@@ -1,0 +1,8 @@
+<resources>
+    <style name="Theme.RokidBus.PhoneProbe" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowBackground">#F5F8F4</item>
+        <item name="android:navigationBarColor">#F5F8F4</item>
+        <item name="android:statusBarColor">#F5F8F4</item>
+    </style>
+</resources>

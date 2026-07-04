@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application
+        android:allowBackup="false"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.RokidBus.ClientProbe">
+
+        <service
+            android:name=".ProbeService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.anezium.rokidbus.action.CLIENT" />
+            </intent-filter>
+            <meta-data
+                android:name="com.anezium.rokidbus.paths"
+                android:value="/probe,/http/request/reply" />
+        </service>
+
+        <activity
+            android:name=".ProbeActivity"
+            android:exported="true"
+            android:screenOrientation="portrait">
+            <intent-filter>
+                <action android:name="com.anezium.rokidbus.clientprobe.OPEN" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

@@ -1,0 +1,7 @@
+<resources>
+    <style name="Theme.RokidBus.Phone" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowActionBar">false</item>
+        <item name="android:colorAccent">#006C67</item>
+    </style>
+</resources>
