@@ -1,8 +1,13 @@
 <resources>
-    <style name="Theme.RokidBus.PhoneProbe" parent="@android:style/Theme.Material.Light.NoActionBar">
-        <item name="android:fontFamily">sans</item>
-        <item name="android:windowBackground">#F5F8F4</item>
-        <item name="android:navigationBarColor">#F5F8F4</item>
-        <item name="android:statusBarColor">#F5F8F4</item>
+    <style name="Theme.RokidBus.PhoneProbe" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowActionBar">false</item>
+        <item name="android:fontFamily">monospace</item>
+        <item name="android:windowBackground">#030C06</item>
+        <item name="android:navigationBarColor">#030C06</item>
+        <item name="android:statusBarColor">#030C06</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:colorAccent">#71FF97</item>
     </style>
 </resources>

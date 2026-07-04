@@ -2,7 +2,6 @@ package com.anezium.rokidbus.phoneprobe
 
 import android.app.Activity
 import android.os.Bundle
-import android.view.Gravity
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.LinearLayout
@@ -10,6 +9,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 import com.anezium.rokidbus.client.BusClient
 import com.anezium.rokidbus.client.BusEvent
+import com.anezium.rokidbus.client.ui.BusTheme
 import org.json.JSONObject
 
 private const val PATH_ECHO = "/probe/echo"
@@ -20,8 +20,9 @@ private const val PATH_HTTP_REPLY = "/http/request/reply"
 private const val DEFAULT_HTTP_URL = "https://api.transitous.org/api/v1/geocode?text=Paris"
 
 class MainActivity : Activity() {
-    private lateinit var status: TextView
     private lateinit var logView: TextView
+    private lateinit var logScroll: ScrollView
+    private lateinit var linkRow: BusTheme.StatusRow
     private lateinit var client: BusClient
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -41,28 +42,36 @@ class MainActivity : Activity() {
     }
 
     private fun buildUi() {
-        status = TextView(this).apply {
-            text = "RokidBus Phone Probe"
-            textSize = 20f
-            setTextColor(0xFF11231A.toInt())
-            setPadding(24, 24, 24, 12)
-        }
-        logView = TextView(this).apply {
-            textSize = 14f
-            setTextColor(0xFF202020.toInt())
-            setPadding(24, 12, 24, 24)
+        window.statusBarColor = BusTheme.bg
+        window.navigationBarColor = BusTheme.bg
+
+        logView = TextView(this)
+        logScroll = BusTheme.logWell(this, logView)
+        linkRow = BusTheme.statusRow(this, "LINK").apply {
+            set(up = false, value = "state 0")
         }
 
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(0xFFF5F8F4.toInt())
-            gravity = Gravity.CENTER_HORIZONTAL
-            addView(status)
-            addView(button("Echo") { echoSmall() }, buttonLayout())
-            addView(button("Echo-big 64 KB") { echoBig() }, buttonLayout())
-            addView(button("HTTP via bus") { httpViaBus() }, buttonLayout())
+        val linkCard = BusTheme.panel(this).apply {
+            addView(linkRow.view)
+        }
+
+        val root = BusTheme.root(this).apply {
+            addView(BusTheme.header(this@MainActivity, "ROKIDBUS PROBE", "phone client - bus request probe"))
+            addView(BusTheme.gap(this@MainActivity, 20))
+            addView(button("ECHO", "Echo") { echoSmall() }, blockLayout())
+            addView(BusTheme.gap(this@MainActivity, 10))
+            addView(button("ECHO 64K", "Echo-big 64 KB") { echoBig() }, blockLayout())
+            addView(BusTheme.gap(this@MainActivity, 10))
+            addView(button("HTTP VIA BUS", "HTTP via bus") { httpViaBus() }, blockLayout())
+            addView(BusTheme.gap(this@MainActivity, 20))
+            addView(BusTheme.sectionLabel(this@MainActivity, "LINK"))
+            addView(BusTheme.gap(this@MainActivity, 8))
+            addView(linkCard, blockLayout())
+            addView(BusTheme.gap(this@MainActivity, 20))
+            addView(BusTheme.sectionLabel(this@MainActivity, "ACTIVITY"))
+            addView(BusTheme.gap(this@MainActivity, 8))
             addView(
-                ScrollView(this@MainActivity).apply { addView(logView) },
+                logScroll,
                 LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     0,
@@ -73,20 +82,20 @@ class MainActivity : Activity() {
         setContentView(root)
     }
 
-    private fun button(label: String, action: () -> Unit): Button =
-        Button(this).apply {
+    private fun button(label: String, logLabel: String, action: () -> Unit): Button =
+        BusTheme.ghostButton(this, label).apply {
             text = label
             setOnClickListener {
-                appendLog("Button: $label")
+                appendLog("Button: $logLabel")
                 action()
             }
         }
 
-    private fun buttonLayout(): LinearLayout.LayoutParams =
+    private fun blockLayout(): LinearLayout.LayoutParams =
         LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT,
-        ).apply { setMargins(24, 4, 24, 4) }
+        )
 
     private fun echoSmall() {
         client.request(
@@ -130,7 +139,10 @@ class MainActivity : Activity() {
 
     private fun handleEvent(event: BusEvent) {
         when (event) {
-            is BusEvent.LinkState -> appendLog("linkState=${event.state}")
+            is BusEvent.LinkState -> {
+                linkRow.set(event.state != 0, "state ${event.state}")
+                appendLog("linkState=${event.state}")
+            }
             is BusEvent.Error -> appendLog("client error: ${event.message}")
             is BusEvent.Message -> appendLog(
                 "RX ${event.path} id=${event.id.take(8)} bytes=${event.payload.toString().length}",
@@ -140,7 +152,7 @@ class MainActivity : Activity() {
 
     private fun appendLog(line: String) {
         if (line.isBlank()) return
-        status.text = line
         logView.append(line + "\n")
+        logScroll.post { logScroll.fullScroll(ScrollView.FOCUS_DOWN) }
     }
 }

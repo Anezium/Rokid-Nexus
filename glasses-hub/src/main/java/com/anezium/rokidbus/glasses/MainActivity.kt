@@ -7,18 +7,27 @@ import android.os.Build
 import android.os.Bundle
 import android.view.Gravity
 import android.widget.TextView
+import com.anezium.rokidbus.client.ui.BusTheme
 import com.anezium.rokidbus.shared.BusConstants
 
 class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        window.statusBarColor = BusTheme.bg
+        window.navigationBarColor = BusTheme.bg
         val status = TextView(this).apply {
             text = "RokidBus Glasses Hub\nSPP: ${BusConstants.SERVICE_NAME}\nUUID: ${BusConstants.SPP_UUID_STRING}\nEnable accessibility service to run headless."
-            setTextColor(0xFFFFFFFF.toInt())
-            textSize = 18f
+            typeface = android.graphics.Typeface.MONOSPACE
+            setTextColor(BusTheme.phosphor)
+            textSize = 14f
             gravity = Gravity.CENTER
-            setPadding(24, 24, 24, 24)
-            setBackgroundColor(0xFF000000.toInt())
+            setPadding(
+                BusTheme.dp(this@MainActivity, 24),
+                BusTheme.dp(this@MainActivity, 24),
+                BusTheme.dp(this@MainActivity, 24),
+                BusTheme.dp(this@MainActivity, 24),
+            )
+            setBackgroundColor(BusTheme.glassesBg)
         }
         setContentView(status)
         requestBluetoothConnectIfNeeded()

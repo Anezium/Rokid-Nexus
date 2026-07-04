@@ -4,6 +4,9 @@
         <item name="android:windowActionBar">false</item>
         <item name="android:windowFullscreen">true</item>
         <item name="android:windowBackground">#000000</item>
-        <item name="android:colorAccent">#5CFF88</item>
+        <item name="android:navigationBarColor">#030C06</item>
+        <item name="android:statusBarColor">#030C06</item>
+        <item name="android:fontFamily">monospace</item>
+        <item name="android:colorAccent">#71FF97</item>
     </style>
 </resources>
