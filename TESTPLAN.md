@@ -1,5 +1,19 @@
 # RokidBus Round A Test Plan
 
+> **RESULT 2026-07-04 — ROUND A VALIDATED ON HARDWARE, ALL 6 ACCEPTANCE CHECKS PASS**
+>
+> - Check 2 (end-to-end small path): phone probe → phone hub → **CXR-L** (`CXR TX /probe/echo`) → glasses hub → **bind-wake of the dead probe process** (~1.6 s including cold start) → reply back via CXR-S. `linkState=7` on the client.
+> - Check 3 (data plane): 64 KB echo automatically routed **SPP** (`SPP TX/RX`), same client API.
+> - Check 4 (HTTP proxy): `HTTP via bus status=200 totalBytes=7592` from api.transitous.org, glasses `wifi_on=0` at test time.
+> - Check 5: zero `connected=false` phone-side for the whole session — Hi Rokid/CXR-L never dropped.
+> - Check 6: `wake-echo` broadcast queued + delivered via the 5 s register-wait flush path.
+> - Hi Rokid authorization was granted silently (already remembered for this signature) — no manual tap was needed.
+>
+> Known limitations found (Round B material):
+> - **No ordering guarantee across planes**: an HTTP `done` (small → CXR-L) arrived *before* its data chunk (10 KB → SPP). Fix idea: per-request-id plane affinity or sequence numbers.
+> - `am kill` on a probe bound by the hub does not actually kill it (bound processes are protected); use `am force-stop` in tests when a true cold start is required (force-stop also unbinds the supervisor).
+> - Phone hub has no wake-on-message supervisor (glasses-only for now, per spec "phone rarely needs it").
+
 Status: 2026-07-04. The original probe project already passed the two hardware gates:
 SPP alongside Hi Rokid stayed connected, bind-based wake worked from the accessibility
 anchor, and the phone HTTP proxy reached `api.transitous.org` while glasses Wi-Fi was off.
