@@ -102,6 +102,30 @@ adb -s $glasses shell am broadcast -n com.anezium.rokidbus.glasses/.ProbeBroadca
 adb -s $glasses shell am broadcast -n com.anezium.rokidbus.glasses/.ProbeBroadcastReceiver -a com.anezium.rokidbus.glasses.PROBE --es probe wake-http
 ```
 
+> **RESULT 2026-07-05 — ROUND B SLICE 1 VALIDATED ON HARDWARE**
+>
+> - `surface-activity` probe: SurfaceActivity started from background (a11y BAL
+>   exemption confirmed by `ActivityStarter: Background activity start allowed`),
+>   demo card rendered.
+> - `surface-overlay` probe: TYPE_ACCESSIBILITY_OVERLAY rendered — including while
+>   Rokid Relay's glasses activity was relaunching itself in a tight loop and
+>   starving activity surfaces. Overlay is therefore the default display path.
+> - Screen wake: surfaces wake the sleeping display (3 s wakelock; display
+>   re-sleeps after its normal timeout — lyrics keep rendering underneath).
+> - End-to-end Lyrics: notification access granted via
+>   `cmd notification allow_listener com.anezium.rokidbus.phone/com.anezium.rokidbus.lyrics.media.MediaNotificationListenerService`,
+>   hub started, `/launcher/list` synced (count=1). Spotify playback auto-opened the
+>   surface; track without synced lyrics showed the fallback card (NETEASE+LRCLIB
+>   "no synced lyrics"); Blinding Lights showed line-synced lyrics (NETEASE / synced)
+>   with prev/current/next lines.
+> - Anchor mechanism: lyrics advanced several lines with ZERO bus messages in a 9 s
+>   window (`/surface` TX count 27 → 27) — glasses tick on their own clock.
+> - Seq protection observed live: a `/surface/show` (seq 1) arriving after seq 3 was
+>   dropped as stale (`Surface stale drop id=lyrics seq=1 latest=3`).
+> - Known quirk: after granting notification access into an already-running hub
+>   process, the media monitor did not attach until the hub app was force-stopped
+>   and relaunched. One-time setup path; revisit if it bites again.
+
 Round B surface renderer checks:
 
 ```powershell
