@@ -29,6 +29,7 @@ class MainActivity : Activity() {
     private lateinit var logView: TextView
     private lateinit var logScroll: ScrollView
     private lateinit var heroView: TextView
+    private lateinit var toggleButton: android.widget.Button
     private lateinit var cxrTile: BusTheme.Tile
     private lateinit var sppTile: BusTheme.Tile
     private lateinit var hiRokidTile: BusTheme.Tile
@@ -49,7 +50,7 @@ class MainActivity : Activity() {
             pathPrefixes = emptyList(),
         ) { event -> handleHubEvent(event) }.also { it.connect() }
         requestBluetoothConnectIfNeeded()
-        if (savedToken().isNotBlank()) {
+        if (savedToken().isNotBlank() && BusHubService.isEnabled(this)) {
             appendLog("Saved Hi Rokid token present")
             BusHubService.start(this)
         }
@@ -116,17 +117,26 @@ class MainActivity : Activity() {
                 }
             }
         }
-        val start = BusTheme.pill(this, "Start hub").apply {
+        toggleButton = BusTheme.pill(this, "Start hub").apply {
             setOnClickListener {
-                appendLog("Starting hub")
-                BusHubService.start(this@MainActivity)
+                // The service persists the pref asynchronously; flip optimistically.
+                if (BusHubService.isEnabled(this@MainActivity)) {
+                    appendLog("Stopping hub")
+                    BusHubService.stop(this@MainActivity)
+                    setToggle(enabled = false)
+                } else {
+                    appendLog("Starting hub")
+                    BusHubService.start(this@MainActivity)
+                    setToggle(enabled = true)
+                }
             }
         }
+        refreshToggle()
 
         val actions = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             addView(auth, actionButtonLayout(isFirst = true))
-            addView(start, actionButtonLayout(isFirst = false))
+            addView(toggleButton, actionButtonLayout(isFirst = false))
         }
 
         val root = BusTheme.root(this).apply {
@@ -187,9 +197,21 @@ class MainActivity : Activity() {
     private fun savedToken(): String =
         getSharedPreferences(PREFS, MODE_PRIVATE).getString(PREF_TOKEN, "").orEmpty()
 
+    private fun refreshToggle() {
+        setToggle(BusHubService.isEnabled(this))
+    }
+
+    private fun setToggle(enabled: Boolean) {
+        toggleButton.text = if (enabled) "STOP HUB" else "START HUB"
+        toggleButton.setTextColor(if (enabled) BusTheme.danger else BusTheme.phosphor)
+    }
+
     private fun handleHubEvent(event: BusEvent) {
         when (event) {
-            is BusEvent.LinkState -> updateLinkState(event.state)
+            is BusEvent.LinkState -> {
+                updateLinkState(event.state)
+                refreshToggle()
+            }
             is BusEvent.Error -> appendLog("hub-ui: ${event.message}")
             is BusEvent.Message -> Unit
         }

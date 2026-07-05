@@ -40,7 +40,9 @@ private const val TAG = "ROKIDBUS-PHONE"
 private const val CHANNEL_ID = "rokidbus_phone"
 private const val ACTION_LOG = "com.anezium.rokidbus.phone.LOG"
 private const val ACTION_SET_TOKEN = "com.anezium.rokidbus.phone.SET_TOKEN"
+private const val ACTION_STOP = "com.anezium.rokidbus.phone.STOP"
 private const val EXTRA_AUTH_TOKEN = "auth_token"
+private const val PREF_ENABLED = "hub_enabled"
 private const val GLASSES_MAC = "AC:86:D1:55:1E:ED"
 private const val GLASSES_NAME = "Glasses_3723"
 private const val GLASSES_HUB_PACKAGE = "com.anezium.rokidbus.glasses"
@@ -59,6 +61,7 @@ class BusHubService : Service() {
     private val registrations = CopyOnWriteArrayList<Registration>()
     private val sppLoopStarted = AtomicBoolean(false)
     @Volatile private var sppLoopStop = false
+    @Volatile private var hubEnabled = true
     private val writeLock = Any()
     private var socket: BluetoothSocket? = null
     private var output: OutputStream? = null
@@ -113,26 +116,64 @@ class BusHubService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        startForegroundWithType()
-        startCxrIfTokenAvailable()
+        hubEnabled = prefs().getBoolean(PREF_ENABLED, true)
+        if (hubEnabled) {
+            startForegroundWithType()
+            startCxrIfTokenAvailable()
+        }
         connectSpp()
-        log("BusHubService created")
+        log("BusHubService created enabled=$hubEnabled")
     }
 
     override fun onBind(intent: Intent?): IBinder = binder
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_SET_TOKEN) {
-            val token = intent.getStringExtra(EXTRA_AUTH_TOKEN).orEmpty()
-            if (token.isNotBlank()) {
-                prefs().edit().putString(PREF_TOKEN, token).apply()
-                startCxr(token)
+        when (intent?.action) {
+            ACTION_STOP -> {
+                stopHub()
+                return START_NOT_STICKY
             }
-        } else {
-            startCxrIfTokenAvailable()
+            ACTION_SET_TOKEN -> {
+                val token = intent.getStringExtra(EXTRA_AUTH_TOKEN).orEmpty()
+                if (token.isNotBlank()) {
+                    prefs().edit().putString(PREF_TOKEN, token).apply()
+                    enableHub()
+                    startCxr(token)
+                }
+            }
+            else -> {
+                enableHub()
+                startCxrIfTokenAvailable()
+            }
         }
         connectSpp()
         return START_STICKY
+    }
+
+    private fun enableHub() {
+        prefs().edit().putBoolean(PREF_ENABLED, true).apply()
+        hubEnabled = true
+        startForegroundWithType()
+    }
+
+    /** Release every radio resource: SPP socket, CXR-L session, foreground state. */
+    private fun stopHub() {
+        prefs().edit().putBoolean(PREF_ENABLED, false).apply()
+        hubEnabled = false
+        runCatching { cxrLink?.disconnect() }
+        cxrLink = null
+        cxrConnected = false
+        glassBtConnected = false
+        closeSocket()
+        notifyLinkState()
+        log("Hub stopped; SPP socket and CXR-L session released")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+        } else {
+            @Suppress("DEPRECATION")
+            stopForeground(true)
+        }
+        stopSelf()
     }
 
     override fun onDestroy() {
@@ -306,6 +347,10 @@ class BusHubService : Service() {
         Thread({
             var backoffMs = 1_000L
             while (!sppLoopStop) {
+                if (!hubEnabled) {
+                    sleepQuietly(750L)
+                    continue
+                }
                 if (!hasBluetoothConnect()) {
                     log("Missing BLUETOOTH_CONNECT; SPP loop waiting")
                     sleepQuietly(5_000L)
@@ -486,5 +531,15 @@ class BusHubService : Service() {
                 context.startService(intent)
             }
         }
+
+        /** Plain startService: callers are foreground UI; the hub must not re-promote itself. */
+        fun stop(context: android.content.Context) {
+            context.startService(
+                Intent(context, BusHubService::class.java).setAction(ACTION_STOP),
+            )
+        }
+
+        fun isEnabled(context: android.content.Context): Boolean =
+            context.getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean(PREF_ENABLED, true)
     }
 }
