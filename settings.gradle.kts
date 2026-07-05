@@ -15,7 +15,7 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "RokidBus"
+rootProject.name = "RokidNexus"
 include(":shared")
 include(":bus-client")
 include(":phone-hub")

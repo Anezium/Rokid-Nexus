@@ -16,7 +16,7 @@ class MainActivity : Activity() {
         window.statusBarColor = BusTheme.bg
         window.navigationBarColor = BusTheme.bg
         val status = TextView(this).apply {
-            text = "RokidBus Glasses Hub\nSPP: ${BusConstants.SERVICE_NAME}\nUUID: ${BusConstants.SPP_UUID_STRING}\nEnable accessibility service to run headless."
+            text = "Rokid Nexus Glasses Hub\nSPP: ${BusConstants.SERVICE_NAME}\nUUID: ${BusConstants.SPP_UUID_STRING}\nEnable accessibility service to run headless."
             typeface = android.graphics.Typeface.MONOSPACE
             setTextColor(BusTheme.phosphor)
             textSize = 14f

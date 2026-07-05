@@ -443,10 +443,10 @@ class BusHubService : Service() {
     private fun startForegroundWithType() {
         val manager = getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(
-            NotificationChannel(CHANNEL_ID, "RokidBus", NotificationManager.IMPORTANCE_LOW),
+            NotificationChannel(CHANNEL_ID, "Rokid Nexus", NotificationManager.IMPORTANCE_LOW),
         )
         val notification = Notification.Builder(this, CHANNEL_ID)
-            .setContentTitle("RokidBus phone hub")
+            .setContentTitle("Rokid Nexus hub")
             .setContentText("CXR-L and SPP bus hub running")
             .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
             .build()

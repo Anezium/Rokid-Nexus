@@ -140,7 +140,7 @@ class MainActivity : Activity() {
         }
 
         val root = BusTheme.root(this).apply {
-            addView(BusTheme.wordmark(this@MainActivity, "Rokidbus"))
+            addView(BusTheme.wordmark(this@MainActivity, "Rokid Nexus"))
             addView(BusTheme.gap(this@MainActivity, 30))
             addView(heroView)
             addView(BusTheme.gap(this@MainActivity, 6))
