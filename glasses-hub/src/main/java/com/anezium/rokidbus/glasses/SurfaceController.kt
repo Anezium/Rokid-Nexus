@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import android.view.KeyEvent
 import com.anezium.rokidbus.shared.BusEnvelope
 import com.anezium.rokidbus.shared.BusPaths
@@ -21,13 +22,16 @@ object SurfaceController {
 
     fun activeSurface(): NexusSurface? = active
 
+    // Overlay is the default: TYPE_ACCESSIBILITY_OVERLAY stays visible even when
+    // another app (e.g. Rokid Relay's glasses activity) keeps relaunching itself
+    // to the foreground, which starves activity-based surfaces on this firmware.
     fun displayPath(context: Context): SurfaceDisplayPath =
         when (
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .getString(PREF_DISPLAY_PATH, SurfaceDisplayPath.ACTIVITY.prefValue)
+                .getString(PREF_DISPLAY_PATH, SurfaceDisplayPath.OVERLAY.prefValue)
         ) {
-            SurfaceDisplayPath.OVERLAY.prefValue -> SurfaceDisplayPath.OVERLAY
-            else -> SurfaceDisplayPath.ACTIVITY
+            SurfaceDisplayPath.ACTIVITY.prefValue -> SurfaceDisplayPath.ACTIVITY
+            else -> SurfaceDisplayPath.OVERLAY
         }
 
     fun setDisplayPath(context: Context, path: SurfaceDisplayPath) {
@@ -116,6 +120,7 @@ object SurfaceController {
         }
         latestSeqBySurface[surface.surfaceId] = surface.seq
         main.post {
+            wakeScreen(context)
             active = surface
             notifyListeners(surface)
             when (forcedPath ?: displayPath(context)) {
@@ -181,6 +186,20 @@ object SurfaceController {
             SurfaceOverlayRenderer.show(context, surface)
         }
     }
+
+    @Suppress("DEPRECATION")
+    private fun wakeScreen(context: Context) {
+        val power = context.getSystemService(PowerManager::class.java) ?: return
+        if (power.isInteractive) return
+        runCatching {
+            power.newWakeLock(
+                PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
+                "rokidbus:surface-wake",
+            ).acquire(WAKE_MS)
+        }.onFailure { logError("Surface screen wake failed", it) }
+    }
+
+    private const val WAKE_MS = 3_000L
 
     private fun notifyListeners(surface: NexusSurface?) {
         listeners.forEach { listener ->
