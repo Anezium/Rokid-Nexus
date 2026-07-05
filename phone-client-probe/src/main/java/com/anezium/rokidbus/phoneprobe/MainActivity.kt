@@ -22,7 +22,8 @@ private const val DEFAULT_HTTP_URL = "https://api.transitous.org/api/v1/geocode?
 class MainActivity : Activity() {
     private lateinit var logView: TextView
     private lateinit var logScroll: ScrollView
-    private lateinit var linkRow: BusTheme.StatusRow
+    private lateinit var heroView: TextView
+    private lateinit var heroSub: TextView
     private lateinit var client: BusClient
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -46,30 +47,29 @@ class MainActivity : Activity() {
         window.navigationBarColor = BusTheme.bg
 
         logView = TextView(this)
-        logScroll = BusTheme.logWell(this, logView)
-        linkRow = BusTheme.statusRow(this, "LINK").apply {
-            set(up = false, value = "state 0")
+        logScroll = BusTheme.console(this, logView)
+        heroView = BusTheme.hero(this).apply {
+            textSize = 32f
+            text = "No link"
+            setTextColor(BusTheme.muted)
         }
-
-        val linkCard = BusTheme.panel(this).apply {
-            addView(linkRow.view)
-        }
+        heroSub = BusTheme.heroSub(this, "client probe · waiting for hub")
 
         val root = BusTheme.root(this).apply {
-            addView(BusTheme.header(this@MainActivity, "ROKIDBUS PROBE", "phone client - bus request probe"))
-            addView(BusTheme.gap(this@MainActivity, 20))
-            addView(button("ECHO", "Echo") { echoSmall() }, blockLayout())
+            addView(BusTheme.wordmark(this@MainActivity, "Rokidbus · Probe"))
+            addView(BusTheme.gap(this@MainActivity, 30))
+            addView(heroView)
+            addView(BusTheme.gap(this@MainActivity, 6))
+            addView(heroSub)
+            addView(BusTheme.gap(this@MainActivity, 28))
+            addView(button("Echo", "Echo") { echoSmall() }, blockLayout())
             addView(BusTheme.gap(this@MainActivity, 10))
-            addView(button("ECHO 64K", "Echo-big 64 KB") { echoBig() }, blockLayout())
+            addView(button("Echo 64K", "Echo-big 64 KB") { echoBig() }, blockLayout())
             addView(BusTheme.gap(this@MainActivity, 10))
-            addView(button("HTTP VIA BUS", "HTTP via bus") { httpViaBus() }, blockLayout())
-            addView(BusTheme.gap(this@MainActivity, 20))
-            addView(BusTheme.sectionLabel(this@MainActivity, "LINK"))
-            addView(BusTheme.gap(this@MainActivity, 8))
-            addView(linkCard, blockLayout())
-            addView(BusTheme.gap(this@MainActivity, 20))
-            addView(BusTheme.sectionLabel(this@MainActivity, "ACTIVITY"))
-            addView(BusTheme.gap(this@MainActivity, 8))
+            addView(button("HTTP via bus", "HTTP via bus") { httpViaBus() }, blockLayout())
+            addView(BusTheme.gap(this@MainActivity, 30))
+            addView(BusTheme.tinyLabel(this@MainActivity, "Console"))
+            addView(BusTheme.gap(this@MainActivity, 10))
             addView(
                 logScroll,
                 LinearLayout.LayoutParams(
@@ -83,8 +83,7 @@ class MainActivity : Activity() {
     }
 
     private fun button(label: String, logLabel: String, action: () -> Unit): Button =
-        BusTheme.ghostButton(this, label).apply {
-            text = label
+        BusTheme.pill(this, label).apply {
             setOnClickListener {
                 appendLog("Button: $logLabel")
                 action()
@@ -140,7 +139,14 @@ class MainActivity : Activity() {
     private fun handleEvent(event: BusEvent) {
         when (event) {
             is BusEvent.LinkState -> {
-                linkRow.set(event.state != 0, "state ${event.state}")
+                if (event.state != 0) {
+                    heroView.text = "Linked"
+                    heroView.setTextColor(BusTheme.phosphor)
+                } else {
+                    heroView.text = "No link"
+                    heroView.setTextColor(BusTheme.muted)
+                }
+                heroSub.text = "client probe · bus state ${event.state}"
                 appendLog("linkState=${event.state}")
             }
             is BusEvent.Error -> appendLog("client error: ${event.message}")

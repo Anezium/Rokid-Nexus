@@ -28,9 +28,10 @@ private const val LINK_GLASS_BONDED = 4
 class MainActivity : Activity() {
     private lateinit var logView: TextView
     private lateinit var logScroll: ScrollView
-    private lateinit var cxrRow: BusTheme.StatusRow
-    private lateinit var sppRow: BusTheme.StatusRow
-    private lateinit var hiRokidRow: BusTheme.StatusRow
+    private lateinit var heroView: TextView
+    private lateinit var cxrTile: BusTheme.Tile
+    private lateinit var sppTile: BusTheme.Tile
+    private lateinit var hiRokidTile: BusTheme.Tile
     private var hubUiClient: BusClient? = null
 
     private val logReceiver = object : BroadcastReceiver() {
@@ -98,13 +99,14 @@ class MainActivity : Activity() {
         window.navigationBarColor = BusTheme.bg
 
         logView = TextView(this)
-        logScroll = BusTheme.logWell(this, logView)
-        cxrRow = BusTheme.statusRow(this, "CXR-L")
-        sppRow = BusTheme.statusRow(this, "SPP")
-        hiRokidRow = BusTheme.statusRow(this, "HI ROKID")
+        logScroll = BusTheme.console(this, logView)
+        heroView = BusTheme.hero(this)
+        cxrTile = BusTheme.Tile(this, "CXR-L")
+        sppTile = BusTheme.Tile(this, "SPP")
+        hiRokidTile = BusTheme.Tile(this, "HI ROKID")
         updateLinkState(0)
 
-        val auth = BusTheme.ghostButton(this, "AUTHORIZE").apply {
+        val auth = BusTheme.pill(this, "Authorize").apply {
             setOnClickListener {
                 when (val result = CxrLAuth.requestAuthorization(this@MainActivity, AUTH_REQUEST)) {
                     null -> appendLog("Hi Rokid authorization opened")
@@ -114,18 +116,13 @@ class MainActivity : Activity() {
                 }
             }
         }
-        val start = BusTheme.ghostButton(this, "START HUB").apply {
+        val start = BusTheme.pill(this, "Start hub").apply {
             setOnClickListener {
                 appendLog("Starting hub")
                 BusHubService.start(this@MainActivity)
             }
         }
 
-        val statusCard = BusTheme.panel(this).apply {
-            addView(cxrRow.view)
-            addView(sppRow.view)
-            addView(hiRokidRow.view)
-        }
         val actions = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             addView(auth, actionButtonLayout(isFirst = true))
@@ -133,16 +130,21 @@ class MainActivity : Activity() {
         }
 
         val root = BusTheme.root(this).apply {
-            addView(BusTheme.header(this@MainActivity, "ROKIDBUS", "phone hub - cxr-l + spp bus"))
-            addView(BusTheme.gap(this@MainActivity, 20))
-            addView(BusTheme.sectionLabel(this@MainActivity, "STATUS"))
-            addView(BusTheme.gap(this@MainActivity, 8))
-            addView(statusCard, blockLayout())
-            addView(BusTheme.gap(this@MainActivity, 18))
+            addView(BusTheme.wordmark(this@MainActivity, "Rokidbus"))
+            addView(BusTheme.gap(this@MainActivity, 30))
+            addView(heroView)
+            addView(BusTheme.gap(this@MainActivity, 6))
+            addView(BusTheme.heroSub(this@MainActivity, "glasses bus · cxr-l + spp"))
+            addView(BusTheme.gap(this@MainActivity, 28))
+            addView(
+                BusTheme.tileRow(this@MainActivity, listOf(cxrTile, sppTile, hiRokidTile)),
+                blockLayout(),
+            )
+            addView(BusTheme.gap(this@MainActivity, 26))
             addView(actions, blockLayout())
-            addView(BusTheme.gap(this@MainActivity, 20))
-            addView(BusTheme.sectionLabel(this@MainActivity, "ACTIVITY"))
-            addView(BusTheme.gap(this@MainActivity, 8))
+            addView(BusTheme.gap(this@MainActivity, 30))
+            addView(BusTheme.tinyLabel(this@MainActivity, "Console"))
+            addView(BusTheme.gap(this@MainActivity, 10))
             addView(
                 logScroll,
                 LinearLayout.LayoutParams(
@@ -168,9 +170,9 @@ class MainActivity : Activity() {
             1f,
         ).apply {
             if (isFirst) {
-                marginEnd = BusTheme.dp(this@MainActivity, 6)
+                marginEnd = BusTheme.dp(this@MainActivity, 5)
             } else {
-                marginStart = BusTheme.dp(this@MainActivity, 6)
+                marginStart = BusTheme.dp(this@MainActivity, 5)
             }
         }
 
@@ -194,18 +196,26 @@ class MainActivity : Activity() {
     }
 
     private fun updateLinkState(state: Int) {
-        cxrRow.set(
-            state and LINK_CXR_CONTROL_UP != 0,
-            if (state and LINK_CXR_CONTROL_UP != 0) "control up" else "control down",
-        )
-        sppRow.set(
-            state and LINK_SPP_DATA_UP != 0,
-            if (state and LINK_SPP_DATA_UP != 0) "data up" else "data down",
-        )
-        hiRokidRow.set(
-            state and LINK_GLASS_BONDED != 0,
-            if (state and LINK_GLASS_BONDED != 0) "bonded" else "not bonded",
-        )
+        val cxrUp = state and LINK_CXR_CONTROL_UP != 0
+        val sppUp = state and LINK_SPP_DATA_UP != 0
+        val bonded = state and LINK_GLASS_BONDED != 0
+        cxrTile.set(cxrUp, if (cxrUp) "up" else "down")
+        sppTile.set(sppUp, if (sppUp) "up" else "down")
+        hiRokidTile.set(bonded, if (bonded) "bonded" else "away")
+        when {
+            cxrUp && sppUp -> {
+                heroView.text = "Online"
+                heroView.setTextColor(BusTheme.phosphor)
+            }
+            cxrUp || sppUp -> {
+                heroView.text = "Partial"
+                heroView.setTextColor(BusTheme.text)
+            }
+            else -> {
+                heroView.text = "Offline"
+                heroView.setTextColor(BusTheme.muted)
+            }
+        }
     }
 
     private fun appendLog(line: String) {

@@ -57,7 +57,8 @@ class BusHubService : Service() {
 
     private val executor = Executors.newCachedThreadPool()
     private val registrations = CopyOnWriteArrayList<Registration>()
-    private val connectingSpp = AtomicBoolean(false)
+    private val sppLoopStarted = AtomicBoolean(false)
+    @Volatile private var sppLoopStop = false
     private val writeLock = Any()
     private var socket: BluetoothSocket? = null
     private var output: OutputStream? = null
@@ -135,6 +136,7 @@ class BusHubService : Service() {
     }
 
     override fun onDestroy() {
+        sppLoopStop = true
         runCatching { cxrLink?.disconnect() }
         closeSocket()
         registrations.clear()
@@ -221,8 +223,8 @@ class BusHubService : Service() {
             true
         }.getOrElse {
             log("SPP TX failed ${it.javaClass.simpleName}: ${it.message}")
+            // Close the broken socket; the permanent connect thread notices and retries.
             closeSocket()
-            connectSpp()
             false
         }
     }
@@ -293,58 +295,62 @@ class BusHubService : Service() {
         }
     }
 
+    /**
+     * Single permanent connection thread: the only place that ever creates,
+     * assigns or retires the SPP socket. A parallel connect attempt against a
+     * live RFCOMM link kills it at the stack level, so there must be exactly one.
+     */
     @SuppressLint("MissingPermission")
     private fun connectSpp() {
-        if (!connectingSpp.compareAndSet(false, true)) return
-        executor.execute {
-            try {
-                var backoffMs = 1_000L
-                while (socket?.isConnected != true) {
-                    if (!hasBluetoothConnect()) {
-                        log("Missing BLUETOOTH_CONNECT; grant permission before SPP connect")
-                        return@execute
-                    }
-                    val device = pickBondedDevice()
-                    if (device == null) {
-                        log("No bonded glasses device found")
-                        return@execute
-                    }
-                    try {
-                        log("SPP connecting to bonded glasses name=${device.name ?: "unknown"}")
-                        val next = device.createInsecureRfcommSocketToServiceRecord(BusConstants.SPP_UUID)
-                        next.connect()
-                        socket = next
-                        output = next.outputStream
-                        log("SPP connected")
-                        notifyLinkState()
-                        readSppLoop(next)
-                    } catch (t: Throwable) {
-                        closeSocket()
-                        log("SPP connect failed: ${t.javaClass.simpleName}; retrying in ${backoffMs}ms")
-                        sleepQuietly(backoffMs)
-                        backoffMs = (backoffMs * 2).coerceAtMost(30_000L)
-                    }
+        if (!sppLoopStarted.compareAndSet(false, true)) return
+        Thread({
+            var backoffMs = 1_000L
+            while (!sppLoopStop) {
+                if (!hasBluetoothConnect()) {
+                    log("Missing BLUETOOTH_CONNECT; SPP loop waiting")
+                    sleepQuietly(5_000L)
+                    continue
                 }
-            } finally {
-                connectingSpp.set(false)
+                val device = pickBondedDevice()
+                if (device == null) {
+                    log("No bonded glasses device found; SPP loop waiting")
+                    sleepQuietly(10_000L)
+                    continue
+                }
+                var current: BluetoothSocket? = null
+                try {
+                    log("SPP connecting to bonded glasses name=${device.name ?: "unknown"}")
+                    current = device.createInsecureRfcommSocketToServiceRecord(BusConstants.SPP_UUID)
+                    current.connect()
+                    socket = current
+                    output = current.outputStream
+                    backoffMs = 1_000L
+                    log("SPP connected")
+                    notifyLinkState()
+                    readSppLoop(current)
+                    log("SPP link closed")
+                } catch (t: Throwable) {
+                    log("SPP connect failed: ${t.javaClass.simpleName}; retrying in ${backoffMs}ms")
+                } finally {
+                    runCatching { current?.close() }
+                    if (socket === current) {
+                        socket = null
+                        output = null
+                    }
+                    notifyLinkState()
+                }
+                sleepQuietly(backoffMs)
+                backoffMs = (backoffMs * 2).coerceAtMost(30_000L)
             }
-        }
+        }, "rokidbus-spp").apply { isDaemon = true }.start()
     }
 
     private fun readSppLoop(activeSocket: BluetoothSocket) {
-        try {
-            val input = activeSocket.inputStream
-            while (true) {
-                val envelope = FrameProtocol.read(input) ?: break
-                log("SPP RX ${envelope.path} id=${envelope.id}")
-                routeRemote(envelope)
-            }
-        } catch (t: Throwable) {
-            log("SPP read loop ended: ${t.javaClass.simpleName}")
-        } finally {
-            closeSocket()
-            notifyLinkState()
-            connectSpp()
+        val input = activeSocket.inputStream
+        while (true) {
+            val envelope = FrameProtocol.read(input) ?: return
+            log("SPP RX ${envelope.path} id=${envelope.id}")
+            routeRemote(envelope)
         }
     }
 

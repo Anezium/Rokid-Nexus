@@ -13,18 +13,27 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 
+/**
+ * RokidBus design system — quiet premium terminal.
+ * Near-black green canvas, one phosphor accent, soft unstroked tiles,
+ * large light hero type. Shared by hubs, probes and every client app.
+ */
 object BusTheme {
     const val bg = 0xFF030C06.toInt()
-    const val panel = 0xFF08120B.toInt()
-    const val field = 0xFF050D08.toInt()
-    const val stroke = 0xFF203426.toInt()
-    const val text = 0xFFE0F5E2.toInt()
-    const val muted = 0xFF8DA291.toInt()
-    const val dim = 0xFF556A5A.toInt()
+    const val card = 0xFF09150D.toInt()
+    const val cardPressed = 0xFF102316.toInt()
+    const val well = 0xFF050D08.toInt()
+    const val hairline = 0xFF13221A.toInt()
+    const val text = 0xFFECF4EC.toInt()
+    const val muted = 0xFF7E9585.toInt()
+    const val dim = 0xFF47584D.toInt()
     const val phosphor = 0xFF71FF97.toInt()
-    const val phosphorDim = 0xFF489C5D.toInt()
     const val danger = 0xFFFF7070.toInt()
     val glassesBg = Color.BLACK
+
+    private val sansLight: Typeface = Typeface.create("sans-serif-light", Typeface.NORMAL)
+    private val sansMedium: Typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+    private val monoBold: Typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
 
     fun dp(context: Context, value: Int): Int =
         (value * context.resources.displayMetrics.density).toInt()
@@ -33,118 +42,140 @@ object BusTheme {
         LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(bg)
-            setPadding(dp(context, 24), dp(context, 24), dp(context, 24), dp(context, 24))
+            setPadding(dp(context, 22), dp(context, 18), dp(context, 22), dp(context, 16))
+            setOnApplyWindowInsetsListener { view, insets ->
+                val topInset = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                    insets.getInsets(android.view.WindowInsets.Type.statusBars()).top
+                } else {
+                    @Suppress("DEPRECATION")
+                    insets.systemWindowInsetTop
+                }
+                view.setPadding(
+                    dp(context, 22),
+                    dp(context, 18) + topInset,
+                    dp(context, 22),
+                    dp(context, 16),
+                )
+                insets
+            }
         }
 
-    fun header(context: Context, title: String, subtitle: String): LinearLayout =
-        LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            addView(
-                monoText(context, title.uppercase(), 22f, phosphor, bold = true).apply {
-                    letterSpacing = 0.15f
-                },
-            )
-            addView(
-                monoText(context, subtitle, 12f, muted).apply {
-                    setPadding(0, dp(context, 4), 0, 0)
-                },
-            )
-        }
-
-    fun sectionLabel(context: Context, label: String): TextView =
-        monoText(context, label.uppercase(), 11f, muted).apply {
-            letterSpacing = 0.2f
-        }
-
-    fun panel(context: Context): LinearLayout =
-        LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            background = rounded(context, panel, stroke, 12)
-            setPadding(dp(context, 16), dp(context, 14), dp(context, 16), dp(context, 14))
-        }
-
-    fun ghostButton(context: Context, label: String, dangerVariant: Boolean = false): Button =
-        Button(context).apply {
+    /** Small phosphor brand tag, the only loud typographic voice. */
+    fun wordmark(context: Context, label: String): TextView =
+        TextView(context).apply {
             text = label.uppercase()
             textSize = 12f
-            typeface = Typeface.MONOSPACE
-            letterSpacing = 0.1f
+            typeface = monoBold
+            letterSpacing = 0.35f
+            setTextColor(phosphor)
+        }
+
+    /** Large light headline — the state of the system is the title of the screen. */
+    fun hero(context: Context): TextView =
+        TextView(context).apply {
+            textSize = 40f
+            typeface = sansLight
+            letterSpacing = -0.01f
+            setTextColor(BusTheme.text)
+        }
+
+    fun heroSub(context: Context, label: String): TextView =
+        TextView(context).apply {
+            text = label
+            textSize = 13f
+            letterSpacing = 0.02f
+            setTextColor(muted)
+        }
+
+    fun tinyLabel(context: Context, label: String): TextView =
+        TextView(context).apply {
+            text = label.uppercase()
+            textSize = 10f
+            typeface = sansMedium
+            letterSpacing = 0.25f
+            setTextColor(dim)
+        }
+
+    /** Soft unstroked status tile: caption on top, live value under it. */
+    class Tile(context: Context, label: String) {
+        private val value = TextView(context).apply {
+            textSize = 15f
+            typeface = sansMedium
+            letterSpacing = 0.05f
+            setTextColor(dim)
+            text = "—"
+        }
+        val view: LinearLayout = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            background = rounded(context, card, 18)
+            setPadding(dp(context, 14), dp(context, 13), dp(context, 14), dp(context, 13))
+            addView(tinyLabel(context, label))
+            addView(gap(context, 7))
+            addView(value)
+        }
+
+        fun set(up: Boolean, valueText: String) {
+            value.text = valueText.uppercase()
+            value.setTextColor(if (up) phosphor else dim)
+        }
+    }
+
+    fun tileRow(context: Context, tiles: List<Tile>): LinearLayout =
+        LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            tiles.forEachIndexed { index, tile ->
+                addView(
+                    tile.view,
+                    LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                        if (index > 0) marginStart = dp(context, 10)
+                    },
+                )
+            }
+        }
+
+    /** Full-radius quiet action pill. */
+    fun pill(context: Context, label: String, dangerVariant: Boolean = false): Button =
+        Button(context).apply {
+            text = label.uppercase()
+            textSize = 13f
+            typeface = sansMedium
+            letterSpacing = 0.12f
             setTextColor(if (dangerVariant) danger else phosphor)
             setAllCaps(false)
-            minHeight = dp(context, 44)
-            minimumHeight = dp(context, 44)
+            stateListAnimator = null
+            minHeight = dp(context, 52)
+            minimumHeight = dp(context, 52)
             minWidth = 0
             minimumWidth = 0
             includeFontPadding = false
-            setPadding(dp(context, 12), 0, dp(context, 12), 0)
-            background = ghostBackground(context, if (dangerVariant) danger else stroke)
+            setPadding(dp(context, 18), 0, dp(context, 18), 0)
+            background = StateListDrawable().apply {
+                addState(
+                    intArrayOf(android.R.attr.state_pressed),
+                    rounded(context, cardPressed, 26),
+                )
+                addState(intArrayOf(), rounded(context, card, 26))
+            }
         }
 
-    fun logWell(context: Context, logView: TextView): ScrollView =
+    /** Recessed console well for the activity feed. */
+    fun console(context: Context, logView: TextView): ScrollView =
         ScrollView(context).apply {
-            background = rounded(context, field, stroke, 10)
-            setPadding(dp(context, 12), dp(context, 12), dp(context, 12), dp(context, 12))
-            isFillViewport = false
+            background = rounded(context, well, 16)
+            setPadding(dp(context, 14), dp(context, 12), dp(context, 14), dp(context, 12))
+            isVerticalScrollBarEnabled = false
             addView(
                 logView.apply {
                     typeface = Typeface.MONOSPACE
-                    textSize = 11f
-                    setTextColor(muted)
-                    includeFontPadding = true
+                    textSize = 10f
+                    setTextColor(dim)
+                    setLineSpacing(dp(context, 3).toFloat(), 1f)
                 },
                 ViewGroup.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT,
                 ),
             )
-        }
-
-    fun statusRow(context: Context, label: String): StatusRow {
-        val dot = View(context).apply {
-            background = oval(context, stroke)
-        }
-        val labelView = monoText(context, label.uppercase(), 13f, text)
-        val valueView = monoText(context, "DOWN", 13f, dim).apply {
-            gravity = Gravity.END
-        }
-        val row = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, dp(context, 6), 0, dp(context, 6))
-            addView(
-                dot,
-                LinearLayout.LayoutParams(dp(context, 8), dp(context, 8)).apply {
-                    marginEnd = dp(context, 10)
-                },
-            )
-            addView(
-                labelView,
-                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
-            )
-            addView(
-                valueView,
-                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
-            )
-        }
-        return StatusRow(context, row, dot, valueView)
-    }
-
-    fun monoText(
-        context: Context,
-        value: String,
-        sizeSp: Float,
-        color: Int,
-        bold: Boolean = false,
-    ): TextView =
-        TextView(context).apply {
-            text = value
-            textSize = sizeSp
-            setTextColor(color)
-            typeface = if (bold) {
-                Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
-            } else {
-                Typeface.MONOSPACE
-            }
         }
 
     fun gap(context: Context, value: Int): View =
@@ -155,39 +186,22 @@ object BusTheme {
             )
         }
 
-    private fun ghostBackground(context: Context, line: Int): StateListDrawable =
-        StateListDrawable().apply {
-            addState(
-                intArrayOf(android.R.attr.state_pressed),
-                rounded(context, 0xFF0C2C16.toInt(), line, 10),
-            )
-            addState(intArrayOf(), rounded(context, 0x00000000, line, 10))
+    /** Minimal phosphor-on-black text screen for the glasses HUD. */
+    fun glassesScreen(context: Context, content: String): TextView =
+        TextView(context).apply {
+            text = content
+            typeface = Typeface.MONOSPACE
+            setTextColor(phosphor)
+            textSize = 14f
+            gravity = Gravity.CENTER
+            setBackgroundColor(glassesBg)
+            setPadding(dp(context, 24), dp(context, 24), dp(context, 24), dp(context, 24))
         }
 
-    private fun rounded(context: Context, fill: Int, line: Int, radius: Int): GradientDrawable =
+    private fun rounded(context: Context, fill: Int, radius: Int): GradientDrawable =
         GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
             setColor(fill)
-            setStroke(dp(context, 1), line)
             cornerRadius = dp(context, radius).toFloat()
         }
-
-    private fun oval(context: Context, fill: Int): GradientDrawable =
-        GradientDrawable().apply {
-            shape = GradientDrawable.OVAL
-            setColor(fill)
-        }
-
-    class StatusRow(
-        private val context: Context,
-        val view: LinearLayout,
-        private val dot: View,
-        private val valueView: TextView,
-    ) {
-        fun set(up: Boolean, value: String) {
-            dot.background = oval(context, if (up) phosphor else stroke)
-            valueView.text = value.uppercase()
-            valueView.setTextColor(if (up) phosphor else dim)
-        }
-    }
 }
