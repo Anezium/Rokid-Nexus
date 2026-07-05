@@ -31,6 +31,14 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".SurfaceActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:launchMode="singleTask"
+            android:screenOrientation="portrait"
+            android:theme="@style/Theme.RokidBus.Surface" />
+
         <service
             android:name=".RokidBusAccessibilityService"
             android:exported="false"

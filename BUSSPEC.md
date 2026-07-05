@@ -59,6 +59,92 @@ copy the exact API usage from Relay's bridges).
 Binary payloads (images, audio later) ride SPP as `payload: {"bin": "<base64>"}` for
 now; leave a `// TODO raw binary frames` marker.
 
+## Surface protocol v1 (Round B)
+
+Plugins do not install glasses APKs. The phone hub hosts plugin logic in-process and
+pushes declarative surfaces over the existing bus. The glasses hub renders those
+surfaces locally with the shared Rokid Nexus phosphor visual language.
+
+Phone to glasses:
+
+- `/surface/show` shows or replaces a surface.
+- `/surface/update` updates an existing surface idempotently.
+- `/surface/hide` hides a surface.
+- `/launcher/list` sends the available phone-side plugins to the glasses launcher.
+
+Glasses to phone:
+
+- `/surface/input` reports key input while a surface is visible.
+- `/launcher/open` asks the phone hub to open a plugin.
+
+Every surface payload carries:
+
+```json
+{
+  "surfaceId": "lyrics",
+  "seq": 42,
+  "kind": "card"
+}
+```
+
+`seq` is monotonic per `surfaceId`. Because Round A proved there is no ordering
+guarantee across CXR-L and SPP, the glasses renderer MUST drop any show, update or
+hide whose `seq` is not newer than the last accepted sequence for that surface.
+Messages are idempotent: the phone can resend the latest complete state at any time.
+Timed-line anchor-only updates may also include a `contentKey`; the glasses hub merges
+such updates only into an active surface with the same key, so an anchor that overtakes
+the full lyrics payload cannot make the later full payload stale.
+
+Surface kinds v1:
+
+- `card`: `title`, `lines` as an array of strings or `{text}`, and optional `footer`.
+- `timed-lines`: `title`, optional `subtitle`/`footer`, full `lines` as
+  `{ "timeMs": 1234, "text": "..." }`, and an `anchor`.
+
+Timed-line anchor:
+
+```json
+{
+  "positionMs": 62840,
+  "playing": true,
+  "sentAtElapsedRealtime": 123456789
+}
+```
+
+The phone sends a full timed-lines surface for the current track, then only re-sends
+an anchor on play, pause, seek or track change. The glasses hub advances highlighting
+locally from the last accepted anchor using its own monotonic clock, so lyric line
+progress does not depend on repeated phone updates or bus latency.
+
+Launcher list payload:
+
+```json
+{
+  "plugins": [
+    { "id": "lyrics", "displayName": "Lyrics" }
+  ]
+}
+```
+
+Launcher open payload:
+
+```json
+{ "pluginId": "lyrics" }
+```
+
+Surface input payload:
+
+```json
+{
+  "surfaceId": "lyrics",
+  "keyCode": 23,
+  "action": 0
+}
+```
+
+The back key hides the surface locally on glasses and is still reported to the phone
+as `/surface/input` so the active plugin can close its own state.
+
 ## Transport selection (hub-side routing)
 
 1. Destination local (a client on the same side registered the path) → deliver directly.

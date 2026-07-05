@@ -18,6 +18,7 @@ import android.util.Base64
 import android.util.Log
 import com.anezium.rokidbus.client.IBusCallback
 import com.anezium.rokidbus.client.IBusService
+import com.anezium.rokidbus.lyrics.LyricsPlugin
 import com.anezium.rokidbus.shared.BusConstants
 import com.anezium.rokidbus.shared.BusEnvelope
 import com.anezium.rokidbus.shared.BusPaths
@@ -66,6 +67,7 @@ class BusHubService : Service() {
     private var socket: BluetoothSocket? = null
     private var output: OutputStream? = null
     private var cxrLink: CXRLink? = null
+    private lateinit var pluginRegistry: PhonePluginRegistry
     @Volatile private var cxrConnected = false
     @Volatile private var glassBtConnected = false
 
@@ -116,6 +118,12 @@ class BusHubService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        pluginRegistry = PhonePluginRegistry(
+            context = applicationContext,
+            plugins = listOf(LyricsPlugin()),
+            sendEnvelope = { envelope -> sendRemote(envelope) },
+            logger = { message -> log(message) },
+        )
         hubEnabled = prefs().getBoolean(PREF_ENABLED, true)
         if (hubEnabled) {
             startForegroundWithType()
@@ -180,6 +188,7 @@ class BusHubService : Service() {
         sppLoopStop = true
         runCatching { cxrLink?.disconnect() }
         closeSocket()
+        if (::pluginRegistry.isInitialized) pluginRegistry.close()
         registrations.clear()
         super.onDestroy()
     }
@@ -198,6 +207,7 @@ class BusHubService : Service() {
             log("hub probe received from glasses")
             return
         }
+        if (::pluginRegistry.isInitialized && pluginRegistry.handleRemote(envelope)) return
         if (handleHubPath(envelope, replyRemote = true)) return
         if (deliverLocal(envelope)) return
         if (envelope.path == BusPaths.ERROR) {
@@ -476,6 +486,11 @@ class BusHubService : Service() {
         registrations.forEach { registration ->
             runCatching { registration.callback.onLinkState(state) }
                 .onFailure { registrations.remove(registration) }
+        }
+        if (::pluginRegistry.isInitialized &&
+            state and (LinkStateBits.CXR_CONTROL_UP or LinkStateBits.SPP_DATA_UP) != 0
+        ) {
+            pluginRegistry.syncLauncherList()
         }
     }
 

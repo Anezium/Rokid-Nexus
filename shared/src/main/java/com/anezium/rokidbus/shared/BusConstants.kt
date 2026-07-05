@@ -22,6 +22,12 @@ object BusPaths {
     const val PROBE_LAUNCH_ACTIVITY = "/probe/launch-activity"
     const val HTTP_REQUEST = "/http/request"
     const val HTTP_REPLY = "/http/request/reply"
+    const val SURFACE_SHOW = "/surface/show"
+    const val SURFACE_UPDATE = "/surface/update"
+    const val SURFACE_HIDE = "/surface/hide"
+    const val SURFACE_INPUT = "/surface/input"
+    const val LAUNCHER_LIST = "/launcher/list"
+    const val LAUNCHER_OPEN = "/launcher/open"
     const val ERROR = "/error"
 }
 

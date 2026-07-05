@@ -7,6 +7,7 @@ class RokidBusAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         log("AccessibilityService connected; starting glasses hub")
+        SurfaceOverlayRenderer.onServiceConnected(this)
         GlassesHub.start(applicationContext)
     }
 
@@ -18,6 +19,7 @@ class RokidBusAccessibilityService : AccessibilityService() {
 
     override fun onDestroy() {
         log("AccessibilityService destroyed")
+        SurfaceOverlayRenderer.onServiceDestroyed(this)
         super.onDestroy()
     }
 }

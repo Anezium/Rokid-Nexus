@@ -33,5 +33,6 @@ android {
 dependencies {
     implementation(project(":shared"))
     implementation(project(":bus-client"))
+    implementation(project(":plugin-lyrics"))
     implementation("com.example.cxrglobal:lib:0.2.0")
 }

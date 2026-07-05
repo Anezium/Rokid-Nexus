@@ -10,11 +10,17 @@ import com.anezium.rokidbus.shared.BusEnvelope
 import com.anezium.rokidbus.shared.BusPaths
 import com.anezium.rokidbus.shared.FrameProtocol
 import com.anezium.rokidbus.shared.LinkStateBits
+import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicBoolean
 
 object GlassesHub {
+    data class LauncherEntry(
+        val id: String,
+        val displayName: String,
+    )
+
     private data class Registration(
         val clientId: String,
         val prefixes: List<String>,
@@ -24,6 +30,8 @@ object GlassesHub {
 
     private val started = AtomicBoolean(false)
     private val registrations = CopyOnWriteArrayList<Registration>()
+    private val launcherListeners = CopyOnWriteArrayList<(List<LauncherEntry>) -> Unit>()
+    @Volatile private var launcherEntries: List<LauncherEntry> = emptyList()
     @Volatile private var appContext: Context? = null
     @Volatile private var cxrUp = false
     @Volatile private var phoneConnected = false
@@ -79,6 +87,13 @@ object GlassesHub {
 
     fun onRemoteEnvelope(envelope: BusEnvelope) {
         log("remote RX ${envelope.path} id=${envelope.id}")
+        appContext?.let { context ->
+            if (SurfaceController.handleSurfaceEnvelope(context, envelope)) return
+        }
+        if (envelope.path == BusPaths.LAUNCHER_LIST) {
+            updateLauncherEntries(envelope.payload)
+            return
+        }
         if (deliverLocal(envelope)) return
         if (envelope.path == BusPaths.ERROR) {
             log("dropping undeliverable remote error id=${envelope.id}")
@@ -97,6 +112,30 @@ object GlassesHub {
         val envelope = BusEnvelope(path = path, payload = JSONObject().put("debugWake", true))
         return "wakeQueued=${GlassesClientSupervisor.enqueue(context.applicationContext, envelope)} path=$path"
     }
+
+    fun observeLauncher(listener: (List<LauncherEntry>) -> Unit): () -> Unit {
+        launcherListeners += listener
+        listener(launcherEntries)
+        return { launcherListeners.remove(listener) }
+    }
+
+    fun openLauncherEntry(pluginId: String): String {
+        if (pluginId.isBlank()) return "launcherOpen=false reason=blank"
+        val error = sendRemote(
+            BusEnvelope(
+                path = BusPaths.LAUNCHER_OPEN,
+                payload = JSONObject().put("pluginId", pluginId),
+            ),
+        )
+        return if (error == null) {
+            "launcherOpen=true pluginId=$pluginId"
+        } else {
+            "launcherOpen=false pluginId=$pluginId code=$error"
+        }
+    }
+
+    fun sendSurfaceInput(payload: JSONObject): String? =
+        sendRemote(BusEnvelope(path = BusPaths.SURFACE_INPUT, payload = payload))
 
     private fun routeLocal(envelope: BusEnvelope, senderUid: Int) {
         if (deliverLocal(envelope, excludeUid = senderUid)) return
@@ -122,6 +161,31 @@ object GlassesHub {
             }
         }
         return delivered
+    }
+
+    private fun updateLauncherEntries(payload: JSONObject) {
+        val array = payload.optJSONArray("plugins") ?: JSONArray()
+        val entries = buildList {
+            for (index in 0 until array.length()) {
+                val item = array.optJSONObject(index)
+                if (item != null) {
+                    val id = item.optString("id")
+                    if (id.isNotBlank()) {
+                        add(
+                            LauncherEntry(
+                                id = id,
+                                displayName = item.optString("displayName", id),
+                            ),
+                        )
+                    }
+                }
+            }
+        }
+        launcherEntries = entries
+        launcherListeners.forEach { listener ->
+            runCatching { listener(entries) }
+        }
+        log("launcher list synced count=${entries.size}")
     }
 
     private fun sendRemote(envelope: BusEnvelope): String? {

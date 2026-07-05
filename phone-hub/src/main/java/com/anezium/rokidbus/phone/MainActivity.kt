@@ -9,6 +9,7 @@ import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.view.ViewGroup
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -16,6 +17,7 @@ import android.widget.TextView
 import com.anezium.rokidbus.client.BusClient
 import com.anezium.rokidbus.client.BusEvent
 import com.anezium.rokidbus.client.ui.BusTheme
+import com.anezium.rokidbus.lyrics.LyricsRuntimeGraph
 
 private const val ACTION_LOG = "com.anezium.rokidbus.phone.LOG"
 private const val AUTH_REQUEST = 42
@@ -33,6 +35,7 @@ class MainActivity : Activity() {
     private lateinit var cxrTile: BusTheme.Tile
     private lateinit var sppTile: BusTheme.Tile
     private lateinit var hiRokidTile: BusTheme.Tile
+    private lateinit var notificationTile: BusTheme.Tile
     private var hubUiClient: BusClient? = null
 
     private val logReceiver = object : BroadcastReceiver() {
@@ -65,6 +68,11 @@ class MainActivity : Activity() {
             @Suppress("DEPRECATION")
             registerReceiver(logReceiver, filter)
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        updateNotificationAccess()
     }
 
     override fun onStop() {
@@ -105,7 +113,9 @@ class MainActivity : Activity() {
         cxrTile = BusTheme.Tile(this, "CXR-L")
         sppTile = BusTheme.Tile(this, "SPP")
         hiRokidTile = BusTheme.Tile(this, "HI ROKID")
+        notificationTile = BusTheme.Tile(this, "LYRICS ACCESS")
         updateLinkState(0)
+        updateNotificationAccess()
 
         val auth = BusTheme.pill(this, "Authorize").apply {
             setOnClickListener {
@@ -132,11 +142,33 @@ class MainActivity : Activity() {
             }
         }
         refreshToggle()
+        val notificationSettings = BusTheme.pill(this, "Notification access").apply {
+            setOnClickListener {
+                appendLog("Opening notification access settings")
+                startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+            }
+        }
 
         val actions = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             addView(auth, actionButtonLayout(isFirst = true))
             addView(toggleButton, actionButtonLayout(isFirst = false))
+        }
+
+        val notificationRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            addView(
+                notificationTile.view,
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    marginEnd = BusTheme.dp(this@MainActivity, 5)
+                },
+            )
+            addView(
+                notificationSettings,
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    marginStart = BusTheme.dp(this@MainActivity, 5)
+                },
+            )
         }
 
         val root = BusTheme.root(this).apply {
@@ -150,6 +182,8 @@ class MainActivity : Activity() {
                 BusTheme.tileRow(this@MainActivity, listOf(cxrTile, sppTile, hiRokidTile)),
                 blockLayout(),
             )
+            addView(BusTheme.gap(this@MainActivity, 12))
+            addView(notificationRow, blockLayout())
             addView(BusTheme.gap(this@MainActivity, 26))
             addView(actions, blockLayout())
             addView(BusTheme.gap(this@MainActivity, 30))
@@ -238,6 +272,12 @@ class MainActivity : Activity() {
                 heroView.setTextColor(BusTheme.muted)
             }
         }
+    }
+
+    private fun updateNotificationAccess() {
+        if (!::notificationTile.isInitialized) return
+        val granted = LyricsRuntimeGraph.notificationAccessEnabled(this)
+        notificationTile.set(granted, if (granted) "granted" else "needed")
     }
 
     private fun appendLog(line: String) {

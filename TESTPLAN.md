@@ -102,6 +102,15 @@ adb -s $glasses shell am broadcast -n com.anezium.rokidbus.glasses/.ProbeBroadca
 adb -s $glasses shell am broadcast -n com.anezium.rokidbus.glasses/.ProbeBroadcastReceiver -a com.anezium.rokidbus.glasses.PROBE --es probe wake-http
 ```
 
+Round B surface renderer checks:
+
+```powershell
+adb -s $glasses shell am broadcast -n com.anezium.rokidbus.glasses/.ProbeBroadcastReceiver -a com.anezium.rokidbus.glasses.PROBE --es probe surface-activity
+adb -s $glasses shell input keyevent 4
+adb -s $glasses shell am broadcast -n com.anezium.rokidbus.glasses/.ProbeBroadcastReceiver -a com.anezium.rokidbus.glasses.PROBE --es probe surface-overlay
+adb -s $glasses shell input keyevent 4
+```
+
 Log collection:
 
 ```powershell
