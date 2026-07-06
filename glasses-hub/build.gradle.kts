@@ -34,4 +34,5 @@ dependencies {
     implementation(project(":shared"))
     implementation(project(":bus-client"))
     implementation("com.rokid.cxr:cxr-service-bridge:1.0-20260522.063600-105")
+    testImplementation("junit:junit:4.13.2")
 }

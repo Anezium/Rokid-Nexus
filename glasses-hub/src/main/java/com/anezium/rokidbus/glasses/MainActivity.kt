@@ -6,7 +6,6 @@ import android.content.pm.PackageManager
 import android.graphics.Typeface
 import android.os.Build
 import android.os.Bundle
-import android.os.SystemClock
 import android.view.KeyEvent
 import android.view.Gravity
 import android.view.View
@@ -23,7 +22,7 @@ class MainActivity : Activity() {
     private var launcherEntries: List<GlassesHub.LauncherEntry> = emptyList()
     private var selectedIndex = 0
     private var unsubscribeLauncher: (() -> Unit)? = null
-    private var lastNavAtMs = 0L
+    private val swipeDedupe = DpadPairDedupe()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -50,21 +49,23 @@ class MainActivity : Activity() {
         if (event.action != KeyEvent.ACTION_DOWN || event.repeatCount != 0) {
             return super.dispatchKeyEvent(event)
         }
+        when (swipeDedupe.onKey(event.keyCode, event.action, event.repeatCount, event.eventTime)) {
+            DpadPairDedupe.Direction.FORWARD -> {
+                moveSelection(1)
+                return true
+            }
+            DpadPairDedupe.Direction.BACKWARD -> {
+                moveSelection(-1)
+                return true
+            }
+            null -> Unit
+        }
         return when (event.keyCode) {
             KeyEvent.KEYCODE_DPAD_RIGHT,
             KeyEvent.KEYCODE_DPAD_DOWN,
-            183,
-            -> {
-                moveSelection(1)
-                true
-            }
             KeyEvent.KEYCODE_DPAD_LEFT,
             KeyEvent.KEYCODE_DPAD_UP,
-            184,
-            -> {
-                moveSelection(-1)
-                true
-            }
+            -> true
             KeyEvent.KEYCODE_ENTER,
             KeyEvent.KEYCODE_DPAD_CENTER,
             -> {
@@ -143,9 +144,6 @@ class MainActivity : Activity() {
 
     private fun moveSelection(delta: Int) {
         if (launcherEntries.isEmpty()) return
-        val now = SystemClock.elapsedRealtime()
-        if (now - lastNavAtMs < 240L) return
-        lastNavAtMs = now
         selectedIndex = (selectedIndex + delta + launcherEntries.size) % launcherEntries.size
         renderLauncher()
     }
