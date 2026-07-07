@@ -165,6 +165,66 @@ Useful PASS log fragments:
 - Phone probe: `Big echo reply ... side=glasses`
 - Phone probe: `HTTP via bus status=200 totalBytes=...`
 
+## Round B slice 2
+
+Install/build as in the earlier sections, then verify both hubs report API v2:
+
+```powershell
+.\gradlew.bat assembleDebug
+adb -s $phone install -r phone-hub\build\outputs\apk\debug\phone-hub-debug.apk
+adb -s $phone install -r phone-client-probe\build\outputs\apk\debug\phone-client-probe-debug.apk
+adb -s $glasses install -r glasses-hub\build\outputs\apk\debug\glasses-hub-debug.apk
+adb -s $glasses install -r glasses-client-probe\build\outputs\apk\debug\glasses-client-probe-debug.apk
+```
+
+Phone probe mic lease:
+
+```powershell
+adb -s $phone logcat -c
+adb -s $phone shell monkey -p com.anezium.rokidbus.phoneprobe 1
+adb -s $phone logcat -d -s ROKIDBUS-PHONE:* RokidBusClient:*
+```
+
+In the phone probe, tap `Mic 5 s`. Expect roughly 50 frames and roughly 160 KB
+over 5 s, with zero gaps. While the first capture is still running, tap `Mic 5 s`
+again and expect the second acquire to be denied with `BUSY`. Hi Rokid/CXR-L
+must stay connected through audio start/stop.
+
+Glasses wake-http binary regression, repeated 5x with glasses Wi-Fi OFF:
+
+```powershell
+1..5 | % {
+  adb -s $glasses shell am broadcast -n com.anezium.rokidbus.glasses/.ProbeBroadcastReceiver -a com.anezium.rokidbus.glasses.PROBE --es probe wake-http
+  Start-Sleep -Seconds 8
+}
+adb -s $phone logcat -d -s ROKIDBUS-PHONE:* RokidBusClient:*
+adb -s $glasses logcat -d -s ROKIDBUS:* ROKIDBUS-CLIENT:* RelayBridge:*
+```
+
+Verify every run logs binary chunks before the final `done`; no `done` may appear
+before all chunks for the same id.
+
+64 KB echo regression:
+
+```powershell
+adb -s $phone shell monkey -p com.anezium.rokidbus.phoneprobe 1
+```
+
+In the phone probe, tap `Echo 64K` and verify it still succeeds over the SPP data
+route.
+
+Useful PASS log fragments:
+
+- Hubs: `apiVersion=2` on phone and glasses
+- Phone probe: `Mic lease granted id=... rate=16000 channels=1`
+- Phone probe: `Mic lease denied reason=BUSY`
+- Phone probe: `Mic frames=... bytes=... gaps=0`
+- Phone: `CXR-L connected=true`
+- Phone: `Hi Rokid glass BT connected=true`
+- Glasses probe: `HTTP chunk id=... bytes=... dataBytes=...`
+- Glasses probe: `HTTP done id=... status=200 totalBytes=...`
+- Phone probe: `Big echo reply ... side=glasses`
+
 ## Cleanup
 
 If you saved the old accessibility setting before appending, restore it. Otherwise remove only

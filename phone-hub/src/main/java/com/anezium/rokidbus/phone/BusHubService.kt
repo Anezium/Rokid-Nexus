@@ -14,6 +14,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Binder
 import android.os.IBinder
+import android.os.SystemClock
 import android.util.Log
 import com.anezium.rokidbus.client.IBusCallback
 import com.anezium.rokidbus.client.IBusService
@@ -25,6 +26,7 @@ import com.anezium.rokidbus.shared.FrameProtocol
 import com.anezium.rokidbus.shared.LinkStateBits
 import com.example.cxrglobal.CXRLink
 import com.example.cxrglobal.CxrDefs
+import com.example.cxrglobal.callbacks.IAudioStreamCbk
 import com.example.cxrglobal.callbacks.ICXRLinkCbk
 import com.example.cxrglobal.callbacks.ICustomCmdCbk
 import com.rokid.cxr.Caps
@@ -32,6 +34,7 @@ import org.json.JSONObject
 import java.io.OutputStream
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
@@ -49,20 +52,41 @@ private const val GLASSES_HUB_PACKAGE = "com.anezium.rokidbus.glasses"
 private const val PREFS = "rokidbus_phone"
 private const val PREF_TOKEN = "cxrl_token"
 private const val LOCAL_BINARY_MAX_BYTES = 512 * 1024
+private const val AUDIO_LEASE_ACQUIRE = "/audio/lease/acquire"
+private const val AUDIO_LEASE_RELEASE = "/audio/lease/release"
+private const val AUDIO_FRAMES = "/audio/frames"
+private const val AUDIO_LEASE_REVOKED = "/audio/lease/revoked"
+private const val CXR_AUDIO_PCM = 1
+private const val AUDIO_SAMPLE_RATE = 16_000
+private const val AUDIO_CHANNELS = 1
+private const val AUDIO_ENCODING = "pcm16le"
 
 class BusHubService : Service() {
     private data class Registration(
         val clientId: String,
         val prefixes: List<String>,
         val uid: Int,
+        val callbackBinder: IBinder,
         val callback: IBusCallback,
+        val deathRecipient: IBinder.DeathRecipient,
+    )
+
+    private enum class AudioLeaseSide { LOCAL, REMOTE }
+
+    private data class AudioLease(
+        val leaseId: String,
+        val side: AudioLeaseSide,
+        val localCallbackBinder: IBinder?,
+        var seq: Long = 0L,
     )
 
     private val executor = Executors.newCachedThreadPool()
     private val registrations = CopyOnWriteArrayList<Registration>()
     private val sppLoopStarted = AtomicBoolean(false)
+    private val audioLeaseLock = Any()
     @Volatile private var sppLoopStop = false
     @Volatile private var hubEnabled = true
+    @Volatile private var audioLease: AudioLease? = null
     private val writeLock = Any()
     private var socket: BluetoothSocket? = null
     private var output: OutputStream? = null
@@ -76,13 +100,26 @@ class BusHubService : Service() {
 
         override fun register(clientId: String, pathPrefixes: Array<out String>, cb: IBusCallback) {
             unregister(cb)
-            registrations += Registration(clientId, pathPrefixes.filter { it.isNotBlank() }, Binder.getCallingUid(), cb)
+            val callbackBinder = cb.asBinder()
+            val deathRecipient = IBinder.DeathRecipient {
+                removeRegistrationsByBinder(callbackBinder, "binderDied")
+            }
+            val registration = Registration(
+                clientId = clientId,
+                prefixes = pathPrefixes.filter { it.isNotBlank() },
+                uid = Binder.getCallingUid(),
+                callbackBinder = callbackBinder,
+                callback = cb,
+                deathRecipient = deathRecipient,
+            )
+            runCatching { callbackBinder.linkToDeath(deathRecipient, 0) }
+            registrations += registration
             log("client registered id=$clientId prefixes=${pathPrefixes.joinToString()}")
             runCatching { cb.onLinkState(linkState()) }
         }
 
         override fun unregister(cb: IBusCallback) {
-            registrations.removeAll { it.callback.asBinder() == cb.asBinder() }
+            removeRegistrationsByBinder(cb.asBinder(), "unregister")
         }
 
         override fun send(path: String, id: String, payload: ByteArray) {
@@ -103,12 +140,29 @@ class BusHubService : Service() {
             cxrConnected = connected
             log("CXR-L connected=$connected")
             notifyLinkState()
+            if (!isCxrUp()) revokeAudioLease("LINK_DOWN")
         }
 
         override fun onGlassBtConnected(connected: Boolean) {
             glassBtConnected = connected
             log("Hi Rokid glass BT connected=$connected")
             notifyLinkState()
+            if (!isCxrUp()) revokeAudioLease("LINK_DOWN")
+        }
+    }
+
+    private val audioCallback = object : IAudioStreamCbk {
+        override fun onAudioReceived(data: ByteArray, offset: Int, length: Int) {
+            forwardAudioFrame(data, offset, length)
+        }
+
+        override fun onAudioError(code: Int, msg: String?) {
+            log("CXR audio error code=$code msg=${msg.orEmpty()}")
+            revokeAudioLease("LINK_DOWN")
+        }
+
+        override fun onAudioStreamStateChanged(started: Boolean) {
+            log("CXR audio stream state started=$started")
         }
     }
 
@@ -173,6 +227,7 @@ class BusHubService : Service() {
     private fun stopHub() {
         prefs().edit().putBoolean(PREF_ENABLED, false).apply()
         hubEnabled = false
+        stopAudioLease()
         runCatching { cxrLink?.disconnect() }
         cxrLink = null
         cxrConnected = false
@@ -191,6 +246,7 @@ class BusHubService : Service() {
 
     override fun onDestroy() {
         sppLoopStop = true
+        stopAudioLease()
         runCatching { cxrLink?.disconnect() }
         closeSocket()
         if (::pluginRegistry.isInitialized) pluginRegistry.close()
@@ -199,7 +255,7 @@ class BusHubService : Service() {
     }
 
     private fun routeLocal(envelope: BusEnvelope, senderUid: Int) {
-        if (handleHubPath(envelope, replyRemote = false)) return
+        if (handleHubPath(envelope, replyRemote = false, senderUid = senderUid)) return
         if (deliverLocal(envelope, excludeUid = senderUid)) return
         val errorCode = sendRemote(envelope)
         if (errorCode != null) {
@@ -222,17 +278,26 @@ class BusHubService : Service() {
         sendRemote(errorEnvelope(envelope.id, "NO_LOCAL_CLIENT"))
     }
 
-    private fun handleHubPath(envelope: BusEnvelope, replyRemote: Boolean): Boolean {
-        if (envelope.path != BusPaths.HTTP_REQUEST) return false
-        executor.execute { fetchAndStream(envelope, replyRemote) }
+    private fun handleHubPath(envelope: BusEnvelope, replyRemote: Boolean, senderUid: Int? = null): Boolean {
+        when (envelope.path) {
+            BusPaths.HTTP_REQUEST -> executor.execute { fetchAndStream(envelope, replyRemote) }
+            AUDIO_LEASE_ACQUIRE -> executor.execute { acquireAudioLease(envelope, replyRemote, senderUid) }
+            AUDIO_LEASE_RELEASE -> executor.execute { releaseAudioLease(envelope, replyRemote) }
+            else -> return false
+        }
         return true
     }
 
-    private fun deliverLocal(envelope: BusEnvelope, excludeUid: Int? = null): Boolean {
+    private fun deliverLocal(
+        envelope: BusEnvelope,
+        excludeUid: Int? = null,
+        targetBinder: IBinder? = null,
+    ): Boolean {
         val payload = envelope.payload.toString().toByteArray(Charsets.UTF_8)
         val binary = envelope.binary
         var delivered = false
         registrations.forEach { registration ->
+            if (targetBinder != null && registration.callbackBinder != targetBinder) return@forEach
             if (excludeUid != null && registration.uid == excludeUid) return@forEach
             if (registration.prefixes.any { envelope.path.startsWith(it) }) {
                 if (binary != null && binary.size > LOCAL_BINARY_MAX_BYTES) {
@@ -248,11 +313,189 @@ class BusHubService : Service() {
                     }
                     delivered = true
                 }.onFailure {
-                    registrations.remove(registration)
+                    removeRegistration(registration, "dead callback")
                 }
             }
         }
         return delivered
+    }
+
+    private fun removeRegistrationsByBinder(callbackBinder: IBinder, reason: String) {
+        registrations.filter { it.callbackBinder == callbackBinder }.forEach { registration ->
+            removeRegistration(registration, reason)
+        }
+    }
+
+    private fun removeRegistration(registration: Registration, reason: String) {
+        if (!registrations.remove(registration)) return
+        runCatching { registration.callbackBinder.unlinkToDeath(registration.deathRecipient, 0) }
+        releaseAudioLeaseForLocalBinder(registration.callbackBinder, reason)
+    }
+
+    private fun acquireAudioLease(envelope: BusEnvelope, replyRemote: Boolean, senderUid: Int?) {
+        val link = cxrLink
+        if (audioLease != null) {
+            replyToAudioRequest(envelope, replyRemote, JSONObject().put("granted", false).put("reason", "BUSY"))
+            return
+        }
+        if (link == null || !isCxrUp()) {
+            replyToAudioRequest(envelope, replyRemote, JSONObject().put("granted", false).put("reason", "NO_CXR"))
+            return
+        }
+
+        val holderBinder = if (replyRemote) null else findLocalAudioHolder(senderUid)
+        val lease = AudioLease(
+            leaseId = UUID.randomUUID().toString(),
+            side = if (replyRemote) AudioLeaseSide.REMOTE else AudioLeaseSide.LOCAL,
+            localCallbackBinder = holderBinder,
+        )
+        synchronized(audioLeaseLock) {
+            if (audioLease != null) {
+                replyToAudioRequest(envelope, replyRemote, JSONObject().put("granted", false).put("reason", "BUSY"))
+                return
+            }
+            audioLease = lease
+        }
+
+        val started = runCatching {
+            link.setInterruptAiWake(true)
+            link.setCXRAudioCbk(audioCallback)
+            link.startAudioStream(CXR_AUDIO_PCM)
+        }.getOrElse {
+            log("CXR audio start failed ${it.javaClass.simpleName}: ${it.message}")
+            false
+        }
+        if (!started) {
+            synchronized(audioLeaseLock) {
+                if (audioLease?.leaseId == lease.leaseId) audioLease = null
+            }
+            stopAudioStreamQuietly()
+            replyToAudioRequest(envelope, replyRemote, JSONObject().put("granted", false).put("reason", "START_FAILED"))
+            return
+        }
+        if (synchronized(audioLeaseLock) { audioLease?.leaseId != lease.leaseId }) {
+            // A concurrent revoke may have run stopAudioStreamQuietly() before our
+            // startAudioStream() landed; stop again so no orphan stream survives.
+            stopAudioStreamQuietly()
+            val reason = if (isCxrUp()) "START_FAILED" else "NO_CXR"
+            replyToAudioRequest(envelope, replyRemote, JSONObject().put("granted", false).put("reason", reason))
+            return
+        }
+
+        replyToAudioRequest(
+            envelope,
+            replyRemote,
+            JSONObject()
+                .put("granted", true)
+                .put("leaseId", lease.leaseId)
+                .put("sampleRate", AUDIO_SAMPLE_RATE)
+                .put("channels", AUDIO_CHANNELS)
+                .put("encoding", AUDIO_ENCODING),
+        )
+    }
+
+    private fun releaseAudioLease(envelope: BusEnvelope, replyRemote: Boolean) {
+        val leaseId = envelope.payload.optString("leaseId")
+        val leaseToStop = synchronized(audioLeaseLock) {
+            val current = audioLease
+            if (current != null && current.leaseId == leaseId) {
+                audioLease = null
+                current
+            } else {
+                null
+            }
+        }
+        if (leaseToStop != null) stopAudioStreamQuietly()
+        replyToAudioRequest(envelope, replyRemote, JSONObject().put("released", true))
+    }
+
+    private fun releaseAudioLeaseForLocalBinder(callbackBinder: IBinder, reason: String) {
+        val leaseToStop = synchronized(audioLeaseLock) {
+            val current = audioLease
+            if (current?.side == AudioLeaseSide.LOCAL && current.localCallbackBinder == callbackBinder) {
+                audioLease = null
+                current
+            } else {
+                null
+            }
+        }
+        if (leaseToStop != null) {
+            log("Audio lease ${leaseToStop.leaseId} released after $reason")
+            stopAudioStreamQuietly()
+        }
+    }
+
+    private fun revokeAudioLease(reason: String) {
+        val leaseToRevoke = synchronized(audioLeaseLock) {
+            val current = audioLease ?: return
+            audioLease = null
+            current
+        }
+        stopAudioStreamQuietly()
+        val revoked = BusEnvelope(
+            path = AUDIO_LEASE_REVOKED,
+            id = leaseToRevoke.leaseId,
+            payload = JSONObject().put("leaseId", leaseToRevoke.leaseId).put("reason", reason),
+        )
+        deliverAudioToHolder(leaseToRevoke, revoked)
+    }
+
+    private fun stopAudioLease() {
+        val leaseToStop = synchronized(audioLeaseLock) {
+            val current = audioLease
+            audioLease = null
+            current
+        }
+        if (leaseToStop != null) stopAudioStreamQuietly()
+    }
+
+    private fun stopAudioStreamQuietly() {
+        runCatching { cxrLink?.stopAudioStream() }
+        runCatching { cxrLink?.setCXRAudioCbk(null) }
+        runCatching { cxrLink?.setInterruptAiWake(false) }
+    }
+
+    private fun forwardAudioFrame(data: ByteArray, offset: Int, length: Int) {
+        if (length <= 0) return
+        val chunk = data.copyOfRange(offset, offset + length)
+        val leaseSnapshot = synchronized(audioLeaseLock) {
+            val current = audioLease ?: return
+            val seq = current.seq
+            current.seq += 1
+            current.copy(seq = seq)
+        }
+        val frame = BusEnvelope(
+            path = AUDIO_FRAMES,
+            id = leaseSnapshot.leaseId,
+            payload = JSONObject()
+                .put("leaseId", leaseSnapshot.leaseId)
+                .put("seq", leaseSnapshot.seq)
+                .put("elapsedRealtime", SystemClock.elapsedRealtime()),
+            binary = chunk,
+        )
+        deliverAudioToHolder(leaseSnapshot, frame)
+    }
+
+    private fun deliverAudioToHolder(lease: AudioLease, envelope: BusEnvelope) {
+        when (lease.side) {
+            AudioLeaseSide.LOCAL -> lease.localCallbackBinder?.let { deliverLocal(envelope, targetBinder = it) }
+            AudioLeaseSide.REMOTE -> sendRemote(envelope)
+        }
+    }
+
+    private fun replyToAudioRequest(envelope: BusEnvelope, replyRemote: Boolean, payload: JSONObject) {
+        val response = BusEnvelope(path = envelope.path + "/reply", id = envelope.id, payload = payload)
+        if (replyRemote) sendRemote(response) else deliverLocal(response)
+    }
+
+    private fun findLocalAudioHolder(senderUid: Int?): IBinder? {
+        if (senderUid == null) return null
+        val audioRegistration = registrations.firstOrNull { registration ->
+            registration.uid == senderUid && registration.prefixes.any { prefix ->
+                AUDIO_FRAMES.startsWith(prefix) || AUDIO_LEASE_REVOKED.startsWith(prefix)
+            }
+        }
+        return audioRegistration?.callbackBinder ?: registrations.firstOrNull { it.uid == senderUid }?.callbackBinder
     }
 
     private fun sendRemote(envelope: BusEnvelope): String? {
@@ -515,7 +758,7 @@ class BusHubService : Service() {
         val state = linkState()
         registrations.forEach { registration ->
             runCatching { registration.callback.onLinkState(state) }
-                .onFailure { registrations.remove(registration) }
+                .onFailure { removeRegistration(registration, "dead callback") }
         }
         if (::pluginRegistry.isInitialized &&
             state and (LinkStateBits.CXR_CONTROL_UP or LinkStateBits.SPP_DATA_UP) != 0

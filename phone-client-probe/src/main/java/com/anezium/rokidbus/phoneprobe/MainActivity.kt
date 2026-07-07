@@ -2,6 +2,8 @@ package com.anezium.rokidbus.phoneprobe
 
 import android.app.Activity
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.LinearLayout
@@ -17,14 +19,29 @@ private const val PATH_ECHO_REPLY = "/probe/echo/reply"
 private const val PATH_HTTP_TRIGGER = "/probe/http"
 private const val PATH_HTTP_TRIGGER_REPLY = "/probe/http/reply"
 private const val PATH_HTTP_REPLY = "/http/request/reply"
+private const val PATH_AUDIO = "/audio"
+private const val PATH_AUDIO_LEASE_ACQUIRE = "/audio/lease/acquire"
+private const val PATH_AUDIO_LEASE_RELEASE = "/audio/lease/release"
+private const val PATH_AUDIO_LEASE_REVOKED = "/audio/lease/revoked"
+private const val PATH_AUDIO_FRAMES = "/audio/frames"
 private const val DEFAULT_HTTP_URL = "https://api.transitous.org/api/v1/geocode?text=Paris"
 
 class MainActivity : Activity() {
+    private data class MicCapture(
+        val leaseId: String,
+        var frames: Int = 0,
+        var bytes: Long = 0L,
+        var gaps: Long = 0L,
+        var nextSeq: Long = 0L,
+    )
+
     private lateinit var logView: TextView
     private lateinit var logScroll: ScrollView
     private lateinit var heroView: TextView
     private lateinit var heroSub: TextView
     private lateinit var client: BusClient
+    private val main = Handler(Looper.getMainLooper())
+    private var micCapture: MicCapture? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -32,7 +49,7 @@ class MainActivity : Activity() {
         client = BusClient(
             context = applicationContext,
             clientId = "phone-client-probe",
-            pathPrefixes = listOf(PATH_ECHO_REPLY, PATH_HTTP_TRIGGER_REPLY, PATH_HTTP_REPLY),
+            pathPrefixes = listOf(PATH_ECHO_REPLY, PATH_HTTP_TRIGGER_REPLY, PATH_HTTP_REPLY, PATH_AUDIO),
         ) { event -> handleEvent(event) }
         client.connect()
     }
@@ -67,6 +84,8 @@ class MainActivity : Activity() {
             addView(button("Echo 64K", "Echo-big 64 KB") { echoBig() }, blockLayout())
             addView(BusTheme.gap(this@MainActivity, 10))
             addView(button("HTTP via bus", "HTTP via bus") { httpViaBus() }, blockLayout())
+            addView(BusTheme.gap(this@MainActivity, 10))
+            addView(button("Mic 5 s", "Mic 5 s") { micFiveSeconds() }, blockLayout())
             addView(BusTheme.gap(this@MainActivity, 30))
             addView(BusTheme.tinyLabel(this@MainActivity, "Console"))
             addView(BusTheme.gap(this@MainActivity, 10))
@@ -136,6 +155,68 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun micFiveSeconds() {
+        if (micCapture != null) {
+            client.request(
+                PATH_AUDIO_LEASE_ACQUIRE,
+                JSONObject(),
+                timeoutMs = 10_000L,
+            ) { result ->
+                appendLog(result.fold(
+                    onSuccess = {
+                        if (it.optBoolean("granted", false)) {
+                            val extraLeaseId = it.optString("leaseId")
+                            client.send(PATH_AUDIO_LEASE_RELEASE, JSONObject().put("leaseId", extraLeaseId))
+                            "Mic second acquire unexpectedly granted"
+                        } else {
+                            "Mic lease denied reason=${it.optString("reason")}"
+                        }
+                    },
+                    onFailure = { "Mic second acquire failed: ${it.message}" },
+                ))
+            }
+            return
+        }
+
+        client.request(
+            PATH_AUDIO_LEASE_ACQUIRE,
+            JSONObject(),
+            timeoutMs = 10_000L,
+        ) { result ->
+            result.fold(
+                onSuccess = { payload ->
+                    if (!payload.optBoolean("granted", false)) {
+                        appendLog("Mic lease denied reason=${payload.optString("reason")}")
+                        return@fold
+                    }
+                    val leaseId = payload.optString("leaseId")
+                    micCapture = MicCapture(leaseId)
+                    appendLog(
+                        "Mic lease granted id=${leaseId.take(8)} rate=${payload.optInt("sampleRate")} channels=${payload.optInt("channels")}",
+                    )
+                    main.postDelayed({ finishMicCapture(leaseId) }, 5_000L)
+                },
+                onFailure = { appendLog("Mic lease failed: ${it.message}") },
+            )
+        }
+    }
+
+    private fun finishMicCapture(leaseId: String) {
+        val capture = micCapture ?: return
+        if (capture.leaseId != leaseId) return
+        micCapture = null
+        client.request(
+            PATH_AUDIO_LEASE_RELEASE,
+            JSONObject().put("leaseId", leaseId),
+            timeoutMs = 10_000L,
+        ) { result ->
+            appendLog(result.fold(
+                onSuccess = { "Mic frames=${capture.frames} bytes=${capture.bytes} gaps=${capture.gaps}" },
+                onFailure = { "Mic release failed: ${it.message}; frames=${capture.frames} bytes=${capture.bytes} gaps=${capture.gaps}" },
+            ))
+        }
+    }
+
     private fun handleEvent(event: BusEvent) {
         when (event) {
             is BusEvent.LinkState -> {
@@ -150,28 +231,55 @@ class MainActivity : Activity() {
                 appendLog("linkState=${event.state}")
             }
             is BusEvent.Error -> appendLog("client error: ${event.message}")
-            is BusEvent.Message -> appendLog(
-                "RX ${event.path} id=${event.id.take(8)} bytes=${event.payload.toString().length}",
-            )
+            is BusEvent.Message -> handleMessage(event)
             is BusEvent.Binary -> handleBinary(event)
         }
     }
 
-    private fun handleBinary(event: BusEvent.Binary) {
-        if (event.path == PATH_HTTP_REPLY) {
-            val bytes = event.meta.optLong("bytes", event.data.size.toLong())
-            if (event.meta.optBoolean("done", false)) {
-                appendLog(
-                    "HTTP done id=${event.id.take(8)} status=${event.meta.optInt("status")} totalBytes=${event.meta.optLong("totalBytes")}",
-                )
-            } else {
-                appendLog("HTTP chunk id=${event.id.take(8)} bytes=$bytes data=${event.data.size}")
-            }
-        } else {
-            appendLog(
-                "RX binary ${event.path} id=${event.id.take(8)} metaBytes=${event.meta.toString().length} data=${event.data.size}",
-            )
+    private fun handleMessage(event: BusEvent.Message) {
+        if (event.path == PATH_AUDIO_LEASE_REVOKED) {
+            val leaseId = event.payload.optString("leaseId")
+            val capture = micCapture
+            if (capture != null && capture.leaseId == leaseId) micCapture = null
+            appendLog("Mic lease revoked id=${leaseId.take(8)} reason=${event.payload.optString("reason")}")
+            return
         }
+        appendLog(
+            "RX ${event.path} id=${event.id.take(8)} bytes=${event.payload.toString().length}",
+        )
+    }
+
+    private fun handleBinary(event: BusEvent.Binary) {
+        when (event.path) {
+            PATH_HTTP_REPLY -> {
+                val bytes = event.meta.optLong("bytes", event.data.size.toLong())
+                if (event.meta.optBoolean("done", false)) {
+                    appendLog(
+                        "HTTP done id=${event.id.take(8)} status=${event.meta.optInt("status")} totalBytes=${event.meta.optLong("totalBytes")}",
+                    )
+                } else {
+                    appendLog("HTTP chunk id=${event.id.take(8)} bytes=$bytes data=${event.data.size}")
+                }
+            }
+            PATH_AUDIO_FRAMES -> handleMicFrame(event)
+            else -> {
+                appendLog(
+                    "RX binary ${event.path} id=${event.id.take(8)} metaBytes=${event.meta.toString().length} data=${event.data.size}",
+                )
+            }
+        }
+    }
+
+    private fun handleMicFrame(event: BusEvent.Binary) {
+        val capture = micCapture ?: return
+        if (event.meta.optString("leaseId") != capture.leaseId) return
+        val seq = event.meta.optLong("seq", -1L)
+        if (seq != capture.nextSeq) {
+            capture.gaps += if (seq > capture.nextSeq) seq - capture.nextSeq else 1L
+        }
+        capture.nextSeq = seq + 1
+        capture.frames += 1
+        capture.bytes += event.data.size.toLong()
     }
 
     private fun appendLog(line: String) {
