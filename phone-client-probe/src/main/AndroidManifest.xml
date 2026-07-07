@@ -7,6 +7,17 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.RokidBus.PhoneProbe">
 
+        <service
+            android:name=".ProbeService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.anezium.rokidbus.action.CLIENT" />
+            </intent-filter>
+            <meta-data
+                android:name="com.anezium.rokidbus.paths"
+                android:value="/probe" />
+        </service>
+
         <activity
             android:name=".MainActivity"
             android:exported="true">

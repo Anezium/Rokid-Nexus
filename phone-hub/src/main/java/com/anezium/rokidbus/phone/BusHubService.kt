@@ -116,6 +116,7 @@ class BusHubService : Service() {
             registrations += registration
             log("client registered id=$clientId prefixes=${pathPrefixes.joinToString()}")
             runCatching { cb.onLinkState(linkState()) }
+            PhoneClientSupervisor.onClientRegistered(applicationContext, registration.prefixes)
         }
 
         override fun unregister(cb: IBusCallback) {
@@ -177,6 +178,7 @@ class BusHubService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        PhoneClientSupervisor.attach(this)
         pluginRegistry = PhonePluginRegistry(
             context = applicationContext,
             plugins = listOf(LyricsPlugin()),
@@ -249,14 +251,21 @@ class BusHubService : Service() {
         stopAudioLease()
         runCatching { cxrLink?.disconnect() }
         closeSocket()
+        PhoneClientSupervisor.detach(applicationContext, this)
         if (::pluginRegistry.isInitialized) pluginRegistry.close()
         registrations.clear()
         super.onDestroy()
     }
 
+    fun deliverQueued(envelope: BusEnvelope): Boolean =
+        deliverLocal(envelope)
+
     private fun routeLocal(envelope: BusEnvelope, senderUid: Int) {
         if (handleHubPath(envelope, replyRemote = false, senderUid = senderUid)) return
         if (deliverLocal(envelope, excludeUid = senderUid)) return
+        if (envelope.path != BusPaths.ERROR &&
+            PhoneClientSupervisor.enqueue(applicationContext, envelope, excludeUid = senderUid)
+        ) return
         val errorCode = sendRemote(envelope)
         if (errorCode != null) {
             deliverLocal(errorEnvelope(envelope.id, errorCode))
@@ -275,6 +284,11 @@ class BusHubService : Service() {
             log("dropping undeliverable remote error id=${envelope.id}")
             return
         }
+        if (envelope.binary != null) {
+            log("dropping undeliverable binary ${envelope.path} id=${envelope.id}; no live registration")
+            return
+        }
+        if (PhoneClientSupervisor.enqueue(applicationContext, envelope)) return
         sendRemote(errorEnvelope(envelope.id, "NO_LOCAL_CLIENT"))
     }
 
@@ -312,6 +326,7 @@ class BusHubService : Service() {
                         registration.callback.onBinaryMessage(envelope.path, envelope.id, payload, binary)
                     }
                     delivered = true
+                    PhoneClientSupervisor.touch()
                 }.onFailure {
                     removeRegistration(registration, "dead callback")
                 }

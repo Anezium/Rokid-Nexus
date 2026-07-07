@@ -204,6 +204,22 @@ adb -s $glasses logcat -d -s ROKIDBUS:* ROKIDBUS-CLIENT:* RelayBridge:*
 Verify every run logs binary chunks before the final `done`; no `done` may appear
 before all chunks for the same id.
 
+Phone wake:
+
+```powershell
+adb -s $phone logcat -c
+adb -s $glasses logcat -c
+adb -s $phone shell am force-stop com.anezium.rokidbus.phoneprobe
+adb -s $glasses shell am broadcast -n com.anezium.rokidbus.glasses/.ProbeBroadcastReceiver -a com.anezium.rokidbus.glasses.PROBE --es probe phone-wake-echo
+Start-Sleep -Seconds 8
+adb -s $phone logcat -d -s ROKIDBUS-PHONE:* ROKIDBUS-CLIENT:* RokidBusClient:* RokidBusClientSvc:*
+adb -s $glasses logcat -d -s ROKIDBUS:* ROKIDBUS-CLIENT:* RelayBridge:*
+```
+
+Verify the phone hub bind-wakes `com.anezium.rokidbus.phoneprobe/.ProbeService`,
+the queued `/probe/echo` flushes after the probe registers, and the echo reply
+returns to glasses.
+
 64 KB echo regression:
 
 ```powershell
@@ -223,6 +239,12 @@ Useful PASS log fragments:
 - Phone: `Hi Rokid glass BT connected=true`
 - Glasses probe: `HTTP chunk id=... bytes=... dataBytes=...`
 - Glasses probe: `HTTP done id=... status=200 totalBytes=...`
+- Glasses: `Broadcast probe result: phoneWakeEchoSent=true path=/probe/echo id=...`
+- Phone: `queued wake path=/probe/echo target=com.anezium.rokidbus.phoneprobe/.ProbeService`
+- Phone: `wake bind connected com.anezium.rokidbus.phoneprobe/.ProbeService`
+- Phone probe: `phone echo request id=...`
+- Glasses: `remote RX /probe/echo/reply id=...`
+- Glasses probe: `echo reply observed id=...`
 - Phone probe: `Big echo reply ... side=glasses`
 
 ## Cleanup

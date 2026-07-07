@@ -124,6 +124,20 @@ object GlassesHub {
         return "wakeQueued=${GlassesClientSupervisor.enqueue(context.applicationContext, envelope)} path=$path"
     }
 
+    fun debugPhoneWakeEcho(context: Context): String {
+        start(context)
+        val envelope = BusEnvelope(
+            path = BusPaths.PROBE_ECHO,
+            payload = JSONObject().put("message", "hello from glasses phone wake probe"),
+        )
+        val error = sendRemote(envelope)
+        return if (error == null) {
+            "phoneWakeEchoSent=true path=${BusPaths.PROBE_ECHO} id=${envelope.id}"
+        } else {
+            "phoneWakeEchoSent=false path=${BusPaths.PROBE_ECHO} id=${envelope.id} code=$error"
+        }
+    }
+
     fun observeLauncher(listener: (List<LauncherEntry>) -> Unit): () -> Unit {
         launcherListeners += listener
         listener(launcherEntries)

@@ -15,6 +15,7 @@ class ProbeBroadcastReceiver : BroadcastReceiver() {
             }
             "wake-echo" -> GlassesHub.debugWake(context.applicationContext, BusPaths.PROBE_ECHO)
             "wake-http" -> GlassesHub.debugWake(context.applicationContext, BusPaths.PROBE_HTTP)
+            "phone-wake-echo" -> GlassesHub.debugPhoneWakeEcho(context.applicationContext)
             "surface-activity" -> SurfaceController.showDemoCard(
                 context.applicationContext,
                 SurfaceDisplayPath.ACTIVITY,
@@ -24,7 +25,7 @@ class ProbeBroadcastReceiver : BroadcastReceiver() {
                 SurfaceDisplayPath.OVERLAY,
             )
             "state" -> "spp=${SppServerManager.isConnected()} cxr=${CxrBusBridge.isUp()}"
-            else -> "unknown probe '$probe'; use hub, state, wake-echo, wake-http, surface-activity, or surface-overlay"
+            else -> "unknown probe '$probe'; use hub, state, wake-echo, wake-http, phone-wake-echo, surface-activity, or surface-overlay"
         }
         log("Broadcast probe result: $result")
     }
