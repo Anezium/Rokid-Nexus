@@ -148,67 +148,111 @@ La voie (b) recycle le code caméra+overlay du Scouter.
 **Q1.** Le triple-tap : quels gestes du touchpad Rokid sont libres (non consommés par
 l'OS / assistant vocal / media) ? Et l'overlay actuel (commit `58ec3b9`), il s'invoque
 comment aujourd'hui ?
-> Réponse :
+> Réponse : **Triple-tap, déjà implémenté et fonctionnel.** Le service a11y intercepte
+> les key events bruts (`FLAG_REQUEST_FILTER_KEY_EVENTS`) : chaque contact touchpad
+> émet KEYCODE 83 (NOTIFICATION) avant que l'OS classifie le geste (single tap → ENTER,
+> double → BACK, swipes → paires DPAD). `TripleTapDetector` : 3 contacts en < 600 ms =
+> TRIGGER, puis 800 ms de suppression des BACK/ENTER résiduels de la classification OS.
+> Les gestes OS (single/double tap, swipes) restent pass-through — pas de conflit.
+> Voir `TouchpadGestureDetectors.kt` + `RokidBusAccessibilityService.kt`.
 
 **Q2.** Surface au-dessus d'une app native (ex. toast nav pendant NewPipe) : le back
 rend la main à l'app native en dessous, c'est bien ça ?
-> Réponse :
+> Réponse : **Oui, confirmé dans le code.** Back sur une surface → `hideLocal()` + la
+> touche est consommée (`SurfaceController.handleKeyEvent`, ligne 104) : l'app native
+> ne reçoit PAS ce back, le suivant lui revient. L'input est aussi rapporté au phone
+> via `/surface/input` pour que le plugin ferme son état.
 
 ### Interruptions
 **Q3.** Qui décide qu'un message est « user-actionable » ? Reco : le plugin déclare
 une *classe* (`ambient` / `toast` / `actionable`) + override utilisateur par plugin
 dans le phone hub + rate-limit hub-side. OK, ou plus simple pour commencer ?
-> Réponse :
+> Réponse : **Décidé : les 3 classes au spec dès maintenant** (`ambient` / `toast` /
+> `actionable` déclarées par le plugin) + override utilisateur par plugin dans le phone
+> hub + rate-limit hub-side. Implémentation phasée : la v1 traite `actionable` comme
+> `toast` tant que l'arbitrage d'affichage (§6.1) n'est pas livré. Les plugins tiers
+> codent contre le bon vocabulaire dès le début, zéro breaking change plus tard.
 
 **Q4.** Deux toasts en même temps : file d'attente, ou le dernier écrase ?
-> Réponse :
+> Réponse : **Le dernier écrase** (comportement Android natif). Le rate-limit hub-side
+> rend les collisions rares ; une file courte pourra venir plus tard sans breaking change.
 
 ### Confiance & vie privée (public = incontournable)
 **Q5.** Consentement par plugin granulaire par capacité ? Reco : 3 capacités
 approuvables séparément — surfaces / mic (audio lease) / proxy HTTP (le plugin fait
 sortir du trafic par ta data).
-> Réponse :
+> Réponse : **Décidé : granulaire, 3 capacités approuvables séparément** (surfaces /
+> mic / proxy HTTP), modèle « notification listener » : n'importe quelle app demande,
+> l'utilisateur approuve dans le phone hub. La « custom signature permission » du
+> BUSSPEC est abandonnée — contradiction §6.2 levée.
 
 **Q6.** Indicateur mic sur le HUD quand l'audio lease est actif (le « green dot »
 Android). Quasi obligatoire pour du public. OK pour le spec ?
-> Réponse :
+> Réponse : **Oui, au spec** — indicateur mic sur le HUD obligatoire tant que l'audio
+> lease est actif.
 
 ### Onboarding sans ADB — probablement LE blocker release publique
 **Q7.** L'ADB « arm once » sert à quoi exactement — activer l'a11y service ? Existe-t-il
 un chemin sans ADB (écran Settings accessible sur les lunettes où l'utilisateur active
 le service lui-même, comme le helper Tasker-Bridge) ? Si non → ça plafonne la release
 publique, à savoir maintenant.
-> Réponse :
+> Réponse : **Vérifié sur device (2026-07-07).** L'arm ADB fait 3 choses : install de
+> l'APK, `settings put secure enabled_accessibility_services` (+ `accessibility_enabled 1`),
+> grant `BLUETOOTH_CONNECT`. Bonne nouvelle : l'écran Accessibilité stock
+> (`com.android.settings/.Settings$AccessibilitySettingsActivity`) **se lance par intent
+> sur les lunettes, s'affiche et liste les services téléchargés** (testé, screenshot) →
+> l'activation a11y a un chemin sans ADB, navigable au touchpad, comme le helper
+> Tasker-Bridge. `BLUETOOTH_CONNECT` = dialog runtime standard. Le seul trou restant
+> est l'**install de l'APK sans ADB** (précédent Tasker-Bridge : upload/install via
+> CXR-L). Décision roadmap : le chantier bootstrap complet (install via Hi Rokid/CXR-L
+> + écran a11y guidé + grant runtime) devient **le gate de la beta publique**, après
+> les 2 premiers plugins. Les Rounds B/C restent ADB (power users).
 
 ### Distribution
 **Q8.** Launcher payload actuel = `{id, displayName}`. Pour du public : icône, ordre,
 favoris ? Et la boucle découverte : bouton « installer des plugins » dans le phone hub
 → RokidBrew, + tag « Nexus-compatible » sur RokidBrew ?
-> Réponse :
+> Réponse : **v1 : texte + ordre/favoris** gérés dans le phone hub (le payload launcher
+> gagne un champ d'ordre) ; les icônes (glyphes 1-bit) viendront plus tard — sur un HUD
+> monochrome 640×480 le texte est roi, inutile de figer un format d'asset trop tôt.
+> Boucle découverte : **oui** — bouton « installer des plugins » dans le phone hub →
+> RokidBrew, + tag « Nexus-compatible » côté store.
 
 **Q9.** `:bus-client` publié où pour les devs tiers — JitPack ? Maven Central ?
 Et règle « kind de surface inconnu » : ignorer + toast « mise à jour requise » ?
-> Réponse :
+> Réponse : **JitPack maintenant** (zéro setup, le repo GitHub suffit — les devs tiers
+> ont le SDK immédiatement), migration Maven Central quand l'AIDL sera stable. Kind
+> inconnu : **ignorer + toast « mise à jour requise »** côté lunettes — au spec.
 
 ### États d'erreur
 **Q10.** Phone injoignable / SPP down : l'utilisateur lambda voit quoi sur les
 lunettes ? Écran « reconnexion… » du hub, ou rien ?
-> Réponse :
+> Réponse : **Silence tant que l'utilisateur ne demande rien** (le lien BT peut flapper,
+> pas question de spammer le display) ; au triple-tap, l'overlay launcher affiche
+> « Téléphone déconnecté — reconnexion… » à la place de la liste. Facile : l'état vide
+> (« No phone plugins synced ») existe déjà comme point d'accroche. Aujourd'hui : rien
+> du tout, silence total.
 
 ### Bonus (nouvelles, apparues en relisant)
 **Q11.** Le système de widgets du launcher Rokid : API ouverte aux apps tierces ?
 (Décide si le widget « Nexus glance » est possible.)
-> Réponse :
+> Réponse : Pas encore investigué (l'exploration du launcher décompilé a été annulée).
+> Sans impact sur la roadmap : le widget « Nexus glance » reste un bonus conditionnel.
+> À creuser plus tard dans `E:\Tools\Rokid\Rokid-Launcher`.
 
 **Q12.** Le menu contextuel doit-il aussi lister/lancer les apps natives lunettes
 (Scouter, NewPipe…) pour être LE point d'entrée unique ? (Porter ≠ lancer.)
-> Réponse :
+> Réponse : **Oui, en phase 2** (après les 2 premiers plugins) : section « Apps » sous
+> les plugins dans le menu — query `PackageManager` + `startActivity` depuis le service
+> a11y. Le menu devient LE point d'entrée unique, ce qui règle la douleur d'origine
+> aussi pour les apps natives.
 
 ---
 
 ## 8. Prochaine étape
 
-Une fois les réponses données : consolider en **VISION.md** — vision produit, modèle
-de couches (ambiant / toast / surface / apps natives), modèle de confiance, et roadmap
-réordonnée en conséquence (l'onboarding sans ADB et l'arbitrage d'affichage remontent
-probablement).
+~~Une fois les réponses données : consolider en **VISION.md**.~~ **Fait (2026-07-07)** :
+toutes les questions tranchées (sauf Q11, bonus reporté), consolidées dans
+[VISION.md](VISION.md) — vision produit, modèle de couches, modèle de confiance,
+roadmap réordonnée (onboarding sans ADB = gate de la beta publique, arbitrage
+d'affichage = Round D).
