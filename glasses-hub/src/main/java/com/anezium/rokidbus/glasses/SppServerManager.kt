@@ -96,7 +96,7 @@ object SppServerManager {
                 val input = it.inputStream
                 while (true) {
                     val envelope = FrameProtocol.read(input) ?: break
-                    log("SPP RX ${envelope.path} id=${envelope.id} payloadBytes=${envelope.payload.toString().length}")
+                    log("SPP RX ${envelope.path} id=${envelope.id} payloadBytes=${envelope.payload.toString().length} binaryBytes=${envelope.binary?.size ?: 0}")
                     GlassesHub.onRemoteEnvelope(envelope)
                 }
             }

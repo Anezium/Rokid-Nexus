@@ -9,7 +9,7 @@ object BusConstants {
     const val ACTION_HUB = "com.anezium.rokidbus.action.HUB"
     const val ACTION_CLIENT = "com.anezium.rokidbus.action.CLIENT"
     const val META_DATA_PATHS = "com.anezium.rokidbus.paths"
-    const val API_VERSION = 1
+    const val API_VERSION = 2
     const val CXR_CONTROL_MAX_BYTES = 3 * 1024
     val SPP_UUID: UUID = UUID.fromString(SPP_UUID_STRING)
 }

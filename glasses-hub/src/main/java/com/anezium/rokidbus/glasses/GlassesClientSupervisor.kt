@@ -35,6 +35,10 @@ object GlassesClientSupervisor {
     private var reaperPosted = false
 
     fun enqueue(context: Context, envelope: BusEnvelope): Boolean {
+        if (envelope.binary != null) {
+            log("drop binary wake queue path=${envelope.path} id=${envelope.id}")
+            return false
+        }
         val target = findTarget(context, envelope.path) ?: return false
         val now = SystemClock.elapsedRealtime()
         val bytes = FrameProtocol.toJsonBytes(envelope).size

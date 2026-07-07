@@ -14,7 +14,6 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Binder
 import android.os.IBinder
-import android.util.Base64
 import android.util.Log
 import com.anezium.rokidbus.client.IBusCallback
 import com.anezium.rokidbus.client.IBusService
@@ -49,6 +48,7 @@ private const val GLASSES_NAME = "Glasses_3723"
 private const val GLASSES_HUB_PACKAGE = "com.anezium.rokidbus.glasses"
 private const val PREFS = "rokidbus_phone"
 private const val PREF_TOKEN = "cxrl_token"
+private const val LOCAL_BINARY_MAX_BYTES = 512 * 1024
 
 class BusHubService : Service() {
     private data class Registration(
@@ -88,6 +88,11 @@ class BusHubService : Service() {
         override fun send(path: String, id: String, payload: ByteArray) {
             val json = runCatching { JSONObject(String(payload, Charsets.UTF_8)) }.getOrElse { JSONObject() }
             routeLocal(BusEnvelope(path = path, id = id, payload = json), Binder.getCallingUid())
+        }
+
+        override fun sendBinary(path: String, id: String, meta: ByteArray, data: ByteArray) {
+            val json = runCatching { JSONObject(String(meta, Charsets.UTF_8)) }.getOrElse { JSONObject() }
+            routeLocal(BusEnvelope(path = path, id = id, payload = json, binary = data), Binder.getCallingUid())
         }
 
         override fun linkState(): Int = this@BusHubService.linkState()
@@ -225,12 +230,22 @@ class BusHubService : Service() {
 
     private fun deliverLocal(envelope: BusEnvelope, excludeUid: Int? = null): Boolean {
         val payload = envelope.payload.toString().toByteArray(Charsets.UTF_8)
+        val binary = envelope.binary
         var delivered = false
         registrations.forEach { registration ->
             if (excludeUid != null && registration.uid == excludeUid) return@forEach
             if (registration.prefixes.any { envelope.path.startsWith(it) }) {
+                if (binary != null && binary.size > LOCAL_BINARY_MAX_BYTES) {
+                    log("drop local binary ${envelope.path} id=${envelope.id} bytes=${binary.size} over cap=$LOCAL_BINARY_MAX_BYTES")
+                    delivered = true
+                    return@forEach
+                }
                 runCatching {
-                    registration.callback.onMessage(envelope.path, envelope.id, payload)
+                    if (binary == null) {
+                        registration.callback.onMessage(envelope.path, envelope.id, payload)
+                    } else {
+                        registration.callback.onBinaryMessage(envelope.path, envelope.id, payload, binary)
+                    }
                     delivered = true
                 }.onFailure {
                     registrations.remove(registration)
@@ -241,6 +256,10 @@ class BusHubService : Service() {
     }
 
     private fun sendRemote(envelope: BusEnvelope): String? {
+        if (envelope.binary != null) {
+            if (output == null) return "NO_DATA_PLANE"
+            return if (writeSpp(envelope)) null else "NO_DATA_PLANE"
+        }
         val bytes = FrameProtocol.toJsonBytes(envelope)
         if (bytes.size <= BusConstants.CXR_CONTROL_MAX_BYTES && isCxrUp()) {
             if (sendCxr(envelope)) return null
@@ -283,8 +302,8 @@ class BusHubService : Service() {
     private fun fetchAndStream(envelope: BusEnvelope, replyRemote: Boolean) {
         val request = envelope.payload
         val urlText = request.optString("url")
-        val reply = { payload: JSONObject ->
-            val response = BusEnvelope(path = BusPaths.HTTP_REPLY, id = envelope.id, payload = payload)
+        val reply = { meta: JSONObject, data: ByteArray ->
+            val response = BusEnvelope(path = BusPaths.HTTP_REPLY, id = envelope.id, payload = meta, binary = data)
             if (replyRemote) sendRemote(response) else deliverLocal(response)
         }
         val url = runCatching { URL(urlText) }.getOrNull()
@@ -292,9 +311,11 @@ class BusHubService : Service() {
             reply(
                 JSONObject()
                     .put("status", 0)
+                    .put("bytes", 0)
                     .put("error", "HTTP host not allowed")
                     .put("done", true)
                     .put("totalBytes", 0),
+                ByteArray(0),
             )
             return
         }
@@ -326,20 +347,29 @@ class BusHubService : Service() {
                         JSONObject()
                             .put("status", status)
                             .put("bytes", read)
-                            .put("chunk", Base64.encodeToString(buffer.copyOf(read), Base64.NO_WRAP))
                             .put("done", false),
+                        buffer.copyOf(read),
                     )
                 }
             }
-            reply(JSONObject().put("status", status).put("done", true).put("totalBytes", total))
+            reply(
+                JSONObject()
+                    .put("status", status)
+                    .put("bytes", 0)
+                    .put("done", true)
+                    .put("totalBytes", total),
+                ByteArray(0),
+            )
             log("HTTP proxy complete status=$status totalBytes=$total")
         } catch (t: Throwable) {
             reply(
                 JSONObject()
                     .put("status", 0)
+                    .put("bytes", 0)
                     .put("error", t.javaClass.simpleName + ": " + (t.message ?: "no message"))
                     .put("done", true)
                     .put("totalBytes", 0),
+                ByteArray(0),
             )
         } finally {
             connection?.disconnect()

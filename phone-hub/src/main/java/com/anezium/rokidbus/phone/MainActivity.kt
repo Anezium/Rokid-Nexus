@@ -248,6 +248,7 @@ class MainActivity : Activity() {
             }
             is BusEvent.Error -> appendLog("hub-ui: ${event.message}")
             is BusEvent.Message -> Unit
+            is BusEvent.Binary -> Unit
         }
     }
 

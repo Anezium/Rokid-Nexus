@@ -153,6 +153,24 @@ class MainActivity : Activity() {
             is BusEvent.Message -> appendLog(
                 "RX ${event.path} id=${event.id.take(8)} bytes=${event.payload.toString().length}",
             )
+            is BusEvent.Binary -> handleBinary(event)
+        }
+    }
+
+    private fun handleBinary(event: BusEvent.Binary) {
+        if (event.path == PATH_HTTP_REPLY) {
+            val bytes = event.meta.optLong("bytes", event.data.size.toLong())
+            if (event.meta.optBoolean("done", false)) {
+                appendLog(
+                    "HTTP done id=${event.id.take(8)} status=${event.meta.optInt("status")} totalBytes=${event.meta.optLong("totalBytes")}",
+                )
+            } else {
+                appendLog("HTTP chunk id=${event.id.take(8)} bytes=$bytes data=${event.data.size}")
+            }
+        } else {
+            appendLog(
+                "RX binary ${event.path} id=${event.id.take(8)} metaBytes=${event.meta.toString().length} data=${event.data.size}",
+            )
         }
     }
 

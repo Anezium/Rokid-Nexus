@@ -8,4 +8,5 @@ interface IBusService {
     void unregister(in IBusCallback cb);
     oneway void send(String path, String id, in byte[] payload);
     int linkState();
+    oneway void sendBinary(String path, String id, in byte[] meta, in byte[] data);
 }

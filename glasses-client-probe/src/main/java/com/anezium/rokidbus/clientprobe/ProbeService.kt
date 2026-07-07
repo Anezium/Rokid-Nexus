@@ -37,6 +37,7 @@ class ProbeService : BusClientService() {
             is BusEvent.LinkState -> Log.i(TAG, "linkState=${event.state}")
             is BusEvent.Error -> Log.w(TAG, event.message, event.cause)
             is BusEvent.Message -> handleMessage(event)
+            is BusEvent.Binary -> handleBinary(event)
         }
     }
 
@@ -58,30 +59,37 @@ class ProbeService : BusClientService() {
                 Log.i(TAG, "HTTP via bus requested id=${event.id} url=$url")
                 client?.send(PATH_HTTP_REQUEST, event.id, JSONObject().put("url", url))
             }
-            PATH_HTTP_REPLY -> handleHttpReply(event)
+            PATH_HTTP_REPLY -> Log.w(TAG, "unexpected JSON HTTP reply id=${event.id}")
             else -> Log.i(TAG, "message path=${event.path} id=${event.id}")
         }
     }
 
-    private fun handleHttpReply(event: BusEvent.Message) {
-        val bytes = event.payload.optLong("bytes", 0L)
+    private fun handleBinary(event: BusEvent.Binary) {
+        when (event.path) {
+            PATH_HTTP_REPLY -> handleHttpReply(event)
+            else -> Log.i(TAG, "binary path=${event.path} id=${event.id} dataBytes=${event.data.size}")
+        }
+    }
+
+    private fun handleHttpReply(event: BusEvent.Binary) {
+        val bytes = event.meta.optLong("bytes", event.data.size.toLong())
         if (bytes > 0) {
             pendingHttp.compute(event.id) { _, current -> (current ?: 0L) + bytes }
         }
-        val total = event.payload.optLong("totalBytes", pendingHttp[event.id] ?: 0L)
-        if (event.payload.optBoolean("done", false)) {
+        val total = event.meta.optLong("totalBytes", pendingHttp[event.id] ?: 0L)
+        if (event.meta.optBoolean("done", false)) {
             pendingHttp.remove(event.id)
-            Log.i(TAG, "HTTP done id=${event.id} status=${event.payload.optInt("status")} totalBytes=$total")
+            Log.i(TAG, "HTTP done id=${event.id} status=${event.meta.optInt("status")} totalBytes=$total")
             client?.send(
                 PATH_HTTP_TRIGGER_REPLY,
                 event.id,
                 JSONObject()
-                    .put("status", event.payload.optInt("status"))
+                    .put("status", event.meta.optInt("status"))
                     .put("totalBytes", total)
                     .put("side", "glasses"),
             )
         } else {
-            Log.i(TAG, "HTTP chunk id=${event.id} bytes=$bytes")
+            Log.i(TAG, "HTTP chunk id=${event.id} bytes=$bytes dataBytes=${event.data.size}")
         }
     }
 }

@@ -16,6 +16,8 @@ import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicBoolean
 
 object GlassesHub {
+    private const val LOCAL_BINARY_MAX_BYTES = 512 * 1024
+
     data class LauncherEntry(
         val id: String,
         val displayName: String,
@@ -55,6 +57,11 @@ object GlassesHub {
         override fun send(path: String, id: String, payload: ByteArray) {
             val json = runCatching { JSONObject(String(payload, Charsets.UTF_8)) }.getOrElse { JSONObject() }
             routeLocal(BusEnvelope(path = path, id = id, payload = json), Binder.getCallingUid())
+        }
+
+        override fun sendBinary(path: String, id: String, meta: ByteArray, data: ByteArray) {
+            val json = runCatching { JSONObject(String(meta, Charsets.UTF_8)) }.getOrElse { JSONObject() }
+            routeLocal(BusEnvelope(path = path, id = id, payload = json, binary = data), Binder.getCallingUid())
         }
 
         override fun linkState(): Int = this@GlassesHub.linkState()
@@ -97,6 +104,10 @@ object GlassesHub {
         if (deliverLocal(envelope)) return
         if (envelope.path == BusPaths.ERROR) {
             log("dropping undeliverable remote error id=${envelope.id}")
+            return
+        }
+        if (envelope.binary != null) {
+            log("dropping undeliverable binary ${envelope.path} id=${envelope.id}; no live registration")
             return
         }
         val context = appContext
@@ -147,12 +158,22 @@ object GlassesHub {
 
     private fun deliverLocal(envelope: BusEnvelope, excludeUid: Int? = null): Boolean {
         val payload = envelope.payload.toString().toByteArray(Charsets.UTF_8)
+        val binary = envelope.binary
         var delivered = false
         registrations.forEach { registration ->
             if (excludeUid != null && registration.uid == excludeUid) return@forEach
             if (registration.prefixes.any { envelope.path.startsWith(it) }) {
+                if (binary != null && binary.size > LOCAL_BINARY_MAX_BYTES) {
+                    log("drop local binary ${envelope.path} id=${envelope.id} bytes=${binary.size} over cap=$LOCAL_BINARY_MAX_BYTES")
+                    delivered = true
+                    return@forEach
+                }
                 runCatching {
-                    registration.callback.onMessage(envelope.path, envelope.id, payload)
+                    if (binary == null) {
+                        registration.callback.onMessage(envelope.path, envelope.id, payload)
+                    } else {
+                        registration.callback.onBinaryMessage(envelope.path, envelope.id, payload, binary)
+                    }
                     delivered = true
                     GlassesClientSupervisor.touch()
                 }.onFailure {
@@ -189,6 +210,10 @@ object GlassesHub {
     }
 
     private fun sendRemote(envelope: BusEnvelope): String? {
+        if (envelope.binary != null) {
+            if (!SppServerManager.isConnected()) return "NO_DATA_PLANE"
+            return if (SppServerManager.send(envelope)) null else "NO_DATA_PLANE"
+        }
         val bytes = FrameProtocol.toJsonBytes(envelope)
         if (bytes.size <= BusConstants.CXR_CONTROL_MAX_BYTES && CxrBusBridge.isUp()) {
             if (CxrBusBridge.send(envelope)) return null

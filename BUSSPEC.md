@@ -261,3 +261,90 @@ logs; it must be woken by the hub from dead.
 
 Audio lease (mic streaming), Relay migration, install/bootstrap of glasses apps via
 Hi Rokid, permission hardening (custom signature permission), raw binary frames.
+
+## Binary frames v1 (Round B slice 2)
+
+Replaces the `payload.bin` base64 placeholder. The SPP frame keeps its 4-byte
+big-endian length prefix (length = body bytes, max 2 MiB); the first body byte now
+selects the format:
+
+- `0x7B` (`{`) → legacy JSON envelope, whole body parsed as before. Old peers are
+  wire-compatible for JSON traffic.
+- `0x01` → binary frame: `[0x01][u16 BE headerLen][header JSON UTF-8][raw data]`.
+  Header is `{"v":1,"path":"...","id":"...","meta":{...}}` (`meta` optional).
+
+`BusEnvelope` gains `binary: ByteArray? = null`; for binary envelopes the existing
+`payload` JSONObject carries the `meta`. Routing rules:
+
+- Binary envelopes are **SPP-only** — never CXR control plane regardless of size.
+  SPP down → `/error` `{code:"NO_DATA_PLANE", forId:<id>}` to the sender.
+- JSON envelopes keep the existing ≤ 3 KB CXR-else-SPP rule.
+- Binary envelopes never trigger wake-bind: no live registration → drop + log
+  (they are realtime/stream data; the supervisor queue stays JSON-only).
+- Local delivery of a binary message is capped at 512 KiB (binder transaction
+  headroom); bigger frames are hub-internal only.
+
+### AIDL v2 (append-only, transaction codes stable)
+
+`API_VERSION = 2`. New methods appended at the END of the interfaces:
+
+```aidl
+// IBusCallback.aidl (+)
+void onBinaryMessage(String path, String id, in byte[] meta, in byte[] data);
+// IBusService.aidl (+)
+oneway void sendBinary(String path, String id, in byte[] meta, in byte[] data);
+```
+
+`BusClient` adds `sendBinary(path, meta: JSONObject, data: ByteArray)` and emits
+`BusEvent.Binary(path, id, meta: JSONObject, data: ByteArray)`. Request/response
+convention is unchanged (a binary reply carrying the request `id` resolves a
+pending `request()` too).
+
+### HTTP proxy on binary frames (fixes the cross-plane ordering bug)
+
+ALL `/http/request/reply` envelopes — chunks, `done`, and errors — become binary
+frames: raw body bytes in `data` (empty for `done`/error), JSON meta
+`{status, bytes, done, totalBytes?, error?}`. No more base64. Because every reply
+of a request now rides the same SPP socket, replies are FIFO end-to-end and the
+Round A "done overtakes chunk" race disappears by construction. Local requesters
+receive the same shape via `onBinaryMessage`. Probes updated accordingly.
+
+## Audio lease v1 (Round B slice 2)
+
+Glasses mic PCM arrives ON THE PHONE via CXR-L (`setCXRAudioCbk` +
+`startAudioStream(CXR_AUDIO_PCM=1)`, format 16 kHz / mono / PCM16 LE, variable
+buffer sizes ~3.2 KB ≈ 100 ms). The phone hub owns the stream; the primary
+consumer is a phone-side client — delivery is then local AIDL (`onBinaryMessage`,
+zero bus transport). A glasses-side leaseholder is allowed and rides SPP binary
+frames. Copy the exact CxrGlobal usage from Relay's `CxrBufferedAudioCapture.kt`.
+
+Paths (single leaseholder at a time):
+
+- `/audio/lease/acquire` `{}` → reply `{granted:true, leaseId, sampleRate:16000,
+  channels:1, encoding:"pcm16le"}` or `{granted:false, reason:"BUSY"|"NO_CXR"|"START_FAILED"}`.
+- `/audio/lease/release` `{leaseId}` → reply `{released:true}`.
+- `/audio/frames` — binary frames to the leaseholder only: meta
+  `{leaseId, seq, elapsedRealtime}`, data = raw PCM buffer as received.
+  `seq` monotonic; receiver detects gaps.
+- `/audio/lease/revoked` `{leaseId, reason:"LINK_DOWN"}` — hub → holder when
+  CXR-L drops mid-lease (hub stops the stream).
+
+Hub lifecycle: acquire → `setInterruptAiWake(true)`, `setCXRAudioCbk(cbk)`,
+`startAudioStream(1)`; release / holder binder death / CXR drop →
+`stopAudioStream()`, `setCXRAudioCbk(null)`, `setInterruptAiWake(false)`.
+Binder-death auto-release is mandatory (no orphan stream). No phone
+`RECORD_AUDIO` needed for the CXR PCM path (validated by Relay).
+
+Phone probe gains a `Mic 5 s` button: acquire → count frames/bytes for 5 s →
+release → log `frames=N bytes=M gaps=K`.
+
+### Acceptance criteria (slice 2, operator validates on hardware)
+
+1. `./gradlew assembleDebug` green; `apiVersion()` returns 2 on both hubs.
+2. Phone probe `Mic 5 s`: PCM frames flow (~50 frames / ~160 KB per 5 s), zero
+   seq gaps, lease released, second acquire while held returns `BUSY`.
+3. Glasses probe `wake-http`: binary-chunk replies, `done` arrives strictly after
+   all chunks (repeat 5×), Wi-Fi OFF.
+4. 64 KB echo and Lyrics surfaces unaffected (JSON path regression check).
+5. Hi Rokid/CXR-L stays connected through start/stop of the audio stream.
+6. TESTPLAN.md updated with the slice 2 steps.

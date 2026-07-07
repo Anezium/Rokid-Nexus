@@ -25,6 +25,7 @@ private const val DEFAULT_TIMEOUT_MS = 15_000L
 
 sealed class BusEvent {
     data class Message(val path: String, val id: String, val payload: JSONObject) : BusEvent()
+    data class Binary(val path: String, val id: String, val meta: JSONObject, val data: ByteArray) : BusEvent()
     data class LinkState(val state: Int) : BusEvent()
     data class Error(val message: String, val cause: Throwable? = null) : BusEvent()
 }
@@ -41,7 +42,12 @@ class BusClient(
         val onFailure: (Throwable) -> Unit,
     )
 
-    private data class Outgoing(val path: String, val id: String, val payload: ByteArray)
+    private data class Outgoing(
+        val path: String,
+        val id: String,
+        val payload: ByteArray,
+        val binary: ByteArray? = null,
+    )
 
     private val appContext = context.applicationContext
     private val main = Handler(Looper.getMainLooper())
@@ -62,6 +68,12 @@ class BusClient(
 
         override fun onLinkState(state: Int) {
             main.post { listener(BusEvent.LinkState(state)) }
+        }
+
+        override fun onBinaryMessage(path: String, id: String, meta: ByteArray, data: ByteArray) {
+            val json = runCatching { JSONObject(String(meta, Charsets.UTF_8)) }
+                .getOrElse { JSONObject().put("raw", String(meta, Charsets.UTF_8)) }
+            main.post { handleBinaryMessage(path, id, json, data) }
         }
     }
 
@@ -131,6 +143,28 @@ class BusClient(
             queued += Outgoing(path, id, bytes)
             service = null
             listener(BusEvent.Error("send failed; queued for reconnect", it))
+            scheduleReconnect()
+        }
+        return id
+    }
+
+    fun sendBinary(path: String, meta: JSONObject, data: ByteArray): String =
+        sendBinary(path, UUID.randomUUID().toString(), meta, data)
+
+    fun sendBinary(path: String, id: String, meta: JSONObject, data: ByteArray): String {
+        val bytes = meta.toString().toByteArray(Charsets.UTF_8)
+        val hub = service
+        if (hub == null) {
+            queued += Outgoing(path, id, bytes, data)
+            connect()
+            return id
+        }
+        runCatching {
+            hub.sendBinary(path, id, bytes, data)
+        }.onFailure {
+            queued += Outgoing(path, id, bytes, data)
+            service = null
+            listener(BusEvent.Error("sendBinary failed; queued for reconnect", it))
             scheduleReconnect()
         }
         return id
@@ -211,12 +245,30 @@ class BusClient(
         listener(BusEvent.Message(path, id, payload))
     }
 
+    private fun handleBinaryMessage(path: String, id: String, meta: JSONObject, data: ByteArray) {
+        val waiting = pending.remove(id)
+        if (waiting != null) {
+            if (path == BusPaths.ERROR) {
+                waiting.onFailure(IllegalStateException(meta.toString()))
+            } else {
+                waiting.onSuccess(meta)
+            }
+            return
+        }
+        listener(BusEvent.Binary(path, id, meta, data))
+    }
+
     private fun flushQueued() {
         val hub = service ?: return
         while (true) {
             val next = queued.poll() ?: return
             try {
-                hub.send(next.path, next.id, next.payload)
+                val data = next.binary
+                if (data == null) {
+                    hub.send(next.path, next.id, next.payload)
+                } else {
+                    hub.sendBinary(next.path, next.id, next.payload, data)
+                }
             } catch (e: RemoteException) {
                 queued += next
                 service = null
