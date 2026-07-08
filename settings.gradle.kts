@@ -19,6 +19,7 @@ rootProject.name = "RokidNexus"
 include(":shared")
 include(":bus-client")
 include(":plugin-lyrics")
+include(":plugin-transit")
 include(":phone-hub")
 include(":glasses-hub")
 include(":phone-client-probe")

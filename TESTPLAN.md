@@ -258,3 +258,65 @@ adb -s $glasses uninstall com.anezium.rokidbus.clientprobe
 adb -s $phone uninstall com.anezium.rokidbus.phone
 adb -s $phone uninstall com.anezium.rokidbus.phoneprobe
 ```
+
+## Transit plugin on-device check
+
+> **RESULT 2026-07-07 — TRANSIT PLUGIN VALIDATED ON HARDWARE (end-to-end)**
+>
+> - Launcher list synced count=2 (Lyrics + Transit); Transit opened from the
+>   glasses launcher activity via DPAD/ENTER.
+> - Full data path live: phone location → Transitous `reverse-geocode?type=STOP`
+>   (nearest stop "Chapellerie", 171 m) → `stoptimes` → card rendered on the HUD:
+>   4 departures, aligned columns, realtime minutes, footer `upd HH:mm . 171m`.
+> - BACK: input forwarded to the phone, plugin sent `/surface/hide`, and zero
+>   `/surface/show|update` in the following 75 s — refresh loop stops on close.
+>
+> Findings:
+> - **Platform bug — surface seq resets on hub restart**: a restarted phone hub
+>   process restarts plugin seq counters at 1 while the glasses keep
+>   `latestSeqBySurface` from the previous process, so every show/update/hide is
+>   dropped as stale (`Surface stale hide drop id=transit seq=1 latest=4`).
+>   TransitPlugin now seeds its counter with wall clock; LyricsPlugin and any
+>   future plugin have the same exposure — fix generically in Round C (seed or
+>   reset handshake on `/launcher/list` sync).
+> - ADB-driven glasses testing quirks: keys injected while the display sleeps are
+>   eaten as wake events (send `input keyevent 224`, pause, then the key), and
+>   while any surface is active the accessibility filter forwards DPAD to the
+>   plugin instead of the launcher activity — dismiss surfaces (BACK) and pause
+>   Spotify (lyrics auto-reopen) before driving the menu.
+
+> **RESULT 2026-07-08 — TRANSIT v2 VALIDATED ON HARDWARE (chooser, modes, favorites, plugin-handled BACK)**
+>
+> Full navigation cycle driven on the glasses via the accessibility input path
+> (swipe = DPAD, tap = ENTER/NOTIFICATION, back = BACK):
+> - **Chooser** renders on open: `Transit` / `> Near Me` / `Favorites` / footer
+>   `swipe . tap opens`; swipe toggles the `>` marker, tap enters the mode.
+> - **Near Me board**: live IDFM data at "Chapellerie" (171 m) — two directions
+>   split (`11 >Victor Basch`, `11 >Saint-Denis`), 3 next passages each; swipe
+>   pages within the stop (line 32 groups on page 2); **tap jumps to the next
+>   nearby stop** ("Ampère - Chartrel", 195 m) — the multi-stop answer to
+>   "bus stop but a station is also nearby".
+> - **Plugin-handled BACK** (`handlesBack = true`): BACK inside a board sends
+>   `/surface/input` and the plugin replies with `/surface/update` (the chooser),
+>   NOT `/surface/hide` — it navigates back to the chooser and preserves the
+>   active mode's `>` marker. BACK from the chooser closes fully (`/surface/hide`).
+>   Confirmed zero surface traffic in the 10 s after close (refresh loop stops).
+> - **Favorites**: empty state shows `No favorites yet.` / `Add in phone app.`;
+>   after adding a stop from the phone the board renders its live departures with a
+>   location-sorted distance footer.
+> - **Phone favorites manager**: text search returns 8 disambiguated results
+>   (`Chapellerie - Goussainville`, `- Sucy-en-Brie`, `La Chapelle - Paris`, …
+>   name + default-area city from the geocode `areas`); tapping a result adds it
+>   (`Added Chapellerie.`) and it appears under Saved stops with a Remove button.
+>
+> Findings:
+> - **Reinstalling the glasses APK disables its accessibility service** (Android
+>   security behaviour). Re-enable it before testing: append
+>   `com.anezium.rokidbus.glasses/…RokidBusAccessibilityService` to
+>   `settings put secure enabled_accessibility_services`.
+> - **Single-display focus trap**: when the glasses are not worn the display sleeps
+>   and input focus lands on an invisible `MockWindow`, so `adb input` never
+>   reaches the debug launcher activity. Fix for testing: `svc power stayon true`
+>   + `input keyevent 224` — focus returns to the activity and injected keys land.
+>   The accessibility-driven surface input path (used once a surface is active) is
+>   focus-independent and works regardless.

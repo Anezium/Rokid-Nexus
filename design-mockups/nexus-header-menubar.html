@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Rokid Nexus — menubar, pimpé</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600;700&family=Chivo+Mono:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{ --green:#4dff8c; --green-dim:#2f9d5c; --bg:#070a08; --panel:#0d150f; --line:#182619; --line2:#16241a;
+    --ink:#dcf3e4; --ink2:#8ba896; --ink3:#5f7a68; --ink4:#42574a; }
+  *{ box-sizing:border-box; margin:0; padding:0; }
+  body{ background:#050706; color:var(--ink); font-family:'Sora',sans-serif; padding:56px 32px 96px; -webkit-font-smoothing:antialiased; }
+  .page-head{ max-width:1500px; margin:0 auto 48px; }
+  .page-head .k{ font:500 12px/1 'Chivo Mono',monospace; letter-spacing:.34em; text-transform:uppercase; color:var(--green); }
+  .page-head h1{ font:300 36px/1.05 'Sora'; margin:16px 0 10px; letter-spacing:-.02em; }
+  .page-head p{ color:var(--ink2); max-width:660px; font-size:15px; line-height:1.6; }
+  .page-head p b{ color:var(--ink); font-weight:500; }
+  .gallery{ max-width:1500px; margin:0 auto; display:grid; grid-template-columns:repeat(auto-fit,minmax(330px,1fr)); gap:48px 40px; align-items:start; }
+  .cell{ display:flex; flex-direction:column; gap:16px; }
+  .cap .n{ display:flex; align-items:baseline; gap:10px; }
+  .cap .num{ font:500 12px/1 'Chivo Mono',monospace; color:var(--green); }
+  .cap h2{ font:600 16px/1.1 'Sora'; }
+  .cap .rec{ margin-left:auto; font:600 9px/1 'Chivo Mono',monospace; letter-spacing:.14em; text-transform:uppercase; color:#04180d; background:var(--green); padding:5px 8px; border-radius:6px; }
+  .cap p{ margin-top:6px; color:var(--ink2); font-size:13px; line-height:1.5; }
+
+  .phone{ width:352px; max-width:100%; aspect-ratio:9/13; border-radius:40px 40px 0 0; overflow:hidden; position:relative;
+    background:var(--bg); box-shadow:0 40px 80px -40px #000, 0 0 0 1px #ffffff08, 0 0 0 9px #12151380; }
+  .sb{ position:absolute; top:0; left:0; right:0; height:34px; z-index:30; display:flex; align-items:center; justify-content:space-between;
+    padding:0 26px 0 30px; font:500 13px/1 'Sora'; color:var(--ink); }
+  .sb .dots{ display:flex; gap:5px; } .sb .dots span{ width:16px; height:9px; border-radius:2px; background:currentColor; opacity:.5; }
+  .scr{ position:absolute; inset:34px 0 0; overflow:hidden; display:flex; flex-direction:column; }
+  .content{ flex:1; padding:18px 22px 0; }
+  .lbl{ display:flex; justify-content:space-between; font:500 10px/1 'Chivo Mono',monospace; letter-spacing:.22em; text-transform:uppercase; color:var(--ink4); margin:2px 2px 14px; }
+  .lbl .c{ color:var(--green-dim); }
+  .prow{ display:grid; grid-template-columns:20px 34px 1fr auto; gap:13px; align-items:center; padding:14px 15px; border-radius:15px; background:var(--panel); border:1px solid var(--line2); margin-bottom:9px; }
+  .prow .idx{ font:500 11px/1 'Chivo Mono',monospace; color:var(--green-dim); } .prow .ic{ width:34px;height:34px;border-radius:9px;display:grid;place-items:center;background:#4dff8c12;color:var(--green);font-size:15px; }
+  .prow .t{ font:400 15px/1 'Sora'; } .prow .s{ display:block;margin-top:4px;font:400 11px/1 'Chivo Mono',monospace;color:var(--ink3); } .prow .go{ color:var(--ink4);font-size:16px; }
+  @keyframes blink{ 0%,100%{ opacity:1; } 50%{ opacity:.35; } }
+
+  /* base slim bar */
+  .bar{ display:flex; align-items:center; justify-content:space-between; padding:14px 22px; border-bottom:1px solid var(--line); }
+  .bar .wm{ font-family:'Chivo Mono',monospace; letter-spacing:.26em; text-transform:uppercase; }
+  .dot{ width:7px; height:7px; border-radius:50%; background:var(--green); box-shadow:0 0 8px var(--green); }
+
+  /* I1 — nom clair, deux poids : ROKID léger / NEXUS gras */
+  .i1 .wm{ font-size:12px; font-weight:400; color:var(--ink); }
+  .i1 .wm b{ font-weight:700; }
+
+  /* I2 — NEXUS en vert, ROKID clair */
+  .i2 .wm{ font-size:12px; font-weight:500; color:var(--ink); }
+  .i2 .wm b{ color:var(--green); font-weight:600; }
+
+  /* I3 — mark vert devant + nom clair */
+  .i3 .wm{ display:flex; align-items:center; gap:9px; font-size:12px; font-weight:500; color:var(--ink); }
+  .i3 .wm .mk{ color:var(--green); font-size:11px; }
+
+  /* I4 — middot vert séparateur, nom clair, glow sous la barre */
+  .i4{ position:relative; }
+  .i4 .wm{ font-size:12px; font-weight:500; color:var(--ink); }
+  .i4 .wm em{ color:var(--green); font-style:normal; padding:0 3px; }
+  .i4::after{ content:""; position:absolute; left:0; right:0; bottom:-1px; height:1px; background:linear-gradient(90deg,transparent,#4dff8c66,transparent); }
+
+  /* I5 — statut mot ● ONLINE à droite, nom clair */
+  .i5 .wm{ font-size:12px; font-weight:600; color:var(--ink); }
+  .i5 .stat{ display:flex; align-items:center; gap:6px; font:500 9px/1 'Chivo Mono',monospace; letter-spacing:.18em; text-transform:uppercase; color:var(--green); }
+  .i5 .stat i{ width:5px; height:5px; border-radius:50%; background:var(--green); box-shadow:0 0 6px var(--green); animation:blink 2.4s ease-in-out infinite; }
+
+  /* I6 — pastille bordée à gauche contenant tout, très "chip" */
+  .i6{ padding:12px 20px; }
+  .i6 .chip{ display:inline-flex; align-items:center; gap:9px; padding:8px 8px 8px 13px; border:1px solid var(--line2); border-radius:22px; }
+  .i6 .wm{ font-size:11px; font-weight:600; color:var(--ink); }
+  .i6 .chip .dot{ width:8px; height:8px; }
+</style>
+</head>
+<body>
+  <div class="page-head">
+    <div class="k">Rokid Nexus · menubar</div>
+    <h1>La barre I, pimpée</h1>
+    <p>Même barre ultra-fine, mais le nom <b>ressort</b> maintenant (avant il était gris-vert éteint). Six façons d'y mettre un peu de vie tout en gardant la finesse.</p>
+  </div>
+
+  <div class="gallery">
+
+    <div class="cell">
+      <div class="phone"><div class="sb"><span>9:41</span><div class="dots"><span></span><span></span><span></span></div></div><div class="scr">
+        <div class="bar i1"><div class="wm">Rokid&nbsp;<b>Nexus</b></div><div class="dot"></div></div>
+        <div class="content"><div class="lbl"><span>Plugins</span><span class="c">2 actifs</span></div>
+          <div class="prow"><span class="idx">01</span><div class="ic">♪</div><div><div class="t">Lyrics</div><span class="s">now-playing lyrics</span></div><span class="go">›</span></div>
+          <div class="prow"><span class="idx">02</span><div class="ic">◈</div><div><div class="t">Transit</div><span class="s">nearby departures</span></div><span class="go">›</span></div></div>
+      </div></div>
+      <div class="cap"><div class="n"><span class="num">I1</span><h2>Deux poids</h2></div><p>Tout en clair, « ROKID » léger et « NEXUS » gras. Lisible, sobre, la hiérarchie sans couleur.</p></div>
+    </div>
+
+    <div class="cell">
+      <div class="phone"><div class="sb"><span>9:41</span><div class="dots"><span></span><span></span><span></span></div></div><div class="scr">
+        <div class="bar i2"><div class="wm">Rokid&nbsp;<b>Nexus</b></div><div class="dot"></div></div>
+        <div class="content"><div class="lbl"><span>Plugins</span><span class="c">2 actifs</span></div>
+          <div class="prow"><span class="idx">01</span><div class="ic">♪</div><div><div class="t">Lyrics</div><span class="s">now-playing lyrics</span></div><span class="go">›</span></div>
+          <div class="prow"><span class="idx">02</span><div class="ic">◈</div><div><div class="t">Transit</div><span class="s">nearby departures</span></div><span class="go">›</span></div></div>
+      </div></div>
+      <div class="cap"><div class="n"><span class="num">I2</span><h2>Nexus en vert</h2><span class="rec">Reco</span></div><p>« ROKID » clair, « NEXUS » en phosphore. La couleur de marque ressort direct, ça signe sans surcharger.</p></div>
+    </div>
+
+    <div class="cell">
+      <div class="phone"><div class="sb"><span>9:41</span><div class="dots"><span></span><span></span><span></span></div></div><div class="scr">
+        <div class="bar i3"><div class="wm"><span class="mk">◆</span> Rokid Nexus</div><div class="dot"></div></div>
+        <div class="content"><div class="lbl"><span>Plugins</span><span class="c">2 actifs</span></div>
+          <div class="prow"><span class="idx">01</span><div class="ic">♪</div><div><div class="t">Lyrics</div><span class="s">now-playing lyrics</span></div><span class="go">›</span></div>
+          <div class="prow"><span class="idx">02</span><div class="ic">◈</div><div><div class="t">Transit</div><span class="s">nearby departures</span></div><span class="go">›</span></div></div>
+      </div></div>
+      <div class="cap"><div class="n"><span class="num">I3</span><h2>Mark devant</h2></div><p>Un ◆ vert (ton logo) devant le nom clair. Donne un point d'ancrage visuel à gauche.</p></div>
+    </div>
+
+    <div class="cell">
+      <div class="phone"><div class="sb"><span>9:41</span><div class="dots"><span></span><span></span><span></span></div></div><div class="scr">
+        <div class="bar i4"><div class="wm">Rokid<em>·</em>Nexus</div><div class="dot"></div></div>
+        <div class="content"><div class="lbl"><span>Plugins</span><span class="c">2 actifs</span></div>
+          <div class="prow"><span class="idx">01</span><div class="ic">♪</div><div><div class="t">Lyrics</div><span class="s">now-playing lyrics</span></div><span class="go">›</span></div>
+          <div class="prow"><span class="idx">02</span><div class="ic">◈</div><div><div class="t">Transit</div><span class="s">nearby departures</span></div><span class="go">›</span></div></div>
+      </div></div>
+      <div class="cap"><div class="n"><span class="num">I4</span><h2>Middot + glow</h2></div><p>Un point vert entre les deux mots, et un léger halo vert sous la barre. Subtil, un peu néon.</p></div>
+    </div>
+
+    <div class="cell">
+      <div class="phone"><div class="sb"><span>9:41</span><div class="dots"><span></span><span></span><span></span></div></div><div class="scr">
+        <div class="bar i5"><div class="wm">Rokid Nexus</div><div class="stat"><i></i> Online</div></div>
+        <div class="content"><div class="lbl"><span>Plugins</span><span class="c">2 actifs</span></div>
+          <div class="prow"><span class="idx">01</span><div class="ic">♪</div><div><div class="t">Lyrics</div><span class="s">now-playing lyrics</span></div><span class="go">›</span></div>
+          <div class="prow"><span class="idx">02</span><div class="ic">◈</div><div><div class="t">Transit</div><span class="s">nearby departures</span></div><span class="go">›</span></div></div>
+      </div></div>
+      <div class="cap"><div class="n"><span class="num">I5</span><h2>Statut mot</h2><span class="rec">Reco</span></div><p>Nom bien clair à gauche, « ● Online » vert clignotant à droite. Le point remplacé par un vrai micro-statut lisible.</p></div>
+    </div>
+
+    <div class="cell">
+      <div class="phone"><div class="sb"><span>9:41</span><div class="dots"><span></span><span></span><span></span></div></div><div class="scr">
+        <div class="bar i6"><div class="chip"><div class="wm">Rokid Nexus</div><div class="dot"></div></div></div>
+        <div class="content"><div class="lbl"><span>Plugins</span><span class="c">2 actifs</span></div>
+          <div class="prow"><span class="idx">01</span><div class="ic">♪</div><div><div class="t">Lyrics</div><span class="s">now-playing lyrics</span></div><span class="go">›</span></div>
+          <div class="prow"><span class="idx">02</span><div class="ic">◈</div><div><div class="t">Transit</div><span class="s">nearby departures</span></div><span class="go">›</span></div></div>
+      </div></div>
+      <div class="cap"><div class="n"><span class="num">I6</span><h2>Chip contourné</h2></div><p>Le nom + point dans une pastille bordée à gauche. Plus « objet », un peu badge-console.</p></div>
+    </div>
+
+  </div>
+</body>
+</html>

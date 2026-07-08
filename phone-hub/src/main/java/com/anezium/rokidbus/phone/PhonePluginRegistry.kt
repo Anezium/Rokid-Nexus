@@ -11,6 +11,9 @@ import com.anezium.rokidbus.shared.plugin.NexusSubscription
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
+import java.util.concurrent.atomic.AtomicLong
 
 class PhonePluginRegistry(
     override val context: Context,
@@ -25,6 +28,11 @@ class PhonePluginRegistry(
 
     private val subscriptions = CopyOnWriteArrayList<Subscription>()
     private val pluginsById = linkedMapOf<String, NexusPlugin>()
+    private val pluginExecutor = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "nexus-plugin")
+    }
+    // Wall-clock seed so a hub process restart never replays seq values the glasses already saw.
+    private val surfaceSeq = AtomicLong(System.currentTimeMillis())
     @Volatile private var activePluginId: String? = null
 
     init {
@@ -32,7 +40,11 @@ class PhonePluginRegistry(
     }
 
     override fun send(path: String, payload: JSONObject) {
-        val error = sendEnvelope(BusEnvelope(path = path, payload = payload))
+        if (path == BusPaths.SURFACE_HIDE && payload.optString("surfaceId") == activePluginId) {
+            activePluginId = null
+        }
+        val outgoing = payload.withSurfaceMetadata(path)
+        val error = sendEnvelope(BusEnvelope(path = path, payload = outgoing))
         if (error != null) logger("plugin send failed path=$path code=$error")
     }
 
@@ -43,6 +55,10 @@ class PhonePluginRegistry(
         val subscription = Subscription(pathPrefix, handler)
         subscriptions += subscription
         return NexusSubscription { subscriptions.remove(subscription) }
+    }
+
+    override fun post(action: () -> Unit) {
+        enqueue("plugin post", action)
     }
 
     override fun log(message: String) {
@@ -95,9 +111,15 @@ class PhonePluginRegistry(
     }
 
     fun close() {
-        activePluginId?.let { pluginsById[it]?.onClose() }
+        activePluginId?.let { pluginId ->
+            pluginsById[pluginId]?.let { plugin ->
+                enqueue("plugin onClose id=${plugin.id}") { plugin.onClose() }
+            }
+        }
         subscriptions.clear()
         activePluginId = null
+        // Shutdown after the final onClose is enqueued; executor shutdown drains submitted work in order.
+        pluginExecutor.shutdown()
     }
 
     private fun register(plugin: NexusPlugin) {
@@ -110,11 +132,15 @@ class PhonePluginRegistry(
     private fun open(pluginId: String): Boolean {
         val plugin = pluginsById[pluginId] ?: return false
         activePluginId?.takeIf { it != plugin.id }?.let { previous ->
-            pluginsById[previous]?.onClose()
+            pluginsById[previous]?.let { previousPlugin ->
+                enqueue("plugin onClose id=${previousPlugin.id}") { previousPlugin.onClose() }
+            }
         }
         activePluginId = plugin.id
-        plugin.onOpen()
-        logger("plugin opened id=${plugin.id}")
+        enqueue("plugin onOpen id=${plugin.id}") {
+            plugin.onOpen()
+            logger("plugin opened id=${plugin.id}")
+        }
         return true
     }
 
@@ -123,15 +149,41 @@ class PhonePluginRegistry(
         val keyCode = payload.optInt("keyCode", KeyEvent.KEYCODE_UNKNOWN)
         val action = payload.optInt("action", KeyEvent.ACTION_DOWN)
         val plugin = pluginsById[surfaceId] ?: activePluginId?.let { pluginsById[it] } ?: return
-        plugin.onInput(
-            NexusInputEvent(
-                surfaceId = surfaceId.ifBlank { plugin.id },
-                keyCode = keyCode,
-                action = action,
-            ),
+        val event = NexusInputEvent(
+            surfaceId = surfaceId.ifBlank { plugin.id },
+            keyCode = keyCode,
+            action = action,
         )
+        enqueue("plugin onInput id=${plugin.id}") { plugin.onInput(event) }
         if (keyCode == KeyEvent.KEYCODE_BACK && action == KeyEvent.ACTION_DOWN) {
-            activePluginId = null
+            if (!plugin.handlesBack) {
+                activePluginId = null
+            }
         }
+    }
+
+    private fun enqueue(label: String, action: () -> Unit) {
+        try {
+            pluginExecutor.execute {
+                runCatching(action).onFailure {
+                    logger("$label failed: ${it.javaClass.simpleName}: ${it.message}")
+                }
+            }
+        } catch (failure: RejectedExecutionException) {
+            logger("$label dropped after plugin dispatcher shutdown: ${failure.message}")
+        }
+    }
+
+    private fun JSONObject.withSurfaceMetadata(path: String): JSONObject {
+        var outgoing = this
+        if (path == BusPaths.SURFACE_SHOW || path == BusPaths.SURFACE_UPDATE || path == BusPaths.SURFACE_HIDE) {
+            outgoing = JSONObject(toString()).put("seq", surfaceSeq.incrementAndGet())
+        }
+        if (path != BusPaths.SURFACE_SHOW && path != BusPaths.SURFACE_UPDATE) return outgoing
+        val surfaceId = optString("surfaceId")
+        val plugin = pluginsById[surfaceId] ?: return outgoing
+        if (!plugin.handlesBack) return outgoing
+        if (outgoing === this) outgoing = JSONObject(toString())
+        return outgoing.put("handlesBack", true)
     }
 }

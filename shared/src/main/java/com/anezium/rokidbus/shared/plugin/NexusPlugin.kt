@@ -23,12 +23,15 @@ interface NexusPluginHost {
 
     fun send(path: String, payload: JSONObject)
     fun subscribe(pathPrefix: String, handler: (path: String, id: String, payload: JSONObject) -> Unit): NexusSubscription
+    fun post(action: () -> Unit)
     fun log(message: String)
 }
 
 interface NexusPlugin {
     val id: String
     val displayName: String
+    val handlesBack: Boolean
+        get() = false
 
     fun onRegister(host: NexusPluginHost)
     fun onOpen()

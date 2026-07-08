@@ -106,12 +106,15 @@ outside power users touches it.
 
 Ordered by leverage, not ambition:
 
-1. **Tasker-Bridge port** — simplest; already the "phone logic + HUD menu" shape. Its
-   entire custom transport dissolves into the bus. Proves multi-plugin launcher.
-2. **Transit plugin** (even-transit model, Motis/Transitous) — pure text `card`; the
-   data path was already a Round A acceptance criterion.
-3. **Rokid-Scribe** — first real audio-lease consumer (glasses mic → phone STT).
-4. **Rokid-Relay migration** — notification listener + direct reply, per BUSSPEC.
+1. **Transit plugin** (even-transit model, Motis/Transitous) — pure text `card`; the
+   data path was already a Round A acceptance criterion. First plugin a stranger can
+   actually use, so it leads.
+2. **Rokid-Scribe** — first real audio-lease consumer (glasses mic → phone STT).
+3. **Rokid-Relay migration** — notification listener + direct reply, per BUSSPEC.
+4. **Tasker-Bridge port** — deferred: too niche (requires Tasker, power-user paid app)
+   to justify even a cheap port right now. Remains the lowest-effort second plugin
+   whenever multi-plugin coexistence needs proving; its no-ADB install proof is
+   already banked either way.
 
 Degraded-or-later: GMaps as text card now, real nav HUD needs a `nav` surface kind;
 Live Studio needs a camera/media lease (Round C+). Non-fits stay non-fits: native
@@ -141,7 +144,7 @@ installed through the same bootstrap channel as the hub itself.
 | Milestone | Contents | Gate |
 |---|---|---|
 | **Round B (in flight)** | Surfaces, binary frames, audio lease, wake supervisors | Hardware validation per TESTPLAN |
-| **Round C — first plugins** | Tasker-Bridge port + transit plugin; interruption classes (`actionable`→`toast`); launcher order/favorites; disconnect state in overlay; granular consent UI + mic indicator | Two plugins living side by side without stepping on each other |
+| **Round C — first plugins** | Transit plugin first, then a second plugin for the coexistence gate (Scribe pulled forward, or the Tasker-Bridge port as cheap filler); interruption classes (`actionable`→`toast`); launcher order/favorites; disconnect state in overlay; granular consent UI + mic indicator | Two plugins living side by side without stepping on each other |
 | **Round D — platform hygiene** | Display arbitration (surface stack, toast layer, real `actionable`); native-apps section in menu; Scribe; unknown-kind degradation | A third-party dev could build a plugin from JitPack docs alone |
 | **Public beta gate** | No-ADB bootstrap (install via Hi Rokid/CXR-L, guided a11y, runtime grants); JitPack publish; RokidBrew loop | A stranger sets up Nexus with nothing but their phone |
 | **Beyond** | Relay migration, `nav` kind, camera lease, Live Studio, Lens | — |

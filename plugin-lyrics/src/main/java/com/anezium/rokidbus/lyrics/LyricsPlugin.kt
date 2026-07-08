@@ -11,14 +11,12 @@ import com.anezium.rokidbus.shared.plugin.NexusPlugin
 import com.anezium.rokidbus.shared.plugin.NexusPluginHost
 import org.json.JSONArray
 import org.json.JSONObject
-import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.abs
 
 class LyricsPlugin : NexusPlugin {
     override val id: String = SURFACE_ID
     override val displayName: String = "Lyrics"
 
-    private val seq = AtomicLong(0L)
     private lateinit var host: NexusPluginHost
     private var unsubscribeState: (() -> Unit)? = null
     private var active = false
@@ -50,8 +48,7 @@ class LyricsPlugin : NexusPlugin {
         host.send(
             BusPaths.SURFACE_HIDE,
             JSONObject()
-                .put("surfaceId", SURFACE_ID)
-                .put("seq", seq.incrementAndGet()),
+                .put("surfaceId", SURFACE_ID),
         )
     }
 
@@ -104,15 +101,14 @@ class LyricsPlugin : NexusPlugin {
             abs(lyrics.progressMs - previous.predictedPosition(now)) >= SEEK_RESYNC_MS
         if (!shouldSend) return
 
-        val nextSeq = seq.incrementAndGet()
         val payload = if (lyrics.synced && lyrics.lines.isNotEmpty()) {
             if (!force && !contentChanged) {
-                anchorOnlyPayload(lyrics, nextSeq, playing, now, contentKey)
+                anchorOnlyPayload(lyrics, playing, now, contentKey)
             } else {
-                timedLinesPayload(lyrics, nextSeq, playing, now, contentKey)
+                timedLinesPayload(lyrics, playing, now, contentKey)
             }
         } else {
-            cardPayload(lyrics, state.deviceStatus.statusLabel, nextSeq, contentKey)
+            cardPayload(lyrics, state.deviceStatus.statusLabel, contentKey)
         }
         val path = if (previous == null || force) BusPaths.SURFACE_SHOW else BusPaths.SURFACE_UPDATE
         host.send(path, payload)
@@ -126,12 +122,11 @@ class LyricsPlugin : NexusPlugin {
 
     private fun timedLinesPayload(
         lyrics: LyricsSnapshot,
-        nextSeq: Long,
         playing: Boolean,
         sentAt: Long,
         contentKey: String,
     ): JSONObject =
-        basePayload(nextSeq, "timed-lines", contentKey)
+        basePayload("timed-lines", contentKey)
             .put("title", titleFor(lyrics))
             .put("subtitle", subtitleFor(lyrics))
             .put("footer", footerFor(lyrics))
@@ -157,12 +152,11 @@ class LyricsPlugin : NexusPlugin {
 
     private fun anchorOnlyPayload(
         lyrics: LyricsSnapshot,
-        nextSeq: Long,
         playing: Boolean,
         sentAt: Long,
         contentKey: String,
     ): JSONObject =
-        basePayload(nextSeq, "timed-lines", contentKey)
+        basePayload("timed-lines", contentKey)
             .put(
                 "anchor",
                 JSONObject()
@@ -174,18 +168,16 @@ class LyricsPlugin : NexusPlugin {
     private fun cardPayload(
         lyrics: LyricsSnapshot,
         statusLabel: String,
-        nextSeq: Long,
         contentKey: String,
     ): JSONObject =
-        basePayload(nextSeq, "card", contentKey)
+        basePayload("card", contentKey)
             .put("title", titleFor(lyrics).ifBlank { "Lyrics" })
             .put("lines", JSONArray(cardLines(lyrics, statusLabel)))
             .put("footer", footerFor(lyrics).ifBlank { "Rokid Nexus" })
 
-    private fun basePayload(nextSeq: Long, kind: String, contentKey: String): JSONObject =
+    private fun basePayload(kind: String, contentKey: String): JSONObject =
         JSONObject()
             .put("surfaceId", SURFACE_ID)
-            .put("seq", nextSeq)
             .put("kind", kind)
             .put("contentKey", contentKey)
 

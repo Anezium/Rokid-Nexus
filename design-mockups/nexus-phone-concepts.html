@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Rokid Nexus — 6 directions</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,500&family=Hanken+Grotesk:wght@400;500;600&family=Sora:wght@300;400;600&family=Chivo+Mono:wght@300;400;500&family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,700;12..96,800&family=Archivo:wght@400;500;700&family=Instrument+Serif:ital@0;1&family=Figtree:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Outfit:wght@200;300;400;600&display=swap" rel="stylesheet">
+<style>
+  :root{ --ph-green:#4dff8c; }
+  *{ box-sizing:border-box; margin:0; padding:0; }
+  body{
+    background:#0a0d0b;
+    background-image:radial-gradient(circle at 20% 0%, #12201700, #0a0d0b);
+    color:#e8efe9;
+    font-family:'Hanken Grotesk',sans-serif;
+    padding:56px 32px 96px;
+    -webkit-font-smoothing:antialiased;
+  }
+  .page-head{ max-width:1400px; margin:0 auto 56px; }
+  .page-head .k{ font:500 12px/1 'Chivo Mono',monospace; letter-spacing:.34em; text-transform:uppercase; color:var(--ph-green); }
+  .page-head h1{ font:300 40px/1.05 'Fraunces',serif; margin:16px 0 10px; letter-spacing:-.01em; }
+  .page-head p{ color:#8ba393; max-width:620px; font-size:15px; line-height:1.6; }
+  .gallery{
+    max-width:1400px; margin:0 auto;
+    display:grid; grid-template-columns:repeat(auto-fit,minmax(340px,1fr));
+    gap:52px 40px; align-items:start;
+  }
+  .cell{ display:flex; flex-direction:column; gap:18px; }
+  .cell > .meta .n{ display:flex; align-items:baseline; gap:10px; }
+  .cell > .meta .num{ font:500 12px/1 'Chivo Mono',monospace; color:var(--ph-green); }
+  .cell > .meta h2{ font:600 18px/1.1 'Hanken Grotesk',sans-serif; letter-spacing:-.01em; }
+  .cell > .meta p{ margin-top:7px; color:#8ba393; font-size:13.5px; line-height:1.55; }
+  .cell > .meta .tag{ margin-left:auto; font:500 10px/1 'Chivo Mono',monospace; letter-spacing:.14em; text-transform:uppercase; color:#6e8476; border:1px solid #24352b; padding:5px 9px; border-radius:20px; }
+
+  /* Phone frame */
+  .phone{
+    width:360px; max-width:100%; aspect-ratio:9/19.2;
+    border-radius:40px; overflow:hidden; position:relative;
+    box-shadow:0 40px 80px -40px #000, 0 0 0 1px #ffffff08, 0 0 0 9px #14181580;
+  }
+  .phone .status-bar{ position:absolute; top:0; left:0; right:0; height:34px; z-index:20;
+    display:flex; align-items:center; justify-content:space-between; padding:0 26px 0 30px;
+    font:600 13px/1 'Hanken Grotesk',sans-serif; }
+  .phone .status-bar .dots{ display:flex; gap:5px; align-items:center; }
+  .phone .status-bar .dots span{ width:16px; height:10px; border-radius:2px; background:currentColor; opacity:.55; }
+  .scr{ position:absolute; inset:0; overflow:hidden; padding-top:34px; }
+  .scr .body{ position:absolute; inset:34px 0 0; overflow:hidden; }
+
+  /* ============================================================ */
+  /* 1 — EVEN : éditorial clair                                    */
+  /* ============================================================ */
+  .d1{ background:#f4f1ea; color:#1a2c20; }
+  .d1 .status-bar{ color:#1a2c20; }
+  .d1 .body{ padding:30px 30px 0; }
+  .d1 .wm{ font:500 11px/1 'Hanken Grotesk'; letter-spacing:.36em; text-transform:uppercase; color:#7c8b7f; }
+  .d1 .hero{ margin-top:46px; }
+  .d1 .hero .st{ display:flex; align-items:center; gap:11px; font:500 12px/1 'Hanken Grotesk'; letter-spacing:.16em; text-transform:uppercase; color:#1a2c20; }
+  .d1 .hero .st b{ width:7px; height:7px; border-radius:50%; background:#0fb85a; box-shadow:0 0 0 4px #0fb85a20; }
+  .d1 .hero h1{ font:300 52px/1.02 'Fraunces',serif; letter-spacing:-.02em; margin-top:20px; }
+  .d1 .hero h1 em{ font-style:italic; color:#159a52; }
+  .d1 .hero .sub{ margin-top:14px; color:#6a7970; font-size:14.5px; line-height:1.5; }
+  .d1 .rule{ height:1px; background:#dcd7cc; margin:34px 0 26px; }
+  .d1 .lbl{ font:500 11px/1 'Hanken Grotesk'; letter-spacing:.2em; text-transform:uppercase; color:#9aa79d; margin-bottom:18px; }
+  .d1 .plug{ display:flex; align-items:baseline; justify-content:space-between; padding:16px 0; border-bottom:1px solid #e4e0d6; }
+  .d1 .plug .t{ font:400 22px/1 'Fraunces',serif; }
+  .d1 .plug .s{ display:block; margin-top:6px; font:400 13px/1.4 'Hanken Grotesk'; color:#8a978c; }
+  .d1 .plug .arw{ font-size:19px; color:#159a52; }
+  .d1 .plug.soon .t,.d1 .plug.soon .arw{ color:#b8c0b6; }
+  .d1 .plug.soon .badge{ font:500 10px/1 'Hanken Grotesk'; letter-spacing:.12em; text-transform:uppercase; color:#a6b0a8; border:1px solid #d8d3c8; border-radius:12px; padding:4px 8px; }
+  .d1 .foot{ position:absolute; left:30px; right:30px; bottom:26px; display:flex; align-items:center; gap:14px; }
+  .d1 .foot .stop{ flex:1; text-align:center; font:500 15px/1 'Hanken Grotesk'; padding:17px; border-radius:100px; background:#1a2c20; color:#f4f1ea; }
+  .d1 .foot .gear{ width:52px; height:52px; border-radius:50%; border:1px solid #d4cfc3; display:grid; place-items:center; color:#6a7970; font-size:18px; }
+
+  /* ============================================================ */
+  /* 2 — PHOSPHOR : HUD sombre raffiné                             */
+  /* ============================================================ */
+  .d2{ background:#080b09; color:#dcf3e4; }
+  .d2 .status-bar{ color:#dcf3e4; }
+  .d2 .body{ padding:26px 24px 0; }
+  .d2 .wm{ display:flex; align-items:center; gap:9px; font:500 11px/1 'Chivo Mono',monospace; letter-spacing:.3em; text-transform:uppercase; color:#5f7a68; }
+  .d2 .wm b{ color:var(--ph-green); }
+  .d2 .hero{ margin-top:34px; padding:24px; border-radius:22px; position:relative;
+    background:linear-gradient(160deg,#0f1c14,#0a110d);
+    border:1px solid #17281d; overflow:hidden; }
+  .d2 .hero::before{ content:""; position:absolute; top:-60%; right:-30%; width:200px; height:200px;
+    background:radial-gradient(circle,#4dff8c33,transparent 70%); }
+  .d2 .hero .st{ font:400 11px/1 'Chivo Mono',monospace; letter-spacing:.2em; text-transform:uppercase; color:var(--ph-green); }
+  .d2 .hero h1{ font:300 42px/1 'Sora',sans-serif; margin-top:14px; letter-spacing:-.02em; }
+  .d2 .hero .sub{ margin-top:12px; font:400 12px/1.5 'Chivo Mono',monospace; color:#6f8a78; }
+  .d2 .hero .sub span{ color:var(--ph-green); }
+  .d2 .lbl{ font:400 10px/1 'Chivo Mono',monospace; letter-spacing:.26em; text-transform:uppercase; color:#4d6656; margin:30px 4px 14px; }
+  .d2 .plug{ display:flex; align-items:center; gap:14px; padding:15px 16px; border-radius:16px; background:#0e150f; border:1px solid #16241a; margin-bottom:9px; }
+  .d2 .plug .ic{ width:34px; height:34px; border-radius:9px; display:grid; place-items:center; background:#4dff8c14; color:var(--ph-green); font-size:15px; }
+  .d2 .plug .tx{ flex:1; }
+  .d2 .plug .t{ font:400 15px/1 'Sora',sans-serif; }
+  .d2 .plug .s{ display:block; margin-top:5px; font-size:11.5px; color:#6f8a78; font-family:'Chivo Mono',monospace; }
+  .d2 .plug .arw{ color:#3d5647; }
+  .d2 .plug.soon{ opacity:.5; }
+  .d2 .foot{ position:absolute; left:24px; right:24px; bottom:24px; }
+  .d2 .foot .stop{ display:flex; align-items:center; justify-content:center; gap:9px; padding:16px; border-radius:16px;
+    border:1px solid #4dff8c40; color:var(--ph-green); background:#4dff8c0a; font:500 13px/1 'Chivo Mono',monospace; letter-spacing:.08em; text-transform:uppercase; }
+
+  /* ============================================================ */
+  /* 3 — SIGNAL : typographique gras clair                         */
+  /* ============================================================ */
+  .d3{ background:#eef0ec; color:#0d0f0c; }
+  .d3 .status-bar{ color:#0d0f0c; }
+  .d3 .body{ padding:28px 26px 0; }
+  .d3 .wm{ font:800 13px/1 'Bricolage Grotesque',sans-serif; letter-spacing:-.01em; text-transform:uppercase; }
+  .d3 .wm span{ color:#15a355; }
+  .d3 .hero{ margin-top:40px; }
+  .d3 .hero .st{ display:inline-flex; align-items:center; gap:8px; font:700 10px/1 'Archivo'; letter-spacing:.14em; text-transform:uppercase; background:#0d0f0c; color:#d6ff2b; padding:6px 11px; border-radius:6px; }
+  .d3 .hero .st b{ width:6px;height:6px;border-radius:50%;background:#4dff8c; }
+  .d3 .hero h1{ font:800 62px/.9 'Bricolage Grotesque',sans-serif; letter-spacing:-.04em; margin-top:18px; text-transform:uppercase; }
+  .d3 .hero .sub{ margin-top:14px; font:500 14px/1.4 'Archivo'; color:#5c6a5f; max-width:80%; }
+  .d3 .lbl{ font:700 11px/1 'Archivo'; letter-spacing:.1em; text-transform:uppercase; color:#0d0f0c; margin:34px 0 4px; padding-top:16px; border-top:2px solid #0d0f0c; }
+  .d3 .plug{ display:flex; align-items:center; justify-content:space-between; padding:18px 0; border-bottom:1px solid #d6d9d3; }
+  .d3 .plug .t{ font:700 20px/1 'Bricolage Grotesque',sans-serif; letter-spacing:-.02em; }
+  .d3 .plug .s{ display:block; margin-top:5px; font:500 12.5px/1 'Archivo'; color:#7a877d; }
+  .d3 .plug .n{ font:700 13px/1 'Archivo'; color:#15a355; }
+  .d3 .plug.soon .t{ color:#aeb5a9; } .d3 .plug.soon .n{ color:#aeb5a9; }
+  .d3 .foot{ position:absolute; left:26px; right:26px; bottom:26px; }
+  .d3 .foot .stop{ display:block; text-align:center; font:700 15px/1 'Archivo'; text-transform:uppercase; letter-spacing:.04em; padding:19px; border-radius:8px; background:#4dff8c; color:#0d1f13; }
+
+  /* ============================================================ */
+  /* 4 — CALM : cartes douces, pastel                              */
+  /* ============================================================ */
+  .d4{ background:#e9efe7; color:#2b3a2f; }
+  .d4 .status-bar{ color:#2b3a2f; }
+  .d4 .body{ padding:30px 22px 0; overflow-y:auto; }
+  .d4 .wm{ text-align:center; font:400 15px/1 'Instrument Serif',serif; letter-spacing:.24em; text-transform:uppercase; color:#7f907f; }
+  .d4 .hero{ margin-top:26px; background:#fbfdf9; border-radius:28px; padding:30px 26px; text-align:center; box-shadow:0 18px 40px -28px #3a5a41; }
+  .d4 .hero .ring{ width:66px; height:66px; margin:0 auto 18px; border-radius:50%; background:radial-gradient(circle,#e4fbec,#c7f2d6); display:grid; place-items:center; }
+  .d4 .hero .ring b{ width:14px; height:14px; border-radius:50%; background:#3fcf7a; box-shadow:0 0 0 6px #3fcf7a25; }
+  .d4 .hero h1{ font:400 40px/1 'Instrument Serif',serif; letter-spacing:.01em; }
+  .d4 .hero .sub{ margin-top:12px; font-size:13.5px; color:#8a988c; line-height:1.5; }
+  .d4 .lbl{ font:400 12px/1 'Figtree'; font-weight:600; letter-spacing:.14em; text-transform:uppercase; color:#9aa89b; margin:26px 8px 14px; }
+  .d4 .plug{ display:flex; align-items:center; gap:15px; background:#fbfdf9; border-radius:22px; padding:16px 18px; margin-bottom:11px; }
+  .d4 .plug .ic{ width:42px;height:42px;border-radius:14px; background:#eaf7ee; display:grid; place-items:center; font-size:17px; }
+  .d4 .plug .tx{ flex:1; }
+  .d4 .plug .t{ font:600 16px/1 'Figtree'; }
+  .d4 .plug .s{ display:block; margin-top:5px; font-size:12.5px; color:#93a196; }
+  .d4 .plug .arw{ color:#c2cdc2; font-size:20px; }
+  .d4 .plug.soon{ background:#eef3ec; box-shadow:none; }
+  .d4 .plug.soon .ic{ background:#e2e9e0; } .d4 .plug.soon .t{ color:#a9b4aa; }
+  .d4 .foot{ padding:8px 0 26px; }
+  .d4 .foot .stop{ display:block; text-align:center; font:600 15px/1 'Figtree'; padding:18px; border-radius:100px; background:#2b3a2f; color:#eafaef; }
+
+  /* ============================================================ */
+  /* 5 — MONO : suisse / utilitaire clair                          */
+  /* ============================================================ */
+  .d5{ background:#f6f6f4; color:#111; }
+  .d5 .status-bar{ color:#111; }
+  .d5 .body{ padding:0; }
+  .d5 .pad{ padding:24px 24px 0; }
+  .d5 .top{ display:flex; align-items:center; justify-content:space-between; border-bottom:1px solid #111; padding-bottom:14px; }
+  .d5 .wm{ font:500 12px/1 'IBM Plex Mono',monospace; letter-spacing:.06em; text-transform:uppercase; }
+  .d5 .top .v{ font:500 11px/1 'IBM Plex Mono',monospace; color:#159a52; }
+  .d5 .hero{ padding:30px 0 26px; border-bottom:1px solid #d9d9d5; }
+  .d5 .hero .st{ font:400 11px/1 'IBM Plex Mono',monospace; letter-spacing:.1em; text-transform:uppercase; color:#6b6b66; }
+  .d5 .hero h1{ font:600 40px/1 'IBM Plex Sans',sans-serif; letter-spacing:-.02em; margin-top:12px; display:flex; align-items:center; gap:12px; }
+  .d5 .hero h1 b{ width:10px;height:10px;border-radius:50%;background:#159a52; }
+  .d5 .hero .sub{ margin-top:12px; font:400 12px/1 'IBM Plex Mono',monospace; color:#8a8a84; }
+  .d5 .lbl{ display:flex; justify-content:space-between; font:500 10px/1 'IBM Plex Mono',monospace; letter-spacing:.12em; text-transform:uppercase; color:#9a9a94; padding:16px 0 4px; }
+  .d5 .plug{ display:grid; grid-template-columns:22px 1fr auto; gap:14px; align-items:center; padding:16px 0; border-bottom:1px solid #e4e4e0; }
+  .d5 .plug .idx{ font:500 12px/1 'IBM Plex Mono',monospace; color:#159a52; }
+  .d5 .plug .t{ font:600 15px/1 'IBM Plex Sans',sans-serif; }
+  .d5 .plug .s{ display:block; margin-top:4px; font:400 12px/1.3 'IBM Plex Mono',monospace; color:#8a8a84; }
+  .d5 .plug .arw{ font:400 12px/1 'IBM Plex Mono',monospace; color:#111; }
+  .d5 .plug.soon .idx,.d5 .plug.soon .t,.d5 .plug.soon .arw{ color:#b4b4ae; }
+  .d5 .foot{ position:absolute; left:0; right:0; bottom:0; padding:16px 24px 26px; border-top:1px solid #111; background:#f6f6f4; }
+  .d5 .foot .stop{ display:flex; align-items:center; justify-content:space-between; font:500 13px/1 'IBM Plex Mono',monospace; text-transform:uppercase; letter-spacing:.08em; padding:16px 20px; background:#111; color:#f6f6f4; }
+  .d5 .foot .stop span{ color:#4dff8c; }
+
+  /* ============================================================ */
+  /* 6 — AURORA : sombre atmosphérique                             */
+  /* ============================================================ */
+  .d6{ background:#070a08; color:#eaf3ec; }
+  .d6 .status-bar{ color:#eaf3ec; }
+  .d6 .body{ padding:0; }
+  .d6 .aurora{ position:absolute; top:0; left:0; right:0; height:340px;
+    background:
+      radial-gradient(120% 80% at 30% -10%, #1c6b3d55, transparent 60%),
+      radial-gradient(90% 70% at 90% 0%, #0e8a5a44, transparent 55%);
+    filter:blur(4px); }
+  .d6 .inner{ position:relative; padding:30px 26px 0; }
+  .d6 .wm{ font:300 12px/1 'Outfit'; letter-spacing:.4em; text-transform:uppercase; color:#9fc4ac; }
+  .d6 .hero{ margin-top:52px; }
+  .d6 .hero .st{ display:inline-flex; align-items:center; gap:9px; font:400 11px/1 'Outfit'; letter-spacing:.18em; text-transform:uppercase; color:#7fe0a4; }
+  .d6 .hero .st b{ width:7px;height:7px;border-radius:50%;background:#7fe0a4;box-shadow:0 0 12px #7fe0a4; }
+  .d6 .hero h1{ font:200 56px/1 'Outfit',sans-serif; letter-spacing:-.02em; margin-top:16px;
+    background:linear-gradient(180deg,#fff,#bfe8cd); -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent; }
+  .d6 .hero .sub{ margin-top:14px; font:300 14px/1.5 'Outfit'; color:#8fae9a; }
+  .d6 .lbl{ font:400 10px/1 'Outfit'; font-weight:500; letter-spacing:.28em; text-transform:uppercase; color:#5f7d6a; margin:34px 4px 16px; }
+  .d6 .plug{ display:flex; align-items:center; gap:14px; padding:15px 16px; border-radius:18px; margin-bottom:10px;
+    background:linear-gradient(160deg,#ffffff0f,#ffffff05); border:1px solid #ffffff12; backdrop-filter:blur(8px); }
+  .d6 .plug .ic{ width:36px;height:36px;border-radius:11px; background:#7fe0a41a; display:grid;place-items:center; color:#7fe0a4; font-size:15px; }
+  .d6 .plug .tx{ flex:1; }
+  .d6 .plug .t{ font:400 16px/1 'Outfit'; }
+  .d6 .plug .s{ display:block;margin-top:5px;font:300 12.5px/1 'Outfit';color:#8fae9a; }
+  .d6 .plug .arw{ color:#4f6c5a; }
+  .d6 .plug.soon{ opacity:.45; }
+  .d6 .foot{ position:absolute; left:26px; right:26px; bottom:26px; }
+  .d6 .foot .stop{ display:block; text-align:center; font:400 14px/1 'Outfit'; letter-spacing:.02em; padding:18px; border-radius:16px;
+    background:linear-gradient(180deg,#7fe0a4,#3fbf76); color:#04180d; font-weight:600; box-shadow:0 12px 30px -12px #3fbf7699; }
+</style>
+</head>
+<body>
+  <div class="page-head">
+    <div class="k">Rokid Nexus · Phone companion</div>
+    <h1>Six directions, un seul écran</h1>
+    <p>Le même écran d'accueil réel — statut de connexion, plugins Lyrics &amp; Transit, hub actif — décliné en six partis pris distincts. Tous propres, aérés, lisibles, avec le vert phosphore comme seul accent. Dis-moi le numéro que tu retiens (ou un mélange).</p>
+  </div>
+
+  <div class="gallery">
+
+    <!-- 1 EVEN -->
+    <div class="cell">
+      <div class="phone d1">
+        <div class="status-bar"><span>9:41</span><div class="dots"><span></span><span></span><span></span></div></div>
+        <div class="scr"><div class="body">
+          <div class="wm">Rokid Nexus</div>
+          <div class="hero">
+            <div class="st"><b></b> En ligne</div>
+            <h1>Lunettes <em>prêtes.</em></h1>
+            <div class="sub">Connecté via CXR-L + SPP</div>
+          </div>
+          <div class="rule"></div>
+          <div class="lbl">Plugins</div>
+          <div class="plug"><div><div class="t">Lyrics</div><span class="s">Paroles en direct de ce qui joue</span></div><span class="arw">›</span></div>
+          <div class="plug"><div><div class="t">Transit</div><span class="s">Prochains départs sur tes lunettes</span></div><span class="arw">›</span></div>
+          <div class="plug soon"><div><div class="t">Relay</div><span class="s">Réponds à tes notifications</span></div><span class="badge">Bientôt</span></div>
+          <div class="foot"><div class="stop">Arrêter le hub</div><div class="gear">⚙</div></div>
+        </div></div>
+      </div>
+      <div class="meta"><div class="n"><span class="num">01</span><h2>Even</h2><span class="tag">Light · éditorial</span></div>
+        <p>La réf Even Realities : serif Fraunces, papier chaud, énormément de vide, le vert réduit à une ponctuation. Calme et haut de gamme.</p></div>
+    </div>
+
+    <!-- 2 PHOSPHOR -->
+    <div class="cell">
+      <div class="phone d2">
+        <div class="status-bar"><span>9:41</span><div class="dots"><span></span><span></span><span></span></div></div>
+        <div class="scr"><div class="body">
+          <div class="wm"><b>◆</b> Rokid Nexus</div>
+          <div class="hero">
+            <div class="st">Online</div>
+            <h1>Ready</h1>
+            <div class="sub">link <span>CXR-L</span> + <span>SPP</span> · stable</div>
+          </div>
+          <div class="lbl">Plugins actifs</div>
+          <div class="plug"><div class="ic">♪</div><div class="tx"><div class="t">Lyrics</div><span class="s">now-playing lyrics</span></div><span class="arw">›</span></div>
+          <div class="plug"><div class="ic">◈</div><div class="tx"><div class="t">Transit</div><span class="s">nearby departures</span></div><span class="arw">›</span></div>
+          <div class="plug soon"><div class="ic">✦</div><div class="tx"><div class="t">Relay</div><span class="s">notification reply · soon</span></div><span class="arw">›</span></div>
+          <div class="foot"><div class="stop">■ Stop hub</div></div>
+        </div></div>
+      </div>
+      <div class="meta"><div class="n"><span class="num">02</span><h2>Phosphor</h2><span class="tag">Dark · HUD</span></div>
+        <p>L'identité lunettes AR assumée : noir profond, mono Chivo, un halo vert derrière le statut. Techy mais raffiné, pas debug.</p></div>
+    </div>
+
+    <!-- 3 SIGNAL -->
+    <div class="cell">
+      <div class="phone d3">
+        <div class="status-bar"><span>9:41</span><div class="dots"><span></span><span></span><span></span></div></div>
+        <div class="scr"><div class="body">
+          <div class="wm">Rokid<span>·</span>Nexus</div>
+          <div class="hero">
+            <div class="st"><b></b> Online</div>
+            <h1>Ready</h1>
+            <div class="sub">Connecté via CXR-L + SPP</div>
+          </div>
+          <div class="lbl">Plugins</div>
+          <div class="plug"><div><div class="t">Lyrics</div><span class="s">Paroles en direct de ce qui joue</span></div><span class="n">01</span></div>
+          <div class="plug"><div><div class="t">Transit</div><span class="s">Prochains départs sur tes lunettes</span></div><span class="n">02</span></div>
+          <div class="plug soon"><div><div class="t">Relay</div><span class="s">Bientôt</span></div><span class="n">03</span></div>
+          <div class="foot"><div class="stop">Arrêter le hub</div></div>
+        </div></div>
+      </div>
+      <div class="meta"><div class="n"><span class="num">03</span><h2>Signal</h2><span class="tag">Light · typo</span></div>
+        <p>Gras et éditorial : Bricolage Grotesque en très gros, contraste fort, statut en badge jaune-vert. Ça a du caractère, ça claque.</p></div>
+    </div>
+
+    <!-- 4 CALM -->
+    <div class="cell">
+      <div class="phone d4">
+        <div class="status-bar"><span>9:41</span><div class="dots"><span></span><span></span><span></span></div></div>
+        <div class="scr"><div class="body">
+          <div class="wm">Rokid Nexus</div>
+          <div class="hero">
+            <div class="ring"><b></b></div>
+            <h1>En ligne</h1>
+            <div class="sub">Lunettes connectées · CXR-L + SPP</div>
+          </div>
+          <div class="lbl">Plugins</div>
+          <div class="plug"><div class="ic">♪</div><div class="tx"><div class="t">Lyrics</div><span class="s">Paroles en direct</span></div><span class="arw">›</span></div>
+          <div class="plug"><div class="ic">◈</div><div class="tx"><div class="t">Transit</div><span class="s">Départs à proximité</span></div><span class="arw">›</span></div>
+          <div class="plug soon"><div class="ic">✦</div><div class="tx"><div class="t">Relay</div><span class="s">Bientôt disponible</span></div><span class="arw">›</span></div>
+          <div class="foot"><div class="stop">Arrêter le hub</div></div>
+        </div></div>
+      </div>
+      <div class="meta"><div class="n"><span class="num">04</span><h2>Calm</h2><span class="tag">Light · doux</span></div>
+        <p>Apaisant : fond vert pâle, grosses cartes blanches arrondies, serif Instrument, vert désaturé. Zen, respirant, rassurant.</p></div>
+    </div>
+
+    <!-- 5 MONO -->
+    <div class="cell">
+      <div class="phone d5">
+        <div class="status-bar"><span>9:41</span><div class="dots"><span></span><span></span><span></span></div></div>
+        <div class="scr"><div class="body">
+          <div class="pad">
+            <div class="top"><div class="wm">Rokid_Nexus</div><div class="v">● LINK OK</div></div>
+            <div class="hero">
+              <div class="st">Statut connexion</div>
+              <h1><b></b> En ligne</h1>
+              <div class="sub">CXR-L + SPP · latence 40ms</div>
+            </div>
+            <div class="lbl"><span>Plugins</span><span>02 actifs</span></div>
+            <div class="plug"><span class="idx">01</span><div><div class="t">Lyrics</div><span class="s">now-playing lyrics</span></div><span class="arw">→</span></div>
+            <div class="plug"><span class="idx">02</span><div><div class="t">Transit</div><span class="s">nearby departures</span></div><span class="arw">→</span></div>
+            <div class="plug soon"><span class="idx">03</span><div><div class="t">Relay</div><span class="s">notification reply</span></div><span class="arw">soon</span></div>
+          </div>
+          <div class="foot"><div class="stop"><span>■ Stop hub</span><span>ON</span></div></div>
+        </div></div>
+      </div>
+      <div class="meta"><div class="n"><span class="num">05</span><h2>Mono</h2><span class="tag">Light · suisse</span></div>
+        <p>Grille suisse stricte : IBM Plex Mono + Sans, filets nets, index numérotés. Précis, ingénieur, mais élégant à la Linear.</p></div>
+    </div>
+
+    <!-- 6 AURORA -->
+    <div class="cell">
+      <div class="phone d6">
+        <div class="status-bar"><span>9:41</span><div class="dots"><span></span><span></span><span></span></div></div>
+        <div class="scr"><div class="body">
+          <div class="aurora"></div>
+          <div class="inner">
+            <div class="wm">Rokid Nexus</div>
+            <div class="hero">
+              <div class="st"><b></b> En ligne</div>
+              <h1>Prêtes</h1>
+              <div class="sub">Connecté via CXR-L + SPP</div>
+            </div>
+            <div class="lbl">Plugins</div>
+            <div class="plug"><div class="ic">♪</div><div class="tx"><div class="t">Lyrics</div><span class="s">Paroles en direct</span></div><span class="arw">›</span></div>
+            <div class="plug"><div class="ic">◈</div><div class="tx"><div class="t">Transit</div><span class="s">Départs à proximité</span></div><span class="arw">›</span></div>
+            <div class="plug soon"><div class="ic">✦</div><div class="tx"><div class="t">Relay</div><span class="s">Bientôt</span></div><span class="arw">›</span></div>
+            <div class="foot"><div class="stop">Arrêter le hub</div></div>
+          </div>
+        </div></div>
+      </div>
+      <div class="meta"><div class="n"><span class="num">06</span><h2>Aurora</h2><span class="tag">Dark · atmosphérique</span></div>
+        <p>Sombre mais vivant : une aurore verte diffuse derrière le statut, cartes en verre dépoli, Outfit ultra-light. Premium et moderne.</p></div>
+    </div>
+
+  </div>
+</body>
+</html>

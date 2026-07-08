@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Rokid Nexus — headers, série 2</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600;700&family=Chivo+Mono:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{ --green:#4dff8c; --green-dim:#2f9d5c; --bg:#070a08; --panel:#0d150f; --line:#182619; --line2:#16241a;
+    --ink:#dcf3e4; --ink2:#8ba896; --ink3:#5f7a68; --ink4:#42574a; }
+  *{ box-sizing:border-box; margin:0; padding:0; }
+  body{ background:#050706; color:var(--ink); font-family:'Sora',sans-serif; padding:56px 32px 96px; -webkit-font-smoothing:antialiased; }
+  .page-head{ max-width:1500px; margin:0 auto 48px; }
+  .page-head .k{ font:500 12px/1 'Chivo Mono',monospace; letter-spacing:.34em; text-transform:uppercase; color:var(--green); }
+  .page-head h1{ font:300 36px/1.05 'Sora'; margin:16px 0 10px; letter-spacing:-.02em; }
+  .page-head p{ color:var(--ink2); max-width:660px; font-size:15px; line-height:1.6; }
+  .page-head p b{ color:var(--ink); font-weight:500; }
+  .gallery{ max-width:1500px; margin:0 auto; display:grid; grid-template-columns:repeat(auto-fit,minmax(330px,1fr)); gap:48px 40px; align-items:start; }
+  .cell{ display:flex; flex-direction:column; gap:16px; }
+  .cap .n{ display:flex; align-items:baseline; gap:10px; }
+  .cap .num{ font:500 12px/1 'Chivo Mono',monospace; color:var(--green); }
+  .cap h2{ font:600 16px/1.1 'Sora'; }
+  .cap .rec{ margin-left:auto; font:600 9px/1 'Chivo Mono',monospace; letter-spacing:.14em; text-transform:uppercase; color:#04180d; background:var(--green); padding:5px 8px; border-radius:6px; }
+  .cap p{ margin-top:6px; color:var(--ink2); font-size:13px; line-height:1.5; }
+
+  .phone{ width:352px; max-width:100%; aspect-ratio:9/13; border-radius:40px 40px 0 0; overflow:hidden; position:relative;
+    background:var(--bg); box-shadow:0 40px 80px -40px #000, 0 0 0 1px #ffffff08, 0 0 0 9px #12151380; }
+  .sb{ position:absolute; top:0; left:0; right:0; height:34px; z-index:30; display:flex; align-items:center; justify-content:space-between;
+    padding:0 26px 0 30px; font:500 13px/1 'Sora'; color:var(--ink); }
+  .sb .dots{ display:flex; gap:5px; } .sb .dots span{ width:16px; height:9px; border-radius:2px; background:currentColor; opacity:.5; }
+  .scr{ position:absolute; inset:34px 0 0; overflow:hidden; display:flex; flex-direction:column; }
+  .content{ flex:1; padding:18px 22px 0; }
+  .lbl{ display:flex; justify-content:space-between; font:500 10px/1 'Chivo Mono',monospace; letter-spacing:.22em; text-transform:uppercase; color:var(--ink4); margin:2px 2px 14px; }
+  .lbl .c{ color:var(--green-dim); }
+  .prow{ display:grid; grid-template-columns:20px 34px 1fr auto; gap:13px; align-items:center; padding:14px 15px; border-radius:15px; background:var(--panel); border:1px solid var(--line2); margin-bottom:9px; }
+  .prow .idx{ font:500 11px/1 'Chivo Mono',monospace; color:var(--green-dim); } .prow .ic{ width:34px;height:34px;border-radius:9px;display:grid;place-items:center;background:#4dff8c12;color:var(--green);font-size:15px; }
+  .prow .t{ font:400 15px/1 'Sora'; } .prow .s{ display:block;margin-top:4px;font:400 11px/1 'Chivo Mono',monospace;color:var(--ink3); } .prow .go{ color:var(--ink4);font-size:16px; }
+
+  @keyframes pulse{ 0%,100%{ box-shadow:0 0 10px var(--green),0 0 0 0 #4dff8c40; } 50%{ box-shadow:0 0 16px var(--green),0 0 0 5px #4dff8c00; } }
+
+  /* G — MASTHEAD : caps espacées + filet, nœud vert */
+  .hG{ padding:22px 22px 0; border-bottom:1px solid var(--line); }
+  .hG .wm{ font:500 12px/1 'Chivo Mono',monospace; letter-spacing:.42em; text-transform:uppercase; color:var(--ink); text-align:center; }
+  .hG .rule{ position:relative; height:1px; background:var(--line); margin:16px 0 0; }
+  .hG .rule::after{ content:""; position:absolute; right:0; top:-2px; width:5px; height:5px; border-radius:50%; background:var(--green); box-shadow:0 0 8px var(--green); }
+
+  /* H — NAMEPLATE bicolore, le mark = la loupiote */
+  .hH{ display:flex; align-items:center; gap:12px; padding:22px 22px 20px; border-bottom:1px solid var(--line); }
+  .hH .mk{ width:32px; height:32px; border-radius:9px; display:grid; place-items:center; background:#4dff8c14; color:var(--green); font-size:15px; animation:pulse 3s ease-in-out infinite; }
+  .hH .wm{ font:600 20px/1 'Sora'; letter-spacing:-.02em; }
+  .hH .wm .r{ color:var(--ink3); font-weight:400; }
+
+  /* I — MENUBAR ultra fin */
+  .hI{ display:flex; align-items:center; justify-content:space-between; padding:13px 22px; border-bottom:1px solid var(--line); }
+  .hI .wm{ font:500 11px/1 'Chivo Mono',monospace; letter-spacing:.28em; text-transform:uppercase; color:var(--ink2); }
+  .hI .d{ width:7px; height:7px; border-radius:50%; background:var(--green); box-shadow:0 0 8px var(--green); }
+
+  /* J — KICKER empilé */
+  .hJ{ padding:22px 22px 20px; border-bottom:1px solid var(--line); }
+  .hJ .k{ font:500 10px/1 'Chivo Mono',monospace; letter-spacing:.34em; text-transform:uppercase; color:var(--green-dim); }
+  .hJ .wm{ margin-top:8px; font:300 30px/1 'Sora'; letter-spacing:-.02em; display:flex; align-items:center; gap:11px; }
+  .hJ .wm i{ width:7px; height:7px; border-radius:50%; background:var(--green); box-shadow:0 0 8px var(--green); }
+
+  /* K — SOULIGNÉ vert = statut */
+  .hK{ padding:24px 22px 20px; border-bottom:1px solid var(--line); }
+  .hK .wm{ display:inline-block; font:600 22px/1 'Sora'; letter-spacing:-.02em; position:relative; padding-bottom:9px; }
+  .hK .wm::after{ content:""; position:absolute; left:0; bottom:0; width:38px; height:3px; border-radius:2px; background:var(--green); box-shadow:0 0 10px var(--green); }
+
+  /* L — LOGO = STATUT (gros mark qui luit) */
+  .hL{ display:flex; align-items:center; gap:14px; padding:20px 22px 18px; border-bottom:1px solid var(--line); }
+  .hL .mk{ width:40px; height:40px; border-radius:11px; display:grid; place-items:center; font-size:18px; color:#04180d;
+    background:radial-gradient(circle at 35% 30%, #7dffab, var(--green)); box-shadow:0 0 22px -2px #4dff8c88; }
+  .hL .tx .wm{ font:600 18px/1 'Sora'; letter-spacing:-.02em; }
+  .hL .tx .st{ margin-top:4px; font:400 10px/1 'Chivo Mono',monospace; letter-spacing:.16em; text-transform:uppercase; color:var(--green-dim); }
+</style>
+</head>
+<body>
+  <div class="page-head">
+    <div class="k">Rokid Nexus · header · série 2</div>
+    <h1>Le nom complet, avec plus de gueule</h1>
+    <p>« Rokid Nexus » gardé en entier, la technique virée. Ici le statut est porté par la <b>typo</b> ou le <b>logo</b> lui-même, pas par un badge collé à côté. Ma reco est marquée.</p>
+  </div>
+
+  <div class="gallery">
+
+    <div class="cell">
+      <div class="phone"><div class="sb"><span>9:41</span><div class="dots"><span></span><span></span><span></span></div></div><div class="scr">
+        <div class="hG"><div class="wm">Rokid Nexus</div><div class="rule"></div></div>
+        <div class="content"><div class="lbl"><span>Plugins</span><span class="c">2 actifs</span></div>
+          <div class="prow"><span class="idx">01</span><div class="ic">♪</div><div><div class="t">Lyrics</div><span class="s">now-playing lyrics</span></div><span class="go">›</span></div>
+          <div class="prow"><span class="idx">02</span><div class="ic">◈</div><div><div class="t">Transit</div><span class="s">nearby departures</span></div><span class="go">›</span></div></div>
+      </div></div>
+      <div class="cap"><div class="n"><span class="num">G</span><h2>Masthead</h2><span class="rec">Reco</span></div><p>Caps espacées centrées + un filet fin, avec un petit nœud vert au bout = connecté. Intemporel, façon titre de journal. Très posé.</p></div>
+    </div>
+
+    <div class="cell">
+      <div class="phone"><div class="sb"><span>9:41</span><div class="dots"><span></span><span></span><span></span></div></div><div class="scr">
+        <div class="hH"><div class="mk">◆</div><div class="wm"><span class="r">Rokid</span> Nexus</div></div>
+        <div class="content"><div class="lbl"><span>Plugins</span><span class="c">2 actifs</span></div>
+          <div class="prow"><span class="idx">01</span><div class="ic">♪</div><div><div class="t">Lyrics</div><span class="s">now-playing lyrics</span></div><span class="go">›</span></div>
+          <div class="prow"><span class="idx">02</span><div class="ic">◈</div><div><div class="t">Transit</div><span class="s">nearby departures</span></div><span class="go">›</span></div></div>
+      </div></div>
+      <div class="cap"><div class="n"><span class="num">H</span><h2>Nameplate bicolore</h2><span class="rec">Reco</span></div><p>« Rokid » en gris, « Nexus » en clair — hiérarchie sans couper le nom. Le mark ◆ pulse doucement = la loupiote de connexion.</p></div>
+    </div>
+
+    <div class="cell">
+      <div class="phone"><div class="sb"><span>9:41</span><div class="dots"><span></span><span></span><span></span></div></div><div class="scr">
+        <div class="hI"><div class="wm">Rokid Nexus</div><div class="d"></div></div>
+        <div class="content"><div class="lbl"><span>Plugins</span><span class="c">2 actifs</span></div>
+          <div class="prow"><span class="idx">01</span><div class="ic">♪</div><div><div class="t">Lyrics</div><span class="s">now-playing lyrics</span></div><span class="go">›</span></div>
+          <div class="prow"><span class="idx">02</span><div class="ic">◈</div><div><div class="t">Transit</div><span class="s">nearby departures</span></div><span class="go">›</span></div></div>
+      </div></div>
+      <div class="cap"><div class="n"><span class="num">I</span><h2>Menubar</h2></div><p>Une barre ultra-fine, nom en petites caps mono, un point vert à droite. Le contenu démarre très haut. Discret à l'extrême.</p></div>
+    </div>
+
+    <div class="cell">
+      <div class="phone"><div class="sb"><span>9:41</span><div class="dots"><span></span><span></span><span></span></div></div><div class="scr">
+        <div class="hJ"><div class="k">Rokid</div><div class="wm"><i></i> Nexus</div></div>
+        <div class="content"><div class="lbl"><span>Plugins</span><span class="c">2 actifs</span></div>
+          <div class="prow"><span class="idx">01</span><div class="ic">♪</div><div><div class="t">Lyrics</div><span class="s">now-playing lyrics</span></div><span class="go">›</span></div>
+          <div class="prow"><span class="idx">02</span><div class="ic">◈</div><div><div class="t">Transit</div><span class="s">nearby departures</span></div><span class="go">›</span></div></div>
+      </div></div>
+      <div class="cap"><div class="n"><span class="num">J</span><h2>Kicker empilé</h2></div><p>« Rokid » minuscule en surtitre vert, « Nexus » en grand dessous. Garde le nom complet mais met Nexus en avant.</p></div>
+    </div>
+
+    <div class="cell">
+      <div class="phone"><div class="sb"><span>9:41</span><div class="dots"><span></span><span></span><span></span></div></div><div class="scr">
+        <div class="hK"><div class="wm">Rokid Nexus</div></div>
+        <div class="content"><div class="lbl"><span>Plugins</span><span class="c">2 actifs</span></div>
+          <div class="prow"><span class="idx">01</span><div class="ic">♪</div><div><div class="t">Lyrics</div><span class="s">now-playing lyrics</span></div><span class="go">›</span></div>
+          <div class="prow"><span class="idx">02</span><div class="ic">◈</div><div><div class="t">Transit</div><span class="s">nearby departures</span></div><span class="go">›</span></div></div>
+      </div></div>
+      <div class="cap"><div class="n"><span class="num">K</span><h2>Souligné vert</h2></div><p>« Rokid Nexus » avec un court trait vert dessous qui glow = statut. Type + un seul accent. Simple mais signé.</p></div>
+    </div>
+
+    <div class="cell">
+      <div class="phone"><div class="sb"><span>9:41</span><div class="dots"><span></span><span></span><span></span></div></div><div class="scr">
+        <div class="hL"><div class="mk">◆</div><div class="tx"><div class="wm">Rokid Nexus</div><div class="st">Connecté</div></div></div>
+        <div class="content"><div class="lbl"><span>Plugins</span><span class="c">2 actifs</span></div>
+          <div class="prow"><span class="idx">01</span><div class="ic">♪</div><div><div class="t">Lyrics</div><span class="s">now-playing lyrics</span></div><span class="go">›</span></div>
+          <div class="prow"><span class="idx">02</span><div class="ic">◈</div><div><div class="t">Transit</div><span class="s">nearby departures</span></div><span class="go">›</span></div></div>
+      </div></div>
+      <div class="cap"><div class="n"><span class="num">L</span><h2>Logo = statut</h2></div><p>Un mark plein qui luit en vert = connecté (il devient creux/gris hors-ligne). « Rokid Nexus » + « Connecté » à côté. Le logo fait le boulot.</p></div>
+    </div>
+
+  </div>
+</body>
+</html>

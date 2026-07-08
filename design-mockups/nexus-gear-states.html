@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Rokid Nexus — états de la roue</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600&family=Chivo+Mono:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{ --green:#4dff8c; --green-dim:#2f9d5c; --amber:#ffb84d; --bg:#070a08; --panel:#0d150f; --line:#182619; --line2:#16241a;
+    --ink:#dcf3e4; --ink2:#8ba896; --ink3:#5f7a68; --ink4:#42574a; }
+  *{ box-sizing:border-box; margin:0; padding:0; }
+  body{ background:#050706; color:var(--ink); font-family:'Sora',sans-serif; padding:56px 32px 96px; -webkit-font-smoothing:antialiased; }
+  .page-head{ max-width:1200px; margin:0 auto 48px; }
+  .page-head .k{ font:500 12px/1 'Chivo Mono',monospace; letter-spacing:.34em; text-transform:uppercase; color:var(--green); }
+  .page-head h1{ font:300 36px/1.05 'Sora'; margin:16px 0 10px; letter-spacing:-.02em; }
+  .page-head p{ color:var(--ink2); max-width:680px; font-size:15px; line-height:1.6; }
+  .page-head p b{ color:var(--ink); font-weight:500; }
+  .gallery{ max-width:1200px; margin:0 auto; display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:48px 40px; align-items:start; }
+  .cell{ display:flex; flex-direction:column; gap:16px; }
+  .cap .n{ display:flex; align-items:baseline; gap:10px; }
+  .cap .num{ font:500 12px/1 'Chivo Mono',monospace; }
+  .cap .num.g{ color:var(--green); } .cap .num.o{ color:var(--amber); } .cap .num.d{ color:var(--ink3); }
+  .cap h2{ font:600 16px/1.1 'Sora'; }
+  .cap p{ margin-top:6px; color:var(--ink2); font-size:13px; line-height:1.5; }
+
+  .phone{ width:340px; max-width:100%; aspect-ratio:9/11; border-radius:40px 40px 0 0; overflow:hidden; position:relative;
+    background:var(--bg); box-shadow:0 40px 80px -40px #000, 0 0 0 1px #ffffff08, 0 0 0 9px #12151380; }
+  .sb{ position:absolute; top:0; left:0; right:0; height:34px; z-index:30; display:flex; align-items:center; justify-content:space-between;
+    padding:0 26px 0 30px; font:500 13px/1 'Sora'; color:var(--ink); }
+  .sb .dots{ display:flex; gap:5px; } .sb .dots span{ width:16px; height:9px; border-radius:2px; background:currentColor; opacity:.5; }
+  .scr{ position:absolute; inset:34px 0 0; overflow:hidden; display:flex; flex-direction:column; }
+  .content{ flex:1; padding:18px 22px 0; }
+  .lbl{ display:flex; justify-content:space-between; font:500 10px/1 'Chivo Mono',monospace; letter-spacing:.22em; text-transform:uppercase; color:var(--ink4); margin:2px 2px 14px; }
+  .lbl .c{ color:var(--green-dim); }
+  .prow{ display:grid; grid-template-columns:20px 34px 1fr auto; gap:13px; align-items:center; padding:14px 15px; border-radius:15px; background:var(--panel); border:1px solid var(--line2); margin-bottom:9px; }
+  .prow .idx{ font:500 11px/1 'Chivo Mono',monospace; color:var(--green-dim); } .prow .ic{ width:34px;height:34px;border-radius:9px;display:grid;place-items:center;background:#4dff8c12;color:var(--green);font-size:15px; }
+  .prow .t{ font:400 15px/1 'Sora'; } .prow .s{ display:block;margin-top:4px;font:400 11px/1 'Chivo Mono',monospace;color:var(--ink3); } .prow .go{ color:var(--ink4);font-size:16px; }
+
+  .top{ display:flex; align-items:center; justify-content:space-between; padding:14px 22px; border-bottom:1px solid var(--line); }
+  .top .wm{ font:500 12px/1 'Chivo Mono',monospace; letter-spacing:.26em; text-transform:uppercase; color:var(--ink); }
+  .top .wm b{ color:var(--green); font-weight:600; }
+  .gear{ position:relative; width:22px; height:22px; display:grid; place-items:center; }
+  .gear svg{ width:20px; height:20px; }
+  .gear.on{ color:var(--green); filter:drop-shadow(0 0 5px #4dff8c66); }
+  .gear.off{ color:var(--ink3); }
+  .gear.upd{ color:var(--amber); filter:drop-shadow(0 0 5px #ffb84d66); }
+  .gear.upd::after{ content:""; position:absolute; top:-2px; right:-2px; width:8px; height:8px; border-radius:50%; background:var(--amber); border:2px solid var(--bg); box-shadow:0 0 6px var(--amber); }
+
+  /* update banner (optional, shown only in update state) */
+  .updbar{ display:flex; align-items:center; gap:10px; margin:6px 0 14px; padding:12px 14px; border-radius:13px;
+    background:#ffb84d10; border:1px solid #4a3a1c; }
+  .updbar .txt{ flex:1; }
+  .updbar .t{ font:400 13px/1 'Sora'; color:var(--amber); }
+  .updbar .s{ display:block; margin-top:4px; font:400 10px/1 'Chivo Mono',monospace; color:#b79a6a; }
+  .updbar .btn{ font:600 10px/1 'Chivo Mono',monospace; letter-spacing:.12em; text-transform:uppercase; padding:8px 13px; border-radius:18px; background:var(--amber); color:#241701; }
+
+  .legend{ display:flex; align-items:center; gap:9px; font:500 11px/1 'Chivo Mono',monospace; letter-spacing:.06em; }
+  .legend .sw{ width:11px; height:11px; border-radius:50%; }
+</style>
+</head>
+<body>
+  <div class="page-head">
+    <div class="k">Rokid Nexus · roue-statut</div>
+    <h1>La roue porte tout l'état</h1>
+    <p>Une seule icône en haut à droite, trois couleurs : <b style="color:#4dff8c">verte</b> = connecté, <b style="color:#5f7a68">grise</b> = hors-ligne, <b style="color:#ffb84d">orange</b> = mise à jour dispo. Tap = ouvre les réglages.</p>
+  </div>
+
+  <div class="gallery">
+
+    <!-- CONNECTED -->
+    <div class="cell">
+      <div class="phone"><div class="sb"><span>9:41</span><div class="dots"><span></span><span></span><span></span></div></div><div class="scr">
+        <div class="top"><div class="wm">Rokid&nbsp;<b>Nexus</b></div>
+          <div class="gear on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></div>
+        </div>
+        <div class="content"><div class="lbl"><span>Plugins</span><span class="c">2 actifs</span></div>
+          <div class="prow"><span class="idx">01</span><div class="ic">♪</div><div><div class="t">Lyrics</div><span class="s">now-playing lyrics</span></div><span class="go">›</span></div>
+          <div class="prow"><span class="idx">02</span><div class="ic">◈</div><div><div class="t">Transit</div><span class="s">nearby departures</span></div><span class="go">›</span></div></div>
+      </div></div>
+      <div class="cap"><div class="n"><span class="num g">01</span><h2>Connecté</h2></div>
+        <div class="legend"><span class="sw" style="background:#4dff8c;box-shadow:0 0 8px #4dff8c"></span> Roue verte, léger halo</div>
+        <p>État normal. La roue luit doucement en phosphore, comme le reste de l'accent.</p></div>
+    </div>
+
+    <!-- OFFLINE -->
+    <div class="cell">
+      <div class="phone"><div class="sb"><span>9:41</span><div class="dots"><span></span><span></span><span></span></div></div><div class="scr">
+        <div class="top"><div class="wm">Rokid&nbsp;<b>Nexus</b></div>
+          <div class="gear off"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></div>
+        </div>
+        <div class="content"><div class="lbl"><span>Plugins</span><span class="c" style="color:var(--ink4)">en pause</span></div>
+          <div class="prow" style="opacity:.5"><span class="idx">01</span><div class="ic">♪</div><div><div class="t">Lyrics</div><span class="s">lunettes déconnectées</span></div><span class="go">›</span></div>
+          <div class="prow" style="opacity:.5"><span class="idx">02</span><div class="ic">◈</div><div><div class="t">Transit</div><span class="s">lunettes déconnectées</span></div><span class="go">›</span></div></div>
+      </div></div>
+      <div class="cap"><div class="n"><span class="num d">02</span><h2>Hors-ligne</h2></div>
+        <div class="legend" style="color:var(--ink3)"><span class="sw" style="background:#5f7a68"></span> Roue grise, sans halo</div>
+        <p>Lunettes déconnectées. La roue s'éteint, les plugins passent en grisé. Rien de criard.</p></div>
+    </div>
+
+    <!-- UPDATE -->
+    <div class="cell">
+      <div class="phone"><div class="sb"><span>9:41</span><div class="dots"><span></span><span></span><span></span></div></div><div class="scr">
+        <div class="top"><div class="wm">Rokid&nbsp;<b>Nexus</b></div>
+          <div class="gear upd"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></div>
+        </div>
+        <div class="content">
+          <div class="updbar"><div class="txt"><div class="t">Mise à jour disponible</div><span class="s">Rokid Nexus 1.4 · 3.2 MB</span></div><div class="btn">Installer</div></div>
+          <div class="lbl"><span>Plugins</span><span class="c">2 actifs</span></div>
+          <div class="prow"><span class="idx">01</span><div class="ic">♪</div><div><div class="t">Lyrics</div><span class="s">now-playing lyrics</span></div><span class="go">›</span></div>
+          <div class="prow"><span class="idx">02</span><div class="ic">◈</div><div><div class="t">Transit</div><span class="s">nearby departures</span></div><span class="go">›</span></div></div>
+      </div></div>
+      <div class="cap"><div class="n"><span class="num o">03</span><h2>Update dispo</h2></div>
+        <div class="legend" style="color:var(--amber)"><span class="sw" style="background:#ffb84d;box-shadow:0 0 8px #ffb84d"></span> Roue orange + pastille</div>
+        <p>La roue vire à l'orange avec une petite pastille. Un bandeau ambre discret propose d'installer. Ça reste vert = connecté par ailleurs.</p></div>
+    </div>
+
+  </div>
+</body>
+</html>

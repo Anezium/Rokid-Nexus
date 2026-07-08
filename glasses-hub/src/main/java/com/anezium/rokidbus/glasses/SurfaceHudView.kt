@@ -2,10 +2,15 @@ package com.anezium.rokidbus.glasses
 
 import android.content.Context
 import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.SystemClock
 import android.text.Layout
+import android.text.SpannableStringBuilder
+import android.text.Spanned
 import android.text.TextUtils
+import android.text.style.ForegroundColorSpan
+import android.text.style.RelativeSizeSpan
 import android.view.Gravity
 import android.view.View
 import android.widget.LinearLayout
@@ -25,6 +30,11 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
         gravity = Gravity.CENTER
         textAlignment = TEXT_ALIGNMENT_CENTER
         maxLines = 3
+    }
+    private val boardView = LinearLayout(context).apply {
+        orientation = VERTICAL
+        gravity = Gravity.CENTER_VERTICAL
+        visibility = GONE
     }
     private val footerView = monoText(10.5f, BusTheme.dim).apply {
         gravity = Gravity.CENTER
@@ -51,8 +61,7 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
         isFocusable = true
         isFocusableInTouchMode = true
 
-        titleView.maxLines = 1
-        titleView.ellipsize = TextUtils.TruncateAt.END
+        applyMarquee(titleView)
         subtitleView.maxLines = 1
         subtitleView.ellipsize = TextUtils.TruncateAt.END
         previousView.gravity = Gravity.CENTER
@@ -68,6 +77,9 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
             topMargin = px(30)
         })
         addView(currentView, LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f).apply {
+            topMargin = px(8)
+        })
+        addView(boardView, LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f).apply {
             topMargin = px(8)
         })
         addView(nextView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
@@ -113,6 +125,13 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
     }
 
     private fun renderTimed(surface: NexusSurface) {
+        // Timed lines (lyrics) show one big centered line; cards pack a board.
+        boardView.visibility = GONE
+        currentView.visibility = VISIBLE
+        currentView.textSize = TIMED_BODY_SP
+        currentView.maxLines = TIMED_BODY_MAX_LINES
+        currentView.gravity = Gravity.CENTER
+        currentView.textAlignment = TEXT_ALIGNMENT_CENTER
         val index = currentTimedIndex(surface)
         previousView.text = surface.timedLines.getOrNull(index - 1)?.text.orEmpty()
         previousView.visibility = visibleIf(previousView.text.isNotBlank())
@@ -126,9 +145,120 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
 
     private fun renderCard(surface: NexusSurface) {
         previousView.visibility = GONE
-        currentView.text = surface.textLines.filter { it.isNotBlank() }.joinToString("\n")
         nextView.visibility = GONE
+        val rows = surface.rows.filter { it.text.isNotBlank() || it.isStructured }
+        if (rows.any { it.isStructured }) {
+            renderBoard(rows)
+        } else {
+            renderPlainCard(rows)
+        }
     }
+
+    private fun renderPlainCard(rows: List<SurfaceRow>) {
+        boardView.visibility = GONE
+        currentView.visibility = VISIBLE
+        currentView.textSize = CARD_BODY_SP
+        currentView.maxLines = CARD_BODY_MAX_LINES
+        // Plain cards align as a left block; per-line centering scatters the columns.
+        currentView.gravity = Gravity.CENTER_VERTICAL or Gravity.START
+        currentView.textAlignment = TEXT_ALIGNMENT_VIEW_START
+        currentView.text = rows.joinToString("\n") { it.text }
+    }
+
+    /** Departure-board rows: route badge, destination, wait times — one row each. */
+    private fun renderBoard(rows: List<SurfaceRow>) {
+        currentView.visibility = GONE
+        boardView.visibility = VISIBLE
+        boardView.removeAllViews()
+        rows.forEachIndexed { index, row ->
+            boardView.addView(
+                boardRow(row),
+                LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
+                    if (index > 0) topMargin = px(BOARD_ROW_GAP_DP)
+                },
+            )
+        }
+    }
+
+    private fun boardRow(row: SurfaceRow): LinearLayout =
+        LinearLayout(context).apply {
+            orientation = HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(
+                badgeView(row.badge),
+                LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT),
+            )
+            addView(
+                monoText(BOARD_TEXT_SP, BusTheme.text).apply {
+                    text = row.text
+                    applyMarquee(this)
+                },
+                LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f).apply {
+                    marginStart = px(10)
+                },
+            )
+            if (row.trail.isNotEmpty()) {
+                addView(
+                    trailView(row.trail),
+                    LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply {
+                        marginStart = px(10)
+                    },
+                )
+            }
+        }
+
+    /**
+     * Slow horizontal scroll for names too long for their slot. isSelected
+     * keeps the marquee running without focus, which overlays never hold.
+     */
+    private fun applyMarquee(view: TextView) {
+        view.isSingleLine = true
+        view.setHorizontallyScrolling(true)
+        view.ellipsize = TextUtils.TruncateAt.MARQUEE
+        view.marqueeRepeatLimit = -1
+        view.isSelected = true
+    }
+
+    /** Solid phosphor chip with punched-out route text — the brightest mark on the row. */
+    private fun badgeView(badge: String): TextView =
+        monoText(BOARD_BADGE_SP, BusTheme.glassesBg, bold = true).apply {
+            text = badge.ifBlank { "·" }
+            maxLines = 1
+            gravity = Gravity.CENTER
+            minWidth = px(44)
+            setPadding(px(7), px(2), px(7), px(2))
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                setColor(BusTheme.phosphor)
+                cornerRadius = px(6).toFloat()
+            }
+        }
+
+    /** Next departure large and bright, the following ones smaller and muted. */
+    private fun trailView(trail: List<String>): TextView =
+        monoText(BOARD_TRAIL_SP, BusTheme.phosphor, bold = true).apply {
+            maxLines = 1
+            text = SpannableStringBuilder().apply {
+                append(trail.first())
+                trail.drop(1).forEach { token ->
+                    val start = length
+                    append("  ")
+                    append(token)
+                    setSpan(
+                        ForegroundColorSpan(BusTheme.muted),
+                        start,
+                        length,
+                        Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
+                    )
+                    setSpan(
+                        RelativeSizeSpan(0.78f),
+                        start,
+                        length,
+                        Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
+                    )
+                }
+            }
+        }
 
     private fun currentTimedIndex(surface: NexusSurface): Int {
         val position = surface.anchor?.effectivePositionMs(SystemClock.elapsedRealtime()) ?: 0L
@@ -150,6 +280,9 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
         currentView.text = ""
         nextView.text = ""
         footerView.text = ""
+        boardView.removeAllViews()
+        boardView.visibility = GONE
+        currentView.visibility = VISIBLE
     }
 
     private fun visibleIf(condition: Boolean): Int =
@@ -174,5 +307,17 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
 
     private companion object {
         private const val TICK_MS = 100L
+
+        // Plain card bodies (messages, chooser): smaller mono, more lines.
+        private const val CARD_BODY_SP = 17f
+        private const val CARD_BODY_MAX_LINES = 12
+        private const val TIMED_BODY_SP = 25f
+        private const val TIMED_BODY_MAX_LINES = 5
+
+        // Structured board rows: badge chip, destination, wait times.
+        private const val BOARD_BADGE_SP = 15f
+        private const val BOARD_TEXT_SP = 16f
+        private const val BOARD_TRAIL_SP = 18f
+        private const val BOARD_ROW_GAP_DP = 12
     }
 }

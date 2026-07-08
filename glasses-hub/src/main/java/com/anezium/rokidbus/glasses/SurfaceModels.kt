@@ -13,6 +13,20 @@ data class TimedLine(
     val text: String,
 )
 
+/**
+ * One card body row. Plain rows carry only [text]; board rows add a route
+ * [badge] and a [trail] of wait times so the HUD can lay them out with
+ * real visual hierarchy instead of pre-formatted monospace strings.
+ */
+data class SurfaceRow(
+    val text: String,
+    val badge: String = "",
+    val trail: List<String> = emptyList(),
+) {
+    val isStructured: Boolean
+        get() = badge.isNotBlank() || trail.isNotEmpty()
+}
+
 data class SurfaceAnchor(
     val positionMs: Long,
     val playing: Boolean,
@@ -34,9 +48,10 @@ data class NexusSurface(
     val title: String,
     val subtitle: String,
     val footer: String,
-    val textLines: List<String>,
+    val rows: List<SurfaceRow>,
     val timedLines: List<TimedLine>,
     val anchor: SurfaceAnchor?,
+    val handlesBack: Boolean,
 ) {
     val isTimed: Boolean
         get() = kind == KIND_TIMED_LINES && timedLines.isNotEmpty()
@@ -62,15 +77,27 @@ data class NexusSurface(
                 title = payload.optString("title").ifBlank { previous?.takeIf { canMergePrevious }?.title.orEmpty() },
                 subtitle = payload.optString("subtitle").ifBlank { previous?.takeIf { canMergePrevious }?.subtitle.orEmpty() },
                 footer = payload.optString("footer").ifBlank { previous?.takeIf { canMergePrevious }?.footer.orEmpty() },
-                textLines = if (!linesPresent && canMergePrevious) {
-                    previous?.textLines.orEmpty()
+                rows = if (!linesPresent && canMergePrevious) {
+                    previous?.rows.orEmpty()
                 } else payload.optJSONArray("lines")?.let { array ->
                     buildList {
                         for (index in 0 until array.length()) {
                             val value = array.opt(index)
                             when (value) {
-                                is JSONObject -> add(value.optString("text"))
-                                else -> add(value?.toString().orEmpty())
+                                is JSONObject -> add(
+                                    SurfaceRow(
+                                        text = value.optString("text"),
+                                        badge = value.optString("badge"),
+                                        trail = value.optJSONArray("trail")?.let { trail ->
+                                            buildList {
+                                                for (trailIndex in 0 until trail.length()) {
+                                                    add(trail.optString(trailIndex))
+                                                }
+                                            }
+                                        }.orEmpty(),
+                                    ),
+                                )
+                                else -> add(SurfaceRow(text = value?.toString().orEmpty()))
                             }
                         }
                     }
@@ -99,6 +126,7 @@ data class NexusSurface(
                         sentAtElapsedRealtime = anchor.optLong("sentAtElapsedRealtime", 0L),
                     )
                 },
+                handlesBack = payload.optBoolean("handlesBack", false),
             )
         }
     }

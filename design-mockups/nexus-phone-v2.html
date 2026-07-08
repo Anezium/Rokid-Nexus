@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Rokid Nexus — Phosphor × Mono</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600&family=Chivo+Mono:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --green:#4dff8c; --green-dim:#2f9d5c;
+    --bg:#070a08; --panel:#0d150f; --panel2:#0e150f;
+    --line:#182619; --line2:#16241a;
+    --ink:#dcf3e4; --ink2:#8ba896; --ink3:#5f7a68; --ink4:#42574a;
+  }
+  *{ box-sizing:border-box; margin:0; padding:0; }
+  body{
+    background:#050706; color:var(--ink);
+    font-family:'Sora',sans-serif; padding:56px 32px 96px;
+    -webkit-font-smoothing:antialiased;
+  }
+  .page-head{ max-width:1500px; margin:0 auto 52px; }
+  .page-head .k{ font:500 12px/1 'Chivo Mono',monospace; letter-spacing:.34em; text-transform:uppercase; color:var(--green); }
+  .page-head h1{ font:300 38px/1.05 'Sora'; margin:16px 0 10px; letter-spacing:-.02em; }
+  .page-head p{ color:var(--ink2); max-width:660px; font-size:15px; line-height:1.6; }
+  .page-head p b{ color:var(--ink); font-weight:500; }
+  .gallery{ max-width:1500px; margin:0 auto; display:grid; grid-template-columns:repeat(auto-fit,minmax(330px,1fr)); gap:52px 40px; align-items:start; }
+  .cell{ display:flex; flex-direction:column; gap:18px; }
+  .cap .n{ display:flex; align-items:baseline; gap:10px; }
+  .cap .num{ font:500 12px/1 'Chivo Mono',monospace; color:var(--green); }
+  .cap h2{ font:600 17px/1.1 'Sora'; letter-spacing:-.01em; }
+  .cap p{ margin-top:7px; color:var(--ink2); font-size:13px; line-height:1.55; }
+
+  /* phone */
+  .phone{ width:352px; max-width:100%; aspect-ratio:9/19.4; border-radius:40px; overflow:hidden; position:relative;
+    background:var(--bg); box-shadow:0 40px 80px -40px #000, 0 0 0 1px #ffffff08, 0 0 0 9px #12151380; }
+  .sb{ position:absolute; top:0; left:0; right:0; height:34px; z-index:30; display:flex; align-items:center; justify-content:space-between;
+    padding:0 26px 0 30px; font:500 13px/1 'Sora'; color:var(--ink); }
+  .sb .dots{ display:flex; gap:5px; } .sb .dots span{ width:16px; height:9px; border-radius:2px; background:currentColor; opacity:.5; }
+  .scr{ position:absolute; inset:34px 0 0; overflow:hidden; display:flex; flex-direction:column; }
+
+  /* header — slim menubar, ROKID clair + NEXUS phosphore; gear = status light */
+  .top{ display:flex; align-items:center; justify-content:space-between; padding:14px 22px; border-bottom:1px solid var(--line); }
+  .top .wm{ font:500 12px/1 'Chivo Mono',monospace; letter-spacing:.26em; text-transform:uppercase; color:var(--ink); }
+  .top .wm b{ color:var(--green); font-weight:600; }
+  .top .gear{ position:relative; width:22px; height:22px; display:grid; place-items:center; }
+  .top .gear svg{ width:20px; height:20px; }
+  .top .gear.on{ color:var(--green); filter:drop-shadow(0 0 5px #4dff8c66); }
+  .top .gear.off{ color:var(--ink3); }
+  .top .gear.upd{ color:#ffb84d; filter:drop-shadow(0 0 5px #ffb84d66); }
+  .top .gear.upd::after{ content:""; position:absolute; top:-2px; right:-2px; width:8px; height:8px; border-radius:50%; background:#ffb84d; border:2px solid var(--bg); box-shadow:0 0 6px #ffb84d; }
+
+  .content{ flex:1; overflow-y:auto; padding:18px 22px 0; }
+  .content::-webkit-scrollbar{ display:none; }
+
+  .lbl{ display:flex; align-items:center; justify-content:space-between; font:500 10px/1 'Chivo Mono',monospace;
+    letter-spacing:.22em; text-transform:uppercase; color:var(--ink4); margin:6px 2px 14px; }
+  .lbl .c{ color:var(--green-dim); }
+
+  /* plugin row (installed) — mono index + phosphor card */
+  .prow{ display:grid; grid-template-columns:20px 34px 1fr auto; gap:13px; align-items:center;
+    padding:14px 15px; border-radius:15px; background:var(--panel); border:1px solid var(--line2); margin-bottom:9px; }
+  .prow .idx{ font:500 11px/1 'Chivo Mono',monospace; color:var(--green-dim); }
+  .prow .ic{ width:34px; height:34px; border-radius:9px; display:grid; place-items:center; background:#4dff8c12; color:var(--green); font-size:15px; }
+  .prow .t{ font:400 15px/1 'Sora'; }
+  .prow .s{ display:block; margin-top:4px; font:400 11px/1 'Chivo Mono',monospace; color:var(--ink3); }
+  .prow .go{ color:var(--ink4); font-size:16px; }
+
+  /* store entry strip */
+  .storecta{ display:flex; align-items:center; gap:13px; padding:16px 15px; border-radius:15px; margin:6px 0 4px;
+    background:linear-gradient(150deg,#10231800,#4dff8c0c); border:1px dashed #2c4a37; }
+  .storecta .plus{ width:34px; height:34px; border-radius:9px; display:grid; place-items:center; border:1px solid #2c4a37; color:var(--green); font-size:18px; }
+  .storecta .t{ font:400 14px/1 'Sora'; }
+  .storecta .s{ display:block; margin-top:4px; font:400 11px/1 'Chivo Mono',monospace; color:var(--ink3); }
+  .storecta .go{ margin-left:auto; color:var(--green); font-size:16px; }
+
+  /* footer control */
+  .foot{ padding:12px 22px 24px; border-top:1px solid var(--line); }
+  .foot .stop{ display:flex; align-items:center; justify-content:center; gap:9px; padding:15px; border-radius:14px;
+    border:1px solid #4dff8c38; color:var(--green); background:#4dff8c0a; font:500 12px/1 'Chivo Mono',monospace; letter-spacing:.1em; text-transform:uppercase; }
+
+  /* ---- STORE screen ---- */
+  .sthead{ padding:16px 22px 0; }
+  .sthead .back{ font:500 10px/1 'Chivo Mono',monospace; letter-spacing:.2em; text-transform:uppercase; color:var(--ink3); }
+  .sthead h1{ font:300 30px/1 'Sora'; letter-spacing:-.02em; margin:14px 0 4px; }
+  .sthead h1 b{ color:var(--green); font-weight:500; }
+  .sthead .sub{ font:400 11px/1 'Chivo Mono',monospace; color:var(--ink3); }
+  .chips{ display:flex; gap:8px; padding:16px 22px 4px; overflow-x:auto; }
+  .chips::-webkit-scrollbar{ display:none; }
+  .chip{ flex:none; font:500 10px/1 'Chivo Mono',monospace; letter-spacing:.12em; text-transform:uppercase; padding:8px 13px; border-radius:20px; border:1px solid var(--line2); color:var(--ink2); }
+  .chip.on{ background:var(--green); color:#04180d; border-color:var(--green); }
+
+  .scard{ padding:15px; border-radius:16px; background:var(--panel); border:1px solid var(--line2); margin-bottom:10px; }
+  .scard .h{ display:flex; align-items:center; gap:13px; }
+  .scard .ic{ width:40px; height:40px; border-radius:11px; display:grid; place-items:center; background:#4dff8c12; color:var(--green); font-size:17px; }
+  .scard .t{ font:500 16px/1 'Sora'; }
+  .scard .meta{ display:block; margin-top:5px; font:400 10px/1 'Chivo Mono',monospace; letter-spacing:.06em; color:var(--ink3); text-transform:uppercase; }
+  .scard .s{ margin-top:11px; font:400 12.5px/1.5 'Sora'; color:var(--ink2); }
+  .scard .act{ margin-top:13px; display:flex; align-items:center; justify-content:space-between; }
+  .scard .size{ font:400 10px/1 'Chivo Mono',monospace; color:var(--ink4); letter-spacing:.06em; }
+  .btn-get{ font:600 11px/1 'Chivo Mono',monospace; letter-spacing:.12em; text-transform:uppercase; padding:10px 18px; border-radius:20px; background:var(--green); color:#04180d; }
+  .btn-open{ font:600 11px/1 'Chivo Mono',monospace; letter-spacing:.12em; text-transform:uppercase; padding:10px 18px; border-radius:20px; border:1px solid #2c4a37; color:var(--green); }
+  .scard.feat{ border-color:#2c4a37; background:linear-gradient(150deg,#4dff8c08,#0d150f); }
+  .scard .new{ font:600 9px/1 'Chivo Mono',monospace; letter-spacing:.16em; text-transform:uppercase; color:#04180d; background:var(--green); padding:4px 7px; border-radius:6px; margin-left:auto; }
+
+  /* ---- EMPTY (new user) ---- */
+  .empty{ flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:0 34px; }
+  .empty .mark{ width:70px; height:70px; border-radius:18px; display:grid; place-items:center; border:1px solid var(--line2); color:var(--green); font-size:26px; margin-bottom:24px; position:relative; }
+  .empty .mark::after{ content:""; position:absolute; inset:-1px; border-radius:18px; box-shadow:0 0 30px -6px #4dff8c30; }
+  .empty h1{ font:300 26px/1.15 'Sora'; letter-spacing:-.01em; }
+  .empty p{ margin-top:12px; font:400 13px/1.6 'Sora'; color:var(--ink2); }
+  .empty .go{ margin-top:26px; font:600 12px/1 'Chivo Mono',monospace; letter-spacing:.12em; text-transform:uppercase; padding:15px 26px; border-radius:24px; background:var(--green); color:#04180d; }
+  .empty .hint{ margin-top:16px; font:400 10px/1 'Chivo Mono',monospace; letter-spacing:.06em; color:var(--ink4); }
+
+  /* ---- PLUGIN detail ---- */
+  .pd-hero{ padding:18px 22px 18px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:14px; }
+  .pd-hero .ic{ width:48px; height:48px; border-radius:13px; display:grid; place-items:center; background:#4dff8c12; color:var(--green); font-size:20px; }
+  .pd-hero .t{ font:500 20px/1 'Sora'; } .pd-hero .s{ display:block; margin-top:5px; font:400 11px/1 'Chivo Mono',monospace; color:var(--ink3); }
+  .settrow{ display:flex; align-items:center; justify-content:space-between; padding:16px 4px; border-bottom:1px solid var(--line2); }
+  .settrow .t{ font:400 14px/1 'Sora'; } .settrow .s{ display:block; margin-top:5px; font:400 11px/1.3 'Chivo Mono',monospace; color:var(--ink3); max-width:200px; }
+  .settrow .v{ font:400 12px/1 'Chivo Mono',monospace; color:var(--ink2); }
+  .toggle{ width:42px; height:24px; border-radius:14px; background:var(--green); position:relative; }
+  .toggle::after{ content:""; position:absolute; top:3px; right:3px; width:18px; height:18px; border-radius:50%; background:#04180d; }
+  .toggle.off{ background:#1c2b21; } .toggle.off::after{ left:3px; right:auto; background:#5f7a68; }
+</style>
+</head>
+<body>
+  <div class="page-head">
+    <div class="k">Rokid Nexus · v2</div>
+    <h1>Phosphor × Mono</h1>
+    <p>Le dark HUD de <b>#2</b> croisé avec la grille mono de <b>#5</b>. Statut réduit à un bandeau fin (fini la grosse carte), et un vrai <b>Store</b> pour télécharger les plugins — rien n'est installé par défaut. Quatre écrans du même design.</p>
+  </div>
+
+  <div class="gallery">
+
+    <!-- HOME (installed) -->
+    <div class="cell">
+      <div class="phone">
+        <div class="sb"><span>9:41</span><div class="dots"><span></span><span></span><span></span></div></div>
+        <div class="scr">
+          <div class="top">
+            <div class="wm">Rokid&nbsp;<b>Nexus</b></div>
+            <div class="gear on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></div>
+          </div>
+          <div class="content">
+            <div class="lbl"><span>Plugins</span><span class="c">2 actifs</span></div>
+            <div class="prow"><span class="idx">01</span><div class="ic">♪</div><div><div class="t">Lyrics</div><span class="s">now-playing lyrics</span></div><span class="go">›</span></div>
+            <div class="prow"><span class="idx">02</span><div class="ic">◈</div><div><div class="t">Transit</div><span class="s">nearby departures</span></div><span class="go">›</span></div>
+            <div class="storecta"><div class="plus">+</div><div><div class="t">Explorer le Store</div><span class="s">3 nouveaux plugins</span></div><span class="go">›</span></div>
+          </div>
+          <div class="foot"><div class="stop">■ Stop hub</div></div>
+        </div>
+      </div>
+      <div class="cap"><div class="n"><span class="num">01</span><h2>Accueil</h2></div>
+        <p>Statut en une ligne tout en haut, puis direct les plugins installés. L'entrée Store vit sous la liste. Rien ne gaspille l'écran.</p></div>
+    </div>
+
+    <!-- STORE -->
+    <div class="cell">
+      <div class="phone">
+        <div class="sb"><span>9:41</span><div class="dots"><span></span><span></span><span></span></div></div>
+        <div class="scr">
+          <div class="sthead">
+            <div class="back">‹ Accueil</div>
+            <h1>Store<b>.</b></h1>
+            <div class="sub">Des plugins pour tes lunettes</div>
+          </div>
+          <div class="chips"><span class="chip on">Tous</span><span class="chip">Audio</span><span class="chip">Transit</span><span class="chip">Messages</span><span class="chip">Outils</span></div>
+          <div class="content" style="padding-top:8px">
+            <div class="scard feat">
+              <div class="h"><div class="ic">✦</div><div><div class="t">Relay</div><span class="meta">Messages · Anezium</span></div><span class="new">New</span></div>
+              <div class="s">Réponds à tes notifications téléphone directement depuis les lunettes, à la voix.</div>
+              <div class="act"><span class="size">1.2 MB</span><span class="btn-get">Installer</span></div>
+            </div>
+            <div class="scard">
+              <div class="h"><div class="ic">♪</div><div><div class="t">Lyrics</div><span class="meta">Audio · installé</span></div></div>
+              <div class="s">Paroles synchronisées de ce qui joue sur ton téléphone.</div>
+              <div class="act"><span class="size">0.9 MB</span><span class="btn-open">Ouvrir</span></div>
+            </div>
+            <div class="scard">
+              <div class="h"><div class="ic">◐</div><div><div class="t">Scribe</div><span class="meta">Audio · Anezium</span></div></div>
+              <div class="s">Dicte des notes vocales, transcrites sur le téléphone.</div>
+              <div class="act"><span class="size">1.6 MB</span><span class="btn-get">Installer</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="cap"><div class="n"><span class="num">02</span><h2>Store</h2></div>
+        <p>Catalogue filtrable par catégorie. Un plugin en vedette, boutons Installer / Ouvrir selon l'état. C'est RokidBrew côté app.</p></div>
+    </div>
+
+    <!-- EMPTY (new user) -->
+    <div class="cell">
+      <div class="phone">
+        <div class="sb"><span>9:41</span><div class="dots"><span></span><span></span><span></span></div></div>
+        <div class="scr">
+          <div class="top">
+            <div class="wm">Rokid&nbsp;<b>Nexus</b></div>
+            <div class="gear on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></div>
+          </div>
+          <div class="empty">
+            <div class="mark">◆</div>
+            <h1>Tes lunettes sont prêtes.</h1>
+            <p>Aucun plugin pour l'instant. Ajoute-en depuis le Store pour donner vie à tes lunettes.</p>
+            <div class="go">Ouvrir le Store</div>
+            <div class="hint">Lyrics · Transit · Relay · Scribe</div>
+          </div>
+        </div>
+      </div>
+      <div class="cap"><div class="n"><span class="num">03</span><h2>Nouvel utilisateur</h2></div>
+        <p>Rien d'installé : l'écran ne montre pas une liste vide, il invite au Store. Le statut reste, discret, en haut.</p></div>
+    </div>
+
+    <!-- PLUGIN detail -->
+    <div class="cell">
+      <div class="phone">
+        <div class="sb"><span>9:41</span><div class="dots"><span></span><span></span><span></span></div></div>
+        <div class="scr">
+          <div class="pd-hero"><div class="ic">♪</div><div><div class="t">Lyrics</div><span class="s">now-playing lyrics · v1.0</span></div></div>
+          <div class="content">
+            <div class="lbl"><span>Réglages</span></div>
+            <div class="settrow"><div><div class="t">Afficher sur les lunettes</div><span class="s">timed-lines synchronisées</span></div><div class="toggle"></div></div>
+            <div class="settrow"><div><div class="t">Musixmatch</div><span class="s">meilleures paroles (optionnel)</span></div><span class="v">Se connecter ›</span></div>
+            <div class="settrow"><div><div class="t">Source des paroles</div><span class="s">LrcLib · Netease</span></div><span class="v">2 actives ›</span></div>
+            <div class="settrow"><div><div class="t">Décalage de synchro</div></div><span class="v">0 ms ›</span></div>
+            <div class="lbl" style="margin-top:22px"><span>Plugin</span></div>
+            <div class="settrow"><div><div class="t">Désinstaller</div></div><span class="v" style="color:#ff8a8a">Retirer ›</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="cap"><div class="n"><span class="num">04</span><h2>Réglages plugin</h2></div>
+        <p>Chaque plugin a son écran : toggles, login Musixmatch (le fameux réglage manquant), sources, désinstall. Même grammaire mono.</p></div>
+    </div>
+
+  </div>
+</body>
+</html>

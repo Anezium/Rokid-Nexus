@@ -3,3 +3,9 @@ build/
 */build/
 local.properties
 .kotlin/
+
+# Reverse-engineering / on-device scratch artifacts (not source)
+/tmp_launcher/
+/nx_*.xml
+/nx_*.png
+/design-mockups/*.png

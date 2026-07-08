@@ -34,5 +34,6 @@ dependencies {
     implementation(project(":shared"))
     implementation(project(":bus-client"))
     implementation(project(":plugin-lyrics"))
+    implementation(project(":plugin-transit"))
     implementation("com.example.cxrglobal:lib:0.2.0")
 }

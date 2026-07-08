@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Rokid Nexus — variantes de header</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600&family=Chivo+Mono:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{ --green:#4dff8c; --green-dim:#2f9d5c; --bg:#070a08; --panel:#0d150f; --line:#182619; --line2:#16241a;
+    --ink:#dcf3e4; --ink2:#8ba896; --ink3:#5f7a68; --ink4:#42574a; }
+  *{ box-sizing:border-box; margin:0; padding:0; }
+  body{ background:#050706; color:var(--ink); font-family:'Sora',sans-serif; padding:56px 32px 96px; -webkit-font-smoothing:antialiased; }
+  .page-head{ max-width:1500px; margin:0 auto 48px; }
+  .page-head .k{ font:500 12px/1 'Chivo Mono',monospace; letter-spacing:.34em; text-transform:uppercase; color:var(--green); }
+  .page-head h1{ font:300 36px/1.05 'Sora'; margin:16px 0 10px; letter-spacing:-.02em; }
+  .page-head p{ color:var(--ink2); max-width:640px; font-size:15px; line-height:1.6; }
+  .gallery{ max-width:1500px; margin:0 auto; display:grid; grid-template-columns:repeat(auto-fit,minmax(330px,1fr)); gap:48px 40px; align-items:start; }
+  .cell{ display:flex; flex-direction:column; gap:16px; }
+  .cap .n{ display:flex; align-items:baseline; gap:10px; }
+  .cap .num{ font:500 12px/1 'Chivo Mono',monospace; color:var(--green); }
+  .cap h2{ font:600 16px/1.1 'Sora'; }
+  .cap p{ margin-top:6px; color:var(--ink2); font-size:13px; line-height:1.5; }
+
+  .phone{ width:352px; max-width:100%; aspect-ratio:9/13; border-radius:40px 40px 0 0; overflow:hidden; position:relative;
+    background:var(--bg); box-shadow:0 40px 80px -40px #000, 0 0 0 1px #ffffff08, 0 0 0 9px #12151380; }
+  .sb{ position:absolute; top:0; left:0; right:0; height:34px; z-index:30; display:flex; align-items:center; justify-content:space-between;
+    padding:0 26px 0 30px; font:500 13px/1 'Sora'; color:var(--ink); }
+  .sb .dots{ display:flex; gap:5px; } .sb .dots span{ width:16px; height:9px; border-radius:2px; background:currentColor; opacity:.5; }
+  .scr{ position:absolute; inset:34px 0 0; overflow:hidden; display:flex; flex-direction:column; }
+
+  /* shared content stub so each header sits over real-looking plugins */
+  .content{ flex:1; padding:18px 22px 0; }
+  .lbl{ display:flex; justify-content:space-between; font:500 10px/1 'Chivo Mono',monospace; letter-spacing:.22em; text-transform:uppercase; color:var(--ink4); margin:2px 2px 14px; }
+  .lbl .c{ color:var(--green-dim); }
+  .prow{ display:grid; grid-template-columns:20px 34px 1fr auto; gap:13px; align-items:center; padding:14px 15px; border-radius:15px; background:var(--panel); border:1px solid var(--line2); margin-bottom:9px; }
+  .prow .idx{ font:500 11px/1 'Chivo Mono',monospace; color:var(--green-dim); } .prow .ic{ width:34px;height:34px;border-radius:9px;display:grid;place-items:center;background:#4dff8c12;color:var(--green);font-size:15px; }
+  .prow .t{ font:400 15px/1 'Sora'; } .prow .s{ display:block;margin-top:4px;font:400 11px/1 'Chivo Mono',monospace;color:var(--ink3); } .prow .go{ color:var(--ink4);font-size:16px; }
+
+  /* ========== HEADER A — wordmark seul + point ========== */
+  .hA{ display:flex; align-items:center; justify-content:space-between; padding:20px 22px 18px; border-bottom:1px solid var(--line); }
+  .hA .wm{ font:600 19px/1 'Sora'; letter-spacing:-.02em; }
+  .hA .wm span{ color:var(--green); }
+  .hA .d{ width:8px; height:8px; border-radius:50%; background:var(--green); box-shadow:0 0 10px var(--green); }
+
+  /* ========== HEADER B — logo mark + wordmark, statut = point ========== */
+  .hB{ display:flex; align-items:center; gap:11px; padding:20px 22px 18px; border-bottom:1px solid var(--line); }
+  .hB .mk{ width:30px; height:30px; border-radius:8px; display:grid; place-items:center; background:#4dff8c14; color:var(--green); font-size:14px; }
+  .hB .wm{ font:500 17px/1 'Sora'; letter-spacing:-.01em; }
+  .hB .d{ margin-left:auto; width:8px; height:8px; border-radius:50%; background:var(--green); box-shadow:0 0 10px var(--green); }
+
+  /* ========== HEADER C — wordmark + pastille statut texte ========== */
+  .hC{ display:flex; align-items:center; justify-content:space-between; padding:20px 22px 18px; border-bottom:1px solid var(--line); }
+  .hC .wm{ font:600 19px/1 'Sora'; letter-spacing:-.02em; }
+  .hC .pill{ display:flex; align-items:center; gap:7px; font:500 10px/1 'Chivo Mono',monospace; letter-spacing:.14em; text-transform:uppercase; color:var(--green); border:1px solid #244a34; border-radius:20px; padding:7px 11px; }
+  .hC .pill i{ width:6px; height:6px; border-radius:50%; background:var(--green); box-shadow:0 0 8px var(--green); }
+
+  /* ========== HEADER D — juste "Nexus" géant, statut minuscule dessous ========== */
+  .hD{ padding:22px 22px 18px; border-bottom:1px solid var(--line); }
+  .hD .wm{ font:300 30px/1 'Sora'; letter-spacing:-.02em; }
+  .hD .wm b{ font-weight:500; color:var(--green); }
+  .hD .st{ margin-top:8px; font:400 10px/1 'Chivo Mono',monospace; letter-spacing:.16em; text-transform:uppercase; color:var(--ink3); display:flex; align-items:center; gap:7px; }
+  .hD .st i{ width:6px;height:6px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green); }
+
+  /* ========== HEADER E — mark centré, ultra épuré ========== */
+  .hE{ display:flex; flex-direction:column; align-items:center; padding:20px 22px 16px; border-bottom:1px solid var(--line); }
+  .hE .mk{ font:600 15px/1 'Sora'; letter-spacing:.02em; display:flex; align-items:center; gap:8px; }
+  .hE .mk b{ color:var(--green); }
+  .hE .st{ margin-top:9px; font:400 9px/1 'Chivo Mono',monospace; letter-spacing:.2em; text-transform:uppercase; color:var(--ink3); }
+
+  /* ========== HEADER F — barre statut fine + wordmark ========== */
+  .hF{ border-bottom:1px solid var(--line); }
+  .hF .bar{ display:flex; align-items:center; gap:7px; padding:11px 22px; background:#4dff8c08; border-bottom:1px solid var(--line2); font:500 9px/1 'Chivo Mono',monospace; letter-spacing:.16em; text-transform:uppercase; color:var(--green); }
+  .hF .bar i{ width:5px;height:5px;border-radius:50%;background:var(--green);box-shadow:0 0 6px var(--green); }
+  .hF .bar span{ margin-left:auto; color:var(--ink3); }
+  .hF .wm{ padding:16px 22px 16px; font:600 19px/1 'Sora'; letter-spacing:-.02em; }
+</style>
+</head>
+<body>
+  <div class="page-head">
+    <div class="k">Rokid Nexus · header</div>
+    <h1>Le bandeau, six façons simples</h1>
+    <p>Juste le haut, refait épuré. Le reste de l'écran est identique (plugins) pour voir le header en contexte. Dis-moi la lettre.</p>
+  </div>
+
+  <div class="gallery">
+
+    <div class="cell">
+      <div class="phone"><div class="sb"><span>9:41</span><div class="dots"><span></span><span></span><span></span></div></div><div class="scr">
+        <div class="hA"><div class="wm">Nexus</div><div class="d"></div></div>
+        <div class="content"><div class="lbl"><span>Plugins</span><span class="c">2 actifs</span></div>
+          <div class="prow"><span class="idx">01</span><div class="ic">♪</div><div><div class="t">Lyrics</div><span class="s">now-playing lyrics</span></div><span class="go">›</span></div>
+          <div class="prow"><span class="idx">02</span><div class="ic">◈</div><div><div class="t">Transit</div><span class="s">nearby departures</span></div><span class="go">›</span></div></div>
+      </div></div>
+      <div class="cap"><div class="n"><span class="num">A</span><h2>Wordmark + point</h2></div><p>« Nexus » seul, le point vert = connecté. Le plus minimal. La marque complète vit ailleurs (réglages).</p></div>
+    </div>
+
+    <div class="cell">
+      <div class="phone"><div class="sb"><span>9:41</span><div class="dots"><span></span><span></span><span></span></div></div><div class="scr">
+        <div class="hB"><div class="mk">◆</div><div class="wm">Nexus</div><div class="d"></div></div>
+        <div class="content"><div class="lbl"><span>Plugins</span><span class="c">2 actifs</span></div>
+          <div class="prow"><span class="idx">01</span><div class="ic">♪</div><div><div class="t">Lyrics</div><span class="s">now-playing lyrics</span></div><span class="go">›</span></div>
+          <div class="prow"><span class="idx">02</span><div class="ic">◈</div><div><div class="t">Transit</div><span class="s">nearby departures</span></div><span class="go">›</span></div></div>
+      </div></div>
+      <div class="cap"><div class="n"><span class="num">B</span><h2>Logo + wordmark</h2></div><p>Petit mark ◆ (à remplacer par ton vrai logo) + « Nexus », point statut à droite. Identité sans blabla.</p></div>
+    </div>
+
+    <div class="cell">
+      <div class="phone"><div class="sb"><span>9:41</span><div class="dots"><span></span><span></span><span></span></div></div><div class="scr">
+        <div class="hC"><div class="wm">Nexus</div><div class="pill"><i></i> Online</div></div>
+        <div class="content"><div class="lbl"><span>Plugins</span><span class="c">2 actifs</span></div>
+          <div class="prow"><span class="idx">01</span><div class="ic">♪</div><div><div class="t">Lyrics</div><span class="s">now-playing lyrics</span></div><span class="go">›</span></div>
+          <div class="prow"><span class="idx">02</span><div class="ic">◈</div><div><div class="t">Transit</div><span class="s">nearby departures</span></div><span class="go">›</span></div></div>
+      </div></div>
+      <div class="cap"><div class="n"><span class="num">C</span><h2>Wordmark + pastille</h2></div><p>« Nexus » + une petite pastille « Online » contournée. Statut lisible d'un coup d'œil, sans le sous-texte technique.</p></div>
+    </div>
+
+    <div class="cell">
+      <div class="phone"><div class="sb"><span>9:41</span><div class="dots"><span></span><span></span><span></span></div></div><div class="scr">
+        <div class="hD"><div class="wm"><b>◆</b> Nexus</div><div class="st"><i></i> Connecté</div></div>
+        <div class="content"><div class="lbl"><span>Plugins</span><span class="c">2 actifs</span></div>
+          <div class="prow"><span class="idx">01</span><div class="ic">♪</div><div><div class="t">Lyrics</div><span class="s">now-playing lyrics</span></div><span class="go">›</span></div>
+          <div class="prow"><span class="idx">02</span><div class="ic">◈</div><div><div class="t">Transit</div><span class="s">nearby departures</span></div><span class="go">›</span></div></div>
+      </div></div>
+      <div class="cap"><div class="n"><span class="num">D</span><h2>Titre + statut minuscule</h2></div><p>« Nexus » plus grand comme un titre de page, statut discret en dessous. Aéré, éditorial.</p></div>
+    </div>
+
+    <div class="cell">
+      <div class="phone"><div class="sb"><span>9:41</span><div class="dots"><span></span><span></span><span></span></div></div><div class="scr">
+        <div class="hE"><div class="mk"><b>◆</b> Nexus</div><div class="st">● En ligne</div></div>
+        <div class="content"><div class="lbl"><span>Plugins</span><span class="c">2 actifs</span></div>
+          <div class="prow"><span class="idx">01</span><div class="ic">♪</div><div><div class="t">Lyrics</div><span class="s">now-playing lyrics</span></div><span class="go">›</span></div>
+          <div class="prow"><span class="idx">02</span><div class="ic">◈</div><div><div class="t">Transit</div><span class="s">nearby departures</span></div><span class="go">›</span></div></div>
+      </div></div>
+      <div class="cap"><div class="n"><span class="num">E</span><h2>Centré, épuré</h2></div><p>Mark + « Nexus » centrés, statut minuscule dessous. Le plus « app posée », symétrique.</p></div>
+    </div>
+
+    <div class="cell">
+      <div class="phone"><div class="sb"><span>9:41</span><div class="dots"><span></span><span></span><span></span></div></div><div class="scr">
+        <div class="hF"><div class="bar"><i></i> Online <span>CXR-L</span></div><div class="wm">Nexus</div></div>
+        <div class="content"><div class="lbl"><span>Plugins</span><span class="c">2 actifs</span></div>
+          <div class="prow"><span class="idx">01</span><div class="ic">♪</div><div><div class="t">Lyrics</div><span class="s">now-playing lyrics</span></div><span class="go">›</span></div>
+          <div class="prow"><span class="idx">02</span><div class="ic">◈</div><div><div class="t">Transit</div><span class="s">nearby departures</span></div><span class="go">›</span></div></div>
+      </div></div>
+      <div class="cap"><div class="n"><span class="num">F</span><h2>Fine barre statut</h2></div><p>Une lichette de statut tout en haut (verte), puis le wordmark. Le statut ne touche jamais à la marque.</p></div>
+    </div>
+
+  </div>
+</body>
+</html>

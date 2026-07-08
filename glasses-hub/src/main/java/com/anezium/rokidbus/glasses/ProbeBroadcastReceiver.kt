@@ -24,8 +24,9 @@ class ProbeBroadcastReceiver : BroadcastReceiver() {
                 context.applicationContext,
                 SurfaceDisplayPath.OVERLAY,
             )
+            "launcher-open" -> GlassesHub.openLauncherEntry(intent.getStringExtra("pluginId").orEmpty())
             "state" -> "spp=${SppServerManager.isConnected()} cxr=${CxrBusBridge.isUp()}"
-            else -> "unknown probe '$probe'; use hub, state, wake-echo, wake-http, phone-wake-echo, surface-activity, or surface-overlay"
+            else -> "unknown probe '$probe'; use hub, state, wake-echo, wake-http, phone-wake-echo, launcher-open, surface-activity, or surface-overlay"
         }
         log("Broadcast probe result: $result")
     }

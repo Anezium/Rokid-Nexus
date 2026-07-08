@@ -2,47 +2,43 @@ package com.anezium.rokidbus.phone
 
 import android.Manifest
 import android.app.Activity
-import android.content.BroadcastReceiver
-import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.content.res.ColorStateList
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.util.Log
+import android.view.Gravity
+import android.view.View
 import android.view.ViewGroup
+import android.widget.Button
+import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import android.widget.Toast
 import com.anezium.rokidbus.client.BusClient
 import com.anezium.rokidbus.client.BusEvent
 import com.anezium.rokidbus.client.ui.BusTheme
 import com.anezium.rokidbus.lyrics.LyricsRuntimeGraph
+import com.anezium.rokidbus.shared.LinkStateBits
 
-private const val ACTION_LOG = "com.anezium.rokidbus.phone.LOG"
-private const val AUTH_REQUEST = 42
-private const val PREFS = "rokidbus_phone"
-private const val PREF_TOKEN = "cxrl_token"
-private const val LINK_CXR_CONTROL_UP = 1
-private const val LINK_SPP_DATA_UP = 2
-private const val LINK_GLASS_BONDED = 4
+private const val TAG = "RokidNexusHome"
+private const val BLUETOOTH_PERMISSION_REQUEST = 20
+private const val LOCATION_PERMISSION_REQUEST = 21
 
+/** Companion home: fixed status/settings menubar, setup cards, plugin list, store entry and hub toggle. */
 class MainActivity : Activity() {
-    private lateinit var logView: TextView
-    private lateinit var logScroll: ScrollView
-    private lateinit var heroView: TextView
-    private lateinit var toggleButton: android.widget.Button
-    private lateinit var cxrTile: BusTheme.Tile
-    private lateinit var sppTile: BusTheme.Tile
-    private lateinit var hiRokidTile: BusTheme.Tile
-    private lateinit var notificationTile: BusTheme.Tile
+    private lateinit var setupSection: LinearLayout
+    private lateinit var toggleButton: Button
+    private lateinit var gearIcon: ImageView
+    private lateinit var gearPip: View
     private var hubUiClient: BusClient? = null
-
-    private val logReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context, intent: Intent) {
-            appendLog(intent.getStringExtra("line").orEmpty())
-        }
-    }
+    private var lastLinkState = 0
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -53,31 +49,29 @@ class MainActivity : Activity() {
             pathPrefixes = emptyList(),
         ) { event -> handleHubEvent(event) }.also { it.connect() }
         requestBluetoothConnectIfNeeded()
+        requestLocationIfNeeded()
         if (savedToken().isNotBlank() && BusHubService.isEnabled(this)) {
-            appendLog("Saved Hi Rokid token present")
+            logLine("Saved Hi Rokid token present")
             BusHubService.start(this)
-        }
-    }
-
-    override fun onStart() {
-        super.onStart()
-        val filter = IntentFilter(ACTION_LOG)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(logReceiver, filter, RECEIVER_NOT_EXPORTED)
-        } else {
-            @Suppress("DEPRECATION")
-            registerReceiver(logReceiver, filter)
         }
     }
 
     override fun onResume() {
         super.onResume()
-        updateNotificationAccess()
+        rebuildSetupSection()
+        refreshToggle()
+        renderLinkState()
     }
 
-    override fun onStop() {
-        runCatching { unregisterReceiver(logReceiver) }
-        super.onStop()
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray,
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == BLUETOOTH_PERMISSION_REQUEST || requestCode == LOCATION_PERMISSION_REQUEST) {
+            rebuildSetupSection()
+        }
     }
 
     override fun onDestroy() {
@@ -88,148 +82,442 @@ class MainActivity : Activity() {
     @Deprecated("Deprecated in platform API")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode != AUTH_REQUEST) return
+        if (requestCode != NexusPhoneState.AUTH_REQUEST) return
         when (val result = CxrLAuth.parseAuthorizationResult(resultCode, data)) {
             is CxrLAuth.Result.Success -> {
-                getSharedPreferences(PREFS, MODE_PRIVATE)
+                getSharedPreferences(NexusPhoneState.PREFS, MODE_PRIVATE)
                     .edit()
-                    .putString(PREF_TOKEN, result.token)
+                    .putString(NexusPhoneState.PREF_TOKEN, result.token)
                     .apply()
-                appendLog("Hi Rokid authorization succeeded")
+                logLine("Hi Rokid authorization succeeded")
                 BusHubService.startWithToken(this, result.token)
+                rebuildSetupSection()
             }
-            is CxrLAuth.Result.Fail -> appendLog("Authorization failed: ${result.reason}")
-            CxrLAuth.Result.Cancel -> appendLog("Authorization canceled")
+            is CxrLAuth.Result.Fail -> logLine("Authorization failed: ${result.reason}")
+            CxrLAuth.Result.Cancel -> logLine("Authorization canceled")
         }
     }
 
     private fun buildUi() {
-        window.statusBarColor = BusTheme.bg
-        window.navigationBarColor = BusTheme.bg
+        window.statusBarColor = NexusUi.BG
+        window.navigationBarColor = NexusUi.BG
 
-        logView = TextView(this)
-        logScroll = BusTheme.console(this, logView)
-        heroView = BusTheme.hero(this)
-        cxrTile = BusTheme.Tile(this, "CXR-L")
-        sppTile = BusTheme.Tile(this, "SPP")
-        hiRokidTile = BusTheme.Tile(this, "HI ROKID")
-        notificationTile = BusTheme.Tile(this, "LYRICS ACCESS")
-        updateLinkState(0)
-        updateNotificationAccess()
+        setupSection = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        toggleButton = NexusUi.outlinePillButton(this, "START HUB").apply {
+            setOnClickListener { toggleHub() }
+        }
 
-        val auth = BusTheme.pill(this, "Authorize").apply {
-            setOnClickListener {
-                when (val result = CxrLAuth.requestAuthorization(this@MainActivity, AUTH_REQUEST)) {
-                    null -> appendLog("Hi Rokid authorization opened")
-                    is CxrLAuth.Result.Fail -> appendLog("Authorization failed: ${result.reason}")
-                    CxrLAuth.Result.Cancel -> appendLog("Authorization canceled")
-                    is CxrLAuth.Result.Success -> Unit
-                }
+        val content = NexusUi.contentColumn(this).apply {
+            if (NexusPhoneState.updateAvailable) {
+                addView(
+                    NexusUi.updateBanner(this@MainActivity) {
+                        Toast.makeText(this@MainActivity, "Coming soon", Toast.LENGTH_SHORT).show()
+                    },
+                    NexusUi.block(),
+                )
+                addView(BusTheme.gap(this@MainActivity, 14))
             }
-        }
-        toggleButton = BusTheme.pill(this, "Start hub").apply {
-            setOnClickListener {
-                // The service persists the pref asynchronously; flip optimistically.
-                if (BusHubService.isEnabled(this@MainActivity)) {
-                    appendLog("Stopping hub")
-                    BusHubService.stop(this@MainActivity)
-                    setToggle(enabled = false)
-                } else {
-                    appendLog("Starting hub")
-                    BusHubService.start(this@MainActivity)
-                    setToggle(enabled = true)
-                }
-            }
-        }
-        refreshToggle()
-        val notificationSettings = BusTheme.pill(this, "Notification access").apply {
-            setOnClickListener {
-                appendLog("Opening notification access settings")
-                startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
-            }
-        }
-
-        val actions = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            addView(auth, actionButtonLayout(isFirst = true))
-            addView(toggleButton, actionButtonLayout(isFirst = false))
-        }
-
-        val notificationRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
+            addView(setupSection, NexusUi.block())
+            addView(NexusUi.sectionRow(this@MainActivity, "Plugins", "2 Active"), NexusUi.block())
+            addView(BusTheme.gap(this@MainActivity, 14))
             addView(
-                notificationTile.view,
-                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
-                    marginEnd = BusTheme.dp(this@MainActivity, 5)
+                pluginRow(
+                    index = "01",
+                    glyph = "\u266A",
+                    title = "Lyrics",
+                    subtitle = "now-playing lyrics",
+                ) {
+                    startActivity(Intent(this@MainActivity, LyricsSettingsActivity::class.java))
                 },
+                NexusUi.block(),
             )
+            addView(BusTheme.gap(this@MainActivity, 9))
             addView(
-                notificationSettings,
-                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
-                    marginStart = BusTheme.dp(this@MainActivity, 5)
+                pluginRow(
+                    index = "02",
+                    glyph = "\u25C6",
+                    title = "Transit",
+                    subtitle = "nearby departures",
+                ) {
+                    startActivity(Intent(this@MainActivity, TransitSettingsActivity::class.java))
                 },
+                NexusUi.block(),
             )
-        }
-
-        val root = BusTheme.root(this).apply {
-            addView(BusTheme.wordmark(this@MainActivity, "Rokid Nexus"))
-            addView(BusTheme.gap(this@MainActivity, 30))
-            addView(heroView)
             addView(BusTheme.gap(this@MainActivity, 6))
-            addView(BusTheme.heroSub(this@MainActivity, "glasses bus · cxr-l + spp"))
-            addView(BusTheme.gap(this@MainActivity, 28))
+            addView(storeRow(), NexusUi.block())
+        }
+
+        val scroll = ScrollView(this).apply {
+            setBackgroundColor(NexusUi.BG)
+            isFillViewport = true
+            isVerticalScrollBarEnabled = false
             addView(
-                BusTheme.tileRow(this@MainActivity, listOf(cxrTile, sppTile, hiRokidTile)),
-                blockLayout(),
+                content,
+                ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ),
             )
-            addView(BusTheme.gap(this@MainActivity, 12))
-            addView(notificationRow, blockLayout())
-            addView(BusTheme.gap(this@MainActivity, 26))
-            addView(actions, blockLayout())
-            addView(BusTheme.gap(this@MainActivity, 30))
-            addView(BusTheme.tinyLabel(this@MainActivity, "Console"))
-            addView(BusTheme.gap(this@MainActivity, 10))
+        }
+
+        val root = NexusUi.fixedRoot(this).apply {
+            addView(header(), NexusUi.block())
             addView(
-                logScroll,
+                scroll,
                 LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     0,
                     1f,
                 ),
             )
+            addView(footer(), NexusUi.block())
         }
+
+        renderLinkState()
+        refreshToggle()
+        rebuildSetupSection()
         setContentView(root)
     }
 
-    private fun blockLayout(): LinearLayout.LayoutParams =
-        LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-        )
-
-    private fun actionButtonLayout(isFirst: Boolean): LinearLayout.LayoutParams =
-        LinearLayout.LayoutParams(
-            0,
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-            1f,
-        ).apply {
-            if (isFirst) {
-                marginEnd = BusTheme.dp(this@MainActivity, 5)
-            } else {
-                marginStart = BusTheme.dp(this@MainActivity, 5)
-            }
+    private fun header(): LinearLayout =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(
+                LinearLayout(this@MainActivity).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    setPadding(
+                        NexusUi.dp(this@MainActivity, 22),
+                        NexusUi.dp(this@MainActivity, 14),
+                        NexusUi.dp(this@MainActivity, 18),
+                        NexusUi.dp(this@MainActivity, 14),
+                    )
+                    addView(
+                        NexusUi.wordmark(this@MainActivity, "Rokid Nexus"),
+                        LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+                    )
+                    addView(gearButton())
+                },
+                NexusUi.block(),
+            )
+            addView(line())
         }
 
-    private fun requestBluetoothConnectIfNeeded() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
-            checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED
-        ) {
-            requestPermissions(arrayOf(Manifest.permission.BLUETOOTH_CONNECT), 20)
+    private fun gearButton(): FrameLayout {
+        gearIcon = ImageView(this).apply {
+            setImageResource(R.drawable.ic_gear)
+            imageTintList = ColorStateList.valueOf(NexusUi.INK3)
+        }
+        gearPip = View(this).apply {
+            visibility = View.GONE
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(NexusUi.AMBER)
+                setStroke(NexusUi.dp(this@MainActivity, 2), NexusUi.BG)
+            }
+        }
+        return FrameLayout(this).apply {
+            isClickable = true
+            isFocusable = true
+            background = NexusUi.pressed(this@MainActivity, android.graphics.Color.TRANSPARENT, 22)
+            setOnClickListener { startActivity(Intent(this@MainActivity, SettingsActivity::class.java)) }
+            addView(
+                gearIcon,
+                FrameLayout.LayoutParams(
+                    NexusUi.dp(this@MainActivity, 24),
+                    NexusUi.dp(this@MainActivity, 24),
+                    Gravity.CENTER,
+                ),
+            )
+            addView(
+                gearPip,
+                FrameLayout.LayoutParams(
+                    NexusUi.dp(this@MainActivity, 8),
+                    NexusUi.dp(this@MainActivity, 8),
+                    Gravity.TOP or Gravity.END,
+                ).apply {
+                    topMargin = NexusUi.dp(this@MainActivity, 7)
+                    marginEnd = NexusUi.dp(this@MainActivity, 7)
+                },
+            )
+            layoutParams = LinearLayout.LayoutParams(
+                NexusUi.dp(this@MainActivity, 44),
+                NexusUi.dp(this@MainActivity, 44),
+            )
         }
     }
 
+    private fun footer(): LinearLayout =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(line())
+            addView(
+                toggleButton,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ).apply {
+                    leftMargin = NexusUi.dp(this@MainActivity, 22)
+                    topMargin = NexusUi.dp(this@MainActivity, 12)
+                    rightMargin = NexusUi.dp(this@MainActivity, 22)
+                    bottomMargin = NexusUi.dp(this@MainActivity, 24)
+                },
+            )
+        }
+
+    private fun line(): View =
+        View(this).apply {
+            setBackgroundColor(NexusUi.LINE)
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                NexusUi.dp(this@MainActivity, 1),
+            )
+        }
+
+    private fun pluginRow(
+        index: String,
+        glyph: String,
+        title: String,
+        subtitle: String,
+        onClick: () -> Unit,
+    ): LinearLayout =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = NexusUi.pressedBordered(this@MainActivity, NexusUi.PANEL, 15)
+            setPadding(
+                NexusUi.dp(this@MainActivity, 15),
+                NexusUi.dp(this@MainActivity, 14),
+                NexusUi.dp(this@MainActivity, 15),
+                NexusUi.dp(this@MainActivity, 14),
+            )
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { onClick() }
+            addView(
+                NexusUi.metaLabel(this@MainActivity, index, NexusUi.GREEN_DIM).apply {
+                    textSize = 11f
+                    letterSpacing = 0f
+                },
+                LinearLayout.LayoutParams(
+                    NexusUi.dp(this@MainActivity, 20),
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ),
+            )
+            addView(
+                NexusUi.iconTile(this@MainActivity, glyph),
+                LinearLayout.LayoutParams(
+                    NexusUi.dp(this@MainActivity, 34),
+                    NexusUi.dp(this@MainActivity, 34),
+                ).apply { marginStart = NexusUi.dp(this@MainActivity, 13) },
+            )
+            addView(
+                LinearLayout(this@MainActivity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    addView(NexusUi.rowTitle(this@MainActivity, title))
+                    addView(BusTheme.gap(this@MainActivity, 4))
+                    addView(NexusUi.rowSub(this@MainActivity, subtitle))
+                },
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    marginStart = NexusUi.dp(this@MainActivity, 13)
+                },
+            )
+            addView(NexusUi.chevron(this@MainActivity))
+        }
+
+    private fun storeRow(): LinearLayout =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = NexusUi.bordered(
+                context = this@MainActivity,
+                fill = NexusUi.alpha(NexusUi.GREEN, 0x08),
+                stroke = 0xFF2C4A37.toInt(),
+                radius = 15,
+                dashWidthDp = 5,
+                dashGapDp = 4,
+            )
+            setPadding(
+                NexusUi.dp(this@MainActivity, 15),
+                NexusUi.dp(this@MainActivity, 16),
+                NexusUi.dp(this@MainActivity, 15),
+                NexusUi.dp(this@MainActivity, 16),
+            )
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { startActivity(Intent(this@MainActivity, StoreActivity::class.java)) }
+            addView(
+                TextView(this@MainActivity).apply {
+                    text = "+"
+                    textSize = 18f
+                    typeface = Typeface.MONOSPACE
+                    gravity = Gravity.CENTER
+                    includeFontPadding = false
+                    setTextColor(NexusUi.GREEN)
+                    background = NexusUi.bordered(
+                        this@MainActivity,
+                        android.graphics.Color.TRANSPARENT,
+                        0xFF2C4A37.toInt(),
+                        9,
+                    )
+                },
+                LinearLayout.LayoutParams(
+                    NexusUi.dp(this@MainActivity, 34),
+                    NexusUi.dp(this@MainActivity, 34),
+                ),
+            )
+            addView(
+                LinearLayout(this@MainActivity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    addView(NexusUi.rowTitle(this@MainActivity, "Browse the Store").apply { textSize = 14f })
+                    addView(BusTheme.gap(this@MainActivity, 4))
+                    addView(NexusUi.rowSub(this@MainActivity, "3 new plugins"))
+                },
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    marginStart = NexusUi.dp(this@MainActivity, 13)
+                },
+            )
+            addView(NexusUi.chevron(this@MainActivity).apply { setTextColor(NexusUi.GREEN) })
+        }
+
+    private fun rebuildSetupSection() {
+        if (!::setupSection.isInitialized) return
+        setupSection.removeAllViews()
+        val cards = buildList {
+            if (savedToken().isBlank()) {
+                add(
+                    setupCard(
+                        title = "Connect your glasses",
+                        body = "Authorize Nexus with the Hi Rokid app so it can talk to your glasses.",
+                        action = "Authorize",
+                    ) { startAuthorization() },
+                )
+            }
+            if (needsBluetoothPermission()) {
+                add(
+                    setupCard(
+                        title = "Nearby devices",
+                        body = "Bluetooth permission is needed to reach the glasses.",
+                        action = "Allow",
+                    ) { requestBluetoothConnectIfNeeded() },
+                )
+            }
+            if (!LyricsRuntimeGraph.notificationAccessEnabled(this@MainActivity)) {
+                add(
+                    setupCard(
+                        title = "Notification access",
+                        body = "Lets Lyrics see what is playing so it can show live lyrics.",
+                        action = "Open settings",
+                    ) {
+                        logLine("Opening notification access settings")
+                        startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                    },
+                )
+            }
+            if (!hasLocationPermission()) {
+                add(
+                    setupCard(
+                        title = "Location access",
+                        body = "Lets Transit find stops and departures near you.",
+                        action = "Allow",
+                    ) {
+                        logLine("Requesting location permission")
+                        requestLocationIfNeeded()
+                    },
+                )
+            }
+        }
+        if (cards.isEmpty()) {
+            setupSection.visibility = View.GONE
+            return
+        }
+        setupSection.visibility = View.VISIBLE
+        setupSection.addView(NexusUi.sectionRow(this, "Set up"), NexusUi.block())
+        setupSection.addView(BusTheme.gap(this, 12))
+        cards.forEachIndexed { index, card ->
+            if (index > 0) setupSection.addView(BusTheme.gap(this, 10))
+            setupSection.addView(card, NexusUi.block())
+        }
+        setupSection.addView(BusTheme.gap(this, 28))
+    }
+
+    private fun setupCard(
+        title: String,
+        body: String,
+        action: String,
+        onClick: () -> Unit,
+    ): LinearLayout =
+        NexusUi.card(this).apply {
+            addView(NexusUi.cardTitle(this@MainActivity, title))
+            addView(BusTheme.gap(this@MainActivity, 6))
+            addView(NexusUi.cardBody(this@MainActivity, body))
+            addView(BusTheme.gap(this@MainActivity, 8))
+            addView(
+                NexusUi.textButton(this@MainActivity, action).apply {
+                    setOnClickListener { onClick() }
+                },
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ).apply { gravity = Gravity.END },
+            )
+        }
+
+    private fun toggleHub() {
+        if (BusHubService.isEnabled(this)) {
+            logLine("Stopping hub")
+            BusHubService.stop(this)
+            setToggle(enabled = false)
+            renderLinkState(hubEnabled = false)
+        } else {
+            logLine("Starting hub")
+            BusHubService.start(this)
+            setToggle(enabled = true)
+            renderLinkState(hubEnabled = true)
+        }
+    }
+
+    private fun startAuthorization() {
+        when (val result = CxrLAuth.requestAuthorization(this, NexusPhoneState.AUTH_REQUEST)) {
+            null -> logLine("Hi Rokid authorization opened")
+            is CxrLAuth.Result.Fail -> logLine("Authorization failed: ${result.reason}")
+            CxrLAuth.Result.Cancel -> logLine("Authorization canceled")
+            is CxrLAuth.Result.Success -> Unit
+        }
+    }
+
+    private fun requestBluetoothConnectIfNeeded() {
+        if (needsBluetoothPermission()) {
+            requestPermissions(
+                arrayOf(Manifest.permission.BLUETOOTH_CONNECT),
+                BLUETOOTH_PERMISSION_REQUEST,
+            )
+        }
+    }
+
+    private fun needsBluetoothPermission(): Boolean =
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+            checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED
+
+    private fun requestLocationIfNeeded() {
+        if (hasLocationPermission()) return
+        requestPermissions(
+            arrayOf(
+                Manifest.permission.ACCESS_FINE_LOCATION,
+                Manifest.permission.ACCESS_COARSE_LOCATION,
+            ),
+            LOCATION_PERMISSION_REQUEST,
+        )
+    }
+
+    private fun hasLocationPermission(): Boolean =
+        checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+            checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+
     private fun savedToken(): String =
-        getSharedPreferences(PREFS, MODE_PRIVATE).getString(PREF_TOKEN, "").orEmpty()
+        getSharedPreferences(NexusPhoneState.PREFS, MODE_PRIVATE)
+            .getString(NexusPhoneState.PREF_TOKEN, "")
+            .orEmpty()
 
     private fun refreshToggle() {
         setToggle(BusHubService.isEnabled(this))
@@ -237,53 +525,43 @@ class MainActivity : Activity() {
 
     private fun setToggle(enabled: Boolean) {
         toggleButton.text = if (enabled) "STOP HUB" else "START HUB"
-        toggleButton.setTextColor(if (enabled) BusTheme.danger else BusTheme.phosphor)
     }
 
     private fun handleHubEvent(event: BusEvent) {
         when (event) {
             is BusEvent.LinkState -> {
-                updateLinkState(event.state)
+                lastLinkState = event.state
+                renderLinkState()
                 refreshToggle()
             }
-            is BusEvent.Error -> appendLog("hub-ui: ${event.message}")
+            is BusEvent.Error -> logLine("hub-ui: ${event.message}")
             is BusEvent.Message -> Unit
             is BusEvent.Binary -> Unit
         }
     }
 
-    private fun updateLinkState(state: Int) {
-        val cxrUp = state and LINK_CXR_CONTROL_UP != 0
-        val sppUp = state and LINK_SPP_DATA_UP != 0
-        val bonded = state and LINK_GLASS_BONDED != 0
-        cxrTile.set(cxrUp, if (cxrUp) "up" else "down")
-        sppTile.set(sppUp, if (sppUp) "up" else "down")
-        hiRokidTile.set(bonded, if (bonded) "bonded" else "away")
-        when {
-            cxrUp && sppUp -> {
-                heroView.text = "Online"
-                heroView.setTextColor(BusTheme.phosphor)
-            }
-            cxrUp || sppUp -> {
-                heroView.text = "Partial"
-                heroView.setTextColor(BusTheme.text)
-            }
-            else -> {
-                heroView.text = "Offline"
-                heroView.setTextColor(BusTheme.muted)
-            }
+    private fun renderLinkState(hubEnabled: Boolean = BusHubService.isEnabled(this)) {
+        val cxrUp = lastLinkState and LinkStateBits.CXR_CONTROL_UP != 0
+        val sppUp = lastLinkState and LinkStateBits.SPP_DATA_UP != 0
+        val connected = hubEnabled && cxrUp && sppUp
+        val tint = when {
+            NexusPhoneState.updateAvailable -> NexusUi.AMBER
+            connected -> NexusUi.GREEN
+            else -> NexusUi.INK3
+        }
+        if (::gearIcon.isInitialized) {
+            gearIcon.imageTintList = ColorStateList.valueOf(tint)
+            gearPip.visibility = if (NexusPhoneState.updateAvailable) View.VISIBLE else View.GONE
         }
     }
 
-    private fun updateNotificationAccess() {
-        if (!::notificationTile.isInitialized) return
-        val granted = LyricsRuntimeGraph.notificationAccessEnabled(this)
-        notificationTile.set(granted, if (granted) "granted" else "needed")
-    }
-
-    private fun appendLog(line: String) {
+    private fun logLine(line: String) {
         if (line.isBlank()) return
-        logView.append(line + "\n")
-        logScroll.post { logScroll.fullScroll(ScrollView.FOCUS_DOWN) }
+        Log.i(TAG, line)
+        sendBroadcast(
+            Intent(NexusPhoneState.ACTION_LOG)
+                .setPackage(packageName)
+                .putExtra("line", line),
+        )
     }
 }

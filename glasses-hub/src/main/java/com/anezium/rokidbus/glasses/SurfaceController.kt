@@ -15,9 +15,14 @@ import java.util.concurrent.CopyOnWriteArrayList
 object SurfaceController {
     private const val PREFS = "surface_renderer"
     private const val PREF_DISPLAY_PATH = "display_path"
+    private const val BACK_FAILSAFE_MS = 1_500L
     private val main = Handler(Looper.getMainLooper())
     private val latestSeqBySurface = ConcurrentHashMap<String, Long>()
     private val listeners = CopyOnWriteArrayList<(NexusSurface?) -> Unit>()
+    private val inputDedupe = DpadPairDedupe()
+    private val suppressedDpadUps = mutableSetOf<Int>()
+    private var backFailsafeSurfaceId: String? = null
+    private var backFailsafe: Runnable? = null
     @Volatile private var active: NexusSurface? = null
 
     fun activeSurface(): NexusSurface? = active
@@ -80,12 +85,25 @@ object SurfaceController {
             title = "Rokid Nexus",
             subtitle = "surface renderer demo",
             footer = path.prefValue,
-            textLines = listOf(
-                "Card surface is rendering locally.",
-                "Back hides it and reports input to the phone.",
-            ),
+            // Width/height ruler: count the last digit that fits before the wrap
+            // and the last row number that renders to calibrate card formatters.
+            rows = listOf(
+                "123456789012345678901234567890",
+                "row 02",
+                "row 03",
+                "row 04",
+                "row 05",
+                "row 06",
+                "row 07",
+                "row 08",
+                "row 09",
+                "row 10",
+                "row 11",
+                "row 12",
+            ).map { SurfaceRow(text = it) },
             timedLines = emptyList(),
             anchor = null,
+            handlesBack = false,
         )
         showOrUpdate(context.applicationContext, surface, forcedPath = path)
         return "surfaceDemo=${path.prefValue} surfaceId=${surface.surfaceId}"
@@ -93,19 +111,34 @@ object SurfaceController {
 
     fun handleKeyEvent(event: KeyEvent): Boolean {
         val surface = active ?: return false
-        if (event.action == KeyEvent.ACTION_DOWN || event.action == KeyEvent.ACTION_UP) {
-            GlassesHub.sendSurfaceInput(
-                JSONObject()
-                    .put("surfaceId", surface.surfaceId)
-                    .put("keyCode", event.keyCode)
-                    .put("action", event.action),
-            )
+        if (shouldSuppressDpadEvent(event)) {
+            return true
+        }
+        if ((event.action == KeyEvent.ACTION_DOWN || event.action == KeyEvent.ACTION_UP) &&
+            event.keyCode in FORWARDED_KEYS
+        ) {
+            forwardSurfaceInput(event.keyCode, event.action)
         }
         if (event.keyCode == KeyEvent.KEYCODE_BACK && event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
-            hideLocal()
+            if (surface.handlesBack) {
+                armBackFailsafe(surface.surfaceId)
+            } else {
+                hideLocal()
+            }
             return true
         }
         return event.keyCode in FORWARDED_KEYS
+    }
+
+    fun forwardSurfaceInput(keyCode: Int, action: Int): Boolean {
+        val surface = active ?: return false
+        GlassesHub.sendSurfaceInput(
+            JSONObject()
+                .put("surfaceId", surface.surfaceId)
+                .put("keyCode", keyCode)
+                .put("action", action),
+        )
+        return true
     }
 
     private fun showOrUpdate(
@@ -120,6 +153,7 @@ object SurfaceController {
         }
         latestSeqBySurface[surface.surfaceId] = surface.seq
         main.post {
+            cancelBackFailsafeOnMain(surface.surfaceId)
             wakeScreen(context)
             active = surface
             notifyListeners(surface)
@@ -159,16 +193,67 @@ object SurfaceController {
             return
         }
         latestSeqBySurface[surfaceId] = seq
-        if (active?.surfaceId == surfaceId) {
-            hideLocal()
+        main.post {
+            cancelBackFailsafeOnMain(surfaceId)
+            if (active?.surfaceId == surfaceId) {
+                hideLocalOnMain()
+            }
         }
     }
 
     private fun hideLocal() {
-        main.post {
-            active = null
-            notifyListeners(null)
-            SurfaceOverlayRenderer.hide()
+        runOnMain { hideLocalOnMain() }
+    }
+
+    private fun hideLocalOnMain() {
+        active?.surfaceId?.let { cancelBackFailsafeOnMain(it) }
+        active = null
+        notifyListeners(null)
+        SurfaceOverlayRenderer.hide()
+    }
+
+    private fun shouldSuppressDpadEvent(event: KeyEvent): Boolean {
+        if (event.keyCode !in DPAD_DIRECTION_KEYS) return false
+        if (event.action == KeyEvent.ACTION_UP && suppressedDpadUps.remove(event.keyCode)) {
+            return true
+        }
+        if (event.action != KeyEvent.ACTION_DOWN || event.repeatCount != 0) return false
+        val direction = inputDedupe.onKey(event.keyCode, event.action, event.repeatCount, event.eventTime)
+        if (direction != null) return false
+        suppressedDpadUps += event.keyCode
+        return true
+    }
+
+    private fun armBackFailsafe(surfaceId: String) {
+        runOnMain {
+            cancelBackFailsafeOnMain()
+            val runnable = Runnable {
+                if (active?.surfaceId == surfaceId) {
+                    hideLocalOnMain()
+                }
+                if (backFailsafeSurfaceId == surfaceId) {
+                    backFailsafeSurfaceId = null
+                    backFailsafe = null
+                }
+            }
+            backFailsafeSurfaceId = surfaceId
+            backFailsafe = runnable
+            main.postDelayed(runnable, BACK_FAILSAFE_MS)
+        }
+    }
+
+    private fun cancelBackFailsafeOnMain(surfaceId: String? = null) {
+        if (surfaceId != null && backFailsafeSurfaceId != surfaceId) return
+        backFailsafe?.let { main.removeCallbacks(it) }
+        backFailsafeSurfaceId = null
+        backFailsafe = null
+    }
+
+    private fun runOnMain(action: () -> Unit) {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            action()
+        } else {
+            main.post(action)
         }
     }
 
@@ -219,5 +304,12 @@ object SurfaceController {
         KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
         KeyEvent.KEYCODE_MEDIA_NEXT,
         KeyEvent.KEYCODE_MEDIA_PREVIOUS,
+    )
+
+    private val DPAD_DIRECTION_KEYS = setOf(
+        KeyEvent.KEYCODE_DPAD_LEFT,
+        KeyEvent.KEYCODE_DPAD_RIGHT,
+        KeyEvent.KEYCODE_DPAD_UP,
+        KeyEvent.KEYCODE_DPAD_DOWN,
     )
 }

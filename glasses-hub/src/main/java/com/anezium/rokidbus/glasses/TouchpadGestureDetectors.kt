@@ -50,6 +50,14 @@ class TripleTapDetector(
         return Decision.TRIGGER
     }
 
+    fun consumeExpiredTapCount(eventTimeMs: Long): Int {
+        val latest = contactTimes.lastOrNull() ?: return 0
+        if (eventTimeMs - latest <= windowMs) return 0
+        val count = contactTimes.size.coerceAtMost(2)
+        contactTimes.clear()
+        return count
+    }
+
     private fun isSuppressedClassification(keyCode: Int, eventTimeMs: Long): Boolean =
         eventTimeMs <= suppressClassificationsUntilMs && (keyCode == backKeyCode || keyCode == enterKeyCode)
 
@@ -105,6 +113,10 @@ class DpadPairDedupe(
         const val KEYCODE_DPAD_DOWN = 20
         const val KEYCODE_DPAD_LEFT = 21
         const val KEYCODE_DPAD_RIGHT = 22
-        const val DEFAULT_PAIR_WINDOW_MS = 50L
+
+        // Hardware swipes emit their duplicated key 20-80ms apart (measured on
+        // device 2026-07-08); 50ms sat inside that jitter and let doubles through.
+        // Deliberate repeat swipes are never faster than ~200ms, so 150ms is safe.
+        const val DEFAULT_PAIR_WINDOW_MS = 150L
     }
 }

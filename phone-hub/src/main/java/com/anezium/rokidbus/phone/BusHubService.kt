@@ -19,6 +19,7 @@ import android.util.Log
 import com.anezium.rokidbus.client.IBusCallback
 import com.anezium.rokidbus.client.IBusService
 import com.anezium.rokidbus.lyrics.LyricsPlugin
+import com.anezium.rokidbus.plugin.transit.TransitPlugin
 import com.anezium.rokidbus.shared.BusConstants
 import com.anezium.rokidbus.shared.BusEnvelope
 import com.anezium.rokidbus.shared.BusPaths
@@ -181,7 +182,7 @@ class BusHubService : Service() {
         PhoneClientSupervisor.attach(this)
         pluginRegistry = PhonePluginRegistry(
             context = applicationContext,
-            plugins = listOf(LyricsPlugin()),
+            plugins = listOf(LyricsPlugin(), TransitPlugin()),
             sendEnvelope = { envelope -> sendRemote(envelope) },
             logger = { message -> log(message) },
         )
@@ -748,7 +749,7 @@ class BusHubService : Service() {
             .setContentText("CXR-L and SPP bus hub running")
             .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
             .build()
-        startForeground(1, notification, ServiceInfoCompat.connectedDeviceType())
+        startForeground(1, notification, ServiceInfoCompat.hubTypes(this))
     }
 
     private fun linkState(): Int {
