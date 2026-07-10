@@ -37,7 +37,6 @@ import com.rokid.cxr.Caps
 import org.json.JSONObject
 import java.io.OutputStream
 import java.net.HttpURLConnection
-import java.net.URL
 import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executors
@@ -568,48 +567,71 @@ class BusHubService : Service() {
 
     private fun fetchAndStream(envelope: BusEnvelope, replyRemote: Boolean) {
         val request = envelope.payload
-        val urlText = request.optString("url")
         val reply = { meta: JSONObject, data: ByteArray ->
             val response = BusEnvelope(path = BusPaths.HTTP_REPLY, id = envelope.id, payload = meta, binary = data)
             if (replyRemote) sendRemote(response) else deliverLocal(response)
         }
-        val url = runCatching { URL(urlText) }.getOrNull()
-        if (url == null || url.host != "api.transitous.org") {
-            reply(
-                JSONObject()
-                    .put("status", 0)
-                    .put("bytes", 0)
-                    .put("error", "HTTP host not allowed")
-                    .put("done", true)
-                    .put("totalBytes", 0),
-                ByteArray(0),
-            )
+        var terminalSent = false
+        fun terminal(status: Int, totalBytes: Long, errorCode: String? = null) {
+            if (terminalSent) return
+            terminalSent = true
+            val meta = JSONObject()
+                .put("status", status)
+                .put("bytes", 0)
+                .put("done", true)
+                .put("totalBytes", totalBytes)
+            errorCode?.let { meta.put("error", it) }
+            reply(meta, ByteArray(0))
+        }
+
+        val callerHeaders = linkedMapOf<String, String>()
+        request.optJSONObject("headers")?.let { headers ->
+            headers.keys().forEach { name -> callerHeaders[name] = headers.optString(name) }
+        }
+        val validation = HttpProxyPolicy.validate(
+            urlText = request.optString("url"),
+            methodText = request.optString("method", "GET").ifBlank { "GET" },
+            callerHeaders = callerHeaders,
+            body = request.optString("body").toByteArray(Charsets.UTF_8),
+        )
+        if (validation is HttpProxyPolicy.Validation.Rejected) {
+            terminal(status = 0, totalBytes = 0L, errorCode = validation.errorCode)
+            log("HTTP proxy rejected code=${validation.errorCode}")
             return
         }
+        val allowed = (validation as HttpProxyPolicy.Validation.Allowed).request
         var connection: HttpURLConnection? = null
+        var totalBytes = 0L
         try {
-            connection = (url.openConnection() as HttpURLConnection).apply {
+            connection = (allowed.url.openConnection() as HttpURLConnection).apply {
                 connectTimeout = 10_000
                 readTimeout = 20_000
-                requestMethod = request.optString("method", "GET").ifBlank { "GET" }
-                request.optJSONObject("headers")?.let { headers ->
-                    headers.keys().forEach { key -> setRequestProperty(key, headers.optString(key)) }
-                }
-                val body = request.optString("body")
-                if (body.isNotBlank()) {
+                instanceFollowRedirects = allowed.followRedirects
+                requestMethod = allowed.method
+                allowed.headers.forEach(::setRequestProperty)
+                if (allowed.body.isNotEmpty()) {
                     doOutput = true
-                    outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
+                    outputStream.use { it.write(allowed.body) }
                 }
             }
             val status = connection.responseCode
             val stream = if (status in 200..299) connection.inputStream else connection.errorStream
-            var total = 0L
+            val budget = HttpProxyPolicy.ResponseBudget()
             val buffer = ByteArray(16 * 1024)
-            stream.use { input ->
+            stream?.use { input ->
                 while (true) {
                     val read = input.read(buffer)
                     if (read == -1) break
-                    total += read
+                    if (!budget.accept(read)) {
+                        terminal(
+                            status = status,
+                            totalBytes = budget.totalBytes,
+                            errorCode = "RESPONSE_TOO_LARGE",
+                        )
+                        log("HTTP proxy failed code=RESPONSE_TOO_LARGE totalBytes=${budget.totalBytes}")
+                        return
+                    }
+                    totalBytes = budget.totalBytes
                     reply(
                         JSONObject()
                             .put("status", status)
@@ -619,25 +641,11 @@ class BusHubService : Service() {
                     )
                 }
             }
-            reply(
-                JSONObject()
-                    .put("status", status)
-                    .put("bytes", 0)
-                    .put("done", true)
-                    .put("totalBytes", total),
-                ByteArray(0),
-            )
-            log("HTTP proxy complete status=$status totalBytes=$total")
-        } catch (t: Throwable) {
-            reply(
-                JSONObject()
-                    .put("status", 0)
-                    .put("bytes", 0)
-                    .put("error", t.javaClass.simpleName + ": " + (t.message ?: "no message"))
-                    .put("done", true)
-                    .put("totalBytes", 0),
-                ByteArray(0),
-            )
+            terminal(status = status, totalBytes = budget.totalBytes)
+            log("HTTP proxy complete status=$status totalBytes=${budget.totalBytes}")
+        } catch (_: Throwable) {
+            terminal(status = 0, totalBytes = totalBytes, errorCode = "UPSTREAM_FAILURE")
+            log("HTTP proxy failed code=UPSTREAM_FAILURE")
         } finally {
             connection?.disconnect()
         }
