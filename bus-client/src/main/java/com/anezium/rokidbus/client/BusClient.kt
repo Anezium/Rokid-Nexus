@@ -18,7 +18,6 @@ import kotlinx.coroutines.withTimeout
 import org.json.JSONObject
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.ConcurrentLinkedQueue
 
 private const val TAG = "RokidBusClient"
 private const val DEFAULT_TIMEOUT_MS = 15_000L
@@ -42,18 +41,11 @@ class BusClient(
         val onFailure: (Throwable) -> Unit,
     )
 
-    private data class Outgoing(
-        val path: String,
-        val id: String,
-        val payload: ByteArray,
-        val binary: ByteArray? = null,
-    )
-
     private val appContext = context.applicationContext
     private val main = Handler(Looper.getMainLooper())
     private val receivePrefixes = (pathPrefixes + BusPaths.ERROR).distinct().toTypedArray()
     private val pending = ConcurrentHashMap<String, Pending>()
-    private val queued = ConcurrentLinkedQueue<Outgoing>()
+    private val queued = BoundedOutgoingQueue()
     private var service: IBusService? = null
     private var bound = false
     private var closed = false
@@ -133,16 +125,24 @@ class BusClient(
         val bytes = payload.toString().toByteArray(Charsets.UTF_8)
         val hub = service
         if (hub == null) {
-            queued += Outgoing(path, id, bytes)
+            reportQueueMutation(
+                queued.offerJson(path, id, bytes),
+                operation = "json queue",
+            )
             connect()
             return id
         }
         runCatching {
             hub.send(path, id, bytes)
         }.onFailure {
-            queued += Outgoing(path, id, bytes)
+            val mutation = queued.offerJson(path, id, bytes)
             service = null
-            listener(BusEvent.Error("send failed; queued for reconnect", it))
+            listener(
+                BusEvent.Error(
+                    mutation.errorMessage("json send failed; reconnect queue")
+                        ?: "json send failed; queued for reconnect",
+                ),
+            )
             scheduleReconnect()
         }
         return id
@@ -155,16 +155,21 @@ class BusClient(
         val bytes = meta.toString().toByteArray(Charsets.UTF_8)
         val hub = service
         if (hub == null) {
-            queued += Outgoing(path, id, bytes, data)
+            reportQueueMutation(
+                queued.rejectBinary(),
+                operation = "binary send offline; payload not retained",
+            )
             connect()
             return id
         }
         runCatching {
             hub.sendBinary(path, id, bytes, data)
         }.onFailure {
-            queued += Outgoing(path, id, bytes, data)
             service = null
-            listener(BusEvent.Error("sendBinary failed; queued for reconnect", it))
+            reportQueueMutation(
+                queued.rejectBinary(),
+                operation = "binary send failed; payload not retained",
+            )
             scheduleReconnect()
         }
         return id
@@ -261,20 +266,34 @@ class BusClient(
     private fun flushQueued() {
         val hub = service ?: return
         while (true) {
-            val next = queued.poll() ?: return
+            val poll = queued.poll()
+            if (poll.expiredCount > 0) {
+                reportQueueMutation(
+                    QueueMutation(accepted = true, expiredCount = poll.expiredCount),
+                    operation = "json reconnect queue",
+                )
+            }
+            val next = poll.item ?: return
             try {
-                val data = next.binary
-                if (data == null) {
-                    hub.send(next.path, next.id, next.payload)
-                } else {
-                    hub.sendBinary(next.path, next.id, next.payload, data)
-                }
-            } catch (e: RemoteException) {
-                queued += next
+                hub.send(next.path, next.id, next.payload)
+            } catch (_: RemoteException) {
+                val mutation = queued.requeueFirst(next)
                 service = null
+                listener(
+                    BusEvent.Error(
+                        mutation.errorMessage("json resend failed; reconnect queue")
+                            ?: "json resend failed; queued for reconnect",
+                    ),
+                )
                 scheduleReconnect()
                 return
             }
+        }
+    }
+
+    private fun reportQueueMutation(mutation: QueueMutation, operation: String) {
+        mutation.errorMessage(operation)?.let { message ->
+            listener(BusEvent.Error(message))
         }
     }
 
