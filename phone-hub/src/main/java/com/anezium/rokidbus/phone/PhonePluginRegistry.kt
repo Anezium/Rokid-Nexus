@@ -40,11 +40,24 @@ class PhonePluginRegistry(
     }
 
     override fun send(path: String, payload: JSONObject) {
+        sendPluginEnvelope(path = path, id = null, payload = payload)
+    }
+
+    override fun send(path: String, id: String, payload: JSONObject) {
+        sendPluginEnvelope(path = path, id = id, payload = payload)
+    }
+
+    private fun sendPluginEnvelope(path: String, id: String?, payload: JSONObject) {
         if (path == BusPaths.SURFACE_HIDE && payload.optString("surfaceId") == activePluginId) {
             activePluginId = null
         }
         val outgoing = payload.withSurfaceMetadata(path)
-        val error = sendEnvelope(BusEnvelope(path = path, payload = outgoing))
+        val envelope = if (id == null) {
+            BusEnvelope(path = path, payload = outgoing)
+        } else {
+            BusEnvelope(path = path, id = id, payload = outgoing)
+        }
+        val error = sendEnvelope(envelope)
         if (error != null) logger("plugin send failed path=$path code=$error")
     }
 
@@ -98,7 +111,7 @@ class PhonePluginRegistry(
             JSONObject().put(
                 "plugins",
                 JSONArray().also { array ->
-                    pluginsById.values.forEach { plugin ->
+                    pluginsById.values.filter { it.launchable }.forEach { plugin ->
                         array.put(
                             JSONObject()
                                 .put("id", plugin.id)
@@ -130,7 +143,7 @@ class PhonePluginRegistry(
     }
 
     private fun open(pluginId: String): Boolean {
-        val plugin = pluginsById[pluginId] ?: return false
+        val plugin = pluginsById[pluginId]?.takeIf { it.launchable } ?: return false
         activePluginId?.takeIf { it != plugin.id }?.let { previous ->
             pluginsById[previous]?.let { previousPlugin ->
                 enqueue("plugin onClose id=${previousPlugin.id}") { previousPlugin.onClose() }

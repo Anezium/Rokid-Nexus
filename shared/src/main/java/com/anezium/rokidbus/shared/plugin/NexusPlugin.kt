@@ -22,6 +22,9 @@ interface NexusPluginHost {
     val context: Context
 
     fun send(path: String, payload: JSONObject)
+    fun send(path: String, id: String, payload: JSONObject) {
+        send(path, payload)
+    }
     fun subscribe(pathPrefix: String, handler: (path: String, id: String, payload: JSONObject) -> Unit): NexusSubscription
     fun post(action: () -> Unit)
     fun log(message: String)
@@ -30,6 +33,8 @@ interface NexusPluginHost {
 interface NexusPlugin {
     val id: String
     val displayName: String
+    val launchable: Boolean
+        get() = true
     val handlesBack: Boolean
         get() = false
 

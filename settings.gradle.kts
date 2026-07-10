@@ -19,11 +19,13 @@ rootProject.name = "RokidNexus"
 include(":shared")
 include(":bus-client")
 include(":plugin-lyrics")
+include(":plugin-media")
 include(":plugin-transit")
 include(":phone-hub")
 include(":glasses-hub")
 include(":phone-client-probe")
 include(":glasses-client-probe")
+include(":lens-glasses")
 
 includeBuild("../CxrGlobal") {
     dependencySubstitution {

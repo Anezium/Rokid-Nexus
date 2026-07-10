@@ -30,7 +30,7 @@ class StoreActivity : Activity() {
         val list = NexusUi.contentColumn(this, topDp = 8).apply {
             addView(
                 storeCard(
-                    glyph = "\u2726",
+                    iconRes = R.drawable.ic_plugin_send,
                     title = "Relay",
                     meta = "Messaging \u00B7 Anezium",
                     description = "Reply to your phone notifications from your glasses, by voice.",
@@ -44,7 +44,23 @@ class StoreActivity : Activity() {
             addView(BusTheme.gap(this@StoreActivity, 10))
             addView(
                 storeCard(
-                    glyph = "\u266A",
+                    iconRes = R.drawable.ic_plugin_disc,
+                    title = "Media Deck",
+                    meta = "Audio \u00B7 installed",
+                    description = "Universal playback controls with a monochrome cover preview.",
+                    size = "Local",
+                    button = "Open",
+                    featured = false,
+                    badge = "New",
+                ) {
+                    startActivity(Intent(this@StoreActivity, MediaDeckSettingsActivity::class.java))
+                },
+                NexusUi.block(),
+            )
+            addView(BusTheme.gap(this@StoreActivity, 10))
+            addView(
+                storeCard(
+                    iconRes = R.drawable.ic_plugin_music,
                     title = "Lyrics",
                     meta = "Audio \u00B7 installed",
                     description = "Synced lyrics for whatever is playing on your phone.",
@@ -60,7 +76,7 @@ class StoreActivity : Activity() {
             addView(BusTheme.gap(this@StoreActivity, 10))
             addView(
                 storeCard(
-                    glyph = "\u25CF",
+                    iconRes = R.drawable.ic_plugin_mic,
                     title = "Scribe",
                     meta = "Audio \u00B7 Anezium",
                     description = "Dictate voice notes, transcribed on your phone.",
@@ -74,7 +90,7 @@ class StoreActivity : Activity() {
             addView(BusTheme.gap(this@StoreActivity, 10))
             addView(
                 storeCard(
-                    glyph = "\u25C6",
+                    iconRes = R.drawable.ic_plugin_bus,
                     title = "Transit",
                     meta = "Transit \u00B7 installed",
                     description = "Nearby departures on your glasses.",
@@ -197,7 +213,7 @@ class StoreActivity : Activity() {
         }
 
     private fun storeCard(
-        glyph: String,
+        iconRes: Int,
         title: String,
         meta: String,
         description: String,
@@ -225,7 +241,7 @@ class StoreActivity : Activity() {
                 LinearLayout(this@StoreActivity).apply {
                     orientation = LinearLayout.HORIZONTAL
                     gravity = Gravity.CENTER_VERTICAL
-                    addView(NexusUi.iconTile(this@StoreActivity, glyph, 40))
+                    addView(NexusUi.iconTileImage(this@StoreActivity, iconRes, 40))
                     addView(
                         LinearLayout(this@StoreActivity).apply {
                             orientation = LinearLayout.VERTICAL

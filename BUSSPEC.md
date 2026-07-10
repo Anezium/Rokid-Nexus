@@ -91,15 +91,17 @@ Every surface payload carries:
 guarantee across CXR-L and SPP, the glasses renderer MUST drop any show, update or
 hide whose `seq` is not newer than the last accepted sequence for that surface.
 Messages are idempotent: the phone can resend the latest complete state at any time.
-Timed-line anchor-only updates may also include a `contentKey`; the glasses hub merges
-such updates only into an active surface with the same key, so an anchor that overtakes
-the full lyrics payload cannot make the later full payload stale.
+Timed-line and media anchor-only updates may also include a `contentKey`; the glasses
+hub merges such updates only into an active surface with the same kind and key, so an
+anchor that overtakes a full payload cannot replace it with an incomplete surface.
 
 Surface kinds v1:
 
 - `card`: `title`, `lines` as an array of strings or `{text}`, and optional `footer`.
 - `timed-lines`: `title`, optional `subtitle`/`footer`, full `lines` as
   `{ "timeMs": 1234, "text": "..." }`, and an `anchor`.
+- `media`: `title`/`subtitle` shell labels, `mediaTitle`, optional
+  `mediaArtist`/`mediaAlbum`, optional bounded one-bit `artwork`, and an `anchor`.
 
 Timed-line anchor:
 
@@ -115,6 +117,49 @@ The phone sends a full timed-lines surface for the current track, then only re-s
 an anchor on play, pause, seek or track change. The glasses hub advances highlighting
 locally from the last accepted anchor using its own monotonic clock, so lyric line
 progress does not depend on repeated phone updates or bus latency.
+
+Media surface v1:
+
+```json
+{
+  "surfaceId": "media",
+  "kind": "media",
+  "mediaVersion": 1,
+  "contentKey": "5d94a53f3a8e6d1b",
+  "title": "MEDIA DECK",
+  "subtitle": "SPOTIFY",
+  "mediaTitle": "Track title",
+  "mediaArtist": "Artist",
+  "mediaAlbum": "Album",
+  "artwork": {
+    "encoding": "mono1",
+    "width": 96,
+    "height": 96,
+    "hash": "38c8c4b94c44f7ba",
+    "data": "<base64 packed bits>"
+  },
+  "anchor": {
+    "positionMs": 62840,
+    "durationMs": 241000,
+    "playing": true,
+    "playbackSpeed": 1.0,
+    "sentAtElapsedRealtime": 123456789
+  }
+}
+```
+
+`mono1` is row-major, most-significant bit first; set bits render in Nexus phosphor
+and unset bits stay transparent. Renderers accept at most 192 x 192 and require the
+decoded byte count to equal `ceil(width * height / 8)`. Media Deck emits 96 x 96
+(1,152 raw bytes) so the complete first frame remains a small declarative payload
+rather than pretending a full-color image is a surface asset. Larger/future artwork belongs
+on an explicit raw-binary asset path.
+
+After the complete surface, the plugin sends anchor-only updates on play, pause, seek,
+or track state changes. Glasses animate the progress bar from their local monotonic
+clock. Swipe aliases select previous/next, tap aliases toggle play/pause, and BACK
+hides the surface. Phone-side metadata and artwork MUST NOT be written to production
+logs.
 
 Launcher list payload:
 
@@ -144,6 +189,83 @@ Surface input payload:
 
 The back key hides the surface locally on glasses and is still reported to the phone
 as `/surface/input` so the active plugin can close its own state.
+
+## Lens protocol v1 (Lens M1)
+
+Lens is an autonomous glasses-side bus client. OCR runs in the Lens glasses APK;
+translation runs inside the phone hub as an in-process plugin/service. Payloads are
+small JSON envelopes only; binary frames are not used for M1.
+
+Lens M1 only starts a translation request while `SPP_DATA_UP` is available. CXR may
+carry small control envelopes, but it is not considered sufficient for Lens because a
+translation response can grow beyond the CXR control-plane limit.
+
+Glasses to phone:
+
+- `/lens/translate/request` requests translations for the OCR block strings missing
+  from the glasses cache.
+
+Request payload:
+
+```json
+{
+  "id": "<same-as-envelope-id>",
+  "targetLang": "fr",
+  "mode": "LATIN",
+  "strings": ["Exit", "Platform 2"]
+}
+```
+
+`mode` is `LATIN` or `JAPANESE`. `strings` are already normalized by the glasses
+client (`trim` + collapsed internal whitespace) and should be unique within the
+request. The client keeps at most one request in flight. A request is limited to 24
+strings, 1,024 characters per string, 16 KiB of source text, and a 48 KiB JSON
+payload.
+
+Phone to glasses:
+
+- `/lens/translate/request/reply` replies with the same envelope `id` and the same
+  payload `id`.
+
+Final reply payload:
+
+```json
+{
+  "id": "<same-as-request-id>",
+  "translations": [
+    { "src": "Exit", "dst": "Sortie", "srcLang": "en", "fallback": false }
+  ]
+}
+```
+
+Each translation item carries `fallback`. `fallback:false` means `dst` is a real
+translation and may be cached by the glasses. `fallback:true` means the phone could
+not translate that string and returned a temporary `dst == src` placeholder; glasses
+clients MUST NOT cache it and MUST clear the in-flight marker so the string can be
+requested again later.
+
+Model-download status payload:
+
+```json
+{
+  "id": "<same-as-request-id>",
+  "status": "downloading",
+  "lang": "ja",
+  "targetLang": "fr"
+}
+```
+
+The phone sends the `downloading` status promptly on first use of a language pair so
+the glasses can show `DOWNLOADING JA->FR` instead of declaring the phone offline.
+When the model is ready, the phone sends the normal final reply on the same topic/id.
+Errors MAY reply with `{ "id": "...", "status": "error", "error": "..." }`; the
+glasses client must keep OCR/outlines working and retry future cache misses normally.
+Stable error values include `BUSY`, `INVALID_REQUEST`, `PAYLOAD_TOO_LARGE`,
+`TRANSLATION_FAILED`, and `TIMEOUT`. Final responses are limited to 128 KiB and use
+SPP. The phone deadline is 8 seconds for an ordinary request and 130 seconds while a
+model is downloading; the matching glasses deadlines are 10 and 135 seconds.
+
+Raw OCR strings and translated text MUST NOT be written to production logs.
 
 ## Transport selection (hub-side routing)
 

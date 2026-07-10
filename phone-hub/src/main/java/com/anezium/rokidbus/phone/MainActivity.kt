@@ -30,6 +30,7 @@ import com.anezium.rokidbus.shared.LinkStateBits
 private const val TAG = "RokidNexusHome"
 private const val BLUETOOTH_PERMISSION_REQUEST = 20
 private const val LOCATION_PERMISSION_REQUEST = 21
+private const val NOTIFICATION_PERMISSION_REQUEST = 22
 
 /** Companion home: fixed status/settings menubar, setup cards, plugin list, store entry and hub toggle. */
 class MainActivity : Activity() {
@@ -50,6 +51,7 @@ class MainActivity : Activity() {
         ) { event -> handleHubEvent(event) }.also { it.connect() }
         requestBluetoothConnectIfNeeded()
         requestLocationIfNeeded()
+        requestNotificationsIfNeeded()
         if (savedToken().isNotBlank() && BusHubService.isEnabled(this)) {
             logLine("Saved Hi Rokid token present")
             BusHubService.start(this)
@@ -118,14 +120,13 @@ class MainActivity : Activity() {
                 addView(BusTheme.gap(this@MainActivity, 14))
             }
             addView(setupSection, NexusUi.block())
-            addView(NexusUi.sectionRow(this@MainActivity, "Plugins", "2 Active"), NexusUi.block())
+            addView(NexusUi.sectionRow(this@MainActivity, "Plugins", "4 Active"), NexusUi.block())
             addView(BusTheme.gap(this@MainActivity, 14))
             addView(
                 pluginRow(
-                    index = "01",
-                    glyph = "\u266A",
+                    iconRes = R.drawable.ic_plugin_music,
                     title = "Lyrics",
-                    subtitle = "now-playing lyrics",
+                    subtitle = "Now-playing lyrics",
                 ) {
                     startActivity(Intent(this@MainActivity, LyricsSettingsActivity::class.java))
                 },
@@ -134,12 +135,33 @@ class MainActivity : Activity() {
             addView(BusTheme.gap(this@MainActivity, 9))
             addView(
                 pluginRow(
-                    index = "02",
-                    glyph = "\u25C6",
+                    iconRes = R.drawable.ic_plugin_disc,
+                    title = "Media Deck",
+                    subtitle = "Universal now playing",
+                ) {
+                    startActivity(Intent(this@MainActivity, MediaDeckSettingsActivity::class.java))
+                },
+                NexusUi.block(),
+            )
+            addView(BusTheme.gap(this@MainActivity, 9))
+            addView(
+                pluginRow(
+                    iconRes = R.drawable.ic_plugin_bus,
                     title = "Transit",
-                    subtitle = "nearby departures",
+                    subtitle = "Nearby departures",
                 ) {
                     startActivity(Intent(this@MainActivity, TransitSettingsActivity::class.java))
+                },
+                NexusUi.block(),
+            )
+            addView(BusTheme.gap(this@MainActivity, 9))
+            addView(
+                pluginRow(
+                    iconRes = R.drawable.ic_plugin_lens,
+                    title = "Lens",
+                    subtitle = "Live camera translation",
+                ) {
+                    startActivity(Intent(this@MainActivity, LensSettingsActivity::class.java))
                 },
                 NexusUi.block(),
             )
@@ -275,8 +297,7 @@ class MainActivity : Activity() {
         }
 
     private fun pluginRow(
-        index: String,
-        glyph: String,
+        iconRes: Int,
         title: String,
         subtitle: String,
         onClick: () -> Unit,
@@ -295,21 +316,11 @@ class MainActivity : Activity() {
             isFocusable = true
             setOnClickListener { onClick() }
             addView(
-                NexusUi.metaLabel(this@MainActivity, index, NexusUi.GREEN_DIM).apply {
-                    textSize = 11f
-                    letterSpacing = 0f
-                },
+                NexusUi.iconTileImage(this@MainActivity, iconRes),
                 LinearLayout.LayoutParams(
-                    NexusUi.dp(this@MainActivity, 20),
-                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    NexusUi.dp(this@MainActivity, 34),
+                    NexusUi.dp(this@MainActivity, 34),
                 ),
-            )
-            addView(
-                NexusUi.iconTile(this@MainActivity, glyph),
-                LinearLayout.LayoutParams(
-                    NexusUi.dp(this@MainActivity, 34),
-                    NexusUi.dp(this@MainActivity, 34),
-                ).apply { marginStart = NexusUi.dp(this@MainActivity, 13) },
             )
             addView(
                 LinearLayout(this@MainActivity).apply {
@@ -498,6 +509,17 @@ class MainActivity : Activity() {
     private fun needsBluetoothPermission(): Boolean =
         Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
             checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED
+
+    private fun requestNotificationsIfNeeded() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(
+                arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+                NOTIFICATION_PERMISSION_REQUEST,
+            )
+        }
+    }
 
     private fun requestLocationIfNeeded() {
         if (hasLocationPermission()) return

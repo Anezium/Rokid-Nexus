@@ -47,7 +47,7 @@ class LyricsSettingsActivity : Activity() {
             addView(
                 settingRow(
                     title = "Show on glasses",
-                    subtitle = "timed-lines synced",
+                    subtitle = "Timed-lines synced",
                     value = toggleView(),
                     danger = false,
                 ) {
@@ -59,7 +59,7 @@ class LyricsSettingsActivity : Activity() {
             addView(
                 settingRow(
                     title = "Musixmatch",
-                    subtitle = "better lyrics, optional",
+                    subtitle = "Better lyrics, optional",
                     value = musixmatchValue,
                     danger = false,
                 ) { showMusixmatchDialog() },
@@ -144,7 +144,7 @@ class LyricsSettingsActivity : Activity() {
                         NexusUi.dp(this@LyricsSettingsActivity, 22),
                         NexusUi.dp(this@LyricsSettingsActivity, 18),
                     )
-                    addView(NexusUi.iconTile(this@LyricsSettingsActivity, "\u266A", 48))
+                    addView(NexusUi.iconTileImage(this@LyricsSettingsActivity, R.drawable.ic_plugin_music, 48))
                     addView(
                         LinearLayout(this@LyricsSettingsActivity).apply {
                             orientation = LinearLayout.VERTICAL
@@ -154,7 +154,7 @@ class LyricsSettingsActivity : Activity() {
                                 },
                             )
                             addView(BusTheme.gap(this@LyricsSettingsActivity, 5))
-                            addView(NexusUi.rowSub(this@LyricsSettingsActivity, "now-playing lyrics \u00B7 v1.0"))
+                            addView(NexusUi.rowSub(this@LyricsSettingsActivity, "Now-playing lyrics \u00B7 v1.0"))
                         },
                         LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
                             marginStart = NexusUi.dp(this@LyricsSettingsActivity, 14)

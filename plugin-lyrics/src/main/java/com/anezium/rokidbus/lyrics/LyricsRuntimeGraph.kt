@@ -1,7 +1,8 @@
 package com.anezium.rokidbus.lyrics
 
+import android.content.ComponentName
 import android.content.Context
-import androidx.core.app.NotificationManagerCompat
+import android.provider.Settings
 import com.anezium.rokidbus.lyrics.lyrics.CompositeLyricsProvider
 import com.anezium.rokidbus.lyrics.lyrics.LrcLibLyricsClient
 import com.anezium.rokidbus.lyrics.lyrics.LyricsRuntimeEngine
@@ -10,6 +11,7 @@ import com.anezium.rokidbus.lyrics.lyrics.NeteaseLyricsProvider
 import com.anezium.rokidbus.lyrics.lyrics.ProviderAttemptOutcome
 import com.anezium.rokidbus.lyrics.lyrics.ProviderAttemptSummary
 import com.anezium.rokidbus.lyrics.media.MediaSessionMonitor
+import com.anezium.rokidbus.lyrics.media.MediaNotificationListenerService
 import com.anezium.rokidbus.lyrics.settings.LyricsProviderSettingsStore
 
 object LyricsRuntimeGraph {
@@ -85,9 +87,17 @@ object LyricsRuntimeGraph {
         if (initialized) mediaSessionMonitor.skipToPrevious()
     }
 
-    fun notificationAccessEnabled(context: Context): Boolean =
-        NotificationManagerCompat.getEnabledListenerPackages(context.applicationContext)
-            .contains(context.packageName)
+    fun notificationAccessEnabled(context: Context): Boolean {
+        val appContext = context.applicationContext
+        val target = ComponentName(appContext, MediaNotificationListenerService::class.java)
+        val enabled = Settings.Secure.getString(
+            appContext.contentResolver,
+            "enabled_notification_listeners",
+        ).orEmpty()
+        return enabled.split(':').any { flattened ->
+            ComponentName.unflattenFromString(flattened) == target
+        }
+    }
 
     @Synchronized
     fun destroy() {
