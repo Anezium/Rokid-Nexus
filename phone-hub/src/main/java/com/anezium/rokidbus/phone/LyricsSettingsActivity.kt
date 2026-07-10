@@ -345,7 +345,14 @@ class LyricsSettingsActivity : Activity() {
                                     ).show()
                                     return@setOnClickListener
                                 }
-                                providerStore.saveMusixmatchCredentials(emailText, passwordText)
+                                if (!providerStore.saveMusixmatchCredentials(emailText, passwordText)) {
+                                    Toast.makeText(
+                                        this@LyricsSettingsActivity,
+                                        "Secure storage unavailable; credentials were not saved.",
+                                        Toast.LENGTH_LONG,
+                                    ).show()
+                                    return@setOnClickListener
+                                }
                                 LyricsRuntimeGraph.start(applicationContext)
                                 musixmatchValue.text = "SIGNED IN \u203A"
                                 Toast.makeText(
