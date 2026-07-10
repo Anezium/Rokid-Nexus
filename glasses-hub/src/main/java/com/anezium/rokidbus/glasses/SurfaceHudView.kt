@@ -3,6 +3,7 @@ package com.anezium.rokidbus.glasses
 import android.content.Context
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.graphics.text.LineBreaker
 import android.os.Build
 import android.os.SystemClock
 import android.text.Layout
@@ -320,7 +321,7 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
             isSingleLine = false
             setHorizontallyScrolling(false)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                breakStrategy = Layout.BREAK_STRATEGY_HIGH_QUALITY
+                breakStrategy = LineBreaker.BREAK_STRATEGY_HIGH_QUALITY
                 hyphenationFrequency = Layout.HYPHENATION_FREQUENCY_NONE
             }
         }
