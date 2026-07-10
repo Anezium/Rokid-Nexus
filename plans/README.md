@@ -14,7 +14,7 @@ The existing CXR-L/SPP transport and single glasses anchor are preserved. The pl
 
 | Plan | Outcome | Priority | Effort | Depends on | Status |
 |---|---|---:|---:|---|---|
-| [001](001-safety-and-verification.md) | Establish a safe, bounded, green verification baseline | P1 | L | — | TODO |
+| [001](001-safety-and-verification.md) | Establish a safe, bounded, green verification baseline | P1 | L | — | DONE |
 | [002](002-plugin-identity-and-capabilities.md) | Authorize plugin principals and enforce capabilities | P1 | L | 001 | TODO |
 | [003](003-external-plugin-sdk.md) | Deliver the external SDK, lifecycle, sample, and publication path | P1 | L | 002 | TODO |
 | [004](004-externalize-transit.md) | Ship Transit as the first independent phone plugin APK | P1 | L | 003 | TODO |
