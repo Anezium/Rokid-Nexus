@@ -11,14 +11,17 @@ import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothSocket
 import android.content.Intent
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Binder
 import android.os.IBinder
+import android.os.Process
 import android.os.SystemClock
 import android.util.Log
 import com.anezium.rokidbus.client.IBusCallback
 import com.anezium.rokidbus.client.IBusService
+import com.anezium.rokidbus.client.PluginRegistrationResult
 import com.anezium.rokidbus.lyrics.LyricsPlugin
 import com.anezium.rokidbus.media.MediaDeckPlugin
 import com.anezium.rokidbus.phone.lens.LensTranslationPlugin
@@ -28,6 +31,8 @@ import com.anezium.rokidbus.shared.BusEnvelope
 import com.anezium.rokidbus.shared.BusPaths
 import com.anezium.rokidbus.shared.FrameProtocol
 import com.anezium.rokidbus.shared.LinkStateBits
+import com.anezium.rokidbus.shared.plugin.PathRules
+import com.anezium.rokidbus.shared.plugin.PluginCapability
 import com.example.cxrglobal.CXRLink
 import com.example.cxrglobal.CxrDefs
 import com.example.cxrglobal.callbacks.IAudioStreamCbk
@@ -73,6 +78,14 @@ class BusHubService : Service() {
         val callbackBinder: IBinder,
         val callback: IBusCallback,
         val deathRecipient: IBinder.DeathRecipient,
+        val principal: PhonePluginPrincipal? = null,
+        val grantedCapabilities: Set<PluginCapability> = emptySet(),
+    )
+
+    private data class AuthorizedSender(
+        val caller: PluginRouteCaller,
+        val replyBinder: IBinder?,
+        val principal: PhonePluginPrincipal? = null,
     )
 
     private enum class AudioLeaseSide { LOCAL, REMOTE }
@@ -97,6 +110,8 @@ class BusHubService : Service() {
     private var cxrLink: CXRLink? = null
     private lateinit var pluginRegistry: PhonePluginRegistry
     private lateinit var lensTranslationPlugin: LensTranslationPlugin
+    private lateinit var pluginDiscovery: PhonePluginDiscovery
+    private lateinit var pluginGrantStore: PluginGrantStore
     @Volatile private var cxrConnected = false
     @Volatile private var glassBtConnected = false
     @Volatile private var lastNotifiedStatus: String? = null
@@ -105,24 +120,20 @@ class BusHubService : Service() {
         override fun apiVersion(): Int = BusConstants.API_VERSION
 
         override fun register(clientId: String, pathPrefixes: Array<out String>, cb: IBusCallback) {
-            unregister(cb)
-            val callbackBinder = cb.asBinder()
-            val deathRecipient = IBinder.DeathRecipient {
-                removeRegistrationsByBinder(callbackBinder, "binderDied")
+            val callingUid = Binder.getCallingUid()
+            if (callingUid != Process.myUid() && !isDebuggableBuild()) {
+                log("legacy client registration rejected status=release_external")
+                return
             }
-            val registration = Registration(
-                clientId = clientId,
-                prefixes = pathPrefixes.filter { it.isNotBlank() },
-                uid = Binder.getCallingUid(),
-                callbackBinder = callbackBinder,
-                callback = cb,
-                deathRecipient = deathRecipient,
-            )
-            runCatching { callbackBinder.linkToDeath(deathRecipient, 0) }
-            registrations += registration
-            log("client registered id=$clientId prefixes=${pathPrefixes.joinToString()}")
-            runCatching { cb.onLinkState(linkState()) }
-            PhoneClientSupervisor.onClientRegistered(applicationContext, registration.prefixes)
+            val prefixes = pathPrefixes.mapNotNull(PathRules::normalizeAbsolute)
+            if (prefixes.size != pathPrefixes.size) {
+                log("legacy client registration rejected status=invalid_paths")
+                return
+            }
+            if (callingUid != Process.myUid()) {
+                log("legacy client registration allowed status=debug_compatibility")
+            }
+            addRegistration(clientId, prefixes, callingUid, cb)
         }
 
         override fun unregister(cb: IBusCallback) {
@@ -140,6 +151,54 @@ class BusHubService : Service() {
         }
 
         override fun linkState(): Int = this@BusHubService.linkState()
+
+        override fun registerPlugin(packageName: String, pluginId: String, cb: IBusCallback): Int {
+            val callingUid = Binder.getCallingUid()
+            val packages = packageManager.getPackagesForUid(callingUid).orEmpty()
+            if (packageName !in packages) return PluginRegistrationResult.IDENTITY_MISMATCH
+
+            val candidates = pluginDiscovery.discoverPackage(packageName)
+            if (candidates.size != 1) return PluginRegistrationResult.INVALID_DESCRIPTOR
+            val candidate = candidates.single()
+            if (candidate is PhonePluginCandidate.Invalid) {
+                return if (candidate.reason == "UNSUPPORTED_API" ||
+                    candidate.reason == "SHARED_UID_UNSUPPORTED"
+                ) {
+                    PluginRegistrationResult.UNSUPPORTED_API
+                } else {
+                    PluginRegistrationResult.INVALID_DESCRIPTOR
+                }
+            }
+            val principal = (candidate as PhonePluginCandidate.Valid).principal
+            if (principal.uid != callingUid || principal.descriptor.id != pluginId) {
+                return PluginRegistrationResult.IDENTITY_MISMATCH
+            }
+            return when (val state = pluginGrantStore.stateFor(principal)) {
+                PluginGrantState.Pending -> PluginRegistrationResult.PENDING_USER_APPROVAL
+                PluginGrantState.Denied,
+                PluginGrantState.Disabled,
+                -> PluginRegistrationResult.DENIED
+                is PluginGrantState.Approved -> {
+                    val prefixes = principal.descriptor.receivePrefixes.filter { prefix ->
+                        PathRules.requiredCapabilityForReceivePrefix(prefix)?.let { it in state.capabilities } != false
+                    }
+                    if (addRegistration(
+                            clientId = principal.descriptor.id,
+                            prefixes = prefixes,
+                            uid = callingUid,
+                            cb = cb,
+                            principal = principal,
+                            grantedCapabilities = state.capabilities,
+                        )
+                    ) {
+                        log("plugin registered package=$packageName plugin=$pluginId status=approved")
+                        PluginRegistrationResult.APPROVED
+                    } else {
+                        PluginRegistrationResult.REGISTRATION_FAILED
+                    }
+                }
+            }
+        }
     }
 
     private val linkCallback = object : ICXRLinkCbk {
@@ -184,7 +243,10 @@ class BusHubService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        activeInstance = this
         PhoneClientSupervisor.attach(this)
+        pluginDiscovery = PhonePluginDiscovery(packageManager)
+        pluginGrantStore = PluginGrantStore(applicationContext)
         lensTranslationPlugin = LensTranslationPlugin()
         pluginRegistry = PhonePluginRegistry(
             context = applicationContext,
@@ -262,6 +324,7 @@ class BusHubService : Service() {
         if (::pluginRegistry.isInitialized) pluginRegistry.close()
         if (::lensTranslationPlugin.isInitialized) lensTranslationPlugin.close()
         registrations.clear()
+        if (activeInstance === this) activeInstance = null
         super.onDestroy()
     }
 
@@ -269,14 +332,39 @@ class BusHubService : Service() {
         deliverLocal(envelope)
 
     private fun routeLocal(envelope: BusEnvelope, senderUid: Int) {
-        if (handleHubPath(envelope, replyRemote = false, senderUid = senderUid)) return
-        if (deliverLocal(envelope, excludeUid = senderUid)) return
-        if (envelope.path != BusPaths.ERROR &&
-            PhoneClientSupervisor.enqueue(applicationContext, envelope, excludeUid = senderUid)
+        val sender = resolveSender(senderUid)
+        val decision = PluginRoutePolicy.authorize(sender.caller, envelope.path)
+        if (decision is PluginRouteDecision.Denied) {
+            deliverError(sender.replyBinder, envelope.id, decision.code)
+            return
+        }
+        val authorizedEnvelope = if (
+            sender.principal != null &&
+            PathRules.requiredCapability(envelope.path) == PluginCapability.SURFACES
+        ) {
+            val payload = PluginRoutePolicy.injectSurfaceOwner(sender.principal.descriptor.id, envelope.payload)
+            if (payload == null) {
+                deliverError(sender.replyBinder, envelope.id, "INVALID_SURFACE_ID")
+                return
+            }
+            envelope.copy(payload = payload)
+        } else {
+            envelope
+        }
+        if (handleHubPath(
+                authorizedEnvelope,
+                replyRemote = false,
+                senderUid = senderUid,
+                replyBinder = sender.replyBinder,
+            )
         ) return
-        val errorCode = sendRemote(envelope)
+        if (deliverLocal(authorizedEnvelope, excludeUid = senderUid)) return
+        if (authorizedEnvelope.path != BusPaths.ERROR &&
+            PhoneClientSupervisor.enqueue(applicationContext, authorizedEnvelope, excludeUid = senderUid)
+        ) return
+        val errorCode = sendRemote(authorizedEnvelope)
         if (errorCode != null) {
-            deliverLocal(errorEnvelope(envelope.id, errorCode))
+            deliverError(sender.replyBinder, authorizedEnvelope.id, errorCode)
         }
     }
 
@@ -300,11 +388,18 @@ class BusHubService : Service() {
         sendRemote(errorEnvelope(envelope.id, "NO_LOCAL_CLIENT"))
     }
 
-    private fun handleHubPath(envelope: BusEnvelope, replyRemote: Boolean, senderUid: Int? = null): Boolean {
+    private fun handleHubPath(
+        envelope: BusEnvelope,
+        replyRemote: Boolean,
+        senderUid: Int? = null,
+        replyBinder: IBinder? = null,
+    ): Boolean {
         when (envelope.path) {
-            BusPaths.HTTP_REQUEST -> executor.execute { fetchAndStream(envelope, replyRemote) }
-            AUDIO_LEASE_ACQUIRE -> executor.execute { acquireAudioLease(envelope, replyRemote, senderUid) }
-            AUDIO_LEASE_RELEASE -> executor.execute { releaseAudioLease(envelope, replyRemote) }
+            BusPaths.HTTP_REQUEST -> executor.execute { fetchAndStream(envelope, replyRemote, replyBinder) }
+            AUDIO_LEASE_ACQUIRE -> executor.execute {
+                acquireAudioLease(envelope, replyRemote, senderUid, replyBinder)
+            }
+            AUDIO_LEASE_RELEASE -> executor.execute { releaseAudioLease(envelope, replyRemote, replyBinder) }
             else -> return false
         }
         return true
@@ -321,7 +416,7 @@ class BusHubService : Service() {
         registrations.forEach { registration ->
             if (targetBinder != null && registration.callbackBinder != targetBinder) return@forEach
             if (excludeUid != null && registration.uid == excludeUid) return@forEach
-            if (registration.prefixes.any { envelope.path.startsWith(it) }) {
+            if (registrationMatches(registration, envelope)) {
                 if (binary != null && binary.size > LOCAL_BINARY_MAX_BYTES) {
                     log("drop local binary ${envelope.path} id=${envelope.id} bytes=${binary.size} over cap=$LOCAL_BINARY_MAX_BYTES")
                     delivered = true
@@ -343,6 +438,60 @@ class BusHubService : Service() {
         return delivered
     }
 
+    private fun registrationMatches(registration: Registration, envelope: BusEnvelope): Boolean {
+        if (registration.prefixes.none { PathRules.matchesPrefix(envelope.path, it) }) return false
+        val principal = registration.principal ?: return true
+        if (PathRules.isPluginPrivate(envelope.path, principal.descriptor.id)) return true
+        if (PathRules.matchesPrefix(envelope.path, "/system/plugin")) {
+            return envelope.payload.optString("pluginId") == principal.descriptor.id
+        }
+        return true
+    }
+
+    private fun resolveSender(senderUid: Int): AuthorizedSender {
+        if (senderUid == Process.myUid()) return AuthorizedSender(PluginRouteCaller.Internal, null)
+        val matching = registrations.filter { it.uid == senderUid }
+        if (matching.isEmpty()) return AuthorizedSender(PluginRouteCaller.Unregistered, null)
+        val principals = matching.mapNotNull(Registration::principal)
+            .distinctBy { it.grantKey() }
+        if (principals.size > 1) {
+            return AuthorizedSender(PluginRouteCaller.Ambiguous, matching.first().callbackBinder)
+        }
+        val principal = principals.singleOrNull()
+        if (principal == null) {
+            return if (isDebuggableBuild()) {
+                AuthorizedSender(PluginRouteCaller.DebugLegacy, matching.first().callbackBinder)
+            } else {
+                AuthorizedSender(PluginRouteCaller.Unregistered, matching.first().callbackBinder)
+            }
+        }
+        val pluginRegistration = matching.first { it.principal?.grantKey() == principal.grantKey() }
+        return when (val state = pluginGrantStore.stateFor(principal)) {
+            PluginGrantState.Pending -> AuthorizedSender(
+                PluginRouteCaller.Pending,
+                pluginRegistration.callbackBinder,
+                principal,
+            )
+            PluginGrantState.Denied,
+            PluginGrantState.Disabled,
+            -> AuthorizedSender(PluginRouteCaller.Revoked, pluginRegistration.callbackBinder, principal)
+            is PluginGrantState.Approved -> AuthorizedSender(
+                PluginRouteCaller.Plugin(principal.descriptor.id, state.capabilities),
+                pluginRegistration.callbackBinder,
+                principal,
+            )
+        }
+    }
+
+    private fun deliverError(targetBinder: IBinder?, id: String, code: String) {
+        val target = targetBinder?.let { binder -> registrations.firstOrNull { it.callbackBinder == binder } }
+            ?: return
+        val envelope = errorEnvelope(id, code)
+        val payload = envelope.payload.toString().toByteArray(Charsets.UTF_8)
+        runCatching { target.callback.onMessage(envelope.path, envelope.id, payload) }
+            .onFailure { removeRegistration(target, "dead callback") }
+    }
+
     private fun removeRegistrationsByBinder(callbackBinder: IBinder, reason: String) {
         registrations.filter { it.callbackBinder == callbackBinder }.forEach { registration ->
             removeRegistration(registration, reason)
@@ -355,18 +504,29 @@ class BusHubService : Service() {
         releaseAudioLeaseForLocalBinder(registration.callbackBinder, reason)
     }
 
-    private fun acquireAudioLease(envelope: BusEnvelope, replyRemote: Boolean, senderUid: Int?) {
+    private fun revokePrincipal(key: PluginGrantKey) {
+        registrations.filter { it.principal?.grantKey() == key }.forEach { registration ->
+            removeRegistration(registration, "authorizationChanged")
+        }
+    }
+
+    private fun acquireAudioLease(
+        envelope: BusEnvelope,
+        replyRemote: Boolean,
+        senderUid: Int?,
+        replyBinder: IBinder?,
+    ) {
         val link = cxrLink
         if (audioLease != null) {
-            replyToAudioRequest(envelope, replyRemote, JSONObject().put("granted", false).put("reason", "BUSY"))
+            replyToAudioRequest(envelope, replyRemote, JSONObject().put("granted", false).put("reason", "BUSY"), replyBinder)
             return
         }
         if (link == null || !isCxrUp()) {
-            replyToAudioRequest(envelope, replyRemote, JSONObject().put("granted", false).put("reason", "NO_CXR"))
+            replyToAudioRequest(envelope, replyRemote, JSONObject().put("granted", false).put("reason", "NO_CXR"), replyBinder)
             return
         }
 
-        val holderBinder = if (replyRemote) null else findLocalAudioHolder(senderUid)
+        val holderBinder = if (replyRemote) null else replyBinder ?: findLocalAudioHolder(senderUid)
         val lease = AudioLease(
             leaseId = UUID.randomUUID().toString(),
             side = if (replyRemote) AudioLeaseSide.REMOTE else AudioLeaseSide.LOCAL,
@@ -374,7 +534,7 @@ class BusHubService : Service() {
         )
         synchronized(audioLeaseLock) {
             if (audioLease != null) {
-                replyToAudioRequest(envelope, replyRemote, JSONObject().put("granted", false).put("reason", "BUSY"))
+                replyToAudioRequest(envelope, replyRemote, JSONObject().put("granted", false).put("reason", "BUSY"), replyBinder)
                 return
             }
             audioLease = lease
@@ -393,7 +553,7 @@ class BusHubService : Service() {
                 if (audioLease?.leaseId == lease.leaseId) audioLease = null
             }
             stopAudioStreamQuietly()
-            replyToAudioRequest(envelope, replyRemote, JSONObject().put("granted", false).put("reason", "START_FAILED"))
+            replyToAudioRequest(envelope, replyRemote, JSONObject().put("granted", false).put("reason", "START_FAILED"), replyBinder)
             return
         }
         if (synchronized(audioLeaseLock) { audioLease?.leaseId != lease.leaseId }) {
@@ -401,7 +561,7 @@ class BusHubService : Service() {
             // startAudioStream() landed; stop again so no orphan stream survives.
             stopAudioStreamQuietly()
             val reason = if (isCxrUp()) "START_FAILED" else "NO_CXR"
-            replyToAudioRequest(envelope, replyRemote, JSONObject().put("granted", false).put("reason", reason))
+            replyToAudioRequest(envelope, replyRemote, JSONObject().put("granted", false).put("reason", reason), replyBinder)
             return
         }
 
@@ -414,10 +574,11 @@ class BusHubService : Service() {
                 .put("sampleRate", AUDIO_SAMPLE_RATE)
                 .put("channels", AUDIO_CHANNELS)
                 .put("encoding", AUDIO_ENCODING),
+            replyBinder,
         )
     }
 
-    private fun releaseAudioLease(envelope: BusEnvelope, replyRemote: Boolean) {
+    private fun releaseAudioLease(envelope: BusEnvelope, replyRemote: Boolean, replyBinder: IBinder?) {
         val leaseId = envelope.payload.optString("leaseId")
         val leaseToStop = synchronized(audioLeaseLock) {
             val current = audioLease
@@ -429,7 +590,7 @@ class BusHubService : Service() {
             }
         }
         if (leaseToStop != null) stopAudioStreamQuietly()
-        replyToAudioRequest(envelope, replyRemote, JSONObject().put("released", true))
+        replyToAudioRequest(envelope, replyRemote, JSONObject().put("released", true), replyBinder)
     }
 
     private fun releaseAudioLeaseForLocalBinder(callbackBinder: IBinder, reason: String) {
@@ -506,16 +667,22 @@ class BusHubService : Service() {
         }
     }
 
-    private fun replyToAudioRequest(envelope: BusEnvelope, replyRemote: Boolean, payload: JSONObject) {
+    private fun replyToAudioRequest(
+        envelope: BusEnvelope,
+        replyRemote: Boolean,
+        payload: JSONObject,
+        replyBinder: IBinder?,
+    ) {
         val response = BusEnvelope(path = envelope.path + "/reply", id = envelope.id, payload = payload)
-        if (replyRemote) sendRemote(response) else deliverLocal(response)
+        if (replyRemote) sendRemote(response) else deliverLocal(response, targetBinder = replyBinder)
     }
 
     private fun findLocalAudioHolder(senderUid: Int?): IBinder? {
         if (senderUid == null) return null
         val audioRegistration = registrations.firstOrNull { registration ->
             registration.uid == senderUid && registration.prefixes.any { prefix ->
-                AUDIO_FRAMES.startsWith(prefix) || AUDIO_LEASE_REVOKED.startsWith(prefix)
+                PathRules.matchesPrefix(AUDIO_FRAMES, prefix) ||
+                    PathRules.matchesPrefix(AUDIO_LEASE_REVOKED, prefix)
             }
         }
         return audioRegistration?.callbackBinder ?: registrations.firstOrNull { it.uid == senderUid }?.callbackBinder
@@ -565,11 +732,11 @@ class BusHubService : Service() {
         }
     }
 
-    private fun fetchAndStream(envelope: BusEnvelope, replyRemote: Boolean) {
+    private fun fetchAndStream(envelope: BusEnvelope, replyRemote: Boolean, replyBinder: IBinder?) {
         val request = envelope.payload
         val reply = { meta: JSONObject, data: ByteArray ->
             val response = BusEnvelope(path = BusPaths.HTTP_REPLY, id = envelope.id, payload = meta, binary = data)
-            if (replyRemote) sendRemote(response) else deliverLocal(response)
+            if (replyRemote) sendRemote(response) else deliverLocal(response, targetBinder = replyBinder)
         }
         var terminalSent = false
         fun terminal(status: Int, totalBytes: Long, errorCode: String? = null) {
@@ -649,6 +816,39 @@ class BusHubService : Service() {
         } finally {
             connection?.disconnect()
         }
+    }
+
+    private fun addRegistration(
+        clientId: String,
+        prefixes: List<String>,
+        uid: Int,
+        cb: IBusCallback,
+        principal: PhonePluginPrincipal? = null,
+        grantedCapabilities: Set<PluginCapability> = emptySet(),
+    ): Boolean {
+        removeRegistrationsByBinder(cb.asBinder(), "replace")
+        val callbackBinder = cb.asBinder()
+        val deathRecipient = IBinder.DeathRecipient {
+            removeRegistrationsByBinder(callbackBinder, "binderDied")
+        }
+        if (runCatching { callbackBinder.linkToDeath(deathRecipient, 0) }.isFailure) {
+            log("client registration rejected status=callback_unavailable")
+            return false
+        }
+        val registration = Registration(
+            clientId = clientId,
+            prefixes = prefixes,
+            uid = uid,
+            callbackBinder = callbackBinder,
+            callback = cb,
+            deathRecipient = deathRecipient,
+            principal = principal,
+            grantedCapabilities = grantedCapabilities,
+        )
+        registrations += registration
+        runCatching { cb.onLinkState(linkState()) }
+        PhoneClientSupervisor.onClientRegistered(applicationContext, prefixes, principal?.grantKey())
+        return true
     }
 
     /**
@@ -850,6 +1050,9 @@ class BusHubService : Service() {
         Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
             checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
 
+    private fun isDebuggableBuild(): Boolean =
+        applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
+
     private fun prefs() = getSharedPreferences(PREFS, MODE_PRIVATE)
 
     private fun log(message: String) {
@@ -866,6 +1069,13 @@ class BusHubService : Service() {
     }
 
     companion object {
+        @Volatile private var activeInstance: BusHubService? = null
+
+        fun onPluginAuthorizationChanged(context: android.content.Context, key: PluginGrantKey) {
+            PhoneClientSupervisor.onPrincipalRevoked(context.applicationContext, key)
+            activeInstance?.revokePrincipal(key)
+        }
+
         fun startWithToken(context: android.content.Context, token: String) {
             val intent = Intent(context, BusHubService::class.java)
                 .setAction(ACTION_SET_TOKEN)

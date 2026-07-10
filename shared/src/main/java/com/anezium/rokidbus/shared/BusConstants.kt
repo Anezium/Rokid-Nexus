@@ -8,8 +8,16 @@ object BusConstants {
     const val CXR_KEY = "rokidbus"
     const val ACTION_HUB = "com.anezium.rokidbus.action.HUB"
     const val ACTION_CLIENT = "com.anezium.rokidbus.action.CLIENT"
+    const val ACTION_PLUGIN = "com.anezium.rokidbus.action.PLUGIN"
     const val META_DATA_PATHS = "com.anezium.rokidbus.paths"
-    const val API_VERSION = 2
+    const val META_PLUGIN_ID = "com.anezium.rokidbus.plugin.ID"
+    const val META_PLUGIN_DISPLAY_NAME = "com.anezium.rokidbus.plugin.DISPLAY_NAME"
+    const val META_PLUGIN_API_VERSION = "com.anezium.rokidbus.plugin.API_VERSION"
+    const val META_PLUGIN_CAPABILITIES = "com.anezium.rokidbus.plugin.CAPABILITIES"
+    const val META_PLUGIN_RECEIVE_PREFIXES = "com.anezium.rokidbus.plugin.RECEIVE_PREFIXES"
+    const val META_PLUGIN_SETTINGS_ACTIVITY = "com.anezium.rokidbus.plugin.SETTINGS_ACTIVITY"
+    const val META_PLUGIN_LAUNCHABLE = "com.anezium.rokidbus.plugin.LAUNCHABLE"
+    const val API_VERSION = 3
     const val CXR_CONTROL_MAX_BYTES = 3 * 1024
     val SPP_UUID: UUID = UUID.fromString(SPP_UUID_STRING)
 }

@@ -8,6 +8,7 @@ import com.anezium.rokidbus.shared.plugin.NexusInputEvent
 import com.anezium.rokidbus.shared.plugin.NexusPlugin
 import com.anezium.rokidbus.shared.plugin.NexusPluginHost
 import com.anezium.rokidbus.shared.plugin.NexusSubscription
+import com.anezium.rokidbus.shared.plugin.PathRules
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.CopyOnWriteArrayList
@@ -93,7 +94,7 @@ class PhonePluginRegistry(
 
         var handled = false
         subscriptions.forEach { subscription ->
-            if (envelope.path.startsWith(subscription.pathPrefix)) {
+            if (PathRules.matchesPrefix(envelope.path, subscription.pathPrefix)) {
                 handled = true
                 runCatching {
                     subscription.handler(envelope.path, envelope.id, envelope.payload)

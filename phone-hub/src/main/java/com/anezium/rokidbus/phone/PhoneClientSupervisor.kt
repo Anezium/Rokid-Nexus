@@ -4,6 +4,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Handler
@@ -14,6 +15,7 @@ import android.util.Log
 import com.anezium.rokidbus.shared.BusConstants
 import com.anezium.rokidbus.shared.BusEnvelope
 import com.anezium.rokidbus.shared.FrameProtocol
+import com.anezium.rokidbus.shared.plugin.PathRules
 import java.util.ArrayDeque
 import java.util.concurrent.ConcurrentHashMap
 
@@ -26,9 +28,24 @@ object PhoneClientSupervisor {
     private const val REGISTER_WAIT_MS = 5_000L
     private const val IDLE_UNBIND_MS = 60_000L
 
-    private data class Target(val component: ComponentName, val prefixes: List<String>)
-    private data class Queued(val envelope: BusEnvelope, val createdAtMs: Long, val bytes: Int)
-    private data class Held(val connection: ServiceConnection, @Volatile var lastActiveMs: Long)
+    private data class Target(
+        val component: ComponentName,
+        val prefixes: List<String>,
+        val action: String,
+        val uid: Int,
+        val principalKey: PluginGrantKey? = null,
+    )
+    private data class Queued(
+        val envelope: BusEnvelope,
+        val target: Target,
+        val createdAtMs: Long,
+        val bytes: Int,
+    )
+    private data class Held(
+        val connection: ServiceConnection,
+        val target: Target,
+        @Volatile var lastActiveMs: Long,
+    )
 
     private val main = Handler(Looper.getMainLooper())
     private val lock = Any()
@@ -57,7 +74,7 @@ object PhoneClientSupervisor {
         val bytes = FrameProtocol.toJsonBytes(envelope).size
         synchronized(lock) {
             pruneExpiredLocked(now)
-            queue += Queued(envelope, now, bytes)
+            queue += Queued(envelope, target, now, bytes)
             queuedBytes += bytes
             while (queue.size > MAX_MESSAGES || queuedBytes > MAX_BYTES) {
                 queuedBytes -= queue.removeFirst().bytes
@@ -70,9 +87,30 @@ object PhoneClientSupervisor {
         return true
     }
 
-    fun onClientRegistered(context: Context, prefixes: List<String>) {
+    fun onClientRegistered(
+        context: Context,
+        prefixes: List<String>,
+        principalKey: PluginGrantKey? = null,
+    ) {
         touch()
-        flush(context.applicationContext, prefixes)
+        flush(context.applicationContext, prefixes, principalKey)
+    }
+
+    fun onPrincipalRevoked(context: Context, principalKey: PluginGrantKey) {
+        synchronized(lock) {
+            val iterator = queue.iterator()
+            while (iterator.hasNext()) {
+                val item = iterator.next()
+                if (item.target.principalKey == principalKey) {
+                    iterator.remove()
+                    queuedBytes -= item.bytes
+                }
+            }
+        }
+        held.entries.filter { it.value.target.principalKey == principalKey }.forEach { entry ->
+            runCatching { context.applicationContext.unbindService(entry.value.connection) }
+            held.remove(entry.key)
+        }
     }
 
     fun touch() {
@@ -111,17 +149,21 @@ object PhoneClientSupervisor {
                 held.remove(name)
             }
         }
-        val intent = Intent(BusConstants.ACTION_CLIENT).setComponent(target.component)
+        val intent = Intent(target.action).setComponent(target.component)
         val ok = runCatching { context.bindService(intent, connection, Context.BIND_AUTO_CREATE) }
             .getOrDefault(false)
         if (ok) {
-            held[target.component] = Held(connection, SystemClock.elapsedRealtime())
+            held[target.component] = Held(connection, target, SystemClock.elapsedRealtime())
         } else {
             logError("wake bind failed ${target.component.flattenToShortString()}")
         }
     }
 
-    private fun flush(context: Context, onlyPrefixes: List<String>? = null) {
+    private fun flush(
+        context: Context,
+        onlyPrefixes: List<String>? = null,
+        principalKey: PluginGrantKey? = null,
+    ) {
         val now = SystemClock.elapsedRealtime()
         val toDeliver = mutableListOf<Queued>()
         synchronized(lock) {
@@ -129,7 +171,12 @@ object PhoneClientSupervisor {
             val iterator = queue.iterator()
             while (iterator.hasNext()) {
                 val item = iterator.next()
-                val matches = onlyPrefixes == null || onlyPrefixes.any { item.envelope.path.startsWith(it) }
+                val matches = when {
+                    principalKey != null -> item.target.principalKey == principalKey
+                    onlyPrefixes != null -> item.target.principalKey == null &&
+                        onlyPrefixes.any { PathRules.matchesPrefix(item.envelope.path, it) }
+                    else -> true
+                }
                 if (matches) {
                     iterator.remove()
                     queuedBytes -= item.bytes
@@ -138,6 +185,9 @@ object PhoneClientSupervisor {
             }
         }
         toDeliver.forEach { item ->
+            if (!targetStillAuthorized(context, item.target, item.envelope.path)) {
+                return@forEach
+            }
             if (hub?.deliverQueued(item.envelope) != true) {
                 synchronized(lock) {
                     queue += item
@@ -151,31 +201,90 @@ object PhoneClientSupervisor {
     }
 
     private fun findTarget(context: Context, path: String, excludeUid: Int? = null): Target? {
-        val intent = Intent(BusConstants.ACTION_CLIENT)
-        val flags = PackageManager.GET_META_DATA
-        val matches = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        val externalTargets = approvedPluginTargets(context)
+        val legacyTargets = if (isDebuggable(context)) legacyTargets(context) else emptyList()
+        val targetsByOwner = (externalTargets + legacyTargets).associateBy { it.component.flattenToString() }
+        val candidates = targetsByOwner.map { (owner, target) ->
+            PluginWakeCandidate(
+                ownerKey = owner,
+                uid = target.uid,
+                prefixes = target.prefixes,
+                approvedAndEnabled = true,
+            )
+        }
+        return when (val selected = PluginWakePolicy.select(path, candidates, excludeUid)) {
+            PluginWakeSelection.None -> null
+            PluginWakeSelection.Conflict -> {
+                logError("wake target conflict path=$path")
+                null
+            }
+            is PluginWakeSelection.Selected -> targetsByOwner[selected.candidate.ownerKey]
+        }
+    }
+
+    private fun approvedPluginTargets(context: Context): List<Target> {
+        val store = PluginGrantStore(context.applicationContext)
+        return PhonePluginDiscovery(context.packageManager).discover().mapNotNull { candidate ->
+            val principal = (candidate as? PhonePluginCandidate.Valid)?.principal ?: return@mapNotNull null
+            val state = store.stateFor(principal) as? PluginGrantState.Approved ?: return@mapNotNull null
+            val prefixes = principal.descriptor.receivePrefixes.filter { prefix ->
+                PathRules.requiredCapabilityForReceivePrefix(prefix)?.let { it in state.capabilities } != false
+            }
+            Target(
+                component = principal.serviceComponent,
+                prefixes = prefixes,
+                action = BusConstants.ACTION_PLUGIN,
+                uid = principal.uid,
+                principalKey = principal.grantKey(),
+            )
+        }
+    }
+
+    private fun legacyTargets(context: Context): List<Target> =
+        queryServices(context, Intent(BusConstants.ACTION_CLIENT)).mapNotNull { info ->
+            val service = info.serviceInfo ?: return@mapNotNull null
+            val rawPrefixes = service.metaData?.getString(BusConstants.META_DATA_PATHS).orEmpty()
+                .split(',', ';', ' ', '\n', '\t')
+                .map(String::trim)
+                .filter(String::isNotEmpty)
+            val prefixes = rawPrefixes.mapNotNull(PathRules::normalizeAbsolute)
+            if (prefixes.size != rawPrefixes.size || prefixes.isEmpty()) return@mapNotNull null
+            Target(
+                component = ComponentName(service.packageName, service.name),
+                prefixes = prefixes,
+                action = BusConstants.ACTION_CLIENT,
+                uid = service.applicationInfo?.uid ?: return@mapNotNull null,
+            )
+        }
+
+    private fun targetStillAuthorized(context: Context, target: Target, path: String): Boolean {
+        if (target.principalKey == null) {
+            return isDebuggable(context) && legacyTargets(context).any { current ->
+                current.component == target.component && current.uid == target.uid &&
+                    current.prefixes.any { PathRules.matchesPrefix(path, it) }
+            }
+        }
+        return approvedPluginTargets(context).any { current ->
+            current.component == target.component &&
+                current.uid == target.uid &&
+                current.principalKey == target.principalKey &&
+                current.prefixes.any { PathRules.matchesPrefix(path, it) }
+        }
+    }
+
+    private fun queryServices(context: Context, intent: Intent) =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             context.packageManager.queryIntentServices(
                 intent,
-                PackageManager.ResolveInfoFlags.of(flags.toLong()),
+                PackageManager.ResolveInfoFlags.of(PackageManager.GET_META_DATA.toLong()),
             )
         } else {
             @Suppress("DEPRECATION")
-            context.packageManager.queryIntentServices(intent, flags)
+            context.packageManager.queryIntentServices(intent, PackageManager.GET_META_DATA)
         }
-        return matches.asSequence().mapNotNull { info ->
-            val service = info.serviceInfo ?: return@mapNotNull null
-            if (excludeUid != null && service.applicationInfo?.uid == excludeUid) return@mapNotNull null
-            val value = service.metaData?.getString(BusConstants.META_DATA_PATHS).orEmpty()
-            val prefixes = value.split(',', ';', ' ', '\n', '\t')
-                .map { it.trim() }
-                .filter { it.isNotBlank() }
-            if (prefixes.any { path.startsWith(it) }) {
-                Target(ComponentName(service.packageName, service.name), prefixes)
-            } else {
-                null
-            }
-        }.firstOrNull()
-    }
+
+    private fun isDebuggable(context: Context): Boolean =
+        context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
 
     private fun scheduleReaper(context: Context) {
         if (reaperPosted) return

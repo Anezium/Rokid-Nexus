@@ -60,6 +60,28 @@ copy the exact API usage from Relay's bridges).
 Binary payloads (images, audio later) ride SPP as `payload: {"bin": "<base64>"}` for
 now; leave a `// TODO raw binary frames` marker.
 
+## Binder plugin registration v3
+
+Bus API v3 preserves the six v2 AIDL transactions in their original order and
+appends `registerPlugin(packageName, pluginId, callback)`. Phone plugins declare
+one exported service for `com.anezium.rokidbus.action.PLUGIN`. The hub derives the
+principal from the Binder calling UID, package ownership, the service manifest,
+and the current signing-certificate SHA-256 digest. Client payloads never supply
+trusted UID, certificate, route prefixes, or surface ownership.
+
+Descriptor metadata keys are `com.anezium.rokidbus.plugin.ID`,
+`.DISPLAY_NAME`, `.API_VERSION`, `.CAPABILITIES`, `.RECEIVE_PREFIXES`,
+`.SETTINGS_ACTIVITY`, and `.LAUNCHABLE`. Plugin IDs match
+`[a-z][a-z0-9._-]{2,63}`. Capability values are `surfaces`, `microphone`, and
+`http_proxy`; unknown values invalidate the descriptor. Grants are keyed by
+package, plugin ID, and signing digest and are never implied by installation.
+
+Legacy `register(clientId, prefixes, callback)` remains ABI-compatible for
+same-UID hub internals and explicit debug-probe compatibility. Release hubs
+reject unknown external legacy callers. Phone approval does not authorize an
+arbitrary glasses-side companion; release glasses hubs remain closed to those
+clients until companion provisioning has its own identity design.
+
 ## Surface protocol v1 (Round B)
 
 Plugins do not install glasses APKs. The phone hub hosts plugin logic in-process and

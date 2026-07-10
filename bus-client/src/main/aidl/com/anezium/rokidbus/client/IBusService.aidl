@@ -9,4 +9,5 @@ interface IBusService {
     oneway void send(String path, String id, in byte[] payload);
     int linkState();
     oneway void sendBinary(String path, String id, in byte[] meta, in byte[] data);
+    int registerPlugin(String packageName, String pluginId, IBusCallback cb);
 }

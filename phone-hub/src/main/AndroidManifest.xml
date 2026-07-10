@@ -23,6 +23,9 @@
         <intent>
             <action android:name="com.anezium.rokidbus.action.CLIENT" />
         </intent>
+        <intent>
+            <action android:name="com.anezium.rokidbus.action.PLUGIN" />
+        </intent>
     </queries>
 
     <application
@@ -74,6 +77,11 @@
             android:name=".SettingsActivity"
             android:exported="false"
             android:parentActivityName=".MainActivity" />
+
+        <activity
+            android:name=".PluginPermissionsActivity"
+            android:exported="true"
+            android:parentActivityName=".SettingsActivity" />
 
         <service
             android:name=".BusHubService"

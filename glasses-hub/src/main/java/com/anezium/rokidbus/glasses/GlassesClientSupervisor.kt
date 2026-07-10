@@ -4,6 +4,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Handler
@@ -13,6 +14,7 @@ import android.os.SystemClock
 import com.anezium.rokidbus.shared.BusConstants
 import com.anezium.rokidbus.shared.BusEnvelope
 import com.anezium.rokidbus.shared.FrameProtocol
+import com.anezium.rokidbus.shared.plugin.PathRules
 import java.util.ArrayDeque
 import java.util.concurrent.ConcurrentHashMap
 
@@ -102,7 +104,8 @@ object GlassesClientSupervisor {
             val iterator = queue.iterator()
             while (iterator.hasNext()) {
                 val item = iterator.next()
-                val matches = onlyPrefixes == null || onlyPrefixes.any { item.envelope.path.startsWith(it) }
+                val matches = onlyPrefixes == null ||
+                    onlyPrefixes.any { PathRules.matchesPrefix(item.envelope.path, it) }
                 if (matches) {
                     iterator.remove()
                     queuedBytes -= item.bytes
@@ -124,6 +127,7 @@ object GlassesClientSupervisor {
     }
 
     private fun findTarget(context: Context, path: String): Target? {
+        if (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE == 0) return null
         val intent = Intent(BusConstants.ACTION_CLIENT)
         val flags = PackageManager.GET_META_DATA
         val matches = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -135,18 +139,22 @@ object GlassesClientSupervisor {
             @Suppress("DEPRECATION")
             context.packageManager.queryIntentServices(intent, flags)
         }
-        return matches.asSequence().mapNotNull { info ->
+        val targets = matches.asSequence().mapNotNull { info ->
             val service = info.serviceInfo ?: return@mapNotNull null
             val value = service.metaData?.getString(BusConstants.META_DATA_PATHS).orEmpty()
-            val prefixes = value.split(',', ';', ' ', '\n', '\t')
+            val rawPrefixes = value.split(',', ';', ' ', '\n', '\t')
                 .map { it.trim() }
                 .filter { it.isNotBlank() }
-            if (prefixes.any { path.startsWith(it) }) {
+            val prefixes = rawPrefixes.mapNotNull(PathRules::normalizeAbsolute)
+            if (prefixes.size == rawPrefixes.size &&
+                prefixes.any { PathRules.matchesPrefix(path, it) }
+            ) {
                 Target(ComponentName(service.packageName, service.name), prefixes)
             } else {
                 null
             }
-        }.firstOrNull()
+        }.distinctBy { it.component }.toList()
+        return targets.singleOrNull()
     }
 
     private fun scheduleReaper(context: Context) {

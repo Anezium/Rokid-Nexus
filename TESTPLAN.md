@@ -234,7 +234,7 @@ route.
 
 Useful PASS log fragments:
 
-- Hubs: `apiVersion=2` on phone and glasses
+- Hubs: `apiVersion=3` on phone and glasses
 - Phone probe: `Mic lease granted id=... rate=16000 channels=1`
 - Phone probe: `Mic lease denied reason=BUSY`
 - Phone probe: `Mic frames=... bytes=... gaps=0`
@@ -323,3 +323,20 @@ adb -s $phone uninstall com.anezium.rokidbus.phoneprobe
 >   + `input keyevent 224` — focus returns to the activity and injected keys land.
 >   The accessibility-driven surface input path (used once a surface is active) is
 >   focus-independent and works regardless.
+
+## Plan 002 plugin identity and capability acceptance
+
+> **PENDING OWNER ON-DEVICE VERIFICATION (2026-07-10)**
+>
+> Software gates passed locally, but this execution was explicitly prohibited
+> from using `adb`, installing APKs, or reading device logs. The owner should
+> verify the following with identifiers, certificate digests, and user payloads
+> redacted:
+>
+> - Debug phone and glasses probes register through the debug-only legacy path.
+> - An unapproved plugin cannot send a surface or request HTTP/audio.
+> - Approving only `surfaces` enables its surface while HTTP/audio stay denied.
+> - Revocation unregisters/closes the plugin and prevents wake-on-message.
+> - Normal and developer consent views transition pending -> partially approved
+>   -> active -> revoked; microphone remains disabled with the HUD-indicator note.
+> - CXR-L and SPP remain connected and the built-in Lyrics/Transit flows still work.
