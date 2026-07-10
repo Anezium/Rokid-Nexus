@@ -53,7 +53,7 @@ class ExternalPluginControllerTest {
         assertTrue(controller.open(principal))
         assertTrue(runtime.deliveries.isEmpty())
         runtime.registered = true
-        controller.onRegistered(principal.grantKey())
+        controller.onRegistered(principal)
         assertEquals(BusPaths.PLUGIN_OPEN, runtime.deliveries.single().first)
         assertEquals("hello", runtime.deliveries.single().second.getString("pluginId"))
     }
@@ -122,5 +122,17 @@ class ExternalPluginControllerTest {
         val runtime = FakeRuntime().apply { bindResult = false }
         val controller = ExternalPluginController(runtime, FakeScheduler())
         assertFalse(controller.open(principal()))
+    }
+
+    @Test
+    fun `approved registration offers principal even when phone launched plugin first`() {
+        val offered = mutableListOf<String>()
+        val controller = ExternalPluginController(
+            runtime = FakeRuntime().apply { registered = true },
+            scheduler = FakeScheduler(),
+            onRegisteredPrincipal = { offered += it.descriptor.id },
+        )
+        controller.onRegistered(principal())
+        assertEquals(listOf("hello"), offered)
     }
 }

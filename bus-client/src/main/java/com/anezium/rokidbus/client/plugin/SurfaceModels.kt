@@ -6,16 +6,42 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
 
+data class NexusCardLine(
+    val text: String,
+    val badge: String? = null,
+    val trail: List<String> = emptyList(),
+) {
+    init {
+        require(text.length <= MAX_LINE_CHARS)
+        require(badge == null || badge.length <= MAX_BADGE_CHARS)
+        require(trail.size <= MAX_TRAIL_ITEMS)
+        require(trail.all { it.length <= MAX_TRAIL_ITEM_CHARS })
+    }
+
+    internal fun toJsonValue(): Any = if (badge.isNullOrBlank() && trail.isEmpty()) {
+        text
+    } else {
+        JSONObject()
+            .put("text", text)
+            .put("badge", badge.orEmpty())
+            .put("trail", JSONArray(trail))
+    }
+}
+
 data class NexusCard(
     val title: String,
     val lines: List<String>,
     val footer: String? = null,
     val contentKey: String? = null,
+    val richLines: List<NexusCardLine>? = null,
+    val handlesBack: Boolean = false,
 ) {
     init {
         require(title.isNotBlank() && title.length <= MAX_TITLE_CHARS)
         require(lines.size <= MAX_LINES)
         require(lines.all { it.length <= MAX_LINE_CHARS })
+        require(richLines == null || lines.isEmpty())
+        require(richLines == null || richLines.size <= MAX_LINES)
         require(footer == null || footer.length <= MAX_LINE_CHARS)
         require(contentKey == null || contentKey.length <= MAX_CONTENT_KEY_CHARS)
     }
@@ -24,10 +50,20 @@ data class NexusCard(
         .put("surfaceId", surfaceId)
         .put("kind", "card")
         .put("title", title)
-        .put("lines", JSONArray(lines))
+        .put(
+            "lines",
+            JSONArray().also { array ->
+                if (richLines == null) {
+                    lines.forEach { line -> array.put(line) }
+                } else {
+                    richLines.forEach { array.put(it.toJsonValue()) }
+                }
+            },
+        )
         .apply {
             footer?.let { put("footer", it) }
             contentKey?.let { put("contentKey", it) }
+            if (handlesBack) put("handlesBack", true)
         }
 }
 
@@ -159,6 +195,9 @@ fun NexusPluginClient.requestAudioLease(): NexusSdkResult =
 private val LOCAL_SURFACE_ID = Regex("[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
 private const val MAX_TITLE_CHARS = 120
 private const val MAX_LINE_CHARS = 240
+private const val MAX_BADGE_CHARS = 24
+private const val MAX_TRAIL_ITEMS = 8
+private const val MAX_TRAIL_ITEM_CHARS = 24
 private const val MAX_LINES = 64
 private const val MAX_TIMED_LINES = 2_000
 private const val MAX_CONTENT_KEY_CHARS = 128

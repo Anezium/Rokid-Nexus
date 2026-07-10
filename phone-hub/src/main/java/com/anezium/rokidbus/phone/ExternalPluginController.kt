@@ -21,6 +21,7 @@ class ExternalPluginController(
     private val runtime: ExternalPluginRuntime,
     private val scheduler: ExternalPluginScheduler,
     private val logger: (String) -> Unit = {},
+    private val onRegisteredPrincipal: (PhonePluginPrincipal) -> Unit = {},
 ) {
     private var pending: PhonePluginPrincipal? = null
     private var active: PhonePluginPrincipal? = null
@@ -43,17 +44,23 @@ class ExternalPluginController(
                 logger("external plugin registration timed out plugin=${principal.descriptor.id}")
             }
         }
-        if (runtime.isRegistered(principal)) onRegistered(principal.grantKey())
+        if (runtime.isRegistered(principal)) onRegistered(principal)
         return true
     }
 
-    fun onRegistered(key: PluginGrantKey) {
-        val principal = pending?.takeIf { it.grantKey() == key } ?: return
-        scheduler.cancel(timeoutKey(principal))
+    fun onRegistered(principal: PhonePluginPrincipal) {
+        val pendingPrincipal = pending?.takeIf { it.grantKey() == principal.grantKey() }
+        if (pendingPrincipal == null) {
+            onRegisteredPrincipal(principal)
+            return
+        }
+        scheduler.cancel(timeoutKey(pendingPrincipal))
         pending = null
-        active = principal
-        if (!deliver(principal, BusPaths.PLUGIN_OPEN, "open")) {
-            closePrincipal(principal, "open_failed")
+        active = pendingPrincipal
+        if (!deliver(pendingPrincipal, BusPaths.PLUGIN_OPEN, "open")) {
+            closePrincipal(pendingPrincipal, "open_failed")
+        } else {
+            onRegisteredPrincipal(pendingPrincipal)
         }
     }
 

@@ -60,6 +60,24 @@ class SurfaceModelsTest {
     }
 
     @Test
+    fun `rich card lines preserve badge and trail metadata`() {
+        val (client, transport) = client("surfaces")
+        val result = client.surfaceSession("main").showCard(
+            NexusCard(
+                title = "Transit",
+                lines = emptyList(),
+                richLines = listOf(NexusCardLine("Downtown", badge = "11", trail = listOf("2m", "8m"))),
+                handlesBack = true,
+            ),
+        )
+        assertEquals(NexusSdkResult.SENT, result)
+        val line = transport.sends.single().second.getJSONArray("lines").getJSONObject(0)
+        assertEquals("11", line.getString("badge"))
+        assertEquals("8m", line.getJSONArray("trail").getString(1))
+        assertTrue(transport.sends.single().second.getBoolean("handlesBack"))
+    }
+
+    @Test
     fun `invalid card and local IDs fail locally`() {
         assertThrows(IllegalArgumentException::class.java) { NexusCard("", emptyList()) }
         assertThrows(IllegalArgumentException::class.java) { NexusCard("Title", listOf("x".repeat(241))) }

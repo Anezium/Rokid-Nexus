@@ -14,6 +14,7 @@ import com.anezium.rokidbus.shared.plugin.NexusInputEvent
 import com.anezium.rokidbus.shared.plugin.PluginDescriptor
 import com.anezium.rokidbus.shared.plugin.PluginDescriptorParseResult
 import com.anezium.rokidbus.shared.plugin.PluginDescriptorParser
+import org.json.JSONObject
 
 abstract class NexusPluginService : Service(), NexusPluginCallbacks {
     private val localBinder = Binder()
@@ -56,12 +57,15 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
     final override fun onInput(event: NexusInputEvent) = onNexusInput(event)
     final override fun onLinkState(state: Int) = onNexusLinkState(state)
     final override fun onRegistrationState(result: Int) = onNexusRegistrationState(result)
+    final override fun onMessage(path: String, id: String, payload: JSONObject) =
+        onNexusMessage(path, id, payload)
 
     protected abstract fun onNexusOpen()
     protected abstract fun onNexusClose()
     protected abstract fun onNexusInput(event: NexusInputEvent)
     protected open fun onNexusLinkState(state: Int) = Unit
     protected open fun onNexusRegistrationState(result: Int) = Unit
+    protected open fun onNexusMessage(path: String, id: String, payload: JSONObject) = Unit
 
     private fun readOwnDescriptor(): PluginDescriptor? {
         val component = ComponentName(this, javaClass)

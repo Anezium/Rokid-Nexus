@@ -69,4 +69,18 @@ class PluginCatalogTest {
         assertFalse(catalog.entries.any { it.launchable })
         assertEquals(setOf(PluginCatalogState.INVALID), catalog.entries.map { it.state }.toSet())
     }
+
+    @Test
+    fun `transit is absent without APK and dynamic when approved`() {
+        val withoutTransit = PluginCatalog.build(listOf(BuiltIn("lyrics")), emptyList()) {
+            PluginGrantState.Pending
+        }
+        assertFalse(withoutTransit.entries.any { it.id == "transit" })
+
+        val transit = PhonePluginCandidate.Valid(principal("transit"))
+        val installed = PluginCatalog.build(listOf(BuiltIn("lyrics")), listOf(transit)) {
+            PluginGrantState.Approved(setOf(PluginCapability.SURFACES))
+        }
+        assertTrue(installed.launchableEntries.any { it.id == "transit" })
+    }
 }

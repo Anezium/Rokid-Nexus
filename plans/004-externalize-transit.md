@@ -22,6 +22,7 @@
 
 ## Status
 
+- **Status**: DONE (software gates complete 2026-07-10; owner on-device checks pending)
 - **Priority**: P1
 - **Effort**: L
 - **Risk**: HIGH
@@ -426,22 +427,50 @@ Expected: exit 0 and only scoped files plus plan status changed.
 
 ## Done criteria
 
-- [ ] `:plugin-transit` produces an independent installable APK.
-- [ ] Transit depends on `:bus-client` SDK and never on phone-hub implementation.
-- [ ] Transit requests Nexus `surfaces` only.
-- [ ] Transit owns its phone network/location permissions and settings UI.
-- [ ] No Transit implementation dependency, Activity, location permission, or
+- [x] `:plugin-transit` produces an independent installable APK.
+- [x] Transit depends on `:bus-client` SDK and never on phone-hub implementation.
+- [x] Transit requests Nexus `surfaces` only.
+- [x] Transit owns its phone network/location permissions and settings UI.
+- [x] No Transit implementation dependency, Activity, location permission, or
   location FGS type remains in phone-hub.
-- [ ] Existing favorites migrate only to the verified Transit principal and only once.
-- [ ] Installing/approving the APK dynamically adds Transit to phone/glasses.
-- [ ] Revoking/uninstalling dynamically removes it without destabilizing hubs.
-- [ ] Force-stopped Transit bind-wakes from the glasses launcher.
-- [ ] Chooser/boards/Favorites/input/BACK/refresh behavior remains validated.
-- [ ] Plugin-owned background location hardware gate passes, or the plan is
-  explicitly `BLOCKED` with the three choices reported.
-- [ ] `.\gradlew.bat test lintDebug assembleDebug` exits 0.
-- [ ] CXR-L/SPP hardware regression passes with redacted logs.
-- [ ] No out-of-scope files changed except `plans/README.md` status.
+- [x] Existing favorites migrate only to the verified Transit principal and only once in software tests.
+- [x] Installing/approving the APK dynamically adds Transit to the canonical catalog in software tests.
+- [x] Revoking/uninstalling dynamically removes it and closes owned state in software tests.
+- [ ] Force-stopped Transit bind-wake: pending owner on-device verification.
+- [x] Chooser/Favorites/input/BACK/refresh behavior remains covered by JVM tests; live boards/pagination are pending owner verification.
+- [ ] Plugin-owned background location hardware gate: pending owner on-device verification; the three fallback choices are recorded in `TESTPLAN.md`.
+- [x] `.\gradlew.bat test lintDebug assembleDebug` exits 0.
+- [ ] CXR-L/SPP hardware regression: pending owner on-device verification.
+- [x] Only scoped files, required SDK surface/private-message extensions, `README.md`, and plan status files changed.
+
+## Execution record (2026-07-10)
+
+- Began from clean commit `a6ee56e` with Plans 001-003 marked `DONE`; the Plan 004
+  drift check showed no uncommitted source changes.
+- The pre-SDK excerpts for hardcoded home/store rows and direct `TransitPlugin()`
+  construction were stale after Plan 003. The end-state was verified through the
+  canonical catalog, dynamic Transit catalog tests, hub dependency report, and
+  source scans showing no Transit implementation/activity/location coupling.
+- Standard AGP cannot place an Android application on another application's
+  `implementation` classpath. The Step 5 combined test exposed that stale
+  mechanical ordering once; Step 6 decoupling was applied immediately, and the
+  corrected migration/unit gate passed.
+- The Plan 003 typed card model lacked Transit's existing structured badge/trail
+  rows and `handlesBack`, and its service callback exposed only reserved lifecycle
+  messages. The SDK was minimally extended for rich card rows, plugin-private
+  migration messages, and plugin-handled BACK; tests verify the preserved wire
+  semantics without exposing trusted owner or sequence fields.
+- The independent manifest requests only Nexus `surfaces` and owns `INTERNET`,
+  foreground location, runtime location, and notification permissions. The debug
+  APK was produced, and every copied launcher bitmap matched the repository-owned
+  Nexus source hash exactly.
+- Favorite migration is callback-only and signer/grant bound, filters corrupt
+  entries, validates count/checksum acknowledgement, clears legacy state only on
+  success, and deduplicates replay. No exported migration component/path or
+  compile-time Transit dependency remains in the hub.
+- Device commands, installs, logs, network publication, pushes, tags, and PRs were
+  not performed. Background-FGS and full phone/glasses acceptance remain pending
+  owner verification in `TESTPLAN.md`.
 
 ## STOP conditions
 

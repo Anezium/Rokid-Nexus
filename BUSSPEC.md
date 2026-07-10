@@ -103,6 +103,23 @@ principal checks, the phone hub injects `ownerPluginId`, rewrites the wire ID to
 `pluginId:localSurfaceId`, and assigns the monotonic sequence. Plugins never
 supply a trusted owner or global sequence.
 
+## Transit external plugin and one-release migration
+
+Transit is an independent phone APK with plugin ID `transit`. It requests only
+Nexus `surfaces`; its own manifest owns `INTERNET`, foreground location, runtime
+location, and notification permissions. No Transit implementation, location
+permission, or location foreground-service type remains in the phone hub.
+
+For one compatibility release, an approved, signer-bound Transit principal may
+receive `/plugin/transit/migration/legacy`. The version 1 payload contains only
+validated favorite stops and the last selected mode plus a count/checksum; it
+never contains current coordinates or recent boards. Transit acknowledges on
+`/plugin/transit/migration/ack`. The hub clears legacy state and records
+completion only after the verified principal returns the exact migration ID,
+count, and checksum. Both sides deduplicate replay. These paths are internal to
+the verified callback/owned namespace and are not exported providers or general
+migration APIs.
+
 ## Surface protocol v1 (Round B)
 
 Plugins do not install glasses APKs. External phone plugins run in their own APK

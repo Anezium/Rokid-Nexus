@@ -358,4 +358,43 @@ adb -s $phone uninstall com.anezium.rokidbus.phoneprobe
 >   row, and BACK hides without reaching the app underneath.
 > - Revoke the sample and confirm it closes, disappears, and cannot wake or send.
 > - Uninstall the sample and confirm the phone and glasses catalogs update safely.
-> - Confirm CXR-L/SPP continuity and the temporary built-in Lyrics/Transit behavior.
+> - Confirm CXR-L/SPP continuity and the remaining temporary built-ins.
+
+## Plan 004 external Transit acceptance
+
+> **PENDING OWNER ON-DEVICE VERIFICATION (2026-07-10)**
+>
+> The independent Transit APK, typed surface runtime, plugin-owned settings and
+> permissions, foreground lifecycle, one-time verified favorite migration, hub
+> decoupling, tests, lint, and build gates passed locally. Device interaction was
+> prohibited for this execution, so both hardware gates remain owner work.
+>
+> Background-location architecture gate:
+>
+> - Open Transit on the phone, grant location/notification, and add a favorite.
+> - Put the phone UI in the background, stop the Transit process, then open Transit
+>   from the glasses and enter Near Me.
+> - Confirm bind-wake can legally start the plugin-owned location foreground
+>   service, a live board arrives, and no foreground-start or location security
+>   exception occurs.
+> - Return to chooser and close; confirm refresh stops and the notification is removed.
+>
+> If Android blocks the background foreground-service start, stop and choose one:
+>
+> - require the user to start Transit from its phone notification/Activity before Near Me;
+> - add a narrowly scoped hub-owned location broker with lazy runtime permission;
+> - request background location in Transit with explicit user education.
+>
+> The recommended initial-beta fallback is the first option. Do not select a
+> fallback silently.
+>
+> Full acceptance cycle:
+>
+> - Transit absent → no Transit catalog/launcher row; install → pending; approve
+>   `surfaces` → dynamic phone/glasses row.
+> - Force-stop → glasses open bind-wakes; validate chooser, Near Me, Favorites,
+>   pagination, single-count paired swipe, tap, both BACK levels, and refresh stop.
+> - Restart the hub, revoke, and uninstall Transit; surfaces must not become stale,
+>   Transit must disappear/cannot wake, and the remaining hub stays stable.
+> - Confirm the one-release favorite migration imports once without duplication,
+>   and CXR-L/SPP remain connected. Record only redacted PASS/FAIL evidence.

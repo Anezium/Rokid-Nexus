@@ -83,6 +83,7 @@ class NexusPluginClient internal constructor(
                 }
                 onRegistrationState(result)
             }
+            else -> if (isApproved) callbacks.onMessage(path, id, payload)
         }
     }
 

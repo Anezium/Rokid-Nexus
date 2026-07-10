@@ -13,8 +13,10 @@ approval.
 - `plugin-sample`: copyable Hello plugin APK using only the public SDK.
 - `phone-hub`: discovery, consent, identity enforcement, catalog, and Rokid link.
 - `glasses-hub`: the single HUD renderer/launcher anchor.
-- `plugin-lyrics`, `plugin-media`, and `plugin-transit`: feature modules being
-  migrated from temporary built-in adapters to independent APKs.
+- `plugin-transit`: the first independent production plugin APK, owning its own
+  network, location permission, settings, and active-session foreground service.
+- `plugin-lyrics` and `plugin-media`: feature modules still using temporary
+  built-in adapters while they await independent-APK migration.
 - `phone-client-probe`, `glasses-client-probe`, and `lens-glasses`: validation and
   advanced integration modules.
 

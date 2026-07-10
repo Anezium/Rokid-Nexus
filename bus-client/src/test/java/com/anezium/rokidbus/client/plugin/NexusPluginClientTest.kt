@@ -33,6 +33,7 @@ class NexusPluginClientTest {
         override fun onInput(event: NexusInputEvent) { events += "input:${event.keyCode}" }
         override fun onLinkState(state: Int) { events += "link:$state" }
         override fun onRegistrationState(result: Int) { events += "registration:$result" }
+        override fun onMessage(path: String, id: String, payload: JSONObject) { events += "message:$path" }
     }
 
     private fun fixture(): Triple<NexusPluginClient, FakeTransport, RecordingCallbacks> {
@@ -90,5 +91,17 @@ class NexusPluginClientTest {
         client.close()
         assertEquals(listOf("registration:0", "open", "close"), callbacks.events)
         assertEquals(1, transport.closeCount)
+    }
+
+    @Test
+    fun `approved plugin private messages reach the service callback`() {
+        val (client, transport, callbacks) = fixture()
+        transport.listener.onRegistrationState(PluginRegistrationResult.APPROVED)
+        transport.listener.onMessage("/plugin/hello/migration", "m1", payload().put("future", true))
+        assertEquals(
+            listOf("registration:0", "message:/plugin/hello/migration"),
+            callbacks.events,
+        )
+        client.close()
     }
 }
