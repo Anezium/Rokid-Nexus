@@ -19,10 +19,16 @@ SPP alongside Hi Rokid stayed connected, bind-based wake worked from the accessi
 anchor, and the phone HTTP proxy reached `api.transitous.org` while glasses Wi-Fi was off.
 Round A validates the AGP multi-module bus built from those constraints.
 
-Serials used during validation:
+Device serials are operator-local. Populate the PowerShell variables from the
+operator's environment before running any device command:
 
-- Glasses: `1901092534053723`
-- Phone: `R5CW12DK1AY`
+```powershell
+$glasses = $env:ROKID_GLASSES_SERIAL
+$phone = $env:ROKID_PHONE_SERIAL
+if ([string]::IsNullOrWhiteSpace($glasses) -or [string]::IsNullOrWhiteSpace($phone)) {
+    throw "Set ROKID_GLASSES_SERIAL and ROKID_PHONE_SERIAL in the operator environment."
+}
+```
 
 ## Build
 
@@ -42,9 +48,6 @@ Expected outputs:
 ## Install
 
 ```powershell
-$glasses = "1901092534053723"
-$phone = "R5CW12DK1AY"
-
 adb -s $glasses install -r .\glasses-hub\build\outputs\apk\debug\glasses-hub-debug.apk
 adb -s $glasses install -r .\glasses-client-probe\build\outputs\apk\debug\glasses-client-probe-debug.apk
 adb -s $phone install -r .\phone-hub\build\outputs\apk\debug\phone-hub-debug.apk

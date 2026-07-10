@@ -14,8 +14,9 @@ Rokid Relay yet; it must end with a bus a real app could ride.
   the subscription. Clients never subscribe themselves.
 - **Data plane** = the hub-owned custom-UUID RFCOMM SPP socket already validated:
   UUID `0b005957-ec6d-4af5-bcba-6c786c46634e`, glasses = server
-  (`listenUsingInsecureRfcommWithServiceRecord`), phone = client, target by MAC
-  `AC:86:D1:55:1E:ED` first (bonded name is `Glasses_3723`, NOT "Rokid").
+  (`listenUsingInsecureRfcommWithServiceRecord`), phone = client. The current
+  validated device-selection logic tries its configured bonded device address
+  first and its configured bonded name second; public docs do not retain either value.
   Never call `cancelDiscovery()` (needs BLUETOOTH_SCAN).
 - Glasses hub is anchored on an **AccessibilityService** (armed once via ADB, appended
   to Relay's service — never overwrite the secure setting). `startService` on an idle

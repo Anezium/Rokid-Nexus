@@ -679,7 +679,7 @@ class BusHubService : Service() {
                 }
                 var current: BluetoothSocket? = null
                 try {
-                    log("SPP connecting to bonded glasses name=${device.name ?: "unknown"}")
+                    log("SPP connecting to bonded glasses")
                     current = device.createInsecureRfcommSocketToServiceRecord(BusConstants.SPP_UUID)
                     current.connect()
                     socket = current
