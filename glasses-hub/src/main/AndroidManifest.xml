@@ -69,12 +69,5 @@
             </intent-filter>
         </receiver>
 
-        <receiver
-            android:name=".ProbeBroadcastReceiver"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="com.anezium.rokidbus.glasses.PROBE" />
-            </intent-filter>
-        </receiver>
     </application>
 </manifest>
