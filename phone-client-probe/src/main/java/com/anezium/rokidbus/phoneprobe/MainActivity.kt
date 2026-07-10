@@ -11,6 +11,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 import com.anezium.rokidbus.client.BusClient
 import com.anezium.rokidbus.client.BusEvent
+import com.anezium.rokidbus.client.HubTarget
 import com.anezium.rokidbus.client.ui.BusTheme
 import org.json.JSONObject
 
@@ -50,6 +51,7 @@ class MainActivity : Activity() {
             context = applicationContext,
             clientId = "phone-client-probe",
             pathPrefixes = listOf(PATH_ECHO_REPLY, PATH_HTTP_TRIGGER_REPLY, PATH_HTTP_REPLY, PATH_AUDIO),
+            hubTarget = HubTarget.PHONE,
         ) { event -> handleEvent(event) }
         client.connect()
     }

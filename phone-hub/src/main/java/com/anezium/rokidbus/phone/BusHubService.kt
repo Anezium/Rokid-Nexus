@@ -10,7 +10,10 @@ import android.app.Service
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothSocket
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.os.Build
@@ -22,10 +25,7 @@ import android.util.Log
 import com.anezium.rokidbus.client.IBusCallback
 import com.anezium.rokidbus.client.IBusService
 import com.anezium.rokidbus.client.PluginRegistrationResult
-import com.anezium.rokidbus.lyrics.LyricsPlugin
-import com.anezium.rokidbus.media.MediaDeckPlugin
 import com.anezium.rokidbus.phone.lens.LensTranslationPlugin
-import com.anezium.rokidbus.plugin.transit.TransitPlugin
 import com.anezium.rokidbus.shared.BusConstants
 import com.anezium.rokidbus.shared.BusEnvelope
 import com.anezium.rokidbus.shared.BusPaths
@@ -33,6 +33,7 @@ import com.anezium.rokidbus.shared.FrameProtocol
 import com.anezium.rokidbus.shared.LinkStateBits
 import com.anezium.rokidbus.shared.plugin.PathRules
 import com.anezium.rokidbus.shared.plugin.PluginCapability
+import com.anezium.rokidbus.shared.plugin.PluginCapability.Companion.serialize
 import com.example.cxrglobal.CXRLink
 import com.example.cxrglobal.CxrDefs
 import com.example.cxrglobal.callbacks.IAudioStreamCbk
@@ -44,8 +45,10 @@ import java.io.OutputStream
 import java.net.HttpURLConnection
 import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 
 private const val TAG = "ROKIDBUS-PHONE"
 private const val CHANNEL_ID = "rokidbus_phone"
@@ -99,6 +102,8 @@ class BusHubService : Service() {
 
     private val executor = Executors.newCachedThreadPool()
     private val registrations = CopyOnWriteArrayList<Registration>()
+    private val externalSurfaceSeq = ConcurrentHashMap<String, AtomicLong>()
+    private val externalSurfaceIds = ConcurrentHashMap<String, MutableSet<String>>()
     private val sppLoopStarted = AtomicBoolean(false)
     private val audioLeaseLock = Any()
     @Volatile private var sppLoopStop = false
@@ -112,9 +117,18 @@ class BusHubService : Service() {
     private lateinit var lensTranslationPlugin: LensTranslationPlugin
     private lateinit var pluginDiscovery: PhonePluginDiscovery
     private lateinit var pluginGrantStore: PluginGrantStore
+    private lateinit var externalPluginController: ExternalPluginController
     @Volatile private var cxrConnected = false
     @Volatile private var glassBtConnected = false
     @Volatile private var lastNotifiedStatus: String? = null
+    private var pluginPackageReceiverRegistered = false
+
+    private val pluginPackageReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            val packageName = intent?.data?.schemeSpecificPart.orEmpty()
+            if (packageName.isNotBlank()) reconcilePluginPackage(packageName)
+        }
+    }
 
     private val binder = object : IBusService.Stub() {
         override fun apiVersion(): Int = BusConstants.API_VERSION
@@ -191,6 +205,10 @@ class BusHubService : Service() {
                             grantedCapabilities = state.capabilities,
                         )
                     ) {
+                        notifyPluginRegistration(principal, state.capabilities, cb)
+                        if (::externalPluginController.isInitialized) {
+                            externalPluginController.onRegistered(principal.grantKey())
+                        }
                         log("plugin registered package=$packageName plugin=$pluginId status=approved")
                         PluginRegistrationResult.APPROVED
                     } else {
@@ -248,12 +266,34 @@ class BusHubService : Service() {
         pluginDiscovery = PhonePluginDiscovery(packageManager)
         pluginGrantStore = PluginGrantStore(applicationContext)
         lensTranslationPlugin = LensTranslationPlugin()
+        val builtInPlugins = PhoneBuiltInPlugins.create(lensTranslationPlugin)
+        val externalRuntime = AndroidExternalPluginRuntime(
+            context = applicationContext,
+            isRegisteredCallback = ::isExternalPrincipalRegistered,
+            deliverCallback = ::deliverExternalLifecycle,
+            hideCallback = ::hideExternalSurfaces,
+            disconnectedCallback = { principal ->
+                if (::externalPluginController.isInitialized) {
+                    externalPluginController.onBinderDied(principal.grantKey())
+                }
+            },
+        )
+        externalPluginController = ExternalPluginController(
+            runtime = externalRuntime,
+            scheduler = MainThreadExternalPluginScheduler(),
+            logger = ::log,
+        )
         pluginRegistry = PhonePluginRegistry(
             context = applicationContext,
-            plugins = listOf(LyricsPlugin(), MediaDeckPlugin(), TransitPlugin(), lensTranslationPlugin),
+            plugins = builtInPlugins,
             sendEnvelope = { envelope -> sendRemote(envelope) },
             logger = { message -> log(message) },
+            catalogProvider = {
+                PhoneBuiltInPlugins.catalog(applicationContext, builtInPlugins)
+            },
+            externalController = externalPluginController,
         )
+        registerPluginPackageReceiver()
         hubEnabled = prefs().getBoolean(PREF_ENABLED, true)
         if (hubEnabled) {
             startForegroundWithType()
@@ -321,6 +361,10 @@ class BusHubService : Service() {
         runCatching { cxrLink?.disconnect() }
         closeSocket()
         PhoneClientSupervisor.detach(applicationContext, this)
+        if (pluginPackageReceiverRegistered) {
+            runCatching { unregisterReceiver(pluginPackageReceiver) }
+            pluginPackageReceiverRegistered = false
+        }
         if (::pluginRegistry.isInitialized) pluginRegistry.close()
         if (::lensTranslationPlugin.isInitialized) lensTranslationPlugin.close()
         registrations.clear()
@@ -347,7 +391,19 @@ class BusHubService : Service() {
                 deliverError(sender.replyBinder, envelope.id, "INVALID_SURFACE_ID")
                 return
             }
-            envelope.copy(payload = payload)
+            val wireSurfaceId = payload.getString("surfaceId")
+            val sequence = externalSurfaceSeq.computeIfAbsent(wireSurfaceId) {
+                AtomicLong(System.currentTimeMillis())
+            }.incrementAndGet()
+            val pluginSurfaces = externalSurfaceIds.computeIfAbsent(sender.principal.descriptor.id) {
+                ConcurrentHashMap.newKeySet()
+            }
+            if (envelope.path == BusPaths.SURFACE_HIDE) {
+                pluginSurfaces.remove(wireSurfaceId)
+            } else {
+                pluginSurfaces += wireSurfaceId
+            }
+            envelope.copy(payload = payload.put("seq", sequence))
         } else {
             envelope
         }
@@ -492,6 +548,24 @@ class BusHubService : Service() {
             .onFailure { removeRegistration(target, "dead callback") }
     }
 
+    private fun notifyPluginRegistration(
+        principal: PhonePluginPrincipal,
+        capabilities: Set<PluginCapability>,
+        callback: IBusCallback,
+    ) {
+        val eventId = UUID.randomUUID().toString()
+        val payload = JSONObject()
+            .put("version", 1)
+            .put("type", "registration")
+            .put("id", eventId)
+            .put("pluginId", principal.descriptor.id)
+            .put("result", PluginRegistrationResult.APPROVED)
+            .put("capabilities", serialize(capabilities))
+            .toString()
+            .toByteArray(Charsets.UTF_8)
+        runCatching { callback.onMessage(BusPaths.PLUGIN_REGISTRATION, eventId, payload) }
+    }
+
     private fun removeRegistrationsByBinder(callbackBinder: IBinder, reason: String) {
         registrations.filter { it.callbackBinder == callbackBinder }.forEach { registration ->
             removeRegistration(registration, reason)
@@ -502,11 +576,88 @@ class BusHubService : Service() {
         if (!registrations.remove(registration)) return
         runCatching { registration.callbackBinder.unlinkToDeath(registration.deathRecipient, 0) }
         releaseAudioLeaseForLocalBinder(registration.callbackBinder, reason)
+        if (reason in setOf("binderDied", "dead callback", "unregister")) {
+            registration.principal?.let { principal ->
+                if (::externalPluginController.isInitialized) {
+                    externalPluginController.onBinderDied(principal.grantKey())
+                }
+            }
+        }
     }
 
     private fun revokePrincipal(key: PluginGrantKey) {
+        if (::externalPluginController.isInitialized) externalPluginController.onRevoked(key)
         registrations.filter { it.principal?.grantKey() == key }.forEach { registration ->
             removeRegistration(registration, "authorizationChanged")
+        }
+    }
+
+    private fun registerPluginPackageReceiver() {
+        val filter = IntentFilter().apply {
+            addAction(Intent.ACTION_PACKAGE_ADDED)
+            addAction(Intent.ACTION_PACKAGE_CHANGED)
+            addAction(Intent.ACTION_PACKAGE_REMOVED)
+            addDataScheme("package")
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(pluginPackageReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("DEPRECATION")
+            registerReceiver(pluginPackageReceiver, filter)
+        }
+        pluginPackageReceiverRegistered = true
+    }
+
+    private fun reconcilePluginPackage(packageName: String) {
+        val candidates = pluginDiscovery.discover()
+        val validPrincipals = candidates.mapNotNull { candidate ->
+            (candidate as? PhonePluginCandidate.Valid)?.principal
+        }
+        pluginGrantStore.reconcile(validPrincipals)
+        val available = validPrincipals.any { principal ->
+            principal.packageName == packageName &&
+                pluginGrantStore.stateFor(principal) is PluginGrantState.Approved
+        }
+        if (!available) externalPluginController.onPackageUnavailable(packageName)
+        if (::pluginRegistry.isInitialized && isCxrUp()) pluginRegistry.syncLauncherList()
+    }
+
+    private fun isExternalPrincipalRegistered(principal: PhonePluginPrincipal): Boolean =
+        registrations.any { it.principal?.grantKey() == principal.grantKey() }
+
+    private fun deliverExternalLifecycle(
+        principal: PhonePluginPrincipal,
+        path: String,
+        id: String,
+        payload: JSONObject,
+    ): Boolean {
+        val registration = registrations.singleOrNull { it.principal?.grantKey() == principal.grantKey() }
+            ?: return false
+        val bytes = payload.toString().toByteArray(Charsets.UTF_8)
+        return runCatching {
+            registration.callback.onMessage(path, id, bytes)
+            true
+        }.getOrElse {
+            removeRegistration(registration, "dead callback")
+            false
+        }
+    }
+
+    private fun hideExternalSurfaces(pluginId: String) {
+        val surfaceIds = externalSurfaceIds.remove(pluginId).orEmpty().toList()
+        surfaceIds.forEach { surfaceId ->
+            val sequence = externalSurfaceSeq.computeIfAbsent(surfaceId) {
+                AtomicLong(System.currentTimeMillis())
+            }.incrementAndGet()
+            sendRemote(
+                BusEnvelope(
+                    path = BusPaths.SURFACE_HIDE,
+                    payload = JSONObject()
+                        .put("surfaceId", surfaceId)
+                        .put("ownerPluginId", pluginId)
+                        .put("seq", sequence),
+                ),
+            )
         }
     }
 
@@ -1075,6 +1226,10 @@ class BusHubService : Service() {
             PhoneClientSupervisor.onPrincipalRevoked(context.applicationContext, key)
             activeInstance?.revokePrincipal(key)
         }
+
+        fun pluginCatalog(context: android.content.Context): PluginCatalog =
+            activeInstance?.pluginRegistry?.catalog()
+                ?: PhoneBuiltInPlugins.catalog(context.applicationContext)
 
         fun startWithToken(context: android.content.Context, token: String) {
             val intent = Intent(context, BusHubService::class.java)

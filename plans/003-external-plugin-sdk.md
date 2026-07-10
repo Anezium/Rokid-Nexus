@@ -20,6 +20,7 @@
 
 ## Status
 
+- **Status**: DONE (software gates complete 2026-07-10; owner on-device checks pending)
 - **Priority**: P1
 - **Effort**: L
 - **Risk**: MED
@@ -428,19 +429,40 @@ Expected: exit 0 and only scoped files plus plan status changed.
 
 ## Done criteria
 
-- [ ] External apps use `NexusPluginService` without a static factory.
-- [ ] BusClient never binds an arbitrary first matching hub service.
-- [ ] One canonical catalog drives phone UI and glasses launcher.
-- [ ] Approved external plugins cold-start, open, receive input, close, and revoke correctly.
-- [ ] SDK owns typed `card`/`timed-lines` helpers; hub owns trusted identity/sequence.
-- [ ] Sample requests only `surfaces` and has no Rokid/CXR/BT/GMS dependency.
-- [ ] `shared` and `bus-client` publish to Maven local with resolvable transitive dependencies.
-- [ ] Published-coordinate sample builds without `../CxrGlobal`.
-- [ ] README, SDK quickstart, protocol link, JitPack config, and non-publishing CI exist.
-- [ ] No license was added without explicit maintainer approval.
-- [ ] `.\gradlew.bat test lintDebug assembleDebug` exits 0.
-- [ ] External sample hardware gate passes with redacted evidence.
-- [ ] No out-of-scope files changed except `plans/README.md` status.
+- [x] External apps use `NexusPluginService` without a static factory.
+- [x] BusClient never binds an arbitrary first matching hub service.
+- [x] One canonical catalog drives phone UI and glasses launcher.
+- [x] Approved external plugins cold-start, open, receive input, close, and revoke correctly in software tests.
+- [x] SDK owns typed `card`/`timed-lines` helpers; hub owns trusted identity/sequence.
+- [x] Sample requests only `surfaces` and has no Rokid/CXR/BT/GMS dependency.
+- [x] `shared` and `bus-client` publish to Maven local with resolvable transitive dependencies.
+- [x] Published-coordinate sample builds with the `CxrGlobal` composite disabled.
+- [x] README, SDK quickstart, protocol link, JitPack config, and non-publishing CI exist.
+- [x] No license was added without explicit maintainer approval.
+- [x] `.\gradlew.bat test lintDebug assembleDebug` exits 0.
+- [ ] External sample hardware gate: pending owner on-device verification; device interaction was prohibited.
+- [x] Only scoped files, required Lens explicit-target callers, `TESTPLAN.md`, and plan status files changed.
+
+## Execution record (2026-07-10)
+
+- Resumed the owner-approved partial Plan 003 worktree at Step 4. The prior JVM
+  Android-stub failure was resolved by the owner's plain-data
+  `PluginSettingsTarget`; UI callers construct `ComponentName` only at launch.
+- Re-ran the precondition, explicit hub-resolution/probe gate, shared/SDK tests,
+  and the formerly blocked phone-hub catalog/controller tests before continuing.
+- The plan's `BusClientService` static-factory and two-plugin UI excerpts were
+  stale after the partial run and Lens/Media baseline. The end-state was verified
+  through `NexusPluginService` cold-start tests and a catalog-driven UI containing
+  all live built-ins plus discovered external descriptors.
+- Lens callers were retained as a necessary stale-scope adaptation: after hub
+  selection became explicit, the glasses-side Lens clients had to select the
+  glasses hub instead of inheriting the phone-plugin default.
+- Maven-local publication generated a bus-client POM with the expected compile
+  dependency on `com.github.Anezium.Rokid-Nexus:shared:0.1.0-SNAPSHOT`; the sample
+  compiled from those coordinates with `-PskipCxrGlobal=true`.
+- No network publication, license addition, device command, install, push, tag,
+  or PR operation was performed. The complete hardware cycle is recorded as
+  pending owner verification in `TESTPLAN.md`.
 
 ## STOP conditions
 

@@ -4,6 +4,7 @@ import android.util.Log
 import com.anezium.rokidbus.client.BusClient
 import com.anezium.rokidbus.client.BusClientService
 import com.anezium.rokidbus.client.BusEvent
+import com.anezium.rokidbus.client.HubTarget
 import org.json.JSONObject
 import java.util.concurrent.ConcurrentHashMap
 
@@ -26,6 +27,7 @@ class ProbeService : BusClientService() {
             context = applicationContext,
             clientId = "glasses-client-probe",
             pathPrefixes = listOf(PATH_PROBE, PATH_HTTP_REPLY),
+            hubTarget = HubTarget.GLASSES,
         ) { event -> handleEvent(event) }
         client = next
         Log.i(TAG, "ProbeService BusClient created")

@@ -33,6 +33,9 @@ class BusClient(
     context: Context,
     private val clientId: String,
     pathPrefixes: List<String>,
+    private val hubTarget: HubTarget = HubTarget.PHONE,
+    private val pluginId: String? = null,
+    private val pluginRegistrationListener: (Int) -> Unit = {},
     private val listener: (BusEvent) -> Unit,
 ) {
     private data class Pending(
@@ -50,6 +53,7 @@ class BusClient(
     private var bound = false
     private var closed = false
     private var reconnectPosted = false
+    private var pluginRegistrationState: Int? = null
 
     private val callback = object : IBusCallback.Stub() {
         override fun onMessage(path: String, id: String, payload: ByteArray) {
@@ -74,10 +78,27 @@ class BusClient(
             service = IBusService.Stub.asInterface(binder)
             reconnectPosted = false
             runCatching {
-                service?.register(clientId, receivePrefixes, callback)
+                val registrationResult = if (pluginId == null) {
+                    service?.register(clientId, receivePrefixes, callback)
+                    null
+                } else {
+                    service?.registerPlugin(appContext.packageName, pluginId, callback)
+                }
+                if (registrationResult != null) {
+                    pluginRegistrationState = registrationResult
+                    pluginRegistrationListener(registrationResult)
+                }
                 service?.linkState()?.let { listener(BusEvent.LinkState(it)) }
-                flushQueued()
+                if (pluginId == null || registrationResult == PluginRegistrationResult.APPROVED) {
+                    flushQueued()
+                } else {
+                    queued.clear()
+                }
             }.onFailure {
+                pluginRegistrationState = PluginRegistrationResult.REGISTRATION_FAILED
+                if (pluginId != null) {
+                    pluginRegistrationListener(PluginRegistrationResult.REGISTRATION_FAILED)
+                }
                 listener(BusEvent.Error("Hub registration failed", it))
                 scheduleReconnect()
             }
@@ -85,16 +106,22 @@ class BusClient(
 
         override fun onServiceDisconnected(name: ComponentName) {
             service = null
+            pluginRegistrationState = null
             if (!closed) scheduleReconnect()
         }
 
         override fun onBindingDied(name: ComponentName) {
             service = null
+            pluginRegistrationState = null
             if (!closed) scheduleReconnect()
         }
 
         override fun onNullBinding(name: ComponentName) {
             service = null
+            pluginRegistrationState = PluginRegistrationResult.REGISTRATION_FAILED
+            if (pluginId != null) {
+                pluginRegistrationListener(PluginRegistrationResult.REGISTRATION_FAILED)
+            }
             listener(BusEvent.Error("Hub returned a null binding"))
             if (!closed) scheduleReconnect()
         }
@@ -123,6 +150,10 @@ class BusClient(
 
     fun send(path: String, id: String, payload: JSONObject): String {
         val bytes = payload.toString().toByteArray(Charsets.UTF_8)
+        if (pluginId != null && pluginRegistrationState != PluginRegistrationResult.APPROVED) {
+            listener(BusEvent.Error("Plugin registration is not approved"))
+            return id
+        }
         val hub = service
         if (hub == null) {
             reportQueueMutation(
@@ -153,6 +184,10 @@ class BusClient(
 
     fun sendBinary(path: String, id: String, meta: JSONObject, data: ByteArray): String {
         val bytes = meta.toString().toByteArray(Charsets.UTF_8)
+        if (pluginId != null && pluginRegistrationState != PluginRegistrationResult.APPROVED) {
+            listener(BusEvent.Error("Plugin registration is not approved"))
+            return id
+        }
         val hub = service
         if (hub == null) {
             reportQueueMutation(
@@ -234,6 +269,7 @@ class BusClient(
         if (bound) runCatching { appContext.unbindService(connection) }
         bound = false
         service = null
+        pluginRegistrationState = null
         queued.clear()
     }
 
@@ -311,7 +347,7 @@ class BusClient(
     }
 
     private fun resolveHubIntent(): Intent? {
-        val query = Intent(BusConstants.ACTION_HUB)
+        val query = Intent(hubTarget.action).setPackage(hubTarget.packageName)
         val matches = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             appContext.packageManager.queryIntentServices(
                 query,
@@ -321,10 +357,14 @@ class BusClient(
             @Suppress("DEPRECATION")
             appContext.packageManager.queryIntentServices(query, 0)
         }
-        val serviceInfo = matches.firstOrNull()?.serviceInfo ?: return null
-        Log.d(TAG, "resolved hub ${serviceInfo.packageName}/${serviceInfo.name}")
-        return Intent(BusConstants.ACTION_HUB).setComponent(
-            ComponentName(serviceInfo.packageName, serviceInfo.name),
+        val records = matches.mapNotNull { match ->
+            val service = match.serviceInfo ?: return@mapNotNull null
+            HubServiceRecord(service.packageName, service.name, setOf(hubTarget.action))
+        }
+        val selected = HubServiceResolver.select(hubTarget, records) ?: return null
+        Log.d(TAG, "resolved explicit hub package=${selected.packageName}")
+        return Intent(hubTarget.action).setComponent(
+            ComponentName(selected.packageName, selected.serviceClassName),
         )
     }
 }

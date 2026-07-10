@@ -43,6 +43,7 @@ import androidx.camera.view.transform.ImageProxyTransformFactory
 import androidx.core.content.ContextCompat
 import com.anezium.rokidbus.client.BusClient
 import com.anezium.rokidbus.client.BusEvent
+import com.anezium.rokidbus.client.HubTarget
 import com.anezium.rokidbus.shared.BusPaths
 import com.anezium.rokidbus.shared.LensWireContract
 import com.google.mlkit.vision.common.InputImage
@@ -410,6 +411,7 @@ class LensActivity : AppCompatActivity() {
             context = applicationContext,
             clientId = "lens-glasses",
             pathPrefixes = listOf(BusPaths.LENS_TRANSLATE_REPLY),
+            hubTarget = HubTarget.GLASSES,
         ) { event -> handleBusEvent(event) }
         busClient = client
         client.connect()

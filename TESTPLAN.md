@@ -340,3 +340,22 @@ adb -s $phone uninstall com.anezium.rokidbus.phoneprobe
 > - Normal and developer consent views transition pending -> partially approved
 >   -> active -> revoked; microphone remains disabled with the HUD-indicator note.
 > - CXR-L and SPP remain connected and the built-in Lyrics/Transit flows still work.
+
+## Plan 003 external plugin SDK acceptance
+
+> **PENDING OWNER ON-DEVICE VERIFICATION (2026-07-10)**
+>
+> The SDK, catalog/controller, Hello sample, local publication, published-coordinate
+> consumer, lint, and JVM/build gates passed locally. This execution was explicitly
+> prohibited from using device tools, installing APKs, or reading device logs.
+> The owner should verify the following with device identity, signer details, and
+> payload/user text redacted:
+>
+> - Install the Hello sample and confirm it appears pending, never auto-approved.
+> - Approve only `surfaces`, force-stop the sample, and open it from the glasses
+>   launcher; confirm bind-wake and the Hello card.
+> - Confirm one physical paired swipe moves exactly once, tap updates the selected
+>   row, and BACK hides without reaching the app underneath.
+> - Revoke the sample and confirm it closes, disappears, and cannot wake or send.
+> - Uninstall the sample and confirm the phone and glasses catalogs update safely.
+> - Confirm CXR-L/SPP continuity and the temporary built-in Lyrics/Transit behavior.

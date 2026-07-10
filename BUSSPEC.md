@@ -82,11 +82,33 @@ reject unknown external legacy callers. Phone approval does not authorize an
 arbitrary glasses-side companion; release glasses hubs remain closed to those
 clients until companion provisioning has its own identity design.
 
+## External plugin lifecycle v1
+
+The public SDK cold-starts through the exported plugin service; it does not use a
+process-local factory or require an Activity to run first. The hub sends these
+reserved, hub-to-plugin paths only to the verified principal:
+
+- `/system/plugin/registration`
+- `/system/plugin/open`
+- `/system/plugin/close`
+- `/system/plugin/input`
+
+Lifecycle payloads include `version`, `type`, `id`, and `pluginId`. Input also
+includes the plugin-local `localSurfaceId`, `keyCode`, and `action`. Version 1
+receivers ignore unknown fields and ignore duplicate event IDs. SDK lifecycle
+callbacks are serialized on the Android application main thread.
+
+Plugins send only local surface IDs such as `main`. After capability and
+principal checks, the phone hub injects `ownerPluginId`, rewrites the wire ID to
+`pluginId:localSurfaceId`, and assigns the monotonic sequence. Plugins never
+supply a trusted owner or global sequence.
+
 ## Surface protocol v1 (Round B)
 
-Plugins do not install glasses APKs. The phone hub hosts plugin logic in-process and
-pushes declarative surfaces over the existing bus. The glasses hub renders those
-surfaces locally with the shared Rokid Nexus phosphor visual language.
+Plugins do not install glasses APKs. External phone plugins run in their own APK
+process; temporary built-in adapters remain during migration. Both paths push
+declarative surfaces over the existing bus. The glasses hub renders those surfaces
+locally with the shared Rokid Nexus phosphor visual language.
 
 Phone to glasses:
 

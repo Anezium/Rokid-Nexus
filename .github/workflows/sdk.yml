@@ -1,0 +1,25 @@
+name: SDK
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-sdk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Test and lint public modules
+        run: ./gradlew :shared:testDebugUnitTest :bus-client:testDebugUnitTest :shared:lintDebug :bus-client:lintDebug -PskipCxrGlobal=true
+      - name: Publish SDK to the runner Maven local repository
+        run: ./gradlew :shared:publishToMavenLocal :bus-client:publishToMavenLocal -PversionName=0.1.0-SNAPSHOT -PskipCxrGlobal=true
+      - name: Compile sample from published coordinates
+        run: ./gradlew :plugin-sample:assembleDebug -PusePublishedSdk=true -PversionName=0.1.0-SNAPSHOT -PskipCxrGlobal=true
