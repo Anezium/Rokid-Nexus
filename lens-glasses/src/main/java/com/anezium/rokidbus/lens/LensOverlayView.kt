@@ -41,6 +41,13 @@ data class LensHudState(
     val ocrHz: Double = 0.0,
     val status: String = "STARTING",
     val frozen: Boolean = false,
+    val linkUp: Boolean = false,
+    /** Wire name of the engine that served the last translation reply, if known. */
+    val engine: String? = null,
+    /** "HD" or "FAST" once a frozen source is installed. */
+    val frozenSource: String? = null,
+    /** Live zoom label ("1.5x") when zoom is active, null at 1x. */
+    val zoomLabel: String? = null,
 )
 
 data class LensOverlayLayoutStats(
@@ -66,6 +73,16 @@ class LensOverlayView @JvmOverloads constructor(
         color = GREEN
         typeface = Typeface.MONOSPACE
         textSize = 12f * resources.displayMetrics.scaledDensity
+    }
+    private val hudAlertPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = HUD_ALERT_AMBER
+        typeface = Typeface.MONOSPACE
+        textSize = 12f * resources.displayMetrics.scaledDensity
+    }
+    private val hudChipBackgroundPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.BLACK
+        alpha = 210
+        style = Paint.Style.FILL
     }
     private val textPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
         color = GREEN
@@ -963,42 +980,64 @@ class LensOverlayView @JvmOverloads constructor(
     }
 
     private fun drawHud(canvas: Canvas) {
-        val density = resources.displayMetrics.density
-        val pad = 6f * density
-        val lineHeight = hudPaint.textSize + 3f * density
-        val lines = hudLines()
-
-        val maxWidth = lines.maxOf { hudPaint.measureText(it) }
-        val right = min(width.toFloat(), maxWidth + pad * 2f)
-        val bottom = min(height.toFloat(), pad * 2f + lineHeight * lines.size)
-        canvas.drawRect(0f, 0f, right, bottom, fillPaint)
-
-        var y = pad + hudPaint.textSize
-        lines.forEach { line ->
-            canvas.drawText(line, pad, y, hudPaint)
-            y += lineHeight
+        val chip = hudChipGeometry()
+        canvas.drawRoundRect(chip.background, chip.cornerRadius, chip.cornerRadius, hudChipBackgroundPaint)
+        canvas.drawCircle(chip.dotCenterX, chip.dotCenterY, chip.dotRadius, if (hudState.linkUp) hudPaint else hudAlertPaint)
+        chip.lines.forEachIndexed { index, line ->
+            val paint = if (line.alert) hudAlertPaint else hudPaint
+            // Right-aligned text keeps the chip visually anchored to the corner.
+            canvas.drawText(line.text, chip.background.right - chip.padding - paint.measureText(line.text), chip.baselines[index], paint)
         }
     }
 
-    private fun hudBounds(): RectF {
-        val density = resources.displayMetrics.density
-        val pad = 6f * density
-        val lineHeight = hudPaint.textSize + 3f * density
-        val lines = hudLines()
-        return RectF(
-            0f,
-            0f,
-            min(width.toFloat(), lines.maxOf { hudPaint.measureText(it) } + pad * 2f),
-            min(height.toFloat(), pad * 2f + lineHeight * lines.size),
-        )
-    }
+    private fun hudBounds(): RectF = RectF(hudChipGeometry().background)
 
-    private fun hudLines(): List<String> = buildList {
-        if (hudState.frozen) add("FROZEN")
-        add("MODE ${hudState.mode}  TGT ${hudState.targetLang.uppercase(Locale.US)}")
-        add("CACHE ${hudState.cacheEntries}  ${hudState.busLabel}")
-        add(String.format(Locale.US, "OCR %.1f Hz", hudState.ocrHz))
-        if (!hudState.frozen || hudState.status != "FROZEN") add(hudState.status)
+    private class HudChipGeometry(
+        val background: RectF,
+        val cornerRadius: Float,
+        val padding: Float,
+        val baselines: FloatArray,
+        val lines: List<HudChipLine>,
+        val dotCenterX: Float,
+        val dotCenterY: Float,
+        val dotRadius: Float,
+    )
+
+    private fun hudChipGeometry(): HudChipGeometry {
+        val density = resources.displayMetrics.density
+        val margin = 4f * density
+        val padding = 7f * density
+        val lineHeight = hudPaint.textSize + 3f * density
+        val lines = composeHudChip(hudState)
+        val dotRadius = 3f * density
+        val dotSlot = dotRadius * 2f + 5f * density
+        val textWidth = lines.maxOf {
+            (if (it.alert) hudAlertPaint else hudPaint).measureText(it.text)
+        }
+        val chipWidth = min(width - margin * 2f, textWidth + dotSlot + padding * 2f)
+        val chipHeight = min(height - margin * 2f, padding * 2f + lineHeight * lines.size - 3f * density)
+        val background = RectF(
+            width - margin - chipWidth,
+            margin,
+            width - margin,
+            margin + chipHeight,
+        )
+        val baselines = FloatArray(lines.size)
+        var baseline = background.top + padding + hudPaint.textSize - 2f * density
+        for (index in lines.indices) {
+            baselines[index] = baseline
+            baseline += lineHeight
+        }
+        return HudChipGeometry(
+            background = background,
+            cornerRadius = 6f * density,
+            padding = padding,
+            baselines = baselines,
+            lines = lines,
+            dotCenterX = background.left + padding + dotRadius,
+            dotCenterY = baselines[0] - hudPaint.textSize * 0.32f,
+            dotRadius = dotRadius,
+        )
     }
 
     private fun drawModeFlash(canvas: Canvas) {
@@ -1077,6 +1116,7 @@ class LensOverlayView @JvmOverloads constructor(
 
     companion object {
         private val GREEN = Color.rgb(0, 255, 102)
+        private val HUD_ALERT_AMBER = Color.rgb(255, 179, 0)
         private const val PARAGRAPH_PANEL_PADDING_DP = 1f
         private const val COLLISION_MAX_ITERATIONS = 6
         private const val COMPLETE_LINE_EPSILON_PX = 0.5f

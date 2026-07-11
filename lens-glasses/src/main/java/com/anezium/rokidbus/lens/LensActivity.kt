@@ -321,6 +321,8 @@ class LensActivity : AppCompatActivity() {
 
     @Volatile private var effectiveScript = OcrScript.LATIN
     @Volatile private var liveZoomLevel = LiveZoomLevel.ONE
+    /** Wire name of the engine that served the last translation reply (HUD chip). */
+    private var lastServingEngine: String? = null
     private val autoScriptLock = Any()
     private var autoScriptState = AutoScriptState()
     @Volatile private var isFrozen = false
@@ -703,6 +705,7 @@ class LensActivity : AppCompatActivity() {
 
         pending.timeout?.let(mainHandler::removeCallbacks)
         pendingRequests.remove(id)
+        payload.optString("engine").takeIf { it.isNotBlank() }?.let { lastServingEngine = it }
         val translations = payload.optJSONArray("translations") ?: JSONArray()
         val successfulKeys = mutableSetOf<CacheKey>()
         val retryKeys = mutableSetOf<CacheKey>()
@@ -2838,6 +2841,16 @@ class LensActivity : AppCompatActivity() {
             ocrHz = metrics.hz,
             status = hudStatus(),
             frozen = isFrozen,
+            linkUp = hasDataLink(),
+            engine = lastServingEngine,
+            frozenSource = frozenSourceStatus?.let { status ->
+                when {
+                    status.startsWith("HD") -> "HD"
+                    status.startsWith("FAST") -> "FAST"
+                    else -> null
+                }
+            },
+            zoomLabel = liveZoomLevel.takeIf { !isFrozen && it != LiveZoomLevel.ONE }?.hudLabel,
         )
 
     private fun hudStatus(): String {

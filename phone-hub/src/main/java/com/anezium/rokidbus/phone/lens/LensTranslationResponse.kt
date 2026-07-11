@@ -51,6 +51,9 @@ private fun lensTranslationPayload(
     JSONObject()
         .put("version", protocolVersion)
         .put("id", requestId)
+        .apply {
+            translations.firstNotNullOfOrNull { it.engine }?.let { put("engine", it.name) }
+        }
         .put("translations", JSONArray().also { array ->
             translations.forEach { translation ->
                 array.put(

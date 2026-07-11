@@ -211,7 +211,8 @@ class TranslationEngineRouter internal constructor(
             }
             if (!accepted) return
             budgetFuture?.cancel(false)
-            if (terminal.complete { notifyCallback { callback.onSuccess(translations) } }) {
+            val stamped = translations.map { it.copy(engine = attempt.engine) }
+            if (terminal.complete { notifyCallback { callback.onSuccess(stamped) } }) {
                 operations -= this
             }
         }

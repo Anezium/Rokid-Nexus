@@ -17,6 +17,8 @@ data class TranslationResult(
     val srcLang: String,
     val fallback: Boolean = false,
     val failure: TranslationErrorCode? = null,
+    /** Engine that actually served this result; the router stamps it on success. */
+    val engine: TranslationEngine? = null,
 )
 
 data class TranslationDownloadStatus(

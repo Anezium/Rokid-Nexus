@@ -28,6 +28,7 @@ class TranslationEngineRouterTest {
 
             assertEquals(listOf("deepl", "gemini", "google"), order)
             assertEquals("google-result", result.single().dst)
+            assertEquals(TranslationEngine.GOOGLE_WEB, result.single().engine)
         } finally {
             router.close()
         }
