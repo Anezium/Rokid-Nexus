@@ -11,6 +11,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 internal object SelfArmController {
     private const val ADB_PORT = 5555
+    private const val WIFI_ENABLE_COMMAND = "svc wifi enable"
+    private const val WIFI_DISABLE_COMMAND = "svc wifi disable"
     private const val INSTALL_SENTINEL = "ROKID_NEXUS_INSTALL_RESULT"
     private const val STOP_SENTINEL = "ROKID_NEXUS_STOP_RESULT"
     private val operationRunning = AtomicBoolean(false)
@@ -25,6 +27,33 @@ internal object SelfArmController {
         val appContext = context.applicationContext
         if (!accessibilityRepairNeeded(appContext)) return
         runAsync(appContext, reason) { runSelfArm(it, reason, restartWatchdog = false) }
+    }
+
+    fun setWifiEnabled(context: Context, enabled: Boolean): Boolean =
+        setWifiEnabled(
+            enabled = enabled,
+            seam = WifiControlSeam(
+                loadKey = { AdbKeyStore.loadOrCreate(context.applicationContext) },
+                loopbackListening = ::adbLoopbackListening,
+                runShell = { command, key ->
+                    AdbLoopbackClient(port = ADB_PORT).runShell(command, key)
+                },
+            ),
+        )
+
+    internal fun setWifiEnabled(enabled: Boolean, seam: WifiControlSeam): Boolean {
+        val key = seam.loadKey()
+        if (key == null) {
+            seam.log("Wi-Fi request no-op: ADB key unavailable")
+            return false
+        }
+        if (!seam.loopbackListening()) {
+            seam.log("Wi-Fi request no-op: loopback ADB $ADB_PORT unavailable")
+            return false
+        }
+        val command = if (enabled) WIFI_ENABLE_COMMAND else WIFI_DISABLE_COMMAND
+        val result = seam.runShell(command, key)
+        return result.authenticated && result.commandSent
     }
 
     internal fun stopWatchdog(context: Context, reason: String, onComplete: ((Boolean) -> Unit)? = null) {
@@ -246,3 +275,10 @@ internal object SelfArmController {
             .toMap()
     }
 }
+
+internal data class WifiControlSeam(
+    val loadKey: () -> AdbKeyMaterial?,
+    val loopbackListening: () -> Boolean,
+    val runShell: (String, AdbKeyMaterial) -> AdbLoopbackClient.ShellResult,
+    val log: (String) -> Unit = ::log,
+)

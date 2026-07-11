@@ -13,6 +13,7 @@ class LensFrozenOcrContractTest {
         assertTrue(BusPaths.isProtectedLensPath(BusPaths.LENS_LINK_OFFER))
         assertTrue(BusPaths.isProtectedLensPath("${BusPaths.LENS_LINK_OFFER}/future"))
         assertTrue(BusPaths.isProtectedLensPath("${BusPaths.LENS_FROZEN_OCR_RESULT}/future"))
+        assertTrue(BusPaths.isProtectedLensPath(BusPaths.GLASSES_WIFI_REQUEST))
         assertFalse(BusPaths.isProtectedLensPath(BusPaths.LENS_TRANSLATE_REQUEST))
     }
 

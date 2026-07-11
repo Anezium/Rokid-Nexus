@@ -456,6 +456,7 @@ class LensActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         isActivityResumed = true
+        requestGlassesWifi(enabled = true)
         applyPreviewScaleForCurrentState()
         hideSystemUi()
         if (hasCameraPermission() && !isFrozen) {
@@ -468,6 +469,7 @@ class LensActivity : AppCompatActivity() {
 
     override fun onPause() {
         isActivityResumed = false
+        requestGlassesWifi(enabled = false)
         cameraRetry?.let(mainHandler::removeCallbacks)
         cameraRetry = null
         cameraBindRetryCount = 0
@@ -532,6 +534,7 @@ class LensActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         isActivityResumed = false
+        requestGlassesWifi(enabled = false)
         cameraRetry?.let(mainHandler::removeCallbacks)
         cameraRetry = null
         cancelFrozenBatchContinuation()
@@ -635,6 +638,14 @@ class LensActivity : AppCompatActivity() {
     private fun startLensImageLink() {
         runCatching { imageLink?.start() }
             .onFailure { Log.w(TAG, "lensLinkStartFailure", it) }
+    }
+
+    private fun requestGlassesWifi(enabled: Boolean) {
+        busClient?.send(
+            BusPaths.GLASSES_WIFI_REQUEST,
+            JSONObject().put("enabled", enabled),
+        )
+        Log.i(TAG, "glassesWifiRequestSent enabled=$enabled")
     }
 
     private fun sendLensLinkOffer(offer: LensLinkOffer) {
