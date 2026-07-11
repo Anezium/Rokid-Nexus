@@ -100,6 +100,7 @@ class LensActivity : AppCompatActivity() {
         val bounds: Rect,
         val lines: List<OcrSourceLine>,
         val gapBelow: Float = 0f,
+        val columnIndex: Int = -1,
     )
 
     private data class OcrMetrics(
@@ -2382,6 +2383,7 @@ class LensActivity : AppCompatActivity() {
                 sourceLang = displayTranslation?.srcLang,
                 stableId = anchor.stableId,
                 gapBelow = anchor.gapBelow,
+                columnIndex = anchor.columnIndex,
             )
         }
         return LiveOverlayFrame(
@@ -2418,6 +2420,7 @@ class LensActivity : AppCompatActivity() {
                 sourceLang = displayTranslation?.srcLang,
                 stableId = index.toLong(),
                 gapBelow = block.gapBelow,
+                columnIndex = block.columnIndex,
             )
         }
 
@@ -2547,6 +2550,7 @@ class LensActivity : AppCompatActivity() {
                 bounds = paragraph.bounds.toAndroidRect(),
                 lines = lines,
                 gapBelow = paragraph.gapBelow,
+                columnIndex = paragraph.columnIndex,
             )
         }
 
@@ -2802,6 +2806,19 @@ class LensActivity : AppCompatActivity() {
             transformMatrix = last.transformMatrix,
             blocks = overlayBlocksFor(last.mode, last.blocks, misses, last.carriedTranslations),
             hudState = hudState(last.metrics),
+            onLayoutStats = if (isFrozen) {
+                { stats ->
+                    if (stats.suppressedPanels > 0 || stats.truncatedPanels > 0) {
+                        Log.i(
+                            TAG,
+                            "frozenLayout suppressedPanels=${stats.suppressedPanels} " +
+                                "truncatedPanels=${stats.truncatedPanels}",
+                        )
+                    }
+                }
+            } else {
+                null
+            },
         )
         if (misses != null) requestMissingTranslations(last.mode, misses)
     }

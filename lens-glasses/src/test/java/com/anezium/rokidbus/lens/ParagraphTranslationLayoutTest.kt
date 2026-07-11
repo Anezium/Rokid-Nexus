@@ -358,6 +358,135 @@ class ParagraphTranslationLayoutTest {
     }
 
     @Test
+    fun staggeredColumnsFindCompleteMixedGrowthAfterLegacyCandidatesFail() {
+        val sourceRect = ParagraphPanelRect(40f, 80f, 140f, 120f)
+        val panels = listOf(
+            spaceInput(sourceRect, columnIndex = 0),
+            spaceInput(ParagraphPanelRect(220f, 160f, 320f, 200f), columnIndex = 1),
+        )
+        val viewport = ParagraphPanelRect(0f, 0f, 480f, 320f)
+        val budget = computeParagraphPanelSpaceBudgets(
+            panels = panels,
+            viewportRect = viewport,
+            edgeMarginPx = 0f,
+        ).first()
+        val candidates = generateParagraphPanelGrowthCandidates(
+            panelIndex = 0,
+            panels = panels,
+            budget = budget,
+            viewportRect = viewport,
+            edgeMarginPx = 0f,
+        )
+        val legacyCandidates = listOf(
+            ParagraphPanelGrowthCandidate(
+                budget.growLeftPx,
+                budget.growRightPx,
+                budget.growUpPx,
+                budget.growDownPx,
+            ),
+            ParagraphPanelGrowthCandidate(budget.growLeftPx, budget.growRightPx, 0f, 0f),
+            ParagraphPanelGrowthCandidate(0f, 0f, budget.growUpPx, budget.growDownPx),
+            ParagraphPanelGrowthCandidate(0f, 0f, 0f, 0f),
+        )
+
+        assertFalse(candidates.contains(legacyCandidates.first()))
+        assertTrue(decideStaggeredFixtureFit(sourceRect, legacyCandidates[1]).truncated)
+        assertTrue(decideStaggeredFixtureFit(sourceRect, legacyCandidates[2]).truncated)
+        assertTrue(decideStaggeredFixtureFit(sourceRect, legacyCandidates[3]).truncated)
+
+        val selected = selectParagraphPanelGrowthFit(
+            candidates = candidates,
+            prepareCandidate = { candidate ->
+                CandidateFit(candidate, decideStaggeredFixtureFit(sourceRect, candidate))
+            },
+            isTruncated = { it.fit.truncated },
+        )
+
+        requireNotNull(selected)
+        assertFalse(selected.fit.truncated)
+        assertFalse(legacyCandidates.contains(selected.candidate))
+        assertTrue(selected.candidate.growLeftPx + selected.candidate.growRightPx > 0f)
+        assertTrue(selected.candidate.growUpPx + selected.candidate.growDownPx > 0f)
+    }
+
+    @Test
+    fun packedColumnStillReturnsTruncatedTerminalFit() {
+        val sourceRect = ParagraphPanelRect(10f, 20f, 110f, 40f)
+        val panels = listOf(
+            spaceInput(sourceRect, columnIndex = 0),
+            spaceInput(ParagraphPanelRect(10f, 44f, 110f, 64f), columnIndex = 0),
+        )
+        val viewport = ParagraphPanelRect(0f, 0f, 120f, 70f)
+        val budget = computeParagraphPanelSpaceBudgets(
+            panels = panels,
+            viewportRect = viewport,
+            edgeMarginPx = 0f,
+        ).first()
+        val candidates = generateParagraphPanelGrowthCandidates(
+            panelIndex = 0,
+            panels = panels,
+            budget = budget,
+            viewportRect = viewport,
+            edgeMarginPx = 0f,
+        )
+
+        val selected = selectParagraphPanelGrowthFit(
+            candidates = candidates,
+            prepareCandidate = { candidate ->
+                decideParagraphPanelFit(
+                    sourceRect = sourceRect,
+                    gapBelowPx = candidate.growDownPx,
+                    growLeftPx = candidate.growLeftPx,
+                    growRightPx = candidate.growRightPx,
+                    growUpPx = candidate.growUpPx,
+                    textLength = 1_000,
+                    startingTextSizePx = 10f,
+                    minimumTextSizePx = 10f,
+                    horizontalPaddingPx = 1f,
+                    verticalPaddingPx = 1f,
+                    textSizeStepPx = 1f,
+                    measureTextHeightPx = { 500f },
+                )
+            },
+            isTruncated = { it.truncated },
+        )
+
+        requireNotNull(selected)
+        assertTrue(selected.truncated)
+    }
+
+    @Test
+    fun mixedGrowthSearchIsDeterministic() {
+        val sourceRect = ParagraphPanelRect(40f, 80f, 140f, 120f)
+        val panels = listOf(
+            spaceInput(sourceRect, columnIndex = 0),
+            spaceInput(ParagraphPanelRect(220f, 160f, 320f, 200f), columnIndex = 1),
+        )
+        val viewport = ParagraphPanelRect(0f, 0f, 480f, 320f)
+        val budget = computeParagraphPanelSpaceBudgets(panels, viewport, edgeMarginPx = 0f).first()
+
+        fun search(): CandidateFit? {
+            val candidates = generateParagraphPanelGrowthCandidates(
+                panelIndex = 0,
+                panels = panels,
+                budget = budget,
+                viewportRect = viewport,
+                edgeMarginPx = 0f,
+            )
+            assertTrue(candidates.size <= 20)
+            return selectParagraphPanelGrowthFit(
+                candidates = candidates,
+                prepareCandidate = { candidate ->
+                    CandidateFit(candidate, decideStaggeredFixtureFit(sourceRect, candidate))
+                },
+                isTruncated = { it.fit.truncated },
+            )
+        }
+
+        assertEquals(search(), search())
+    }
+
+    @Test
     fun postCollisionPanelRequiresOneCompleteMeasuredLineIncludingPadding() {
         assertTrue(
             panelFitsMeasuredLayout(
@@ -437,6 +566,29 @@ class ParagraphTranslationLayoutTest {
         val minimumTextSizePx: Float,
     )
 
+    private data class CandidateFit(
+        val candidate: ParagraphPanelGrowthCandidate,
+        val fit: ParagraphPanelFitDecision,
+    )
+
+    private fun decideStaggeredFixtureFit(
+        sourceRect: ParagraphPanelRect,
+        candidate: ParagraphPanelGrowthCandidate,
+    ): ParagraphPanelFitDecision = decideParagraphPanelFit(
+        sourceRect = sourceRect,
+        gapBelowPx = candidate.growDownPx,
+        growLeftPx = candidate.growLeftPx,
+        growRightPx = candidate.growRightPx,
+        growUpPx = candidate.growUpPx,
+        textLength = 200,
+        startingTextSizePx = 10f,
+        minimumTextSizePx = 10f,
+        horizontalPaddingPx = 1f,
+        verticalPaddingPx = 1f,
+        textSizeStepPx = 1f,
+        measureTextHeightPx = { request -> if (request.contentWidthPx >= 130) 86f else 400f },
+    )
+
     private fun fitRequest(
         sourceRect: ParagraphPanelRect,
         gapBelowPx: Float,
@@ -480,10 +632,12 @@ class ParagraphTranslationLayoutTest {
         sourceRect: ParagraphPanelRect,
         horizontalClearancePx: Float = 7f,
         verticalClearancePx: Float = 2f,
+        columnIndex: Int = -1,
     ): ParagraphPanelSpaceInput = ParagraphPanelSpaceInput(
         sourceRect = sourceRect,
         horizontalClearancePx = horizontalClearancePx,
         verticalClearancePx = verticalClearancePx,
+        columnIndex = columnIndex,
     )
 
     private fun budgetsBySourceRect(

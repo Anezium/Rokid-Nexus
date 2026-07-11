@@ -204,9 +204,10 @@ internal object LiveParagraphReconciler {
         )
         return LiveParagraphReconciliationResult(
             state = nextState,
-            visibleAnchors = canonicalAnchors.filter { anchor ->
-                anchor.visible && anchor.lastSeenCredibleSerial == credibleSerial
-            },
+            // Once visible, an anchor stays rendered until the drop policy retires it: a
+            // single missed match must not blink the panel off (field 2026-07-11, "le mode
+            // live clignote"). Stability wins over one-frame freshness.
+            visibleAnchors = canonicalAnchors.filter { it.visible },
             stats = LiveParagraphReconciliationStats(
                 matchedCount = matchedCount,
                 revivedCount = revivedCount,

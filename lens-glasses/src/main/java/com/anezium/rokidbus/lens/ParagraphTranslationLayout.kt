@@ -52,9 +52,17 @@ internal data class ParagraphPanelSpaceInput(
     val sourceRect: ParagraphPanelRect,
     val horizontalClearancePx: Float,
     val verticalClearancePx: Float,
+    val columnIndex: Int = -1,
 )
 
 internal data class ParagraphPanelSpaceBudget(
+    val growLeftPx: Float,
+    val growRightPx: Float,
+    val growUpPx: Float,
+    val growDownPx: Float,
+)
+
+internal data class ParagraphPanelGrowthCandidate(
     val growLeftPx: Float,
     val growRightPx: Float,
     val growUpPx: Float,
@@ -149,6 +157,98 @@ internal fun computeParagraphPanelSpaceBudgets(
             growDownPx = max(0f, bottomLimit - source.bottom),
         )
     }
+}
+
+/**
+ * Builds a bounded, deterministic 2-D growth search from the four independent space budgets.
+ * Candidate envelopes are checked before text measurement against every source/HUD obstacle and
+ * the viewport edge margin. Existing source overlap or edge violations may be retained, but growth
+ * may never make them worse; this preserves the zero-growth terminal behavior for malformed OCR.
+ */
+internal fun generateParagraphPanelGrowthCandidates(
+    panelIndex: Int,
+    panels: List<ParagraphPanelSpaceInput>,
+    budget: ParagraphPanelSpaceBudget,
+    viewportRect: ParagraphPanelRect,
+    edgeMarginPx: Float,
+    candidateLimit: Int = PARAGRAPH_PANEL_GROWTH_CANDIDATE_LIMIT,
+): List<ParagraphPanelGrowthCandidate> {
+    require(panelIndex in panels.indices) { "panelIndex must identify a panel" }
+    require(candidateLimit > 0) { "candidateLimit must be positive" }
+
+    val panel = panels[panelIndex]
+    val source = panel.sourceRect.normalized()
+    val safeBudget = ParagraphPanelSpaceBudget(
+        growLeftPx = budget.growLeftPx.safeClearance(),
+        growRightPx = budget.growRightPx.safeClearance(),
+        growUpPx = budget.growUpPx.safeClearance(),
+        growDownPx = budget.growDownPx.safeClearance(),
+    )
+    val candidates = mutableListOf<ParagraphPanelGrowthCandidate>()
+    val seen = mutableSetOf<ParagraphPanelGrowthKey>()
+    val obstacles = panels.filterIndexed { index, _ -> index != panelIndex }
+
+    for (leftFraction in PARAGRAPH_PANEL_GROWTH_FRACTIONS) {
+        for (rightFraction in PARAGRAPH_PANEL_GROWTH_FRACTIONS) {
+            for (upFraction in PARAGRAPH_PANEL_GROWTH_FRACTIONS) {
+                for (downFraction in PARAGRAPH_PANEL_GROWTH_FRACTIONS) {
+                    val candidate = ParagraphPanelGrowthCandidate(
+                        growLeftPx = safeBudget.growLeftPx * leftFraction,
+                        growRightPx = safeBudget.growRightPx * rightFraction,
+                        growUpPx = safeBudget.growUpPx * upFraction,
+                        growDownPx = safeBudget.growDownPx * downFraction,
+                    )
+                    if (!seen.add(candidate.toGrowthKey())) continue
+                    if (
+                        isValidParagraphPanelGrowthCandidate(
+                            source = source,
+                            panel = panel,
+                            candidate = candidate,
+                            obstacles = obstacles,
+                            viewportRect = viewportRect,
+                            edgeMarginPx = edgeMarginPx,
+                        )
+                    ) {
+                        candidates += candidate
+                    }
+                }
+            }
+        }
+    }
+
+    val ordered = candidates.sortedWith(
+        compareByDescending<ParagraphPanelGrowthCandidate> { it.envelope(source).area() }
+            .thenByDescending { it.envelope(source).width }
+            .thenByDescending { it.envelope(source).height }
+            .thenByDescending { it.growRightPx }
+            .thenByDescending { it.growDownPx }
+            .thenByDescending { it.growLeftPx }
+            .thenByDescending { it.growUpPx },
+    )
+    if (ordered.size <= candidateLimit) return ordered
+
+    val terminal = ordered.lastOrNull { it.isZeroGrowth() }
+    val capped = ordered.take(candidateLimit)
+    return if (terminal != null && terminal !in capped) {
+        capped.dropLast(1) + terminal
+    } else {
+        capped
+    }
+}
+
+/** Selects the first complete prepared fit, retaining the first truncated fit as the terminal result. */
+internal fun <T> selectParagraphPanelGrowthFit(
+    candidates: List<ParagraphPanelGrowthCandidate>,
+    prepareCandidate: (ParagraphPanelGrowthCandidate) -> T?,
+    isTruncated: (T) -> Boolean,
+): T? {
+    var firstTruncated: T? = null
+    candidates.forEach { candidate ->
+        val prepared = prepareCandidate(candidate) ?: return@forEach
+        if (!isTruncated(prepared)) return prepared
+        if (firstTruncated == null) firstTruncated = prepared
+    }
+    return firstTruncated
 }
 
 /**
@@ -365,6 +465,82 @@ private fun ParagraphPanelRect.withRightFirstHorizontalGrowth(
     )
 }
 
+private fun isValidParagraphPanelGrowthCandidate(
+    source: ParagraphPanelRect,
+    panel: ParagraphPanelSpaceInput,
+    candidate: ParagraphPanelGrowthCandidate,
+    obstacles: List<ParagraphPanelSpaceInput>,
+    viewportRect: ParagraphPanelRect,
+    edgeMarginPx: Float,
+): Boolean {
+    val envelope = candidate.envelope(source)
+    val viewport = viewportRect.normalized()
+    val safeMargin = edgeMarginPx.safeClearance()
+    val horizontalMargin = min(safeMargin, viewport.width / 2f)
+    val verticalMargin = min(safeMargin, viewport.height / 2f)
+    val allowedLeft = min(source.left, viewport.left + horizontalMargin)
+    val allowedTop = min(source.top, viewport.top + verticalMargin)
+    val allowedRight = max(source.right, viewport.right - horizontalMargin)
+    val allowedBottom = max(source.bottom, viewport.bottom - verticalMargin)
+    if (
+        envelope.left < allowedLeft - FIT_EPSILON_PX ||
+        envelope.top < allowedTop - FIT_EPSILON_PX ||
+        envelope.right > allowedRight + FIT_EPSILON_PX ||
+        envelope.bottom > allowedBottom + FIT_EPSILON_PX
+    ) {
+        return false
+    }
+
+    return obstacles.none { obstacle ->
+        val horizontalClearance = max(
+            panel.horizontalClearancePx.safeClearance(),
+            obstacle.horizontalClearancePx.safeClearance(),
+        )
+        val verticalClearance = max(
+            panel.verticalClearancePx.safeClearance(),
+            obstacle.verticalClearancePx.safeClearance(),
+        )
+        val blockedRect = obstacle.sourceRect.normalized().expanded(
+            horizontalPx = horizontalClearance,
+            verticalPx = verticalClearance,
+        )
+        envelope.overlapArea(blockedRect) > source.overlapArea(blockedRect) + FIT_EPSILON_PX
+    }
+}
+
+private fun ParagraphPanelGrowthCandidate.envelope(source: ParagraphPanelRect): ParagraphPanelRect =
+    ParagraphPanelRect(
+        left = source.left - growLeftPx,
+        top = source.top - growUpPx,
+        right = source.right + growRightPx,
+        bottom = source.bottom + growDownPx,
+    )
+
+private fun ParagraphPanelGrowthCandidate.toGrowthKey(): ParagraphPanelGrowthKey =
+    ParagraphPanelGrowthKey(
+        growLeftPxBits = growLeftPx.toBits(),
+        growRightPxBits = growRightPx.toBits(),
+        growUpPxBits = growUpPx.toBits(),
+        growDownPxBits = growDownPx.toBits(),
+    )
+
+private fun ParagraphPanelGrowthCandidate.isZeroGrowth(): Boolean =
+    growLeftPx == 0f && growRightPx == 0f && growUpPx == 0f && growDownPx == 0f
+
+private fun ParagraphPanelRect.expanded(horizontalPx: Float, verticalPx: Float): ParagraphPanelRect =
+    ParagraphPanelRect(
+        left = left - horizontalPx,
+        top = top - verticalPx,
+        right = right + horizontalPx,
+        bottom = bottom + verticalPx,
+    )
+
+private fun ParagraphPanelRect.area(): Float = max(0f, width) * max(0f, height)
+
+private fun ParagraphPanelRect.overlapArea(other: ParagraphPanelRect): Float =
+    max(0f, min(right, other.right) - max(left, other.left)) *
+        max(0f, min(bottom, other.bottom) - max(top, other.top))
+
 private fun verticalBandsOverlap(
     first: ParagraphPanelRect,
     second: ParagraphPanelRect,
@@ -404,6 +580,15 @@ private fun partitionedGapReservation(gapPx: Float, preferredClearancePx: Float)
     return (safeGap + adaptiveClearance) / 2f
 }
 
+private data class ParagraphPanelGrowthKey(
+    val growLeftPxBits: Int,
+    val growRightPxBits: Int,
+    val growUpPxBits: Int,
+    val growDownPxBits: Int,
+)
+
 private const val FIT_EPSILON_PX = 0.01f
 private const val HORIZONTAL_GROWTH_STEP_COUNT = 4
 private const val ADAPTIVE_CLEARANCE_GAP_FRACTION = 0.25f
+private const val PARAGRAPH_PANEL_GROWTH_CANDIDATE_LIMIT = 20
+private val PARAGRAPH_PANEL_GROWTH_FRACTIONS = floatArrayOf(1f, 2f / 3f, 1f / 3f, 0f)

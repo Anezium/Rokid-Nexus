@@ -24,6 +24,27 @@ class LiveParagraphReconciliationTest {
     }
 
     @Test
+    fun visibleAnchorMissedInOnePopulatedFrameStaysRendered() {
+        // Field 2026-07-11: a single missed match must not blink the panel off. The anchor
+        // stays rendered at its last bounds until the drop policy retires it.
+        val first = reconcile(observations = listOf(observation("stable article", top = 0f)), nowMs = 0L)
+        val second = reconcile(
+            state = first.state,
+            observations = listOf(observation("stable article", top = 0f)),
+            nowMs = 100L,
+        )
+        assertEquals(1, second.visibleAnchors.size)
+
+        val missedFrame = reconcile(
+            state = second.state,
+            observations = listOf(observation("unrelated elsewhere", top = 500f)),
+            nowMs = 200L,
+        )
+
+        assertTrue(missedFrame.visibleAnchors.any { it.sourceText == "stable article" })
+    }
+
+    @Test
     fun twoAndThreeWayMemberLineSplitsKeepOneParagraphId() {
         val unsplit = frameParagraph(
             frameLine("alpha beta gamma", left = 10, right = 190),

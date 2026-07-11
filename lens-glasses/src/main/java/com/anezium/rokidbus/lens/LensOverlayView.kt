@@ -30,6 +30,7 @@ data class LensOverlayBlock(
     val sourceLang: String?,
     val stableId: Long? = null,
     val gapBelow: Float = 0f,
+    val columnIndex: Int = -1,
 )
 
 data class LensHudState(
@@ -196,25 +197,35 @@ class LensOverlayView @JvmOverloads constructor(
         }
         val edgeMarginPx = PARAGRAPH_PANEL_SCREEN_EDGE_MARGIN_DP * resources.displayMetrics.density
         val hudObstacleRect = hudBounds()
-        val frozenSpaceBudgets = if (useFrozenLayout) {
-            val panelInputs = mappedBlocks.map { mappedBlock ->
+        val frozenPanelInputs = if (useFrozenLayout) {
+            mappedBlocks.map { mappedBlock ->
                 ParagraphPanelSpaceInput(
                     sourceRect = mappedBlock.sourceRect.toParagraphPanelRect(),
                     horizontalClearancePx = mappedBlock.medianSourceLineHeight *
                         PARAGRAPH_PANEL_HORIZONTAL_CLEARANCE_LINE_HEIGHTS,
                     verticalClearancePx = mappedBlock.medianSourceLineHeight *
                         PARAGRAPH_PANEL_GAP_CLEARANCE_LINE_HEIGHTS,
+                    columnIndex = mappedBlock.block.columnIndex,
                 )
             }
+        } else {
+            emptyList()
+        }
+        val frozenObstacleInputs = if (useFrozenLayout) {
+            frozenPanelInputs + ParagraphPanelSpaceInput(
+                sourceRect = hudObstacleRect.toParagraphPanelRect(),
+                horizontalClearancePx = 0f,
+                verticalClearancePx = 0f,
+            )
+        } else {
+            emptyList()
+        }
+        val frozenSpaceBudgets = if (useFrozenLayout) {
             computeParagraphPanelSpaceBudgets(
-                panels = panelInputs + ParagraphPanelSpaceInput(
-                    sourceRect = hudObstacleRect.toParagraphPanelRect(),
-                    horizontalClearancePx = 0f,
-                    verticalClearancePx = 0f,
-                ),
+                panels = frozenObstacleInputs,
                 viewportRect = ParagraphPanelRect(0f, 0f, width.toFloat(), height.toFloat()),
                 edgeMarginPx = edgeMarginPx,
-            ).take(panelInputs.size)
+            ).take(frozenPanelInputs.size)
         } else {
             emptyList()
         }
@@ -249,6 +260,25 @@ class LensOverlayView @JvmOverloads constructor(
                     val minimumTextSizePx = minimumTranslationTextSizePx(useFrozenLayout)
                     val frozenBudget = frozenSpaceBudgets.getOrNull(index)
                     val liveHorizontalBudget = liveHorizontalBudgets.getOrNull(index)
+                    val growthCandidates = if (frozenBudget != null) {
+                        generateParagraphPanelGrowthCandidates(
+                            panelIndex = index,
+                            panels = frozenObstacleInputs,
+                            budget = frozenBudget,
+                            viewportRect = ParagraphPanelRect(0f, 0f, width.toFloat(), height.toFloat()),
+                            edgeMarginPx = edgeMarginPx,
+                        )
+                    } else {
+                        val growLeftPx = liveHorizontalBudget?.growLeftPx ?: 0f
+                        val growRightPx = liveHorizontalBudget?.growRightPx ?: 0f
+                        val growDownPx = maximumBottom(allowedRect, sourceRect) - sourceRect.bottom
+                        listOf(
+                            ParagraphPanelGrowthCandidate(growLeftPx, growRightPx, 0f, growDownPx),
+                            ParagraphPanelGrowthCandidate(growLeftPx, growRightPx, 0f, 0f),
+                            ParagraphPanelGrowthCandidate(0f, 0f, 0f, growDownPx),
+                            ParagraphPanelGrowthCandidate(0f, 0f, 0f, 0f),
+                        )
+                    }
                     prepareTranslatedParagraphPanel(
                         rect = sourceRect,
                         sourceRect = sourceRect,
@@ -259,10 +289,7 @@ class LensOverlayView @JvmOverloads constructor(
                             mappedBlock.medianSourceLineHeight * PARAGRAPH_PANEL_START_LINE_HEIGHT_RATIO,
                         ),
                         minimumTextSizePx = minimumTextSizePx,
-                        growLeftPx = frozenBudget?.growLeftPx ?: liveHorizontalBudget?.growLeftPx ?: 0f,
-                        growRightPx = frozenBudget?.growRightPx ?: liveHorizontalBudget?.growRightPx ?: 0f,
-                        growUpPx = frozenBudget?.growUpPx ?: 0f,
-                        growDownPx = frozenBudget?.growDownPx ?: (maximumBottom(allowedRect, sourceRect) - sourceRect.bottom),
+                        growthCandidates = growthCandidates,
                         blockedSourceRects = mappedBlocks.mapIndexedNotNull { otherIndex, other ->
                             RectF(other.sourceRect).takeIf { otherIndex != index }
                         },
@@ -324,10 +351,7 @@ class LensOverlayView @JvmOverloads constructor(
         stableId: Long,
         startingTextSizePx: Float,
         minimumTextSizePx: Float,
-        growLeftPx: Float,
-        growRightPx: Float,
-        growUpPx: Float,
-        growDownPx: Float,
+        growthCandidates: List<ParagraphPanelGrowthCandidate>,
         blockedSourceRects: List<RectF>,
         hudObstacleRect: RectF,
     ): TranslatedBlock? {
@@ -372,18 +396,18 @@ class LensOverlayView @JvmOverloads constructor(
             )
         }
 
-        var firstTruncated: TranslatedBlock? = null
-        fun selectCandidate(candidate: TranslatedBlock?): TranslatedBlock? {
-            if (candidate == null) return null
-            if (!candidate.truncated) return candidate
-            if (firstTruncated == null) firstTruncated = candidate
-            return null
-        }
-        selectCandidate(prepareCandidate(growLeftPx, growRightPx, growUpPx, growDownPx))?.let { return it }
-        selectCandidate(prepareCandidate(growLeftPx, growRightPx, 0f, 0f))?.let { return it }
-        selectCandidate(prepareCandidate(0f, 0f, growUpPx, growDownPx))?.let { return it }
-        selectCandidate(prepareCandidate(0f, 0f, 0f, 0f))?.let { return it }
-        return firstTruncated
+        return selectParagraphPanelGrowthFit(
+            candidates = growthCandidates,
+            prepareCandidate = { candidate ->
+                prepareCandidate(
+                    candidateGrowLeftPx = candidate.growLeftPx,
+                    candidateGrowRightPx = candidate.growRightPx,
+                    candidateGrowUpPx = candidate.growUpPx,
+                    candidateGrowDownPx = candidate.growDownPx,
+                )
+            },
+            isTruncated = { it.truncated },
+        )
     }
 
     private fun resolveTranslatedBlockCollisions(blocks: List<TranslatedBlock>): List<TranslatedBlock> {
