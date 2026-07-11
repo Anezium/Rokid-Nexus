@@ -14,8 +14,9 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 class LensTranslationPlugin internal constructor(
     private val injectedProvider: TranslationProvider?,
+    private val injectedTargetLanguageSupplier: (() -> String?)? = null,
 ) : NexusPlugin, AutoCloseable {
-    constructor() : this(null)
+    constructor() : this(null, null)
 
     override val id: String = "lens"
     override val displayName: String = "Lens"
@@ -29,6 +30,7 @@ class LensTranslationPlugin internal constructor(
 
     private lateinit var host: NexusPluginHost
     private lateinit var provider: TranslationProvider
+    private lateinit var targetLanguageSupplier: () -> String?
     private var subscription: NexusSubscription? = null
     private val activeRequestsLock = Any()
     private val activeRequests = linkedMapOf<String, ActiveRequest>()
@@ -42,6 +44,21 @@ class LensTranslationPlugin internal constructor(
     override fun onRegister(host: NexusPluginHost) {
         this.host = host
         provider = injectedProvider ?: TranslationEngineRouter(host.context)
+        targetLanguageSupplier = injectedTargetLanguageSupplier ?: if (injectedProvider != null) {
+            { null }
+        } else run {
+            val preferences = host.context.applicationContext.getSharedPreferences(
+                LENS_TRANSLATION_PREFS_NAME,
+                android.content.Context.MODE_PRIVATE,
+            )
+            val supplier: () -> String? = {
+                preferences.getString(
+                    LENS_TRANSLATION_PREF_TARGET_LANG,
+                    LENS_TRANSLATION_TARGET_LANG_DEFAULT,
+                )
+            }
+            supplier
+        }
         // Registry dispatch is prefix-based, so the exact-path guard must reject the /reply path.
         subscription = host.subscribe(BusPaths.LENS_TRANSLATE_REQUEST) { path, envelopeId, payload ->
             if (path == BusPaths.LENS_TRANSLATE_REQUEST) handleRequest(envelopeId, payload)
@@ -106,7 +123,7 @@ class LensTranslationPlugin internal constructor(
 
         val call = try {
             provider.translate(
-                request,
+                request.copy(targetLang = selectedTargetLanguage(request.targetLang)),
                 object : TranslationProvider.Callback {
                     override fun onDownloading(status: TranslationDownloadStatus) {
                         if (!extendDeadline(request.id, active, LensWireContract.PHONE_MODEL_DOWNLOAD_TIMEOUT_MS)) return
@@ -162,6 +179,13 @@ class LensTranslationPlugin internal constructor(
         }
         if (cancelNow) call.cancel()
     }
+
+    private fun selectedTargetLanguage(wireTargetLanguage: String): String =
+        runCatching(targetLanguageSupplier)
+            .getOrNull()
+            ?.trim()
+            ?.takeIf(String::isNotEmpty)
+            ?: wireTargetLanguage
 
     private fun sendTranslations(requestId: String, translations: List<TranslationResult>) {
         val response = fitLensTranslationResponse(

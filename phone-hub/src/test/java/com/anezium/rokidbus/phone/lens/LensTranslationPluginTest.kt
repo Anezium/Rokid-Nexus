@@ -4,11 +4,34 @@ import android.content.Context
 import com.anezium.rokidbus.shared.BusPaths
 import com.anezium.rokidbus.shared.plugin.NexusPluginHost
 import com.anezium.rokidbus.shared.plugin.NexusSubscription
+import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class LensTranslationPluginTest {
+    @Test
+    fun `configured target language overrides wire value at provider seam`() {
+        val provider = RecordingProvider()
+        val host = RecordingHost()
+        val plugin = LensTranslationPlugin(provider) { "ja" }
+        try {
+            plugin.onRegister(host)
+
+            host.dispatch(
+                path = BusPaths.LENS_TRANSLATE_REQUEST,
+                id = "request-1",
+                payload = JSONObject()
+                    .put("targetLang", "fr")
+                    .put("strings", JSONArray().put("hello")),
+            )
+
+            assertEquals("ja", provider.lastRequest?.targetLang)
+        } finally {
+            plugin.close()
+        }
+    }
+
     @Test
     fun `reply path envelope is ignored despite request prefix collision`() {
         val provider = RecordingProvider()
@@ -33,12 +56,14 @@ class LensTranslationPluginTest {
 
     private class RecordingProvider : TranslationProvider {
         var translateCalls = 0
+        var lastRequest: TranslationRequest? = null
 
         override fun translate(
             request: TranslationRequest,
             callback: TranslationProvider.Callback,
         ): TranslationCall {
             translateCalls += 1
+            lastRequest = request
             return TranslationCall.NONE
         }
 

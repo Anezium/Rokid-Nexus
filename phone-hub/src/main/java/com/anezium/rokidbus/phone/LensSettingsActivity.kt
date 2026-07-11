@@ -1,16 +1,20 @@
 package com.anezium.rokidbus.phone
 
 import android.app.Activity
+import android.app.Dialog
 import android.content.SharedPreferences
 import android.graphics.Typeface
+import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.text.Editable
 import android.text.InputType
 import android.text.TextWatcher
+import android.text.method.PasswordTransformationMethod
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.view.Window
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -23,7 +27,10 @@ import com.anezium.rokidbus.phone.lens.LENS_TRANSLATION_PREF_DEEPL_API_KEY
 import com.anezium.rokidbus.phone.lens.LENS_TRANSLATION_PREF_ENGINE
 import com.anezium.rokidbus.phone.lens.LENS_TRANSLATION_PREF_GEMINI_API_KEY
 import com.anezium.rokidbus.phone.lens.LENS_TRANSLATION_PREF_GEMINI_MODEL
+import com.anezium.rokidbus.phone.lens.LENS_TRANSLATION_PREF_TARGET_LANG
+import com.anezium.rokidbus.phone.lens.LENS_TRANSLATION_TARGET_LANG_DEFAULT
 import com.anezium.rokidbus.phone.lens.TranslationEngine
+import com.google.mlkit.nl.translate.TranslateLanguage
 
 class LensSettingsActivity : Activity() {
     private lateinit var translationPrefs: SharedPreferences
@@ -31,6 +38,7 @@ class LensSettingsActivity : Activity() {
     private val engineNames = mutableMapOf<TranslationEngine, TextView>()
     private val modelDots = mutableMapOf<String, View>()
     private val modelNames = mutableMapOf<String, TextView>()
+    private lateinit var outputLanguageValue: TextView
 
     private data class EngineChoice(
         val engine: TranslationEngine,
@@ -59,6 +67,31 @@ class LensSettingsActivity : Activity() {
         ModelChoice("gemini-flash-latest", "Gemini Flash Latest", "Always the newest flash"),
     )
 
+    private data class LanguageChoice(
+        val code: String,
+        val nativeName: String,
+    ) {
+        val displayName: String = "$nativeName ($code)"
+    }
+
+    private val languageChoices = listOf(
+        LanguageChoice("en", "English"),
+        LanguageChoice("fr", "Français"),
+        LanguageChoice("es", "Español"),
+        LanguageChoice("de", "Deutsch"),
+        LanguageChoice("it", "Italiano"),
+        LanguageChoice("pt", "Português"),
+        LanguageChoice("nl", "Nederlands"),
+        LanguageChoice("pl", "Polski"),
+        LanguageChoice("ru", "Русский"),
+        LanguageChoice("ja", "日本語"),
+        LanguageChoice("ko", "한국어"),
+        LanguageChoice("zh", "中文"),
+        LanguageChoice("ar", "العربية"),
+        LanguageChoice("tr", "Türkçe"),
+        LanguageChoice("hi", "हिन्दी"),
+    ).filter { TranslateLanguage.fromLanguageTag(it.code) != null }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         translationPrefs = getSharedPreferences(LENS_TRANSLATION_PREFS_NAME, MODE_PRIVATE)
@@ -85,6 +118,8 @@ class LensSettingsActivity : Activity() {
             addView(NexusUi.sectionRow(this@LensSettingsActivity, "Gemini model"), NexusUi.block())
             addView(BusTheme.gap(this@LensSettingsActivity, 12))
             addView(modelCard(), NexusUi.block())
+            addView(BusTheme.gap(this@LensSettingsActivity, 10))
+            addView(outputLanguageCard(), NexusUi.block())
             addView(BusTheme.gap(this@LensSettingsActivity, 10))
             addView(apiKeysCard(), NexusUi.block())
             addView(BusTheme.gap(this@LensSettingsActivity, 28))
@@ -239,6 +274,130 @@ class LensSettingsActivity : Activity() {
         }
     }
 
+    private fun outputLanguageCard(): LinearLayout =
+        NexusUi.pressableCard(this).apply {
+            setOnClickListener { showOutputLanguagePicker() }
+            addView(
+                LinearLayout(this@LensSettingsActivity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    addView(NexusUi.rowLabel(this@LensSettingsActivity, "Output language"))
+                    addView(BusTheme.gap(this@LensSettingsActivity, 4))
+                    addView(
+                        NexusUi.rowSub(
+                            this@LensSettingsActivity,
+                            selectedLanguageChoice().displayName,
+                        ).also { outputLanguageValue = it },
+                    )
+                },
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+            )
+            addView(
+                NexusUi.rowSub(this@LensSettingsActivity, "CHANGE ›").apply {
+                    setTextColor(NexusUi.GREEN)
+                },
+            )
+        }
+
+    private fun selectedLanguageChoice(): LanguageChoice {
+        val stored = translationPrefs.getString(
+            LENS_TRANSLATION_PREF_TARGET_LANG,
+            LENS_TRANSLATION_TARGET_LANG_DEFAULT,
+        )
+        return languageChoices.firstOrNull { it.code == stored }
+            ?: languageChoices.first { it.code == LENS_TRANSLATION_TARGET_LANG_DEFAULT }
+    }
+
+    private fun showOutputLanguagePicker() {
+        val dialog = Dialog(this)
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+        val selectedCode = selectedLanguageChoice().code
+        val options = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            languageChoices.forEachIndexed { index, choice ->
+                if (index > 0) addView(NexusUi.divider(this@LensSettingsActivity))
+                addView(
+                    languageChoiceRow(choice, choice.code == selectedCode) {
+                        translationPrefs.edit()
+                            .putString(LENS_TRANSLATION_PREF_TARGET_LANG, choice.code)
+                            .apply()
+                        outputLanguageValue.text = choice.displayName
+                        dialog.dismiss()
+                    },
+                    NexusUi.block(),
+                )
+            }
+        }
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = NexusUi.bordered(this@LensSettingsActivity, NexusUi.PANEL, NexusUi.LINE2, 16)
+            setPadding(
+                NexusUi.dp(this@LensSettingsActivity, 18),
+                NexusUi.dp(this@LensSettingsActivity, 18),
+                NexusUi.dp(this@LensSettingsActivity, 18),
+                NexusUi.dp(this@LensSettingsActivity, 10),
+            )
+            addView(NexusUi.cardTitle(this@LensSettingsActivity, "Output language"))
+            addView(BusTheme.gap(this@LensSettingsActivity, 8))
+            addView(
+                ScrollView(this@LensSettingsActivity).apply {
+                    isVerticalScrollBarEnabled = false
+                    addView(options, NexusUi.block())
+                },
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    0,
+                    1f,
+                ),
+            )
+            addView(
+                NexusUi.textButton(this@LensSettingsActivity, "Cancel").apply {
+                    setOnClickListener { dialog.dismiss() }
+                },
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ).apply { gravity = Gravity.END },
+            )
+        }
+        dialog.setContentView(panel)
+        dialog.window?.setBackgroundDrawable(ColorDrawable(android.graphics.Color.TRANSPARENT))
+        dialog.show()
+        dialog.window?.setLayout(
+            (resources.displayMetrics.widthPixels * 0.9f).toInt(),
+            (resources.displayMetrics.heightPixels * 0.84f).toInt(),
+        )
+    }
+
+    private fun languageChoiceRow(
+        choice: LanguageChoice,
+        selected: Boolean,
+        onSelect: () -> Unit,
+    ): LinearLayout =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            isClickable = true
+            isFocusable = true
+            background = NexusUi.pressed(this@LensSettingsActivity, android.graphics.Color.TRANSPARENT, 10)
+            setPadding(0, NexusUi.dp(this@LensSettingsActivity, 7), 0, NexusUi.dp(this@LensSettingsActivity, 7))
+            setOnClickListener { onSelect() }
+            addView(
+                NexusUi.rowLabel(this@LensSettingsActivity, choice.displayName).apply {
+                    setTextColor(if (selected) NexusUi.INK else NexusUi.INK2)
+                },
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+            )
+            addView(
+                NexusUi.dot(this@LensSettingsActivity).apply {
+                    NexusUi.setDotColor(this, if (selected) NexusUi.GREEN else NexusUi.INK4)
+                },
+                LinearLayout.LayoutParams(
+                    NexusUi.dp(this@LensSettingsActivity, 8),
+                    NexusUi.dp(this@LensSettingsActivity, 8),
+                ),
+            )
+        }
+
     private fun apiKeysCard(): LinearLayout =
         NexusUi.card(this).apply {
             addView(
@@ -268,7 +427,40 @@ class LensSettingsActivity : Activity() {
                 NexusUi.block(),
             )
             addView(BusTheme.gap(this@LensSettingsActivity, 6))
-            addView(keyField(prefKey), NexusUi.block())
+            val field = keyField(prefKey)
+            var revealed = false
+            val revealButton = NexusUi.textButton(this@LensSettingsActivity, "Show").apply {
+                contentDescription = "Show $label"
+                setOnClickListener {
+                    revealed = !revealed
+                    field.transformationMethod = if (revealed) {
+                        null
+                    } else {
+                        PasswordTransformationMethod.getInstance()
+                    }
+                    field.setSelection(field.text.length)
+                    text = if (revealed) "Hide" else "Show"
+                    contentDescription = if (revealed) "Hide $label" else "Show $label"
+                }
+            }
+            addView(
+                LinearLayout(this@LensSettingsActivity).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    addView(
+                        field,
+                        LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+                    )
+                    addView(
+                        revealButton,
+                        LinearLayout.LayoutParams(
+                            ViewGroup.LayoutParams.WRAP_CONTENT,
+                            ViewGroup.LayoutParams.WRAP_CONTENT,
+                        ).apply { marginStart = NexusUi.dp(this@LensSettingsActivity, 6) },
+                    )
+                },
+                NexusUi.block(),
+            )
         }
 
     private fun keyField(prefKey: String): EditText =
@@ -278,9 +470,12 @@ class LensSettingsActivity : Activity() {
             setHintTextColor(NexusUi.INK4)
             setTextColor(NexusUi.INK)
             textSize = 12f
-            typeface = Typeface.MONOSPACE
             isSingleLine = true
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+            inputType = InputType.TYPE_CLASS_TEXT or
+                InputType.TYPE_TEXT_VARIATION_PASSWORD or
+                InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+            transformationMethod = PasswordTransformationMethod.getInstance()
+            typeface = Typeface.MONOSPACE
             background = GradientDrawable().apply {
                 cornerRadius = NexusUi.dp(this@LensSettingsActivity, 10).toFloat()
                 setColor(NexusUi.BG)

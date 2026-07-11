@@ -14,6 +14,8 @@ const val LENS_TRANSLATION_PREF_ENGINE = "engine"
 const val LENS_TRANSLATION_PREF_DEEPL_API_KEY = "deepl_api_key"
 const val LENS_TRANSLATION_PREF_GEMINI_API_KEY = "gemini_api_key"
 const val LENS_TRANSLATION_PREF_GEMINI_MODEL = "gemini_model"
+const val LENS_TRANSLATION_PREF_TARGET_LANG = "target_lang"
+const val LENS_TRANSLATION_TARGET_LANG_DEFAULT = "fr"
 
 const val LENS_GEMINI_MODEL_DEFAULT = "gemini-2.5-flash"
 
