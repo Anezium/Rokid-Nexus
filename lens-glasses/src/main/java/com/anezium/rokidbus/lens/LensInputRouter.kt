@@ -4,7 +4,8 @@ import android.view.KeyEvent
 
 internal enum class LensInputAction {
     TOGGLE_FREEZE,
-    SWITCH_OCR_MODE,
+    ZOOM_IN,
+    ZOOM_OUT,
 }
 
 internal data class LensInputDecision(
@@ -29,13 +30,15 @@ internal class LensInputRouter(
             KeyEvent.KEYCODE_DPAD_CENTER,
             -> LensInputAction.TOGGLE_FREEZE
 
-            KeyEvent.KEYCODE_DPAD_LEFT,
             KeyEvent.KEYCODE_DPAD_RIGHT,
-            KeyEvent.KEYCODE_DPAD_UP,
             KeyEvent.KEYCODE_DPAD_DOWN,
             KEYCODE_ROKID_SWIPE_FORWARD,
+            -> LensInputAction.ZOOM_IN
+
+            KeyEvent.KEYCODE_DPAD_LEFT,
+            KeyEvent.KEYCODE_DPAD_UP,
             KEYCODE_ROKID_SWIPE_BACK,
-            -> LensInputAction.SWITCH_OCR_MODE
+            -> LensInputAction.ZOOM_OUT
 
             else -> return LensInputDecision(consumed = false)
         }
@@ -45,7 +48,9 @@ internal class LensInputRouter(
 
         return when (action) {
             LensInputAction.TOGGLE_FREEZE -> routeDebouncedActivation(eventTimeMs)
-            LensInputAction.SWITCH_OCR_MODE -> routeDebouncedDirection(eventTimeMs)
+            LensInputAction.ZOOM_IN,
+            LensInputAction.ZOOM_OUT,
+            -> routeDebouncedDirection(action, eventTimeMs)
         }
     }
 
@@ -66,12 +71,12 @@ internal class LensInputRouter(
             else -> false
         }
 
-    private fun routeDebouncedDirection(eventTimeMs: Long): LensInputDecision {
+    private fun routeDebouncedDirection(action: LensInputAction, eventTimeMs: Long): LensInputDecision {
         val accepted = shouldAccept(lastDirectionalAtMs, eventTimeMs, directionalDebounceMs)
         if (accepted) lastDirectionalAtMs = eventTimeMs
         return LensInputDecision(
             consumed = true,
-            action = LensInputAction.SWITCH_OCR_MODE.takeIf { accepted },
+            action = action.takeIf { accepted },
         )
     }
 

@@ -5,10 +5,20 @@ import org.junit.Test
 
 class FrozenZoomPolicyTest {
     @Test
-    fun cyclesOneToOnePointSixToTwoPointFiveToOne() {
-        assertEquals(FrozenZoomLevel.ONE_POINT_SIX, FrozenZoomPolicy.next(FrozenZoomLevel.ONE))
-        assertEquals(FrozenZoomLevel.TWO_POINT_FIVE, FrozenZoomPolicy.next(FrozenZoomLevel.ONE_POINT_SIX))
-        assertEquals(FrozenZoomLevel.ONE, FrozenZoomPolicy.next(FrozenZoomLevel.TWO_POINT_FIVE))
+    fun queuesUntilJpegExistsAndHdBaseOcrHasFinished() {
+        assertEquals(true, FrozenZoomPolicy.shouldQueueUntilHdBaseReady(false, false))
+        assertEquals(true, FrozenZoomPolicy.shouldQueueUntilHdBaseReady(true, true))
+        assertEquals(false, FrozenZoomPolicy.shouldQueueUntilHdBaseReady(true, false))
+    }
+
+    @Test
+    fun directionalStepsClampWithoutWrapping() {
+        assertEquals(FrozenZoomLevel.ONE_POINT_SIX, FrozenZoomPolicy.zoomIn(FrozenZoomLevel.ONE))
+        assertEquals(FrozenZoomLevel.TWO_POINT_FIVE, FrozenZoomPolicy.zoomIn(FrozenZoomLevel.ONE_POINT_SIX))
+        assertEquals(FrozenZoomLevel.TWO_POINT_FIVE, FrozenZoomPolicy.zoomIn(FrozenZoomLevel.TWO_POINT_FIVE))
+        assertEquals(FrozenZoomLevel.ONE_POINT_SIX, FrozenZoomPolicy.zoomOut(FrozenZoomLevel.TWO_POINT_FIVE))
+        assertEquals(FrozenZoomLevel.ONE, FrozenZoomPolicy.zoomOut(FrozenZoomLevel.ONE_POINT_SIX))
+        assertEquals(FrozenZoomLevel.ONE, FrozenZoomPolicy.zoomOut(FrozenZoomLevel.ONE))
     }
 
     @Test

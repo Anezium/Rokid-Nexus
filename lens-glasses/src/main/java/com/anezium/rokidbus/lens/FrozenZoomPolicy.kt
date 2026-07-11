@@ -21,14 +21,16 @@ internal data class FrozenCropRect(
     val height: Int get() = bottom - top
 }
 
-/** Pure zoom-cycle and JPEG-coordinate math for native-resolution frozen crops. */
+/** Pure zoom-step and JPEG-coordinate math for native-resolution frozen crops. */
 internal object FrozenZoomPolicy {
-    fun next(level: FrozenZoomLevel): FrozenZoomLevel =
-        when (level) {
-            FrozenZoomLevel.ONE -> FrozenZoomLevel.ONE_POINT_SIX
-            FrozenZoomLevel.ONE_POINT_SIX -> FrozenZoomLevel.TWO_POINT_FIVE
-            FrozenZoomLevel.TWO_POINT_FIVE -> FrozenZoomLevel.ONE
-        }
+    fun shouldQueueUntilHdBaseReady(hasHdJpeg: Boolean, hdBaseOcrInFlight: Boolean): Boolean =
+        !hasHdJpeg || hdBaseOcrInFlight
+
+    fun zoomIn(level: FrozenZoomLevel): FrozenZoomLevel =
+        FrozenZoomLevel.entries[(level.ordinal + 1).coerceAtMost(FrozenZoomLevel.entries.lastIndex)]
+
+    fun zoomOut(level: FrozenZoomLevel): FrozenZoomLevel =
+        FrozenZoomLevel.entries[(level.ordinal - 1).coerceAtLeast(0)]
 
     fun centerCropInRawCoordinates(
         rawWidth: Int,
@@ -37,15 +39,25 @@ internal object FrozenZoomPolicy {
         zoomLevel: FrozenZoomLevel,
     ): FrozenCropRect {
         require(rawWidth > 0 && rawHeight > 0)
-        if (zoomLevel == FrozenZoomLevel.ONE) {
+        return centerCropInRawCoordinates(rawWidth, rawHeight, rotationDegrees, zoomLevel.scale)
+    }
+
+    fun centerCropInRawCoordinates(
+        rawWidth: Int,
+        rawHeight: Int,
+        rotationDegrees: Int,
+        zoomScale: Float,
+    ): FrozenCropRect {
+        require(zoomScale >= 1f)
+        if (zoomScale == 1f) {
             return FrozenCropRect(0, 0, rawWidth, rawHeight)
         }
 
         val rotation = normalizeRightAngleRotation(rotationDegrees)
         val orientedWidth = if (rotation == 90 || rotation == 270) rawHeight else rawWidth
         val orientedHeight = if (rotation == 90 || rotation == 270) rawWidth else rawHeight
-        val cropWidth = (orientedWidth / zoomLevel.scale).roundToInt().coerceIn(1, orientedWidth)
-        val cropHeight = (orientedHeight / zoomLevel.scale).roundToInt().coerceIn(1, orientedHeight)
+        val cropWidth = (orientedWidth / zoomScale).roundToInt().coerceIn(1, orientedWidth)
+        val cropHeight = (orientedHeight / zoomScale).roundToInt().coerceIn(1, orientedHeight)
         val left = (orientedWidth - cropWidth) / 2
         val top = (orientedHeight - cropHeight) / 2
         return mapOrientedRectToRaw(

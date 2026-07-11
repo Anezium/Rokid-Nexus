@@ -10,8 +10,8 @@ android {
         applicationId = "com.anezium.rokidbus.lens"
         minSdk = 31
         targetSdk = 32
-        versionCode = 8
-        versionName = "0.1.7-lens-m2"
+        versionCode = 25
+        versionName = "0.1.24-lens-m5"
     }
 
     buildTypes {
@@ -47,6 +47,9 @@ dependencies {
 
     implementation("com.google.mlkit:text-recognition:16.0.1")
     implementation("com.google.mlkit:text-recognition-japanese:16.0.1")
+    implementation("com.google.mlkit:text-recognition-chinese:16.0.1")
+    implementation("com.google.mlkit:text-recognition-korean:16.0.1")
+    implementation("com.google.mlkit:text-recognition-devanagari:16.0.1")
 
     testImplementation("junit:junit:4.13.2")
 }

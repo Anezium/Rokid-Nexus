@@ -13,8 +13,10 @@ import android.os.SystemClock
 import android.text.Layout
 import android.text.StaticLayout
 import android.text.TextPaint
+import android.text.TextUtils
 import android.util.AttributeSet
 import android.view.View
+import java.util.ArrayDeque
 import java.util.Locale
 import kotlin.math.max
 import kotlin.math.min
@@ -23,8 +25,12 @@ data class LensOverlayBlock(
     val source: String,
     val normalized: String,
     val bounds: Rect,
+    val lineBounds: List<Rect>,
     val translation: String?,
     val sourceLang: String?,
+    val stableId: Long? = null,
+    val gapBelow: Float = 0f,
+    val columnIndex: Int = -1,
 )
 
 data class LensHudState(
@@ -35,6 +41,18 @@ data class LensHudState(
     val ocrHz: Double = 0.0,
     val status: String = "STARTING",
     val frozen: Boolean = false,
+    val linkUp: Boolean = false,
+    /** Wire name of the engine that served the last translation reply, if known. */
+    val engine: String? = null,
+    /** "HD" or "FAST" once a frozen source is installed. */
+    val frozenSource: String? = null,
+    /** Live zoom label ("1.5x") when zoom is active, null at 1x. */
+    val zoomLabel: String? = null,
+)
+
+data class LensOverlayLayoutStats(
+    val suppressedPanels: Int = 0,
+    val truncatedPanels: Int = 0,
 )
 
 class LensOverlayView @JvmOverloads constructor(
@@ -56,6 +74,16 @@ class LensOverlayView @JvmOverloads constructor(
         typeface = Typeface.MONOSPACE
         textSize = 12f * resources.displayMetrics.scaledDensity
     }
+    private val hudAlertPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = HUD_ALERT_AMBER
+        typeface = Typeface.MONOSPACE
+        textSize = 12f * resources.displayMetrics.scaledDensity
+    }
+    private val hudChipBackgroundPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.BLACK
+        alpha = 210
+        style = Paint.Style.FILL
+    }
     private val textPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
         color = GREEN
         typeface = Typeface.DEFAULT_BOLD
@@ -76,6 +104,14 @@ class LensOverlayView @JvmOverloads constructor(
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<LayoutCacheKey, LayoutFit>?): Boolean =
             size > FITTED_LAYOUT_CACHE_SIZE
     }
+    private val fixedLayoutCache = object : LinkedHashMap<FixedLayoutCacheKey, StaticLayout>(
+        FIXED_LAYOUT_CACHE_SIZE,
+        0.75f,
+        true,
+    ) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<FixedLayoutCacheKey, StaticLayout>?): Boolean =
+            size > FIXED_LAYOUT_CACHE_SIZE
+    }
 
     private var frozenBackground: Bitmap? = null
     private var transformMatrix: Matrix? = null
@@ -83,35 +119,49 @@ class LensOverlayView @JvmOverloads constructor(
     private var hudState = LensHudState()
     private var modeFlashLabel: String? = null
     private var modeFlashUntilMs: Long = 0L
+    private val pendingLayoutStatsListeners = ArrayDeque<(LensOverlayLayoutStats) -> Unit>()
+    private var lastCompletedLayoutStats = LensOverlayLayoutStats()
 
     fun setFrozenBackground(bitmap: Bitmap?, recyclePrevious: Boolean = true) {
         val previous = frozenBackground
-        frozenBackground = bitmap
-        invalidate()
         if (recyclePrevious && previous != null && previous !== bitmap && !previous.isRecycled) {
+            frozenBackground = null
             previous.recycle()
         }
+        frozenBackground = bitmap
+        invalidate()
     }
 
     fun replaceFrozenBackground(expected: Bitmap, replacement: Bitmap): Boolean {
         if (frozenBackground !== expected) return false
+        frozenBackground = null
+        if (!expected.isRecycled) expected.recycle()
         frozenBackground = replacement
         invalidate()
-        if (!expected.isRecycled) expected.recycle()
         return true
     }
 
     fun isFrozenBackground(bitmap: Bitmap): Boolean =
         frozenBackground === bitmap
 
+    fun clearLayoutCache() {
+        fittedLayoutCache.clear()
+        fixedLayoutCache.clear()
+    }
+
     fun updateOcrResult(
         transformMatrix: Matrix?,
         blocks: List<LensOverlayBlock>,
         hudState: LensHudState,
+        onLayoutStats: ((LensOverlayLayoutStats) -> Unit)? = null,
     ) {
         this.transformMatrix = transformMatrix?.let(::Matrix)
         this.blocks = blocks
         this.hudState = hudState
+        if (hudState.frozen || onLayoutStats != null) {
+            dispatchPendingLayoutStats(lastCompletedLayoutStats)
+        }
+        if (onLayoutStats != null) pendingLayoutStatsListeners.addLast(onLayoutStats)
         invalidate()
     }
 
@@ -136,135 +186,259 @@ class LensOverlayView @JvmOverloads constructor(
         val matrix = transformMatrix
         val useFrozenLayout = hudState.frozen || frozenBackground != null
         val translatedBlocks = mutableListOf<TranslatedBlock>()
-        blocks.forEach { block ->
-            val mapped = RectF(block.bounds)
-            matrix?.mapRect(mapped) ?: return@forEach
-            val sourceRect = RectF(mapped)
+        val translatedSourceRects = linkedMapOf<Long, RectF>()
+        val sourceOutlineRects = mutableListOf<RectF>()
+        val mappedBlocks = if (matrix == null) {
+            emptyList()
+        } else {
+            blocks.mapIndexed { index, block ->
+                val sourceRect = RectF(block.bounds).also { matrix.mapRect(it) }
+                val allowedRect = RectF(
+                    block.bounds.left.toFloat(),
+                    block.bounds.top.toFloat(),
+                    block.bounds.right.toFloat(),
+                    block.bounds.bottom.toFloat() + block.gapBelow.coerceAtLeast(0f),
+                ).also { matrix.mapRect(it) }
+                MappedOverlayBlock(
+                    block = block,
+                    sourceRect = sourceRect,
+                    allowedRect = allowedRect,
+                    medianSourceLineHeight = medianMappedLineHeight(
+                        lineBounds = block.lineBounds,
+                        matrix = matrix,
+                        fallbackHeight = sourceRect.height(),
+                    ),
+                    stableId = block.stableId ?: index.toLong(),
+                )
+            }
+        }
+        val edgeMarginPx = PARAGRAPH_PANEL_SCREEN_EDGE_MARGIN_DP * resources.displayMetrics.density
+        val hudObstacleRect = hudBounds()
+        val frozenPanelInputs = if (useFrozenLayout) {
+            mappedBlocks.map { mappedBlock ->
+                ParagraphPanelSpaceInput(
+                    sourceRect = mappedBlock.sourceRect.toParagraphPanelRect(),
+                    horizontalClearancePx = mappedBlock.medianSourceLineHeight *
+                        PARAGRAPH_PANEL_HORIZONTAL_CLEARANCE_LINE_HEIGHTS,
+                    verticalClearancePx = mappedBlock.medianSourceLineHeight *
+                        PARAGRAPH_PANEL_GAP_CLEARANCE_LINE_HEIGHTS,
+                    columnIndex = mappedBlock.block.columnIndex,
+                )
+            }
+        } else {
+            emptyList()
+        }
+        val frozenObstacleInputs = if (useFrozenLayout) {
+            frozenPanelInputs + ParagraphPanelSpaceInput(
+                sourceRect = hudObstacleRect.toParagraphPanelRect(),
+                horizontalClearancePx = 0f,
+                verticalClearancePx = 0f,
+            )
+        } else {
+            emptyList()
+        }
+        val frozenSpaceBudgets = if (useFrozenLayout) {
+            computeParagraphPanelSpaceBudgets(
+                panels = frozenObstacleInputs,
+                viewportRect = ParagraphPanelRect(0f, 0f, width.toFloat(), height.toFloat()),
+                edgeMarginPx = edgeMarginPx,
+            ).take(frozenPanelInputs.size)
+        } else {
+            emptyList()
+        }
+        val liveHorizontalBudgets = if (useFrozenLayout) {
+            emptyList()
+        } else {
+            computeParagraphPanelHorizontalBudgets(
+                panels = mappedBlocks.map { mappedBlock ->
+                    ParagraphPanelHorizontalBudgetInput(
+                        sourceRect = mappedBlock.sourceRect.toParagraphPanelRect(),
+                        allowedRect = mappedBlock.allowedRect.toParagraphPanelRect(),
+                        clearancePx = mappedBlock.medianSourceLineHeight *
+                            PARAGRAPH_PANEL_HORIZONTAL_CLEARANCE_LINE_HEIGHTS,
+                    )
+                },
+                viewWidthPx = width.toFloat(),
+                edgeMarginPx = edgeMarginPx,
+            )
+        }
+        mappedBlocks.forEachIndexed { index, mappedBlock ->
+            val block = mappedBlock.block
+            val sourceRect = mappedBlock.sourceRect
+            val allowedRect = RectF(
+                mappedBlock.allowedRect,
+            )
             val translation = block.translation?.takeIf { it.isNotBlank() }
             if (translation == null) {
-                canvas.drawRect(mapped, outlinePaint)
+                sourceOutlineRects += RectF(sourceRect)
             } else {
-                if (!useFrozenLayout) {
-                    mapped.inset(0f, mapped.height() * TRANSLATED_VERTICAL_INSET_FRACTION)
-                }
-                if (mapped.width() >= 4f && mapped.height() >= 4f) {
-                    prepareTranslatedBlock(
-                        rect = mapped,
+                translatedSourceRects[mappedBlock.stableId] = RectF(sourceRect)
+                if (sourceRect.width() >= 4f && sourceRect.height() >= 4f) {
+                    val minimumTextSizePx = minimumTranslationTextSizePx(useFrozenLayout)
+                    val frozenBudget = frozenSpaceBudgets.getOrNull(index)
+                    val liveHorizontalBudget = liveHorizontalBudgets.getOrNull(index)
+                    val growthCandidates = if (frozenBudget != null) {
+                        generateParagraphPanelGrowthCandidates(
+                            panelIndex = index,
+                            panels = frozenObstacleInputs,
+                            budget = frozenBudget,
+                            viewportRect = ParagraphPanelRect(0f, 0f, width.toFloat(), height.toFloat()),
+                            edgeMarginPx = edgeMarginPx,
+                        )
+                    } else {
+                        val growLeftPx = liveHorizontalBudget?.growLeftPx ?: 0f
+                        val growRightPx = liveHorizontalBudget?.growRightPx ?: 0f
+                        val growDownPx = maximumBottom(allowedRect, sourceRect) - sourceRect.bottom
+                        listOf(
+                            ParagraphPanelGrowthCandidate(growLeftPx, growRightPx, 0f, growDownPx),
+                            ParagraphPanelGrowthCandidate(growLeftPx, growRightPx, 0f, 0f),
+                            ParagraphPanelGrowthCandidate(0f, 0f, 0f, growDownPx),
+                            ParagraphPanelGrowthCandidate(0f, 0f, 0f, 0f),
+                        )
+                    }
+                    prepareTranslatedParagraphPanel(
+                        rect = sourceRect,
                         sourceRect = sourceRect,
                         text = translation,
-                        allowHorizontalExpansion = useFrozenLayout,
+                        stableId = mappedBlock.stableId,
+                        startingTextSizePx = max(
+                            minimumTextSizePx,
+                            mappedBlock.medianSourceLineHeight * PARAGRAPH_PANEL_START_LINE_HEIGHT_RATIO,
+                        ),
+                        minimumTextSizePx = minimumTextSizePx,
+                        growthCandidates = growthCandidates,
+                        blockedSourceRects = mappedBlocks.mapIndexedNotNull { otherIndex, other ->
+                            RectF(other.sourceRect).takeIf { otherIndex != index }
+                        },
+                        hudObstacleRect = hudObstacleRect,
                     )?.let { translatedBlocks += it }
                 }
             }
         }
-        val laidOutBlocks = if (useFrozenLayout) {
-            resolveTranslatedBlockCollisions(translatedBlocks)
-        } else {
-            translatedBlocks
+        // Required safety net: malformed OCR collisions may adjust panels while retaining anchors.
+        val collisionResolved = resolveTranslatedBlockCollisions(translatedBlocks)
+            .mapNotNull(::refitTranslatedBlockToRect)
+        val sourceSafeBlocks = collisionResolved.filter { candidate ->
+            // Coarse FAST-1080 OCR yields source boxes that already overlap each other; a
+            // hard no-intersect veto made those panels unrenderable (field 2026-07-11,
+            // suppressedPanels=2-5 per freeze). Pre-existing overlap is tolerated — growth
+            // just must not make any of it worse.
+            val avoidsOtherSources = mappedBlocks.none { other ->
+                other.stableId != candidate.stableId &&
+                    !doesNotIncreaseObstacleOverlap(candidate.rect, other.sourceRect, candidate.sourceRect)
+            }
+            val staysInViewport = candidate.rect.left >= 0f && candidate.rect.top >= 0f &&
+                candidate.rect.right <= width.toFloat() && candidate.rect.bottom <= height.toFloat()
+            avoidsOtherSources && staysInViewport &&
+                doesNotIncreaseObstacleOverlap(candidate.rect, hudObstacleRect, candidate.sourceRect)
         }
+        val laidOutBlocks = suppressResidualLiveOverlaps(sourceSafeBlocks)
+        val retainedIds = laidOutBlocks.mapTo(mutableSetOf()) { it.stableId }
+        translatedSourceRects.forEach { (stableId, sourceRect) ->
+            if (stableId !in retainedIds) sourceOutlineRects += RectF(sourceRect)
+        }
+        // In live mode the HUD goes UNDER the panels: top-of-scene paragraphs are legitimately
+        // anchored inside the HUD band (their sources sit there), and hiding a translation the
+        // user waited for is worse than covering a status line. Frozen keeps HUD-on-top since
+        // its panels never share the band (budgets treat the HUD as an obstacle).
+        if (!useFrozenLayout) drawHud(canvas)
         laidOutBlocks
             .sortedByDescending { it.rect.width() * it.rect.height() }
             .forEach { block -> canvas.drawRect(block.rect, fillPaint) }
         laidOutBlocks.forEach { block -> drawTranslationText(canvas, block) }
-        drawHud(canvas)
+        sourceOutlineRects.forEach { sourceRect -> canvas.drawRect(sourceRect, outlinePaint) }
+        val layoutStats = LensOverlayLayoutStats(
+            suppressedPanels = (translatedSourceRects.size - laidOutBlocks.size).coerceAtLeast(0),
+            truncatedPanels = laidOutBlocks.count { it.truncated },
+        )
+        lastCompletedLayoutStats = layoutStats
+        dispatchPendingLayoutStats(layoutStats)
+        if (useFrozenLayout) drawHud(canvas)
         drawModeFlash(canvas)
     }
 
-    private fun prepareTranslatedBlock(
-        rect: RectF,
-        sourceRect: RectF,
-        text: String,
-        allowHorizontalExpansion: Boolean,
-    ): TranslatedBlock? {
-        val density = resources.displayMetrics.density
-        val pad = 3f * density
-        val verticalFit = prepareWithVerticalExpansion(sourceRect, rect, text, pad)
-        if (!allowHorizontalExpansion || verticalFit.comfortable || width <= 0) {
-            return verticalFit.block
+    private fun dispatchPendingLayoutStats(layoutStats: LensOverlayLayoutStats) {
+        while (pendingLayoutStatsListeners.isNotEmpty()) {
+            val listener = pendingLayoutStatsListeners.removeFirst()
+            runCatching {
+                listener(layoutStats)
+            }
         }
-
-        val widenedRect = expandRectHorizontally(sourceRect, verticalFit.block.rect)
-        if (widenedRect.width() <= verticalFit.block.rect.width() + 0.5f) {
-            return verticalFit.block
-        }
-        return prepareWithVerticalExpansion(sourceRect, widenedRect, text, pad).block
     }
 
-    private fun prepareWithVerticalExpansion(
-        sourceRect: RectF,
+    private fun prepareTranslatedParagraphPanel(
         rect: RectF,
+        sourceRect: RectF,
         text: String,
-        pad: Float,
-    ): PreparedBlock {
-        val fitted = fittedLayout(text, contentWidth(rect, pad), contentHeight(rect, pad))
-        if (fitted.fits) {
-            return PreparedBlock(
-                block = TranslatedBlock(RectF(rect), RectF(sourceRect), text, fitted.layout, pad, fitted.textSizePx),
-                comfortable = fitted.textSizePx >= comfortableTextSizePx(),
+        stableId: Long,
+        startingTextSizePx: Float,
+        minimumTextSizePx: Float,
+        growthCandidates: List<ParagraphPanelGrowthCandidate>,
+        blockedSourceRects: List<RectF>,
+        hudObstacleRect: RectF,
+    ): TranslatedBlock? {
+        val density = resources.displayMetrics.density
+        val pad = PARAGRAPH_PANEL_PADDING_DP * density
+        fun prepareCandidate(
+            candidateGrowLeftPx: Float,
+            candidateGrowRightPx: Float,
+            candidateGrowUpPx: Float,
+            candidateGrowDownPx: Float,
+        ): TranslatedBlock? {
+            val fit = fittedLayout(
+                text = text,
+                sourceWidthPx = rect.width(),
+                sourceHeightPx = rect.height(),
+                gapAbovePx = candidateGrowUpPx,
+                gapBelowPx = candidateGrowDownPx,
+                growLeftPx = candidateGrowLeftPx,
+                growRightPx = candidateGrowRightPx,
+                startingTextSizePx = startingTextSizePx,
+                minimumTextSizePx = minimumTextSizePx,
+                pad = pad,
+            ) ?: return null
+            val selectedRect = RectF(
+                rect.left + fit.panelRect.left,
+                rect.top + fit.panelRect.top,
+                rect.left + fit.panelRect.right,
+                rect.top + fit.panelRect.bottom,
+            )
+            if (blockedSourceRects.any { RectF.intersects(selectedRect, it) }) return null
+            if (!doesNotIncreaseObstacleOverlap(selectedRect, hudObstacleRect, sourceRect)) return null
+            return TranslatedBlock(
+                stableId = stableId,
+                rect = selectedRect,
+                sourceRect = RectF(sourceRect),
+                text = text,
+                layout = fit.layout,
+                pad = pad,
+                textSizePx = fit.textSizePx,
+                minimumTextSizePx = minimumTextSizePx,
+                truncated = fit.truncated,
             )
         }
 
-        val expandedHeight = min(
-            rect.height() * MAX_TRANSLATED_RECT_EXPANSION,
-            max(rect.height(), fitted.layout.height + pad * 2f),
+        return selectParagraphPanelGrowthFit(
+            candidates = growthCandidates,
+            prepareCandidate = { candidate ->
+                prepareCandidate(
+                    candidateGrowLeftPx = candidate.growLeftPx,
+                    candidateGrowRightPx = candidate.growRightPx,
+                    candidateGrowUpPx = candidate.growUpPx,
+                    candidateGrowDownPx = candidate.growDownPx,
+                )
+            },
+            isTruncated = { it.truncated },
         )
-        val expandedRect = expandRectVertically(sourceRect, rect, expandedHeight)
-        val expandedFit = fittedLayout(text, contentWidth(expandedRect, pad), contentHeight(expandedRect, pad))
-        return PreparedBlock(
-            block = TranslatedBlock(
-                expandedRect,
-                RectF(sourceRect),
-                text,
-                expandedFit.layout,
-                pad,
-                expandedFit.textSizePx,
-            ),
-            comfortable = expandedFit.fits && expandedFit.textSizePx >= comfortableTextSizePx(),
-        )
-    }
-
-    private fun expandRectVertically(sourceRect: RectF, rect: RectF, targetHeight: Float): RectF {
-        val expanded = RectF(rect)
-        val extraHeight = max(0f, targetHeight - rect.height())
-        expanded.bottom += extraHeight
-        if (expanded.bottom > height) {
-            val overflow = expanded.bottom - height
-            expanded.bottom = height.toFloat()
-            expanded.top = max(0f, expanded.top - overflow)
-        }
-        ensureContainsSourceCenter(expanded, sourceRect)
-        return expanded
-    }
-
-    private fun expandRectHorizontally(sourceRect: RectF, rect: RectF): RectF {
-        val density = resources.displayMetrics.density
-        val margin = HORIZONTAL_EXPANSION_MARGIN_DP * density
-        val maxWidth = max(1f, width.toFloat() - margin * 2f)
-        val targetWidth = maxWidth
-        val centerX = rect.centerX()
-        val expanded = RectF(rect)
-        expanded.left = centerX - targetWidth / 2f
-        expanded.right = centerX + targetWidth / 2f
-        if (expanded.left < margin) {
-            val shift = margin - expanded.left
-            expanded.left += shift
-            expanded.right += shift
-        }
-        val rightLimit = width.toFloat() - margin
-        if (expanded.right > rightLimit) {
-            val shift = expanded.right - rightLimit
-            expanded.left -= shift
-            expanded.right -= shift
-        }
-        expanded.left = max(margin, expanded.left)
-        expanded.right = min(rightLimit, expanded.right)
-        ensureContainsSourceCenter(expanded, sourceRect)
-        return expanded
     }
 
     private fun resolveTranslatedBlockCollisions(blocks: List<TranslatedBlock>): List<TranslatedBlock> {
         if (blocks.size < 2 || height <= 0) return blocks
-        val resolved = blocks.map { it.withAnchoredRect(it.rect) }.toMutableList()
+        val resolved = blocks
+            .sortedWith(compareBy<TranslatedBlock> { it.stableId }.thenBy { it.sourceRect.top }.thenBy { it.sourceRect.left })
+            .map { it.withAnchoredRect(it.rect) }
+            .toMutableList()
+        if (resolved.hasNoOverlaps()) return resolved
         repeat(COLLISION_MAX_ITERATIONS) {
             var changed = false
             for (leftIndex in 0 until resolved.lastIndex) {
@@ -287,6 +461,7 @@ class LensOverlayView @JvmOverloads constructor(
         first: TranslatedBlock,
         second: TranslatedBlock,
     ): Pair<TranslatedBlock, TranslatedBlock> {
+        separateAnchoredPair(first, second)?.let { return it }
         var a = first
         var b = second
         var shrank = true
@@ -317,23 +492,83 @@ class LensOverlayView @JvmOverloads constructor(
         }
         if (!RectF.intersects(a.rect, b.rect)) return a to b
 
-        separateAnchoredPair(a, b)?.let { return it }
         return abutAnchoredPair(a, b)
     }
 
     private fun shrinkTranslatedBlock(block: TranslatedBlock): TranslatedBlock {
         val density = resources.displayMetrics.scaledDensity
-        val minSize = MIN_TRANSLATION_TEXT_SP * density
-        val nextSize = max(minSize, block.textSizePx - density)
+        val nextSize = max(block.minimumTextSizePx, block.textSizePx - density)
         if (nextSize >= block.textSizePx) return block
 
-        val layout = makeLayout(block.text, contentWidth(block.rect, block.pad), nextSize)
+        val widthPx = contentWidth(block.rect, block.pad)
+        val heightPx = contentHeight(block.rect, block.pad)
+        val fullLayout = makeLayout(block.text, widthPx, nextSize)
+        val truncated = !fullLayout.fitsCompleteMeasuredLines(heightPx)
+        val layout = if (!truncated) {
+            fullLayout
+        } else {
+            makeTruncatedLayout(block.text, widthPx, heightPx, nextSize) ?: return block
+        }
         val rect = shrinkRectHeightAroundAnchor(
             rect = block.rect,
-            targetHeight = min(block.rect.height(), layout.height + block.pad * 2f),
+            targetHeight = if (!truncated) {
+                min(block.rect.height(), fullLayout.height + block.pad * 2f)
+            } else {
+                block.rect.height()
+            },
             anchorY = block.sourceRect.centerY(),
         )
-        return block.copy(rect = rect, layout = layout, textSizePx = nextSize)
+        return block.copy(
+            rect = rect,
+            layout = layout,
+            textSizePx = nextSize,
+            truncated = truncated,
+        )
+    }
+
+    private fun refitTranslatedBlockToRect(block: TranslatedBlock): TranslatedBlock? {
+        if (block.rect.width() < 1f || block.rect.height() < 1f) return null
+        if (block.rect.width() - block.pad * 2f < 1f) return null
+        val widthPx = contentWidth(block.rect, block.pad)
+        val heightPx = contentHeight(block.rect, block.pad)
+        if (block.layout.width == widthPx && block.layout.fitsCompleteMeasuredLines(heightPx)) return block
+
+        val fit = fittedLayout(
+            text = block.text,
+            sourceWidthPx = block.rect.width(),
+            sourceHeightPx = block.rect.height(),
+            gapAbovePx = 0f,
+            gapBelowPx = 0f,
+            growLeftPx = 0f,
+            growRightPx = 0f,
+            startingTextSizePx = block.textSizePx,
+            minimumTextSizePx = block.minimumTextSizePx,
+            pad = block.pad,
+        ) ?: return null
+        if (!fit.layout.fitsCompleteMeasuredLines(heightPx)) return null
+        return block.copy(
+            layout = fit.layout,
+            textSizePx = fit.textSizePx,
+            truncated = fit.truncated,
+        )
+    }
+
+    private fun suppressResidualLiveOverlaps(blocks: List<TranslatedBlock>): List<TranslatedBlock> {
+        if (blocks.size < 2) return blocks
+        val selectedIds = selectNonOverlappingLiveBlockIds(
+            blocks.map { block ->
+                LivePlacedBlock(
+                    stableId = block.stableId,
+                    bounds = LiveLayoutRect(
+                        left = block.rect.left,
+                        top = block.rect.top,
+                        right = block.rect.right,
+                        bottom = block.rect.bottom,
+                    ),
+                )
+            },
+        ).toHashSet()
+        return blocks.filter { it.stableId in selectedIds }
     }
 
     private fun separateAnchoredPair(
@@ -524,59 +759,209 @@ class LensOverlayView @JvmOverloads constructor(
         canvas.restore()
     }
 
-    private fun fittedLayout(text: String, widthPx: Int, heightPx: Float): LayoutFit {
-        val density = resources.displayMetrics.scaledDensity
-        val maxSize = min(24f * density, max(9f * density, heightPx * 0.55f))
+    private fun fittedLayout(
+        text: String,
+        sourceWidthPx: Float,
+        sourceHeightPx: Float,
+        gapAbovePx: Float,
+        gapBelowPx: Float,
+        growLeftPx: Float,
+        growRightPx: Float,
+        startingTextSizePx: Float,
+        minimumTextSizePx: Float,
+        pad: Float,
+    ): LayoutFit? {
+        val safeGrowLeftPx = growLeftPx.takeIf { it.isFinite() }?.coerceAtLeast(0f) ?: 0f
+        val safeGrowRightPx = growRightPx.takeIf { it.isFinite() }?.coerceAtLeast(0f) ?: 0f
+        val safeGapAbovePx = gapAbovePx.takeIf { it.isFinite() }?.coerceAtLeast(0f) ?: 0f
         val cacheKey = LayoutCacheKey(
             text = text,
-            widthPx = widthPx,
-            heightPxBits = heightPx.toBits(),
-            baseTextSizePxBits = maxSize.toBits(),
+            sourceWidthPxBits = sourceWidthPx.toBits(),
+            sourceHeightPxBits = sourceHeightPx.toBits(),
+            gapAbovePxBits = safeGapAbovePx.toBits(),
+            gapBelowPxBits = gapBelowPx.toBits(),
+            growLeftPxBits = safeGrowLeftPx.toBits(),
+            growRightPxBits = safeGrowRightPx.toBits(),
+            startingTextSizePxBits = startingTextSizePx.toBits(),
+            minimumTextSizePxBits = minimumTextSizePx.toBits(),
+            padPxBits = pad.toBits(),
         )
         fittedLayoutCache[cacheKey]?.let { return it }
 
-        val minSize = MIN_TRANSLATION_TEXT_SP * density
-        var size = maxSize
-        var best = makeScratchLayout(text, widthPx, size)
-        while (size > minSize && best.height > heightPx) {
-            size = max(minSize, size - 1f * density)
-            best = makeScratchLayout(text, widthPx, size)
+        val decision = decideParagraphPanelFit(
+            sourceRect = ParagraphPanelRect(
+                left = 0f,
+                top = 0f,
+                right = sourceWidthPx,
+                bottom = sourceHeightPx,
+            ),
+            gapBelowPx = gapBelowPx,
+            growLeftPx = safeGrowLeftPx,
+            growRightPx = safeGrowRightPx,
+            growUpPx = safeGapAbovePx,
+            textLength = text.length,
+            startingTextSizePx = startingTextSizePx,
+            minimumTextSizePx = minimumTextSizePx,
+            horizontalPaddingPx = pad,
+            verticalPaddingPx = pad,
+            textSizeStepPx = resources.displayMetrics.scaledDensity,
+            measureTextHeightPx = { request ->
+                makeScratchLayout(text, request.contentWidthPx, request.textSizePx).height.toFloat()
+            },
+        )
+        val rawContentWidthPx = decision.panelRect.width - pad * 2f
+        val contentHeightPx = decision.panelRect.height - pad * 2f
+        if (rawContentWidthPx < 1f || contentHeightPx <= 0f) return null
+        val selectedWidthPx = rawContentWidthPx.toInt().coerceAtLeast(1)
+        val layout = if (decision.truncated) {
+            makeTruncatedLayout(
+                text = text,
+                widthPx = selectedWidthPx,
+                heightPx = contentHeightPx,
+                textSizePx = decision.textSizePx,
+            ) ?: return null
+        } else {
+            makeLayout(text, selectedWidthPx, decision.textSizePx)
         }
+        if (!layout.fitsCompleteMeasuredLines(contentHeightPx)) return null
         return LayoutFit(
-            layout = makeLayout(text, widthPx, size),
-            fits = best.height <= heightPx,
-            textSizePx = size,
+            layout = layout,
+            textSizePx = decision.textSizePx,
+            panelRect = decision.panelRect,
+            truncated = decision.truncated,
         ).also { fittedLayoutCache[cacheKey] = it }
     }
 
     private fun makeScratchLayout(text: String, widthPx: Int, textSizePx: Float): StaticLayout {
         scratchTextPaint.textSize = textSizePx
-        return buildLayout(text, widthPx, scratchTextPaint)
+        return buildLayout(text, widthPx, scratchTextPaint, maxLines = Int.MAX_VALUE, ellipsize = false)
     }
 
     private fun makeLayout(text: String, widthPx: Int, textSizePx: Float): StaticLayout {
+        return makeLayout(text, widthPx, textSizePx, maxLines = Int.MAX_VALUE, ellipsize = false)
+    }
+
+    private fun makeTruncatedLayout(
+        text: String,
+        widthPx: Int,
+        heightPx: Float,
+        textSizePx: Float,
+    ): StaticLayout? {
+        val fullLayout = makeLayout(text, widthPx, textSizePx)
+        var completeLines = 0
+        while (completeLines < fullLayout.lineCount &&
+            fullLayout.getLineBottom(completeLines) <= heightPx + COMPLETE_LINE_EPSILON_PX
+        ) {
+            completeLines += 1
+        }
+        if (completeLines == 0) return null
+        if (completeLines == fullLayout.lineCount) return fullLayout
+        return makeLayout(text, widthPx, textSizePx, maxLines = completeLines, ellipsize = true)
+    }
+
+    private fun makeLayout(
+        text: String,
+        widthPx: Int,
+        textSizePx: Float,
+        maxLines: Int,
+        ellipsize: Boolean,
+    ): StaticLayout {
+        val cacheKey = FixedLayoutCacheKey(text, widthPx, textSizePx.toBits(), maxLines, ellipsize)
+        fixedLayoutCache[cacheKey]?.let { return it }
         val paint = TextPaint(textPaint).apply {
             textSize = textSizePx
         }
-        return buildLayout(text, widthPx, paint)
+        return buildLayout(text, widthPx, paint, maxLines, ellipsize).also { fixedLayoutCache[cacheKey] = it }
     }
 
-    private fun buildLayout(text: String, widthPx: Int, paint: TextPaint): StaticLayout {
-        return StaticLayout.Builder.obtain(text, 0, text.length, paint, widthPx)
+    private fun buildLayout(
+        text: String,
+        widthPx: Int,
+        paint: TextPaint,
+        maxLines: Int,
+        ellipsize: Boolean,
+    ): StaticLayout {
+        val builder = StaticLayout.Builder.obtain(text, 0, text.length, paint, widthPx)
             .setAlignment(Layout.Alignment.ALIGN_NORMAL)
             .setLineSpacing(0f, 1f)
             .setIncludePad(false)
-            .build()
+        if (maxLines != Int.MAX_VALUE) builder.setMaxLines(maxLines)
+        if (ellipsize) builder.setEllipsize(TextUtils.TruncateAt.END)
+        return builder.build()
     }
 
     private fun contentWidth(rect: RectF, pad: Float): Int =
         max(1, (rect.width() - pad * 2f).toInt())
 
     private fun contentHeight(rect: RectF, pad: Float): Float =
-        max(1f, rect.height() - pad * 2f)
+        rect.height() - pad * 2f
 
-    private fun comfortableTextSizePx(): Float =
-        COMFORTABLE_TRANSLATION_TEXT_SP * resources.displayMetrics.scaledDensity
+    private fun maximumBottom(allowedRect: RectF, sourceRect: RectF): Float =
+        max(sourceRect.bottom, min(allowedRect.bottom, height.toFloat()))
+
+    private fun doesNotIncreaseObstacleOverlap(
+        candidateRect: RectF,
+        obstacleRect: RectF,
+        sourceRect: RectF,
+    ): Boolean {
+        val candidateIntersection = intersection(candidateRect, obstacleRect) ?: return true
+        val allowedIntersection = intersection(sourceRect, obstacleRect) ?: return false
+        return candidateIntersection.left + COMPLETE_LINE_EPSILON_PX >= allowedIntersection.left &&
+            candidateIntersection.top + COMPLETE_LINE_EPSILON_PX >= allowedIntersection.top &&
+            candidateIntersection.right <= allowedIntersection.right + COMPLETE_LINE_EPSILON_PX &&
+            candidateIntersection.bottom <= allowedIntersection.bottom + COMPLETE_LINE_EPSILON_PX
+    }
+
+    private fun intersection(first: RectF, second: RectF): RectF? {
+        val left = max(first.left, second.left)
+        val top = max(first.top, second.top)
+        val right = min(first.right, second.right)
+        val bottom = min(first.bottom, second.bottom)
+        return RectF(left, top, right, bottom).takeIf { it.width() > 0f && it.height() > 0f }
+    }
+
+    private fun StaticLayout.fitsCompleteMeasuredLines(contentHeightPx: Float): Boolean {
+        if (lineCount <= 0) return false
+        val firstLineHeightPx = (getLineBottom(0) - getLineTop(0)).toFloat()
+        return panelFitsMeasuredLayout(
+            panelHeightPx = contentHeightPx,
+            paddingPx = 0f,
+            layoutHeightPx = height.toFloat(),
+            firstLineHeightPx = firstLineHeightPx,
+        )
+    }
+
+    private fun RectF.toParagraphPanelRect(): ParagraphPanelRect =
+        ParagraphPanelRect(
+            left = left,
+            top = top,
+            right = right,
+            bottom = bottom,
+        )
+
+    private fun minimumTranslationTextSizePx(useFrozenLayout: Boolean): Float {
+        val minimumSp = if (useFrozenLayout) FROZEN_MIN_READABLE_TEXT_SP else LIVE_MIN_READABLE_TEXT_SP
+        return minimumSp * resources.displayMetrics.scaledDensity
+    }
+
+    private fun medianMappedLineHeight(
+        lineBounds: List<Rect>,
+        matrix: Matrix,
+        fallbackHeight: Float,
+    ): Float {
+        val heights = lineBounds.mapNotNull { bounds ->
+            val mapped = RectF(bounds)
+            matrix.mapRect(mapped)
+            mapped.height().takeIf { it > 0f }
+        }.sorted()
+        if (heights.isEmpty()) return fallbackHeight.coerceAtLeast(1f)
+        val middle = heights.size / 2
+        return if (heights.size % 2 == 0) {
+            (heights[middle - 1] + heights[middle]) / 2f
+        } else {
+            heights[middle]
+        }
+    }
 
     private fun Matrix.setFillCenter(sourceWidth: Int, sourceHeight: Int, viewWidth: Int, viewHeight: Int) {
         val safeSourceWidth = max(1, sourceWidth)
@@ -595,26 +980,55 @@ class LensOverlayView @JvmOverloads constructor(
     }
 
     private fun drawHud(canvas: Canvas) {
-        val density = resources.displayMetrics.density
-        val pad = 6f * density
-        val lineHeight = hudPaint.textSize + 3f * density
-        val lines = mutableListOf<String>()
-        if (hudState.frozen) lines += "FROZEN"
-        lines += "MODE ${hudState.mode}  TGT ${hudState.targetLang.uppercase(Locale.US)}"
-        lines += "CACHE ${hudState.cacheEntries}  ${hudState.busLabel}"
-        lines += String.format(Locale.US, "OCR %.1f Hz", hudState.ocrHz)
-        if (!hudState.frozen || hudState.status != "FROZEN") lines += hudState.status
-
-        val maxWidth = lines.maxOf { hudPaint.measureText(it) }
-        val right = min(width.toFloat(), maxWidth + pad * 2f)
-        val bottom = min(height.toFloat(), pad * 2f + lineHeight * lines.size)
-        canvas.drawRect(0f, 0f, right, bottom, fillPaint)
-
-        var y = pad + hudPaint.textSize
-        lines.forEach { line ->
-            canvas.drawText(line, pad, y, hudPaint)
-            y += lineHeight
+        val chip = hudChipGeometry()
+        canvas.drawRoundRect(chip.background, chip.cornerRadius, chip.cornerRadius, hudChipBackgroundPaint)
+        chip.lines.forEachIndexed { index, line ->
+            val paint = if (line.alert) hudAlertPaint else hudPaint
+            // Right-aligned text keeps the chip visually anchored to the corner.
+            canvas.drawText(line.text, chip.background.right - chip.padding - paint.measureText(line.text), chip.baselines[index], paint)
         }
+    }
+
+    private fun hudBounds(): RectF = RectF(hudChipGeometry().background)
+
+    private class HudChipGeometry(
+        val background: RectF,
+        val cornerRadius: Float,
+        val padding: Float,
+        val baselines: FloatArray,
+        val lines: List<HudChipLine>,
+    )
+
+    private fun hudChipGeometry(): HudChipGeometry {
+        val density = resources.displayMetrics.density
+        val margin = 4f * density
+        val padding = 7f * density
+        val lineHeight = hudPaint.textSize + 3f * density
+        val lines = composeHudChip(hudState)
+        val textWidth = lines.maxOf {
+            (if (it.alert) hudAlertPaint else hudPaint).measureText(it.text)
+        }
+        val chipWidth = min(width - margin * 2f, textWidth + padding * 2f)
+        val chipHeight = min(height - margin * 2f, padding * 2f + lineHeight * lines.size - 3f * density)
+        val background = RectF(
+            width - margin - chipWidth,
+            margin,
+            width - margin,
+            margin + chipHeight,
+        )
+        val baselines = FloatArray(lines.size)
+        var baseline = background.top + padding + hudPaint.textSize - 2f * density
+        for (index in lines.indices) {
+            baselines[index] = baseline
+            baseline += lineHeight
+        }
+        return HudChipGeometry(
+            background = background,
+            cornerRadius = 6f * density,
+            padding = padding,
+            baselines = baselines,
+            lines = lines,
+        )
     }
 
     private fun drawModeFlash(canvas: Canvas) {
@@ -631,17 +1045,23 @@ class LensOverlayView @JvmOverloads constructor(
     }
 
     private data class TranslatedBlock(
+        val stableId: Long,
         val rect: RectF,
         val sourceRect: RectF,
         val text: String,
         val layout: StaticLayout,
         val pad: Float,
         val textSizePx: Float,
+        val minimumTextSizePx: Float,
+        val truncated: Boolean,
     )
 
-    private data class PreparedBlock(
-        val block: TranslatedBlock,
-        val comfortable: Boolean,
+    private data class MappedOverlayBlock(
+        val block: LensOverlayBlock,
+        val sourceRect: RectF,
+        val allowedRect: RectF,
+        val medianSourceLineHeight: Float,
+        val stableId: Long,
     )
 
     private data class SeparationMove(
@@ -654,15 +1074,30 @@ class LensOverlayView @JvmOverloads constructor(
 
     private data class LayoutFit(
         val layout: StaticLayout,
-        val fits: Boolean,
         val textSizePx: Float,
+        val panelRect: ParagraphPanelRect,
+        val truncated: Boolean,
     )
 
     private data class LayoutCacheKey(
         val text: String,
+        val sourceWidthPxBits: Int,
+        val sourceHeightPxBits: Int,
+        val gapAbovePxBits: Int,
+        val gapBelowPxBits: Int,
+        val growLeftPxBits: Int,
+        val growRightPxBits: Int,
+        val startingTextSizePxBits: Int,
+        val minimumTextSizePxBits: Int,
+        val padPxBits: Int,
+    )
+
+    private data class FixedLayoutCacheKey(
+        val text: String,
         val widthPx: Int,
-        val heightPxBits: Int,
-        val baseTextSizePxBits: Int,
+        val textSizePxBits: Int,
+        val maxLines: Int,
+        val ellipsize: Boolean,
     )
 
     private enum class Axis {
@@ -672,14 +1107,13 @@ class LensOverlayView @JvmOverloads constructor(
 
     companion object {
         private val GREEN = Color.rgb(0, 255, 102)
-        private const val TRANSLATED_VERTICAL_INSET_FRACTION = 0.08f
-        private const val COMFORTABLE_TRANSLATION_TEXT_SP = 10f
-        private const val MIN_TRANSLATION_TEXT_SP = 7f
-        private const val MAX_TRANSLATED_RECT_EXPANSION = 3f
-        private const val HORIZONTAL_EXPANSION_MARGIN_DP = 4f
+        private val HUD_ALERT_AMBER = Color.rgb(255, 179, 0)
+        private const val PARAGRAPH_PANEL_PADDING_DP = 1f
         private const val COLLISION_MAX_ITERATIONS = 6
+        private const val COMPLETE_LINE_EPSILON_PX = 0.5f
         private const val COLLISION_ABUT_EPSILON = 0.01f
         private const val MODE_FLASH_MS = 1_500L
-        private const val FITTED_LAYOUT_CACHE_SIZE = 256
+        private const val FITTED_LAYOUT_CACHE_SIZE = 64
+        private const val FIXED_LAYOUT_CACHE_SIZE = 64
     }
 }
