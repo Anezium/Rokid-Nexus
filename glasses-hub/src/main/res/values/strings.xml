@@ -3,4 +3,7 @@
     <string name="accessibility_service_label">Rokid Nexus Hub</string>
     <string name="accessibility_service_description">Runs the Rokid Nexus glasses hub.</string>
     <string name="accessibility_service_summary">Rokid Nexus glasses hub</string>
+    <string name="selfarm_wireless_accessibility_service_label">Rokid Nexus Wireless Setup</string>
+    <string name="selfarm_wireless_accessibility_service_description">Maintainer-only Wireless Debugging setup for Rokid Nexus.</string>
+    <string name="selfarm_wireless_accessibility_service_summary">Wireless Debugging self-arm setup</string>
 </resources>

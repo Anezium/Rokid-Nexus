@@ -1,6 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <permission
+        android:name="com.anezium.rokidbus.glasses.permission.START_SELFARM_WIRELESS"
+        android:protectionLevel="signature" />
+
     <uses-permission android:name="android.permission.BLUETOOTH" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
@@ -56,6 +60,19 @@
         </service>
 
         <service
+            android:name=".SelfArmWirelessAccessibilityService"
+            android:exported="false"
+            android:label="@string/selfarm_wireless_accessibility_service_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/selfarm_wireless_accessibility_service" />
+        </service>
+
+        <service
             android:name=".BusHubService"
             android:exported="true">
             <intent-filter>
@@ -68,6 +85,15 @@
             android:exported="false">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
+            android:name=".SelfArmWirelessBootstrapReceiver"
+            android:exported="false"
+            android:permission="com.anezium.rokidbus.glasses.permission.START_SELFARM_WIRELESS">
+            <intent-filter>
+                <action android:name="com.anezium.rokidbus.glasses.ACTION_SELFARM_WIRELESS_START" />
             </intent-filter>
         </receiver>
 

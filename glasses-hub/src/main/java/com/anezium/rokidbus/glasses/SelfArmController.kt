@@ -29,17 +29,41 @@ internal object SelfArmController {
         runAsync(appContext, reason) { runSelfArm(it, reason, restartWatchdog = false) }
     }
 
-    fun setWifiEnabled(context: Context, enabled: Boolean): Boolean =
-        setWifiEnabled(
+    fun setWifiEnabled(context: Context, enabled: Boolean): Boolean {
+        val appContext = context.applicationContext
+        val wirelessResult = WirelessAdbShell.setWifiEnabled(appContext, enabled)
+        if (wirelessResult.success) return true
+        log(
+            "Wireless ADB Wi-Fi request unavailable; falling back to classic loopback: " +
+                wirelessResult.error.take(160),
+        )
+        return setWifiEnabled(
             enabled = enabled,
             seam = WifiControlSeam(
-                loadKey = { AdbKeyStore.loadOrCreate(context.applicationContext) },
+                loadKey = { AdbKeyStore.loadOrCreate(appContext) },
                 loopbackListening = ::adbLoopbackListening,
                 runShell = { command, key ->
                     AdbLoopbackClient(port = ADB_PORT).runShell(command, key)
                 },
             ),
         )
+    }
+
+    fun bootstrapWirelessManually(
+        context: Context,
+        pairPort: Int,
+        code: String,
+        connectPort: Int,
+    ): Boolean = runCatching {
+        SelfArmLocalAdbBootstrapper(context.applicationContext).bootstrap(
+            pairPort = pairPort,
+            pairingCode = code,
+            connectPort = connectPort,
+        )
+        true
+    }.onFailure {
+        logError("Manual Wireless Debugging bootstrap failed", it)
+    }.getOrDefault(false)
 
     internal fun setWifiEnabled(enabled: Boolean, seam: WifiControlSeam): Boolean {
         val key = seam.loadKey()
