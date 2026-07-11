@@ -1,0 +1,31 @@
+# Media Deck
+
+Media Deck is the Rokid Nexus universal now-playing plugin. Playback remains owned by
+the active Android media app; the plugin reads its `MediaSession`, sends a declarative
+HUD surface, and forwards only play/pause/previous/next transport commands.
+
+## Module boundary
+
+- No CXR, Bluetooth, glasses SDK, phone-hub implementation, microphone, or network
+  dependency.
+- The plugin owns its notification-listener component. Its settings screen lives in
+  phone-hub (`MediaDeckSettingsActivity`) with the other plugin settings screens, on
+  the shared NexusUi kit; it moves back here when the module becomes its own APK.
+- The current repository registers `MediaDeckPlugin` through the in-process
+  `NexusPlugin` adapter. Its runtime and UI are isolated here so the module can become
+  an independent phone APK when the external Nexus plugin service SDK lands.
+- The glasses hub owns rendering through the versioned `media` surface documented in
+  `../BUSSPEC.md`; the plugin never installs or launches glasses-side code.
+
+## HUD contract
+
+- Swipe back/forward: previous/next media item.
+- Tap/center: play or pause.
+- Back: close Media Deck and return to the underlying glasses app.
+- Position advances locally from an anchor; the phone does not poll or stream
+  progress updates.
+- Artwork is center-cropped, contrast-normalized, Floyd-Steinberg dithered, and packed
+  as a 96 x 96 one-bit mask. The original bitmap never crosses the Nexus bus.
+
+Media titles and artwork are user data. They may be rendered on the requested HUD but
+must not be included in production logs.

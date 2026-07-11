@@ -36,6 +36,7 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
         gravity = Gravity.CENTER_VERTICAL
         visibility = GONE
     }
+    private val mediaView = MediaHudView(context).apply { visibility = GONE }
     private val footerView = monoText(10.5f, BusTheme.dim).apply {
         gravity = Gravity.CENTER
         textAlignment = TEXT_ALIGNMENT_CENTER
@@ -47,8 +48,8 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
         override fun run() {
             val active = surface ?: return
             renderNow(active)
-            if (active.anchor?.playing == true && active.isTimed) {
-                postDelayed(this, TICK_MS)
+            if (shouldTick(active)) {
+                postDelayed(this, tickDelay(active))
             }
         }
     }
@@ -72,6 +73,9 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
         addView(titleView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
         addView(subtitleView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
             topMargin = px(3)
+        })
+        addView(mediaView, LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f).apply {
+            topMargin = px(8)
         })
         addView(previousView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
             topMargin = px(30)
@@ -98,8 +102,8 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
             return
         }
         renderNow(next)
-        if (next.anchor?.playing == true && next.isTimed) {
-            postDelayed(ticker, TICK_MS)
+        if (shouldTick(next)) {
+            postDelayed(ticker, tickDelay(next))
         }
         requestFocus()
     }
@@ -117,15 +121,16 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
         footerView.text = surface.footer
         footerView.visibility = visibleIf(surface.footer.isNotBlank())
 
-        if (surface.isTimed) {
-            renderTimed(surface)
-        } else {
-            renderCard(surface)
+        when {
+            surface.isMedia -> renderMedia(surface)
+            surface.isTimed -> renderTimed(surface)
+            else -> renderCard(surface)
         }
     }
 
     private fun renderTimed(surface: NexusSurface) {
         // Timed lines (lyrics) show one big centered line; cards pack a board.
+        mediaView.visibility = GONE
         boardView.visibility = GONE
         currentView.visibility = VISIBLE
         currentView.textSize = TIMED_BODY_SP
@@ -144,6 +149,7 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
     }
 
     private fun renderCard(surface: NexusSurface) {
+        mediaView.visibility = GONE
         previousView.visibility = GONE
         nextView.visibility = GONE
         val rows = surface.rows.filter { it.text.isNotBlank() || it.isStructured }
@@ -152,6 +158,15 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
         } else {
             renderPlainCard(rows)
         }
+    }
+
+    private fun renderMedia(surface: NexusSurface) {
+        previousView.visibility = GONE
+        currentView.visibility = GONE
+        boardView.visibility = GONE
+        nextView.visibility = GONE
+        mediaView.visibility = VISIBLE
+        mediaView.render(surface)
     }
 
     private fun renderPlainCard(rows: List<SurfaceRow>) {
@@ -280,6 +295,8 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
         currentView.text = ""
         nextView.text = ""
         footerView.text = ""
+        mediaView.clear()
+        mediaView.visibility = GONE
         boardView.removeAllViews()
         boardView.visibility = GONE
         currentView.visibility = VISIBLE
@@ -287,6 +304,12 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
 
     private fun visibleIf(condition: Boolean): Int =
         if (condition) View.VISIBLE else View.GONE
+
+    private fun shouldTick(surface: NexusSurface): Boolean =
+        surface.anchor?.playing == true && (surface.isTimed || surface.isMedia)
+
+    private fun tickDelay(surface: NexusSurface): Long =
+        if (surface.isMedia) MEDIA_TICK_MS else TICK_MS
 
     private fun monoText(sizeSp: Float, color: Int, bold: Boolean = false): TextView =
         TextView(context).apply {
@@ -307,6 +330,7 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
 
     private companion object {
         private const val TICK_MS = 100L
+        private const val MEDIA_TICK_MS = 500L
 
         // Plain card bodies (messages, chooser): smaller mono, more lines.
         private const val CARD_BODY_SP = 17f

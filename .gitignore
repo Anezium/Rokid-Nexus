@@ -9,3 +9,8 @@ local.properties
 /nx_*.xml
 /nx_*.png
 /design-mockups/*.png
+.claude/settings.local.json
+
+# Field-test photos and one-shot Codex run specs (session scratch)
+/.lens-test-photos/
+/.codex-spec-*.md

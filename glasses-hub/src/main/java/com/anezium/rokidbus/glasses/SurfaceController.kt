@@ -170,17 +170,23 @@ object SurfaceController {
     }
 
     private fun isUnmatchedAnchorOnlyUpdate(payload: JSONObject): Boolean {
-        if (payload.has("lines")) return false
-        if (payload.optString("kind") != NexusSurface.KIND_TIMED_LINES) return false
+        val kind = payload.optString("kind")
+        val anchorOnly = when (kind) {
+            NexusSurface.KIND_TIMED_LINES -> !payload.has("lines")
+            NexusSurface.KIND_MEDIA ->
+                payload.has("anchor") && !payload.has("mediaTitle") && !payload.has("artwork")
+            else -> false
+        }
+        if (!anchorOnly) return false
         val surfaceId = payload.optString("surfaceId")
         val contentKey = payload.optString("contentKey")
         val current = active
         val matched = current != null &&
             current.surfaceId == surfaceId &&
-            current.kind == NexusSurface.KIND_TIMED_LINES &&
+            current.kind == kind &&
             (contentKey.isBlank() || current.contentKey == contentKey)
         if (!matched) {
-            log("Surface anchor ignored until base timed-lines arrives id=$surfaceId")
+            log("Surface anchor ignored until matching base arrives id=$surfaceId kind=$kind")
         }
         return !matched
     }

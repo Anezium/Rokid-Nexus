@@ -10,8 +10,8 @@ android {
         applicationId = "com.anezium.rokidbus.phone"
         minSdk = 31
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0-round-a"
+        versionCode = 3
+        versionName = "0.1.2-lens-m2"
     }
 
     buildTypes {
@@ -34,6 +34,11 @@ dependencies {
     implementation(project(":shared"))
     implementation(project(":bus-client"))
     implementation(project(":plugin-lyrics"))
+    implementation(project(":plugin-media"))
     implementation(project(":plugin-transit"))
     implementation("com.example.cxrglobal:lib:0.2.0")
+    implementation("com.google.mlkit:language-id:17.0.6")
+    implementation("com.google.mlkit:translate:17.0.3")
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
 }

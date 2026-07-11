@@ -5,6 +5,7 @@ import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
@@ -19,6 +20,8 @@ import android.util.Log
 import com.anezium.rokidbus.client.IBusCallback
 import com.anezium.rokidbus.client.IBusService
 import com.anezium.rokidbus.lyrics.LyricsPlugin
+import com.anezium.rokidbus.media.MediaDeckPlugin
+import com.anezium.rokidbus.phone.lens.LensTranslationPlugin
 import com.anezium.rokidbus.plugin.transit.TransitPlugin
 import com.anezium.rokidbus.shared.BusConstants
 import com.anezium.rokidbus.shared.BusEnvelope
@@ -42,6 +45,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 private const val TAG = "ROKIDBUS-PHONE"
 private const val CHANNEL_ID = "rokidbus_phone"
+private const val NOTIFICATION_ID = 1
 private const val ACTION_LOG = "com.anezium.rokidbus.phone.LOG"
 private const val ACTION_SET_TOKEN = "com.anezium.rokidbus.phone.SET_TOKEN"
 private const val ACTION_STOP = "com.anezium.rokidbus.phone.STOP"
@@ -93,8 +97,10 @@ class BusHubService : Service() {
     private var output: OutputStream? = null
     private var cxrLink: CXRLink? = null
     private lateinit var pluginRegistry: PhonePluginRegistry
+    private lateinit var lensTranslationPlugin: LensTranslationPlugin
     @Volatile private var cxrConnected = false
     @Volatile private var glassBtConnected = false
+    @Volatile private var lastNotifiedStatus: String? = null
 
     private val binder = object : IBusService.Stub() {
         override fun apiVersion(): Int = BusConstants.API_VERSION
@@ -180,9 +186,10 @@ class BusHubService : Service() {
     override fun onCreate() {
         super.onCreate()
         PhoneClientSupervisor.attach(this)
+        lensTranslationPlugin = LensTranslationPlugin()
         pluginRegistry = PhonePluginRegistry(
             context = applicationContext,
-            plugins = listOf(LyricsPlugin(), TransitPlugin()),
+            plugins = listOf(LyricsPlugin(), MediaDeckPlugin(), TransitPlugin(), lensTranslationPlugin),
             sendEnvelope = { envelope -> sendRemote(envelope) },
             logger = { message -> log(message) },
         )
@@ -254,6 +261,7 @@ class BusHubService : Service() {
         closeSocket()
         PhoneClientSupervisor.detach(applicationContext, this)
         if (::pluginRegistry.isInitialized) pluginRegistry.close()
+        if (::lensTranslationPlugin.isInitialized) lensTranslationPlugin.close()
         registrations.clear()
         super.onDestroy()
     }
@@ -742,14 +750,47 @@ class BusHubService : Service() {
     private fun startForegroundWithType() {
         val manager = getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(
-            NotificationChannel(CHANNEL_ID, "Rokid Nexus", NotificationManager.IMPORTANCE_LOW),
+            NotificationChannel(CHANNEL_ID, "Connection status", NotificationManager.IMPORTANCE_LOW),
         )
-        val notification = Notification.Builder(this, CHANNEL_ID)
-            .setContentTitle("Rokid Nexus hub")
-            .setContentText("CXR-L and SPP bus hub running")
-            .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
+        val state = linkState()
+        lastNotifiedStatus = statusText(state)
+        startForeground(NOTIFICATION_ID, buildStatusNotification(state), ServiceInfoCompat.hubTypes(this))
+    }
+
+    private fun buildStatusNotification(state: Int): Notification {
+        val openApp = PendingIntent.getActivity(
+            this,
+            0,
+            Intent(this, MainActivity::class.java),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        return Notification.Builder(this, CHANNEL_ID)
+            .setContentTitle("Rokid Nexus")
+            .setContentText(statusText(state))
+            .setSmallIcon(R.drawable.ic_nexus_status)
+            .setContentIntent(openApp)
+            .setOngoing(true)
             .build()
-        startForeground(1, notification, ServiceInfoCompat.hubTypes(this))
+    }
+
+    private fun statusText(state: Int): String = when {
+        state and (LinkStateBits.CXR_CONTROL_UP or LinkStateBits.SPP_DATA_UP) != 0 ->
+            "Connected to glasses"
+        state and LinkStateBits.GLASSES_BT_BONDED_OR_PHONE_CONNECTED != 0 ->
+            "Waiting for glasses"
+        @Suppress("DEPRECATION")
+        BluetoothAdapter.getDefaultAdapter()?.isEnabled == false ->
+            "Bluetooth is off"
+        else -> "Pair your glasses to get started"
+    }
+
+    private fun updateStatusNotification(state: Int) {
+        if (!hubEnabled) return
+        val text = statusText(state)
+        if (text == lastNotifiedStatus) return
+        lastNotifiedStatus = text
+        getSystemService(NotificationManager::class.java)
+            .notify(NOTIFICATION_ID, buildStatusNotification(state))
     }
 
     private fun linkState(): Int {
@@ -772,6 +813,7 @@ class BusHubService : Service() {
 
     private fun notifyLinkState() {
         val state = linkState()
+        updateStatusNotification(state)
         registrations.forEach { registration ->
             runCatching { registration.callback.onLinkState(state) }
                 .onFailure { removeRegistration(registration, "dead callback") }

@@ -9,7 +9,7 @@ import android.media.session.PlaybackState
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
-import androidx.core.app.NotificationManagerCompat
+import android.provider.Settings
 
 data class MediaPlaybackSnapshot(
     val packageName: String,
@@ -282,9 +282,15 @@ class MediaSessionMonitor(
     private fun shouldScheduleProgress(state: PlaybackState?): Boolean =
         state?.state == PlaybackState.STATE_PLAYING && state.lastPositionUpdateTime > 0L
 
-    private fun isNotificationAccessEnabled(): Boolean =
-        NotificationManagerCompat.getEnabledListenerPackages(appContext)
-            .contains(appContext.packageName)
+    private fun isNotificationAccessEnabled(): Boolean {
+        val enabled = Settings.Secure.getString(
+            appContext.contentResolver,
+            "enabled_notification_listeners",
+        ).orEmpty()
+        return enabled.split(':').any { flattened ->
+            ComponentName.unflattenFromString(flattened) == listenerComponent
+        }
+    }
 
     private fun sourceLabel(packageName: String): String = when (packageName) {
         SPOTIFY_PACKAGE -> "Spotify"

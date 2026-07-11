@@ -25,112 +25,132 @@
   .page-head h1{ font:300 38px/1.05 'Sora'; margin:16px 0 10px; letter-spacing:-.02em; }
   .page-head p{ color:var(--ink2); max-width:660px; font-size:15px; line-height:1.6; }
   .page-head p b{ color:var(--ink); font-weight:500; }
-  .gallery{ max-width:1500px; margin:0 auto; display:grid; grid-template-columns:repeat(auto-fit,minmax(330px,1fr)); gap:52px 40px; align-items:start; }
+  .gallery{ max-width:1500px; margin:0 auto; display:grid; grid-template-columns:repeat(auto-fit,minmax(310px,1fr)); gap:52px 40px; align-items:start; }
   .cell{ display:flex; flex-direction:column; gap:18px; }
   .cap .n{ display:flex; align-items:baseline; gap:10px; }
   .cap .num{ font:500 12px/1 'Chivo Mono',monospace; color:var(--green); }
   .cap h2{ font:600 17px/1.1 'Sora'; letter-spacing:-.01em; }
   .cap p{ margin-top:7px; color:var(--ink2); font-size:13px; line-height:1.55; }
 
-  /* phone */
-  .phone{ width:352px; max-width:100%; aspect-ratio:9/19.4; border-radius:40px; overflow:hidden; position:relative;
-    background:var(--bg); box-shadow:0 40px 80px -40px #000, 0 0 0 1px #ffffff08, 0 0 0 9px #12151380; }
-  .sb{ position:absolute; top:0; left:0; right:0; height:34px; z-index:30; display:flex; align-items:center; justify-content:space-between;
-    padding:0 26px 0 30px; font:500 13px/1 'Sora'; color:var(--ink); }
-  .sb .dots{ display:flex; gap:5px; } .sb .dots span{ width:16px; height:9px; border-radius:2px; background:currentColor; opacity:.5; }
-  .scr{ position:absolute; inset:34px 0 0; overflow:hidden; display:flex; flex-direction:column; }
+  /* phone — échelle resserrée pour coller au rendu réel */
+  .phone{ width:330px; max-width:100%; aspect-ratio:9/19.4; border-radius:36px; overflow:hidden; position:relative;
+    background:var(--bg); box-shadow:0 40px 80px -40px #000, 0 0 0 1px #ffffff08, 0 0 0 8px #12151380; }
+  .sb{ position:absolute; top:0; left:0; right:0; height:30px; z-index:30; display:flex; align-items:center; justify-content:space-between;
+    padding:0 24px 0 28px; font:500 12px/1 'Sora'; color:var(--ink); }
+  .sb .dots{ display:flex; gap:5px; } .sb .dots span{ width:14px; height:8px; border-radius:2px; background:currentColor; opacity:.5; }
+  .scr{ position:absolute; inset:30px 0 0; overflow:hidden; display:flex; flex-direction:column; }
 
   /* header — slim menubar, ROKID clair + NEXUS phosphore; gear = status light */
-  .top{ display:flex; align-items:center; justify-content:space-between; padding:14px 22px; border-bottom:1px solid var(--line); }
-  .top .wm{ font:500 12px/1 'Chivo Mono',monospace; letter-spacing:.26em; text-transform:uppercase; color:var(--ink); }
+  .top{ display:flex; align-items:center; justify-content:space-between; padding:12px 20px; border-bottom:1px solid var(--line); }
+  .top .wm{ font:500 11px/1 'Chivo Mono',monospace; letter-spacing:.26em; text-transform:uppercase; color:var(--ink); }
   .top .wm b{ color:var(--green); font-weight:600; }
-  .top .gear{ position:relative; width:22px; height:22px; display:grid; place-items:center; }
-  .top .gear svg{ width:20px; height:20px; }
+  .top .gear{ position:relative; width:20px; height:20px; display:grid; place-items:center; }
+  .top .gear svg{ width:18px; height:18px; }
   .top .gear.on{ color:var(--green); filter:drop-shadow(0 0 5px #4dff8c66); }
   .top .gear.off{ color:var(--ink3); }
-  .top .gear.upd{ color:#ffb84d; filter:drop-shadow(0 0 5px #ffb84d66); }
-  .top .gear.upd::after{ content:""; position:absolute; top:-2px; right:-2px; width:8px; height:8px; border-radius:50%; background:#ffb84d; border:2px solid var(--bg); box-shadow:0 0 6px #ffb84d; }
 
-  .content{ flex:1; overflow-y:auto; padding:18px 22px 0; }
+  .content{ flex:1; overflow-y:auto; padding:15px 20px 0; }
   .content::-webkit-scrollbar{ display:none; }
 
-  .lbl{ display:flex; align-items:center; justify-content:space-between; font:500 10px/1 'Chivo Mono',monospace;
-    letter-spacing:.22em; text-transform:uppercase; color:var(--ink4); margin:6px 2px 14px; }
+  .lbl{ display:flex; align-items:center; justify-content:space-between; font:500 9.5px/1 'Chivo Mono',monospace;
+    letter-spacing:.22em; text-transform:uppercase; color:var(--ink4); margin:5px 2px 12px; }
   .lbl .c{ color:var(--green-dim); }
 
-  /* plugin row (installed) — mono index + phosphor card */
-  .prow{ display:grid; grid-template-columns:20px 34px 1fr auto; gap:13px; align-items:center;
-    padding:14px 15px; border-radius:15px; background:var(--panel); border:1px solid var(--line2); margin-bottom:9px; }
-  .prow .idx{ font:500 11px/1 'Chivo Mono',monospace; color:var(--green-dim); }
-  .prow .ic{ width:34px; height:34px; border-radius:9px; display:grid; place-items:center; background:#4dff8c12; color:var(--green); font-size:15px; }
-  .prow .t{ font:400 15px/1 'Sora'; }
-  .prow .s{ display:block; margin-top:4px; font:400 11px/1 'Chivo Mono',monospace; color:var(--ink3); }
-  .prow .go{ color:var(--ink4); font-size:16px; }
+  /* plugin row (installed) — icône SVG phosphor, sans index */
+  .prow{ display:grid; grid-template-columns:30px 1fr auto; gap:12px; align-items:center;
+    padding:12px 13px; border-radius:13px; background:var(--panel); border:1px solid var(--line2); margin-bottom:8px; }
+  .prow .ic{ width:30px; height:30px; border-radius:8px; display:grid; place-items:center; background:#4dff8c12; color:var(--green); }
+  .prow .ic svg{ width:15px; height:15px; }
+  .prow .t{ font:400 14px/1 'Sora'; }
+  .prow .s{ display:block; margin-top:3px; font:400 10.5px/1 'Chivo Mono',monospace; color:var(--ink3); }
+  .prow .go{ color:var(--ink4); font-size:15px; }
 
   /* store entry strip */
-  .storecta{ display:flex; align-items:center; gap:13px; padding:16px 15px; border-radius:15px; margin:6px 0 4px;
+  .storecta{ display:flex; align-items:center; gap:12px; padding:13px; border-radius:13px; margin:5px 0 4px;
     background:linear-gradient(150deg,#10231800,#4dff8c0c); border:1px dashed #2c4a37; }
-  .storecta .plus{ width:34px; height:34px; border-radius:9px; display:grid; place-items:center; border:1px solid #2c4a37; color:var(--green); font-size:18px; }
-  .storecta .t{ font:400 14px/1 'Sora'; }
-  .storecta .s{ display:block; margin-top:4px; font:400 11px/1 'Chivo Mono',monospace; color:var(--ink3); }
-  .storecta .go{ margin-left:auto; color:var(--green); font-size:16px; }
+  .storecta .plus{ width:30px; height:30px; border-radius:8px; display:grid; place-items:center; border:1px solid #2c4a37; color:var(--green); font-size:16px; }
+  .storecta .t{ font:400 13px/1 'Sora'; }
+  .storecta .s{ display:block; margin-top:3px; font:400 10.5px/1 'Chivo Mono',monospace; color:var(--ink3); }
+  .storecta .go{ margin-left:auto; color:var(--green); font-size:15px; }
 
   /* footer control */
-  .foot{ padding:12px 22px 24px; border-top:1px solid var(--line); }
-  .foot .stop{ display:flex; align-items:center; justify-content:center; gap:9px; padding:15px; border-radius:14px;
-    border:1px solid #4dff8c38; color:var(--green); background:#4dff8c0a; font:500 12px/1 'Chivo Mono',monospace; letter-spacing:.1em; text-transform:uppercase; }
+  .foot{ padding:11px 20px 22px; border-top:1px solid var(--line); }
+  .foot .stop{ display:flex; align-items:center; justify-content:center; gap:9px; padding:13px; border-radius:13px;
+    border:1px solid #4dff8c38; color:var(--green); background:#4dff8c0a; font:500 11px/1 'Chivo Mono',monospace; letter-spacing:.1em; text-transform:uppercase; }
 
   /* ---- STORE screen ---- */
-  .sthead{ padding:16px 22px 0; }
-  .sthead .back{ font:500 10px/1 'Chivo Mono',monospace; letter-spacing:.2em; text-transform:uppercase; color:var(--ink3); }
-  .sthead h1{ font:300 30px/1 'Sora'; letter-spacing:-.02em; margin:14px 0 4px; }
+  .sthead{ padding:14px 20px 0; }
+  .sthead .back{ font:500 9.5px/1 'Chivo Mono',monospace; letter-spacing:.2em; text-transform:uppercase; color:var(--ink3); }
+  .sthead h1{ font:300 27px/1 'Sora'; letter-spacing:-.02em; margin:12px 0 4px; }
   .sthead h1 b{ color:var(--green); font-weight:500; }
-  .sthead .sub{ font:400 11px/1 'Chivo Mono',monospace; color:var(--ink3); }
-  .chips{ display:flex; gap:8px; padding:16px 22px 4px; overflow-x:auto; }
+  .sthead .sub{ font:400 10.5px/1 'Chivo Mono',monospace; color:var(--ink3); }
+  .chips{ display:flex; gap:7px; padding:14px 20px 4px; overflow-x:auto; }
   .chips::-webkit-scrollbar{ display:none; }
-  .chip{ flex:none; font:500 10px/1 'Chivo Mono',monospace; letter-spacing:.12em; text-transform:uppercase; padding:8px 13px; border-radius:20px; border:1px solid var(--line2); color:var(--ink2); }
+  .chip{ flex:none; font:500 9.5px/1 'Chivo Mono',monospace; letter-spacing:.12em; text-transform:uppercase; padding:7px 12px; border-radius:18px; border:1px solid var(--line2); color:var(--ink2); }
   .chip.on{ background:var(--green); color:#04180d; border-color:var(--green); }
 
-  .scard{ padding:15px; border-radius:16px; background:var(--panel); border:1px solid var(--line2); margin-bottom:10px; }
-  .scard .h{ display:flex; align-items:center; gap:13px; }
-  .scard .ic{ width:40px; height:40px; border-radius:11px; display:grid; place-items:center; background:#4dff8c12; color:var(--green); font-size:17px; }
-  .scard .t{ font:500 16px/1 'Sora'; }
-  .scard .meta{ display:block; margin-top:5px; font:400 10px/1 'Chivo Mono',monospace; letter-spacing:.06em; color:var(--ink3); text-transform:uppercase; }
-  .scard .s{ margin-top:11px; font:400 12.5px/1.5 'Sora'; color:var(--ink2); }
-  .scard .act{ margin-top:13px; display:flex; align-items:center; justify-content:space-between; }
-  .scard .size{ font:400 10px/1 'Chivo Mono',monospace; color:var(--ink4); letter-spacing:.06em; }
-  .btn-get{ font:600 11px/1 'Chivo Mono',monospace; letter-spacing:.12em; text-transform:uppercase; padding:10px 18px; border-radius:20px; background:var(--green); color:#04180d; }
-  .btn-open{ font:600 11px/1 'Chivo Mono',monospace; letter-spacing:.12em; text-transform:uppercase; padding:10px 18px; border-radius:20px; border:1px solid #2c4a37; color:var(--green); }
+  .scard{ padding:13px; border-radius:14px; background:var(--panel); border:1px solid var(--line2); margin-bottom:9px; }
+  .scard .h{ display:flex; align-items:center; gap:12px; }
+  .scard .ic{ width:36px; height:36px; border-radius:10px; display:grid; place-items:center; background:#4dff8c12; color:var(--green); }
+  .scard .ic svg{ width:17px; height:17px; }
+  .scard .t{ font:500 15px/1 'Sora'; }
+  .scard .meta{ display:block; margin-top:4px; font:400 9.5px/1 'Chivo Mono',monospace; letter-spacing:.06em; color:var(--ink3); text-transform:uppercase; }
+  .scard .s{ margin-top:10px; font:400 12px/1.5 'Sora'; color:var(--ink2); }
+  .scard .act{ margin-top:12px; display:flex; align-items:center; justify-content:space-between; }
+  .scard .size{ font:400 9.5px/1 'Chivo Mono',monospace; color:var(--ink4); letter-spacing:.06em; }
+  .btn-get{ font:600 10.5px/1 'Chivo Mono',monospace; letter-spacing:.12em; text-transform:uppercase; padding:9px 16px; border-radius:18px; background:var(--green); color:#04180d; }
+  .btn-open{ font:600 10.5px/1 'Chivo Mono',monospace; letter-spacing:.12em; text-transform:uppercase; padding:9px 16px; border-radius:18px; border:1px solid #2c4a37; color:var(--green); }
   .scard.feat{ border-color:#2c4a37; background:linear-gradient(150deg,#4dff8c08,#0d150f); }
-  .scard .new{ font:600 9px/1 'Chivo Mono',monospace; letter-spacing:.16em; text-transform:uppercase; color:#04180d; background:var(--green); padding:4px 7px; border-radius:6px; margin-left:auto; }
+  .scard .new{ font:600 8.5px/1 'Chivo Mono',monospace; letter-spacing:.16em; text-transform:uppercase; color:#04180d; background:var(--green); padding:4px 7px; border-radius:6px; margin-left:auto; }
 
   /* ---- EMPTY (new user) ---- */
-  .empty{ flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:0 34px; }
-  .empty .mark{ width:70px; height:70px; border-radius:18px; display:grid; place-items:center; border:1px solid var(--line2); color:var(--green); font-size:26px; margin-bottom:24px; position:relative; }
-  .empty .mark::after{ content:""; position:absolute; inset:-1px; border-radius:18px; box-shadow:0 0 30px -6px #4dff8c30; }
-  .empty h1{ font:300 26px/1.15 'Sora'; letter-spacing:-.01em; }
-  .empty p{ margin-top:12px; font:400 13px/1.6 'Sora'; color:var(--ink2); }
-  .empty .go{ margin-top:26px; font:600 12px/1 'Chivo Mono',monospace; letter-spacing:.12em; text-transform:uppercase; padding:15px 26px; border-radius:24px; background:var(--green); color:#04180d; }
-  .empty .hint{ margin-top:16px; font:400 10px/1 'Chivo Mono',monospace; letter-spacing:.06em; color:var(--ink4); }
+  .empty{ flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:0 32px; }
+  .empty .mark{ width:62px; height:62px; border-radius:16px; display:grid; place-items:center; border:1px solid var(--line2); color:var(--green); position:relative; }
+  .empty .mark svg{ width:26px; height:26px; }
+  .empty .mark::after{ content:""; position:absolute; inset:-1px; border-radius:16px; box-shadow:0 0 30px -6px #4dff8c30; }
+  .empty h1{ font:300 23px/1.15 'Sora'; letter-spacing:-.01em; margin-top:22px; }
+  .empty p{ margin-top:11px; font:400 12.5px/1.6 'Sora'; color:var(--ink2); }
+  .empty .go{ margin-top:24px; font:600 11px/1 'Chivo Mono',monospace; letter-spacing:.12em; text-transform:uppercase; padding:13px 24px; border-radius:22px; background:var(--green); color:#04180d; }
+  .empty .hint{ margin-top:15px; font:400 9.5px/1 'Chivo Mono',monospace; letter-spacing:.06em; color:var(--ink4); }
 
   /* ---- PLUGIN detail ---- */
-  .pd-hero{ padding:18px 22px 18px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:14px; }
-  .pd-hero .ic{ width:48px; height:48px; border-radius:13px; display:grid; place-items:center; background:#4dff8c12; color:var(--green); font-size:20px; }
-  .pd-hero .t{ font:500 20px/1 'Sora'; } .pd-hero .s{ display:block; margin-top:5px; font:400 11px/1 'Chivo Mono',monospace; color:var(--ink3); }
-  .settrow{ display:flex; align-items:center; justify-content:space-between; padding:16px 4px; border-bottom:1px solid var(--line2); }
-  .settrow .t{ font:400 14px/1 'Sora'; } .settrow .s{ display:block; margin-top:5px; font:400 11px/1.3 'Chivo Mono',monospace; color:var(--ink3); max-width:200px; }
-  .settrow .v{ font:400 12px/1 'Chivo Mono',monospace; color:var(--ink2); }
-  .toggle{ width:42px; height:24px; border-radius:14px; background:var(--green); position:relative; }
-  .toggle::after{ content:""; position:absolute; top:3px; right:3px; width:18px; height:18px; border-radius:50%; background:#04180d; }
+  .pd-hero{ padding:16px 20px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:13px; }
+  .pd-hero .ic{ width:42px; height:42px; border-radius:12px; display:grid; place-items:center; background:#4dff8c12; color:var(--green); }
+  .pd-hero .ic svg{ width:20px; height:20px; }
+  .pd-hero .t{ font:500 18px/1 'Sora'; } .pd-hero .s{ display:block; margin-top:4px; font:400 10.5px/1 'Chivo Mono',monospace; color:var(--ink3); }
+  .settrow{ display:flex; align-items:center; justify-content:space-between; padding:14px 4px; border-bottom:1px solid var(--line2); }
+  .settrow .t{ font:400 13.5px/1 'Sora'; } .settrow .s{ display:block; margin-top:4px; font:400 10.5px/1.3 'Chivo Mono',monospace; color:var(--ink3); max-width:190px; }
+  .settrow .v{ font:400 11px/1 'Chivo Mono',monospace; color:var(--ink2); }
+  .toggle{ width:38px; height:22px; border-radius:13px; background:var(--green); position:relative; }
+  .toggle::after{ content:""; position:absolute; top:3px; right:3px; width:16px; height:16px; border-radius:50%; background:#04180d; }
   .toggle.off{ background:#1c2b21; } .toggle.off::after{ left:3px; right:auto; background:#5f7a68; }
+
+  /* icônes SVG partagées */
+  svg.pic{ fill:none; stroke:currentColor; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
 </style>
 </head>
 <body>
   <div class="page-head">
-    <div class="k">Rokid Nexus · v2</div>
+    <div class="k">Rokid Nexus · v2.1</div>
     <h1>Phosphor × Mono</h1>
-    <p>Le dark HUD de <b>#2</b> croisé avec la grille mono de <b>#5</b>. Statut réduit à un bandeau fin (fini la grosse carte), et un vrai <b>Store</b> pour télécharger les plugins — rien n'est installé par défaut. Quatre écrans du même design.</p>
+    <p>Itération sur v2 : <b>index 01/02 supprimés</b> (déco qui mangeait la grille), <b>échelle resserrée</b> pour
+      coller au rendu réel sur téléphone, et <b>icônes SVG stroke</b> à la place des glyphes texte —
+      bus pour Transit, disque pour Media Deck, œil pour Lens. L'accueil montre les quatre plugins réels.</p>
   </div>
+
+  <!-- bibliothèque d'icônes -->
+  <svg width="0" height="0" style="position:absolute">
+    <defs>
+      <g id="i-music"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></g>
+      <g id="i-disc"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.5"/></g>
+      <g id="i-bus"><rect x="4.5" y="3.5" width="15" height="13" rx="2.5"/><path d="M4.5 9.5h15"/><path d="M8.2 13.5h.01M15.8 13.5h.01"/><circle cx="8" cy="19.6" r="1.4"/><circle cx="16" cy="19.6" r="1.4"/></g>
+      <g id="i-eye"><path d="M2 12s3.5-6.5 10-6.5S22 12 22 12s-3.5 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></g>
+      <g id="i-send"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4 20-7z"/></g>
+      <g id="i-mic"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 11a7 7 0 0 1-14 0"/><path d="M12 18v4"/></g>
+      <g id="i-nexus"><path d="M10 12l8.4-6.6M10 12H4.8M10 12l8.4 6.6"/><circle cx="10" cy="12" r="2.6" fill="currentColor" stroke="none"/><circle cx="18.6" cy="5.4" r="1.8" fill="currentColor" stroke="none"/><circle cx="4.8" cy="12" r="1.8" fill="currentColor" stroke="none"/><circle cx="18.6" cy="18.6" r="1.8" fill="currentColor" stroke="none"/></g>
+      <g id="i-gear"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></g>
+    </defs>
+  </svg>
 
   <div class="gallery">
 
@@ -141,19 +161,22 @@
         <div class="scr">
           <div class="top">
             <div class="wm">Rokid&nbsp;<b>Nexus</b></div>
-            <div class="gear on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></div>
+            <div class="gear on"><svg class="pic" viewBox="0 0 24 24" stroke-width="1.6"><use href="#i-gear"/></svg></div>
           </div>
           <div class="content">
-            <div class="lbl"><span>Plugins</span><span class="c">2 actifs</span></div>
-            <div class="prow"><span class="idx">01</span><div class="ic">♪</div><div><div class="t">Lyrics</div><span class="s">now-playing lyrics</span></div><span class="go">›</span></div>
-            <div class="prow"><span class="idx">02</span><div class="ic">◈</div><div><div class="t">Transit</div><span class="s">nearby departures</span></div><span class="go">›</span></div>
-            <div class="storecta"><div class="plus">+</div><div><div class="t">Explorer le Store</div><span class="s">3 nouveaux plugins</span></div><span class="go">›</span></div>
+            <div class="lbl"><span>Plugins</span><span class="c">4 actifs</span></div>
+            <div class="prow"><div class="ic"><svg class="pic" viewBox="0 0 24 24"><use href="#i-music"/></svg></div><div><div class="t">Lyrics</div><span class="s">Now-playing lyrics</span></div><span class="go">›</span></div>
+            <div class="prow"><div class="ic"><svg class="pic" viewBox="0 0 24 24"><use href="#i-disc"/></svg></div><div><div class="t">Media Deck</div><span class="s">Universal now playing</span></div><span class="go">›</span></div>
+            <div class="prow"><div class="ic"><svg class="pic" viewBox="0 0 24 24"><use href="#i-bus"/></svg></div><div><div class="t">Transit</div><span class="s">Nearby departures</span></div><span class="go">›</span></div>
+            <div class="prow"><div class="ic"><svg class="pic" viewBox="0 0 24 24"><use href="#i-eye"/></svg></div><div><div class="t">Lens</div><span class="s">Live camera translation</span></div><span class="go">›</span></div>
+            <div class="storecta"><div class="plus">+</div><div><div class="t">Explorer le Store</div><span class="s">2 nouveaux plugins</span></div><span class="go">›</span></div>
           </div>
           <div class="foot"><div class="stop">■ Stop hub</div></div>
         </div>
       </div>
       <div class="cap"><div class="n"><span class="num">01</span><h2>Accueil</h2></div>
-        <p>Statut en une ligne tout en haut, puis direct les plugins installés. L'entrée Store vit sous la liste. Rien ne gaspille l'écran.</p></div>
+        <p>Statut en une ligne tout en haut, puis direct les plugins installés — sans numérotation, l'icône
+          et le nom suffisent. L'entrée Store vit sous la liste.</p></div>
     </div>
 
     <!-- STORE -->
@@ -169,17 +192,17 @@
           <div class="chips"><span class="chip on">Tous</span><span class="chip">Audio</span><span class="chip">Transit</span><span class="chip">Messages</span><span class="chip">Outils</span></div>
           <div class="content" style="padding-top:8px">
             <div class="scard feat">
-              <div class="h"><div class="ic">✦</div><div><div class="t">Relay</div><span class="meta">Messages · Anezium</span></div><span class="new">New</span></div>
+              <div class="h"><div class="ic"><svg class="pic" viewBox="0 0 24 24"><use href="#i-send"/></svg></div><div><div class="t">Relay</div><span class="meta">Messages · Anezium</span></div><span class="new">New</span></div>
               <div class="s">Réponds à tes notifications téléphone directement depuis les lunettes, à la voix.</div>
               <div class="act"><span class="size">1.2 MB</span><span class="btn-get">Installer</span></div>
             </div>
             <div class="scard">
-              <div class="h"><div class="ic">♪</div><div><div class="t">Lyrics</div><span class="meta">Audio · installé</span></div></div>
+              <div class="h"><div class="ic"><svg class="pic" viewBox="0 0 24 24"><use href="#i-music"/></svg></div><div><div class="t">Lyrics</div><span class="meta">Audio · installé</span></div></div>
               <div class="s">Paroles synchronisées de ce qui joue sur ton téléphone.</div>
               <div class="act"><span class="size">0.9 MB</span><span class="btn-open">Ouvrir</span></div>
             </div>
             <div class="scard">
-              <div class="h"><div class="ic">◐</div><div><div class="t">Scribe</div><span class="meta">Audio · Anezium</span></div></div>
+              <div class="h"><div class="ic"><svg class="pic" viewBox="0 0 24 24"><use href="#i-mic"/></svg></div><div><div class="t">Scribe</div><span class="meta">Audio · Anezium</span></div></div>
               <div class="s">Dicte des notes vocales, transcrites sur le téléphone.</div>
               <div class="act"><span class="size">1.6 MB</span><span class="btn-get">Installer</span></div>
             </div>
@@ -197,10 +220,10 @@
         <div class="scr">
           <div class="top">
             <div class="wm">Rokid&nbsp;<b>Nexus</b></div>
-            <div class="gear on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></div>
+            <div class="gear on"><svg class="pic" viewBox="0 0 24 24" stroke-width="1.6"><use href="#i-gear"/></svg></div>
           </div>
           <div class="empty">
-            <div class="mark">◆</div>
+            <div class="mark"><svg class="pic" viewBox="0 0 24 24" stroke-width="1.6"><use href="#i-nexus"/></svg></div>
             <h1>Tes lunettes sont prêtes.</h1>
             <p>Aucun plugin pour l'instant. Ajoute-en depuis le Store pour donner vie à tes lunettes.</p>
             <div class="go">Ouvrir le Store</div>
@@ -209,28 +232,30 @@
         </div>
       </div>
       <div class="cap"><div class="n"><span class="num">03</span><h2>Nouvel utilisateur</h2></div>
-        <p>Rien d'installé : l'écran ne montre pas une liste vide, il invite au Store. Le statut reste, discret, en haut.</p></div>
+        <p>Rien d'installé : l'écran ne montre pas une liste vide, il invite au Store. Le mark reprend le
+          logo réseau Nexus (le même que l'icône de notification).</p></div>
     </div>
 
-    <!-- PLUGIN detail -->
+    <!-- PLUGIN detail : Media Deck -->
     <div class="cell">
       <div class="phone">
         <div class="sb"><span>9:41</span><div class="dots"><span></span><span></span><span></span></div></div>
         <div class="scr">
-          <div class="pd-hero"><div class="ic">♪</div><div><div class="t">Lyrics</div><span class="s">now-playing lyrics · v1.0</span></div></div>
+          <div class="pd-hero"><div class="ic"><svg class="pic" viewBox="0 0 24 24"><use href="#i-disc"/></svg></div><div><div class="t">Media Deck</div><span class="s">Universal now playing · v1.0</span></div></div>
           <div class="content">
             <div class="lbl"><span>Réglages</span></div>
-            <div class="settrow"><div><div class="t">Afficher sur les lunettes</div><span class="s">timed-lines synchronisées</span></div><div class="toggle"></div></div>
-            <div class="settrow"><div><div class="t">Musixmatch</div><span class="s">meilleures paroles (optionnel)</span></div><span class="v">Se connecter ›</span></div>
-            <div class="settrow"><div><div class="t">Source des paroles</div><span class="s">LrcLib · Netease</span></div><span class="v">2 actives ›</span></div>
-            <div class="settrow"><div><div class="t">Décalage de synchro</div></div><span class="v">0 ms ›</span></div>
-            <div class="lbl" style="margin-top:22px"><span>Plugin</span></div>
+            <div class="settrow"><div><div class="t">Accès média</div><span class="s">Suit ce qui joue sur le téléphone</span></div><span class="v" style="color:var(--green)">Activé ›</span></div>
+            <div class="settrow"><div><div class="t">Pochette sur les lunettes</div><span class="s">Mono 1-bit, générée localement</span></div><div class="toggle"></div></div>
+            <div class="lbl" style="margin-top:20px"><span>Confidentialité</span></div>
+            <div class="settrow" style="border-bottom:none; padding-top:6px"><div><span class="s" style="max-width:260px; line-height:1.5">Media Deck lit uniquement la session média active. L'audio ne passe jamais par Nexus ; la pochette est réduite localement en aperçu 96×96 1-bit.</span></div></div>
+            <div class="lbl" style="margin-top:14px"><span>Plugin</span></div>
             <div class="settrow"><div><div class="t">Désinstaller</div></div><span class="v" style="color:#ff8a8a">Retirer ›</span></div>
           </div>
         </div>
       </div>
-      <div class="cap"><div class="n"><span class="num">04</span><h2>Réglages plugin</h2></div>
-        <p>Chaque plugin a son écran : toggles, login Musixmatch (le fameux réglage manquant), sources, désinstall. Même grammaire mono.</p></div>
+      <div class="cap"><div class="n"><span class="num">04</span><h2>Réglages plugin — Media Deck</h2></div>
+        <p>Même grammaire que Lyrics : header icône + nom, setting rows, section confidentialité. C'est
+          la cible du redesign de l'écran Media Deck dans l'app.</p></div>
     </div>
 
   </div>

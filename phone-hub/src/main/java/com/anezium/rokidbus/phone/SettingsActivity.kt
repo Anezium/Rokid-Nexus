@@ -17,6 +17,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import androidx.core.content.ContextCompat
 import com.anezium.rokidbus.client.BusClient
 import com.anezium.rokidbus.client.BusEvent
 import com.anezium.rokidbus.client.ui.BusTheme
@@ -52,12 +53,12 @@ class SettingsActivity : Activity() {
     override fun onStart() {
         super.onStart()
         val filter = IntentFilter(NexusPhoneState.ACTION_LOG)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(logReceiver, filter, RECEIVER_NOT_EXPORTED)
-        } else {
-            @Suppress("DEPRECATION")
-            registerReceiver(logReceiver, filter)
-        }
+        ContextCompat.registerReceiver(
+            this,
+            logReceiver,
+            filter,
+            ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
     }
 
     override fun onStop() {

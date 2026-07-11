@@ -19,6 +19,7 @@ import android.view.WindowInsets
 import android.view.inputmethod.EditorInfo
 import android.widget.Button
 import android.widget.EditText
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -371,6 +372,16 @@ internal object NexusUi {
             typeface = sans
             includeFontPadding = false
             setTextColor(INK4)
+        }
+
+    /** Icon tile backed by a vector drawable — the standard plugin mark. */
+    fun iconTileImage(context: Context, resId: Int, sizeDp: Int = 34): ImageView =
+        ImageView(context).apply {
+            setImageResource(resId)
+            val pad = dp(context, if (sizeDp > 40) 12 else 8)
+            setPadding(pad, pad, pad, pad)
+            background = rounded(context, alpha(GREEN, 0x14), if (sizeDp > 34) 11 else 9)
+            layoutParams = LinearLayout.LayoutParams(dp(context, sizeDp), dp(context, sizeDp))
         }
 
     fun iconTile(context: Context, glyph: String, sizeDp: Int = 34): TextView =

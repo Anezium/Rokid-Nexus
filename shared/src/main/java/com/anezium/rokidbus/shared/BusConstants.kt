@@ -28,6 +28,8 @@ object BusPaths {
     const val SURFACE_INPUT = "/surface/input"
     const val LAUNCHER_LIST = "/launcher/list"
     const val LAUNCHER_OPEN = "/launcher/open"
+    const val LENS_TRANSLATE_REQUEST = "/lens/translate/request"
+    const val LENS_TRANSLATE_REPLY = "/lens/translate/request/reply"
     const val ERROR = "/error"
 }
 
