@@ -18,6 +18,7 @@ The existing CXR-L/SPP transport and single glasses anchor are preserved. The pl
 | [002](002-plugin-identity-and-capabilities.md) | Authorize plugin principals and enforce capabilities | P1 | L | 001 | DONE |
 | [003](003-external-plugin-sdk.md) | Deliver the external SDK, lifecycle, sample, and publication path | P1 | L | 002 | DONE |
 | [004](004-externalize-transit.md) | Ship Transit as the first independent phone plugin APK | P1 | L | 003 | DONE |
+| [005](005-nexus-store-registry.md) | Drive the Nexus Store from the RokidBrew registry (plugins-only) | P1 | L | 003, 004 | TODO |
 
 Status values are `TODO`, `IN PROGRESS`, `BLOCKED`, and `DONE`. Update both this table and the individual plan when execution status changes.
 
@@ -54,7 +55,7 @@ These findings are intentionally deferred until plans 001–004 establish the pl
 - Extract Lyrics into an independent plugin APK, including encrypted credential migration and a plugin-owned settings screen.
 - Stabilize the current Lens work, remove raw OCR data from release diagnostics, and extract it as an optional advanced plugin without making its transport a platform dependency.
 - Add display arbitration, surface ownership epochs, microphone-in-use indication, and actionable failure feedback on glasses.
-- Design no-ADB onboarding, pairing, plugin deep links, and RokidBrew distribution metadata.
+- Design no-ADB onboarding, pairing, and plugin deep links. (RokidBrew distribution metadata is now scoped as [Plan 005](005-nexus-store-registry.md).)
 - Add compatibility fixtures for multiple SDK generations once the v3 identity contract has shipped.
 
 ## Approaches considered and rejected
