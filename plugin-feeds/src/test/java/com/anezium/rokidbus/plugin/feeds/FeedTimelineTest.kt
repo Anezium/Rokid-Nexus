@@ -38,6 +38,20 @@ class FeedTimelineTest {
         assertNull(timeline.nextCursor)
     }
 
+    @Test
+    fun xAccountCursor_isClearedWhenTimelineReachesBound() {
+        val timeline = FeedTimeline()
+        val accountPage = XAccountFeedSource.parsePage(
+            checkNotNull(javaClass.classLoader?.getResource("x_home_timeline.json")).readText(),
+        )
+
+        timeline.append(accountPage)
+        timeline.append(FeedPage(posts(2, 210), "another-x-cursor"))
+
+        assertEquals(200, timeline.posts.size)
+        assertNull(timeline.nextCursor)
+    }
+
     private fun posts(start: Int, count: Int): List<FeedPost> = (start until start + count).map { index ->
         FeedPost(
             id = "post-$index",

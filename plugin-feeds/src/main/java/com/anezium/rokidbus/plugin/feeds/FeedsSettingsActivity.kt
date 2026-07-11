@@ -6,11 +6,13 @@ import android.content.Intent
 import android.os.Bundle
 import android.text.InputType
 import android.view.ViewGroup
+import android.webkit.CookieManager
 import android.widget.ArrayAdapter
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.Spinner
+import android.widget.TextView
 import android.widget.Toast
 import com.anezium.rokidbus.client.HubTarget
 import com.anezium.rokidbus.client.ui.BusTheme
@@ -21,11 +23,17 @@ class FeedsSettingsActivity : Activity() {
     private lateinit var tokenInput: EditText
     private lateinit var userIdInput: EditText
     private lateinit var feedUriInput: EditText
+    private lateinit var xAccountStatus: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         buildUi()
         renderSettings()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (::xAccountStatus.isInitialized) renderXAccountStatus()
     }
 
     private fun buildUi() {
@@ -45,6 +53,7 @@ class FeedsSettingsActivity : Activity() {
             inputType = InputType.TYPE_CLASS_NUMBER
         }
         feedUriInput = textInput("Bluesky feed generator URI")
+        xAccountStatus = BusTheme.heroSub(this, "")
 
         val content = BusTheme.root(this).apply {
             addView(BusTheme.wordmark(this@FeedsSettingsActivity, "Nexus plugin"))
@@ -54,11 +63,23 @@ class FeedsSettingsActivity : Activity() {
             addView(BusTheme.heroSub(this@FeedsSettingsActivity, "Choose a social feed for the glasses HUD."))
             addView(BusTheme.gap(this@FeedsSettingsActivity, 22))
             addField("Active source", sourceSpinner)
-            addField("X bearer token", tokenInput)
+            addView(BusTheme.tinyLabel(this@FeedsSettingsActivity, "X account"))
+            addView(BusTheme.gap(this@FeedsSettingsActivity, 8))
+            addView(xAccountStatus)
+            addView(BusTheme.gap(this@FeedsSettingsActivity, 10))
+            addView(BusTheme.pill(this@FeedsSettingsActivity, "Connect X account").apply {
+                setOnClickListener { startActivity(Intent(this@FeedsSettingsActivity, XAccountLoginActivity::class.java)) }
+            })
+            addView(BusTheme.gap(this@FeedsSettingsActivity, 10))
+            addView(BusTheme.pill(this@FeedsSettingsActivity, "Disconnect X account").apply {
+                setOnClickListener { disconnectXAccount() }
+            })
+            addView(BusTheme.gap(this@FeedsSettingsActivity, 18))
+            addField("Official X API bearer token", tokenInput)
             addView(
                 BusTheme.heroSub(
                     this@FeedsSettingsActivity,
-                    "X requires a user-context OAuth2 token with tweet.read and users.read; app-only tokens do not work.",
+                    "Only X (official API) uses this OAuth2 token and numeric user id. X (account) uses the login above.",
                 ),
             )
             addView(BusTheme.gap(this@FeedsSettingsActivity, 16))
@@ -101,18 +122,35 @@ class FeedsSettingsActivity : Activity() {
         tokenInput.setText(settings.xBearerToken)
         userIdInput.setText(settings.xUserId)
         feedUriInput.setText(settings.blueskyFeedGeneratorUri)
+        renderXAccountStatus()
     }
 
     private fun saveSettings() {
         settingsStore.save(
             FeedsSettings(
                 source = FeedSourceKind.entries[sourceSpinner.selectedItemPosition],
+                xAccountCookies = settingsStore.load().xAccountCookies,
                 xBearerToken = tokenInput.text.toString(),
                 xUserId = userIdInput.text.toString(),
                 blueskyFeedGeneratorUri = feedUriInput.text.toString(),
             ),
         )
         Toast.makeText(this, "Feeds settings saved", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun renderXAccountStatus() {
+        xAccountStatus.text = if (settingsStore.load().xAccountCookies.isConnected) {
+            "Connected. Cookies are stored privately on this phone."
+        } else {
+            "Disconnected. Sign in to load your X home timeline."
+        }
+    }
+
+    private fun disconnectXAccount() {
+        settingsStore.clearXAccountCookies()
+        CookieManager.getInstance().removeAllCookies { CookieManager.getInstance().flush() }
+        renderXAccountStatus()
+        Toast.makeText(this, "X account disconnected", Toast.LENGTH_SHORT).show()
     }
 
     private fun openNexusPluginAccess() {

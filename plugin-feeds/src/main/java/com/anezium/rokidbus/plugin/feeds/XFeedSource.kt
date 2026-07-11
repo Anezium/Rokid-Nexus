@@ -44,7 +44,7 @@ class XFeedSource(
                     authorHandle = "x",
                     text = "X: add API token in phone settings",
                     createdAt = now,
-                    source = FeedSourceKind.X.tag,
+                    source = FeedSourceKind.X_OFFICIAL.tag,
                     hasMedia = false,
                 ),
             ),
@@ -59,7 +59,7 @@ class XFeedSource(
                     authorHandle = "x",
                     text = "X: add numeric user id in phone settings",
                     createdAt = now,
-                    source = FeedSourceKind.X.tag,
+                    source = FeedSourceKind.X_OFFICIAL.tag,
                     hasMedia = false,
                 ),
             ),
@@ -93,7 +93,7 @@ class XFeedSource(
                             text = item.optString("text").trim(),
                             createdAt = runCatching { Instant.parse(item.optString("created_at")) }
                                 .getOrDefault(fallbackNow),
-                            source = FeedSourceKind.X.tag,
+                            source = FeedSourceKind.X_OFFICIAL.tag,
                             hasMedia = item.optJSONObject("attachments")
                                 ?.optJSONArray("media_keys")
                                 ?.length()

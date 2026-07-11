@@ -25,7 +25,7 @@ class XFeedSourceTest {
         assertFalse(networkCalled)
         assertEquals(1, page.posts.size)
         assertEquals("X: add API token in phone settings", page.posts.single().text)
-        assertEquals("x", page.posts.single().source)
+        assertEquals("x-api", page.posts.single().source)
         assertNull(page.nextCursor)
     }
 }

@@ -165,7 +165,8 @@ internal class FeedsRuntime(
     private companion object {
         fun defaultSource(settings: FeedsSettings): FeedSource = when (settings.source) {
             FeedSourceKind.BLUESKY -> BlueskyFeedSource(settings.blueskyFeedGeneratorUri)
-            FeedSourceKind.X -> XFeedSource(settings.xBearerToken, settings.xUserId)
+            FeedSourceKind.X_ACCOUNT -> XAccountFeedSource(settings.xAccountCookies)
+            FeedSourceKind.X_OFFICIAL -> XFeedSource(settings.xBearerToken, settings.xUserId)
             FeedSourceKind.DEMO -> MockFeedSource()
         }
 
