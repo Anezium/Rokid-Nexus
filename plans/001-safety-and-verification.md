@@ -21,6 +21,7 @@
 
 ## Status
 
+- **Status**: DONE
 - **Priority**: P1
 - **Effort**: L
 - **Risk**: MED
@@ -142,6 +143,7 @@ Repository conventions to preserve:
 - `phone-hub/src/main/java/com/anezium/rokidbus/phone/SettingsActivity.kt`
 - `phone-hub/build.gradle.kts`
 - `glasses-hub/src/main/java/com/anezium/rokidbus/glasses/LauncherOverlayRenderer.kt`
+- `glasses-hub/src/main/java/com/anezium/rokidbus/glasses/MediaHudView.kt`
 - `glasses-hub/src/main/java/com/anezium/rokidbus/glasses/SurfaceHudView.kt`
 - `glasses-hub/src/main/AndroidManifest.xml`
 - `glasses-hub/src/debug/AndroidManifest.xml` (create if needed)
@@ -341,18 +343,18 @@ files explicitly listed in this plan plus the plan-index status update.
 
 ## Done criteria
 
-- [ ] `.\gradlew.bat test lintDebug assembleDebug` exits 0.
-- [ ] New queue and HTTP policy tests exist and pass.
-- [ ] Binary payloads are not retained by `BusClient` while disconnected.
-- [ ] JSON reconnect data is capped by count, bytes, and TTL.
-- [ ] HTTP proxy requires HTTPS, disables redirects, and caps request/response sizes.
-- [ ] Lens does not log OCR or translation text by default.
-- [ ] Lyrics has no ordinary-preferences credential fallback.
-- [ ] Release glasses manifest does not export the debug probe receiver.
-- [ ] Device identifiers are absent from public test/spec prose.
-- [ ] No lint baseline was added and glasses `targetSdk` was not raised.
-- [ ] No file outside Scope is modified, except `plans/README.md` status.
-- [ ] `plans/README.md` marks Plan 001 `DONE` only after all gates pass.
+- [x] `.\gradlew.bat test lintDebug assembleDebug` exits 0.
+- [x] New queue and HTTP policy tests exist and pass.
+- [x] Binary payloads are not retained by `BusClient` while disconnected.
+- [x] JSON reconnect data is capped by count, bytes, and TTL.
+- [x] HTTP proxy requires HTTPS, disables redirects, and caps request/response sizes.
+- [x] Lens does not log OCR or translation text by default.
+- [x] Lyrics has no ordinary-preferences credential fallback.
+- [x] Release glasses manifest does not export the debug probe receiver.
+- [x] Device identifiers are absent from public test/spec prose.
+- [x] No lint baseline was added and glasses `targetSdk` was not raised.
+- [x] No file outside Scope is modified, except `plans/README.md` status.
+- [x] `plans/README.md` marks Plan 001 `DONE` only after all gates pass.
 
 ## STOP conditions
 

@@ -1,8 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
-
     <application>
+        <receiver
+            android:name=".ProbeBroadcastReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.anezium.rokidbus.glasses.PROBE" />
+            </intent-filter>
+        </receiver>
+
         <receiver
             android:name=".SelfArmWirelessBootstrapReceiver"
             android:exported="true"

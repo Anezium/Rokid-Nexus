@@ -10,20 +10,20 @@ import java.time.Instant
 
 class TransitRepository(
     private val baseUrl: String = "https://api.transitous.org/api/v1",
-) {
-    fun nearbyStops(location: TransitCoordinate): List<TransitStop> {
+) : TransitRepositorySource {
+    override fun nearbyStops(location: TransitCoordinate): List<TransitStop> {
         val json = get(
             "$baseUrl/reverse-geocode?place=${location.lat},${location.lon}&type=STOP",
         )
         return parseStops(json, location)
     }
 
-    fun departures(stopId: String): List<TransitDeparture> {
+    override fun departures(stopId: String): List<TransitDeparture> {
         val encodedStopId = URLEncoder.encode(stopId, Charsets.UTF_8.name())
         return parseDepartures(get("$baseUrl/stoptimes?stopId=$encodedStopId&n=12"))
     }
 
-    fun searchStops(query: String): List<TransitStopMatch> {
+    override fun searchStops(query: String): List<TransitStopMatch> {
         val encodedQuery = URLEncoder.encode(query, Charsets.UTF_8.name())
         return parseStopMatches(get("$baseUrl/geocode?text=$encodedQuery&type=STOP")).take(MAX_SEARCH_RESULTS)
     }

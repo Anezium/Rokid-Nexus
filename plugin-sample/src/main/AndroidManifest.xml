@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application
+        android:allowBackup="false"
+        android:label="Nexus Hello Plugin"
+        android:supportsRtl="true"
+        android:theme="@style/AppTheme">
+        <activity
+            android:name=".HelloActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <service
+            android:name=".HelloPluginService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.anezium.rokidbus.action.PLUGIN" />
+            </intent-filter>
+            <meta-data
+                android:name="com.anezium.rokidbus.plugin.ID"
+                android:value="hello" />
+            <meta-data
+                android:name="com.anezium.rokidbus.plugin.DISPLAY_NAME"
+                android:value="Hello Nexus" />
+            <meta-data
+                android:name="com.anezium.rokidbus.plugin.API_VERSION"
+                android:value="3" />
+            <meta-data
+                android:name="com.anezium.rokidbus.plugin.CAPABILITIES"
+                android:value="surfaces" />
+            <meta-data
+                android:name="com.anezium.rokidbus.plugin.RECEIVE_PREFIXES"
+                android:value="/plugin/hello,/system/plugin" />
+            <meta-data
+                android:name="com.anezium.rokidbus.plugin.SETTINGS_ACTIVITY"
+                android:value=".HelloActivity" />
+            <meta-data
+                android:name="com.anezium.rokidbus.plugin.LAUNCHABLE"
+                android:value="true" />
+        </service>
+    </application>
+
+</manifest>

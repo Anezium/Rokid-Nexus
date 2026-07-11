@@ -10,16 +10,16 @@ import android.os.CancellationSignal
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 
-class TransitLocationProvider(private val context: Context) {
+class TransitLocationProvider(private val context: Context) : TransitLocationSource {
     private val locationManager: LocationManager? =
         context.getSystemService(LocationManager::class.java)
 
-    fun hasLocationPermission(): Boolean =
+    override fun hasLocationPermission(): Boolean =
         context.checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
             context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
 
     @SuppressLint("MissingPermission")
-    suspend fun currentLocation(): TransitCoordinate? {
+    override suspend fun currentLocation(): TransitCoordinate? {
         if (!hasLocationPermission()) return null
         val provider = bestProvider() ?: return lastKnownLocation()
         val current = suspendCancellableCoroutine<Location?> { continuation ->

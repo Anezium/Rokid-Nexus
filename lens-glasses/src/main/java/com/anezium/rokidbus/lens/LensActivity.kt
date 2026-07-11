@@ -50,6 +50,7 @@ import androidx.camera.view.transform.ImageProxyTransformFactory
 import androidx.core.content.ContextCompat
 import com.anezium.rokidbus.client.BusClient
 import com.anezium.rokidbus.client.BusEvent
+import com.anezium.rokidbus.client.HubTarget
 import com.anezium.rokidbus.shared.BusPaths
 import com.anezium.rokidbus.shared.LensFrozenOcrResult
 import com.anezium.rokidbus.shared.LensLinkPacket
@@ -666,6 +667,7 @@ class LensActivity : AppCompatActivity() {
                 BusPaths.LENS_TRANSLATE_REPLY,
                 BusPaths.LENS_FROZEN_OCR_RESULT,
             ),
+            hubTarget = HubTarget.GLASSES,
         ) { event -> handleBusEvent(event) }
         busClient = client
         client.connect()

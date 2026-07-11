@@ -4,10 +4,10 @@ import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
 
-class TransitFavoritesStore(context: Context) {
+class TransitFavoritesStore(context: Context) : TransitFavoritesSource {
     private val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
-    fun list(): List<TransitStop> {
+    override fun list(): List<TransitStop> {
         val raw = prefs.getString(KEY_STOPS, "[]").orEmpty()
         val array = runCatching { JSONArray(raw) }.getOrDefault(JSONArray())
         return buildList {
@@ -31,24 +31,35 @@ class TransitFavoritesStore(context: Context) {
         }
     }
 
-    fun add(stop: TransitStop) {
+    override fun add(stop: TransitStop) {
         val current = list()
         if (current.any { it.id == stop.id }) return
         write(current + stop.withUnknownDistance())
     }
 
-    fun remove(id: String) {
+    override fun remove(id: String) {
         write(list().filterNot { it.id == id })
     }
 
-    fun lastMode(): TransitMode =
+    override fun lastMode(): TransitMode =
         TransitMode.fromPref(prefs.getString(KEY_LAST_MODE, TransitMode.NEAR_ME.prefValue))
 
-    fun setLastMode(mode: TransitMode) {
+    override fun setLastMode(mode: TransitMode) {
         prefs.edit().putString(KEY_LAST_MODE, mode.prefValue).apply()
     }
 
+    internal fun importLegacy(stops: List<TransitStop>, mode: TransitMode?) {
+        val merged = (list() + stops.map { it.withUnknownDistance() }).distinctBy(TransitStop::id)
+        val editor = prefs.edit().putString(KEY_STOPS, encode(merged))
+        mode?.let { editor.putString(KEY_LAST_MODE, it.prefValue) }
+        editor.apply()
+    }
+
     private fun write(stops: List<TransitStop>) {
+        prefs.edit().putString(KEY_STOPS, encode(stops)).apply()
+    }
+
+    private fun encode(stops: List<TransitStop>): String {
         val array = JSONArray()
         stops.forEach { stop ->
             array.put(
@@ -59,7 +70,7 @@ class TransitFavoritesStore(context: Context) {
                     .put("lon", stop.lon),
             )
         }
-        prefs.edit().putString(KEY_STOPS, array.toString()).apply()
+        return array.toString()
     }
 
     private companion object {

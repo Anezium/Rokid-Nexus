@@ -1,5 +1,64 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <application>
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <queries>
+        <intent>
+            <action android:name="com.anezium.rokidbus.action.HUB" />
+        </intent>
+    </queries>
+
+    <application
+        android:allowBackup="false"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.Transit">
+        <activity
+            android:name=".TransitSettingsActivity"
+            android:exported="true"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <service
+            android:name=".TransitPluginService"
+            android:exported="true"
+            android:foregroundServiceType="location">
+            <intent-filter>
+                <action android:name="com.anezium.rokidbus.action.PLUGIN" />
+            </intent-filter>
+            <meta-data
+                android:name="com.anezium.rokidbus.plugin.ID"
+                android:value="transit" />
+            <meta-data
+                android:name="com.anezium.rokidbus.plugin.DISPLAY_NAME"
+                android:value="Transit" />
+            <meta-data
+                android:name="com.anezium.rokidbus.plugin.API_VERSION"
+                android:value="3" />
+            <meta-data
+                android:name="com.anezium.rokidbus.plugin.CAPABILITIES"
+                android:value="surfaces" />
+            <meta-data
+                android:name="com.anezium.rokidbus.plugin.RECEIVE_PREFIXES"
+                android:value="/plugin/transit,/system/plugin" />
+            <meta-data
+                android:name="com.anezium.rokidbus.plugin.SETTINGS_ACTIVITY"
+                android:value=".TransitSettingsActivity" />
+            <meta-data
+                android:name="com.anezium.rokidbus.plugin.LAUNCHABLE"
+                android:value="true" />
+        </service>
     </application>
 </manifest>

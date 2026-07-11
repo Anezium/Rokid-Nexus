@@ -13,6 +13,7 @@ import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import com.anezium.rokidbus.client.BusClient
 import com.anezium.rokidbus.client.BusEvent
+import com.anezium.rokidbus.client.HubTarget
 import com.anezium.rokidbus.shared.BusPaths
 import com.anezium.rokidbus.shared.LinkStateBits
 import org.json.JSONArray
@@ -49,6 +50,7 @@ class LensE2eSmokeActivity : AppCompatActivity() {
             context = applicationContext,
             clientId = CLIENT_ID,
             pathPrefixes = listOf(BusPaths.LENS_TRANSLATE_REPLY),
+            hubTarget = HubTarget.GLASSES,
             listener = ::handleBusEvent,
         ).also(BusClient::connect)
     }

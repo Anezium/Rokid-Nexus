@@ -20,6 +20,7 @@
 
 ## Status
 
+- **Status**: DONE (software gates complete 2026-07-10; owner on-device checks pending)
 - **Priority**: P1
 - **Effort**: L
 - **Risk**: HIGH
@@ -431,19 +432,35 @@ Expected: all commands exit 0 and only scoped files plus the plan index changed.
 
 ## Done criteria
 
-- [ ] AIDL existing methods remain in their original order and `registerPlugin` is appended.
-- [ ] API version is 3 and BUSSPEC documents v2 compatibility.
-- [ ] Plugin identity is verified from UID, package, certificate, and manifest metadata.
-- [ ] Grants are keyed by package + plugin ID + signing digest and are granular.
-- [ ] Unknown/revoked callers cannot send, subscribe, wake, use surfaces, HTTP, or audio.
-- [ ] Raw lexical prefix matching is absent from hub/supervisor authorization paths.
-- [ ] External release callers cannot use legacy `register`.
-- [ ] Debug probes still work without weakening release policy.
-- [ ] Normal and developer consent views both work.
-- [ ] Third-party microphone approval remains disabled pending HUD indication.
-- [ ] `.\gradlew.bat test lintDebug assembleDebug` exits 0.
-- [ ] Hardware regression steps pass with redacted logs.
-- [ ] Only in-scope files plus `plans/README.md` are modified.
+- [x] AIDL existing methods remain in their original order and `registerPlugin` is appended.
+- [x] API version is 3 and BUSSPEC documents v2 compatibility.
+- [x] Plugin identity is verified from UID, package, certificate, and manifest metadata.
+- [x] Grants are keyed by package + plugin ID + signing digest and are granular.
+- [x] Unknown/revoked callers cannot send, subscribe, wake, use surfaces, HTTP, or audio.
+- [x] Raw lexical prefix matching is absent from hub/supervisor authorization paths.
+- [x] External release callers cannot use legacy `register`.
+- [x] Debug probe compatibility is isolated to debuggable builds without weakening release policy.
+- [x] Normal and developer consent views are implemented and build successfully.
+- [x] Third-party microphone approval remains disabled pending HUD indication.
+- [x] `.\gradlew.bat test lintDebug assembleDebug` exits 0.
+- [ ] Hardware regression steps: pending owner on-device verification; device interaction was prohibited for this execution.
+- [x] Only in-scope files, `TESTPLAN.md`, and plan status files are modified.
+
+## Execution record (2026-07-10)
+
+- Drift check was clean. The scoped `da068ad..HEAD` diff contains the documented
+  Lens/Media baseline snapshot and Plan 001 hardening; the uncommitted scoped diff
+  was empty.
+- The registration, lexical-prefix routing, and first-match supervisor excerpts
+  were stale only in line placement because of the baseline snapshot and Plan 001.
+  Their described v2 end-state still existed and was verified directly before the
+  v3 AIDL append, segment-aware policy, and authorized wake selection were applied.
+- Verified successfully: Plan 001 precondition `test lintDebug`; shared policy
+  tests; phone discovery/grant/route/wake tests; AIDL/client compile; phone and
+  glasses hub builds; full `test lintDebug assembleDebug`; and `git diff --check`.
+- Pending owner on-device verification: debug phone/glasses probe registration,
+  unapproved/partially approved/revoked plugin behavior, consent UI transitions,
+  and CXR-L/SPP continuity. No device commands were run.
 
 ## STOP conditions
 

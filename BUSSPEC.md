@@ -14,8 +14,9 @@ Rokid Relay yet; it must end with a bus a real app could ride.
   the subscription. Clients never subscribe themselves.
 - **Data plane** = the hub-owned custom-UUID RFCOMM SPP socket already validated:
   UUID `0b005957-ec6d-4af5-bcba-6c786c46634e`, glasses = server
-  (`listenUsingInsecureRfcommWithServiceRecord`), phone = client, target by MAC
-  `AC:86:D1:55:1E:ED` first (bonded name is `Glasses_3723`, NOT "Rokid").
+  (`listenUsingInsecureRfcommWithServiceRecord`), phone = client. The current
+  validated device-selection logic tries its configured bonded device address
+  first and its configured bonded name second; public docs do not retain either value.
   Never call `cancelDiscovery()` (needs BLUETOOTH_SCAN).
 - Glasses hub is anchored on an **AccessibilityService** (armed once via ADB, appended
   to Relay's service — never overwrite the secure setting). `startService` on an idle
@@ -59,11 +60,72 @@ copy the exact API usage from Relay's bridges).
 Binary payloads (images, audio later) ride SPP as `payload: {"bin": "<base64>"}` for
 now; leave a `// TODO raw binary frames` marker.
 
+## Binder plugin registration v3
+
+Bus API v3 preserves the six v2 AIDL transactions in their original order and
+appends `registerPlugin(packageName, pluginId, callback)`. Phone plugins declare
+one exported service for `com.anezium.rokidbus.action.PLUGIN`. The hub derives the
+principal from the Binder calling UID, package ownership, the service manifest,
+and the current signing-certificate SHA-256 digest. Client payloads never supply
+trusted UID, certificate, route prefixes, or surface ownership.
+
+Descriptor metadata keys are `com.anezium.rokidbus.plugin.ID`,
+`.DISPLAY_NAME`, `.API_VERSION`, `.CAPABILITIES`, `.RECEIVE_PREFIXES`,
+`.SETTINGS_ACTIVITY`, and `.LAUNCHABLE`. Plugin IDs match
+`[a-z][a-z0-9._-]{2,63}`. Capability values are `surfaces`, `microphone`, and
+`http_proxy`; unknown values invalidate the descriptor. Grants are keyed by
+package, plugin ID, and signing digest and are never implied by installation.
+
+Legacy `register(clientId, prefixes, callback)` remains ABI-compatible for
+same-UID hub internals and explicit debug-probe compatibility. Release hubs
+reject unknown external legacy callers. Phone approval does not authorize an
+arbitrary glasses-side companion; release glasses hubs remain closed to those
+clients until companion provisioning has its own identity design.
+
+## External plugin lifecycle v1
+
+The public SDK cold-starts through the exported plugin service; it does not use a
+process-local factory or require an Activity to run first. The hub sends these
+reserved, hub-to-plugin paths only to the verified principal:
+
+- `/system/plugin/registration`
+- `/system/plugin/open`
+- `/system/plugin/close`
+- `/system/plugin/input`
+
+Lifecycle payloads include `version`, `type`, `id`, and `pluginId`. Input also
+includes the plugin-local `localSurfaceId`, `keyCode`, and `action`. Version 1
+receivers ignore unknown fields and ignore duplicate event IDs. SDK lifecycle
+callbacks are serialized on the Android application main thread.
+
+Plugins send only local surface IDs such as `main`. After capability and
+principal checks, the phone hub injects `ownerPluginId`, rewrites the wire ID to
+`pluginId:localSurfaceId`, and assigns the monotonic sequence. Plugins never
+supply a trusted owner or global sequence.
+
+## Transit external plugin and one-release migration
+
+Transit is an independent phone APK with plugin ID `transit`. It requests only
+Nexus `surfaces`; its own manifest owns `INTERNET`, foreground location, runtime
+location, and notification permissions. No Transit implementation, location
+permission, or location foreground-service type remains in the phone hub.
+
+For one compatibility release, an approved, signer-bound Transit principal may
+receive `/plugin/transit/migration/legacy`. The version 1 payload contains only
+validated favorite stops and the last selected mode plus a count/checksum; it
+never contains current coordinates or recent boards. Transit acknowledges on
+`/plugin/transit/migration/ack`. The hub clears legacy state and records
+completion only after the verified principal returns the exact migration ID,
+count, and checksum. Both sides deduplicate replay. These paths are internal to
+the verified callback/owned namespace and are not exported providers or general
+migration APIs.
+
 ## Surface protocol v1 (Round B)
 
-Plugins do not install glasses APKs. The phone hub hosts plugin logic in-process and
-pushes declarative surfaces over the existing bus. The glasses hub renders those
-surfaces locally with the shared Rokid Nexus phosphor visual language.
+Plugins do not install glasses APKs. External phone plugins run in their own APK
+process; temporary built-in adapters remain during migration. Both paths push
+declarative surfaces over the existing bus. The glasses hub renders those surfaces
+locally with the shared Rokid Nexus phosphor visual language.
 
 Phone to glasses:
 

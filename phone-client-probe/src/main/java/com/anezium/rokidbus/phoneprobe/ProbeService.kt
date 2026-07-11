@@ -4,6 +4,7 @@ import android.util.Log
 import com.anezium.rokidbus.client.BusClient
 import com.anezium.rokidbus.client.BusClientService
 import com.anezium.rokidbus.client.BusEvent
+import com.anezium.rokidbus.client.HubTarget
 import org.json.JSONObject
 
 private const val TAG = "ROKIDBUS-CLIENT"
@@ -19,6 +20,7 @@ class ProbeService : BusClientService() {
             context = applicationContext,
             clientId = "phone-client-probe",
             pathPrefixes = listOf(PATH_PROBE),
+            hubTarget = HubTarget.PHONE,
         ) { event -> handleEvent(event) }
         client = next
         Log.i(TAG, "Phone ProbeService BusClient created")

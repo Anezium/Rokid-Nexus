@@ -10,6 +10,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.provider.Settings
+import com.anezium.rokidbus.lyrics.lyrics.SpotifyTrackIdentifier
 
 data class MediaPlaybackSnapshot(
     val packageName: String,
@@ -20,6 +21,7 @@ data class MediaPlaybackSnapshot(
     val positionMs: Long,
     val isPlaying: Boolean,
     val playbackSpeed: Float,
+    val spotifyTrackId: String? = null,
 )
 
 class MediaSessionMonitor(
@@ -247,6 +249,10 @@ class MediaSessionMonitor(
             positionMs = positionMs,
             isPlaying = isPlaying,
             playbackSpeed = speed,
+            spotifyTrackId = spotifyTrackIdFor(
+                packageName = controller.packageName,
+                mediaId = metadata.getString(MediaMetadata.METADATA_KEY_MEDIA_ID),
+            ),
         )
     }
 
@@ -301,6 +307,16 @@ class MediaSessionMonitor(
         private const val SPOTIFY_PACKAGE = "com.spotify.music"
     }
 }
+
+internal fun spotifyTrackIdFor(
+    packageName: String,
+    mediaId: String?,
+): String? =
+    if (packageName == "com.spotify.music") {
+        SpotifyTrackIdentifier.extract(mediaId.orEmpty())
+    } else {
+        null
+    }
 
 internal fun controllerPlaybackPriority(state: Int?): Int = when (state) {
     PlaybackState.STATE_PLAYING,

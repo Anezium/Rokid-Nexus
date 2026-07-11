@@ -1,11 +1,9 @@
 package com.anezium.rokidbus.plugin.transit
 
 import android.view.KeyEvent
-import com.anezium.rokidbus.shared.BusPaths
 import com.anezium.rokidbus.shared.plugin.NexusInputEvent
-import com.anezium.rokidbus.shared.plugin.NexusPlugin
-import com.anezium.rokidbus.shared.plugin.NexusPluginHost
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -14,20 +12,18 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import org.json.JSONArray
-import org.json.JSONObject
 import java.time.Instant
 import kotlin.coroutines.coroutineContext
 
-class TransitPlugin : NexusPlugin {
-    override val id: String = SURFACE_ID
-    override val displayName: String = "Transit"
-    override val handlesBack: Boolean = true
-
-    private lateinit var host: NexusPluginHost
-    private lateinit var repository: TransitRepository
-    private lateinit var locationProvider: TransitLocationProvider
-    private lateinit var favoritesStore: TransitFavoritesStore
+internal class TransitRuntime(
+    private val host: TransitRuntimeHost,
+    dependencies: TransitDependencies,
+    private val refreshDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    private val refreshDelayMs: Long = REFRESH_MS,
+) {
+    private val repository = dependencies.repository
+    private val locationProvider = dependencies.location
+    private val favoritesStore = dependencies.favorites
     private val pager = BoardPager()
     private var refreshJob: Job? = null
     private var refreshGeneration = 0L
@@ -42,14 +38,7 @@ class TransitPlugin : NexusPlugin {
     private var boardsByStopId: Map<String, TransitBoard> = emptyMap()
     private var staleStopIds: Set<String> = emptySet()
 
-    override fun onRegister(host: NexusPluginHost) {
-        this.host = host
-        repository = TransitRepository()
-        locationProvider = TransitLocationProvider(host.context)
-        favoritesStore = TransitFavoritesStore(host.context)
-    }
-
-    override fun onOpen() {
+    fun open() {
         stopRefreshLoop()
         lastSentKey = null
         screen = Screen.CHOOSER
@@ -62,17 +51,14 @@ class TransitPlugin : NexusPlugin {
         sendCard(TransitCards.chooser(selectedMode), forceShow = true)
     }
 
-    override fun onClose() {
+    fun close() {
         stopRefreshLoop()
+        host.setNearMeForeground(false)
         lastSentKey = null
-        host.send(
-            BusPaths.SURFACE_HIDE,
-            JSONObject()
-                .put("surfaceId", SURFACE_ID),
-        )
+        host.hideSurface()
     }
 
-    override fun onInput(event: NexusInputEvent) {
+    fun input(event: NexusInputEvent) {
         if (event.action != KeyEvent.ACTION_DOWN) return
         when (screen) {
             Screen.CHOOSER -> handleChooserInput(event.keyCode)
@@ -82,7 +68,7 @@ class TransitPlugin : NexusPlugin {
 
     private fun handleChooserInput(keyCode: Int) {
         when {
-            keyCode == KeyEvent.KEYCODE_BACK -> onClose()
+            keyCode == KeyEvent.KEYCODE_BACK -> close()
             keyCode in FORWARD_KEYS || keyCode in BACKWARD_KEYS -> {
                 selectedMode = selectedMode.toggled()
                 sendCard(TransitCards.chooser(selectedMode))
@@ -106,6 +92,7 @@ class TransitPlugin : NexusPlugin {
 
     private fun enterMode(mode: TransitMode) {
         stopRefreshLoop()
+        host.setNearMeForeground(false)
         activeMode = mode
         screen = Screen.BOARD
         boardStops = emptyList()
@@ -119,6 +106,10 @@ class TransitPlugin : NexusPlugin {
                 sendCard(DepartureFormatter.message("Transit", "Locating..."))
                 if (!locationProvider.hasLocationPermission()) {
                     sendCard(DepartureFormatter.message("Transit", "Grant location in phone app."))
+                    return
+                }
+                if (!host.setNearMeForeground(true)) {
+                    sendCard(DepartureFormatter.message("Transit", "Open Transit on phone to start Near Me."))
                     return
                 }
             }
@@ -135,6 +126,7 @@ class TransitPlugin : NexusPlugin {
 
     private fun returnToChooser() {
         stopRefreshLoop()
+        host.setNearMeForeground(false)
         screen = Screen.CHOOSER
         selectedMode = activeMode
         sendCard(TransitCards.chooser(selectedMode))
@@ -257,7 +249,7 @@ class TransitPlugin : NexusPlugin {
                 nextBoards[stop.id] = board
             }.onFailure { failure ->
                 if (failure is CancellationException) throw failure
-                host.log("transit stop refresh failed id=${stop.id}: ${failure.javaClass.simpleName}: ${failure.message}")
+                host.log("transit stop refresh failed id=${stop.id}: ${failure.javaClass.simpleName}")
                 val previous = previousBoards[stop.id]
                 nextBoards[stop.id] = if (previous != null) {
                     previous.copy(stop = stop)
@@ -307,7 +299,7 @@ class TransitPlugin : NexusPlugin {
 
     private fun renderRefreshFailure(generation: Long, mode: TransitMode, failure: Throwable) {
         postRefresh(generation, mode) {
-            host.log("transit refresh failed: ${failure.javaClass.simpleName}: ${failure.message}")
+            host.log("transit refresh failed: ${failure.javaClass.simpleName}")
             if (boardStops.isNotEmpty() && boardsByStopId.isNotEmpty()) {
                 staleStopIds = boardStops.map { it.id }.toSet()
                 renderCurrentBoard(Instant.now(), staleOverride = true)
@@ -329,7 +321,7 @@ class TransitPlugin : NexusPlugin {
             ),
             previousBoards = boardsByStopId,
         )
-        refreshJob = CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+        refreshJob = CoroutineScope(SupervisorJob() + refreshDispatcher).launch {
             while (isActive) {
                 try {
                     loopState = refreshOnce(generation, mode, loopState)
@@ -338,7 +330,7 @@ class TransitPlugin : NexusPlugin {
                 } catch (failure: Throwable) {
                     renderRefreshFailure(generation, mode, failure)
                 }
-                delay(REFRESH_MS)
+                delay(refreshDelayMs)
             }
         }
     }
@@ -417,30 +409,7 @@ class TransitPlugin : NexusPlugin {
     private fun sendCard(card: TransitCardContent, forceShow: Boolean = false) {
         val contentKey = card.contentKey()
         if (!forceShow && contentKey == lastSentKey) return
-        val lines = JSONArray()
-        card.lines.forEach { line ->
-            if (line.isStructured) {
-                lines.put(
-                    JSONObject()
-                        .put("text", line.text)
-                        .put("badge", line.badge)
-                        .put("trail", JSONArray(line.trail)),
-                )
-            } else {
-                lines.put(line.text)
-            }
-        }
-        val payload = JSONObject()
-            .put("surfaceId", SURFACE_ID)
-            .put("kind", "card")
-            .put("contentKey", contentKey)
-            .put("title", card.title)
-            .put("lines", lines)
-            .put("footer", card.footer)
-        host.send(
-            if (forceShow || lastSentKey == null) BusPaths.SURFACE_SHOW else BusPaths.SURFACE_UPDATE,
-            payload,
-        )
+        host.sendCard(card, show = forceShow || lastSentKey == null)
         lastSentKey = contentKey
     }
 
@@ -472,7 +441,6 @@ class TransitPlugin : NexusPlugin {
     )
 
     private companion object {
-        private const val SURFACE_ID = "transit"
         private const val REFRESH_MS = 60_000L
         private const val STOP_DISCOVERY_MAX_AGE_MS = 5 * 60_000L
         private const val STOP_MOVE_METERS = 200

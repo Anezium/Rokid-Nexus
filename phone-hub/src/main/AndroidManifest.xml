@@ -29,6 +29,9 @@
         <intent>
             <action android:name="com.anezium.rokidbus.action.CLIENT" />
         </intent>
+        <intent>
+            <action android:name="com.anezium.rokidbus.action.PLUGIN" />
+        </intent>
     </queries>
 
     <application
@@ -49,16 +52,15 @@
         </activity>
 
         <activity
-            android:name=".TransitSettingsActivity"
+            android:name=".LyricsSettingsActivity"
             android:exported="false"
             android:parentActivityName=".MainActivity"
             android:windowSoftInputMode="adjustResize" />
 
         <activity
-            android:name=".LyricsSettingsActivity"
+            android:name=".SpotifyLoginActivity"
             android:exported="false"
-            android:parentActivityName=".MainActivity"
-            android:windowSoftInputMode="adjustResize" />
+            android:parentActivityName=".LyricsSettingsActivity" />
 
         <activity
             android:name=".LensSettingsActivity"
@@ -81,10 +83,15 @@
             android:exported="false"
             android:parentActivityName=".MainActivity" />
 
+        <activity
+            android:name=".PluginPermissionsActivity"
+            android:exported="true"
+            android:parentActivityName=".SettingsActivity" />
+
         <service
             android:name=".BusHubService"
             android:exported="true"
-            android:foregroundServiceType="connectedDevice|location">
+            android:foregroundServiceType="connectedDevice">
             <intent-filter>
                 <action android:name="com.anezium.rokidbus.action.HUB" />
             </intent-filter>

@@ -114,6 +114,17 @@ class SettingsActivity : Activity() {
             addView(connectionCard(), NexusUi.block())
             addView(BusTheme.gap(this@SettingsActivity, 10))
             addView(authorizeRow(), NexusUi.block())
+            addView(BusTheme.gap(this@SettingsActivity, 10))
+            addView(
+                actionRow(
+                    title = "Plugin access",
+                    value = "Manage",
+                    danger = false,
+                ) {
+                    startActivity(Intent(this@SettingsActivity, PluginPermissionsActivity::class.java))
+                },
+                NexusUi.block(),
+            )
             addView(BusTheme.gap(this@SettingsActivity, 28))
             addView(NexusUi.sectionRow(this@SettingsActivity, "Advanced"), NexusUi.block())
             addView(BusTheme.gap(this@SettingsActivity, 12))

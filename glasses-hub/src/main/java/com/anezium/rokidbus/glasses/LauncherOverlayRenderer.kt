@@ -5,6 +5,7 @@ import android.content.Context
 import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.graphics.Typeface
+import android.graphics.text.LineBreaker
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.text.Layout
@@ -251,7 +252,7 @@ object LauncherOverlayRenderer {
                 isSingleLine = false
                 setHorizontallyScrolling(false)
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                    breakStrategy = Layout.BREAK_STRATEGY_HIGH_QUALITY
+                    breakStrategy = LineBreaker.BREAK_STRATEGY_HIGH_QUALITY
                     hyphenationFrequency = Layout.HYPHENATION_FREQUENCY_NONE
                 }
             }

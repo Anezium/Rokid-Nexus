@@ -7,6 +7,7 @@ data class LyricsLookupRequest(
     val artist: String,
     val album: String = "",
     val durationSeconds: Int? = null,
+    val spotifyTrackId: String? = null,
 )
 
 data class LyricsFetchResult(

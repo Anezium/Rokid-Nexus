@@ -1,18 +1,22 @@
 package com.anezium.rokidbus.glasses
 
 import android.content.Context
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.net.wifi.WifiManager
 import android.os.Binder
 import android.os.IBinder
+import android.os.Process
 import com.anezium.rokidbus.client.IBusCallback
 import com.anezium.rokidbus.client.IBusService
-import com.anezium.rokidbus.shared.BusConstants
+import com.anezium.rokidbus.client.PluginRegistrationResult
 import com.anezium.rokidbus.shared.BusCapabilityBits
+import com.anezium.rokidbus.shared.BusConstants
 import com.anezium.rokidbus.shared.BusEnvelope
 import com.anezium.rokidbus.shared.BusPaths
 import com.anezium.rokidbus.shared.FrameProtocol
 import com.anezium.rokidbus.shared.LinkStateBits
+import com.anezium.rokidbus.shared.plugin.PathRules
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.CopyOnWriteArrayList
@@ -32,7 +36,9 @@ object GlassesHub {
         val prefixes: List<String>,
         val uid: Int,
         val trusted: Boolean,
+        val callbackBinder: IBinder,
         val callback: IBusCallback,
+        val deathRecipient: IBinder.DeathRecipient,
     )
 
     private val started = AtomicBoolean(false)
@@ -52,17 +58,21 @@ object GlassesHub {
         override fun apiVersion(): Int = BusConstants.API_VERSION
 
         override fun register(clientId: String, pathPrefixes: Array<out String>, cb: IBusCallback) {
-            unregister(cb)
-            val cleanPrefixes = pathPrefixes.filter { it.isNotBlank() }
-            val uid = Binder.getCallingUid()
-            registrations += Registration(clientId, cleanPrefixes, uid, isTrustedUid(uid), cb)
-            log("client registered id=$clientId prefixes=${cleanPrefixes.joinToString()}")
-            runCatching { cb.onLinkState(linkState()) }
-            appContext?.let { GlassesClientSupervisor.onClientRegistered(it, cleanPrefixes) }
+            val callingUid = Binder.getCallingUid()
+            if (callingUid != Process.myUid() && !isDebuggableBuild()) {
+                log("legacy client registration rejected status=release_external")
+                return
+            }
+            val cleanPrefixes = pathPrefixes.mapNotNull(PathRules::normalizeAbsolute)
+            if (cleanPrefixes.size != pathPrefixes.size) return
+            if (callingUid != Process.myUid()) {
+                log("legacy client registration allowed status=debug_compatibility")
+            }
+            addRegistration(clientId, cleanPrefixes, callingUid, cb)
         }
 
         override fun unregister(cb: IBusCallback) {
-            registrations.removeAll { it.callback.asBinder() == cb.asBinder() }
+            removeRegistrationsByBinder(cb.asBinder())
         }
 
         override fun send(path: String, id: String, payload: ByteArray) {
@@ -78,6 +88,9 @@ object GlassesHub {
         override fun linkState(): Int = this@GlassesHub.linkState()
 
         override fun capabilities(): Int = BusCapabilityBits.PROTECTED_LENS_LINK
+
+        override fun registerPlugin(packageName: String, pluginId: String, cb: IBusCallback): Int =
+            PluginRegistrationResult.DENIED
     }
 
     fun start(context: Context) {
@@ -176,6 +189,12 @@ object GlassesHub {
         sendRemote(BusEnvelope(path = BusPaths.SURFACE_INPUT, payload = payload))
 
     private fun routeLocal(envelope: BusEnvelope, senderUid: Int) {
+        val allowed = senderUid == Process.myUid() ||
+            (isDebuggableBuild() && registrations.any { it.uid == senderUid })
+        if (!allowed) {
+            log("local send rejected status=unregistered_or_release_external")
+            return
+        }
         if (BusPaths.isProtectedLensPath(envelope.path) && !isTrustedUid(senderUid)) {
             log("blocked untrusted protected lens send uid=$senderUid")
             return
@@ -214,7 +233,7 @@ object GlassesHub {
         registrations.forEach { registration ->
             if (excludeUid != null && registration.uid == excludeUid) return@forEach
             if (BusPaths.isProtectedLensPath(envelope.path) && !registration.trusted) return@forEach
-            if (registration.prefixes.any { envelope.path.startsWith(it) }) {
+            if (registration.prefixes.any { PathRules.matchesPrefix(envelope.path, it) }) {
                 if (binary != null && binary.size > LOCAL_BINARY_MAX_BYTES) {
                     log("drop local binary ${envelope.path} id=${envelope.id} bytes=${binary.size} over cap=$LOCAL_BINARY_MAX_BYTES")
                     delivered = true
@@ -229,12 +248,50 @@ object GlassesHub {
                     delivered = true
                     GlassesClientSupervisor.touch()
                 }.onFailure {
-                    registrations.remove(registration)
+                    removeRegistration(registration)
                 }
             }
         }
         return delivered
     }
+
+    private fun addRegistration(
+        clientId: String,
+        prefixes: List<String>,
+        uid: Int,
+        callback: IBusCallback,
+    ): Boolean {
+        removeRegistrationsByBinder(callback.asBinder())
+        val callbackBinder = callback.asBinder()
+        val deathRecipient = IBinder.DeathRecipient { removeRegistrationsByBinder(callbackBinder) }
+        if (runCatching { callbackBinder.linkToDeath(deathRecipient, 0) }.isFailure) return false
+        registrations += Registration(
+            clientId,
+            prefixes,
+            uid,
+            isTrustedUid(uid),
+            callbackBinder,
+            callback,
+            deathRecipient,
+        )
+        runCatching { callback.onLinkState(linkState()) }
+        appContext?.let { GlassesClientSupervisor.onClientRegistered(it, prefixes) }
+        return true
+    }
+
+    private fun removeRegistrationsByBinder(callbackBinder: IBinder) {
+        registrations.filter { it.callbackBinder == callbackBinder }.forEach(::removeRegistration)
+    }
+
+    private fun removeRegistration(registration: Registration) {
+        if (!registrations.remove(registration)) return
+        runCatching { registration.callbackBinder.unlinkToDeath(registration.deathRecipient, 0) }
+    }
+
+    private fun isDebuggableBuild(): Boolean =
+        appContext?.applicationInfo?.flags?.let { flags ->
+            flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
+        } == true
 
     private fun updateLauncherEntries(payload: JSONObject) {
         val array = payload.optJSONArray("plugins") ?: JSONArray()
@@ -289,7 +346,7 @@ object GlassesHub {
         val state = linkState()
         registrations.forEach { registration ->
             runCatching { registration.callback.onLinkState(state) }
-                .onFailure { registrations.remove(registration) }
+                .onFailure { removeRegistration(registration) }
         }
     }
 
@@ -302,7 +359,7 @@ object GlassesHub {
 
     private fun isTrustedUid(uid: Int): Boolean {
         val context = appContext ?: return false
-        return context.packageManager.checkSignatures(uid, android.os.Process.myUid()) ==
+        return context.packageManager.checkSignatures(uid, Process.myUid()) ==
             PackageManager.SIGNATURE_MATCH
     }
 

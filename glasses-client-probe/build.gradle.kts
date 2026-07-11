@@ -28,6 +28,11 @@ android {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
     }
+
+    lint {
+        // YodaOS side-load compatibility intentionally keeps this glasses probe on API 32.
+        disable += "ExpiredTargetSdkVersion"
+    }
 }
 
 dependencies {

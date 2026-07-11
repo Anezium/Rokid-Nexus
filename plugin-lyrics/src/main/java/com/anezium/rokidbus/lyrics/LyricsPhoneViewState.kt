@@ -5,6 +5,9 @@ import com.anezium.rokidbus.lyrics.contracts.DeviceStatus
 import com.anezium.rokidbus.lyrics.contracts.LyricsSnapshot
 
 data class ProviderSettingsViewState(
+    val spotifyConfigured: Boolean = false,
+    val spotifyStatusLabel: String =
+        "Add your Spotify sp_dc cookie to try Spotify's own synced lyrics first.",
     val musixmatchConfigured: Boolean = false,
     val musixmatchStatusLabel: String =
         "Musixmatch is not configured yet. LRCLIB remains available as fallback.",

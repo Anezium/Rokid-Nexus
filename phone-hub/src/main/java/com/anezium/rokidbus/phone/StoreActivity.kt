@@ -1,6 +1,7 @@
 package com.anezium.rokidbus.phone
 
 import android.app.Activity
+import android.content.ComponentName
 import android.content.Intent
 import android.graphics.Typeface
 import android.os.Bundle
@@ -18,92 +19,23 @@ import android.widget.Toast
 import com.anezium.rokidbus.client.ui.BusTheme
 
 class StoreActivity : Activity() {
+    private lateinit var list: LinearLayout
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         buildUi()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        renderCatalog()
     }
 
     private fun buildUi() {
         window.statusBarColor = NexusUi.BG
         window.navigationBarColor = NexusUi.BG
 
-        val list = NexusUi.contentColumn(this, topDp = 8).apply {
-            addView(
-                storeCard(
-                    iconRes = R.drawable.ic_plugin_send,
-                    title = "Relay",
-                    meta = "Messaging \u00B7 Anezium",
-                    description = "Reply to your phone notifications from your glasses, by voice.",
-                    size = "1.2 MB",
-                    button = "Install",
-                    featured = true,
-                    badge = "New",
-                ) { comingSoon() },
-                NexusUi.block(),
-            )
-            addView(BusTheme.gap(this@StoreActivity, 10))
-            addView(
-                storeCard(
-                    iconRes = R.drawable.ic_plugin_disc,
-                    title = "Media Deck",
-                    meta = "Audio \u00B7 installed",
-                    description = "Universal playback controls with a monochrome cover preview.",
-                    size = "Local",
-                    button = "Open",
-                    featured = false,
-                    badge = "New",
-                ) {
-                    startActivity(Intent(this@StoreActivity, MediaDeckSettingsActivity::class.java))
-                },
-                NexusUi.block(),
-            )
-            addView(BusTheme.gap(this@StoreActivity, 10))
-            addView(
-                storeCard(
-                    iconRes = R.drawable.ic_plugin_music,
-                    title = "Lyrics",
-                    meta = "Audio \u00B7 installed",
-                    description = "Synced lyrics for whatever is playing on your phone.",
-                    size = "0.9 MB",
-                    button = "Open",
-                    featured = false,
-                    badge = null,
-                ) {
-                    startActivity(Intent(this@StoreActivity, LyricsSettingsActivity::class.java))
-                },
-                NexusUi.block(),
-            )
-            addView(BusTheme.gap(this@StoreActivity, 10))
-            addView(
-                storeCard(
-                    iconRes = R.drawable.ic_plugin_mic,
-                    title = "Scribe",
-                    meta = "Audio \u00B7 Anezium",
-                    description = "Dictate voice notes, transcribed on your phone.",
-                    size = "1.6 MB",
-                    button = "Install",
-                    featured = false,
-                    badge = null,
-                ) { comingSoon() },
-                NexusUi.block(),
-            )
-            addView(BusTheme.gap(this@StoreActivity, 10))
-            addView(
-                storeCard(
-                    iconRes = R.drawable.ic_plugin_bus,
-                    title = "Transit",
-                    meta = "Transit \u00B7 installed",
-                    description = "Nearby departures on your glasses.",
-                    size = "0.8 MB",
-                    button = "Open",
-                    featured = false,
-                    badge = null,
-                ) {
-                    startActivity(Intent(this@StoreActivity, TransitSettingsActivity::class.java))
-                },
-                NexusUi.block(),
-            )
-        }
+        list = NexusUi.contentColumn(this, topDp = 8)
 
         val scroll = ScrollView(this).apply {
             setBackgroundColor(NexusUi.BG)
@@ -130,7 +62,100 @@ class StoreActivity : Activity() {
                 ),
             )
         }
+        renderCatalog()
         setContentView(root)
+    }
+
+    private fun renderCatalog() {
+        if (!::list.isInitialized) return
+        list.removeAllViews()
+        list.addView(
+            storeCard(
+                iconRes = R.drawable.ic_plugin_send,
+                title = "Relay",
+                meta = "Messaging · Coming soon",
+                description = "Reply to your phone notifications from your glasses, by voice.",
+                size = "—",
+                button = "Install",
+                featured = true,
+                badge = "New",
+            ) { comingSoon() },
+            NexusUi.block(),
+        )
+
+        BusHubService.pluginCatalog(this).entries.forEach { entry ->
+            list.addView(BusTheme.gap(this, 10))
+            list.addView(
+                storeCard(
+                    iconRes = iconFor(entry.id),
+                    title = entry.displayName,
+                    meta = "Installed · ${stateLabel(entry.state)}",
+                    description = entry.detail ?: "Installed Nexus phone plugin.",
+                    size = "Local",
+                    button = if (entry.state in setOf(PluginCatalogState.BUILT_IN, PluginCatalogState.ENABLED)) {
+                        "Open"
+                    } else {
+                        "Review"
+                    },
+                    featured = false,
+                    badge = null,
+                ) { openCatalogEntry(entry) },
+                NexusUi.block(),
+            )
+        }
+
+        list.addView(BusTheme.gap(this, 10))
+        list.addView(
+            storeCard(
+                iconRes = R.drawable.ic_plugin_mic,
+                title = "Scribe",
+                meta = "Audio · Coming soon",
+                description = "Dictate voice notes, transcribed on your phone.",
+                size = "—",
+                button = "Install",
+                featured = false,
+                badge = null,
+            ) { comingSoon() },
+            NexusUi.block(),
+        )
+    }
+
+    private fun stateLabel(state: PluginCatalogState): String = when (state) {
+        PluginCatalogState.BUILT_IN -> "built in"
+        PluginCatalogState.PENDING -> "pending approval"
+        PluginCatalogState.ENABLED -> "enabled"
+        PluginCatalogState.DISABLED -> "disabled"
+        PluginCatalogState.DENIED -> "denied"
+        PluginCatalogState.INVALID -> "invalid"
+        PluginCatalogState.MISSING_CAPABILITY -> "missing access"
+    }
+
+    private fun iconFor(id: String?): Int = when (id) {
+        "lyrics" -> R.drawable.ic_plugin_music
+        "media" -> R.drawable.ic_plugin_disc
+        "transit" -> R.drawable.ic_plugin_bus
+        "lens" -> R.drawable.ic_plugin_lens
+        else -> R.drawable.ic_plugin_send
+    }
+
+    private fun openCatalogEntry(entry: PluginCatalogEntry) {
+        if (entry.principal != null && entry.state != PluginCatalogState.ENABLED) {
+            startActivity(Intent(this, PluginPermissionsActivity::class.java))
+            return
+        }
+        val target = entry.settingsComponent
+        if (target == null) {
+            if (entry.principal != null) {
+                startActivity(Intent(this, PluginPermissionsActivity::class.java))
+            } else {
+                Toast.makeText(this, "No settings available", Toast.LENGTH_SHORT).show()
+            }
+            return
+        }
+        val intent = Intent().setComponent(ComponentName(target.packageName, target.className))
+        runCatching { startActivity(intent) }.onFailure {
+            Toast.makeText(this, "Plugin settings are unavailable", Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun storeHeader(): LinearLayout =

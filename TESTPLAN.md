@@ -19,10 +19,16 @@ SPP alongside Hi Rokid stayed connected, bind-based wake worked from the accessi
 anchor, and the phone HTTP proxy reached `api.transitous.org` while glasses Wi-Fi was off.
 Round A validates the AGP multi-module bus built from those constraints.
 
-Serials used during validation:
+Device serials are operator-local. Populate the PowerShell variables from the
+operator's environment before running any device command:
 
-- Glasses: `1901092534053723`
-- Phone: `R5CW12DK1AY`
+```powershell
+$glasses = $env:ROKID_GLASSES_SERIAL
+$phone = $env:ROKID_PHONE_SERIAL
+if ([string]::IsNullOrWhiteSpace($glasses) -or [string]::IsNullOrWhiteSpace($phone)) {
+    throw "Set ROKID_GLASSES_SERIAL and ROKID_PHONE_SERIAL in the operator environment."
+}
+```
 
 ## Build
 
@@ -42,9 +48,6 @@ Expected outputs:
 ## Install
 
 ```powershell
-$glasses = "1901092534053723"
-$phone = "R5CW12DK1AY"
-
 adb -s $glasses install -r .\glasses-hub\build\outputs\apk\debug\glasses-hub-debug.apk
 adb -s $glasses install -r .\glasses-client-probe\build\outputs\apk\debug\glasses-client-probe-debug.apk
 adb -s $phone install -r .\phone-hub\build\outputs\apk\debug\phone-hub-debug.apk
@@ -231,7 +234,7 @@ route.
 
 Useful PASS log fragments:
 
-- Hubs: `apiVersion=2` on phone and glasses
+- Hubs: `apiVersion=3` on phone and glasses
 - Phone probe: `Mic lease granted id=... rate=16000 channels=1`
 - Phone probe: `Mic lease denied reason=BUSY`
 - Phone probe: `Mic frames=... bytes=... gaps=0`
@@ -320,3 +323,78 @@ adb -s $phone uninstall com.anezium.rokidbus.phoneprobe
 >   + `input keyevent 224` — focus returns to the activity and injected keys land.
 >   The accessibility-driven surface input path (used once a surface is active) is
 >   focus-independent and works regardless.
+
+## Plan 002 plugin identity and capability acceptance
+
+> **PENDING OWNER ON-DEVICE VERIFICATION (2026-07-10)**
+>
+> Software gates passed locally, but this execution was explicitly prohibited
+> from using `adb`, installing APKs, or reading device logs. The owner should
+> verify the following with identifiers, certificate digests, and user payloads
+> redacted:
+>
+> - Debug phone and glasses probes register through the debug-only legacy path.
+> - An unapproved plugin cannot send a surface or request HTTP/audio.
+> - Approving only `surfaces` enables its surface while HTTP/audio stay denied.
+> - Revocation unregisters/closes the plugin and prevents wake-on-message.
+> - Normal and developer consent views transition pending -> partially approved
+>   -> active -> revoked; microphone remains disabled with the HUD-indicator note.
+> - CXR-L and SPP remain connected and the built-in Lyrics/Transit flows still work.
+
+## Plan 003 external plugin SDK acceptance
+
+> **PENDING OWNER ON-DEVICE VERIFICATION (2026-07-10)**
+>
+> The SDK, catalog/controller, Hello sample, local publication, published-coordinate
+> consumer, lint, and JVM/build gates passed locally. This execution was explicitly
+> prohibited from using device tools, installing APKs, or reading device logs.
+> The owner should verify the following with device identity, signer details, and
+> payload/user text redacted:
+>
+> - Install the Hello sample and confirm it appears pending, never auto-approved.
+> - Approve only `surfaces`, force-stop the sample, and open it from the glasses
+>   launcher; confirm bind-wake and the Hello card.
+> - Confirm one physical paired swipe moves exactly once, tap updates the selected
+>   row, and BACK hides without reaching the app underneath.
+> - Revoke the sample and confirm it closes, disappears, and cannot wake or send.
+> - Uninstall the sample and confirm the phone and glasses catalogs update safely.
+> - Confirm CXR-L/SPP continuity and the remaining temporary built-ins.
+
+## Plan 004 external Transit acceptance
+
+> **PENDING OWNER ON-DEVICE VERIFICATION (2026-07-10)**
+>
+> The independent Transit APK, typed surface runtime, plugin-owned settings and
+> permissions, foreground lifecycle, one-time verified favorite migration, hub
+> decoupling, tests, lint, and build gates passed locally. Device interaction was
+> prohibited for this execution, so both hardware gates remain owner work.
+>
+> Background-location architecture gate:
+>
+> - Open Transit on the phone, grant location/notification, and add a favorite.
+> - Put the phone UI in the background, stop the Transit process, then open Transit
+>   from the glasses and enter Near Me.
+> - Confirm bind-wake can legally start the plugin-owned location foreground
+>   service, a live board arrives, and no foreground-start or location security
+>   exception occurs.
+> - Return to chooser and close; confirm refresh stops and the notification is removed.
+>
+> If Android blocks the background foreground-service start, stop and choose one:
+>
+> - require the user to start Transit from its phone notification/Activity before Near Me;
+> - add a narrowly scoped hub-owned location broker with lazy runtime permission;
+> - request background location in Transit with explicit user education.
+>
+> The recommended initial-beta fallback is the first option. Do not select a
+> fallback silently.
+>
+> Full acceptance cycle:
+>
+> - Transit absent → no Transit catalog/launcher row; install → pending; approve
+>   `surfaces` → dynamic phone/glasses row.
+> - Force-stop → glasses open bind-wakes; validate chooser, Near Me, Favorites,
+>   pagination, single-count paired swipe, tap, both BACK levels, and refresh stop.
+> - Restart the hub, revoke, and uninstall Transit; surfaces must not become stale,
+>   Transit must disappear/cannot wake, and the remaining hub stays stable.
+> - Confirm the one-release favorite migration imports once without duplication,
+>   and CXR-L/SPP remain connected. Record only redacted PASS/FAIL evidence.

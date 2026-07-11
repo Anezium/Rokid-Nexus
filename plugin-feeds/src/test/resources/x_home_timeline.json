@@ -1,0 +1,99 @@
+{
+  "data": {
+    "home": {
+      "home_timeline_urt": {
+        "instructions": [
+          {
+            "type": "TimelineAddEntries",
+            "entries": [
+              {
+                "entryId": "tweet-101",
+                "sortIndex": "900",
+                "content": {
+                  "itemContent": {
+                    "tweet_results": {
+                      "result": {
+                        "__typename": "Tweet",
+                        "rest_id": "101",
+                        "core": {
+                          "user_results": {
+                            "result": {
+                              "core": { "name": "Alice", "screen_name": "alice" },
+                              "legacy": { "name": "Old Alice", "screen_name": "old_alice" }
+                            }
+                          }
+                        },
+                        "legacy": {
+                          "full_text": "Short timeline post",
+                          "created_at": "Wed Oct 10 20:19:24 +0000 2018"
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "entryId": "tweet-202",
+                "sortIndex": "800",
+                "content": {
+                  "itemContent": {
+                    "tweet_results": {
+                      "result": {
+                        "__typename": "TweetWithVisibilityResults",
+                        "tweet": {
+                          "rest_id": "202",
+                          "core": {
+                            "user_results": {
+                              "result": {
+                                "legacy": { "name": "Bob", "screen_name": "bob" }
+                              }
+                            }
+                          },
+                          "note_tweet": {
+                            "note_tweet_results": {
+                              "result": { "text": "This is the complete Note Tweet long text, not the truncated legacy text." }
+                            }
+                          },
+                          "legacy": {
+                            "full_text": "This is truncated…",
+                            "created_at": "Thu Oct 11 08:00:00 +0000 2018",
+                            "extended_entities": { "media": [{ "type": "photo" }] }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "entryId": "tweet-promoted-303",
+                "sortIndex": "700",
+                "content": {
+                  "itemContent": {
+                    "promotedMetadata": { "advertiser_results": {} },
+                    "tweet_results": {
+                      "result": {
+                        "rest_id": "303",
+                        "core": { "user_results": { "result": { "core": { "name": "Advertiser", "screen_name": "ad" } } } },
+                        "legacy": { "full_text": "Buy this", "created_at": "Fri Oct 12 08:00:00 +0000 2018" }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "entryId": "cursor-bottom-0",
+                "sortIndex": "0",
+                "content": {
+                  "entryType": "TimelineTimelineCursor",
+                  "cursorType": "Bottom",
+                  "value": "bottom-cursor-2"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

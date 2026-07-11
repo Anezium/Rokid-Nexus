@@ -3,6 +3,7 @@ package com.anezium.rokidbus.lyrics.lyrics
 import com.anezium.rokidbus.lyrics.contracts.LyricsLine
 import com.anezium.rokidbus.lyrics.contracts.LyricsSessionState
 import com.anezium.rokidbus.lyrics.contracts.LyricsSnapshot
+import com.anezium.rokidbus.lyrics.media.MediaPlaybackSnapshot
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -97,5 +98,30 @@ class LyricsRuntimeEngineTest {
         assertEquals(1, failureSnapshot.lines.size)
         assertNull(failureSnapshot.errorMessage)
         assertFalse(failureSnapshot.sourceSummary.isBlank())
+    }
+
+    @Test
+    fun lookupKeys_changeWhenSpotifyTrackIdChanges() {
+        val firstRequest = LyricsLookupRequest(
+            title = "Track",
+            artist = "Artist",
+            spotifyTrackId = "0VjIjW4GlUZAMYd2vXMi3b",
+        )
+        val secondRequest = firstRequest.copy(spotifyTrackId = "1VjIjW4GlUZAMYd2vXMi3b")
+        val firstSnapshot = MediaPlaybackSnapshot(
+            packageName = "com.spotify.music",
+            title = "Track",
+            artist = "Artist",
+            album = "Album",
+            durationMs = 180_000L,
+            positionMs = 0L,
+            isPlaying = true,
+            playbackSpeed = 1f,
+            spotifyTrackId = firstRequest.spotifyTrackId,
+        )
+        val secondSnapshot = firstSnapshot.copy(spotifyTrackId = secondRequest.spotifyTrackId)
+
+        assertTrue(lyricsLookupRequestKey(firstRequest) != lyricsLookupRequestKey(secondRequest))
+        assertTrue(mediaLookupKey(firstSnapshot) != mediaLookupKey(secondSnapshot))
     }
 }

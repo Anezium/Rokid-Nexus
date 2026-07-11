@@ -2,6 +2,7 @@ package com.anezium.rokidbus.phone
 
 import android.Manifest
 import android.app.Activity
+import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
@@ -35,6 +36,7 @@ private const val NOTIFICATION_PERMISSION_REQUEST = 22
 /** Companion home: fixed status/settings menubar, setup cards, plugin list, store entry and hub toggle. */
 class MainActivity : Activity() {
     private lateinit var setupSection: LinearLayout
+    private lateinit var pluginSection: LinearLayout
     private lateinit var toggleButton: Button
     private lateinit var gearIcon: ImageView
     private lateinit var gearPip: View
@@ -61,6 +63,7 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         rebuildSetupSection()
+        rebuildPluginSection()
         refreshToggle()
         renderLinkState()
     }
@@ -109,6 +112,7 @@ class MainActivity : Activity() {
             setOnClickListener { toggleHub() }
         }
 
+        pluginSection = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val content = NexusUi.contentColumn(this).apply {
             if (NexusPhoneState.updateAvailable) {
                 addView(
@@ -120,53 +124,7 @@ class MainActivity : Activity() {
                 addView(BusTheme.gap(this@MainActivity, 14))
             }
             addView(setupSection, NexusUi.block())
-            addView(NexusUi.sectionRow(this@MainActivity, "Plugins", "4 Active"), NexusUi.block())
-            addView(BusTheme.gap(this@MainActivity, 14))
-            addView(
-                pluginRow(
-                    iconRes = R.drawable.ic_plugin_music,
-                    title = "Lyrics",
-                    subtitle = "Now-playing lyrics",
-                ) {
-                    startActivity(Intent(this@MainActivity, LyricsSettingsActivity::class.java))
-                },
-                NexusUi.block(),
-            )
-            addView(BusTheme.gap(this@MainActivity, 9))
-            addView(
-                pluginRow(
-                    iconRes = R.drawable.ic_plugin_disc,
-                    title = "Media Deck",
-                    subtitle = "Universal now playing",
-                ) {
-                    startActivity(Intent(this@MainActivity, MediaDeckSettingsActivity::class.java))
-                },
-                NexusUi.block(),
-            )
-            addView(BusTheme.gap(this@MainActivity, 9))
-            addView(
-                pluginRow(
-                    iconRes = R.drawable.ic_plugin_bus,
-                    title = "Transit",
-                    subtitle = "Nearby departures",
-                ) {
-                    startActivity(Intent(this@MainActivity, TransitSettingsActivity::class.java))
-                },
-                NexusUi.block(),
-            )
-            addView(BusTheme.gap(this@MainActivity, 9))
-            addView(
-                pluginRow(
-                    iconRes = R.drawable.ic_plugin_lens,
-                    title = "Lens",
-                    subtitle = "Live camera translation",
-                ) {
-                    startActivity(Intent(this@MainActivity, LensSettingsActivity::class.java))
-                },
-                NexusUi.block(),
-            )
-            addView(BusTheme.gap(this@MainActivity, 6))
-            addView(storeRow(), NexusUi.block())
+            addView(pluginSection, NexusUi.block())
         }
 
         val scroll = ScrollView(this).apply {
@@ -198,7 +156,85 @@ class MainActivity : Activity() {
         renderLinkState()
         refreshToggle()
         rebuildSetupSection()
+        rebuildPluginSection()
         setContentView(root)
+    }
+
+    private fun rebuildPluginSection() {
+        if (!::pluginSection.isInitialized) return
+        pluginSection.removeAllViews()
+        val catalog = BusHubService.pluginCatalog(this)
+        val activeCount = catalog.entries.count {
+            it.state == PluginCatalogState.BUILT_IN || it.state == PluginCatalogState.ENABLED
+        }
+        pluginSection.addView(
+            NexusUi.sectionRow(this, "Plugins", "$activeCount Active"),
+            NexusUi.block(),
+        )
+        pluginSection.addView(BusTheme.gap(this, 14))
+        if (catalog.entries.isEmpty()) {
+            pluginSection.addView(
+                NexusUi.navCard(
+                    this,
+                    "No plugins installed",
+                    "Nexus is ready. Install a phone plugin, then approve its access.",
+                ),
+                NexusUi.block(),
+            )
+            pluginSection.addView(BusTheme.gap(this, 9))
+        } else {
+            catalog.entries.forEachIndexed { index, entry ->
+                if (index > 0) pluginSection.addView(BusTheme.gap(this, 9))
+                pluginSection.addView(
+                    pluginRow(
+                        iconRes = iconFor(entry.id),
+                        title = entry.displayName,
+                        subtitle = catalogStateLabel(entry),
+                    ) { openCatalogEntry(entry) },
+                    NexusUi.block(),
+                )
+            }
+            pluginSection.addView(BusTheme.gap(this, 6))
+        }
+        pluginSection.addView(storeRow(), NexusUi.block())
+    }
+
+    private fun catalogStateLabel(entry: PluginCatalogEntry): String = when (entry.state) {
+        PluginCatalogState.BUILT_IN -> if (entry.launchable) "Built in · enabled" else "Built in · service"
+        PluginCatalogState.PENDING -> "Pending approval"
+        PluginCatalogState.ENABLED -> "Installed · enabled"
+        PluginCatalogState.DISABLED -> "Installed · disabled"
+        PluginCatalogState.DENIED -> "Access denied"
+        PluginCatalogState.INVALID -> "Invalid plugin${entry.detail?.let { " · $it" }.orEmpty()}"
+        PluginCatalogState.MISSING_CAPABILITY -> "Missing surfaces access"
+    }
+
+    private fun iconFor(id: String?): Int = when (id) {
+        "lyrics" -> R.drawable.ic_plugin_music
+        "media" -> R.drawable.ic_plugin_disc
+        "transit" -> R.drawable.ic_plugin_bus
+        "lens" -> R.drawable.ic_plugin_lens
+        else -> R.drawable.ic_plugin_send
+    }
+
+    private fun openCatalogEntry(entry: PluginCatalogEntry) {
+        if (entry.principal != null && entry.state != PluginCatalogState.ENABLED) {
+            startActivity(Intent(this, PluginPermissionsActivity::class.java))
+            return
+        }
+        val target = entry.settingsComponent
+        if (target == null) {
+            if (entry.principal != null) {
+                startActivity(Intent(this, PluginPermissionsActivity::class.java))
+            } else {
+                Toast.makeText(this, "No settings available", Toast.LENGTH_SHORT).show()
+            }
+            return
+        }
+        val intent = Intent().setComponent(ComponentName(target.packageName, target.className))
+        runCatching { startActivity(intent) }.onFailure {
+            Toast.makeText(this, "Plugin settings are unavailable", Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun header(): LinearLayout =
@@ -425,14 +461,14 @@ class MainActivity : Activity() {
                     },
                 )
             }
-            if (!hasLocationPermission() || !hasLensWifiPermission()) {
+            if (!hasLensWifiPermission()) {
                 add(
                     setupCard(
-                        title = "Location access",
-                        body = "Lets Transit find stops and departures near you.",
+                        title = "Nearby Wi-Fi",
+                        body = "Wi-Fi permission lets Lens receive frozen images for phone-side OCR.",
                         action = "Allow",
                     ) {
-                        logLine("Requesting location permission")
+                        logLine("Requesting Lens Wi-Fi permission")
                         requestLocationIfNeeded()
                     },
                 )
@@ -522,27 +558,14 @@ class MainActivity : Activity() {
     }
 
     private fun requestLocationIfNeeded() {
-        val missing = linkedSetOf<String>().apply {
-            if (!hasLocationPermission()) {
-                add(Manifest.permission.ACCESS_FINE_LOCATION)
-                add(Manifest.permission.ACCESS_COARSE_LOCATION)
-            }
-            if (!hasLensWifiPermission()) {
-                add(
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                        Manifest.permission.NEARBY_WIFI_DEVICES
-                    } else {
-                        Manifest.permission.ACCESS_FINE_LOCATION
-                    },
-                )
-            }
+        if (hasLensWifiPermission()) return
+        val permission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            Manifest.permission.NEARBY_WIFI_DEVICES
+        } else {
+            Manifest.permission.ACCESS_FINE_LOCATION
         }
-        if (missing.isNotEmpty()) requestPermissions(missing.toTypedArray(), LOCATION_PERMISSION_REQUEST)
+        requestPermissions(arrayOf(permission), LOCATION_PERMISSION_REQUEST)
     }
-
-    private fun hasLocationPermission(): Boolean =
-        checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
-            checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
 
     private fun hasLensWifiPermission(): Boolean =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {

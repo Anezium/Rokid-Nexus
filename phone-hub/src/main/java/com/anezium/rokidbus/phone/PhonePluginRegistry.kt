@@ -8,6 +8,7 @@ import com.anezium.rokidbus.shared.plugin.NexusInputEvent
 import com.anezium.rokidbus.shared.plugin.NexusPlugin
 import com.anezium.rokidbus.shared.plugin.NexusPluginHost
 import com.anezium.rokidbus.shared.plugin.NexusSubscription
+import com.anezium.rokidbus.shared.plugin.PathRules
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.CopyOnWriteArrayList
@@ -20,6 +21,8 @@ class PhonePluginRegistry(
     plugins: List<NexusPlugin>,
     private val sendEnvelope: (BusEnvelope) -> String?,
     private val logger: (String) -> Unit,
+    private val catalogProvider: (() -> PluginCatalog)? = null,
+    private val externalController: ExternalPluginController? = null,
 ) : NexusPluginHost {
     private data class Subscription(
         val pathPrefix: String,
@@ -28,6 +31,7 @@ class PhonePluginRegistry(
 
     private val subscriptions = CopyOnWriteArrayList<Subscription>()
     private val pluginsById = linkedMapOf<String, NexusPlugin>()
+    private val builtInPlugins = plugins.toList()
     private val pluginExecutor = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "nexus-plugin")
     }
@@ -93,7 +97,7 @@ class PhonePluginRegistry(
 
         var handled = false
         subscriptions.forEach { subscription ->
-            if (envelope.path.startsWith(subscription.pathPrefix)) {
+            if (PathRules.matchesPrefix(envelope.path, subscription.pathPrefix)) {
                 handled = true
                 runCatching {
                     subscription.handler(envelope.path, envelope.id, envelope.payload)
@@ -111,11 +115,11 @@ class PhonePluginRegistry(
             JSONObject().put(
                 "plugins",
                 JSONArray().also { array ->
-                    pluginsById.values.filter { it.launchable }.forEach { plugin ->
+                    catalog().launchableEntries.forEach { entry ->
                         array.put(
                             JSONObject()
-                                .put("id", plugin.id)
-                                .put("displayName", plugin.displayName),
+                                .put("id", entry.id)
+                                .put("displayName", entry.displayName),
                         )
                     }
                 },
@@ -124,6 +128,7 @@ class PhonePluginRegistry(
     }
 
     fun close() {
+        externalController?.closeActive("hub_destroyed")
         activePluginId?.let { pluginId ->
             pluginsById[pluginId]?.let { plugin ->
                 enqueue("plugin onClose id=${plugin.id}") { plugin.onClose() }
@@ -137,13 +142,26 @@ class PhonePluginRegistry(
 
     private fun register(plugin: NexusPlugin) {
         require(plugin.id.isNotBlank()) { "Plugin id must not be blank" }
+        require(plugin.id !in pluginsById) { "Duplicate built-in plugin id=${plugin.id}" }
         pluginsById[plugin.id] = plugin
         plugin.onRegister(this)
         logger("plugin registered id=${plugin.id} display=${plugin.displayName}")
     }
 
     private fun open(pluginId: String): Boolean {
-        val plugin = pluginsById[pluginId]?.takeIf { it.launchable } ?: return false
+        val entry = catalog().entry(pluginId)?.takeIf { it.launchable } ?: return false
+        val external = entry.principal
+        if (external != null) {
+            activePluginId?.let { previous ->
+                pluginsById[previous]?.let { previousPlugin ->
+                    enqueue("plugin onClose id=${previousPlugin.id}") { previousPlugin.onClose() }
+                }
+            }
+            activePluginId = null
+            return externalController?.open(external) == true
+        }
+        externalController?.closeActive("built_in_opened")
+        val plugin = entry.builtIn ?: pluginsById[pluginId]?.takeIf { it.launchable } ?: return false
         activePluginId?.takeIf { it != plugin.id }?.let { previous ->
             pluginsById[previous]?.let { previousPlugin ->
                 enqueue("plugin onClose id=${previousPlugin.id}") { previousPlugin.onClose() }
@@ -161,6 +179,13 @@ class PhonePluginRegistry(
         val surfaceId = payload.optString("surfaceId")
         val keyCode = payload.optInt("keyCode", KeyEvent.KEYCODE_UNKNOWN)
         val action = payload.optInt("action", KeyEvent.ACTION_DOWN)
+        val ownerPluginId = payload.optString("ownerPluginId")
+            .ifBlank { surfaceId.substringBefore(':').takeIf { ':' in surfaceId }.orEmpty() }
+        val localSurfaceId = payload.optString("localSurfaceId")
+            .ifBlank { surfaceId.substringAfter(':', surfaceId) }
+        if (ownerPluginId.isNotBlank() &&
+            externalController?.input(ownerPluginId, localSurfaceId, keyCode, action) == true
+        ) return
         val plugin = pluginsById[surfaceId] ?: activePluginId?.let { pluginsById[it] } ?: return
         val event = NexusInputEvent(
             surfaceId = surfaceId.ifBlank { plugin.id },
@@ -174,6 +199,9 @@ class PhonePluginRegistry(
             }
         }
     }
+
+    fun catalog(): PluginCatalog = catalogProvider?.invoke()
+        ?: PluginCatalog.build(builtInPlugins, emptyList()) { PluginGrantState.Pending }
 
     private fun enqueue(label: String, action: () -> Unit) {
         try {
