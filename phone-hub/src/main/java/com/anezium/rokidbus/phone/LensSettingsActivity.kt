@@ -15,6 +15,7 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.view.Window
+import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -35,7 +36,10 @@ import com.anezium.rokidbus.phone.lens.LENS_TRANSLATION_PREF_GEMINI_MODEL
 import com.anezium.rokidbus.phone.lens.LENS_TRANSLATION_PREF_TARGET_LANG
 import com.anezium.rokidbus.phone.lens.LENS_TRANSLATION_TARGET_LANG_DEFAULT
 import com.anezium.rokidbus.phone.lens.TranslationEngine
+import com.google.mlkit.common.model.DownloadConditions
+import com.google.mlkit.common.model.RemoteModelManager
 import com.google.mlkit.nl.translate.TranslateLanguage
+import com.google.mlkit.nl.translate.TranslateRemoteModel
 
 class LensSettingsActivity : Activity() {
     private lateinit var translationPrefs: SharedPreferences
@@ -45,6 +49,13 @@ class LensSettingsActivity : Activity() {
     private val modelDots = mutableMapOf<String, View>()
     private val modelNames = mutableMapOf<String, TextView>()
     private lateinit var outputLanguageValue: TextView
+
+    private val remoteModelManager by lazy { RemoteModelManager.getInstance() }
+    private val offlinePackStatus = mutableMapOf<String, TextView>()
+    private val offlinePackActions = mutableMapOf<String, Button>()
+    private val downloadedPacks = mutableSetOf<String>()
+    private val downloadingPacks = mutableSetOf<String>()
+    private val failedPacks = mutableSetOf<String>()
 
     private data class EngineChoice(
         val engine: TranslationEngine,
@@ -117,17 +128,35 @@ class LensSettingsActivity : Activity() {
                 NexusUi.block(),
             )
             addView(BusTheme.gap(this@LensSettingsActivity, 28))
+            addView(NexusUi.sectionRow(this@LensSettingsActivity, "Output language"), NexusUi.block())
+            addView(BusTheme.gap(this@LensSettingsActivity, 12))
+            addView(outputLanguageCard(), NexusUi.block())
+            addView(BusTheme.gap(this@LensSettingsActivity, 22))
             addView(NexusUi.sectionRow(this@LensSettingsActivity, "Translation engine"), NexusUi.block())
             addView(BusTheme.gap(this@LensSettingsActivity, 12))
             addView(engineCard(), NexusUi.block())
             addView(BusTheme.gap(this@LensSettingsActivity, 22))
-            addView(NexusUi.sectionRow(this@LensSettingsActivity, "Gemini model"), NexusUi.block())
+            addView(NexusUi.sectionRow(this@LensSettingsActivity, "DeepL"), NexusUi.block())
             addView(BusTheme.gap(this@LensSettingsActivity, 12))
-            addView(modelCard(), NexusUi.block())
-            addView(BusTheme.gap(this@LensSettingsActivity, 10))
-            addView(outputLanguageCard(), NexusUi.block())
-            addView(BusTheme.gap(this@LensSettingsActivity, 10))
-            addView(apiKeysCard(), NexusUi.block())
+            addView(deepLCard(), NexusUi.block())
+            addView(BusTheme.gap(this@LensSettingsActivity, 22))
+            addView(NexusUi.sectionRow(this@LensSettingsActivity, "Gemini"), NexusUi.block())
+            addView(BusTheme.gap(this@LensSettingsActivity, 12))
+            addView(geminiCard(), NexusUi.block())
+            addView(BusTheme.gap(this@LensSettingsActivity, 22))
+            addView(NexusUi.sectionRow(this@LensSettingsActivity, "Offline language packs"), NexusUi.block())
+            addView(BusTheme.gap(this@LensSettingsActivity, 8))
+            addView(
+                NexusUi.cardBody(
+                    this@LensSettingsActivity,
+                    "Packs power the On-device engine and the offline fallback. Each is about " +
+                        "30 MB, downloads automatically on first use, and stays on this phone - " +
+                        "or grab them here before a trip.",
+                ),
+                NexusUi.block(),
+            )
+            addView(BusTheme.gap(this@LensSettingsActivity, 12))
+            addView(offlineLanguagesCard(), NexusUi.block())
             addView(BusTheme.gap(this@LensSettingsActivity, 28))
             addView(NexusUi.sectionRow(this@LensSettingsActivity, "Privacy"), NexusUi.block())
             addView(BusTheme.gap(this@LensSettingsActivity, 8))
@@ -169,6 +198,7 @@ class LensSettingsActivity : Activity() {
     override fun onResume() {
         super.onResume()
         refreshDeepLUsage()
+        refreshOfflinePacks()
     }
 
     /** Fetches DeepL /v2/usage off the main thread and swaps the key row hint for live quota. */
@@ -245,10 +275,35 @@ class LensSettingsActivity : Activity() {
         renderEngineSelection()
     }
 
-    private fun modelCard(): LinearLayout =
+    private fun deepLCard(): LinearLayout =
         NexusUi.card(this).apply {
-            modelChoices.forEachIndexed { index, choice ->
-                if (index > 0) addView(NexusUi.divider(this@LensSettingsActivity))
+            addView(
+                keyRow(
+                    label = "API key",
+                    hintSource = "deepl.com/pro-api - free",
+                    prefKey = LENS_TRANSLATION_PREF_DEEPL_API_KEY,
+                    a11yName = "DeepL API key",
+                ),
+                NexusUi.block(),
+            )
+        }
+
+    private fun geminiCard(): LinearLayout =
+        NexusUi.card(this).apply {
+            addView(
+                keyRow(
+                    label = "API key",
+                    hintSource = "aistudio.google.com - free",
+                    prefKey = LENS_TRANSLATION_PREF_GEMINI_API_KEY,
+                    a11yName = "Gemini API key",
+                ),
+                NexusUi.block(),
+            )
+            addView(NexusUi.divider(this@LensSettingsActivity))
+            addView(BusTheme.gap(this@LensSettingsActivity, 4))
+            addView(NexusUi.metaLabel(this@LensSettingsActivity, "Model"), NexusUi.block())
+            addView(BusTheme.gap(this@LensSettingsActivity, 2))
+            modelChoices.forEach { choice ->
                 addView(modelRow(choice), NexusUi.block())
             }
             renderModelSelection()
@@ -320,7 +375,7 @@ class LensSettingsActivity : Activity() {
             addView(
                 LinearLayout(this@LensSettingsActivity).apply {
                     orientation = LinearLayout.VERTICAL
-                    addView(NexusUi.rowLabel(this@LensSettingsActivity, "Output language"))
+                    addView(NexusUi.rowLabel(this@LensSettingsActivity, "Translate everything into"))
                     addView(BusTheme.gap(this@LensSettingsActivity, 4))
                     addView(
                         NexusUi.rowSub(
@@ -424,6 +479,7 @@ class LensSettingsActivity : Activity() {
             addView(
                 NexusUi.rowLabel(this@LensSettingsActivity, choice.displayName).apply {
                     setTextColor(if (selected) NexusUi.INK else NexusUi.INK2)
+                    textDirection = View.TEXT_DIRECTION_LTR
                 },
                 LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
             )
@@ -438,20 +494,144 @@ class LensSettingsActivity : Activity() {
             )
         }
 
-    private fun apiKeysCard(): LinearLayout =
+    private fun offlineLanguagesCard(): LinearLayout =
         NexusUi.card(this).apply {
+            languageChoices.forEachIndexed { index, choice ->
+                if (index > 0) addView(NexusUi.divider(this@LensSettingsActivity))
+                addView(offlinePackRow(choice), NexusUi.block())
+            }
+        }
+
+    private fun offlinePackRow(choice: LanguageChoice): LinearLayout =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, NexusUi.dp(this@LensSettingsActivity, 4), 0, NexusUi.dp(this@LensSettingsActivity, 4))
             addView(
-                keyRow("Gemini API key", "aistudio.google.com - free", LENS_TRANSLATION_PREF_GEMINI_API_KEY),
-                NexusUi.block(),
+                LinearLayout(this@LensSettingsActivity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    addView(
+                        NexusUi.rowLabel(this@LensSettingsActivity, choice.displayName).apply {
+                            // RTL names (Arabic) must not flip the whole row to the right.
+                            textDirection = View.TEXT_DIRECTION_LTR
+                        },
+                        NexusUi.block(),
+                    )
+                    addView(
+                        NexusUi.rowSub(this@LensSettingsActivity, "~30 MB").also {
+                            offlinePackStatus[choice.code] = it
+                        },
+                        NexusUi.block(),
+                    )
+                },
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
             )
-            addView(NexusUi.divider(this@LensSettingsActivity))
             addView(
-                keyRow("DeepL API key", "deepl.com/pro-api - free 500k/mo", LENS_TRANSLATION_PREF_DEEPL_API_KEY),
-                NexusUi.block(),
+                NexusUi.textButton(this@LensSettingsActivity, "Get").apply {
+                    contentDescription = "Download ${choice.nativeName} pack"
+                    offlinePackActions[choice.code] = this
+                    setOnClickListener {
+                        when {
+                            choice.code in downloadingPacks -> Unit
+                            choice.code in downloadedPacks -> removePack(choice.code)
+                            else -> downloadPack(choice.code)
+                        }
+                    }
+                },
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ),
             )
         }
 
-    private fun keyRow(label: String, hintSource: String, prefKey: String): LinearLayout =
+    private fun renderOfflinePack(code: String) {
+        val status = offlinePackStatus[code] ?: return
+        val action = offlinePackActions[code] ?: return
+        val name = languageChoices.firstOrNull { it.code == code }?.nativeName ?: code
+        when (code) {
+            in downloadingPacks -> {
+                status.text = "Downloading…"
+                status.setTextColor(NexusUi.INK3)
+                action.visibility = View.INVISIBLE
+            }
+            in downloadedPacks -> {
+                status.text = "Downloaded"
+                status.setTextColor(NexusUi.GREEN_DIM)
+                action.visibility = View.VISIBLE
+                // Muted, not red: a full column of danger-colored buttons overwhelms the card.
+                action.text = "Remove"
+                action.setTextColor(NexusUi.INK3)
+                action.contentDescription = "Remove $name pack"
+            }
+            in failedPacks -> {
+                status.text = "Download failed"
+                status.setTextColor(NexusUi.AMBER)
+                action.visibility = View.VISIBLE
+                action.text = "Retry"
+                action.setTextColor(NexusUi.GREEN)
+                action.contentDescription = "Retry $name pack download"
+            }
+            else -> {
+                status.text = "~30 MB"
+                status.setTextColor(NexusUi.INK3)
+                action.visibility = View.VISIBLE
+                action.text = "Get"
+                action.setTextColor(NexusUi.GREEN)
+                action.contentDescription = "Download $name pack"
+            }
+        }
+    }
+
+    /** Syncs pack rows with the models ML Kit actually has on disk. */
+    private fun refreshOfflinePacks() {
+        remoteModelManager.getDownloadedModels(TranslateRemoteModel::class.java)
+            .addOnSuccessListener { models ->
+                if (isDestroyed || isFinishing) return@addOnSuccessListener
+                downloadedPacks.clear()
+                models.mapTo(downloadedPacks) { it.language }
+                offlinePackStatus.keys.forEach(::renderOfflinePack)
+            }
+    }
+
+    private fun downloadPack(code: String) {
+        val language = TranslateLanguage.fromLanguageTag(code) ?: return
+        if (!downloadingPacks.add(code)) return
+        failedPacks.remove(code)
+        renderOfflinePack(code)
+        remoteModelManager.download(
+            TranslateRemoteModel.Builder(language).build(),
+            DownloadConditions.Builder().build(),
+        )
+            .addOnSuccessListener {
+                downloadingPacks.remove(code)
+                downloadedPacks.add(code)
+                if (!isDestroyed && !isFinishing) renderOfflinePack(code)
+            }
+            .addOnFailureListener {
+                downloadingPacks.remove(code)
+                failedPacks.add(code)
+                if (!isDestroyed && !isFinishing) renderOfflinePack(code)
+            }
+    }
+
+    private fun removePack(code: String) {
+        val language = TranslateLanguage.fromLanguageTag(code) ?: return
+        remoteModelManager.deleteDownloadedModel(TranslateRemoteModel.Builder(language).build())
+            .addOnCompleteListener {
+                if (isDestroyed || isFinishing) return@addOnCompleteListener
+                downloadedPacks.remove(code)
+                renderOfflinePack(code)
+                refreshOfflinePacks()
+            }
+    }
+
+    private fun keyRow(
+        label: String,
+        hintSource: String,
+        prefKey: String,
+        a11yName: String = label,
+    ): LinearLayout =
         LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             addView(
@@ -474,7 +654,7 @@ class LensSettingsActivity : Activity() {
             val field = keyField(prefKey)
             var revealed = false
             val revealButton = NexusUi.textButton(this@LensSettingsActivity, "Show").apply {
-                contentDescription = "Show $label"
+                contentDescription = "Show $a11yName"
                 setOnClickListener {
                     revealed = !revealed
                     field.transformationMethod = if (revealed) {
@@ -484,7 +664,7 @@ class LensSettingsActivity : Activity() {
                     }
                     field.setSelection(field.text.length)
                     text = if (revealed) "Hide" else "Show"
-                    contentDescription = if (revealed) "Hide $label" else "Show $label"
+                    contentDescription = if (revealed) "Hide $a11yName" else "Show $a11yName"
                 }
             }
             addView(
