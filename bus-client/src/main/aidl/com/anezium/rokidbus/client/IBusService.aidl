@@ -10,4 +10,5 @@ interface IBusService {
     int linkState();
     oneway void sendBinary(String path, String id, in byte[] meta, in byte[] data);
     int registerPlugin(String packageName, String pluginId, IBusCallback cb);
+    int capabilities();
 }

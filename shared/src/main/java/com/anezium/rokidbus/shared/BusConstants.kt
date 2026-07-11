@@ -38,11 +38,23 @@ object BusPaths {
     const val LAUNCHER_OPEN = "/launcher/open"
     const val LENS_TRANSLATE_REQUEST = "/lens/translate/request"
     const val LENS_TRANSLATE_REPLY = "/lens/translate/request/reply"
+    const val LENS_LINK_OFFER = "/lens/link/offer"
+    const val LENS_FROZEN_OCR_RESULT = "/lens/frozen/ocr/result"
+    const val GLASSES_WIFI_REQUEST = "/glasses/wifi/request"
     const val PLUGIN_OPEN = "/system/plugin/open"
     const val PLUGIN_CLOSE = "/system/plugin/close"
     const val PLUGIN_INPUT = "/system/plugin/input"
     const val PLUGIN_REGISTRATION = "/system/plugin/registration"
     const val ERROR = "/error"
+
+    fun isProtectedLensPath(path: String): Boolean =
+        path == LENS_LINK_OFFER || path.startsWith("$LENS_LINK_OFFER/") ||
+            path == LENS_FROZEN_OCR_RESULT || path.startsWith("$LENS_FROZEN_OCR_RESULT/") ||
+            path == GLASSES_WIFI_REQUEST
+}
+
+object BusCapabilityBits {
+    const val PROTECTED_LENS_LINK = 1
 }
 
 object LinkStateBits {
