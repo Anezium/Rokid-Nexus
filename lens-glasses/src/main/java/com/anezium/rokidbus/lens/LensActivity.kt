@@ -22,7 +22,6 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
-import android.provider.Settings
 import android.util.Log
 import android.util.Size
 import android.view.KeyEvent
@@ -428,7 +427,6 @@ class LensActivity : AppCompatActivity() {
         isActivityResumed = true
         applyPreviewScaleForCurrentState()
         hideSystemUi()
-        applyScreenTimeoutOverride()
         if (hasCameraPermission() && !isFrozen) {
             startCamera()
         } else if (isFrozen) {
@@ -437,50 +435,8 @@ class LensActivity : AppCompatActivity() {
         Log.i(TAG, "lifecycle state=resumed frozen=$isFrozen")
     }
 
-    private fun applyScreenTimeoutOverride() {
-        if (!Settings.System.canWrite(this)) {
-            Log.w(
-                TAG,
-                "screenTimeoutOverride skipped: WRITE_SETTINGS not granted " +
-                    "(grant: adb shell appops set $packageName WRITE_SETTINGS allow)",
-            )
-            return
-        }
-        val current = Settings.System.getInt(
-            contentResolver,
-            Settings.System.SCREEN_OFF_TIMEOUT,
-            -1,
-        )
-        if (current == -1) return
-        if (current != SCREEN_OFF_TIMEOUT_OVERRIDE_MS) {
-            // Only a value that is not our own override can be the stock timeout; a
-            // previous kill without onPause leaves the override in place and must not
-            // be persisted as stock.
-            getSharedPreferences(SCREEN_PREFS_NAME, MODE_PRIVATE)
-                .edit()
-                .putInt(SCREEN_PREF_STOCK_TIMEOUT_MS, current)
-                .apply()
-        }
-        Settings.System.putInt(
-            contentResolver,
-            Settings.System.SCREEN_OFF_TIMEOUT,
-            SCREEN_OFF_TIMEOUT_OVERRIDE_MS,
-        )
-        Log.i(TAG, "screenTimeoutOverride applied current=$current override=$SCREEN_OFF_TIMEOUT_OVERRIDE_MS")
-    }
-
-    private fun restoreScreenTimeout() {
-        if (!Settings.System.canWrite(this)) return
-        val stock = getSharedPreferences(SCREEN_PREFS_NAME, MODE_PRIVATE)
-            .getInt(SCREEN_PREF_STOCK_TIMEOUT_MS, -1)
-        if (stock <= 0) return
-        Settings.System.putInt(contentResolver, Settings.System.SCREEN_OFF_TIMEOUT, stock)
-        Log.i(TAG, "screenTimeoutOverride restored stock=$stock")
-    }
-
     override fun onPause() {
         isActivityResumed = false
-        restoreScreenTimeout()
         cameraRetry?.let(mainHandler::removeCallbacks)
         cameraRetry = null
         cameraBindRetryCount = 0
@@ -3245,13 +3201,6 @@ class LensActivity : AppCompatActivity() {
 
     companion object {
         private const val REQUEST_CAMERA = 42
-        // The Rokid sprite OS ignores FLAG_KEEP_SCREEN_ON (its LightCtrlSVC sleeps the
-        // display after the system screen_off_timeout, stock 10 s, regardless of window
-        // flags) but honors Settings.System.SCREEN_OFF_TIMEOUT writes — so Lens holds
-        // the screen by overriding the timeout while foreground and restoring on pause.
-        private const val SCREEN_OFF_TIMEOUT_OVERRIDE_MS = 600_000
-        private const val SCREEN_PREFS_NAME = "lens_screen"
-        private const val SCREEN_PREF_STOCK_TIMEOUT_MS = "stock_screen_off_timeout_ms"
         private const val CACHE_MAX_ENTRIES = 512
         private const val TRANSLATE_TIMEOUT_MS = LensWireContract.GLASSES_REQUEST_TIMEOUT_MS
         private const val TRANSLATE_RETRY_BACKOFF_MS = 750L

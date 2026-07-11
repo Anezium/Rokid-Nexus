@@ -10,8 +10,8 @@ android {
         applicationId = "com.anezium.rokidbus.lens"
         minSdk = 31
         targetSdk = 32
-        versionCode = 20
-        versionName = "0.1.19-lens-m4"
+        versionCode = 21
+        versionName = "0.1.20-lens-m4"
     }
 
     buildTypes {
