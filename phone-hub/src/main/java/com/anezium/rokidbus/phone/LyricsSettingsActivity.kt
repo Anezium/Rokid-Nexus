@@ -2,6 +2,7 @@ package com.anezium.rokidbus.phone
 
 import android.app.Activity
 import android.app.Dialog
+import android.content.Intent
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
@@ -20,6 +21,7 @@ import android.widget.TextView
 import android.widget.Toast
 import com.anezium.rokidbus.client.ui.BusTheme
 import com.anezium.rokidbus.lyrics.LyricsRuntimeGraph
+import com.anezium.rokidbus.lyrics.lyrics.SpotifySpDcCookie
 import com.anezium.rokidbus.lyrics.settings.LyricsProviderSettingsStore
 
 private const val LYRICS_PREFS = "nexus_plugin_lyrics"
@@ -28,6 +30,7 @@ private const val LYRICS_PREF_AUTO_OPEN = "auto_open"
 class LyricsSettingsActivity : Activity() {
     private lateinit var toggleTrack: FrameLayout
     private lateinit var toggleKnob: View
+    private lateinit var spotifyValue: TextView
     private lateinit var musixmatchValue: TextView
     private lateinit var providerStore: LyricsProviderSettingsStore
 
@@ -35,6 +38,20 @@ class LyricsSettingsActivity : Activity() {
         super.onCreate(savedInstanceState)
         providerStore = LyricsProviderSettingsStore(applicationContext)
         buildUi()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        refreshProviderValues()
+    }
+
+    private fun refreshProviderValues() {
+        if (::spotifyValue.isInitialized) {
+            spotifyValue.text = if (providerStore.hasSpotifySpDc()) "Connected ›" else "Sign in ›"
+        }
+        if (::musixmatchValue.isInitialized) {
+            musixmatchValue.text = if (providerStore.hasMusixmatchCredentials()) "Signed in ›" else "Sign in ›"
+        }
     }
 
     private fun buildUi() {
@@ -53,6 +70,16 @@ class LyricsSettingsActivity : Activity() {
                 ) {
                     setShowOnGlasses(!showOnGlasses())
                 },
+                NexusUi.block(),
+            )
+            spotifyValue = valueText(if (providerStore.hasSpotifySpDc()) "Connected" else "Sign in")
+            addView(
+                settingRow(
+                    title = "Spotify",
+                    subtitle = "Own synced lyrics, tried first",
+                    value = spotifyValue,
+                    danger = false,
+                ) { showSpotifyDialog() },
                 NexusUi.block(),
             )
             musixmatchValue = valueText(if (providerStore.hasMusixmatchCredentials()) "Signed in" else "Sign in")
@@ -297,6 +324,128 @@ class LyricsSettingsActivity : Activity() {
         toggleTrack.updateViewLayout(toggleKnob, params)
     }
 
+    private fun showSpotifyDialog() {
+        val connected = providerStore.hasSpotifySpDc()
+        val dialog = Dialog(this)
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+        val cookieField = NexusUi.field(this, "sp_dc cookie").apply {
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
+        }
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = NexusUi.bordered(this@LyricsSettingsActivity, NexusUi.PANEL, NexusUi.LINE2, 16)
+            setPadding(
+                NexusUi.dp(this@LyricsSettingsActivity, 18),
+                NexusUi.dp(this@LyricsSettingsActivity, 18),
+                NexusUi.dp(this@LyricsSettingsActivity, 18),
+                NexusUi.dp(this@LyricsSettingsActivity, 14),
+            )
+            addView(NexusUi.cardTitle(this@LyricsSettingsActivity, "Spotify"))
+            addView(BusTheme.gap(this@LyricsSettingsActivity, 6))
+            addView(
+                NexusUi.cardBody(
+                    this@LyricsSettingsActivity,
+                    if (connected) {
+                        "Connected. Spotify's own synced lyrics are tried first for Spotify tracks."
+                    } else {
+                        "Sign in to use Spotify's own synced lyrics. The session cookie stays encrypted on this phone."
+                    },
+                ),
+            )
+            addView(BusTheme.gap(this@LyricsSettingsActivity, 14))
+            addView(
+                NexusUi.pillButton(
+                    this@LyricsSettingsActivity,
+                    if (connected) "Sign in again" else "Sign in with Spotify",
+                ).apply {
+                    setOnClickListener {
+                        dialog.dismiss()
+                        startActivity(
+                            Intent(this@LyricsSettingsActivity, SpotifyLoginActivity::class.java),
+                        )
+                    }
+                },
+                NexusUi.block(),
+            )
+            addView(BusTheme.gap(this@LyricsSettingsActivity, 12))
+            addView(NexusUi.metaLabel(this@LyricsSettingsActivity, "or paste it manually"), NexusUi.block())
+            addView(BusTheme.gap(this@LyricsSettingsActivity, 8))
+            addView(cookieField, NexusUi.block())
+            addView(BusTheme.gap(this@LyricsSettingsActivity, 14))
+            addView(
+                LinearLayout(this@LyricsSettingsActivity).apply {
+                    gravity = Gravity.CENTER_VERTICAL
+                    if (connected) {
+                        addView(
+                            NexusUi.textButton(this@LyricsSettingsActivity, "Disconnect", danger = true).apply {
+                                setOnClickListener {
+                                    providerStore.clearSpotifySpDc()
+                                    LyricsRuntimeGraph.onSpotifyCookieChanged()
+                                    refreshProviderValues()
+                                    Toast.makeText(
+                                        this@LyricsSettingsActivity,
+                                        "Spotify disconnected.",
+                                        Toast.LENGTH_SHORT,
+                                    ).show()
+                                    dialog.dismiss()
+                                }
+                            },
+                        )
+                    }
+                    addView(
+                        View(this@LyricsSettingsActivity),
+                        LinearLayout.LayoutParams(0, 1, 1f),
+                    )
+                    addView(
+                        NexusUi.textButton(this@LyricsSettingsActivity, "Cancel").apply {
+                            setOnClickListener { dialog.dismiss() }
+                        },
+                    )
+                    addView(
+                        NexusUi.textButton(this@LyricsSettingsActivity, "Save").apply {
+                            setOnClickListener {
+                                val pasted = cookieField.text.toString()
+                                if (SpotifySpDcCookie.extractValue(pasted) == null) {
+                                    Toast.makeText(
+                                        this@LyricsSettingsActivity,
+                                        "No sp_dc cookie found in the pasted text.",
+                                        Toast.LENGTH_SHORT,
+                                    ).show()
+                                    return@setOnClickListener
+                                }
+                                if (!providerStore.saveSpotifySpDc(pasted)) {
+                                    Toast.makeText(
+                                        this@LyricsSettingsActivity,
+                                        "Secure storage unavailable; the cookie was not saved.",
+                                        Toast.LENGTH_LONG,
+                                    ).show()
+                                    return@setOnClickListener
+                                }
+                                LyricsRuntimeGraph.start(applicationContext)
+                                LyricsRuntimeGraph.onSpotifyCookieChanged()
+                                refreshProviderValues()
+                                Toast.makeText(
+                                    this@LyricsSettingsActivity,
+                                    "Spotify connected.",
+                                    Toast.LENGTH_SHORT,
+                                ).show()
+                                dialog.dismiss()
+                            }
+                        },
+                    )
+                },
+                NexusUi.block(),
+            )
+        }
+        dialog.setContentView(panel)
+        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        dialog.show()
+        dialog.window?.setLayout(
+            (resources.displayMetrics.widthPixels * 0.9f).toInt(),
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+        )
+    }
+
     private fun showMusixmatchDialog() {
         val dialog = Dialog(this)
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
@@ -354,7 +503,7 @@ class LyricsSettingsActivity : Activity() {
                                     return@setOnClickListener
                                 }
                                 LyricsRuntimeGraph.start(applicationContext)
-                                musixmatchValue.text = "SIGNED IN \u203A"
+                                refreshProviderValues()
                                 Toast.makeText(
                                     this@LyricsSettingsActivity,
                                     "Musixmatch saved.",

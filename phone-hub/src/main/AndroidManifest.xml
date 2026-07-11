@@ -49,6 +49,11 @@
             android:windowSoftInputMode="adjustResize" />
 
         <activity
+            android:name=".SpotifyLoginActivity"
+            android:exported="false"
+            android:parentActivityName=".LyricsSettingsActivity" />
+
+        <activity
             android:name=".LensSettingsActivity"
             android:exported="false"
             android:parentActivityName=".MainActivity"
