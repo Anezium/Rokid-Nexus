@@ -40,6 +40,35 @@ class LensTranslationRequestParserTest {
     }
 
     @Test
+    fun `parses every recognized mode vocabulary value`() {
+        LensRecognizerMode.entries.forEach { mode ->
+            val payload = JSONObject()
+                .put(LensWireContract.RECOGNIZER_MODE_FIELD, mode.wireValue.lowercase())
+                .put("strings", JSONArray().put("hello"))
+
+            val result = LensTranslationRequestParser.parse(REQUEST_ID, payload)
+
+            assertTrue(mode.name, result is LensTranslationParseResult.Success)
+            assertEquals(mode, (result as LensTranslationParseResult.Success).request.mode)
+        }
+    }
+
+    @Test
+    fun `unknown mode falls back to latin for forward compatibility`() {
+        val payload = JSONObject()
+            .put(LensWireContract.RECOGNIZER_MODE_FIELD, "FUTURE_SCRIPT")
+            .put("strings", JSONArray().put("hello"))
+
+        val result = LensTranslationRequestParser.parse(REQUEST_ID, payload)
+
+        assertTrue(result is LensTranslationParseResult.Success)
+        assertEquals(
+            LensRecognizerMode.LATIN,
+            (result as LensTranslationParseResult.Success).request.mode,
+        )
+    }
+
+    @Test
     fun `rejects payload id that diverges from envelope id`() {
         val payload = JSONObject()
             .put("id", "different-id")
@@ -82,12 +111,12 @@ class LensTranslationRequestParserTest {
     }
 
     @Test
-    fun `rejects malformed language and mode fields`() {
+    fun `rejects malformed language and non string mode fields`() {
         val badLanguage = JSONObject()
             .put("targetLang", "not_a_language")
             .put("strings", JSONArray().put("hello"))
         val badMode = JSONObject()
-            .put("mode", "unknown")
+            .put(LensWireContract.RECOGNIZER_MODE_FIELD, 7)
             .put("strings", JSONArray().put("hello"))
 
         assertFailure(

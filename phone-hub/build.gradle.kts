@@ -10,8 +10,8 @@ android {
         applicationId = "com.anezium.rokidbus.phone"
         minSdk = 31
         targetSdk = 36
-        versionCode = 4
-        versionName = "0.1.3-lens-m4"
+        versionCode = 5
+        versionName = "0.1.4-lens-m4"
     }
 
     buildTypes {

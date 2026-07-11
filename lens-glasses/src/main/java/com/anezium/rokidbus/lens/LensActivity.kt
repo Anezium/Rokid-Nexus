@@ -56,7 +56,10 @@ import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.Text
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.TextRecognizer
+import com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions
+import com.google.mlkit.vision.text.devanagari.DevanagariTextRecognizerOptions
 import com.google.mlkit.vision.text.japanese.JapaneseTextRecognizerOptions
+import com.google.mlkit.vision.text.korean.KoreanTextRecognizerOptions
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import org.json.JSONArray
 import org.json.JSONObject
@@ -315,6 +318,10 @@ class LensActivity : AppCompatActivity() {
     private lateinit var cameraExecutor: ExecutorService
     private lateinit var latinRecognizer: TextRecognizer
     private lateinit var japaneseRecognizer: TextRecognizer
+    private val recognizerLock = Any()
+    private var chineseRecognizer: TextRecognizer? = null
+    private var koreanRecognizer: TextRecognizer? = null
+    private var devanagariRecognizer: TextRecognizer? = null
     private var busClient: BusClient? = null
     private val inputRouter = LensInputRouter()
 
@@ -516,6 +523,14 @@ class LensActivity : AppCompatActivity() {
         busClient = null
         latinRecognizer.close()
         japaneseRecognizer.close()
+        synchronized(recognizerLock) {
+            chineseRecognizer?.close()
+            koreanRecognizer?.close()
+            devanagariRecognizer?.close()
+            chineseRecognizer = null
+            koreanRecognizer = null
+            devanagariRecognizer = null
+        }
         overlayView.setFrozenBackground(null)
         recycleFrozenContent(baseFrozenContent)
         recycleFrozenContent(zoomFrozenContent)
@@ -975,7 +990,9 @@ class LensActivity : AppCompatActivity() {
         }
         val requestId = freezeRequestSerial.incrementAndGet()
         activeHdCaptureSession?.cancel("new_freeze")
-        val modeSnapshot = effectiveScript
+        val (modeSnapshot, nextProbeScriptSnapshot) = synchronized(autoScriptLock) {
+            autoScriptState.effectiveScript to autoScriptState.nextProbeScript
+        }
         val liveZoomSnapshot = liveZoomLevel
         cancelFrozenBatchContinuation()
         cancelFastFreezeTimeout()
@@ -987,7 +1004,14 @@ class LensActivity : AppCompatActivity() {
         hdFrozenOcrInFlight = false
         frozenZoomLevel = FrozenZoomLevel.ONE
         frozenBaseLiveZoomLevel = liveZoomSnapshot
-        frozenScriptState = FrozenScriptState(modeSnapshot)
+        frozenScriptState = FrozenScriptState(
+            primaryScript = modeSnapshot,
+            retryScript = if (modeSnapshot == OcrScript.LATIN) {
+                nextProbeScriptSnapshot
+            } else {
+                OcrScript.LATIN
+            },
+        )
         frozenSelectedScript = modeSnapshot
         queuedFrozenZoomLevel = null
         baseFrozenContent = null
@@ -1662,7 +1686,25 @@ class LensActivity : AppCompatActivity() {
     }
 
     private fun recognizerFor(script: OcrScript): TextRecognizer =
-        if (script == OcrScript.LATIN) latinRecognizer else japaneseRecognizer
+        when (script) {
+            OcrScript.LATIN -> latinRecognizer
+            OcrScript.JAPANESE -> japaneseRecognizer
+            OcrScript.CHINESE -> synchronized(recognizerLock) {
+                chineseRecognizer ?: TextRecognition.getClient(
+                    ChineseTextRecognizerOptions.Builder().build(),
+                ).also { chineseRecognizer = it }
+            }
+            OcrScript.KOREAN -> synchronized(recognizerLock) {
+                koreanRecognizer ?: TextRecognition.getClient(
+                    KoreanTextRecognizerOptions.Builder().build(),
+                ).also { koreanRecognizer = it }
+            }
+            OcrScript.DEVANAGARI -> synchronized(recognizerLock) {
+                devanagariRecognizer ?: TextRecognition.getClient(
+                    DevanagariTextRecognizerOptions.Builder().build(),
+                ).also { devanagariRecognizer = it }
+            }
+        }
 
     private fun installBaseFrozenContent(requestId: Long, content: FrozenContent) {
         if (!isCurrentFreeze(requestId)) {
@@ -2728,7 +2770,7 @@ class LensActivity : AppCompatActivity() {
         val payload = JSONObject()
             .put("id", id)
             .put("targetLang", LensWireContract.DEFAULT_TARGET_LANG)
-            .put("mode", mode.name)
+            .put(LensWireContract.RECOGNIZER_MODE_FIELD, recognizerModeWireValue(mode))
             .put("strings", strings)
         busClient?.send(BusPaths.LENS_TRANSLATE_REQUEST, id, payload)
         translationStatus = "TRANSLATING ${strings.length()}"
@@ -2829,6 +2871,18 @@ class LensActivity : AppCompatActivity() {
         when (mode) {
             OcrScript.LATIN -> "AUTO·ABC"
             OcrScript.JAPANESE -> "AUTO·JP"
+            OcrScript.CHINESE -> "AUTO·ZH"
+            OcrScript.KOREAN -> "AUTO·KO"
+            OcrScript.DEVANAGARI -> "AUTO·HI"
+        }
+
+    private fun recognizerModeWireValue(mode: OcrScript): String =
+        when (mode) {
+            OcrScript.LATIN -> LensWireContract.RECOGNIZER_MODE_LATIN
+            OcrScript.JAPANESE -> LensWireContract.RECOGNIZER_MODE_JAPANESE
+            OcrScript.CHINESE -> LensWireContract.RECOGNIZER_MODE_CHINESE
+            OcrScript.KOREAN -> LensWireContract.RECOGNIZER_MODE_KOREAN
+            OcrScript.DEVANAGARI -> LensWireContract.RECOGNIZER_MODE_DEVANAGARI
         }
 
     private fun hudModeLabel(): String {
@@ -3144,7 +3198,10 @@ class LensActivity : AppCompatActivity() {
                         Log.i(TAG, "autoScriptSwitch effective=${scriptObservation.effectiveScript.name}")
                     }
                     if (!scriptObservation.acceptResult) {
-                        Log.i(TAG, "autoProbeDiscarded chars=${AutoScriptPolicy.textStats(text.text).nonSpaceCharacters}")
+                        Log.i(
+                            TAG,
+                            "autoProbeDiscarded chars=${AutoScriptPolicy.textStats(text.text, modeSnapshot).nonSpaceCharacters}",
+                        )
                         refreshHud()
                         return@addOnSuccessListener
                     }

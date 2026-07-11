@@ -6,16 +6,25 @@ internal const val AUTO_MIN_DWELL_MS = 5_000L
 
 internal enum class OcrScript {
     LATIN,
-    JAPANESE;
-
-    fun other(): OcrScript = if (this == LATIN) JAPANESE else LATIN
+    JAPANESE,
+    CHINESE,
+    KOREAN,
+    DEVANAGARI,
 }
+
+internal val NON_LATIN_OCR_SCRIPTS = listOf(
+    OcrScript.JAPANESE,
+    OcrScript.CHINESE,
+    OcrScript.KOREAN,
+    OcrScript.DEVANAGARI,
+)
 
 internal data class AutoScriptState(
     val effectiveScript: OcrScript = OcrScript.LATIN,
+    val nextProbeScript: OcrScript = OcrScript.JAPANESE,
     val lastProbeAtMs: Long? = null,
     val lastSwitchAtMs: Long? = null,
-    val consecutiveLowCjkFrames: Int = 0,
+    val consecutiveLowScriptFrames: Int = 0,
 )
 
 internal data class LiveScriptPlan(
@@ -33,14 +42,19 @@ internal data class LiveScriptObservation(
 
 internal data class ScriptTextStats(
     val nonSpaceCharacters: Int,
-    val cjkCharacters: Int,
+    val scriptCharacters: Int,
 ) {
-    val cjkShare: Double
-        get() = if (nonSpaceCharacters == 0) 0.0 else cjkCharacters.toDouble() / nonSpaceCharacters
+    val scriptShare: Double
+        get() = if (nonSpaceCharacters == 0) 0.0 else scriptCharacters.toDouble() / nonSpaceCharacters
 }
 
 internal data class FrozenScriptState(
     val primaryScript: OcrScript,
+    val retryScript: OcrScript = if (primaryScript == OcrScript.LATIN) {
+        OcrScript.JAPANESE
+    } else {
+        OcrScript.LATIN
+    },
     val otherRecognizerTried: Boolean = false,
 )
 
@@ -53,8 +67,8 @@ internal data class FrozenScriptObservation(
 internal object AutoScriptPolicy {
     fun planLiveFrame(state: AutoScriptState, nowMs: Long): LiveScriptPlan {
         require(nowMs >= 0L)
-        if (state.effectiveScript == OcrScript.JAPANESE) {
-            return LiveScriptPlan(OcrScript.JAPANESE, isProbe = false, nextState = state)
+        if (state.effectiveScript != OcrScript.LATIN) {
+            return LiveScriptPlan(state.effectiveScript, isProbe = false, nextState = state)
         }
 
         val lastProbeAtMs = state.lastProbeAtMs
@@ -66,10 +80,18 @@ internal object AutoScriptPolicy {
             )
         }
         val probeDue = nowMs < lastProbeAtMs || nowMs - lastProbeAtMs >= AUTO_PROBE_INTERVAL_MS
+        if (!probeDue) {
+            return LiveScriptPlan(OcrScript.LATIN, isProbe = false, nextState = state)
+        }
+
+        val probeScript = state.nextProbeScript.takeIf { it != OcrScript.LATIN } ?: OcrScript.JAPANESE
         return LiveScriptPlan(
-            script = if (probeDue) OcrScript.JAPANESE else OcrScript.LATIN,
-            isProbe = probeDue,
-            nextState = if (probeDue) state.copy(lastProbeAtMs = nowMs) else state,
+            script = probeScript,
+            isProbe = true,
+            nextState = state.copy(
+                nextProbeScript = nextNonLatinScript(probeScript),
+                lastProbeAtMs = nowMs,
+            ),
         )
     }
 
@@ -80,19 +102,19 @@ internal object AutoScriptPolicy {
         isProbe: Boolean,
         text: String,
     ): LiveScriptObservation {
-        val stats = textStats(text)
+        val stats = textStats(text, script)
         if (isProbe) {
             val dwellComplete = dwellComplete(state, nowMs)
             val shouldSwitch = state.effectiveScript == OcrScript.LATIN &&
-                script == OcrScript.JAPANESE &&
+                script != OcrScript.LATIN &&
                 dwellComplete &&
                 stats.nonSpaceCharacters >= 8 &&
-                stats.cjkShare >= 0.30
+                stats.scriptShare >= 0.30
             val nextState = if (shouldSwitch) {
                 state.copy(
-                    effectiveScript = OcrScript.JAPANESE,
+                    effectiveScript = script,
                     lastSwitchAtMs = nowMs,
-                    consecutiveLowCjkFrames = 0,
+                    consecutiveLowScriptFrames = 0,
                 )
             } else {
                 state
@@ -105,21 +127,21 @@ internal object AutoScriptPolicy {
             )
         }
 
-        if (state.effectiveScript != OcrScript.JAPANESE || script != OcrScript.JAPANESE) {
+        if (state.effectiveScript == OcrScript.LATIN || script != state.effectiveScript) {
             return LiveScriptObservation(state.effectiveScript, acceptResult = true, switched = false, state)
         }
 
-        val lowCount = if (stats.cjkShare < 0.05) state.consecutiveLowCjkFrames + 1 else 0
+        val lowCount = if (stats.scriptShare < 0.05) state.consecutiveLowScriptFrames + 1 else 0
         val shouldRevert = lowCount >= AUTO_REVERT_CONSECUTIVE_FRAMES && dwellComplete(state, nowMs)
         val nextState = if (shouldRevert) {
             state.copy(
                 effectiveScript = OcrScript.LATIN,
                 lastProbeAtMs = nowMs,
                 lastSwitchAtMs = nowMs,
-                consecutiveLowCjkFrames = 0,
+                consecutiveLowScriptFrames = 0,
             )
         } else {
-            state.copy(consecutiveLowCjkFrames = lowCount.coerceAtMost(AUTO_REVERT_CONSECUTIVE_FRAMES))
+            state.copy(consecutiveLowScriptFrames = lowCount.coerceAtMost(AUTO_REVERT_CONSECUTIVE_FRAMES))
         }
         return LiveScriptObservation(
             effectiveScript = nextState.effectiveScript,
@@ -135,8 +157,8 @@ internal object AutoScriptPolicy {
         text: String,
     ): FrozenScriptObservation {
         val triedOther = state.otherRecognizerTried || script != state.primaryScript
-        val retry = if (!triedOther && textStats(text).nonSpaceCharacters < 8) {
-            state.primaryScript.other()
+        val retry = if (!triedOther && textStats(text, script).nonSpaceCharacters < 8) {
+            state.retryScript
         } else {
             null
         }
@@ -152,30 +174,42 @@ internal object AutoScriptPolicy {
         retryScript: OcrScript,
         retryText: String,
     ): OcrScript =
-        if (textStats(retryText).nonSpaceCharacters > textStats(primaryText).nonSpaceCharacters) {
+        if (textStats(retryText, retryScript).nonSpaceCharacters >
+            textStats(primaryText, primaryScript).nonSpaceCharacters
+        ) {
             retryScript
         } else {
             primaryScript
         }
 
-    fun textStats(text: String): ScriptTextStats {
+    fun textStats(text: String, script: OcrScript): ScriptTextStats {
         var nonSpace = 0
-        var cjk = 0
+        var scriptCharacters = 0
         var index = 0
         while (index < text.length) {
             val codePoint = Character.codePointAt(text, index)
             index += Character.charCount(codePoint)
             if (Character.isWhitespace(codePoint)) continue
             nonSpace += 1
-            when (Character.UnicodeScript.of(codePoint)) {
-                Character.UnicodeScript.HAN,
-                Character.UnicodeScript.HIRAGANA,
-                Character.UnicodeScript.KATAKANA,
-                -> cjk += 1
-                else -> Unit
-            }
+            if (matchesScript(Character.UnicodeScript.of(codePoint), script)) scriptCharacters += 1
         }
-        return ScriptTextStats(nonSpaceCharacters = nonSpace, cjkCharacters = cjk)
+        return ScriptTextStats(nonSpaceCharacters = nonSpace, scriptCharacters = scriptCharacters)
+    }
+
+    private fun matchesScript(unicodeScript: Character.UnicodeScript, script: OcrScript): Boolean =
+        when (script) {
+            OcrScript.LATIN -> unicodeScript == Character.UnicodeScript.LATIN
+            OcrScript.JAPANESE -> unicodeScript == Character.UnicodeScript.HAN ||
+                unicodeScript == Character.UnicodeScript.HIRAGANA ||
+                unicodeScript == Character.UnicodeScript.KATAKANA
+            OcrScript.CHINESE -> unicodeScript == Character.UnicodeScript.HAN
+            OcrScript.KOREAN -> unicodeScript == Character.UnicodeScript.HANGUL
+            OcrScript.DEVANAGARI -> unicodeScript == Character.UnicodeScript.DEVANAGARI
+        }
+
+    private fun nextNonLatinScript(script: OcrScript): OcrScript {
+        val index = NON_LATIN_OCR_SCRIPTS.indexOf(script)
+        return NON_LATIN_OCR_SCRIPTS[(index + 1).mod(NON_LATIN_OCR_SCRIPTS.size)]
     }
 
     private fun dwellComplete(state: AutoScriptState, nowMs: Long): Boolean {

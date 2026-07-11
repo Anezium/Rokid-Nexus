@@ -8,49 +8,66 @@ import org.junit.Test
 
 class AutoScriptPolicyTest {
     @Test
-    fun probeBecomesDueEveryThreeSecondsWhileLatin() {
-        val first = AutoScriptPolicy.planLiveFrame(AutoScriptState(), nowMs = 1_000L)
-        assertEquals(OcrScript.LATIN, first.script)
-        assertFalse(first.isProbe)
+    fun probeRotatesThroughOneNonLatinScriptEveryThreeSeconds() {
+        var state = AutoScriptPolicy.planLiveFrame(AutoScriptState(), nowMs = 1_000L).also {
+            assertEquals(OcrScript.LATIN, it.script)
+            assertFalse(it.isProbe)
+        }.nextState
 
-        val early = AutoScriptPolicy.planLiveFrame(first.nextState, nowMs = 3_999L)
+        val early = AutoScriptPolicy.planLiveFrame(state, nowMs = 3_999L)
         assertFalse(early.isProbe)
+        state = early.nextState
 
-        val due = AutoScriptPolicy.planLiveFrame(early.nextState, nowMs = 4_000L)
-        assertTrue(due.isProbe)
-        assertEquals(OcrScript.JAPANESE, due.script)
-
-        val nextDue = AutoScriptPolicy.planLiveFrame(due.nextState, nowMs = 7_000L)
-        assertTrue(nextDue.isProbe)
+        val expected = listOf(
+            OcrScript.JAPANESE,
+            OcrScript.CHINESE,
+            OcrScript.KOREAN,
+            OcrScript.DEVANAGARI,
+            OcrScript.JAPANESE,
+        )
+        expected.forEachIndexed { index, script ->
+            val plan = AutoScriptPolicy.planLiveFrame(state, nowMs = 4_000L + index * 3_000L)
+            assertTrue(plan.isProbe)
+            assertEquals(script, plan.script)
+            state = plan.nextState
+        }
     }
 
     @Test
-    fun cjkProbeSwitchesAtThirtyPercentWithEightCharacters() {
-        val state = AutoScriptState(lastProbeAtMs = 0L)
-        val result = AutoScriptPolicy.observeLiveResult(
-            state = state,
-            nowMs = 3_000L,
-            script = OcrScript.JAPANESE,
-            isProbe = true,
-            text = "日本語abcdefg",
+    fun everyNonLatinProbeCanWinTheSameCredibilityComparison() {
+        val credibleText = mapOf(
+            OcrScript.JAPANESE to "\u65e5\u672c\u8a9eabcdefg",
+            OcrScript.CHINESE to "\u4e2d\u6587\u5b57abcdefg",
+            OcrScript.KOREAN to "\ud55c\uad6d\uc5b4abcdefg",
+            OcrScript.DEVANAGARI to "\u0915\u0916\u0917abcdefg",
         )
 
-        assertTrue(result.acceptResult)
-        assertTrue(result.switched)
-        assertEquals(OcrScript.JAPANESE, result.effectiveScript)
+        credibleText.forEach { (script, text) ->
+            val result = AutoScriptPolicy.observeLiveResult(
+                state = AutoScriptState(lastProbeAtMs = 0L),
+                nowMs = 3_000L,
+                script = script,
+                isProbe = true,
+                text = text,
+            )
+
+            assertTrue(script.name, result.acceptResult)
+            assertTrue(script.name, result.switched)
+            assertEquals(script, result.effectiveScript)
+        }
 
         val tooShort = AutoScriptPolicy.observeLiveResult(
-            state = state,
+            state = AutoScriptState(lastProbeAtMs = 0L),
             nowMs = 3_000L,
-            script = OcrScript.JAPANESE,
+            script = OcrScript.CHINESE,
             isProbe = true,
-            text = "日本語abc",
+            text = "\u4e2d\u6587\u5b57abc",
         )
         assertFalse(tooShort.acceptResult)
     }
 
     @Test
-    fun minimumDwellBlocksLatinToJapaneseSwitchAfterRecentRevert() {
+    fun minimumDwellBlocksLatinToNonLatinSwitchAfterRecentRevert() {
         val state = AutoScriptState(
             effectiveScript = OcrScript.LATIN,
             lastProbeAtMs = 3_000L,
@@ -59,9 +76,9 @@ class AutoScriptPolicyTest {
         val blocked = AutoScriptPolicy.observeLiveResult(
             state = state,
             nowMs = 5_999L,
-            script = OcrScript.JAPANESE,
+            script = OcrScript.KOREAN,
             isProbe = true,
-            text = "日本語abcdefg",
+            text = "\ud55c\uad6d\ubb38\uc790\uc778\uc2dd\uc2dc\ud5d8",
         )
         assertFalse(blocked.acceptResult)
         assertEquals(OcrScript.LATIN, blocked.effectiveScript)
@@ -69,63 +86,65 @@ class AutoScriptPolicyTest {
         val allowed = AutoScriptPolicy.observeLiveResult(
             state = state,
             nowMs = 6_000L,
-            script = OcrScript.JAPANESE,
+            script = OcrScript.KOREAN,
             isProbe = true,
-            text = "日本語abcdefg",
+            text = "\ud55c\uad6d\ubb38\uc790\uc778\uc2dd\uc2dc\ud5d8",
         )
         assertTrue(allowed.acceptResult)
-        assertEquals(OcrScript.JAPANESE, allowed.effectiveScript)
+        assertEquals(OcrScript.KOREAN, allowed.effectiveScript)
     }
 
     @Test
-    fun japaneseRevertsAfterSixConsecutiveLowCjkFrames() {
-        var state = AutoScriptState(
-            effectiveScript = OcrScript.JAPANESE,
-            lastSwitchAtMs = 0L,
-        )
-        repeat(AUTO_REVERT_CONSECUTIVE_FRAMES - 1) { index ->
-            val observation = AutoScriptPolicy.observeLiveResult(
-                state,
-                nowMs = 5_000L + index,
-                script = OcrScript.JAPANESE,
-                isProbe = false,
-                text = "plain latin words",
+    fun everyNonLatinScriptFallsBackAfterSixLowScriptFrames() {
+        NON_LATIN_OCR_SCRIPTS.forEach { script ->
+            var state = AutoScriptState(
+                effectiveScript = script,
+                lastSwitchAtMs = 0L,
             )
-            assertFalse(observation.switched)
-            state = observation.nextState
+            repeat(AUTO_REVERT_CONSECUTIVE_FRAMES - 1) { index ->
+                val observation = AutoScriptPolicy.observeLiveResult(
+                    state,
+                    nowMs = 5_000L + index,
+                    script = script,
+                    isProbe = false,
+                    text = "plain latin words",
+                )
+                assertFalse(script.name, observation.switched)
+                state = observation.nextState
+            }
+            val sixth = AutoScriptPolicy.observeLiveResult(
+                state,
+                nowMs = 5_100L,
+                script = script,
+                isProbe = false,
+                text = "still latin",
+            )
+            assertTrue(script.name, sixth.switched)
+            assertEquals(OcrScript.LATIN, sixth.effectiveScript)
         }
-        val sixth = AutoScriptPolicy.observeLiveResult(
-            state,
-            nowMs = 5_100L,
-            script = OcrScript.JAPANESE,
-            isProbe = false,
-            text = "still latin",
-        )
-        assertTrue(sixth.switched)
-        assertEquals(OcrScript.LATIN, sixth.effectiveScript)
     }
 
     @Test
     fun dwellHysteresisBlocksRevertUntilFiveSeconds() {
         var state = AutoScriptState(
-            effectiveScript = OcrScript.JAPANESE,
+            effectiveScript = OcrScript.DEVANAGARI,
             lastSwitchAtMs = 1_000L,
         )
         repeat(AUTO_REVERT_CONSECUTIVE_FRAMES) {
             state = AutoScriptPolicy.observeLiveResult(
                 state,
                 nowMs = 2_000L + it,
-                script = OcrScript.JAPANESE,
+                script = OcrScript.DEVANAGARI,
                 isProbe = false,
                 text = "latin only",
             ).nextState
         }
-        assertEquals(OcrScript.JAPANESE, state.effectiveScript)
+        assertEquals(OcrScript.DEVANAGARI, state.effectiveScript)
 
         val afterDwell = AutoScriptPolicy.observeLiveResult(
             state,
             nowMs = 6_000L,
-            script = OcrScript.JAPANESE,
+            script = OcrScript.DEVANAGARI,
             isProbe = false,
             text = "latin only",
         )
@@ -133,33 +152,47 @@ class AutoScriptPolicyTest {
     }
 
     @Test
-    fun frozenLowTextRetriesOtherRecognizerOnlyOnceAndKeepsMoreText() {
-        val initial = FrozenScriptState(primaryScript = OcrScript.LATIN)
-        val primary = AutoScriptPolicy.observeFrozenResult(initial, OcrScript.LATIN, "short")
-        assertEquals(OcrScript.JAPANESE, primary.retryScript)
-        assertTrue(primary.nextState.otherRecognizerTried)
+    fun frozenLatinPrimaryRetriesTheCurrentRotationScriptOnlyOnce() {
+        NON_LATIN_OCR_SCRIPTS.forEach { retryScript ->
+            val initial = FrozenScriptState(
+                primaryScript = OcrScript.LATIN,
+                retryScript = retryScript,
+            )
+            val primary = AutoScriptPolicy.observeFrozenResult(initial, OcrScript.LATIN, "short")
+            assertEquals(retryScript, primary.retryScript)
+            assertTrue(primary.nextState.otherRecognizerTried)
 
-        val retry = AutoScriptPolicy.observeFrozenResult(
-            primary.nextState,
-            OcrScript.JAPANESE,
-            "日本語の長い文章です",
-        )
-        assertNull(retry.retryScript)
-        assertEquals(
-            OcrScript.JAPANESE,
-            AutoScriptPolicy.betterFrozenScript(
+            val retry = AutoScriptPolicy.observeFrozenResult(
+                primary.nextState,
+                retryScript,
+                "long enough retry text",
+            )
+            assertNull(retry.retryScript)
+
+            val laterLowResult = AutoScriptPolicy.observeFrozenResult(
+                retry.nextState,
                 OcrScript.LATIN,
-                "short",
-                OcrScript.JAPANESE,
-                "日本語の長い文章です",
-            ),
-        )
+                "tiny",
+            )
+            assertNull(laterLowResult.retryScript)
+        }
+    }
 
-        val laterLowResult = AutoScriptPolicy.observeFrozenResult(
-            retry.nextState,
-            OcrScript.LATIN,
-            "tiny",
-        )
-        assertNull(laterLowResult.retryScript)
+    @Test
+    fun frozenNonLatinPrimaryRetriesLatinAndKeepsTheResultWithMoreText() {
+        NON_LATIN_OCR_SCRIPTS.forEach { primaryScript ->
+            val initial = FrozenScriptState(primaryScript = primaryScript)
+            val primary = AutoScriptPolicy.observeFrozenResult(initial, primaryScript, "short")
+            assertEquals(OcrScript.LATIN, primary.retryScript)
+            assertEquals(
+                OcrScript.LATIN,
+                AutoScriptPolicy.betterFrozenScript(
+                    primaryScript,
+                    "short",
+                    OcrScript.LATIN,
+                    "a much longer latin retry result",
+                ),
+            )
+        }
     }
 }

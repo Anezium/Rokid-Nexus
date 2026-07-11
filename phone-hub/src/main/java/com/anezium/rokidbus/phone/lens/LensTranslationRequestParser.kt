@@ -96,7 +96,8 @@ internal object LensTranslationRequestParser {
         val raw = payload.opt("mode").takeUnless { it == null || it === JSONObject.NULL }
             ?: return LensRecognizerMode.LATIN
         if (raw !is String) return null
-        return LensRecognizerMode.entries.firstOrNull { it.name.equals(raw, ignoreCase = true) }
+        return LensRecognizerMode.entries.firstOrNull { it.wireValue.equals(raw, ignoreCase = true) }
+            ?: LensRecognizerMode.LATIN
     }
 
     private fun isSafeRequestId(value: String): Boolean =
