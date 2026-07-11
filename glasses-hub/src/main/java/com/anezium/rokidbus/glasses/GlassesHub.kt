@@ -39,6 +39,7 @@ object GlassesHub {
     private val registrations = CopyOnWriteArrayList<Registration>()
     private val launcherListeners = CopyOnWriteArrayList<(List<LauncherEntry>) -> Unit>()
     private val wifiOwnership = GlassesWifiOwnership()
+    private val autoEnrollAttempted = AtomicBoolean(false)
     private val wifiRequestExecutor = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "RokidNexusWifi").apply { isDaemon = true }
     }
@@ -322,11 +323,20 @@ object GlassesHub {
             enabled = enabled,
             wifiCurrentlyEnabled = wifiCurrentlyEnabled,
             setWifiEnabled = { requested ->
-                runCatching { SelfArmController.setWifiEnabled(context, requested) }
+                val applied = runCatching { SelfArmController.setWifiEnabled(context, requested) }
                     .onFailure { logError("glassesWifiRequest shell failed", it) }
                     .getOrDefault(false)
+                if (requested && !applied) attemptWifiAutoEnroll(context)
+                applied
             },
         )
         log("glassesWifiRequest enabled=$enabled hubOwned=${result.hubOwned} applied=${result.applied}")
+    }
+
+    private fun attemptWifiAutoEnroll(context: Context) {
+        if (SelfArmLocalAdbBootstrapper.isBootstrapComplete(context)) return
+        val attempted = autoEnrollAttempted.compareAndSet(false, true)
+        val serviceConnected = attempted && SelfArmWirelessAccessibilityService.startConnectedService()
+        log("glassesWifi auto-enroll attempted=$attempted serviceConnected=$serviceConnected")
     }
 }
