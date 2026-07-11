@@ -331,6 +331,7 @@ class LensActivity : AppCompatActivity() {
     private var lastServingEngine: String? = null
     private val autoScriptLock = Any()
     private var autoScriptState = AutoScriptState()
+    private var lastNonLatinEffectiveScript: OcrScript? = null
     @Volatile private var isFrozen = false
     @Volatile private var isActivityResumed = false
     private val analyzerBusy = AtomicBoolean(false)
@@ -1188,6 +1189,19 @@ class LensActivity : AppCompatActivity() {
     }
 
     private fun unfreezeLens() {
+        val frozenWinner = frozenSelectedScript
+        if (frozenWinner != OcrScript.LATIN) {
+            val nowMs = SystemClock.elapsedRealtime()
+            synchronized(autoScriptLock) {
+                lastNonLatinEffectiveScript = frozenWinner
+                autoScriptState = AutoScriptPolicy.seedLiveState(
+                    state = autoScriptState,
+                    script = lastNonLatinEffectiveScript ?: frozenWinner,
+                    nowMs = nowMs,
+                )
+                effectiveScript = autoScriptState.effectiveScript
+            }
+        }
         activeHdCaptureSession?.cancel("unfreeze")
         freezeRequestSerial.incrementAndGet()
         pendingFastFreeze.set(null)
@@ -1623,12 +1637,49 @@ class LensActivity : AppCompatActivity() {
     ) {
         val startedAtMs = SystemClock.elapsedRealtime()
         val executor = ContextCompat.getMainExecutor(this)
+        val retryPointer = when {
+            initialScript == frozenScriptState.primaryScript -> frozenScriptState.retryScript
+            initialScript == OcrScript.LATIN && frozenScriptState.primaryScript != OcrScript.LATIN -> {
+                frozenScriptState.primaryScript
+            }
+            else -> OcrScript.LATIN
+        }
+        var policyState = FrozenScriptState(
+            primaryScript = initialScript,
+            retryScript = retryPointer,
+        )
+        val recognitions = linkedMapOf<OcrScript, FrozenRecognition>()
 
-        fun recognize(script: OcrScript, primary: FrozenRecognition?) {
+        fun finish(winnerScript: OcrScript) {
+            val winner = recognitions[winnerScript] ?: recognitions.values.firstOrNull()
+            if (winner == null) {
+                onFailure(IllegalStateException("Frozen script sweep produced no result"))
+                return
+            }
+            val completed = winner.copy(latencyMs = SystemClock.elapsedRealtime() - startedAtMs)
+            frozenSelectedScript = completed.script
+            Log.i(TAG, "freezeScriptWinner id=$requestId script=${completed.script.name}")
+            onSuccess(completed)
+        }
+
+        fun recognizeNext() {
+            val script = AutoScriptPolicy.planFrozenRecognition(policyState)
+            if (script == null) {
+                policyState.winnerScript?.let(::finish)
+                    ?: onFailure(IllegalStateException("Frozen script sweep ended without a winner"))
+                return
+            }
             val task = runCatching {
                 recognizerFor(script).process(InputImage.fromBitmap(bitmap, 0))
             }.getOrElse { cause ->
-                if (primary != null) onSuccess(primary) else onFailure(cause)
+                if (script == policyState.primaryScript) {
+                    onFailure(cause)
+                } else {
+                    Log.i(TAG, "freezeScriptSweep id=$requestId script=${script.name} chars=0")
+                    val resolution = AutoScriptPolicy.resolveFrozenResult(policyState, script, "")
+                    policyState = resolution.nextState
+                    resolution.winnerScript?.let(::finish) ?: recognizeNext()
+                }
                 return
             }
             task
@@ -1642,47 +1693,33 @@ class LensActivity : AppCompatActivity() {
                         script = script,
                         latencyMs = SystemClock.elapsedRealtime() - startedAtMs,
                     )
-                    if (primary != null) {
-                        val winningScript = AutoScriptPolicy.betterFrozenScript(
-                            primaryScript = primary.script,
-                            primaryText = primary.text.text,
-                            retryScript = recognition.script,
-                            retryText = recognition.text.text,
-                        )
-                        val winner = if (winningScript == recognition.script) recognition else primary.copy(
-                            latencyMs = recognition.latencyMs,
-                        )
-                        frozenSelectedScript = winner.script
-                        onSuccess(winner)
-                        return@addOnSuccessListener
+                    recognitions[script] = recognition
+                    if (script != policyState.primaryScript) {
+                        val chars = AutoScriptPolicy.textStats(text.text, script).nonSpaceCharacters
+                        Log.i(TAG, "freezeScriptSweep id=$requestId script=${script.name} chars=$chars")
                     }
-
-                    val observation = AutoScriptPolicy.observeFrozenResult(
-                        state = frozenScriptState,
+                    val resolution = AutoScriptPolicy.resolveFrozenResult(
+                        state = policyState,
                         script = script,
                         text = text.text,
                     )
-                    frozenScriptState = observation.nextState
-                    val retryScript = observation.retryScript
-                    if (retryScript != null) {
-                        Log.i(TAG, "freezeAutoRetry id=$requestId from=${script.name} to=${retryScript.name}")
-                        recognize(retryScript, recognition)
-                    } else {
-                        frozenSelectedScript = recognition.script
-                        onSuccess(recognition)
-                    }
+                    policyState = resolution.nextState
+                    resolution.winnerScript?.let(::finish) ?: recognizeNext()
                 }
                 .addOnFailureListener(executor) { cause ->
-                    if (primary != null) {
-                        frozenSelectedScript = primary.script
-                        onSuccess(primary.copy(latencyMs = SystemClock.elapsedRealtime() - startedAtMs))
-                    } else if (isCurrentFreeze(requestId)) {
+                    if (!isCurrentFreeze(requestId)) return@addOnFailureListener
+                    if (script == policyState.primaryScript) {
                         onFailure(cause)
+                        return@addOnFailureListener
                     }
+                    Log.i(TAG, "freezeScriptSweep id=$requestId script=${script.name} chars=0")
+                    val resolution = AutoScriptPolicy.resolveFrozenResult(policyState, script, "")
+                    policyState = resolution.nextState
+                    resolution.winnerScript?.let(::finish) ?: recognizeNext()
                 }
         }
 
-        recognize(initialScript, primary = null)
+        recognizeNext()
     }
 
     private fun recognizerFor(script: OcrScript): TextRecognizer =
@@ -3183,16 +3220,23 @@ class LensActivity : AppCompatActivity() {
                     }
                     val latencyMs = SystemClock.elapsedRealtime() - processStartMs
                     val scriptObservation = synchronized(autoScriptLock) {
-                        AutoScriptPolicy.observeLiveResult(
+                        val observation = AutoScriptPolicy.observeLiveResult(
                             state = autoScriptState,
                             nowMs = SystemClock.elapsedRealtime(),
                             script = modeSnapshot,
                             isProbe = scriptPlan.isProbe,
+                            isBurstProbe = scriptPlan.isBurstProbe,
                             text = text.text,
-                        ).also {
-                            autoScriptState = it.nextState
-                            effectiveScript = it.effectiveScript
+                        )
+                        if (observation.switched && observation.effectiveScript != OcrScript.LATIN) {
+                            lastNonLatinEffectiveScript = observation.effectiveScript
                         }
+                        autoScriptState = AutoScriptPolicy.biasNextProbe(
+                            state = observation.nextState,
+                            script = lastNonLatinEffectiveScript.takeIf { observation.switched },
+                        )
+                        effectiveScript = autoScriptState.effectiveScript
+                        observation.copy(nextState = autoScriptState)
                     }
                     if (scriptObservation.switched) {
                         Log.i(TAG, "autoScriptSwitch effective=${scriptObservation.effectiveScript.name}")
