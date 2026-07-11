@@ -164,6 +164,10 @@ class LensSettingsActivity : Activity() {
             )
         }
         setContentView(root)
+    }
+
+    override fun onResume() {
+        super.onResume()
         refreshDeepLUsage()
     }
 

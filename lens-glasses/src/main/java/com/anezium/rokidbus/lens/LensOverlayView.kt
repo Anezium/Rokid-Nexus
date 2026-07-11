@@ -982,7 +982,6 @@ class LensOverlayView @JvmOverloads constructor(
     private fun drawHud(canvas: Canvas) {
         val chip = hudChipGeometry()
         canvas.drawRoundRect(chip.background, chip.cornerRadius, chip.cornerRadius, hudChipBackgroundPaint)
-        canvas.drawCircle(chip.dotCenterX, chip.dotCenterY, chip.dotRadius, if (hudState.linkUp) hudPaint else hudAlertPaint)
         chip.lines.forEachIndexed { index, line ->
             val paint = if (line.alert) hudAlertPaint else hudPaint
             // Right-aligned text keeps the chip visually anchored to the corner.
@@ -998,9 +997,6 @@ class LensOverlayView @JvmOverloads constructor(
         val padding: Float,
         val baselines: FloatArray,
         val lines: List<HudChipLine>,
-        val dotCenterX: Float,
-        val dotCenterY: Float,
-        val dotRadius: Float,
     )
 
     private fun hudChipGeometry(): HudChipGeometry {
@@ -1009,12 +1005,10 @@ class LensOverlayView @JvmOverloads constructor(
         val padding = 7f * density
         val lineHeight = hudPaint.textSize + 3f * density
         val lines = composeHudChip(hudState)
-        val dotRadius = 3f * density
-        val dotSlot = dotRadius * 2f + 5f * density
         val textWidth = lines.maxOf {
             (if (it.alert) hudAlertPaint else hudPaint).measureText(it.text)
         }
-        val chipWidth = min(width - margin * 2f, textWidth + dotSlot + padding * 2f)
+        val chipWidth = min(width - margin * 2f, textWidth + padding * 2f)
         val chipHeight = min(height - margin * 2f, padding * 2f + lineHeight * lines.size - 3f * density)
         val background = RectF(
             width - margin - chipWidth,
@@ -1034,9 +1028,6 @@ class LensOverlayView @JvmOverloads constructor(
             padding = padding,
             baselines = baselines,
             lines = lines,
-            dotCenterX = background.left + padding + dotRadius,
-            dotCenterY = baselines[0] - hudPaint.textSize * 0.32f,
-            dotRadius = dotRadius,
         )
     }
 
