@@ -358,9 +358,10 @@ class TranslationEngineRouter internal constructor(
     private fun candidates(config: TranslationEngineConfig): List<TranslationEngine> =
         when (config.engine) {
             TranslationEngine.AUTO -> buildList {
-                if (config.geminiApiKey.isNotBlank()) add(TranslationEngine.GEMINI)
+                // Field-measured 2026-07-11: DeepL 0.3-0.7s and best quality; Gemini ~3s.
                 if (config.deepLApiKey.isNotBlank()) add(TranslationEngine.DEEPL)
-                // Product contract: AUTO intentionally tries keyless Google Web before offline ML Kit.
+                if (config.geminiApiKey.isNotBlank()) add(TranslationEngine.GEMINI)
+                // Keyless Google Web is the unstable last online resort before offline ML Kit.
                 add(TranslationEngine.GOOGLE_WEB)
                 add(TranslationEngine.MLKIT_OFFLINE)
             }
@@ -370,10 +371,12 @@ class TranslationEngineRouter internal constructor(
             )
             TranslationEngine.DEEPL -> buildList {
                 if (config.deepLApiKey.isNotBlank()) add(TranslationEngine.DEEPL)
+                add(TranslationEngine.GOOGLE_WEB)
                 add(TranslationEngine.MLKIT_OFFLINE)
             }
             TranslationEngine.GEMINI -> buildList {
                 if (config.geminiApiKey.isNotBlank()) add(TranslationEngine.GEMINI)
+                add(TranslationEngine.GOOGLE_WEB)
                 add(TranslationEngine.MLKIT_OFFLINE)
             }
             TranslationEngine.MLKIT_OFFLINE -> listOf(TranslationEngine.MLKIT_OFFLINE)

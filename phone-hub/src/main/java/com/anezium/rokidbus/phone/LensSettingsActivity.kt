@@ -20,6 +20,11 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import com.anezium.rokidbus.client.ui.BusTheme
+import java.net.HttpURLConnection
+import java.net.URL
+import java.text.NumberFormat
+import java.util.Locale
+import org.json.JSONObject
 import com.anezium.rokidbus.phone.lens.LENS_GEMINI_MODEL_DEFAULT
 import com.anezium.rokidbus.phone.lens.LENS_GEMINI_MODELS
 import com.anezium.rokidbus.phone.lens.LENS_TRANSLATION_PREFS_NAME
@@ -36,6 +41,7 @@ class LensSettingsActivity : Activity() {
     private lateinit var translationPrefs: SharedPreferences
     private val engineDots = mutableMapOf<TranslationEngine, View>()
     private val engineNames = mutableMapOf<TranslationEngine, TextView>()
+    private var deepLUsageLabel: TextView? = null
     private val modelDots = mutableMapOf<String, View>()
     private val modelNames = mutableMapOf<String, TextView>()
     private lateinit var outputLanguageValue: TextView
@@ -48,9 +54,9 @@ class LensSettingsActivity : Activity() {
 
     private val engineChoices = listOf(
         EngineChoice(TranslationEngine.AUTO, "Auto", "Best configured engine, offline fallback"),
-        EngineChoice(TranslationEngine.GEMINI, "Gemini", "AI grade, fixes OCR errors - needs key"),
         EngineChoice(TranslationEngine.DEEPL, "DeepL", "High quality - needs key"),
-        EngineChoice(TranslationEngine.GOOGLE_WEB, "Google", "Good quality - no key needed"),
+        EngineChoice(TranslationEngine.GEMINI, "Gemini", "AI grade, fixes OCR errors - needs key"),
+        EngineChoice(TranslationEngine.GOOGLE_WEB, "Google", "No key - unstable, last-resort fallback"),
         EngineChoice(TranslationEngine.MLKIT_OFFLINE, "On-device", "Works offline, basic quality"),
     )
 
@@ -158,6 +164,36 @@ class LensSettingsActivity : Activity() {
             )
         }
         setContentView(root)
+        refreshDeepLUsage()
+    }
+
+    /** Fetches DeepL /v2/usage off the main thread and swaps the key row hint for live quota. */
+    private fun refreshDeepLUsage() {
+        val label = deepLUsageLabel ?: return
+        val apiKey = translationPrefs.getString(LENS_TRANSLATION_PREF_DEEPL_API_KEY, "").orEmpty().trim()
+        if (apiKey.isEmpty()) return
+        Thread {
+            val usage = runCatching {
+                val host = if (apiKey.endsWith(":fx")) "api-free.deepl.com" else "api.deepl.com"
+                val connection = URL("https://$host/v2/usage").openConnection() as HttpURLConnection
+                try {
+                    connection.connectTimeout = 4_000
+                    connection.readTimeout = 4_000
+                    connection.setRequestProperty("Authorization", "DeepL-Auth-Key $apiKey")
+                    val body = connection.inputStream.bufferedReader().use { it.readText() }
+                    val json = JSONObject(body)
+                    json.getLong("character_count") to json.getLong("character_limit")
+                } finally {
+                    connection.disconnect()
+                }
+            }.getOrNull() ?: return@Thread
+            runOnUiThread {
+                if (isDestroyed || isFinishing) return@runOnUiThread
+                val (used, limit) = usage
+                val formatter = NumberFormat.getIntegerInstance(Locale.FRANCE)
+                label.text = "${formatter.format(used)} / ${formatter.format(limit)} chars used"
+            }
+        }.apply { isDaemon = true }.start()
     }
 
     private fun engineCard(): LinearLayout =
@@ -422,7 +458,11 @@ class LensSettingsActivity : Activity() {
                         NexusUi.rowLabel(this@LensSettingsActivity, label),
                         LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
                     )
-                    addView(NexusUi.rowSub(this@LensSettingsActivity, hintSource))
+                    addView(
+                        NexusUi.rowSub(this@LensSettingsActivity, hintSource).also { hint ->
+                            if (prefKey == LENS_TRANSLATION_PREF_DEEPL_API_KEY) deepLUsageLabel = hint
+                        },
+                    )
                 },
                 NexusUi.block(),
             )

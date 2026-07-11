@@ -26,7 +26,7 @@ class TranslationEngineRouterTest {
         try {
             val result = translate(router)
 
-            assertEquals(listOf("gemini", "deepl", "google"), order)
+            assertEquals(listOf("deepl", "gemini", "google"), order)
             assertEquals("google-result", result.single().dst)
         } finally {
             router.close()
@@ -124,7 +124,7 @@ class TranslationEngineRouterTest {
         try {
             translate(router)
 
-            assertEquals(listOf("gemini", "deepl", "mlkit"), order)
+            assertEquals(listOf("deepl", "gemini", "mlkit"), order)
         } finally {
             router.close()
         }
@@ -143,7 +143,8 @@ class TranslationEngineRouterTest {
         try {
             translate(router)
 
-            assertEquals(listOf("mlkit"), order)
+            // The keyed engine is skipped; keyless Google Web now rescues before offline.
+            assertEquals(listOf("google"), order)
         } finally {
             router.close()
         }
