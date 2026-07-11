@@ -151,10 +151,10 @@ class ParagraphTranslationLayoutTest {
     }
 
     @Test
-    fun fullWidthAndBoundedHeightAreExhaustedBeforeTruncation() {
+    fun fullWidthAndAvailableHeightAreExhaustedBeforeTruncation() {
         val decision = decideParagraphPanelFit(
             sourceRect = ParagraphPanelRect(10f, 20f, 110f, 40f),
-            gapBelowPx = 1_000f,
+            gapBelowPx = 27f,
             growLeftPx = 10f,
             growRightPx = 20f,
             textLength = 1_000,
@@ -170,7 +170,10 @@ class ParagraphTranslationLayoutTest {
         assertEquals(10f, decision.textSizePx, 0f)
         assertEquals(0f, decision.panelRect.left, 0f)
         assertEquals(130f, decision.panelRect.right, 0f)
-        assertEquals(47f, decision.panelRect.bottom, 0.01f)
+        assertEquals(67f, decision.panelRect.bottom, 0.01f)
+        assertEquals(1_002f, decision.requiredHeightPx, 0f)
+        assertEquals(47f, decision.availableHeightPx, 0f)
+        assertEquals(955f, decision.overflowHeightPx, 0f)
     }
 
     @Test
@@ -195,8 +198,190 @@ class ParagraphTranslationLayoutTest {
                 textSizePx = 10f,
                 panelRect = ParagraphPanelRect(0f, 0f, 100f, 26f),
                 truncated = false,
+                requiredHeightPx = 26f,
+                availableHeightPx = 27f,
+                overflowHeightPx = 0f,
             ),
             decision,
+        )
+    }
+
+    @Test
+    fun globalViewportSpaceLetsFullTextGrowBeyondOldHeightFactor() {
+        val sourceRect = ParagraphPanelRect(20f, 20f, 120f, 60f)
+        val budget = computeParagraphPanelSpaceBudgets(
+            panels = listOf(spaceInput(sourceRect)),
+            viewportRect = ParagraphPanelRect(0f, 0f, 480f, 640f),
+            edgeMarginPx = 4f,
+        ).single()
+
+        val decision = decideParagraphPanelFit(
+            sourceRect = sourceRect,
+            gapBelowPx = budget.growDownPx,
+            growLeftPx = 0f,
+            growRightPx = 0f,
+            growUpPx = budget.growUpPx,
+            textLength = 200,
+            startingTextSizePx = 17f,
+            minimumTextSizePx = 7f,
+            horizontalPaddingPx = 1f,
+            verticalPaddingPx = 1f,
+            textSizeStepPx = 1f,
+            measureTextHeightPx = { 80f },
+        )
+
+        assertFalse(decision.truncated)
+        assertEquals(17f, decision.textSizePx, 0f)
+        assertEquals(82f, decision.requiredHeightPx, 0f)
+        assertEquals(632f, decision.availableHeightPx, 0f)
+        assertEquals(0f, decision.overflowHeightPx, 0f)
+        assertEquals(102f, decision.panelRect.bottom, 0f)
+        assertTrue(decision.panelRect.height > sourceRect.height * PARAGRAPH_PANEL_MAX_HEIGHT_FACTOR)
+    }
+
+    @Test
+    fun verticallyDisjointBandLetsFullTextUseNeighboringHorizontalSpace() {
+        val sourceRect = ParagraphPanelRect(20f, 20f, 120f, 60f)
+        val inputs = listOf(
+            spaceInput(sourceRect),
+            spaceInput(ParagraphPanelRect(200f, 100f, 300f, 140f)),
+        )
+        val budget = computeParagraphPanelSpaceBudgets(
+            panels = inputs,
+            viewportRect = ParagraphPanelRect(0f, 0f, 480f, 640f),
+            edgeMarginPx = 4f,
+        ).first()
+
+        val decision = decideParagraphPanelFit(
+            sourceRect = sourceRect,
+            gapBelowPx = 0f,
+            growLeftPx = budget.growLeftPx,
+            growRightPx = budget.growRightPx,
+            textLength = 120,
+            startingTextSizePx = 17f,
+            minimumTextSizePx = 7f,
+            horizontalPaddingPx = 1f,
+            verticalPaddingPx = 1f,
+            textSizeStepPx = 1f,
+            measureTextHeightPx = { request -> if (request.contentWidthPx >= 300) 38f else 80f },
+        )
+
+        assertEquals(356f, budget.growRightPx, 0f)
+        assertFalse(decision.truncated)
+        assertEquals(17f, decision.textSizePx, 0f)
+        assertTrue(decision.panelRect.width >= 300f)
+        assertEquals(0f, decision.overflowHeightPx, 0f)
+    }
+
+    @Test
+    fun fitUsesSpaceAboveAfterDownwardSpaceIsConsumed() {
+        val sourceRect = ParagraphPanelRect(20f, 100f, 220f, 120f)
+        val budgets = computeParagraphPanelSpaceBudgets(
+            panels = listOf(
+                spaceInput(sourceRect, verticalClearancePx = 2f),
+                spaceInput(
+                    ParagraphPanelRect(20f, 130f, 220f, 150f),
+                    verticalClearancePx = 2f,
+                ),
+            ),
+            viewportRect = ParagraphPanelRect(0f, 0f, 240f, 160f),
+            edgeMarginPx = 0f,
+        )
+        val budget = budgets.first()
+
+        val decision = decideParagraphPanelFit(
+            sourceRect = sourceRect,
+            gapBelowPx = budget.growDownPx,
+            growLeftPx = 0f,
+            growRightPx = 0f,
+            growUpPx = budget.growUpPx,
+            textLength = 100,
+            startingTextSizePx = 12f,
+            minimumTextSizePx = 7f,
+            horizontalPaddingPx = 1f,
+            verticalPaddingPx = 1f,
+            textSizeStepPx = 1f,
+            measureTextHeightPx = { 50f },
+        )
+
+        assertEquals(4f, budget.growDownPx, 0f)
+        assertEquals(100f, budget.growUpPx, 0f)
+        assertFalse(decision.truncated)
+        assertEquals(72f, decision.panelRect.top, 0f)
+        assertEquals(124f, decision.panelRect.bottom, 0f)
+    }
+
+    @Test
+    fun globalBudgetsPartitionSharedGapWithAdaptiveClearance() {
+        val inputs = listOf(
+            spaceInput(ParagraphPanelRect(0f, 20f, 100f, 60f), horizontalClearancePx = 10f),
+            spaceInput(ParagraphPanelRect(200f, 20f, 300f, 60f), horizontalClearancePx = 10f),
+        )
+
+        val budgets = computeParagraphPanelSpaceBudgets(
+            panels = inputs,
+            viewportRect = ParagraphPanelRect(0f, 0f, 400f, 200f),
+            edgeMarginPx = 0f,
+        )
+
+        assertEquals(45f, budgets[0].growRightPx, 0f)
+        assertEquals(45f, budgets[1].growLeftPx, 0f)
+        val firstRight = inputs[0].sourceRect.right + budgets[0].growRightPx
+        val secondLeft = inputs[1].sourceRect.left - budgets[1].growLeftPx
+        assertEquals(10f, secondLeft - firstRight, 0f)
+    }
+
+    @Test
+    fun genuinelyExhaustedViewportTruncatesAtFloorAndReportsOverflow() {
+        val decision = decideParagraphPanelFit(
+            sourceRect = ParagraphPanelRect(0f, 0f, 100f, 20f),
+            gapBelowPx = 10f,
+            growLeftPx = 10f,
+            growRightPx = 10f,
+            growUpPx = 5f,
+            textLength = 1_000,
+            startingTextSizePx = 14f,
+            minimumTextSizePx = 7f,
+            horizontalPaddingPx = 1f,
+            verticalPaddingPx = 1f,
+            textSizeStepPx = 1f,
+            measureTextHeightPx = { 100f },
+        )
+
+        assertTrue(decision.truncated)
+        assertEquals(7f, decision.textSizePx, 0f)
+        assertEquals(102f, decision.requiredHeightPx, 0f)
+        assertEquals(35f, decision.availableHeightPx, 0f)
+        assertEquals(67f, decision.overflowHeightPx, 0f)
+        assertEquals(-5f, decision.panelRect.top, 0f)
+        assertEquals(30f, decision.panelRect.bottom, 0f)
+    }
+
+    @Test
+    fun postCollisionPanelRequiresOneCompleteMeasuredLineIncludingPadding() {
+        assertTrue(
+            panelFitsMeasuredLayout(
+                panelHeightPx = 14f,
+                paddingPx = 2f,
+                layoutHeightPx = 10f,
+                firstLineHeightPx = 10f,
+            ),
+        )
+        assertFalse(
+            panelFitsMeasuredLayout(
+                panelHeightPx = 13.5f,
+                paddingPx = 2f,
+                layoutHeightPx = 10f,
+                firstLineHeightPx = 10f,
+            ),
+        )
+        assertFalse(
+            panelFitsMeasuredLayout(
+                panelHeightPx = 14f,
+                paddingPx = 2f,
+                layoutHeightPx = 20f,
+                firstLineHeightPx = 10f,
+            ),
         )
     }
 
@@ -289,6 +474,16 @@ class ParagraphTranslationLayoutTest {
         sourceRect = sourceRect,
         allowedRect = sourceRect.copy(bottom = allowedBottom),
         clearancePx = clearancePx,
+    )
+
+    private fun spaceInput(
+        sourceRect: ParagraphPanelRect,
+        horizontalClearancePx: Float = 7f,
+        verticalClearancePx: Float = 2f,
+    ): ParagraphPanelSpaceInput = ParagraphPanelSpaceInput(
+        sourceRect = sourceRect,
+        horizontalClearancePx = horizontalClearancePx,
+        verticalClearancePx = verticalClearancePx,
     )
 
     private fun budgetsBySourceRect(

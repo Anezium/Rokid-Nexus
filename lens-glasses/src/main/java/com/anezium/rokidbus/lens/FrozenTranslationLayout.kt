@@ -44,17 +44,17 @@ internal data class FrozenLayoutParagraph(
 internal const val FROZEN_PARAGRAPH_MAX_LINES = 8
 internal const val FROZEN_PARAGRAPH_MAX_CHARS = 512
 internal const val FROZEN_PARAGRAPH_GAP_LINE_HEIGHTS = 0.85f
+internal const val FROZEN_PARAGRAPH_WITHIN_BLOCK_GAP_LINE_HEIGHTS = 1.8f
 internal const val FROZEN_PARAGRAPH_INDENT_LINE_HEIGHTS = 0.60f
 internal const val FROZEN_PARAGRAPH_HEADING_HEIGHT_RATIO = 1.3f
 
 /**
  * Reconstructs paragraphs from ML Kit line geometry without losing the original line geometry.
  * Blocks are first assigned to deterministic columns, then split on visual paragraph cues and
- * conservative size caps. Each result also carries a same-column downward-growth budget capped
- * by the next paragraph and [PARAGRAPH_PANEL_MAX_HEIGHT_FACTOR]. A pathological frozen OCR line
- * over [maxChars] is split into contiguous horizontal pieces so the cap remains absolute without
- * discarding source text. Stable live lines remain atomic because their translations are cached
- * and requested per line.
+ * conservative size caps. Each result also carries a conservative same-column downward-growth
+ * hint for live layout; frozen rendering replaces that hint with viewport-global allocation. A
+ * pathological frozen OCR line over [maxChars] is split into contiguous horizontal pieces so the
+ * cap remains absolute without discarding source text.
  */
 internal fun segmentFrozenParagraphs(
     blocks: List<FrozenLayoutBlock>,
@@ -248,11 +248,18 @@ private fun segmentFrozenColumn(
             val joinedChars = paragraphChars + if (paragraphLines.isEmpty()) line.text.length else line.text.length + 1
             val exceedsCaps = paragraphLines.isNotEmpty() &&
                 (paragraphLines.size >= maxLines || joinedChars > maxChars)
-            val visualBoundary = previous != null && (
+            // Gap/heading cues fire only across block boundaries: within one ML Kit block,
+            // ordinary glyph-box noise (20->27px height, jittery leading) crosses both
+            // thresholds and shredded live articles into per-line paragraphs (field
+            // 2026-07-11). Inside a block only a genuine blank-line gap still splits,
+            // covering blocks that lump two real paragraphs together.
+            val visualBoundary = previous != null && if (lineIndex == 0) {
                 hasFrozenParagraphGap(previous, line, medianLineHeight) ||
                     hasFrozenHeadingJump(previous, line) ||
-                    (lineIndex == 0 && hasFrozenIndentChange(paragraphLines, line, medianLineHeight))
-                )
+                    hasFrozenIndentChange(paragraphLines, line, medianLineHeight)
+            } else {
+                hasFrozenWithinBlockGap(previous, line, medianLineHeight)
+            }
             if (exceedsCaps || visualBoundary) flushParagraph()
             paragraphLines += line
             paragraphChars += line.text.length + if (paragraphLines.size == 1) 0 else 1
@@ -268,6 +275,14 @@ private fun hasFrozenParagraphGap(
     medianLineHeight: Float,
 ): Boolean =
     next.bounds.top - previous.bounds.bottom > medianLineHeight * FROZEN_PARAGRAPH_GAP_LINE_HEIGHTS
+
+private fun hasFrozenWithinBlockGap(
+    previous: FrozenLayoutLine,
+    next: FrozenLayoutLine,
+    medianLineHeight: Float,
+): Boolean =
+    next.bounds.top - previous.bounds.bottom >
+        medianLineHeight * FROZEN_PARAGRAPH_WITHIN_BLOCK_GAP_LINE_HEIGHTS
 
 private fun hasFrozenIndentChange(
     paragraphLines: List<FrozenLayoutLine>,

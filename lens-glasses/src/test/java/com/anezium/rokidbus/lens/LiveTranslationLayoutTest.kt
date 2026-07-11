@@ -7,23 +7,20 @@ import org.junit.Test
 
 class LiveTranslationLayoutTest {
     @Test
-    fun progressiveParagraphIsOutlineOnlyWithZeroTranslatedMembers() {
-        assertEquals(null, progressiveLiveParagraphTranslation(listOf(null, null)))
+    fun incompleteParagraphIsOutlineOnlyWithZeroTranslatedMembers() {
+        assertEquals(null, completeLiveParagraphTranslation(listOf(null, null)))
     }
 
     @Test
-    fun progressiveParagraphJoinsAvailableMembersAndMarksMissingMembers() {
-        assertEquals(
-            "first third …",
-            progressiveLiveParagraphTranslation(listOf("first", null, "third")),
-        )
+    fun incompleteParagraphNeverProducesAnOpaquePanelTranslation() {
+        assertEquals(null, completeLiveParagraphTranslation(listOf("first", null, "third")))
     }
 
     @Test
-    fun progressiveParagraphJoinsAllMembersWithoutSuffix() {
+    fun completeParagraphJoinsAllMembersWithoutSuffix() {
         assertEquals(
             "first second third",
-            progressiveLiveParagraphTranslation(listOf("first", "second", "third")),
+            completeLiveParagraphTranslation(listOf("first", "second", "third")),
         )
     }
 
@@ -99,8 +96,44 @@ class LiveTranslationLayoutTest {
         assertTrue(groups.all { it.gapBelow >= 0f })
     }
 
+    @Test
+    fun currentFrameTwoAndThreeWayLineSplitsKeepOneParagraphGeometry() {
+        val unsplit = segmentLiveFrameParagraphs(
+            listOf(frameBlock(frameLine("alpha beta gamma", left = 10, right = 190))),
+        ).single()
+        val twoWay = segmentLiveFrameParagraphs(
+            listOf(
+                frameBlock(
+                    frameLine("alpha", left = 10, right = 65),
+                    frameLine("beta gamma", left = 65, right = 190),
+                ),
+            ),
+        ).single()
+        val threeWay = segmentLiveFrameParagraphs(
+            listOf(
+                frameBlock(
+                    frameLine("alpha", left = 10, right = 65),
+                    frameLine("beta", left = 65, right = 115),
+                    frameLine("gamma", left = 115, right = 190),
+                ),
+            ),
+        ).single()
+
+        assertEquals(unsplit.source, twoWay.source)
+        assertEquals(unsplit.source, threeWay.source)
+        assertEquals(unsplit.bounds, twoWay.bounds)
+        assertEquals(unsplit.bounds, threeWay.bounds)
+        assertEquals(listOf(1, 2, 3), listOf(unsplit.lineBounds.size, twoWay.lineBounds.size, threeWay.lineBounds.size))
+    }
+
     private fun placed(id: Long, top: Float): LivePlacedBlock =
         LivePlacedBlock(id, LiveLayoutRect(10f, top, 210f, top + 20f))
+
+    private fun frameBlock(vararg lines: LiveFrameParagraphLine): LiveFrameParagraphBlock =
+        LiveFrameParagraphBlock(lines.toList())
+
+    private fun frameLine(source: String, left: Int, right: Int): LiveFrameParagraphLine =
+        LiveFrameParagraphLine(source, FrozenLayoutRect(left, 0, right, 20))
 
     private fun liveLine(
         id: Long,

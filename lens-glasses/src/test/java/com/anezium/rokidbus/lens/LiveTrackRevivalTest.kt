@@ -8,7 +8,7 @@ import org.junit.Test
 
 class LiveTrackRevivalTest {
     @Test
-    fun exactNormalizedTextMatchesWithoutDistanceLimit() {
+    fun exactNormalizedTextStillRequiresNearbyGeometry() {
         val entry = entry(1, "  exact   text ", left = 500f)
 
         val decision = consumeBestLiveTrackRevival(
@@ -18,7 +18,7 @@ class LiveTrackRevivalTest {
             nowMs = 1_000L,
         )
 
-        assertEquals(1L, decision.match?.stableId)
+        assertNull(decision.match)
     }
 
     @Test

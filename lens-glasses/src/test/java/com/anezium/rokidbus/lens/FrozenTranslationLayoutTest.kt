@@ -18,6 +18,45 @@ class FrozenTranslationLayoutTest {
     }
 
     @Test
+    fun glyphBoxNoiseInsideOneBlockDoesNotSplit() {
+        // Field regression 2026-07-11: ordinary ML Kit glyph-box variation (20->27px heights,
+        // jittery leading) inside ONE block shredded live articles into per-line paragraphs.
+        val blocks = listOf(
+            block(
+                line("first line of body", left = 10, top = 0, width = 300, height = 20),
+                line("second with talls", left = 10, top = 24, width = 300, height = 27),
+                line("third line words", left = 10, top = 55, width = 300, height = 21),
+                line("fourth wraps here", left = 10, top = 80, width = 300, height = 26),
+            ),
+        )
+
+        val paragraphs = segmentFrozenParagraphs(blocks)
+
+        assertEquals(1, paragraphs.size)
+        assertEquals(
+            "first line of body second with talls third line words fourth wraps here",
+            paragraphs[0].source,
+        )
+    }
+
+    @Test
+    fun blankLineSizedGapInsideOneBlockStillSplits() {
+        val blocks = listOf(
+            block(
+                line("paragraph one", left = 10, top = 0, height = 20),
+                line("paragraph two after blank line", left = 10, top = 60, height = 20),
+            ),
+        )
+
+        val paragraphs = segmentFrozenParagraphs(blocks)
+
+        assertEquals(
+            listOf("paragraph one", "paragraph two after blank line"),
+            paragraphs.map { it.source },
+        )
+    }
+
+    @Test
     fun changedFirstLineIndentSplitsParagraph() {
         val blocks = listOf(
             block(

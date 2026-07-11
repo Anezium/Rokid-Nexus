@@ -1,6 +1,7 @@
 package com.anezium.rokidbus.lens
 
 import android.Manifest
+import android.app.ActivityManager
 import android.content.ComponentCallbacks2
 import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
@@ -120,38 +121,14 @@ class LensActivity : AppCompatActivity() {
         val displayRect: Rect,
     )
 
-    private class TrackedBlock(
-        val stableId: Long,
-        var displayRect: Rect,
-        var displayText: String,
-        var translation: CachedTranslation?,
-        var lastSeenMs: Long,
-        var seenCount: Int,
-        var candidateText: String? = null,
-        var candidateCount: Int = 0,
-        var candidateLastSeenFrame: Long = -1L,
-        var lastSeenFrameSerial: Long = -1L,
+    private data class MappedLiveFrame(
+        val lineCount: Int,
+        val paragraphs: List<LiveFrameParagraph>,
     )
 
-    private data class DroppedLiveTrack(
-        val token: Long,
-        val stableId: Long,
-        val displayRect: Rect,
-        val displayText: String,
-        val translation: CachedTranslation?,
-        val seenCount: Int,
-        val droppedAtMs: Long,
-    )
-
-    private data class LiveTrackingStats(
-        val newCount: Int,
-        val droppedCount: Int,
-    )
-
-    private data class LiveMatch(
-        val trackedIndex: Int,
-        val blockIndex: Int,
-        val iou: Float,
+    private data class LiveOverlayFrame(
+        val blocks: List<LensOverlayBlock>,
+        val pendingTranslationParagraphs: Int,
     )
 
     private class PendingRequest(
@@ -386,11 +363,8 @@ class LensActivity : AppCompatActivity() {
     private var frozenSourceStatus: String? = null
     private var lastOcrResult: LastOcrResult? = null
     private var frozenOcrResult: LastOcrResult? = null
-    private val liveTrackedBlocks = mutableListOf<TrackedBlock>()
-    private val liveTrackGraveyard = ArrayDeque<DroppedLiveTrack>()
-    private var nextLiveTrackId = 1L
-    private var nextLiveGraveyardToken = 1L
-    private var liveFrameSerial = 0L
+    private var liveParagraphReconciliationState = LiveParagraphReconciliationState()
+    private var visibleLiveParagraphAnchors: List<LiveParagraphAnchor> = emptyList()
     private var lastLiveMode: OcrScript? = null
     private var cameraProviderRequestInFlight = false
     private var cameraBindRetryCount = 0
@@ -760,7 +734,9 @@ class LensActivity : AppCompatActivity() {
         translationRetryNotBeforeMs = 0L
         translationStatus = "TRANSLATED ${translations.length()}"
         Log.i(TAG, "translateRoundTrip id=$id latencyMs=$latencyMs stringCount=${pending.keyBySource.size}")
-        refreshOverlayFromCache()
+        // Live continuation: without requestMissing the next batch waits for another OCR frame
+        // (0.6-1.2Hz), serializing pending paragraphs into many seconds of dead time.
+        refreshOverlayFromCache(requestMissing = !isFrozen)
         if (isFrozen) {
             val nowMs = SystemClock.elapsedRealtime()
             val retryDelayMs = retryKeys
@@ -969,7 +945,7 @@ class LensActivity : AppCompatActivity() {
     private fun buildImageCaptureUseCase(targetRotation: Int): ImageCapture =
         ImageCapture.Builder()
             .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
-            .setJpegQuality(100)
+            .setJpegQuality(90)
             .setFlashMode(ImageCapture.FLASH_MODE_OFF)
             .setTargetResolution(Size(MAX_FROZEN_OCR_BITMAP_EDGE * 3 / 4, MAX_FROZEN_OCR_BITMAP_EDGE))
             .setTargetRotation(targetRotation)
@@ -1057,6 +1033,9 @@ class LensActivity : AppCompatActivity() {
         baseFrozenContent = null
         zoomFrozenContent = null
         isFrozen = true
+        // Live reconciliation state is dead weight for the whole frozen session; drop it
+        // now so its anchors/graveyard aren't resident through the HD capture peak.
+        clearLiveTracking()
         applyPreviewScaleForCurrentState()
         frozenOcrResult = null
         frozenSourceStatus = null
@@ -1083,10 +1062,19 @@ class LensActivity : AppCompatActivity() {
             lastOcrResult = null
             clearLiveTracking()
         }
+        // The kernel OOM-reaps foreground apps on this 1.8GB device when the HD rebind's
+        // ION/gralloc demand lands on an already-tight system (observed 2026-07-11, three
+        // sweeps in one morning). Keeping the FAST result beats dying with the HD one.
+        val availableMemoryMb = availableSystemMemoryMb()
+        if (availableMemoryMb in 0 until HD_REFINE_MIN_AVAILABLE_MEMORY_MB) {
+            Log.w(TAG, "freezeHdSkipped id=${request.requestId} reason=lowmem availMb=$availableMemoryMb")
+            finishHdRefineFailure(request.requestId, "LOWMEM ${availableMemoryMb}MB")
+            return
+        }
         // The LIMITED HAL cannot takePicture on preview+analysis+capture. Only after the
-        // analysis ImageProxy closes do we switch to the proven preview+capture binding.
+        // analysis ImageProxy closes do we switch to the proven capture-only binding.
         activeHdCaptureSession?.cancel("replaced")
-        val session = bindPreviewCaptureOnlyForFreeze(
+        val session = bindCaptureOnlyForFreeze(
             requestId = request.requestId,
             mode = frozenSelectedScript,
             restoreCaptureWithAnalysis = request.restoreCaptureWithAnalysis,
@@ -1253,7 +1241,7 @@ class LensActivity : AppCompatActivity() {
         Log.i(TAG, "freeze disabled")
     }
 
-    private fun bindPreviewCaptureOnlyForFreeze(
+    private fun bindCaptureOnlyForFreeze(
         requestId: Long,
         mode: OcrScript,
         restoreCaptureWithAnalysis: Boolean = imageCaptureBoundWithAnalysis,
@@ -1268,7 +1256,6 @@ class LensActivity : AppCompatActivity() {
             mode = mode,
             bindStartedAtMs = SystemClock.elapsedRealtime(),
         )
-        val preview = buildPreviewUseCase(targetRotation, session.captureCallback)
         val capture = buildImageCaptureUseCase(targetRotation)
         session.capture = capture
         restoreCaptureWithAnalysisAfterTemporary = restoreCaptureWithAnalysis
@@ -1276,19 +1263,25 @@ class LensActivity : AppCompatActivity() {
         provider.unbindAll()
         activeHdCaptureSession = session
         return runCatching {
-            provider.bindToLifecycle(this, selector, preview, capture)
+            provider.bindToLifecycle(this, selector, capture)
             session.onBound(SystemClock.elapsedRealtime())
             imageCapture = capture
             imageCaptureBoundWithAnalysis = false
             temporaryCaptureBindingActive = true
             cameraUnboundForFrozen = false
-            Log.i(TAG, "cameraBindSucceeded label=$label useCases=preview+imageCapture temporary=true")
+            Log.i(TAG, "cameraBindSucceeded label=$label useCases=imageCapture temporary=true")
+            // This HAL never delivered a single preview frame or AE state to the old temp
+            // preview (deadline always fired blind after 450ms), so a companion preview
+            // stream costs ION buffers and latency for nothing. Issue immediately; CameraX
+            // queues the still until the capture session is configured, and the ISP's 3A
+            // state is still warm from the live session unbound milliseconds ago.
+            session.issueCapture("capture_only_immediate")
             session
         }.onFailure {
             session.cancel("bind_error")
             temporaryCaptureBindingActive = false
             imageCapture = null
-            Log.w(TAG, "cameraBindFailed label=$label useCases=preview+imageCapture temporary=true", it)
+            Log.w(TAG, "cameraBindFailed label=$label useCases=imageCapture temporary=true", it)
             restoreCameraBinding(restoreCaptureWithAnalysis)
         }.getOrNull()
     }
@@ -1379,6 +1372,16 @@ class LensActivity : AppCompatActivity() {
         analyzerGeneration.incrementAndGet()
         analyzerBusy.set(false)
         resetAnalyzerCadence()
+    }
+
+    /** System-wide available memory in MB, or -1 when the service is unavailable. */
+    private fun availableSystemMemoryMb(): Int {
+        val activityManager = getSystemService(ACTIVITY_SERVICE) as? ActivityManager ?: return -1
+        val info = ActivityManager.MemoryInfo()
+        return runCatching {
+            activityManager.getMemoryInfo(info)
+            (info.availMem / (1024L * 1024L)).toInt()
+        }.getOrDefault(-1)
     }
 
     private fun tryAcquireAnalyzerCadence(nowMs: Long): Boolean =
@@ -2257,34 +2260,49 @@ class LensActivity : AppCompatActivity() {
             carriedTranslations = carriedTranslations,
         )
 
-        liveFrameSerial += 1L
-        val viewBlocks = blocks
-            .asSequence()
-            .flatMap { it.lines.asSequence() }
-            .mapNotNull { mapLiveLineToView(it, transformMatrix) }
-            .toList()
-        val trackingStats = reconcileLiveTrackedBlocks(viewBlocks, nowMs, liveFrameSerial)
-        val misses = linkedMapOf<CacheKey, String>()
-        val overlayBlocks = overlayBlocksForTracked(mode, misses)
-        overlayView.updateOcrResult(Matrix(), overlayBlocks, hudState(metrics))
-        requestMissingTranslations(mode, misses)
-        Log.i(
-            TAG,
-            String.format(
-                Locale.US,
-                "mode=%s latencyMs=%d avgMs=%d hz=%.1f blocks=%d tracked=%d visible=%d new=%d dropped=%d transformReady=%s",
-                mode.name,
-                latencyMs,
-                metrics.avgLatencyMs,
-                metrics.hz,
-                blocks.size,
-                liveTrackedBlocks.size,
-                overlayBlocks.size,
-                trackingStats.newCount,
-                trackingStats.droppedCount,
-                transformMatrix != null,
-            ),
+        val mappedFrame = mapLiveFrameToParagraphs(blocks, transformMatrix)
+        val reconciliation = LiveParagraphReconciler.reconcile(
+            state = liveParagraphReconciliationState,
+            observations = mappedFrame.paragraphs.map { it.toLiveParagraphObservation() },
+            nowMs = nowMs,
         )
+        liveParagraphReconciliationState = reconciliation.state
+        visibleLiveParagraphAnchors = reconciliation.visibleAnchors
+        val misses = linkedMapOf<CacheKey, String>()
+        val overlayFrame = overlayBlocksForTracked(mode, misses)
+        overlayView.updateOcrResult(
+            transformMatrix = Matrix(),
+            blocks = overlayFrame.blocks,
+            hudState = hudState(metrics),
+            onLayoutStats = { layoutStats ->
+                Log.i(
+                    TAG,
+                    String.format(
+                        Locale.US,
+                        "mode=%s latencyMs=%d avgMs=%d hz=%.1f blocks=%d lines=%d matched=%d revived=%d " +
+                            "paragraphAnchors=%d visible=%d new=%d dropped=%d pendingParagraphs=%d " +
+                            "suppressedPanels=%d truncatedPanels=%d transformReady=%s",
+                        mode.name,
+                        latencyMs,
+                        metrics.avgLatencyMs,
+                        metrics.hz,
+                        blocks.size,
+                        mappedFrame.lineCount,
+                        reconciliation.stats.matchedCount,
+                        reconciliation.stats.revivedCount,
+                        reconciliation.stats.paragraphAnchorCount,
+                        overlayFrame.blocks.size,
+                        reconciliation.stats.newCount,
+                        reconciliation.stats.droppedCount,
+                        overlayFrame.pendingTranslationParagraphs,
+                        layoutStats.suppressedPanels,
+                        layoutStats.truncatedPanels,
+                        transformMatrix != null,
+                    ),
+                )
+            },
+        )
+        requestMissingTranslations(mode, misses)
     }
 
     private fun mapLiveLineToView(line: OcrSourceLine, transformMatrix: Matrix?): ViewOcrBlock? {
@@ -2307,232 +2325,74 @@ class LensActivity : AppCompatActivity() {
         )
     }
 
-    private fun reconcileLiveTrackedBlocks(
-        viewBlocks: List<ViewOcrBlock>,
-        nowMs: Long,
-        frameSerial: Long,
-    ): LiveTrackingStats {
-        pruneLiveTrackGraveyard(nowMs)
-        var droppedCount = 0
-        val hardStaleIterator = liveTrackedBlocks.iterator()
-        while (hardStaleIterator.hasNext()) {
-            val tracked = hardStaleIterator.next()
-            if (nowMs - tracked.lastSeenMs < LIVE_TRACK_STALE_HARD_MS) continue
-            addLiveTrackToGraveyard(tracked, nowMs)
-            hardStaleIterator.remove()
-            droppedCount += 1
-        }
-        val matches = matchLiveBlocks(viewBlocks)
-        val matchedBlockIndices = matches.mapTo(mutableSetOf()) { it.blockIndex }
-
-        matches.forEach { match ->
-            val tracked = liveTrackedBlocks[match.trackedIndex]
-            val block = viewBlocks[match.blockIndex]
-            val wasSeenPreviousFrame = tracked.lastSeenFrameSerial == frameSerial - 1L
-            tracked.lastSeenMs = nowMs
-            tracked.lastSeenFrameSerial = frameSerial
-            if (tracked.seenCount < LIVE_TRACK_VISIBLE_SEEN_COUNT) {
-                tracked.seenCount = if (wasSeenPreviousFrame) tracked.seenCount + 1 else 1
-            } else if (wasSeenPreviousFrame) {
-                tracked.seenCount += 1
-            }
-
-            if (centerDistanceSquared(tracked.displayRect, block.displayRect) > LIVE_TRACK_RECT_SNAP_DISTANCE_PX *
-                LIVE_TRACK_RECT_SNAP_DISTANCE_PX
-            ) {
-                tracked.displayRect = Rect(block.displayRect)
-            }
-            updateTrackedText(tracked, block.normalized, frameSerial)
-        }
-
-        val trackedIterator = liveTrackedBlocks.iterator()
-        while (trackedIterator.hasNext()) {
-            val tracked = trackedIterator.next()
-            if (!shouldDropLiveTrack(frameSerial, tracked.lastSeenFrameSerial, nowMs, tracked.lastSeenMs)) continue
-            addLiveTrackToGraveyard(tracked, nowMs)
-            trackedIterator.remove()
-            droppedCount += 1
-        }
-
-        var newCount = 0
-        viewBlocks.forEachIndexed { index, block ->
-            if (index in matchedBlockIndices) return@forEachIndexed
-            val revival = consumeLiveTrackRevival(block, nowMs)
-            liveTrackedBlocks += TrackedBlock(
-                stableId = revival?.stableId ?: nextLiveTrackId++,
-                displayRect = Rect(block.displayRect),
-                displayText = block.normalized,
-                translation = revival?.translation,
-                lastSeenMs = nowMs,
-                seenCount = revival?.seenCount
-                    ?.coerceAtLeast(LIVE_TRACK_VISIBLE_SEEN_COUNT)
-                    ?.coerceAtMost(LIVE_TRACK_VISIBLE_SEEN_COUNT)
-                    ?: 1,
-                lastSeenFrameSerial = frameSerial,
-            )
-            newCount += 1
-        }
-
-        return LiveTrackingStats(
-            newCount = newCount,
-            droppedCount = droppedCount,
-        )
-    }
-
-    private fun addLiveTrackToGraveyard(tracked: TrackedBlock, nowMs: Long) {
-        while (liveTrackGraveyard.size >= LIVE_TRACK_GRAVEYARD_CAPACITY) {
-            liveTrackGraveyard.removeFirst()
-        }
-        liveTrackGraveyard.addLast(
-            DroppedLiveTrack(
-                token = nextLiveGraveyardToken++,
-                stableId = tracked.stableId,
-                displayRect = Rect(tracked.displayRect),
-                displayText = tracked.displayText,
-                translation = tracked.translation,
-                seenCount = tracked.seenCount,
-                droppedAtMs = nowMs,
-            ),
-        )
-    }
-
-    private fun pruneLiveTrackGraveyard(nowMs: Long) {
-        val iterator = liveTrackGraveyard.iterator()
-        while (iterator.hasNext()) {
-            if (nowMs - iterator.next().droppedAtMs >= LIVE_TRACK_GRAVEYARD_MS) iterator.remove()
-        }
-    }
-
-    private fun consumeLiveTrackRevival(block: ViewOcrBlock, nowMs: Long): DroppedLiveTrack? {
-        if (liveTrackGraveyard.isEmpty()) return null
-        val decision = consumeBestLiveTrackRevival(
-            entries = liveTrackGraveyard.map { dropped ->
-                LiveTrackRevivalEntry(
-                    token = dropped.token,
-                    stableId = dropped.stableId,
-                    text = dropped.displayText,
-                    bounds = dropped.displayRect.toLiveTrackRevivalRect(),
-                    droppedAtMs = dropped.droppedAtMs,
-                )
-            },
-            newText = block.normalized,
-            newBounds = block.displayRect.toLiveTrackRevivalRect(),
-            nowMs = nowMs,
-        )
-        val matchedToken = decision.match?.token
-        val retainedTokens = decision.remainingEntries.mapTo(mutableSetOf()) { it.token }
-        var matched: DroppedLiveTrack? = null
-        val iterator = liveTrackGraveyard.iterator()
-        while (iterator.hasNext()) {
-            val dropped = iterator.next()
-            if (dropped.token == matchedToken) matched = dropped
-            if (dropped.token !in retainedTokens) iterator.remove()
-        }
-        return matched
-    }
-
-    private fun matchLiveBlocks(viewBlocks: List<ViewOcrBlock>): List<LiveMatch> {
-        if (liveTrackedBlocks.isEmpty() || viewBlocks.isEmpty()) return emptyList()
-        val candidates = mutableListOf<LiveMatch>()
-        liveTrackedBlocks.forEachIndexed { trackedIndex, tracked ->
-            viewBlocks.forEachIndexed { blockIndex, block ->
-                val iou = rectIou(tracked.displayRect, block.displayRect)
-                if (iou >= LIVE_TRACK_MATCH_IOU) {
-                    candidates += LiveMatch(trackedIndex, blockIndex, iou)
+    private fun mapLiveFrameToParagraphs(
+        blocks: List<OcrSourceBlock>,
+        transformMatrix: Matrix?,
+    ): MappedLiveFrame {
+        var lineCount = 0
+        val mappedBlocks = blocks.mapNotNull { block ->
+            val mappedLines = block.lines.mapNotNull { line ->
+                mapLiveLineToView(line, transformMatrix)?.let { mapped ->
+                    lineCount += 1
+                    LiveFrameParagraphLine(
+                        source = mapped.normalized,
+                        bounds = mapped.displayRect.toFrozenLayoutRect(),
+                    )
                 }
             }
+            mappedLines.takeIf { it.isNotEmpty() }?.let(::LiveFrameParagraphBlock)
         }
-
-        val usedTracks = mutableSetOf<Int>()
-        val usedBlocks = mutableSetOf<Int>()
-        val matches = mutableListOf<LiveMatch>()
-        candidates.sortedByDescending { it.iou }.forEach { candidate ->
-            if (candidate.trackedIndex in usedTracks || candidate.blockIndex in usedBlocks) return@forEach
-            usedTracks += candidate.trackedIndex
-            usedBlocks += candidate.blockIndex
-            matches += candidate
-        }
-        return matches
+        return MappedLiveFrame(
+            lineCount = lineCount,
+            paragraphs = segmentLiveFrameParagraphs(mappedBlocks),
+        )
     }
 
-    private fun updateTrackedText(
-        tracked: TrackedBlock,
-        normalized: String,
-        frameSerial: Long,
-    ) {
-        if (normalized == tracked.displayText) {
-            tracked.candidateText = null
-            tracked.candidateCount = 0
-            tracked.candidateLastSeenFrame = -1L
-            return
-        }
-
-        val sameCandidate = tracked.candidateText == normalized &&
-            tracked.candidateLastSeenFrame == frameSerial - 1L
-        tracked.candidateText = normalized
-        tracked.candidateCount = if (sameCandidate) tracked.candidateCount + 1 else 1
-        tracked.candidateLastSeenFrame = frameSerial
-        if (tracked.candidateCount >= LIVE_TRACK_TEXT_SWAP_FRAMES) {
-            tracked.displayText = normalized
-            tracked.translation = null
-            tracked.candidateText = null
-            tracked.candidateCount = 0
-            tracked.candidateLastSeenFrame = -1L
-        }
-    }
-
-    private fun centerDistanceSquared(a: Rect, b: Rect): Int {
-        val dx = a.centerX() - b.centerX()
-        val dy = a.centerY() - b.centerY()
-        return dx * dx + dy * dy
-    }
+    private fun LiveFrameParagraph.toLiveParagraphObservation(): LiveParagraphObservation =
+        LiveParagraphObservation(
+            sourceText = source,
+            bounds = bounds.toLiveParagraphRect(),
+            memberBounds = lineBounds.map { it.toLiveParagraphRect() },
+            columnIndex = columnIndex,
+            gapBelow = gapBelow,
+        )
 
     private fun overlayBlocksForTracked(
         mode: OcrScript,
         misses: MutableMap<CacheKey, String>? = null,
-    ): List<LensOverlayBlock> {
-        val visibleTracks = liveTrackedBlocks.filter { it.seenCount >= LIVE_TRACK_VISIBLE_SEEN_COUNT }
-        val translationsByStableId = linkedMapOf<Long, CachedTranslation?>()
-        visibleTracks.forEach { tracked ->
-            val key = CacheKey(tracked.displayText, mode, LensWireContract.DEFAULT_TARGET_LANG)
+    ): LiveOverlayFrame {
+        var pendingTranslationParagraphs = 0
+        val overlayBlocks = visibleLiveParagraphAnchors.map { anchor ->
+            val key = CacheKey(anchor.sourceText, mode, LensWireContract.DEFAULT_TARGET_LANG)
+            // Committed text stays displayable and requestable while a candidate debounces:
+            // OCR that alternates between two readings keeps candidateSourceText non-null
+            // forever, and gating on it starved every request (field 2026-07-11, 7-byte batches).
             val cached = translationCache[key]
-            if (cached != null) tracked.translation = cached
-            val displayTranslation = cached ?: tracked.translation
-            translationsByStableId[tracked.stableId] = displayTranslation
-            if (displayTranslation == null && !inFlightByKey.containsKey(key)) {
-                misses?.putIfAbsent(key, tracked.displayText)
+            if (cached == null) pendingTranslationParagraphs += 1
+            if (cached == null && !inFlightByKey.containsKey(key)) {
+                misses?.putIfAbsent(key, anchor.sourceText)
             }
-        }
-
-        return segmentLiveParagraphs(
-            visibleTracks.map { tracked ->
-                LiveParagraphLine(
-                    stableId = tracked.stableId,
-                    source = tracked.displayText,
-                    bounds = tracked.displayRect.toFrozenLayoutRect(),
-                )
-            },
-        ).map { paragraph ->
-            val memberTranslations = paragraph.members.map { member ->
-                translationsByStableId[member.stableId]
-            }
+            val displayTranslation = cached
             LensOverlayBlock(
-                source = paragraph.source,
-                normalized = LensWireContract.normalizeText(paragraph.source),
-                bounds = paragraph.bounds.toAndroidRect(),
-                lineBounds = paragraph.members.map { it.bounds.toAndroidRect() },
-                translation = progressiveLiveParagraphTranslation(memberTranslations.map { it?.dst }),
-                sourceLang = memberTranslations.firstNotNullOfOrNull { it?.srcLang },
-                stableId = paragraph.collisionStableId,
-                gapBelow = paragraph.gapBelow,
+                source = anchor.sourceText,
+                normalized = LensWireContract.normalizeText(anchor.sourceText),
+                bounds = anchor.bounds.toAndroidRect(),
+                lineBounds = anchor.memberBounds.map { it.toAndroidRect() },
+                translation = displayTranslation?.dst,
+                sourceLang = displayTranslation?.srcLang,
+                stableId = anchor.stableId,
+                gapBelow = anchor.gapBelow,
             )
         }
+        return LiveOverlayFrame(
+            blocks = overlayBlocks,
+            pendingTranslationParagraphs = pendingTranslationParagraphs,
+        )
     }
 
     private fun clearLiveTracking() {
-        liveTrackedBlocks.clear()
-        liveTrackGraveyard.clear()
-        liveFrameSerial = 0L
+        liveParagraphReconciliationState = LiveParagraphReconciliationState()
+        visibleLiveParagraphAnchors = emptyList()
         lastLiveMode = null
     }
 
@@ -2693,13 +2553,16 @@ class LensActivity : AppCompatActivity() {
     private fun Rect.toFrozenLayoutRect(): FrozenLayoutRect =
         FrozenLayoutRect(left = left, top = top, right = right, bottom = bottom)
 
-    private fun Rect.toLiveTrackRevivalRect(): LiveTrackRevivalRect =
-        LiveTrackRevivalRect(
+    private fun FrozenLayoutRect.toLiveParagraphRect(): LiveParagraphRect =
+        LiveParagraphRect(
             left = left.toFloat(),
             top = top.toFloat(),
             right = right.toFloat(),
             bottom = bottom.toFloat(),
         )
+
+    private fun LiveParagraphRect.toAndroidRect(): Rect =
+        Rect(left.roundToInt(), top.roundToInt(), right.roundToInt(), bottom.roundToInt())
 
     private fun FrozenLayoutRect.toAndroidRect(): Rect =
         Rect(left, top, right, bottom)
@@ -2919,9 +2782,10 @@ class LensActivity : AppCompatActivity() {
         if (!isFrozen) {
             val metrics = lastOcrResult?.metrics ?: OcrMetrics(avgLatencyMs = 0L, hz = 0.0)
             val misses = if (requestMissing) linkedMapOf<CacheKey, String>() else null
+            val liveOverlayFrame = overlayBlocksForTracked(effectiveScript, misses)
             overlayView.updateOcrResult(
                 transformMatrix = Matrix(),
-                blocks = overlayBlocksForTracked(effectiveScript, misses),
+                blocks = liveOverlayFrame.blocks,
                 hudState = hudState(metrics),
             )
             if (misses != null) requestMissingTranslations(effectiveScript, misses)
@@ -2989,7 +2853,7 @@ class LensActivity : AppCompatActivity() {
     private fun liveStatusLabel(): String = "LIVE ${displayModeLabel(effectiveScript)} ${liveZoomLevel.hudLabel}"
 
     private fun visibleLiveTrackCount(): Int =
-        liveTrackedBlocks.count { it.seenCount >= LIVE_TRACK_VISIBLE_SEEN_COUNT }
+        visibleLiveParagraphAnchors.sumOf { it.memberBounds.size }
 
     private fun hasDataLink(): Boolean = isLensTranslationDataLinkUp(busState)
 
@@ -3358,7 +3222,7 @@ class LensActivity : AppCompatActivity() {
         private const val SCREEN_OFF_TIMEOUT_OVERRIDE_MS = 600_000
         private const val SCREEN_PREFS_NAME = "lens_screen"
         private const val SCREEN_PREF_STOCK_TIMEOUT_MS = "stock_screen_off_timeout_ms"
-        private const val CACHE_MAX_ENTRIES = 1500
+        private const val CACHE_MAX_ENTRIES = 512
         private const val TRANSLATE_TIMEOUT_MS = LensWireContract.GLASSES_REQUEST_TIMEOUT_MS
         private const val TRANSLATE_RETRY_BACKOFF_MS = 750L
         private const val MODEL_DOWNLOAD_TIMEOUT_MS = LensWireContract.GLASSES_MODEL_DOWNLOAD_TIMEOUT_MS
@@ -3369,6 +3233,7 @@ class LensActivity : AppCompatActivity() {
         private const val FAST_FREEZE_FRAME_TIMEOUT_MS = 1_200L
         private const val HD_AE_SETTLE_MAX_MS = 450L
         private const val HD_AE_SETTLE_MIN_FRAMES = 3
+        private const val HD_REFINE_MIN_AVAILABLE_MEMORY_MB = 300
         private const val FROZEN_ZOOM_NOTICE_MS = 1_200L
         private const val PHONE_TIMEOUT_ERROR_CODE = "TIMEOUT"
         private const val CAMERA_BIND_MAX_RETRIES = 3
@@ -3379,10 +3244,6 @@ class LensActivity : AppCompatActivity() {
         private const val THROUGHPUT_WINDOW_MS = 10_000L
         private const val LATENCY_WINDOW_SIZE = 30
         private const val RECT_MATCH_IOU = 0.5f
-        private const val LIVE_TRACK_MATCH_IOU = 0.4f
-        private const val LIVE_TRACK_RECT_SNAP_DISTANCE_PX = 12
-        private const val LIVE_TRACK_VISIBLE_SEEN_COUNT = 2
-        private const val LIVE_TRACK_TEXT_SWAP_FRAMES = 3
         private const val LIVE_DENSE_VISIBLE_TRACK_COUNT = 35
         private const val LIVE_DENSE_STATUS = "DENSE - FREEZE ADVISED"
         private const val MIN_TRACKED_RECT_SIZE_PX = 4

@@ -35,6 +35,45 @@ internal data class LiveParagraphGroup(
     val collisionStableId: Long get() = members.minOf { it.stableId }
 }
 
+internal data class LiveFrameParagraphLine(
+    val source: String,
+    val bounds: FrozenLayoutRect,
+)
+
+internal data class LiveFrameParagraphBlock(
+    val lines: List<LiveFrameParagraphLine>,
+)
+
+internal data class LiveFrameParagraph(
+    val source: String,
+    val bounds: FrozenLayoutRect,
+    val lineBounds: List<FrozenLayoutRect>,
+    val columnIndex: Int,
+    val gapBelow: Float,
+)
+
+/** Segments current-frame OCR blocks before any stable paragraph identity is assigned. */
+internal fun segmentLiveFrameParagraphs(
+    blocks: List<LiveFrameParagraphBlock>,
+): List<LiveFrameParagraph> =
+    segmentFrozenParagraphs(
+        blocks.map { block ->
+            FrozenLayoutBlock(
+                lines = block.lines.map { line ->
+                    FrozenLayoutLine(text = line.source, bounds = line.bounds)
+                },
+            )
+        },
+    ).map { paragraph ->
+        LiveFrameParagraph(
+            source = paragraph.source,
+            bounds = paragraph.bounds,
+            lineBounds = paragraph.lines.map { it.bounds },
+            columnIndex = paragraph.columnIndex,
+            gapBelow = paragraph.gapBelow,
+        )
+    }
+
 /** Uses the frozen paragraph segmenter verbatim while retaining live tracking identities. */
 internal fun segmentLiveParagraphs(lines: List<LiveParagraphLine>): List<LiveParagraphGroup> {
     if (lines.isEmpty()) return emptyList()
@@ -74,12 +113,10 @@ internal fun segmentLiveParagraphs(lines: List<LiveParagraphLine>): List<LivePar
     }.filter { it.members.isNotEmpty() }
 }
 
-/** Joins only translated members in reading order and marks an incomplete paragraph. */
-internal fun progressiveLiveParagraphTranslation(memberTranslations: List<String?>): String? {
-    val translated = memberTranslations.filterNotNull()
-    if (translated.isEmpty()) return null
-    val joined = translated.joinToString(" ").trim()
-    return if (translated.size < memberTranslations.size) "$joined …" else joined
+/** Returns text only when every paragraph member is translated. */
+internal fun completeLiveParagraphTranslation(memberTranslations: List<String?>): String? {
+    if (memberTranslations.isEmpty() || memberTranslations.any { it.isNullOrBlank() }) return null
+    return memberTranslations.filterNotNull().joinToString(" ").trim().takeIf { it.isNotEmpty() }
 }
 
 /**

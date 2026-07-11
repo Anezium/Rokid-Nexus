@@ -66,11 +66,11 @@ internal fun consumeBestLiveTrackRevival(
             (newBounds.centerX - entry.bounds.centerX).toDouble(),
             (newBounds.centerY - entry.bounds.centerY).toDouble(),
         )
-        val exactText = normalizedNewText == normalizedOldText
-        val fuzzyTextNearby = newBounds.height > 0f &&
-            centerDistance <= LIVE_TRACK_REVIVAL_MAX_CENTER_HEIGHTS * newBounds.height &&
+        val geometryNearby = newBounds.height > 0f &&
+            centerDistance <= LIVE_TRACK_REVIVAL_MAX_CENTER_HEIGHTS * newBounds.height
+        val compatibleTextNearby = geometryNearby &&
             editDistance <= LIVE_TRACK_REVIVAL_MAX_EDIT_DISTANCE
-        if (!exactText && !fuzzyTextNearby) return@mapNotNull null
+        if (!compatibleTextNearby) return@mapNotNull null
         RankedRevival(entry, editDistance, centerDistance)
     }
     val match = ranked.minWithOrNull(
