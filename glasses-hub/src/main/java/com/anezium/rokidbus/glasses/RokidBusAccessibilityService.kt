@@ -27,6 +27,7 @@ class RokidBusAccessibilityService : AccessibilityService() {
         SurfaceOverlayRenderer.onServiceConnected(this)
         LauncherOverlayRenderer.onServiceConnected(this)
         GlassesHub.start(applicationContext)
+        AccessibilityRearmWatcher.start(applicationContext, "accessibility_service_connected")
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) = Unit

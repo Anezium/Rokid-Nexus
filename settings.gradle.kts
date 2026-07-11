@@ -13,6 +13,7 @@ dependencyResolutionManagement {
         mavenLocal()
         google()
         mavenCentral()
+        maven { url = uri("https://jitpack.io") }
         maven { url = uri("https://maven.rokid.com/repository/maven-public/") }
     }
 }

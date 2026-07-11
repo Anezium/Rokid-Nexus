@@ -10,8 +10,8 @@ android {
         applicationId = "com.anezium.rokidbus.glasses"
         minSdk = 31
         targetSdk = 32
-        versionCode = 1
-        versionName = "0.1.0-round-a"
+        versionCode = 2
+        versionName = "0.1.1-selfarm"
     }
 
     buildTypes {
@@ -22,6 +22,10 @@ android {
                 "proguard-rules.pro",
             )
         }
+    }
+
+    buildFeatures {
+        buildConfig = true
     }
 
     compileOptions {
@@ -39,5 +43,8 @@ dependencies {
     implementation(project(":shared"))
     implementation(project(":bus-client"))
     implementation("com.rokid.cxr:cxr-service-bridge:1.0-20260522.063600-105")
+    implementation("dev.mobile:dadb:1.2.10")
+    implementation("com.flyfishxu:kadb:2.1.1")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
     testImplementation("junit:junit:4.13.2")
 }

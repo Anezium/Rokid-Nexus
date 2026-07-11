@@ -8,6 +8,7 @@ class BusHubService : Service() {
     override fun onCreate() {
         super.onCreate()
         GlassesHub.start(applicationContext)
+        AccessibilityRearmWatcher.start(applicationContext, "bus_hub_service")
     }
 
     override fun onBind(intent: Intent?): IBinder {

@@ -3,7 +3,6 @@ package com.anezium.rokidbus.glasses
 import android.content.Context
 import android.graphics.Typeface
 import android.graphics.drawable.BitmapDrawable
-import android.graphics.text.LineBreaker
 import android.os.Build
 import android.os.SystemClock
 import android.text.Layout
@@ -172,7 +171,7 @@ internal class MediaHudView(context: Context) : LinearLayout(context) {
             isSingleLine = false
             setHorizontallyScrolling(false)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                breakStrategy = LineBreaker.BREAK_STRATEGY_HIGH_QUALITY
+                breakStrategy = Layout.BREAK_STRATEGY_HIGH_QUALITY
                 hyphenationFrequency = Layout.HYPHENATION_FREQUENCY_NONE
             }
         }

@@ -2,12 +2,15 @@ package com.anezium.rokidbus.glasses
 
 import android.content.Context
 import android.content.pm.ApplicationInfo
+import android.content.pm.PackageManager
+import android.net.wifi.WifiManager
 import android.os.Binder
 import android.os.IBinder
 import android.os.Process
 import com.anezium.rokidbus.client.IBusCallback
 import com.anezium.rokidbus.client.IBusService
 import com.anezium.rokidbus.client.PluginRegistrationResult
+import com.anezium.rokidbus.shared.BusCapabilityBits
 import com.anezium.rokidbus.shared.BusConstants
 import com.anezium.rokidbus.shared.BusEnvelope
 import com.anezium.rokidbus.shared.BusPaths
@@ -17,6 +20,7 @@ import com.anezium.rokidbus.shared.plugin.PathRules
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 
 object GlassesHub {
@@ -31,6 +35,7 @@ object GlassesHub {
         val clientId: String,
         val prefixes: List<String>,
         val uid: Int,
+        val trusted: Boolean,
         val callbackBinder: IBinder,
         val callback: IBusCallback,
         val deathRecipient: IBinder.DeathRecipient,
@@ -39,6 +44,11 @@ object GlassesHub {
     private val started = AtomicBoolean(false)
     private val registrations = CopyOnWriteArrayList<Registration>()
     private val launcherListeners = CopyOnWriteArrayList<(List<LauncherEntry>) -> Unit>()
+    private val wifiOwnership = GlassesWifiOwnership()
+    private val autoEnrollAttempted = AtomicBoolean(false)
+    private val wifiRequestExecutor = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "RokidNexusWifi").apply { isDaemon = true }
+    }
     @Volatile private var launcherEntries: List<LauncherEntry> = emptyList()
     @Volatile private var appContext: Context? = null
     @Volatile private var cxrUp = false
@@ -76,6 +86,8 @@ object GlassesHub {
         }
 
         override fun linkState(): Int = this@GlassesHub.linkState()
+
+        override fun capabilities(): Int = BusCapabilityBits.PROTECTED_LENS_LINK
 
         override fun registerPlugin(packageName: String, pluginId: String, cb: IBusCallback): Int =
             PluginRegistrationResult.DENIED
@@ -183,6 +195,30 @@ object GlassesHub {
             log("local send rejected status=unregistered_or_release_external")
             return
         }
+        if (BusPaths.isProtectedLensPath(envelope.path) && !isTrustedUid(senderUid)) {
+            log("blocked untrusted protected lens send uid=$senderUid")
+            return
+        }
+        if (envelope.path == BusPaths.GLASSES_WIFI_REQUEST) {
+            if (!isTrustedUid(senderUid)) {
+                log("blocked untrusted glasses Wi-Fi request uid=$senderUid")
+                return
+            }
+            val rawEnabled = envelope.payload.opt("enabled")
+            if (rawEnabled !is Boolean) {
+                log("glassesWifiRequest rejected reason=invalid_payload")
+                return
+            }
+            val context = appContext
+            if (context == null) {
+                log("glassesWifiRequest enabled=$rawEnabled hubOwned=${wifiOwnership.isHubOwned()} applied=false")
+                return
+            }
+            wifiRequestExecutor.execute {
+                handleGlassesWifiRequest(context, rawEnabled)
+            }
+            return
+        }
         if (deliverLocal(envelope, excludeUid = senderUid)) return
         val errorCode = sendRemote(envelope)
         if (errorCode != null) {
@@ -196,6 +232,7 @@ object GlassesHub {
         var delivered = false
         registrations.forEach { registration ->
             if (excludeUid != null && registration.uid == excludeUid) return@forEach
+            if (BusPaths.isProtectedLensPath(envelope.path) && !registration.trusted) return@forEach
             if (registration.prefixes.any { PathRules.matchesPrefix(envelope.path, it) }) {
                 if (binary != null && binary.size > LOCAL_BINARY_MAX_BYTES) {
                     log("drop local binary ${envelope.path} id=${envelope.id} bytes=${binary.size} over cap=$LOCAL_BINARY_MAX_BYTES")
@@ -228,7 +265,15 @@ object GlassesHub {
         val callbackBinder = callback.asBinder()
         val deathRecipient = IBinder.DeathRecipient { removeRegistrationsByBinder(callbackBinder) }
         if (runCatching { callbackBinder.linkToDeath(deathRecipient, 0) }.isFailure) return false
-        registrations += Registration(clientId, prefixes, uid, callbackBinder, callback, deathRecipient)
+        registrations += Registration(
+            clientId,
+            prefixes,
+            uid,
+            isTrustedUid(uid),
+            callbackBinder,
+            callback,
+            deathRecipient,
+        )
         runCatching { callback.onLinkState(linkState()) }
         appContext?.let { GlassesClientSupervisor.onClientRegistered(it, prefixes) }
         return true
@@ -311,4 +356,44 @@ object GlassesHub {
             id = id,
             payload = JSONObject().put("code", code).put("forId", id),
         )
+
+    private fun isTrustedUid(uid: Int): Boolean {
+        val context = appContext ?: return false
+        return context.packageManager.checkSignatures(uid, Process.myUid()) ==
+            PackageManager.SIGNATURE_MATCH
+    }
+
+    private fun handleGlassesWifiRequest(context: Context, enabled: Boolean) {
+        val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+        if (wifiManager == null) {
+            log("glassesWifiRequest enabled=$enabled hubOwned=${wifiOwnership.isHubOwned()} applied=false")
+            return
+        }
+        val wifiCurrentlyEnabled = runCatching { wifiManager.isWifiEnabled }
+            .onFailure { logError("glassesWifiRequest state read failed", it) }
+            .getOrNull()
+        if (wifiCurrentlyEnabled == null) {
+            log("glassesWifiRequest enabled=$enabled hubOwned=${wifiOwnership.isHubOwned()} applied=false")
+            return
+        }
+        val result = wifiOwnership.handleRequest(
+            enabled = enabled,
+            wifiCurrentlyEnabled = wifiCurrentlyEnabled,
+            setWifiEnabled = { requested ->
+                val applied = runCatching { SelfArmController.setWifiEnabled(context, requested) }
+                    .onFailure { logError("glassesWifiRequest shell failed", it) }
+                    .getOrDefault(false)
+                if (requested && !applied) attemptWifiAutoEnroll(context)
+                applied
+            },
+        )
+        log("glassesWifiRequest enabled=$enabled hubOwned=${result.hubOwned} applied=${result.applied}")
+    }
+
+    private fun attemptWifiAutoEnroll(context: Context) {
+        if (SelfArmLocalAdbBootstrapper.isBootstrapComplete(context)) return
+        val attempted = autoEnrollAttempted.compareAndSet(false, true)
+        val serviceConnected = attempted && SelfArmWirelessAccessibilityService.startConnectedService()
+        log("glassesWifi auto-enroll attempted=$attempted serviceConnected=$serviceConnected")
+    }
 }
