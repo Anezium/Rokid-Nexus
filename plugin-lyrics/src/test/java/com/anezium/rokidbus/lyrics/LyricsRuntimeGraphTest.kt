@@ -64,4 +64,27 @@ class LyricsRuntimeGraphTest {
         assertEquals("Current track: fallback resolved by NETEASE.", next.musixmatchStatusLabel)
         assertEquals("Current track: synced lyrics found.", next.neteaseStatusLabel)
     }
+
+    @Test
+    fun providerStatusViewState_updatesSpotifyStatus() {
+        val next = providerStatusViewState(
+            current = ProviderSettingsViewState(
+                spotifyConfigured = true,
+                spotifyStatusLabel = "stale",
+            ),
+            defaults = ProviderSettingsViewState(
+                spotifyConfigured = true,
+                spotifyStatusLabel = "Spotify is configured. Waiting for the next lyrics lookup.",
+            ),
+            summaries = listOf(
+                ProviderAttemptSummary(
+                    provider = "SPOTIFY",
+                    outcome = ProviderAttemptOutcome.SUCCESS,
+                    detail = "Spotify color-lyrics returned LINE_SYNCED lyrics with 2 timed lines.",
+                ),
+            ),
+        )
+
+        assertEquals("Current track: synced lyrics found.", next.spotifyStatusLabel)
+    }
 }

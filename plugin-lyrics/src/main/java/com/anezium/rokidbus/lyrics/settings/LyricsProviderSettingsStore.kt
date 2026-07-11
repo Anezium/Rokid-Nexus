@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import android.util.Log
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKeys
+import com.anezium.rokidbus.lyrics.lyrics.SpotifySpDcCookie
 
 data class MusixmatchCredentials(
     val email: String,
@@ -26,10 +27,14 @@ interface MusixmatchSessionCacheSource {
     fun clearMusixmatchSessionToken()
 }
 
+interface SpotifySpDcSource {
+    fun getSpotifySpDc(): String?
+}
+
 class LyricsProviderSettingsStore internal constructor(
     private val preferences: SharedPreferences?,
     private val warningLogger: (String) -> Unit = {},
-) : MusixmatchCredentialsSource, MusixmatchSessionCacheSource {
+) : MusixmatchCredentialsSource, MusixmatchSessionCacheSource, SpotifySpDcSource {
     constructor(context: Context) : this(
         preferences = createPreferences(context.applicationContext),
         warningLogger = { message -> Log.w(TAG, message) },
@@ -72,6 +77,37 @@ class LyricsProviderSettingsStore internal constructor(
             null
         }
     }
+
+    override fun getSpotifySpDc(): String? {
+        val securePreferences = preferences ?: return null
+        return runCatching {
+            securePreferences.getString(KEY_SPOTIFY_SP_DC, null)
+                ?.trim()
+                ?.takeIf { it.isNotBlank() }
+        }.getOrElse {
+            warningLogger("Secure Spotify cookie read failed")
+            null
+        }
+    }
+
+    fun hasSpotifySpDc(): Boolean =
+        getSpotifySpDc() != null
+
+    fun saveSpotifySpDc(value: String): Boolean {
+        val normalized = SpotifySpDcCookie.extractValue(value)
+        return secureCommit("Secure Spotify cookie write failed") {
+            if (normalized == null) {
+                remove(KEY_SPOTIFY_SP_DC)
+            } else {
+                putString(KEY_SPOTIFY_SP_DC, normalized)
+            }
+        }
+    }
+
+    fun clearSpotifySpDc(): Boolean =
+        secureCommit("Secure Spotify cookie clear failed") {
+            remove(KEY_SPOTIFY_SP_DC)
+        }
 
     fun hasMusixmatchCredentials(): Boolean =
         getMusixmatchCredentials() != null
@@ -129,6 +165,7 @@ class LyricsProviderSettingsStore internal constructor(
     private companion object {
         private const val TAG = "LyricsProviderSettings"
         private const val PREFERENCES_NAME = "lyrics_provider_settings"
+        private const val KEY_SPOTIFY_SP_DC = "spotify_sp_dc"
         private const val KEY_MUSIXMATCH_EMAIL = "musixmatch_email"
         private const val KEY_MUSIXMATCH_PASSWORD = "musixmatch_password"
         private const val KEY_MUSIXMATCH_USER_TOKEN = "musixmatch_user_token"

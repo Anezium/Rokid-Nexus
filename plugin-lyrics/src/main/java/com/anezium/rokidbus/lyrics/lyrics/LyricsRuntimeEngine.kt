@@ -46,6 +46,7 @@ class LyricsRuntimeEngine(
                     artist = mediaSnapshot.artist,
                     album = mediaSnapshot.album,
                     durationSeconds = mediaSnapshot.durationMs?.div(1000L)?.toInt(),
+                    spotifyTrackId = mediaSnapshot.spotifyTrackId,
                 ),
                 mediaKey = mediaLookupKey(mediaSnapshot),
                 fromMedia = true,
@@ -123,6 +124,7 @@ class LyricsRuntimeEngine(
                     artist = snapshot.artist,
                     album = snapshot.album,
                     durationSeconds = snapshot.durationMs?.div(1000L)?.toInt(),
+                    spotifyTrackId = snapshot.spotifyTrackId,
                 ),
                 mediaKey = lookupKey,
                 fromMedia = true,
@@ -161,7 +163,7 @@ class LyricsRuntimeEngine(
             artist = artist,
             album = request.album.trim(),
         )
-        val requestKey = mediaKey ?: lookupRequestKey(normalizedRequest)
+        val requestKey = mediaKey ?: lyricsLookupRequestKey(normalizedRequest)
         if (!force && requestKey == lookupInFlightKey) {
             return
         }
@@ -360,14 +362,6 @@ class LyricsRuntimeEngine(
         return SystemClock.elapsedRealtime() - lastLookupErrorAtMs >= LOOKUP_ERROR_RETRY_MS
     }
 
-    private fun lookupRequestKey(request: LyricsLookupRequest): String =
-        listOf(
-            normalized(request.title),
-            normalized(request.artist),
-            normalized(request.album),
-            request.durationSeconds?.toString().orEmpty(),
-        ).joinToString("|")
-
     private fun initialLineIndex(@Suppress("UNUSED_PARAMETER") lines: List<LyricsLine>): Int = -1
 
     private fun applyMediaSnapshot(
@@ -406,15 +400,6 @@ class LyricsRuntimeEngine(
         }
         return candidate
     }
-
-    private fun mediaLookupKey(snapshot: MediaPlaybackSnapshot): String =
-        listOf(
-            snapshot.packageName,
-            normalized(snapshot.title),
-            normalized(snapshot.artist),
-            normalized(snapshot.album),
-            snapshot.durationMs?.div(1000L)?.toString().orEmpty(),
-        ).joinToString("|")
 
     private fun normalized(value: String): String =
         value.trim().lowercase()
@@ -520,3 +505,22 @@ internal fun hasVisibleLyrics(snapshot: LyricsSnapshot): Boolean =
 
 internal fun String.normalizedLookupValue(): String =
     trim().lowercase()
+
+internal fun lyricsLookupRequestKey(request: LyricsLookupRequest): String =
+    listOf(
+        request.title.normalizedLookupValue(),
+        request.artist.normalizedLookupValue(),
+        request.album.normalizedLookupValue(),
+        request.durationSeconds?.toString().orEmpty(),
+        request.spotifyTrackId?.trim().orEmpty(),
+    ).joinToString("|")
+
+internal fun mediaLookupKey(snapshot: MediaPlaybackSnapshot): String =
+    listOf(
+        snapshot.packageName,
+        snapshot.title.normalizedLookupValue(),
+        snapshot.artist.normalizedLookupValue(),
+        snapshot.album.normalizedLookupValue(),
+        snapshot.durationMs?.div(1000L)?.toString().orEmpty(),
+        snapshot.spotifyTrackId?.trim().orEmpty(),
+    ).joinToString("|")

@@ -10,6 +10,7 @@ import com.anezium.rokidbus.lyrics.lyrics.MusixmatchLyricsProvider
 import com.anezium.rokidbus.lyrics.lyrics.NeteaseLyricsProvider
 import com.anezium.rokidbus.lyrics.lyrics.ProviderAttemptOutcome
 import com.anezium.rokidbus.lyrics.lyrics.ProviderAttemptSummary
+import com.anezium.rokidbus.lyrics.lyrics.SpotifyLyricsProvider
 import com.anezium.rokidbus.lyrics.media.MediaSessionMonitor
 import com.anezium.rokidbus.lyrics.media.MediaNotificationListenerService
 import com.anezium.rokidbus.lyrics.settings.LyricsProviderSettingsStore
@@ -25,6 +26,7 @@ object LyricsRuntimeGraph {
     lateinit var providerSettingsStore: LyricsProviderSettingsStore
         private set
     private lateinit var appContext: Context
+    private lateinit var spotifyLyricsProvider: SpotifyLyricsProvider
     private lateinit var musixmatchLyricsProvider: MusixmatchLyricsProvider
 
     @Synchronized
@@ -32,6 +34,9 @@ object LyricsRuntimeGraph {
         if (initialized) return
         appContext = context.applicationContext
         providerSettingsStore = LyricsProviderSettingsStore(appContext)
+        spotifyLyricsProvider = SpotifyLyricsProvider(
+            spDcSource = providerSettingsStore,
+        )
         musixmatchLyricsProvider = MusixmatchLyricsProvider(
             credentialsSource = providerSettingsStore,
             sessionCacheSource = providerSettingsStore,
@@ -40,6 +45,7 @@ object LyricsRuntimeGraph {
             stateStore = stateStore,
             lyricsProvider = CompositeLyricsProvider(
                 providers = listOf(
+                    spotifyLyricsProvider,
                     musixmatchLyricsProvider,
                     NeteaseLyricsProvider(),
                     LrcLibLyricsClient(),
@@ -87,6 +93,13 @@ object LyricsRuntimeGraph {
         if (initialized) mediaSessionMonitor.skipToPrevious()
     }
 
+    fun onSpotifyCookieChanged() {
+        if (!initialized) return
+        spotifyLyricsProvider.invalidateSession()
+        syncProviderSettingsState(preserveDynamicLabels = false)
+        lyricsRuntimeEngine.refresh()
+    }
+
     fun notificationAccessEnabled(context: Context): Boolean {
         val appContext = context.applicationContext
         val target = ComponentName(appContext, MediaNotificationListenerService::class.java)
@@ -115,6 +128,13 @@ object LyricsRuntimeGraph {
                 defaults
             } else {
                 current.copy(
+                    spotifyConfigured = defaults.spotifyConfigured,
+                    spotifyStatusLabel = current.spotifyStatusLabel.takeUnless {
+                        it.isBlank() ||
+                            it.startsWith("Spotify is configured.") ||
+                            it.startsWith("Paste your Spotify sp_dc cookie") ||
+                            it.startsWith("Add your Spotify sp_dc cookie")
+                    } ?: defaults.spotifyStatusLabel,
                     musixmatchConfigured = defaults.musixmatchConfigured,
                     musixmatchStatusLabel = current.musixmatchStatusLabel.takeUnless {
                         it.isBlank() ||
@@ -143,8 +163,15 @@ object LyricsRuntimeGraph {
     }
 
     private fun defaultProviderSettingsViewState(): ProviderSettingsViewState {
+        val spotifyConfigured = providerSettingsStore.hasSpotifySpDc()
         val musixmatchConfigured = providerSettingsStore.hasMusixmatchCredentials()
         return ProviderSettingsViewState(
+            spotifyConfigured = spotifyConfigured,
+            spotifyStatusLabel = if (spotifyConfigured) {
+                "Spotify is configured. Waiting for the next lyrics lookup."
+            } else {
+                "Add your Spotify sp_dc cookie to try Spotify's own synced lyrics first."
+            },
             musixmatchConfigured = musixmatchConfigured,
             musixmatchStatusLabel = if (musixmatchConfigured) {
                 "Musixmatch is configured. Waiting for the next lyrics lookup."
@@ -179,9 +206,15 @@ internal fun providerStatusViewState(
     summaries: List<ProviderAttemptSummary>,
 ): ProviderSettingsViewState {
     val resolvedProvider = summaries.lastOrNull { it.outcome == ProviderAttemptOutcome.SUCCESS }?.provider
-    var next = defaults.copy(musixmatchConfigured = current.musixmatchConfigured)
+    var next = defaults.copy(
+        spotifyConfigured = current.spotifyConfigured,
+        musixmatchConfigured = current.musixmatchConfigured,
+    )
     summaries.forEach { summary ->
         next = when (summary.provider) {
+            "SPOTIFY" -> next.copy(
+                spotifyStatusLabel = providerStatusLabel(summary, resolvedProvider),
+            )
             "MUSIXMATCH" -> next.copy(
                 musixmatchStatusLabel = providerStatusLabel(summary, resolvedProvider),
             )
