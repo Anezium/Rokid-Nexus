@@ -3250,7 +3250,9 @@ class LensActivity : AppCompatActivity() {
         private const val FAST_FREEZE_FRAME_TIMEOUT_MS = 1_200L
         private const val HD_AE_SETTLE_MAX_MS = 450L
         private const val HD_AE_SETTLE_MIN_FRAMES = 3
-        private const val HD_REFINE_MIN_AVAILABLE_MEMORY_MB = 300
+        // Field-calibrated 2026-07-11: with the camera session up this device OPERATES at
+        // ~265-300MB availMem, so 300 disabled HD entirely. 150 marks genuine pressure.
+        private const val HD_REFINE_MIN_AVAILABLE_MEMORY_MB = 150
         private const val FROZEN_ZOOM_NOTICE_MS = 1_200L
         private const val PHONE_TIMEOUT_ERROR_CODE = "TIMEOUT"
         private const val CAMERA_BIND_MAX_RETRIES = 3

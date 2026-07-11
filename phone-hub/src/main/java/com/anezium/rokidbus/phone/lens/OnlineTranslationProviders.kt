@@ -364,7 +364,9 @@ class GoogleWebTranslationProvider : HttpTranslationProvider("lens-google-web") 
                 Callable {
                     val target = urlEncode(request.targetLang)
                     val query = urlEncode(source)
-                    // This unofficial Google Web endpoint may change, break, or throttle at any time.
+                    // This unofficial Google Web endpoint may change, break, or throttle at any
+                    // time. It 302-redirects Dalvik user agents to google.com/sorry (verified
+                    // on-device 2026-07-11), so present a browser UA.
                     val response = readResponse(
                         operation = operation,
                         url = URL(
@@ -372,8 +374,21 @@ class GoogleWebTranslationProvider : HttpTranslationProvider("lens-google-web") 
                                 "?client=gtx&sl=auto&tl=$target&dt=t&q=$query",
                         ),
                         method = "GET",
+                        headers = mapOf("User-Agent" to GOOGLE_WEB_USER_AGENT),
                     )
-                    IndexedTranslation(index, OnlineTranslationResponseParser.parseGoogle(response))
+                    val parsed = try {
+                        OnlineTranslationResponseParser.parseGoogle(response)
+                    } catch (failure: Exception) {
+                        // Field 2026-07-11: every attempt died as TRANSLATION_FAILED with no
+                        // clue whether Google served a captcha page or an unexpected shape.
+                        Log.w(
+                            "LensTranslation",
+                            "googleWebParseFailed len=${response.length} " +
+                                "head=${response.take(120).replace(Regex("\\s+"), " ")}",
+                        )
+                        throw failure
+                    }
+                    IndexedTranslation(index, parsed)
                 },
             ).also { track(operation, it) }
         }
@@ -409,6 +424,9 @@ class GoogleWebTranslationProvider : HttpTranslationProvider("lens-google-web") 
 
     private companion object {
         private const val MAX_CONCURRENT_CALLS = 4
+        private const val GOOGLE_WEB_USER_AGENT =
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+                "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
     }
 }
 

@@ -302,8 +302,13 @@ class LensOverlayView @JvmOverloads constructor(
         val collisionResolved = resolveTranslatedBlockCollisions(translatedBlocks)
             .mapNotNull(::refitTranslatedBlockToRect)
         val sourceSafeBlocks = collisionResolved.filter { candidate ->
+            // Coarse FAST-1080 OCR yields source boxes that already overlap each other; a
+            // hard no-intersect veto made those panels unrenderable (field 2026-07-11,
+            // suppressedPanels=2-5 per freeze). Pre-existing overlap is tolerated — growth
+            // just must not make any of it worse.
             val avoidsOtherSources = mappedBlocks.none { other ->
-                other.stableId != candidate.stableId && RectF.intersects(candidate.rect, other.sourceRect)
+                other.stableId != candidate.stableId &&
+                    !doesNotIncreaseObstacleOverlap(candidate.rect, other.sourceRect, candidate.sourceRect)
             }
             val staysInViewport = candidate.rect.left >= 0f && candidate.rect.top >= 0f &&
                 candidate.rect.right <= width.toFloat() && candidate.rect.bottom <= height.toFloat()
