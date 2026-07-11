@@ -12,6 +12,7 @@ import android.os.Looper
 import android.os.RemoteException
 import android.util.Log
 import com.anezium.rokidbus.shared.BusConstants
+import com.anezium.rokidbus.shared.BusCapabilityBits
 import com.anezium.rokidbus.shared.BusPaths
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.withTimeout
@@ -58,6 +59,7 @@ class BusClient(
     private var bound = false
     private var closed = false
     private var reconnectPosted = false
+    @Volatile private var hubCapabilities = 0
 
     private val callback = object : IBusCallback.Stub() {
         override fun onMessage(path: String, id: String, payload: ByteArray) {
@@ -83,6 +85,9 @@ class BusClient(
             reconnectPosted = false
             runCatching {
                 service?.register(clientId, receivePrefixes, callback)
+                // Registration callbacks post onto main. Resolve capabilities first so every
+                // observed LinkState can safely trigger protected-path offer replay.
+                hubCapabilities = runCatching { service?.capabilities() ?: 0 }.getOrDefault(0)
                 service?.linkState()?.let { listener(BusEvent.LinkState(it)) }
                 flushQueued()
             }.onFailure {
@@ -93,16 +98,19 @@ class BusClient(
 
         override fun onServiceDisconnected(name: ComponentName) {
             service = null
+            hubCapabilities = 0
             if (!closed) scheduleReconnect()
         }
 
         override fun onBindingDied(name: ComponentName) {
             service = null
+            hubCapabilities = 0
             if (!closed) scheduleReconnect()
         }
 
         override fun onNullBinding(name: ComponentName) {
             service = null
+            hubCapabilities = 0
             listener(BusEvent.Error("Hub returned a null binding"))
             if (!closed) scheduleReconnect()
         }
@@ -221,6 +229,9 @@ class BusClient(
     fun linkState(): Int =
         runCatching { service?.linkState() ?: 0 }.getOrDefault(0)
 
+    fun supportsProtectedLensLink(): Boolean =
+        hubCapabilities and BusCapabilityBits.PROTECTED_LENS_LINK != 0
+
     fun close() {
         closed = true
         pending.values.forEach { it.onFailure(IllegalStateException("BusClient closed")) }
@@ -229,6 +240,7 @@ class BusClient(
         if (bound) runCatching { appContext.unbindService(connection) }
         bound = false
         service = null
+        hubCapabilities = 0
         queued.clear()
     }
 

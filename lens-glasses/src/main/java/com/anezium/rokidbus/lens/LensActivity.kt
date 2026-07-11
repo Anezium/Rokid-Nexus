@@ -51,6 +51,9 @@ import androidx.core.content.ContextCompat
 import com.anezium.rokidbus.client.BusClient
 import com.anezium.rokidbus.client.BusEvent
 import com.anezium.rokidbus.shared.BusPaths
+import com.anezium.rokidbus.shared.LensFrozenOcrResult
+import com.anezium.rokidbus.shared.LensLinkPacket
+import com.anezium.rokidbus.shared.LensLinkPacketType
 import com.anezium.rokidbus.shared.LensWireContract
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.Text
@@ -63,6 +66,7 @@ import com.google.mlkit.vision.text.korean.KoreanTextRecognizerOptions
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.ByteArrayOutputStream
 import java.util.ArrayDeque
 import java.util.Locale
 import java.util.UUID
@@ -282,6 +286,7 @@ class LensActivity : AppCompatActivity() {
         val bitmap: Bitmap,
         val jpegBytes: ByteArray,
         val appliedRotation: Int,
+        val rawCrop: Rect,
     )
 
     private data class FrozenCaptureJpeg(
@@ -299,6 +304,20 @@ class LensActivity : AppCompatActivity() {
         val text: Text,
         val script: OcrScript,
         val latencyMs: Long,
+    )
+
+    private data class RemoteFrozenOcrPending(
+        val requestId: Long,
+        val stage: String,
+        val bitmap: Bitmap,
+        val mode: OcrScript,
+        val sourceStatus: String,
+        val previous: LastOcrResult?,
+        val fastRequest: FastFreezeRequest? = null,
+        val jpegCrop: Rect? = null,
+        val jpegRotationDegrees: Int = 0,
+        var sentAtMs: Long = 0L,
+        var timeout: Runnable? = null,
     )
 
     private lateinit var previewView: PreviewView
@@ -323,6 +342,7 @@ class LensActivity : AppCompatActivity() {
     private var koreanRecognizer: TextRecognizer? = null
     private var devanagariRecognizer: TextRecognizer? = null
     private var busClient: BusClient? = null
+    private var imageLink: LensImageLink? = null
     private val inputRouter = LensInputRouter()
 
     @Volatile private var effectiveScript = OcrScript.LATIN
@@ -394,6 +414,7 @@ class LensActivity : AppCompatActivity() {
     private var queuedFrozenZoomLevel: FrozenZoomLevel? = null
     private var baseFrozenContent: FrozenContent? = null
     private var zoomFrozenContent: FrozenContent? = null
+    private val remoteFrozenOcrPending = linkedMapOf<String, RemoteFrozenOcrPending>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -424,9 +445,11 @@ class LensActivity : AppCompatActivity() {
         cameraExecutor = Executors.newSingleThreadExecutor()
         latinRecognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
         japaneseRecognizer = TextRecognition.getClient(JapaneseTextRecognizerOptions.Builder().build())
+        imageLink = LensImageLink(applicationContext, ::sendLensLinkOffer)
         startBusClient()
         hideSystemUi()
         ensureCameraPermission()
+        if (hasCameraPermission()) ensureLensLinkPermission()
         Log.i(TAG, "sessionStart state=created")
     }
 
@@ -453,6 +476,7 @@ class LensActivity : AppCompatActivity() {
         hdFrozenOcrInFlight = false
         val incompleteFreeze = isFrozen && frozenOcrResult == null
         freezeRequestSerial.incrementAndGet()
+        clearRemoteFrozenOcrPending()
         pendingFastFreeze.set(null)
         zoomRequestSerial.incrementAndGet()
         queuedFrozenZoomLevel = null
@@ -513,6 +537,7 @@ class LensActivity : AppCompatActivity() {
         cancelFrozenBatchContinuation()
         activeHdCaptureSession?.cancel("lifecycle_destroy")
         freezeRequestSerial.incrementAndGet()
+        clearRemoteFrozenOcrPending()
         pendingFastFreeze.set(null)
         zoomRequestSerial.incrementAndGet()
         cancelFastFreezeTimeout()
@@ -520,6 +545,8 @@ class LensActivity : AppCompatActivity() {
         clearPendingRequests("STOPPED")
         cameraProvider?.unbindAll()
         resetAnalyzerPipeline()
+        imageLink?.close()
+        imageLink = null
         busClient?.close()
         busClient = null
         latinRecognizer.close()
@@ -572,22 +599,62 @@ class LensActivity : AppCompatActivity() {
         grantResults: IntArray,
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode != REQUEST_CAMERA) return
-        if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
-            translationStatus = "CAMERA READY"
-            refreshHud()
-            startCamera()
-        } else {
-            translationStatus = "CAMERA PERMISSION REQUIRED"
-            refreshHud()
+        when (requestCode) {
+            REQUEST_CAMERA -> {
+                if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
+                    translationStatus = "CAMERA READY"
+                    refreshHud()
+                    startCamera()
+                } else {
+                    translationStatus = "CAMERA PERMISSION REQUIRED"
+                    refreshHud()
+                }
+                ensureLensLinkPermission()
+            }
+            REQUEST_LENS_LINK -> {
+                if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
+                    startLensImageLink()
+                } else {
+                    Log.w(TAG, "lensLinkPermissionDenied")
+                }
+            }
         }
+    }
+
+    private fun ensureLensLinkPermission() {
+        // targetSdk 32 keeps WifiP2pManager on the location runtime gate even when the
+        // device OS is Android 13+; NEARBY_WIFI_DEVICES applies after targeting 33.
+        val permission = Manifest.permission.ACCESS_FINE_LOCATION
+        if (ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED) {
+            startLensImageLink()
+        } else {
+            requestPermissions(arrayOf(permission), REQUEST_LENS_LINK)
+        }
+    }
+
+    private fun startLensImageLink() {
+        runCatching { imageLink?.start() }
+            .onFailure { Log.w(TAG, "lensLinkStartFailure", it) }
+    }
+
+    private fun sendLensLinkOffer(offer: LensLinkOffer) {
+        val client = busClient
+        if (client?.supportsProtectedLensLink() != true) {
+            Log.w(TAG, "lensLinkOfferDeferred reason=unprotected_bus")
+            return
+        }
+        client.send(BusPaths.LENS_LINK_OFFER, offer.toJson())
+        Log.i(TAG, "lensLinkOfferSent port=${offer.port}")
     }
 
     private fun startBusClient() {
         val client = BusClient(
             context = applicationContext,
             clientId = "lens-glasses",
-            pathPrefixes = listOf(BusPaths.LENS_TRANSLATE_REPLY),
+            pathPrefixes = listOf(
+                BusPaths.LENS_TRANSLATE_REPLY,
+                BusPaths.LENS_FROZEN_OCR_RESULT,
+            ),
         ) { event -> handleBusEvent(event) }
         busClient = client
         client.connect()
@@ -597,6 +664,7 @@ class LensActivity : AppCompatActivity() {
         when (event) {
             is BusEvent.LinkState -> {
                 busState = event.state
+                if (isLensControlBusUp(busState)) imageLink?.resendOfferIfDisconnected()
                 if (!hasDataLink()) {
                     clearPendingRequests("DATA LINK OFFLINE")
                 } else if (translationStatus == "DATA LINK OFFLINE" || translationStatus == "DATA LINK ERROR") {
@@ -621,6 +689,7 @@ class LensActivity : AppCompatActivity() {
     private fun handleBusMessage(event: BusEvent.Message) {
         when (event.path) {
             BusPaths.LENS_TRANSLATE_REPLY -> handleTranslateReply(event.id, event.payload)
+            BusPaths.LENS_FROZEN_OCR_RESULT -> handleRemoteFrozenOcrResult(event.payload)
             BusPaths.ERROR -> handleBusErrorReply(event)
         }
     }
@@ -990,6 +1059,7 @@ class LensActivity : AppCompatActivity() {
             return
         }
         val requestId = freezeRequestSerial.incrementAndGet()
+        clearRemoteFrozenOcrPending()
         activeHdCaptureSession?.cancel("new_freeze")
         val (modeSnapshot, nextProbeScriptSnapshot) = synchronized(autoScriptLock) {
             autoScriptState.effectiveScript to autoScriptState.nextProbeScript
@@ -1130,11 +1200,13 @@ class LensActivity : AppCompatActivity() {
                                         frozenJpegBytes = decodedCapture.jpegBytes
                                         frozenJpegRotationDegrees = decodedCapture.appliedRotation
                                         session.completeTiming()
-                                        runHdFrozenBitmapOcr(
-                                            requestId = requestId,
-                                            mode = mode,
-                                            bitmap = decodedCapture.bitmap,
-                                        )
+                                        if (!sendHdForRemoteOcr(requestId, mode, decodedCapture)) {
+                                            runHdFrozenBitmapOcr(
+                                                requestId = requestId,
+                                                mode = mode,
+                                                bitmap = decodedCapture.bitmap,
+                                            )
+                                        }
                                     }
                                 }
                             }.onFailure {
@@ -1204,6 +1276,7 @@ class LensActivity : AppCompatActivity() {
         }
         activeHdCaptureSession?.cancel("unfreeze")
         freezeRequestSerial.incrementAndGet()
+        clearRemoteFrozenOcrPending()
         pendingFastFreeze.set(null)
         zoomRequestSerial.incrementAndGet()
         cancelFastFreezeTimeout()
@@ -1478,6 +1551,262 @@ class LensActivity : AppCompatActivity() {
             emptyList(),
             hudState(OcrMetrics(avgLatencyMs = 0L, hz = 0.0)),
         )
+    }
+
+    private fun sendFastForRemoteOcr(request: FastFreezeRequest, bitmap: Bitmap): Boolean {
+        if (imageLink?.isConnected != true) return false
+        val pending = RemoteFrozenOcrPending(
+            requestId = request.requestId,
+            stage = LensWireContract.FROZEN_STAGE_FAST,
+            bitmap = bitmap,
+            mode = request.mode,
+            sourceStatus = fastSourceStatus(bitmap),
+            previous = lastOcrResult,
+            fastRequest = request,
+        )
+        return queueRemoteFrozenImage(pending, FAST_REMOTE_OCR_TIMEOUT_MS) {
+            ByteArrayOutputStream().use { output ->
+                check(bitmap.compress(Bitmap.CompressFormat.JPEG, FAST_REMOTE_JPEG_QUALITY, output)) {
+                    "FAST JPEG encode failed"
+                }
+                output.toByteArray()
+            }
+        }
+    }
+
+    private fun sendHdForRemoteOcr(
+        requestId: Long,
+        mode: OcrScript,
+        capture: DecodedFrozenCapture,
+    ): Boolean {
+        if (imageLink?.isConnected != true) return false
+        hdFrozenOcrInFlight = true
+        val pending = RemoteFrozenOcrPending(
+            requestId = requestId,
+            stage = LensWireContract.FROZEN_STAGE_HD,
+            bitmap = capture.bitmap,
+            mode = mode,
+            sourceStatus = "HD ${maxOf(capture.bitmap.width, capture.bitmap.height)}",
+            previous = baseFrozenContent?.ocrResult ?: lastOcrResult,
+            jpegCrop = Rect(capture.rawCrop),
+            jpegRotationDegrees = capture.appliedRotation,
+        )
+        return queueRemoteFrozenImage(pending, HD_REMOTE_OCR_TIMEOUT_MS) { capture.jpegBytes }
+    }
+
+    private fun queueRemoteFrozenImage(
+        pending: RemoteFrozenOcrPending,
+        timeoutMs: Long,
+        jpegSupplier: () -> ByteArray,
+    ): Boolean {
+        val key = remoteFrozenOcrKey(pending.requestId, pending.stage)
+        remoteFrozenOcrPending.remove(key)?.timeout?.let(mainHandler::removeCallbacks)
+        remoteFrozenOcrPending[key] = pending
+        pending.sentAtMs = SystemClock.elapsedRealtime()
+        val timeout = Runnable {
+            if (remoteFrozenOcrPending.remove(key) === pending) {
+                pending.timeout = null
+                imageLink?.abortClient()
+                runRemoteFrozenOcrFallback(pending, "timeout")
+            }
+        }
+        pending.timeout = timeout
+        mainHandler.postDelayed(timeout, timeoutMs)
+        return runCatching {
+            cameraExecutor.execute {
+                val jpeg = runCatching(jpegSupplier)
+                    .onFailure { Log.w(TAG, "lensLinkFrozenEncodeFailure stage=${pending.stage}", it) }
+                    .getOrNull()
+                val sent = jpeg != null && imageLink?.send(
+                    LensLinkPacket(
+                        type = LensLinkPacketType.FROZEN_IMAGE,
+                        requestId = pending.requestId,
+                        seq = if (pending.stage == LensWireContract.FROZEN_STAGE_FAST) 0 else 1,
+                        meta = JSONObject()
+                            .put("freezeId", pending.requestId)
+                            .put("stage", pending.stage)
+                            .put("width", pending.bitmap.width)
+                            .put("height", pending.bitmap.height)
+                            .put("script", recognizerModeWireValue(pending.mode))
+                            .also { meta ->
+                                pending.jpegCrop?.let { crop ->
+                                    meta.put(
+                                        "crop",
+                                        JSONArray().put(crop.left).put(crop.top).put(crop.right).put(crop.bottom),
+                                    )
+                                    meta.put("rotation", pending.jpegRotationDegrees)
+                                }
+                            }
+                            .toString(),
+                        payload = jpeg ?: ByteArray(0),
+                    ),
+                ) == true
+                mainHandler.post {
+                    if (remoteFrozenOcrPending[key] !== pending) return@post
+                    if (!sent || !isCurrentFreeze(pending.requestId)) {
+                        remoteFrozenOcrPending.remove(key)
+                        pending.timeout?.let(mainHandler::removeCallbacks)
+                        pending.timeout = null
+                        runRemoteFrozenOcrFallback(pending, "send_failed")
+                    }
+                }
+            }
+        }.onFailure {
+            remoteFrozenOcrPending.remove(key)
+            pending.timeout?.let(mainHandler::removeCallbacks)
+            pending.timeout = null
+            Log.w(TAG, "lensLinkFrozenSendStartFailure stage=${pending.stage}", it)
+        }.isSuccess
+    }
+
+    private fun runRemoteFrozenOcrFallback(pending: RemoteFrozenOcrPending, reason: String) {
+        if (!isCurrentFreeze(pending.requestId)) {
+            recycleRemotePendingBitmap(pending)
+            return
+        }
+        Log.w(
+            TAG,
+            "freezeRemoteOcrFallback id=${pending.requestId} stage=${pending.stage} reason=$reason",
+        )
+        if (pending.stage == LensWireContract.FROZEN_STAGE_FAST) {
+            val request = pending.fastRequest ?: return
+            runLocalFastFrozenRecognition(request, pending.bitmap)
+        } else {
+            runHdFrozenBitmapOcr(pending.requestId, pending.mode, pending.bitmap)
+        }
+    }
+
+    private fun runLocalFastFrozenRecognition(request: FastFreezeRequest, bitmap: Bitmap) {
+        runAutoFrozenRecognition(
+            requestId = request.requestId,
+            bitmap = bitmap,
+            initialScript = request.mode,
+            onSuccess = { recognition ->
+                completeFastFreezeOcr(
+                    request = request,
+                    bitmap = bitmap,
+                    text = recognition.text,
+                    script = recognition.script,
+                    latencyMs = recognition.latencyMs,
+                )
+            },
+            onFailure = { cause ->
+                completeFastFreezeOcrFailure(request, bitmap, "OCR FAILED", cause)
+            },
+        )
+    }
+
+    private fun handleRemoteFrozenOcrResult(payload: JSONObject) {
+        val remote = LensWireContract.parseFrozenOcrResult(payload) ?: return
+        val key = remoteFrozenOcrKey(remote.freezeId, remote.stage)
+        val pending = remoteFrozenOcrPending.remove(key) ?: return
+        pending.timeout?.let(mainHandler::removeCallbacks)
+        pending.timeout = null
+        if (!isCurrentFreeze(remote.freezeId)) {
+            recycleRemotePendingBitmap(pending)
+            return
+        }
+        val script = ocrScriptFromWire(remote.script) ?: run {
+            runRemoteFrozenOcrFallback(pending, "invalid_script")
+            return
+        }
+        val latencyMs = if (pending.sentAtMs > 0L) {
+            SystemClock.elapsedRealtime() - pending.sentAtMs
+        } else {
+            0L
+        }
+        val content = remoteFrozenContent(pending, remote, script, latencyMs)
+        frozenSelectedScript = script
+        installBaseFrozenContent(remote.freezeId, content)
+        Log.i(
+            TAG,
+            "freezeRemoteOcr id=${remote.freezeId} stage=${remote.stage} ms=$latencyMs " +
+                "blocks=${content.ocrResult.blocks.size}",
+        )
+        if (remote.stage == LensWireContract.FROZEN_STAGE_FAST) {
+            pending.fastRequest?.let(::startHdRefine)
+        } else {
+            hdFrozenOcrInFlight = false
+            Log.i(TAG, "freezeHdRefineSuccess id=${remote.freezeId} blocks=${content.ocrResult.blocks.size}")
+            queuedFrozenZoomLevel?.let { queued ->
+                queuedFrozenZoomLevel = null
+                Log.i(TAG, "frozenZoomQueuedApply level=${queued.hudLabel}")
+                applyFrozenZoom(remote.freezeId, queued)
+            }
+        }
+    }
+
+    private fun remoteFrozenContent(
+        pending: RemoteFrozenOcrPending,
+        remote: LensFrozenOcrResult,
+        script: OcrScript,
+        latencyMs: Long,
+    ): FrozenContent {
+        val rawBlocks = remote.blocks.mapNotNull { block ->
+            val lines = block.lines.mapNotNull { line ->
+                val normalized = LensWireContract.normalizeText(line.text)
+                if (normalized.isEmpty()) null else OcrSourceLine(
+                    source = line.text,
+                    normalized = normalized,
+                    bounds = Rect(line.box[0], line.box[1], line.box[2], line.box[3]),
+                )
+            }
+            if (lines.isEmpty()) return@mapNotNull null
+            val bounds = Rect(
+                lines.minOf { it.bounds.left },
+                lines.minOf { it.bounds.top },
+                lines.maxOf { it.bounds.right },
+                lines.maxOf { it.bounds.bottom },
+            )
+            val source = lines.joinToString("\n") { it.source }
+            OcrSourceBlock(
+                source = source,
+                normalized = LensWireContract.normalizeText(source),
+                bounds = bounds,
+                lines = lines,
+            )
+        }
+        val filteredBlocks = filterFrozenBlocks(script, rawBlocks)
+        val blocks = segmentFrozenParagraphBlocks(filteredBlocks)
+        return FrozenContent(
+            bitmap = pending.bitmap,
+            ocrResult = LastOcrResult(
+                mode = script,
+                transformMatrix = frozenBitmapToViewMatrix(pending.bitmap),
+                blocks = blocks,
+                metrics = OcrMetrics(avgLatencyMs = latencyMs, hz = 0.0),
+                completedAtMs = SystemClock.elapsedRealtime(),
+                carriedTranslations = carriedTranslationsFor(script, blocks, pending.previous),
+            ),
+            sourceStatus = pending.sourceStatus,
+        )
+    }
+
+    private fun clearRemoteFrozenOcrPending() {
+        val pending = remoteFrozenOcrPending.values.toList()
+        remoteFrozenOcrPending.clear()
+        pending.forEach {
+            it.timeout?.let(mainHandler::removeCallbacks)
+            it.timeout = null
+            recycleRemotePendingBitmap(it)
+        }
+    }
+
+    private fun recycleRemotePendingBitmap(pending: RemoteFrozenOcrPending) {
+        if (!overlayView.isFrozenBackground(pending.bitmap) && !pending.bitmap.isRecycled) {
+            pending.bitmap.recycle()
+        }
+    }
+
+    private fun remoteFrozenOcrKey(requestId: Long, stage: String): String = "$requestId:$stage"
+
+    private fun ocrScriptFromWire(value: String): OcrScript? = when (value) {
+        LensWireContract.RECOGNIZER_MODE_LATIN -> OcrScript.LATIN
+        LensWireContract.RECOGNIZER_MODE_JAPANESE -> OcrScript.JAPANESE
+        LensWireContract.RECOGNIZER_MODE_CHINESE -> OcrScript.CHINESE
+        LensWireContract.RECOGNIZER_MODE_KOREAN -> OcrScript.KOREAN
+        LensWireContract.RECOGNIZER_MODE_DEVANAGARI -> OcrScript.DEVANAGARI
+        else -> null
     }
 
     private fun completeFastFreezeOcr(
@@ -1944,6 +2273,7 @@ class LensActivity : AppCompatActivity() {
             bitmap = transformed,
             jpegBytes = bytes,
             appliedRotation = normalizedRotation,
+            rawCrop = Rect(rawCrop.left, rawCrop.top, rawCrop.right, rawCrop.bottom),
         )
     }
 
@@ -3002,23 +3332,9 @@ class LensActivity : AppCompatActivity() {
         imageProxy.close()
         mainHandler.post {
             showFastFrozenBitmap(request, bitmap)
-            runAutoFrozenRecognition(
-                requestId = request.requestId,
-                bitmap = bitmap,
-                initialScript = request.mode,
-                onSuccess = { recognition ->
-                    completeFastFreezeOcr(
-                        request = request,
-                        bitmap = bitmap,
-                        text = recognition.text,
-                        script = recognition.script,
-                        latencyMs = recognition.latencyMs,
-                    )
-                },
-                onFailure = { cause ->
-                    completeFastFreezeOcrFailure(request, bitmap, "OCR FAILED", cause)
-                },
-            )
+            if (!sendFastForRemoteOcr(request, bitmap)) {
+                runLocalFastFrozenRecognition(request, bitmap)
+            }
         }
     }
 
@@ -3302,6 +3618,7 @@ class LensActivity : AppCompatActivity() {
 
     companion object {
         private const val REQUEST_CAMERA = 42
+        private const val REQUEST_LENS_LINK = 43
         private const val CACHE_MAX_ENTRIES = 512
         private const val TRANSLATE_TIMEOUT_MS = LensWireContract.GLASSES_REQUEST_TIMEOUT_MS
         private const val TRANSLATE_RETRY_BACKOFF_MS = 750L
@@ -3311,6 +3628,11 @@ class LensActivity : AppCompatActivity() {
         private const val MAX_RETRY_BACKOFF_SHIFT = 16
         private const val FROZEN_BATCH_CONTINUATION_DELAY_MS = 200L
         private const val FAST_FREEZE_FRAME_TIMEOUT_MS = 1_200L
+        private const val FAST_REMOTE_JPEG_QUALITY = 80
+        private const val FAST_REMOTE_OCR_TIMEOUT_MS = 2_500L
+        // HD is a background refine, not user-blocking; allow for a full phone-side
+        // multi-script sweep on sparse scenes before falling back to local OCR.
+        private const val HD_REMOTE_OCR_TIMEOUT_MS = 7_000L
         private const val HD_AE_SETTLE_MAX_MS = 450L
         private const val HD_AE_SETTLE_MIN_FRAMES = 3
         // Field-calibrated 2026-07-11: with the camera session up this device OPERATES at

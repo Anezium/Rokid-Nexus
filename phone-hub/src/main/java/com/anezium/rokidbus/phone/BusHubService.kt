@@ -24,6 +24,7 @@ import com.anezium.rokidbus.media.MediaDeckPlugin
 import com.anezium.rokidbus.phone.lens.LensTranslationPlugin
 import com.anezium.rokidbus.plugin.transit.TransitPlugin
 import com.anezium.rokidbus.shared.BusConstants
+import com.anezium.rokidbus.shared.BusCapabilityBits
 import com.anezium.rokidbus.shared.BusEnvelope
 import com.anezium.rokidbus.shared.BusPaths
 import com.anezium.rokidbus.shared.FrameProtocol
@@ -71,6 +72,7 @@ class BusHubService : Service() {
         val clientId: String,
         val prefixes: List<String>,
         val uid: Int,
+        val trusted: Boolean,
         val callbackBinder: IBinder,
         val callback: IBusCallback,
         val deathRecipient: IBinder.DeathRecipient,
@@ -115,6 +117,7 @@ class BusHubService : Service() {
                 clientId = clientId,
                 prefixes = pathPrefixes.filter { it.isNotBlank() },
                 uid = Binder.getCallingUid(),
+                trusted = isTrustedUid(Binder.getCallingUid()),
                 callbackBinder = callbackBinder,
                 callback = cb,
                 deathRecipient = deathRecipient,
@@ -141,6 +144,8 @@ class BusHubService : Service() {
         }
 
         override fun linkState(): Int = this@BusHubService.linkState()
+
+        override fun capabilities(): Int = BusCapabilityBits.PROTECTED_LENS_LINK
     }
 
     private val linkCallback = object : ICXRLinkCbk {
@@ -270,6 +275,10 @@ class BusHubService : Service() {
         deliverLocal(envelope)
 
     private fun routeLocal(envelope: BusEnvelope, senderUid: Int) {
+        if (BusPaths.isProtectedLensPath(envelope.path) && !isTrustedUid(senderUid)) {
+            log("blocked untrusted protected lens send uid=$senderUid")
+            return
+        }
         if (handleHubPath(envelope, replyRemote = false, senderUid = senderUid)) return
         if (deliverLocal(envelope, excludeUid = senderUid)) return
         if (envelope.path != BusPaths.ERROR &&
@@ -322,6 +331,7 @@ class BusHubService : Service() {
         registrations.forEach { registration ->
             if (targetBinder != null && registration.callbackBinder != targetBinder) return@forEach
             if (excludeUid != null && registration.uid == excludeUid) return@forEach
+            if (BusPaths.isProtectedLensPath(envelope.path) && !registration.trusted) return@forEach
             if (registration.prefixes.any { envelope.path.startsWith(it) }) {
                 if (binary != null && binary.size > LOCAL_BINARY_MAX_BYTES) {
                     log("drop local binary ${envelope.path} id=${envelope.id} bytes=${binary.size} over cap=$LOCAL_BINARY_MAX_BYTES")
@@ -841,6 +851,9 @@ class BusHubService : Service() {
     private fun hasBluetoothConnect(): Boolean =
         Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
             checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
+
+    private fun isTrustedUid(uid: Int): Boolean =
+        packageManager.checkSignatures(uid, android.os.Process.myUid()) == PackageManager.SIGNATURE_MATCH
 
     private fun prefs() = getSharedPreferences(PREFS, MODE_PRIVATE)
 

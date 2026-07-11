@@ -5,6 +5,9 @@ import com.anezium.rokidbus.shared.LinkStateBits
 internal fun isLensTranslationDataLinkUp(linkState: Int): Boolean =
     linkState and LinkStateBits.SPP_DATA_UP != 0
 
+internal fun isLensControlBusUp(linkState: Int): Boolean =
+    linkState and (LinkStateBits.CXR_CONTROL_UP or LinkStateBits.SPP_DATA_UP) != 0
+
 internal fun canStartLensTranslationRequest(
     dataLinkUp: Boolean,
     pendingRequestCount: Int,

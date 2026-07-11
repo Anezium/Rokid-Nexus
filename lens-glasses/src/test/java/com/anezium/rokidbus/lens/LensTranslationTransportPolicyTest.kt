@@ -22,6 +22,13 @@ class LensTranslationTransportPolicyTest {
     }
 
     @Test
+    fun lensControlOfferCanUseCxrOrSpp() {
+        assertFalse(isLensControlBusUp(0))
+        assertTrue(isLensControlBusUp(LinkStateBits.CXR_CONTROL_UP))
+        assertTrue(isLensControlBusUp(LinkStateBits.SPP_DATA_UP))
+    }
+
+    @Test
     fun pendingRequestBlocksEveryAdditionalRequest() {
         assertFalse(
             canStartLensTranslationRequest(

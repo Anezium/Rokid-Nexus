@@ -425,7 +425,7 @@ class MainActivity : Activity() {
                     },
                 )
             }
-            if (!hasLocationPermission()) {
+            if (!hasLocationPermission() || !hasLensWifiPermission()) {
                 add(
                     setupCard(
                         title = "Location access",
@@ -522,19 +522,34 @@ class MainActivity : Activity() {
     }
 
     private fun requestLocationIfNeeded() {
-        if (hasLocationPermission()) return
-        requestPermissions(
-            arrayOf(
-                Manifest.permission.ACCESS_FINE_LOCATION,
-                Manifest.permission.ACCESS_COARSE_LOCATION,
-            ),
-            LOCATION_PERMISSION_REQUEST,
-        )
+        val missing = linkedSetOf<String>().apply {
+            if (!hasLocationPermission()) {
+                add(Manifest.permission.ACCESS_FINE_LOCATION)
+                add(Manifest.permission.ACCESS_COARSE_LOCATION)
+            }
+            if (!hasLensWifiPermission()) {
+                add(
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        Manifest.permission.NEARBY_WIFI_DEVICES
+                    } else {
+                        Manifest.permission.ACCESS_FINE_LOCATION
+                    },
+                )
+            }
+        }
+        if (missing.isNotEmpty()) requestPermissions(missing.toTypedArray(), LOCATION_PERMISSION_REQUEST)
     }
 
     private fun hasLocationPermission(): Boolean =
         checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
             checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+
+    private fun hasLensWifiPermission(): Boolean =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            checkSelfPermission(Manifest.permission.NEARBY_WIFI_DEVICES) == PackageManager.PERMISSION_GRANTED
+        } else {
+            checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        }
 
     private fun savedToken(): String =
         getSharedPreferences(NexusPhoneState.PREFS, MODE_PRIVATE)

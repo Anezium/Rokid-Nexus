@@ -1,11 +1,13 @@
 package com.anezium.rokidbus.glasses
 
 import android.content.Context
+import android.content.pm.PackageManager
 import android.os.Binder
 import android.os.IBinder
 import com.anezium.rokidbus.client.IBusCallback
 import com.anezium.rokidbus.client.IBusService
 import com.anezium.rokidbus.shared.BusConstants
+import com.anezium.rokidbus.shared.BusCapabilityBits
 import com.anezium.rokidbus.shared.BusEnvelope
 import com.anezium.rokidbus.shared.BusPaths
 import com.anezium.rokidbus.shared.FrameProtocol
@@ -27,6 +29,7 @@ object GlassesHub {
         val clientId: String,
         val prefixes: List<String>,
         val uid: Int,
+        val trusted: Boolean,
         val callback: IBusCallback,
     )
 
@@ -44,7 +47,8 @@ object GlassesHub {
         override fun register(clientId: String, pathPrefixes: Array<out String>, cb: IBusCallback) {
             unregister(cb)
             val cleanPrefixes = pathPrefixes.filter { it.isNotBlank() }
-            registrations += Registration(clientId, cleanPrefixes, Binder.getCallingUid(), cb)
+            val uid = Binder.getCallingUid()
+            registrations += Registration(clientId, cleanPrefixes, uid, isTrustedUid(uid), cb)
             log("client registered id=$clientId prefixes=${cleanPrefixes.joinToString()}")
             runCatching { cb.onLinkState(linkState()) }
             appContext?.let { GlassesClientSupervisor.onClientRegistered(it, cleanPrefixes) }
@@ -65,6 +69,8 @@ object GlassesHub {
         }
 
         override fun linkState(): Int = this@GlassesHub.linkState()
+
+        override fun capabilities(): Int = BusCapabilityBits.PROTECTED_LENS_LINK
     }
 
     fun start(context: Context) {
@@ -163,6 +169,10 @@ object GlassesHub {
         sendRemote(BusEnvelope(path = BusPaths.SURFACE_INPUT, payload = payload))
 
     private fun routeLocal(envelope: BusEnvelope, senderUid: Int) {
+        if (BusPaths.isProtectedLensPath(envelope.path) && !isTrustedUid(senderUid)) {
+            log("blocked untrusted protected lens send uid=$senderUid")
+            return
+        }
         if (deliverLocal(envelope, excludeUid = senderUid)) return
         val errorCode = sendRemote(envelope)
         if (errorCode != null) {
@@ -176,6 +186,7 @@ object GlassesHub {
         var delivered = false
         registrations.forEach { registration ->
             if (excludeUid != null && registration.uid == excludeUid) return@forEach
+            if (BusPaths.isProtectedLensPath(envelope.path) && !registration.trusted) return@forEach
             if (registration.prefixes.any { envelope.path.startsWith(it) }) {
                 if (binary != null && binary.size > LOCAL_BINARY_MAX_BYTES) {
                     log("drop local binary ${envelope.path} id=${envelope.id} bytes=${binary.size} over cap=$LOCAL_BINARY_MAX_BYTES")
@@ -261,4 +272,10 @@ object GlassesHub {
             id = id,
             payload = JSONObject().put("code", code).put("forId", id),
         )
+
+    private fun isTrustedUid(uid: Int): Boolean {
+        val context = appContext ?: return false
+        return context.packageManager.checkSignatures(uid, android.os.Process.myUid()) ==
+            PackageManager.SIGNATURE_MATCH
+    }
 }
