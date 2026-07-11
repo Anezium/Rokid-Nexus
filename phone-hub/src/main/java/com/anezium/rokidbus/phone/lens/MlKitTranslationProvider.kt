@@ -21,6 +21,21 @@ private const val TAG = "LensTranslation"
 private const val MAX_TRANSLATOR_CACHE_SIZE = 3
 private const val MAX_ACTIVE_TEXT_PIPELINES = 4
 private const val MAX_QUEUED_TEXT_PIPELINES = 72
+
+internal fun mlKitSourceLanguage(detectedLang: String?, mode: LensRecognizerMode): String {
+    val detected = detectedLang
+        ?.takeUnless { it == "und" }
+        ?.let(TranslateLanguage::fromLanguageTag)
+    if (detected != null) return detected
+    return when (mode) {
+        LensRecognizerMode.LATIN -> TranslateLanguage.ENGLISH
+        LensRecognizerMode.JAPANESE -> TranslateLanguage.JAPANESE
+        LensRecognizerMode.CHINESE -> TranslateLanguage.CHINESE
+        LensRecognizerMode.KOREAN -> TranslateLanguage.KOREAN
+        LensRecognizerMode.DEVANAGARI -> TranslateLanguage.HINDI
+    }
+}
+
 class MlKitTranslationProvider(
     @Suppress("UNUSED_PARAMETER") context: Context,
 ) : TranslationProvider {
@@ -193,7 +208,7 @@ class MlKitTranslationProvider(
             finishSkipped(work)
             return
         }
-        val sourceLang = sourceLanguage(detectedLang, work.operation.request.mode)
+        val sourceLang = mlKitSourceLanguage(detectedLang, work.operation.request.mode)
         val targetLang = work.operation.request.targetLang
         if (sourceLang == targetLang) {
             finishSuccess(
@@ -407,17 +422,6 @@ class MlKitTranslationProvider(
         if (!holder.closed.compareAndSet(false, true)) return
         runCatching { holder.translator.close() }
             .onFailure { logFailure("translator_close", it) }
-    }
-
-    private fun sourceLanguage(detectedLang: String?, mode: LensRecognizerMode): String {
-        val detected = detectedLang
-            ?.takeUnless { it == "und" }
-            ?.let(::supportedLanguage)
-        if (detected != null) return detected
-        return when (mode) {
-            LensRecognizerMode.LATIN -> TranslateLanguage.ENGLISH
-            LensRecognizerMode.JAPANESE -> TranslateLanguage.JAPANESE
-        }
     }
 
     private fun supportedLanguage(languageTag: String): String? =

@@ -1,5 +1,6 @@
 package com.anezium.rokidbus.phone.lens
 
+import com.anezium.rokidbus.shared.LensWireContract
 import java.util.concurrent.atomic.AtomicReference
 
 internal const val MAX_TRANSLATED_TEXT_CHARS = 4_096
@@ -17,6 +18,8 @@ data class TranslationResult(
     val srcLang: String,
     val fallback: Boolean = false,
     val failure: TranslationErrorCode? = null,
+    /** Engine that actually served this result; the router stamps it on success. */
+    val engine: TranslationEngine? = null,
 )
 
 data class TranslationDownloadStatus(
@@ -38,9 +41,12 @@ enum class TranslationErrorCode(val wireValue: String) {
     INTERNAL_ERROR("INTERNAL_ERROR"),
 }
 
-enum class LensRecognizerMode {
-    LATIN,
-    JAPANESE,
+enum class LensRecognizerMode(val wireValue: String) {
+    LATIN(LensWireContract.RECOGNIZER_MODE_LATIN),
+    JAPANESE(LensWireContract.RECOGNIZER_MODE_JAPANESE),
+    CHINESE(LensWireContract.RECOGNIZER_MODE_CHINESE),
+    KOREAN(LensWireContract.RECOGNIZER_MODE_KOREAN),
+    DEVANAGARI(LensWireContract.RECOGNIZER_MODE_DEVANAGARI),
 }
 
 interface TranslationProvider : AutoCloseable {

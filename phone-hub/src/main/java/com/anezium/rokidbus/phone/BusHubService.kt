@@ -26,6 +26,7 @@ import com.anezium.rokidbus.client.IBusCallback
 import com.anezium.rokidbus.client.IBusService
 import com.anezium.rokidbus.client.PluginRegistrationResult
 import com.anezium.rokidbus.phone.lens.LensTranslationPlugin
+import com.anezium.rokidbus.shared.BusCapabilityBits
 import com.anezium.rokidbus.shared.BusConstants
 import com.anezium.rokidbus.shared.BusEnvelope
 import com.anezium.rokidbus.shared.BusPaths
@@ -166,6 +167,8 @@ class BusHubService : Service() {
         }
 
         override fun linkState(): Int = this@BusHubService.linkState()
+
+        override fun capabilities(): Int = BusCapabilityBits.PROTECTED_LENS_LINK
 
         override fun registerPlugin(packageName: String, pluginId: String, cb: IBusCallback): Int {
             val callingUid = Binder.getCallingUid()
@@ -381,6 +384,11 @@ class BusHubService : Service() {
         deliverLocal(envelope)
 
     private fun routeLocal(envelope: BusEnvelope, senderUid: Int) {
+        if (BusPaths.isProtectedLensPath(envelope.path) && senderUid != Process.myUid()) {
+            val sender = resolveSender(senderUid)
+            deliverError(sender.replyBinder, envelope.id, "PROTECTED_LENS_PATH")
+            return
+        }
         val sender = resolveSender(senderUid)
         val decision = PluginRoutePolicy.authorize(sender.caller, envelope.path)
         if (decision is PluginRouteDecision.Denied) {
@@ -509,6 +517,7 @@ class BusHubService : Service() {
     }
 
     private fun registrationMatches(registration: Registration, envelope: BusEnvelope): Boolean {
+        if (BusPaths.isProtectedLensPath(envelope.path) && registration.uid != Process.myUid()) return false
         if (registration.prefixes.none { PathRules.matchesPrefix(envelope.path, it) }) return false
         val principal = registration.principal ?: return true
         if (PathRules.isPluginPrivate(envelope.path, principal.descriptor.id)) return true

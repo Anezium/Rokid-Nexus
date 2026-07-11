@@ -13,6 +13,20 @@ const val LENS_TRANSLATION_PREFS_NAME = "lens_translation"
 const val LENS_TRANSLATION_PREF_ENGINE = "engine"
 const val LENS_TRANSLATION_PREF_DEEPL_API_KEY = "deepl_api_key"
 const val LENS_TRANSLATION_PREF_GEMINI_API_KEY = "gemini_api_key"
+const val LENS_TRANSLATION_PREF_GEMINI_MODEL = "gemini_model"
+const val LENS_TRANSLATION_PREF_TARGET_LANG = "target_lang"
+const val LENS_TRANSLATION_TARGET_LANG_DEFAULT = "fr"
+
+const val LENS_GEMINI_MODEL_DEFAULT = "gemini-2.5-flash"
+
+// Free-tier models verified against the Gemini API on 2026-07-10; "pro" models 429 with
+// a zero free-tier quota, and retired models (gemini-2.0-flash) do too. Unknown stored
+// values fall back to the default so a removed model can never brick translation again.
+val LENS_GEMINI_MODELS: List<String> = listOf(
+    LENS_GEMINI_MODEL_DEFAULT,
+    "gemini-3-flash-preview",
+    "gemini-flash-latest",
+)
 
 enum class TranslationEngine {
     AUTO,
@@ -26,6 +40,7 @@ data class TranslationEngineConfig(
     val engine: TranslationEngine = TranslationEngine.AUTO,
     val deepLApiKey: String = "",
     val geminiApiKey: String = "",
+    val geminiModel: String = LENS_GEMINI_MODEL_DEFAULT,
 )
 
 fun sharedPreferencesTranslationEngineConfigSupplier(
@@ -52,6 +67,9 @@ fun sharedPreferencesTranslationEngineConfigSupplier(
                 LENS_TRANSLATION_PREF_GEMINI_API_KEY,
                 "",
             ).orEmpty(),
+            geminiModel = preferences.getString(LENS_TRANSLATION_PREF_GEMINI_MODEL, null)
+                ?.takeIf { it in LENS_GEMINI_MODELS }
+                ?: LENS_GEMINI_MODEL_DEFAULT,
         )
     }
 }
@@ -73,9 +91,10 @@ class TranslationEngineRouter internal constructor(
         deepLProvider: TranslationProvider = DeepLTranslationProvider {
             configSupplier().deepLApiKey
         },
-        geminiProvider: TranslationProvider = GeminiTranslationProvider {
-            configSupplier().geminiApiKey
-        },
+        geminiProvider: TranslationProvider = GeminiTranslationProvider(
+            apiKeySupplier = { configSupplier().geminiApiKey },
+            modelSupplier = { configSupplier().geminiModel },
+        ),
         mlKitProvider: TranslationProvider = MlKitTranslationProvider(context),
     ) : this(
         configSupplier = configSupplier,
@@ -192,7 +211,8 @@ class TranslationEngineRouter internal constructor(
             }
             if (!accepted) return
             budgetFuture?.cancel(false)
-            if (terminal.complete { notifyCallback { callback.onSuccess(translations) } }) {
+            val stamped = translations.map { it.copy(engine = attempt.engine) }
+            if (terminal.complete { notifyCallback { callback.onSuccess(stamped) } }) {
                 operations -= this
             }
         }
@@ -339,9 +359,10 @@ class TranslationEngineRouter internal constructor(
     private fun candidates(config: TranslationEngineConfig): List<TranslationEngine> =
         when (config.engine) {
             TranslationEngine.AUTO -> buildList {
-                if (config.geminiApiKey.isNotBlank()) add(TranslationEngine.GEMINI)
+                // Field-measured 2026-07-11: DeepL 0.3-0.7s and best quality; Gemini ~3s.
                 if (config.deepLApiKey.isNotBlank()) add(TranslationEngine.DEEPL)
-                // Product contract: AUTO intentionally tries keyless Google Web before offline ML Kit.
+                if (config.geminiApiKey.isNotBlank()) add(TranslationEngine.GEMINI)
+                // Keyless Google Web is the unstable last online resort before offline ML Kit.
                 add(TranslationEngine.GOOGLE_WEB)
                 add(TranslationEngine.MLKIT_OFFLINE)
             }
@@ -351,10 +372,12 @@ class TranslationEngineRouter internal constructor(
             )
             TranslationEngine.DEEPL -> buildList {
                 if (config.deepLApiKey.isNotBlank()) add(TranslationEngine.DEEPL)
+                add(TranslationEngine.GOOGLE_WEB)
                 add(TranslationEngine.MLKIT_OFFLINE)
             }
             TranslationEngine.GEMINI -> buildList {
                 if (config.geminiApiKey.isNotBlank()) add(TranslationEngine.GEMINI)
+                add(TranslationEngine.GOOGLE_WEB)
                 add(TranslationEngine.MLKIT_OFFLINE)
             }
             TranslationEngine.MLKIT_OFFLINE -> listOf(TranslationEngine.MLKIT_OFFLINE)
