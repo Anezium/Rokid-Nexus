@@ -18,7 +18,7 @@ The existing CXR-L/SPP transport and single glasses anchor are preserved. The pl
 | [002](002-plugin-identity-and-capabilities.md) | Authorize plugin principals and enforce capabilities | P1 | L | 001 | DONE |
 | [003](003-external-plugin-sdk.md) | Deliver the external SDK, lifecycle, sample, and publication path | P1 | L | 002 | DONE |
 | [004](004-externalize-transit.md) | Ship Transit as the first independent phone plugin APK | P1 | L | 003 | DONE |
-| [005](005-nexus-store-registry.md) | Drive the Nexus Store from the RokidBrew registry (plugins-only) | P1 | L | 003, 004 | TODO |
+| [005](005-nexus-store-registry.md) | Nexus Store from the RokidBrew registry (plugins) + app self-update | P1 | L | 003, 004 | TODO |
 
 Status values are `TODO`, `IN PROGRESS`, `BLOCKED`, and `DONE`. Update both this table and the individual plan when execution status changes.
 

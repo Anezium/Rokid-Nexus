@@ -3,8 +3,10 @@
 > **Executor instructions**: Follow every step and verification gate in order.
 > This plan turns the Nexus Store from a local, hard-coded catalogue into a real
 > network catalogue backed by the existing `RokidBrew-Registry`, scoped to Nexus
-> plugins only. It spans two repositories — the registry (`RokidBrew-Registry`)
-> and the Nexus client (`RokidNexus/phone-hub`). Stop on any listed STOP
+> plugins only, and additionally wires the app's own self-update (Part C) from
+> the Nexus repo's public GitHub releases, reusing the same installer. It spans
+> the registry (`RokidBrew-Registry`), the Nexus client (`RokidNexus/phone-hub`),
+> and the Nexus repo's release CI. Stop on any listed STOP
 > condition. Do not invent a second identity, consent, or trust model — reuse
 > the Plan 002 grant boundary verbatim. Update `plans/README.md` when complete.
 
@@ -52,8 +54,16 @@ metadata" item deferred in `plans/README.md`.
   own registry namespace (`plugins-nexus/`) and their own published feed
   (`dist/nexus-plugins.v1.json`), so the plugin schema and the Nexus client feed
   stay clean and evolve with the plugin API independently of the app schema.
+- **The app self-update is NOT the registry.** The Nexus host updates from its
+  own public GitHub releases (`Anezium/Rokid-Nexus`, public once shipped) via a
+  small `nexus-latest.json` manifest — the host is a single first-party artifact,
+  not a catalogue. It reuses the shared installer. Android's same-signer
+  enforcement on update is the security gate; the manifest `sha256` is
+  defense-in-depth. The glasses app updates over CXR-L `appUploadAndInstall`.
 - Keep the Phosphor×Mono visual language (`NexusUi`, `BusTheme`). Do not redesign
-  the Store; re-skin its data source.
+  the Store; re-skin its data source. The app-update UI already exists
+  (`NexusUi.updateBanner`, the Settings row, the amber gear pip); this plan wires
+  it, it does not rebuild it.
 
 ## Current state
 
@@ -149,7 +159,20 @@ next to `apps.v1.json`.
   install/update/open; remove the hard-coded teasers (or make them registry-fed).
 - `phone-hub/src/main/AndroidManifest.xml` — INTERNET (already present), a
   `PackageInstaller` result receiver, and a cache `FileProvider` if needed.
-- Unit tests for parse, merge/state, and installer orchestration (seam-tested).
+- `AppUpdateChecker.kt` (create) — fetch `nexus-latest.json`, compare versionCode,
+  set `NexusPhoneState.updateAvailable`; wire the existing banner / Settings
+  "Check"/"Install" action and the amber pip to the shared installer.
+- Glasses app update via `CxrGlobal` `CXRLink.appUploadAndInstall` (phone side).
+- Replace the hard-coded `UPDATE_VERSION_LABEL` with the real installed/available
+  version.
+- Unit tests for parse, merge/state, installer orchestration, and the update
+  checker (seam-tested).
+
+**In scope — `RokidNexus` repo (release CI)**:
+
+- A release workflow that builds the phone + glasses release APKs, computes each
+  `sha256`, and publishes them plus a `nexus-latest.json` manifest as GitHub
+  release assets. (Plan 003 deliberately did not set up releases; this adds them.)
 
 **Out of scope**:
 
@@ -271,6 +294,64 @@ without dropping grants. Record redacted PASS/FAIL in `TESTPLAN.md`.
 **Verify**: `.\gradlew.bat :phone-hub:testDebugUnitTest :phone-hub:assembleDebug`
 exits 0; the device scenario passes.
 
+### Part C — Nexus app self-update (host, not plugins)
+
+The host updates from its own **public GitHub releases** (`Anezium/Rokid-Nexus`),
+deliberately not through the registry. It reuses Part B's installer core
+(download → sha256 → `PackageInstaller`) for the phone APK; the glasses APK
+installs over CXR-L.
+
+#### C1: Publish a release manifest from the Nexus repo
+
+Add a release workflow (`RokidNexus/.github/workflows/`) that, on tag, builds the
+phone and glasses release APKs, computes each `sha256`, and publishes them as
+release assets alongside a small `nexus-latest.json`:
+
+```json
+{
+  "versionName": "1.5",
+  "phone":   { "url": "…/nexus-phone-release.apk",   "versionCode": 12, "sha256": "…", "packageName": "com.anezium.rokidbus.phone" },
+  "glasses": { "url": "…/nexus-glasses-release.apk", "versionCode": 12, "sha256": "…", "packageName": "com.anezium.rokidbus.glasses" }
+}
+```
+
+The updater fetches the stable
+`https://github.com/Anezium/Rokid-Nexus/releases/latest/download/nexus-latest.json`
+(one GET, no token). **Verify**: a tagged run publishes both APKs + a valid
+manifest; the manifest `sha256` matches the assets.
+
+#### C2: App update checker
+
+Create `AppUpdateChecker` that fetches the manifest, compares `phone.versionCode`
+to `BuildConfig.VERSION_CODE`, and sets `NexusPhoneState.updateAvailable`. Cache
+the last fetch; check on launch and on the Settings "Check" tap. Replace the
+hard-coded `UPDATE_VERSION_LABEL`/"1.4" with the real installed and available
+versions. **Verify**: unit tests for newer/equal/older and offline (no false
+positive from a stale/absent manifest).
+
+#### C3: Install the phone update
+
+Wire the existing `NexusUi.updateBanner` and the Settings "Install" action to the
+shared installer: download `phone.url`, verify `sha256`, `PackageInstaller`
+(Android enforces same-signer). Remove the "Coming soon" toast. **Verify**:
+seam-tested; on-device in C5.
+
+#### C4: Install the glasses update via CXR-L
+
+If `glasses.versionCode` exceeds the installed glasses version (query via CXR-L
+`appIsInstalled`), download `glasses.url`, verify `sha256`, and install through
+`CXRLink.appUploadAndInstall`, surfacing `onInstallAppResult`. Gate on an active
+CXR link; never ADB. **Verify**: on-device in C5.
+
+#### C5: On-device update cycle
+
+From an older build: launch → banner + amber pip appear → Settings shows
+"Install" → phone updates via `PackageInstaller` with plugins/grants preserved →
+glasses updates via CXR-L. Record redacted PASS/FAIL in `TESTPLAN.md`.
+
+**Verify**: `.\gradlew.bat :phone-hub:testDebugUnitTest :phone-hub:assembleDebug`
+exits 0; the update cycle passes on device.
+
 ## Test plan
 
 - Registry: `build-registry.mjs` emits a valid `nexus-plugins.v1.json`; `--kind`
@@ -278,9 +359,12 @@ exits 0; the device scenario passes.
 - Client: feed parse (valid/unknown/version), cache offline, merge/state matrix,
   duplicate id, host-version gate, installer orchestration (ok/mismatch/fail/
   cancel), post-install refresh, grant hand-off.
+- App self-update: manifest parse, versionCode compare (newer/equal/older),
+  offline safety, phone-install seam, glasses CXR-L install seam.
 - Existing phone-hub catalogue, discovery, grant, Lyrics/Media/Lens, and Feeds
   tests remain green.
-- Hardware: B6 install + update cycle.
+- Hardware: B6 plugin install + update cycle; C5 app self-update cycle
+  (phone + glasses).
 
 ## Done criteria
 
@@ -295,7 +379,13 @@ exits 0; the device scenario passes.
 - [ ] `StoreActivity` renders the real catalogue with correct per-state actions
       and no hard-coded teasers.
 - [ ] Install routes into the existing grant flow; install never implies a grant.
-- [ ] On-device install + update cycle passes with grants preserved.
+- [ ] On-device plugin install + update cycle passes with grants preserved.
+- [ ] The Nexus repo publishes phone + glasses release APKs and a
+      `nexus-latest.json` manifest on tag.
+- [ ] `AppUpdateChecker` sets `updateAvailable` from the manifest; the existing
+      banner / Settings action / amber pip drive a real update (no "Coming soon").
+- [ ] Phone self-update installs via `PackageInstaller` (same-signer); glasses
+      update installs via CXR-L `appUploadAndInstall`; both verify `sha256`.
 - [ ] `.\gradlew.bat test lintDebug assembleDebug` exits 0.
 
 ## STOP conditions
@@ -303,9 +393,11 @@ exits 0; the device scenario passes.
 Stop and report if:
 
 - The published feed URL is not owner-controlled or not served over HTTPS.
-- Installing would require silent install, device-owner, ADB, or CXR from the
-  Nexus Store (all out of scope — Nexus installs phone plugins via
-  `PackageInstaller` only).
+- Installing a **plugin** would require silent install, device-owner, ADB, or
+  CXR (plugins install via the phone `PackageInstaller` only). CXR is permitted
+  solely for the **host glasses-app self-update** in Part C, never for plugins.
+- An **app update** would install without same-signer enforcement (phone) or
+  without verifying the manifest `sha256`.
 - The design would let the feed assert plugin identity, capabilities, or grants
   (the feed is a catalogue; the hub + Android identity remain authoritative).
 - sha256 cannot be verified before install, or install would proceed on a
