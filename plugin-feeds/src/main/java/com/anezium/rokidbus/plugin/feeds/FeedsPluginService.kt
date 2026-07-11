@@ -64,6 +64,7 @@ class FeedsPluginService : NexusPluginService() {
     }
 
     private fun ensureRuntime(): FeedsRuntime = runtime ?: FeedsRuntime(
+        context = applicationContext,
         host = runtimeHost,
         settings = settingsStore::load,
     ).also { runtime = it }

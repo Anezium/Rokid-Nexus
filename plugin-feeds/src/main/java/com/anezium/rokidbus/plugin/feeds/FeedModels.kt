@@ -24,6 +24,7 @@ fun interface FeedSource {
 enum class FeedSourceKind(val preferenceValue: String, val displayName: String, val tag: String) {
     BLUESKY("bsky", "Bluesky", "bsky"),
     X_ACCOUNT("x", "X (account)", "x"),
+    X_WEBVIEW("x-web", "X (WebView)", "x-web"),
     X_OFFICIAL("x_official", "X (official API)", "x-api"),
     DEMO("demo", "Demo", "demo"),
     ;

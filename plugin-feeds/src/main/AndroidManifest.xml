@@ -2,6 +2,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
 
     <queries>
         <intent>
@@ -56,6 +59,15 @@
             <meta-data
                 android:name="com.anezium.rokidbus.plugin.LAUNCHABLE"
                 android:value="true" />
+        </service>
+
+        <service
+            android:name=".XWebViewHostService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Hosts the user-selected X timeline in an offscreen WebView while the Feeds surface is open" />
         </service>
     </application>
 </manifest>

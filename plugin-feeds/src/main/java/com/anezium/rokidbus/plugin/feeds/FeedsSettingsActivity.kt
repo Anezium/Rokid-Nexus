@@ -3,7 +3,9 @@ package com.anezium.rokidbus.plugin.feeds
 import android.app.Activity
 import android.content.ComponentName
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
+import android.provider.Settings
 import android.text.InputType
 import android.view.ViewGroup
 import android.webkit.CookieManager
@@ -24,6 +26,7 @@ class FeedsSettingsActivity : Activity() {
     private lateinit var userIdInput: EditText
     private lateinit var feedUriInput: EditText
     private lateinit var xAccountStatus: TextView
+    private lateinit var xWebViewOverlayStatus: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -34,6 +37,7 @@ class FeedsSettingsActivity : Activity() {
     override fun onResume() {
         super.onResume()
         if (::xAccountStatus.isInitialized) renderXAccountStatus()
+        if (::xWebViewOverlayStatus.isInitialized) renderXWebViewOverlayStatus()
     }
 
     private fun buildUi() {
@@ -54,6 +58,7 @@ class FeedsSettingsActivity : Activity() {
         }
         feedUriInput = textInput("Bluesky feed generator URI")
         xAccountStatus = BusTheme.heroSub(this, "")
+        xWebViewOverlayStatus = BusTheme.heroSub(this, "")
 
         val content = BusTheme.root(this).apply {
             addView(BusTheme.wordmark(this@FeedsSettingsActivity, "Nexus plugin"))
@@ -75,11 +80,19 @@ class FeedsSettingsActivity : Activity() {
                 setOnClickListener { disconnectXAccount() }
             })
             addView(BusTheme.gap(this@FeedsSettingsActivity, 18))
+            addView(BusTheme.tinyLabel(this@FeedsSettingsActivity, "X WebView host"))
+            addView(BusTheme.gap(this@FeedsSettingsActivity, 8))
+            addView(xWebViewOverlayStatus)
+            addView(BusTheme.gap(this@FeedsSettingsActivity, 10))
+            addView(BusTheme.pill(this@FeedsSettingsActivity, "Grant display-over-apps access").apply {
+                setOnClickListener { openOverlayPermission() }
+            })
+            addView(BusTheme.gap(this@FeedsSettingsActivity, 18))
             addField("Official X API bearer token", tokenInput)
             addView(
                 BusTheme.heroSub(
                     this@FeedsSettingsActivity,
-                    "Only X (official API) uses this OAuth2 token and numeric user id. X (account) uses the login above.",
+                    "X (account) and X (WebView) share the login above. Only X (official API) uses this OAuth2 token and numeric user id.",
                 ),
             )
             addView(BusTheme.gap(this@FeedsSettingsActivity, 16))
@@ -123,6 +136,7 @@ class FeedsSettingsActivity : Activity() {
         userIdInput.setText(settings.xUserId)
         feedUriInput.setText(settings.blueskyFeedGeneratorUri)
         renderXAccountStatus()
+        renderXWebViewOverlayStatus()
     }
 
     private fun saveSettings() {
@@ -151,6 +165,24 @@ class FeedsSettingsActivity : Activity() {
         CookieManager.getInstance().removeAllCookies { CookieManager.getInstance().flush() }
         renderXAccountStatus()
         Toast.makeText(this, "X account disconnected", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun renderXWebViewOverlayStatus() {
+        xWebViewOverlayStatus.text = if (Settings.canDrawOverlays(this)) {
+            "Granted. X (WebView) can attach its invisible 1 x 1 browser window."
+        } else {
+            "One-time grant required only for X (WebView). The browser window stays fully transparent."
+        }
+    }
+
+    private fun openOverlayPermission() {
+        val intent = Intent(
+            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+            Uri.parse("package:$packageName"),
+        )
+        runCatching { startActivity(intent) }.onFailure {
+            startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION))
+        }
     }
 
     private fun openNexusPluginAccess() {

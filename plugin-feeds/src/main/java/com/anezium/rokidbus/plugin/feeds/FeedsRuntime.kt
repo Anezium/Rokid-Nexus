@@ -1,5 +1,6 @@
 package com.anezium.rokidbus.plugin.feeds
 
+import android.content.Context
 import android.view.KeyEvent
 import com.anezium.rokidbus.shared.plugin.NexusInputEvent
 import kotlinx.coroutines.CancellationException
@@ -19,9 +20,10 @@ internal interface FeedsRuntimeHost {
 }
 
 internal class FeedsRuntime(
+    context: Context,
     private val host: FeedsRuntimeHost,
     private val settings: () -> FeedsSettings,
-    private val sourceFactory: (FeedsSettings) -> FeedSource = ::defaultSource,
+    private val sourceFactory: (FeedsSettings) -> FeedSource = { defaultSource(context.applicationContext, it) },
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val now: () -> Instant = Instant::now,
 ) {
@@ -37,6 +39,7 @@ internal class FeedsRuntime(
 
     fun open() {
         closeFetch()
+        closeSource()
         val currentSettings = settings()
         sourceKind = currentSettings.source
         source = sourceFactory(currentSettings)
@@ -52,6 +55,7 @@ internal class FeedsRuntime(
     fun close() {
         visible = false
         closeFetch()
+        closeSource()
         host.hideSurface()
     }
 
@@ -162,10 +166,16 @@ internal class FeedsRuntime(
         fetchJob = null
     }
 
+    private fun closeSource() {
+        (source as? AutoCloseable)?.close()
+        source = null
+    }
+
     private companion object {
-        fun defaultSource(settings: FeedsSettings): FeedSource = when (settings.source) {
+        fun defaultSource(context: Context, settings: FeedsSettings): FeedSource = when (settings.source) {
             FeedSourceKind.BLUESKY -> BlueskyFeedSource(settings.blueskyFeedGeneratorUri)
             FeedSourceKind.X_ACCOUNT -> XAccountFeedSource(settings.xAccountCookies)
+            FeedSourceKind.X_WEBVIEW -> XWebViewFeedSource(context, settings.xAccountCookies)
             FeedSourceKind.X_OFFICIAL -> XFeedSource(settings.xBearerToken, settings.xUserId)
             FeedSourceKind.DEMO -> MockFeedSource()
         }

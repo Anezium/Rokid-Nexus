@@ -23,7 +23,7 @@ class XAccountLoginActivity : Activity() {
             setBackgroundColor(0xff030c06.toInt())
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
-            settings.userAgentString = LOGIN_USER_AGENT
+            settings.userAgentString = XWebViewInterception.USER_AGENT
             cookieManager.setAcceptThirdPartyCookies(this, true)
             webViewClient = object : WebViewClient() {
                 override fun onPageFinished(view: WebView, url: String) {
@@ -56,10 +56,6 @@ class XAccountLoginActivity : Activity() {
 
     companion object {
         private const val LOGIN_URL = "https://x.com/i/flow/login"
-        private const val LOGIN_USER_AGENT =
-            "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 " +
-                "(KHTML, like Gecko) Chrome/123.0.0.0 Mobile Safari/537.3"
-
         private fun isHomeUrl(url: String): Boolean = runCatching {
             val parsed = android.net.Uri.parse(url)
             parsed.host.equals("x.com", ignoreCase = true) && parsed.path == "/home"
