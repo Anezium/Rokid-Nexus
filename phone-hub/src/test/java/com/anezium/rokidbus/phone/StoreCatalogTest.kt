@@ -80,22 +80,20 @@ class StoreCatalogTest {
     }
 
     @Test
-    fun `built-in plugin remains installed rather than sideloaded`() {
-        val builtIn = PluginCatalogEntry(
-            catalogKey = "builtin:lens",
-            id = "lens",
-            displayName = "Lens",
-            state = PluginCatalogState.BUILT_IN,
-            launchable = false,
-            settingsComponent = PluginSettingsTarget("com.anezium.rokidbus.phone", "com.anezium.rokidbus.phone.LensSettingsActivity"),
+    fun `lens is available from the registry when no built-ins or APK are present`() {
+        val catalog = build(
+            remote = listOf(
+                plugin(
+                    pluginId = "lens",
+                    id = "lens",
+                    packageName = "com.anezium.rokidbus.plugin.lens",
+                ),
+            ),
         )
 
-        val catalog = build(local = listOf(builtIn))
-
-        assertEquals(StoreEntryState.INSTALLED, catalog.entry("lens")?.state)
-        assertEquals(PluginCatalogState.BUILT_IN, catalog.entry("lens")?.localGrantState)
+        assertEquals(StoreEntryState.AVAILABLE, catalog.entry("lens")?.state)
+        assertNull(catalog.entry("lens")?.localEntry)
     }
-
     @Test
     fun `duplicate registry plugin ids are all dropped and logged`() {
         val logs = mutableListOf<String>()

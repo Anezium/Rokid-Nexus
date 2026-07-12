@@ -26,7 +26,6 @@ import android.util.Log
 import com.anezium.rokidbus.client.IBusCallback
 import com.anezium.rokidbus.client.IBusService
 import com.anezium.rokidbus.client.PluginRegistrationResult
-import com.anezium.rokidbus.phone.lens.LensTranslationPlugin
 import com.anezium.rokidbus.shared.BusCapabilityBits
 import com.anezium.rokidbus.shared.BusConstants
 import com.anezium.rokidbus.shared.BusEnvelope
@@ -123,7 +122,6 @@ class BusHubService : Service() {
     private var output: OutputStream? = null
     private var cxrLink: CXRLink? = null
     private lateinit var pluginRegistry: PhonePluginRegistry
-    private lateinit var lensTranslationPlugin: LensTranslationPlugin
     private lateinit var pluginDiscovery: PhonePluginDiscovery
     private lateinit var pluginGrantStore: PluginGrantStore
     private lateinit var externalPluginController: ExternalPluginController
@@ -297,8 +295,6 @@ class BusHubService : Service() {
         transitLegacyStateExporter = TransitLegacyStateExporter(
             AndroidTransitLegacyStateStorage(applicationContext),
         )
-        lensTranslationPlugin = LensTranslationPlugin()
-        val builtInPlugins = PhoneBuiltInPlugins.create(lensTranslationPlugin)
         val externalRuntime = AndroidExternalPluginRuntime(
             context = applicationContext,
             isRegisteredCallback = ::isExternalPrincipalRegistered,
@@ -336,12 +332,16 @@ class BusHubService : Service() {
         )
         pluginRegistry = PhonePluginRegistry(
             context = applicationContext,
-            plugins = builtInPlugins,
+            plugins = emptyList(),
             sendEnvelope = ::sendBuiltInPluginEnvelope,
             capabilitiesProvider = ::capabilities,
             logger = { message -> log(message) },
             catalogProvider = {
-                PhoneBuiltInPlugins.catalog(applicationContext, builtInPlugins)
+                PluginCatalog.build(
+                    builtIns = emptyList(),
+                    candidates = pluginDiscovery.discover(),
+                    grantState = pluginGrantStore::stateFor,
+                )
             },
             externalController = externalPluginController,
         )
@@ -428,7 +428,6 @@ class BusHubService : Service() {
         }
         if (::pluginRegistry.isInitialized) pluginRegistry.close()
         if (::cameraCompanionController.isInitialized) cameraCompanionController.close()
-        if (::lensTranslationPlugin.isInitialized) lensTranslationPlugin.close()
         registrations.clear()
         if (activeInstance === this) activeInstance = null
         super.onDestroy()
@@ -440,12 +439,7 @@ class BusHubService : Service() {
     private fun routeLocal(envelope: BusEnvelope, senderUid: Int) {
         val sender = resolveSender(senderUid)
         if (!protectedPathAllowed(envelope.path, senderUid, sender.principal)) {
-            val code = if (BusPaths.isProtectedLensPath(envelope.path)) {
-                "PROTECTED_LENS_PATH"
-            } else {
-                "PROTECTED_CAMERA_PATH"
-            }
-            deliverError(sender.replyBinder, envelope.id, code)
+            deliverError(sender.replyBinder, envelope.id, "PROTECTED_CAMERA_PATH")
             return
         }
         val decision = PluginRoutePolicy.authorize(sender.caller, envelope.path)
@@ -1386,7 +1380,7 @@ class BusHubService : Service() {
         )
 
     private fun capabilities(): Int {
-        var capabilities = BusCapabilityBits.PROTECTED_LENS_LINK
+        var capabilities = 0
         if (::cameraConsumerReadiness.isInitialized && cameraConsumerReadiness.isReady()) {
             capabilities = capabilities or BusCapabilityBits.CAMERA_CONSUMER_READY
         }
@@ -1555,7 +1549,13 @@ class BusHubService : Service() {
 
         fun pluginCatalog(context: android.content.Context): PluginCatalog =
             activeInstance?.pluginRegistry?.catalog()
-                ?: PhoneBuiltInPlugins.catalog(context.applicationContext)
+                ?: context.applicationContext.let { appContext ->
+                    PluginCatalog.build(
+                        builtIns = emptyList(),
+                        candidates = PhonePluginDiscovery(appContext.packageManager).discover(),
+                        grantState = PluginGrantStore(appContext)::stateFor,
+                    )
+                }
 
         fun startWithToken(context: android.content.Context, token: String) {
             val intent = Intent(context, BusHubService::class.java)

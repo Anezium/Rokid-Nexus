@@ -11,3 +11,13 @@ Wi-Fi Direct state.
 ```powershell
 .\gradlew.bat :plugin-lens:assembleDebug :plugin-lens:testDebugUnitTest
 ```
+## Release steps
+
+1. Set the module `versionName` and add the matching changelog section.
+2. Push a namespaced tag in the form `lens-vX.Y.Z`; release CI produces
+   `lens-phone-release.apk` after enforcing SemVer, `versionName`, and changelog
+   consistency.
+3. In the sibling RokidBrew-Registry repository, ingest the release with
+   `--kind nexus-plugin`.
+4. Set the registry descriptor's `minHostVersionCode` to the first Nexus host
+   build that carries the generic camera contract.

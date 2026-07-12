@@ -30,7 +30,6 @@ import com.anezium.rokidbus.shared.LinkStateBits
 
 private const val TAG = "RokidNexusHome"
 private const val BLUETOOTH_PERMISSION_REQUEST = 20
-private const val LOCATION_PERMISSION_REQUEST = 21
 private const val NOTIFICATION_PERMISSION_REQUEST = 22
 
 /** Companion home: fixed status/settings menubar, setup cards, plugin list, store entry and hub toggle. */
@@ -52,7 +51,6 @@ class MainActivity : Activity() {
             pathPrefixes = emptyList(),
         ) { event -> handleHubEvent(event) }.also { it.connect() }
         requestBluetoothConnectIfNeeded()
-        requestLocationIfNeeded()
         requestNotificationsIfNeeded()
         if (savedToken().isNotBlank() && BusHubService.isEnabled(this)) {
             logLine("Saved Hi Rokid token present")
@@ -75,7 +73,7 @@ class MainActivity : Activity() {
         grantResults: IntArray,
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == BLUETOOTH_PERMISSION_REQUEST || requestCode == LOCATION_PERMISSION_REQUEST) {
+        if (requestCode == BLUETOOTH_PERMISSION_REQUEST) {
             rebuildSetupSection()
         }
     }
@@ -450,18 +448,6 @@ class MainActivity : Activity() {
                     ) { requestBluetoothConnectIfNeeded() },
                 )
             }
-            if (!hasLensWifiPermission()) {
-                add(
-                    setupCard(
-                        title = "Nearby Wi-Fi",
-                        body = "Wi-Fi permission lets Lens receive frozen images for phone-side OCR.",
-                        action = "Allow",
-                    ) {
-                        logLine("Requesting Lens Wi-Fi permission")
-                        requestLocationIfNeeded()
-                    },
-                )
-            }
         }
         if (cards.isEmpty()) {
             setupSection.visibility = View.GONE
@@ -545,23 +531,6 @@ class MainActivity : Activity() {
             )
         }
     }
-
-    private fun requestLocationIfNeeded() {
-        if (hasLensWifiPermission()) return
-        val permission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            Manifest.permission.NEARBY_WIFI_DEVICES
-        } else {
-            Manifest.permission.ACCESS_FINE_LOCATION
-        }
-        requestPermissions(arrayOf(permission), LOCATION_PERMISSION_REQUEST)
-    }
-
-    private fun hasLensWifiPermission(): Boolean =
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            checkSelfPermission(Manifest.permission.NEARBY_WIFI_DEVICES) == PackageManager.PERMISSION_GRANTED
-        } else {
-            checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
-        }
 
     private fun savedToken(): String =
         getSharedPreferences(NexusPhoneState.PREFS, MODE_PRIVATE)

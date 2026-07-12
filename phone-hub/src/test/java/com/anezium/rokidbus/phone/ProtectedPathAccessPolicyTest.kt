@@ -36,28 +36,20 @@ class ProtectedPathAccessPolicyTest {
     )
 
     @Test
-    fun `hub keeps lens and camera access while camera principal needs exact enabled grant`() {
+    fun `hub keeps camera access while camera principal needs exact enabled grant`() {
         val store = PluginGrantStore(MemoryStorage())
         val granted = principal("dev.camera", "camera.one")
         val sameSignedButUngranted = principal("dev.other", "camera.other")
         val unsignedOther = principal("dev.unsigned", "camera.unsigned", "other-signer")
         store.approve(granted, setOf(PluginCapability.CAMERA))
 
-        listOf(BusPaths.LENS_LINK_OFFER, BusPaths.CAMERA_SESSION_STATE, BusPaths.CAMERA_OVERLAY)
+        listOf(BusPaths.CAMERA_SESSION_STATE, BusPaths.CAMERA_OVERLAY)
             .forEach { path ->
                 assertTrue(ProtectedPathAccessPolicy.isAllowed(path, true, null, null))
             }
         assertTrue(
             ProtectedPathAccessPolicy.isAllowed(
                 BusPaths.CAMERA_LINK_OFFER,
-                false,
-                granted,
-                store.stateFor(granted),
-            ),
-        )
-        assertFalse(
-            ProtectedPathAccessPolicy.isAllowed(
-                BusPaths.LENS_LINK_OFFER,
                 false,
                 granted,
                 store.stateFor(granted),

@@ -59,6 +59,11 @@ jobs:
               changelog_path="plugins/lyrics/CHANGELOG.md"
               release_name="Lyrics"
               ;;
+            lens)
+              module_dir="plugins/lens"
+              changelog_path="plugins/lens/CHANGELOG.md"
+              release_name="Lens"
+              ;;
             media)
               module_dir="plugins/media"
               changelog_path="plugins/media/CHANGELOG.md"

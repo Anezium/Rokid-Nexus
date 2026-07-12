@@ -84,4 +84,14 @@ class PluginCatalogTest {
         assertEquals(1, installed.entries.count { it.id == "transit" })
         assertEquals(PluginCatalogState.BUILT_IN, installed.entry("transit")?.state)
     }
+
+    @Test
+    fun `empty built-in catalog contains only discovered external plugins`() {
+        val lens = PhonePluginCandidate.Valid(principal("lens"))
+
+        val catalog = PluginCatalog.build(emptyList(), listOf(lens)) { PluginGrantState.Pending }
+
+        assertEquals(listOf("lens"), catalog.entries.mapNotNull { it.id })
+        assertEquals(PluginCatalogState.PENDING, catalog.entry("lens")?.state)
+    }
 }

@@ -10,7 +10,6 @@ object ProtectedPathAccessPolicy {
         principal: PhonePluginPrincipal?,
         grantState: PluginGrantState?,
     ): Boolean {
-        if (BusPaths.isProtectedLensPath(path)) return isHubUid
         if (!BusPaths.isProtectedCameraPath(path)) return true
         if (isHubUid) return true
         val approved = grantState as? PluginGrantState.Approved ?: return false

@@ -445,3 +445,23 @@ adb -s $phone uninstall com.anezium.rokidbus.phoneprobe
 >   Transit must disappear/cannot wake, and the remaining hub stays stable.
 > - Confirm the one-release favorite migration imports once without duplication,
 >   and CXR-L/SPP remain connected. Record only redacted PASS/FAIL evidence.
+## Plan 007 Phase E camera/Lens on-device validation
+
+> **PENDING OWNER ON-DEVICE VERIFICATION (2026-07-12)**
+>
+> Phase E covers code, documentation, CI, and local Gradle gates only. The owner
+> will run the following hardware matrix in a later session with device identity,
+> camera content, credentials, and user text redacted from captured evidence.
+
+- Start cold with the Lens plugin's nearby-device permission absent, then grant it
+  and repeat with the permission present.
+- Exercise Lens absent, pending, approved, and revoked; the glasses camera empty/
+  ready state must match `CAMERA_CONSUMER_READY` in all four states.
+- Force-stop Lens, then open the glasses camera session; verify a cold bind with
+  important process priority and live processing within that same session.
+- Validate live translation with a latency spot-check against the Phase A numbers,
+  frozen translation, and multi-script frozen OCR for Chinese, Korean, and Hindi.
+- Drop P2P mid-session and reconnect; keep a session idle longer than 60 seconds;
+  pause/resume the glasses camera activity; restart the phone hub mid-session.
+- Run the Store lifecycle: install, approve, open, update, and uninstall Lens while
+  confirming CXR/SPP transport continuity throughout.

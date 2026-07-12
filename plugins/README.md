@@ -17,14 +17,14 @@ releases. The Gradle project names keep the historical `:plugin-<id>` form
 | Plugin | Id | What it does |
 |---|---|---|
 | [Feeds](../plugin-feeds/) | `feeds` | Bluesky and X timelines on the HUD |
+| [Lens](lens/) | `lens` | Live and frozen camera OCR with phone-side translation |
 | [Transit](transit/) | `transit` | Nearby stops, departures, and favourites (Île-de-France) |
 | [Lyrics](lyrics/) | `lyrics` | Live synced lyrics for whatever is playing |
 | [Media Deck](media/) | `media` | Universal now-playing surface with transport controls |
 | [Sample](sample/) | `hello` | Minimal copyable reference plugin |
 
 Feeds still sits at the repository root until the in-flight feeds branch
-lands; it moves here afterwards. Lens is the last remaining in-hub built-in —
-it needs a glasses-side companion API before it can become an APK.
+lands; it moves here afterwards.
 
 ## Releases
 

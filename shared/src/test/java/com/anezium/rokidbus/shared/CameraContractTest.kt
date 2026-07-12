@@ -17,12 +17,11 @@ class CameraContractTest {
             assertTrue("$path/future", BusPaths.isProtectedCameraPath("$path/future"))
         }
         assertFalse(BusPaths.isProtectedCameraPath("/camera/session/stateful"))
-        assertFalse(BusPaths.isProtectedCameraPath(BusPaths.LENS_LINK_OFFER))
+        assertFalse(BusPaths.isProtectedCameraPath("/plugin/lens"))
     }
 
     @Test
     fun `camera readiness has an independent feature bit`() {
-        assertTrue(BusCapabilityBits.CAMERA_CONSUMER_READY != BusCapabilityBits.PROTECTED_LENS_LINK)
         assertTrue(BusCapabilityBits.CAMERA_CONSUMER_READY != BusCapabilityBits.IMAGE_SURFACE)
     }
 }

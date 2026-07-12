@@ -322,89 +322,11 @@ Surface input payload:
 The back key hides the surface locally on glasses and is still reported to the phone
 as `/surface/input` so the active plugin can close its own state.
 
-## Lens protocol v1 (Lens M1)
-
-Lens is an autonomous glasses-side bus client. OCR runs in the Lens glasses APK;
-translation runs inside the phone hub as an in-process plugin/service. Payloads are
-small JSON envelopes only; binary frames are not used for M1.
-
-Lens M1 only starts a translation request while `SPP_DATA_UP` is available. CXR may
-carry small control envelopes, but it is not considered sufficient for Lens because a
-translation response can grow beyond the CXR control-plane limit.
-
-Glasses to phone:
-
-- `/lens/translate/request` requests translations for the OCR block strings missing
-  from the glasses cache.
-
-Request payload:
-
-```json
-{
-  "id": "<same-as-envelope-id>",
-  "targetLang": "fr",
-  "mode": "LATIN",
-  "strings": ["Exit", "Platform 2"]
-}
-```
-
-`mode` is `LATIN` or `JAPANESE`. `strings` are already normalized by the glasses
-client (`trim` + collapsed internal whitespace) and should be unique within the
-request. The client keeps at most one request in flight. A request is limited to 24
-strings, 1,024 characters per string, 16 KiB of source text, and a 48 KiB JSON
-payload.
-
-Phone to glasses:
-
-- `/lens/translate/request/reply` replies with the same envelope `id` and the same
-  payload `id`.
-
-Final reply payload:
-
-```json
-{
-  "id": "<same-as-request-id>",
-  "translations": [
-    { "src": "Exit", "dst": "Sortie", "srcLang": "en", "fallback": false }
-  ]
-}
-```
-
-Each translation item carries `fallback`. `fallback:false` means `dst` is a real
-translation and may be cached by the glasses. `fallback:true` means the phone could
-not translate that string and returned a temporary `dst == src` placeholder; glasses
-clients MUST NOT cache it and MUST clear the in-flight marker so the string can be
-requested again later.
-
-Model-download status payload:
-
-```json
-{
-  "id": "<same-as-request-id>",
-  "status": "downloading",
-  "lang": "ja",
-  "targetLang": "fr"
-}
-```
-
-The phone sends the `downloading` status promptly on first use of a language pair so
-the glasses can show `DOWNLOADING JA->FR` instead of declaring the phone offline.
-When the model is ready, the phone sends the normal final reply on the same topic/id.
-Errors MAY reply with `{ "id": "...", "status": "error", "error": "..." }`; the
-glasses client must keep OCR/outlines working and retry future cache misses normally.
-Stable error values include `BUSY`, `INVALID_REQUEST`, `PAYLOAD_TOO_LARGE`,
-`TRANSLATION_FAILED`, and `TIMEOUT`. Final responses are limited to 128 KiB and use
-SPP. The phone deadline is 8 seconds for an ordinary request and 130 seconds while a
-model is downloading; the matching glasses deadlines are 10 and 135 seconds.
-
-Raw OCR strings and translated text MUST NOT be written to production logs.
-
 ## Camera contract
 
 The generic camera contract is available only to an installed plugin whose exact
 package, descriptor ID, and signing digest have an approved, enabled `camera`
-grant. Installation or a shared signer alone never grants access. Legacy
-`/lens/*` protected paths remain hub-UID-only.
+grant. Installation or a shared signer alone never grants access.
 
 Glasses to phone:
 
@@ -431,8 +353,8 @@ open/close events are ignored by `sessionId`.
 
 `IBusService.capabilities()` bit `4` is `CAMERA_CONSUMER_READY`. The phone hub
 sets it exactly while at least one installed camera principal has an approved,
-enabled `camera` grant. Grant and package changes recompute the bit. This bit is
-independent of bit `1` (`PROTECTED_LENS_LINK`).
+enabled `camera` grant. Grant and package changes recompute the bit. Bit `1` is
+retired and is no longer advertised by either hub.
 
 ## Transport selection (hub-side routing)
 

@@ -90,8 +90,8 @@ object GlassesHub {
 
         override fun linkState(): Int = this@GlassesHub.linkState()
 
-        override fun capabilities(): Int = BusCapabilityBits.PROTECTED_LENS_LINK or
-            (remotePhoneCapabilities and BusCapabilityBits.CAMERA_CONSUMER_READY)
+        override fun capabilities(): Int =
+            remotePhoneCapabilities and BusCapabilityBits.CAMERA_CONSUMER_READY
 
         override fun registerPlugin(packageName: String, pluginId: String, cb: IBusCallback): Int =
             PluginRegistrationResult.DENIED
@@ -234,10 +234,6 @@ object GlassesHub {
             log("local send rejected status=unregistered_or_release_external")
             return
         }
-        if (BusPaths.isProtectedLensPath(envelope.path) && !isTrustedUid(senderUid)) {
-            log("blocked untrusted protected lens send uid=$senderUid")
-            return
-        }
         if (BusPaths.isProtectedCameraPath(envelope.path) && !isTrustedUid(senderUid)) {
             log("blocked untrusted protected camera send uid=$senderUid")
             return
@@ -275,7 +271,6 @@ object GlassesHub {
         var delivered = false
         registrations.forEach { registration ->
             if (excludeUid != null && registration.uid == excludeUid) return@forEach
-            if (BusPaths.isProtectedLensPath(envelope.path) && !registration.trusted) return@forEach
             if (BusPaths.isProtectedCameraPath(envelope.path) && !registration.trusted) return@forEach
             if (registration.prefixes.any { PathRules.matchesPrefix(envelope.path, it) }) {
                 if (binary != null && binary.size > LOCAL_BINARY_MAX_BYTES) {
