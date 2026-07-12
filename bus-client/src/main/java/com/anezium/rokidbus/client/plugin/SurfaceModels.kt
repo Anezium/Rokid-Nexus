@@ -1,6 +1,8 @@
 package com.anezium.rokidbus.client.plugin
 
 import com.anezium.rokidbus.shared.BusPaths
+import com.anezium.rokidbus.shared.ImageSurfaceContract
+import com.anezium.rokidbus.shared.ImageSurfaceValidationResult
 import com.anezium.rokidbus.shared.plugin.PluginCapability
 import org.json.JSONArray
 import org.json.JSONObject
@@ -121,24 +123,68 @@ data class NexusTimedLines(
         }
 }
 
+data class NexusImage(
+    val contentKey: String,
+    val mimeType: String,
+    val pixelWidth: Int,
+    val pixelHeight: Int,
+    val title: String? = null,
+    val caption: String? = null,
+    val footer: String? = null,
+    val handlesBack: Boolean = false,
+) {
+    init {
+        require(contentKey.isNotBlank() && contentKey.length <= ImageSurfaceContract.MAX_CONTENT_KEY_CHARS)
+        require(mimeType == ImageSurfaceContract.MIME_JPEG || mimeType == ImageSurfaceContract.MIME_PNG)
+        require(pixelWidth in 1..ImageSurfaceContract.MAX_EDGE_PIXELS)
+        require(pixelHeight in 1..ImageSurfaceContract.MAX_EDGE_PIXELS)
+        require(pixelWidth.toLong() * pixelHeight.toLong() <= ImageSurfaceContract.MAX_TOTAL_PIXELS)
+        require(title == null || title.length <= ImageSurfaceContract.MAX_TITLE_CHARS)
+        require(caption == null || caption.length <= ImageSurfaceContract.MAX_TEXT_CHARS)
+        require(footer == null || footer.length <= ImageSurfaceContract.MAX_TEXT_CHARS)
+    }
+
+    internal fun toPayload(surfaceId: String, bytes: ByteArray): JSONObject = JSONObject()
+        .put("surfaceId", surfaceId)
+        .put("kind", ImageSurfaceContract.KIND)
+        .put("imageVersion", ImageSurfaceContract.VERSION)
+        .put("contentKey", contentKey)
+        .put("mimeType", mimeType)
+        .put("pixelWidth", pixelWidth)
+        .put("pixelHeight", pixelHeight)
+        .put("sha256", ImageSurfaceContract.sha256(bytes))
+        .apply {
+            title?.let { put("title", it) }
+            caption?.let { put("caption", it) }
+            footer?.let { put("footer", it) }
+            if (handlesBack) put("handlesBack", true)
+        }
+}
+
 enum class NexusSdkResult {
     SENT,
     NOT_REGISTERED,
     CAPABILITY_NOT_GRANTED,
     CAPABILITY_NOT_AVAILABLE,
     INVALID_PAYLOAD,
+    IMAGE_RATE_LIMITED,
 }
 
 class NexusSurfaceSession internal constructor(
     private val client: NexusPluginClient,
     val localSurfaceId: String,
 ) {
+    private var lastImageSendNanos = Long.MIN_VALUE
     init {
         require(LOCAL_SURFACE_ID.matches(localSurfaceId))
     }
 
     fun showCard(card: NexusCard): NexusSdkResult = sendSurface(BusPaths.SURFACE_SHOW, card.toPayload(localSurfaceId))
     fun updateCard(card: NexusCard): NexusSdkResult = sendSurface(BusPaths.SURFACE_UPDATE, card.toPayload(localSurfaceId))
+    fun showImage(image: NexusImage, bytes: ByteArray): NexusSdkResult =
+        sendImage(BusPaths.SURFACE_SHOW, image, bytes)
+    fun updateImage(image: NexusImage, bytes: ByteArray): NexusSdkResult =
+        sendImage(BusPaths.SURFACE_UPDATE, image, bytes)
     fun showTimedLines(lines: NexusTimedLines): NexusSdkResult =
         sendSurface(BusPaths.SURFACE_SHOW, lines.toPayload(localSurfaceId))
 
@@ -161,6 +207,30 @@ class NexusSurfaceSession internal constructor(
         BusPaths.SURFACE_HIDE,
         JSONObject().put("surfaceId", localSurfaceId),
     )
+
+    private fun sendImage(path: String, image: NexusImage, bytes: ByteArray): NexusSdkResult {
+        if (!client.isApproved) return NexusSdkResult.NOT_REGISTERED
+        if (!client.hasCapability(PluginCapability.SURFACES)) return NexusSdkResult.CAPABILITY_NOT_GRANTED
+        if (!client.supportsImageSurface) return NexusSdkResult.CAPABILITY_NOT_AVAILABLE
+        val payload = image.toPayload(localSurfaceId, bytes)
+        if (ImageSurfaceContract.validate(payload, bytes) !is ImageSurfaceValidationResult.Valid) {
+            return NexusSdkResult.INVALID_PAYLOAD
+        }
+        synchronized(this) {
+            val now = System.nanoTime()
+            if (lastImageSendNanos != Long.MIN_VALUE &&
+                now - lastImageSendNanos < ImageSurfaceContract.MIN_FRAME_INTERVAL_MS * 1_000_000L
+            ) {
+                return NexusSdkResult.IMAGE_RATE_LIMITED
+            }
+            return if (client.sendBinary(path, UUID.randomUUID().toString(), payload, bytes)) {
+                lastImageSendNanos = now
+                NexusSdkResult.SENT
+            } else {
+                NexusSdkResult.CAPABILITY_NOT_AVAILABLE
+            }
+        }
+    }
 
     private fun sendSurface(path: String, payload: JSONObject): NexusSdkResult {
         if (!client.isApproved) return NexusSdkResult.NOT_REGISTERED

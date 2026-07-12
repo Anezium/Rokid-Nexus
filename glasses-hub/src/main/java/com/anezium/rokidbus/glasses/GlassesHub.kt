@@ -15,6 +15,7 @@ import com.anezium.rokidbus.shared.BusConstants
 import com.anezium.rokidbus.shared.BusEnvelope
 import com.anezium.rokidbus.shared.BusPaths
 import com.anezium.rokidbus.shared.FrameProtocol
+import com.anezium.rokidbus.shared.ImageSurfaceContract
 import com.anezium.rokidbus.shared.LinkStateBits
 import com.anezium.rokidbus.shared.plugin.PathRules
 import org.json.JSONArray
@@ -110,12 +111,14 @@ object GlassesHub {
     fun onSppConnected(connected: Boolean) {
         phoneConnected = connected || CxrBusBridge.isUp()
         notifyLinkState()
+        if (connected) announceRendererCapabilities()
     }
 
     fun onCxrState(connected: Boolean) {
         cxrUp = connected
         phoneConnected = connected || SppServerManager.isConnected()
         notifyLinkState()
+        if (connected) announceRendererCapabilities()
     }
 
     fun onRemoteEnvelope(envelope: BusEnvelope) {
@@ -187,6 +190,24 @@ object GlassesHub {
 
     fun sendSurfaceInput(payload: JSONObject): String? =
         sendRemote(BusEnvelope(path = BusPaths.SURFACE_INPUT, payload = payload))
+
+    private fun announceRendererCapabilities() {
+        val error = sendRemote(
+            BusEnvelope(
+                path = BusPaths.HUB_CAPABILITIES,
+                payload = JSONObject()
+                    .put("version", 1)
+                    .put("features", BusCapabilityBits.IMAGE_SURFACE)
+                    .put("imageSurfaceVersion", ImageSurfaceContract.VERSION)
+                    .put("maxImageBytes", ImageSurfaceContract.MAX_IMAGE_BYTES),
+            ),
+        )
+        if (error == null) {
+            log("renderer capabilities announced imageVersion=${ImageSurfaceContract.VERSION}")
+        } else {
+            log("renderer capability announcement failed code=$error")
+        }
+    }
 
     private fun routeLocal(envelope: BusEnvelope, senderUid: Int) {
         val allowed = senderUid == Process.myUid() ||

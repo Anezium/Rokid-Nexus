@@ -1,7 +1,9 @@
 package com.anezium.rokidbus.glasses
 
+import android.graphics.Bitmap
 import android.os.SystemClock
 import android.util.Base64
+import com.anezium.rokidbus.shared.ImageSurfaceContract
 import org.json.JSONObject
 
 enum class SurfaceDisplayPath(val prefValue: String) {
@@ -79,6 +81,45 @@ data class SurfaceAnchor(
     }
 }
 
+data class SurfaceImageMetadata(
+    val version: Int,
+    val contentKey: String,
+    val mimeType: String,
+    val pixelWidth: Int,
+    val pixelHeight: Int,
+    val sha256: String,
+    val caption: String,
+) {
+    companion object {
+        fun fromPayload(payload: JSONObject): SurfaceImageMetadata {
+            val version = payload.getInt("imageVersion")
+            val contentKey = payload.getString("contentKey")
+            val mimeType = payload.getString("mimeType")
+            val width = payload.getInt("pixelWidth")
+            val height = payload.getInt("pixelHeight")
+            val sha256 = payload.getString("sha256")
+            require(version == ImageSurfaceContract.VERSION)
+            require(contentKey.isNotBlank() && contentKey.length <= ImageSurfaceContract.MAX_CONTENT_KEY_CHARS)
+            require(mimeType == ImageSurfaceContract.MIME_JPEG || mimeType == ImageSurfaceContract.MIME_PNG)
+            require(width in 1..ImageSurfaceContract.MAX_EDGE_PIXELS)
+            require(height in 1..ImageSurfaceContract.MAX_EDGE_PIXELS)
+            require(width.toLong() * height.toLong() <= ImageSurfaceContract.MAX_TOTAL_PIXELS)
+            require(sha256.matches(Regex("[0-9a-f]{64}")))
+            val caption = payload.optString("caption")
+            require(caption.length <= ImageSurfaceContract.MAX_TEXT_CHARS)
+            return SurfaceImageMetadata(
+                version = version,
+                contentKey = contentKey,
+                mimeType = mimeType,
+                pixelWidth = width,
+                pixelHeight = height,
+                sha256 = sha256,
+                caption = caption,
+            )
+        }
+    }
+}
+
 data class NexusSurface(
     val surfaceId: String,
     val seq: Long,
@@ -95,19 +136,27 @@ data class NexusSurface(
     val mediaArtist: String = "",
     val mediaAlbum: String = "",
     val artwork: MonoArtwork? = null,
+    val imageMetadata: SurfaceImageMetadata? = null,
+    val imageBitmap: Bitmap? = null,
 ) {
     val isTimed: Boolean
         get() = kind == KIND_TIMED_LINES && timedLines.isNotEmpty()
     val isMedia: Boolean
         get() = kind == KIND_MEDIA && mediaTitle.isNotBlank()
+    val isImage: Boolean
+        get() = kind == KIND_IMAGE && imageMetadata != null
 
     companion object {
         const val KIND_CARD = "card"
         const val KIND_TIMED_LINES = "timed-lines"
         const val KIND_MEDIA = "media"
+        const val KIND_IMAGE = "image"
 
         fun fromPayload(payload: JSONObject, previous: NexusSurface? = null): NexusSurface {
             val kind = payload.optString("kind", KIND_CARD).ifBlank { KIND_CARD }
+            require(kind == KIND_CARD || kind == KIND_TIMED_LINES || kind == KIND_MEDIA || kind == KIND_IMAGE) {
+                "Unknown surface kind: $kind"
+            }
             val surfaceId = payload.getString("surfaceId")
             val contentKey = payload.optString("contentKey")
             val canMergePrevious = previous != null &&
@@ -121,7 +170,13 @@ data class NexusSurface(
                 kind = kind,
                 contentKey = contentKey.ifBlank { previous?.takeIf { canMergePrevious }?.contentKey.orEmpty() },
                 title = payload.optString("title").ifBlank { previous?.takeIf { canMergePrevious }?.title.orEmpty() },
-                subtitle = payload.optString("subtitle").ifBlank { previous?.takeIf { canMergePrevious }?.subtitle.orEmpty() },
+                subtitle = if (kind == KIND_IMAGE) {
+                    payload.optString("caption")
+                } else {
+                    payload.optString("subtitle").ifBlank {
+                        previous?.takeIf { canMergePrevious }?.subtitle.orEmpty()
+                    }
+                },
                 footer = payload.optString("footer").ifBlank { previous?.takeIf { canMergePrevious }?.footer.orEmpty() },
                 rows = if (!linesPresent && canMergePrevious) {
                     previous?.rows.orEmpty()
@@ -188,6 +243,7 @@ data class NexusSurface(
                     canMergePrevious -> previous?.artwork
                     else -> null
                 },
+                imageMetadata = if (kind == KIND_IMAGE) SurfaceImageMetadata.fromPayload(payload) else null,
             )
         }
     }

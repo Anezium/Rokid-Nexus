@@ -1,7 +1,10 @@
 package com.anezium.rokidbus.client.plugin
 
 import com.anezium.rokidbus.client.PluginRegistrationResult
+import com.anezium.rokidbus.shared.BusCapabilityBits
 import com.anezium.rokidbus.shared.BusPaths
+import com.anezium.rokidbus.shared.ImageSurfaceContract
+import com.anezium.rokidbus.shared.LinkStateBits
 import com.anezium.rokidbus.shared.plugin.NexusInputEvent
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -14,11 +17,19 @@ class SurfaceModelsTest {
     private class FakeTransport : NexusPluginTransport {
         lateinit var listener: NexusPluginTransport.Listener
         val sends = mutableListOf<Pair<String, JSONObject>>()
+        val binarySends = mutableListOf<Triple<String, JSONObject, ByteArray>>()
+        var featureBits = 0
+        var binaryAccepted = true
         override fun connect(listener: NexusPluginTransport.Listener) { this.listener = listener }
         override fun send(path: String, id: String, payload: JSONObject): Boolean {
             sends += path to JSONObject(payload.toString())
             return true
         }
+        override fun sendBinary(path: String, id: String, payload: JSONObject, data: ByteArray): Boolean {
+            binarySends += Triple(path, JSONObject(payload.toString()), data.copyOf())
+            return binaryAccepted
+        }
+        override fun capabilities(): Int = featureBits
         override fun close() = Unit
     }
 
@@ -45,6 +56,28 @@ class SurfaceModelsTest {
         )
         return client to transport
     }
+
+    private fun validJpeg(width: Int = 512, height: Int = 512): ByteArray = ByteArray(128).also { bytes ->
+        byteArrayOf(
+            0xff.toByte(), 0xd8.toByte(), 0xff.toByte(), 0xc0.toByte(),
+            0x00, 0x11, 0x08,
+            (height ushr 8).toByte(), height.toByte(),
+            (width ushr 8).toByte(), width.toByte(),
+            0x03, 0x01, 0x11, 0x00, 0x02, 0x11, 0x00, 0x03, 0x11, 0x00,
+            0xff.toByte(), 0xd9.toByte(),
+        ).copyInto(bytes)
+    }
+
+    private fun image() = NexusImage(
+        contentKey = "photo-1",
+        mimeType = ImageSurfaceContract.MIME_JPEG,
+        pixelWidth = 512,
+        pixelHeight = 512,
+        title = "Photo",
+        caption = "A real image",
+        footer = "Back",
+        handlesBack = true,
+    )
 
     @Test
     fun `valid card sends only local surface fields`() {
@@ -116,5 +149,85 @@ class SurfaceModelsTest {
         val (client, _) = client("surfaces,http_proxy")
         assertTrue(client.hasCapability(com.anezium.rokidbus.shared.plugin.PluginCapability.SURFACES))
         assertTrue(client.hasCapability(com.anezium.rokidbus.shared.plugin.PluginCapability.HTTP_PROXY))
+    }
+
+    @Test
+    fun `image metadata validates and delegates binary bytes`() {
+        val (client, transport) = client("surfaces")
+        transport.featureBits = BusCapabilityBits.IMAGE_SURFACE
+        transport.listener.onLinkState(LinkStateBits.SPP_DATA_UP)
+        val bytes = validJpeg()
+        val session = client.surfaceSession("main")
+
+        assertEquals(NexusSdkResult.SENT, session.showImage(image(), bytes))
+
+        val (path, payload, sentBytes) = transport.binarySends.single()
+        assertEquals(BusPaths.SURFACE_SHOW, path)
+        assertEquals("image", payload.getString("kind"))
+        assertEquals("photo-1", payload.getString("contentKey"))
+        assertEquals(ImageSurfaceContract.sha256(bytes), payload.getString("sha256"))
+        assertTrue(bytes.contentEquals(sentBytes))
+        assertEquals(0, transport.sends.size)
+        assertEquals(
+            NexusSdkResult.IMAGE_RATE_LIMITED,
+            session.updateImage(image(), bytes),
+        )
+    }
+
+    @Test
+    fun `image send fails for missing grant feature and SPP link`() {
+        val bytes = validJpeg()
+        val (noGrant, noGrantTransport) = client("http_proxy")
+        noGrantTransport.featureBits = BusCapabilityBits.IMAGE_SURFACE
+        noGrantTransport.listener.onLinkState(LinkStateBits.SPP_DATA_UP)
+        assertEquals(NexusSdkResult.CAPABILITY_NOT_GRANTED, noGrant.surfaceSession("main").showImage(image(), bytes))
+
+        val (noFeature, noFeatureTransport) = client("surfaces")
+        noFeatureTransport.listener.onLinkState(LinkStateBits.SPP_DATA_UP)
+        assertEquals(NexusSdkResult.CAPABILITY_NOT_AVAILABLE, noFeature.surfaceSession("main").showImage(image(), bytes))
+
+        val (noSpp, noSppTransport) = client("surfaces")
+        noSppTransport.featureBits = BusCapabilityBits.IMAGE_SURFACE
+        noSppTransport.listener.onLinkState(LinkStateBits.CXR_CONTROL_UP)
+        assertEquals(NexusSdkResult.CAPABILITY_NOT_AVAILABLE, noSpp.surfaceSession("main").showImage(image(), bytes))
+        assertTrue(noGrantTransport.binarySends.isEmpty())
+        assertTrue(noFeatureTransport.binarySends.isEmpty())
+        assertTrue(noSppTransport.binarySends.isEmpty())
+    }
+
+    @Test
+    fun `image body and metadata caps fail before transport`() {
+        assertThrows(IllegalArgumentException::class.java) {
+            NexusImage("photo", "image/webp", 10, 10)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            NexusImage("photo", ImageSurfaceContract.MIME_JPEG, 513, 10)
+        }
+
+        val (client, transport) = client("surfaces")
+        transport.featureBits = BusCapabilityBits.IMAGE_SURFACE
+        transport.listener.onLinkState(LinkStateBits.SPP_DATA_UP)
+        val oversized = validJpeg() + ByteArray(ImageSurfaceContract.MAX_IMAGE_BYTES)
+        assertEquals(NexusSdkResult.INVALID_PAYLOAD, client.surfaceSession("main").showImage(image(), oversized))
+        assertTrue(transport.binarySends.isEmpty())
+    }
+
+    @Test
+    fun `offline binary rejection is not reported as sent`() {
+        val (client, transport) = client("surfaces")
+        transport.featureBits = BusCapabilityBits.IMAGE_SURFACE
+        transport.binaryAccepted = false
+        transport.listener.onLinkState(LinkStateBits.SPP_DATA_UP)
+        val session = client.surfaceSession("main")
+
+        assertEquals(
+            NexusSdkResult.CAPABILITY_NOT_AVAILABLE,
+            session.showImage(image(), validJpeg()),
+        )
+        assertFalse(client.supportsImageSurface)
+
+        transport.binaryAccepted = true
+        transport.listener.onLinkState(LinkStateBits.SPP_DATA_UP)
+        assertEquals(NexusSdkResult.SENT, session.showImage(image(), validJpeg()))
     }
 }
