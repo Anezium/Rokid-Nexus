@@ -1,4 +1,4 @@
-package com.anezium.rokidbus.phone
+package com.anezium.rokidbus.plugin.media
 
 import com.anezium.rokidbus.client.R as BusClientR
 import com.anezium.rokidbus.client.ui.NexusUi
@@ -6,6 +6,7 @@ import android.app.Activity
 import android.content.ComponentName
 import android.content.Intent
 import android.graphics.Color
+import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
 import android.view.Gravity
@@ -14,7 +15,6 @@ import android.view.ViewGroup
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
-import android.widget.Toast
 import com.anezium.rokidbus.client.ui.BusTheme
 import com.anezium.rokidbus.media.session.MediaDeckNotificationListenerService
 
@@ -71,11 +71,7 @@ class MediaDeckSettingsActivity : Activity() {
                     value = valueText("Remove", NexusUi.DANGER),
                     danger = true,
                 ) {
-                    Toast.makeText(
-                        this@MediaDeckSettingsActivity,
-                        "Built-in plugins cannot be uninstalled yet.",
-                        Toast.LENGTH_SHORT,
-                    ).show()
+                    startActivity(Intent(Intent.ACTION_DELETE, Uri.parse("package:$packageName")))
                 },
                 NexusUi.block(),
             )

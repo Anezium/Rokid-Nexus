@@ -8,12 +8,10 @@ HUD surface, and forwards only play/pause/previous/next transport commands.
 
 - No CXR, Bluetooth, glasses SDK, phone-hub implementation, microphone, or network
   dependency.
-- The plugin owns its notification-listener component. Its settings screen lives in
-  phone-hub (`MediaDeckSettingsActivity`) with the other plugin settings screens, on
-  the shared NexusUi kit; it moves back here when the module becomes its own APK.
-- The current repository registers `MediaDeckPlugin` through the in-process
-  `NexusPlugin` adapter. Its runtime and UI are isolated here so the module can become
-  an independent phone APK when the external Nexus plugin service SDK lands.
+- The plugin owns its notification-listener component and its `MediaDeckSettingsActivity`
+  on the shared NexusUi kit.
+- `MediaDeckPluginService` registers the headless APK through the external Nexus plugin
+  SDK and adapts the isolated `MediaDeckRuntime` onto typed surface sessions.
 - The glasses hub owns rendering through the versioned `media` surface documented in
   `../BUSSPEC.md`; the plugin never installs or launches glasses-side code.
 

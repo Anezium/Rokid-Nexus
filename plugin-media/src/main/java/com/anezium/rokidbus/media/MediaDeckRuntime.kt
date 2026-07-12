@@ -1,25 +1,37 @@
 package com.anezium.rokidbus.media
 
+import android.content.Context
 import android.os.SystemClock
 import android.view.KeyEvent
+import com.anezium.rokidbus.client.plugin.NexusCard
+import com.anezium.rokidbus.client.plugin.NexusMedia
+import com.anezium.rokidbus.client.plugin.NexusMediaAnchor
+import com.anezium.rokidbus.client.plugin.NexusMonoArtwork
 import com.anezium.rokidbus.media.session.MediaDeckMonitorStatus
 import com.anezium.rokidbus.media.session.MediaDeckSnapshot
 import com.anezium.rokidbus.media.session.MediaSessionMonitor
-import com.anezium.rokidbus.shared.BusPaths
 import com.anezium.rokidbus.shared.plugin.NexusInputEvent
-import com.anezium.rokidbus.shared.plugin.NexusPlugin
-import com.anezium.rokidbus.shared.plugin.NexusPluginHost
-import org.json.JSONArray
-import org.json.JSONObject
 import java.security.MessageDigest
 import kotlin.math.abs
 
-class MediaDeckPlugin : NexusPlugin {
-    override val id: String = SURFACE_ID
-    override val displayName: String = "Media Deck"
+internal interface MediaDeckRuntimeHost {
+    fun sendCard(card: NexusCard, show: Boolean)
+    fun sendMedia(media: NexusMedia, show: Boolean)
+    fun updateMediaAnchor(contentKey: String, anchor: NexusMediaAnchor)
+    fun hideSurface()
+    fun post(action: () -> Unit)
+}
 
-    private lateinit var host: NexusPluginHost
-    private lateinit var monitor: MediaSessionMonitor
+internal class MediaDeckRuntime(
+    context: Context,
+    private val host: MediaDeckRuntimeHost,
+) {
+    private val appContext = context.applicationContext
+    private val monitor = MediaSessionMonitor(
+        context = appContext,
+        onSnapshot = { snapshot -> host.post { handleSnapshot(snapshot) } },
+        onStatus = { status -> host.post { handleStatus(status) } },
+    )
     private var active = false
     private var surfaceShown = false
     private var latestSnapshot: MediaDeckSnapshot? = null
@@ -30,20 +42,7 @@ class MediaDeckPlugin : NexusPlugin {
     private var cachedArtwork: EncodedMonoArtwork? = null
     private var cachedArtworkUriAttempt: String? = null
 
-    override fun onRegister(host: NexusPluginHost) {
-        this.host = host
-        monitor = MediaSessionMonitor(
-            context = host.context,
-            onSnapshot = { snapshot ->
-                host.post { handleSnapshot(snapshot) }
-            },
-            onStatus = { status ->
-                host.post { handleStatus(status) }
-            },
-        )
-    }
-
-    override fun onOpen() {
+    fun open() {
         active = true
         surfaceShown = false
         lastRenderedKey = null
@@ -53,7 +52,7 @@ class MediaDeckPlugin : NexusPlugin {
         monitor.start()
     }
 
-    override fun onClose() {
+    fun close() {
         active = false
         monitor.stop()
         latestSnapshot = null
@@ -63,18 +62,15 @@ class MediaDeckPlugin : NexusPlugin {
         cachedArtwork = null
         cachedArtworkUriAttempt = null
         if (surfaceShown) {
-            host.send(
-                BusPaths.SURFACE_HIDE,
-                JSONObject().put("surfaceId", SURFACE_ID),
-            )
+            host.hideSurface()
         }
         surfaceShown = false
     }
 
-    override fun onInput(event: NexusInputEvent) {
+    fun input(event: NexusInputEvent) {
         if (!active || event.action != KeyEvent.ACTION_DOWN) return
         when (event.keyCode) {
-            KeyEvent.KEYCODE_BACK -> onClose()
+            KeyEvent.KEYCODE_BACK -> close()
             KeyEvent.KEYCODE_ENTER,
             KeyEvent.KEYCODE_DPAD_CENTER,
             KeyEvent.KEYCODE_SPACE,
@@ -131,15 +127,17 @@ class MediaDeckPlugin : NexusPlugin {
         }
         val renderedKey = "status:$key"
         if (!force && lastRenderedKey == renderedKey) return
-        sendSurface(
-            JSONObject()
-                .put("surfaceId", SURFACE_ID)
-                .put("kind", "card")
-                .put("contentKey", renderedKey)
-                .put("title", "MEDIA DECK")
-                .put("lines", JSONArray(lines))
-                .put("footer", "BACK: CLOSE"),
+        host.sendCard(
+            NexusCard(
+                title = "MEDIA DECK",
+                lines = lines,
+                footer = "BACK: CLOSE",
+                contentKey = renderedKey,
+                handlesBack = true,
+            ),
+            show = !surfaceShown,
         )
+        surfaceShown = true
         lastRenderedKey = renderedKey
         lastSentMedia = null
     }
@@ -159,12 +157,16 @@ class MediaDeckPlugin : NexusPlugin {
         if (!force && !contentChanged && !artworkArrived && !anchorChanged) return
 
         val sendFullPayload = force || contentChanged || artworkArrived
-        val payload = if (sendFullPayload) {
-            buildFullPayload(snapshot, contentKey, artwork, now)
+        val anchor = anchor(snapshot, now)
+        if (sendFullPayload) {
+            host.sendMedia(
+                buildFullSurface(snapshot, contentKey, artwork, anchor),
+                show = !surfaceShown,
+            )
         } else {
-            anchorPayload(snapshot, contentKey, now)
+            host.updateMediaAnchor(contentKey, anchor)
         }
-        sendSurface(payload)
+        surfaceShown = true
         lastRenderedKey = "media:$contentKey"
         lastSentMedia = SentMedia(
             contentKey = contentKey,
@@ -176,66 +178,53 @@ class MediaDeckPlugin : NexusPlugin {
         )
     }
 
-    private fun buildFullPayload(
+    private fun buildFullSurface(
         snapshot: MediaDeckSnapshot,
         contentKey: String,
         artwork: EncodedMonoArtwork?,
-        now: Long,
-    ): JSONObject = JSONObject()
-        .put("surfaceId", SURFACE_ID)
-        .put("kind", "media")
-        .put("mediaVersion", 1)
-        .put("contentKey", contentKey)
-        .put("title", "MEDIA DECK")
-        .put("subtitle", clipped(snapshot.sourceLabel, SOURCE_LIMIT).uppercase())
-        .put("mediaTitle", clipped(snapshot.title, TITLE_LIMIT))
-        .put("mediaArtist", clipped(snapshot.artist, ARTIST_LIMIT))
-        .put("mediaAlbum", clipped(snapshot.album, ALBUM_LIMIT))
-        .put("footer", "SWIPE: TRACK  TAP: PLAY/PAUSE")
-        .put("anchor", anchor(snapshot, now))
-        .also { payload -> artwork?.let { payload.put("artwork", it.toJson()) } }
+        anchor: NexusMediaAnchor,
+    ): NexusMedia = NexusMedia(
+        title = "MEDIA DECK",
+        contentKey = contentKey,
+        subtitle = clipped(snapshot.sourceLabel, SOURCE_LIMIT).uppercase().takeIf(String::isNotBlank),
+        mediaTitle = clipped(snapshot.title, TITLE_LIMIT),
+        mediaArtist = clipped(snapshot.artist, ARTIST_LIMIT).takeIf(String::isNotBlank),
+        mediaAlbum = clipped(snapshot.album, ALBUM_LIMIT).takeIf(String::isNotBlank),
+        footer = "SWIPE: TRACK  TAP: PLAY/PAUSE",
+        anchor = anchor,
+        artwork = artwork?.let {
+            NexusMonoArtwork(
+                width = it.width,
+                height = it.height,
+                bytes = it.bytes,
+                hash = it.hash,
+            )
+        },
+    )
 
-    private fun anchorPayload(
-        snapshot: MediaDeckSnapshot,
-        contentKey: String,
-        now: Long,
-    ): JSONObject = JSONObject()
-        .put("surfaceId", SURFACE_ID)
-        .put("kind", "media")
-        .put("mediaVersion", 1)
-        .put("contentKey", contentKey)
-        .put("anchor", anchor(snapshot, now))
-
-    private fun anchor(snapshot: MediaDeckSnapshot, now: Long): JSONObject = JSONObject()
-        .put("positionMs", snapshot.positionMs.coerceAtLeast(0L))
-        .put("playing", snapshot.isPlaying)
-        .put("playbackSpeed", snapshot.playbackSpeed.toDouble())
-        .put("sentAtElapsedRealtime", now)
-        .also { value -> snapshot.durationMs?.let { value.put("durationMs", it) } }
+    private fun anchor(snapshot: MediaDeckSnapshot, now: Long): NexusMediaAnchor = NexusMediaAnchor(
+        positionMs = snapshot.positionMs.coerceAtLeast(0L),
+        playing = snapshot.isPlaying,
+        playbackSpeed = snapshot.playbackSpeed.coerceAtLeast(0f),
+        sentAtElapsedRealtime = now,
+        durationMs = snapshot.durationMs,
+    )
 
     private fun artworkFor(contentKey: String, snapshot: MediaDeckSnapshot): EncodedMonoArtwork? {
         if (cachedArtworkTrackKey != contentKey) {
             cachedArtworkTrackKey = contentKey
             cachedArtworkUriAttempt = snapshot.artworkUri
-            cachedArtwork = MonoArtworkEncoder.encode(host.context, snapshot.artwork, snapshot.artworkUri)
+            cachedArtwork = MonoArtworkEncoder.encode(appContext, snapshot.artwork, snapshot.artworkUri)
         } else if (cachedArtwork == null && snapshot.artwork != null) {
-            cachedArtwork = MonoArtworkEncoder.encode(host.context, snapshot.artwork, snapshot.artworkUri)
+            cachedArtwork = MonoArtworkEncoder.encode(appContext, snapshot.artwork, snapshot.artworkUri)
         } else if (cachedArtwork == null &&
             snapshot.artworkUri.isNotBlank() &&
             snapshot.artworkUri != cachedArtworkUriAttempt
         ) {
             cachedArtworkUriAttempt = snapshot.artworkUri
-            cachedArtwork = MonoArtworkEncoder.encode(host.context, null, snapshot.artworkUri)
+            cachedArtwork = MonoArtworkEncoder.encode(appContext, null, snapshot.artworkUri)
         }
         return cachedArtwork
-    }
-
-    private fun sendSurface(payload: JSONObject) {
-        host.send(
-            if (surfaceShown) BusPaths.SURFACE_UPDATE else BusPaths.SURFACE_SHOW,
-            payload,
-        )
-        surfaceShown = true
     }
 
     private fun trackKey(snapshot: MediaDeckSnapshot): String = shortHash(
@@ -281,7 +270,6 @@ class MediaDeckPlugin : NexusPlugin {
     }
 
     private companion object {
-        const val SURFACE_ID = "media"
         const val SEEK_RESYNC_MS = 1_250L
         const val TITLE_LIMIT = 96
         const val ARTIST_LIMIT = 80

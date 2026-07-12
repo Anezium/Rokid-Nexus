@@ -1,13 +1,17 @@
 plugins {
-    id("com.android.library")
+    id("com.android.application")
 }
 
 android {
-    namespace = "com.anezium.rokidbus.lyrics"
+    namespace = "com.anezium.rokidbus.plugin.lyrics"
     compileSdk = 36
 
     defaultConfig {
+        applicationId = "com.anezium.rokidbus.plugin.lyrics"
         minSdk = 31
+        targetSdk = 36
+        versionCode = 1
+        versionName = "1.0.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -19,6 +23,8 @@ android {
 
 dependencies {
     implementation(project(":shared"))
+    implementation(project(":bus-client"))
+    implementation("androidx.activity:activity:1.10.1")
     implementation("androidx.core:core:1.13.1")
     implementation("androidx.security:security-crypto:1.0.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")

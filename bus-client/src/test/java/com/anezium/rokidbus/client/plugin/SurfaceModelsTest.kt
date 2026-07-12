@@ -104,6 +104,35 @@ class SurfaceModelsTest {
     }
 
     @Test
+    fun `media full and anchor-only updates preserve the versioned surface`() {
+        val (client, transport) = client("surfaces")
+        val session = client.surfaceSession("media")
+        val anchor = NexusMediaAnchor(1200, true, 1f, 99, durationMs = 2400)
+        assertEquals(
+            NexusSdkResult.SENT,
+            session.showMedia(
+                NexusMedia(
+                    title = "MEDIA DECK",
+                    contentKey = "track-1",
+                    mediaTitle = "Track",
+                    mediaArtist = "Artist",
+                    anchor = anchor,
+                    artwork = NexusMonoArtwork(8, 1, byteArrayOf(0x55), "art-1"),
+                ),
+            ),
+        )
+        assertEquals(NexusSdkResult.SENT, session.updateMediaAnchor("track-1", anchor))
+        val full = transport.sends.first().second
+        assertEquals(1, full.getInt("mediaVersion"))
+        assertEquals("mono1", full.getJSONObject("artwork").getString("encoding"))
+        val update = transport.sends.last().second
+        assertEquals("media", update.getString("kind"))
+        assertEquals("track-1", update.getString("contentKey"))
+        assertTrue(update.has("anchor"))
+        assertFalse(update.has("mediaTitle"))
+    }
+
+    @Test
     fun `capability helpers fail locally and microphone stays unavailable`() {
         val (client, transport) = client("surfaces")
         assertEquals(NexusSdkResult.CAPABILITY_NOT_GRANTED, client.requestHttp(JSONObject().put("url", "https://example.com")))

@@ -1,15 +1,18 @@
-package com.anezium.rokidbus.phone
+package com.anezium.rokidbus.plugin.lyrics
 
 import com.anezium.rokidbus.client.R as BusClientR
 import com.anezium.rokidbus.client.ui.NexusUi
 import android.app.Activity
 import android.app.Dialog
+import android.content.ComponentName
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
+import android.net.Uri
 import android.os.Bundle
+import android.provider.Settings
 import android.text.InputType
 import android.view.Gravity
 import android.view.View
@@ -24,6 +27,7 @@ import android.widget.Toast
 import com.anezium.rokidbus.client.ui.BusTheme
 import com.anezium.rokidbus.lyrics.LyricsRuntimeGraph
 import com.anezium.rokidbus.lyrics.lyrics.SpotifySpDcCookie
+import com.anezium.rokidbus.lyrics.media.MediaNotificationListenerService
 import com.anezium.rokidbus.lyrics.settings.LyricsProviderSettingsStore
 
 private const val LYRICS_PREFS = "nexus_plugin_lyrics"
@@ -32,6 +36,7 @@ private const val LYRICS_PREF_AUTO_OPEN = "auto_open"
 class LyricsSettingsActivity : Activity() {
     private lateinit var toggleTrack: FrameLayout
     private lateinit var toggleKnob: View
+    private lateinit var accessValue: TextView
     private lateinit var spotifyValue: TextView
     private lateinit var musixmatchValue: TextView
     private lateinit var providerStore: LyricsProviderSettingsStore
@@ -45,6 +50,22 @@ class LyricsSettingsActivity : Activity() {
     override fun onResume() {
         super.onResume()
         refreshProviderValues()
+        renderAccessState()
+    }
+
+    private fun renderAccessState() {
+        if (!::accessValue.isInitialized) return
+        val enabled = isMusicListenerEnabled()
+        accessValue.text = if (enabled) "ENABLED ›" else "ENABLE ›"
+        accessValue.setTextColor(if (enabled) NexusUi.GREEN else NexusUi.INK2)
+    }
+
+    private fun isMusicListenerEnabled(): Boolean {
+        val target = ComponentName(this, MediaNotificationListenerService::class.java)
+        val enabled = Settings.Secure.getString(contentResolver, "enabled_notification_listeners").orEmpty()
+        return enabled.split(':').any { flattened ->
+            ComponentName.unflattenFromString(flattened) == target
+        }
     }
 
     private fun refreshProviderValues() {
@@ -63,6 +84,16 @@ class LyricsSettingsActivity : Activity() {
         val content = NexusUi.contentColumn(this).apply {
             addView(NexusUi.sectionRow(this@LyricsSettingsActivity, "Settings"), NexusUi.block())
             addView(BusTheme.gap(this@LyricsSettingsActivity, 12))
+            accessValue = valueText("Enable")
+            addView(
+                settingRow(
+                    title = "Music access",
+                    subtitle = "Sees what plays to find lyrics",
+                    value = accessValue,
+                    danger = false,
+                ) { startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) },
+                NexusUi.block(),
+            )
             addView(
                 settingRow(
                     title = "Show on glasses",
@@ -122,11 +153,7 @@ class LyricsSettingsActivity : Activity() {
                     value = valueText("Remove", NexusUi.DANGER),
                     danger = true,
                 ) {
-                    Toast.makeText(
-                        this@LyricsSettingsActivity,
-                        "Built-in plugins cannot be uninstalled yet.",
-                        Toast.LENGTH_SHORT,
-                    ).show()
+                    startActivity(Intent(Intent.ACTION_DELETE, Uri.parse("package:$packageName")))
                 },
                 NexusUi.block(),
             )

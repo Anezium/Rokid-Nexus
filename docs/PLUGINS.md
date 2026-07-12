@@ -7,8 +7,8 @@ discovers it, the user approves its capabilities once, and from then on it
 lives entirely inside Nexus — launched from the glasses launcher, configured
 from the phone hub, removable from its own settings screen or the Store.
 
-Feeds and Transit ship this way. Lyrics, Media Deck, and Lens are still
-compiled into the hub as legacy built-ins and will migrate to this model.
+Feeds, Transit, Lyrics, and Media Deck ship this way. Lens is still compiled
+into the hub as a legacy built-in and will migrate to this model.
 
 The wire/SDK contract (artifact coordinates, service base class, payload
 limits, approval flow) is specified in [PLUGIN_SDK.md](PLUGIN_SDK.md); this

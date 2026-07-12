@@ -4,6 +4,7 @@ import com.anezium.rokidbus.shared.BusPaths
 import com.anezium.rokidbus.shared.plugin.PluginCapability
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.Base64
 import java.util.UUID
 
 data class NexusCardLine(
@@ -121,6 +122,87 @@ data class NexusTimedLines(
         }
 }
 
+data class NexusMonoArtwork(
+    val width: Int,
+    val height: Int,
+    val bytes: ByteArray,
+    val hash: String,
+) {
+    init {
+        require(width in 1..MAX_ARTWORK_DIMENSION)
+        require(height in 1..MAX_ARTWORK_DIMENSION)
+        require(bytes.size == (width * height + 7) / 8)
+        require(hash.isNotBlank() && hash.length <= MAX_CONTENT_KEY_CHARS)
+    }
+
+    internal fun toJson(): JSONObject = JSONObject()
+        .put("encoding", "mono1")
+        .put("width", width)
+        .put("height", height)
+        .put("hash", hash)
+        .put("data", Base64.getEncoder().encodeToString(bytes))
+}
+
+data class NexusMediaAnchor(
+    val positionMs: Long,
+    val playing: Boolean,
+    val playbackSpeed: Float,
+    val sentAtElapsedRealtime: Long,
+    val durationMs: Long? = null,
+) {
+    init {
+        require(positionMs >= 0)
+        require(playbackSpeed.isFinite() && playbackSpeed >= 0f)
+        require(sentAtElapsedRealtime >= 0)
+        require(durationMs == null || durationMs >= 0)
+    }
+
+    internal fun toJson(): JSONObject = JSONObject()
+        .put("positionMs", positionMs)
+        .put("playing", playing)
+        .put("playbackSpeed", playbackSpeed.toDouble())
+        .put("sentAtElapsedRealtime", sentAtElapsedRealtime)
+        .apply { durationMs?.let { put("durationMs", it) } }
+}
+
+data class NexusMedia(
+    val title: String,
+    val contentKey: String,
+    val mediaTitle: String,
+    val anchor: NexusMediaAnchor,
+    val subtitle: String? = null,
+    val mediaArtist: String? = null,
+    val mediaAlbum: String? = null,
+    val footer: String? = null,
+    val artwork: NexusMonoArtwork? = null,
+) {
+    init {
+        require(title.isNotBlank() && title.length <= MAX_TITLE_CHARS)
+        require(contentKey.isNotBlank() && contentKey.length <= MAX_CONTENT_KEY_CHARS)
+        require(mediaTitle.isNotBlank() && mediaTitle.length <= MAX_TITLE_CHARS)
+        require(subtitle == null || subtitle.length <= MAX_LINE_CHARS)
+        require(mediaArtist == null || mediaArtist.length <= MAX_LINE_CHARS)
+        require(mediaAlbum == null || mediaAlbum.length <= MAX_LINE_CHARS)
+        require(footer == null || footer.length <= MAX_LINE_CHARS)
+    }
+
+    internal fun toPayload(surfaceId: String): JSONObject = JSONObject()
+        .put("surfaceId", surfaceId)
+        .put("kind", "media")
+        .put("mediaVersion", 1)
+        .put("contentKey", contentKey)
+        .put("title", title)
+        .put("mediaTitle", mediaTitle)
+        .put("anchor", anchor.toJson())
+        .apply {
+            subtitle?.let { put("subtitle", it) }
+            mediaArtist?.let { put("mediaArtist", it) }
+            mediaAlbum?.let { put("mediaAlbum", it) }
+            footer?.let { put("footer", it) }
+            artwork?.let { put("artwork", it.toJson()) }
+        }
+}
+
 enum class NexusSdkResult {
     SENT,
     NOT_REGISTERED,
@@ -141,6 +223,8 @@ class NexusSurfaceSession internal constructor(
     fun updateCard(card: NexusCard): NexusSdkResult = sendSurface(BusPaths.SURFACE_UPDATE, card.toPayload(localSurfaceId))
     fun showTimedLines(lines: NexusTimedLines): NexusSdkResult =
         sendSurface(BusPaths.SURFACE_SHOW, lines.toPayload(localSurfaceId))
+    fun updateTimedLines(lines: NexusTimedLines): NexusSdkResult =
+        sendSurface(BusPaths.SURFACE_UPDATE, lines.toPayload(localSurfaceId))
 
     fun updateTimedLinesAnchor(
         contentKey: String,
@@ -152,6 +236,28 @@ class NexusSurfaceSession internal constructor(
             JSONObject()
                 .put("surfaceId", localSurfaceId)
                 .put("kind", "timed-lines")
+                .put("contentKey", contentKey)
+                .put("anchor", anchor.toJson()),
+        )
+    }
+
+    fun showMedia(media: NexusMedia): NexusSdkResult =
+        sendSurface(BusPaths.SURFACE_SHOW, media.toPayload(localSurfaceId))
+
+    fun updateMedia(media: NexusMedia): NexusSdkResult =
+        sendSurface(BusPaths.SURFACE_UPDATE, media.toPayload(localSurfaceId))
+
+    fun updateMediaAnchor(
+        contentKey: String,
+        anchor: NexusMediaAnchor,
+    ): NexusSdkResult {
+        if (contentKey.isBlank() || contentKey.length > MAX_CONTENT_KEY_CHARS) return NexusSdkResult.INVALID_PAYLOAD
+        return sendSurface(
+            BusPaths.SURFACE_UPDATE,
+            JSONObject()
+                .put("surfaceId", localSurfaceId)
+                .put("kind", "media")
+                .put("mediaVersion", 1)
                 .put("contentKey", contentKey)
                 .put("anchor", anchor.toJson()),
         )
@@ -201,4 +307,5 @@ private const val MAX_TRAIL_ITEM_CHARS = 24
 private const val MAX_LINES = 64
 private const val MAX_TIMED_LINES = 2_000
 private const val MAX_CONTENT_KEY_CHARS = 128
+private const val MAX_ARTWORK_DIMENSION = 192
 private const val MAX_SURFACE_PAYLOAD_BYTES = 64 * 1024

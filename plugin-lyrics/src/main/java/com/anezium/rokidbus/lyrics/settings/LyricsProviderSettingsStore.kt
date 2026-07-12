@@ -164,7 +164,7 @@ class LyricsProviderSettingsStore internal constructor(
 
     private companion object {
         private const val TAG = "LyricsProviderSettings"
-        private const val PREFERENCES_NAME = "lyrics_provider_settings"
+        private const val PREFERENCES_NAME = "nexus_plugin_lyrics_credentials"
         private const val KEY_SPOTIFY_SP_DC = "spotify_sp_dc"
         private const val KEY_MUSIXMATCH_EMAIL = "musixmatch_email"
         private const val KEY_MUSIXMATCH_PASSWORD = "musixmatch_password"

@@ -12,7 +12,6 @@ import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Bundle
-import android.provider.Settings
 import android.util.Log
 import android.view.Gravity
 import android.view.View
@@ -27,7 +26,6 @@ import android.widget.Toast
 import com.anezium.rokidbus.client.BusClient
 import com.anezium.rokidbus.client.BusEvent
 import com.anezium.rokidbus.client.ui.BusTheme
-import com.anezium.rokidbus.lyrics.LyricsRuntimeGraph
 import com.anezium.rokidbus.shared.LinkStateBits
 
 private const val TAG = "RokidNexusHome"
@@ -449,18 +447,6 @@ class MainActivity : Activity() {
                         body = "Bluetooth permission is needed to reach the glasses.",
                         action = "Allow",
                     ) { requestBluetoothConnectIfNeeded() },
-                )
-            }
-            if (!LyricsRuntimeGraph.notificationAccessEnabled(this@MainActivity)) {
-                add(
-                    setupCard(
-                        title = "Notification access",
-                        body = "Lets Lyrics see what is playing so it can show live lyrics.",
-                        action = "Open settings",
-                    ) {
-                        logLine("Opening notification access settings")
-                        startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
-                    },
                 )
             }
             if (!hasLensWifiPermission()) {

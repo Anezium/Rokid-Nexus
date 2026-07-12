@@ -33,8 +33,6 @@ android {
 dependencies {
     implementation(project(":shared"))
     implementation(project(":bus-client"))
-    implementation(project(":plugin-lyrics"))
-    implementation(project(":plugin-media"))
     implementation("androidx.activity:activity:1.10.1")
     implementation("com.example.cxrglobal:lib:0.2.0")
     implementation("com.google.mlkit:language-id:17.0.6")

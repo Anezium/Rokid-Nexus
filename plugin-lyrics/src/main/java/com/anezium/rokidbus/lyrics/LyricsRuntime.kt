@@ -3,28 +3,33 @@ package com.anezium.rokidbus.lyrics
 import android.content.Context
 import android.os.SystemClock
 import android.view.KeyEvent
+import com.anezium.rokidbus.client.plugin.NexusCard
+import com.anezium.rokidbus.client.plugin.NexusPlaybackAnchor
+import com.anezium.rokidbus.client.plugin.NexusTimedLine
+import com.anezium.rokidbus.client.plugin.NexusTimedLines
 import com.anezium.rokidbus.lyrics.contracts.LyricsSessionState
 import com.anezium.rokidbus.lyrics.contracts.LyricsSnapshot
-import com.anezium.rokidbus.shared.BusPaths
 import com.anezium.rokidbus.shared.plugin.NexusInputEvent
-import com.anezium.rokidbus.shared.plugin.NexusPlugin
-import com.anezium.rokidbus.shared.plugin.NexusPluginHost
-import org.json.JSONArray
-import org.json.JSONObject
+import java.security.MessageDigest
 import kotlin.math.abs
 
-class LyricsPlugin : NexusPlugin {
-    override val id: String = SURFACE_ID
-    override val displayName: String = "Lyrics"
+internal interface LyricsRuntimeHost {
+    val context: Context
+    fun sendCard(card: NexusCard, show: Boolean)
+    fun sendTimedLines(lines: NexusTimedLines, show: Boolean)
+    fun updateTimedLinesAnchor(contentKey: String, anchor: NexusPlaybackAnchor)
+    fun hideSurface()
+}
 
-    private lateinit var host: NexusPluginHost
+internal class LyricsRuntime(
+    private val host: LyricsRuntimeHost,
+) {
     private var unsubscribeState: (() -> Unit)? = null
     private var active = false
     private var lastSent: SentSurface? = null
     private var dismissedTrackKey: String? = null
 
-    override fun onRegister(host: NexusPluginHost) {
-        this.host = host
+    fun register() {
         LyricsRuntimeGraph.initialize(host.context)
         unsubscribeState?.invoke()
         unsubscribeState = LyricsRuntimeGraph.stateStore.subscribe { state ->
@@ -33,29 +38,25 @@ class LyricsPlugin : NexusPlugin {
         LyricsRuntimeGraph.start(host.context)
     }
 
-    override fun onOpen() {
+    fun open() {
         active = true
         dismissedTrackKey = null
         LyricsRuntimeGraph.start(host.context)
         pushState(LyricsRuntimeGraph.stateStore.current(), force = true)
     }
 
-    override fun onClose() {
+    fun close() {
         if (!active && lastSent == null) return
         dismissedTrackKey = trackKey(LyricsRuntimeGraph.stateStore.current().lyrics)
         active = false
         lastSent = null
-        host.send(
-            BusPaths.SURFACE_HIDE,
-            JSONObject()
-                .put("surfaceId", SURFACE_ID),
-        )
+        host.hideSurface()
     }
 
-    override fun onInput(event: NexusInputEvent) {
+    fun input(event: NexusInputEvent) {
         if (event.action != KeyEvent.ACTION_DOWN) return
         when (event.keyCode) {
-            KeyEvent.KEYCODE_BACK -> onClose()
+            KeyEvent.KEYCODE_BACK -> close()
             KeyEvent.KEYCODE_ENTER,
             KeyEvent.KEYCODE_DPAD_CENTER,
             KeyEvent.KEYCODE_SPACE,
@@ -71,6 +72,17 @@ class LyricsPlugin : NexusPlugin {
             KeyEvent.KEYCODE_MEDIA_PREVIOUS,
             -> LyricsRuntimeGraph.skipToPrevious()
         }
+    }
+
+    fun registrationApproved() {
+        if (active) pushState(LyricsRuntimeGraph.stateStore.current(), force = true)
+    }
+
+    fun unregister() {
+        close()
+        unsubscribeState?.invoke()
+        unsubscribeState = null
+        LyricsRuntimeGraph.destroy()
     }
 
     private fun handleState(state: LyricsPhoneViewState) {
@@ -101,17 +113,17 @@ class LyricsPlugin : NexusPlugin {
             abs(lyrics.progressMs - previous.predictedPosition(now)) >= SEEK_RESYNC_MS
         if (!shouldSend) return
 
-        val payload = if (lyrics.synced && lyrics.lines.isNotEmpty()) {
+        val show = previous == null || force
+        if (lyrics.synced && lyrics.lines.isNotEmpty()) {
+            val anchor = playbackAnchor(lyrics, playing, now)
             if (!force && !contentChanged) {
-                anchorOnlyPayload(lyrics, playing, now, contentKey)
+                host.updateTimedLinesAnchor(contentKey, anchor)
             } else {
-                timedLinesPayload(lyrics, playing, now, contentKey)
+                host.sendTimedLines(timedLines(lyrics, contentKey, anchor), show)
             }
         } else {
-            cardPayload(lyrics, state.deviceStatus.statusLabel, contentKey)
+            host.sendCard(card(lyrics, state.deviceStatus.statusLabel, contentKey), show)
         }
-        val path = if (previous == null || force) BusPaths.SURFACE_SHOW else BusPaths.SURFACE_UPDATE
-        host.send(path, payload)
         lastSent = SentSurface(
             contentKey = contentKey,
             positionMs = lyrics.progressMs,
@@ -120,66 +132,42 @@ class LyricsPlugin : NexusPlugin {
         )
     }
 
-    private fun timedLinesPayload(
+    private fun timedLines(
+        lyrics: LyricsSnapshot,
+        contentKey: String,
+        anchor: NexusPlaybackAnchor,
+    ): NexusTimedLines = NexusTimedLines(
+        title = titleFor(lyrics).take(MAX_TITLE_CHARS),
+        contentKey = contentKey,
+        lines = lyrics.lines.take(MAX_TIMED_LINES).map { line ->
+            NexusTimedLine(line.startTimeMs.coerceAtLeast(0L), line.text.take(MAX_LINE_CHARS))
+        },
+        anchor = anchor,
+        subtitle = subtitleFor(lyrics).take(MAX_LINE_CHARS).takeIf(String::isNotBlank),
+        footer = footerFor(lyrics).take(MAX_LINE_CHARS).takeIf(String::isNotBlank),
+    )
+
+    private fun playbackAnchor(
         lyrics: LyricsSnapshot,
         playing: Boolean,
         sentAt: Long,
-        contentKey: String,
-    ): JSONObject =
-        basePayload("timed-lines", contentKey)
-            .put("title", titleFor(lyrics))
-            .put("subtitle", subtitleFor(lyrics))
-            .put("footer", footerFor(lyrics))
-            .put(
-                "anchor",
-                JSONObject()
-                    .put("positionMs", lyrics.progressMs.coerceAtLeast(0L))
-                    .put("playing", playing)
-                    .put("sentAtElapsedRealtime", sentAt),
-            )
-            .put(
-                "lines",
-                JSONArray().also { array ->
-                    lyrics.lines.forEach { line ->
-                        array.put(
-                            JSONObject()
-                                .put("timeMs", line.startTimeMs)
-                                .put("text", line.text),
-                        )
-                    }
-                },
-            )
+    ): NexusPlaybackAnchor = NexusPlaybackAnchor(
+        positionMs = lyrics.progressMs.coerceAtLeast(0L),
+        playing = playing,
+        sentAtElapsedRealtime = sentAt,
+    )
 
-    private fun anchorOnlyPayload(
-        lyrics: LyricsSnapshot,
-        playing: Boolean,
-        sentAt: Long,
-        contentKey: String,
-    ): JSONObject =
-        basePayload("timed-lines", contentKey)
-            .put(
-                "anchor",
-                JSONObject()
-                    .put("positionMs", lyrics.progressMs.coerceAtLeast(0L))
-                    .put("playing", playing)
-                    .put("sentAtElapsedRealtime", sentAt),
-            )
-
-    private fun cardPayload(
+    private fun card(
         lyrics: LyricsSnapshot,
         statusLabel: String,
         contentKey: String,
-    ): JSONObject =
-        basePayload("card", contentKey)
-            .put("title", titleFor(lyrics).ifBlank { "Lyrics" })
-            .put("lines", JSONArray(cardLines(lyrics, statusLabel)))
-            .put("footer", footerFor(lyrics).ifBlank { "Rokid Nexus" })
-
-    private fun basePayload(kind: String, contentKey: String): JSONObject =
-        JSONObject()
-            .put("surfaceId", SURFACE_ID)
-            .put("kind", kind)
-            .put("contentKey", contentKey)
+    ): NexusCard = NexusCard(
+        title = titleFor(lyrics).ifBlank { "Lyrics" }.take(MAX_TITLE_CHARS),
+        lines = cardLines(lyrics, statusLabel).map { it.take(MAX_LINE_CHARS) },
+        footer = footerFor(lyrics).ifBlank { "Rokid Nexus" }.take(MAX_LINE_CHARS),
+        contentKey = contentKey,
+        handlesBack = true,
+    )
 
     private fun cardLines(lyrics: LyricsSnapshot, statusLabel: String): List<String> {
         lyrics.errorMessage?.takeIf { it.isNotBlank() }?.let {
@@ -230,7 +218,7 @@ class LyricsPlugin : NexusPlugin {
         } else {
             lyrics.plainLyrics.take(128)
         }
-        return if (lyrics.synced && lyrics.lines.isNotEmpty()) {
+        val identity = if (lyrics.synced && lyrics.lines.isNotEmpty()) {
             listOf(
                 lyrics.trackTitle,
                 lyrics.artistName,
@@ -249,6 +237,19 @@ class LyricsPlugin : NexusPlugin {
                 statusLabel,
                 lineKey,
             ).joinToString("|")
+        }
+        return shortHash(identity)
+    }
+
+    private fun shortHash(value: String): String {
+        val digest = MessageDigest.getInstance("SHA-256").digest(value.toByteArray(Charsets.UTF_8))
+        val hex = "0123456789abcdef"
+        return buildString(16) {
+            for (index in 0 until 8) {
+                val byte = digest[index].toInt() and 0xff
+                append(hex[byte ushr 4])
+                append(hex[byte and 0x0f])
+            }
         }
     }
 
@@ -278,9 +279,11 @@ class LyricsPlugin : NexusPlugin {
     }
 
     private companion object {
-        private const val SURFACE_ID = "lyrics"
         private const val PREFS = "nexus_plugin_lyrics"
         private const val PREF_AUTO_OPEN = "auto_open"
         private const val SEEK_RESYNC_MS = 1_500L
+        private const val MAX_TITLE_CHARS = 120
+        private const val MAX_LINE_CHARS = 240
+        private const val MAX_TIMED_LINES = 2_000
     }
 }

@@ -1,4 +1,4 @@
-package com.anezium.rokidbus.phone
+package com.anezium.rokidbus.plugin.lyrics
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull

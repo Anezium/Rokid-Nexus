@@ -1,4 +1,4 @@
-package com.anezium.rokidbus.phone
+package com.anezium.rokidbus.plugin.lyrics
 
 import com.anezium.rokidbus.client.ui.NexusUi
 import android.annotation.SuppressLint
