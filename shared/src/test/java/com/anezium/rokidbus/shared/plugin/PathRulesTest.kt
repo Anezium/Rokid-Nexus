@@ -35,4 +35,18 @@ class PathRulesTest {
         assertTrue(PathRules.isReserved("/error"))
         assertFalse(PathRules.isReserved("/launcherish"))
     }
+
+    @Test
+    fun `camera receive routes are capability conditioned and narrow`() {
+        val camera = setOf(PluginCapability.CAMERA)
+        assertTrue(PathRules.isAllowedReceivePrefix("/camera/session/state", "lens", camera))
+        assertTrue(PathRules.isAllowedReceivePrefix("/camera/link/offer", "lens", camera))
+        assertFalse(PathRules.isAllowedReceivePrefix("/camera/session/state", "lens", emptySet()))
+        assertFalse(PathRules.isAllowedReceivePrefix("/camera", "lens", camera))
+        assertFalse(PathRules.isAllowedReceivePrefix("/camera/overlay", "lens", camera))
+        assertEquals(
+            PluginCapability.CAMERA,
+            PathRules.requiredCapabilityForReceivePrefix("/camera/link/offer"),
+        )
+    }
 }

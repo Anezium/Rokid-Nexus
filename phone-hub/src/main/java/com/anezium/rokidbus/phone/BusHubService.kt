@@ -127,12 +127,15 @@ class BusHubService : Service() {
     private lateinit var pluginDiscovery: PhonePluginDiscovery
     private lateinit var pluginGrantStore: PluginGrantStore
     private lateinit var externalPluginController: ExternalPluginController
+    private lateinit var cameraConsumerReadiness: CameraConsumerReadiness
+    private lateinit var cameraCompanionController: CameraCompanionController
     private lateinit var transitLegacyStateExporter: TransitLegacyStateExporter
     @Volatile private var cxrConnected = false
     @Volatile private var glassBtConnected = false
     @Volatile private var lastNotifiedStatus: String? = null
     @Volatile private var remoteImageSurfaceVersion = 0
     @Volatile private var remoteMaxImageBytes = 0
+    @Volatile private var lastTransportLinkState = 0
     private var pluginPackageReceiverRegistered = false
 
     private val pluginPackageReceiver = object : BroadcastReceiver() {
@@ -228,6 +231,9 @@ class BusHubService : Service() {
                         if (::externalPluginController.isInitialized) {
                             externalPluginController.onRegistered(principal)
                         }
+                        if (::cameraCompanionController.isInitialized) {
+                            cameraCompanionController.onRegistered(principal)
+                        }
                         log("plugin registered package=$packageName plugin=$pluginId status=approved")
                         PluginRegistrationResult.APPROVED
                     } else {
@@ -284,6 +290,10 @@ class BusHubService : Service() {
         PhoneClientSupervisor.attach(this)
         pluginDiscovery = PhonePluginDiscovery(packageManager)
         pluginGrantStore = PluginGrantStore(applicationContext)
+        cameraConsumerReadiness = CameraConsumerReadiness(
+            installedPrincipals = ::installedPluginPrincipals,
+            grantState = pluginGrantStore::stateFor,
+        ).also { it.recompute() }
         transitLegacyStateExporter = TransitLegacyStateExporter(
             AndroidTransitLegacyStateStorage(applicationContext),
         )
@@ -306,6 +316,23 @@ class BusHubService : Service() {
             logger = ::log,
             onRegisteredPrincipal = ::offerTransitLegacyMigration,
             onForegroundChanged = { updateStatusNotification(linkState()) },
+        )
+        val cameraRuntime = AndroidExternalPluginRuntime(
+            context = applicationContext,
+            isRegisteredCallback = ::isExternalPrincipalRegistered,
+            deliverCallback = ::deliverExternalLifecycle,
+            hideCallback = {},
+            disconnectedCallback = { principal ->
+                if (::cameraCompanionController.isInitialized) {
+                    cameraCompanionController.onBinderDied(principal.grantKey())
+                }
+            },
+        )
+        cameraCompanionController = CameraCompanionController(
+            runtime = cameraRuntime,
+            scheduler = MainThreadExternalPluginScheduler(),
+            resolveApprovedConsumer = cameraConsumerReadiness::resolveApproved,
+            logger = ::log,
         )
         pluginRegistry = PhonePluginRegistry(
             context = applicationContext,
@@ -400,6 +427,7 @@ class BusHubService : Service() {
             pluginPackageReceiverRegistered = false
         }
         if (::pluginRegistry.isInitialized) pluginRegistry.close()
+        if (::cameraCompanionController.isInitialized) cameraCompanionController.close()
         if (::lensTranslationPlugin.isInitialized) lensTranslationPlugin.close()
         registrations.clear()
         if (activeInstance === this) activeInstance = null
@@ -410,12 +438,16 @@ class BusHubService : Service() {
         deliverLocal(envelope)
 
     private fun routeLocal(envelope: BusEnvelope, senderUid: Int) {
-        if (BusPaths.isProtectedLensPath(envelope.path) && senderUid != Process.myUid()) {
-            val sender = resolveSender(senderUid)
-            deliverError(sender.replyBinder, envelope.id, "PROTECTED_LENS_PATH")
+        val sender = resolveSender(senderUid)
+        if (!protectedPathAllowed(envelope.path, senderUid, sender.principal)) {
+            val code = if (BusPaths.isProtectedLensPath(envelope.path)) {
+                "PROTECTED_LENS_PATH"
+            } else {
+                "PROTECTED_CAMERA_PATH"
+            }
+            deliverError(sender.replyBinder, envelope.id, code)
             return
         }
-        val sender = resolveSender(senderUid)
         val decision = PluginRoutePolicy.authorize(sender.caller, envelope.path)
         if (decision is PluginRouteDecision.Denied) {
             deliverError(sender.replyBinder, envelope.id, decision.code)
@@ -517,6 +549,9 @@ class BusHubService : Service() {
             updateRemoteCapabilities(envelope.payload)
             return
         }
+        if (::cameraCompanionController.isInitialized &&
+            cameraCompanionController.onRemoteEnvelope(envelope)
+        ) return
         if (::pluginRegistry.isInitialized && pluginRegistry.handleRemote(envelope)) return
         if (handleHubPath(envelope, replyRemote = true)) return
         if (deliverLocal(envelope)) return
@@ -583,7 +618,7 @@ class BusHubService : Service() {
     }
 
     private fun registrationMatches(registration: Registration, envelope: BusEnvelope): Boolean {
-        if (BusPaths.isProtectedLensPath(envelope.path) && registration.uid != Process.myUid()) return false
+        if (!protectedPathAllowed(envelope.path, registration.uid, registration.principal)) return false
         if (registration.prefixes.none { PathRules.matchesPrefix(envelope.path, it) }) return false
         val principal = registration.principal ?: return true
         if (PathRules.isPluginPrivate(envelope.path, principal.descriptor.id)) return true
@@ -592,6 +627,17 @@ class BusHubService : Service() {
         }
         return true
     }
+
+    private fun protectedPathAllowed(
+        path: String,
+        uid: Int,
+        principal: PhonePluginPrincipal?,
+    ): Boolean = ProtectedPathAccessPolicy.isAllowed(
+        path = path,
+        isHubUid = uid == Process.myUid(),
+        principal = principal,
+        grantState = principal?.let(pluginGrantStore::stateFor),
+    )
 
     private fun resolveSender(senderUid: Int): AuthorizedSender {
         if (senderUid == Process.myUid()) return AuthorizedSender(PluginRouteCaller.Internal, null)
@@ -670,15 +716,25 @@ class BusHubService : Service() {
                 if (::externalPluginController.isInitialized) {
                     externalPluginController.onBinderDied(principal.grantKey())
                 }
+                if (::cameraCompanionController.isInitialized) {
+                    cameraCompanionController.onBinderDied(principal.grantKey())
+                }
             }
         }
     }
 
     private fun revokePrincipal(key: PluginGrantKey) {
+        if (::cameraCompanionController.isInitialized) cameraCompanionController.onRevoked(key)
         if (::externalPluginController.isInitialized) externalPluginController.onRevoked(key)
         registrations.filter { it.principal?.grantKey() == key }.forEach { registration ->
             removeRegistration(registration, "authorizationChanged")
         }
+    }
+
+    private fun authorizationChanged(key: PluginGrantKey) {
+        revokePrincipal(key)
+        cameraConsumerReadiness.recompute()
+        notifyLinkState()
     }
 
     private fun registerPluginPackageReceiver() {
@@ -698,18 +754,27 @@ class BusHubService : Service() {
     }
 
     private fun reconcilePluginPackage(packageName: String) {
-        val candidates = pluginDiscovery.discover()
-        val validPrincipals = candidates.mapNotNull { candidate ->
-            (candidate as? PhonePluginCandidate.Valid)?.principal
-        }
+        val validPrincipals = installedPluginPrincipals()
         pluginGrantStore.reconcile(validPrincipals)
+        cameraConsumerReadiness.recompute()
         val available = validPrincipals.any { principal ->
             principal.packageName == packageName &&
                 pluginGrantStore.stateFor(principal) is PluginGrantState.Approved
         }
         if (!available) externalPluginController.onPackageUnavailable(packageName)
+        val cameraAvailable = validPrincipals.any { principal ->
+            principal.packageName == packageName &&
+                cameraConsumerReadiness.isApprovedCameraConsumer(principal)
+        }
+        if (!cameraAvailable) cameraCompanionController.onPackageUnavailable(packageName)
+        notifyLinkState()
         if (::pluginRegistry.isInitialized && isCxrUp()) pluginRegistry.syncLauncherList()
     }
+
+    private fun installedPluginPrincipals(): List<PhonePluginPrincipal> =
+        pluginDiscovery.discover().mapNotNull { candidate ->
+            (candidate as? PhonePluginCandidate.Valid)?.principal
+        }
 
     private fun isExternalPrincipalRegistered(principal: PhonePluginPrincipal): Boolean =
         registrations.any { it.principal?.grantKey() == principal.grantKey() }
@@ -720,6 +785,7 @@ class BusHubService : Service() {
         id: String,
         payload: JSONObject,
     ): Boolean {
+        if (!protectedPathAllowed(path, principal.uid, principal)) return false
         val registration = registrations.singleOrNull { it.principal?.grantKey() == principal.grantKey() }
             ?: return false
         val bytes = payload.toString().toByteArray(Charsets.UTF_8)
@@ -1287,6 +1353,14 @@ class BusHubService : Service() {
 
     private fun notifyLinkState() {
         val state = linkState()
+        val previousTransportState = lastTransportLinkState
+        lastTransportLinkState = state
+        val transportBits = LinkStateBits.CXR_CONTROL_UP or LinkStateBits.SPP_DATA_UP
+        if (::cameraCompanionController.isInitialized &&
+            ((previousTransportState and transportBits) and state.inv()) != 0
+        ) {
+            cameraCompanionController.onLinkLost()
+        }
         if (state and (LinkStateBits.CXR_CONTROL_UP or LinkStateBits.SPP_DATA_UP) == 0) {
             remoteImageSurfaceVersion = 0
             remoteMaxImageBytes = 0
@@ -1313,6 +1387,9 @@ class BusHubService : Service() {
 
     private fun capabilities(): Int {
         var capabilities = BusCapabilityBits.PROTECTED_LENS_LINK
+        if (::cameraConsumerReadiness.isInitialized && cameraConsumerReadiness.isReady()) {
+            capabilities = capabilities or BusCapabilityBits.CAMERA_CONSUMER_READY
+        }
         if (remoteImageSurfaceVersion == ImageSurfaceContract.VERSION &&
             remoteMaxImageBytes >= ImageSurfaceContract.MAX_IMAGE_BYTES &&
             linkState() and LinkStateBits.SPP_DATA_UP != 0
@@ -1473,7 +1550,7 @@ class BusHubService : Service() {
 
         fun onPluginAuthorizationChanged(context: android.content.Context, key: PluginGrantKey) {
             PhoneClientSupervisor.onPrincipalRevoked(context.applicationContext, key)
-            activeInstance?.revokePrincipal(key)
+            activeInstance?.authorizationChanged(key)
         }
 
         fun pluginCatalog(context: android.content.Context): PluginCatalog =

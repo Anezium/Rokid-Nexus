@@ -27,6 +27,24 @@ class PluginRoutePolicyTest {
     }
 
     @Test
+    fun `camera grant allows only phone to glasses camera routes`() {
+        val granted = plugin(PluginCapability.CAMERA)
+        assertEquals(PluginRouteDecision.Allowed, PluginRoutePolicy.authorize(granted, "/camera/freeze/result"))
+        assertEquals(PluginRouteDecision.Allowed, PluginRoutePolicy.authorize(granted, "/camera/overlay"))
+        assertTrue(PluginRoutePolicy.authorize(granted, "/camera/session/state") is PluginRouteDecision.Denied)
+        assertTrue(PluginRoutePolicy.authorize(granted, "/camera/link/offer") is PluginRouteDecision.Denied)
+        listOf(
+            plugin(),
+            PluginRouteCaller.Plugin("wrong", emptySet()),
+            PluginRouteCaller.Pending,
+            PluginRouteCaller.Revoked,
+        ).forEach { caller ->
+            assertTrue(PluginRoutePolicy.authorize(caller, "/camera/freeze/result") is PluginRouteDecision.Denied)
+            assertTrue(PluginRoutePolicy.authorize(caller, "/camera/overlay") is PluginRouteDecision.Denied)
+        }
+    }
+
+    @Test
     fun `plugin namespace is isolated with segment boundaries`() {
         assertEquals(PluginRouteDecision.Allowed, PluginRoutePolicy.authorize(plugin(), "/plugin/hello/event"))
         assertTrue(PluginRoutePolicy.authorize(plugin(), "/plugin/other/event") is PluginRouteDecision.Denied)

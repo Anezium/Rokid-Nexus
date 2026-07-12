@@ -40,6 +40,10 @@ object BusPaths {
     const val LENS_TRANSLATE_REPLY = "/lens/translate/request/reply"
     const val LENS_LINK_OFFER = "/lens/link/offer"
     const val LENS_FROZEN_OCR_RESULT = "/lens/frozen/ocr/result"
+    const val CAMERA_SESSION_STATE = "/camera/session/state"
+    const val CAMERA_LINK_OFFER = "/camera/link/offer"
+    const val CAMERA_FREEZE_RESULT = "/camera/freeze/result"
+    const val CAMERA_OVERLAY = "/camera/overlay"
     const val GLASSES_WIFI_REQUEST = "/glasses/wifi/request"
     const val PLUGIN_OPEN = "/system/plugin/open"
     const val PLUGIN_CLOSE = "/system/plugin/close"
@@ -52,11 +56,18 @@ object BusPaths {
         path == LENS_LINK_OFFER || path.startsWith("$LENS_LINK_OFFER/") ||
             path == LENS_FROZEN_OCR_RESULT || path.startsWith("$LENS_FROZEN_OCR_RESULT/") ||
             path == GLASSES_WIFI_REQUEST
+
+    fun isProtectedCameraPath(path: String): Boolean =
+        path == CAMERA_SESSION_STATE || path.startsWith("$CAMERA_SESSION_STATE/") ||
+            path == CAMERA_LINK_OFFER || path.startsWith("$CAMERA_LINK_OFFER/") ||
+            path == CAMERA_FREEZE_RESULT || path.startsWith("$CAMERA_FREEZE_RESULT/") ||
+            path == CAMERA_OVERLAY || path.startsWith("$CAMERA_OVERLAY/")
 }
 
 object BusCapabilityBits {
     const val PROTECTED_LENS_LINK = 1
     const val IMAGE_SURFACE = 1 shl 1
+    const val CAMERA_CONSUMER_READY = 1 shl 2
 }
 
 object LinkStateBits {

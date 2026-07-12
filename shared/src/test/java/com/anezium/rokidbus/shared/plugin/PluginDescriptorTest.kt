@@ -48,6 +48,23 @@ class PluginDescriptorTest {
     }
 
     @Test
+    fun `camera receive prefixes require camera capability`() {
+        val receive = "/system/plugin,/plugin/hello.plugin,/camera/session/state,/camera/link/offer"
+        val withCamera = validMetadata() + mapOf(
+            BusConstants.META_PLUGIN_CAPABILITIES to "camera",
+            BusConstants.META_PLUGIN_RECEIVE_PREFIXES to receive,
+        )
+        val descriptor = PluginDescriptorParser.parse(withCamera)
+        assertTrue(descriptor is PluginDescriptorParseResult.Valid)
+        assertEquals(
+            PluginDescriptorParseResult.Invalid("RECEIVE_PREFIX_OUTSIDE_NAMESPACE"),
+            PluginDescriptorParser.parse(
+                withCamera + (BusConstants.META_PLUGIN_CAPABILITIES to "surfaces"),
+            ),
+        )
+    }
+
+    @Test
     fun `conflicting duplicate metadata is rejected`() {
         val entries = validMetadata().entries.map { it.key to it.value } +
             (BusConstants.META_PLUGIN_ID to "other")

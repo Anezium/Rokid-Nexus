@@ -191,6 +191,7 @@ class PluginPermissionsActivity : Activity() {
                 PluginCapability.SURFACES -> "Show surfaces on your glasses"
                 PluginCapability.MICROPHONE -> "Use the glasses microphone\nRequires Nexus microphone indicator support"
                 PluginCapability.HTTP_PROXY -> "Use the Nexus phone HTTP proxy"
+                PluginCapability.CAMERA -> "Use the glasses camera\nOnly while the camera view is open"
             }
             textSize = 13f
             setTextColor(if (unavailable) NexusUi.INK3 else NexusUi.INK2)

@@ -72,8 +72,8 @@ trusted UID, certificate, route prefixes, or surface ownership.
 Descriptor metadata keys are `com.anezium.rokidbus.plugin.ID`,
 `.DISPLAY_NAME`, `.API_VERSION`, `.CAPABILITIES`, `.RECEIVE_PREFIXES`,
 `.SETTINGS_ACTIVITY`, and `.LAUNCHABLE`. Plugin IDs match
-`[a-z][a-z0-9._-]{2,63}`. Capability values are `surfaces`, `microphone`, and
-`http_proxy`; unknown values invalidate the descriptor. Grants are keyed by
+`[a-z][a-z0-9._-]{2,63}`. Capability values are `surfaces`, `microphone`,
+`http_proxy`, and `camera`; unknown values invalidate the descriptor. Grants are keyed by
 package, plugin ID, and signing digest and are never implied by installation.
 
 Legacy `register(clientId, prefixes, callback)` remains ABI-compatible for
@@ -399,6 +399,41 @@ model is downloading; the matching glasses deadlines are 10 and 135 seconds.
 
 Raw OCR strings and translated text MUST NOT be written to production logs.
 
+## Camera contract
+
+The generic camera contract is available only to an installed plugin whose exact
+package, descriptor ID, and signing digest have an approved, enabled `camera`
+grant. Installation or a shared signer alone never grants access. Legacy
+`/lens/*` protected paths remain hub-UID-only.
+
+Glasses to phone:
+
+- `/camera/session/state` carries `sessionId`, `state` (`opened` or `closed`),
+  and, when opened, `config` with `width`, `height`, `fps`, and
+  `protocolVersion`.
+- `/camera/link/offer` carries `sessionId`, `ssid`, `passphrase`, `port`,
+  `token`, and `goIp`.
+
+Phone to glasses:
+
+- `/camera/freeze/result` carries processing results for a frozen frame.
+- `/camera/overlay` carries structured live-view overlay content.
+
+All four paths are protected. The phone hub itself may send or receive them; an
+external principal may receive only session state and link offers and may send
+only freeze results and overlays, after the current signer-bound `camera` grant
+is checked. Camera-session open binds the selected consumer with important
+process priority, sends `/system/plugin/open`, and forwards the opening state
+and subsequent offers. The matching close state sends `/system/plugin/close`
+and unbinds. Link loss, grant revocation, package removal, binder death, and
+registration timeout perform the same idempotent teardown. Duplicate and stale
+open/close events are ignored by `sessionId`.
+
+`IBusService.capabilities()` bit `4` is `CAMERA_CONSUMER_READY`. The phone hub
+sets it exactly while at least one installed camera principal has an approved,
+enabled `camera` grant. Grant and package changes recompute the bit. This bit is
+independent of bit `1` (`PROTECTED_LENS_LINK`).
+
 ## Transport selection (hub-side routing)
 
 1. Destination local (a client on the same side registered the path) → deliver directly.
@@ -430,7 +465,7 @@ Link-state bits: `1 = CXR_CONTROL_UP`, `2 = SPP_DATA_UP`, `4 = GLASSES_BT_BONDED
 (phone) / `4 = PHONE_CONNECTED` (glasses).
 
 Hub feature bits are returned by `IBusService.capabilities()`. Bit `2` is
-`IMAGE_SURFACE`. The glasses hub announces its renderer after either remote link
+`IMAGE_SURFACE` and bit `4` is `CAMERA_CONSUMER_READY`. The glasses hub announces its renderer after either remote link
 connects by sending `/system/hub/capabilities` with
 `{"version":1,"features":2,"imageSurfaceVersion":1,"maxImageBytes":65536}`.
 The phone hub exposes `IMAGE_SURFACE` to local plugins only after receiving a

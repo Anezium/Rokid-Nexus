@@ -15,7 +15,7 @@ class AndroidExternalPluginRuntime(
     private val deliverCallback: (PhonePluginPrincipal, String, String, JSONObject) -> Boolean,
     private val hideCallback: (String) -> Unit,
     private val disconnectedCallback: (PhonePluginPrincipal) -> Unit,
-) : ExternalPluginRuntime {
+) : ExternalPluginRuntime, CameraCompanionRuntime {
     private val connections = ConcurrentHashMap<PluginGrantKey, ServiceConnection>()
 
     override fun bind(principal: PhonePluginPrincipal): Boolean {

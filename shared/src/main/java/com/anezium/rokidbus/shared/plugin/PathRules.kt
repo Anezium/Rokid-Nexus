@@ -1,5 +1,7 @@
 package com.anezium.rokidbus.shared.plugin
 
+import com.anezium.rokidbus.shared.BusPaths
+
 object PathRules {
     private val reservedRoots = setOf("/launcher", "/surface/input", "/system", "/security", "/error")
     private val lifecyclePrefixes = setOf("/system/plugin")
@@ -9,6 +11,10 @@ object PathRules {
         "/audio/lease/acquire/reply",
         "/audio/lease/release/reply",
         "/audio/lease/revoked",
+    )
+    private val cameraReceivePrefixes = setOf(
+        BusPaths.CAMERA_SESSION_STATE,
+        BusPaths.CAMERA_LINK_OFFER,
     )
 
     fun normalizeAbsolute(path: String): String? {
@@ -37,6 +43,7 @@ object PathRules {
         "/surface/show", "/surface/update", "/surface/hide" -> PluginCapability.SURFACES
         "/audio/lease/acquire", "/audio/lease/release" -> PluginCapability.MICROPHONE
         "/http/request" -> PluginCapability.HTTP_PROXY
+        BusPaths.CAMERA_FREEZE_RESULT, BusPaths.CAMERA_OVERLAY -> PluginCapability.CAMERA
         else -> null
     }
 
@@ -54,6 +61,9 @@ object PathRules {
         if (PluginCapability.MICROPHONE in requestedCapabilities &&
             audioReplyPrefixes.any { matchesPrefix(normalized, it) || matchesPrefix(it, normalized) }
         ) return true
+        if (PluginCapability.CAMERA in requestedCapabilities &&
+            cameraReceivePrefixes.any { matchesPrefix(normalized, it) }
+        ) return true
         return false
     }
 
@@ -64,6 +74,9 @@ object PathRules {
         }
         if (audioReplyPrefixes.any { matchesPrefix(normalized, it) || matchesPrefix(it, normalized) }) {
             return PluginCapability.MICROPHONE
+        }
+        if (cameraReceivePrefixes.any { matchesPrefix(normalized, it) }) {
+            return PluginCapability.CAMERA
         }
         return null
     }
