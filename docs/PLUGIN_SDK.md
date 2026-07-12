@@ -1,4 +1,8 @@
-# Nexus Android plugin SDK
+# Nexus Android plugin SDK (external APKs)
+
+> **Plugins that ship with the app are built-in library modules, not external
+> APKs — read [PLUGINS.md](PLUGINS.md) first.** This document covers the
+> external-APK path only (the Store experiment and `plugin-sample`).
 
 The SDK artifact is `com.github.Anezium.Rokid-Nexus:bus-client`. The current
 repository can publish `0.1.0-SNAPSHOT` locally; this is not a public release.
