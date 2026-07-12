@@ -11,6 +11,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 import java.time.Instant
@@ -34,6 +35,7 @@ internal class FeedsRuntime(
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val imageLoader: FeedImageLoader = FeedImagePipeline(),
     private val now: () -> Instant = Instant::now,
+    private val nanoTime: () -> Long = System::nanoTime,
 ) {
     private val timeline = FeedTimeline()
     private var source: FeedSource? = null
@@ -48,6 +50,7 @@ internal class FeedsRuntime(
     private var generation = 0L
     private var threadGeneration = 0L
     private var imageGeneration = 0L
+    @Volatile private var lastImageSendNanos = 0L
     private var visible = false
 
     fun open() {
@@ -285,6 +288,7 @@ internal class FeedsRuntime(
         imageFetchJob = CoroutineScope(SupervisorJob() + ioDispatcher).launch {
             try {
                 val frame = imageLoader.load(media)
+                if (frame != null) awaitImageSendWindow()
                 host.post {
                     if (!isCurrentGalleryRequest(runtimeGeneration, requestGeneration, requestPostId, requestIndex)) {
                         return@post
@@ -299,6 +303,7 @@ internal class FeedsRuntime(
                         .put("handlesBack", true)
                     if (ImageSurfaceContract.validate(payload, frame.bytes) is ImageSurfaceValidationResult.Valid) {
                         host.sendImage(payload, frame.bytes)
+                        lastImageSendNanos = nanoTime()
                     } else {
                         host.sendCard(PostCardLayout.renderGalleryItem(post, requestIndex, now()), show = false)
                     }
@@ -331,6 +336,16 @@ internal class FeedsRuntime(
         level == NavigationLevel.GALLERY &&
         galleryIndex == mediaIndex &&
         currentThreadPost()?.id == postId
+
+    private suspend fun awaitImageSendWindow() {
+        val previous = lastImageSendNanos
+        if (previous == 0L) return
+        val minimumNanos = ImageSurfaceContract.MIN_FRAME_INTERVAL_MS * NANOS_PER_MILLISECOND
+        val remainingNanos = minimumNanos - (nanoTime() - previous)
+        if (remainingNanos > 0L) {
+            delay((remainingNanos + NANOS_PER_MILLISECOND - 1L) / NANOS_PER_MILLISECOND)
+        }
+    }
 
     private fun currentCard(): FeedCardContent? = when (level) {
         NavigationLevel.FEED -> currentFeedCard()
@@ -390,6 +405,8 @@ internal class FeedsRuntime(
     }
 
     private companion object {
+        const val NANOS_PER_MILLISECOND = 1_000_000L
+
         fun FeedMedia.hasDisplayableImageUrl(): Boolean {
             val candidate = previewUrl.trim().ifBlank { url.trim() }
             return candidate.startsWith("https://", ignoreCase = true)

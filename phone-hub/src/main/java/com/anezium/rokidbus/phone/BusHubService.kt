@@ -298,7 +298,7 @@ class BusHubService : Service() {
         pluginRegistry = PhonePluginRegistry(
             context = applicationContext,
             plugins = builtInPlugins,
-            sendEnvelope = { envelope -> sendRemote(envelope) },
+            sendEnvelope = ::sendBuiltInPluginEnvelope,
             capabilitiesProvider = ::capabilities,
             logger = { message -> log(message) },
             catalogProvider = {
@@ -903,6 +903,15 @@ class BusHubService : Service() {
         }
         if (writeSpp(envelope)) return null
         return if (bytes.size > BusConstants.CXR_CONTROL_MAX_BYTES) "NO_DATA_PLANE" else "NO_LINK"
+    }
+
+    private fun sendBuiltInPluginEnvelope(envelope: BusEnvelope): String? {
+        if ((envelope.path == BusPaths.SURFACE_SHOW || envelope.path == BusPaths.SURFACE_UPDATE) &&
+            envelope.payload.optString("kind") == ImageSurfaceContract.KIND
+        ) {
+            validateImageEnvelope(envelope)?.let { return it }
+        }
+        return sendRemote(envelope)
     }
 
     private fun sendCxr(envelope: BusEnvelope): Boolean =
