@@ -23,14 +23,14 @@ class OnlineTranslationResponseParserTest {
             {
               "translations": [
                 {"detected_source_language": "EN", "text": "Bonjour"},
-                {"detected_source_language": "DE", "text": "SÃ©curitÃ©"}
+                {"detected_source_language": "DE", "text": "Sécurité"}
               ]
             }
         """.trimIndent()
 
         val parsed = OnlineTranslationResponseParser.parseDeepL(response, expectedCount = 2)
 
-        assertEquals(listOf("Bonjour", "SÃ©curitÃ©"), parsed.map { it.dst })
+        assertEquals(listOf("Bonjour", "Sécurité"), parsed.map { it.dst })
         assertEquals(listOf("en", "de"), parsed.map { it.srcLang })
     }
 
@@ -41,7 +41,7 @@ class OnlineTranslationResponseParserTest {
               "candidates": [{
                 "content": {
                   "parts": [{
-                    "text": "[{\"dst\":\"Bonjour\",\"srcLang\":\"en\"},{\"dst\":\"SÃ©curitÃ© Gerber\",\"srcLang\":\"en\"}]"
+                    "text": "[{\"dst\":\"Bonjour\",\"srcLang\":\"en\"},{\"dst\":\"Sécurité Gerber\",\"srcLang\":\"en\"}]"
                   }]
                 }
               }]
@@ -50,7 +50,7 @@ class OnlineTranslationResponseParserTest {
 
         val parsed = OnlineTranslationResponseParser.parseGemini(response, expectedCount = 2)
 
-        assertEquals(listOf("Bonjour", "SÃ©curitÃ© Gerber"), parsed.map { it.dst })
+        assertEquals(listOf("Bonjour", "Sécurité Gerber"), parsed.map { it.dst })
         assertEquals(listOf("en", "en"), parsed.map { it.srcLang })
     }
 
@@ -73,4 +73,3 @@ class OnlineTranslationResponseParserTest {
         }
     }
 }
-
