@@ -78,9 +78,18 @@ object SurfaceController {
                         log("Image surface rejected id=${surface.surfaceId} code=$code")
                         return true
                     }
-                    showOrUpdateImage(context.applicationContext, surface, envelope.binary!!)
+                    showOrUpdateImage(
+                        context.applicationContext,
+                        surface,
+                        envelope.binary!!,
+                        launcherShow = envelope.path == BusPaths.SURFACE_SHOW,
+                    )
                 } else {
-                    showOrUpdate(context.applicationContext, surface)
+                    showOrUpdate(
+                        context.applicationContext,
+                        surface,
+                        launcherShow = envelope.path == BusPaths.SURFACE_SHOW,
+                    )
                 }
                 true
             }
@@ -164,8 +173,10 @@ object SurfaceController {
         context: Context,
         surface: NexusSurface,
         forcedPath: SurfaceDisplayPath? = null,
+        launcherShow: Boolean = false,
     ) {
         if (!acceptSequence(surface)) return
+        if (launcherShow) launcherReturnCoordinator.onSurfaceShown(surface.surfaceId)
         main.post {
             if (latestSeqBySurface[surface.surfaceId] != surface.seq) return@post
             val coordinated = imageDecodeCoordinator.invalidate()
@@ -179,8 +190,14 @@ object SurfaceController {
         }
     }
 
-    private fun showOrUpdateImage(context: Context, surface: NexusSurface, bytes: ByteArray) {
+    private fun showOrUpdateImage(
+        context: Context,
+        surface: NexusSurface,
+        bytes: ByteArray,
+        launcherShow: Boolean = false,
+    ) {
         if (!acceptSequence(surface)) return
+        if (launcherShow) launcherReturnCoordinator.onSurfaceShown(surface.surfaceId)
         val metadata = surface.imageMetadata ?: return
         val key = ImageDecodeKey(surface.surfaceId, surface.seq, metadata.contentKey)
         main.post {
@@ -286,6 +303,7 @@ object SurfaceController {
 
     private fun hideLocalOnMain() {
         val activeSurfaceId = active?.surfaceId
+        val returnToLauncher = activeSurfaceId?.let(launcherReturnCoordinator::consumeReturnOnHide) == true
         activeSurfaceId?.let { cancelBackFailsafeOnMain(it) }
         val coordinated = activeSurfaceId?.let(imageDecodeCoordinator::invalidate)
         coordinated?.recycleSafely()
@@ -293,6 +311,7 @@ object SurfaceController {
         active = null
         notifyListeners(null)
         SurfaceOverlayRenderer.hide()
+        if (returnToLauncher) LauncherOverlayRenderer.show()
     }
 
     private fun shouldSuppressDpadEvent(event: KeyEvent): Boolean {
