@@ -134,6 +134,52 @@ class XAccountFeedSourceTest {
     }
 
     @Test
+    fun tweetDetailParser_preservesTopToBottomOrderAndFindsFocal() {
+        val thread = XGraphQlParser.parseThread(
+            json = threadFixture(),
+            focalTweetId = "300",
+            source = FeedSourceKind.X_ACCOUNT.tag,
+            fallbackNow = Instant.EPOCH,
+        )
+
+        assertEquals(listOf("100", "200", "300", "401", "402"), thread.posts.map(FeedPost::id))
+        assertEquals(2, thread.focusIndex)
+        assertEquals("https://video.twimg.com/focal-high.mp4", thread.posts[2].media.single().url)
+        assertEquals("Reply Two", thread.posts.last().authorName)
+    }
+
+    @Test
+    fun fetchThread_usesTweetDetailEndpointVariablesAndTransactionHeader() {
+        var requestedUrl = ""
+        var requestedHeaders = emptyMap<String, String>()
+        val source = XAccountFeedSource(
+            cookies = connectedCookies(),
+            httpClient = responseClient { url, headers ->
+                requestedUrl = url
+                requestedHeaders = headers
+                FeedHttpResponse(statusCode = 200, body = threadFixture())
+            },
+            now = { Instant.EPOCH },
+            transactionFactory = { fixedTransaction() },
+        )
+        val focal = XGraphQlParser.parseThread(
+            threadFixture(),
+            "300",
+            FeedSourceKind.X_ACCOUNT.tag,
+            Instant.EPOCH,
+        ).posts[2]
+
+        val thread = source.fetchThread(focal)
+
+        assertEquals(2, thread.focusIndex)
+        assertTrue(requestedUrl.startsWith("${XAccountFeedSource.THREAD_API_URL}?variables="))
+        assertTrue(java.net.URLDecoder.decode(requestedUrl, Charsets.UTF_8.name()).contains("\"focalTweetId\":\"300\""))
+        assertTrue(requestedUrl.contains("&features="))
+        assertTrue(requestedUrl.contains("&fieldToggles="))
+        assertTrue(requestedHeaders["x-client-transaction-id"].orEmpty().isNotBlank())
+    }
+
+    @Test
     fun cookieCapture_keepsOnlyQuaXAccountCookiesAndRequiresAuthAndCsrf() {
         val cookies = XAccountCookies.fromCookieHeader(
             "other=discard; auth_token=auth=value; ct0=csrf; guest_id=guest; gt=token; att=attestation",
@@ -147,6 +193,9 @@ class XAccountFeedSourceTest {
 
     private fun fixture(): String =
         checkNotNull(javaClass.classLoader?.getResource("x_home_timeline.json")).readText()
+
+    private fun threadFixture(): String =
+        checkNotNull(javaClass.classLoader?.getResource("x_tweet_detail.json")).readText()
 
     private fun emptyTimeline(): String =
         """{"data":{"home":{"home_timeline_urt":{"instructions":[{"type":"TimelineAddEntries","entries":[{"entryId":"cursor-bottom-0","content":{"cursorType":"Bottom","value":"next"}}]}]}}}}"""

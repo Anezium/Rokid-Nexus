@@ -24,10 +24,27 @@ class BlueskyFeedSource(
         return parsePage(httpClient.get(url, emptyMap()))
     }
 
+    override fun fetchThread(post: FeedPost): FeedThread {
+        val threadRef = post.threadRef.ifBlank { post.id }
+        val url = buildString {
+            append(POST_THREAD_ENDPOINT)
+            append("?uri=")
+            append(urlEncode(threadRef))
+            append("&depth=10&parentHeight=20")
+        }
+        val parsed = parseThread(httpClient.get(url, emptyMap()))
+        if (parsed.posts.isEmpty()) return FeedThread(listOf(post), 0)
+        val focusIndex = parsed.posts.indexOfFirst { it.threadRef == threadRef }
+            .takeIf { it >= 0 }
+            ?: parsed.focusIndex.coerceIn(parsed.posts.indices)
+        return parsed.copy(focusIndex = focusIndex)
+    }
+
     companion object {
         const val DEFAULT_FEED_GENERATOR_URI =
             "at://did:plc:z72i7hdynmk6r22z27h6tvur/app.bsky.feed.generator/whats-hot"
         const val APP_VIEW_ENDPOINT = "https://public.api.bsky.app/xrpc/app.bsky.feed.getFeed"
+        const val POST_THREAD_ENDPOINT = "https://public.api.bsky.app/xrpc/app.bsky.feed.getPostThread"
         const val PAGE_SIZE = 25
 
         fun parsePage(json: String): FeedPage {
@@ -44,6 +61,32 @@ class BlueskyFeedSource(
             return FeedPage(
                 posts = posts,
                 nextCursor = root.optString("cursor").trim().takeIf(String::isNotBlank),
+            )
+        }
+
+        fun parseThread(json: String): FeedThread {
+            val focalNode = JSONObject(json).optJSONObject("thread") ?: return FeedThread(emptyList(), 0)
+            val focal = focalNode.optJSONObject("post")?.let(::parsePost)
+                ?: return FeedThread(emptyList(), 0)
+            val ancestors = mutableListOf<FeedPost>()
+            var parent = focalNode.optJSONObject("parent")
+            while (parent != null) {
+                parent.optJSONObject("post")?.let(::parsePost)?.let(ancestors::add)
+                parent = parent.optJSONObject("parent")
+            }
+            ancestors.reverse()
+            val replies = buildList {
+                val replyNodes = focalNode.optJSONArray("replies") ?: JSONArray()
+                for (index in 0 until replyNodes.length()) {
+                    replyNodes.optJSONObject(index)
+                        ?.optJSONObject("post")
+                        ?.let(::parsePost)
+                        ?.let(::add)
+                }
+            }
+            return FeedThread(
+                posts = ancestors + focal + replies,
+                focusIndex = ancestors.size,
             )
         }
 

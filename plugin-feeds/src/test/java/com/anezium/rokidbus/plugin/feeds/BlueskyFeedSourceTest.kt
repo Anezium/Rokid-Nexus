@@ -50,4 +50,16 @@ class BlueskyFeedSourceTest {
         assertEquals(FeedMediaType.PHOTO, thumb.type)
         assertEquals("https://example.com/thumb.jpg", thumb.url)
     }
+
+    @Test
+    fun parseThread_ordersAncestorsFocalAndFirstLevelReplies() {
+        val json = checkNotNull(javaClass.classLoader?.getResource("bluesky_thread.json")).readText()
+
+        val thread = BlueskyFeedSource.parseThread(json)
+
+        assertEquals(listOf("Root", "Parent", "Focal", "Reply One", "Reply Two"), thread.posts.map(FeedPost::authorName))
+        assertEquals(2, thread.focusIndex)
+        assertEquals(FeedMediaType.VIDEO, thread.posts[thread.focusIndex].media.single().type)
+        assertEquals("at://did:plc:focal/app.bsky.feed.post/focal", thread.posts[thread.focusIndex].threadRef)
+    }
 }
