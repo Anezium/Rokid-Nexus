@@ -156,8 +156,9 @@ class SurfaceModelsTest {
         transport.featureBits = BusCapabilityBits.IMAGE_SURFACE
         transport.listener.onLinkState(LinkStateBits.SPP_DATA_UP)
         val bytes = validJpeg()
+        val session = client.surfaceSession("main")
 
-        assertEquals(NexusSdkResult.SENT, client.surfaceSession("main").showImage(image(), bytes))
+        assertEquals(NexusSdkResult.SENT, session.showImage(image(), bytes))
 
         val (path, payload, sentBytes) = transport.binarySends.single()
         assertEquals(BusPaths.SURFACE_SHOW, path)
@@ -166,6 +167,10 @@ class SurfaceModelsTest {
         assertEquals(ImageSurfaceContract.sha256(bytes), payload.getString("sha256"))
         assertTrue(bytes.contentEquals(sentBytes))
         assertEquals(0, transport.sends.size)
+        assertEquals(
+            NexusSdkResult.IMAGE_RATE_LIMITED,
+            session.updateImage(image(), bytes),
+        )
     }
 
     @Test

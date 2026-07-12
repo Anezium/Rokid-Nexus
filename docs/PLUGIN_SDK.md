@@ -125,7 +125,9 @@ val result = if (nexusClient?.supportsImageSurface == true) {
 Use `updateImage(image, bytes)` to replace the current image. Every image update
 is a complete binary frame and the phone hub enforces 150 ms between image
 frames for the same surface. A faster frame is rejected with `/error` code
-`IMAGE_RATE_LIMITED`; plugins should not build animation loops around v1.
+`IMAGE_RATE_LIMITED`; the SDK preflight returns
+`NexusSdkResult.IMAGE_RATE_LIMITED` immediately. Plugins should not build
+animation loops around v1.
 
 ## 4. Approve and debug
 

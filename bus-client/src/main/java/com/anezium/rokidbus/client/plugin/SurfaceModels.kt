@@ -167,12 +167,14 @@ enum class NexusSdkResult {
     CAPABILITY_NOT_GRANTED,
     CAPABILITY_NOT_AVAILABLE,
     INVALID_PAYLOAD,
+    IMAGE_RATE_LIMITED,
 }
 
 class NexusSurfaceSession internal constructor(
     private val client: NexusPluginClient,
     val localSurfaceId: String,
 ) {
+    private var lastImageSendNanos = Long.MIN_VALUE
     init {
         require(LOCAL_SURFACE_ID.matches(localSurfaceId))
     }
@@ -214,10 +216,19 @@ class NexusSurfaceSession internal constructor(
         if (ImageSurfaceContract.validate(payload, bytes) !is ImageSurfaceValidationResult.Valid) {
             return NexusSdkResult.INVALID_PAYLOAD
         }
-        return if (client.sendBinary(path, UUID.randomUUID().toString(), payload, bytes)) {
-            NexusSdkResult.SENT
-        } else {
-            NexusSdkResult.NOT_REGISTERED
+        synchronized(this) {
+            val now = System.nanoTime()
+            if (lastImageSendNanos != Long.MIN_VALUE &&
+                now - lastImageSendNanos < ImageSurfaceContract.MIN_FRAME_INTERVAL_MS * 1_000_000L
+            ) {
+                return NexusSdkResult.IMAGE_RATE_LIMITED
+            }
+            return if (client.sendBinary(path, UUID.randomUUID().toString(), payload, bytes)) {
+                lastImageSendNanos = now
+                NexusSdkResult.SENT
+            } else {
+                NexusSdkResult.NOT_REGISTERED
+            }
         }
     }
 
