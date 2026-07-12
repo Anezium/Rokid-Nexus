@@ -7,7 +7,7 @@ import org.junit.Test
 class LauncherReturnCoordinatorTest {
     @Test
     fun builtInSurfaceReturnsOnlyOnceAfterMatchingLauncherOpen() {
-        val coordinator = LauncherReturnCoordinator()
+        val coordinator = LauncherReturnCoordinator { }
 
         coordinator.recordLauncherOpen("feeds")
 
@@ -18,7 +18,7 @@ class LauncherReturnCoordinatorTest {
 
     @Test
     fun externalPluginSurfaceMatchesNamespacedSurfaceId() {
-        val coordinator = LauncherReturnCoordinator()
+        val coordinator = LauncherReturnCoordinator { }
 
         coordinator.recordLauncherOpen("weather")
 
@@ -28,7 +28,7 @@ class LauncherReturnCoordinatorTest {
 
     @Test
     fun automaticAndUnrelatedSurfacesNeverAcquireLauncherReturn() {
-        val coordinator = LauncherReturnCoordinator()
+        val coordinator = LauncherReturnCoordinator { }
 
         assertFalse(coordinator.onSurfaceShown("lyrics"))
         assertFalse(coordinator.consumeReturnOnHide("lyrics"))
@@ -42,7 +42,7 @@ class LauncherReturnCoordinatorTest {
 
     @Test
     fun switchingPluginsFromLauncherDropsThePreviousReturnClaim() {
-        val coordinator = LauncherReturnCoordinator()
+        val coordinator = LauncherReturnCoordinator { }
 
         coordinator.recordLauncherOpen("feeds")
         assertTrue(coordinator.onSurfaceShown("feeds"))
@@ -58,7 +58,7 @@ class LauncherReturnCoordinatorTest {
 
     @Test
     fun reopeningLauncherClearsAnUnclaimedIntent() {
-        val coordinator = LauncherReturnCoordinator()
+        val coordinator = LauncherReturnCoordinator { }
 
         coordinator.recordLauncherOpen("feeds")
         coordinator.clearPendingLauncherOpen()

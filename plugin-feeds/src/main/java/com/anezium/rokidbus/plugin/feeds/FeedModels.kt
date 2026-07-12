@@ -49,7 +49,7 @@ enum class FeedSourceKind(
     val blurb: String,
 ) {
     BLUESKY("bsky", "Bluesky", "bsky", "Bluesky", "What's Hot — no account"),
-    X_ACCOUNT("x", "X (account)", "x", "X · account", "Your home timeline"),
+    X_ACCOUNT("x", "X (QuaX)", "x", "X · QuaX", "Your home timeline"),
     X_WEBVIEW("x-web", "X (WebView)", "x-web", "X · WebView", "Home timeline, read in-page"),
     X_OFFICIAL("x_official", "X (official API)", "x-api", "X · official API", "Needs a paid API token"),
     DEMO("demo", "Demo", "demo", "Demo", "Sample posts, offline"),

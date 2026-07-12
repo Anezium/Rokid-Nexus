@@ -22,8 +22,15 @@ class PostCardLayoutTest {
 
         assertEquals("Feeds", card.title)
         assertEquals("source 3/4 \u00b7 tap", card.footer)
-        assertTrue(card.lines.contains("\u203a X \u00b7 WebView"))
-        assertTrue(card.lines.contains("  Home timeline, read in-pa"))
+        assertEquals(
+            listOf(
+                "  Bluesky",
+                "  X \u00b7 QuaX",
+                "\u203a X \u00b7 WebView",
+                "  X \u00b7 official API",
+            ),
+            card.lines,
+        )
         assertTrue(card.lines.size <= PostCardLayout.CARD_ROWS)
         assertTrue(card.lines.all { it.length <= PostCardLayout.LINE_CHARS })
     }

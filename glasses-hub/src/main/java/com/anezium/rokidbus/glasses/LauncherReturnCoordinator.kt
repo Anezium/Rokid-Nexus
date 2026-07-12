@@ -1,6 +1,8 @@
 package com.anezium.rokidbus.glasses
 
-internal class LauncherReturnCoordinator {
+internal class LauncherReturnCoordinator(
+    private val logLine: (String) -> Unit = ::log,
+) {
     private var pendingPluginId: String? = null
     private var launcherReturnSurfaceId: String? = null
 
@@ -20,8 +22,13 @@ internal class LauncherReturnCoordinator {
 
     @Synchronized
     fun onSurfaceShown(surfaceId: String): Boolean {
-        val pluginId = pendingPluginId ?: return false
+        val pluginId = pendingPluginId
+        if (pluginId == null) {
+            logLine("launcher-return show id=$surfaceId pending=null")
+            return false
+        }
         val matchesPlugin = surfaceId == pluginId || surfaceId.startsWith("$pluginId:")
+        logLine("launcher-return show id=$surfaceId pending=$pluginId match=$matchesPlugin")
         if (!matchesPlugin) return false
         pendingPluginId = null
         launcherReturnSurfaceId = surfaceId
@@ -30,7 +37,9 @@ internal class LauncherReturnCoordinator {
 
     @Synchronized
     fun consumeReturnOnHide(surfaceId: String): Boolean {
-        if (launcherReturnSurfaceId != surfaceId) return false
+        val consumed = launcherReturnSurfaceId == surfaceId
+        logLine("launcher-return hide id=$surfaceId claimed=$launcherReturnSurfaceId consumed=$consumed")
+        if (!consumed) return false
         launcherReturnSurfaceId = null
         return true
     }

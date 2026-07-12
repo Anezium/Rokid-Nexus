@@ -26,13 +26,9 @@ object PostCardLayout {
         require(sources.isNotEmpty())
         require(sources.size <= CARD_ROWS)
         val selected = selectedIndex.coerceIn(sources.indices)
-        val showBlurbs = sources.size * 2 <= CARD_ROWS
-        val lines = buildList {
-            sources.forEachIndexed { index, source ->
-                val cursor = if (index == selected) "\u203a " else "  "
-                add((cursor + source.title).take(LINE_CHARS))
-                if (showBlurbs) add(("  " + source.blurb).take(LINE_CHARS))
-            }
+        val lines = sources.mapIndexed { index, source ->
+            val cursor = if (index == selected) "\u203a " else "  "
+            (cursor + source.title).take(LINE_CHARS)
         }
         return FeedCardContent(
             title = "Feeds",
