@@ -36,6 +36,7 @@ class XWebViewFeedSource internal constructor(
     private var previousFingerprint: String? = null
     private var previousThreadFingerprint: String? = null
 
+    @Synchronized
     override fun fetchPage(cursor: String?): FeedPage {
         if (!cookies.isConnected) return missingCookiesPage(now())
         if (!captureClient.isOverlayGranted) return missingOverlayPage(now())
@@ -53,6 +54,7 @@ class XWebViewFeedSource internal constructor(
         return parseCapturedPage(response.body, cursor, now())
     }
 
+    @Synchronized
     override fun fetchThread(post: FeedPost): FeedThread {
         if (!cookies.isConnected) return FeedThread(listOf(post), 0)
         if (!captureClient.isOverlayGranted) throw IOException("X WebView overlay permission is missing")
