@@ -299,7 +299,11 @@ class StoreActivity : Activity() {
         StoreEntryState.AVAILABLE -> "${entry.category} · ${entry.registryPlugin?.artifact?.versionName.orEmpty()}"
         StoreEntryState.UPDATE_AVAILABLE ->
             "Update available · ${entry.registryPlugin?.artifact?.versionName.orEmpty()}"
-        StoreEntryState.INSTALLED -> "Installed · ${grantLabel(entry.localGrantState)}"
+        StoreEntryState.INSTALLED -> if (entry.updateBlockedByHost) {
+            "Installed · Update requires Nexus host ${entry.registryPlugin?.nexus?.minHostVersionCode ?: "?"}"
+        } else {
+            "Installed · ${grantLabel(entry.localGrantState)}"
+        }
         StoreEntryState.SIDELOADED -> "Local · ${grantLabel(entry.localGrantState)}"
         StoreEntryState.REQUIRES_HOST ->
             "Requires Nexus host ${entry.registryPlugin?.nexus?.minHostVersionCode ?: "?"}"

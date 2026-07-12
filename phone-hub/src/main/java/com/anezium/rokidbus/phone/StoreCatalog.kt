@@ -17,6 +17,7 @@ data class StoreEntry(
     val registryPlugin: RegistryPlugin?,
     val localEntry: PluginCatalogEntry?,
     val installedVersionCode: Long?,
+    val updateBlockedByHost: Boolean = false,
 ) {
     val localGrantState: PluginCatalogState?
         get() = localEntry?.state
@@ -77,10 +78,12 @@ data class StoreCatalog(val entries: List<StoreEntry>) {
                 }
                 if (local != null) localRemaining.remove(local)
                 val installedVersion = installedVersionCodes[plugin.artifact.packageName]
+                val requiresNewerHost = plugin.nexus.minHostVersionCode > hostVersionCode
+                val hasNewerRelease = installedVersion != null && plugin.artifact.versionCode > installedVersion
                 val state = when {
-                    plugin.nexus.minHostVersionCode > hostVersionCode -> StoreEntryState.REQUIRES_HOST
+                    local == null && requiresNewerHost -> StoreEntryState.REQUIRES_HOST
                     local == null -> StoreEntryState.AVAILABLE
-                    installedVersion != null && plugin.artifact.versionCode > installedVersion ->
+                    hasNewerRelease && !requiresNewerHost ->
                         StoreEntryState.UPDATE_AVAILABLE
                     else -> StoreEntryState.INSTALLED
                 }
@@ -93,6 +96,7 @@ data class StoreCatalog(val entries: List<StoreEntry>) {
                     registryPlugin = plugin,
                     localEntry = local,
                     installedVersionCode = installedVersion,
+                    updateBlockedByHost = local != null && hasNewerRelease && requiresNewerHost,
                 )
             }
 
@@ -103,7 +107,11 @@ data class StoreCatalog(val entries: List<StoreEntry>) {
                     displayName = local.displayName,
                     category = LOCAL_CATEGORY,
                     summary = local.detail ?: "Installed outside the Nexus Store.",
-                    state = StoreEntryState.SIDELOADED,
+                    state = if (local.state == PluginCatalogState.BUILT_IN) {
+                        StoreEntryState.INSTALLED
+                    } else {
+                        StoreEntryState.SIDELOADED
+                    },
                     registryPlugin = null,
                     localEntry = local,
                     installedVersionCode = packageName?.let(installedVersionCodes::get),

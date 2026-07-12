@@ -56,15 +56,44 @@ class StoreCatalogTest {
     }
 
     @Test
-    fun `host requirement takes precedence over installed state`() {
+    fun `feed-only host requirement disables install`() {
         val catalog = build(
             remote = listOf(plugin(minHostVersionCode = 7)),
+            hostVersionCode = 6,
+        )
+
+        assertEquals(StoreEntryState.REQUIRES_HOST, catalog.entry("feeds")?.state)
+    }
+
+    @Test
+    fun `host-incompatible update keeps installed plugin accessible`() {
+        val catalog = build(
+            remote = listOf(plugin(versionCode = 8, minHostVersionCode = 7)),
             local = listOf(local()),
             versions = mapOf(PACKAGE to 7L),
             hostVersionCode = 6,
         )
 
-        assertEquals(StoreEntryState.REQUIRES_HOST, catalog.entry("feeds")?.state)
+        assertEquals(StoreEntryState.INSTALLED, catalog.entry("feeds")?.state)
+        assertEquals(true, catalog.entry("feeds")?.updateBlockedByHost)
+        assertEquals(PluginCatalogState.ENABLED, catalog.entry("feeds")?.localGrantState)
+    }
+
+    @Test
+    fun `built-in plugin remains installed rather than sideloaded`() {
+        val builtIn = PluginCatalogEntry(
+            catalogKey = "builtin:lens",
+            id = "lens",
+            displayName = "Lens",
+            state = PluginCatalogState.BUILT_IN,
+            launchable = false,
+            settingsComponent = PluginSettingsTarget("com.anezium.rokidbus.phone", "com.anezium.rokidbus.phone.LensSettingsActivity"),
+        )
+
+        val catalog = build(local = listOf(builtIn))
+
+        assertEquals(StoreEntryState.INSTALLED, catalog.entry("lens")?.state)
+        assertEquals(PluginCatalogState.BUILT_IN, catalog.entry("lens")?.localGrantState)
     }
 
     @Test
