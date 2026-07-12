@@ -7,6 +7,7 @@ import android.graphics.BitmapRegionDecoder
 import android.graphics.Matrix
 import android.graphics.Rect
 import android.media.ExifInterface
+import android.os.SystemClock
 import android.util.Log
 import com.anezium.rokidbus.client.PluginRegistrationResult
 import com.anezium.rokidbus.client.plugin.NexusPluginService
@@ -113,7 +114,7 @@ internal class LensCameraSession(
     }
     private val pool = Nv21BufferPool()
     private val holder = LatestFrameHolder()
-    private val emissionPolicy = OverlayEmissionPolicy()
+    private val overlayComposer = LiveOverlayComposer()
     private val activeFrozenBitmaps = ConcurrentHashMap.newKeySet<Bitmap>()
     private val liveOcr: LiveOcrRunner
     private val decoder: LatestFrameDecoder
@@ -157,7 +158,8 @@ internal class LensCameraSession(
                     config.optInt("fps") !in 1..60
                 ) return
                 sessionId = incomingSession
-                emissionPolicy.reset()
+                overlayComposer.reset()
+                liveOcr.resetPolicies()
                 host.log("camera session opened")
             }
             "closed" -> if (sessionId == incomingSession) close()
@@ -184,27 +186,46 @@ internal class LensCameraSession(
         }
     }
 
-    private fun onLiveRecognized(frame: DecodedFrame, result: Text, continuation: () -> Unit) {
+    private fun onLiveRecognized(
+        frame: DecodedFrame,
+        result: Text,
+        script: OcrScript,
+        continuation: () -> Unit,
+    ) {
         val activeSession = sessionId
-        if (closed.get() || activeSession == null || !emissionPolicy.shouldEmit(result.text)) {
+        if (closed.get() || activeSession == null) {
             continuation()
             return
         }
-        val lines = ocrLines(result)
-        if (lines.isEmpty()) {
+        val pending = runCatching {
+            overlayComposer.observe(
+                blocks = liveOcrBlocks(result),
+                script = script,
+                frameWidth = frame.width,
+                frameHeight = frame.height,
+                nowMs = SystemClock.elapsedRealtime(),
+            )
+        }.getOrElse {
+            host.log("live overlay composition failed")
+            continuation()
+            return
+        }
+        if (pending.tracks.isEmpty()) {
+            overlayComposer.complete(pending, emptyMap())?.let { items ->
+                if (!closed.get() && sessionId == activeSession) sendLiveOverlay(activeSession, items)
+            }
             continuation()
             return
         }
         translate(
             requestId = "live-${frame.frameId}-${seq.incrementAndGet()}",
-            mode = LensRecognizerMode.LATIN,
-            lines = lines,
+            mode = script.toRecognizerMode(),
+            sources = pending.tracks.map(LiveOverlayTrack::sourceText),
             onResult = { translations ->
                 if (!closed.get() && sessionId == activeSession) {
-                    sendOverlay(
-                        BusPaths.CAMERA_OVERLAY, activeSession, null, lines, translations,
-                        frame.width, frame.height,
-                    )
+                    overlayComposer.complete(pending, translations)?.let { items ->
+                        sendLiveOverlay(activeSession, items)
+                    }
                 }
                 continuation()
             },
@@ -247,7 +268,7 @@ internal class LensCameraSession(
                         translate(
                             requestId = "freeze-$requestId",
                             mode = result.script.toRecognizerMode(),
-                            lines = lines,
+                            sources = lines.map(OcrLine::source),
                             onResult = { translations ->
                                 try {
                                     if (!closed.get() && sessionId == activeSession) {
@@ -271,14 +292,14 @@ internal class LensCameraSession(
     private fun translate(
         requestId: String,
         mode: LensRecognizerMode,
-        lines: List<OcrLine>,
+        sources: List<String>,
         onResult: (Map<String, TranslationResult>) -> Unit,
     ) {
         if (closed.get()) {
             onResult(emptyMap())
             return
         }
-        val strings = lines.asSequence().map(OcrLine::source).distinct().take(MAX_TRANSLATION_STRINGS).toList()
+        val strings = sources.asSequence().distinct().take(MAX_TRANSLATION_STRINGS).toList()
         if (strings.isEmpty()) {
             onResult(emptyMap())
             return
@@ -333,6 +354,52 @@ internal class LensCameraSession(
         if (requestId != null) payload.put("requestId", requestId)
         host.send(path, requestId?.toString() ?: UUID.randomUUID().toString(), payload)
     }
+
+    private fun sendLiveOverlay(
+        activeSession: String,
+        composed: List<ComposedLiveOverlayItem>,
+    ) {
+        val items = JSONArray()
+        composed.take(CameraOverlayContract.MAX_ITEMS).forEach { item ->
+            items.put(
+                JSONObject()
+                    .put("id", item.id.take(CameraOverlayContract.MAX_ID_CHARS))
+                    .put("text", item.text.take(CameraOverlayContract.MAX_TEXT_CHARS))
+                    .put(
+                        "box",
+                        JSONObject()
+                            .put("left", item.box.left)
+                            .put("top", item.box.top)
+                            .put("right", item.box.right)
+                            .put("bottom", item.box.bottom),
+                    )
+                    .put("role", item.role),
+            )
+        }
+        val payload = JSONObject()
+            .put("version", CameraOverlayContract.VERSION)
+            .put("sessionId", activeSession)
+            .put("seq", seq.incrementAndGet())
+            .put("items", items)
+        host.send(BusPaths.CAMERA_OVERLAY, UUID.randomUUID().toString(), payload)
+    }
+
+    private fun liveOcrBlocks(text: Text): List<LiveFrameParagraphBlock> =
+        text.textBlocks.mapNotNull { block ->
+            val lines = block.lines.mapNotNull { line ->
+                val source = normalizeSource(line.text)
+                val box = line.boundingBox
+                if (source.isBlank() || box == null || box.width() <= 0 || box.height() <= 0) {
+                    null
+                } else {
+                    LiveFrameParagraphLine(
+                        source = source,
+                        bounds = FrozenLayoutRect(box.left, box.top, box.right, box.bottom),
+                    )
+                }
+            }
+            lines.takeIf { it.isNotEmpty() }?.let(::LiveFrameParagraphBlock)
+        }
 
     private fun ocrLines(text: Text): List<OcrLine> = text.textBlocks
         .flatMap(Text.TextBlock::getLines)
@@ -420,6 +487,14 @@ internal class LensCameraSession(
         PhoneOcrScript.DEVANAGARI -> LensRecognizerMode.DEVANAGARI
     }
 
+    private fun OcrScript.toRecognizerMode(): LensRecognizerMode = when (this) {
+        OcrScript.LATIN -> LensRecognizerMode.LATIN
+        OcrScript.JAPANESE -> LensRecognizerMode.JAPANESE
+        OcrScript.CHINESE -> LensRecognizerMode.CHINESE
+        OcrScript.KOREAN -> LensRecognizerMode.KOREAN
+        OcrScript.DEVANAGARI -> LensRecognizerMode.DEVANAGARI
+    }
+
     private fun recycleFrozen(bitmap: Bitmap) {
         activeFrozenBitmaps -= bitmap
         if (!bitmap.isRecycled) bitmap.recycle()
@@ -437,7 +512,7 @@ internal class LensCameraSession(
         activeFrozenBitmaps.toList().forEach(::recycleFrozen)
         holder.close()
         pool.close()
-        emissionPolicy.reset()
+        overlayComposer.reset()
         host.log("camera session closed")
     }
 

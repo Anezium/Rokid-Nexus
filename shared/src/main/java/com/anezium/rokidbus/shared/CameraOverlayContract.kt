@@ -14,6 +14,7 @@ data class CameraOverlayItem(
     val text: String,
     val box: CameraOverlayBounds,
     val role: String,
+    val id: String? = null,
 )
 
 data class CameraOverlayPayload(
@@ -28,6 +29,7 @@ object CameraOverlayContract {
     const val MAX_ITEMS = 128
     const val MAX_TEXT_CHARS = 1_024
     const val MAX_ROLE_CHARS = 32
+    const val MAX_ID_CHARS = 64
 
     fun parse(payload: JSONObject, requireRequestId: Boolean): CameraOverlayPayload? {
         if (payload.optInt("version", VERSION) != VERSION) return null
@@ -43,11 +45,18 @@ object CameraOverlayContract {
                 val value = values.optJSONObject(index) ?: return null
                 val text = value.optString("text")
                 val role = value.optString("role")
+                val id = if (value.has("id")) {
+                    (value.opt("id") as? String)?.takeIf {
+                        it.isNotBlank() && it.length <= MAX_ID_CHARS
+                    } ?: return null
+                } else {
+                    null
+                }
                 if (text.isBlank() || text.length > MAX_TEXT_CHARS ||
                     role.isBlank() || role.length > MAX_ROLE_CHARS
                 ) return null
                 val box = parseBox(value.opt("box")) ?: return null
-                add(CameraOverlayItem(text, box, role))
+                add(CameraOverlayItem(text, box, role, id))
             }
         }
         return CameraOverlayPayload(sessionId, requestId, seq, items)

@@ -4,12 +4,18 @@ import android.media.Image
 import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaFormat
+import android.os.SystemClock
 import com.anezium.rokidbus.shared.CameraLinkPacket
 import com.anezium.rokidbus.shared.CameraLinkPacketFlags
 import com.anezium.rokidbus.shared.CameraLinkPacketType
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.Text
 import com.google.mlkit.vision.text.TextRecognition
+import com.google.mlkit.vision.text.TextRecognizer
+import com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions
+import com.google.mlkit.vision.text.devanagari.DevanagariTextRecognizerOptions
+import com.google.mlkit.vision.text.japanese.JapaneseTextRecognizerOptions
+import com.google.mlkit.vision.text.korean.KoreanTextRecognizerOptions
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import java.nio.ByteBuffer
 import java.util.LinkedHashMap
@@ -301,24 +307,45 @@ internal class LatestFrameDecoder(
  */
 internal class LiveOcrRunner(
     private val holder: LatestFrameHolder,
-    private val onRecognized: (DecodedFrame, Text, () -> Unit) -> Unit,
+    private val onRecognized: (DecodedFrame, Text, OcrScript, () -> Unit) -> Unit,
     private val onError: (String) -> Unit,
 ) : AutoCloseable {
-    private val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
     private val inFlight = AtomicBoolean(false)
     private val closed = AtomicBoolean(false)
     private val current = AtomicReference<DecodedFrame?>(null)
+    private val recognizerLock = Any()
+    private val recognizers = mutableMapOf<OcrScript, TextRecognizer>()
+    private val policyLock = Any()
+    private var cadenceState = OcrCadenceState()
+    private var autoScriptState = AutoScriptState()
+    private var lastNonLatinScript: OcrScript? = null
 
     fun kick() {
         if (closed.get() || !inFlight.compareAndSet(false, true)) return
+        val startedAtMs = SystemClock.elapsedRealtime()
+        val cadenceAccepted = synchronized(policyLock) {
+            OcrCadencePolicy.evaluate(
+                state = cadenceState,
+                nowMs = startedAtMs,
+                minIntervalMs = LIVE_OCR_MIN_INTERVAL_MS,
+            ).also { cadenceState = it.nextState }.shouldStart
+        }
+        if (!cadenceAccepted) {
+            inFlight.set(false)
+            return
+        }
         val frame = holder.takeNewest()
         if (frame == null) {
             inFlight.set(false)
             return
         }
         current.set(frame)
+        val scriptPlan = synchronized(policyLock) {
+            AutoScriptPolicy.planLiveFrame(autoScriptState, startedAtMs)
+                .also { autoScriptState = it.nextState }
+        }
         val task = runCatching {
-            recognizer.process(
+            recognizerFor(scriptPlan.script).process(
                 InputImage.fromByteArray(
                     frame.nv21,
                     frame.width,
@@ -328,17 +355,49 @@ internal class LiveOcrRunner(
                 ),
             )
         }.getOrElse {
-            finish(frame, null, it.message)
+            finish(frame, null, scriptPlan, it.message)
             return
         }
         task.addOnCompleteListener {
-            finish(frame, if (it.isSuccessful) it.result else null, it.exception?.message)
+            finish(
+                frame,
+                if (it.isSuccessful) it.result else null,
+                scriptPlan,
+                it.exception?.message,
+            )
         }
     }
 
-    private fun finish(frame: DecodedFrame, result: Text?, error: String?) {
+    private fun finish(
+        frame: DecodedFrame,
+        result: Text?,
+        scriptPlan: LiveScriptPlan,
+        error: String?,
+    ) {
         if (closed.get() || result == null) {
             if (error != null && !closed.get()) onError(error)
+            releaseAndContinue(frame)
+            return
+        }
+        val observation = synchronized(policyLock) {
+            val observed = AutoScriptPolicy.observeLiveResult(
+                state = autoScriptState,
+                nowMs = SystemClock.elapsedRealtime(),
+                script = scriptPlan.script,
+                isProbe = scriptPlan.isProbe,
+                isBurstProbe = scriptPlan.isBurstProbe,
+                text = result.text,
+            )
+            if (observed.switched && observed.effectiveScript != OcrScript.LATIN) {
+                lastNonLatinScript = observed.effectiveScript
+            }
+            autoScriptState = AutoScriptPolicy.biasNextProbe(
+                state = observed.nextState,
+                script = lastNonLatinScript.takeIf { observed.switched },
+            )
+            observed
+        }
+        if (!observation.acceptResult) {
             releaseAndContinue(frame)
             return
         }
@@ -346,11 +405,40 @@ internal class LiveOcrRunner(
         val continuation = {
             if (completed.compareAndSet(false, true)) releaseAndContinue(frame)
         }
-        runCatching { onRecognized(frame, result, continuation) }
+        runCatching { onRecognized(frame, result, scriptPlan.script, continuation) }
             .onFailure {
                 onError(it.message.orEmpty())
                 continuation()
             }
+    }
+
+    fun resetPolicies() {
+        synchronized(policyLock) {
+            cadenceState = OcrCadenceState()
+            autoScriptState = AutoScriptState()
+            lastNonLatinScript = null
+        }
+    }
+
+    private fun recognizerFor(script: OcrScript): TextRecognizer = synchronized(recognizerLock) {
+        check(!closed.get()) { "Live OCR runner is closed" }
+        recognizers.getOrPut(script) {
+            when (script) {
+                OcrScript.LATIN -> TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+                OcrScript.JAPANESE -> TextRecognition.getClient(
+                    JapaneseTextRecognizerOptions.Builder().build(),
+                )
+                OcrScript.CHINESE -> TextRecognition.getClient(
+                    ChineseTextRecognizerOptions.Builder().build(),
+                )
+                OcrScript.KOREAN -> TextRecognition.getClient(
+                    KoreanTextRecognizerOptions.Builder().build(),
+                )
+                OcrScript.DEVANAGARI -> TextRecognition.getClient(
+                    DevanagariTextRecognizerOptions.Builder().build(),
+                )
+            }
+        }
     }
 
     private fun releaseAndContinue(frame: DecodedFrame) {
@@ -363,9 +451,16 @@ internal class LiveOcrRunner(
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
         holder.close()
-        recognizer.close()
+        synchronized(recognizerLock) {
+            recognizers.values.forEach(TextRecognizer::close)
+            recognizers.clear()
+        }
         current.getAndSet(null)?.close()
         inFlight.set(false)
+    }
+
+    private companion object {
+        const val LIVE_OCR_MIN_INTERVAL_MS = 300L
     }
 }
 

@@ -17,6 +17,7 @@ class CameraOverlayContractTest {
                 "items",
                 JSONArray().put(
                     JSONObject()
+                        .put("id", "track-7")
                         .put("text", "Bonjour")
                         .put("role", "translation")
                         .put(
@@ -33,6 +34,7 @@ class CameraOverlayContractTest {
         assertEquals("session", parsed.sessionId)
         assertEquals(9L, parsed.seq)
         assertEquals("Bonjour", parsed.items.single().text)
+        assertEquals("track-7", parsed.items.single().id)
     }
 
     @Test
@@ -46,6 +48,40 @@ class CameraOverlayContractTest {
                         .put("text", "bad")
                         .put("role", "source")
                         .put("box", JSONArray().put(-0.1).put(0).put(1).put(1)),
+                ),
+            )
+        assertNull(CameraOverlayContract.parse(payload, requireRequestId = false))
+    }
+
+    @Test
+    fun `id stays optional for version one items`() {
+        val payload = JSONObject()
+            .put("version", 1)
+            .put("sessionId", "session")
+            .put(
+                "items",
+                JSONArray().put(
+                    JSONObject()
+                        .put("text", "legacy")
+                        .put("role", "source")
+                        .put("box", JSONArray().put(0).put(0).put(1).put(1)),
+                ),
+            )
+        assertNull(CameraOverlayContract.parse(payload, requireRequestId = false)!!.items.single().id)
+    }
+
+    @Test
+    fun `id longer than contract cap is rejected`() {
+        val payload = JSONObject()
+            .put("sessionId", "session")
+            .put(
+                "items",
+                JSONArray().put(
+                    JSONObject()
+                        .put("id", "x".repeat(CameraOverlayContract.MAX_ID_CHARS + 1))
+                        .put("text", "bad")
+                        .put("role", "source")
+                        .put("box", JSONArray().put(0).put(0).put(1).put(1)),
                 ),
             )
         assertNull(CameraOverlayContract.parse(payload, requireRequestId = false))

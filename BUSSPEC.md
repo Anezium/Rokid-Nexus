@@ -339,7 +339,8 @@ Glasses to phone:
 Phone to glasses:
 
 - `/camera/freeze/result` carries processing results for a frozen frame.
-- `/camera/overlay` carries structured live-view overlay content.
+- `/camera/overlay` carries structured live-view overlay content; each item may include an
+  optional string `id` (at most 64 characters) for stable live-item reuse.
 
 All four paths are protected. The phone hub itself may send or receive them; an
 external principal may receive only session state and link offers and may send

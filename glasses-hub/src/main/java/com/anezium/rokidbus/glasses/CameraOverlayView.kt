@@ -47,6 +47,7 @@ internal class CameraOverlayView @JvmOverloads constructor(
         style = Paint.Style.FILL
     }
     private val bitmapMatrix = Matrix()
+    private val stabilizer = CameraOverlayStabilizer()
 
     private var items: List<CameraOverlayItem> = emptyList()
     private var status: String = "STARTING"
@@ -55,7 +56,7 @@ internal class CameraOverlayView @JvmOverloads constructor(
     private var frozenDisplayScale = 1f
 
     fun updateOverlay(next: List<CameraOverlayItem>) {
-        items = next
+        items = stabilizer.update(next)
         invalidate()
     }
 
