@@ -16,6 +16,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.GraphicsMode
 import java.io.ByteArrayOutputStream
+import java.net.InetAddress
 
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
@@ -105,6 +106,25 @@ class FeedImagePipelineTest {
         assertEquals(1, fetches)
         assertArrayEquals(first!!.bytes, second!!.bytes)
         assertEquals(first.contentKey, second.contentKey)
+    }
+
+    @Test
+    fun httpFetcherRejectsUnexpectedAndPrivateDestinationsBeforeConnecting() {
+        val publicResolver = FeedImageAddressResolver { arrayOf(InetAddress.getByName("8.8.8.8")) }
+        assertThrows(FeedImageUnsafeUrlException::class.java) {
+            HttpFeedImageFetcher(publicResolver).fetch(
+                "https://localhost/image.jpg",
+                FeedImagePipeline.MAX_DOWNLOAD_BYTES,
+            )
+        }
+
+        val privateResolver = FeedImageAddressResolver { arrayOf(InetAddress.getByName("127.0.0.1")) }
+        assertThrows(FeedImageUnsafeUrlException::class.java) {
+            HttpFeedImageFetcher(privateResolver).fetch(
+                "https://pbs.twimg.com/media/image.jpg",
+                FeedImagePipeline.MAX_DOWNLOAD_BYTES,
+            )
+        }
     }
 
     private fun pipeline(

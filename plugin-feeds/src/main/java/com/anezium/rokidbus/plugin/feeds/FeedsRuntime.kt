@@ -392,8 +392,7 @@ internal class FeedsRuntime(
     private companion object {
         fun FeedMedia.hasDisplayableImageUrl(): Boolean {
             val candidate = previewUrl.trim().ifBlank { url.trim() }
-            return candidate.startsWith("https://", ignoreCase = true) ||
-                candidate.startsWith("http://", ignoreCase = true)
+            return candidate.startsWith("https://", ignoreCase = true)
         }
 
         fun galleryFooter(post: FeedPost, media: FeedMedia, index: Int): String {

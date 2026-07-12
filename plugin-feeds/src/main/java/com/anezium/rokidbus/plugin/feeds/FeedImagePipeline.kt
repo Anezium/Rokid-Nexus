@@ -15,6 +15,9 @@ import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.net.HttpURLConnection
+import java.net.Inet4Address
+import java.net.Inet6Address
+import java.net.InetAddress
 import java.net.URL
 import java.nio.charset.StandardCharsets
 import java.util.LinkedHashMap
@@ -48,53 +51,103 @@ internal fun interface FeedImageFetcher {
     fun fetch(url: String, maxBytes: Int): ByteArray
 }
 
-internal class HttpFeedImageFetcher : FeedImageFetcher {
+internal fun interface FeedImageAddressResolver {
+    fun resolve(host: String): Array<InetAddress>
+}
+
+internal class HttpFeedImageFetcher(
+    private val addressResolver: FeedImageAddressResolver = FeedImageAddressResolver(InetAddress::getAllByName),
+) : FeedImageFetcher {
     override fun fetch(url: String, maxBytes: Int): ByteArray {
-        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
-            connectTimeout = TIMEOUT_MS
-            readTimeout = TIMEOUT_MS
-            requestMethod = "GET"
-            instanceFollowRedirects = true
-            setRequestProperty("Accept", "image/*")
-            setRequestProperty("User-Agent", USER_AGENT)
-        }
-        return try {
-            val status = connection.responseCode
-            if (status !in 200..299) throw IOException("Image HTTP $status")
-            val declaredLength = connection.contentLengthLong
-            if (declaredLength > maxBytes) {
-                throw FeedImageTooLargeException("Image body exceeds $maxBytes bytes")
+        var currentUrl = validateDestination(URL(url))
+        repeat(MAX_REDIRECTS + 1) { redirectCount ->
+            val connection = (currentUrl.openConnection() as HttpURLConnection).apply {
+                connectTimeout = TIMEOUT_MS
+                readTimeout = TIMEOUT_MS
+                requestMethod = "GET"
+                instanceFollowRedirects = false
+                setRequestProperty("Accept", "image/*")
+                setRequestProperty("User-Agent", USER_AGENT)
             }
-            connection.inputStream.buffered().use { input ->
-                val output = ByteArrayOutputStream(
-                    declaredLength.takeIf { it in 1..maxBytes.toLong() }?.toInt() ?: DEFAULT_BUFFER_BYTES,
-                )
-                val buffer = ByteArray(DEFAULT_BUFFER_BYTES)
-                var total = 0
-                while (true) {
-                    val count = input.read(buffer)
-                    if (count < 0) break
-                    total += count
-                    if (total > maxBytes) {
-                        throw FeedImageTooLargeException("Image body exceeds $maxBytes bytes")
-                    }
-                    output.write(buffer, 0, count)
+            try {
+                val status = connection.responseCode
+                if (status in REDIRECT_STATUS_CODES) {
+                    if (redirectCount == MAX_REDIRECTS) throw IOException("Too many image redirects")
+                    val location = connection.getHeaderField("Location")
+                        ?.takeIf(String::isNotBlank)
+                        ?: throw IOException("Image redirect has no destination")
+                    currentUrl = validateDestination(URL(currentUrl, location))
+                    return@repeat
                 }
-                output.toByteArray()
+                if (status !in 200..299) throw IOException("Image HTTP $status")
+                val declaredLength = connection.contentLengthLong
+                if (declaredLength > maxBytes) {
+                    throw FeedImageTooLargeException("Image body exceeds $maxBytes bytes")
+                }
+                connection.inputStream.buffered().use { input ->
+                    val output = ByteArrayOutputStream(
+                        declaredLength.takeIf { it in 1..maxBytes.toLong() }?.toInt() ?: DEFAULT_BUFFER_BYTES,
+                    )
+                    val buffer = ByteArray(DEFAULT_BUFFER_BYTES)
+                    var total = 0
+                    while (true) {
+                        val count = input.read(buffer)
+                        if (count < 0) break
+                        total += count
+                        if (total > maxBytes) {
+                            throw FeedImageTooLargeException("Image body exceeds $maxBytes bytes")
+                        }
+                        output.write(buffer, 0, count)
+                    }
+                    return output.toByteArray()
+                }
+            } finally {
+                connection.disconnect()
             }
-        } finally {
-            connection.disconnect()
+        }
+        throw IOException("Image request did not complete")
+    }
+
+    private fun validateDestination(url: URL): URL {
+        if (url.protocol != "https" || url.userInfo != null || url.host.lowercase() !in ALLOWED_MEDIA_HOSTS) {
+            throw FeedImageUnsafeUrlException("Unsupported image destination")
+        }
+        val addresses = addressResolver.resolve(url.host)
+        if (addresses.isEmpty() || addresses.any(::isPrivateOrSpecialAddress)) {
+            throw FeedImageUnsafeUrlException("Image destination is not public")
+        }
+        return url
+    }
+
+    private fun isPrivateOrSpecialAddress(address: InetAddress): Boolean {
+        if (address.isAnyLocalAddress || address.isLoopbackAddress || address.isLinkLocalAddress ||
+            address.isSiteLocalAddress || address.isMulticastAddress
+        ) return true
+        return when (address) {
+            is Inet4Address -> {
+                val bytes = address.address.map { it.toInt() and 0xff }
+                bytes[0] == 0 ||
+                    bytes[0] == 100 && bytes[1] in 64..127 ||
+                    bytes[0] == 198 && bytes[1] in 18..19 ||
+                    bytes[0] >= 224
+            }
+            is Inet6Address -> address.address.first().toInt() and 0xfe == 0xfc
+            else -> true
         }
     }
 
     private companion object {
         const val TIMEOUT_MS = 8_000
         const val DEFAULT_BUFFER_BYTES = 16 * 1024
+        const val MAX_REDIRECTS = 4
         const val USER_AGENT = "RokidNexus/0.1 (+https://github.com/Anezium)"
+        val ALLOWED_MEDIA_HOSTS = setOf("pbs.twimg.com", "cdn.bsky.app")
+        val REDIRECT_STATUS_CODES = setOf(301, 302, 303, 307, 308)
     }
 }
 
 internal class FeedImageTooLargeException(message: String) : IOException(message)
+internal class FeedImageUnsafeUrlException(message: String) : IOException(message)
 
 internal fun interface FeedImageContrast {
     fun apply(bitmap: Bitmap, factor: Float): Bitmap
