@@ -10,6 +10,20 @@ data class FeedsSettings(
     val blueskyFeedGeneratorUri: String,
 )
 
+const val INCLUDE_DEMO_SOURCE = false
+
+fun FeedSourceKind.isConfigured(settings: FeedsSettings): Boolean = when (this) {
+    FeedSourceKind.BLUESKY -> true
+    FeedSourceKind.X_ACCOUNT,
+    FeedSourceKind.X_WEBVIEW,
+    -> settings.xAccountCookies.isConnected
+    FeedSourceKind.X_OFFICIAL -> settings.xBearerToken.isNotBlank()
+    FeedSourceKind.DEMO -> INCLUDE_DEMO_SOURCE
+}
+
+fun availableSources(settings: FeedsSettings): List<FeedSourceKind> =
+    FeedSourceKind.entries.filter { it.isConfigured(settings) }
+
 data class XAccountCookies(
     val authToken: String = "",
     val ct0: String = "",

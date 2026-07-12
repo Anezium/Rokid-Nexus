@@ -10,6 +10,25 @@ class PostCardLayoutTest {
     private val now = Instant.parse("2026-07-11T12:00:00Z")
 
     @Test
+    fun sourceMenu_listsSourcesMarksSelectionAndFitsCard() {
+        val sources = listOf(
+            FeedSourceKind.BLUESKY,
+            FeedSourceKind.X_ACCOUNT,
+            FeedSourceKind.X_WEBVIEW,
+            FeedSourceKind.X_OFFICIAL,
+        )
+
+        val card = PostCardLayout.renderSourceMenu(sources, selectedIndex = 2)
+
+        assertEquals("Feeds", card.title)
+        assertEquals("source 3/4 \u00b7 tap", card.footer)
+        assertTrue(card.lines.contains("\u203a X \u00b7 WebView"))
+        assertTrue(card.lines.contains("  Home timeline, read in-pa"))
+        assertTrue(card.lines.size <= PostCardLayout.CARD_ROWS)
+        assertTrue(card.lines.all { it.length <= PostCardLayout.LINE_CHARS })
+    }
+
+    @Test
     fun shortPost_formatsHeaderBodyAndFooter() {
         val card = PostCardLayout.layout(
             post(text = "Hello HUD", createdAt = Instant.parse("2026-07-11T11:42:00Z")),

@@ -18,6 +18,89 @@ class FeedsRuntimeTest {
     private val now = Instant.parse("2026-07-12T12:00:00Z")
 
     @Test
+    fun open_entersSourceMenuWithoutBuildingOrFetchingSource() {
+        val source = FakeSource(FeedPage(listOf(post("feed", "Feed")), null), FeedThread(emptyList(), 0))
+        val host = FakeHost()
+        val requestedKinds = mutableListOf<FeedSourceKind>()
+        val runtime = runtime(source, host, requestedKinds = requestedKinds)
+
+        runtime.open()
+
+        assertEquals("source 1/1 \u00b7 tap", host.last.footer)
+        assertTrue(host.cards.single().second)
+        assertTrue(requestedKinds.isEmpty())
+        assertEquals(0, source.pageFetchCount)
+    }
+
+    @Test
+    fun open_highlightsConfiguredDefaultAndFallsBackWhenUnavailable() {
+        val source = FakeSource(FeedPage(emptyList(), null), FeedThread(emptyList(), 0))
+        val configuredHost = FakeHost()
+        val unavailableHost = FakeHost()
+
+        runtime(
+            source,
+            configuredHost,
+            runtimeSettings = settings(source = FeedSourceKind.X_OFFICIAL, xBearerToken = "configured"),
+        ).open()
+        runtime(
+            source,
+            unavailableHost,
+            runtimeSettings = settings(source = FeedSourceKind.X_ACCOUNT),
+        ).open()
+
+        assertEquals("source 2/2 \u00b7 tap", configuredHost.last.footer)
+        assertEquals("source 1/1 \u00b7 tap", unavailableHost.last.footer)
+    }
+
+    @Test
+    fun menuMoveAndTap_buildsSelectedKindAndFetchesFirstPage() {
+        val source = FakeSource(FeedPage(listOf(post("feed", "Feed")), null), FeedThread(emptyList(), 0))
+        val host = FakeHost()
+        val requestedKinds = mutableListOf<FeedSourceKind>()
+        val runtime = runtime(
+            source,
+            host,
+            runtimeSettings = settings(xBearerToken = "configured"),
+            requestedKinds = requestedKinds,
+        )
+
+        runtime.open()
+        runtime.key(KeyEvent.KEYCODE_DPAD_RIGHT)
+        assertEquals("source 2/2 \u00b7 tap", host.last.footer)
+        runtime.key(KeyEvent.KEYCODE_ENTER)
+
+        assertEquals(listOf(FeedSourceKind.X_OFFICIAL), requestedKinds)
+        assertEquals(1, source.pageFetchCount)
+        assertEquals("demo 1/1", host.last.footer)
+    }
+
+    @Test
+    fun availableSources_filtersCredentialsAndAlwaysHidesDemo() {
+        val cookies = XAccountCookies(authToken = "auth", ct0 = "csrf")
+
+        assertEquals(listOf(FeedSourceKind.BLUESKY), availableSources(settings()))
+        assertEquals(
+            listOf(FeedSourceKind.BLUESKY, FeedSourceKind.X_ACCOUNT, FeedSourceKind.X_WEBVIEW),
+            availableSources(settings(xAccountCookies = cookies)),
+        )
+        assertEquals(
+            listOf(FeedSourceKind.BLUESKY, FeedSourceKind.X_OFFICIAL),
+            availableSources(settings(xBearerToken = "configured")),
+        )
+        assertEquals(
+            listOf(
+                FeedSourceKind.BLUESKY,
+                FeedSourceKind.X_ACCOUNT,
+                FeedSourceKind.X_WEBVIEW,
+                FeedSourceKind.X_OFFICIAL,
+            ),
+            availableSources(settings(xAccountCookies = cookies, xBearerToken = "configured")),
+        )
+        assertFalse(INCLUDE_DEMO_SOURCE)
+    }
+
+    @Test
     fun feedThreadGalleryBackStack_restoresExactFeedPositionAndClosesOnlyAtRoot() {
         val feedPosts = listOf(post("feed-1", "First"), focalPost(), post("feed-3", "Third"))
         val threadPosts = listOf(post("root", "Root"), feedPosts[1], post("reply", "Reply"))
@@ -25,7 +108,7 @@ class FeedsRuntimeTest {
         val host = FakeHost()
         val runtime = runtime(source, host)
 
-        runtime.open()
+        runtime.openFeed()
         assertEquals("demo 1/3", host.last.footer)
         assertTrue(host.cards.first().second)
 
@@ -61,6 +144,10 @@ class FeedsRuntimeTest {
         assertFalse(host.hidden)
 
         runtime.key(KeyEvent.KEYCODE_BACK)
+        assertEquals("source 1/1 \u00b7 tap", host.last.footer)
+        assertFalse(host.hidden)
+
+        runtime.key(KeyEvent.KEYCODE_BACK)
         assertTrue(host.hidden)
     }
 
@@ -71,7 +158,7 @@ class FeedsRuntimeTest {
         val source = FakeSource(FeedPage(listOf(focal), null), FeedThread(listOf(focal, reply), 0))
         val host = FakeHost()
         val runtime = runtime(source, host)
-        runtime.open()
+        runtime.openFeed()
         runtime.key(KeyEvent.KEYCODE_ENTER)
         val pageCount = host.last.pageCount
         assertTrue(pageCount > 2)
@@ -94,12 +181,12 @@ class FeedsRuntimeTest {
         val focal = post("focal", "Focal")
         val host = FakeHost()
         val runtime = runtime(FailingThreadSource(FeedPage(listOf(focal), null)), host)
-        runtime.open()
+        runtime.openFeed()
 
         runtime.key(KeyEvent.KEYCODE_ENTER)
 
         assertTrue(host.last.lines.joinToString(" ").startsWith("Thread fetch failed."))
-        assertTrue(host.logs.single().startsWith("thread fetch failed source=demo"))
+        assertTrue(host.logs.single().startsWith("thread fetch failed source=bsky"))
         runtime.key(KeyEvent.KEYCODE_BACK)
         assertEquals("demo 1/1", host.last.footer)
         assertFalse(host.hidden)
@@ -110,7 +197,7 @@ class FeedsRuntimeTest {
         val source = PagingSource()
         val host = FakeHost()
         val runtime = runtime(source, host)
-        runtime.open()
+        runtime.openFeed()
 
         runtime.key(KeyEvent.KEYCODE_DPAD_RIGHT)
 
@@ -197,20 +284,29 @@ class FeedsRuntimeTest {
         source: FeedSource,
         host: FakeHost,
         imageLoader: FeedImageLoader = FeedImageLoader { null },
+        runtimeSettings: FeedsSettings = settings(),
+        requestedKinds: MutableList<FeedSourceKind>? = null,
     ) = FeedsRuntime(
         context = null,
         host = host,
-        settings = { settings() },
-        sourceFactory = { source },
+        settings = { runtimeSettings },
+        sourceFactory = { _, kind ->
+            requestedKinds?.add(kind)
+            source
+        },
         ioDispatcher = Dispatchers.Unconfined,
         imageLoader = imageLoader,
         now = { now },
     )
 
-    private fun settings() = FeedsSettings(
-        source = FeedSourceKind.DEMO,
-        xAccountCookies = XAccountCookies(),
-        xBearerToken = "",
+    private fun settings(
+        source: FeedSourceKind = FeedSourceKind.BLUESKY,
+        xAccountCookies: XAccountCookies = XAccountCookies(),
+        xBearerToken: String = "",
+    ) = FeedsSettings(
+        source = source,
+        xAccountCookies = xAccountCookies,
+        xBearerToken = xBearerToken,
         xUserId = "",
         blueskyFeedGeneratorUri = BlueskyFeedSource.DEFAULT_FEED_GENERATOR_URI,
     )
@@ -251,9 +347,14 @@ class FeedsRuntimeTest {
     }
 
     private fun FeedsRuntime.openGallery() {
-        open()
+        openFeed()
         key(KeyEvent.KEYCODE_ENTER)
         key(KeyEvent.KEYCODE_DPAD_CENTER)
+    }
+
+    private fun FeedsRuntime.openFeed() {
+        open()
+        key(KeyEvent.KEYCODE_ENTER)
     }
 
     private fun validImageFrame(): FeedImageFrame {
@@ -280,7 +381,12 @@ class FeedsRuntimeTest {
         private val page: FeedPage,
         private val thread: FeedThread,
     ) : FeedSource {
-        override fun fetchPage(cursor: String?): FeedPage = page
+        var pageFetchCount = 0
+
+        override fun fetchPage(cursor: String?): FeedPage {
+            pageFetchCount++
+            return page
+        }
         override fun fetchThread(post: FeedPost): FeedThread = thread
     }
 

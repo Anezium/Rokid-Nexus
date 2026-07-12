@@ -19,6 +19,31 @@ object PostCardLayout {
     const val CARD_ROWS = 15
     const val BODY_ROWS = CARD_ROWS - 2
 
+    fun renderSourceMenu(
+        sources: List<FeedSourceKind>,
+        selectedIndex: Int,
+    ): FeedCardContent {
+        require(sources.isNotEmpty())
+        require(sources.size <= CARD_ROWS)
+        val selected = selectedIndex.coerceIn(sources.indices)
+        val showBlurbs = sources.size * 2 <= CARD_ROWS
+        val lines = buildList {
+            sources.forEachIndexed { index, source ->
+                val cursor = if (index == selected) "\u203a " else "  "
+                add((cursor + source.title).take(LINE_CHARS))
+                if (showBlurbs) add(("  " + source.blurb).take(LINE_CHARS))
+            }
+        }
+        return FeedCardContent(
+            title = "Feeds",
+            lines = lines,
+            footer = "source ${selected + 1}/${sources.size} \u00b7 tap".take(LINE_CHARS),
+            truncated = false,
+            pageIndex = selected,
+            pageCount = sources.size,
+        )
+    }
+
     fun layout(
         post: FeedPost,
         now: Instant,

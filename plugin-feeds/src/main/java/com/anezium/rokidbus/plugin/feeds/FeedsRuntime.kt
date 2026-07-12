@@ -29,8 +29,8 @@ internal class FeedsRuntime(
     context: Context?,
     private val host: FeedsRuntimeHost,
     private val settings: () -> FeedsSettings,
-    private val sourceFactory: (FeedsSettings) -> FeedSource = {
-        defaultSource(requireNotNull(context).applicationContext, it)
+    private val sourceFactory: (FeedsSettings, FeedSourceKind) -> FeedSource = { currentSettings, kind ->
+        defaultSource(requireNotNull(context).applicationContext, currentSettings, kind)
     },
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val imageLoader: FeedImageLoader = FeedImagePipeline(),
@@ -39,9 +39,12 @@ internal class FeedsRuntime(
 ) {
     private val timeline = FeedTimeline()
     private var source: FeedSource? = null
+    private var currentSettings: FeedsSettings? = null
+    private var sources: List<FeedSourceKind> = listOf(FeedSourceKind.BLUESKY)
+    private var menuIndex = 0
     private var sourceKind = FeedSourceKind.BLUESKY
     private var position = 0
-    private var level = NavigationLevel.FEED
+    private var level = NavigationLevel.SOURCE_MENU
     private var threadState: ThreadState? = null
     private var galleryIndex = 0
     private var pageFetchJob: Job? = null
@@ -56,17 +59,17 @@ internal class FeedsRuntime(
     fun open() {
         closeFetch()
         closeSource()
-        val currentSettings = settings()
-        sourceKind = currentSettings.source
-        source = sourceFactory(currentSettings)
+        val loadedSettings = settings()
+        currentSettings = loadedSettings
+        sources = availableSources(loadedSettings)
+        menuIndex = sources.indexOf(loadedSettings.source).takeIf { it >= 0 } ?: 0
         timeline.reset()
         position = 0
-        level = NavigationLevel.FEED
+        level = NavigationLevel.SOURCE_MENU
         threadState = null
         galleryIndex = 0
         visible = true
-        host.sendCard(PostCardLayout.message("Loading ${sourceKind.displayName}...", sourceKind.tag), show = true)
-        fetchNextPage()
+        host.sendCard(PostCardLayout.renderSourceMenu(sources, menuIndex), show = true)
     }
 
     fun close() {
@@ -88,6 +91,10 @@ internal class FeedsRuntime(
 
     private fun moveForward() {
         when (level) {
+            NavigationLevel.SOURCE_MENU -> {
+                if (menuIndex + 1 < sources.size) menuIndex++
+                renderCurrent()
+            }
             NavigationLevel.FEED -> {
                 if (position + 1 < timeline.posts.size) position++
                 renderCurrent()
@@ -115,6 +122,10 @@ internal class FeedsRuntime(
 
     private fun moveBackward() {
         when (level) {
+            NavigationLevel.SOURCE_MENU -> {
+                if (menuIndex > 0) menuIndex--
+                renderCurrent()
+            }
             NavigationLevel.FEED -> {
                 if (position > 0) position--
                 renderCurrent()
@@ -139,6 +150,7 @@ internal class FeedsRuntime(
 
     private fun tap() {
         when (level) {
+            NavigationLevel.SOURCE_MENU -> openSelectedSource()
             NavigationLevel.FEED -> openThread()
             NavigationLevel.THREAD -> {
                 val post = currentThreadPost() ?: return
@@ -153,7 +165,8 @@ internal class FeedsRuntime(
 
     private fun navigateBack() {
         when (level) {
-            NavigationLevel.FEED -> close()
+            NavigationLevel.SOURCE_MENU -> close()
+            NavigationLevel.FEED -> returnToSourceMenu()
             NavigationLevel.THREAD -> {
                 threadGeneration++
                 threadFetchJob?.cancel()
@@ -325,6 +338,33 @@ internal class FeedsRuntime(
         }
     }
 
+    private fun openSelectedSource() {
+        val loadedSettings = currentSettings ?: return
+        val selectedSource = sources.getOrNull(menuIndex) ?: return
+        closeFetch()
+        closeSource()
+        sourceKind = selectedSource
+        source = sourceFactory(loadedSettings, selectedSource)
+        timeline.reset()
+        position = 0
+        threadState = null
+        galleryIndex = 0
+        level = NavigationLevel.FEED
+        host.sendCard(PostCardLayout.message("Loading ${sourceKind.displayName}...", sourceKind.tag), show = false)
+        fetchNextPage()
+    }
+
+    private fun returnToSourceMenu() {
+        closeFetch()
+        closeSource()
+        timeline.reset()
+        position = 0
+        threadState = null
+        galleryIndex = 0
+        level = NavigationLevel.SOURCE_MENU
+        host.sendCard(PostCardLayout.renderSourceMenu(sources, menuIndex), show = false)
+    }
+
     private fun isCurrentGalleryRequest(
         runtimeGeneration: Long,
         requestGeneration: Long,
@@ -348,6 +388,7 @@ internal class FeedsRuntime(
     }
 
     private fun currentCard(): FeedCardContent? = when (level) {
+        NavigationLevel.SOURCE_MENU -> PostCardLayout.renderSourceMenu(sources, menuIndex)
         NavigationLevel.FEED -> currentFeedCard()
         NavigationLevel.THREAD -> currentThreadCard()
         NavigationLevel.GALLERY -> currentGalleryCard()
@@ -430,7 +471,7 @@ internal class FeedsRuntime(
             ?.div(1_000L)
             ?.let { seconds -> "${seconds / 60}:${(seconds % 60).toString().padStart(2, '0')}" }
 
-        fun defaultSource(context: Context, settings: FeedsSettings): FeedSource = when (settings.source) {
+        fun defaultSource(context: Context, settings: FeedsSettings, kind: FeedSourceKind): FeedSource = when (kind) {
             FeedSourceKind.BLUESKY -> BlueskyFeedSource(settings.blueskyFeedGeneratorUri)
             FeedSourceKind.X_ACCOUNT -> XAccountFeedSource(settings.xAccountCookies)
             FeedSourceKind.X_WEBVIEW -> XWebViewFeedSource(context, settings.xAccountCookies)
@@ -456,7 +497,7 @@ internal class FeedsRuntime(
         )
     }
 
-    private enum class NavigationLevel { FEED, THREAD, GALLERY }
+    private enum class NavigationLevel { SOURCE_MENU, FEED, THREAD, GALLERY }
 
     private data class ThreadState(
         val posts: List<FeedPost>,
