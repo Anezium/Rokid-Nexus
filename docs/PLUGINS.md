@@ -1,109 +1,119 @@
 # Building a Nexus plugin
 
-Nexus plugins are **built-in library modules compiled into the phone hub** —
-not standalone apps. A plugin adds no launcher icon, no theme, and no APK of
-its own: its logic lives in a `plugin-*` Gradle module, and its settings screen
-lives in `phone-hub` on the shared design kit. Lyrics, Media Deck, Lens, Feeds,
-and Transit all follow this model.
+A Nexus plugin is a **headless phone APK**: it installs and uninstalls like an
+app, but it has no launcher icon, no visible identity outside Rokid Nexus, and
+its settings screen renders with the same design kit as the host app. The hub
+discovers it, the user approves its capabilities once, and from then on it
+lives entirely inside Nexus — launched from the glasses launcher, configured
+from the phone hub, removable from its own settings screen or the Store.
 
-(A second, external-APK path exists behind `com.anezium.rokidbus.action.PLUGIN`
-for the Store experiment — see [PLUGIN_SDK.md](PLUGIN_SDK.md) and
-`plugin-sample`. Do not use it for anything that ships with the app.)
+Feeds and Transit ship this way. Lyrics, Media Deck, and Lens are still
+compiled into the hub as legacy built-ins and will migrate to this model.
+
+The wire/SDK contract (artifact coordinates, service base class, payload
+limits, approval flow) is specified in [PLUGIN_SDK.md](PLUGIN_SDK.md); this
+guide covers how to structure and skin a plugin so it feels native.
 
 ## 1. Module
 
-Create `plugin-<id>/` as an Android **library** and register it:
+An ordinary application module:
 
 ```kotlin
 // plugin-<id>/build.gradle.kts
-plugins { id("com.android.library") }
+plugins { id("com.android.application") }
 android {
     namespace = "com.anezium.rokidbus.plugin.<id>"
     compileSdk = 36
-    defaultConfig { minSdk = 31 }
-}
-dependencies { implementation(project(":shared")) }
-```
-
-```kotlin
-// settings.gradle.kts          // phone-hub/build.gradle.kts
-include(":plugin-<id>")         implementation(project(":plugin-<id>"))
-```
-
-The manifest stays near-empty (see `plugin-lyrics` — `<application/>` only).
-Components the merged APK genuinely needs (a foreground service, for example)
-may be declared here and will be merged into phone-hub's manifest, as
-`plugin-feeds` does for its WebView host service. `uses-permission` entries
-merge too. Never declare: a LAUNCHER activity, an application icon/label/theme,
-styles, or XML layouts.
-
-## 2. Plugin class
-
-Implement `NexusPlugin` (`shared/.../plugin/NexusPlugin.kt`). Keep the domain
-logic in a runtime class that talks to a small host interface of its own, and
-make the plugin an adapter from that interface onto `NexusPluginHost` — see
-`FeedsPlugin` (simple) and `TransitPlugin` (host callback for foreground
-location) for the shape.
-
-```kotlin
-class HelloPlugin : NexusPlugin {
-    override val id = "hello"                  // [a-z][a-z0-9._-]{2,63}
-    override val displayName = "Hello"
-    override val handlesBack = true            // plugin consumes BACK itself
-
-    private lateinit var host: NexusPluginHost
-
-    override fun onRegister(host: NexusPluginHost) {
-        this.host = host                       // host.context, send, subscribe, post, log
-        host.subscribe("/plugin/hello") { path, id, payload -> /* bus messages */ }
+    defaultConfig {
+        applicationId = "com.anezium.rokidbus.plugin.<id>"
+        minSdk = 31
+        targetSdk = 36
+        versionCode = 1
+        versionName = "1.0.0"
     }
-    override fun onOpen() { /* user opened the surface from the glasses launcher */ }
-    override fun onClose() { /* surface dismissed — stop work */ }
-    override fun onInput(event: NexusInputEvent) { /* touchpad keys while focused */ }
 }
+dependencies { implementation(project(":bus-client")) }   // SDK: bus client + NexusUi kit
 ```
 
-HUD output goes through the bus surface paths with `surfaceId = id`:
-`BusPaths.SURFACE_SHOW` / `SURFACE_UPDATE` / `SURFACE_HIDE`, payload
-`{surfaceId, kind: "card", title, lines, footer, contentKey, handlesBack}`.
-Card limits are enforced (`bus-client/.../SurfaceModels.kt`): ≤64 lines,
-line ≤240 chars, title ≤120, footer ≤240, **contentKey ≤128 — hash it, never
-concatenate content into it**.
-
-## 3. Register it in the hub
-
-Add the plugin to `phone-hub/.../PhoneBuiltInPlugins.kt`, in **both** places:
-
-- `create()` — the runtime instance list;
-- `specs()` — the catalog entry: id, display name, `launchable` (true if the
-  glasses launcher should list it), and its settings activity class name.
-
-Built-ins do not go through the external grant flow; `PluginCatalog` shows
-them as `BUILT_IN` and they win any id collision with a stale external APK.
-
-## 4. Settings screen
-
-The screen is a plain `Activity` in **phone-hub** (package
-`com.anezium.rokidbus.phone`), declared non-exported in phone-hub's manifest:
+## 2. Manifest — the headless contract
 
 ```xml
-<activity android:name=".HelloSettingsActivity"
-    android:exported="false"
-    android:parentActivityName=".MainActivity"
-    android:windowSoftInputMode="adjustResize" />  <!-- if it has inputs -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- only what the plugin really needs -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <queries>
+        <intent><action android:name="com.anezium.rokidbus.action.HUB" /></intent>
+    </queries>
+
+    <application
+        android:allowBackup="false"
+        android:icon="@drawable/ic_launcher"    <!-- system app list only -->
+        android:label="@string/app_name"
+        android:theme="@style/Theme.MyPlugin">  <!-- plain dark NoActionBar; the kit paints everything -->
+
+        <!-- Settings: exported so the hub can open it by explicit component.
+             NO intent-filter — that is what keeps the plugin out of launchers. -->
+        <activity
+            android:name=".MySettingsActivity"
+            android:exported="true"
+            android:windowSoftInputMode="adjustResize" />
+
+        <service android:name=".MyPluginService" android:exported="true">
+            <intent-filter>
+                <action android:name="com.anezium.rokidbus.action.PLUGIN" />
+            </intent-filter>
+            <meta-data android:name="com.anezium.rokidbus.plugin.ID" android:value="myid" />
+            <meta-data android:name="com.anezium.rokidbus.plugin.DISPLAY_NAME" android:value="My Plugin" />
+            <meta-data android:name="com.anezium.rokidbus.plugin.API_VERSION" android:value="3" />
+            <meta-data android:name="com.anezium.rokidbus.plugin.CAPABILITIES" android:value="surfaces" />
+            <meta-data android:name="com.anezium.rokidbus.plugin.RECEIVE_PREFIXES" android:value="/plugin/myid,/system/plugin" />
+            <meta-data android:name="com.anezium.rokidbus.plugin.SETTINGS_ACTIVITY" android:value=".MySettingsActivity" />
+            <meta-data android:name="com.anezium.rokidbus.plugin.LAUNCHABLE" android:value="true" />
+        </service>
+    </application>
+</manifest>
 ```
 
-**Kit rules — this is what keeps the app coherent:**
+**Absolute rule: no `MAIN`/`LAUNCHER` intent-filter anywhere.** A plugin that
+puts an icon in the launcher is not a plugin, it is an app. The application
+icon/label exist only for the system app list and the uninstall dialog.
 
-- Build every view in code from `NexusUi` (+ `BusTheme.gap`). No XML layouts,
-  no themes, no hand-rolled `GradientDrawable`, colors, or dp math in the
-  activity. If a component is genuinely missing, add one generic helper to
-  `NexusUi` following its conventions — never style inline.
-- The palette and type are fixed ("Phosphor × Mono"): `NexusUi.BG/PANEL/CARD`
-  layers, `LINE` hairlines, `INK`→`INK4` text ladder, one `GREEN` accent
-  (`AMBER`/`DANGER` sparingly), system sans for names/body, monospace for
-  caps/meta labels.
-- Every plugin screen uses the same shell:
+## 3. Service and runtime
+
+Extend `NexusPluginService` (bus-client) and keep the domain logic in a
+runtime class that talks to a small host interface; the service is only an
+adapter. See `FeedsPluginService`/`FeedsRuntime` (simple) and
+`TransitPluginService`/`TransitRuntime` (foreground location, bus messages)
+for the shape. Lifecycle: `onNexusOpen` (surface opened from the glasses
+launcher), `onNexusClose`, `onNexusInput` (touchpad), `onNexusMessage`
+(RECEIVE_PREFIXES traffic), `onNexusRegistrationState`.
+
+HUD cards go through `nexusSurfaceSession(id).showCard/updateCard` with the
+limits from `SurfaceModels.kt` — in particular **contentKey ≤ 128 chars: hash
+it, never concatenate content into it**.
+
+If the plugin needs a foreground service (location sampling, background
+WebView), it declares the type and permissions in its own manifest and posts
+its own notification — see `TransitPluginService.startLocationForeground`.
+
+## 4. Settings screen — the design kit
+
+The screen is a plain code-built `Activity` using **only** `NexusUi` +
+`BusTheme` from bus-client (`com.anezium.rokidbus.client.ui`). No XML layouts,
+no hand-rolled `GradientDrawable`/colors/dp math. If a component is missing,
+add one generic helper to `NexusUi` following its conventions.
+
+The palette and type are fixed ("Phosphor × Mono"): `NexusUi.BG/PANEL/CARD`
+layers, `LINE` hairlines, the `INK`→`INK4` text ladder, one `GREEN` accent
+(`AMBER`/`DANGER` sparingly), system sans for names/body, monospace for
+caps/meta. Component vocabulary: `sectionRow`, `card`/`pressableCard`,
+`rowTitle`/`rowSub`/`rowLabel`/`rowValue`, `pillButton`/`outlinePillButton`/
+`textButton` (`danger = true`), `field`, `dot`, `divider`, `metaLabel`,
+`cardBody`, `iconTileImage` (plugin marks live in bus-client:
+`com.anezium.rokidbus.client.R.drawable.ic_plugin_*`).
+
+Every plugin screen uses the same shell:
 
 ```kotlin
 override fun onCreate(savedInstanceState: Bundle?) {
@@ -111,19 +121,18 @@ override fun onCreate(savedInstanceState: Bundle?) {
     window.statusBarColor = NexusUi.BG
     window.navigationBarColor = NexusUi.BG
     val content = NexusUi.contentColumn(this).apply {
-        addView(NexusUi.cardBody(this@HelloSettingsActivity, "One-line intro."), NexusUi.block())
-        addView(BusTheme.gap(this@HelloSettingsActivity, 18))
-        addView(NexusUi.sectionRow(this@HelloSettingsActivity, "Section"), NexusUi.block())
-        // cards, rows, fields, pill buttons...
+        addView(NexusUi.cardBody(this@MySettingsActivity, "One-line intro."), NexusUi.block())
+        addView(BusTheme.gap(this@MySettingsActivity, 18))
+        // sections, cards, rows, fields, pill buttons...
     }
-    val root = NexusUi.fixedRoot(this).apply {          // fixedRoot handles system-bar insets
+    val root = NexusUi.fixedRoot(this).apply {            // fixedRoot handles system-bar insets
         addView(
-            NexusUi.pluginHeader(this@HelloSettingsActivity,
-                R.drawable.ic_plugin_hello, "Hello", "One-liner · v1.0"),
+            NexusUi.pluginHeader(this@MySettingsActivity,
+                BusClientR.drawable.ic_plugin_send, "My Plugin", "One-liner · v1.0"),
             NexusUi.block(),
         )
         addView(
-            NexusUi.screen(this@HelloSettingsActivity, content),
+            NexusUi.screen(this@MySettingsActivity, content),
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f),
         )
     }
@@ -131,31 +140,32 @@ override fun onCreate(savedInstanceState: Bundle?) {
 }
 ```
 
-Component vocabulary: `sectionRow`/`sectionLabel` (mono caps headings),
-`card`/`pressableCard`, `rowTitle`/`rowSub`/`rowLabel`/`rowValue`,
-`pillButton`/`outlinePillButton`/`textButton` (`danger = true` for red),
-`field` (text input), `dot`/`setDotColor` (status), `divider`, `metaLabel`,
-`cardBody` (body copy/notes), `iconTileImage` (plugin mark, vector drawable in
-`phone-hub/res/drawable/ic_plugin_*.xml`).
+End the screen with a "Plugin" section containing an **Uninstall** row that
+fires the system dialog — plugins must always be removable from where the
+user configures them:
 
-## 5. State, permissions, hardware
+```kotlin
+startActivity(Intent(Intent.ACTION_DELETE, Uri.parse("package:$packageName")))
+```
 
-- SharedPreferences live in the hub process; name them `nexus_plugin_<id>`.
-- Runtime permissions are requested from the plugin's settings screen (see
-  `TransitSettingsActivity` for the location flow). If the plugin needs a
-  foreground-service type (location, etc.), it must be declared on
-  `BusHubService` in phone-hub's manifest and enabled dynamically — see
-  `setTransitLocationForeground` in `BusHubService`.
-- The WebView cookie jar is shared across the whole hub — scope any cookie
-  clearing to your own domains (see `FeedsSettingsActivity.expireXCookies`).
+## 5. Install, approval, state
+
+- Installing the APK grants nothing: the hub discovers it and the user
+  approves the requested capabilities in **Rokid Nexus → Settings → Plugin
+  access** (or the Store flow). Pending/denied/disabled plugins are not
+  launchable.
+- SharedPreferences live in the plugin's own package; name the main file
+  `nexus_plugin_<id>`.
+- Uninstalling removes the plugin and all its state; the hub's grant becomes
+  stale and harmless.
 
 ## 6. Checklist
 
-1. Library module, near-empty manifest, `:shared` dependency, in
-   `settings.gradle.kts` + phone-hub deps.
-2. `NexusPlugin` implementation + runtime, unit-tested.
-3. Registered in `PhoneBuiltInPlugins.create()` and `specs()`.
-4. Settings activity in phone-hub: kit-only, `pluginHeader` + `fixedRoot`
-   shell, declared non-exported in the manifest.
-5. `./gradlew :phone-hub:assembleDebug :phone-hub:testDebugUnitTest
-   :plugin-<id>:testDebugUnitTest` green; screens verified on a phone.
+1. Application module, headless manifest (no LAUNCHER), `:bus-client` dep.
+2. `NexusPluginService` shell + runtime class, unit-tested.
+3. Settings activity on the kit: `pluginHeader` + `fixedRoot` shell, an
+   Uninstall row, declared exported without intent-filter, wired via the
+   `SETTINGS_ACTIVITY` meta-data.
+4. `./gradlew :plugin-<id>:assembleDebug :plugin-<id>:testDebugUnitTest` green.
+5. On-device: install, approve in Plugin access, launch from the glasses,
+   confirm no launcher icon appeared, confirm the uninstall dialog works.
