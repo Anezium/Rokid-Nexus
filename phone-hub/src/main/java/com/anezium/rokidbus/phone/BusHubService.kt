@@ -299,6 +299,7 @@ class BusHubService : Service() {
             context = applicationContext,
             plugins = builtInPlugins,
             sendEnvelope = { envelope -> sendRemote(envelope) },
+            capabilitiesProvider = ::capabilities,
             logger = { message -> log(message) },
             catalogProvider = {
                 PhoneBuiltInPlugins.catalog(applicationContext, builtInPlugins)

@@ -25,6 +25,11 @@ interface NexusPluginHost {
     fun send(path: String, id: String, payload: JSONObject) {
         send(path, payload)
     }
+    fun sendBinary(path: String, payload: JSONObject, data: ByteArray)
+    fun sendBinary(path: String, id: String, payload: JSONObject, data: ByteArray) {
+        sendBinary(path, payload, data)
+    }
+    fun supportsImageSurface(): Boolean
     fun subscribe(pathPrefix: String, handler: (path: String, id: String, payload: JSONObject) -> Unit): NexusSubscription
     fun post(action: () -> Unit)
     fun log(message: String)
