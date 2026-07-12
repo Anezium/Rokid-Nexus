@@ -21,6 +21,7 @@ class PluginInstallerTest {
         override fun install(
             apk: File,
             expectedPackageName: String,
+            expectedPluginId: String,
             callback: (PackageInstallEvent) -> Unit,
         ): PackageInstallSession {
             installCount++

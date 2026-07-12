@@ -27,6 +27,7 @@ class PluginPermissionsActivity : Activity() {
         super.onCreate(savedInstanceState)
         grantStore = PluginGrantStore(applicationContext)
         focusedTarget = intent?.let(::targetFromIntent)
+        focusedTarget?.let { PluginInstallRecoveryStore(applicationContext).clearSuccess(it) }
         developerDetails = getSharedPreferences(PREFERENCES, MODE_PRIVATE)
             .getBoolean(KEY_DEVELOPER_DETAILS, false)
         buildUi()

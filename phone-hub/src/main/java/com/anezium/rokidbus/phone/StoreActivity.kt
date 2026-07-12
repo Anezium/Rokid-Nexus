@@ -57,6 +57,7 @@ class StoreActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        resumeRecoveredPluginInstall()
         renderCatalog()
     }
 

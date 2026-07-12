@@ -57,6 +57,7 @@ fun interface PackageInstallGateway {
     fun install(
         apk: File,
         expectedPackageName: String,
+        expectedPluginId: String,
         callback: (PackageInstallEvent) -> Unit,
     ): PackageInstallSession
 }
@@ -150,6 +151,7 @@ class PluginInstaller(
                 activeSession = packageInstaller.install(
                     apk = apk,
                     expectedPackageName = plugin.artifact.packageName,
+                    expectedPluginId = plugin.nexus.pluginId,
                 ) { event ->
                     when (event) {
                         PackageInstallEvent.AwaitingUserConfirmation ->
@@ -282,6 +284,7 @@ private class AndroidPackageInstallGateway(private val context: Context) : Packa
     override fun install(
         apk: File,
         expectedPackageName: String,
+        expectedPluginId: String,
         callback: (PackageInstallEvent) -> Unit,
     ): PackageInstallSession {
         val packageInstaller = context.packageManager.packageInstaller
@@ -292,7 +295,7 @@ private class AndroidPackageInstallGateway(private val context: Context) : Packa
         }
         val sessionId = packageInstaller.createSession(params)
         val token = UUID.randomUUID().toString()
-        PluginInstallResultReceiver.register(token, expectedPackageName, callback)
+        PluginInstallResultReceiver.register(token, expectedPackageName, expectedPluginId, callback)
         try {
             packageInstaller.openSession(sessionId).use { session ->
                 session.openWrite("plugin.apk", 0, apk.length()).use { output ->
@@ -302,6 +305,8 @@ private class AndroidPackageInstallGateway(private val context: Context) : Packa
                 val statusIntent = Intent(context, PluginInstallResultReceiver::class.java)
                     .setAction("${context.packageName}.PLUGIN_INSTALL_RESULT.$token")
                     .putExtra(PluginInstallResultReceiver.EXTRA_TOKEN, token)
+                    .putExtra(PluginInstallResultReceiver.EXTRA_EXPECTED_PACKAGE, expectedPackageName)
+                    .putExtra(PluginInstallResultReceiver.EXTRA_EXPECTED_PLUGIN_ID, expectedPluginId)
                 val pendingIntent = PendingIntent.getBroadcast(
                     context,
                     token.hashCode(),
@@ -326,43 +331,116 @@ private class AndroidPackageInstallGateway(private val context: Context) : Packa
 class PluginInstallResultReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val token = intent.getStringExtra(EXTRA_TOKEN) ?: return
-        val pending = callbacks[token] ?: return
-        val callback = pending.callback
+        val pending = callbacks[token]
+        val expectedPackageName = pending?.expectedPackageName
+            ?: intent.getStringExtra(EXTRA_EXPECTED_PACKAGE)
+            ?: return
+        val expectedPluginId = pending?.expectedPluginId
+            ?: intent.getStringExtra(EXTRA_EXPECTED_PLUGIN_ID)
+            ?: return
+        val callback = pending?.callback
         when (val status = intent.getIntExtra(AndroidPackageInstaller.EXTRA_STATUS, AndroidPackageInstaller.STATUS_FAILURE)) {
             AndroidPackageInstaller.STATUS_PENDING_USER_ACTION -> {
-                callback(PackageInstallEvent.AwaitingUserConfirmation)
+                callback?.invoke(PackageInstallEvent.AwaitingUserConfirmation)
                 confirmationIntent(intent)?.let { confirmation ->
                     confirmation.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     runCatching { context.startActivity(confirmation) }
                         .onFailure {
                             callbacks.remove(token)
-                            callback(PackageInstallEvent.Failure("Could not open package confirmation"))
+                            dispatchTerminal(
+                                context,
+                                callback,
+                                expectedPackageName,
+                                expectedPluginId,
+                                PackageInstallEvent.Failure("Could not open package confirmation"),
+                            )
                         }
                 } ?: run {
                     callbacks.remove(token)
-                    callback(PackageInstallEvent.Failure("Package confirmation is unavailable"))
+                    dispatchTerminal(
+                        context,
+                        callback,
+                        expectedPackageName,
+                        expectedPluginId,
+                        PackageInstallEvent.Failure("Package confirmation is unavailable"),
+                    )
                 }
             }
             AndroidPackageInstaller.STATUS_SUCCESS -> {
                 callbacks.remove(token)
                 val installedPackage = intent.getStringExtra(AndroidPackageInstaller.EXTRA_PACKAGE_NAME)
-                if (installedPackage == pending.expectedPackageName) {
-                    callback(PackageInstallEvent.Success)
+                val event = if (installedPackage == expectedPackageName) {
+                    PackageInstallEvent.Success
                 } else {
-                    callback(PackageInstallEvent.Failure("Installed package identity did not match the request"))
+                    PackageInstallEvent.Failure("Installed package identity did not match the request")
                 }
+                dispatchTerminal(context, callback, expectedPackageName, expectedPluginId, event)
             }
             AndroidPackageInstaller.STATUS_FAILURE_ABORTED -> {
                 callbacks.remove(token)
-                callback(PackageInstallEvent.Cancelled)
+                dispatchTerminal(
+                    context,
+                    callback,
+                    expectedPackageName,
+                    expectedPluginId,
+                    PackageInstallEvent.Cancelled,
+                )
             }
             else -> {
                 callbacks.remove(token)
                 val message = intent.getStringExtra(AndroidPackageInstaller.EXTRA_STATUS_MESSAGE)
                     ?.takeIf(String::isNotBlank)
                     ?: "Package installation failed (status $status)"
-                callback(PackageInstallEvent.Failure(message))
+                dispatchTerminal(
+                    context,
+                    callback,
+                    expectedPackageName,
+                    expectedPluginId,
+                    PackageInstallEvent.Failure(message),
+                )
             }
+        }
+    }
+
+    private fun dispatchTerminal(
+        context: Context,
+        callback: ((PackageInstallEvent) -> Unit)?,
+        expectedPackageName: String,
+        expectedPluginId: String,
+        event: PackageInstallEvent,
+    ) {
+        if (callback != null) {
+            callback(event)
+            return
+        }
+        val recoveryStore = PluginInstallRecoveryStore(context)
+        when (event) {
+            PackageInstallEvent.Success -> {
+                val coordinator = PluginPostInstallCoordinator(
+                    discoverPackage = PhonePluginDiscovery(context.packageManager)::discoverPackage,
+                    grantState = PluginGrantStore(context)::stateFor,
+                    refreshCatalog = {},
+                )
+                when (val result = coordinator.onInstalled(expectedPackageName, expectedPluginId)) {
+                    is PluginPostInstallResult.Ready -> {
+                        recoveryStore.save(RecoveredPluginInstall.Success(result.target))
+                        runCatching {
+                            context.startActivity(
+                                PluginPermissionsActivity.intent(context, result.target)
+                                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                            )
+                        }
+                    }
+                    is PluginPostInstallResult.Failure -> {
+                        recoveryStore.save(RecoveredPluginInstall.Failure(result.reason))
+                    }
+                }
+            }
+            PackageInstallEvent.Cancelled ->
+                recoveryStore.save(RecoveredPluginInstall.Cancelled)
+            is PackageInstallEvent.Failure ->
+                recoveryStore.save(RecoveredPluginInstall.Failure(event.message))
+            PackageInstallEvent.AwaitingUserConfirmation -> Unit
         }
     }
 
@@ -372,8 +450,11 @@ class PluginInstallResultReceiver : BroadcastReceiver() {
 
     companion object {
         internal const val EXTRA_TOKEN = "plugin_install_token"
+        internal const val EXTRA_EXPECTED_PACKAGE = "plugin_install_expected_package"
+        internal const val EXTRA_EXPECTED_PLUGIN_ID = "plugin_install_expected_plugin_id"
         private data class PendingResult(
             val expectedPackageName: String,
+            val expectedPluginId: String,
             val callback: (PackageInstallEvent) -> Unit,
         )
 
@@ -382,9 +463,10 @@ class PluginInstallResultReceiver : BroadcastReceiver() {
         internal fun register(
             token: String,
             expectedPackageName: String,
+            expectedPluginId: String,
             callback: (PackageInstallEvent) -> Unit,
         ) {
-            callbacks[token] = PendingResult(expectedPackageName, callback)
+            callbacks[token] = PendingResult(expectedPackageName, expectedPluginId, callback)
         }
 
         internal fun unregister(token: String) {
