@@ -7,6 +7,10 @@ internal class LauncherReturnCoordinator {
     @Synchronized
     fun recordLauncherOpen(pluginId: String) {
         pendingPluginId = pluginId.takeIf(String::isNotBlank)
+        // Opening forward from the launcher supersedes any prior return contract;
+        // otherwise the outgoing plugin's hide (sent before the new show) would
+        // pop the launcher on top of the incoming surface.
+        launcherReturnSurfaceId = null
     }
 
     @Synchronized

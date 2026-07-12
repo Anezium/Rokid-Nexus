@@ -41,6 +41,22 @@ class LauncherReturnCoordinatorTest {
     }
 
     @Test
+    fun switchingPluginsFromLauncherDropsThePreviousReturnClaim() {
+        val coordinator = LauncherReturnCoordinator()
+
+        coordinator.recordLauncherOpen("feeds")
+        assertTrue(coordinator.onSurfaceShown("feeds"))
+
+        // User triple-taps the launcher and opens another plugin. The registry
+        // sends the old plugin's hide BEFORE the new plugin's show; that hide
+        // must not resurface the launcher over the incoming plugin.
+        coordinator.recordLauncherOpen("transit")
+        assertFalse(coordinator.consumeReturnOnHide("feeds"))
+        assertTrue(coordinator.onSurfaceShown("transit"))
+        assertTrue(coordinator.consumeReturnOnHide("transit"))
+    }
+
+    @Test
     fun reopeningLauncherClearsAnUnclaimedIntent() {
         val coordinator = LauncherReturnCoordinator()
 
