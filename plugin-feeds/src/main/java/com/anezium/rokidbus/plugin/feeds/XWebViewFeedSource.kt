@@ -95,7 +95,6 @@ class XWebViewFeedSource internal constructor(
                     text = text,
                     createdAt = now,
                     source = FeedSourceKind.X_WEBVIEW.tag,
-                    hasMedia = false,
                 ),
             ),
             nextCursor = null,

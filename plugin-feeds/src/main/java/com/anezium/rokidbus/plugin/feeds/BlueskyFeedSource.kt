@@ -38,33 +38,89 @@ class BlueskyFeedSource(
                     val item = feed.optJSONObject(index) ?: continue
                     if (item.has("reason") || item.has("reply")) continue
                     val post = item.optJSONObject("post") ?: continue
-                    val author = post.optJSONObject("author") ?: continue
-                    if (hasLoggedOutOptOut(author.optJSONArray("labels"))) continue
-                    val record = post.optJSONObject("record") ?: continue
-                    if (record.optString("\$type") != "app.bsky.feed.post") continue
-                    val id = post.optString("uri").trim()
-                    val text = record.optString("text").trim()
-                    val createdAt = parseInstant(record.optString("createdAt")) ?: continue
-                    val handle = author.optString("handle").trim()
-                    val name = author.optString("displayName").trim().ifBlank { handle }
-                    if (id.isBlank() || name.isBlank()) continue
-                    add(
-                        FeedPost(
-                            id = id,
-                            authorName = name,
-                            authorHandle = handle,
-                            text = text,
-                            createdAt = createdAt,
-                            source = FeedSourceKind.BLUESKY.tag,
-                            hasMedia = post.has("embed"),
-                        ),
-                    )
+                    parsePost(post)?.let(::add)
                 }
             }
             return FeedPage(
                 posts = posts,
                 nextCursor = root.optString("cursor").trim().takeIf(String::isNotBlank),
             )
+        }
+
+        internal fun parsePost(post: JSONObject): FeedPost? {
+            val author = post.optJSONObject("author") ?: return null
+            if (hasLoggedOutOptOut(author.optJSONArray("labels"))) return null
+            val record = post.optJSONObject("record") ?: return null
+            if (record.optString("\$type") != "app.bsky.feed.post") return null
+            val id = post.optString("uri").trim()
+            val createdAt = parseInstant(record.optString("createdAt")) ?: return null
+            val handle = author.optString("handle").trim()
+            val name = author.optString("displayName").trim().ifBlank { handle }
+            if (id.isBlank() || name.isBlank()) return null
+            return FeedPost(
+                id = id,
+                authorName = name,
+                authorHandle = handle,
+                text = record.optString("text").trim(),
+                createdAt = createdAt,
+                source = FeedSourceKind.BLUESKY.tag,
+                media = extractMedia(post.optJSONObject("embed")),
+                threadRef = id,
+            )
+        }
+
+        internal fun extractMedia(embed: JSONObject?): List<FeedMedia> {
+            if (embed == null) return emptyList()
+            return when (embed.optString("\$type")) {
+                "app.bsky.embed.recordWithMedia#view" -> extractMedia(embed.optJSONObject("media"))
+                "app.bsky.embed.images#view" -> {
+                    val images = embed.optJSONArray("images") ?: JSONArray()
+                    buildList {
+                        for (index in 0 until images.length()) {
+                            val image = images.optJSONObject(index) ?: continue
+                            val fullsize = image.optString("fullsize").trim()
+                            val thumb = image.optString("thumb").trim()
+                            if (fullsize.isBlank() && thumb.isBlank()) continue
+                            add(
+                                FeedMedia(
+                                    type = FeedMediaType.PHOTO,
+                                    url = fullsize.ifBlank { thumb },
+                                    previewUrl = thumb.ifBlank { fullsize },
+                                    altText = image.optString("alt").trim(),
+                                    durationMs = null,
+                                ),
+                            )
+                        }
+                    }
+                }
+                "app.bsky.embed.video#view" -> {
+                    val playlist = embed.optString("playlist").trim()
+                    val thumbnail = embed.optString("thumbnail").trim()
+                    if (playlist.isBlank()) emptyList() else listOf(
+                        FeedMedia(
+                            type = FeedMediaType.VIDEO,
+                            url = playlist,
+                            previewUrl = thumbnail.ifBlank { playlist },
+                            altText = embed.optString("alt").trim(),
+                            durationMs = null,
+                        ),
+                    )
+                }
+                "app.bsky.embed.external#view" -> {
+                    val external = embed.optJSONObject("external")
+                    val thumb = external?.optString("thumb").orEmpty().trim()
+                    if (thumb.isBlank()) emptyList() else listOf(
+                        FeedMedia(
+                            type = FeedMediaType.PHOTO,
+                            url = thumb,
+                            previewUrl = thumb,
+                            altText = external?.optString("description").orEmpty().trim(),
+                            durationMs = null,
+                        ),
+                    )
+                }
+                else -> emptyList()
+            }
         }
 
         private fun hasLoggedOutOptOut(labels: JSONArray?): Boolean {

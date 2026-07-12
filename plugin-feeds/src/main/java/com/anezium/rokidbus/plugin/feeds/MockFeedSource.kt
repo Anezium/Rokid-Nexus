@@ -18,7 +18,7 @@ class MockFeedSource(
                     text = sample.third,
                     createdAt = instant.minus((index * 37L) + 2L, ChronoUnit.MINUTES),
                     source = FeedSourceKind.DEMO.tag,
-                    hasMedia = index == 3 || index == 11,
+                    media = sampleMedia(index),
                 )
             },
             nextCursor = null,
@@ -26,6 +26,37 @@ class MockFeedSource(
     }
 
     private companion object {
+        fun sampleMedia(index: Int): List<FeedMedia> = when (index) {
+            3 -> (1..3).map { mediaIndex ->
+                FeedMedia(
+                    type = FeedMediaType.PHOTO,
+                    url = "https://example.invalid/demo/photo-$mediaIndex-large.jpg",
+                    previewUrl = "https://example.invalid/demo/photo-$mediaIndex-small.jpg",
+                    altText = if (mediaIndex == 1) "Green light reflecting on wet pavement after the rain." else "",
+                    durationMs = null,
+                )
+            }
+            11 -> listOf(
+                FeedMedia(
+                    type = FeedMediaType.GIF,
+                    url = "https://example.invalid/demo/sketch.gif.mp4",
+                    previewUrl = "https://example.invalid/demo/sketch-poster.jpg",
+                    altText = "A sketchbook page flipping in the station breeze.",
+                    durationMs = 4_200L,
+                ),
+            )
+            12 -> listOf(
+                FeedMedia(
+                    type = FeedMediaType.VIDEO,
+                    url = "https://example.invalid/demo/hud.mp4",
+                    previewUrl = "https://example.invalid/demo/hud-poster.jpg",
+                    altText = "A monochrome card advancing with one swipe.",
+                    durationMs = 12_000L,
+                ),
+            )
+            else -> emptyList()
+        }
+
         val SAMPLE_TEXTS = listOf(
             Triple("Maya Chen", "maya", "Morning walk, clear sky, and exactly enough coffee."),
             Triple("Noah", "noah-builds", "Shipped the tiny fix that makes the whole interaction feel calmer."),

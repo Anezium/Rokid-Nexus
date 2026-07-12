@@ -6,8 +6,6 @@ import org.json.JSONObject
 import java.io.IOException
 import java.net.URLEncoder
 import java.time.Instant
-import java.time.format.DateTimeFormatter
-import java.util.Locale
 
 class XAccountFeedSource internal constructor(
     private val cookies: XAccountCookies,
@@ -92,11 +90,6 @@ class XAccountFeedSource internal constructor(
         internal const val FIELD_TOGGLES_JSON =
             "{\"withAuxiliaryUserLabels\":false,\"withArticleRichContentState\":false}"
         internal const val RATE_LIMIT_FALLBACK_SECONDS = 15 * 60L
-        private val CREATED_AT_FORMAT = DateTimeFormatter.ofPattern(
-            "EEE MMM dd HH:mm:ss Z yyyy",
-            Locale.ENGLISH,
-        )
-
         internal fun accountHeaders(cookies: XAccountCookies, transactionId: String): Map<String, String> =
             mapOf(
                 "accept" to "*/*",
@@ -142,38 +135,11 @@ class XAccountFeedSource internal constructor(
                     if (!entry.optString("entryId").startsWith("tweet-")) continue
                     val itemContent = content.optJSONObject("itemContent") ?: continue
                     if (itemContent.has("promotedMetadata")) continue
-                    var result = itemContent.optJSONObject("tweet_results")?.optJSONObject("result") ?: continue
-                    if (!result.has("rest_id")) result = result.optJSONObject("tweet") ?: continue
-                    val legacy = result.optJSONObject("legacy") ?: continue
-                    val id = result.optString("rest_id").trim()
-                    if (id.isBlank()) continue
-                    val user = result.optJSONObject("core")
-                        ?.optJSONObject("user_results")
-                        ?.optJSONObject("result")
-                    val userCore = user?.optJSONObject("core")
-                    val userLegacy = user?.optJSONObject("legacy")
-                    val handle = userCore?.optString("screen_name").orEmpty()
-                        .ifBlank { userLegacy?.optString("screen_name").orEmpty() }
-                    val name = userCore?.optString("name").orEmpty()
-                        .ifBlank { userLegacy?.optString("name").orEmpty() }
-                        .ifBlank { handle.ifBlank { "X" } }
-                    val noteText = result.optJSONObject("note_tweet")
-                        ?.optJSONObject("note_tweet_results")
-                        ?.optJSONObject("result")
-                        ?.optString("text")
-                        ?.trim()
-                        .orEmpty()
-                    add(
-                        FeedPost(
-                            id = id,
-                            authorName = name,
-                            authorHandle = handle,
-                            text = noteText.ifBlank { legacy.optString("full_text").trim() },
-                            createdAt = parseCreatedAt(legacy.optString("created_at")) ?: fallbackNow,
-                            source = FeedSourceKind.X_ACCOUNT.tag,
-                            hasMedia = hasMedia(legacy),
-                        ),
-                    )
+                    XGraphQlParser.parseTweetResult(
+                        itemContent.optJSONObject("tweet_results")?.optJSONObject("result"),
+                        FeedSourceKind.X_ACCOUNT.tag,
+                        fallbackNow,
+                    )?.let(::add)
                 }
             }
             val nextCursor = bottomCursor
@@ -211,7 +177,6 @@ class XAccountFeedSource internal constructor(
                     text = text,
                     createdAt = now,
                     source = FeedSourceKind.X_ACCOUNT.tag,
-                    hasMedia = false,
                 ),
             ),
             nextCursor = null,
@@ -222,14 +187,6 @@ class XAccountFeedSource internal constructor(
             val cursor = content.optJSONObject("operation")?.optJSONObject("cursor") ?: return null
             return cursor.optString("value").takeIf { cursor.optString("cursorType") == type }
         }
-
-        private fun hasMedia(legacy: JSONObject): Boolean =
-            listOf("extended_entities", "entities").any { key ->
-                legacy.optJSONObject(key)?.optJSONArray("media")?.length()?.let { it > 0 } == true
-            }
-
-        private fun parseCreatedAt(value: String): Instant? =
-            runCatching { Instant.from(CREATED_AT_FORMAT.parse(value)) }.getOrNull()
 
         private fun urlEncode(value: String): String =
             URLEncoder.encode(value, Charsets.UTF_8.name())

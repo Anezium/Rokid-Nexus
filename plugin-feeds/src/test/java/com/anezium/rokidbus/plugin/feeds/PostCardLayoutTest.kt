@@ -19,7 +19,8 @@ class PostCardLayoutTest {
         )
 
         assertEquals("Ada Lovelace \u00b7 18m", card.lines[0])
-        assertEquals("Hello HUD", card.lines[1])
+        assertEquals("@ada", card.lines[1])
+        assertEquals("Hello HUD", card.lines[2])
         assertEquals("bsky 3/25", card.footer)
         assertFalse(card.truncated)
     }
@@ -38,7 +39,7 @@ class PostCardLayoutTest {
     fun multilinePost_preservesExplicitLineBreaks() {
         val card = PostCardLayout.layout(post("first line\nsecond line\nthird line"), now, 0, 1)
 
-        assertEquals(listOf("first line", "second line", "third line"), card.lines.drop(1))
+        assertEquals(listOf("first line", "second line", "third line"), card.lines.drop(2))
     }
 
     @Test
@@ -46,8 +47,8 @@ class PostCardLayoutTest {
         val text = ("0123456789".repeat(28)).also { assertEquals(280, it.length) }
         val card = PostCardLayout.layout(post(text), now, 0, 1)
 
-        assertFalse(card.truncated)
-        assertEquals(1, card.pageCount)
+        assertTrue(card.truncated)
+        assertEquals(2, card.pageCount)
         assertEquals(PostCardLayout.CARD_ROWS, card.lines.size)
         assertTrue(card.lines.all { it.length <= PostCardLayout.LINE_CHARS })
     }
@@ -63,16 +64,79 @@ class PostCardLayoutTest {
     }
 
     @Test
-    fun mediaPost_appendsMarkerBeforeWrapping() {
-        val card = PostCardLayout.layout(post("Photo", hasMedia = true), now, 0, 1)
+    fun mediaPost_appendsTypedMarkerAndAltBeforeWrapping() {
+        val card = PostCardLayout.layout(
+            post(
+                "Photo",
+                media = listOf(
+                    media(FeedMediaType.PHOTO, "A cat sleeping on a chair"),
+                    media(FeedMediaType.PHOTO),
+                ),
+            ),
+            now,
+            0,
+            1,
+        )
 
-        assertEquals("Photo [+media]", card.lines[1])
+        assertEquals("Photo [2 photos] (A cat", card.lines[2])
+        assertEquals("sleeping on a chair)", card.lines[3])
+    }
+
+    @Test
+    fun header_usesTwoLinesTruncatesAndSkipsBlankHandle() {
+        val withHandle = PostCardLayout.layout(
+            post("Body").copy(authorName = "A name that is much too long", authorHandle = "a-handle-that-is-also-too-long"),
+            now,
+            0,
+            1,
+        )
+        val blankHandle = PostCardLayout.layout(post("Body").copy(authorHandle = ""), now, 0, 1)
+
+        assertEquals(26, withHandle.lines[0].length)
+        assertEquals("@a-handle-that-is-also-too", withHandle.lines[1])
+        assertEquals("Body", withHandle.lines[2])
+        assertEquals(listOf("Ada Lovelace \u00b7 1h", "Body"), blankHandle.lines)
+    }
+
+    @Test
+    fun typedMarkers_coverGifAndTimedVideo() {
+        assertEquals("[GIF]", PostCardLayout.mediaMarker(listOf(media(FeedMediaType.GIF))))
+        assertEquals("[video 1:05]", PostCardLayout.mediaMarker(listOf(media(FeedMediaType.VIDEO, durationMs = 65_000L))))
+    }
+
+    @Test
+    fun galleryPlaceholder_hasPostHeaderDescriptorAltAndFooter() {
+        val post = post(
+            "Ignored in gallery",
+            media = listOf(media(FeedMediaType.PHOTO), media(FeedMediaType.PHOTO, "A second photo")),
+        )
+
+        val card = PostCardLayout.renderGalleryItem(post, 1, now)
+
+        assertEquals(listOf("Ada Lovelace \u00b7 1h", "@ada", "Photo 2/2", "A second photo"), card.lines)
+        assertEquals("bsky media 2/2", card.footer)
+        assertEquals(1, card.pageIndex)
+        assertEquals(2, card.pageCount)
+    }
+
+    @Test
+    fun contentKey_staysWithinSurfaceLimitForMaximalCard() {
+        val card = FeedCardContent(
+            title = "T".repeat(120),
+            lines = List(12) { "x".repeat(26) },
+            footer = "f".repeat(26),
+            truncated = true,
+            pageIndex = 0,
+            pageCount = 2,
+        )
+
+        assertTrue(card.contentKey().length <= 128)
     }
 
     private fun post(
         text: String,
         createdAt: Instant = Instant.parse("2026-07-11T11:00:00Z"),
-        hasMedia: Boolean = false,
+        media: List<FeedMedia> = emptyList(),
     ) = FeedPost(
         id = "post",
         authorName = "Ada Lovelace",
@@ -80,6 +144,12 @@ class PostCardLayoutTest {
         text = text,
         createdAt = createdAt,
         source = "bsky",
-        hasMedia = hasMedia,
+        media = media,
     )
+
+    private fun media(
+        type: FeedMediaType,
+        altText: String = "",
+        durationMs: Long? = null,
+    ) = FeedMedia(type, "https://example.invalid/full", "https://example.invalid/preview", altText, durationMs)
 }
