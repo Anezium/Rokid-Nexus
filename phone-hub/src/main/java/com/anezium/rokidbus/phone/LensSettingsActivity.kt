@@ -116,10 +116,6 @@ class LensSettingsActivity : Activity() {
         window.navigationBarColor = NexusUi.BG
 
         val content = NexusUi.contentColumn(this).apply {
-            addView(BusTheme.wordmark(this@LensSettingsActivity, "Rokid Nexus"), NexusUi.block())
-            addView(BusTheme.gap(this@LensSettingsActivity, 18))
-            addView(NexusUi.hero(this@LensSettingsActivity).apply { text = "Lens" }, NexusUi.block())
-            addView(BusTheme.gap(this@LensSettingsActivity, 8))
             addView(
                 NexusUi.cardBody(
                     this@LensSettingsActivity,
@@ -127,7 +123,7 @@ class LensSettingsActivity : Activity() {
                 ),
                 NexusUi.block(),
             )
-            addView(BusTheme.gap(this@LensSettingsActivity, 28))
+            addView(BusTheme.gap(this@LensSettingsActivity, 18))
             addView(NexusUi.sectionRow(this@LensSettingsActivity, "Output language"), NexusUi.block())
             addView(BusTheme.gap(this@LensSettingsActivity, 12))
             addView(outputLanguageCard(), NexusUi.block())
@@ -170,21 +166,18 @@ class LensSettingsActivity : Activity() {
             )
         }
 
-        val scroll = ScrollView(this).apply {
-            setBackgroundColor(NexusUi.BG)
-            isFillViewport = true
-            isVerticalScrollBarEnabled = false
-            addView(
-                content,
-                ViewGroup.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT,
-                ),
-            )
-        }
         val root = NexusUi.fixedRoot(this).apply {
             addView(
-                scroll,
+                NexusUi.pluginHeader(
+                    this@LensSettingsActivity,
+                    R.drawable.ic_plugin_lens,
+                    "Lens",
+                    "Camera translation · v1.0",
+                ),
+                NexusUi.block(),
+            )
+            addView(
+                NexusUi.screen(this@LensSettingsActivity, content),
                 LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     0,

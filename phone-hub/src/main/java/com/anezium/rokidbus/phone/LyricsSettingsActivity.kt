@@ -144,7 +144,15 @@ class LyricsSettingsActivity : Activity() {
         }
 
         val root = NexusUi.fixedRoot(this).apply {
-            addView(pluginHeader(), NexusUi.block())
+            addView(
+                NexusUi.pluginHeader(
+                    this@LyricsSettingsActivity,
+                    R.drawable.ic_plugin_music,
+                    "Lyrics",
+                    "Now-playing lyrics · v1.0",
+                ),
+                NexusUi.block(),
+            )
             addView(
                 scroll,
                 LinearLayout.LayoutParams(
@@ -157,49 +165,6 @@ class LyricsSettingsActivity : Activity() {
         setShowOnGlasses(showOnGlasses(), persist = false)
         setContentView(root)
     }
-
-    private fun pluginHeader(): LinearLayout =
-        LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            addView(
-                LinearLayout(this@LyricsSettingsActivity).apply {
-                    orientation = LinearLayout.HORIZONTAL
-                    gravity = Gravity.CENTER_VERTICAL
-                    setPadding(
-                        NexusUi.dp(this@LyricsSettingsActivity, 22),
-                        NexusUi.dp(this@LyricsSettingsActivity, 18),
-                        NexusUi.dp(this@LyricsSettingsActivity, 22),
-                        NexusUi.dp(this@LyricsSettingsActivity, 18),
-                    )
-                    addView(NexusUi.iconTileImage(this@LyricsSettingsActivity, R.drawable.ic_plugin_music, 48))
-                    addView(
-                        LinearLayout(this@LyricsSettingsActivity).apply {
-                            orientation = LinearLayout.VERTICAL
-                            addView(
-                                NexusUi.cardTitle(this@LyricsSettingsActivity, "Lyrics").apply {
-                                    textSize = 20f
-                                },
-                            )
-                            addView(BusTheme.gap(this@LyricsSettingsActivity, 5))
-                            addView(NexusUi.rowSub(this@LyricsSettingsActivity, "Now-playing lyrics \u00B7 v1.0"))
-                        },
-                        LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
-                            marginStart = NexusUi.dp(this@LyricsSettingsActivity, 14)
-                        },
-                    )
-                },
-                NexusUi.block(),
-            )
-            addView(
-                View(this@LyricsSettingsActivity).apply {
-                    setBackgroundColor(NexusUi.LINE)
-                    layoutParams = LinearLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        NexusUi.dp(this@LyricsSettingsActivity, 1),
-                    )
-                },
-            )
-        }
 
     private fun settingRow(
         title: String,

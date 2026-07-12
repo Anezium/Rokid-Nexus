@@ -93,7 +93,15 @@ class MediaDeckSettingsActivity : Activity() {
         }
 
         val root = NexusUi.fixedRoot(this).apply {
-            addView(pluginHeader(), NexusUi.block())
+            addView(
+                NexusUi.pluginHeader(
+                    this@MediaDeckSettingsActivity,
+                    R.drawable.ic_plugin_disc,
+                    "Media Deck",
+                    "Universal now playing · v1.0",
+                ),
+                NexusUi.block(),
+            )
             addView(
                 scroll,
                 LinearLayout.LayoutParams(
@@ -105,49 +113,6 @@ class MediaDeckSettingsActivity : Activity() {
         }
         setContentView(root)
     }
-
-    private fun pluginHeader(): LinearLayout =
-        LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            addView(
-                LinearLayout(this@MediaDeckSettingsActivity).apply {
-                    orientation = LinearLayout.HORIZONTAL
-                    gravity = Gravity.CENTER_VERTICAL
-                    setPadding(
-                        NexusUi.dp(this@MediaDeckSettingsActivity, 22),
-                        NexusUi.dp(this@MediaDeckSettingsActivity, 18),
-                        NexusUi.dp(this@MediaDeckSettingsActivity, 22),
-                        NexusUi.dp(this@MediaDeckSettingsActivity, 18),
-                    )
-                    addView(NexusUi.iconTileImage(this@MediaDeckSettingsActivity, R.drawable.ic_plugin_disc, 48))
-                    addView(
-                        LinearLayout(this@MediaDeckSettingsActivity).apply {
-                            orientation = LinearLayout.VERTICAL
-                            addView(
-                                NexusUi.cardTitle(this@MediaDeckSettingsActivity, "Media Deck").apply {
-                                    textSize = 20f
-                                },
-                            )
-                            addView(BusTheme.gap(this@MediaDeckSettingsActivity, 5))
-                            addView(NexusUi.rowSub(this@MediaDeckSettingsActivity, "Universal now playing · v1.0"))
-                        },
-                        LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
-                            marginStart = NexusUi.dp(this@MediaDeckSettingsActivity, 14)
-                        },
-                    )
-                },
-                NexusUi.block(),
-            )
-            addView(
-                View(this@MediaDeckSettingsActivity).apply {
-                    setBackgroundColor(NexusUi.LINE)
-                    layoutParams = LinearLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        NexusUi.dp(this@MediaDeckSettingsActivity, 1),
-                    )
-                },
-            )
-        }
 
     private fun settingRow(
         title: String,
