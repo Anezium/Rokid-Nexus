@@ -2,12 +2,17 @@ package com.anezium.rokidbus.plugin.feeds
 
 import android.view.KeyEvent
 import com.anezium.rokidbus.shared.plugin.NexusInputEvent
+import com.anezium.rokidbus.shared.ImageSurfaceContract
 import kotlinx.coroutines.Dispatchers
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.Instant
+import kotlin.coroutines.Continuation
+import kotlin.coroutines.resume
+import kotlin.coroutines.suspendCoroutine
 
 class FeedsRuntimeTest {
     private val now = Instant.parse("2026-07-12T12:00:00Z")
@@ -113,12 +118,92 @@ class FeedsRuntimeTest {
         assertEquals("demo 2/7", host.last.footer)
     }
 
-    private fun runtime(source: FeedSource, host: FakeHost) = FeedsRuntime(
+    @Test
+    fun galleryWithoutImageCapability_keepsTextPlaceholder() {
+        val host = FakeHost(supportsImage = false)
+        val runtime = runtime(
+            FakeSource(FeedPage(listOf(focalPost()), null), FeedThread(listOf(focalPost()), 0)),
+            host,
+            imageLoader = FeedImageLoader { error("must not load") },
+        )
+
+        runtime.openGallery()
+
+        assertTrue(host.last.lines.contains("Photo 1/2"))
+        assertTrue(host.images.isEmpty())
+    }
+
+    @Test
+    fun galleryWithImageCapability_emitsImageAndBackReplacesItWithCard() {
+        val host = FakeHost(supportsImage = true)
+        val runtime = runtime(
+            FakeSource(FeedPage(listOf(focalPost()), null), FeedThread(listOf(focalPost()), 0)),
+            host,
+            imageLoader = FeedImageLoader { validImageFrame() },
+        )
+
+        runtime.openGallery()
+
+        assertEquals(1, host.images.size)
+        assertEquals("image", host.events.last())
+        assertEquals("demo photo 1/2", host.images.single().first.getString("footer"))
+
+        runtime.key(KeyEvent.KEYCODE_BACK)
+
+        assertEquals("card", host.events.last())
+        assertEquals("demo thread 1/1", host.last.footer)
+    }
+
+    @Test
+    fun galleryImageFailure_replacesLoadingCardWithTextFallback() {
+        val host = FakeHost(supportsImage = true)
+        val runtime = runtime(
+            FakeSource(FeedPage(listOf(focalPost()), null), FeedThread(listOf(focalPost()), 0)),
+            host,
+            imageLoader = FeedImageLoader { null },
+        )
+
+        runtime.openGallery()
+
+        assertTrue(host.images.isEmpty())
+        assertTrue(host.last.lines.contains("Photo 1/2"))
+    }
+
+    @Test
+    fun lateGalleryResultAfterIndexChange_doesNotReplaceNewerView() {
+        val loader = DeferredImageLoader()
+        val host = FakeHost(supportsImage = true)
+        val runtime = runtime(
+            FakeSource(FeedPage(listOf(focalPost()), null), FeedThread(listOf(focalPost()), 0)),
+            host,
+            imageLoader = loader,
+        )
+        runtime.openGallery()
+        assertEquals(1, loader.requests.size)
+
+        runtime.key(KeyEvent.KEYCODE_MEDIA_NEXT)
+        assertEquals(2, loader.requests.size)
+        assertTrue(host.last.lines.single().startsWith("Loading photo"))
+
+        loader.complete(0, validImageFrame())
+        assertTrue(host.images.isEmpty())
+
+        loader.complete(1, validImageFrame())
+        assertEquals(1, host.images.size)
+        assertEquals("demo video 0:12 2/2", host.images.single().first.getString("footer"))
+    }
+
+    private fun runtime(
+        source: FeedSource,
+        host: FakeHost,
+        imageLoader: FeedImageLoader = FeedImageLoader { null },
+    ) = FeedsRuntime(
         context = null,
         host = host,
         settings = { settings() },
         sourceFactory = { source },
         ioDispatcher = Dispatchers.Unconfined,
+        imageLoader = imageLoader,
         now = { now },
     )
 
@@ -165,6 +250,32 @@ class FeedsRuntimeTest {
         input(NexusInputEvent("feeds", keyCode, KeyEvent.ACTION_DOWN))
     }
 
+    private fun FeedsRuntime.openGallery() {
+        open()
+        key(KeyEvent.KEYCODE_ENTER)
+        key(KeyEvent.KEYCODE_DPAD_CENTER)
+    }
+
+    private fun validImageFrame(): FeedImageFrame {
+        val bytes = byteArrayOf(
+            0xff.toByte(), 0xd8.toByte(),
+            0xff.toByte(), 0xc0.toByte(), 0x00, 0x0b,
+            0x08, 0x00, 0x01, 0x00, 0x01,
+            0x01, 0x01, 0x11, 0x00,
+            0xff.toByte(), 0xd9.toByte(),
+        )
+        return FeedImageFrame(
+            contentKey = "feed-test",
+            pixelWidth = 1,
+            pixelHeight = 1,
+            mimeType = ImageSurfaceContract.MIME_JPEG,
+            sha256 = ImageSurfaceContract.sha256(bytes),
+            bytes = bytes,
+            jpegQuality = 85,
+            contrastFactor = FeedImagePipeline.DEFAULT_CONTRAST_FACTOR,
+        )
+    }
+
     private class FakeSource(
         private val page: FeedPage,
         private val thread: FeedThread,
@@ -200,15 +311,25 @@ class FeedsRuntimeTest {
         )
     }
 
-    private class FakeHost : FeedsRuntimeHost {
+    private class FakeHost(private val supportsImage: Boolean = false) : FeedsRuntimeHost {
         val cards = mutableListOf<Pair<FeedCardContent, Boolean>>()
+        val images = mutableListOf<Pair<JSONObject, ByteArray>>()
+        val events = mutableListOf<String>()
         val logs = mutableListOf<String>()
         var hidden = false
         val last: FeedCardContent get() = cards.last().first
 
         override fun sendCard(card: FeedCardContent, show: Boolean) {
             cards += card to show
+            events += "card"
         }
+
+        override fun sendImage(payload: JSONObject, bytes: ByteArray) {
+            images += payload to bytes
+            events += "image"
+        }
+
+        override fun supportsImage(): Boolean = supportsImage
 
         override fun hideSurface() {
             hidden = true
@@ -218,6 +339,18 @@ class FeedsRuntimeTest {
 
         override fun log(message: String) {
             logs += message
+        }
+    }
+
+    private class DeferredImageLoader : FeedImageLoader {
+        val requests = mutableListOf<Continuation<FeedImageFrame?>>()
+
+        override suspend fun load(media: FeedMedia): FeedImageFrame? = suspendCoroutine { continuation ->
+            requests += continuation
+        }
+
+        fun complete(index: Int, frame: FeedImageFrame?) {
+            requests[index].resume(frame)
         }
     }
 }

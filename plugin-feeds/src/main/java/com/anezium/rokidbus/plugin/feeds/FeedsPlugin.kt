@@ -34,6 +34,19 @@ class FeedsPlugin : NexusPlugin {
             surfaceShown = true
         }
 
+        override fun sendImage(payload: JSONObject, bytes: ByteArray) {
+            host.sendBinary(
+                if (!surfaceShown) BusPaths.SURFACE_SHOW else BusPaths.SURFACE_UPDATE,
+                JSONObject(payload.toString())
+                    .put("surfaceId", SURFACE_ID)
+                    .put("handlesBack", true),
+                bytes,
+            )
+            surfaceShown = true
+        }
+
+        override fun supportsImage(): Boolean = host.supportsImageSurface()
+
         override fun hideSurface() {
             if (!surfaceShown) return
             host.send(BusPaths.SURFACE_HIDE, JSONObject().put("surfaceId", SURFACE_ID))

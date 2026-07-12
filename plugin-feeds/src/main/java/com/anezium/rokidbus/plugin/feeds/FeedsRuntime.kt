@@ -2,6 +2,8 @@ package com.anezium.rokidbus.plugin.feeds
 
 import android.content.Context
 import android.view.KeyEvent
+import com.anezium.rokidbus.shared.ImageSurfaceContract
+import com.anezium.rokidbus.shared.ImageSurfaceValidationResult
 import com.anezium.rokidbus.shared.plugin.NexusInputEvent
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
@@ -10,10 +12,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import org.json.JSONObject
 import java.time.Instant
 
 internal interface FeedsRuntimeHost {
     fun sendCard(card: FeedCardContent, show: Boolean)
+    fun sendImage(payload: JSONObject, bytes: ByteArray)
+    fun supportsImage(): Boolean
     fun hideSurface()
     fun post(action: () -> Unit)
     fun log(message: String)
@@ -27,6 +32,7 @@ internal class FeedsRuntime(
         defaultSource(requireNotNull(context).applicationContext, it)
     },
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    private val imageLoader: FeedImageLoader = FeedImagePipeline(),
     private val now: () -> Instant = Instant::now,
 ) {
     private val timeline = FeedTimeline()
@@ -38,8 +44,10 @@ internal class FeedsRuntime(
     private var galleryIndex = 0
     private var pageFetchJob: Job? = null
     private var threadFetchJob: Job? = null
+    private var imageFetchJob: Job? = null
     private var generation = 0L
     private var threadGeneration = 0L
+    private var imageGeneration = 0L
     private var visible = false
 
     fun open() {
@@ -245,9 +253,84 @@ internal class FeedsRuntime(
     }
 
     private fun renderCurrent() {
+        if (level == NavigationLevel.GALLERY) {
+            renderGallery()
+            return
+        }
+        closeImageFetch()
         val card = currentCard() ?: return
         host.sendCard(card, show = false)
     }
+
+    private fun renderGallery() {
+        val post = currentThreadPost() ?: return
+        val media = post.media.getOrNull(galleryIndex) ?: return
+        closeImageFetch()
+        if (!host.supportsImage() || !media.hasDisplayableImageUrl()) {
+            host.sendCard(PostCardLayout.renderGalleryItem(post, galleryIndex, now()), show = false)
+            return
+        }
+
+        val requestGeneration = imageGeneration
+        val runtimeGeneration = generation
+        val requestIndex = galleryIndex
+        val requestPostId = post.id
+        host.sendCard(
+            PostCardLayout.message(
+                "Loading photo… (${requestIndex + 1}/${post.media.size})",
+                "${post.source} media ${requestIndex + 1}/${post.media.size}",
+            ),
+            show = false,
+        )
+        imageFetchJob = CoroutineScope(SupervisorJob() + ioDispatcher).launch {
+            try {
+                val frame = imageLoader.load(media)
+                host.post {
+                    if (!isCurrentGalleryRequest(runtimeGeneration, requestGeneration, requestPostId, requestIndex)) {
+                        return@post
+                    }
+                    if (frame == null || !host.supportsImage()) {
+                        host.sendCard(PostCardLayout.renderGalleryItem(post, requestIndex, now()), show = false)
+                        return@post
+                    }
+                    val payload = frame.payload()
+                        .put("caption", media.altText.trim().take(ImageSurfaceContract.MAX_TEXT_CHARS))
+                        .put("footer", galleryFooter(post, media, requestIndex))
+                        .put("handlesBack", true)
+                    if (ImageSurfaceContract.validate(payload, frame.bytes) is ImageSurfaceValidationResult.Valid) {
+                        host.sendImage(payload, frame.bytes)
+                    } else {
+                        host.sendCard(PostCardLayout.renderGalleryItem(post, requestIndex, now()), show = false)
+                    }
+                }
+            } catch (failure: CancellationException) {
+                throw failure
+            } catch (failure: Throwable) {
+                host.post {
+                    if (!isCurrentGalleryRequest(runtimeGeneration, requestGeneration, requestPostId, requestIndex)) {
+                        return@post
+                    }
+                    host.log(
+                        "gallery image failed source=${post.source} type=${media.type.name.lowercase()}: " +
+                            failure.javaClass.simpleName,
+                    )
+                    host.sendCard(PostCardLayout.renderGalleryItem(post, requestIndex, now()), show = false)
+                }
+            }
+        }
+    }
+
+    private fun isCurrentGalleryRequest(
+        runtimeGeneration: Long,
+        requestGeneration: Long,
+        postId: String,
+        mediaIndex: Int,
+    ): Boolean = visible &&
+        generation == runtimeGeneration &&
+        imageGeneration == requestGeneration &&
+        level == NavigationLevel.GALLERY &&
+        galleryIndex == mediaIndex &&
+        currentThreadPost()?.id == postId
 
     private fun currentCard(): FeedCardContent? = when (level) {
         NavigationLevel.FEED -> currentFeedCard()
@@ -288,10 +371,17 @@ internal class FeedsRuntime(
     private fun closeFetch() {
         generation++
         threadGeneration++
+        closeImageFetch()
         pageFetchJob?.cancel()
         pageFetchJob = null
         threadFetchJob?.cancel()
         threadFetchJob = null
+    }
+
+    private fun closeImageFetch() {
+        imageGeneration++
+        imageFetchJob?.cancel()
+        imageFetchJob = null
     }
 
     private fun closeSource() {
@@ -300,6 +390,30 @@ internal class FeedsRuntime(
     }
 
     private companion object {
+        fun FeedMedia.hasDisplayableImageUrl(): Boolean {
+            val candidate = previewUrl.trim().ifBlank { url.trim() }
+            return candidate.startsWith("https://", ignoreCase = true) ||
+                candidate.startsWith("http://", ignoreCase = true)
+        }
+
+        fun galleryFooter(post: FeedPost, media: FeedMedia, index: Int): String {
+            val type = when (media.type) {
+                FeedMediaType.PHOTO -> "photo"
+                FeedMediaType.GIF -> "GIF"
+                FeedMediaType.VIDEO -> buildString {
+                    append("video")
+                    duration(media.durationMs)?.let { append(" $it") }
+                }
+            }
+            return "${post.source} $type ${index + 1}/${post.media.size}"
+                .take(ImageSurfaceContract.MAX_TEXT_CHARS)
+        }
+
+        fun duration(durationMs: Long?): String? = durationMs
+            ?.coerceAtLeast(0L)
+            ?.div(1_000L)
+            ?.let { seconds -> "${seconds / 60}:${(seconds % 60).toString().padStart(2, '0')}" }
+
         fun defaultSource(context: Context, settings: FeedsSettings): FeedSource = when (settings.source) {
             FeedSourceKind.BLUESKY -> BlueskyFeedSource(settings.blueskyFeedGeneratorUri)
             FeedSourceKind.X_ACCOUNT -> XAccountFeedSource(settings.xAccountCookies)
