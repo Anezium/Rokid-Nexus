@@ -13,7 +13,6 @@ import com.anezium.rokidbus.shared.ImageSurfaceContract
 import com.anezium.rokidbus.shared.ImageSurfaceValidationResult
 import com.anezium.rokidbus.shared.MediaArtworkContract
 import org.json.JSONObject
-import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executors
 
@@ -22,7 +21,7 @@ object SurfaceController {
     private const val PREF_DISPLAY_PATH = "display_path"
     private const val BACK_FAILSAFE_MS = 1_500L
     private val main = Handler(Looper.getMainLooper())
-    private val latestSeqBySurface = ConcurrentHashMap<String, Long>()
+    private val orderingCoordinator = SurfaceOrderingCoordinator<JSONObject>()
     private val listeners = CopyOnWriteArrayList<(NexusSurface?) -> Unit>()
     private val inputDedupe = DpadPairDedupe()
     private val suppressedDpadUps = mutableSetOf<Int>()
@@ -66,56 +65,99 @@ object SurfaceController {
             BusPaths.SURFACE_SHOW,
             BusPaths.SURFACE_UPDATE,
             -> {
-                if (isUnmatchedAnchorOnlyUpdate(envelope.payload)) return true
-                val surface = runCatching { NexusSurface.fromPayload(envelope.payload, active) }
-                    .onFailure { logError("Surface parse failed", it) }
-                    .getOrNull()
-                    ?: return true
-                if (surface.isImage ||
-                    (surface.isMedia &&
-                        (MediaArtworkContract.hasBinaryArtwork(envelope.payload) || envelope.binary != null))
-                ) {
-                    val validation = if (surface.isImage) {
-                        ImageSurfaceContract.validate(envelope.payload, envelope.binary)
-                    } else {
-                        MediaArtworkContract.validate(envelope.payload, envelope.binary)
-                    }
-                    if (validation !is ImageSurfaceValidationResult.Valid) {
-                        val code = (validation as? ImageSurfaceValidationResult.Invalid)?.code
-                            ?: ImageSurfaceContract.ERROR_INVALID_IMAGE
-                        log("Image surface rejected id=${surface.surfaceId} code=$code")
-                        return true
-                    }
-                    if (surface.isMedia && surface.imageBitmap != null) {
-                        showOrUpdate(
-                            context.applicationContext,
-                            surface,
-                            launcherShow = envelope.path == BusPaths.SURFACE_SHOW,
-                        )
-                    } else {
-                        showOrUpdateImage(
-                            context.applicationContext,
-                            surface,
-                            envelope.binary!!,
-                            launcherShow = envelope.path == BusPaths.SURFACE_SHOW,
-                        )
-                    }
-                } else {
-                    showOrUpdate(
-                        context.applicationContext,
-                        surface,
-                        launcherShow = envelope.path == BusPaths.SURFACE_SHOW,
-                    )
-                }
+                runOnMain { processShowOrUpdate(context.applicationContext, envelope) }
                 true
             }
             BusPaths.SURFACE_HIDE -> {
                 val surfaceId = envelope.payload.optString("surfaceId")
                 val seq = envelope.payload.optLong("seq", 0L)
-                hideRemote(surfaceId, seq)
+                runOnMain { hideRemote(surfaceId, seq) }
                 true
             }
             else -> false
+        }
+    }
+
+    private fun processShowOrUpdate(context: Context, envelope: BusEnvelope) {
+        val payload = envelope.payload
+        if (envelope.path == BusPaths.SURFACE_UPDATE && isAnchorOnlyUpdate(payload)) {
+            processAnchorUpdate(context, payload)
+            return
+        }
+
+        val previous = active
+        var surface = runCatching { NexusSurface.fromPayload(payload, previous) }
+            .onFailure { logError("Surface parse failed", it) }
+            .getOrNull()
+            ?: return
+        val carriesImage = surface.isImage ||
+            (surface.isMedia &&
+                (MediaArtworkContract.hasBinaryArtwork(payload) || envelope.binary != null))
+        if (carriesImage) {
+            val validation = if (surface.isImage) {
+                ImageSurfaceContract.validate(payload, envelope.binary)
+            } else {
+                MediaArtworkContract.validate(payload, envelope.binary)
+            }
+            if (validation !is ImageSurfaceValidationResult.Valid) {
+                val code = (validation as? ImageSurfaceValidationResult.Invalid)?.code
+                    ?: ImageSurfaceContract.ERROR_INVALID_IMAGE
+                log("Image surface rejected id=${surface.surfaceId} code=$code")
+                return
+            }
+        }
+
+        val baseOrder = surface.toSurfaceOrder()
+        when (val decision = orderingCoordinator.onBase(baseOrder)) {
+            is SurfaceOrderDecision.Drop -> {
+                logOrderDrop(surface.surfaceId, surface.seq, decision)
+                return
+            }
+            is SurfaceOrderDecision.ApplyBase -> {
+                if (decision.pendingAnchor != null) {
+                    val pending = decision.pendingAnchor
+                    surface = runCatching { NexusSurface.fromPayload(pending.value, surface) }
+                        .onFailure { logError("Pending surface anchor parse failed", it) }
+                        .getOrDefault(surface)
+                } else if (decision.appliedAnchorSeqToPreserve != null) {
+                    surface = surface.copy(
+                        seq = decision.appliedAnchorSeqToPreserve,
+                        anchor = previous?.anchor,
+                    )
+                }
+            }
+            else -> return
+        }
+
+        val launcherShow = envelope.path == BusPaths.SURFACE_SHOW
+        if (carriesImage && !(surface.isMedia && surface.imageBitmap != null)) {
+            showOrUpdateImage(
+                context = context,
+                surface = surface,
+                bytes = envelope.binary!!,
+                baseOrder = baseOrder,
+                launcherShow = launcherShow,
+            )
+        } else {
+            showOrUpdate(context, surface, launcherShow = launcherShow)
+        }
+    }
+
+    private fun processAnchorUpdate(context: Context, payload: JSONObject) {
+        val order = payload.toSurfaceOrder()
+        when (val decision = orderingCoordinator.onAnchor(order, payload)) {
+            SurfaceOrderDecision.ApplyAnchor -> {
+                val surface = runCatching { NexusSurface.fromPayload(payload, active) }
+                    .onFailure { logError("Surface anchor parse failed", it) }
+                    .getOrNull()
+                    ?: return
+                showOrUpdate(context, surface)
+            }
+            SurfaceOrderDecision.StashAnchor -> {
+                log("Surface anchor stashed until matching base arrives id=${order.surfaceId} kind=${order.kind}")
+            }
+            is SurfaceOrderDecision.Drop -> logOrderDrop(order.surfaceId, order.seq, decision)
+            else -> Unit
         }
     }
 
@@ -191,10 +233,8 @@ object SurfaceController {
         forcedPath: SurfaceDisplayPath? = null,
         launcherShow: Boolean = false,
     ) {
-        if (!acceptSequence(surface)) return
         if (launcherShow) launcherReturnCoordinator.onSurfaceShown(surface.surfaceId)
-        main.post {
-            if (latestSeqBySurface[surface.surfaceId] != surface.seq) return@post
+        runOnMain {
             val keepMediaDecode = surface.isMedia && surface.mediaArtworkMetadata != null &&
                 imageDecodeCoordinator.isCurrent(surface.surfaceId, surface.contentKey)
             val coordinated = if (keepMediaDecode) null else imageDecodeCoordinator.invalidate()
@@ -202,6 +242,7 @@ object SurfaceController {
             recycleActiveImageUnless(surface.imageBitmap ?: coordinated)
             cancelBackFailsafeOnMain(surface.surfaceId)
             wakeScreen(context)
+            deactivateReplacedSurface(surface.surfaceId)
             active = surface
             notifyListeners(surface)
             displaySurface(context, surface, forcedPath)
@@ -212,14 +253,14 @@ object SurfaceController {
         context: Context,
         surface: NexusSurface,
         bytes: ByteArray,
+        baseOrder: SurfaceOrder,
         launcherShow: Boolean = false,
     ) {
-        if (!acceptSequence(surface)) return
         if (launcherShow) launcherReturnCoordinator.onSurfaceShown(surface.surfaceId)
         val metadata = surface.imageMetadata ?: surface.mediaArtworkMetadata ?: return
-        val key = ImageDecodeKey(surface.surfaceId, surface.seq, metadata.contentKey)
-        main.post {
-            if (latestSeqBySurface[surface.surfaceId] != surface.seq) return@post
+        val key = ImageDecodeKey(surface.surfaceId, baseOrder.seq, metadata.contentKey)
+        runOnMain {
+            if (!orderingCoordinator.isCurrentBase(baseOrder)) return@runOnMain
             // Keep the previously published HUD/bitmap until this body decodes.
             // begin() invalidates older work; active still owns the visible bitmap.
             imageDecodeCoordinator.begin(key)
@@ -227,6 +268,7 @@ object SurfaceController {
                 recycleActiveImageUnless(surface.imageBitmap)
                 cancelBackFailsafeOnMain(surface.surfaceId)
                 wakeScreen(context)
+                deactivateReplacedSurface(surface.surfaceId)
                 active = surface
                 notifyListeners(surface)
                 displaySurface(context, surface, null)
@@ -251,7 +293,7 @@ object SurfaceController {
                                         it.mediaArtworkMetadata?.sha256 == metadata.sha256
                                 }
                             } else {
-                                surface.takeIf { latestSeqBySurface[key.surfaceId] == key.seq }
+                                surface.takeIf { orderingCoordinator.isCurrentBase(baseOrder) }
                             }
                             if (target == null) {
                                 imageDecodeCoordinator.invalidate(key.surfaceId)?.recycleSafely()
@@ -271,17 +313,6 @@ object SurfaceController {
         }
     }
 
-    @Synchronized
-    private fun acceptSequence(surface: NexusSurface): Boolean {
-        val previousSeq = latestSeqBySurface[surface.surfaceId] ?: Long.MIN_VALUE
-        if (surface.seq <= previousSeq) {
-            log("Surface stale drop id=${surface.surfaceId} seq=${surface.seq} latest=$previousSeq")
-            return false
-        }
-        latestSeqBySurface[surface.surfaceId] = surface.seq
-        return true
-    }
-
     private fun displaySurface(context: Context, surface: NexusSurface, forcedPath: SurfaceDisplayPath?) {
         when (forcedPath ?: displayPath(context)) {
             SurfaceDisplayPath.ACTIVITY -> showActivity(context, surface)
@@ -294,42 +325,28 @@ object SurfaceController {
         }
     }
 
-    private fun isUnmatchedAnchorOnlyUpdate(payload: JSONObject): Boolean {
+    private fun isAnchorOnlyUpdate(payload: JSONObject): Boolean {
         val kind = payload.optString("kind")
-        val anchorOnly = when (kind) {
+        return when (kind) {
             NexusSurface.KIND_TIMED_LINES -> !payload.has("lines")
             NexusSurface.KIND_MEDIA ->
                 payload.has("anchor") && !payload.has("mediaTitle") && !payload.has("artwork")
             else -> false
         }
-        if (!anchorOnly) return false
-        val surfaceId = payload.optString("surfaceId")
-        val contentKey = payload.optString("contentKey")
-        val current = active
-        val matched = current != null &&
-            current.surfaceId == surfaceId &&
-            current.kind == kind &&
-            (contentKey.isBlank() || current.contentKey == contentKey)
-        if (!matched) {
-            log("Surface anchor ignored until matching base arrives id=$surfaceId kind=$kind")
-        }
-        return !matched
     }
 
     private fun hideRemote(surfaceId: String, seq: Long) {
         if (surfaceId.isBlank()) return
-        val previousSeq = latestSeqBySurface[surfaceId] ?: Long.MIN_VALUE
-        if (seq <= previousSeq) {
-            log("Surface stale hide drop id=$surfaceId seq=$seq latest=$previousSeq")
-            return
-        }
-        latestSeqBySurface[surfaceId] = seq
-        main.post {
-            cancelBackFailsafeOnMain(surfaceId)
-            if (active?.surfaceId == surfaceId) {
-                imageDecodeCoordinator.invalidate(surfaceId)?.recycleSafely()
-                hideLocalOnMain()
+        when (val decision = orderingCoordinator.onHide(surfaceId, seq)) {
+            SurfaceOrderDecision.ApplyHide -> {
+                cancelBackFailsafeOnMain(surfaceId)
+                if (active?.surfaceId == surfaceId) {
+                    imageDecodeCoordinator.invalidate(surfaceId)?.recycleSafely()
+                    hideLocalOnMain()
+                }
             }
+            is SurfaceOrderDecision.Drop -> logOrderDrop(surfaceId, seq, decision)
+            else -> Unit
         }
     }
 
@@ -341,6 +358,7 @@ object SurfaceController {
         val activeSurfaceId = active?.surfaceId
         val returnToLauncher = activeSurfaceId?.let(launcherReturnCoordinator::consumeReturnOnHide) == true
         activeSurfaceId?.let { cancelBackFailsafeOnMain(it) }
+        activeSurfaceId?.let(orderingCoordinator::deactivate)
         val coordinated = activeSurfaceId?.let(imageDecodeCoordinator::invalidate)
         coordinated?.recycleSafely()
         recycleActiveImageUnless(coordinated)
@@ -348,6 +366,42 @@ object SurfaceController {
         notifyListeners(null)
         SurfaceOverlayRenderer.hide()
         if (returnToLauncher) LauncherOverlayRenderer.show()
+    }
+
+    private fun deactivateReplacedSurface(surfaceId: String) {
+        active?.surfaceId
+            ?.takeIf { it != surfaceId }
+            ?.let(orderingCoordinator::deactivate)
+    }
+
+    private fun JSONObject.toSurfaceOrder(): SurfaceOrder = SurfaceOrder(
+        surfaceId = optString("surfaceId"),
+        seq = optLong("seq", 0L),
+        kind = optString("kind", NexusSurface.KIND_CARD).ifBlank { NexusSurface.KIND_CARD },
+        contentKey = optString("contentKey"),
+    )
+
+    private fun NexusSurface.toSurfaceOrder(): SurfaceOrder = SurfaceOrder(
+        surfaceId = surfaceId,
+        seq = seq,
+        kind = kind,
+        contentKey = contentKey,
+    )
+
+    private fun logOrderDrop(
+        surfaceId: String,
+        seq: Long,
+        decision: SurfaceOrderDecision.Drop,
+    ) {
+        val label = when (decision.reason) {
+            SurfaceOrderDropReason.STALE_BASE -> "Surface stale base drop"
+            SurfaceOrderDropReason.STALE_ANCHOR -> "Surface stale anchor drop"
+            SurfaceOrderDropReason.STALE_HIDE -> "Surface stale hide drop"
+        }
+        log(
+            "$label id=$surfaceId seq=$seq latestBase=${decision.latestBaseSeq} " +
+                "latest=${decision.latestSeq}",
+        )
     }
 
     private fun shouldSuppressDpadEvent(event: KeyEvent): Boolean {
