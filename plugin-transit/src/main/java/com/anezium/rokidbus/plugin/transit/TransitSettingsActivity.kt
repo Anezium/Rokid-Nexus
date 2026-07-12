@@ -1,8 +1,10 @@
-package com.anezium.rokidbus.phone
+package com.anezium.rokidbus.plugin.transit
 
 import android.Manifest
 import android.app.Activity
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -16,10 +18,9 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import com.anezium.rokidbus.client.R as BusClientR
 import com.anezium.rokidbus.client.ui.BusTheme
-import com.anezium.rokidbus.plugin.transit.TransitFavoritesStore
-import com.anezium.rokidbus.plugin.transit.TransitRepository
-import com.anezium.rokidbus.plugin.transit.TransitStopMatch
+import com.anezium.rokidbus.client.ui.NexusUi
 import java.util.concurrent.Executors
 
 class TransitSettingsActivity : Activity() {
@@ -121,12 +122,16 @@ class TransitSettingsActivity : Activity() {
             addView(searchStatus, NexusUi.block())
             addView(BusTheme.gap(this@TransitSettingsActivity, 10))
             addView(resultsList, NexusUi.block())
+            addView(BusTheme.gap(this@TransitSettingsActivity, 24))
+            addView(NexusUi.sectionRow(this@TransitSettingsActivity, "Plugin"), NexusUi.block())
+            addView(BusTheme.gap(this@TransitSettingsActivity, 10))
+            addView(uninstallRow(), NexusUi.block())
         }
         val root = NexusUi.fixedRoot(this).apply {
             addView(
                 NexusUi.pluginHeader(
                     this@TransitSettingsActivity,
-                    R.drawable.ic_plugin_bus,
+                    BusClientR.drawable.ic_plugin_bus,
                     "Transit",
                     "Stops and departures · v1.0",
                 ),
@@ -235,6 +240,27 @@ class TransitSettingsActivity : Activity() {
     private fun hideKeyboard() {
         val manager = getSystemService(INPUT_METHOD_SERVICE) as? InputMethodManager
         manager?.hideSoftInputFromWindow(searchInput.windowToken, 0)
+    }
+
+    private fun uninstallRow() = NexusUi.pressableCard(this).apply {
+        val uninstall = {
+            startActivity(Intent(Intent.ACTION_DELETE, Uri.parse("package:$packageName")))
+        }
+        addView(
+            LinearLayout(this@TransitSettingsActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                addView(NexusUi.rowTitle(this@TransitSettingsActivity, "Uninstall"))
+                addView(BusTheme.gap(this@TransitSettingsActivity, 4))
+                addView(NexusUi.rowSub(this@TransitSettingsActivity, "Remove Transit from this phone"))
+            },
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+        )
+        addView(
+            NexusUi.textButton(this@TransitSettingsActivity, "Uninstall", danger = true).apply {
+                setOnClickListener { uninstall() }
+            },
+        )
+        setOnClickListener { uninstall() }
     }
 
     private companion object {

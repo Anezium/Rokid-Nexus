@@ -1,4 +1,4 @@
-package com.anezium.rokidbus.phone
+package com.anezium.rokidbus.plugin.feeds
 
 import android.annotation.SuppressLint
 import android.app.Activity
@@ -13,9 +13,7 @@ import android.webkit.WebViewClient
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.Toast
-import com.anezium.rokidbus.plugin.feeds.FeedsSettingsStore
-import com.anezium.rokidbus.plugin.feeds.XAccountCookies
-import com.anezium.rokidbus.plugin.feeds.XWebViewInterception
+import com.anezium.rokidbus.client.ui.NexusUi
 
 class XAccountLoginActivity : Activity() {
     private val settingsStore by lazy { FeedsSettingsStore(applicationContext) }

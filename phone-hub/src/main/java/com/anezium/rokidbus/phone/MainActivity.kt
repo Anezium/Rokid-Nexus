@@ -1,5 +1,7 @@
 package com.anezium.rokidbus.phone
 
+import com.anezium.rokidbus.client.R as BusClientR
+import com.anezium.rokidbus.client.ui.NexusUi
 import android.Manifest
 import android.app.Activity
 import android.content.ComponentName
@@ -116,7 +118,7 @@ class MainActivity : Activity() {
         val content = NexusUi.contentColumn(this).apply {
             if (NexusPhoneState.updateAvailable) {
                 addView(
-                    NexusUi.updateBanner(this@MainActivity) {
+                    NexusUi.updateBanner(this@MainActivity, NexusPhoneState.UPDATE_VERSION_LABEL) {
                         Toast.makeText(this@MainActivity, "Coming soon", Toast.LENGTH_SHORT).show()
                     },
                     NexusUi.block(),
@@ -210,11 +212,11 @@ class MainActivity : Activity() {
     }
 
     private fun iconFor(id: String?): Int = when (id) {
-        "lyrics" -> R.drawable.ic_plugin_music
-        "media" -> R.drawable.ic_plugin_disc
-        "transit" -> R.drawable.ic_plugin_bus
-        "lens" -> R.drawable.ic_plugin_lens
-        else -> R.drawable.ic_plugin_send
+        "lyrics" -> BusClientR.drawable.ic_plugin_music
+        "media" -> BusClientR.drawable.ic_plugin_disc
+        "transit" -> BusClientR.drawable.ic_plugin_bus
+        "lens" -> BusClientR.drawable.ic_plugin_lens
+        else -> BusClientR.drawable.ic_plugin_send
     }
 
     private fun openCatalogEntry(entry: PluginCatalogEntry) {

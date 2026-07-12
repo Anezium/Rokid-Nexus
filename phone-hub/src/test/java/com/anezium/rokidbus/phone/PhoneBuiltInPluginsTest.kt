@@ -6,25 +6,31 @@ import org.junit.Test
 
 class PhoneBuiltInPluginsTest {
     @Test
-    fun `create returns the complete in-process plugin set`() {
+    fun `create returns the three in-process plugins`() {
         val plugins = PhoneBuiltInPlugins.create(LensTranslationPlugin())
 
-        assertEquals(listOf("lyrics", "media", "lens", "feeds", "transit"), plugins.map { it.id })
+        assertEquals(listOf("lyrics", "media", "lens"), plugins.map { it.id })
     }
 
     @Test
-    fun `feeds and transit catalog specs are launchable host settings`() {
+    fun `catalog specs describe only the three in-process plugins`() {
         val specs = PhoneBuiltInPlugins.specs("com.anezium.rokidbus.phone", emptyMap())
 
-        assertEquals(true, specs.single { it.id == "feeds" }.launchable)
-        assertEquals(true, specs.single { it.id == "transit" }.launchable)
+        assertEquals(listOf("lyrics", "media", "lens"), specs.map { it.id })
+        assertEquals(true, specs.single { it.id == "lyrics" }.launchable)
+        assertEquals(true, specs.single { it.id == "media" }.launchable)
+        assertEquals(false, specs.single { it.id == "lens" }.launchable)
         assertEquals(
-            "com.anezium.rokidbus.phone.FeedsSettingsActivity",
-            specs.single { it.id == "feeds" }.settingsTarget?.className,
+            "com.anezium.rokidbus.phone.LyricsSettingsActivity",
+            specs.single { it.id == "lyrics" }.settingsTarget?.className,
         )
         assertEquals(
-            "com.anezium.rokidbus.phone.TransitSettingsActivity",
-            specs.single { it.id == "transit" }.settingsTarget?.className,
+            "com.anezium.rokidbus.phone.MediaDeckSettingsActivity",
+            specs.single { it.id == "media" }.settingsTarget?.className,
+        )
+        assertEquals(
+            "com.anezium.rokidbus.phone.LensSettingsActivity",
+            specs.single { it.id == "lens" }.settingsTarget?.className,
         )
     }
 }

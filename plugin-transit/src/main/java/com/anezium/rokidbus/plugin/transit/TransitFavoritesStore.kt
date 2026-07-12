@@ -7,10 +7,6 @@ import org.json.JSONObject
 class TransitFavoritesStore(context: Context) : TransitFavoritesSource {
     private val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
-    init {
-        TransitLegacyImporter(AndroidTransitLegacyStorage(context.applicationContext)).importIfNeeded(::importLegacy)
-    }
-
     override fun list(): List<TransitStop> {
         val raw = prefs.getString(KEY_STOPS, "[]").orEmpty()
         val array = runCatching { JSONArray(raw) }.getOrDefault(JSONArray())

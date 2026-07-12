@@ -352,11 +352,11 @@ class XWebViewHostService : Service() {
         val settingsIntent = PendingIntent.getActivity(
             this,
             0,
-            Intent().setClassName(packageName, "com.anezium.rokidbus.phone.FeedsSettingsActivity"),
+            Intent(this, FeedsSettingsActivity::class.java),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         val notification = Notification.Builder(this, NOTIFICATION_CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.stat_notify_sync)
+            .setSmallIcon(R.drawable.ic_launcher)
             .setContentTitle("Nexus Feeds")
             .setContentText("Capturing the selected X timeline")
             .setContentIntent(settingsIntent)

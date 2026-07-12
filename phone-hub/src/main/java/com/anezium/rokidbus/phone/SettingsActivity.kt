@@ -1,5 +1,6 @@
 package com.anezium.rokidbus.phone
 
+import com.anezium.rokidbus.client.ui.NexusUi
 import android.app.Activity
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -102,7 +103,7 @@ class SettingsActivity : Activity() {
         val content = NexusUi.contentColumn(this).apply {
             if (NexusPhoneState.updateAvailable) {
                 addView(
-                    NexusUi.updateBanner(this@SettingsActivity) {
+                    NexusUi.updateBanner(this@SettingsActivity, NexusPhoneState.UPDATE_VERSION_LABEL) {
                         Toast.makeText(this@SettingsActivity, "Coming soon", Toast.LENGTH_SHORT).show()
                     },
                     NexusUi.block(),

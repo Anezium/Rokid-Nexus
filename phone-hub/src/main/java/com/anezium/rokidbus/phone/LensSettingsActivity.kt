@@ -1,5 +1,7 @@
 package com.anezium.rokidbus.phone
 
+import com.anezium.rokidbus.client.R as BusClientR
+import com.anezium.rokidbus.client.ui.NexusUi
 import android.app.Activity
 import android.app.Dialog
 import android.content.SharedPreferences
@@ -170,7 +172,7 @@ class LensSettingsActivity : Activity() {
             addView(
                 NexusUi.pluginHeader(
                     this@LensSettingsActivity,
-                    R.drawable.ic_plugin_lens,
+                    BusClientR.drawable.ic_plugin_lens,
                     "Lens",
                     "Camera translation · v1.0",
                 ),

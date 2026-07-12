@@ -1,8 +1,6 @@
 package com.anezium.rokidbus.phone
 
 import android.content.Context
-import com.anezium.rokidbus.plugin.feeds.FeedsPlugin
-import com.anezium.rokidbus.plugin.transit.TransitPlugin
 import com.anezium.rokidbus.lyrics.LyricsPlugin
 import com.anezium.rokidbus.media.MediaDeckPlugin
 import com.anezium.rokidbus.phone.lens.LensTranslationPlugin
@@ -10,11 +8,8 @@ import com.anezium.rokidbus.shared.plugin.NexusPlugin
 
 /** The temporary in-process plugin set and its catalog presentation live in one place. */
 object PhoneBuiltInPlugins {
-    fun create(
-        lens: LensTranslationPlugin,
-        transitLocationForeground: (Boolean) -> Boolean = { false },
-    ): List<NexusPlugin> =
-        listOf(LyricsPlugin(), MediaDeckPlugin(), lens, FeedsPlugin(), TransitPlugin(transitLocationForeground))
+    fun create(lens: LensTranslationPlugin): List<NexusPlugin> =
+        listOf(LyricsPlugin(), MediaDeckPlugin(), lens)
 
     fun catalog(
         context: Context,
@@ -36,8 +31,6 @@ object PhoneBuiltInPlugins {
         spec(packageName, "lyrics", "Lyrics", true, ".LyricsSettingsActivity", runtimeById),
         spec(packageName, "media", "Media Deck", true, ".MediaDeckSettingsActivity", runtimeById),
         spec(packageName, "lens", "Lens", false, ".LensSettingsActivity", runtimeById),
-        spec(packageName, "feeds", "Feeds", true, ".FeedsSettingsActivity", runtimeById),
-        spec(packageName, "transit", "Transit", true, ".TransitSettingsActivity", runtimeById),
     )
 
     private fun spec(

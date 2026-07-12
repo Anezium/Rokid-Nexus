@@ -1,5 +1,7 @@
 package com.anezium.rokidbus.phone
 
+import com.anezium.rokidbus.client.R as BusClientR
+import com.anezium.rokidbus.client.ui.NexusUi
 import android.app.Activity
 import android.content.ComponentName
 import android.content.Intent
@@ -71,7 +73,7 @@ class StoreActivity : Activity() {
         list.removeAllViews()
         list.addView(
             storeCard(
-                iconRes = R.drawable.ic_plugin_send,
+                iconRes = BusClientR.drawable.ic_plugin_send,
                 title = "Relay",
                 meta = "Messaging · Coming soon",
                 description = "Reply to your phone notifications from your glasses, by voice.",
@@ -107,7 +109,7 @@ class StoreActivity : Activity() {
         list.addView(BusTheme.gap(this, 10))
         list.addView(
             storeCard(
-                iconRes = R.drawable.ic_plugin_mic,
+                iconRes = BusClientR.drawable.ic_plugin_mic,
                 title = "Scribe",
                 meta = "Audio · Coming soon",
                 description = "Dictate voice notes, transcribed on your phone.",
@@ -131,11 +133,11 @@ class StoreActivity : Activity() {
     }
 
     private fun iconFor(id: String?): Int = when (id) {
-        "lyrics" -> R.drawable.ic_plugin_music
-        "media" -> R.drawable.ic_plugin_disc
-        "transit" -> R.drawable.ic_plugin_bus
-        "lens" -> R.drawable.ic_plugin_lens
-        else -> R.drawable.ic_plugin_send
+        "lyrics" -> BusClientR.drawable.ic_plugin_music
+        "media" -> BusClientR.drawable.ic_plugin_disc
+        "transit" -> BusClientR.drawable.ic_plugin_bus
+        "lens" -> BusClientR.drawable.ic_plugin_lens
+        else -> BusClientR.drawable.ic_plugin_send
     }
 
     private fun openCatalogEntry(entry: PluginCatalogEntry) {

@@ -1,4 +1,4 @@
-package com.anezium.rokidbus.phone
+package com.anezium.rokidbus.client.ui
 
 import android.content.Context
 import android.graphics.Color
@@ -23,15 +23,13 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
-import com.anezium.rokidbus.client.ui.BusTheme
-
 /**
  * Phone-app widget kit and palette.
  *
  * Phosphor times Mono: dark layers, one electric green accent, system sans for
  * names/body, and monospace for caps/meta UI.
  */
-internal object NexusUi {
+object NexusUi {
     const val BG = 0xFF070A08.toInt()
     const val PANEL = 0xFF0D150F.toInt()
     const val CARD = 0xFF0E150F.toInt()
@@ -480,7 +478,7 @@ internal object NexusUi {
         }
     }
 
-    fun updateBanner(context: Context, onInstall: () -> Unit): LinearLayout =
+    fun updateBanner(context: Context, versionLabel: String, onInstall: () -> Unit): LinearLayout =
         LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -498,7 +496,7 @@ internal object NexusUi {
                 )
                 addView(BusTheme.gap(context, 4))
                 addView(
-                    monoText(context, NexusPhoneState.UPDATE_VERSION_LABEL, 10f, 0xFFB79A6A.toInt(), 0.06f),
+                    monoText(context, versionLabel, 10f, 0xFFB79A6A.toInt(), 0.06f),
                 )
             }
             addView(textColumn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))

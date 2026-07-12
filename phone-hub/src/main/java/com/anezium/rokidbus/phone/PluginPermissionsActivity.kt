@@ -1,5 +1,6 @@
 package com.anezium.rokidbus.phone
 
+import com.anezium.rokidbus.client.ui.NexusUi
 import android.app.Activity
 import android.graphics.Color
 import android.graphics.Typeface

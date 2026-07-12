@@ -74,23 +74,6 @@
             android:parentActivityName=".MainActivity" />
 
         <activity
-            android:name=".FeedsSettingsActivity"
-            android:exported="false"
-            android:parentActivityName=".MainActivity"
-            android:windowSoftInputMode="adjustResize" />
-
-        <activity
-            android:name=".XAccountLoginActivity"
-            android:exported="false"
-            android:parentActivityName=".FeedsSettingsActivity" />
-
-        <activity
-            android:name=".TransitSettingsActivity"
-            android:exported="false"
-            android:parentActivityName=".MainActivity"
-            android:windowSoftInputMode="adjustResize" />
-
-        <activity
             android:name=".StoreActivity"
             android:exported="false"
             android:parentActivityName=".MainActivity" />
@@ -108,7 +91,7 @@
         <service
             android:name=".BusHubService"
             android:exported="true"
-            android:foregroundServiceType="connectedDevice|location">
+            android:foregroundServiceType="connectedDevice">
             <intent-filter>
                 <action android:name="com.anezium.rokidbus.action.HUB" />
             </intent-filter>

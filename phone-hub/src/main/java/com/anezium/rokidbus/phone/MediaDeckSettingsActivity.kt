@@ -1,5 +1,7 @@
 package com.anezium.rokidbus.phone
 
+import com.anezium.rokidbus.client.R as BusClientR
+import com.anezium.rokidbus.client.ui.NexusUi
 import android.app.Activity
 import android.content.ComponentName
 import android.content.Intent
@@ -96,7 +98,7 @@ class MediaDeckSettingsActivity : Activity() {
             addView(
                 NexusUi.pluginHeader(
                     this@MediaDeckSettingsActivity,
-                    R.drawable.ic_plugin_disc,
+                    BusClientR.drawable.ic_plugin_disc,
                     "Media Deck",
                     "Universal now playing · v1.0",
                 ),
