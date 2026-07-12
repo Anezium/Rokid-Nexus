@@ -22,8 +22,10 @@ HUD surface, and forwards only play/pause/previous/next transport commands.
 - Back: close Media Deck and return to the underlying glasses app.
 - Position advances locally from an anchor; the phone does not poll or stream
   progress updates.
-- Artwork is center-cropped, contrast-normalized, Floyd-Steinberg dithered, and packed
-  as a 96 x 96 one-bit mask. The original bitmap never crosses the Nexus bus.
+- With the image renderer capability, artwork is aspect-fit to a maximum 256 px edge,
+  JPEG-encoded under 64 KiB, and sent in the media envelope's SPP binary body.
+- Without that capability, artwork keeps the original center-cropped,
+  contrast-normalized, Floyd-Steinberg-dithered 96 x 96 `mono1` payload.
 
 Media titles and artwork are user data. They may be rendered on the requested HUD but
 must not be included in production logs.

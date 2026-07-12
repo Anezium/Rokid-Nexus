@@ -50,6 +50,7 @@ internal class MediaHudView(context: Context) : LinearLayout(context) {
         maxLines = 1
     }
     private var renderedArtworkKey: String? = null
+    private var renderedArtworkOwned = false
 
     init {
         orientation = VERTICAL
@@ -97,7 +98,7 @@ internal class MediaHudView(context: Context) : LinearLayout(context) {
         } else {
             "${formatDuration(position)}  $state"
         }
-        renderArtwork(surface.artwork)
+        renderArtwork(surface)
     }
 
     fun clear() {
@@ -114,11 +115,30 @@ internal class MediaHudView(context: Context) : LinearLayout(context) {
         super.onDetachedFromWindow()
     }
 
-    private fun renderArtwork(artwork: MonoArtwork?) {
-        val nextKey = artwork?.identityKey.orEmpty()
+    private fun renderArtwork(surface: NexusSurface) {
+        val image = surface.imageBitmap?.takeUnless { it.isRecycled }
+            ?.takeIf { surface.mediaArtworkMetadata != null }
+        val artwork = surface.artwork
+        val nextKey = if (image != null) {
+            "image:${surface.mediaArtworkMetadata?.sha256}:${image.generationId}"
+        } else {
+            artwork?.identityKey.orEmpty()
+        }
         if (renderedArtworkKey == nextKey) return
         clearRenderedArtwork()
         renderedArtworkKey = nextKey
+        if (image != null) {
+            artworkView.setImageDrawable(
+                BitmapDrawable(resources, image).apply {
+                    paint.isAntiAlias = true
+                    paint.isFilterBitmap = true
+                    paint.isDither = false
+                },
+            )
+            renderedArtworkOwned = false
+            artworkFallback.visibility = GONE
+            return
+        }
         if (artwork == null) return
         val bitmap = artwork.toPhosphorBitmap(BusTheme.phosphor)
         artworkView.setImageDrawable(
@@ -128,16 +148,20 @@ internal class MediaHudView(context: Context) : LinearLayout(context) {
                 paint.isDither = false
             },
         )
+        renderedArtworkOwned = true
         artworkFallback.visibility = GONE
     }
 
     private fun clearRenderedArtwork() {
-        (artworkView.drawable as? BitmapDrawable)?.bitmap?.let { bitmap ->
-            if (!bitmap.isRecycled) bitmap.recycle()
+        if (renderedArtworkOwned) {
+            (artworkView.drawable as? BitmapDrawable)?.bitmap?.let { bitmap ->
+                if (!bitmap.isRecycled) bitmap.recycle()
+            }
         }
         artworkView.setImageDrawable(null)
         artworkFallback.visibility = VISIBLE
         renderedArtworkKey = null
+        renderedArtworkOwned = false
     }
 
     private fun applyMarquee(view: TextView) {

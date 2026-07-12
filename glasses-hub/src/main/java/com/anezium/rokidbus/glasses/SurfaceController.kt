@@ -11,6 +11,7 @@ import com.anezium.rokidbus.shared.BusEnvelope
 import com.anezium.rokidbus.shared.BusPaths
 import com.anezium.rokidbus.shared.ImageSurfaceContract
 import com.anezium.rokidbus.shared.ImageSurfaceValidationResult
+import com.anezium.rokidbus.shared.MediaArtworkContract
 import org.json.JSONObject
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
@@ -70,20 +71,35 @@ object SurfaceController {
                     .onFailure { logError("Surface parse failed", it) }
                     .getOrNull()
                     ?: return true
-                if (surface.isImage) {
-                    val validation = ImageSurfaceContract.validate(envelope.payload, envelope.binary)
+                if (surface.isImage ||
+                    (surface.isMedia &&
+                        (MediaArtworkContract.hasBinaryArtwork(envelope.payload) || envelope.binary != null))
+                ) {
+                    val validation = if (surface.isImage) {
+                        ImageSurfaceContract.validate(envelope.payload, envelope.binary)
+                    } else {
+                        MediaArtworkContract.validate(envelope.payload, envelope.binary)
+                    }
                     if (validation !is ImageSurfaceValidationResult.Valid) {
                         val code = (validation as? ImageSurfaceValidationResult.Invalid)?.code
                             ?: ImageSurfaceContract.ERROR_INVALID_IMAGE
                         log("Image surface rejected id=${surface.surfaceId} code=$code")
                         return true
                     }
-                    showOrUpdateImage(
-                        context.applicationContext,
-                        surface,
-                        envelope.binary!!,
-                        launcherShow = envelope.path == BusPaths.SURFACE_SHOW,
-                    )
+                    if (surface.isMedia && surface.imageBitmap != null) {
+                        showOrUpdate(
+                            context.applicationContext,
+                            surface,
+                            launcherShow = envelope.path == BusPaths.SURFACE_SHOW,
+                        )
+                    } else {
+                        showOrUpdateImage(
+                            context.applicationContext,
+                            surface,
+                            envelope.binary!!,
+                            launcherShow = envelope.path == BusPaths.SURFACE_SHOW,
+                        )
+                    }
                 } else {
                     showOrUpdate(
                         context.applicationContext,
@@ -179,9 +195,11 @@ object SurfaceController {
         if (launcherShow) launcherReturnCoordinator.onSurfaceShown(surface.surfaceId)
         main.post {
             if (latestSeqBySurface[surface.surfaceId] != surface.seq) return@post
-            val coordinated = imageDecodeCoordinator.invalidate()
+            val keepMediaDecode = surface.isMedia && surface.mediaArtworkMetadata != null &&
+                imageDecodeCoordinator.isCurrent(surface.surfaceId, surface.contentKey)
+            val coordinated = if (keepMediaDecode) null else imageDecodeCoordinator.invalidate()
             coordinated?.recycleSafely()
-            recycleActiveImageUnless(coordinated)
+            recycleActiveImageUnless(surface.imageBitmap ?: coordinated)
             cancelBackFailsafeOnMain(surface.surfaceId)
             wakeScreen(context)
             active = surface
@@ -198,13 +216,21 @@ object SurfaceController {
     ) {
         if (!acceptSequence(surface)) return
         if (launcherShow) launcherReturnCoordinator.onSurfaceShown(surface.surfaceId)
-        val metadata = surface.imageMetadata ?: return
+        val metadata = surface.imageMetadata ?: surface.mediaArtworkMetadata ?: return
         val key = ImageDecodeKey(surface.surfaceId, surface.seq, metadata.contentKey)
         main.post {
             if (latestSeqBySurface[surface.surfaceId] != surface.seq) return@post
             // Keep the previously published HUD/bitmap until this body decodes.
             // begin() invalidates older work; active still owns the visible bitmap.
             imageDecodeCoordinator.begin(key)
+            if (surface.isMedia) {
+                recycleActiveImageUnless(surface.imageBitmap)
+                cancelBackFailsafeOnMain(surface.surfaceId)
+                wakeScreen(context)
+                active = surface
+                notifyListeners(surface)
+                displaySurface(context, surface, null)
+            }
             imageDecodeExecutor.execute {
                 val decoded = ImageHudView.decodeRgb565(bytes, metadata)
                 if (decoded == null) {
@@ -217,13 +243,23 @@ object SurfaceController {
                         is ImageDecodeCompletion.Rejected -> completion.stale.recycleSafely()
                         is ImageDecodeCompletion.Accepted -> {
                             completion.replaced?.recycleSafely()
-                            if (latestSeqBySurface[key.surfaceId] != key.seq) {
+                            val current = active
+                            val target = if (surface.isMedia) {
+                                current?.takeIf {
+                                    it.surfaceId == key.surfaceId &&
+                                        it.contentKey == key.contentKey &&
+                                        it.mediaArtworkMetadata?.sha256 == metadata.sha256
+                                }
+                            } else {
+                                surface.takeIf { latestSeqBySurface[key.surfaceId] == key.seq }
+                            }
+                            if (target == null) {
                                 imageDecodeCoordinator.invalidate(key.surfaceId)?.recycleSafely()
                                 return@post
                             }
                             recycleActiveImageUnless(decoded)
-                            val published = surface.copy(imageBitmap = decoded)
-                            cancelBackFailsafeOnMain(surface.surfaceId)
+                            val published = target.copy(imageBitmap = decoded)
+                            cancelBackFailsafeOnMain(target.surfaceId)
                             wakeScreen(context)
                             active = published
                             notifyListeners(published)

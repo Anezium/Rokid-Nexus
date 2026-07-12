@@ -41,6 +41,10 @@ class ImageDecodeCoordinator<T> {
     }
 
     @Synchronized
+    fun isCurrent(surfaceId: String, contentKey: String): Boolean =
+        currentKey?.let { it.surfaceId == surfaceId && it.contentKey == contentKey } == true
+
+    @Synchronized
     fun invalidate(surfaceId: String? = null): T? {
         if (surfaceId != null && currentKey?.surfaceId != surfaceId) return null
         val detached = currentValue

@@ -163,7 +163,7 @@ Surface kinds v1:
 - `timed-lines`: `title`, optional `subtitle`/`footer`, full `lines` as
   `{ "timeMs": 1234, "text": "..." }`, and an `anchor`.
 - `media`: `title`/`subtitle` shell labels, `mediaTitle`, optional
-  `mediaArtist`/`mediaAlbum`, optional bounded one-bit `artwork`, and an `anchor`.
+  `mediaArtist`/`mediaAlbum`, optional mono or binary `artwork`, and an `anchor`.
 - `image`: a real JPEG or PNG carried as an SPP binary frame. The binary-frame
   `meta`/`BusEnvelope.payload` object is:
 
@@ -260,12 +260,32 @@ Media surface v1:
 }
 ```
 
+When the image-surface capability is available, the `artwork` object instead describes
+the compressed body carried only in `BusEnvelope.binary`:
+
+```json
+"artwork": {
+  "encoding": "binary",
+  "mimeType": "image/jpeg",
+  "pixelWidth": 256,
+  "pixelHeight": 256,
+  "sha256": "64-lowercase-hex-characters"
+}
+```
+
+`encoding` is exactly `binary`; `mimeType` is `image/jpeg` or `image/png`; both
+decoded edges are in `1..256`; and `sha256` covers the compressed envelope body.
+The body is required, non-empty, and at most 65,536 bytes. The hub applies the same
+signature, decoded-dimension, hash, capability, and per-surface 150 ms rate-limit
+checks as an image surface before forwarding. `mediaVersion` remains `1`, and
+receivers ignore unknown fields.
+
 `mono1` is row-major, most-significant bit first; set bits render in Nexus phosphor
 and unset bits stay transparent. Renderers accept at most 192 x 192 and require the
 decoded byte count to equal `ceil(width * height / 8)`. Media Deck emits 96 x 96
-(1,152 raw bytes) so the complete first frame remains a small declarative payload
-rather than pretending a full-color image is a surface asset. Larger/future artwork belongs
-on an explicit raw-binary asset path.
+(1,152 raw bytes). Clients without the image capability emit this exact legacy shape;
+binary-capable clients scale the longest artwork edge to at most 256 pixels, re-encode
+JPEG under the binary cap, and omit artwork if it cannot fit.
 
 After the complete surface, the plugin sends anchor-only updates on play, pause, seek,
 or track state changes. Glasses animate the progress bar from their local monotonic

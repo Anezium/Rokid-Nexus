@@ -3,6 +3,7 @@ package com.anezium.rokidbus.client.plugin
 import com.anezium.rokidbus.shared.BusPaths
 import com.anezium.rokidbus.shared.ImageSurfaceContract
 import com.anezium.rokidbus.shared.ImageSurfaceValidationResult
+import com.anezium.rokidbus.shared.MediaArtworkContract
 import com.anezium.rokidbus.shared.plugin.PluginCapability
 import org.json.JSONArray
 import org.json.JSONObject
@@ -145,6 +146,25 @@ data class NexusMonoArtwork(
         .put("data", Base64.getEncoder().encodeToString(bytes))
 }
 
+data class NexusMediaImageArtwork(
+    val mimeType: String,
+    val pixelWidth: Int,
+    val pixelHeight: Int,
+) {
+    init {
+        require(mimeType == ImageSurfaceContract.MIME_JPEG || mimeType == ImageSurfaceContract.MIME_PNG)
+        require(pixelWidth in 1..MediaArtworkContract.MAX_EDGE_PIXELS)
+        require(pixelHeight in 1..MediaArtworkContract.MAX_EDGE_PIXELS)
+    }
+
+    internal fun toJson(bytes: ByteArray): JSONObject = JSONObject()
+        .put("encoding", MediaArtworkContract.ENCODING_BINARY)
+        .put("mimeType", mimeType)
+        .put("pixelWidth", pixelWidth)
+        .put("pixelHeight", pixelHeight)
+        .put("sha256", ImageSurfaceContract.sha256(bytes))
+}
+
 data class NexusMediaAnchor(
     val positionMs: Long,
     val playing: Boolean,
@@ -177,6 +197,7 @@ data class NexusMedia(
     val mediaAlbum: String? = null,
     val footer: String? = null,
     val artwork: NexusMonoArtwork? = null,
+    val imageArtwork: NexusMediaImageArtwork? = null,
 ) {
     init {
         require(title.isNotBlank() && title.length <= MAX_TITLE_CHARS)
@@ -186,9 +207,10 @@ data class NexusMedia(
         require(mediaArtist == null || mediaArtist.length <= MAX_LINE_CHARS)
         require(mediaAlbum == null || mediaAlbum.length <= MAX_LINE_CHARS)
         require(footer == null || footer.length <= MAX_LINE_CHARS)
+        require(artwork == null || imageArtwork == null)
     }
 
-    internal fun toPayload(surfaceId: String): JSONObject = JSONObject()
+    internal fun toPayload(surfaceId: String, imageBytes: ByteArray? = null): JSONObject = JSONObject()
         .put("surfaceId", surfaceId)
         .put("kind", "media")
         .put("mediaVersion", 1)
@@ -202,6 +224,9 @@ data class NexusMedia(
             mediaAlbum?.let { put("mediaAlbum", it) }
             footer?.let { put("footer", it) }
             artwork?.let { put("artwork", it.toJson()) }
+            imageArtwork?.let { metadata ->
+                imageBytes?.let { put("artwork", metadata.toJson(it)) }
+            }
         }
 }
 
@@ -288,10 +313,24 @@ class NexusSurfaceSession internal constructor(
     }
 
     fun showMedia(media: NexusMedia): NexusSdkResult =
-        sendSurface(BusPaths.SURFACE_SHOW, media.toPayload(localSurfaceId))
+        if (media.imageArtwork == null) {
+            sendSurface(BusPaths.SURFACE_SHOW, media.toPayload(localSurfaceId))
+        } else {
+            NexusSdkResult.INVALID_PAYLOAD
+        }
+
+    fun showMedia(media: NexusMedia, artworkBytes: ByteArray): NexusSdkResult =
+        sendMediaImage(BusPaths.SURFACE_SHOW, media, artworkBytes)
 
     fun updateMedia(media: NexusMedia): NexusSdkResult =
-        sendSurface(BusPaths.SURFACE_UPDATE, media.toPayload(localSurfaceId))
+        if (media.imageArtwork == null) {
+            sendSurface(BusPaths.SURFACE_UPDATE, media.toPayload(localSurfaceId))
+        } else {
+            NexusSdkResult.INVALID_PAYLOAD
+        }
+
+    fun updateMedia(media: NexusMedia, artworkBytes: ByteArray): NexusSdkResult =
+        sendMediaImage(BusPaths.SURFACE_UPDATE, media, artworkBytes)
 
     fun updateMediaAnchor(
         contentKey: String,
@@ -322,6 +361,22 @@ class NexusSurfaceSession internal constructor(
         if (ImageSurfaceContract.validate(payload, bytes) !is ImageSurfaceValidationResult.Valid) {
             return NexusSdkResult.INVALID_PAYLOAD
         }
+        return sendValidatedBinary(path, payload, bytes)
+    }
+
+    private fun sendMediaImage(path: String, media: NexusMedia, bytes: ByteArray): NexusSdkResult {
+        if (!client.isApproved) return NexusSdkResult.NOT_REGISTERED
+        if (!client.hasCapability(PluginCapability.SURFACES)) return NexusSdkResult.CAPABILITY_NOT_GRANTED
+        if (!client.supportsImageSurface) return NexusSdkResult.CAPABILITY_NOT_AVAILABLE
+        if (media.imageArtwork == null || media.artwork != null) return NexusSdkResult.INVALID_PAYLOAD
+        val payload = media.toPayload(localSurfaceId, bytes)
+        if (MediaArtworkContract.validate(payload, bytes) !is ImageSurfaceValidationResult.Valid) {
+            return NexusSdkResult.INVALID_PAYLOAD
+        }
+        return sendValidatedBinary(path, payload, bytes)
+    }
+
+    private fun sendValidatedBinary(path: String, payload: JSONObject, bytes: ByteArray): NexusSdkResult {
         synchronized(this) {
             val now = System.nanoTime()
             if (lastImageSendNanos != Long.MIN_VALUE &&

@@ -62,4 +62,14 @@ class ImageSurfaceStateTest {
         assertNull(state.invalidate("plugin:old"))
         assertTrue(state.complete(pending, "bitmap-b") is ImageDecodeCompletion.Accepted)
     }
+
+    @Test
+    fun `media anchor can recognize same content decode across a newer sequence`() {
+        val state = ImageDecodeCoordinator<String>()
+        val artwork = ImageDecodeKey("media:media", 10, "track-a")
+        state.begin(artwork)
+
+        assertTrue(state.isCurrent("media:media", "track-a"))
+        assertTrue(state.complete(artwork, "bitmap-a") is ImageDecodeCompletion.Accepted)
+    }
 }

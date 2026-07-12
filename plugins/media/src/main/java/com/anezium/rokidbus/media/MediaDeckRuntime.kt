@@ -6,6 +6,7 @@ import android.view.KeyEvent
 import com.anezium.rokidbus.client.plugin.NexusCard
 import com.anezium.rokidbus.client.plugin.NexusMedia
 import com.anezium.rokidbus.client.plugin.NexusMediaAnchor
+import com.anezium.rokidbus.client.plugin.NexusMediaImageArtwork
 import com.anezium.rokidbus.client.plugin.NexusMonoArtwork
 import com.anezium.rokidbus.media.session.MediaDeckMonitorStatus
 import com.anezium.rokidbus.media.session.MediaDeckSnapshot
@@ -15,8 +16,9 @@ import java.security.MessageDigest
 import kotlin.math.abs
 
 internal interface MediaDeckRuntimeHost {
+    fun supportsImage(): Boolean
     fun sendCard(card: NexusCard, show: Boolean)
-    fun sendMedia(media: NexusMedia, show: Boolean)
+    fun sendMedia(media: NexusMedia, imageBytes: ByteArray?, show: Boolean)
     fun updateMediaAnchor(contentKey: String, anchor: NexusMediaAnchor)
     fun hideSurface()
     fun post(action: () -> Unit)
@@ -39,7 +41,8 @@ internal class MediaDeckRuntime(
     private var lastRenderedKey: String? = null
     private var lastSentMedia: SentMedia? = null
     private var cachedArtworkTrackKey: String? = null
-    private var cachedArtwork: EncodedMonoArtwork? = null
+    private var cachedArtworkMode: MediaArtworkMode? = null
+    private var cachedArtwork: EncodedMediaArtwork? = null
     private var cachedArtworkUriAttempt: String? = null
 
     fun open() {
@@ -59,6 +62,7 @@ internal class MediaDeckRuntime(
         lastSentMedia = null
         lastRenderedKey = null
         cachedArtworkTrackKey = null
+        cachedArtworkMode = null
         cachedArtwork = null
         cachedArtworkUriAttempt = null
         if (surfaceShown) {
@@ -86,6 +90,11 @@ internal class MediaDeckRuntime(
             KeyEvent.KEYCODE_MEDIA_PREVIOUS,
             -> monitor.skipToPrevious()
         }
+    }
+
+    fun imageCapabilityChanged() {
+        if (!active || cachedArtworkMode == artworkModeFor(host.supportsImage())) return
+        latestSnapshot?.let { pushSnapshot(it, force = true) }
     }
 
     private fun handleStatus(status: MediaDeckMonitorStatus) {
@@ -145,8 +154,10 @@ internal class MediaDeckRuntime(
     private fun pushSnapshot(snapshot: MediaDeckSnapshot, force: Boolean) {
         val now = SystemClock.elapsedRealtime()
         val contentKey = trackKey(snapshot)
-        val artworkWasMissing = cachedArtworkTrackKey == contentKey && cachedArtwork == null
-        val artwork = artworkFor(contentKey, snapshot)
+        val artworkMode = artworkModeFor(host.supportsImage())
+        val artworkWasMissing = cachedArtworkTrackKey == contentKey &&
+            cachedArtworkMode == artworkMode && cachedArtwork == null
+        val artwork = artworkFor(contentKey, snapshot, artworkMode)
         val artworkArrived = artworkWasMissing && artwork != null
         val previous = lastSentMedia
         val contentChanged = previous == null || previous.contentKey != contentKey
@@ -159,8 +170,10 @@ internal class MediaDeckRuntime(
         val sendFullPayload = force || contentChanged || artworkArrived
         val anchor = anchor(snapshot, now)
         if (sendFullPayload) {
+            val media = buildFullSurface(snapshot, contentKey, artwork, anchor)
             host.sendMedia(
-                buildFullSurface(snapshot, contentKey, artwork, anchor),
+                media,
+                imageBytes = (artwork as? EncodedImageArtwork)?.bytes,
                 show = !surfaceShown,
             )
         } else {
@@ -181,7 +194,7 @@ internal class MediaDeckRuntime(
     private fun buildFullSurface(
         snapshot: MediaDeckSnapshot,
         contentKey: String,
-        artwork: EncodedMonoArtwork?,
+        artwork: EncodedMediaArtwork?,
         anchor: NexusMediaAnchor,
     ): NexusMedia = NexusMedia(
         title = "MEDIA DECK",
@@ -192,12 +205,19 @@ internal class MediaDeckRuntime(
         mediaAlbum = clipped(snapshot.album, ALBUM_LIMIT).takeIf(String::isNotBlank),
         footer = "SWIPE: TRACK  TAP: PLAY/PAUSE",
         anchor = anchor,
-        artwork = artwork?.let {
+        artwork = (artwork as? EncodedMonoArtwork)?.let {
             NexusMonoArtwork(
                 width = it.width,
                 height = it.height,
                 bytes = it.bytes,
                 hash = it.hash,
+            )
+        },
+        imageArtwork = (artwork as? EncodedImageArtwork)?.let {
+            NexusMediaImageArtwork(
+                mimeType = it.mimeType,
+                pixelWidth = it.width,
+                pixelHeight = it.height,
             )
         },
     )
@@ -210,22 +230,44 @@ internal class MediaDeckRuntime(
         durationMs = snapshot.durationMs,
     )
 
-    private fun artworkFor(contentKey: String, snapshot: MediaDeckSnapshot): EncodedMonoArtwork? {
-        if (cachedArtworkTrackKey != contentKey) {
+    private fun artworkFor(
+        contentKey: String,
+        snapshot: MediaDeckSnapshot,
+        mode: MediaArtworkMode,
+    ): EncodedMediaArtwork? {
+        if (cachedArtworkTrackKey != contentKey || cachedArtworkMode != mode) {
             cachedArtworkTrackKey = contentKey
+            cachedArtworkMode = mode
             cachedArtworkUriAttempt = snapshot.artworkUri
-            cachedArtwork = MonoArtworkEncoder.encode(appContext, snapshot.artwork, snapshot.artworkUri)
+            cachedArtwork = encodeArtwork(mode, snapshot)
         } else if (cachedArtwork == null && snapshot.artwork != null) {
-            cachedArtwork = MonoArtworkEncoder.encode(appContext, snapshot.artwork, snapshot.artworkUri)
+            cachedArtwork = encodeArtwork(mode, snapshot)
         } else if (cachedArtwork == null &&
             snapshot.artworkUri.isNotBlank() &&
             snapshot.artworkUri != cachedArtworkUriAttempt
         ) {
             cachedArtworkUriAttempt = snapshot.artworkUri
-            cachedArtwork = MonoArtworkEncoder.encode(appContext, null, snapshot.artworkUri)
+            cachedArtwork = when (mode) {
+                MediaArtworkMode.IMAGE -> ImageArtworkEncoder.encode(appContext, null, snapshot.artworkUri)
+                MediaArtworkMode.MONO -> MonoArtworkEncoder.encode(appContext, null, snapshot.artworkUri)
+            }
         }
         return cachedArtwork
     }
+
+    private fun encodeArtwork(mode: MediaArtworkMode, snapshot: MediaDeckSnapshot): EncodedMediaArtwork? =
+        when (mode) {
+            MediaArtworkMode.IMAGE -> ImageArtworkEncoder.encode(
+                appContext,
+                snapshot.artwork,
+                snapshot.artworkUri,
+            )
+            MediaArtworkMode.MONO -> MonoArtworkEncoder.encode(
+                appContext,
+                snapshot.artwork,
+                snapshot.artworkUri,
+            )
+        }
 
     private fun trackKey(snapshot: MediaDeckSnapshot): String = shortHash(
         listOf(

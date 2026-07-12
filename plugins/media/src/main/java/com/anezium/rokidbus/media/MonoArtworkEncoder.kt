@@ -5,16 +5,21 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.util.Base64
+import com.anezium.rokidbus.shared.ImageSurfaceContract
+import com.anezium.rokidbus.shared.MediaArtworkContract
 import org.json.JSONObject
+import java.io.ByteArrayOutputStream
 import java.security.MessageDigest
 import kotlin.math.roundToInt
+
+internal sealed interface EncodedMediaArtwork
 
 internal data class EncodedMonoArtwork(
     val width: Int,
     val height: Int,
     val bytes: ByteArray,
     val hash: String,
-) {
+) : EncodedMediaArtwork {
     fun toJson(): JSONObject = JSONObject()
         .put("encoding", "mono1")
         .put("width", width)
@@ -22,6 +27,20 @@ internal data class EncodedMonoArtwork(
         .put("hash", hash)
         .put("data", Base64.encodeToString(bytes, Base64.NO_WRAP))
 }
+
+internal data class EncodedImageArtwork(
+    val mimeType: String,
+    val width: Int,
+    val height: Int,
+    val bytes: ByteArray,
+    val sha256: String,
+    val jpegQuality: Int,
+) : EncodedMediaArtwork
+
+internal enum class MediaArtworkMode { IMAGE, MONO }
+
+internal fun artworkModeFor(supportsImage: Boolean): MediaArtworkMode =
+    if (supportsImage) MediaArtworkMode.IMAGE else MediaArtworkMode.MONO
 
 internal object MonoArtworkEncoder {
     const val SIZE = 96
@@ -50,7 +69,7 @@ internal object MonoArtworkEncoder {
         }
 
         try {
-            val software = if (source.config == Bitmap.Config.HARDWARE) {
+            val software = if (source.config?.toString() == "HARDWARE") {
                 own(requireNotNull(source.copy(Bitmap.Config.ARGB_8888, false)))
             } else {
                 source
@@ -161,6 +180,99 @@ internal object MonoArtworkEncoder {
                 append(hex[value ushr 4])
                 append(hex[value and 0x0f])
             }
+        }
+    }
+
+    private const val MAX_DECODE_DIMENSION = 512
+    private val LOCAL_URI_SCHEMES = setOf("content", "android.resource", "file")
+}
+
+internal object ImageArtworkEncoder {
+    private val JPEG_QUALITIES = listOf(88, 80, 72, 60, 48, 36)
+
+    fun encode(context: Context, source: Bitmap?, sourceUri: String): EncodedImageArtwork? {
+        encode(source)?.let { return it }
+        if (sourceUri.isBlank()) return null
+        val decoded = runCatching { decodeLocalArtwork(context, sourceUri) }.getOrNull() ?: return null
+        return try {
+            encode(decoded)
+        } finally {
+            if (!decoded.isRecycled) decoded.recycle()
+        }
+    }
+
+    fun encode(source: Bitmap?): EncodedImageArtwork? {
+        if (source == null || source.isRecycled || source.width <= 0 || source.height <= 0) return null
+        return runCatching { encodeChecked(source) }.getOrNull()
+    }
+
+    private fun encodeChecked(source: Bitmap): EncodedImageArtwork? {
+        val owned = mutableListOf<Bitmap>()
+        fun own(bitmap: Bitmap): Bitmap {
+            if (bitmap !== source && owned.none { it === bitmap }) owned += bitmap
+            return bitmap
+        }
+
+        try {
+            val software = if (source.config?.toString() == "HARDWARE") {
+                own(requireNotNull(source.copy(Bitmap.Config.ARGB_8888, false)))
+            } else {
+                source
+            }
+            val longestEdge = maxOf(software.width, software.height)
+            val scale = minOf(1.0, MediaArtworkContract.MAX_EDGE_PIXELS.toDouble() / longestEdge)
+            val targetWidth = (software.width * scale).roundToInt().coerceAtLeast(1)
+            val targetHeight = (software.height * scale).roundToInt().coerceAtLeast(1)
+            val scaled = if (software.width == targetWidth && software.height == targetHeight) {
+                software
+            } else {
+                own(Bitmap.createScaledBitmap(software, targetWidth, targetHeight, true))
+            }
+
+            JPEG_QUALITIES.forEach { quality ->
+                val bytes = ByteArrayOutputStream().use { output ->
+                    if (!scaled.compress(Bitmap.CompressFormat.JPEG, quality, output)) return@forEach
+                    output.toByteArray()
+                }
+                if (bytes.isEmpty() || bytes.size > ImageSurfaceContract.MAX_IMAGE_BYTES) return@forEach
+                val dimensions = ImageSurfaceContract.dimensions(ImageSurfaceContract.MIME_JPEG, bytes)
+                    ?: return@forEach
+                if (dimensions.width != targetWidth || dimensions.height != targetHeight) return@forEach
+                return EncodedImageArtwork(
+                    mimeType = ImageSurfaceContract.MIME_JPEG,
+                    width = targetWidth,
+                    height = targetHeight,
+                    bytes = bytes,
+                    sha256 = ImageSurfaceContract.sha256(bytes),
+                    jpegQuality = quality,
+                )
+            }
+            return null
+        } finally {
+            owned.asReversed().forEach { bitmap ->
+                if (!bitmap.isRecycled) bitmap.recycle()
+            }
+        }
+    }
+
+    private fun decodeLocalArtwork(context: Context, value: String): Bitmap? {
+        val uri = Uri.parse(value)
+        if (uri.scheme !in LOCAL_URI_SCHEMES) return null
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        context.contentResolver.openInputStream(uri)?.use { input ->
+            BitmapFactory.decodeStream(input, null, bounds)
+        }
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+        var sampleSize = 1
+        while (maxOf(bounds.outWidth, bounds.outHeight) / sampleSize > MAX_DECODE_DIMENSION) {
+            sampleSize *= 2
+        }
+        val options = BitmapFactory.Options().apply {
+            inSampleSize = sampleSize
+            inPreferredConfig = Bitmap.Config.ARGB_8888
+        }
+        return context.contentResolver.openInputStream(uri)?.use { input ->
+            BitmapFactory.decodeStream(input, null, options)
         }
     }
 

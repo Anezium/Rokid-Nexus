@@ -15,14 +15,20 @@ class MediaDeckPluginService : NexusPluginService() {
     private var runtime: MediaDeckRuntime? = null
 
     private val runtimeHost = object : MediaDeckRuntimeHost {
+        override fun supportsImage(): Boolean = nexusClient?.supportsImageSurface == true
+
         override fun sendCard(card: NexusCard, show: Boolean) {
             val session = surfaceSession() ?: return
             if (show) session.showCard(card) else session.updateCard(card)
         }
 
-        override fun sendMedia(media: NexusMedia, show: Boolean) {
+        override fun sendMedia(media: NexusMedia, imageBytes: ByteArray?, show: Boolean) {
             val session = surfaceSession() ?: return
-            if (show) session.showMedia(media) else session.updateMedia(media)
+            if (imageBytes == null) {
+                if (show) session.showMedia(media) else session.updateMedia(media)
+            } else {
+                if (show) session.showMedia(media, imageBytes) else session.updateMedia(media, imageBytes)
+            }
         }
 
         override fun updateMediaAnchor(contentKey: String, anchor: NexusMediaAnchor) {
@@ -54,6 +60,10 @@ class MediaDeckPluginService : NexusPluginService() {
 
     override fun onNexusRegistrationState(result: Int) {
         if (result != PluginRegistrationResult.APPROVED) runtime?.close()
+    }
+
+    override fun onNexusLinkState(state: Int) {
+        runtime?.imageCapabilityChanged()
     }
 
     override fun onDestroy() {

@@ -166,6 +166,61 @@ class SurfaceModelsTest {
     }
 
     @Test
+    fun `media image artwork uses binary envelope and nested metadata`() {
+        val (client, transport) = client("surfaces")
+        transport.featureBits = BusCapabilityBits.IMAGE_SURFACE
+        transport.listener.onLinkState(LinkStateBits.SPP_DATA_UP)
+        val bytes = validJpeg(width = 256, height = 128)
+        val media = NexusMedia(
+            title = "MEDIA DECK",
+            contentKey = "track-image",
+            mediaTitle = "Track",
+            anchor = NexusMediaAnchor(0, false, 1f, 99),
+            imageArtwork = NexusMediaImageArtwork(
+                mimeType = ImageSurfaceContract.MIME_JPEG,
+                pixelWidth = 256,
+                pixelHeight = 128,
+            ),
+        )
+
+        assertEquals(NexusSdkResult.SENT, client.surfaceSession("media").showMedia(media, bytes))
+
+        val (path, payload, sentBytes) = transport.binarySends.single()
+        assertEquals(BusPaths.SURFACE_SHOW, path)
+        assertEquals("media", payload.getString("kind"))
+        assertEquals(1, payload.getInt("mediaVersion"))
+        val artwork = payload.getJSONObject("artwork")
+        assertEquals("binary", artwork.getString("encoding"))
+        assertEquals("image/jpeg", artwork.getString("mimeType"))
+        assertEquals(256, artwork.getInt("pixelWidth"))
+        assertEquals(ImageSurfaceContract.sha256(bytes), artwork.getString("sha256"))
+        assertTrue(bytes.contentEquals(sentBytes))
+        assertTrue(transport.sends.isEmpty())
+    }
+
+    @Test
+    fun `media image artwork requires image capability and binary overload`() {
+        val (client, transport) = client("surfaces")
+        transport.listener.onLinkState(LinkStateBits.SPP_DATA_UP)
+        val bytes = validJpeg(width = 256, height = 256)
+        val media = NexusMedia(
+            title = "MEDIA DECK",
+            contentKey = "track-image",
+            mediaTitle = "Track",
+            anchor = NexusMediaAnchor(0, false, 1f, 99),
+            imageArtwork = NexusMediaImageArtwork(ImageSurfaceContract.MIME_JPEG, 256, 256),
+        )
+
+        assertEquals(NexusSdkResult.INVALID_PAYLOAD, client.surfaceSession("media").showMedia(media))
+        assertEquals(
+            NexusSdkResult.CAPABILITY_NOT_AVAILABLE,
+            client.surfaceSession("media-2").showMedia(media, bytes),
+        )
+        assertTrue(transport.sends.isEmpty())
+        assertTrue(transport.binarySends.isEmpty())
+    }
+
+    @Test
     fun `capability helpers fail locally and microphone stays unavailable`() {
         val (client, transport) = client("surfaces")
         assertEquals(NexusSdkResult.CAPABILITY_NOT_GRANTED, client.requestHttp(JSONObject().put("url", "https://example.com")))

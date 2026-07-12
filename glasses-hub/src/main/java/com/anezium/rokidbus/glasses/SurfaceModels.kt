@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.os.SystemClock
 import android.util.Base64
 import com.anezium.rokidbus.shared.ImageSurfaceContract
+import com.anezium.rokidbus.shared.MediaArtworkContract
 import org.json.JSONObject
 
 enum class SurfaceDisplayPath(val prefValue: String) {
@@ -117,6 +118,30 @@ data class SurfaceImageMetadata(
                 caption = caption,
             )
         }
+
+        fun fromMediaPayload(payload: JSONObject): SurfaceImageMetadata? {
+            val artwork = payload.optJSONObject("artwork") ?: return null
+            if (artwork.optString("encoding") != MediaArtworkContract.ENCODING_BINARY) return null
+            val contentKey = payload.getString("contentKey")
+            val mimeType = artwork.getString("mimeType")
+            val width = artwork.getInt("pixelWidth")
+            val height = artwork.getInt("pixelHeight")
+            val sha256 = artwork.getString("sha256")
+            require(contentKey.isNotBlank() && contentKey.length <= ImageSurfaceContract.MAX_CONTENT_KEY_CHARS)
+            require(mimeType == ImageSurfaceContract.MIME_JPEG || mimeType == ImageSurfaceContract.MIME_PNG)
+            require(width in 1..MediaArtworkContract.MAX_EDGE_PIXELS)
+            require(height in 1..MediaArtworkContract.MAX_EDGE_PIXELS)
+            require(sha256.matches(Regex("[0-9a-f]{64}")))
+            return SurfaceImageMetadata(
+                version = ImageSurfaceContract.VERSION,
+                contentKey = contentKey,
+                mimeType = mimeType,
+                pixelWidth = width,
+                pixelHeight = height,
+                sha256 = sha256,
+                caption = "",
+            )
+        }
     }
 }
 
@@ -136,6 +161,7 @@ data class NexusSurface(
     val mediaArtist: String = "",
     val mediaAlbum: String = "",
     val artwork: MonoArtwork? = null,
+    val mediaArtworkMetadata: SurfaceImageMetadata? = null,
     val imageMetadata: SurfaceImageMetadata? = null,
     val imageBitmap: Bitmap? = null,
 ) {
@@ -164,6 +190,21 @@ data class NexusSurface(
                 previous.kind == kind &&
                 (contentKey.isBlank() || previous.contentKey == contentKey)
             val linesPresent = payload.has("lines")
+            val artworkPresent = payload.has("artwork")
+            val mediaArtworkMetadata = when {
+                kind != KIND_MEDIA -> null
+                artworkPresent -> SurfaceImageMetadata.fromMediaPayload(payload)
+                canMergePrevious -> previous?.mediaArtworkMetadata
+                else -> null
+            }
+            val preservedImageBitmap = if (
+                kind == KIND_MEDIA && canMergePrevious &&
+                previous?.mediaArtworkMetadata?.sha256 == mediaArtworkMetadata?.sha256
+            ) {
+                previous?.imageBitmap
+            } else {
+                null
+            }
             return NexusSurface(
                 surfaceId = surfaceId,
                 seq = payload.optLong("seq", 0L),
@@ -239,11 +280,13 @@ data class NexusSurface(
                 mediaAlbum = payload.optString("mediaAlbum")
                     .ifBlank { previous?.takeIf { canMergePrevious }?.mediaAlbum.orEmpty() },
                 artwork = when {
-                    payload.has("artwork") -> MonoArtwork.fromPayload(payload.optJSONObject("artwork"))
+                    artworkPresent -> MonoArtwork.fromPayload(payload.optJSONObject("artwork"))
                     canMergePrevious -> previous?.artwork
                     else -> null
                 },
+                mediaArtworkMetadata = mediaArtworkMetadata,
                 imageMetadata = if (kind == KIND_IMAGE) SurfaceImageMetadata.fromPayload(payload) else null,
+                imageBitmap = preservedImageBitmap,
             )
         }
     }

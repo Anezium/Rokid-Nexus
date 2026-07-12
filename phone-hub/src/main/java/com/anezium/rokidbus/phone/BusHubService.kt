@@ -33,8 +33,10 @@ import com.anezium.rokidbus.shared.BusEnvelope
 import com.anezium.rokidbus.shared.BusPaths
 import com.anezium.rokidbus.shared.FrameProtocol
 import com.anezium.rokidbus.shared.ImageSurfaceContract
+import com.anezium.rokidbus.shared.ImageSurfaceMetadata
 import com.anezium.rokidbus.shared.ImageSurfaceValidationResult
 import com.anezium.rokidbus.shared.LinkStateBits
+import com.anezium.rokidbus.shared.MediaArtworkContract
 import com.anezium.rokidbus.shared.plugin.PathRules
 import com.anezium.rokidbus.shared.plugin.PluginCapability
 import com.anezium.rokidbus.shared.plugin.PluginCapability.Companion.serialize
@@ -435,12 +437,10 @@ class BusHubService : Service() {
             envelope
         }
         if (ownedEnvelope.path == BusPaths.SURFACE_SHOW || ownedEnvelope.path == BusPaths.SURFACE_UPDATE) {
-            if (ownedEnvelope.payload.optString("kind") == ImageSurfaceContract.KIND) {
-                val imageError = validateImageEnvelope(ownedEnvelope)
-                if (imageError != null) {
-                    deliverError(sender.replyBinder, ownedEnvelope.id, imageError)
-                    return
-                }
+            val imageError = validateSurfaceImageEnvelope(ownedEnvelope)
+            if (imageError != null) {
+                deliverError(sender.replyBinder, ownedEnvelope.id, imageError)
+                return
             }
         }
         if (
@@ -953,10 +953,8 @@ class BusHubService : Service() {
     }
 
     private fun sendBuiltInPluginEnvelope(envelope: BusEnvelope): String? {
-        if ((envelope.path == BusPaths.SURFACE_SHOW || envelope.path == BusPaths.SURFACE_UPDATE) &&
-            envelope.payload.optString("kind") == ImageSurfaceContract.KIND
-        ) {
-            validateImageEnvelope(envelope)?.let { return it }
+        if (envelope.path == BusPaths.SURFACE_SHOW || envelope.path == BusPaths.SURFACE_UPDATE) {
+            validateSurfaceImageEnvelope(envelope)?.let { return it }
         }
         return sendRemote(envelope)
     }
@@ -1333,6 +1331,36 @@ class BusHubService : Service() {
         val validation = ImageSurfaceContract.validate(envelope.payload, envelope.binary)
         if (validation is ImageSurfaceValidationResult.Invalid) return validation.code
         val metadata = (validation as ImageSurfaceValidationResult.Valid).metadata
+        return validateDecodedImageEnvelope(envelope, metadata)
+    }
+
+    private fun validateMediaArtworkEnvelope(envelope: BusEnvelope): String? {
+        if (capabilities() and BusCapabilityBits.IMAGE_SURFACE == 0) {
+            return ImageSurfaceContract.ERROR_CAPABILITY_NOT_AVAILABLE
+        }
+        val validation = MediaArtworkContract.validate(envelope.payload, envelope.binary)
+        if (validation is ImageSurfaceValidationResult.Invalid) return validation.code
+        val metadata = (validation as ImageSurfaceValidationResult.Valid).metadata
+        return validateDecodedImageEnvelope(envelope, metadata)
+    }
+
+    private fun validateSurfaceImageEnvelope(envelope: BusEnvelope): String? =
+        when (envelope.payload.optString("kind")) {
+            ImageSurfaceContract.KIND -> validateImageEnvelope(envelope)
+            MediaArtworkContract.KIND -> if (
+                MediaArtworkContract.hasBinaryArtwork(envelope.payload) || envelope.binary != null
+            ) {
+                validateMediaArtworkEnvelope(envelope)
+            } else {
+                null
+            }
+            else -> null
+        }
+
+    private fun validateDecodedImageEnvelope(
+        envelope: BusEnvelope,
+        metadata: ImageSurfaceMetadata,
+    ): String? {
         val bytes = envelope.binary ?: return ImageSurfaceContract.ERROR_INVALID_IMAGE
         val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
