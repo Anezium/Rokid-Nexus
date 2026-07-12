@@ -113,8 +113,13 @@ work: closed plugins must not keep engines, fetching, bindings, or pushes
 running, and must never initiate a surface themselves. Android may keep an
 enabled notification-listener component alive, but that listener must remain
 idle until the hub opens the plugin. While open, the SDK promotes the plugin
-service to the foreground with a quiet "Glasses session" notification; when
-closed, it removes that notification and returns the plugin to dormant state.
+service to a special-use foreground service so OEM app freezers leave it
+alone; when closed, it returns the plugin to dormant state.
+
+Plugins never show notifications. Do **not** declare `POST_NOTIFICATIONS`:
+without it the session foreground service runs with its notification
+suppressed, and the Rokid Nexus hub notification — which names the plugin
+that is live on the glasses — stays the single user-facing one.
 
 ## 4. Settings screen — the design kit
 
