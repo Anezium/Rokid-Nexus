@@ -1,0 +1,11 @@
+<resources>
+    <style name="Theme.Lens" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:colorAccent">#71FF97</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:navigationBarColor">#050706</item>
+        <item name="android:statusBarColor">#050706</item>
+        <item name="android:windowBackground">#050706</item>
+    </style>
+</resources>

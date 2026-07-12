@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES" android:usesPermissionFlags="neverForLocation" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- No POST_NOTIFICATIONS: the Nexus hub is the single user-facing notifier. -->
+    <queries>
+        <intent><action android:name="com.anezium.rokidbus.action.HUB" /></intent>
+    </queries>
+    <application android:allowBackup="false" android:icon="@drawable/ic_plugin_lens"
+        android:label="@string/app_name" android:supportsRtl="true" android:theme="@style/Theme.Lens">
+        <activity android:name=".LensSettingsActivity" android:exported="true"
+            android:windowSoftInputMode="adjustResize" />
+        <service android:name=".LensPluginService" android:exported="true"
+            android:foregroundServiceType="specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="glasses-session" />
+            <intent-filter><action android:name="com.anezium.rokidbus.action.PLUGIN" /></intent-filter>
+            <meta-data android:name="com.anezium.rokidbus.plugin.ID" android:value="lens" />
+            <meta-data android:name="com.anezium.rokidbus.plugin.DISPLAY_NAME" android:value="Lens" />
+            <meta-data android:name="com.anezium.rokidbus.plugin.API_VERSION" android:value="3" />
+            <meta-data android:name="com.anezium.rokidbus.plugin.CAPABILITIES" android:value="camera" />
+            <meta-data android:name="com.anezium.rokidbus.plugin.RECEIVE_PREFIXES"
+                android:value="/camera/session/state,/camera/link/offer,/system/plugin" />
+            <meta-data android:name="com.anezium.rokidbus.plugin.SETTINGS_ACTIVITY"
+                android:value=".LensSettingsActivity" />
+            <meta-data android:name="com.anezium.rokidbus.plugin.LAUNCHABLE" android:value="false" />
+        </service>
+    </application>
+</manifest>
