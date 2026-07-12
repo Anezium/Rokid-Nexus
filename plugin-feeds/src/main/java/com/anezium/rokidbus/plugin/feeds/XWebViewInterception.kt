@@ -2,6 +2,7 @@ package com.anezium.rokidbus.plugin.feeds
 
 import java.net.URLDecoder
 import java.net.URI
+import org.json.JSONObject
 
 object XWebViewInterception {
     const val USER_AGENT =
@@ -17,18 +18,32 @@ object XWebViewInterception {
     fun isTweetDetailGraphQlUrl(url: String): Boolean =
         graphQlOperation(url)?.equals("TweetDetail", ignoreCase = true) == true
 
+    fun tweetDetailFocalTweetId(url: String): String? {
+        if (!isTweetDetailGraphQlUrl(url)) return null
+        val query = runCatching { URI(url) }.getOrNull()?.rawQuery ?: return null
+        val variables = query.split('&').firstNotNullOfOrNull { parameter ->
+            val pieces = parameter.split('=', limit = 2)
+            if (pieces.size != 2 || decode(pieces[0]) != "variables") null else decode(pieces[1])
+        } ?: return null
+        return runCatching { JSONObject(variables).optString("focalTweetId").trim() }
+            .getOrNull()
+            ?.takeIf(String::isNotBlank)
+    }
+
     private fun graphQlOperation(url: String): String? {
         val parsed = runCatching { URI(url) }.getOrNull() ?: return null
         if (!parsed.scheme.equals("https", ignoreCase = true)) return null
         val host = parsed.host?.lowercase().orEmpty()
         if (TRUSTED_HOST_SUFFIXES.none { host == it || host.endsWith(".$it") }) return null
         val decodedPath = runCatching {
-            URLDecoder.decode(parsed.rawPath.orEmpty(), Charsets.UTF_8.name())
+            decode(parsed.rawPath.orEmpty())
         }.getOrDefault(parsed.path.orEmpty())
         val pathSegments = decodedPath.split('/').filter(String::isNotBlank)
         if (!decodedPath.contains("/graphql/", ignoreCase = true)) return null
         return pathSegments.lastOrNull()
     }
+
+    private fun decode(value: String): String = URLDecoder.decode(value, Charsets.UTF_8.name())
 
     fun responseFingerprint(body: String): String = "${body.length}:${body.hashCode()}"
 

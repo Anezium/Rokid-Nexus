@@ -61,6 +61,18 @@ class XWebViewFeedSourceTest {
                 "https://evil.example/i/api/graphql/query-id/TweetDetail",
             ),
         )
+        val variables = java.net.URLEncoder.encode("{\"focalTweetId\":\"300\"}", Charsets.UTF_8.name())
+        assertEquals(
+            "300",
+            XWebViewInterception.tweetDetailFocalTweetId(
+                "https://x.com/i/api/graphql/query-id/TweetDetail?variables=$variables&features=%7B%7D",
+            ),
+        )
+        assertNull(
+            XWebViewInterception.tweetDetailFocalTweetId(
+                "https://x.com/i/api/graphql/query-id/TweetDetail?variables=%7B%7D",
+            ),
+        )
     }
 
     @Test

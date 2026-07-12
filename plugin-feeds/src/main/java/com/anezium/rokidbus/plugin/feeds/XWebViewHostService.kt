@@ -332,16 +332,13 @@ class XWebViewHostService : Service() {
     private fun activeCaptureToken(): Long? = synchronized(captureLock) { activeCapture?.token }
 
     private fun handleCapturedResponse(url: String, body: String) {
-        val expectsThread = synchronized(captureLock) { activeCapture?.threadPostId != null }
-        val matches = if (expectsThread) {
-            XWebViewInterception.isTweetDetailGraphQlUrl(url)
-        } else {
-            XWebViewInterception.isHomeTimelineGraphQlUrl(url)
-        }
-        if (!matches) return
         val response = XWebViewCapturedResponse(body)
         val pending = synchronized(captureLock) {
             val current = activeCapture ?: return
+            val matches = current.threadPostId?.let { expectedId ->
+                XWebViewInterception.tweetDetailFocalTweetId(url) == expectedId
+            } ?: XWebViewInterception.isHomeTimelineGraphQlUrl(url)
+            if (!matches) return
             if (
                 XWebViewInterception.shouldSuppressDuplicate(
                     current.previousFingerprint,
