@@ -32,6 +32,13 @@ include(":glasses-client-probe")
 include(":lens-glasses")
 include(":plugin-sample")
 
+// Plugin modules live under plugins/ (one folder per plugin, each with its own
+// README and CHANGELOG); feeds moves there once the in-flight feeds branch lands.
+project(":plugin-lyrics").projectDir = file("plugins/lyrics")
+project(":plugin-media").projectDir = file("plugins/media")
+project(":plugin-transit").projectDir = file("plugins/transit")
+project(":plugin-sample").projectDir = file("plugins/sample")
+
 val cxrGlobalDirectory = file("../CxrGlobal")
 val skipCxrGlobal = providers.gradleProperty("skipCxrGlobal")
     .map(String::toBoolean)

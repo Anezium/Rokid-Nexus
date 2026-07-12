@@ -19,7 +19,8 @@ guide covers how to structure and skin a plugin so it feels native.
 An ordinary application module:
 
 ```kotlin
-// plugin-<id>/build.gradle.kts
+// plugins/<id>/build.gradle.kts — plugin modules live under plugins/,
+// each with a README.md and CHANGELOG.md (see plugins/README.md)
 plugins { id("com.android.application") }
 android {
     namespace = "com.anezium.rokidbus.plugin.<id>"

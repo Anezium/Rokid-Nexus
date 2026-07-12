@@ -108,7 +108,7 @@ and hardware gates, not SDK initialization requirements.
 
 Compatibility details and reserved lifecycle payloads live in
 [BUSSPEC.md](../BUSSPEC.md). The complete copyable implementation is in
-[`plugin-sample`](../plugin-sample).
+[`plugins/sample`](../plugins/sample).
 
 A maintainer must choose a repository license before public distribution. No
 license or public artifact release is implied by these coordinates.
