@@ -3,7 +3,7 @@ package com.anezium.rokidbus.plugin.feeds
 import java.net.URLDecoder
 import java.net.URI
 
-internal object XWebViewInterception {
+object XWebViewInterception {
     const val USER_AGENT =
         "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 " +
             "(KHTML, like Gecko) Chrome/123.0.0.0 Mobile Safari/537.3"

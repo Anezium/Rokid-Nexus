@@ -60,27 +60,28 @@ class PluginCatalogTest {
     }
 
     @Test
-    fun `duplicate built-in and external IDs invalidate both`() {
+    fun `built-in wins over stale external plugin with the same ID`() {
         val catalog = PluginCatalog.build(
             listOf(BuiltIn("hello")),
             listOf(PhonePluginCandidate.Valid(principal("hello"))),
         ) { PluginGrantState.Approved(setOf(PluginCapability.SURFACES)) }
-        assertTrue(catalog.launchableEntries.isEmpty())
-        assertFalse(catalog.entries.any { it.launchable })
-        assertEquals(setOf(PluginCatalogState.INVALID), catalog.entries.map { it.state }.toSet())
+        assertEquals(listOf("hello"), catalog.launchableEntries.mapNotNull { it.id })
+        assertEquals(1, catalog.entries.size)
+        assertEquals(PluginCatalogState.BUILT_IN, catalog.entry("hello")?.state)
     }
 
     @Test
-    fun `transit is absent without APK and dynamic when approved`() {
-        val withoutTransit = PluginCatalog.build(listOf(BuiltIn("lyrics")), emptyList()) {
+    fun `transit remains built in when stale APK is installed`() {
+        val withoutTransitApk = PluginCatalog.build(listOf(BuiltIn("lyrics"), BuiltIn("transit")), emptyList()) {
             PluginGrantState.Pending
         }
-        assertFalse(withoutTransit.entries.any { it.id == "transit" })
+        assertTrue(withoutTransitApk.launchableEntries.any { it.id == "transit" })
 
         val transit = PhonePluginCandidate.Valid(principal("transit"))
-        val installed = PluginCatalog.build(listOf(BuiltIn("lyrics")), listOf(transit)) {
+        val installed = PluginCatalog.build(listOf(BuiltIn("lyrics"), BuiltIn("transit")), listOf(transit)) {
             PluginGrantState.Approved(setOf(PluginCapability.SURFACES))
         }
-        assertTrue(installed.launchableEntries.any { it.id == "transit" })
+        assertEquals(1, installed.entries.count { it.id == "transit" })
+        assertEquals(PluginCatalogState.BUILT_IN, installed.entry("transit")?.state)
     }
 }

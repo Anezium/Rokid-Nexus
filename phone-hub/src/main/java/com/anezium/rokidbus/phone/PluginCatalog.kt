@@ -60,6 +60,7 @@ data class PluginCatalog(val entries: List<PluginCatalogEntry>) {
             grantState: (PhonePluginPrincipal) -> PluginGrantState,
         ): PluginCatalog {
             val entries = mutableListOf<PluginCatalogEntry>()
+            val builtInIds = builtInSpecs.map(BuiltInPluginCatalogSpec::id).toSet()
             builtInSpecs.forEach { spec ->
                 entries += PluginCatalogEntry(
                     catalogKey = "builtin:${spec.id}",
@@ -83,6 +84,7 @@ data class PluginCatalog(val entries: List<PluginCatalogEntry>) {
                     )
                     is PhonePluginCandidate.Valid -> {
                         val principal = candidate.principal
+                        if (principal.descriptor.id in builtInIds) return@forEach
                         val grant = grantState(principal)
                         val state = when (grant) {
                             PluginGrantState.Pending -> PluginCatalogState.PENDING

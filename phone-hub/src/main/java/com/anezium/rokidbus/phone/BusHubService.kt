@@ -119,7 +119,7 @@ class BusHubService : Service() {
     private lateinit var pluginDiscovery: PhonePluginDiscovery
     private lateinit var pluginGrantStore: PluginGrantStore
     private lateinit var externalPluginController: ExternalPluginController
-    private lateinit var transitLegacyStateExporter: TransitLegacyStateExporter
+    private var transitLocationForeground = false
     @Volatile private var cxrConnected = false
     @Volatile private var glassBtConnected = false
     @Volatile private var lastNotifiedStatus: String? = null
@@ -269,11 +269,8 @@ class BusHubService : Service() {
         PhoneClientSupervisor.attach(this)
         pluginDiscovery = PhonePluginDiscovery(packageManager)
         pluginGrantStore = PluginGrantStore(applicationContext)
-        transitLegacyStateExporter = TransitLegacyStateExporter(
-            AndroidTransitLegacyStateStorage(applicationContext),
-        )
         lensTranslationPlugin = LensTranslationPlugin()
-        val builtInPlugins = PhoneBuiltInPlugins.create(lensTranslationPlugin)
+        val builtInPlugins = PhoneBuiltInPlugins.create(lensTranslationPlugin, ::setTransitLocationForeground)
         val externalRuntime = AndroidExternalPluginRuntime(
             context = applicationContext,
             isRegisteredCallback = ::isExternalPrincipalRegistered,
@@ -289,7 +286,6 @@ class BusHubService : Service() {
             runtime = externalRuntime,
             scheduler = MainThreadExternalPluginScheduler(),
             logger = ::log,
-            onRegisteredPrincipal = ::offerTransitLegacyMigration,
         )
         pluginRegistry = PhonePluginRegistry(
             context = applicationContext,
@@ -419,15 +415,6 @@ class BusHubService : Service() {
             envelope.copy(payload = payload.put("seq", sequence))
         } else {
             envelope
-        }
-        if (authorizedEnvelope.path == TransitLegacyStateExporter.ACK_PATH && sender.principal != null) {
-            val acknowledged = transitLegacyStateExporter.acknowledge(
-                sender.principal,
-                pluginGrantStore.stateFor(sender.principal),
-                authorizedEnvelope.payload,
-            )
-            if (!acknowledged) deliverError(sender.replyBinder, authorizedEnvelope.id, "INVALID_MIGRATION_ACK")
-            return
         }
         if (handleHubPath(
                 authorizedEnvelope,
@@ -664,19 +651,6 @@ class BusHubService : Service() {
             removeRegistration(registration, "dead callback")
             false
         }
-    }
-
-    private fun offerTransitLegacyMigration(principal: PhonePluginPrincipal) {
-        val pending = transitLegacyStateExporter.prepare(
-            principal,
-            pluginGrantStore.stateFor(principal),
-        ) ?: return
-        deliverExternalLifecycle(
-            principal = principal,
-            path = TransitLegacyStateExporter.IMPORT_PATH,
-            id = pending.eventId,
-            payload = pending.payload,
-        )
     }
 
     private fun hideExternalSurfaces(pluginId: String) {
@@ -1149,8 +1123,34 @@ class BusHubService : Service() {
         )
         val state = linkState()
         lastNotifiedStatus = statusText(state)
-        startForeground(NOTIFICATION_ID, buildStatusNotification(state), ServiceInfoCompat.hubTypes())
+        startForeground(
+            NOTIFICATION_ID,
+            buildStatusNotification(state),
+            ServiceInfoCompat.hubTypes(locationActive = transitLocationForeground),
+        )
     }
+
+    private fun setTransitLocationForeground(active: Boolean): Boolean {
+        if (!active) {
+            transitLocationForeground = false
+            if (hubEnabled) startForegroundWithType()
+            return true
+        }
+        if (!hubEnabled || !hasLocationPermission()) return false
+        transitLocationForeground = true
+        return runCatching {
+            startForegroundWithType()
+            true
+        }.getOrElse { failure ->
+            transitLocationForeground = false
+            log("Transit location foreground rejected: ${failure.javaClass.simpleName}")
+            false
+        }
+    }
+
+    private fun hasLocationPermission(): Boolean =
+        checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+            checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
 
     private fun buildStatusNotification(state: Int): Notification {
         val openApp = PendingIntent.getActivity(

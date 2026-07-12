@@ -396,6 +396,41 @@ internal object NexusUi {
             layoutParams = LinearLayout.LayoutParams(dp(context, sizeDp), dp(context, sizeDp))
         }
 
+    /** Fixed header for a plugin settings screen: icon tile, name, one-liner, hairline. */
+    fun pluginHeader(context: Context, iconRes: Int, title: String, subtitle: String): LinearLayout =
+        LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(
+                LinearLayout(context).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    setPadding(dp(context, 22), dp(context, 18), dp(context, 22), dp(context, 18))
+                    addView(iconTileImage(context, iconRes, 48))
+                    addView(
+                        LinearLayout(context).apply {
+                            orientation = LinearLayout.VERTICAL
+                            addView(cardTitle(context, title).apply { textSize = 20f })
+                            addView(BusTheme.gap(context, 5))
+                            addView(rowSub(context, subtitle))
+                        },
+                        LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                            marginStart = dp(context, 14)
+                        },
+                    )
+                },
+                block(),
+            )
+            addView(
+                View(context).apply {
+                    setBackgroundColor(LINE)
+                    layoutParams = LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        dp(context, 1),
+                    )
+                },
+            )
+        }
+
     fun field(context: Context, hintText: String): EditText =
         EditText(context).apply {
             hint = hintText
