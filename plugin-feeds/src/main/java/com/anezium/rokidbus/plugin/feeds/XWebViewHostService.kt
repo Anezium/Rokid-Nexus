@@ -194,6 +194,7 @@ class XWebViewHostService : Service() {
                 override fun onPageFinished(view: WebView, url: String?) {
                     super.onPageFinished(view, url)
                     injectInterception(view)
+                    scrollAfterHomeNavigation(view, url)
                 }
             }
         }
@@ -283,8 +284,8 @@ class XWebViewHostService : Service() {
             browser.loadUrl(HOME_URL)
         } else if (!browser.url.orEmpty().startsWith(HOME_URL)) {
             browser.stopLoading()
+            pending.scrollAfterHomeLoad = true
             browser.loadUrl(HOME_URL)
-            scrollForNextPage(pending.token, browser)
         } else {
             scrollForNextPage(pending.token, browser)
         }
@@ -312,6 +313,16 @@ class XWebViewHostService : Service() {
                 delay,
             )
         }
+    }
+
+    private fun scrollAfterHomeNavigation(browser: WebView, url: String?) {
+        if (!url.orEmpty().startsWith(HOME_URL)) return
+        val token = synchronized(captureLock) {
+            val pending = activeCapture?.takeIf { it.scrollAfterHomeLoad } ?: return
+            pending.scrollAfterHomeLoad = false
+            pending.token
+        }
+        scrollForNextPage(token, browser)
     }
 
     private fun injectInterception(browser: WebView) {
@@ -409,6 +420,8 @@ class XWebViewHostService : Service() {
 
         @Volatile
         var response: XWebViewCapturedResponse? = null
+
+        var scrollAfterHomeLoad: Boolean = false
     }
 
     private companion object {
