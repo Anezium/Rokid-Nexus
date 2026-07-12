@@ -267,8 +267,18 @@ class BusClient(
     fun linkState(): Int =
         runCatching { service?.linkState() ?: 0 }.getOrDefault(0)
 
+    /** Reads the live Binder value; feature availability may change without a rebind. */
+    fun capabilities(): Int =
+        runCatching { service?.capabilities() ?: 0 }
+            .getOrDefault(0)
+            .also { hubCapabilities = it }
+
     fun supportsProtectedLensLink(): Boolean =
         hubCapabilities and BusCapabilityBits.PROTECTED_LENS_LINK != 0
+
+    fun supportsImageSurface(): Boolean =
+        capabilities() and BusCapabilityBits.IMAGE_SURFACE != 0 &&
+            linkState() and com.anezium.rokidbus.shared.LinkStateBits.SPP_DATA_UP != 0
 
     fun close() {
         closed = true

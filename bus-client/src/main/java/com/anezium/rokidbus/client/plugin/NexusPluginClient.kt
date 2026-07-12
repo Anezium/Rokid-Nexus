@@ -3,7 +3,9 @@ package com.anezium.rokidbus.client.plugin
 import android.content.Context
 import com.anezium.rokidbus.client.HubTarget
 import com.anezium.rokidbus.client.PluginRegistrationResult
+import com.anezium.rokidbus.shared.BusCapabilityBits
 import com.anezium.rokidbus.shared.BusPaths
+import com.anezium.rokidbus.shared.LinkStateBits
 import com.anezium.rokidbus.shared.plugin.NexusInputEvent
 import com.anezium.rokidbus.shared.plugin.CapabilityParseResult
 import com.anezium.rokidbus.shared.plugin.PluginCapability
@@ -21,12 +23,18 @@ class NexusPluginClient internal constructor(
     private var opened = false
     private var closed = false
     private var approvedCapabilities: Set<PluginCapability> = emptySet()
+    @Volatile private var currentLinkState = 0
+    @Volatile private var hubCapabilities = 0
 
     val isApproved: Boolean
         get() = registrationState == PluginRegistrationResult.APPROVED
 
     fun hasCapability(capability: PluginCapability): Boolean =
         isApproved && capability in approvedCapabilities
+
+    val supportsImageSurface: Boolean
+        get() = currentLinkState and LinkStateBits.SPP_DATA_UP != 0 &&
+            hubCapabilities and BusCapabilityBits.IMAGE_SURFACE != 0
 
     fun connect() {
         check(!closed) { "NexusPluginClient is closed" }
@@ -36,6 +44,11 @@ class NexusPluginClient internal constructor(
     fun send(path: String, id: String, payload: JSONObject): Boolean {
         if (closed || !isApproved) return false
         return transport.send(path, id, payload)
+    }
+
+    internal fun sendBinary(path: String, id: String, payload: JSONObject, data: ByteArray): Boolean {
+        if (closed || !isApproved) return false
+        return transport.sendBinary(path, id, payload, data)
     }
 
     override fun onRegistrationState(result: Int) {
@@ -50,7 +63,10 @@ class NexusPluginClient internal constructor(
     }
 
     override fun onLinkState(state: Int) {
-        if (!closed) callbacks.onLinkState(state)
+        if (closed) return
+        currentLinkState = state
+        hubCapabilities = transport.capabilities()
+        callbacks.onLinkState(state)
     }
 
     override fun onMessage(path: String, id: String, payload: JSONObject) {
@@ -97,6 +113,8 @@ class NexusPluginClient internal constructor(
             callbacks.onClose()
         }
         transport.close()
+        currentLinkState = 0
+        hubCapabilities = 0
         seenEventIds.clear()
         seenEventIdSet.clear()
     }
