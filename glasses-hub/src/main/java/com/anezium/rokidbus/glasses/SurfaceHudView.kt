@@ -357,7 +357,7 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
 
         // Plain card bodies (messages, chooser): smaller mono, more lines.
         private const val CARD_BODY_SP = 17f
-        private const val CARD_BODY_MAX_LINES = 12
+        private const val CARD_BODY_MAX_LINES = 15
         private const val TIMED_BODY_SP = 25f
         private const val TIMED_BODY_MAX_LINES = 5
 

@@ -43,13 +43,13 @@ class PostCardLayoutTest {
     }
 
     @Test
-    fun twoHundredEightyCharacterPost_fitsTheDocumentedCardBounds() {
+    fun twoHundredEightyCharacterPost_fitsTheExpandedCardBounds() {
         val text = ("0123456789".repeat(28)).also { assertEquals(280, it.length) }
         val card = PostCardLayout.layout(post(text), now, 0, 1)
 
-        assertTrue(card.truncated)
-        assertEquals(2, card.pageCount)
-        assertEquals(PostCardLayout.CARD_ROWS, card.lines.size)
+        assertFalse(card.truncated)
+        assertEquals(1, card.pageCount)
+        assertEquals(13, card.lines.size)
         assertTrue(card.lines.all { it.length <= PostCardLayout.LINE_CHARS })
     }
 
@@ -92,8 +92,8 @@ class PostCardLayoutTest {
         )
         val blankHandle = PostCardLayout.layout(post("Body").copy(authorHandle = ""), now, 0, 1)
 
-        assertEquals(26, withHandle.lines[0].length)
-        assertEquals("@a-handle-that-is-also-too", withHandle.lines[1])
+        assertEquals(27, withHandle.lines[0].length)
+        assertEquals("@a-handle-that-is-also-too-", withHandle.lines[1])
         assertEquals("Body", withHandle.lines[2])
         assertEquals(listOf("Ada Lovelace \u00b7 1h", "Body"), blankHandle.lines)
     }
@@ -123,8 +123,8 @@ class PostCardLayoutTest {
     fun contentKey_staysWithinSurfaceLimitForMaximalCard() {
         val card = FeedCardContent(
             title = "T".repeat(120),
-            lines = List(12) { "x".repeat(26) },
-            footer = "f".repeat(26),
+            lines = List(15) { "x".repeat(27) },
+            footer = "f".repeat(27),
             truncated = true,
             pageIndex = 0,
             pageCount = 2,

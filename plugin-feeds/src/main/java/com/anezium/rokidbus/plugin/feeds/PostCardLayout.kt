@@ -15,8 +15,8 @@ data class FeedCardContent(
 }
 
 object PostCardLayout {
-    const val LINE_CHARS = 26
-    const val CARD_ROWS = 12
+    const val LINE_CHARS = 27
+    const val CARD_ROWS = 15
     const val BODY_ROWS = CARD_ROWS - 2
 
     fun layout(
