@@ -78,6 +78,13 @@ class XWebViewFeedSourceTest {
     }
 
     @Test
+    fun duplicateSuppression_appliesToHomePaginationButNotThreadReopen() {
+        assertTrue(XWebViewInterception.shouldSuppressDuplicate("same", "same", threadPostId = null))
+        assertFalse(XWebViewInterception.shouldSuppressDuplicate("same", "same", threadPostId = "300"))
+        assertFalse(XWebViewInterception.shouldSuppressDuplicate("old", "new", threadPostId = null))
+    }
+
+    @Test
     fun interceptedFixture_usesAccountParserAndReturnsWebViewPosts() {
         val captureClient = FakeCaptureClient(response = XWebViewCapturedResponse(fixture()))
         val source = XWebViewFeedSource(

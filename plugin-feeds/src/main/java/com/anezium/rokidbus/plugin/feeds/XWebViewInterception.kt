@@ -32,6 +32,12 @@ object XWebViewInterception {
 
     fun responseFingerprint(body: String): String = "${body.length}:${body.hashCode()}"
 
+    fun shouldSuppressDuplicate(
+        previousFingerprint: String?,
+        responseFingerprint: String,
+        threadPostId: String?,
+    ): Boolean = threadPostId == null && previousFingerprint == responseFingerprint
+
     fun javascript(): String = INTERCEPTION_JAVASCRIPT
 
     private val HOME_OPERATIONS = listOf("HomeTimeline", "HomeLatestTimeline")

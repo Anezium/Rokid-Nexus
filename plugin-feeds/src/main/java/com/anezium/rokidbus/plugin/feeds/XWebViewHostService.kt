@@ -331,7 +331,13 @@ class XWebViewHostService : Service() {
         val response = XWebViewCapturedResponse(body)
         val pending = synchronized(captureLock) {
             val current = activeCapture ?: return
-            if (current.previousFingerprint == response.fingerprint) return
+            if (
+                XWebViewInterception.shouldSuppressDuplicate(
+                    current.previousFingerprint,
+                    response.fingerprint,
+                    current.threadPostId,
+                )
+            ) return
             activeCapture = null
             current
         }

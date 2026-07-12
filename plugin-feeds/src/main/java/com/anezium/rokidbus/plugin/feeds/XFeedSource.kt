@@ -92,6 +92,7 @@ class XFeedSource(
                             createdAt = runCatching { Instant.parse(item.optString("created_at")) }
                                 .getOrDefault(fallbackNow),
                             source = FeedSourceKind.X_OFFICIAL.tag,
+                            // Official v1 intentionally leaves typed media empty: media_keys do not include usable URLs.
                         ),
                     )
                 }
