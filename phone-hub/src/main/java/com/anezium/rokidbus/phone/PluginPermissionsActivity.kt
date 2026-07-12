@@ -2,6 +2,8 @@ package com.anezium.rokidbus.phone
 
 import com.anezium.rokidbus.client.ui.NexusUi
 import android.app.Activity
+import android.content.Context
+import android.content.Intent
 import android.graphics.Color
 import android.graphics.Typeface
 import android.os.Bundle
@@ -19,10 +21,13 @@ class PluginPermissionsActivity : Activity() {
     private lateinit var content: LinearLayout
     private lateinit var grantStore: PluginGrantStore
     private var developerDetails = false
+    private var focusedTarget: PluginGrantTarget? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         grantStore = PluginGrantStore(applicationContext)
+        focusedTarget = intent?.let(::targetFromIntent)
+        focusedTarget?.let { PluginInstallRecoveryStore(applicationContext).clearSuccess(it) }
         developerDetails = getSharedPreferences(PREFERENCES, MODE_PRIVATE)
             .getBoolean(KEY_DEVELOPER_DETAILS, false)
         buildUi()
@@ -63,9 +68,17 @@ class PluginPermissionsActivity : Activity() {
         content.addView(developerToggle(), NexusUi.block())
         content.addView(BusTheme.gap(this, 22))
 
-        val candidates = PhonePluginDiscovery(packageManager).discover()
-        val valid = candidates.mapNotNull { (it as? PhonePluginCandidate.Valid)?.principal }
+        val allCandidates = PhonePluginDiscovery(packageManager).discover()
+        val valid = allCandidates.mapNotNull { (it as? PhonePluginCandidate.Valid)?.principal }
         grantStore.reconcile(valid)
+        val candidates = focusedTarget?.let { target ->
+            allCandidates.filter { candidate ->
+                when (candidate) {
+                    is PhonePluginCandidate.Valid -> target.matches(candidate.principal)
+                    is PhonePluginCandidate.Invalid -> candidate.packageName == target.packageName
+                }
+            }
+        } ?: allCandidates
         if (candidates.isEmpty()) {
             content.addView(
                 NexusUi.navCard(this, "No plugins installed", "Install a Nexus phone plugin to review its access."),
@@ -253,7 +266,20 @@ class PluginPermissionsActivity : Activity() {
     }
 
     companion object {
+        private const val EXTRA_PACKAGE_NAME = "plugin_package_name"
+        private const val EXTRA_PLUGIN_ID = "plugin_id"
         private const val PREFERENCES = "plugin_access_ui"
         private const val KEY_DEVELOPER_DETAILS = "developer_details"
+
+        fun intent(context: Context, target: PluginGrantTarget): Intent =
+            Intent(context, PluginPermissionsActivity::class.java)
+                .putExtra(EXTRA_PACKAGE_NAME, target.packageName)
+                .putExtra(EXTRA_PLUGIN_ID, target.pluginId)
+
+        private fun targetFromIntent(intent: Intent): PluginGrantTarget? {
+            val packageName = intent.getStringExtra(EXTRA_PACKAGE_NAME).orEmpty()
+            val pluginId = intent.getStringExtra(EXTRA_PLUGIN_ID).orEmpty()
+            return if (packageName.isBlank() || pluginId.isBlank()) null else PluginGrantTarget(packageName, pluginId)
+        }
     }
 }

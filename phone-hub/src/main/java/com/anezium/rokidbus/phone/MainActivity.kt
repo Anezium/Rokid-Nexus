@@ -62,6 +62,7 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        resumeRecoveredPluginInstall()
         rebuildSetupSection()
         rebuildPluginSection()
         refreshToggle()
