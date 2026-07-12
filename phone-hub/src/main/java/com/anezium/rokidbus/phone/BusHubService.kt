@@ -305,6 +305,7 @@ class BusHubService : Service() {
             scheduler = MainThreadExternalPluginScheduler(),
             logger = ::log,
             onRegisteredPrincipal = ::offerTransitLegacyMigration,
+            onForegroundChanged = { updateStatusNotification(linkState()) },
         )
         pluginRegistry = PhonePluginRegistry(
             context = applicationContext,
@@ -1241,8 +1242,14 @@ class BusHubService : Service() {
     }
 
     private fun statusText(state: Int): String = when {
-        state and (LinkStateBits.CXR_CONTROL_UP or LinkStateBits.SPP_DATA_UP) != 0 ->
-            "Connected to glasses"
+        state and (LinkStateBits.CXR_CONTROL_UP or LinkStateBits.SPP_DATA_UP) != 0 -> {
+            val livePlugin = if (::externalPluginController.isInitialized) {
+                externalPluginController.activeDisplayName()
+            } else {
+                null
+            }
+            if (livePlugin != null) "$livePlugin is live on the glasses" else "Connected to glasses"
+        }
         state and LinkStateBits.GLASSES_BT_BONDED_OR_PHONE_CONNECTED != 0 ->
             "Waiting for glasses"
         @Suppress("DEPRECATION")

@@ -85,6 +85,19 @@ class NexusPluginClientTest {
     }
 
     @Test
+    fun `a fresh open while already open re-presents instead of being swallowed`() {
+        val (client, transport, callbacks) = fixture()
+        transport.listener.onRegistrationState(PluginRegistrationResult.APPROVED)
+        transport.listener.onMessage(BusPaths.PLUGIN_OPEN, "open-1", payload())
+        // The hub re-delivers PLUGIN_OPEN when the launcher relaunches an open plugin:
+        // the plugin must reset and re-show, not drop it as a duplicate.
+        transport.listener.onMessage(BusPaths.PLUGIN_OPEN, "open-2", payload())
+        transport.listener.onMessage(BusPaths.PLUGIN_INPUT, "input-1", payload().put("keyCode", 22).put("action", 0))
+        assertEquals(listOf("registration:0", "open", "open", "input:22"), callbacks.events)
+        client.close()
+    }
+
+    @Test
     fun `re-registration closes a stale open so the next open dispatches`() {
         val (client, transport, callbacks) = fixture()
         transport.listener.onMessage(

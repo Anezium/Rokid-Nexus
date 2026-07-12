@@ -77,7 +77,11 @@ class NexusPluginClient internal constructor(
     override fun onMessage(path: String, id: String, payload: JSONObject) {
         if (closed || payload.optString("pluginId") != pluginId || !rememberEvent(id)) return
         when (path) {
-            BusPaths.PLUGIN_OPEN -> if (!opened && isApproved) {
+            // A duplicate PLUGIN_OPEN (fresh event id) is the hub asking an already-open
+            // plugin to re-present itself — e.g. the glasses fell back to the launcher
+            // while the hub still considers the session open. onOpen implementations
+            // reset and re-show, which also acknowledges the hub's open watchdog.
+            BusPaths.PLUGIN_OPEN -> if (isApproved) {
                 opened = true
                 callbacks.onOpen()
             }

@@ -1,5 +1,6 @@
 package com.anezium.rokidbus.plugin.transit
 
+import java.security.MessageDigest
 import java.time.Instant
 import kotlin.math.atan2
 import kotlin.math.cos
@@ -62,16 +63,28 @@ data class TransitCardContent(
     val lines: List<CardLine>,
     val footer: String,
 ) {
-    fun contentKey(): String = buildString {
-        append(title)
-        append('|')
-        append(footer)
-        append('|')
-        append(
-            lines.joinToString("\n") { line ->
-                "${line.badge}|${line.text}|${line.trail.joinToString(",")}"
-            },
-        )
+    // NexusCard caps contentKey at 128 chars, so the content is hashed, never concatenated:
+    // a real departure board easily exceeds the cap and the SDK rejects the card.
+    fun contentKey(): String {
+        val content = buildString {
+            append(title)
+            append('|')
+            append(footer)
+            append('|')
+            append(
+                lines.joinToString("\n") { line ->
+                    "${line.badge}|${line.text}|${line.trail.joinToString(",")}"
+                },
+            )
+        }
+        val digest = MessageDigest.getInstance("SHA-256").digest(content.toByteArray(Charsets.UTF_8))
+        return buildString(16) {
+            for (index in 0 until 8) {
+                val byte = digest[index].toInt() and 0xff
+                append("0123456789abcdef"[byte ushr 4])
+                append("0123456789abcdef"[byte and 0x0f])
+            }
+        }
     }
 }
 

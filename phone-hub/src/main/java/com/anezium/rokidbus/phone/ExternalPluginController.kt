@@ -22,9 +22,15 @@ class ExternalPluginController(
     private val scheduler: ExternalPluginScheduler,
     private val logger: (String) -> Unit = {},
     private val onRegisteredPrincipal: (PhonePluginPrincipal) -> Unit = {},
+    private val onForegroundChanged: () -> Unit = {},
 ) {
     private var pending: PhonePluginPrincipal? = null
     private var active: PhonePluginPrincipal? = null
+        set(value) {
+            val changed = field?.grantKey() != value?.grantKey()
+            field = value
+            if (changed) onForegroundChanged()
+        }
     private var openGeneration = 0L
     private var automaticRebindAttempted = false
 
@@ -113,6 +119,8 @@ class ExternalPluginController(
     }
 
     fun activeId(): String? = active?.descriptor?.id
+
+    fun activeDisplayName(): String? = active?.descriptor?.displayName
 
     /**
      * A plugin that shows a surface while the HUD is idle becomes the foreground
