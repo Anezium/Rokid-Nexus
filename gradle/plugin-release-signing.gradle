@@ -1,0 +1,47 @@
+def releaseKeystorePath = providers.environmentVariable("NEXUS_RELEASE_KEYSTORE").orNull
+def releaseKeystorePassword = providers.environmentVariable("NEXUS_RELEASE_KEYSTORE_PASSWORD").orNull
+def releaseKeyAlias = providers.environmentVariable("NEXUS_RELEASE_KEY_ALIAS").orNull
+
+def releaseSigningValues = [
+    NEXUS_RELEASE_KEYSTORE: releaseKeystorePath,
+    NEXUS_RELEASE_KEYSTORE_PASSWORD: releaseKeystorePassword,
+    NEXUS_RELEASE_KEY_ALIAS: releaseKeyAlias,
+]
+def configuredReleaseSigningValues = releaseSigningValues.findAll {
+    it.value != null && !it.value.isBlank()
+}
+
+if (!configuredReleaseSigningValues.isEmpty() &&
+    configuredReleaseSigningValues.size() != releaseSigningValues.size()
+) {
+    def missingVariables = releaseSigningValues
+        .findAll { !it.value || it.value.isBlank() }
+        .keySet()
+        .join(", ")
+    throw new GradleException("Incomplete Nexus release signing configuration; missing: $missingVariables")
+}
+
+if (configuredReleaseSigningValues.size() == releaseSigningValues.size()) {
+    def releaseKeystore = file(releaseKeystorePath)
+    if (!releaseKeystore.isFile()) {
+        throw new GradleException("Nexus release keystore does not exist: $releaseKeystore")
+    }
+
+    android {
+        signingConfigs {
+            release {
+                storeFile releaseKeystore
+                storePassword releaseKeystorePassword
+                keyAlias releaseKeyAlias
+                keyPassword releaseKeystorePassword
+                storeType "PKCS12"
+            }
+        }
+
+        buildTypes {
+            release {
+                signingConfig signingConfigs.release
+            }
+        }
+    }
+}

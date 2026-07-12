@@ -2,6 +2,8 @@ plugins {
     id("com.android.application")
 }
 
+apply(from = rootProject.file("gradle/plugin-release-signing.gradle"))
+
 android {
     namespace = "com.anezium.rokidbus.plugin.feeds"
     compileSdk = 36

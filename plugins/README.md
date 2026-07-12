@@ -37,3 +37,6 @@ tags**, one stream per plugin, separate from the app's `v*` releases:
 - The release notes are the matching section of the plugin's `CHANGELOG.md`.
 - The RokidBrew registry ingests the release (`--kind nexus-plugin`) and the
   Nexus Store serves it from `dist/nexus-plugins.v1.json`.
+
+Before pushing a plugin tag, set that module's `versionName` and add the
+matching `## <version>` changelog section; release CI rejects either mismatch.

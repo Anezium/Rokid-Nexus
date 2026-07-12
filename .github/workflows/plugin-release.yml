@@ -1,0 +1,191 @@
+name: Plugin release
+
+on:
+  push:
+    tags:
+      - "*-v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release-plugin:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the tagged revision
+        uses: actions/checkout@v6
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Parse and validate the plugin tag
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tag="$GITHUB_REF_NAME"
+          if [[ "$tag" =~ ^([a-z0-9-]+)-v(.+)$ ]]; then
+            plugin_id="${BASH_REMATCH[1]}"
+            version="${BASH_REMATCH[2]}"
+          else
+            echo "::error::Plugin release tag must have the form <id>-v<semver>; got '$tag'."
+            exit 1
+          fi
+
+          if [[ ! "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Plugin release version must be SemVer; got '$version' from '$tag'."
+            exit 1
+          fi
+
+          case "$plugin_id" in
+            feeds)
+              module_dir="plugin-feeds"
+              changelog_path="plugin-feeds/CHANGELOG.md"
+              release_name="Feeds"
+              ;;
+            transit)
+              module_dir="plugins/transit"
+              changelog_path="plugins/transit/CHANGELOG.md"
+              release_name="Transit"
+              ;;
+            lyrics)
+              module_dir="plugins/lyrics"
+              changelog_path="plugins/lyrics/CHANGELOG.md"
+              release_name="Lyrics"
+              ;;
+            media)
+              module_dir="plugins/media"
+              changelog_path="plugins/media/CHANGELOG.md"
+              release_name="Media Deck"
+              ;;
+            sample)
+              module_dir="plugins/sample"
+              changelog_path="plugins/sample/CHANGELOG.md"
+              release_name="Sample"
+              ;;
+            *)
+              echo "::error::Unknown Nexus plugin id '$plugin_id' in tag '$tag'."
+              exit 1
+              ;;
+          esac
+
+          {
+            echo "PLUGIN_ID=$plugin_id"
+            echo "PLUGIN_VERSION=$version"
+            echo "PLUGIN_MODULE=plugin-$plugin_id"
+            echo "MODULE_DIR=$module_dir"
+            echo "CHANGELOG_PATH=$changelog_path"
+            echo "RELEASE_NAME=$release_name"
+          } >> "$GITHUB_ENV"
+
+      - name: Verify module versionName
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          build_file="$MODULE_DIR/build.gradle.kts"
+          mapfile -t version_names < <(
+            sed -nE 's/^[[:space:]]*versionName[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' "$build_file"
+          )
+          if [[ "${#version_names[@]}" -ne 1 ]]; then
+            echo "::error::Expected exactly one literal versionName in '$build_file'; found ${#version_names[@]}."
+            exit 1
+          fi
+          if [[ "${version_names[0]}" != "$PLUGIN_VERSION" ]]; then
+            echo "::error::$PLUGIN_MODULE versionName is '${version_names[0]}', but tag '$GITHUB_REF_NAME' requests '$PLUGIN_VERSION'."
+            exit 1
+          fi
+
+      - name: Decode release keystore outside the checkout
+        shell: bash
+        env:
+          NEXUS_RELEASE_KEYSTORE_B64: ${{ secrets.NEXUS_RELEASE_KEYSTORE_B64 }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$NEXUS_RELEASE_KEYSTORE_B64" ]]; then
+            echo "::error::NEXUS_RELEASE_KEYSTORE_B64 is not configured."
+            exit 1
+          fi
+
+          keystore_path="$RUNNER_TEMP/nexus-release.keystore"
+          umask 077
+          printf '%s' "$NEXUS_RELEASE_KEYSTORE_B64" | base64 --decode > "$keystore_path"
+          echo "NEXUS_RELEASE_KEYSTORE=$keystore_path" >> "$GITHUB_ENV"
+
+      - name: Build signed release APK
+        shell: bash
+        env:
+          NEXUS_RELEASE_KEYSTORE_PASSWORD: ${{ secrets.NEXUS_RELEASE_KEYSTORE_PASSWORD }}
+          NEXUS_RELEASE_KEY_ALIAS: ${{ secrets.NEXUS_RELEASE_KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+          ./gradlew ":$PLUGIN_MODULE:assembleRelease" -PskipCxrGlobal=true
+
+      - name: Prepare artifact and release notes
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          apk_dir="$MODULE_DIR/build/outputs/apk/release"
+          mapfile -t apks < <(find "$apk_dir" -maxdepth 1 -type f -name '*.apk' -print)
+          if [[ "${#apks[@]}" -ne 1 ]]; then
+            echo "::error::Expected exactly one release APK in '$apk_dir'; found ${#apks[@]}."
+            exit 1
+          fi
+
+          artifact_name="$PLUGIN_ID-phone-release.apk"
+          artifact_path="$RUNNER_TEMP/$artifact_name"
+          cp "${apks[0]}" "$artifact_path"
+          sha256="$(sha256sum "$artifact_path" | cut -d ' ' -f 1)"
+
+          notes_path="$RUNNER_TEMP/$PLUGIN_ID-release-notes.md"
+          if ! awk -v version="$PLUGIN_VERSION" '
+            $1 == "##" {
+              if (found) exit
+              if ($2 == version) {
+                found = 1
+                next
+              }
+            }
+            found { print }
+            END { if (!found) exit 42 }
+          ' "$CHANGELOG_PATH" > "$notes_path"; then
+            echo "::error::CHANGELOG '$CHANGELOG_PATH' has no '## $PLUGIN_VERSION' section."
+            exit 1
+          fi
+          if ! grep -q '[^[:space:]]' "$notes_path"; then
+            echo "::error::CHANGELOG section '## $PLUGIN_VERSION' is empty."
+            exit 1
+          fi
+
+          printf '\n### Artifact\n\n- File: `%s`\n- SHA-256: `%s`\n' \
+            "$artifact_name" "$sha256" >> "$notes_path"
+
+          {
+            echo "ARTIFACT_NAME=$artifact_name"
+            echo "ARTIFACT_PATH=$artifact_path"
+            echo "RELEASE_NOTES_PATH=$notes_path"
+          } >> "$GITHUB_ENV"
+
+      - name: Create non-latest GitHub release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "$GITHUB_REF_NAME" "$ARTIFACT_PATH" \
+            --title "$RELEASE_NAME $PLUGIN_VERSION" \
+            --notes-file "$RELEASE_NOTES_PATH" \
+            --verify-tag \
+            --latest=false
+
+      - name: Remove decoded keystore
+        if: always()
+        shell: bash
+        run: rm -f "$RUNNER_TEMP/nexus-release.keystore"
