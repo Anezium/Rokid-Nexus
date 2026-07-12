@@ -135,6 +135,14 @@ class BusHubService : Service() {
 
     private val pluginPackageReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
+            // PACKAGE_REMOVED fires mid-update with EXTRA_REPLACING while the package is
+            // momentarily invisible to PackageManager; reconciling then prunes the
+            // plugin's grant, so an in-place update would silently lose its approval.
+            if (intent?.action == Intent.ACTION_PACKAGE_REMOVED &&
+                intent.getBooleanExtra(Intent.EXTRA_REPLACING, false)
+            ) {
+                return
+            }
             val packageName = intent?.data?.schemeSpecificPart.orEmpty()
             if (packageName.isNotBlank()) reconcilePluginPackage(packageName)
         }
