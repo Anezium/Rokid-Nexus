@@ -95,7 +95,11 @@ internal object XGraphQlParser {
     }
 
     fun extractMedia(legacy: JSONObject): List<FeedMedia> {
-        val items = legacy.optJSONObject("extended_entities")?.optJSONArray("media") ?: return emptyList()
+        val items = legacy.optJSONObject("extended_entities")
+            ?.optJSONArray("media")
+            ?.takeIf { it.length() > 0 }
+            ?: legacy.optJSONObject("entities")?.optJSONArray("media")
+            ?: return emptyList()
         return buildList {
             for (index in 0 until items.length()) {
                 val item = items.optJSONObject(index) ?: continue

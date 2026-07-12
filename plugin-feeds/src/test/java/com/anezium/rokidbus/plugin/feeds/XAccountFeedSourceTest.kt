@@ -44,6 +44,19 @@ class XAccountFeedSourceTest {
     }
 
     @Test
+    fun mediaExtraction_fallsBackToLegacyEntitiesPhoto() {
+        val legacy = org.json.JSONObject(
+            """{"entities":{"media":[{"type":"photo","media_url_https":"https://pbs.twimg.com/entities.jpg","ext_alt_text":"Fallback photo"}]}}""",
+        )
+
+        val media = XGraphQlParser.extractMedia(legacy).single()
+
+        assertEquals(FeedMediaType.PHOTO, media.type)
+        assertEquals("https://pbs.twimg.com/entities.jpg?name=large", media.url)
+        assertEquals("Fallback photo", media.altText)
+    }
+
+    @Test
     fun missingCookies_returnsConnectPostWithoutNetworkOrTransactionInitialization() {
         var networkCalled = false
         val source = XAccountFeedSource(
