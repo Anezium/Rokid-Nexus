@@ -49,4 +49,17 @@ class ImageSurfaceStateTest {
         assertTrue(!state.cancel(failed))
         assertTrue(state.complete(newer, "bitmap-b") is ImageDecodeCompletion.Accepted)
     }
+
+    @Test
+    fun `hiding old surface preserves pending decode for new surface`() {
+        val state = ImageDecodeCoordinator<String>()
+        val old = ImageDecodeKey("plugin:old", 10, "photo-a")
+        val pending = ImageDecodeKey("plugin:new", 20, "photo-b")
+        state.begin(old)
+        state.complete(old, "bitmap-a")
+        state.begin(pending)
+
+        assertNull(state.invalidate("plugin:old"))
+        assertTrue(state.complete(pending, "bitmap-b") is ImageDecodeCompletion.Accepted)
+    }
 }

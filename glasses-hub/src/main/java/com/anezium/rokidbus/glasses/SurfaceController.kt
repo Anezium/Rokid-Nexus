@@ -285,8 +285,9 @@ object SurfaceController {
     }
 
     private fun hideLocalOnMain() {
-        active?.surfaceId?.let { cancelBackFailsafeOnMain(it) }
-        val coordinated = imageDecodeCoordinator.invalidate()
+        val activeSurfaceId = active?.surfaceId
+        activeSurfaceId?.let { cancelBackFailsafeOnMain(it) }
+        val coordinated = activeSurfaceId?.let(imageDecodeCoordinator::invalidate)
         coordinated?.recycleSafely()
         recycleActiveImageUnless(coordinated)
         active = null
