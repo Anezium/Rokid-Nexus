@@ -127,6 +127,11 @@ class BusHubService : Service() {
 
     private val pluginPackageReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
+            if (!PluginPackageChangePolicy.shouldReconcile(
+                    action = intent?.action,
+                    replacing = intent?.getBooleanExtra(Intent.EXTRA_REPLACING, false) == true,
+                )
+            ) return
             val packageName = intent?.data?.schemeSpecificPart.orEmpty()
             if (packageName.isNotBlank()) reconcilePluginPackage(packageName)
         }

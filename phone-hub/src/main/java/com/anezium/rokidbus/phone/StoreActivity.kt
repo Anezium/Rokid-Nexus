@@ -28,6 +28,7 @@ class StoreActivity : Activity() {
     private lateinit var chipRow: LinearLayout
     private lateinit var registryClient: RegistryClient
     private lateinit var pluginInstaller: PluginInstaller
+    private lateinit var postInstallCoordinator: PluginPostInstallCoordinator
     private var registrySnapshot: RegistrySnapshot? = null
     private var registryLoading = true
     private var registryFailure: Throwable? = null
@@ -41,10 +42,14 @@ class StoreActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         registryClient = RegistryClient.create(applicationContext)
+        postInstallCoordinator = PluginPostInstallCoordinator(
+            discoverPackage = PhonePluginDiscovery(packageManager)::discoverPackage,
+            grantState = PluginGrantStore(applicationContext)::stateFor,
+            refreshCatalog = ::renderCatalog,
+        )
         pluginInstaller = PluginInstaller.create(
             context = applicationContext,
             hostVersionCode = hostVersionCode,
-            postInstall = { runOnUiThread(::renderCatalog) },
         )
         buildUi()
         refreshRegistry()
@@ -276,7 +281,15 @@ class StoreActivity : Activity() {
                 Toast.makeText(this, "Installation cancelled", Toast.LENGTH_SHORT).show()
             } else if (state is PluginInstallState.Success) {
                 installOperations.remove(entry.id)
-                Toast.makeText(this, "${entry.displayName} installed", Toast.LENGTH_SHORT).show()
+                when (val handoff = postInstallCoordinator.onInstalled(state.packageName, state.pluginId)) {
+                    is PluginPostInstallResult.Ready -> {
+                        Toast.makeText(this, "${entry.displayName} installed. Review its access.", Toast.LENGTH_SHORT).show()
+                        startActivity(PluginPermissionsActivity.intent(this, handoff.target))
+                    }
+                    is PluginPostInstallResult.Failure -> {
+                        Toast.makeText(this, handoff.reason, Toast.LENGTH_LONG).show()
+                    }
+                }
             }
             renderCatalog()
         }
