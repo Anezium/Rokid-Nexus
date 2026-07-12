@@ -30,7 +30,7 @@ object LyricsRuntimeGraph {
     private lateinit var musixmatchLyricsProvider: MusixmatchLyricsProvider
 
     @Synchronized
-    fun initialize(context: Context) {
+    private fun initialize(context: Context) {
         if (initialized) return
         appContext = context.applicationContext
         providerSettingsStore = LyricsProviderSettingsStore(appContext)
@@ -75,12 +75,6 @@ object LyricsRuntimeGraph {
         mediaSessionMonitor.start()
     }
 
-    fun refresh() {
-        if (!initialized) return
-        syncNotificationAccessFlag()
-        mediaSessionMonitor.refresh()
-    }
-
     fun togglePlayback() {
         if (initialized) mediaSessionMonitor.togglePlayback()
     }
@@ -113,7 +107,7 @@ object LyricsRuntimeGraph {
     }
 
     @Synchronized
-    fun destroy() {
+    fun stop() {
         if (!initialized) return
         runCatching { mediaSessionMonitor.stop() }
         runCatching { lyricsRuntimeEngine.destroy() }

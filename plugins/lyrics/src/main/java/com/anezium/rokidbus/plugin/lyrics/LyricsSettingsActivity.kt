@@ -9,7 +9,6 @@ import android.content.Intent
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
-import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
@@ -19,7 +18,6 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.Window
 import android.widget.EditText
-import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -30,12 +28,7 @@ import com.anezium.rokidbus.lyrics.lyrics.SpotifySpDcCookie
 import com.anezium.rokidbus.lyrics.media.MediaNotificationListenerService
 import com.anezium.rokidbus.lyrics.settings.LyricsProviderSettingsStore
 
-private const val LYRICS_PREFS = "nexus_plugin_lyrics"
-private const val LYRICS_PREF_AUTO_OPEN = "auto_open"
-
 class LyricsSettingsActivity : Activity() {
-    private lateinit var toggleTrack: FrameLayout
-    private lateinit var toggleKnob: View
     private lateinit var accessValue: TextView
     private lateinit var spotifyValue: TextView
     private lateinit var musixmatchValue: TextView
@@ -92,17 +85,6 @@ class LyricsSettingsActivity : Activity() {
                     value = accessValue,
                     danger = false,
                 ) { startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) },
-                NexusUi.block(),
-            )
-            addView(
-                settingRow(
-                    title = "Show on glasses",
-                    subtitle = "Timed-lines synced",
-                    value = toggleView(),
-                    danger = false,
-                ) {
-                    setShowOnGlasses(!showOnGlasses())
-                },
                 NexusUi.block(),
             )
             spotifyValue = valueText(if (providerStore.hasSpotifySpDc()) "Connected" else "Sign in")
@@ -191,7 +173,6 @@ class LyricsSettingsActivity : Activity() {
                 ),
             )
         }
-        setShowOnGlasses(showOnGlasses(), persist = false)
         setContentView(root)
     }
 
@@ -260,63 +241,6 @@ class LyricsSettingsActivity : Activity() {
             textSize = 12f
             letterSpacing = 0.04f
         }
-
-    private fun toggleView(): FrameLayout {
-        toggleKnob = View(this).apply {
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(NexusUi.ON_ACCENT)
-            }
-        }
-        toggleTrack = FrameLayout(this).apply {
-            background = NexusUi.rounded(this@LyricsSettingsActivity, NexusUi.GREEN, 14)
-            addView(
-                toggleKnob,
-                FrameLayout.LayoutParams(
-                    NexusUi.dp(this@LyricsSettingsActivity, 18),
-                    NexusUi.dp(this@LyricsSettingsActivity, 18),
-                    Gravity.CENTER_VERTICAL or Gravity.END,
-                ).apply { marginEnd = NexusUi.dp(this@LyricsSettingsActivity, 3) },
-            )
-            layoutParams = LinearLayout.LayoutParams(
-                NexusUi.dp(this@LyricsSettingsActivity, 42),
-                NexusUi.dp(this@LyricsSettingsActivity, 24),
-            )
-        }
-        return toggleTrack
-    }
-
-    private fun showOnGlasses(): Boolean =
-        getSharedPreferences(LYRICS_PREFS, MODE_PRIVATE)
-            .getBoolean(LYRICS_PREF_AUTO_OPEN, true)
-
-    private fun setShowOnGlasses(enabled: Boolean, persist: Boolean = true) {
-        if (persist) {
-            getSharedPreferences(LYRICS_PREFS, MODE_PRIVATE)
-                .edit()
-                .putBoolean(LYRICS_PREF_AUTO_OPEN, enabled)
-                .apply()
-        }
-        if (!::toggleTrack.isInitialized || !::toggleKnob.isInitialized) return
-        toggleTrack.background = NexusUi.rounded(
-            this,
-            if (enabled) NexusUi.GREEN else 0xFF1C2B21.toInt(),
-            14,
-        )
-        val params = FrameLayout.LayoutParams(
-            NexusUi.dp(this, 18),
-            NexusUi.dp(this, 18),
-            Gravity.CENTER_VERTICAL or if (enabled) Gravity.END else Gravity.START,
-        ).apply {
-            if (enabled) marginEnd = NexusUi.dp(this@LyricsSettingsActivity, 3)
-            else marginStart = NexusUi.dp(this@LyricsSettingsActivity, 3)
-        }
-        toggleKnob.background = GradientDrawable().apply {
-            shape = GradientDrawable.OVAL
-            setColor(if (enabled) NexusUi.ON_ACCENT else NexusUi.INK3)
-        }
-        toggleTrack.updateViewLayout(toggleKnob, params)
-    }
 
     private fun showSpotifyDialog() {
         val connected = providerStore.hasSpotifySpDc()
@@ -415,7 +339,6 @@ class LyricsSettingsActivity : Activity() {
                                     ).show()
                                     return@setOnClickListener
                                 }
-                                LyricsRuntimeGraph.start(applicationContext)
                                 LyricsRuntimeGraph.onSpotifyCookieChanged()
                                 refreshProviderValues()
                                 Toast.makeText(
@@ -496,7 +419,6 @@ class LyricsSettingsActivity : Activity() {
                                     ).show()
                                     return@setOnClickListener
                                 }
-                                LyricsRuntimeGraph.start(applicationContext)
                                 refreshProviderValues()
                                 Toast.makeText(
                                     this@LyricsSettingsActivity,

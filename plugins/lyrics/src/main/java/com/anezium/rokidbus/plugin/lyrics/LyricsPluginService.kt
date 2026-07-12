@@ -1,6 +1,5 @@
 package com.anezium.rokidbus.plugin.lyrics
 
-import android.content.Context
 import com.anezium.rokidbus.client.PluginRegistrationResult
 import com.anezium.rokidbus.client.plugin.NexusCard
 import com.anezium.rokidbus.client.plugin.NexusPlaybackAnchor
@@ -8,6 +7,7 @@ import com.anezium.rokidbus.client.plugin.NexusPluginService
 import com.anezium.rokidbus.client.plugin.NexusSurfaceSession
 import com.anezium.rokidbus.client.plugin.NexusTimedLines
 import com.anezium.rokidbus.lyrics.LyricsRuntime
+import com.anezium.rokidbus.lyrics.LyricsRuntimeGraph
 import com.anezium.rokidbus.lyrics.LyricsRuntimeHost
 import com.anezium.rokidbus.shared.plugin.NexusInputEvent
 
@@ -16,9 +16,6 @@ class LyricsPluginService : NexusPluginService() {
     private val runtime by lazy { LyricsRuntime(runtimeHost) }
 
     private val runtimeHost = object : LyricsRuntimeHost {
-        override val context: Context
-            get() = applicationContext
-
         override fun sendCard(card: NexusCard, show: Boolean) {
             val session = surfaceSession() ?: return
             if (show) session.showCard(card) else session.updateCard(card)
@@ -45,11 +42,13 @@ class LyricsPluginService : NexusPluginService() {
 
     override fun onNexusOpen() {
         surfaceSession()
+        LyricsRuntimeGraph.start(applicationContext)
         runtime.open()
     }
 
     override fun onNexusClose() {
         runtime.close()
+        LyricsRuntimeGraph.stop()
         surface = null
     }
 
@@ -62,11 +61,14 @@ class LyricsPluginService : NexusPluginService() {
             runtime.registrationApproved()
         } else {
             runtime.close()
+            LyricsRuntimeGraph.stop()
+            surface = null
         }
     }
 
     override fun onDestroy() {
         runtime.unregister()
+        LyricsRuntimeGraph.stop()
         surface = null
         super.onDestroy()
     }

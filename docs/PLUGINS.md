@@ -98,6 +98,14 @@ If the plugin needs a foreground service (location sampling, background
 WebView), it declares the type and permissions in its own manifest and posts
 its own notification — see `TransitPluginService.startLocationForeground`.
 
+### Background policy
+
+A plugin is dormant unless its surface is open. The hub initiates plugin
+work: closed plugins must not keep engines, fetching, bindings, or pushes
+running, and must never initiate a surface themselves. Android may keep an
+enabled notification-listener component alive, but that listener must remain
+idle until the hub opens the plugin.
+
 ## 4. Settings screen — the design kit
 
 The screen is a plain code-built `Activity` using **only** `NexusUi` +

@@ -22,9 +22,13 @@ class ExternalPluginControllerTest {
         var bindResult = true
         var registered = false
         val deliveries = mutableListOf<Pair<String, JSONObject>>()
+        val bound = mutableListOf<String>()
         val hidden = mutableListOf<String>()
         val unbound = mutableListOf<String>()
-        override fun bind(principal: PhonePluginPrincipal): Boolean = bindResult
+        override fun bind(principal: PhonePluginPrincipal): Boolean {
+            bound += principal.descriptor.id
+            return bindResult
+        }
         override fun isRegistered(principal: PhonePluginPrincipal): Boolean = registered
         override fun deliver(principal: PhonePluginPrincipal, path: String, id: String, payload: JSONObject): Boolean {
             deliveries += path to JSONObject(payload.toString())
@@ -146,15 +150,18 @@ class ExternalPluginControllerTest {
         val principal = principal()
         controller.open(principal)
         assertEquals(listOf(BusPaths.PLUGIN_OPEN), runtime.deliveries.map { it.first })
+        assertEquals(listOf("hello"), runtime.bound)
 
         controller.onPluginSelfHid("other")
         assertEquals(1, runtime.deliveries.size)
 
         controller.onPluginSelfHid("hello")
         assertEquals(BusPaths.PLUGIN_CLOSE, runtime.deliveries.last().first)
+        assertEquals(listOf("hello"), runtime.unbound)
         assertFalse(controller.input("hello", "main", 22, 0))
 
         controller.open(principal)
+        assertEquals(listOf("hello", "hello"), runtime.bound)
         assertEquals(BusPaths.PLUGIN_OPEN, runtime.deliveries.last().first)
         assertTrue(controller.input("hello", "main", 22, 0))
     }

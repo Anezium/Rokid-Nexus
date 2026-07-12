@@ -1,6 +1,5 @@
 package com.anezium.rokidbus.lyrics
 
-import android.content.Context
 import android.os.SystemClock
 import android.view.KeyEvent
 import com.anezium.rokidbus.client.plugin.NexusCard
@@ -14,7 +13,6 @@ import java.security.MessageDigest
 import kotlin.math.abs
 
 internal interface LyricsRuntimeHost {
-    val context: Context
     fun sendCard(card: NexusCard, show: Boolean)
     fun sendTimedLines(lines: NexusTimedLines, show: Boolean)
     fun updateTimedLinesAnchor(contentKey: String, anchor: NexusPlaybackAnchor)
@@ -27,27 +25,21 @@ internal class LyricsRuntime(
     private var unsubscribeState: (() -> Unit)? = null
     private var active = false
     private var lastSent: SentSurface? = null
-    private var dismissedTrackKey: String? = null
 
     fun register() {
-        LyricsRuntimeGraph.initialize(host.context)
         unsubscribeState?.invoke()
         unsubscribeState = LyricsRuntimeGraph.stateStore.subscribe { state ->
             handleState(state)
         }
-        LyricsRuntimeGraph.start(host.context)
     }
 
     fun open() {
         active = true
-        dismissedTrackKey = null
-        LyricsRuntimeGraph.start(host.context)
         pushState(LyricsRuntimeGraph.stateStore.current(), force = true)
     }
 
     fun close() {
         if (!active && lastSent == null) return
-        dismissedTrackKey = trackKey(LyricsRuntimeGraph.stateStore.current().lyrics)
         active = false
         lastSent = null
         host.hideSurface()
@@ -82,19 +74,9 @@ internal class LyricsRuntime(
         close()
         unsubscribeState?.invoke()
         unsubscribeState = null
-        LyricsRuntimeGraph.destroy()
     }
 
     private fun handleState(state: LyricsPhoneViewState) {
-        val lyrics = state.lyrics
-        val currentTrackKey = trackKey(lyrics)
-        if (!active &&
-            autoOpenEnabled() &&
-            lyrics.sessionState == LyricsSessionState.PLAYING &&
-            currentTrackKey != dismissedTrackKey
-        ) {
-            active = true
-        }
         if (active) {
             pushState(state, force = false)
         }
@@ -253,18 +235,6 @@ internal class LyricsRuntime(
         }
     }
 
-    private fun trackKey(lyrics: LyricsSnapshot): String =
-        listOf(
-            lyrics.trackTitle.trim().lowercase(),
-            lyrics.artistName.trim().lowercase(),
-            lyrics.albumName.trim().lowercase(),
-            lyrics.durationSeconds?.toString().orEmpty(),
-        ).joinToString("|")
-
-    private fun autoOpenEnabled(): Boolean =
-        host.context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getBoolean(PREF_AUTO_OPEN, true)
-
     private data class SentSurface(
         val contentKey: String,
         val positionMs: Long,
@@ -279,8 +249,6 @@ internal class LyricsRuntime(
     }
 
     private companion object {
-        private const val PREFS = "nexus_plugin_lyrics"
-        private const val PREF_AUTO_OPEN = "auto_open"
         private const val SEEK_RESYNC_MS = 1_500L
         private const val MAX_TITLE_CHARS = 120
         private const val MAX_LINE_CHARS = 240

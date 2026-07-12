@@ -118,7 +118,6 @@ class SpotifyLoginActivity : ComponentActivity() {
 
         captureHandled = true
         if (LyricsProviderSettingsStore(applicationContext).saveSpotifySpDc(spDc)) {
-            LyricsRuntimeGraph.start(applicationContext)
             LyricsRuntimeGraph.onSpotifyCookieChanged()
             Toast.makeText(this, "Spotify connected.", Toast.LENGTH_SHORT).show()
         } else {

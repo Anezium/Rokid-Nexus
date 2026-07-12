@@ -95,9 +95,9 @@ class ExternalPluginController(
 
     /**
      * A plugin that shows a surface while the HUD is idle becomes the foreground
-     * plugin (lyrics auto-open). The PLUGIN_OPEN is what lets its inputs through the
-     * SDK gate and keeps the open/close lifecycle balanced — without it BACK on the
-     * adopted surface is silently dropped and the HUD is stuck.
+     * plugin. This remains a containment path for third-party plugins that violate
+     * the hub-initiated lifecycle: PLUGIN_OPEN lets inputs through the SDK gate and
+     * keeps the open/close lifecycle balanced.
      */
     fun adopt(principal: PhonePluginPrincipal): Boolean {
         if (active?.grantKey() == principal.grantKey()) return true
@@ -118,6 +118,7 @@ class ExternalPluginController(
         val principal = active?.takeIf { it.descriptor.id == pluginId } ?: return
         active = null
         deliver(principal, BusPaths.PLUGIN_CLOSE, "self_hidden")
+        runtime.unbind(principal)
         logger("external plugin self-closed plugin=$pluginId")
     }
 
