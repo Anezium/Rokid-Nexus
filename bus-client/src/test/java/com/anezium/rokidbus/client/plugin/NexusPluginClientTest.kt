@@ -23,6 +23,8 @@ class NexusPluginClientTest {
             sends += path to JSONObject(payload.toString())
             return true
         }
+        override fun sendBinary(path: String, id: String, payload: JSONObject, data: ByteArray) = true
+        override fun capabilities(): Int = 0
         override fun close() { closeCount += 1 }
     }
 

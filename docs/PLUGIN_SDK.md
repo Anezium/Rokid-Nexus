@@ -85,6 +85,51 @@ Surface IDs are local to the plugin. The SDK validates fields and payload size;
 the hub injects verified ownership and global sequencing. High-level code cannot
 set a trusted owner, global sequence, or arbitrary system path.
 
+### Real image surfaces
+
+Image surfaces use the existing `surfaces` grant; do not add a descriptor
+capability and do not change API version 3. They are available only while the
+glasses renderer has announced image v1 and the SPP binary link is live. Check
+`nexusClient?.supportsImageSurface` immediately before sending and keep a card
+fallback: it is a live value and can become false when SPP drops. `showImage`
+and `updateImage` return `CAPABILITY_NOT_AVAILABLE` without sending when either
+condition is absent.
+
+Preprocess on the phone. Correct orientation, downscale so both decoded edges
+are at most 512 px (and total pixels at most `512 * 512`), then encode as JPEG or
+PNG. For photographs, start around JPEG quality 70--80 and adjust to a 20--40 KiB
+target. The hard compressed cap is 65,536 bytes. PNG is most useful for simple
+graphics; neither format may exceed the decoded bounds. The SDK verifies the
+format signature, actual encoded dimensions, SHA-256, metadata, and size before
+calling the binary transport. Do not base64 the image.
+
+```kotlin
+val bytes = resources.openRawResource(R.raw.image_surface_sample).use { it.readBytes() }
+val image = NexusImage(
+    contentKey = "tweet-123-photo-1", // stable identity, max 128 chars
+    mimeType = ImageSurfaceContract.MIME_JPEG,
+    pixelWidth = 480,
+    pixelHeight = 480,
+    title = "Photo",
+    caption = "Optional caption",
+    footer = "back",
+    handlesBack = true,
+)
+
+val result = if (nexusClient?.supportsImageSurface == true) {
+    surface?.showImage(image, bytes)
+} else {
+    surface?.showCard(NexusCard("Photo", listOf("Image preview unavailable")))
+}
+```
+
+Use `updateImage(image, bytes)` to replace the current image. Every image update
+is a complete binary frame and the phone hub enforces 150 ms between image
+frames for the same surface. A faster frame is rejected with `/error` code
+`IMAGE_RATE_LIMITED`; the SDK preflight returns
+`NexusSdkResult.IMAGE_RATE_LIMITED` immediately. Plugins should not build
+animation loops around v1.
+
 ## 4. Approve and debug
 
 After installing the APK, open **Rokid Nexus → Settings → Plugin access**. Review
@@ -105,6 +150,17 @@ Normal use should not require ADB. The present repository still needs owner-run
 device validation for APK install/update, glasses accessibility onboarding,
 force-stop wake, input, revoke, and CXR-L/SPP continuity. Those are deployment
 and hardware gates, not SDK initialization requirements.
+
+Debug builds include a phone-hub-owned end-to-end image probe. With both hubs
+installed, the glasses accessibility service armed, and SPP connected, run:
+
+```powershell
+adb -s $phone shell am broadcast -n com.anezium.rokidbus.phone/.PhoneProbeBroadcastReceiver -a com.anezium.rokidbus.phone.PROBE --es probe image-surface
+```
+
+This loads the bundled 480x480 JPEG in the phone hub and sends it through the
+normal SPP frame, glasses validation/decode, and HUD renderer. The receiver is
+present only in debug builds.
 
 Compatibility details and reserved lifecycle payloads live in
 [BUSSPEC.md](../BUSSPEC.md). The complete copyable implementation is in

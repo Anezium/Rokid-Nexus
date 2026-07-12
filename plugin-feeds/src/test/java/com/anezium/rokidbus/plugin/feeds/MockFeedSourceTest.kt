@@ -15,4 +15,17 @@ class MockFeedSourceTest {
         assertTrue(page.posts.any(FeedPost::hasMedia))
         assertEquals(null, page.nextCursor)
     }
+
+    @Test
+    fun bundledDemoThread_hasAncestorsFocalAndReplies() {
+        val source = MockFeedSource { Instant.EPOCH }
+        val focal = source.fetchPage(null).posts[3]
+
+        val thread = source.fetchThread(focal)
+
+        assertEquals(6, thread.posts.size)
+        assertEquals(2, thread.focusIndex)
+        assertEquals(focal, thread.posts[thread.focusIndex])
+        assertTrue(thread.posts.drop(thread.focusIndex + 1).any(FeedPost::hasMedia))
+    }
 }

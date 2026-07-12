@@ -168,6 +168,53 @@ Useful PASS log fragments:
 - Phone probe: `Big echo reply ... side=glasses`
 - Phone probe: `HTTP via bus status=200 totalBytes=...`
 
+## Image surface v1 hardware gates
+
+Install the debug phone and glasses hubs, arm accessibility, start both hubs,
+and wait until the phone log contains `SPP connected` followed by
+`renderer capabilities image=true maxImageBytes=65536`. Push the bundled sample
+JPEG through the full phone-hub -> SPP -> glasses decode -> HUD path without a
+plugin:
+
+```powershell
+adb -s $phone shell am broadcast -n com.anezium.rokidbus.phone/.PhoneProbeBroadcastReceiver -a com.anezium.rokidbus.phone.PROBE --es probe image-surface
+adb -s $phone logcat -d -s ROKIDBUS-PHONE:*
+adb -s $glasses logcat -d -s ROKIDBUS:*
+```
+
+Expected: phone logs `debug image probe sent bytes=26335 surfaceId=debug:image`;
+glasses logs the binary surface receive with no
+validation/decode error; the tree/lake JPEG is FIT_CENTER on black. The physical
+panel is GREEN MONOCHROME, so the unchanged bitmap appears as green luminance.
+Do not add or expect tone mapping, dithering, or color transforms in v1. The
+probe receiver is debug-build-only and adds no permission.
+
+Run the remaining hardware matrix with a small approved test plugin or a debug
+fixture that uses the public `showImage`/`updateImage` calls:
+
+1. Encode the same 480 px source at approximately 16, 32, 48, and exactly 64 KiB.
+   Record phone send-to-glasses-publish latency and confirm every frame renders;
+   65,537 bytes must return/reject as `IMAGE_TOO_LARGE` or SDK `INVALID_PAYLOAD`.
+2. Send missing binary, empty binary, WebP/incorrect MIME, dimensions 0 and 513,
+   declared/body dimension mismatch, malformed JPEG/PNG, and bad SHA-256. Confirm
+   rejection at SDK where applicable, phone hub, and glasses renderer; no HUD
+   replacement and no process crash.
+3. Send two updates for one surface less than 150 ms apart. Confirm the second
+   receives `/error` code `IMAGE_RATE_LIMITED`, then succeeds at 150 ms. Send
+   rapid A/B replacements with intentionally delayed decode and confirm an older
+   decode never replaces the latest `(surfaceId, seq, contentKey)`.
+4. Drop SPP while an image is visible and while an update is in flight. Confirm
+   the phone capability bit disappears, the SDK returns
+   `CAPABILITY_NOT_AVAILABLE`, text surfaces continue over CXR when eligible,
+   and image capability returns only after SPP reconnect plus renderer
+   announcement.
+5. Repeatedly replace/hide images under Android memory pressure. Confirm replaced,
+   stale, and detached bitmaps are recycled; no growing bitmap heap, OOM, frozen
+   overlay, or use-after-recycle draw occurs.
+6. Verify both overlay and activity display paths, back/input forwarding, aspect
+   ratios portrait/landscape/square, JPEG and PNG, black card background, and
+   green-luminance panel output.
+
 ## Round B slice 2
 
 Install/build as in the earlier sections, then verify both hubs report API v2:

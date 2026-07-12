@@ -18,14 +18,83 @@ class MockFeedSource(
                     text = sample.third,
                     createdAt = instant.minus((index * 37L) + 2L, ChronoUnit.MINUTES),
                     source = FeedSourceKind.DEMO.tag,
-                    hasMedia = index == 3 || index == 11,
+                    media = sampleMedia(index),
                 )
             },
             nextCursor = null,
         )
     }
 
+    override fun fetchThread(post: FeedPost): FeedThread {
+        val rootTime = post.createdAt.minus(2, ChronoUnit.HOURS)
+        val ancestors = listOf(
+            threadPost("${post.id}-root", "Maya Chen", "maya", "The root of this demo conversation.", rootTime),
+            threadPost("${post.id}-parent", "Noah", "noah-builds", "A parent reply adds some context.", rootTime.plus(35, ChronoUnit.MINUTES)),
+        )
+        val replies = listOf(
+            threadPost("${post.id}-reply-1", "Ari Sol", "arisol", "First reply, in source order.", post.createdAt.plus(2, ChronoUnit.MINUTES)),
+            threadPost(
+                "${post.id}-reply-2",
+                "Leonie",
+                "leonie.photo",
+                "Second reply includes a gallery item.",
+                post.createdAt.plus(4, ChronoUnit.MINUTES),
+                sampleMedia(12),
+            ),
+            threadPost("${post.id}-reply-3", "Samir", "samir", "Third reply closes the demo thread.", post.createdAt.plus(6, ChronoUnit.MINUTES)),
+        )
+        return FeedThread(ancestors + post + replies, ancestors.size)
+    }
+
+    private fun threadPost(
+        id: String,
+        name: String,
+        handle: String,
+        text: String,
+        createdAt: Instant,
+        media: List<FeedMedia> = emptyList(),
+    ) = FeedPost(
+        id = id,
+        authorName = name,
+        authorHandle = handle,
+        text = text,
+        createdAt = createdAt,
+        source = FeedSourceKind.DEMO.tag,
+        media = media,
+    )
+
     private companion object {
+        fun sampleMedia(index: Int): List<FeedMedia> = when (index) {
+            3 -> (1..3).map { mediaIndex ->
+                FeedMedia(
+                    type = FeedMediaType.PHOTO,
+                    url = "https://example.invalid/demo/photo-$mediaIndex-large.jpg",
+                    previewUrl = "https://example.invalid/demo/photo-$mediaIndex-small.jpg",
+                    altText = if (mediaIndex == 1) "Green light reflecting on wet pavement after the rain." else "",
+                    durationMs = null,
+                )
+            }
+            11 -> listOf(
+                FeedMedia(
+                    type = FeedMediaType.GIF,
+                    url = "https://example.invalid/demo/sketch.gif.mp4",
+                    previewUrl = "https://example.invalid/demo/sketch-poster.jpg",
+                    altText = "A sketchbook page flipping in the station breeze.",
+                    durationMs = 4_200L,
+                ),
+            )
+            12 -> listOf(
+                FeedMedia(
+                    type = FeedMediaType.VIDEO,
+                    url = "https://example.invalid/demo/hud.mp4",
+                    previewUrl = "https://example.invalid/demo/hud-poster.jpg",
+                    altText = "A monochrome card advancing with one swipe.",
+                    durationMs = 12_000L,
+                ),
+            )
+            else -> emptyList()
+        }
+
         val SAMPLE_TEXTS = listOf(
             Triple("Maya Chen", "maya", "Morning walk, clear sky, and exactly enough coffee."),
             Triple("Noah", "noah-builds", "Shipped the tiny fix that makes the whole interaction feel calmer."),

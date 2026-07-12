@@ -1,0 +1,73 @@
+{
+  "data": {
+    "threaded_conversation_with_injections_v2": {
+      "instructions": [
+        {
+          "type": "TimelineAddEntries",
+          "entries": [
+            {
+              "entryId": "tweet-100",
+              "content": { "itemContent": { "tweet_results": { "result": {
+                "rest_id": "100",
+                "core": { "user_results": { "result": { "core": { "name": "Root", "screen_name": "root" } } } },
+                "legacy": { "full_text": "Root tweet", "created_at": "Wed Oct 10 18:00:00 +0000 2018" }
+              } } } }
+            },
+            {
+              "entryId": "tweet-200",
+              "content": { "itemContent": { "tweet_results": { "result": {
+                "rest_id": "200",
+                "core": { "user_results": { "result": { "core": { "name": "Parent", "screen_name": "parent" } } } },
+                "legacy": { "full_text": "Parent tweet", "created_at": "Wed Oct 10 19:00:00 +0000 2018" }
+              } } } }
+            },
+            {
+              "entryId": "tweet-300",
+              "content": { "itemContent": { "tweet_results": { "result": {
+                "rest_id": "300",
+                "core": { "user_results": { "result": { "core": { "name": "Focal", "screen_name": "focal" } } } },
+                "legacy": {
+                  "full_text": "Focal tweet",
+                  "created_at": "Wed Oct 10 20:00:00 +0000 2018",
+                  "extended_entities": { "media": [{
+                    "type": "video",
+                    "media_url_https": "https://pbs.twimg.com/focal.jpg",
+                    "ext_alt_text": "A focal clip",
+                    "video_info": { "duration_millis": 12000, "variants": [
+                      { "bit_rate": 256000, "content_type": "video/mp4", "url": "https://video.twimg.com/focal-low.mp4" },
+                      { "bit_rate": 832000, "content_type": "video/mp4", "url": "https://video.twimg.com/focal-high.mp4" }
+                    ] }
+                  }] }
+                }
+              } } } }
+            },
+            {
+              "entryId": "conversationthread-300",
+              "content": { "items": [
+                { "item": { "itemContent": { "tweet_results": { "result": {
+                  "rest_id": "401",
+                  "core": { "user_results": { "result": { "legacy": { "name": "Reply One", "screen_name": "reply1" } } } },
+                  "legacy": { "full_text": "First reply", "created_at": "Wed Oct 10 20:05:00 +0000 2018" }
+                } } } } },
+                { "item": { "itemContent": { "tweet_results": { "result": {
+                  "__typename": "TweetWithVisibilityResults",
+                  "tweet": {
+                    "rest_id": "402",
+                    "core": { "user_results": { "result": { "core": { "name": "Reply Two", "screen_name": "reply2" } } } },
+                    "legacy": { "full_text": "Second reply", "created_at": "Wed Oct 10 20:10:00 +0000 2018" }
+                  }
+                } } } } },
+                { "item": { "itemContent": { "promotedMetadata": {}, "tweet_results": { "result": {
+                  "rest_id": "999",
+                  "core": { "user_results": { "result": { "core": { "name": "Ad", "screen_name": "ad" } } } },
+                  "legacy": { "full_text": "Promoted", "created_at": "Wed Oct 10 20:15:00 +0000 2018" }
+                } } } } }
+              ] }
+            },
+            { "entryId": "cursor-bottom-0", "content": { "cursorType": "Bottom", "value": "cursor" } }
+          ]
+        }
+      ]
+    }
+  }
+}

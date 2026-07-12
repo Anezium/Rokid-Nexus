@@ -10,6 +10,7 @@ import android.app.Service
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothSocket
+import android.graphics.BitmapFactory
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -31,6 +32,8 @@ import com.anezium.rokidbus.shared.BusConstants
 import com.anezium.rokidbus.shared.BusEnvelope
 import com.anezium.rokidbus.shared.BusPaths
 import com.anezium.rokidbus.shared.FrameProtocol
+import com.anezium.rokidbus.shared.ImageSurfaceContract
+import com.anezium.rokidbus.shared.ImageSurfaceValidationResult
 import com.anezium.rokidbus.shared.LinkStateBits
 import com.anezium.rokidbus.shared.plugin.PathRules
 import com.anezium.rokidbus.shared.plugin.PluginCapability
@@ -57,6 +60,7 @@ private const val NOTIFICATION_ID = 1
 private const val ACTION_LOG = "com.anezium.rokidbus.phone.LOG"
 private const val ACTION_SET_TOKEN = "com.anezium.rokidbus.phone.SET_TOKEN"
 private const val ACTION_STOP = "com.anezium.rokidbus.phone.STOP"
+private const val ACTION_DEBUG_IMAGE = "com.anezium.rokidbus.phone.DEBUG_IMAGE_SURFACE"
 private const val EXTRA_AUTH_TOKEN = "auth_token"
 private const val PREF_ENABLED = "hub_enabled"
 private const val GLASSES_MAC = "AC:86:D1:55:1E:ED"
@@ -104,7 +108,9 @@ class BusHubService : Service() {
     private val executor = Executors.newCachedThreadPool()
     private val registrations = CopyOnWriteArrayList<Registration>()
     private val externalSurfaceSeq = ConcurrentHashMap<String, AtomicLong>()
+    private val debugImageSeq = AtomicLong(System.currentTimeMillis())
     private val externalSurfaceIds = ConcurrentHashMap<String, MutableSet<String>>()
+    private val imageSurfaceRateLimiter = ImageSurfaceRateLimiter()
     private val sppLoopStarted = AtomicBoolean(false)
     private val audioLeaseLock = Any()
     @Volatile private var sppLoopStop = false
@@ -123,6 +129,8 @@ class BusHubService : Service() {
     @Volatile private var cxrConnected = false
     @Volatile private var glassBtConnected = false
     @Volatile private var lastNotifiedStatus: String? = null
+    @Volatile private var remoteImageSurfaceVersion = 0
+    @Volatile private var remoteMaxImageBytes = 0
     private var pluginPackageReceiverRegistered = false
 
     private val pluginPackageReceiver = object : BroadcastReceiver() {
@@ -168,7 +176,7 @@ class BusHubService : Service() {
 
         override fun linkState(): Int = this@BusHubService.linkState()
 
-        override fun capabilities(): Int = BusCapabilityBits.PROTECTED_LENS_LINK
+        override fun capabilities(): Int = this@BusHubService.capabilities()
 
         override fun registerPlugin(packageName: String, pluginId: String, cb: IBusCallback): Int {
             val callingUid = Binder.getCallingUid()
@@ -294,7 +302,8 @@ class BusHubService : Service() {
         pluginRegistry = PhonePluginRegistry(
             context = applicationContext,
             plugins = builtInPlugins,
-            sendEnvelope = { envelope -> sendRemote(envelope) },
+            sendEnvelope = ::sendBuiltInPluginEnvelope,
+            capabilitiesProvider = ::capabilities,
             logger = { message -> log(message) },
             catalogProvider = {
                 PhoneBuiltInPlugins.catalog(applicationContext, builtInPlugins)
@@ -325,6 +334,15 @@ class BusHubService : Service() {
                     prefs().edit().putString(PREF_TOKEN, token).apply()
                     enableHub()
                     startCxr(token)
+                }
+            }
+            ACTION_DEBUG_IMAGE -> {
+                if (isDebuggableBuild()) {
+                    enableHub()
+                    startCxrIfTokenAvailable()
+                    executor.execute(::pushDebugImageWhenReady)
+                } else {
+                    log("debug image probe rejected status=release_build")
                 }
             }
             else -> {
@@ -395,7 +413,7 @@ class BusHubService : Service() {
             deliverError(sender.replyBinder, envelope.id, decision.code)
             return
         }
-        val authorizedEnvelope = if (
+        val ownedEnvelope = if (
             sender.principal != null &&
             PathRules.requiredCapability(envelope.path) == PluginCapability.SURFACES
         ) {
@@ -404,6 +422,24 @@ class BusHubService : Service() {
                 deliverError(sender.replyBinder, envelope.id, "INVALID_SURFACE_ID")
                 return
             }
+            envelope.copy(payload = payload)
+        } else {
+            envelope
+        }
+        if (ownedEnvelope.path == BusPaths.SURFACE_SHOW || ownedEnvelope.path == BusPaths.SURFACE_UPDATE) {
+            if (ownedEnvelope.payload.optString("kind") == ImageSurfaceContract.KIND) {
+                val imageError = validateImageEnvelope(ownedEnvelope)
+                if (imageError != null) {
+                    deliverError(sender.replyBinder, ownedEnvelope.id, imageError)
+                    return
+                }
+            }
+        }
+        val authorizedEnvelope = if (
+            sender.principal != null &&
+            PathRules.requiredCapability(ownedEnvelope.path) == PluginCapability.SURFACES
+        ) {
+            val payload = ownedEnvelope.payload
             val wireSurfaceId = payload.getString("surfaceId")
             val sequence = externalSurfaceSeq.computeIfAbsent(wireSurfaceId) {
                 AtomicLong(System.currentTimeMillis())
@@ -411,7 +447,7 @@ class BusHubService : Service() {
             val pluginSurfaces = externalSurfaceIds.computeIfAbsent(sender.principal.descriptor.id) {
                 ConcurrentHashMap.newKeySet()
             }
-            if (envelope.path == BusPaths.SURFACE_HIDE) {
+            if (ownedEnvelope.path == BusPaths.SURFACE_HIDE) {
                 pluginSurfaces.remove(wireSurfaceId)
                 if (pluginSurfaces.isEmpty() && ::externalPluginController.isInitialized) {
                     externalPluginController.onPluginSelfHid(sender.principal.descriptor.id)
@@ -419,9 +455,9 @@ class BusHubService : Service() {
             } else {
                 pluginSurfaces += wireSurfaceId
             }
-            envelope.copy(payload = payload.put("seq", sequence))
+            ownedEnvelope.copy(payload = payload.put("seq", sequence))
         } else {
-            envelope
+            ownedEnvelope
         }
         if (authorizedEnvelope.path == TransitLegacyStateExporter.ACK_PATH && sender.principal != null) {
             val acknowledged = transitLegacyStateExporter.acknowledge(
@@ -452,6 +488,10 @@ class BusHubService : Service() {
     private fun routeRemote(envelope: BusEnvelope) {
         if (envelope.path == "/hub/probe") {
             log("hub probe received from glasses")
+            return
+        }
+        if (envelope.path == BusPaths.HUB_CAPABILITIES) {
+            updateRemoteCapabilities(envelope.payload)
             return
         }
         if (::pluginRegistry.isInitialized && pluginRegistry.handleRemote(envelope)) return
@@ -894,6 +934,15 @@ class BusHubService : Service() {
         return if (bytes.size > BusConstants.CXR_CONTROL_MAX_BYTES) "NO_DATA_PLANE" else "NO_LINK"
     }
 
+    private fun sendBuiltInPluginEnvelope(envelope: BusEnvelope): String? {
+        if ((envelope.path == BusPaths.SURFACE_SHOW || envelope.path == BusPaths.SURFACE_UPDATE) &&
+            envelope.payload.optString("kind") == ImageSurfaceContract.KIND
+        ) {
+            validateImageEnvelope(envelope)?.let { return it }
+        }
+        return sendRemote(envelope)
+    }
+
     private fun sendCxr(envelope: BusEnvelope): Boolean =
         runCatching {
             val json = FrameProtocol.toJson(envelope).toString()
@@ -1211,6 +1260,11 @@ class BusHubService : Service() {
 
     private fun notifyLinkState() {
         val state = linkState()
+        if (state and (LinkStateBits.CXR_CONTROL_UP or LinkStateBits.SPP_DATA_UP) == 0) {
+            remoteImageSurfaceVersion = 0
+            remoteMaxImageBytes = 0
+            imageSurfaceRateLimiter.clear()
+        }
         updateStatusNotification(state)
         registrations.forEach { registration ->
             runCatching { registration.callback.onLinkState(state) }
@@ -1229,6 +1283,105 @@ class BusHubService : Service() {
             id = id,
             payload = JSONObject().put("code", code).put("forId", id),
         )
+
+    private fun capabilities(): Int {
+        var capabilities = BusCapabilityBits.PROTECTED_LENS_LINK
+        if (remoteImageSurfaceVersion == ImageSurfaceContract.VERSION &&
+            remoteMaxImageBytes >= ImageSurfaceContract.MAX_IMAGE_BYTES &&
+            linkState() and LinkStateBits.SPP_DATA_UP != 0
+        ) {
+            capabilities = capabilities or BusCapabilityBits.IMAGE_SURFACE
+        }
+        return capabilities
+    }
+
+    private fun updateRemoteCapabilities(payload: JSONObject) {
+        val features = payload.optInt("features", 0)
+        val supported = payload.optInt("version", 0) == 1 &&
+            features and BusCapabilityBits.IMAGE_SURFACE != 0 &&
+            payload.optInt("imageSurfaceVersion", 0) == ImageSurfaceContract.VERSION &&
+            payload.optInt("maxImageBytes", 0) >= ImageSurfaceContract.MAX_IMAGE_BYTES
+        remoteImageSurfaceVersion = if (supported) ImageSurfaceContract.VERSION else 0
+        remoteMaxImageBytes = if (supported) payload.optInt("maxImageBytes") else 0
+        log("renderer capabilities image=$supported maxImageBytes=$remoteMaxImageBytes")
+        // Link bits may be unchanged; repeat the callback so clients refresh capabilities().
+        notifyLinkState()
+    }
+
+    private fun validateImageEnvelope(envelope: BusEnvelope): String? {
+        if (capabilities() and BusCapabilityBits.IMAGE_SURFACE == 0) {
+            return ImageSurfaceContract.ERROR_CAPABILITY_NOT_AVAILABLE
+        }
+        val validation = ImageSurfaceContract.validate(envelope.payload, envelope.binary)
+        if (validation is ImageSurfaceValidationResult.Invalid) return validation.code
+        val metadata = (validation as ImageSurfaceValidationResult.Valid).metadata
+        val bytes = envelope.binary ?: return ImageSurfaceContract.ERROR_INVALID_IMAGE
+        val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+        if (options.outWidth != metadata.pixelWidth || options.outHeight != metadata.pixelHeight ||
+            options.outMimeType != metadata.mimeType
+        ) {
+            return ImageSurfaceContract.ERROR_INVALID_IMAGE
+        }
+        val surfaceId = envelope.payload.optString("surfaceId")
+        if (surfaceId.isBlank()) return ImageSurfaceContract.ERROR_INVALID_IMAGE
+        if (!imageSurfaceRateLimiter.tryAcquire(surfaceId)) {
+            return ImageSurfaceContract.ERROR_IMAGE_RATE_LIMITED
+        }
+        return null
+    }
+
+    private fun pushDebugImageWhenReady() {
+        repeat(20) {
+            if (capabilities() and BusCapabilityBits.IMAGE_SURFACE != 0) {
+                pushDebugImage()
+                return
+            }
+            sleepQuietly(250L)
+        }
+        log("debug image probe failed code=${ImageSurfaceContract.ERROR_CAPABILITY_NOT_AVAILABLE}")
+    }
+
+    private fun pushDebugImage() {
+        val resourceId = resources.getIdentifier("image_surface_sample", "raw", packageName)
+        if (resourceId == 0) {
+            log("debug image probe failed code=RESOURCE_MISSING")
+            return
+        }
+        val bytes = runCatching { resources.openRawResource(resourceId).use { it.readBytes() } }
+            .getOrElse {
+                log("debug image probe failed code=RESOURCE_READ_FAILED")
+                return
+            }
+        val envelope = BusEnvelope(
+            path = BusPaths.SURFACE_SHOW,
+            payload = JSONObject()
+                .put("surfaceId", "debug:image")
+                .put("seq", debugImageSeq.incrementAndGet())
+                .put("kind", ImageSurfaceContract.KIND)
+                .put("imageVersion", ImageSurfaceContract.VERSION)
+                .put("contentKey", "debug-tree-v1")
+                .put("mimeType", ImageSurfaceContract.MIME_JPEG)
+                .put("pixelWidth", 480)
+                .put("pixelHeight", 480)
+                .put("sha256", ImageSurfaceContract.sha256(bytes))
+                .put("title", "Nexus image probe")
+                .put("caption", "Phone hub to glasses over SPP")
+                .put("footer", "debug build"),
+            binary = bytes,
+        )
+        val validationError = validateImageEnvelope(envelope)
+        if (validationError != null) {
+            log("debug image probe failed code=$validationError")
+            return
+        }
+        val sendError = sendRemote(envelope)
+        if (sendError == null) {
+            log("debug image probe sent bytes=${bytes.size} surfaceId=debug:image")
+        } else {
+            log("debug image probe failed code=$sendError")
+        }
+    }
 
     private fun closeSocket() {
         runCatching { socket?.close() }
@@ -1283,6 +1436,15 @@ class BusHubService : Service() {
 
         fun start(context: android.content.Context) {
             val intent = Intent(context, BusHubService::class.java)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(intent)
+            } else {
+                context.startService(intent)
+            }
+        }
+
+        fun startDebugImage(context: android.content.Context) {
+            val intent = Intent(context, BusHubService::class.java).setAction(ACTION_DEBUG_IMAGE)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
             } else {

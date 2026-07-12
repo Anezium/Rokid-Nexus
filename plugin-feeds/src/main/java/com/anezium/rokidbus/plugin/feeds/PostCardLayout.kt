@@ -15,9 +15,34 @@ data class FeedCardContent(
 }
 
 object PostCardLayout {
-    const val LINE_CHARS = 26
-    const val CARD_ROWS = 12
-    const val BODY_ROWS = CARD_ROWS - 1
+    const val LINE_CHARS = 27
+    const val CARD_ROWS = 15
+    const val BODY_ROWS = CARD_ROWS - 2
+
+    fun renderSourceMenu(
+        sources: List<FeedSourceKind>,
+        selectedIndex: Int,
+    ): FeedCardContent {
+        require(sources.isNotEmpty())
+        require(sources.size <= CARD_ROWS)
+        val selected = selectedIndex.coerceIn(sources.indices)
+        val showBlurbs = sources.size * 2 <= CARD_ROWS
+        val lines = buildList {
+            sources.forEachIndexed { index, source ->
+                val cursor = if (index == selected) "\u203a " else "  "
+                add((cursor + source.title).take(LINE_CHARS))
+                if (showBlurbs) add(("  " + source.blurb).take(LINE_CHARS))
+            }
+        }
+        return FeedCardContent(
+            title = "Feeds",
+            lines = lines,
+            footer = "source ${selected + 1}/${sources.size} \u00b7 tap".take(LINE_CHARS),
+            truncated = false,
+            pageIndex = selected,
+            pageCount = sources.size,
+        )
+    }
 
     fun layout(
         post: FeedPost,
@@ -26,26 +51,29 @@ object PostCardLayout {
         total: Int,
         expanded: Boolean = false,
         requestedPage: Int = 0,
+        footerOverride: String? = null,
     ): FeedCardContent {
         val displayText = buildString {
             append(post.text.trim())
-            if (post.hasMedia) {
+            mediaMarker(post.media)?.let { marker ->
                 if (isNotEmpty()) append(' ')
-                append("[+media]")
+                append(marker)
             }
         }.ifBlank { "(no text)" }
         val bodyRows = wrap(displayText)
-        val pageCount = ((bodyRows.size + BODY_ROWS - 1) / BODY_ROWS).coerceAtLeast(1)
+        val header = header(post, now)
+        val bodyRowCount = CARD_ROWS - header.size
+        val pageCount = ((bodyRows.size + bodyRowCount - 1) / bodyRowCount).coerceAtLeast(1)
         val truncated = pageCount > 1
         val pageIndex = if (expanded) requestedPage.coerceIn(0, pageCount - 1) else 0
         val visibleBody = if (expanded) {
-            bodyRows.drop(pageIndex * BODY_ROWS).take(BODY_ROWS)
+            bodyRows.drop(pageIndex * bodyRowCount).take(bodyRowCount)
         } else {
-            bodyRows.take(BODY_ROWS).toMutableList().also { rows ->
+            bodyRows.take(bodyRowCount).toMutableList().also { rows ->
                 if (truncated && rows.isNotEmpty()) rows[rows.lastIndex] = ellipsize(rows.last(), LINE_CHARS)
             }
         }
-        val footer = buildString {
+        val footer = footerOverride ?: buildString {
             append(post.source)
             append(' ')
             append(position.coerceAtLeast(0) + 1)
@@ -60,11 +88,47 @@ object PostCardLayout {
         }
         return FeedCardContent(
             title = "Feeds",
-            lines = listOf(header(post, now)) + visibleBody,
-            footer = footer,
+            lines = header + visibleBody,
+            footer = footer.take(LINE_CHARS),
             truncated = truncated,
             pageIndex = pageIndex,
             pageCount = pageCount,
+        )
+    }
+
+    fun renderGalleryItem(
+        post: FeedPost,
+        mediaIndex: Int,
+        now: Instant = Instant.now(),
+    ): FeedCardContent {
+        val index = mediaIndex.coerceIn(0, post.media.lastIndex)
+        val item = post.media[index]
+        val descriptor = when (item.type) {
+            FeedMediaType.PHOTO -> "Photo ${index + 1}/${post.media.size}"
+            FeedMediaType.GIF -> "[GIF]"
+            FeedMediaType.VIDEO -> "[Video${duration(item.durationMs)?.let { " $it" }.orEmpty()}]"
+        }
+        val body = buildString {
+            append(descriptor)
+            item.altText.trim().takeIf(String::isNotBlank)?.let {
+                append('\n')
+                append(it)
+            }
+        }
+        val header = header(post, now)
+        val bodyRows = wrap(body)
+        val availableRows = CARD_ROWS - header.size
+        val truncated = bodyRows.size > availableRows
+        val visibleBody = bodyRows.take(availableRows).toMutableList().also { rows ->
+            if (truncated && rows.isNotEmpty()) rows[rows.lastIndex] = ellipsize(rows.last(), LINE_CHARS)
+        }
+        return FeedCardContent(
+            title = "Feeds",
+            lines = header + visibleBody,
+            footer = "${post.source} media ${index + 1}/${post.media.size}".take(LINE_CHARS),
+            truncated = truncated,
+            pageIndex = index,
+            pageCount = post.media.size,
         )
     }
 
@@ -120,13 +184,37 @@ object PostCardLayout {
         return rows.ifEmpty { listOf("") }
     }
 
-    private fun header(post: FeedPost, now: Instant): String {
+    internal fun header(post: FeedPost, now: Instant): List<String> {
         val age = relativeAge(post.createdAt, now)
         val suffix = " \u00b7 $age"
         val maxName = (LINE_CHARS - suffix.length).coerceAtLeast(1)
-        return post.authorName.ifBlank { post.authorHandle.ifBlank { "Unknown" } }
+        val firstLine = post.authorName.ifBlank { post.authorHandle.ifBlank { "Unknown" } }
             .take(maxName) + suffix
+        val handle = post.authorHandle.trim().takeIf(String::isNotBlank)
+        return if (handle == null) listOf(firstLine) else listOf(firstLine, "@$handle".take(LINE_CHARS))
     }
+
+    internal fun mediaMarker(media: List<FeedMedia>): String? {
+        val first = media.firstOrNull() ?: return null
+        val marker = when (first.type) {
+            FeedMediaType.PHOTO -> {
+                val photoCount = media.count { it.type == FeedMediaType.PHOTO }
+                if (photoCount > 1) "[$photoCount photos]" else "[photo]"
+            }
+            FeedMediaType.GIF -> "[GIF]"
+            FeedMediaType.VIDEO -> "[video${duration(first.durationMs)?.let { " $it" }.orEmpty()}]"
+        }
+        val alt = first.altText.trim().replace(Regex("\\s+"), " ")
+        if (alt.isBlank()) return marker
+        val available = (LINE_CHARS * 2 - marker.length - 3).coerceAtLeast(0)
+        val shortened = if (alt.length <= available) alt else ellipsize(alt, available)
+        return "$marker ($shortened)"
+    }
+
+    private fun duration(durationMs: Long?): String? = durationMs
+        ?.coerceAtLeast(0L)
+        ?.div(1_000L)
+        ?.let { seconds -> "${seconds / 60}:${(seconds % 60).toString().padStart(2, '0')}" }
 
     private fun ellipsize(value: String, width: Int): String = when {
         width <= 1 -> "\u2026".take(width)

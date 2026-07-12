@@ -183,7 +183,7 @@ class XWebViewHostService : Service() {
             settings.domStorageEnabled = true
             settings.userAgentString = XWebViewInterception.USER_AGENT
             settings.setSupportMultipleWindows(false)
-            addJavascriptInterface(HomeTimelineBridge(), JAVASCRIPT_BRIDGE_NAME)
+            addJavascriptInterface(GraphQlBridge(), JAVASCRIPT_BRIDGE_NAME)
             webViewClient = object : WebViewClient() {
                 override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
                     super.onPageStarted(view, url, favicon)
@@ -194,6 +194,7 @@ class XWebViewHostService : Service() {
                 override fun onPageFinished(view: WebView, url: String?) {
                     super.onPageFinished(view, url)
                     injectInterception(view)
+                    scrollAfterHomeNavigation(view, url)
                 }
             }
         }
@@ -249,7 +250,11 @@ class XWebViewHostService : Service() {
         timeoutMillis: Long,
     ): XWebViewCapturedResponse? {
         if (Looper.myLooper() == Looper.getMainLooper() || timeoutMillis <= 0L) return null
-        val pending = PendingCapture(tokenGenerator.incrementAndGet(), request.previousFingerprint)
+        val pending = PendingCapture(
+            token = tokenGenerator.incrementAndGet(),
+            previousFingerprint = request.previousFingerprint,
+            threadPostId = request.threadPostId,
+        )
         mainHandler.post { beginCapture(pending, request) }
         val completed = try {
             pending.latch.await(timeoutMillis, TimeUnit.MILLISECONDS)
@@ -271,8 +276,15 @@ class XWebViewHostService : Service() {
         synchronized(captureLock) { activeCapture = pending }
         installCookies(request.cookies, browser)
         injectInterception(browser)
-        if (request.initialPage) {
+        if (request.threadPostId != null) {
             browser.stopLoading()
+            browser.loadUrl("https://x.com/i/status/${request.threadPostId}")
+        } else if (request.initialPage) {
+            browser.stopLoading()
+            browser.loadUrl(HOME_URL)
+        } else if (!browser.url.orEmpty().startsWith(HOME_URL)) {
+            browser.stopLoading()
+            pending.scrollAfterHomeLoad = true
             browser.loadUrl(HOME_URL)
         } else {
             scrollForNextPage(pending.token, browser)
@@ -303,6 +315,16 @@ class XWebViewHostService : Service() {
         }
     }
 
+    private fun scrollAfterHomeNavigation(browser: WebView, url: String?) {
+        if (!url.orEmpty().startsWith(HOME_URL)) return
+        val token = synchronized(captureLock) {
+            val pending = activeCapture?.takeIf { it.scrollAfterHomeLoad } ?: return
+            pending.scrollAfterHomeLoad = false
+            pending.token
+        }
+        scrollForNextPage(token, browser)
+    }
+
     private fun injectInterception(browser: WebView) {
         browser.evaluateJavascript(XWebViewInterception.javascript(), null)
     }
@@ -310,11 +332,20 @@ class XWebViewHostService : Service() {
     private fun activeCaptureToken(): Long? = synchronized(captureLock) { activeCapture?.token }
 
     private fun handleCapturedResponse(url: String, body: String) {
-        if (!XWebViewInterception.isHomeTimelineGraphQlUrl(url)) return
         val response = XWebViewCapturedResponse(body)
         val pending = synchronized(captureLock) {
             val current = activeCapture ?: return
-            if (current.previousFingerprint == response.fingerprint) return
+            val matches = current.threadPostId?.let { expectedId ->
+                XWebViewInterception.tweetDetailFocalTweetId(url) == expectedId
+            } ?: XWebViewInterception.isHomeTimelineGraphQlUrl(url)
+            if (!matches) return
+            if (
+                XWebViewInterception.shouldSuppressDuplicate(
+                    current.previousFingerprint,
+                    response.fingerprint,
+                    current.threadPostId,
+                )
+            ) return
             activeCapture = null
             current
         }
@@ -370,9 +401,9 @@ class XWebViewHostService : Service() {
         }
     }
 
-    private inner class HomeTimelineBridge {
+    private inner class GraphQlBridge {
         @JavascriptInterface
-        fun onHomeTimeline(url: String, body: String) {
+        fun onGraphQlResponse(url: String, body: String) {
             mainHandler.post { handleCapturedResponse(url, body) }
         }
     }
@@ -380,11 +411,14 @@ class XWebViewHostService : Service() {
     private class PendingCapture(
         val token: Long,
         val previousFingerprint: String?,
+        val threadPostId: String?,
     ) {
         val latch = CountDownLatch(1)
 
         @Volatile
         var response: XWebViewCapturedResponse? = null
+
+        var scrollAfterHomeLoad: Boolean = false
     }
 
     private companion object {

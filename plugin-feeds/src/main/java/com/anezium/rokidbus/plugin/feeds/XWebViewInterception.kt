@@ -2,6 +2,7 @@ package com.anezium.rokidbus.plugin.feeds
 
 import java.net.URLDecoder
 import java.net.URI
+import org.json.JSONObject
 
 internal object XWebViewInterception {
     const val USER_AGENT =
@@ -9,19 +10,48 @@ internal object XWebViewInterception {
             "(KHTML, like Gecko) Chrome/123.0.0.0 Mobile Safari/537.3"
 
     fun isHomeTimelineGraphQlUrl(url: String): Boolean {
-        val parsed = runCatching { URI(url) }.getOrNull() ?: return false
-        if (!parsed.scheme.equals("https", ignoreCase = true)) return false
-        val host = parsed.host?.lowercase().orEmpty()
-        if (TRUSTED_HOST_SUFFIXES.none { host == it || host.endsWith(".$it") }) return false
-        val decodedPath = runCatching {
-            URLDecoder.decode(parsed.rawPath.orEmpty(), Charsets.UTF_8.name())
-        }.getOrDefault(parsed.path.orEmpty())
-        val pathSegments = decodedPath.split('/').filter(String::isNotBlank)
-        return decodedPath.contains("/graphql/", ignoreCase = true) &&
-            HOME_OPERATIONS.any { operation -> pathSegments.any { it.equals(operation, ignoreCase = true) } }
+        return graphQlOperation(url)?.let { operation ->
+            HOME_OPERATIONS.any { it.equals(operation, ignoreCase = true) }
+        } == true
     }
 
+    fun isTweetDetailGraphQlUrl(url: String): Boolean =
+        graphQlOperation(url)?.equals("TweetDetail", ignoreCase = true) == true
+
+    fun tweetDetailFocalTweetId(url: String): String? {
+        if (!isTweetDetailGraphQlUrl(url)) return null
+        val query = runCatching { URI(url) }.getOrNull()?.rawQuery ?: return null
+        val variables = query.split('&').firstNotNullOfOrNull { parameter ->
+            val pieces = parameter.split('=', limit = 2)
+            if (pieces.size != 2 || decode(pieces[0]) != "variables") null else decode(pieces[1])
+        } ?: return null
+        return runCatching { JSONObject(variables).optString("focalTweetId").trim() }
+            .getOrNull()
+            ?.takeIf(String::isNotBlank)
+    }
+
+    private fun graphQlOperation(url: String): String? {
+        val parsed = runCatching { URI(url) }.getOrNull() ?: return null
+        if (!parsed.scheme.equals("https", ignoreCase = true)) return null
+        val host = parsed.host?.lowercase().orEmpty()
+        if (TRUSTED_HOST_SUFFIXES.none { host == it || host.endsWith(".$it") }) return null
+        val decodedPath = runCatching {
+            decode(parsed.rawPath.orEmpty())
+        }.getOrDefault(parsed.path.orEmpty())
+        val pathSegments = decodedPath.split('/').filter(String::isNotBlank)
+        if (!decodedPath.contains("/graphql/", ignoreCase = true)) return null
+        return pathSegments.lastOrNull()
+    }
+
+    private fun decode(value: String): String = URLDecoder.decode(value, Charsets.UTF_8.name())
+
     fun responseFingerprint(body: String): String = "${body.length}:${body.hashCode()}"
+
+    fun shouldSuppressDuplicate(
+        previousFingerprint: String?,
+        responseFingerprint: String,
+        threadPostId: String?,
+    ): Boolean = threadPostId == null && previousFingerprint == responseFingerprint
 
     fun javascript(): String = INTERCEPTION_JAVASCRIPT
 
@@ -33,7 +63,7 @@ internal object XWebViewInterception {
           if (window.__nexusXHomeTimelineInterceptor) return;
           window.__nexusXHomeTimelineInterceptor = true;
 
-          const isHomeTimeline = function(value) {
+          const isCapturedGraphQl = function(value) {
             if (!value) return false;
             try {
               const parsed = new URL(String(value), window.location.href);
@@ -44,14 +74,14 @@ internal object XWebViewInterception {
               try { path = decodeURIComponent(path); } catch (_) {}
               path = path.toLowerCase();
               return parsed.protocol === 'https:' && trustedHost && path.indexOf('/graphql/') !== -1 &&
-                /\/(hometimeline|homelatesttimeline)(?:\/|$)/.test(path);
+                /\/(hometimeline|homelatesttimeline|tweetdetail)(?:\/|$)/.test(path);
             } catch (_) {
               return false;
             }
           };
           const deliver = function(url, body) {
-            if (!isHomeTimeline(url) || typeof body !== 'string') return;
-            try { window.NexusXBridge.onHomeTimeline(String(url), body); } catch (_) {}
+            if (!isCapturedGraphQl(url) || typeof body !== 'string') return;
+            try { window.NexusXBridge.onGraphQlResponse(String(url), body); } catch (_) {}
           };
 
           if (typeof window.fetch === 'function') {
@@ -63,7 +93,7 @@ internal object XWebViewInterception {
                   const request = args[0];
                   const url = response.url ||
                     (typeof request === 'string' ? request : (request && request.url));
-                  if (isHomeTimeline(url)) {
+                  if (isCapturedGraphQl(url)) {
                     response.clone().text().then(function(body) { deliver(url, body); }).catch(function() {});
                   }
                 } catch (_) {}
@@ -85,7 +115,7 @@ internal object XWebViewInterception {
               xhr.addEventListener('load', function() {
                 try {
                   const url = xhr.responseURL || xhr.__nexusXRequestUrl;
-                  if (isHomeTimeline(url) && (xhr.responseType === '' || xhr.responseType === 'text')) {
+                  if (isCapturedGraphQl(url) && (xhr.responseType === '' || xhr.responseType === 'text')) {
                     deliver(url, xhr.responseText);
                   }
                 } catch (_) {}

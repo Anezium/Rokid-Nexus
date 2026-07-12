@@ -45,7 +45,6 @@ class XFeedSource(
                     text = "X: add API token in phone settings",
                     createdAt = now,
                     source = FeedSourceKind.X_OFFICIAL.tag,
-                    hasMedia = false,
                 ),
             ),
             nextCursor = null,
@@ -60,7 +59,6 @@ class XFeedSource(
                     text = "X: add numeric user id in phone settings",
                     createdAt = now,
                     source = FeedSourceKind.X_OFFICIAL.tag,
-                    hasMedia = false,
                 ),
             ),
             nextCursor = null,
@@ -94,10 +92,7 @@ class XFeedSource(
                             createdAt = runCatching { Instant.parse(item.optString("created_at")) }
                                 .getOrDefault(fallbackNow),
                             source = FeedSourceKind.X_OFFICIAL.tag,
-                            hasMedia = item.optJSONObject("attachments")
-                                ?.optJSONArray("media_keys")
-                                ?.length()
-                                ?.let { it > 0 } == true,
+                            // Official v1 intentionally leaves typed media empty: media_keys do not include usable URLs.
                         ),
                     )
                 }

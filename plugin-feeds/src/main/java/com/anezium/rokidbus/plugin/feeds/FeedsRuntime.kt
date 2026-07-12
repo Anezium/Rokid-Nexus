@@ -2,6 +2,8 @@ package com.anezium.rokidbus.plugin.feeds
 
 import android.content.Context
 import android.view.KeyEvent
+import com.anezium.rokidbus.shared.ImageSurfaceContract
+import com.anezium.rokidbus.shared.ImageSurfaceValidationResult
 import com.anezium.rokidbus.shared.plugin.NexusInputEvent
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
@@ -9,47 +11,65 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import org.json.JSONObject
 import java.time.Instant
 
 internal interface FeedsRuntimeHost {
     fun sendCard(card: FeedCardContent, show: Boolean)
+    fun sendImage(payload: JSONObject, bytes: ByteArray)
+    fun supportsImage(): Boolean
     fun hideSurface()
     fun post(action: () -> Unit)
     fun log(message: String)
 }
 
 internal class FeedsRuntime(
-    context: Context,
+    context: Context?,
     private val host: FeedsRuntimeHost,
     private val settings: () -> FeedsSettings,
-    private val sourceFactory: (FeedsSettings) -> FeedSource = { defaultSource(context.applicationContext, it) },
+    private val sourceFactory: (FeedsSettings, FeedSourceKind) -> FeedSource = { currentSettings, kind ->
+        defaultSource(requireNotNull(context).applicationContext, currentSettings, kind)
+    },
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    private val imageLoader: FeedImageLoader = FeedImagePipeline(),
     private val now: () -> Instant = Instant::now,
+    private val nanoTime: () -> Long = System::nanoTime,
 ) {
     private val timeline = FeedTimeline()
     private var source: FeedSource? = null
+    private var currentSettings: FeedsSettings? = null
+    private var sources: List<FeedSourceKind> = listOf(FeedSourceKind.BLUESKY)
+    private var menuIndex = 0
     private var sourceKind = FeedSourceKind.BLUESKY
     private var position = 0
-    private var expanded = false
-    private var textPage = 0
-    private var fetchJob: Job? = null
+    private var level = NavigationLevel.SOURCE_MENU
+    private var threadState: ThreadState? = null
+    private var galleryIndex = 0
+    private var pageFetchJob: Job? = null
+    private var threadFetchJob: Job? = null
+    private var imageFetchJob: Job? = null
     private var generation = 0L
+    private var threadGeneration = 0L
+    private var imageGeneration = 0L
+    @Volatile private var lastImageSendNanos = 0L
     private var visible = false
 
     fun open() {
         closeFetch()
         closeSource()
-        val currentSettings = settings()
-        sourceKind = currentSettings.source
-        source = sourceFactory(currentSettings)
+        val loadedSettings = settings()
+        currentSettings = loadedSettings
+        sources = availableSources(loadedSettings)
+        menuIndex = sources.indexOf(loadedSettings.source).takeIf { it >= 0 } ?: 0
         timeline.reset()
         position = 0
-        expanded = false
-        textPage = 0
+        level = NavigationLevel.SOURCE_MENU
+        threadState = null
+        galleryIndex = 0
         visible = true
-        host.sendCard(PostCardLayout.message("Loading ${sourceKind.displayName}...", sourceKind.tag), show = true)
-        fetchNextPage()
+        host.sendCard(PostCardLayout.renderSourceMenu(sources, menuIndex), show = true)
     }
 
     fun close() {
@@ -62,47 +82,114 @@ internal class FeedsRuntime(
     fun input(event: NexusInputEvent) {
         if (!visible || event.action != KeyEvent.ACTION_DOWN) return
         when {
-            event.keyCode == KeyEvent.KEYCODE_BACK -> close()
+            event.keyCode == KeyEvent.KEYCODE_BACK -> navigateBack()
             event.keyCode in FORWARD_KEYS -> moveForward()
             event.keyCode in BACKWARD_KEYS -> moveBackward()
-            event.keyCode in TAP_KEYS -> toggleExpanded()
+            event.keyCode in TAP_KEYS -> tap()
         }
     }
 
     private fun moveForward() {
-        val card = currentCard() ?: return
-        when {
-            expanded && textPage + 1 < card.pageCount -> textPage++
-            position + 1 < timeline.posts.size -> {
-                position++
-                expanded = false
-                textPage = 0
+        when (level) {
+            NavigationLevel.SOURCE_MENU -> {
+                if (menuIndex + 1 < sources.size) menuIndex++
+                renderCurrent()
             }
-            else -> Unit
+            NavigationLevel.FEED -> {
+                if (position + 1 < timeline.posts.size) position++
+                renderCurrent()
+                maybeFetchNext()
+            }
+            NavigationLevel.THREAD -> {
+                val state = threadState ?: return
+                val card = currentThreadCard() ?: return
+                when {
+                    state.textPage + 1 < card.pageCount -> state.textPage++
+                    state.position + 1 < state.posts.size -> {
+                        state.position++
+                        state.textPage = 0
+                    }
+                }
+                renderCurrent()
+            }
+            NavigationLevel.GALLERY -> {
+                val post = currentThreadPost() ?: return
+                if (galleryIndex + 1 < post.media.size) galleryIndex++
+                renderCurrent()
+            }
         }
-        renderCurrent()
-        maybeFetchNext()
     }
 
     private fun moveBackward() {
-        when {
-            expanded && textPage > 0 -> textPage--
-            position > 0 -> {
-                position--
-                expanded = false
-                textPage = 0
+        when (level) {
+            NavigationLevel.SOURCE_MENU -> {
+                if (menuIndex > 0) menuIndex--
+                renderCurrent()
             }
-            else -> Unit
+            NavigationLevel.FEED -> {
+                if (position > 0) position--
+                renderCurrent()
+            }
+            NavigationLevel.THREAD -> {
+                val state = threadState ?: return
+                when {
+                    state.textPage > 0 -> state.textPage--
+                    state.position > 0 -> {
+                        state.position--
+                        state.textPage = 0
+                    }
+                }
+                renderCurrent()
+            }
+            NavigationLevel.GALLERY -> {
+                if (galleryIndex > 0) galleryIndex--
+                renderCurrent()
+            }
         }
-        renderCurrent()
     }
 
-    private fun toggleExpanded() {
-        val card = currentCard() ?: return
-        if (!card.truncated) return
-        expanded = !expanded
-        textPage = 0
-        renderCurrent()
+    private fun tap() {
+        when (level) {
+            NavigationLevel.SOURCE_MENU -> openSelectedSource()
+            NavigationLevel.FEED -> openThread()
+            NavigationLevel.THREAD -> {
+                val post = currentThreadPost() ?: return
+                if (!post.hasMedia) return
+                galleryIndex = 0
+                level = NavigationLevel.GALLERY
+                renderCurrent()
+            }
+            NavigationLevel.GALLERY -> Unit
+        }
+    }
+
+    private fun navigateBack() {
+        when (level) {
+            NavigationLevel.SOURCE_MENU -> close()
+            NavigationLevel.FEED -> returnToSourceMenu()
+            NavigationLevel.THREAD -> {
+                threadGeneration++
+                threadFetchJob?.cancel()
+                threadFetchJob = null
+                threadState = null
+                level = NavigationLevel.FEED
+                renderCurrent()
+            }
+            NavigationLevel.GALLERY -> {
+                level = NavigationLevel.THREAD
+                galleryIndex = 0
+                renderCurrent()
+            }
+        }
+    }
+
+    private fun openThread() {
+        val focalPost = timeline.posts.getOrNull(position) ?: return
+        level = NavigationLevel.THREAD
+        threadState = null
+        galleryIndex = 0
+        host.sendCard(PostCardLayout.message("Loading thread...", sourceKind.tag), show = false)
+        fetchThread(focalPost)
     }
 
     private fun maybeFetchNext() {
@@ -110,11 +197,11 @@ internal class FeedsRuntime(
     }
 
     private fun fetchNextPage() {
-        if (fetchJob?.isActive == true) return
+        if (pageFetchJob?.isActive == true) return
         val activeSource = source ?: return
         val cursor = if (timeline.hasFetched) timeline.nextCursor ?: return else null
         val fetchGeneration = generation
-        fetchJob = CoroutineScope(SupervisorJob() + ioDispatcher).launch {
+        pageFetchJob = CoroutineScope(SupervisorJob() + ioDispatcher).launch {
             try {
                 val page = activeSource.fetchPage(cursor)
                 host.post {
@@ -124,7 +211,7 @@ internal class FeedsRuntime(
                         host.sendCard(PostCardLayout.message("No posts found.", sourceKind.tag), show = false)
                     } else {
                         position = position.coerceIn(0, timeline.posts.lastIndex)
-                        renderCurrent()
+                        if (level == NavigationLevel.FEED) renderCurrent()
                     }
                 }
             } catch (failure: CancellationException) {
@@ -144,26 +231,213 @@ internal class FeedsRuntime(
         }
     }
 
+    private fun fetchThread(focalPost: FeedPost) {
+        val activeSource = source ?: return
+        val fetchGeneration = generation
+        val requestGeneration = ++threadGeneration
+        threadFetchJob = CoroutineScope(SupervisorJob() + ioDispatcher).launch {
+            try {
+                val fetched = activeSource.fetchThread(focalPost)
+                host.post {
+                    if (
+                        !visible || generation != fetchGeneration ||
+                        threadGeneration != requestGeneration || level != NavigationLevel.THREAD
+                    ) return@post
+                    val posts = fetched.posts.ifEmpty { listOf(focalPost) }
+                    threadState = ThreadState(
+                        posts = posts,
+                        position = fetched.focusIndex.coerceIn(posts.indices),
+                    )
+                    renderCurrent()
+                }
+            } catch (failure: CancellationException) {
+                throw failure
+            } catch (failure: Throwable) {
+                host.post {
+                    if (
+                        !visible || generation != fetchGeneration ||
+                        threadGeneration != requestGeneration || level != NavigationLevel.THREAD
+                    ) return@post
+                    host.log("thread fetch failed source=${sourceKind.tag}: ${failure.javaClass.simpleName}")
+                    host.sendCard(
+                        PostCardLayout.message("Thread fetch failed. Check phone network and settings.", sourceKind.tag),
+                        show = false,
+                    )
+                }
+            }
+        }
+    }
+
     private fun renderCurrent() {
+        if (level == NavigationLevel.GALLERY) {
+            renderGallery()
+            return
+        }
+        closeImageFetch()
         val card = currentCard() ?: return
         host.sendCard(card, show = false)
     }
 
-    private fun currentCard(): FeedCardContent? = timeline.posts.getOrNull(position)?.let { post ->
+    private fun renderGallery() {
+        val post = currentThreadPost() ?: return
+        val media = post.media.getOrNull(galleryIndex) ?: return
+        closeImageFetch()
+        if (!host.supportsImage() || !media.hasDisplayableImageUrl()) {
+            host.sendCard(PostCardLayout.renderGalleryItem(post, galleryIndex, now()), show = false)
+            return
+        }
+
+        val requestGeneration = imageGeneration
+        val runtimeGeneration = generation
+        val requestIndex = galleryIndex
+        val requestPostId = post.id
+        host.sendCard(
+            PostCardLayout.message(
+                "Loading photo… (${requestIndex + 1}/${post.media.size})",
+                "${post.source} media ${requestIndex + 1}/${post.media.size}",
+            ),
+            show = false,
+        )
+        imageFetchJob = CoroutineScope(SupervisorJob() + ioDispatcher).launch {
+            try {
+                val frame = imageLoader.load(media)
+                if (frame != null) awaitImageSendWindow()
+                host.post {
+                    if (!isCurrentGalleryRequest(runtimeGeneration, requestGeneration, requestPostId, requestIndex)) {
+                        return@post
+                    }
+                    if (frame == null || !host.supportsImage()) {
+                        host.sendCard(PostCardLayout.renderGalleryItem(post, requestIndex, now()), show = false)
+                        return@post
+                    }
+                    val payload = frame.payload()
+                        .put("caption", media.altText.trim().take(ImageSurfaceContract.MAX_TEXT_CHARS))
+                        .put("footer", galleryFooter(post, media, requestIndex))
+                        .put("handlesBack", true)
+                    if (ImageSurfaceContract.validate(payload, frame.bytes) is ImageSurfaceValidationResult.Valid) {
+                        host.sendImage(payload, frame.bytes)
+                        lastImageSendNanos = nanoTime()
+                    } else {
+                        host.sendCard(PostCardLayout.renderGalleryItem(post, requestIndex, now()), show = false)
+                    }
+                }
+            } catch (failure: CancellationException) {
+                throw failure
+            } catch (failure: Throwable) {
+                host.post {
+                    if (!isCurrentGalleryRequest(runtimeGeneration, requestGeneration, requestPostId, requestIndex)) {
+                        return@post
+                    }
+                    host.log(
+                        "gallery image failed source=${post.source} type=${media.type.name.lowercase()}: " +
+                            failure.javaClass.simpleName,
+                    )
+                    host.sendCard(PostCardLayout.renderGalleryItem(post, requestIndex, now()), show = false)
+                }
+            }
+        }
+    }
+
+    private fun openSelectedSource() {
+        val loadedSettings = currentSettings ?: return
+        val selectedSource = sources.getOrNull(menuIndex) ?: return
+        closeFetch()
+        closeSource()
+        sourceKind = selectedSource
+        source = sourceFactory(loadedSettings, selectedSource)
+        timeline.reset()
+        position = 0
+        threadState = null
+        galleryIndex = 0
+        level = NavigationLevel.FEED
+        host.sendCard(PostCardLayout.message("Loading ${sourceKind.displayName}...", sourceKind.tag), show = false)
+        fetchNextPage()
+    }
+
+    private fun returnToSourceMenu() {
+        closeFetch()
+        closeSource()
+        timeline.reset()
+        position = 0
+        threadState = null
+        galleryIndex = 0
+        level = NavigationLevel.SOURCE_MENU
+        host.sendCard(PostCardLayout.renderSourceMenu(sources, menuIndex), show = false)
+    }
+
+    private fun isCurrentGalleryRequest(
+        runtimeGeneration: Long,
+        requestGeneration: Long,
+        postId: String,
+        mediaIndex: Int,
+    ): Boolean = visible &&
+        generation == runtimeGeneration &&
+        imageGeneration == requestGeneration &&
+        level == NavigationLevel.GALLERY &&
+        galleryIndex == mediaIndex &&
+        currentThreadPost()?.id == postId
+
+    private suspend fun awaitImageSendWindow() {
+        val previous = lastImageSendNanos
+        if (previous == 0L) return
+        val minimumNanos = ImageSurfaceContract.MIN_FRAME_INTERVAL_MS * NANOS_PER_MILLISECOND
+        val remainingNanos = minimumNanos - (nanoTime() - previous)
+        if (remainingNanos > 0L) {
+            delay((remainingNanos + NANOS_PER_MILLISECOND - 1L) / NANOS_PER_MILLISECOND)
+        }
+    }
+
+    private fun currentCard(): FeedCardContent? = when (level) {
+        NavigationLevel.SOURCE_MENU -> PostCardLayout.renderSourceMenu(sources, menuIndex)
+        NavigationLevel.FEED -> currentFeedCard()
+        NavigationLevel.THREAD -> currentThreadCard()
+        NavigationLevel.GALLERY -> currentGalleryCard()
+    }
+
+    private fun currentFeedCard(): FeedCardContent? = timeline.posts.getOrNull(position)?.let { post ->
         PostCardLayout.layout(
             post = post,
             now = now(),
             position = position,
             total = timeline.posts.size,
-            expanded = expanded,
-            requestedPage = textPage,
         )
     }
 
+    private fun currentThreadCard(): FeedCardContent? {
+        val state = threadState ?: return null
+        val post = state.posts.getOrNull(state.position) ?: return null
+        return PostCardLayout.layout(
+            post = post,
+            now = now(),
+            position = state.position,
+            total = state.posts.size,
+            expanded = true,
+            requestedPage = state.textPage,
+            footerOverride = "${post.source} thread ${state.position + 1}/${state.posts.size}",
+        )
+    }
+
+    private fun currentGalleryCard(): FeedCardContent? = currentThreadPost()?.let { post ->
+        PostCardLayout.renderGalleryItem(post, galleryIndex, now())
+    }
+
+    private fun currentThreadPost(): FeedPost? =
+        threadState?.let { state -> state.posts.getOrNull(state.position) }
+
     private fun closeFetch() {
         generation++
-        fetchJob?.cancel()
-        fetchJob = null
+        threadGeneration++
+        closeImageFetch()
+        pageFetchJob?.cancel()
+        pageFetchJob = null
+        threadFetchJob?.cancel()
+        threadFetchJob = null
+    }
+
+    private fun closeImageFetch() {
+        imageGeneration++
+        imageFetchJob?.cancel()
+        imageFetchJob = null
     }
 
     private fun closeSource() {
@@ -172,7 +446,32 @@ internal class FeedsRuntime(
     }
 
     private companion object {
-        fun defaultSource(context: Context, settings: FeedsSettings): FeedSource = when (settings.source) {
+        const val NANOS_PER_MILLISECOND = 1_000_000L
+
+        fun FeedMedia.hasDisplayableImageUrl(): Boolean {
+            val candidate = previewUrl.trim().ifBlank { url.trim() }
+            return candidate.startsWith("https://", ignoreCase = true)
+        }
+
+        fun galleryFooter(post: FeedPost, media: FeedMedia, index: Int): String {
+            val type = when (media.type) {
+                FeedMediaType.PHOTO -> "photo"
+                FeedMediaType.GIF -> "GIF"
+                FeedMediaType.VIDEO -> buildString {
+                    append("video")
+                    duration(media.durationMs)?.let { append(" $it") }
+                }
+            }
+            return "${post.source} $type ${index + 1}/${post.media.size}"
+                .take(ImageSurfaceContract.MAX_TEXT_CHARS)
+        }
+
+        fun duration(durationMs: Long?): String? = durationMs
+            ?.coerceAtLeast(0L)
+            ?.div(1_000L)
+            ?.let { seconds -> "${seconds / 60}:${(seconds % 60).toString().padStart(2, '0')}" }
+
+        fun defaultSource(context: Context, settings: FeedsSettings, kind: FeedSourceKind): FeedSource = when (kind) {
             FeedSourceKind.BLUESKY -> BlueskyFeedSource(settings.blueskyFeedGeneratorUri)
             FeedSourceKind.X_ACCOUNT -> XAccountFeedSource(settings.xAccountCookies)
             FeedSourceKind.X_WEBVIEW -> XWebViewFeedSource(context, settings.xAccountCookies)
@@ -197,4 +496,12 @@ internal class FeedsRuntime(
             KeyEvent.KEYCODE_SPACE,
         )
     }
+
+    private enum class NavigationLevel { SOURCE_MENU, FEED, THREAD, GALLERY }
+
+    private data class ThreadState(
+        val posts: List<FeedPost>,
+        var position: Int,
+        var textPage: Int = 0,
+    )
 }

@@ -82,6 +82,10 @@ class LensTranslationPluginTest {
             sendCount += 1
         }
 
+        override fun sendBinary(path: String, payload: JSONObject, data: ByteArray) = Unit
+
+        override fun supportsImageSurface(): Boolean = false
+
         override fun subscribe(
             pathPrefix: String,
             handler: (path: String, id: String, payload: JSONObject) -> Unit,

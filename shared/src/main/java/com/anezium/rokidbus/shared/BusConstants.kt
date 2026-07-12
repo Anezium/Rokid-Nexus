@@ -45,6 +45,7 @@ object BusPaths {
     const val PLUGIN_CLOSE = "/system/plugin/close"
     const val PLUGIN_INPUT = "/system/plugin/input"
     const val PLUGIN_REGISTRATION = "/system/plugin/registration"
+    const val HUB_CAPABILITIES = "/system/hub/capabilities"
     const val ERROR = "/error"
 
     fun isProtectedLensPath(path: String): Boolean =
@@ -55,6 +56,7 @@ object BusPaths {
 
 object BusCapabilityBits {
     const val PROTECTED_LENS_LINK = 1
+    const val IMAGE_SURFACE = 1 shl 1
 }
 
 object LinkStateBits {

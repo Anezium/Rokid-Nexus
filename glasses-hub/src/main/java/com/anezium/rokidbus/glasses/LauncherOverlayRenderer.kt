@@ -47,8 +47,14 @@ object LauncherOverlayRenderer {
 
     fun isShown(): Boolean = root != null
 
+    fun show(): Boolean {
+        val activeService = service ?: return false
+        return show(activeService)
+    }
+
     fun show(context: Context): Boolean {
         val activeService = service ?: return false
+        launcherReturnCoordinator.clearPendingLauncherOpen()
         GlassesHub.start(activeService.applicationContext)
         val manager = windowManager ?: activeService.getSystemService(WindowManager::class.java) ?: return false
         val currentRoot = root ?: LauncherOverlayRoot(activeService).also { next ->
@@ -131,7 +137,10 @@ object LauncherOverlayRenderer {
         val entry = launcherEntries.getOrNull(selectedIndex) ?: return
         val result = GlassesHub.openLauncherEntry(entry.id)
         log("Launcher overlay open result: $result")
-        hide()
+        if (result.startsWith("launcherOpen=true")) {
+            launcherReturnCoordinator.recordLauncherOpen(entry.id)
+            hide()
+        }
     }
 
     private class LauncherOverlayRoot(context: Context) : FrameLayout(context) {

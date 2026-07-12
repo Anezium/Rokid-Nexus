@@ -2,15 +2,19 @@ package com.anezium.rokidbus.glasses
 
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
 import android.view.KeyEvent
 import com.anezium.rokidbus.shared.BusEnvelope
 import com.anezium.rokidbus.shared.BusPaths
+import com.anezium.rokidbus.shared.ImageSurfaceContract
+import com.anezium.rokidbus.shared.ImageSurfaceValidationResult
 import org.json.JSONObject
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.Executors
 
 object SurfaceController {
     private const val PREFS = "surface_renderer"
@@ -21,6 +25,10 @@ object SurfaceController {
     private val listeners = CopyOnWriteArrayList<(NexusSurface?) -> Unit>()
     private val inputDedupe = DpadPairDedupe()
     private val suppressedDpadUps = mutableSetOf<Int>()
+    private val imageDecodeCoordinator = ImageDecodeCoordinator<Bitmap>()
+    private val imageDecodeExecutor = Executors.newFixedThreadPool(2) { runnable ->
+        Thread(runnable, "RokidNexusImageDecode").apply { isDaemon = true }
+    }
     private var backFailsafeSurfaceId: String? = null
     private var backFailsafe: Runnable? = null
     @Volatile private var active: NexusSurface? = null
@@ -62,7 +70,27 @@ object SurfaceController {
                     .onFailure { logError("Surface parse failed", it) }
                     .getOrNull()
                     ?: return true
-                showOrUpdate(context.applicationContext, surface)
+                if (surface.isImage) {
+                    val validation = ImageSurfaceContract.validate(envelope.payload, envelope.binary)
+                    if (validation !is ImageSurfaceValidationResult.Valid) {
+                        val code = (validation as? ImageSurfaceValidationResult.Invalid)?.code
+                            ?: ImageSurfaceContract.ERROR_INVALID_IMAGE
+                        log("Image surface rejected id=${surface.surfaceId} code=$code")
+                        return true
+                    }
+                    showOrUpdateImage(
+                        context.applicationContext,
+                        surface,
+                        envelope.binary!!,
+                        launcherShow = envelope.path == BusPaths.SURFACE_SHOW,
+                    )
+                } else {
+                    showOrUpdate(
+                        context.applicationContext,
+                        surface,
+                        launcherShow = envelope.path == BusPaths.SURFACE_SHOW,
+                    )
+                }
                 true
             }
             BusPaths.SURFACE_HIDE -> {
@@ -145,25 +173,86 @@ object SurfaceController {
         context: Context,
         surface: NexusSurface,
         forcedPath: SurfaceDisplayPath? = null,
+        launcherShow: Boolean = false,
     ) {
-        val previousSeq = latestSeqBySurface[surface.surfaceId] ?: Long.MIN_VALUE
-        if (surface.seq <= previousSeq) {
-            log("Surface stale drop id=${surface.surfaceId} seq=${surface.seq} latest=$previousSeq")
-            return
-        }
-        latestSeqBySurface[surface.surfaceId] = surface.seq
+        if (!acceptSequence(surface)) return
+        if (launcherShow) launcherReturnCoordinator.onSurfaceShown(surface.surfaceId)
         main.post {
+            if (latestSeqBySurface[surface.surfaceId] != surface.seq) return@post
+            val coordinated = imageDecodeCoordinator.invalidate()
+            coordinated?.recycleSafely()
+            recycleActiveImageUnless(coordinated)
             cancelBackFailsafeOnMain(surface.surfaceId)
             wakeScreen(context)
             active = surface
             notifyListeners(surface)
-            when (forcedPath ?: displayPath(context)) {
-                SurfaceDisplayPath.ACTIVITY -> showActivity(context, surface)
-                SurfaceDisplayPath.OVERLAY -> {
-                    if (!SurfaceOverlayRenderer.show(context, surface)) {
-                        log("Surface overlay unavailable; falling back to activity")
-                        showActivity(context, surface)
+            displaySurface(context, surface, forcedPath)
+        }
+    }
+
+    private fun showOrUpdateImage(
+        context: Context,
+        surface: NexusSurface,
+        bytes: ByteArray,
+        launcherShow: Boolean = false,
+    ) {
+        if (!acceptSequence(surface)) return
+        if (launcherShow) launcherReturnCoordinator.onSurfaceShown(surface.surfaceId)
+        val metadata = surface.imageMetadata ?: return
+        val key = ImageDecodeKey(surface.surfaceId, surface.seq, metadata.contentKey)
+        main.post {
+            if (latestSeqBySurface[surface.surfaceId] != surface.seq) return@post
+            // Keep the previously published HUD/bitmap until this body decodes.
+            // begin() invalidates older work; active still owns the visible bitmap.
+            imageDecodeCoordinator.begin(key)
+            imageDecodeExecutor.execute {
+                val decoded = ImageHudView.decodeRgb565(bytes, metadata)
+                if (decoded == null) {
+                    log("Image decode failed id=${surface.surfaceId} seq=${surface.seq}")
+                    main.post { imageDecodeCoordinator.cancel(key) }
+                    return@execute
+                }
+                main.post {
+                    when (val completion = imageDecodeCoordinator.complete(key, decoded)) {
+                        is ImageDecodeCompletion.Rejected -> completion.stale.recycleSafely()
+                        is ImageDecodeCompletion.Accepted -> {
+                            completion.replaced?.recycleSafely()
+                            if (latestSeqBySurface[key.surfaceId] != key.seq) {
+                                imageDecodeCoordinator.invalidate(key.surfaceId)?.recycleSafely()
+                                return@post
+                            }
+                            recycleActiveImageUnless(decoded)
+                            val published = surface.copy(imageBitmap = decoded)
+                            cancelBackFailsafeOnMain(surface.surfaceId)
+                            wakeScreen(context)
+                            active = published
+                            notifyListeners(published)
+                            displaySurface(context, published, null)
+                        }
                     }
+                }
+            }
+        }
+    }
+
+    @Synchronized
+    private fun acceptSequence(surface: NexusSurface): Boolean {
+        val previousSeq = latestSeqBySurface[surface.surfaceId] ?: Long.MIN_VALUE
+        if (surface.seq <= previousSeq) {
+            log("Surface stale drop id=${surface.surfaceId} seq=${surface.seq} latest=$previousSeq")
+            return false
+        }
+        latestSeqBySurface[surface.surfaceId] = surface.seq
+        return true
+    }
+
+    private fun displaySurface(context: Context, surface: NexusSurface, forcedPath: SurfaceDisplayPath?) {
+        when (forcedPath ?: displayPath(context)) {
+            SurfaceDisplayPath.ACTIVITY -> showActivity(context, surface)
+            SurfaceDisplayPath.OVERLAY -> {
+                if (!SurfaceOverlayRenderer.show(context, surface)) {
+                    log("Surface overlay unavailable; falling back to activity")
+                    showActivity(context, surface)
                 }
             }
         }
@@ -202,6 +291,7 @@ object SurfaceController {
         main.post {
             cancelBackFailsafeOnMain(surfaceId)
             if (active?.surfaceId == surfaceId) {
+                imageDecodeCoordinator.invalidate(surfaceId)?.recycleSafely()
                 hideLocalOnMain()
             }
         }
@@ -212,10 +302,16 @@ object SurfaceController {
     }
 
     private fun hideLocalOnMain() {
-        active?.surfaceId?.let { cancelBackFailsafeOnMain(it) }
+        val activeSurfaceId = active?.surfaceId
+        val returnToLauncher = activeSurfaceId?.let(launcherReturnCoordinator::consumeReturnOnHide) == true
+        activeSurfaceId?.let { cancelBackFailsafeOnMain(it) }
+        val coordinated = activeSurfaceId?.let(imageDecodeCoordinator::invalidate)
+        coordinated?.recycleSafely()
+        recycleActiveImageUnless(coordinated)
         active = null
         notifyListeners(null)
         SurfaceOverlayRenderer.hide()
+        if (returnToLauncher) LauncherOverlayRenderer.show()
     }
 
     private fun shouldSuppressDpadEvent(event: KeyEvent): Boolean {
@@ -296,6 +392,14 @@ object SurfaceController {
         listeners.forEach { listener ->
             runCatching { listener(surface) }
         }
+    }
+
+    private fun Bitmap.recycleSafely() {
+        if (!isRecycled) recycle()
+    }
+
+    private fun recycleActiveImageUnless(kept: Bitmap?) {
+        active?.imageBitmap?.takeUnless { it === kept }?.recycleSafely()
     }
 
     private val FORWARDED_KEYS = setOf(

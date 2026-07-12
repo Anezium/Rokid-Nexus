@@ -2,6 +2,7 @@ package com.anezium.rokidbus.phone
 
 import android.content.Context
 import android.view.KeyEvent
+import com.anezium.rokidbus.shared.BusCapabilityBits
 import com.anezium.rokidbus.shared.BusEnvelope
 import com.anezium.rokidbus.shared.BusPaths
 import com.anezium.rokidbus.shared.plugin.NexusInputEvent
@@ -20,6 +21,7 @@ class PhonePluginRegistry(
     override val context: Context,
     plugins: List<NexusPlugin>,
     private val sendEnvelope: (BusEnvelope) -> String?,
+    private val capabilitiesProvider: () -> Int,
     private val logger: (String) -> Unit,
     private val catalogProvider: (() -> PluginCatalog)? = null,
     private val externalController: ExternalPluginController? = null,
@@ -51,15 +53,31 @@ class PhonePluginRegistry(
         sendPluginEnvelope(path = path, id = id, payload = payload)
     }
 
-    private fun sendPluginEnvelope(path: String, id: String?, payload: JSONObject) {
+    override fun sendBinary(path: String, payload: JSONObject, data: ByteArray) {
+        sendPluginEnvelope(path = path, id = null, payload = payload, binary = data)
+    }
+
+    override fun sendBinary(path: String, id: String, payload: JSONObject, data: ByteArray) {
+        sendPluginEnvelope(path = path, id = id, payload = payload, binary = data)
+    }
+
+    override fun supportsImageSurface(): Boolean =
+        capabilitiesProvider() and BusCapabilityBits.IMAGE_SURFACE != 0
+
+    private fun sendPluginEnvelope(
+        path: String,
+        id: String?,
+        payload: JSONObject,
+        binary: ByteArray? = null,
+    ) {
         if (path == BusPaths.SURFACE_HIDE && payload.optString("surfaceId") == activePluginId) {
             activePluginId = null
         }
         val outgoing = payload.withSurfaceMetadata(path)
         val envelope = if (id == null) {
-            BusEnvelope(path = path, payload = outgoing)
+            BusEnvelope(path = path, payload = outgoing, binary = binary)
         } else {
-            BusEnvelope(path = path, id = id, payload = outgoing)
+            BusEnvelope(path = path, id = id, payload = outgoing, binary = binary)
         }
         val error = sendEnvelope(envelope)
         if (error != null) logger("plugin send failed path=$path code=$error")

@@ -37,6 +37,10 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
         visibility = GONE
     }
     private val mediaView = MediaHudView(context).apply { visibility = GONE }
+    private val imageView = ImageHudView(context).apply {
+        visibility = GONE
+        setPadding(px(4), px(4), px(4), px(4))
+    }
     private val footerView = monoText(10.5f, BusTheme.dim).apply {
         gravity = Gravity.CENTER
         textAlignment = TEXT_ALIGNMENT_CENTER
@@ -75,6 +79,9 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
             topMargin = px(3)
         })
         addView(mediaView, LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f).apply {
+            topMargin = px(8)
+        })
+        addView(imageView, LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f).apply {
             topMargin = px(8)
         })
         addView(previousView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
@@ -122,6 +129,7 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
         footerView.visibility = visibleIf(surface.footer.isNotBlank())
 
         when {
+            surface.isImage -> renderImage(surface)
             surface.isMedia -> renderMedia(surface)
             surface.isTimed -> renderTimed(surface)
             else -> renderCard(surface)
@@ -131,6 +139,7 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
     private fun renderTimed(surface: NexusSurface) {
         // Timed lines (lyrics) show one big centered line; cards pack a board.
         mediaView.visibility = GONE
+        imageView.visibility = GONE
         boardView.visibility = GONE
         currentView.visibility = VISIBLE
         currentView.textSize = TIMED_BODY_SP
@@ -150,6 +159,7 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
 
     private fun renderCard(surface: NexusSurface) {
         mediaView.visibility = GONE
+        imageView.visibility = GONE
         previousView.visibility = GONE
         nextView.visibility = GONE
         val rows = surface.rows.filter { it.text.isNotBlank() || it.isStructured }
@@ -161,12 +171,23 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
     }
 
     private fun renderMedia(surface: NexusSurface) {
+        imageView.visibility = GONE
         previousView.visibility = GONE
         currentView.visibility = GONE
         boardView.visibility = GONE
         nextView.visibility = GONE
         mediaView.visibility = VISIBLE
         mediaView.render(surface)
+    }
+
+    private fun renderImage(surface: NexusSurface) {
+        mediaView.visibility = GONE
+        previousView.visibility = GONE
+        currentView.visibility = GONE
+        boardView.visibility = GONE
+        nextView.visibility = GONE
+        imageView.visibility = VISIBLE
+        imageView.render(surface)
     }
 
     private fun renderPlainCard(rows: List<SurfaceRow>) {
@@ -297,6 +318,8 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
         footerView.text = ""
         mediaView.clear()
         mediaView.visibility = GONE
+        imageView.render(null)
+        imageView.visibility = GONE
         boardView.removeAllViews()
         boardView.visibility = GONE
         currentView.visibility = VISIBLE
@@ -334,7 +357,7 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
 
         // Plain card bodies (messages, chooser): smaller mono, more lines.
         private const val CARD_BODY_SP = 17f
-        private const val CARD_BODY_MAX_LINES = 12
+        private const val CARD_BODY_MAX_LINES = 15
         private const val TIMED_BODY_SP = 25f
         private const val TIMED_BODY_MAX_LINES = 5
 
