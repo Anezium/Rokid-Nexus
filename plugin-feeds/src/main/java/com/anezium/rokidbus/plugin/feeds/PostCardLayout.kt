@@ -11,7 +11,7 @@ data class FeedCardContent(
     val pageIndex: Int,
     val pageCount: Int,
 ) {
-    fun contentKey(): String = "$title|$footer|${lines.joinToString("\n")}"
+    fun contentKey(): String = "$title|$footer|${lines.joinToString("\n")}".hashCode().toString()
 }
 
 object PostCardLayout {

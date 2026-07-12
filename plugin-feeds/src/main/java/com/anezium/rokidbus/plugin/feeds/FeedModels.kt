@@ -21,13 +21,21 @@ fun interface FeedSource {
     fun fetchPage(cursor: String?): FeedPage
 }
 
-enum class FeedSourceKind(val preferenceValue: String, val displayName: String, val tag: String) {
-    BLUESKY("bsky", "Bluesky", "bsky"),
-    X_ACCOUNT("x", "X (account)", "x"),
-    X_WEBVIEW("x-web", "X (WebView)", "x-web"),
-    X_OFFICIAL("x_official", "X (official API)", "x-api"),
-    DEMO("demo", "Demo", "demo"),
+enum class FeedSourceKind(
+    val preferenceValue: String,
+    val displayName: String,
+    val tag: String,
+    val title: String,
+    val blurb: String,
+) {
+    BLUESKY("bsky", "Bluesky", "bsky", "Bluesky", "What's Hot — no account"),
+    X_ACCOUNT("x", "X (account)", "x", "X · account", "Your home timeline"),
+    X_WEBVIEW("x-web", "X (WebView)", "x-web", "X · WebView", "Home timeline, read in-page"),
+    X_OFFICIAL("x_official", "X (official API)", "x-api", "X · official API", "Needs a paid API token"),
+    DEMO("demo", "Demo", "demo", "Demo", "Sample posts, offline"),
     ;
+
+    val isXSession: Boolean get() = this == X_ACCOUNT || this == X_WEBVIEW
 
     companion object {
         fun fromPreference(value: String?): FeedSourceKind =
