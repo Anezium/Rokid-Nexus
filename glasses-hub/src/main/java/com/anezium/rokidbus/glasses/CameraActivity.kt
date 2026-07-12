@@ -138,7 +138,6 @@ class CameraActivity : Activity(), TextureView.SurfaceTextureListener {
     private fun buildUi() {
         previewView = TextureView(this).apply {
             surfaceTextureListener = this@CameraActivity
-            setBackgroundColor(Color.BLACK)
         }
         overlayView = CameraOverlayView(this).apply {
             setBackgroundColor(Color.TRANSPARENT)
