@@ -60,7 +60,6 @@ class FeedTimelineTest {
             text = "Post $index",
             createdAt = Instant.EPOCH,
             source = "demo",
-            hasMedia = false,
         )
     }
 }

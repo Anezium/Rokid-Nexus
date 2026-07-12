@@ -9,7 +9,20 @@ data class FeedPost(
     val text: String,
     val createdAt: Instant,
     val source: String,
-    val hasMedia: Boolean,
+    val media: List<FeedMedia> = emptyList(),
+    val threadRef: String = id,
+) {
+    val hasMedia: Boolean get() = media.isNotEmpty()
+}
+
+enum class FeedMediaType { PHOTO, GIF, VIDEO }
+
+data class FeedMedia(
+    val type: FeedMediaType,
+    val url: String,
+    val previewUrl: String,
+    val altText: String,
+    val durationMs: Long?,
 )
 
 data class FeedPage(
@@ -17,8 +30,15 @@ data class FeedPage(
     val nextCursor: String?,
 )
 
-fun interface FeedSource {
+data class FeedThread(
+    val posts: List<FeedPost>,
+    val focusIndex: Int,
+)
+
+interface FeedSource {
     fun fetchPage(cursor: String?): FeedPage
+
+    fun fetchThread(post: FeedPost): FeedThread = FeedThread(listOf(post), 0)
 }
 
 enum class FeedSourceKind(

@@ -1,0 +1,60 @@
+{
+  "thread": {
+    "$type": "app.bsky.feed.defs#threadViewPost",
+    "post": {
+      "uri": "at://did:plc:focal/app.bsky.feed.post/focal",
+      "author": { "handle": "focal.example", "displayName": "Focal", "labels": [] },
+      "record": { "$type": "app.bsky.feed.post", "text": "Focal post", "createdAt": "2026-07-11T10:00:00Z" },
+      "embed": {
+        "$type": "app.bsky.embed.video#view",
+        "playlist": "https://video.bsky.app/focal.m3u8",
+        "thumbnail": "https://video.bsky.app/focal.jpg",
+        "alt": "Focal video"
+      }
+    },
+    "parent": {
+      "$type": "app.bsky.feed.defs#threadViewPost",
+      "post": {
+        "uri": "at://did:plc:parent/app.bsky.feed.post/parent",
+        "author": { "handle": "parent.example", "displayName": "Parent", "labels": [] },
+        "record": { "$type": "app.bsky.feed.post", "text": "Parent post", "createdAt": "2026-07-11T09:00:00Z" }
+      },
+      "parent": {
+        "$type": "app.bsky.feed.defs#threadViewPost",
+        "post": {
+          "uri": "at://did:plc:root/app.bsky.feed.post/root",
+          "author": { "handle": "root.example", "displayName": "Root", "labels": [] },
+          "record": { "$type": "app.bsky.feed.post", "text": "Root post", "createdAt": "2026-07-11T08:00:00Z" }
+        },
+        "parent": { "$type": "app.bsky.feed.defs#notFoundPost", "uri": "at://missing" }
+      }
+    },
+    "replies": [
+      {
+        "$type": "app.bsky.feed.defs#threadViewPost",
+        "post": {
+          "uri": "at://did:plc:reply1/app.bsky.feed.post/reply1",
+          "author": { "handle": "reply1.example", "displayName": "Reply One", "labels": [] },
+          "record": { "$type": "app.bsky.feed.post", "text": "First reply", "createdAt": "2026-07-11T10:05:00Z" }
+        },
+        "replies": [{
+          "$type": "app.bsky.feed.defs#threadViewPost",
+          "post": {
+            "uri": "at://did:plc:nested/app.bsky.feed.post/nested",
+            "author": { "handle": "nested.example", "displayName": "Nested Reply", "labels": [] },
+            "record": { "$type": "app.bsky.feed.post", "text": "Nested reply is outside v1", "createdAt": "2026-07-11T10:06:00Z" }
+          }
+        }]
+      },
+      { "$type": "app.bsky.feed.defs#blockedPost", "uri": "at://blocked" },
+      {
+        "$type": "app.bsky.feed.defs#threadViewPost",
+        "post": {
+          "uri": "at://did:plc:reply2/app.bsky.feed.post/reply2",
+          "author": { "handle": "reply2.example", "displayName": "Reply Two", "labels": [] },
+          "record": { "$type": "app.bsky.feed.post", "text": "Second reply", "createdAt": "2026-07-11T10:10:00Z" }
+        }
+      }
+    ]
+  }
+}

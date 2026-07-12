@@ -57,7 +57,39 @@
                           "legacy": {
                             "full_text": "This is truncated…",
                             "created_at": "Thu Oct 11 08:00:00 +0000 2018",
-                            "extended_entities": { "media": [{ "type": "photo" }] }
+                            "extended_entities": {
+                              "media": [
+                                {
+                                  "type": "photo",
+                                  "media_url_https": "https://pbs.twimg.com/media/photo.jpg",
+                                  "ext_alt_text": "A cat sleeping on a chair"
+                                },
+                                {
+                                  "type": "animated_gif",
+                                  "media_url_https": "https://pbs.twimg.com/tweet_video_thumb/gif.jpg",
+                                  "ext_alt_text": "The cat stretches",
+                                  "video_info": {
+                                    "duration_millis": 4200,
+                                    "variants": [
+                                      { "content_type": "application/x-mpegURL", "url": "https://video.twimg.com/gif.m3u8" },
+                                      { "content_type": "video/mp4", "url": "https://video.twimg.com/gif.mp4" }
+                                    ]
+                                  }
+                                },
+                                {
+                                  "type": "video",
+                                  "media_url_https": "https://pbs.twimg.com/ext_tw_video_thumb/video.jpg",
+                                  "video_info": {
+                                    "duration_millis": 12500,
+                                    "variants": [
+                                      { "bit_rate": 256000, "content_type": "video/mp4", "url": "https://video.twimg.com/low.mp4" },
+                                      { "bit_rate": 2176000, "content_type": "video/mp4", "url": "https://video.twimg.com/high.mp4" },
+                                      { "content_type": "application/x-mpegURL", "url": "https://video.twimg.com/video.m3u8" }
+                                    ]
+                                  }
+                                }
+                              ]
+                            }
                           }
                         }
                       }

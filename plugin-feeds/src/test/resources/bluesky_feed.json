@@ -15,7 +15,18 @@
         },
         "embed": {
           "$type": "app.bsky.embed.images#view",
-          "images": []
+          "images": [
+            {
+              "fullsize": "https://cdn.bsky.app/full-1.jpg",
+              "thumb": "https://cdn.bsky.app/thumb-1.jpg",
+              "alt": "A cat sleeping on a blue chair"
+            },
+            {
+              "fullsize": "https://cdn.bsky.app/full-2.jpg",
+              "thumb": "https://cdn.bsky.app/thumb-2.jpg",
+              "alt": ""
+            }
+          ]
         }
       }
     },

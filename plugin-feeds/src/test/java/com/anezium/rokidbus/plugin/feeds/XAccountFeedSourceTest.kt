@@ -23,6 +23,14 @@ class XAccountFeedSourceTest {
         )
         assertFalse(page.posts[0].hasMedia)
         assertTrue(page.posts[1].hasMedia)
+        assertEquals(listOf(FeedMediaType.PHOTO, FeedMediaType.GIF, FeedMediaType.VIDEO), page.posts[1].media.map(FeedMedia::type))
+        assertEquals("https://pbs.twimg.com/media/photo.jpg?name=large", page.posts[1].media[0].url)
+        assertEquals("https://pbs.twimg.com/media/photo.jpg?name=small", page.posts[1].media[0].previewUrl)
+        assertEquals("A cat sleeping on a chair", page.posts[1].media[0].altText)
+        assertEquals("https://video.twimg.com/gif.mp4", page.posts[1].media[1].url)
+        assertEquals(4_200L, page.posts[1].media[1].durationMs)
+        assertEquals("https://video.twimg.com/high.mp4", page.posts[1].media[2].url)
+        assertEquals(12_500L, page.posts[1].media[2].durationMs)
         assertEquals(Instant.parse("2018-10-10T20:19:24Z"), page.posts[0].createdAt)
         assertTrue(page.posts.all { it.source == "x" })
         assertEquals("bottom-cursor-2", page.nextCursor)
@@ -33,6 +41,19 @@ class XAccountFeedSourceTest {
         assertNull(XAccountFeedSource.parsePage(fixture(), "bottom-cursor-2").nextCursor)
         assertNull(XAccountFeedSource.parsePage(emptyTimeline()).nextCursor)
         assertNull(XAccountFeedSource.parsePage("{}", "old-cursor").nextCursor)
+    }
+
+    @Test
+    fun mediaExtraction_fallsBackToLegacyEntitiesPhoto() {
+        val legacy = org.json.JSONObject(
+            """{"entities":{"media":[{"type":"photo","media_url_https":"https://pbs.twimg.com/entities.jpg","ext_alt_text":"Fallback photo"}]}}""",
+        )
+
+        val media = XGraphQlParser.extractMedia(legacy).single()
+
+        assertEquals(FeedMediaType.PHOTO, media.type)
+        assertEquals("https://pbs.twimg.com/entities.jpg?name=large", media.url)
+        assertEquals("Fallback photo", media.altText)
     }
 
     @Test
@@ -126,6 +147,52 @@ class XAccountFeedSourceTest {
     }
 
     @Test
+    fun tweetDetailParser_preservesTopToBottomOrderAndFindsFocal() {
+        val thread = XGraphQlParser.parseThread(
+            json = threadFixture(),
+            focalTweetId = "300",
+            source = FeedSourceKind.X_ACCOUNT.tag,
+            fallbackNow = Instant.EPOCH,
+        )
+
+        assertEquals(listOf("100", "200", "300", "401", "402"), thread.posts.map(FeedPost::id))
+        assertEquals(2, thread.focusIndex)
+        assertEquals("https://video.twimg.com/focal-high.mp4", thread.posts[2].media.single().url)
+        assertEquals("Reply Two", thread.posts.last().authorName)
+    }
+
+    @Test
+    fun fetchThread_usesTweetDetailEndpointVariablesAndTransactionHeader() {
+        var requestedUrl = ""
+        var requestedHeaders = emptyMap<String, String>()
+        val source = XAccountFeedSource(
+            cookies = connectedCookies(),
+            httpClient = responseClient { url, headers ->
+                requestedUrl = url
+                requestedHeaders = headers
+                FeedHttpResponse(statusCode = 200, body = threadFixture())
+            },
+            now = { Instant.EPOCH },
+            transactionFactory = { fixedTransaction() },
+        )
+        val focal = XGraphQlParser.parseThread(
+            threadFixture(),
+            "300",
+            FeedSourceKind.X_ACCOUNT.tag,
+            Instant.EPOCH,
+        ).posts[2]
+
+        val thread = source.fetchThread(focal)
+
+        assertEquals(2, thread.focusIndex)
+        assertTrue(requestedUrl.startsWith("${XAccountFeedSource.THREAD_API_URL}?variables="))
+        assertTrue(java.net.URLDecoder.decode(requestedUrl, Charsets.UTF_8.name()).contains("\"focalTweetId\":\"300\""))
+        assertTrue(requestedUrl.contains("&features="))
+        assertTrue(requestedUrl.contains("&fieldToggles="))
+        assertTrue(requestedHeaders["x-client-transaction-id"].orEmpty().isNotBlank())
+    }
+
+    @Test
     fun cookieCapture_keepsOnlyQuaXAccountCookiesAndRequiresAuthAndCsrf() {
         val cookies = XAccountCookies.fromCookieHeader(
             "other=discard; auth_token=auth=value; ct0=csrf; guest_id=guest; gt=token; att=attestation",
@@ -139,6 +206,9 @@ class XAccountFeedSourceTest {
 
     private fun fixture(): String =
         checkNotNull(javaClass.classLoader?.getResource("x_home_timeline.json")).readText()
+
+    private fun threadFixture(): String =
+        checkNotNull(javaClass.classLoader?.getResource("x_tweet_detail.json")).readText()
 
     private fun emptyTimeline(): String =
         """{"data":{"home":{"home_timeline_urt":{"instructions":[{"type":"TimelineAddEntries","entries":[{"entryId":"cursor-bottom-0","content":{"cursorType":"Bottom","value":"next"}}]}]}}}}"""

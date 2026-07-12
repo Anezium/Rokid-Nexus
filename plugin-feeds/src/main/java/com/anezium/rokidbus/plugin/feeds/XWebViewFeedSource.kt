@@ -1,12 +1,14 @@
 package com.anezium.rokidbus.plugin.feeds
 
 import android.content.Context
+import java.io.IOException
 import java.time.Instant
 
 internal data class XWebViewCaptureRequest(
     val cookies: XAccountCookies,
     val initialPage: Boolean,
     val previousFingerprint: String?,
+    val threadPostId: String? = null,
 )
 
 internal data class XWebViewCapturedResponse(
@@ -32,7 +34,9 @@ class XWebViewFeedSource internal constructor(
     )
 
     private var previousFingerprint: String? = null
+    private var previousThreadFingerprint: String? = null
 
+    @Synchronized
     override fun fetchPage(cursor: String?): FeedPage {
         if (!cookies.isConnected) return missingCookiesPage(now())
         if (!captureClient.isOverlayGranted) return missingOverlayPage(now())
@@ -48,6 +52,29 @@ class XWebViewFeedSource internal constructor(
         if (response.fingerprint == previousFingerprint) return FeedPage(emptyList(), null)
         previousFingerprint = response.fingerprint
         return parseCapturedPage(response.body, cursor, now())
+    }
+
+    @Synchronized
+    override fun fetchThread(post: FeedPost): FeedThread {
+        if (!cookies.isConnected) return FeedThread(listOf(post), 0)
+        if (!captureClient.isOverlayGranted) throw IOException("X WebView overlay permission is missing")
+        val response = captureClient.capture(
+            request = XWebViewCaptureRequest(
+                cookies = cookies,
+                initialPage = false,
+                previousFingerprint = previousThreadFingerprint,
+                threadPostId = post.threadRef.ifBlank { post.id },
+            ),
+            timeoutMillis = timeoutMillis,
+        ) ?: throw IOException("X WebView TweetDetail capture timed out")
+        previousThreadFingerprint = response.fingerprint
+        val parsed = XGraphQlParser.parseThread(
+            json = response.body,
+            focalTweetId = post.id,
+            source = FeedSourceKind.X_WEBVIEW.tag,
+            fallbackNow = now(),
+        )
+        return if (parsed.posts.isEmpty()) FeedThread(listOf(post), 0) else parsed
     }
 
     override fun close() {
@@ -95,7 +122,6 @@ class XWebViewFeedSource internal constructor(
                     text = text,
                     createdAt = now,
                     source = FeedSourceKind.X_WEBVIEW.tag,
-                    hasMedia = false,
                 ),
             ),
             nextCursor = null,

@@ -51,6 +51,28 @@ class XWebViewFeedSourceTest {
                 "http://x.com/i/api/graphql/query-id/HomeTimeline",
             ),
         )
+        assertTrue(
+            XWebViewInterception.isTweetDetailGraphQlUrl(
+                "https://x.com/i/api/graphql/query-id/TweetDetail?variables=%7B%7D",
+            ),
+        )
+        assertFalse(
+            XWebViewInterception.isTweetDetailGraphQlUrl(
+                "https://evil.example/i/api/graphql/query-id/TweetDetail",
+            ),
+        )
+        val variables = java.net.URLEncoder.encode("{\"focalTweetId\":\"300\"}", Charsets.UTF_8.name())
+        assertEquals(
+            "300",
+            XWebViewInterception.tweetDetailFocalTweetId(
+                "https://x.com/i/api/graphql/query-id/TweetDetail?variables=$variables&features=%7B%7D",
+            ),
+        )
+        assertNull(
+            XWebViewInterception.tweetDetailFocalTweetId(
+                "https://x.com/i/api/graphql/query-id/TweetDetail?variables=%7B%7D",
+            ),
+        )
     }
 
     @Test
@@ -62,7 +84,16 @@ class XWebViewFeedSourceTest {
         assertTrue(javascript.contains("response.clone().text()"))
         assertTrue(javascript.contains("XMLHttpRequest"))
         assertTrue(javascript.contains("xhr.responseText"))
+        assertTrue(javascript.contains("tweetdetail"))
+        assertTrue(javascript.contains("onGraphQlResponse"))
         assertFalse(javascript.contains("querySelector"))
+    }
+
+    @Test
+    fun duplicateSuppression_appliesToHomePaginationButNotThreadReopen() {
+        assertTrue(XWebViewInterception.shouldSuppressDuplicate("same", "same", threadPostId = null))
+        assertFalse(XWebViewInterception.shouldSuppressDuplicate("same", "same", threadPostId = "300"))
+        assertFalse(XWebViewInterception.shouldSuppressDuplicate("old", "new", threadPostId = null))
     }
 
     @Test
@@ -136,8 +167,37 @@ class XWebViewFeedSourceTest {
         assertFalse(captureClient.requests.last().initialPage)
     }
 
+    @Test
+    fun fetchThread_requestsTweetDetailAndUsesSharedParser() {
+        val captureClient = FakeCaptureClient(XWebViewCapturedResponse(threadFixture()))
+        val source = XWebViewFeedSource(
+            cookies = connectedCookies(),
+            captureClient = captureClient,
+            now = { Instant.EPOCH },
+        )
+        val focal = FeedPost(
+            id = "300",
+            authorName = "Focal",
+            authorHandle = "focal",
+            text = "Focal tweet",
+            createdAt = Instant.EPOCH,
+            source = FeedSourceKind.X_WEBVIEW.tag,
+        )
+
+        val thread = source.fetchThread(focal)
+
+        assertEquals(listOf("100", "200", "300", "401", "402"), thread.posts.map(FeedPost::id))
+        assertEquals(2, thread.focusIndex)
+        assertEquals("300", captureClient.requests.single().threadPostId)
+        assertFalse(captureClient.requests.single().initialPage)
+        assertTrue(thread.posts.all { it.source == FeedSourceKind.X_WEBVIEW.tag })
+    }
+
     private fun fixture(): String =
         checkNotNull(javaClass.classLoader?.getResource("x_home_timeline.json")).readText()
+
+    private fun threadFixture(): String =
+        checkNotNull(javaClass.classLoader?.getResource("x_tweet_detail.json")).readText()
 
     private fun connectedCookies(): XAccountCookies = XAccountCookies(authToken = "auth", ct0 = "csrf")
 
