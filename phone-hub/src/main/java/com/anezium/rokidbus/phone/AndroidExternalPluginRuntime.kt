@@ -41,7 +41,10 @@ class AndroidExternalPluginRuntime(
             context.bindService(
                 Intent(BusConstants.ACTION_PLUGIN).setComponent(principal.serviceComponent),
                 connection,
-                Context.BIND_AUTO_CREATE,
+                // BIND_IMPORTANT: this bind only exists while the plugin is open on the HUD,
+                // and OEM app freezers (Samsung Freecess) freeze plainly-bound background
+                // processes mid-display unless the hub's foreground importance propagates.
+                Context.BIND_AUTO_CREATE or Context.BIND_IMPORTANT,
             )
         }.getOrDefault(false)
         if (bound) connections[principal.grantKey()] = connection
