@@ -68,6 +68,22 @@ class PluginInstallerTest {
     }
 
     @Test
+    fun `apk package mismatch aborts before package installer`() {
+        val bytes = "verified apk".toByteArray()
+        val gateway = FakeGateway()
+        val states = mutableListOf<PluginInstallState>()
+        val installer = installer(bytes, gateway, inspectedPackage = "dev.unexpected.plugin")
+
+        installer.install(entry(bytes), states::add)
+
+        assertEquals(0, gateway.installCount)
+        assertEquals(
+            PluginInstallState.Failure("Downloaded APK package does not match the registry"),
+            states.last(),
+        )
+    }
+
+    @Test
     fun `package install failure is surfaced`() {
         val bytes = "verified apk".toByteArray()
         val gateway = FakeGateway()
@@ -117,6 +133,7 @@ class PluginInstallerTest {
             cacheDirectory = temporaryFolder.root,
             hostVersionCode = 6,
             downloader = ArtifactDownloader { _, _, _, _ -> downloadCount++ },
+            packageInspector = ArtifactPackageInspector { PACKAGE },
             packageInstaller = gateway,
             ioExecutor = Executor(Runnable::run),
         )
@@ -134,6 +151,7 @@ class PluginInstallerTest {
         gateway: FakeGateway,
         ioExecutor: Executor = Executor(Runnable::run),
         postInstall: (String) -> Unit = {},
+        inspectedPackage: String? = PACKAGE,
     ) = PluginInstaller(
         cacheDirectory = temporaryFolder.root,
         hostVersionCode = 6,
@@ -141,6 +159,7 @@ class PluginInstallerTest {
             destination.writeBytes(bytes)
             progress(bytes.size.toLong(), bytes.size.toLong())
         },
+        packageInspector = ArtifactPackageInspector { inspectedPackage },
         packageInstaller = gateway,
         ioExecutor = ioExecutor,
         postInstall = postInstall,

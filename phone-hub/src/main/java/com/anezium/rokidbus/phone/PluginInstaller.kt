@@ -5,6 +5,8 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageInstaller as AndroidPackageInstaller
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import java.io.File
@@ -59,6 +61,10 @@ fun interface PackageInstallGateway {
     ): PackageInstallSession
 }
 
+fun interface ArtifactPackageInspector {
+    fun packageName(apk: File): String?
+}
+
 class PluginInstallOperation internal constructor(
     private val cancelled: AtomicBoolean,
     private val cancelAction: () -> Unit,
@@ -72,6 +78,7 @@ class PluginInstaller(
     private val cacheDirectory: File,
     private val hostVersionCode: Long,
     private val downloader: ArtifactDownloader,
+    private val packageInspector: ArtifactPackageInspector,
     private val packageInstaller: PackageInstallGateway,
     private val ioExecutor: Executor = DEFAULT_IO_EXECUTOR,
     private val callbackExecutor: Executor = Executor(Runnable::run),
@@ -130,6 +137,11 @@ class PluginInstaller(
                     finish(PluginInstallState.Failure("Downloaded APK failed SHA-256 verification"))
                     return@execute
                 }
+                val actualPackageName = packageInspector.packageName(apk)
+                if (actualPackageName != plugin.artifact.packageName) {
+                    finish(PluginInstallState.Failure("Downloaded APK package does not match the registry"))
+                    return@execute
+                }
                 if (cancelled.get()) {
                     finish(PluginInstallState.Cancelled)
                     return@execute
@@ -185,6 +197,7 @@ class PluginInstaller(
                 cacheDirectory = File(appContext.cacheDir, "plugin-installs"),
                 hostVersionCode = hostVersionCode,
                 downloader = HttpsArtifactDownloader(),
+                packageInspector = AndroidArtifactPackageInspector(appContext.packageManager),
                 packageInstaller = AndroidPackageInstallGateway(appContext),
                 callbackExecutor = Executor { runnable -> Handler(Looper.getMainLooper()).post(runnable) },
                 postInstall = postInstall,
@@ -205,6 +218,20 @@ class PluginInstaller(
             val actual = digest.digest().joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) }
             return actual.equals(expected, ignoreCase = true)
         }
+    }
+}
+
+private class AndroidArtifactPackageInspector(
+    private val packageManager: PackageManager,
+) : ArtifactPackageInspector {
+    override fun packageName(apk: File): String? {
+        val packageInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            packageManager.getPackageArchiveInfo(apk.absolutePath, PackageManager.PackageInfoFlags.of(0))
+        } else {
+            @Suppress("DEPRECATION")
+            packageManager.getPackageArchiveInfo(apk.absolutePath, 0)
+        }
+        return packageInfo?.packageName
     }
 }
 
@@ -265,7 +292,7 @@ private class AndroidPackageInstallGateway(private val context: Context) : Packa
         }
         val sessionId = packageInstaller.createSession(params)
         val token = UUID.randomUUID().toString()
-        PluginInstallResultReceiver.register(token, callback)
+        PluginInstallResultReceiver.register(token, expectedPackageName, callback)
         try {
             packageInstaller.openSession(sessionId).use { session ->
                 session.openWrite("plugin.apk", 0, apk.length()).use { output ->
@@ -299,7 +326,8 @@ private class AndroidPackageInstallGateway(private val context: Context) : Packa
 class PluginInstallResultReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val token = intent.getStringExtra(EXTRA_TOKEN) ?: return
-        val callback = callbacks[token] ?: return
+        val pending = callbacks[token] ?: return
+        val callback = pending.callback
         when (val status = intent.getIntExtra(AndroidPackageInstaller.EXTRA_STATUS, AndroidPackageInstaller.STATUS_FAILURE)) {
             AndroidPackageInstaller.STATUS_PENDING_USER_ACTION -> {
                 callback(PackageInstallEvent.AwaitingUserConfirmation)
@@ -317,7 +345,12 @@ class PluginInstallResultReceiver : BroadcastReceiver() {
             }
             AndroidPackageInstaller.STATUS_SUCCESS -> {
                 callbacks.remove(token)
-                callback(PackageInstallEvent.Success)
+                val installedPackage = intent.getStringExtra(AndroidPackageInstaller.EXTRA_PACKAGE_NAME)
+                if (installedPackage == pending.expectedPackageName) {
+                    callback(PackageInstallEvent.Success)
+                } else {
+                    callback(PackageInstallEvent.Failure("Installed package identity did not match the request"))
+                }
             }
             AndroidPackageInstaller.STATUS_FAILURE_ABORTED -> {
                 callbacks.remove(token)
@@ -339,10 +372,19 @@ class PluginInstallResultReceiver : BroadcastReceiver() {
 
     companion object {
         internal const val EXTRA_TOKEN = "plugin_install_token"
-        private val callbacks = ConcurrentHashMap<String, (PackageInstallEvent) -> Unit>()
+        private data class PendingResult(
+            val expectedPackageName: String,
+            val callback: (PackageInstallEvent) -> Unit,
+        )
 
-        internal fun register(token: String, callback: (PackageInstallEvent) -> Unit) {
-            callbacks[token] = callback
+        private val callbacks = ConcurrentHashMap<String, PendingResult>()
+
+        internal fun register(
+            token: String,
+            expectedPackageName: String,
+            callback: (PackageInstallEvent) -> Unit,
+        ) {
+            callbacks[token] = PendingResult(expectedPackageName, callback)
         }
 
         internal fun unregister(token: String) {
