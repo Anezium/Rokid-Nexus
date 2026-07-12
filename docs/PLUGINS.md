@@ -42,6 +42,8 @@ dependencies { implementation(project(":bus-client")) }   // SDK: bus client + N
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <!-- only what the plugin really needs -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
 
     <queries>
         <intent><action android:name="com.anezium.rokidbus.action.HUB" /></intent>
@@ -60,7 +62,13 @@ dependencies { implementation(project(":bus-client")) }   // SDK: bus client + N
             android:exported="true"
             android:windowSoftInputMode="adjustResize" />
 
-        <service android:name=".MyPluginService" android:exported="true">
+        <service
+            android:name=".MyPluginService"
+            android:exported="true"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="glasses-session" />
             <intent-filter>
                 <action android:name="com.anezium.rokidbus.action.PLUGIN" />
             </intent-filter>
@@ -104,7 +112,9 @@ A plugin is dormant unless its surface is open. The hub initiates plugin
 work: closed plugins must not keep engines, fetching, bindings, or pushes
 running, and must never initiate a surface themselves. Android may keep an
 enabled notification-listener component alive, but that listener must remain
-idle until the hub opens the plugin.
+idle until the hub opens the plugin. While open, the SDK promotes the plugin
+service to the foreground with a quiet "Glasses session" notification; when
+closed, it removes that notification and returns the plugin to dormant state.
 
 ## 4. Settings screen — the design kit
 

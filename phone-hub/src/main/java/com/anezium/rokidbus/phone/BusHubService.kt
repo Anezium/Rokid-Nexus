@@ -450,6 +450,13 @@ class BusHubService : Service() {
             log("surface rejected path=${ownedEnvelope.path} plugin=${sender.principal.descriptor.id} reason=foreground_busy")
             return
         }
+        if (
+            sender.principal != null &&
+            ownedEnvelope.path in setOf(BusPaths.SURFACE_SHOW, BusPaths.SURFACE_UPDATE, BusPaths.SURFACE_HIDE) &&
+            ::externalPluginController.isInitialized
+        ) {
+            externalPluginController.onPluginActivity(sender.principal.descriptor.id)
+        }
         val authorizedEnvelope = if (
             sender.principal != null &&
             PathRules.requiredCapability(ownedEnvelope.path) == PluginCapability.SURFACES

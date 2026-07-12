@@ -31,7 +31,11 @@
 
         <service
             android:name=".FeedsPluginService"
-            android:exported="true">
+            android:exported="true"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="glasses-session" />
             <intent-filter>
                 <action android:name="com.anezium.rokidbus.action.PLUGIN" />
             </intent-filter>

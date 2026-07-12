@@ -50,7 +50,9 @@ class HelloPluginService : NexusPluginService() {
 
     private fun showBundledImage(): Boolean {
         if (nexusClient?.supportsImageSurface != true) return false
-        val bytes = resources.openRawResource(R.raw.image_surface_sample).use { it.readBytes() }
+        val imageResource = resources.getIdentifier("image_surface_sample", "raw", packageName)
+        if (imageResource == 0) return false
+        val bytes = resources.openRawResource(imageResource).use { it.readBytes() }
         val image = NexusImage(
             contentKey = "sample-tree-v1",
             mimeType = ImageSurfaceContract.MIME_JPEG,

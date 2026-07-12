@@ -13,9 +13,27 @@ import org.junit.Test
 class ExternalPluginControllerTest {
     private class FakeScheduler : ExternalPluginScheduler {
         val actions = linkedMapOf<String, () -> Unit>()
-        override fun schedule(key: String, delayMs: Long, action: () -> Unit) { actions[key] = action }
-        override fun cancel(key: String) { actions.remove(key) }
-        fun runAll() { actions.values.toList().also { actions.clear() }.forEach { it() } }
+        val delays = linkedMapOf<String, Long>()
+        override fun schedule(key: String, delayMs: Long, action: () -> Unit) {
+            actions[key] = action
+            delays[key] = delayMs
+        }
+        override fun cancel(key: String) {
+            actions.remove(key)
+            delays.remove(key)
+        }
+        fun runAll() {
+            val pending = actions.values.toList()
+            actions.clear()
+            delays.clear()
+            pending.forEach { it() }
+        }
+        fun runFirst(prefix: String) {
+            val key = actions.keys.first { it.startsWith(prefix) }
+            val action = actions.remove(key)!!
+            delays.remove(key)
+            action()
+        }
     }
 
     private class FakeRuntime : ExternalPluginRuntime {
@@ -60,6 +78,70 @@ class ExternalPluginControllerTest {
         controller.onRegistered(principal)
         assertEquals(BusPaths.PLUGIN_OPEN, runtime.deliveries.single().first)
         assertEquals("hello", runtime.deliveries.single().second.getString("pluginId"))
+    }
+
+    @Test
+    fun `plugin activity acknowledges open and cancels watchdog`() {
+        val runtime = FakeRuntime().apply { registered = true }
+        val scheduler = FakeScheduler()
+        val controller = ExternalPluginController(runtime, scheduler)
+
+        controller.open(principal())
+
+        assertEquals(listOf(ExternalPluginController.OPEN_ACK_TIMEOUT_MS), scheduler.delays.values.toList())
+        controller.onPluginActivity("hello")
+        assertTrue(scheduler.actions.isEmpty())
+        assertEquals(listOf("hello"), runtime.bound)
+        assertEquals(1, runtime.deliveries.count { it.first == BusPaths.PLUGIN_OPEN })
+    }
+
+    @Test
+    fun `registration activity also acknowledges an outstanding open`() {
+        val runtime = FakeRuntime().apply { registered = true }
+        val scheduler = FakeScheduler()
+        val controller = ExternalPluginController(runtime, scheduler)
+        val principal = principal()
+
+        controller.open(principal)
+        controller.onRegistered(principal)
+
+        assertTrue(scheduler.actions.isEmpty())
+        assertEquals(1, runtime.deliveries.count { it.first == BusPaths.PLUGIN_OPEN })
+    }
+
+    @Test
+    fun `open ack timeout rebinds once and redelivers`() {
+        val runtime = FakeRuntime().apply { registered = true }
+        val scheduler = FakeScheduler()
+        val logs = mutableListOf<String>()
+        val controller = ExternalPluginController(runtime, scheduler, logger = logs::add)
+
+        controller.open(principal())
+        scheduler.runFirst("open-ack:")
+
+        assertEquals(listOf("hello", "hello"), runtime.bound)
+        assertEquals(listOf("hello"), runtime.unbound)
+        assertEquals(2, runtime.deliveries.count { it.first == BusPaths.PLUGIN_OPEN })
+        assertEquals(listOf("external plugin open unacknowledged plugin=hello; rebinding"), logs)
+    }
+
+    @Test
+    fun `second open ack timeout gives up cleanly without another rebind`() {
+        val runtime = FakeRuntime().apply { registered = true }
+        val scheduler = FakeScheduler()
+        val logs = mutableListOf<String>()
+        val controller = ExternalPluginController(runtime, scheduler, logger = logs::add)
+
+        controller.open(principal())
+        scheduler.runFirst("open-ack:")
+        scheduler.runFirst("open-ack:")
+
+        assertEquals(listOf("hello", "hello"), runtime.bound)
+        assertEquals(listOf("hello", "hello"), runtime.unbound)
+        assertEquals(listOf("hello"), runtime.hidden)
+        assertEquals(null, controller.activeId())
+        assertEquals("external plugin open failed plugin=hello", logs.last())
+        assertTrue(scheduler.actions.isEmpty())
     }
 
     @Test
@@ -133,6 +215,23 @@ class ExternalPluginControllerTest {
         assertFalse(controller.adopt(principal("other")))
         assertTrue(controller.adopt(principal))
         assertEquals(1, runtime.deliveries.count { it.first == BusPaths.PLUGIN_OPEN })
+    }
+
+    @Test
+    fun `adopted plugin uses the same open ack recovery`() {
+        val runtime = FakeRuntime().apply { registered = true }
+        val scheduler = FakeScheduler()
+        val controller = ExternalPluginController(runtime, scheduler)
+        val principal = principal()
+
+        assertTrue(controller.adopt(principal))
+        scheduler.runFirst("open-ack:")
+
+        assertEquals(listOf("hello"), runtime.bound)
+        assertEquals(listOf("hello"), runtime.unbound)
+        assertEquals(2, runtime.deliveries.count { it.first == BusPaths.PLUGIN_OPEN })
+        controller.onPluginActivity("hello")
+        assertTrue(scheduler.actions.isEmpty())
     }
 
     @Test

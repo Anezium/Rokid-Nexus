@@ -23,18 +23,21 @@ class AndroidExternalPluginRuntime(
         val connection = object : ServiceConnection {
             override fun onServiceConnected(name: android.content.ComponentName, service: android.os.IBinder) = Unit
             override fun onServiceDisconnected(name: android.content.ComponentName) {
-                connections.remove(principal.grantKey())
-                disconnectedCallback(principal)
+                releaseDeadBinding()
             }
 
             override fun onBindingDied(name: android.content.ComponentName) {
-                connections.remove(principal.grantKey())
-                disconnectedCallback(principal)
+                releaseDeadBinding()
             }
 
             override fun onNullBinding(name: android.content.ComponentName) {
-                connections.remove(principal.grantKey())
-                disconnectedCallback(principal)
+                releaseDeadBinding()
+            }
+
+            private fun releaseDeadBinding() {
+                val wasCurrent = connections.remove(principal.grantKey(), this)
+                runCatching { context.unbindService(this) }
+                if (wasCurrent) disconnectedCallback(principal)
             }
         }
         val bound = runCatching {
