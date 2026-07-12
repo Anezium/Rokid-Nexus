@@ -164,6 +164,56 @@ Surface kinds v1:
   `{ "timeMs": 1234, "text": "..." }`, and an `anchor`.
 - `media`: `title`/`subtitle` shell labels, `mediaTitle`, optional
   `mediaArtist`/`mediaAlbum`, optional bounded one-bit `artwork`, and an `anchor`.
+- `image`: a real JPEG or PNG carried as an SPP binary frame. The binary-frame
+  `meta`/`BusEnvelope.payload` object is:
+
+```json
+{
+  "surfaceId": "feed:main",
+  "seq": 43,
+  "kind": "image",
+  "imageVersion": 1,
+  "contentKey": "tweet-123-photo-1",
+  "mimeType": "image/jpeg",
+  "pixelWidth": 480,
+  "pixelHeight": 320,
+  "sha256": "64-lowercase-hex-characters",
+  "title": "Optional title",
+  "caption": "Optional caption",
+  "footer": "Optional footer",
+  "handlesBack": false
+}
+```
+
+`imageVersion` is exactly `1`. `contentKey` is required, non-empty, and at most
+128 characters. `mimeType` is exactly `image/jpeg` or `image/png`. `pixelWidth`
+and `pixelHeight` are the actual decoded dimensions: each is in `1..512`, and
+their product is at most `512 * 512`. `sha256` is the lowercase hexadecimal
+SHA-256 of the compressed binary bytes. `title` follows the card title limit
+(120 characters); `caption` and `footer` follow the card line limit (240
+characters). `handlesBack` has the same semantics as on a card.
+
+The compressed image is required and is carried only in `BusEnvelope.binary`.
+An `image` show/update sent as JSON, with a null or empty binary body, with a body
+larger than 65,536 bytes, with a mismatched MIME/dimension/hash, or with invalid
+metadata is rejected. The 2 MiB general SPP frame ceiling and 512 KiB Binder
+ceiling do not enlarge this public image allowance. Producers SHOULD downscale
+and compress on the phone and target 20--40 KiB.
+
+Image lifecycle is otherwise identical to `card`: `/surface/show` shows or
+replaces, `/surface/update` replaces the current image, and `/surface/hide`
+hides it. The same phone-assigned monotonic per-`surfaceId` `seq` rule applies.
+An async decode result may be published only while its `surfaceId`, `seq`, and
+`contentKey` are still current; replacement or hide invalidates older work.
+
+The phone hub enforces a minimum 150 ms interval between accepted image frames
+for each wire `surfaceId`. Faster frames are rejected, never silently dropped.
+Stable image error codes returned on `/error` are:
+
+- `CAPABILITY_NOT_AVAILABLE`: the renderer announcement is absent or SPP is down.
+- `INVALID_IMAGE`: metadata, MIME, dimensions, body, or SHA-256 validation failed.
+- `IMAGE_TOO_LARGE`: the compressed body exceeds 65,536 bytes.
+- `IMAGE_RATE_LIMITED`: the per-surface 150 ms interval has not elapsed.
 
 Timed-line anchor:
 
@@ -358,6 +408,19 @@ interface IBusService {
 
 Link-state bits: `1 = CXR_CONTROL_UP`, `2 = SPP_DATA_UP`, `4 = GLASSES_BT_BONDED`
 (phone) / `4 = PHONE_CONNECTED` (glasses).
+
+Hub feature bits are returned by `IBusService.capabilities()`. Bit `2` is
+`IMAGE_SURFACE`. The glasses hub announces its renderer after either remote link
+connects by sending `/system/hub/capabilities` with
+`{"version":1,"features":2,"imageSurfaceVersion":1,"maxImageBytes":65536}`.
+The phone hub exposes `IMAGE_SURFACE` to local plugins only after receiving a
+valid announcement and only while `SPP_DATA_UP` is live. It clears the remote
+announcement when all glasses links are down. Capability changes are surfaced by
+another link-state callback so clients refresh `capabilities()`; callers must not
+cache a one-time Binder result. Old glasses hubs do not announce the bit, so the
+plugin API version remains 3 and image calls fail locally with
+`CAPABILITY_NOT_AVAILABLE`. Image rendering remains covered by the existing
+`surfaces` user grant; it is not a plugin descriptor capability.
 
 Request/response is NOT in AIDL: the `BusClient` wrapper implements it — a request is
 `send(path, id, payload)` + a pending map keyed by `id`; any reply is delivered by the
