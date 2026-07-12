@@ -74,6 +74,13 @@ class NexusPluginClient internal constructor(
                 )
             }
             BusPaths.PLUGIN_REGISTRATION -> {
+                // A fresh registration means the hub has no open session with us (it just
+                // (re)accepted this client), so a stale `opened` from a previous hub life
+                // must not swallow the next PLUGIN_OPEN.
+                if (opened) {
+                    opened = false
+                    callbacks.onClose()
+                }
                 val result = payload.optInt("result", PluginRegistrationResult.REGISTRATION_FAILED)
                 val parsed = PluginCapability.parseList(payload.optString("capabilities"))
                 approvedCapabilities = if (parsed is CapabilityParseResult.Valid) {

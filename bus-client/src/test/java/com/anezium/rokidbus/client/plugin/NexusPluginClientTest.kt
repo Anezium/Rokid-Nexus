@@ -83,6 +83,29 @@ class NexusPluginClientTest {
     }
 
     @Test
+    fun `re-registration closes a stale open so the next open dispatches`() {
+        val (client, transport, callbacks) = fixture()
+        transport.listener.onMessage(
+            BusPaths.PLUGIN_REGISTRATION,
+            "reg-1",
+            payload().put("result", PluginRegistrationResult.APPROVED).put("capabilities", "surfaces"),
+        )
+        transport.listener.onMessage(BusPaths.PLUGIN_OPEN, "open-1", payload())
+        // The hub restarts and re-accepts this still-running client: opened must reset.
+        transport.listener.onMessage(
+            BusPaths.PLUGIN_REGISTRATION,
+            "reg-2",
+            payload().put("result", PluginRegistrationResult.APPROVED).put("capabilities", "surfaces"),
+        )
+        transport.listener.onMessage(BusPaths.PLUGIN_OPEN, "open-2", payload())
+        assertEquals(
+            listOf("registration:0", "open", "close", "registration:0", "open"),
+            callbacks.events,
+        )
+        client.close()
+    }
+
+    @Test
     fun `close cleans open lifecycle and transport once`() {
         val (client, transport, callbacks) = fixture()
         transport.listener.onRegistrationState(PluginRegistrationResult.APPROVED)

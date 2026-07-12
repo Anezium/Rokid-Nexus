@@ -118,6 +118,26 @@ class ExternalPluginControllerTest {
     }
 
     @Test
+    fun `self hide closes the active plugin and allows reopen`() {
+        val runtime = FakeRuntime().apply { registered = true }
+        val controller = ExternalPluginController(runtime, FakeScheduler())
+        val principal = principal()
+        controller.open(principal)
+        assertEquals(listOf(BusPaths.PLUGIN_OPEN), runtime.deliveries.map { it.first })
+
+        controller.onPluginSelfHid("other")
+        assertEquals(1, runtime.deliveries.size)
+
+        controller.onPluginSelfHid("hello")
+        assertEquals(BusPaths.PLUGIN_CLOSE, runtime.deliveries.last().first)
+        assertFalse(controller.input("hello", "main", 22, 0))
+
+        controller.open(principal)
+        assertEquals(BusPaths.PLUGIN_OPEN, runtime.deliveries.last().first)
+        assertTrue(controller.input("hello", "main", 22, 0))
+    }
+
+    @Test
     fun `bind failure lets registry fall back`() {
         val runtime = FakeRuntime().apply { bindResult = false }
         val controller = ExternalPluginController(runtime, FakeScheduler())

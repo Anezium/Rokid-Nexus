@@ -91,6 +91,18 @@ class ExternalPluginController(
         pending = null
     }
 
+    /**
+     * A plugin that hides its own last surface (BACK on the HUD) is closed, not paused:
+     * without the PLUGIN_CLOSE the SDK-side `opened` flag stays true and every later
+     * launcher open is silently dropped as a duplicate.
+     */
+    fun onPluginSelfHid(pluginId: String) {
+        val principal = active?.takeIf { it.descriptor.id == pluginId } ?: return
+        active = null
+        deliver(principal, BusPaths.PLUGIN_CLOSE, "self_hidden")
+        logger("external plugin self-closed plugin=$pluginId")
+    }
+
     fun onRevoked(key: PluginGrantKey) {
         pending?.takeIf { it.grantKey() == key }?.let { principal ->
             scheduler.cancel(timeoutKey(principal))

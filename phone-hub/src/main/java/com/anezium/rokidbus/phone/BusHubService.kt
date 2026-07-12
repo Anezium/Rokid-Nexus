@@ -413,6 +413,9 @@ class BusHubService : Service() {
             }
             if (envelope.path == BusPaths.SURFACE_HIDE) {
                 pluginSurfaces.remove(wireSurfaceId)
+                if (pluginSurfaces.isEmpty() && ::externalPluginController.isInitialized) {
+                    externalPluginController.onPluginSelfHid(sender.principal.descriptor.id)
+                }
             } else {
                 pluginSurfaces += wireSurfaceId
             }
