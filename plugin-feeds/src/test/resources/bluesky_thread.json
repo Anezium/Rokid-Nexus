@@ -36,7 +36,15 @@
           "uri": "at://did:plc:reply1/app.bsky.feed.post/reply1",
           "author": { "handle": "reply1.example", "displayName": "Reply One", "labels": [] },
           "record": { "$type": "app.bsky.feed.post", "text": "First reply", "createdAt": "2026-07-11T10:05:00Z" }
-        }
+        },
+        "replies": [{
+          "$type": "app.bsky.feed.defs#threadViewPost",
+          "post": {
+            "uri": "at://did:plc:nested/app.bsky.feed.post/nested",
+            "author": { "handle": "nested.example", "displayName": "Nested Reply", "labels": [] },
+            "record": { "$type": "app.bsky.feed.post", "text": "Nested reply is outside v1", "createdAt": "2026-07-11T10:06:00Z" }
+          }
+        }]
       },
       { "$type": "app.bsky.feed.defs#blockedPost", "uri": "at://blocked" },
       {

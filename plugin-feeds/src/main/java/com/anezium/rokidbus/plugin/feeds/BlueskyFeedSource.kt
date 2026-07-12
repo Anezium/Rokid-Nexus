@@ -75,6 +75,7 @@ class BlueskyFeedSource(
                 parent = parent.optJSONObject("parent")
             }
             ancestors.reverse()
+            // Thread v1 intentionally flattens only first-level replies, preserving API source order.
             val replies = buildList {
                 val replyNodes = focalNode.optJSONArray("replies") ?: JSONArray()
                 for (index in 0 until replyNodes.length()) {
