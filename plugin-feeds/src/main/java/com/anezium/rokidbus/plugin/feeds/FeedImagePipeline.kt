@@ -109,7 +109,7 @@ internal class HttpFeedImageFetcher(
     }
 
     private fun validateDestination(url: URL): URL {
-        if (url.protocol != "https" || url.userInfo != null || url.host.lowercase() !in ALLOWED_MEDIA_HOSTS) {
+        if (url.protocol != "https" || url.userInfo != null || !isTrustedMediaHost(url.host)) {
             throw FeedImageUnsafeUrlException("Unsupported image destination")
         }
         val addresses = addressResolver.resolve(url.host)
@@ -117,6 +117,11 @@ internal class HttpFeedImageFetcher(
             throw FeedImageUnsafeUrlException("Image destination is not public")
         }
         return url
+    }
+
+    private fun isTrustedMediaHost(host: String): Boolean {
+        val h = host.lowercase()
+        return ALLOWED_MEDIA_DOMAINS.any { h == it || h.endsWith(".$it") }
     }
 
     private fun isPrivateOrSpecialAddress(address: InetAddress): Boolean {
@@ -141,7 +146,9 @@ internal class HttpFeedImageFetcher(
         const val DEFAULT_BUFFER_BYTES = 16 * 1024
         const val MAX_REDIRECTS = 4
         const val USER_AGENT = "RokidNexus/0.1 (+https://github.com/Anezium)"
-        val ALLOWED_MEDIA_HOSTS = setOf("pbs.twimg.com", "cdn.bsky.app")
+        // Trusted media platforms; any sub-host is accepted (CDN redirects included)
+        // and still gated by the https / no-userinfo / public-IP checks in validateDestination.
+        val ALLOWED_MEDIA_DOMAINS = setOf("bsky.app", "twimg.com")
         val REDIRECT_STATUS_CODES = setOf(301, 302, 303, 307, 308)
     }
 }
