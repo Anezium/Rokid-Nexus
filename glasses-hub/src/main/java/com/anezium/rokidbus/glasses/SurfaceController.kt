@@ -168,7 +168,9 @@ object SurfaceController {
         if (!acceptSequence(surface)) return
         main.post {
             if (latestSeqBySurface[surface.surfaceId] != surface.seq) return@post
-            imageDecodeCoordinator.invalidate()?.recycleSafely()
+            val coordinated = imageDecodeCoordinator.invalidate()
+            coordinated?.recycleSafely()
+            recycleActiveImageUnless(coordinated)
             cancelBackFailsafeOnMain(surface.surfaceId)
             wakeScreen(context)
             active = surface
@@ -183,16 +185,14 @@ object SurfaceController {
         val key = ImageDecodeKey(surface.surfaceId, surface.seq, metadata.contentKey)
         main.post {
             if (latestSeqBySurface[surface.surfaceId] != surface.seq) return@post
-            imageDecodeCoordinator.begin(key)?.recycleSafely()
-            cancelBackFailsafeOnMain(surface.surfaceId)
-            wakeScreen(context)
-            active = surface
-            notifyListeners(surface)
-            displaySurface(context, surface, null)
+            // Keep the previously published HUD/bitmap until this body decodes.
+            // begin() invalidates older work; active still owns the visible bitmap.
+            imageDecodeCoordinator.begin(key)
             imageDecodeExecutor.execute {
                 val decoded = ImageHudView.decodeRgb565(bytes, metadata)
                 if (decoded == null) {
                     log("Image decode failed id=${surface.surfaceId} seq=${surface.seq}")
+                    main.post { imageDecodeCoordinator.cancel(key) }
                     return@execute
                 }
                 main.post {
@@ -200,15 +200,14 @@ object SurfaceController {
                         is ImageDecodeCompletion.Rejected -> completion.stale.recycleSafely()
                         is ImageDecodeCompletion.Accepted -> {
                             completion.replaced?.recycleSafely()
-                            val current = active
-                            if (current == null || current.surfaceId != key.surfaceId ||
-                                current.seq != key.seq || current.contentKey != key.contentKey ||
-                                latestSeqBySurface[key.surfaceId] != key.seq
-                            ) {
+                            if (latestSeqBySurface[key.surfaceId] != key.seq) {
                                 imageDecodeCoordinator.invalidate(key.surfaceId)?.recycleSafely()
                                 return@post
                             }
-                            val published = current.copy(imageBitmap = decoded)
+                            recycleActiveImageUnless(decoded)
+                            val published = surface.copy(imageBitmap = decoded)
+                            cancelBackFailsafeOnMain(surface.surfaceId)
+                            wakeScreen(context)
                             active = published
                             notifyListeners(published)
                             displaySurface(context, published, null)
@@ -287,7 +286,9 @@ object SurfaceController {
 
     private fun hideLocalOnMain() {
         active?.surfaceId?.let { cancelBackFailsafeOnMain(it) }
-        imageDecodeCoordinator.invalidate()?.recycleSafely()
+        val coordinated = imageDecodeCoordinator.invalidate()
+        coordinated?.recycleSafely()
+        recycleActiveImageUnless(coordinated)
         active = null
         notifyListeners(null)
         SurfaceOverlayRenderer.hide()
@@ -375,6 +376,10 @@ object SurfaceController {
 
     private fun Bitmap.recycleSafely() {
         if (!isRecycled) recycle()
+    }
+
+    private fun recycleActiveImageUnless(kept: Bitmap?) {
+        active?.imageBitmap?.takeUnless { it === kept }?.recycleSafely()
     }
 
     private val FORWARDED_KEYS = setOf(

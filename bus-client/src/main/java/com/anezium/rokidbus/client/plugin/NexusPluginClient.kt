@@ -48,7 +48,12 @@ class NexusPluginClient internal constructor(
 
     internal fun sendBinary(path: String, id: String, payload: JSONObject, data: ByteArray): Boolean {
         if (closed || !isApproved) return false
-        return transport.sendBinary(path, id, payload, data)
+        val sent = transport.sendBinary(path, id, payload, data)
+        if (!sent) {
+            currentLinkState = currentLinkState and LinkStateBits.SPP_DATA_UP.inv()
+            hubCapabilities = transport.capabilities()
+        }
+        return sent
     }
 
     override fun onRegistrationState(result: Int) {

@@ -227,7 +227,7 @@ class NexusSurfaceSession internal constructor(
                 lastImageSendNanos = now
                 NexusSdkResult.SENT
             } else {
-                NexusSdkResult.NOT_REGISTERED
+                NexusSdkResult.CAPABILITY_NOT_AVAILABLE
             }
         }
     }

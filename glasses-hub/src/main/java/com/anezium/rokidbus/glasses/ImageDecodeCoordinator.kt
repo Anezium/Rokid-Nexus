@@ -33,6 +33,14 @@ class ImageDecodeCoordinator<T> {
     }
 
     @Synchronized
+    fun cancel(key: ImageDecodeKey): Boolean {
+        if (currentKey != key) return false
+        currentKey = null
+        currentValue = null
+        return true
+    }
+
+    @Synchronized
     fun invalidate(surfaceId: String? = null): T? {
         if (surfaceId != null && currentKey?.surfaceId != surfaceId) return null
         val detached = currentValue

@@ -38,4 +38,15 @@ class ImageSurfaceStateTest {
         assertEquals("bitmap-a", state.invalidate("feed:main"))
         assertTrue(state.complete(shown, "late") is ImageDecodeCompletion.Rejected)
     }
+
+    @Test
+    fun `failed decode cancels only its own pending key`() {
+        val state = ImageDecodeCoordinator<String>()
+        val failed = ImageDecodeKey("feed:main", 10, "photo-a")
+        val newer = ImageDecodeKey("feed:main", 11, "photo-b")
+        state.begin(failed)
+        state.begin(newer)
+        assertTrue(!state.cancel(failed))
+        assertTrue(state.complete(newer, "bitmap-b") is ImageDecodeCompletion.Accepted)
+    }
 }

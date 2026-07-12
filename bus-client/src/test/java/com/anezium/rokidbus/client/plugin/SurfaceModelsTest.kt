@@ -19,6 +19,7 @@ class SurfaceModelsTest {
         val sends = mutableListOf<Pair<String, JSONObject>>()
         val binarySends = mutableListOf<Triple<String, JSONObject, ByteArray>>()
         var featureBits = 0
+        var binaryAccepted = true
         override fun connect(listener: NexusPluginTransport.Listener) { this.listener = listener }
         override fun send(path: String, id: String, payload: JSONObject): Boolean {
             sends += path to JSONObject(payload.toString())
@@ -26,7 +27,7 @@ class SurfaceModelsTest {
         }
         override fun sendBinary(path: String, id: String, payload: JSONObject, data: ByteArray): Boolean {
             binarySends += Triple(path, JSONObject(payload.toString()), data.copyOf())
-            return true
+            return binaryAccepted
         }
         override fun capabilities(): Int = featureBits
         override fun close() = Unit
@@ -209,5 +210,24 @@ class SurfaceModelsTest {
         val oversized = validJpeg() + ByteArray(ImageSurfaceContract.MAX_IMAGE_BYTES)
         assertEquals(NexusSdkResult.INVALID_PAYLOAD, client.surfaceSession("main").showImage(image(), oversized))
         assertTrue(transport.binarySends.isEmpty())
+    }
+
+    @Test
+    fun `offline binary rejection is not reported as sent`() {
+        val (client, transport) = client("surfaces")
+        transport.featureBits = BusCapabilityBits.IMAGE_SURFACE
+        transport.binaryAccepted = false
+        transport.listener.onLinkState(LinkStateBits.SPP_DATA_UP)
+        val session = client.surfaceSession("main")
+
+        assertEquals(
+            NexusSdkResult.CAPABILITY_NOT_AVAILABLE,
+            session.showImage(image(), validJpeg()),
+        )
+        assertFalse(client.supportsImageSurface)
+
+        transport.binaryAccepted = true
+        transport.listener.onLinkState(LinkStateBits.SPP_DATA_UP)
+        assertEquals(NexusSdkResult.SENT, session.showImage(image(), validJpeg()))
     }
 }

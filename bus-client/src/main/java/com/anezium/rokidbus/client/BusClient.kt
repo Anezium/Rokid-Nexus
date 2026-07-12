@@ -189,10 +189,15 @@ class BusClient(
         sendBinary(path, UUID.randomUUID().toString(), meta, data)
 
     fun sendBinary(path: String, id: String, meta: JSONObject, data: ByteArray): String {
+        trySendBinary(path, id, meta, data)
+        return id
+    }
+
+    internal fun trySendBinary(path: String, id: String, meta: JSONObject, data: ByteArray): Boolean {
         val bytes = meta.toString().toByteArray(Charsets.UTF_8)
         if (pluginId != null && pluginRegistrationState != PluginRegistrationResult.APPROVED) {
             listener(BusEvent.Error("Plugin registration is not approved"))
-            return id
+            return false
         }
         val hub = service
         if (hub == null) {
@@ -201,10 +206,11 @@ class BusClient(
                 operation = "binary send offline; payload not retained",
             )
             connect()
-            return id
+            return false
         }
-        runCatching {
+        return runCatching {
             hub.sendBinary(path, id, bytes, data)
+            true
         }.onFailure {
             service = null
             reportQueueMutation(
@@ -212,8 +218,7 @@ class BusClient(
                 operation = "binary send failed; payload not retained",
             )
             scheduleReconnect()
-        }
-        return id
+        }.getOrDefault(false)
     }
 
     suspend fun request(
