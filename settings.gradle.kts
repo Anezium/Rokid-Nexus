@@ -29,7 +29,6 @@ include(":phone-hub")
 include(":glasses-hub")
 include(":phone-client-probe")
 include(":glasses-client-probe")
-include(":lens-glasses")
 include(":plugin-sample")
 
 // Plugin modules live under plugins/ (one folder per plugin, each with its own

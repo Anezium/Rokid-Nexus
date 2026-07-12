@@ -1,6 +1,7 @@
 package com.anezium.rokidbus.glasses
 
 import android.content.Context
+import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.net.wifi.WifiManager
@@ -54,6 +55,7 @@ object GlassesHub {
     @Volatile private var appContext: Context? = null
     @Volatile private var cxrUp = false
     @Volatile private var phoneConnected = false
+    @Volatile private var remotePhoneCapabilities = 0
 
     private val aidl = object : IBusService.Stub() {
         override fun apiVersion(): Int = BusConstants.API_VERSION
@@ -88,7 +90,8 @@ object GlassesHub {
 
         override fun linkState(): Int = this@GlassesHub.linkState()
 
-        override fun capabilities(): Int = BusCapabilityBits.PROTECTED_LENS_LINK
+        override fun capabilities(): Int = BusCapabilityBits.PROTECTED_LENS_LINK or
+            (remotePhoneCapabilities and BusCapabilityBits.CAMERA_CONSUMER_READY)
 
         override fun registerPlugin(packageName: String, pluginId: String, cb: IBusCallback): Int =
             PluginRegistrationResult.DENIED
@@ -110,6 +113,7 @@ object GlassesHub {
 
     fun onSppConnected(connected: Boolean) {
         phoneConnected = connected || CxrBusBridge.isUp()
+        if (!phoneConnected) remotePhoneCapabilities = 0
         notifyLinkState()
         if (connected) announceRendererCapabilities()
     }
@@ -117,12 +121,17 @@ object GlassesHub {
     fun onCxrState(connected: Boolean) {
         cxrUp = connected
         phoneConnected = connected || SppServerManager.isConnected()
+        if (!phoneConnected) remotePhoneCapabilities = 0
         notifyLinkState()
         if (connected) announceRendererCapabilities()
     }
 
     fun onRemoteEnvelope(envelope: BusEnvelope) {
         log("remote RX ${envelope.path} id=${envelope.id}")
+        if (envelope.path == BusPaths.HUB_CAPABILITIES) {
+            updateRemotePhoneCapabilities(envelope.payload)
+            return
+        }
         appContext?.let { context ->
             if (SurfaceController.handleSurfaceEnvelope(context, envelope)) return
         }
@@ -169,12 +178,21 @@ object GlassesHub {
 
     fun observeLauncher(listener: (List<LauncherEntry>) -> Unit): () -> Unit {
         launcherListeners += listener
-        listener(launcherEntries)
+        listener(allLauncherEntries())
         return { launcherListeners.remove(listener) }
     }
 
     fun openLauncherEntry(pluginId: String): String {
         if (pluginId.isBlank()) return "launcherOpen=false reason=blank"
+        if (pluginId == CAMERA_LAUNCHER_ID) {
+            val context = appContext ?: return "launcherOpen=false reason=hub_not_started"
+            return runCatching {
+                context.startActivity(
+                    Intent(context, CameraActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                )
+                "launcherOpen=true pluginId=$pluginId"
+            }.getOrElse { "launcherOpen=false pluginId=$pluginId code=ACTIVITY_START_FAILED" }
+        }
         val error = sendRemote(
             BusEnvelope(
                 path = BusPaths.LAUNCHER_OPEN,
@@ -220,6 +238,10 @@ object GlassesHub {
             log("blocked untrusted protected lens send uid=$senderUid")
             return
         }
+        if (BusPaths.isProtectedCameraPath(envelope.path) && !isTrustedUid(senderUid)) {
+            log("blocked untrusted protected camera send uid=$senderUid")
+            return
+        }
         if (envelope.path == BusPaths.GLASSES_WIFI_REQUEST) {
             if (!isTrustedUid(senderUid)) {
                 log("blocked untrusted glasses Wi-Fi request uid=$senderUid")
@@ -254,6 +276,7 @@ object GlassesHub {
         registrations.forEach { registration ->
             if (excludeUid != null && registration.uid == excludeUid) return@forEach
             if (BusPaths.isProtectedLensPath(envelope.path) && !registration.trusted) return@forEach
+            if (BusPaths.isProtectedCameraPath(envelope.path) && !registration.trusted) return@forEach
             if (registration.prefixes.any { PathRules.matchesPrefix(envelope.path, it) }) {
                 if (binary != null && binary.size > LOCAL_BINARY_MAX_BYTES) {
                     log("drop local binary ${envelope.path} id=${envelope.id} bytes=${binary.size} over cap=$LOCAL_BINARY_MAX_BYTES")
@@ -333,8 +356,9 @@ object GlassesHub {
             }
         }
         launcherEntries = entries
+        val visibleEntries = allLauncherEntries()
         launcherListeners.forEach { listener ->
-            runCatching { listener(entries) }
+            runCatching { listener(visibleEntries) }
         }
         log("launcher list synced count=${entries.size}")
     }
@@ -370,6 +394,19 @@ object GlassesHub {
                 .onFailure { removeRegistration(registration) }
         }
     }
+
+    private fun updateRemotePhoneCapabilities(payload: JSONObject) {
+        val advertised = payload.optInt("features", payload.optInt("capabilities", 0))
+        val next = advertised and BusCapabilityBits.CAMERA_CONSUMER_READY
+        if (next == remotePhoneCapabilities) return
+        remotePhoneCapabilities = next
+        log("phone capabilities cameraConsumerReady=${next != 0}")
+        notifyLinkState()
+    }
+
+    private fun allLauncherEntries(): List<LauncherEntry> =
+        listOf(LauncherEntry(CAMERA_LAUNCHER_ID, "Camera")) +
+            launcherEntries.filterNot { it.id == CAMERA_LAUNCHER_ID }
 
     private fun errorEnvelope(id: String, code: String): BusEnvelope =
         BusEnvelope(
@@ -417,4 +454,6 @@ object GlassesHub {
         val serviceConnected = attempted && SelfArmWirelessAccessibilityService.startConnectedService()
         log("glassesWifi auto-enroll attempted=$attempted serviceConnected=$serviceConnected")
     }
+
+    private const val CAMERA_LAUNCHER_ID = "camera"
 }
