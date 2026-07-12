@@ -118,6 +118,28 @@ class ExternalPluginControllerTest {
     }
 
     @Test
+    fun `idle show adopts the sender as foreground and opens it`() {
+        val runtime = FakeRuntime().apply { registered = true }
+        val controller = ExternalPluginController(runtime, FakeScheduler())
+        val principal = principal()
+        assertTrue(controller.adopt(principal))
+        assertEquals(BusPaths.PLUGIN_OPEN, runtime.deliveries.last().first)
+        assertTrue(controller.input("hello", "main", 22, 0))
+
+        assertFalse(controller.adopt(principal("other")))
+        assertTrue(controller.adopt(principal))
+        assertEquals(1, runtime.deliveries.count { it.first == BusPaths.PLUGIN_OPEN })
+    }
+
+    @Test
+    fun `unregistered plugin cannot adopt`() {
+        val runtime = FakeRuntime()
+        val controller = ExternalPluginController(runtime, FakeScheduler())
+        assertFalse(controller.adopt(principal()))
+        assertTrue(runtime.deliveries.isEmpty())
+    }
+
+    @Test
     fun `self hide closes the active plugin and allows reopen`() {
         val runtime = FakeRuntime().apply { registered = true }
         val controller = ExternalPluginController(runtime, FakeScheduler())

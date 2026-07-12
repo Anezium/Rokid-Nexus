@@ -127,6 +127,21 @@ class PhonePluginRegistry(
         return handled
     }
 
+    /**
+     * Gate for surfaces pushed by external plugins on their own initiative: only the
+     * foreground plugin may draw on the HUD. On an idle HUD a show adopts the sender
+     * as the foreground plugin; anything pushed while another plugin holds the HUD is
+     * rejected so a background auto-open (lyrics) cannot steal the display.
+     */
+    fun allowExternalSurface(principal: PhonePluginPrincipal, path: String): Boolean {
+        val controller = externalController ?: return true
+        val externalActive = controller.activeId()
+        if (externalActive == principal.descriptor.id) return true
+        if (externalActive != null || activePluginId != null) return false
+        if (path != BusPaths.SURFACE_SHOW) return false
+        return controller.adopt(principal)
+    }
+
     fun syncLauncherList() {
         send(
             BusPaths.LAUNCHER_LIST,

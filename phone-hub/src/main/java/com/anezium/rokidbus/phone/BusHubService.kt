@@ -435,6 +435,16 @@ class BusHubService : Service() {
                 }
             }
         }
+        if (
+            sender.principal != null &&
+            (ownedEnvelope.path == BusPaths.SURFACE_SHOW || ownedEnvelope.path == BusPaths.SURFACE_UPDATE) &&
+            ::pluginRegistry.isInitialized &&
+            !pluginRegistry.allowExternalSurface(sender.principal, ownedEnvelope.path)
+        ) {
+            deliverError(sender.replyBinder, ownedEnvelope.id, "SURFACE_BUSY")
+            log("surface rejected path=${ownedEnvelope.path} plugin=${sender.principal.descriptor.id} reason=foreground_busy")
+            return
+        }
         val authorizedEnvelope = if (
             sender.principal != null &&
             PathRules.requiredCapability(ownedEnvelope.path) == PluginCapability.SURFACES

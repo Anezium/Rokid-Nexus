@@ -91,6 +91,24 @@ class ExternalPluginController(
         pending = null
     }
 
+    fun activeId(): String? = active?.descriptor?.id
+
+    /**
+     * A plugin that shows a surface while the HUD is idle becomes the foreground
+     * plugin (lyrics auto-open). The PLUGIN_OPEN is what lets its inputs through the
+     * SDK gate and keeps the open/close lifecycle balanced — without it BACK on the
+     * adopted surface is silently dropped and the HUD is stuck.
+     */
+    fun adopt(principal: PhonePluginPrincipal): Boolean {
+        if (active?.grantKey() == principal.grantKey()) return true
+        if (active != null) return false
+        if (!runtime.isRegistered(principal)) return false
+        active = principal
+        deliver(principal, BusPaths.PLUGIN_OPEN, "adopted")
+        logger("external plugin adopted as foreground plugin=${principal.descriptor.id}")
+        return true
+    }
+
     /**
      * A plugin that hides its own last surface (BACK on the HUD) is closed, not paused:
      * without the PLUGIN_CLOSE the SDK-side `opened` flag stays true and every later
