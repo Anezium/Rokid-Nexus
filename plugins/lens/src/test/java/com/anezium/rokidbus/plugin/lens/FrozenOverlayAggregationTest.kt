@@ -24,6 +24,9 @@ class FrozenOverlayAggregationTest {
             result.single().source,
         )
         assertEquals(FrozenLayoutRect(40, 100, 600, 240), result.single().bounds)
+        assertEquals(40f, result.single().medianLineHeight, 0f)
+        assertEquals(49f, result.single().growDown, 0.001f)
+        assertEquals(0, result.single().column)
     }
 
     @Test
@@ -36,5 +39,6 @@ class FrozenOverlayAggregationTest {
         )
 
         assertEquals(listOf("Left", "Right"), result.map(FrozenOverlayLine::source))
+        assertEquals(listOf(0, 1), result.map(FrozenOverlayLine::column))
     }
 }

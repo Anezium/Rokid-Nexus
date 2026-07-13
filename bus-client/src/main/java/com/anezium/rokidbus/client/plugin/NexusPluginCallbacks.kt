@@ -10,4 +10,5 @@ interface NexusPluginCallbacks {
     fun onLinkState(state: Int)
     fun onRegistrationState(result: Int)
     fun onMessage(path: String, id: String, payload: JSONObject) = Unit
+    fun onBinary(path: String, id: String, payload: JSONObject, data: ByteArray) = Unit
 }

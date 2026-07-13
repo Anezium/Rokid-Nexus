@@ -5,6 +5,7 @@ import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaFormat
 import android.os.SystemClock
+import com.anezium.rokidbus.shared.CameraFrameGeometry
 import com.anezium.rokidbus.shared.CameraLinkPacket
 import com.anezium.rokidbus.shared.CameraLinkPacketFlags
 import com.anezium.rokidbus.shared.CameraLinkPacketType
@@ -55,9 +56,7 @@ internal class Nv21BufferPool(private val capacity: Int = 3) : AutoCloseable {
 
 internal class DecodedFrame(
     val nv21: ByteArray,
-    val width: Int,
-    val height: Int,
-    val rotationDegrees: Int,
+    val geometry: CameraFrameGeometry,
     val frameId: Long,
     private val pool: Nv21BufferPool,
 ) : AutoCloseable {
@@ -83,6 +82,7 @@ internal class LatestFrameDecoder(
     private val holder: LatestFrameHolder,
     private val pool: Nv21BufferPool,
     private val onFrameReady: () -> Unit,
+    private val onGeometry: (CameraFrameGeometry) -> Unit,
     private val onError: (String, Throwable?) -> Unit,
 ) : AutoCloseable {
     private val lock = Any()
@@ -92,24 +92,28 @@ internal class LatestFrameDecoder(
     private val worker = Thread(::decodeLoop, "lens-live-decoder").also { it.start() }
     private var codec: MediaCodec? = null
     private var config: ByteArray? = null
-    private var configuredRotationDegrees = 0
+    private var configuredGeometry: CameraFrameGeometry? = null
+    private var reportedGeometry: CameraFrameGeometry? = null
     @Volatile private var waitingForKeyFrame = true
 
-    fun configure(configPayload: ByteArray, width: Int, height: Int, fps: Int, rotationDegrees: Int) {
-        if (!running.get() || width !in 1..MAX_EDGE || height !in 1..MAX_EDGE) return
-        val normalizedRotation = runCatching {
-            LiveFrameGeometry.normalizeRightAngle(rotationDegrees)
-        }.getOrNull() ?: return
+    fun configure(configPayload: ByteArray, geometry: CameraFrameGeometry, fps: Int) {
+        if (!running.get() || geometry.rasterWidth !in 1..MAX_EDGE ||
+            geometry.rasterHeight !in 1..MAX_EDGE
+        ) return
         synchronized(lock) {
             if (config?.contentEquals(configPayload) == true &&
-                configuredRotationDegrees == normalizedRotation && codec != null
+                configuredGeometry == geometry && codec != null
             ) return
             val sets = parameterSets(configPayload) ?: return onError("Incomplete H.264 codec config", null)
             frames.clear()
             received.clear()
             releaseCodecLocked()
             runCatching {
-                val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, width, height).apply {
+                val format = MediaFormat.createVideoFormat(
+                    MediaFormat.MIMETYPE_VIDEO_AVC,
+                    geometry.rasterWidth,
+                    geometry.rasterHeight,
+                ).apply {
                     setByteBuffer("csd-0", ByteBuffer.wrap(sets.first))
                     setByteBuffer("csd-1", ByteBuffer.wrap(sets.second))
                     setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, MAX_PACKET_BYTES)
@@ -125,7 +129,8 @@ internal class LatestFrameDecoder(
                     it.start()
                 }
                 config = configPayload.copyOf()
-                configuredRotationDegrees = normalizedRotation
+                configuredGeometry = geometry
+                reportedGeometry = null
                 waitingForKeyFrame = true
             }.onFailure { onError("H.264 decoder configure failed", it) }
         }
@@ -188,14 +193,23 @@ internal class LatestFrameDecoder(
                         image = decoder.getOutputImage(index) ?: error("Decoder output image unavailable")
                         val converted = imageToNv21(image)
                         if (received.remove(frameId) != null) {
+                            val configured = configuredGeometry
+                                ?: error("Decoder frame geometry unavailable")
+                            val decodedGeometry = LiveFrameGeometry.withDecoderCrop(
+                                configured,
+                                converted.width,
+                                converted.height,
+                            )
+                            if (reportedGeometry != decodedGeometry) {
+                                reportedGeometry = decodedGeometry
+                                onGeometry(decodedGeometry)
+                            }
                             holder.offer(
                                 DecodedFrame(
-                                    converted.bytes,
-                                    converted.width,
-                                    converted.height,
-                                    configuredRotationDegrees,
-                                    frameId,
-                                    pool,
+                                    nv21 = converted.bytes,
+                                    geometry = decodedGeometry,
+                                    frameId = frameId,
+                                    pool = pool,
                                 ),
                             )
                             onFrameReady()
@@ -319,8 +333,8 @@ internal class LatestFrameDecoder(
 }
 
 /**
- * Holds recognition ownership until the consumer finishes translation. This keeps one complete
- * OCR/translation operation in flight while decoded-frame replacement preserves newest-wins.
+ * Holds frame ownership only through synchronous OCR reconciliation. The consumer continuation
+ * releases the frame immediately; translation and overlay callbacks run independently afterward.
  */
 internal class LiveOcrRunner(
     private val holder: LatestFrameHolder,
@@ -365,9 +379,9 @@ internal class LiveOcrRunner(
             recognizerFor(scriptPlan.script).process(
                 InputImage.fromByteArray(
                     frame.nv21,
-                    frame.width,
-                    frame.height,
-                    frame.rotationDegrees,
+                    frame.geometry.rasterWidth,
+                    frame.geometry.rasterHeight,
+                    frame.geometry.remainingRotationDegrees,
                     InputImage.IMAGE_FORMAT_NV21,
                 ),
             )

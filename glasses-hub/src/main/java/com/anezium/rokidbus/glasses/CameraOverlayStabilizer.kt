@@ -3,15 +3,16 @@ package com.anezium.rokidbus.glasses
 import com.anezium.rokidbus.shared.CameraOverlayBounds
 import com.anezium.rokidbus.shared.CameraOverlayItem
 
-/** Reuses id-addressed items and damps their positions; anonymous v1 items retain legacy behavior. */
+/** Damps id-addressed legacy items; adaptive paragraphs stay on current source geometry. */
 internal class CameraOverlayStabilizer {
     private var current: List<CameraOverlayItem> = emptyList()
 
     fun update(next: List<CameraOverlayItem>): List<CameraOverlayItem> {
         val previousById = current.mapNotNull { item -> item.id?.let { it to item } }.toMap()
         current = next.map { item ->
+            if (item.isAdaptiveParagraph()) return@map item
             val id = item.id ?: return@map item
-            val previous = previousById[id] ?: return@map item
+            val previous = previousById[id]?.takeUnless { it.isAdaptiveParagraph() } ?: return@map item
             item.copy(box = previous.box.dampToward(item.box))
         }
         return current

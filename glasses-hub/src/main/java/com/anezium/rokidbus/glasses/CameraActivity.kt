@@ -31,8 +31,10 @@ import com.anezium.rokidbus.shared.CameraLinkPacketType
 import com.anezium.rokidbus.shared.CameraLinkProtocol
 import com.anezium.rokidbus.shared.CameraOverlayContract
 import com.anezium.rokidbus.shared.CameraOverlayItem
+import com.anezium.rokidbus.shared.FrozenImageChunkContract
 import org.json.JSONObject
 import java.util.UUID
+import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicLong
 
 /** Foreground-visible generic camera domain. Runs in the isolated :camera app process. */
@@ -42,10 +44,15 @@ class CameraActivity : Activity(), TextureView.SurfaceTextureListener {
     private lateinit var emptyView: TextView
     private val inputRouter = CameraInputRouter()
     private val freezeSerial = AtomicLong(System.currentTimeMillis())
+    private val frozenTransferExecutor = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "camera-frozen-transfer").apply { isDaemon = true }
+    }
 
     private var busClient: BusClient? = null
     private var cameraLink: CameraLink? = null
     private var streamer: CameraH264Streamer? = null
+    private var streamPlan: CameraStreamPlan? = null
+    private var rotationFallbackAttempted = false
     private var previewSurface: Surface? = null
     private var sessionId: String? = null
     private var currentFreezeRequestId: Long? = null
@@ -56,6 +63,7 @@ class CameraActivity : Activity(), TextureView.SurfaceTextureListener {
     private var liveZoomLevel = LiveZoomLevel.ONE
     private var frozenZoomLevel = LiveZoomLevel.ONE
     private var liveFrameGeometry: CameraLiveFrameGeometry? = null
+    private var previewConsumerGeometry: CameraPreviewConsumerGeometry? = null
     private var liveSourceItems: List<CameraOverlayItem> = emptyList()
     private var liveItems: List<CameraOverlayItem> = emptyList()
     private var lastLiveSeq = Long.MIN_VALUE
@@ -91,6 +99,7 @@ class CameraActivity : Activity(), TextureView.SurfaceTextureListener {
         previewSurface?.release()
         previewSurface = null
         overlayView.setFrozenBackground(null)
+        frozenTransferExecutor.shutdownNow()
         super.onDestroy()
     }
 
@@ -121,10 +130,14 @@ class CameraActivity : Activity(), TextureView.SurfaceTextureListener {
     }
 
     override fun onSurfaceTextureAvailable(surface: SurfaceTexture, width: Int, height: Int) {
-        // Keep preview and encoder on the same 720x1280 stream crop. A separate 4:3 preview
-        // receives a wider per-output Camera2 crop, so encoder-derived overlay boxes no longer
-        // align without HAL crop metadata. Freeze capture uses its own full-FOV 4:3 JPEG output.
-        surface.setDefaultBufferSize(CameraH264Streamer.WIDTH, CameraH264Streamer.HEIGHT)
+        // Preview and encoder must use the same stream size/crop. A separate 4:3 preview receives
+        // a wider per-output Camera2 crop, so encoder-derived overlay boxes no longer align.
+        val plan = streamPlan ?: selectCameraStreamPlan().also { streamPlan = it }
+        if (plan == null) {
+            showEmpty("CAMERA ORIENTATION UNSUPPORTED")
+            return
+        }
+        surface.setDefaultBufferSize(plan.rasterSize.width, plan.rasterSize.height)
         previewSurface?.release()
         previewSurface = Surface(surface)
         if (resumed && ready && hasRequiredPermissions()) activateCameraSession()
@@ -241,8 +254,8 @@ class CameraActivity : Activity(), TextureView.SurfaceTextureListener {
                     .put(
                         "config",
                         JSONObject()
-                            .put("width", CameraH264Streamer.WIDTH)
-                            .put("height", CameraH264Streamer.HEIGHT)
+                            .put("width", streamPlan?.rasterSize?.width ?: CameraH264Streamer.PREFERRED_RASTER_SIZE.width)
+                            .put("height", streamPlan?.rasterSize?.height ?: CameraH264Streamer.PREFERRED_RASTER_SIZE.height)
                             .put("fps", CameraH264Streamer.FPS)
                             .put("protocolVersion", CameraLinkProtocol.VERSION),
                     ),
@@ -283,12 +296,16 @@ class CameraActivity : Activity(), TextureView.SurfaceTextureListener {
         currentFreezeRequestId = null
         isFrozen = false
         liveFrameGeometry = null
+        previewConsumerGeometry = null
+        streamPlan = null
+        rotationFallbackAttempted = false
         liveSourceItems = emptyList()
         liveItems = emptyList()
         previewView.setTransform(Matrix())
         lastLiveSeq = Long.MIN_VALUE
         lastFreezeSeq = Long.MIN_VALUE
         overlayView.updateOverlay(emptyList())
+        overlayView.setMode(CameraOverlayMode.LIVE)
         overlayView.setFrozenBackground(null)
     }
 
@@ -296,12 +313,19 @@ class CameraActivity : Activity(), TextureView.SurfaceTextureListener {
         if (streamer != null) return
         val surface = previewSurface ?: return
         val link = cameraLink ?: return
+        val plan = streamPlan ?: selectCameraStreamPlan()?.also { streamPlan = it } ?: run {
+            showEmpty("CAMERA ORIENTATION UNSUPPORTED")
+            return
+        }
+        val displayRotationDegrees = CameraOrientation.displayRotationDegrees(
+            previewView.display?.rotation ?: Surface.ROTATION_0,
+        )
+        previewConsumerGeometry = CameraPreviewGeometry.previewConsumerGeometry(plan)
         streamer = CameraH264Streamer(
             context = applicationContext,
             packetSender = link::enqueue,
-            displayRotationDegrees = CameraOrientation.displayRotationDegrees(
-                previewView.display?.rotation ?: Surface.ROTATION_0,
-            ),
+            displayRotationDegrees = displayRotationDegrees,
+            streamPlan = plan,
             onLiveFrameGeometry = { width, height, rotationDegrees ->
                 runOnUiThread {
                     liveFrameGeometry = CameraLiveFrameGeometry(width, height, rotationDegrees)
@@ -322,6 +346,9 @@ class CameraActivity : Activity(), TextureView.SurfaceTextureListener {
                     log("camera retry attempt=$attempt delayMs=$delayMs reason=$reason")
                 }
             },
+            onRotationMismatch = { expectedDegrees, effectiveDegrees ->
+                runOnUiThread { handleRotationMismatch(expectedDegrees, effectiveDegrees) }
+            },
             onFrozenJpeg = { requestId, jpeg, width, height, rotationDegrees ->
                 runOnUiThread { handleFrozenJpeg(requestId, jpeg, width, height, rotationDegrees) }
             },
@@ -331,6 +358,9 @@ class CameraActivity : Activity(), TextureView.SurfaceTextureListener {
                     if (message.startsWith("FREEZE")) {
                         isFrozen = false
                         currentFreezeRequestId = null
+                        overlayView.setMode(CameraOverlayMode.LIVE)
+                        overlayView.setFrozenBackground(null)
+                        overlayView.updateOverlay(liveItems)
                     }
                     overlayView.updateStatus(message, currentZoomLabel())
                 }
@@ -345,6 +375,73 @@ class CameraActivity : Activity(), TextureView.SurfaceTextureListener {
         streamer?.close()
         streamer = null
     }
+
+    private fun handleRotationMismatch(expectedDegrees: Int, effectiveDegrees: Int) {
+        log("camera rotate-and-crop mismatch expected=$expectedDegrees effective=$effectiveDegrees")
+        val current = streamPlan ?: return
+        if (rotationFallbackAttempted || current.requestedHardwareRotationDegrees == 0) {
+            stopStreamer()
+            showEmpty("CAMERA ORIENTATION UNSUPPORTED")
+            return
+        }
+        val fallback = selectCameraStreamPlan(forceSoftwareFallback = true)
+        if (fallback == null) {
+            stopStreamer()
+            showEmpty("CAMERA ORIENTATION UNSUPPORTED")
+            return
+        }
+        rotationFallbackAttempted = true
+        streamPlan = fallback
+        previewView.surfaceTexture?.setDefaultBufferSize(
+            fallback.rasterSize.width,
+            fallback.rasterSize.height,
+        )
+        stopStreamer()
+        startStreamerIfReady()
+    }
+
+    private fun selectCameraStreamPlan(forceSoftwareFallback: Boolean = false): CameraStreamPlan? = runCatching {
+        val manager = getSystemService(android.hardware.camera2.CameraManager::class.java)
+        val cameraId = manager.cameraIdList.firstOrNull { it == "0" }
+            ?: manager.cameraIdList.firstOrNull()
+            ?: return@runCatching null
+        val characteristics = manager.getCameraCharacteristics(cameraId)
+        val sensorOrientation = characteristics.get(
+            android.hardware.camera2.CameraCharacteristics.SENSOR_ORIENTATION,
+        ) ?: 0
+        val frontFacing = characteristics.get(
+            android.hardware.camera2.CameraCharacteristics.LENS_FACING,
+        ) == android.hardware.camera2.CameraCharacteristics.LENS_FACING_FRONT
+        val requiredRotation = CameraOrientation.sensorToDisplayRotationDegrees(
+            sensorOrientation = sensorOrientation,
+            displayRotationDegrees = CameraOrientation.displayRotationDegrees(
+                previewView.display?.rotation ?: Surface.ROTATION_0,
+            ),
+            frontFacing = frontFacing,
+        )
+        val modes = buildSet {
+            (characteristics.get(
+                android.hardware.camera2.CameraCharacteristics.SCALER_AVAILABLE_ROTATE_AND_CROP_MODES,
+            ) ?: intArrayOf()).forEach { mode ->
+                when (mode) {
+                    android.hardware.camera2.CaptureRequest.SCALER_ROTATE_AND_CROP_NONE -> add(0)
+                    android.hardware.camera2.CaptureRequest.SCALER_ROTATE_AND_CROP_90 -> add(90)
+                    android.hardware.camera2.CaptureRequest.SCALER_ROTATE_AND_CROP_180 -> add(180)
+                    android.hardware.camera2.CaptureRequest.SCALER_ROTATE_AND_CROP_270 -> add(270)
+                }
+            }
+        }
+        val outputs = characteristics.get(
+            android.hardware.camera2.CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP,
+        )?.getOutputSizes(SurfaceTexture::class.java).orEmpty().mapTo(mutableSetOf()) {
+            CameraPixelSize(it.width, it.height)
+        }
+        CameraOrientation.selectStreamPlan(
+            sensorToDisplayRotationDegrees = requiredRotation,
+            availableHardwareRotationDegrees = if (forceSoftwareFallback) setOf(0) else modes,
+            availableOutputSizes = outputs,
+        )
+    }.onFailure { logError("camera stream plan failed", it) }.getOrNull()
 
     private fun sendLinkOffer(offer: CameraLinkOffer) {
         val activeSession = sessionId ?: return
@@ -382,20 +479,17 @@ class CameraActivity : Activity(), TextureView.SurfaceTextureListener {
             frozenZoomLevel = LiveZoomLevel.ONE
             overlayView.setFrozenBackground(null)
             overlayView.setFrozenDisplayScale(1f)
+            overlayView.setMode(CameraOverlayMode.LIVE)
             overlayView.updateOverlay(liveItems)
             overlayView.updateStatus("LIVE", liveZoomLevel.hudLabel)
             return
         }
-        val link = cameraLink
-        if (link?.isAuthenticated != true) {
-            link?.resendOfferIfDisconnected()
-            overlayView.updateStatus("WAITING FOR PHONE LINK", liveZoomLevel.hudLabel)
-            return
-        }
+        cameraLink?.resendOfferIfDisconnected()
         val requestId = freezeSerial.incrementAndGet()
         currentFreezeRequestId = requestId
         lastFreezeSeq = Long.MIN_VALUE
         isFrozen = true
+        overlayView.setMode(CameraOverlayMode.FROZEN)
         overlayView.updateOverlay(emptyList())
         overlayView.updateStatus("CAPTURING HD FRAME", liveZoomLevel.hudLabel)
         streamer?.captureFrozenJpeg(requestId)
@@ -410,23 +504,99 @@ class CameraActivity : Activity(), TextureView.SurfaceTextureListener {
     ) {
         if (!isFrozen || currentFreezeRequestId != requestId || sessionId == null) return
         val bitmap = decodeFrozenPreview(jpeg, rotationDegrees)
-        if (bitmap != null) overlayView.setFrozenBackground(bitmap)
-        val sent = jpeg.size <= CameraLinkProtocol.MAX_PAYLOAD_BYTES && cameraLink?.enqueue(
-            CameraLinkPacket(
-                type = CameraLinkPacketType.FROZEN_IMAGE,
+        if (bitmap != null) {
+            val live = liveFrameGeometry?.orientedSize
+            val viewport = live?.let {
+                CameraPreviewGeometry.matchingFrozenSourceViewport(
+                    frozenWidth = bitmap.width,
+                    frozenHeight = bitmap.height,
+                    liveWidth = it.width,
+                    liveHeight = it.height,
+                    viewWidth = previewView.width,
+                    viewHeight = previewView.height,
+                )
+            }
+            overlayView.setFrozenBackground(bitmap, viewport)
+        }
+        val packet = CameraLinkPacket(
+            type = CameraLinkPacketType.FROZEN_IMAGE,
+            requestId = requestId,
+            meta = JSONObject()
+                .put("sessionId", sessionId)
+                .put("requestId", requestId)
+                .put("mimeType", "image/jpeg")
+                .put("width", width)
+                .put("height", height)
+                .put("rotationDegrees", rotationDegrees)
+                .toString(),
+            payload = jpeg,
+        )
+        val sent = jpeg.size <= CameraLinkProtocol.MAX_PAYLOAD_BYTES &&
+            cameraLink?.enqueue(packet) == true
+        if (sent) {
+            overlayView.updateStatus("FROZEN / PROCESSING", liveZoomLevel.hudLabel)
+            return
+        }
+        overlayView.updateStatus("FROZEN / SENDING VIA BLUETOOTH", liveZoomLevel.hudLabel)
+        frozenTransferExecutor.execute {
+            val sppSent = sendFrozenOverSpp(
                 requestId = requestId,
-                meta = JSONObject()
-                    .put("sessionId", sessionId)
-                    .put("requestId", requestId)
-                    .put("mimeType", "image/jpeg")
-                    .put("width", width)
-                    .put("height", height)
-                    .put("rotationDegrees", rotationDegrees)
-                    .toString(),
-                payload = jpeg,
-            ),
-        ) == true
-        overlayView.updateStatus(if (sent) "FROZEN / PROCESSING" else "FROZEN / LINK LOST", liveZoomLevel.hudLabel)
+                jpeg = jpeg,
+                width = width,
+                height = height,
+                rotationDegrees = rotationDegrees,
+            )
+            runOnUiThread {
+                if (!isFrozen || currentFreezeRequestId != requestId) return@runOnUiThread
+                overlayView.updateStatus(
+                    if (sppSent) "FROZEN / PROCESSING VIA BLUETOOTH" else "FROZEN / LINK LOST",
+                    liveZoomLevel.hudLabel,
+                )
+            }
+        }
+    }
+
+    private fun sendFrozenOverSpp(
+        requestId: Long,
+        jpeg: ByteArray,
+        width: Int,
+        height: Int,
+        rotationDegrees: Int,
+    ): Boolean {
+        val activeSession = sessionId ?: return false
+        val capabilities = busClient?.capabilities() ?: 0
+        if (capabilities and BusCapabilityBits.CAMERA_FROZEN_SPP == 0 ||
+            jpeg.size !in 1..FrozenImageChunkContract.MAX_IMAGE_BYTES
+        ) return false
+        val transferId = UUID.randomUUID().toString()
+        val chunkCount = FrozenImageChunkContract.chunkCount(jpeg.size)
+        val sha256 = FrozenImageChunkContract.sha256(jpeg)
+        for (chunkIndex in 0 until chunkCount) {
+            val start = chunkIndex * FrozenImageChunkContract.CHUNK_BYTES
+            val end = minOf(jpeg.size, start + FrozenImageChunkContract.CHUNK_BYTES)
+            val metadata = FrozenImageChunkContract.metadataJson(
+                FrozenImageChunkContract.Metadata(
+                    sessionId = activeSession,
+                    requestId = requestId,
+                    transferId = transferId,
+                    chunkIndex = chunkIndex,
+                    chunkCount = chunkCount,
+                    totalBytes = jpeg.size,
+                    width = width,
+                    height = height,
+                    rotationDegrees = rotationDegrees,
+                    sha256 = sha256,
+                ),
+            )
+            val sent = busClient?.trySendBinary(
+                BusPaths.CAMERA_FREEZE_IMAGE_CHUNK,
+                "$transferId:$chunkIndex",
+                metadata,
+                jpeg.copyOfRange(start, end),
+            ) == true
+            if (!sent) return false
+        }
+        return true
     }
 
     private fun handleOverlay(payload: JSONObject) {
@@ -450,7 +620,7 @@ class CameraActivity : Activity(), TextureView.SurfaceTextureListener {
     }
 
     private fun applyLivePreviewTransform() {
-        val geometry = liveFrameGeometry ?: return
+        val geometry = previewConsumerGeometry ?: return
         val viewWidth = previewView.width
         val viewHeight = previewView.height
         val destination = CameraPreviewGeometry.textureDestinationCorners(
@@ -458,8 +628,8 @@ class CameraActivity : Activity(), TextureView.SurfaceTextureListener {
             viewWidth,
             viewHeight,
         ) ?: return
-        // Match the old PreviewView FILL_CENTER transform, then use the same viewport below for
-        // overlay boxes. The encoded stream remains 720x1280 and no camera/encoder copy is added.
+        // TextureView consumes the camera target's local raster orientation. This intentionally
+        // differs from the remaining rotation advertised to the encoded-frame consumer.
         previewView.setTransform(
             Matrix().apply {
                 setPolyToPoly(
@@ -485,12 +655,12 @@ class CameraActivity : Activity(), TextureView.SurfaceTextureListener {
         if (viewWidth <= 0 || viewHeight <= 0) return source
         return source.mapNotNull { item ->
             CameraPreviewGeometry.mapFillCenter(
-                box = item.box,
+                item = item,
                 sourceWidth = frame.width,
                 sourceHeight = frame.height,
                 viewWidth = viewWidth,
                 viewHeight = viewHeight,
-            )?.let { item.copy(box = it) }
+            )
         }
     }
 

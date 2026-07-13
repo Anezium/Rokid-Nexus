@@ -25,6 +25,8 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 object GlassesHub {
@@ -50,9 +52,10 @@ object GlassesHub {
     private val launcherListeners = CopyOnWriteArrayList<(List<LauncherEntry>) -> Unit>()
     private val wifiOwnership = GlassesWifiOwnership()
     private val autoEnrollAttempted = AtomicBoolean(false)
-    private val wifiRequestExecutor = Executors.newSingleThreadExecutor { runnable ->
+    private val wifiRequestExecutor = Executors.newSingleThreadScheduledExecutor { runnable ->
         Thread(runnable, "RokidNexusWifi").apply { isDaemon = true }
     }
+    private var wifiDisableFuture: ScheduledFuture<*>? = null
     @Volatile private var launcherEntries: List<LauncherEntry> = emptyList()
     @Volatile private var appContext: Context? = null
     @Volatile private var cxrUp = false
@@ -93,7 +96,8 @@ object GlassesHub {
         override fun linkState(): Int = this@GlassesHub.linkState()
 
         override fun capabilities(): Int =
-            remotePhoneCapabilities.features and BusCapabilityBits.CAMERA_CONSUMER_READY
+            remotePhoneCapabilities.features and
+                (BusCapabilityBits.CAMERA_CONSUMER_READY or BusCapabilityBits.CAMERA_FROZEN_SPP)
 
         override fun registerPlugin(packageName: String, pluginId: String, cb: IBusCallback): Int =
             PluginRegistrationResult.DENIED
@@ -256,7 +260,13 @@ object GlassesHub {
                 return
             }
             wifiRequestExecutor.execute {
-                handleGlassesWifiRequest(context, rawEnabled)
+                if (rawEnabled) {
+                    wifiDisableFuture?.cancel(false)
+                    wifiDisableFuture = null
+                    handleGlassesWifiRequest(context, true)
+                } else {
+                    scheduleGlassesWifiDisable(context)
+                }
             }
             return
         }
@@ -392,7 +402,8 @@ object GlassesHub {
     private fun updateRemotePhoneCapabilities(payload: JSONObject) {
         val advertised = PhoneHubCapabilitiesContract.parse(payload)
         val next = PhoneHubCapabilitiesContract.create(
-            features = advertised.features and BusCapabilityBits.CAMERA_CONSUMER_READY,
+            features = advertised.features and
+                (BusCapabilityBits.CAMERA_CONSUMER_READY or BusCapabilityBits.CAMERA_FROZEN_SPP),
             cameraConsumerName = advertised.cameraConsumerName,
         )
         val previous = remotePhoneCapabilities
@@ -446,6 +457,22 @@ object GlassesHub {
             PackageManager.SIGNATURE_MATCH
     }
 
+    private fun scheduleGlassesWifiDisable(context: Context) {
+        if (!wifiOwnership.isHubOwned() || wifiDisableFuture != null) {
+            log("glassesWifiGrace scheduled=false hubOwned=${wifiOwnership.isHubOwned()}")
+            return
+        }
+        log("glassesWifiGrace scheduled=true delayMs=$WIFI_DISABLE_GRACE_MS")
+        wifiDisableFuture = wifiRequestExecutor.schedule(
+            {
+                wifiDisableFuture = null
+                handleGlassesWifiRequest(context, false)
+            },
+            WIFI_DISABLE_GRACE_MS,
+            TimeUnit.MILLISECONDS,
+        )
+    }
+
     private fun handleGlassesWifiRequest(context: Context, enabled: Boolean) {
         val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
         if (wifiManager == null) {
@@ -480,5 +507,6 @@ object GlassesHub {
         log("glassesWifi auto-enroll attempted=$attempted serviceConnected=$serviceConnected")
     }
 
+    private const val WIFI_DISABLE_GRACE_MS = 40_000L
     private const val CAMERA_LAUNCHER_ID = "camera"
 }

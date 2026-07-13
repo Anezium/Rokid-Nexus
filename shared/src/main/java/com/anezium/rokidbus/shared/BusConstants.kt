@@ -39,6 +39,8 @@ object BusPaths {
     const val CAMERA_SESSION_STATE = "/camera/session/state"
     const val CAMERA_LINK_OFFER = "/camera/link/offer"
     const val CAMERA_FREEZE_RESULT = "/camera/freeze/result"
+    const val CAMERA_FREEZE_IMAGE_CHUNK = "/camera/freeze/image/chunk"
+    const val CAMERA_FREEZE_IMAGE_ACK = "/camera/freeze/image/ack"
     const val CAMERA_OVERLAY = "/camera/overlay"
     const val GLASSES_WIFI_REQUEST = "/glasses/wifi/request"
     const val PLUGIN_OPEN = "/system/plugin/open"
@@ -52,12 +54,15 @@ object BusPaths {
         path == CAMERA_SESSION_STATE || path.startsWith("$CAMERA_SESSION_STATE/") ||
             path == CAMERA_LINK_OFFER || path.startsWith("$CAMERA_LINK_OFFER/") ||
             path == CAMERA_FREEZE_RESULT || path.startsWith("$CAMERA_FREEZE_RESULT/") ||
+            path == CAMERA_FREEZE_IMAGE_CHUNK || path.startsWith("$CAMERA_FREEZE_IMAGE_CHUNK/") ||
+            path == CAMERA_FREEZE_IMAGE_ACK || path.startsWith("$CAMERA_FREEZE_IMAGE_ACK/") ||
             path == CAMERA_OVERLAY || path.startsWith("$CAMERA_OVERLAY/")
 }
 
 object BusCapabilityBits {
     const val IMAGE_SURFACE = 1 shl 1
     const val CAMERA_CONSUMER_READY = 1 shl 2
+    const val CAMERA_FROZEN_SPP = 1 shl 3
 }
 
 object LinkStateBits {

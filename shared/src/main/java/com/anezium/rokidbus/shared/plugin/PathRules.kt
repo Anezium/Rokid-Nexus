@@ -15,6 +15,7 @@ object PathRules {
     private val cameraReceivePrefixes = setOf(
         BusPaths.CAMERA_SESSION_STATE,
         BusPaths.CAMERA_LINK_OFFER,
+        BusPaths.CAMERA_FREEZE_IMAGE_CHUNK,
     )
 
     fun normalizeAbsolute(path: String): String? {

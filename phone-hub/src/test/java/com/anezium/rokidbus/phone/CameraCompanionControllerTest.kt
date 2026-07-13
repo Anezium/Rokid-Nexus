@@ -29,6 +29,7 @@ class CameraCompanionControllerTest {
         val bound = mutableListOf<String>()
         val unbound = mutableListOf<String>()
         val deliveries = mutableListOf<Pair<String, JSONObject>>()
+        val binaryDeliveries = mutableListOf<Pair<String, ByteArray>>()
         override fun bind(principal: PhonePluginPrincipal): Boolean {
             bound += principal.descriptor.id
             return bindResult
@@ -36,6 +37,16 @@ class CameraCompanionControllerTest {
         override fun isRegistered(principal: PhonePluginPrincipal): Boolean = registered
         override fun deliver(principal: PhonePluginPrincipal, path: String, id: String, payload: JSONObject): Boolean {
             deliveries += path to JSONObject(payload.toString())
+            return registered
+        }
+        override fun deliverBinary(
+            principal: PhonePluginPrincipal,
+            path: String,
+            id: String,
+            payload: JSONObject,
+            data: ByteArray,
+        ): Boolean {
+            binaryDeliveries += path to data.copyOf()
             return registered
         }
         override fun unbind(principal: PhonePluginPrincipal) { unbound += principal.descriptor.id }
@@ -51,7 +62,12 @@ class CameraCompanionControllerTest {
             "Lens",
             3,
             setOf(PluginCapability.CAMERA),
-            listOf("/system/plugin", "/camera/session/state", "/camera/link/offer"),
+            listOf(
+                "/system/plugin",
+                "/camera/session/state",
+                "/camera/link/offer",
+                BusPaths.CAMERA_FREEZE_IMAGE_CHUNK,
+            ),
             null,
             false,
         ),
@@ -90,6 +106,29 @@ class CameraCompanionControllerTest {
         assertEquals(BusPaths.PLUGIN_CLOSE, runtime.deliveries.last().first)
         assertEquals(listOf("lens"), runtime.unbound)
         assertNull(controller.activeSessionId())
+    }
+
+    @Test
+    fun `binary freeze chunk queues until registration then targets camera consumer`() {
+        val runtime = FakeRuntime()
+        val controller = CameraCompanionController(runtime, FakeScheduler(), { principal })
+        controller.onRemoteEnvelope(state("frozen", "opened"))
+        val chunk = byteArrayOf(1, 2, 3)
+        assertTrue(
+            controller.onRemoteEnvelope(
+                BusEnvelope(
+                    path = BusPaths.CAMERA_FREEZE_IMAGE_CHUNK,
+                    id = "transfer:0",
+                    payload = JSONObject().put("sessionId", "frozen"),
+                    binary = chunk,
+                ),
+            ),
+        )
+        assertTrue(runtime.binaryDeliveries.isEmpty())
+        runtime.registered = true
+        controller.onRegistered(principal)
+        assertEquals(BusPaths.CAMERA_FREEZE_IMAGE_CHUNK, runtime.binaryDeliveries.single().first)
+        assertTrue(chunk.contentEquals(runtime.binaryDeliveries.single().second))
     }
 
     @Test

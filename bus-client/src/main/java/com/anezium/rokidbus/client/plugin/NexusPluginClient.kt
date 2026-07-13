@@ -119,6 +119,11 @@ class NexusPluginClient internal constructor(
         }
     }
 
+    override fun onBinary(path: String, id: String, payload: JSONObject, data: ByteArray) {
+        if (closed || !isApproved || payload.optString("pluginId") != pluginId || !rememberEvent(id)) return
+        callbacks.onBinary(path, id, payload, data)
+    }
+
     override fun onError(message: String) = Unit
 
     override fun close() {

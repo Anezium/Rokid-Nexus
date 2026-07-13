@@ -24,7 +24,7 @@
             <meta-data android:name="com.anezium.rokidbus.plugin.API_VERSION" android:value="3" />
             <meta-data android:name="com.anezium.rokidbus.plugin.CAPABILITIES" android:value="camera" />
             <meta-data android:name="com.anezium.rokidbus.plugin.RECEIVE_PREFIXES"
-                android:value="/camera/session/state,/camera/link/offer,/system/plugin" />
+                android:value="/camera/session/state,/camera/link/offer,/camera/freeze/image/chunk,/system/plugin" />
             <meta-data android:name="com.anezium.rokidbus.plugin.SETTINGS_ACTIVITY"
                 android:value=".LensSettingsActivity" />
             <meta-data android:name="com.anezium.rokidbus.plugin.LAUNCHABLE" android:value="false" />

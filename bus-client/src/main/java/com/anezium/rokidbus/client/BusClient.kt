@@ -193,7 +193,7 @@ class BusClient(
         return id
     }
 
-    internal fun trySendBinary(path: String, id: String, meta: JSONObject, data: ByteArray): Boolean {
+    fun trySendBinary(path: String, id: String, meta: JSONObject, data: ByteArray): Boolean {
         val bytes = meta.toString().toByteArray(Charsets.UTF_8)
         if (pluginId != null && pluginRegistrationState != PluginRegistrationResult.APPROVED) {
             listener(BusEvent.Error("Plugin registration is not approved"))

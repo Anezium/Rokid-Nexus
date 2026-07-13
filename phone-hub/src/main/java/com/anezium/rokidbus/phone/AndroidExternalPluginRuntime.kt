@@ -13,6 +13,8 @@ class AndroidExternalPluginRuntime(
     private val context: Context,
     private val isRegisteredCallback: (PhonePluginPrincipal) -> Boolean,
     private val deliverCallback: (PhonePluginPrincipal, String, String, JSONObject) -> Boolean,
+    private val deliverBinaryCallback: (PhonePluginPrincipal, String, String, JSONObject, ByteArray) -> Boolean =
+        { _, _, _, _, _ -> false },
     private val hideCallback: (String) -> Unit,
     private val disconnectedCallback: (PhonePluginPrincipal) -> Unit,
 ) : ExternalPluginRuntime, CameraCompanionRuntime {
@@ -63,6 +65,14 @@ class AndroidExternalPluginRuntime(
         id: String,
         payload: JSONObject,
     ): Boolean = deliverCallback(principal, path, id, payload)
+
+    override fun deliverBinary(
+        principal: PhonePluginPrincipal,
+        path: String,
+        id: String,
+        payload: JSONObject,
+        data: ByteArray,
+    ): Boolean = deliverBinaryCallback(principal, path, id, payload, data)
 
     override fun hideOwnedSurfaces(pluginId: String) = hideCallback(pluginId)
 

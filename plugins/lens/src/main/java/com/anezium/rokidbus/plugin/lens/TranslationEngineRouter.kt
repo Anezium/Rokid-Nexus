@@ -111,6 +111,10 @@ class TranslationEngineRouter internal constructor(
         private val lock = Any()
         private val terminal = TranslationTerminal()
         private val onlineStartedAtMs = nowMs()
+        private val sourceOrder = request.strings.distinct()
+        private val missingSources = LinkedHashSet(sourceOrder)
+        private val accumulated = mutableMapOf<String, TranslationResult>()
+        private val failures = mutableMapOf<String, AttemptFailure>()
         private var nextCandidateIndex = 0
         private var currentEngine: TranslationEngine? = null
         private var currentAttemptStartedAtMs = 0L
@@ -120,6 +124,10 @@ class TranslationEngineRouter internal constructor(
         private var finishing = false
 
         fun start() {
+            if (sourceOrder.isEmpty()) {
+                finish(emptyList())
+                return
+            }
             if (candidates.any { it.isOnline() }) {
                 val delayMs = (ONLINE_BUDGET_MS - elapsedOnlineMs()).coerceAtLeast(1L)
                 budgetFuture = budgetExecutor.schedule(
@@ -145,7 +153,12 @@ class TranslationEngineRouter internal constructor(
                 currentEngine = selected
                 currentAttemptStartedAtMs = nowMs()
                 generation += 1
-                Attempt(selected, generation, currentAttemptStartedAtMs)
+                Attempt(
+                    engine = selected,
+                    generation = generation,
+                    startedAtMs = currentAttemptStartedAtMs,
+                    sources = missingSources.toList(),
+                )
             }
             if (selection.engine == TranslationEngine.MLKIT_OFFLINE) {
                 budgetFuture?.cancel(false)
@@ -157,7 +170,7 @@ class TranslationEngineRouter internal constructor(
             val provider = providers.getValue(attempt.engine)
             val call = try {
                 provider.translate(
-                    request,
+                    request.copy(strings = attempt.sources),
                     object : TranslationProvider.Callback {
                         override fun onDownloading(status: TranslationDownloadStatus) {
                             if (attempt.engine != TranslationEngine.MLKIT_OFFLINE) return
@@ -196,22 +209,57 @@ class TranslationEngineRouter internal constructor(
             attempt: Attempt,
             translations: List<TranslationResult>,
         ) {
+            var completed: List<TranslationResult>? = null
             val accepted = synchronized(lock) {
                 if (!isCurrentAttempt(attempt) || finishing) {
                     false
                 } else {
-                    finishing = true
+                    translations.forEach { translation ->
+                        val matchingSources = attempt.sources.filter { source ->
+                            source in missingSources &&
+                                if (attempt.engine == TranslationEngine.MLKIT_OFFLINE) {
+                                    source.trim() == translation.src
+                                } else {
+                                    source == translation.src
+                                }
+                        }
+                        matchingSources.forEach { source ->
+                            val terminalResult = attempt.engine == TranslationEngine.MLKIT_OFFLINE
+                            if (terminalResult || (!translation.fallback && translation.failure == null)) {
+                                accumulated[source] = translation.copy(
+                                    src = source,
+                                    engine = attempt.engine,
+                                )
+                                missingSources.remove(source)
+                            } else {
+                                failures[source] = AttemptFailure(
+                                    attempt.engine,
+                                    translation.failure ?: TranslationErrorCode.TRANSLATION_FAILED,
+                                )
+                            }
+                        }
+                    }
                     currentEngine = null
+                    activeCall = TranslationCall.NONE
                     generation += 1
+                    if (missingSources.isEmpty()) {
+                        finishing = true
+                        completed = orderedResults()
+                    } else if (attempt.engine == TranslationEngine.MLKIT_OFFLINE) {
+                        missingSources.forEach { source ->
+                            failures[source] = AttemptFailure(
+                                TranslationEngine.MLKIT_OFFLINE,
+                                TranslationErrorCode.TRANSLATION_FAILED,
+                            )
+                        }
+                        finishing = true
+                        completed = orderedResultsWithFallbacks()
+                    }
                     true
                 }
             }
             if (!accepted) return
-            budgetFuture?.cancel(false)
-            val stamped = translations.map { it.copy(engine = attempt.engine) }
-            if (terminal.complete { notifyCallback { callback.onSuccess(stamped) } }) {
-                operations -= this
-            }
+            completed?.let(::finish) ?: advance()
         }
 
         private fun failAttempt(
@@ -225,6 +273,11 @@ class TranslationEngineRouter internal constructor(
                     currentEngine = null
                     activeCall = TranslationCall.NONE
                     generation += 1
+                    attempt.sources.forEach { source ->
+                        if (source in missingSources) {
+                            failures[source] = AttemptFailure(attempt.engine, error)
+                        }
+                    }
                     if (attempt.engine == TranslationEngine.MLKIT_OFFLINE) finishing = true
                     true
                 }
@@ -235,10 +288,31 @@ class TranslationEngineRouter internal constructor(
                 logAttemptFailure(attempt.engine, error, attempt.startedAtMs)
                 advance()
             } else {
-                budgetFuture?.cancel(false)
-                if (terminal.complete { notifyCallback { callback.onError(error) } }) {
-                    operations -= this
+                finish(orderedResultsWithFallbacks())
+            }
+        }
+
+        private fun orderedResults(): List<TranslationResult> =
+            sourceOrder.mapNotNull(accumulated::get)
+
+        private fun orderedResultsWithFallbacks(): List<TranslationResult> =
+            sourceOrder.map { source ->
+                accumulated[source] ?: failures[source].let { failure ->
+                    TranslationResult(
+                        src = source,
+                        dst = source,
+                        srcLang = "und",
+                        fallback = true,
+                        failure = failure?.error ?: TranslationErrorCode.TRANSLATION_FAILED,
+                        engine = failure?.engine ?: TranslationEngine.MLKIT_OFFLINE,
+                    )
                 }
+            }
+
+        private fun finish(results: List<TranslationResult>) {
+            budgetFuture?.cancel(false)
+            if (terminal.complete { notifyCallback { callback.onSuccess(results) } }) {
+                operations -= this
             }
         }
 
@@ -251,7 +325,12 @@ class TranslationEngineRouter internal constructor(
                 } else {
                     val engine = currentEngine
                     if (engine != null && engine.isOnline()) {
-                        expiredAttempt = Attempt(engine, generation, currentAttemptStartedAtMs)
+                        expiredAttempt = Attempt(
+                            engine = engine,
+                            generation = generation,
+                            startedAtMs = currentAttemptStartedAtMs,
+                            sources = missingSources.toList(),
+                        )
                         callToCancel = activeCall
                         activeCall = TranslationCall.NONE
                         currentEngine = null
@@ -312,6 +391,12 @@ class TranslationEngineRouter internal constructor(
         val engine: TranslationEngine,
         val generation: Long,
         val startedAtMs: Long,
+        val sources: List<String>,
+    )
+
+    private data class AttemptFailure(
+        val engine: TranslationEngine,
+        val error: TranslationErrorCode,
     )
 
     private val closed = AtomicBoolean(false)

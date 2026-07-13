@@ -9,6 +9,13 @@ interface CameraCompanionRuntime {
     fun bind(principal: PhonePluginPrincipal): Boolean
     fun isRegistered(principal: PhonePluginPrincipal): Boolean
     fun deliver(principal: PhonePluginPrincipal, path: String, id: String, payload: JSONObject): Boolean
+    fun deliverBinary(
+        principal: PhonePluginPrincipal,
+        path: String,
+        id: String,
+        payload: JSONObject,
+        data: ByteArray,
+    ): Boolean = false
     fun unbind(principal: PhonePluginPrincipal)
 }
 
@@ -35,7 +42,11 @@ class CameraCompanionController(
             true
         }
         BusPaths.CAMERA_LINK_OFFER -> {
-            handleLinkOffer(envelope)
+            handleCameraEnvelope(envelope)
+            true
+        }
+        BusPaths.CAMERA_FREEZE_IMAGE_CHUNK -> {
+            handleCameraEnvelope(envelope)
             true
         }
         else -> false
@@ -54,7 +65,7 @@ class CameraCompanionController(
         val pending = session.pending.toList()
         session.pending.clear()
         pending.forEach { message ->
-            if (!forward(session, message.path, message.id, message.payload)) {
+            if (!forward(session, message)) {
                 terminate(session, "forward_failed")
                 return
             }
@@ -62,13 +73,22 @@ class CameraCompanionController(
     }
 
     /** The plugin SDK drops any message whose payload lacks its own pluginId. */
-    private fun forward(session: Session, path: String, id: String, payload: JSONObject): Boolean =
-        runtime.deliver(
-            session.principal,
-            path,
-            id,
-            payload.put("pluginId", session.principal.descriptor.id),
-        )
+    private fun forward(session: Session, envelope: BusEnvelope): Boolean {
+        val payload = envelope.payload.put("pluginId", session.principal.descriptor.id)
+        val binary = envelope.binary
+        return if (binary == null) {
+            runtime.deliver(session.principal, envelope.path, envelope.id, payload)
+        } else {
+            runtime.deliverBinary(session.principal, envelope.path, envelope.id, payload, binary)
+        }
+    }
+
+    private fun forward(
+        session: Session,
+        path: String,
+        id: String,
+        payload: JSONObject,
+    ): Boolean = forward(session, BusEnvelope(path = path, id = id, payload = payload))
 
     @Synchronized
     fun onLinkLost() {
@@ -143,14 +163,23 @@ class CameraCompanionController(
         terminate(session, "session_closed")
     }
 
-    private fun handleLinkOffer(envelope: BusEnvelope) {
+    private fun handleCameraEnvelope(envelope: BusEnvelope) {
         val sessionId = envelope.payload.optString("sessionId")
         val session = active?.takeIf { it.sessionId == sessionId } ?: return
         if (session.openDelivered) {
-            if (!forward(session, envelope.path, envelope.id, envelope.payload)) {
-                terminate(session, "forward_failed")
-            }
+            if (!forward(session, envelope)) terminate(session, "forward_failed")
         } else {
+            val binary = envelope.binary
+            if (binary != null) {
+                val pendingBytes = session.pending.sumOf { it.binary?.size ?: 0 }
+                val pendingChunks = session.pending.count { it.binary != null }
+                if (pendingBytes + binary.size > MAX_PENDING_BINARY_BYTES ||
+                    pendingChunks >= MAX_PENDING_BINARY_CHUNKS
+                ) {
+                    terminate(session, "pending_binary_limit")
+                    return
+                }
+            }
             session.pending += envelope.snapshot()
         }
     }
@@ -196,6 +225,8 @@ class CameraCompanionController(
 
     companion object {
         const val REGISTRATION_TIMEOUT_MS = 5_000L
+        private const val MAX_PENDING_BINARY_BYTES = 8 * 1024 * 1024
+        private const val MAX_PENDING_BINARY_CHUNKS = 64
         private const val MAX_TERMINAL_SESSION_IDS = 64
     }
 }

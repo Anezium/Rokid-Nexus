@@ -23,7 +23,7 @@ internal class AndroidNexusPluginTransport(
         when (event) {
             is BusEvent.LinkState -> listener?.onLinkState(event.state)
             is BusEvent.Message -> listener?.onMessage(event.path, event.id, event.payload)
-            is BusEvent.Binary -> Unit
+            is BusEvent.Binary -> listener?.onBinary(event.path, event.id, event.meta, event.data)
             is BusEvent.Error -> listener?.onError(event.message)
         }
     }

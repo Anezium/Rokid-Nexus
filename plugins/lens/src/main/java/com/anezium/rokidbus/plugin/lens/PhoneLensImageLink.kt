@@ -24,6 +24,7 @@ import org.json.JSONObject
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.security.SecureRandom
+import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.ScheduledThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -83,6 +84,9 @@ internal class PhoneLensImageLink(
     private var channel: WifiP2pManager.Channel? = null
     private var receiverRegistered = false
     private var connectionInfoPoll: Runnable? = null
+    private var joinRetry: Runnable? = null
+    private var tcpRetry: ScheduledFuture<*>? = null
+    private var conflictRecoveryAttempted = false
     @Volatile var state: PhoneLensLinkState = PhoneLensLinkState.IDLE
         private set
 
@@ -96,9 +100,13 @@ internal class PhoneLensImageLink(
                 WifiP2pManager.WIFI_P2P_STATE_CHANGED_ACTION -> {
                     val enabled = intent.getIntExtra(WifiP2pManager.EXTRA_WIFI_STATE, -1) ==
                         WifiP2pManager.WIFI_P2P_STATE_ENABLED
-                    if (enabled && p2pRunning && !p2pConnecting) {
+                    if (
+                        enabled && p2pRunning && !p2pConnecting &&
+                        state != PhoneLensLinkState.CONNECTED && socket == null &&
+                        !tcpConnecting.get()
+                    ) {
                         currentSession()?.let { (expectedGeneration, currentOffer) ->
-                            resetGroupThenConnect(expectedGeneration, currentOffer)
+                            inspectGroupThenConnect(expectedGeneration, currentOffer)
                         }
                     } else if (!enabled && p2pRunning) {
                         log("lensLinkP2pDisabled")
@@ -137,7 +145,7 @@ internal class PhoneLensImageLink(
         val nextGeneration = generation.incrementAndGet()
         closeSocket()
         mainHandler.post {
-            teardownP2p(removeGroup = true)
+            teardownP2p()
             if (isCurrent(nextGeneration, parsed)) startP2p(nextGeneration, parsed)
         }
     }
@@ -158,39 +166,55 @@ internal class PhoneLensImageLink(
             return
         }
         p2pRunning = true
+        conflictRecoveryAttempted = false
         state = PhoneLensLinkState.WAITING_NETWORK
         registerReceiver()
         mainHandler.postDelayed(timeout, TIMEOUT_MS)
-        resetGroupThenConnect(expectedGeneration, currentOffer)
+        inspectGroupThenConnect(expectedGeneration, currentOffer)
     }
 
     @SuppressLint("MissingPermission")
-    private fun resetGroupThenConnect(
+    private fun inspectGroupThenConnect(
         expectedGeneration: Long,
         currentOffer: PhoneLensLinkOffer,
     ) {
-        if (!isP2pCurrent(expectedGeneration, currentOffer)) return
+        if (!isP2pCurrent(expectedGeneration, currentOffer) || isConnectedOrConnectingSocket()) return
         val localManager = manager ?: return failP2p("lensLinkP2pManagerLost")
         val localChannel = channel ?: return failP2p("lensLinkP2pChannelLost")
+        clearJoinRetry()
+        clearConnectionInfoPoll()
+        localManager.requestGroupInfo(localChannel) { group ->
+            if (!isP2pCurrent(expectedGeneration, currentOffer) || isConnectedOrConnectingSocket()) return@requestGroupInfo
+            when {
+                group == null -> connectByCredentials(expectedGeneration, currentOffer)
+                group.isGroupOwner -> recoverConflictingGroup(expectedGeneration, currentOffer)
+                group.networkName == currentOffer.ssid -> {
+                    log("lensLinkGroupReuse")
+                    p2pConnecting = true
+                    requestConnectionInfo(expectedGeneration, currentOffer)
+                }
+                else -> recoverConflictingGroup(expectedGeneration, currentOffer)
+            }
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun recoverConflictingGroup(
+        expectedGeneration: Long,
+        currentOffer: PhoneLensLinkOffer,
+    ) {
+        if (!isP2pCurrent(expectedGeneration, currentOffer) || isConnectedOrConnectingSocket()) return
+        if (conflictRecoveryAttempted) return failP2p("lensLinkP2pConflict")
+        val localManager = manager ?: return failP2p("lensLinkP2pManagerLost")
+        val localChannel = channel ?: return failP2p("lensLinkP2pChannelLost")
+        conflictRecoveryAttempted = true
         p2pConnecting = false
         groupOwnerAddress = null
-        clearConnectionInfoPoll()
         runCatching { localManager.stopPeerDiscovery(localChannel, null) }
         runCatching { localManager.cancelConnect(localChannel, null) }
         localManager.removeGroup(localChannel, object : WifiP2pManager.ActionListener {
-            override fun onSuccess() {
-                mainHandler.postDelayed(
-                    { connectByCredentials(expectedGeneration, currentOffer) },
-                    RESET_SETTLE_MS,
-                )
-            }
-
-            override fun onFailure(reason: Int) {
-                mainHandler.postDelayed(
-                    { connectByCredentials(expectedGeneration, currentOffer) },
-                    RESET_SETTLE_MS,
-                )
-            }
+            override fun onSuccess() = scheduleJoinRetry(expectedGeneration, currentOffer, RESET_SETTLE_MS)
+            override fun onFailure(reason: Int) = failP2p("lensLinkP2pConflict reason=$reason")
         })
     }
 
@@ -202,14 +226,17 @@ internal class PhoneLensImageLink(
      */
     @SuppressLint("MissingPermission")
     private fun connectByCredentials(expectedGeneration: Long, currentOffer: PhoneLensLinkOffer) {
-        if (!isP2pCurrent(expectedGeneration, currentOffer)) return
+        if (!isP2pCurrent(expectedGeneration, currentOffer) ||
+            isConnectedOrConnectingSocket() || p2pConnecting
+        ) return
+        clearJoinRetry()
         val localManager = manager ?: return failP2p("lensLinkP2pManagerLost")
         val localChannel = channel ?: return failP2p("lensLinkP2pChannelLost")
         val config = runCatching {
             WifiP2pConfig.Builder()
                 .setNetworkName(currentOffer.ssid)
                 .setPassphrase(currentOffer.passphrase)
-                .enablePersistentMode(false)
+                .enablePersistentMode(true)
                 .build()
         }.getOrElse {
             failP2p("lensLinkConfigBuildFailed")
@@ -231,10 +258,7 @@ internal class PhoneLensImageLink(
                     if (!isP2pCurrent(expectedGeneration, currentOffer)) return
                     p2pConnecting = false
                     log("lensLinkJoinRetry reason=$reason")
-                    mainHandler.postDelayed(
-                        { connectByCredentials(expectedGeneration, currentOffer) },
-                        RETRY_MS,
-                    )
+                    scheduleJoinRetry(expectedGeneration, currentOffer, RETRY_MS)
                 }
             },
         )
@@ -265,10 +289,8 @@ internal class PhoneLensImageLink(
         }
         if (info.isGroupOwner) {
             log("lensLinkUnexpectedGroupOwner")
-            mainHandler.postDelayed(
-                { resetGroupThenConnect(expectedGeneration, currentOffer) },
-                RETRY_MS,
-            )
+            p2pConnecting = false
+            recoverConflictingGroup(expectedGeneration, currentOffer)
             return
         }
 
@@ -279,6 +301,7 @@ internal class PhoneLensImageLink(
         }
         p2pConnecting = false
         groupOwnerAddress = ownerAddress
+        clearJoinRetry()
         clearConnectionInfoPoll()
         mainHandler.removeCallbacks(timeout)
         state = PhoneLensLinkState.CONNECTING
@@ -304,6 +327,31 @@ internal class PhoneLensImageLink(
         connectionInfoPoll?.let(mainHandler::removeCallbacks)
         connectionInfoPoll = null
     }
+
+    private fun scheduleJoinRetry(
+        expectedGeneration: Long,
+        currentOffer: PhoneLensLinkOffer,
+        delayMs: Long,
+    ) {
+        clearJoinRetry()
+        joinRetry = Runnable {
+            joinRetry = null
+            connectByCredentials(expectedGeneration, currentOffer)
+        }.also { mainHandler.postDelayed(it, delayMs) }
+    }
+
+    private fun clearJoinRetry() {
+        joinRetry?.let(mainHandler::removeCallbacks)
+        joinRetry = null
+    }
+
+    private fun clearTcpRetry() {
+        tcpRetry?.cancel(false)
+        tcpRetry = null
+    }
+
+    private fun isConnectedOrConnectingSocket(): Boolean =
+        state == PhoneLensLinkState.CONNECTED || socket != null || tcpConnecting.get()
 
     private fun registerReceiver() {
         if (receiverRegistered) return
@@ -349,6 +397,10 @@ internal class PhoneLensImageLink(
                 ),
             )
             state = PhoneLensLinkState.CONNECTED
+            clearJoinRetry()
+            clearConnectionInfoPoll()
+            clearTcpRetry()
+            mainHandler.removeCallbacks(timeout)
             log("lensLinkConnected")
 
             val probe = ByteArray(PROBE_BYTES).also(random::nextBytes)
@@ -380,7 +432,8 @@ internal class PhoneLensImageLink(
             tcpConnecting.set(false)
             if (isSocketCurrent(expectedGeneration, currentOffer, ownerAddress)) {
                 state = PhoneLensLinkState.WAITING_NETWORK
-                executor.schedule(
+                clearTcpRetry()
+                tcpRetry = executor.schedule(
                     { connectToGroupOwner(expectedGeneration, currentOffer, ownerAddress) },
                     RETRY_MS,
                     TimeUnit.MILLISECONDS,
@@ -428,7 +481,7 @@ internal class PhoneLensImageLink(
         log(message)
         state = PhoneLensLinkState.IDLE
         closeSocket()
-        teardownP2p(removeGroup = true)
+        teardownP2p()
     }
 
     private fun closeSocket() {
@@ -437,19 +490,19 @@ internal class PhoneLensImageLink(
         tcpConnecting.set(false)
     }
 
-    @SuppressLint("MissingPermission")
-    private fun teardownP2p(removeGroup: Boolean) {
+    private fun teardownP2p() {
         p2pRunning = false
         p2pConnecting = false
         groupOwnerAddress = null
         mainHandler.removeCallbacks(timeout)
+        clearJoinRetry()
         clearConnectionInfoPoll()
+        clearTcpRetry()
         val localManager = manager
         val localChannel = channel
         if (localManager != null && localChannel != null) {
             runCatching { localManager.stopPeerDiscovery(localChannel, null) }
             runCatching { localManager.cancelConnect(localChannel, null) }
-            if (removeGroup) runCatching { localManager.removeGroup(localChannel, null) }
         }
         if (receiverRegistered) {
             runCatching { appContext.unregisterReceiver(receiver) }
@@ -466,7 +519,7 @@ internal class PhoneLensImageLink(
         state = PhoneLensLinkState.IDLE
         offer = null
         closeSocket()
-        teardownP2p(removeGroup = true)
+        teardownP2p()
         executor.shutdownNow()
     }
 

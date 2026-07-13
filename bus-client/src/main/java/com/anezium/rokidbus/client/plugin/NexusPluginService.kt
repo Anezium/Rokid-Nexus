@@ -97,6 +97,8 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
     }
     final override fun onMessage(path: String, id: String, payload: JSONObject) =
         onNexusMessage(path, id, payload)
+    final override fun onBinary(path: String, id: String, payload: JSONObject, data: ByteArray) =
+        onNexusBinaryMessage(path, id, payload, data)
 
     protected abstract fun onNexusOpen()
     protected abstract fun onNexusClose()
@@ -104,6 +106,12 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
     protected open fun onNexusLinkState(state: Int) = Unit
     protected open fun onNexusRegistrationState(result: Int) = Unit
     protected open fun onNexusMessage(path: String, id: String, payload: JSONObject) = Unit
+    protected open fun onNexusBinaryMessage(
+        path: String,
+        id: String,
+        payload: JSONObject,
+        data: ByteArray,
+    ) = Unit
 
     /**
      * Re-promotes the single plugin-service notification with any foreground types needed by

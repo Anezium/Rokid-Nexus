@@ -6,7 +6,6 @@ import android.graphics.BitmapFactory
 import android.graphics.BitmapRegionDecoder
 import android.graphics.Matrix
 import android.graphics.Rect
-import android.media.ExifInterface
 import android.os.SystemClock
 import android.util.Log
 import com.anezium.rokidbus.client.PluginRegistrationResult
@@ -19,7 +18,6 @@ import com.anezium.rokidbus.shared.plugin.NexusInputEvent
 import com.google.mlkit.vision.text.Text
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.ByteArrayInputStream
 import java.util.UUID
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -34,10 +32,49 @@ internal interface LensRuntimeHost {
 
 internal interface LensSessionEngine : AutoCloseable {
     fun message(path: String, id: String, payload: JSONObject)
+    fun binary(path: String, id: String, payload: JSONObject, data: ByteArray) = Unit
 }
 
 internal fun interface LensSessionEngineFactory {
     fun create(): LensSessionEngine
+}
+
+internal fun paragraphLayoutJson(layout: LiveOverlayParagraphLayout): JSONObject =
+    JSONObject()
+        .put("kind", CameraOverlayContract.PARAGRAPH_LAYOUT_KIND)
+        .put("version", CameraOverlayContract.PARAGRAPH_LAYOUT_VERSION)
+        .put("medianLineHeight", layout.medianLineHeight)
+        .put("growDown", layout.growDown)
+        .apply { layout.column?.let { put("column", it) } }
+
+internal fun normalizedParagraphLayoutJson(
+    medianLineHeight: Float,
+    growDown: Float,
+    frameHeight: Int,
+    column: Int,
+): JSONObject {
+    require(frameHeight > 0)
+    return paragraphLayoutJson(
+        LiveOverlayParagraphLayout(
+            medianLineHeight = (medianLineHeight / frameHeight).coerceIn(0f, 1f),
+            growDown = (growDown / frameHeight).coerceIn(0f, 1f),
+            column = column.takeIf { it in 0..CameraOverlayContract.MAX_LAYOUT_COLUMN },
+        ),
+    )
+}
+
+internal fun frozenRemainingRotation(metadata: JSONObject): Int? {
+    val key = when {
+        metadata.has("remainingRotationDegrees") -> "remainingRotationDegrees"
+        metadata.has("rotationDegrees") -> "rotationDegrees"
+        metadata.has("rotation") -> "rotation"
+        else -> return null
+    }
+    val value = metadata.opt(key) as? Number ?: return null
+    val long = value.toLong()
+    if (value.toDouble() != long.toDouble() || long !in Int.MIN_VALUE..Int.MAX_VALUE) return null
+    val normalized = ((long.toInt() % 360) + 360) % 360
+    return normalized.takeIf { it % 90 == 0 }
 }
 
 internal class LensLifecycle(private val factory: LensSessionEngineFactory) : AutoCloseable {
@@ -52,6 +89,11 @@ internal class LensLifecycle(private val factory: LensSessionEngineFactory) : Au
     @Synchronized
     fun message(path: String, id: String, payload: JSONObject) {
         engine?.message(path, id, payload)
+    }
+
+    @Synchronized
+    fun binary(path: String, id: String, payload: JSONObject, data: ByteArray) {
+        engine?.binary(path, id, payload, data)
     }
 
     @Synchronized
@@ -82,6 +124,12 @@ class LensPluginService : NexusPluginService() {
     override fun onNexusInput(event: NexusInputEvent) = Unit
     override fun onNexusMessage(path: String, id: String, payload: JSONObject) =
         lifecycle.message(path, id, payload)
+    override fun onNexusBinaryMessage(
+        path: String,
+        id: String,
+        payload: JSONObject,
+        data: ByteArray,
+    ) = lifecycle.binary(path, id, payload, data)
 
     override fun onNexusRegistrationState(result: Int) {
         if (result != PluginRegistrationResult.APPROVED) lifecycle.close()
@@ -101,7 +149,13 @@ internal class LensCameraSession(
     context: Context,
     private val host: LensRuntimeHost,
 ) : LensSessionEngine {
-    private data class OcrLine(val source: String, val box: Rect)
+    private data class OcrLine(
+        val source: String,
+        val box: Rect,
+        val medianLineHeight: Float,
+        val growDown: Float,
+        val column: Int,
+    )
 
     private val appContext = context.applicationContext
     private val closed = AtomicBoolean(false)
@@ -115,7 +169,16 @@ internal class LensCameraSession(
     private val pool = Nv21BufferPool()
     private val holder = LatestFrameHolder()
     private val overlayComposer = LiveOverlayComposer()
+    private val sessionGeneration = AtomicLong(0L)
     private val activeFrozenBitmaps = ConcurrentHashMap.newKeySet<Bitmap>()
+    private val activeFrozenTranslations = ConcurrentHashMap.newKeySet<TranslationCall>()
+    private val frozenChunkAssembler = FrozenImageChunkAssembler()
+    private val processedFrozenRequests = linkedSetOf<Pair<String, Long>>()
+    private val liveTranslation = LiveTranslationScheduler(
+        translator = translator,
+        log = host::log,
+        onUpdates = ::onLiveTranslations,
+    )
     private val liveOcr: LiveOcrRunner
     private val decoder: LatestFrameDecoder
     private val imageLink: PhoneLensImageLink
@@ -131,6 +194,14 @@ internal class LensCameraSession(
             holder = holder,
             pool = pool,
             onFrameReady = liveOcr::kick,
+            onGeometry = { geometry ->
+                val oriented = geometry.orientedSize
+                host.log(
+                    "decoder crop=${geometry.rasterWidth}x${geometry.rasterHeight} " +
+                        "remainingRotation=${geometry.remainingRotationDegrees} " +
+                        "oriented=${oriented.width}x${oriented.height}",
+                )
+            },
             onError = { message, failure ->
                 host.log("$message type=${failure?.javaClass?.simpleName ?: "unknown"}")
             },
@@ -146,6 +217,27 @@ internal class LensCameraSession(
         }
     }
 
+    override fun binary(path: String, id: String, payload: JSONObject, data: ByteArray) {
+        if (closed.get() || path != BusPaths.CAMERA_FREEZE_IMAGE_CHUNK) return
+        val assembled = frozenChunkAssembler.accept(payload, data) ?: return
+        if (assembled.metadata.sessionId != sessionId) return
+        processFrozen(
+            CameraLinkPacket(
+                type = CameraLinkPacketType.FROZEN_IMAGE,
+                requestId = assembled.metadata.requestId,
+                meta = JSONObject()
+                    .put("sessionId", assembled.metadata.sessionId)
+                    .put("requestId", assembled.metadata.requestId)
+                    .put("mimeType", "image/jpeg")
+                    .put("width", assembled.metadata.width)
+                    .put("height", assembled.metadata.height)
+                    .put("rotationDegrees", assembled.metadata.rotationDegrees)
+                    .toString(),
+                payload = assembled.jpeg,
+            ),
+        )
+    }
+
     private fun handleSessionState(payload: JSONObject) {
         val incomingSession = payload.optString("sessionId")
         if (incomingSession.isBlank()) return
@@ -157,7 +249,11 @@ internal class LensCameraSession(
                     config.optInt("height") !in 1..MAX_IMAGE_EDGE ||
                     config.optInt("fps") !in 1..60
                 ) return
+                sessionGeneration.incrementAndGet()
                 sessionId = incomingSession
+                frozenChunkAssembler.clear()
+                synchronized(processedFrozenRequests) { processedFrozenRequests.clear() }
+                liveTranslation.reset()
                 overlayComposer.reset()
                 liveOcr.resetPolicies()
                 host.log("camera session opened")
@@ -178,13 +274,19 @@ internal class LensCameraSession(
             CameraLinkPacketType.VIDEO_CONFIG -> {
                 val meta = runCatching { JSONObject(packet.meta) }.getOrNull() ?: return
                 if (meta.optString("mimeType") != "video/avc") return
-                decoder.configure(
-                    packet.payload,
-                    meta.optInt("width"),
-                    meta.optInt("height"),
-                    meta.optInt("fps"),
-                    meta.optInt("rotationDegrees", 0),
+                val geometry = runCatching { LiveFrameGeometry.fromVideoConfigMetadata(meta) }
+                    .getOrNull() ?: return
+                val fps = meta.optInt("fps")
+                if (geometry.rasterWidth !in 1..MAX_IMAGE_EDGE ||
+                    geometry.rasterHeight !in 1..MAX_IMAGE_EDGE || fps !in 1..60
+                ) return
+                val oriented = geometry.orientedSize
+                host.log(
+                    "video config raster=${geometry.rasterWidth}x${geometry.rasterHeight} " +
+                        "remainingRotation=${geometry.remainingRotationDegrees} " +
+                        "oriented=${oriented.width}x${oriented.height}",
                 )
+                decoder.configure(packet.payload, geometry, fps)
             }
             CameraLinkPacketType.VIDEO_FRAME -> decoder.queue(packet)
             CameraLinkPacketType.FROZEN_IMAGE -> processFrozen(packet)
@@ -203,11 +305,9 @@ internal class LensCameraSession(
             continuation()
             return
         }
-        val orientedSize = LiveFrameGeometry.orientedSize(
-            frame.width,
-            frame.height,
-            frame.rotationDegrees,
-        )
+        val orientedSize = frame.geometry.orientedSize
+        val targetLanguage = targetLanguage()
+        val activeGeneration = sessionGeneration.get()
         val pending = runCatching {
             overlayComposer.observe(
                 blocks = liveOcrBlocks(result),
@@ -215,32 +315,39 @@ internal class LensCameraSession(
                 frameWidth = orientedSize.width,
                 frameHeight = orientedSize.height,
                 nowMs = SystemClock.elapsedRealtime(),
+                targetLanguage = targetLanguage,
             )
         }.getOrElse {
             host.log("live overlay composition failed")
             continuation()
             return
         }
-        if (pending.tracks.isEmpty()) {
-            overlayComposer.complete(pending, emptyMap())?.let { items ->
-                if (!closed.get() && sessionId == activeSession) sendLiveOverlay(activeSession, items)
+        overlayComposer.complete(pending, emptyMap())?.let { items ->
+            if (!closed.get() && sessionId == activeSession && sessionGeneration.get() == activeGeneration) {
+                sendLiveOverlay(activeSession, items)
             }
-            continuation()
-            return
         }
-        translate(
-            requestId = "live-${frame.frameId}-${seq.incrementAndGet()}",
-            mode = script.toRecognizerMode(),
-            sources = pending.tracks.map(LiveOverlayTrack::sourceText),
-            onResult = { translations ->
-                if (!closed.get() && sessionId == activeSession) {
-                    overlayComposer.complete(pending, translations)?.let { items ->
-                        sendLiveOverlay(activeSession, items)
-                    }
-                }
-                continuation()
-            },
+        val candidates = overlayComposer.translationCandidates(pending, activeGeneration)
+        continuation()
+        liveTranslation.submit(candidates)
+    }
+
+    private fun onLiveTranslations(updates: List<LiveTranslationUpdate>) {
+        if (closed.get() || updates.isEmpty()) return
+        val activeSession = sessionId ?: return
+        val activeGeneration = sessionGeneration.get()
+        val eligible = updates.filter { it.candidate.sessionGeneration == activeGeneration }
+        val application = overlayComposer.applyTranslations(eligible, activeGeneration)
+        host.log(
+            "live translation callback candidates=${updates.size} requested=${eligible.size} " +
+                "covered=${application.applied - application.fallback} fallback=${application.fallback} " +
+                "stale=${application.rejected + updates.size - eligible.size}",
         )
+        application.emitted?.let { items ->
+            if (!closed.get() && sessionId == activeSession && sessionGeneration.get() == activeGeneration) {
+                sendLiveOverlay(activeSession, items)
+            }
+        }
     }
 
     private fun processFrozen(packet: CameraLinkPacket) {
@@ -250,7 +357,7 @@ internal class LensCameraSession(
         val requestId = meta.optLong("requestId", Long.MIN_VALUE)
         val width = meta.optInt("width")
         val height = meta.optInt("height")
-        val rotation = meta.optInt("rotationDegrees", meta.optInt("rotation", -1))
+        val rotation = frozenRemainingRotation(meta) ?: return
         val crop = meta.optJSONArray("crop")?.takeIf { it.length() == 4 }?.let {
             Rect(it.optInt(0), it.optInt(1), it.optInt(2), it.optInt(3))
         }
@@ -259,6 +366,13 @@ internal class LensCameraSession(
             width !in 1..MAX_IMAGE_EDGE || height !in 1..MAX_IMAGE_EDGE ||
             rotation !in setOf(0, 90, 180, 270) || packet.payload.isEmpty()
         ) return
+        val requestKey = activeSession to requestId
+        synchronized(processedFrozenRequests) {
+            if (!processedFrozenRequests.add(requestKey)) return
+            while (processedFrozenRequests.size > MAX_PROCESSED_FROZEN_REQUESTS) {
+                processedFrozenRequests.remove(processedFrozenRequests.first())
+            }
+        }
         val jpeg = packet.payload
         frozenExecutor.execute {
             val bitmap = runCatching { decodeFrozenJpeg(jpeg, width, height, crop, rotation) }
@@ -276,12 +390,17 @@ internal class LensCameraSession(
                 recognized.fold(
                     onSuccess = { result ->
                         val lines = frozenOcrLines(result.text)
-                        translate(
-                            requestId = "freeze-$requestId",
+                        var translation: TranslationCall? = null
+                        val batch = FrozenTranslationBatch(
+                            translator = translator,
+                            requestPrefix = "freeze-$requestId",
+                            targetLanguage = targetLanguage(),
                             mode = result.script.toRecognizerMode(),
                             sources = lines.map(OcrLine::source),
-                            onResult = { translations ->
+                            log = host::log,
+                            onComplete = { translations ->
                                 try {
+                                    translation?.let { activeFrozenTranslations -= it }
                                     if (!closed.get() && sessionId == activeSession) {
                                         sendOverlay(
                                             BusPaths.CAMERA_FREEZE_RESULT, activeSession, requestId,
@@ -293,37 +412,14 @@ internal class LensCameraSession(
                                 }
                             },
                         )
+                        translation = batch
+                        activeFrozenTranslations += batch
+                        batch.start()
                     },
                     onFailure = { recycleFrozen(bitmap) },
                 )
             }
         }
-    }
-
-    private fun translate(
-        requestId: String,
-        mode: LensRecognizerMode,
-        sources: List<String>,
-        onResult: (Map<String, TranslationResult>) -> Unit,
-    ) {
-        if (closed.get()) {
-            onResult(emptyMap())
-            return
-        }
-        val strings = sources.asSequence().distinct().take(MAX_TRANSLATION_STRINGS).toList()
-        if (strings.isEmpty()) {
-            onResult(emptyMap())
-            return
-        }
-        val callback = object : TranslationProvider.Callback {
-            override fun onDownloading(status: TranslationDownloadStatus) = Unit
-            override fun onSuccess(translations: List<TranslationResult>) =
-                onResult(translations.associateBy(TranslationResult::src))
-            override fun onError(error: TranslationErrorCode) = onResult(emptyMap())
-        }
-        runCatching {
-            translator.translate(TranslationRequest(requestId, targetLanguage(), mode, strings), callback)
-        }.onFailure { onResult(emptyMap()) }
     }
 
     private fun sendOverlay(
@@ -336,25 +432,23 @@ internal class LensCameraSession(
         height: Int,
     ) {
         val items = JSONArray()
+        var fallbackCount = 0
         lines.take(CameraOverlayContract.MAX_ITEMS).forEach { line ->
             val box = normalizedBox(line.box, width, height) ?: return@forEach
-            val translated = translations[line.source]
-            val output = translated?.dst?.takeIf(String::isNotBlank) ?: line.source
+            val display = overlayDisplay(line.source, translations[line.source])
+            if (display.fallback) fallbackCount += 1
             items.put(
                 JSONObject()
-                    .put("text", output.take(CameraOverlayContract.MAX_TEXT_CHARS))
+                    .put("text", display.text)
                     .put(
                         "box",
                         JSONObject()
                             .put("left", box[0]).put("top", box[1])
                             .put("right", box[2]).put("bottom", box[3]),
                     )
-                    .put(
-                        "role",
-                        if (translated == null || translated.fallback || translated.dst == line.source) {
-                            "source"
-                        } else "translation",
-                    ),
+                    .put("role", display.role)
+                    .apply { display.reason?.let { put("reason", it) } }
+                    .put("layout", paragraphLayoutJson(line, height)),
             )
         }
         val payload = JSONObject()
@@ -363,7 +457,18 @@ internal class LensCameraSession(
             .put("seq", seq.incrementAndGet())
             .put("items", items)
         if (requestId != null) payload.put("requestId", requestId)
-        host.send(path, requestId?.toString() ?: UUID.randomUUID().toString(), payload)
+        val payloadBytes = payload.toString().toByteArray(Charsets.UTF_8).size
+        val dispatchAccepted = host.send(
+            path,
+            requestId?.toString() ?: UUID.randomUUID().toString(),
+            payload,
+        )
+        host.log(
+            "overlay dispatch path=$path candidates=${lines.size} requested=${translations.size} " +
+                "covered=${items.length() - fallbackCount} fallback=$fallbackCount " +
+                "itemCount=${items.length()} jsonUtf8Bytes=$payloadBytes " +
+                "warningOver3KiB=${payloadBytes > THREE_KIB} dispatchAccepted=$dispatchAccepted",
+        )
     }
 
     private fun sendLiveOverlay(
@@ -375,7 +480,7 @@ internal class LensCameraSession(
             items.put(
                 JSONObject()
                     .put("id", item.id.take(CameraOverlayContract.MAX_ID_CHARS))
-                    .put("text", item.text.take(CameraOverlayContract.MAX_TEXT_CHARS))
+                    .put("text", item.text)
                     .put(
                         "box",
                         JSONObject()
@@ -384,7 +489,9 @@ internal class LensCameraSession(
                             .put("right", item.box.right)
                             .put("bottom", item.box.bottom),
                     )
-                    .put("role", item.role),
+                    .put("role", item.role)
+                    .apply { item.reason?.let { put("reason", it) } }
+                    .put("layout", paragraphLayoutJson(item.layout)),
             )
         }
         val payload = JSONObject()
@@ -392,8 +499,28 @@ internal class LensCameraSession(
             .put("sessionId", activeSession)
             .put("seq", seq.incrementAndGet())
             .put("items", items)
-        host.send(BusPaths.CAMERA_OVERLAY, UUID.randomUUID().toString(), payload)
+        val payloadBytes = payload.toString().toByteArray(Charsets.UTF_8).size
+        val fallbackCount = composed.count { it.role != ROLE_TRANSLATION }
+        val dispatchAccepted = host.send(
+            BusPaths.CAMERA_OVERLAY,
+            UUID.randomUUID().toString(),
+            payload,
+        )
+        host.log(
+            "overlay dispatch path=${BusPaths.CAMERA_OVERLAY} candidates=${composed.size} " +
+                "requested=${composed.size} covered=${composed.size - fallbackCount} " +
+                "fallback=$fallbackCount itemCount=${items.length()} jsonUtf8Bytes=$payloadBytes " +
+                "warningOver3KiB=${payloadBytes > THREE_KIB} dispatchAccepted=$dispatchAccepted",
+        )
     }
+
+    private fun paragraphLayoutJson(line: OcrLine, height: Int): JSONObject =
+        normalizedParagraphLayoutJson(
+            medianLineHeight = line.medianLineHeight,
+            growDown = line.growDown,
+            frameHeight = height,
+            column = line.column,
+        )
 
     private fun liveOcrBlocks(text: Text): List<LiveFrameParagraphBlock> =
         text.textBlocks.mapNotNull { block ->
@@ -431,15 +558,18 @@ internal class LensCameraSession(
         return aggregateFrozenOverlayLines(blocks)
             .map { line ->
                 OcrLine(
-                    line.source,
-                    Rect(line.bounds.left, line.bounds.top, line.bounds.right, line.bounds.bottom),
+                    source = line.source,
+                    box = Rect(line.bounds.left, line.bounds.top, line.bounds.right, line.bounds.bottom),
+                    medianLineHeight = line.medianLineHeight,
+                    growDown = line.growDown,
+                    column = line.column,
                 )
             }
             .take(CameraOverlayContract.MAX_ITEMS)
     }
 
     private fun normalizeSource(value: String): String =
-        value.trim().replace(Regex("\\s+"), " ").take(MAX_SOURCE_CHARS)
+        value.trim().replace(Regex("\\s+"), " ")
 
     private fun normalizedBox(box: Rect, width: Int, height: Int): FloatArray? {
         if (width <= 0 || height <= 0) return null
@@ -477,23 +607,10 @@ internal class LensCameraSession(
         } else {
             BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size) ?: error("JPEG decode failed")
         }
-        val rotation = rotationDegrees.takeIf { it >= 0 } ?: runCatching {
-            when (
-                ExifInterface(ByteArrayInputStream(jpeg)).getAttributeInt(
-                    ExifInterface.TAG_ORIENTATION,
-                    ExifInterface.ORIENTATION_NORMAL,
-                )
-            ) {
-                ExifInterface.ORIENTATION_ROTATE_90 -> 90
-                ExifInterface.ORIENTATION_ROTATE_180 -> 180
-                ExifInterface.ORIENTATION_ROTATE_270 -> 270
-                else -> 0
-            }
-        }.getOrDefault(0)
-        if (rotation != 0) {
+        if (rotationDegrees != 0) {
             val rotated = Bitmap.createBitmap(
                 bitmap, 0, 0, bitmap.width, bitmap.height,
-                Matrix().apply { postRotate(rotation.toFloat()) }, true,
+                Matrix().apply { postRotate(rotationDegrees.toFloat()) }, true,
             )
             if (rotated !== bitmap) bitmap.recycle()
             bitmap = rotated
@@ -530,9 +647,15 @@ internal class LensCameraSession(
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
         sessionId = null
+        frozenChunkAssembler.clear()
+        synchronized(processedFrozenRequests) { processedFrozenRequests.clear() }
         imageLink.close()
         decoder.close()
         liveOcr.close()
+        sessionGeneration.incrementAndGet()
+        liveTranslation.close()
+        activeFrozenTranslations.toList().forEach(TranslationCall::cancel)
+        activeFrozenTranslations.clear()
         frozenExecutor.shutdownNow()
         frozenOcr.close()
         translator.close()
@@ -545,7 +668,7 @@ internal class LensCameraSession(
 
     private companion object {
         const val MAX_IMAGE_EDGE = 4096
-        const val MAX_TRANSLATION_STRINGS = 24
-        const val MAX_SOURCE_CHARS = 1_024
+        const val MAX_PROCESSED_FROZEN_REQUESTS = 64
+        const val THREE_KIB = 3 * 1024
     }
 }

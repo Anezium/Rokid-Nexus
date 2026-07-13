@@ -7,6 +7,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.net.NetworkInfo
 import android.net.wifi.WifiManager
+import android.net.wifi.p2p.WifiP2pConfig
 import android.net.wifi.p2p.WifiP2pGroup
 import android.net.wifi.p2p.WifiP2pInfo
 import android.net.wifi.p2p.WifiP2pManager
@@ -46,6 +47,7 @@ internal class CameraLink(
     private val onState: (String) -> Unit,
 ) : AutoCloseable {
     private val appContext = context.applicationContext
+    private val profileStore = CameraP2pProfileStore(appContext)
     private val mainHandler = Handler(Looper.getMainLooper())
     private val acceptExecutor = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "camera-link-accept").apply { isDaemon = true }
@@ -69,6 +71,10 @@ internal class CameraLink(
     private var receiverRegistered = false
     private var createAttempts = 0
     private var wifiWaitAttempts = 0
+    private var configuredCreateAttempted = false
+    private var legacyCreateAttempted = false
+    private var conflictRecoveryAttempted = false
+    private var waitingForCreatedGroup = false
     private var createRetry: Runnable? = null
     private var wifiRetry: Runnable? = null
     private var groupPoll: Runnable? = null
@@ -82,7 +88,7 @@ internal class CameraLink(
                 WifiP2pManager.WIFI_P2P_STATE_CHANGED_ACTION -> {
                     val enabled = intent.getIntExtra(WifiP2pManager.EXTRA_WIFI_STATE, -1) ==
                         WifiP2pManager.WIFI_P2P_STATE_ENABLED
-                    if (running && enabled && currentOffer == null) resetGroupThenCreate()
+                    if (running && enabled && currentOffer == null) inspectGroup()
                     if (running && !enabled) state("WAITING FOR WI-FI")
                 }
                 WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION -> {
@@ -107,7 +113,7 @@ internal class CameraLink(
         if (manager == null || channel == null) return fail("WI-FI DIRECT UNAVAILABLE")
         registerReceiver()
         writerExecutor.execute(::writerLoop)
-        if (isWifiReady()) resetGroupThenCreate() else waitForWifi()
+        if (isWifiReady()) inspectGroup() else waitForWifi()
     }
 
     fun resendOfferIfDisconnected() {
@@ -136,64 +142,126 @@ internal class CameraLink(
     }
 
     @SuppressLint("MissingPermission")
-    private fun resetGroupThenCreate() {
+    private fun inspectGroup() {
         if (!running) return
         if (!isWifiReady()) return waitForWifi()
-        val localManager = manager ?: return fail("WI-FI DIRECT LOST")
-        val localChannel = channel ?: return fail("WI-FI DIRECT LOST")
-        clearCreateRetry()
-        runCatching { localManager.stopPeerDiscovery(localChannel, null) }
-        runCatching { localManager.cancelConnect(localChannel, null) }
-        localManager.removeGroup(localChannel, object : WifiP2pManager.ActionListener {
-            override fun onSuccess() = scheduleCreate(RESET_SETTLE_MS)
-            override fun onFailure(reason: Int) = scheduleCreate(RESET_SETTLE_MS)
-        })
-    }
-
-    private fun scheduleCreate(delayMs: Long) {
-        clearCreateRetry()
-        createRetry = Runnable {
-            createRetry = null
-            createGroup()
-        }.also { mainHandler.postDelayed(it, delayMs) }
+        state("INSPECTING CAMERA LINK")
+        requestGroupInfo()
     }
 
     @SuppressLint("MissingPermission")
-    private fun createGroup() {
-        if (!running) return
+    private fun requestGroupInfo() {
         val localManager = manager ?: return fail("WI-FI DIRECT LOST")
         val localChannel = channel ?: return fail("WI-FI DIRECT LOST")
+        runCatching { localManager.requestGroupInfo(localChannel, ::handleGroup) }
+            .onFailure {
+                if (running) {
+                    if (waitingForCreatedGroup) scheduleGroupPoll(GROUP_POLL_MS)
+                    else createConfiguredGroup()
+                }
+            }
+    }
+
+    private fun handleGroup(group: WifiP2pGroup?) {
+        if (!running) return
+        if (isUsableOwnerGroup(group)) {
+            activateGroup(group!!, if (waitingForCreatedGroup) "created" else "active_reuse")
+            return
+        }
+        if (waitingForCreatedGroup) {
+            scheduleGroupPoll(GROUP_POLL_MS)
+            return
+        }
+        if (group == null) {
+            createConfiguredGroup()
+        } else {
+            recoverConflictingGroup()
+        }
+    }
+
+    private fun isUsableOwnerGroup(group: WifiP2pGroup?): Boolean =
+        group != null && group.isGroupOwner && group.networkName.isNotBlank() &&
+            group.passphrase.isNotBlank() && group.getInterface().isNotBlank()
+
+    @SuppressLint("MissingPermission")
+    private fun recoverConflictingGroup() {
+        if (conflictRecoveryAttempted) return fail("CAMERA LINK CONFLICT")
+        val localManager = manager ?: return fail("WI-FI DIRECT LOST")
+        val localChannel = channel ?: return fail("WI-FI DIRECT LOST")
+        conflictRecoveryAttempted = true
+        state("RECOVERING CAMERA LINK")
+        runCatching { localManager.stopPeerDiscovery(localChannel, null) }
+        runCatching { localManager.cancelConnect(localChannel, null) }
+        localManager.removeGroup(localChannel, object : WifiP2pManager.ActionListener {
+            override fun onSuccess() = scheduleCreate(RECOVERY_SETTLE_MS, ::createConfiguredGroup)
+            override fun onFailure(reason: Int) = fail("CAMERA LINK CONFLICT")
+        })
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun createConfiguredGroup() {
+        if (!running || configuredCreateAttempted) return
+        val localManager = manager ?: return fail("WI-FI DIRECT LOST")
+        val localChannel = channel ?: return fail("WI-FI DIRECT LOST")
+        val profile = profileStore.loadOrCreate()
+        val config = WifiP2pConfig.Builder()
+            .setNetworkName(profile.networkName)
+            .setPassphrase(profile.passphrase)
+            .enablePersistentMode(true)
+            .build()
+        configuredCreateAttempted = true
         createAttempts += 1
         state("CREATING CAMERA LINK")
-        localManager.createGroup(localChannel, object : WifiP2pManager.ActionListener {
-            override fun onSuccess() = scheduleGroupPoll(0L)
+        Log.i(TAG, "cameraLinkGroup path=configured_create elapsedMs=${SystemClock.elapsedRealtime()}")
+        localManager.createGroup(localChannel, config, object : WifiP2pManager.ActionListener {
+            override fun onSuccess() = awaitCreatedGroup()
             override fun onFailure(reason: Int) {
-                if (createAttempts < MAX_CREATE_ATTEMPTS) scheduleCreate(CREATE_RETRY_MS)
-                else fail("CAMERA LINK UNAVAILABLE")
+                Log.w(TAG, "cameraLinkConfiguredCreateRejected reason=$reason")
+                scheduleCreate(LEGACY_FALLBACK_MS, ::createLegacyGroup)
             }
         })
     }
 
     @SuppressLint("MissingPermission")
-    private fun requestGroupInfo() {
-        val localManager = manager ?: return
-        val localChannel = channel ?: return
-        runCatching { localManager.requestGroupInfo(localChannel, ::handleGroup) }
-            .onFailure { if (running) scheduleGroupPoll(GROUP_POLL_MS) }
+    private fun createLegacyGroup() {
+        if (!running || legacyCreateAttempted) return
+        val localManager = manager ?: return fail("WI-FI DIRECT LOST")
+        val localChannel = channel ?: return fail("WI-FI DIRECT LOST")
+        legacyCreateAttempted = true
+        createAttempts += 1
+        state("CREATING CAMERA LINK")
+        Log.i(TAG, "cameraLinkGroup path=legacy_create elapsedMs=${SystemClock.elapsedRealtime()}")
+        localManager.createGroup(localChannel, object : WifiP2pManager.ActionListener {
+            override fun onSuccess() = awaitCreatedGroup()
+            override fun onFailure(reason: Int) {
+                Log.e(TAG, "cameraLinkLegacyCreateFailed reason=$reason")
+                fail("CAMERA LINK UNAVAILABLE")
+            }
+        })
     }
 
-    private fun handleGroup(group: WifiP2pGroup?) {
-        if (!running) return
-        val ssid = group?.networkName.orEmpty()
-        val passphrase = group?.passphrase.orEmpty()
-        val interfaceName = group?.getInterface().orEmpty()
-        if (group == null || !group.isGroupOwner || ssid.isBlank() ||
-            passphrase.isBlank() || interfaceName.isBlank()
-        ) {
-            scheduleGroupPoll(GROUP_POLL_MS)
-            return
-        }
+    private fun awaitCreatedGroup() {
+        waitingForCreatedGroup = true
+        scheduleGroupPoll(0L)
+    }
+
+    private fun scheduleCreate(delayMs: Long, action: () -> Unit) {
+        clearCreateRetry()
+        createRetry = Runnable {
+            createRetry = null
+            if (running) action()
+        }.also { mainHandler.postDelayed(it, delayMs) }
+    }
+
+    private fun activateGroup(group: WifiP2pGroup, path: String) {
+        clearCreateRetry()
         clearGroupPoll()
+        waitingForCreatedGroup = false
+        val ssid = group.networkName
+        val passphrase = group.passphrase
+        val interfaceName = group.getInterface()
+        profileStore.save(CameraP2pProfile(ssid, passphrase))
+        Log.i(TAG, "cameraLinkGroup path=$path elapsedMs=${SystemClock.elapsedRealtime()}")
         if (serverSocket == null) startServer(interfaceName)
         requestOwnerAddress { address ->
             if (!running) return@requestOwnerAddress
@@ -328,7 +396,7 @@ internal class CameraLink(
         wifiRetry = Runnable {
             wifiRetry = null
             if (running) {
-                if (isWifiReady()) resetGroupThenCreate() else waitForWifi()
+                if (isWifiReady()) inspectGroup() else waitForWifi()
             }
         }.also { mainHandler.postDelayed(it, WIFI_WAIT_MS) }
     }
@@ -360,13 +428,12 @@ internal class CameraLink(
     private fun fail(message: String) {
         Log.e(TAG, message)
         state(message)
-        stop(removeGroup = false)
+        stop()
     }
 
-    override fun close() = stop(removeGroup = true)
+    override fun close() = stop()
 
-    @SuppressLint("MissingPermission")
-    private fun stop(removeGroup: Boolean) {
+    private fun stop() {
         running = false
         clearCreateRetry()
         clearWifiRetry()
@@ -376,10 +443,9 @@ internal class CameraLink(
         serverSocket = null
         val localManager = manager
         val localChannel = channel
-        if (removeGroup && localManager != null && localChannel != null) {
+        if (localManager != null && localChannel != null) {
             runCatching { localManager.stopPeerDiscovery(localChannel, null) }
             runCatching { localManager.cancelConnect(localChannel, null) }
-            runCatching { localManager.removeGroup(localChannel, null) }
         }
         if (receiverRegistered) runCatching { appContext.unregisterReceiver(receiver) }
         receiverRegistered = false
@@ -410,9 +476,8 @@ internal class CameraLink(
         private const val NETWORK_QUEUE_CAPACITY = 12
         private const val MAX_WIFI_WAIT_ATTEMPTS = 8
         private const val WIFI_WAIT_MS = 750L
-        private const val MAX_CREATE_ATTEMPTS = 8
-        private const val CREATE_RETRY_MS = 1_500L
-        private const val RESET_SETTLE_MS = 500L
-        private const val GROUP_POLL_MS = 1_000L
+        private const val RECOVERY_SETTLE_MS = 350L
+        private const val LEGACY_FALLBACK_MS = 150L
+        private const val GROUP_POLL_MS = 500L
     }
 }

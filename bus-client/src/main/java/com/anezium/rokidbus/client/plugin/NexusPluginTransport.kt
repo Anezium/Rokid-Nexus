@@ -7,6 +7,7 @@ interface NexusPluginTransport {
         fun onRegistrationState(result: Int)
         fun onLinkState(state: Int)
         fun onMessage(path: String, id: String, payload: JSONObject)
+        fun onBinary(path: String, id: String, payload: JSONObject, data: ByteArray)
         fun onError(message: String)
     }
 

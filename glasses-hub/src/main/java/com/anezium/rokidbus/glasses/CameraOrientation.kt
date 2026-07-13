@@ -5,6 +5,19 @@ internal data class CameraPixelSize(
     val height: Int,
 )
 
+internal data class CameraStreamPlan(
+    val rasterSize: CameraPixelSize,
+    val requestedHardwareRotationDegrees: Int,
+    val remainingRotationDegrees: Int,
+) {
+    val orientedSize: CameraPixelSize
+        get() = CameraOrientation.orientedSize(
+            rasterSize.width,
+            rasterSize.height,
+            remainingRotationDegrees,
+        )
+}
+
 internal object CameraOrientation {
     fun displayRotationDegrees(surfaceRotation: Int): Int = when (surfaceRotation) {
         0 -> 0
@@ -24,6 +37,35 @@ internal object CameraOrientation {
         return normalizeRightAngle(
             if (frontFacing) sensor + display else sensor - display,
         )
+    }
+
+    fun selectStreamPlan(
+        sensorToDisplayRotationDegrees: Int,
+        availableHardwareRotationDegrees: Set<Int>,
+        availableOutputSizes: Set<CameraPixelSize>,
+        portraitSize: CameraPixelSize = CameraPixelSize(720, 1_280),
+        landscapeSize: CameraPixelSize = CameraPixelSize(1_280, 720),
+    ): CameraStreamPlan? {
+        val requiredRotation = normalizeRightAngle(sensorToDisplayRotationDegrees)
+        if (landscapeSize in availableOutputSizes && 0 in availableHardwareRotationDegrees &&
+            requiredRotation in setOf(90, 270)
+        ) {
+            return CameraStreamPlan(
+                rasterSize = landscapeSize,
+                requestedHardwareRotationDegrees = 0,
+                remainingRotationDegrees = requiredRotation,
+            )
+        }
+        if (portraitSize in availableOutputSizes && 0 in availableHardwareRotationDegrees &&
+            requiredRotation in setOf(0, 180)
+        ) {
+            return CameraStreamPlan(
+                rasterSize = portraitSize,
+                requestedHardwareRotationDegrees = 0,
+                remainingRotationDegrees = requiredRotation,
+            )
+        }
+        return null
     }
 
     fun orientedSize(width: Int, height: Int, rotationDegrees: Int): CameraPixelSize {

@@ -320,6 +320,7 @@ class BusHubService : Service() {
             context = applicationContext,
             isRegisteredCallback = ::isExternalPrincipalRegistered,
             deliverCallback = ::deliverExternalLifecycle,
+            deliverBinaryCallback = ::deliverExternalBinary,
             hideCallback = {},
             disconnectedCallback = { principal ->
                 if (::cameraCompanionController.isInitialized) {
@@ -788,6 +789,28 @@ class BusHubService : Service() {
         val bytes = payload.toString().toByteArray(Charsets.UTF_8)
         return runCatching {
             registration.callback.onMessage(path, id, bytes)
+            true
+        }.getOrElse {
+            removeRegistration(registration, "dead callback")
+            false
+        }
+    }
+
+    private fun deliverExternalBinary(
+        principal: PhonePluginPrincipal,
+        path: String,
+        id: String,
+        payload: JSONObject,
+        data: ByteArray,
+    ): Boolean {
+        if (data.size > LOCAL_BINARY_MAX_BYTES ||
+            !protectedPathAllowed(path, principal.uid, principal)
+        ) return false
+        val registration = registrations.singleOrNull { it.principal?.grantKey() == principal.grantKey() }
+            ?: return false
+        val bytes = payload.toString().toByteArray(Charsets.UTF_8)
+        return runCatching {
+            registration.callback.onBinaryMessage(path, id, bytes, data)
             true
         }.getOrElse {
             removeRegistration(registration, "dead callback")
@@ -1407,6 +1430,12 @@ class BusHubService : Service() {
         var capabilities = 0
         if (::cameraConsumerReadiness.isInitialized && cameraConsumerReadiness.isReady()) {
             capabilities = capabilities or BusCapabilityBits.CAMERA_CONSUMER_READY
+            val consumer = cameraConsumerReadiness.resolveApproved()
+            if (consumer?.descriptor?.receivePrefixes?.contains(BusPaths.CAMERA_FREEZE_IMAGE_CHUNK) == true &&
+                linkState() and LinkStateBits.SPP_DATA_UP != 0
+            ) {
+                capabilities = capabilities or BusCapabilityBits.CAMERA_FROZEN_SPP
+            }
         }
         if (remoteImageSurfaceVersion == ImageSurfaceContract.VERSION &&
             remoteMaxImageBytes >= ImageSurfaceContract.MAX_IMAGE_BYTES &&
