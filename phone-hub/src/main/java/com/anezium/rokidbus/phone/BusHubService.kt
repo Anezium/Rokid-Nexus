@@ -130,6 +130,7 @@ class BusHubService : Service() {
     private lateinit var transitLegacyStateExporter: TransitLegacyStateExporter
     @Volatile private var cxrConnected = false
     @Volatile private var glassBtConnected = false
+    @Volatile private var lastAnnouncedPhoneFeatures = -1
     @Volatile private var lastNotifiedStatus: String? = null
     @Volatile private var remoteImageSurfaceVersion = 0
     @Volatile private var remoteMaxImageBytes = 0
@@ -1369,6 +1370,24 @@ class BusHubService : Service() {
             state and (LinkStateBits.CXR_CONTROL_UP or LinkStateBits.SPP_DATA_UP) != 0
         ) {
             pluginRegistry.syncLauncherList()
+            announcePhoneCapabilities()
+        } else {
+            lastAnnouncedPhoneFeatures = -1
+        }
+    }
+
+    /** The glasses learn phone-side feature bits (camera readiness) only through this. */
+    private fun announcePhoneCapabilities() {
+        val features = capabilities()
+        if (features == lastAnnouncedPhoneFeatures) return
+        val envelope = BusEnvelope(
+            path = BusPaths.HUB_CAPABILITIES,
+            id = UUID.randomUUID().toString(),
+            payload = JSONObject().put("version", 1).put("features", features),
+        )
+        if (sendRemote(envelope) == null) {
+            lastAnnouncedPhoneFeatures = features
+            log("phone capabilities announced features=$features")
         }
     }
 

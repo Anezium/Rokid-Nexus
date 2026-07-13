@@ -54,12 +54,21 @@ class CameraCompanionController(
         val pending = session.pending.toList()
         session.pending.clear()
         pending.forEach { message ->
-            if (!runtime.deliver(session.principal, message.path, message.id, message.payload)) {
+            if (!forward(session, message.path, message.id, message.payload)) {
                 terminate(session, "forward_failed")
                 return
             }
         }
     }
+
+    /** The plugin SDK drops any message whose payload lacks its own pluginId. */
+    private fun forward(session: Session, path: String, id: String, payload: JSONObject): Boolean =
+        runtime.deliver(
+            session.principal,
+            path,
+            id,
+            payload.put("pluginId", session.principal.descriptor.id),
+        )
 
     @Synchronized
     fun onLinkLost() {
@@ -129,7 +138,7 @@ class CameraCompanionController(
         rememberTerminal(sessionId)
         val session = active?.takeIf { it.sessionId == sessionId } ?: return
         if (session.openDelivered) {
-            runtime.deliver(session.principal, envelope.path, envelope.id, envelope.payload)
+            forward(session, envelope.path, envelope.id, envelope.payload)
         }
         terminate(session, "session_closed")
     }
@@ -138,7 +147,7 @@ class CameraCompanionController(
         val sessionId = envelope.payload.optString("sessionId")
         val session = active?.takeIf { it.sessionId == sessionId } ?: return
         if (session.openDelivered) {
-            if (!runtime.deliver(session.principal, envelope.path, envelope.id, envelope.payload)) {
+            if (!forward(session, envelope.path, envelope.id, envelope.payload)) {
                 terminate(session, "forward_failed")
             }
         } else {

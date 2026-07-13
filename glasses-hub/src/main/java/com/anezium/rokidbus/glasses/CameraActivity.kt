@@ -191,7 +191,7 @@ class CameraActivity : Activity(), TextureView.SurfaceTextureListener {
     }
 
     private fun refreshAvailability() {
-        val advertised = busClient?.capabilities()?.and(BusCapabilityBits.CAMERA_CONSUMER_READY) != 0
+        val advertised = ((busClient?.capabilities() ?: 0) and BusCapabilityBits.CAMERA_CONSUMER_READY) != 0
         if (ready == advertised && (advertised || emptyView.visibility == View.VISIBLE)) {
             if (advertised && resumed) ensurePermissionsAndActivate()
             return
