@@ -36,6 +36,8 @@ import com.anezium.rokidbus.shared.ImageSurfaceMetadata
 import com.anezium.rokidbus.shared.ImageSurfaceValidationResult
 import com.anezium.rokidbus.shared.LinkStateBits
 import com.anezium.rokidbus.shared.MediaArtworkContract
+import com.anezium.rokidbus.shared.PhoneHubCapabilities
+import com.anezium.rokidbus.shared.PhoneHubCapabilitiesContract
 import com.anezium.rokidbus.shared.plugin.PathRules
 import com.anezium.rokidbus.shared.plugin.PluginCapability
 import com.anezium.rokidbus.shared.plugin.PluginCapability.Companion.serialize
@@ -130,7 +132,7 @@ class BusHubService : Service() {
     private lateinit var transitLegacyStateExporter: TransitLegacyStateExporter
     @Volatile private var cxrConnected = false
     @Volatile private var glassBtConnected = false
-    @Volatile private var lastAnnouncedPhoneFeatures = -1
+    @Volatile private var lastAnnouncedPhoneCapabilities: PhoneHubCapabilities? = null
     @Volatile private var lastNotifiedStatus: String? = null
     @Volatile private var remoteImageSurfaceVersion = 0
     @Volatile private var remoteMaxImageBytes = 0
@@ -1372,22 +1374,25 @@ class BusHubService : Service() {
             pluginRegistry.syncLauncherList()
             announcePhoneCapabilities()
         } else {
-            lastAnnouncedPhoneFeatures = -1
+            lastAnnouncedPhoneCapabilities = null
         }
     }
 
     /** The glasses learn phone-side feature bits (camera readiness) only through this. */
     private fun announcePhoneCapabilities() {
-        val features = capabilities()
-        if (features == lastAnnouncedPhoneFeatures) return
+        val announced = PhoneHubCapabilitiesContract.create(
+            features = capabilities(),
+            cameraConsumerName = cameraConsumerReadiness.resolveApproved()?.descriptor?.displayName,
+        )
+        if (announced == lastAnnouncedPhoneCapabilities) return
         val envelope = BusEnvelope(
             path = BusPaths.HUB_CAPABILITIES,
             id = UUID.randomUUID().toString(),
-            payload = JSONObject().put("version", 1).put("features", features),
+            payload = PhoneHubCapabilitiesContract.toJson(announced),
         )
         if (sendRemote(envelope) == null) {
-            lastAnnouncedPhoneFeatures = features
-            log("phone capabilities announced features=$features")
+            lastAnnouncedPhoneCapabilities = announced
+            log("phone capabilities announced features=${announced.features}")
         }
     }
 

@@ -18,6 +18,8 @@ import com.anezium.rokidbus.shared.BusPaths
 import com.anezium.rokidbus.shared.FrameProtocol
 import com.anezium.rokidbus.shared.ImageSurfaceContract
 import com.anezium.rokidbus.shared.LinkStateBits
+import com.anezium.rokidbus.shared.PhoneHubCapabilities
+import com.anezium.rokidbus.shared.PhoneHubCapabilitiesContract
 import com.anezium.rokidbus.shared.plugin.PathRules
 import org.json.JSONArray
 import org.json.JSONObject
@@ -55,7 +57,7 @@ object GlassesHub {
     @Volatile private var appContext: Context? = null
     @Volatile private var cxrUp = false
     @Volatile private var phoneConnected = false
-    @Volatile private var remotePhoneCapabilities = 0
+    @Volatile private var remotePhoneCapabilities = PhoneHubCapabilities(0, null)
 
     private val aidl = object : IBusService.Stub() {
         override fun apiVersion(): Int = BusConstants.API_VERSION
@@ -91,7 +93,7 @@ object GlassesHub {
         override fun linkState(): Int = this@GlassesHub.linkState()
 
         override fun capabilities(): Int =
-            remotePhoneCapabilities and BusCapabilityBits.CAMERA_CONSUMER_READY
+            remotePhoneCapabilities.features and BusCapabilityBits.CAMERA_CONSUMER_READY
 
         override fun registerPlugin(packageName: String, pluginId: String, cb: IBusCallback): Int =
             PluginRegistrationResult.DENIED
@@ -113,7 +115,7 @@ object GlassesHub {
 
     fun onSppConnected(connected: Boolean) {
         phoneConnected = connected || CxrBusBridge.isUp()
-        if (!phoneConnected) remotePhoneCapabilities = 0
+        if (!phoneConnected) clearRemotePhoneCapabilities()
         notifyLinkState()
         if (connected) announceRendererCapabilities()
     }
@@ -121,7 +123,7 @@ object GlassesHub {
     fun onCxrState(connected: Boolean) {
         cxrUp = connected
         phoneConnected = connected || SppServerManager.isConnected()
-        if (!phoneConnected) remotePhoneCapabilities = 0
+        if (!phoneConnected) clearRemotePhoneCapabilities()
         notifyLinkState()
         if (connected) announceRendererCapabilities()
     }
@@ -351,10 +353,7 @@ object GlassesHub {
             }
         }
         launcherEntries = entries
-        val visibleEntries = allLauncherEntries()
-        launcherListeners.forEach { listener ->
-            runCatching { listener(visibleEntries) }
-        }
+        notifyLauncherEntries()
         log("launcher list synced count=${entries.size}")
     }
 
@@ -391,17 +390,48 @@ object GlassesHub {
     }
 
     private fun updateRemotePhoneCapabilities(payload: JSONObject) {
-        val advertised = payload.optInt("features", payload.optInt("capabilities", 0))
-        val next = advertised and BusCapabilityBits.CAMERA_CONSUMER_READY
-        if (next == remotePhoneCapabilities) return
+        val advertised = PhoneHubCapabilitiesContract.parse(payload)
+        val next = PhoneHubCapabilitiesContract.create(
+            features = advertised.features and BusCapabilityBits.CAMERA_CONSUMER_READY,
+            cameraConsumerName = advertised.cameraConsumerName,
+        )
+        val previous = remotePhoneCapabilities
+        if (next == previous) return
         remotePhoneCapabilities = next
-        log("phone capabilities cameraConsumerReady=${next != 0}")
-        notifyLinkState()
+        log("phone capabilities cameraConsumerReady=${next.features != 0}")
+        if (next.features != previous.features) notifyLinkState()
+        if (PhoneHubCapabilitiesContract.cameraLauncherLabel(next) !=
+            PhoneHubCapabilitiesContract.cameraLauncherLabel(previous)
+        ) {
+            notifyLauncherEntries()
+        }
     }
 
     private fun allLauncherEntries(): List<LauncherEntry> =
-        listOf(LauncherEntry(CAMERA_LAUNCHER_ID, "Camera")) +
+        listOf(
+            LauncherEntry(
+                CAMERA_LAUNCHER_ID,
+                PhoneHubCapabilitiesContract.cameraLauncherLabel(remotePhoneCapabilities),
+            ),
+        ) +
             launcherEntries.filterNot { it.id == CAMERA_LAUNCHER_ID }
+
+    private fun notifyLauncherEntries() {
+        val visibleEntries = allLauncherEntries()
+        launcherListeners.forEach { listener ->
+            runCatching { listener(visibleEntries) }
+        }
+    }
+
+    private fun clearRemotePhoneCapabilities() {
+        val previous = remotePhoneCapabilities
+        remotePhoneCapabilities = PhoneHubCapabilities(0, null)
+        if (PhoneHubCapabilitiesContract.cameraLauncherLabel(previous) !=
+            PhoneHubCapabilitiesContract.DEFAULT_CAMERA_LABEL
+        ) {
+            notifyLauncherEntries()
+        }
+    }
 
     private fun errorEnvelope(id: String, code: String): BusEnvelope =
         BusEnvelope(

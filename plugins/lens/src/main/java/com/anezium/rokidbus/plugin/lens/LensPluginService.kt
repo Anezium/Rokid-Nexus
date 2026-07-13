@@ -178,7 +178,13 @@ internal class LensCameraSession(
             CameraLinkPacketType.VIDEO_CONFIG -> {
                 val meta = runCatching { JSONObject(packet.meta) }.getOrNull() ?: return
                 if (meta.optString("mimeType") != "video/avc") return
-                decoder.configure(packet.payload, meta.optInt("width"), meta.optInt("height"), meta.optInt("fps"))
+                decoder.configure(
+                    packet.payload,
+                    meta.optInt("width"),
+                    meta.optInt("height"),
+                    meta.optInt("fps"),
+                    meta.optInt("rotationDegrees", 0),
+                )
             }
             CameraLinkPacketType.VIDEO_FRAME -> decoder.queue(packet)
             CameraLinkPacketType.FROZEN_IMAGE -> processFrozen(packet)
@@ -197,12 +203,17 @@ internal class LensCameraSession(
             continuation()
             return
         }
+        val orientedSize = LiveFrameGeometry.orientedSize(
+            frame.width,
+            frame.height,
+            frame.rotationDegrees,
+        )
         val pending = runCatching {
             overlayComposer.observe(
                 blocks = liveOcrBlocks(result),
                 script = script,
-                frameWidth = frame.width,
-                frameHeight = frame.height,
+                frameWidth = orientedSize.width,
+                frameHeight = orientedSize.height,
                 nowMs = SystemClock.elapsedRealtime(),
             )
         }.getOrElse {
@@ -264,7 +275,7 @@ internal class LensCameraSession(
                 }
                 recognized.fold(
                     onSuccess = { result ->
-                        val lines = ocrLines(result.text)
+                        val lines = frozenOcrLines(result.text)
                         translate(
                             requestId = "freeze-$requestId",
                             mode = result.script.toRecognizerMode(),
@@ -401,15 +412,31 @@ internal class LensCameraSession(
             lines.takeIf { it.isNotEmpty() }?.let(::LiveFrameParagraphBlock)
         }
 
-    private fun ocrLines(text: Text): List<OcrLine> = text.textBlocks
-        .flatMap(Text.TextBlock::getLines)
-        .mapNotNull { line ->
-            val source = normalizeSource(line.text)
-            val box = line.boundingBox
-            if (source.isBlank() || box == null || box.width() <= 0 || box.height() <= 0) null
-            else OcrLine(source, Rect(box))
+    private fun frozenOcrLines(text: Text): List<OcrLine> {
+        val blocks = text.textBlocks.mapNotNull { block ->
+            val lines = block.lines.mapNotNull { line ->
+                val source = normalizeSource(line.text)
+                val box = line.boundingBox
+                if (source.isBlank() || box == null || box.width() <= 0 || box.height() <= 0) {
+                    null
+                } else {
+                    FrozenLayoutLine(
+                        text = source,
+                        bounds = FrozenLayoutRect(box.left, box.top, box.right, box.bottom),
+                    )
+                }
+            }
+            lines.takeIf { it.isNotEmpty() }?.let(::FrozenLayoutBlock)
         }
-        .take(CameraOverlayContract.MAX_ITEMS)
+        return aggregateFrozenOverlayLines(blocks)
+            .map { line ->
+                OcrLine(
+                    line.source,
+                    Rect(line.bounds.left, line.bounds.top, line.bounds.right, line.bounds.bottom),
+                )
+            }
+            .take(CameraOverlayContract.MAX_ITEMS)
+    }
 
     private fun normalizeSource(value: String): String =
         value.trim().replace(Regex("\\s+"), " ").take(MAX_SOURCE_CHARS)

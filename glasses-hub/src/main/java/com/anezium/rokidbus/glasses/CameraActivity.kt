@@ -7,6 +7,7 @@ import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Color
+import android.graphics.Matrix
 import android.graphics.SurfaceTexture
 import android.os.Bundle
 import android.os.SystemClock
@@ -54,6 +55,8 @@ class CameraActivity : Activity(), TextureView.SurfaceTextureListener {
     private var isFrozen = false
     private var liveZoomLevel = LiveZoomLevel.ONE
     private var frozenZoomLevel = LiveZoomLevel.ONE
+    private var liveFrameGeometry: CameraLiveFrameGeometry? = null
+    private var liveSourceItems: List<CameraOverlayItem> = emptyList()
     private var liveItems: List<CameraOverlayItem> = emptyList()
     private var lastLiveSeq = Long.MIN_VALUE
     private var lastFreezeSeq = Long.MIN_VALUE
@@ -118,13 +121,18 @@ class CameraActivity : Activity(), TextureView.SurfaceTextureListener {
     }
 
     override fun onSurfaceTextureAvailable(surface: SurfaceTexture, width: Int, height: Int) {
+        // Keep preview and encoder on the same 720x1280 stream crop. A separate 4:3 preview
+        // receives a wider per-output Camera2 crop, so encoder-derived overlay boxes no longer
+        // align without HAL crop metadata. Freeze capture uses its own full-FOV 4:3 JPEG output.
         surface.setDefaultBufferSize(CameraH264Streamer.WIDTH, CameraH264Streamer.HEIGHT)
         previewSurface?.release()
         previewSurface = Surface(surface)
         if (resumed && ready && hasRequiredPermissions()) activateCameraSession()
     }
 
-    override fun onSurfaceTextureSizeChanged(surface: SurfaceTexture, width: Int, height: Int) = Unit
+    override fun onSurfaceTextureSizeChanged(surface: SurfaceTexture, width: Int, height: Int) {
+        refreshMappedLiveOverlay()
+    }
 
     override fun onSurfaceTextureDestroyed(surface: SurfaceTexture): Boolean {
         stopStreamer()
@@ -274,7 +282,10 @@ class CameraActivity : Activity(), TextureView.SurfaceTextureListener {
         }
         currentFreezeRequestId = null
         isFrozen = false
+        liveFrameGeometry = null
+        liveSourceItems = emptyList()
         liveItems = emptyList()
+        previewView.setTransform(Matrix())
         lastLiveSeq = Long.MIN_VALUE
         lastFreezeSeq = Long.MIN_VALUE
         overlayView.updateOverlay(emptyList())
@@ -288,6 +299,15 @@ class CameraActivity : Activity(), TextureView.SurfaceTextureListener {
         streamer = CameraH264Streamer(
             context = applicationContext,
             packetSender = link::enqueue,
+            displayRotationDegrees = CameraOrientation.displayRotationDegrees(
+                previewView.display?.rotation ?: Surface.ROTATION_0,
+            ),
+            onLiveFrameGeometry = { width, height, rotationDegrees ->
+                runOnUiThread {
+                    liveFrameGeometry = CameraLiveFrameGeometry(width, height, rotationDegrees)
+                    refreshMappedLiveOverlay()
+                }
+            },
             onRunning = {
                 runOnUiThread {
                     overlayView.updateStatus(
@@ -302,8 +322,8 @@ class CameraActivity : Activity(), TextureView.SurfaceTextureListener {
                     log("camera retry attempt=$attempt delayMs=$delayMs reason=$reason")
                 }
             },
-            onFrozenJpeg = { requestId, jpeg, width, height ->
-                runOnUiThread { handleFrozenJpeg(requestId, jpeg, width, height) }
+            onFrozenJpeg = { requestId, jpeg, width, height, rotationDegrees ->
+                runOnUiThread { handleFrozenJpeg(requestId, jpeg, width, height, rotationDegrees) }
             },
             onError = { message, failure ->
                 runOnUiThread {
@@ -381,9 +401,15 @@ class CameraActivity : Activity(), TextureView.SurfaceTextureListener {
         streamer?.captureFrozenJpeg(requestId)
     }
 
-    private fun handleFrozenJpeg(requestId: Long, jpeg: ByteArray, width: Int, height: Int) {
+    private fun handleFrozenJpeg(
+        requestId: Long,
+        jpeg: ByteArray,
+        width: Int,
+        height: Int,
+        rotationDegrees: Int,
+    ) {
         if (!isFrozen || currentFreezeRequestId != requestId || sessionId == null) return
-        val bitmap = decodeFrozenPreview(jpeg)
+        val bitmap = decodeFrozenPreview(jpeg, rotationDegrees)
         if (bitmap != null) overlayView.setFrozenBackground(bitmap)
         val sent = jpeg.size <= CameraLinkProtocol.MAX_PAYLOAD_BYTES && cameraLink?.enqueue(
             CameraLinkPacket(
@@ -395,7 +421,7 @@ class CameraActivity : Activity(), TextureView.SurfaceTextureListener {
                     .put("mimeType", "image/jpeg")
                     .put("width", width)
                     .put("height", height)
-                    .put("rotationDegrees", 0)
+                    .put("rotationDegrees", rotationDegrees)
                     .toString(),
                 payload = jpeg,
             ),
@@ -409,10 +435,62 @@ class CameraActivity : Activity(), TextureView.SurfaceTextureListener {
         val seq = parsed.seq
         if (seq != null && seq <= lastLiveSeq) return
         if (seq != null) lastLiveSeq = seq
-        liveItems = parsed.items
+        liveSourceItems = parsed.items
+        liveItems = mapLiveOverlay(parsed.items)
         if (!isFrozen) {
-            overlayView.updateOverlay(parsed.items)
+            overlayView.updateOverlay(liveItems)
             overlayView.updateStatus("LIVE", liveZoomLevel.hudLabel)
+        }
+    }
+
+    private fun refreshMappedLiveOverlay() {
+        applyLivePreviewTransform()
+        liveItems = mapLiveOverlay(liveSourceItems)
+        if (!isFrozen) overlayView.updateOverlay(liveItems)
+    }
+
+    private fun applyLivePreviewTransform() {
+        val geometry = liveFrameGeometry ?: return
+        val viewWidth = previewView.width
+        val viewHeight = previewView.height
+        val destination = CameraPreviewGeometry.textureDestinationCorners(
+            geometry,
+            viewWidth,
+            viewHeight,
+        ) ?: return
+        // Match the old PreviewView FILL_CENTER transform, then use the same viewport below for
+        // overlay boxes. The encoded stream remains 720x1280 and no camera/encoder copy is added.
+        previewView.setTransform(
+            Matrix().apply {
+                setPolyToPoly(
+                    floatArrayOf(
+                        0f, 0f,
+                        viewWidth.toFloat(), 0f,
+                        viewWidth.toFloat(), viewHeight.toFloat(),
+                        0f, viewHeight.toFloat(),
+                    ),
+                    0,
+                    destination,
+                    0,
+                    4,
+                )
+            },
+        )
+    }
+
+    private fun mapLiveOverlay(source: List<CameraOverlayItem>): List<CameraOverlayItem> {
+        val frame = liveFrameGeometry?.orientedSize ?: return source
+        val viewWidth = previewView.width
+        val viewHeight = previewView.height
+        if (viewWidth <= 0 || viewHeight <= 0) return source
+        return source.mapNotNull { item ->
+            CameraPreviewGeometry.mapFillCenter(
+                box = item.box,
+                sourceWidth = frame.width,
+                sourceHeight = frame.height,
+                viewWidth = viewWidth,
+                viewHeight = viewHeight,
+            )?.let { item.copy(box = it) }
         }
     }
 
@@ -444,12 +522,12 @@ class CameraActivity : Activity(), TextureView.SurfaceTextureListener {
     private fun currentZoomLabel(): String =
         if (isFrozen) frozenZoomLevel.hudLabel else liveZoomLevel.hudLabel
 
-    private fun decodeFrozenPreview(jpeg: ByteArray): Bitmap? = runCatching {
+    private fun decodeFrozenPreview(jpeg: ByteArray, rotationDegrees: Int): Bitmap? = runCatching {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size, bounds)
         var sample = 1
         while (maxOf(bounds.outWidth, bounds.outHeight) / sample > MAX_FROZEN_PREVIEW_EDGE) sample *= 2
-        BitmapFactory.decodeByteArray(
+        val decoded = BitmapFactory.decodeByteArray(
             jpeg,
             0,
             jpeg.size,
@@ -457,7 +535,22 @@ class CameraActivity : Activity(), TextureView.SurfaceTextureListener {
                 inSampleSize = sample
                 inPreferredConfig = Bitmap.Config.RGB_565
             },
-        )
+        ) ?: error("frozen preview decode returned null")
+        if (rotationDegrees == 0) {
+            decoded
+        } else {
+            val rotated = Bitmap.createBitmap(
+                decoded,
+                0,
+                0,
+                decoded.width,
+                decoded.height,
+                Matrix().apply { postRotate(rotationDegrees.toFloat()) },
+                true,
+            )
+            if (rotated !== decoded) decoded.recycle()
+            rotated
+        }
     }.onFailure { logError("frozen preview decode failed", it) }.getOrNull()
 
     private fun showEmpty(message: String) {

@@ -4,6 +4,7 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.pm.PackageManager
+import android.graphics.BitmapFactory
 import android.graphics.ImageFormat
 import android.graphics.Rect
 import android.hardware.camera2.CameraCaptureSession
@@ -16,6 +17,7 @@ import android.media.ImageReader
 import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaFormat
+import android.media.ExifInterface
 import android.os.Bundle
 import android.os.Handler
 import android.os.HandlerThread
@@ -28,6 +30,7 @@ import com.anezium.rokidbus.shared.CameraLinkPacket
 import com.anezium.rokidbus.shared.CameraLinkPacketFlags
 import com.anezium.rokidbus.shared.CameraLinkPacketType
 import org.json.JSONObject
+import java.io.ByteArrayInputStream
 import java.nio.ByteBuffer
 import java.util.ArrayDeque
 import java.util.concurrent.ConcurrentSkipListMap
@@ -38,9 +41,17 @@ import kotlin.math.abs
 internal class CameraH264Streamer(
     private val context: Context,
     private val packetSender: (CameraLinkPacket) -> Boolean,
+    private val displayRotationDegrees: Int,
+    private val onLiveFrameGeometry: (width: Int, height: Int, rotationDegrees: Int) -> Unit,
     private val onRunning: () -> Unit,
     private val onRetry: (attempt: Int, delayMs: Long, reason: String) -> Unit,
-    private val onFrozenJpeg: (requestId: Long, jpeg: ByteArray, width: Int, height: Int) -> Unit,
+    private val onFrozenJpeg: (
+        requestId: Long,
+        jpeg: ByteArray,
+        width: Int,
+        height: Int,
+        rotationDegrees: Int,
+    ) -> Unit,
     private val onError: (String, Throwable?) -> Unit,
 ) : AutoCloseable {
     private var cameraThread: HandlerThread? = null
@@ -56,7 +67,8 @@ internal class CameraH264Streamer(
     private var cameraId: String? = null
     private var characteristics: CameraCharacteristics? = null
     private var fpsRange: Range<Int>? = null
-    private var rotateAndCrop: Int? = null
+    private var rotateAndCropMode: Int? = null
+    private var frameRotationDegrees = 0
     private var latestConfig: ByteArray? = null
     private val pendingFreezeIds = ArrayDeque<Long>()
     private val captureElapsedByPtsUs = ConcurrentSkipListMap<Long, Long>()
@@ -77,6 +89,7 @@ internal class CameraH264Streamer(
         cameraHandler = Handler(requireNotNull(cameraThread).looper)
         encoderHandler = Handler(requireNotNull(encoderThread).looper)
         try {
+            prepareCameraMetadata()
             prepareEncoder()
             openCamera()
         } catch (failure: Throwable) {
@@ -104,7 +117,8 @@ internal class CameraH264Streamer(
                     addTarget(target)
                     set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
                     set(CaptureRequest.JPEG_QUALITY, 95.toByte())
-                    rotateAndCrop?.let { set(CaptureRequest.SCALER_ROTATE_AND_CROP, it) }
+                    set(CaptureRequest.JPEG_ORIENTATION, frameRotationDegrees)
+                    rotateAndCropMode?.let { set(CaptureRequest.SCALER_ROTATE_AND_CROP, it) }
                     cropRegion()?.let { set(CaptureRequest.SCALER_CROP_REGION, it) }
                 }.build()
             }.getOrElse {
@@ -178,18 +192,9 @@ internal class CameraH264Streamer(
     @SuppressLint("MissingPermission")
     private fun openCamera() {
         if (!running) return
+        prepareCameraMetadata()
         val manager = context.getSystemService(CameraManager::class.java)
-        val selectedId = cameraId ?: manager.cameraIdList.firstOrNull { it == "0" }
-            ?: manager.cameraIdList.firstOrNull()
-            ?: error("No camera found")
-        cameraId = selectedId
-        val selectedCharacteristics = characteristics ?: manager.getCameraCharacteristics(selectedId)
-        characteristics = selectedCharacteristics
-        cameraTimestampsAreRealtime = selectedCharacteristics.get(CameraCharacteristics.SENSOR_INFO_TIMESTAMP_SOURCE) ==
-            CameraCharacteristics.SENSOR_INFO_TIMESTAMP_SOURCE_REALTIME
-        rotateAndCrop = selectRotateAndCrop(selectedCharacteristics)
-        fpsRange = selectFpsRange(selectedCharacteristics)
-        if (imageReader == null) prepareImageReader(selectedCharacteristics)
+        val selectedId = cameraId ?: error("No camera found")
         manager.openCamera(selectedId, object : CameraDevice.StateCallback() {
             override fun onOpened(device: CameraDevice) {
                 if (!running) {
@@ -214,13 +219,44 @@ internal class CameraH264Streamer(
         }, cameraHandler)
     }
 
+    private fun prepareCameraMetadata() {
+        if (characteristics != null && cameraId != null && imageReader != null) return
+        val manager = context.getSystemService(CameraManager::class.java)
+        val selectedId = cameraId ?: manager.cameraIdList.firstOrNull { it == "0" }
+            ?: manager.cameraIdList.firstOrNull()
+            ?: error("No camera found")
+        val selectedCharacteristics = characteristics ?: manager.getCameraCharacteristics(selectedId)
+        cameraId = selectedId
+        characteristics = selectedCharacteristics
+        cameraTimestampsAreRealtime = selectedCharacteristics.get(CameraCharacteristics.SENSOR_INFO_TIMESTAMP_SOURCE) ==
+            CameraCharacteristics.SENSOR_INFO_TIMESTAMP_SOURCE_REALTIME
+        val sensorOrientation = selectedCharacteristics.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0
+        val frontFacing = selectedCharacteristics.get(CameraCharacteristics.LENS_FACING) ==
+            CameraCharacteristics.LENS_FACING_FRONT
+        frameRotationDegrees = CameraOrientation.sensorToDisplayRotationDegrees(
+            sensorOrientation,
+            displayRotationDegrees,
+            frontFacing,
+        )
+        onLiveFrameGeometry(WIDTH, HEIGHT, frameRotationDegrees)
+        // Keep sensor pixels unrotated here. Camera2 rotate-and-crop discards FOV; the preview
+        // Surface and the phone geometry pipeline apply the orientation without that crop.
+        rotateAndCropMode = selectUnrotatedOutput(selectedCharacteristics)
+        fpsRange = selectFpsRange(selectedCharacteristics)
+        if (imageReader == null) prepareImageReader(selectedCharacteristics)
+    }
+
     private fun prepareImageReader(cameraCharacteristics: CameraCharacteristics) {
         val sizes = cameraCharacteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
             ?.getOutputSizes(ImageFormat.JPEG).orEmpty()
-        val selected = sizes.filter { maxOf(it.width, it.height) <= JPEG_MAX_LONG_EDGE }
-            .maxByOrNull { it.width.toLong() * it.height }
-            ?: sizes.minByOrNull { it.width.toLong() * it.height }
-            ?: Size(1920, 1080)
+        val active = cameraCharacteristics.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)
+        val selected = selectFullFovJpegSize(
+            candidates = sizes.map { CameraOutputSize(it.width, it.height) },
+            sensorWidth = active?.width() ?: 4,
+            sensorHeight = active?.height() ?: 3,
+        )?.let { Size(it.width, it.height) }
+            ?: sizes.firstOrNull()
+            ?: Size(2_048, 1_536)
         imageReader = ImageReader.newInstance(selected.width, selected.height, ImageFormat.JPEG, 2).apply {
             setOnImageAvailableListener({ reader ->
                 val image = reader.acquireNextImage() ?: return@setOnImageAvailableListener
@@ -229,7 +265,10 @@ internal class CameraH264Streamer(
                     if (requestId == null) return@setOnImageAvailableListener
                     val buffer = image.planes[0].buffer
                     val bytes = ByteArray(buffer.remaining()).also(buffer::get)
-                    onFrozenJpeg(requestId, bytes, image.width, image.height)
+                    val rawSize = jpegPixelSize(bytes) ?: CameraPixelSize(image.width, image.height)
+                    val rotation = jpegRotationDegrees(bytes, frameRotationDegrees)
+                    val oriented = CameraOrientation.orientedSize(rawSize.width, rawSize.height, rotation)
+                    onFrozenJpeg(requestId, bytes, oriented.width, oriented.height, rotation)
                 } finally {
                     image.close()
                 }
@@ -271,7 +310,7 @@ internal class CameraH264Streamer(
                 addTarget(encode)
                 set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
                 fpsRange?.let { set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, it) }
-                rotateAndCrop?.let { set(CaptureRequest.SCALER_ROTATE_AND_CROP, it) }
+                rotateAndCropMode?.let { set(CaptureRequest.SCALER_ROTATE_AND_CROP, it) }
                 cropRegion()?.let { set(CaptureRequest.SCALER_CROP_REGION, it) }
             }.build()
             activeSession.setRepeatingRequest(request, captureCallback, cameraHandler)
@@ -322,13 +361,33 @@ internal class CameraH264Streamer(
         }.also { cameraHandler?.postDelayed(it, delayMs) }
     }
 
-    private fun selectRotateAndCrop(value: CameraCharacteristics): Int? {
+    private fun selectUnrotatedOutput(value: CameraCharacteristics): Int? {
         val modes = value.get(CameraCharacteristics.SCALER_AVAILABLE_ROTATE_AND_CROP_MODES)?.toSet().orEmpty()
-        return when {
-            CaptureRequest.SCALER_ROTATE_AND_CROP_270 in modes -> CaptureRequest.SCALER_ROTATE_AND_CROP_270
-            CaptureRequest.SCALER_ROTATE_AND_CROP_AUTO in modes -> CaptureRequest.SCALER_ROTATE_AND_CROP_AUTO
+        return CaptureRequest.SCALER_ROTATE_AND_CROP_NONE.takeIf { it in modes }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun jpegRotationDegrees(jpeg: ByteArray, fallback: Int): Int = runCatching {
+        when (
+            ExifInterface(ByteArrayInputStream(jpeg)).getAttributeInt(
+                ExifInterface.TAG_ORIENTATION,
+                ExifInterface.ORIENTATION_UNDEFINED,
+            )
+        ) {
+            ExifInterface.ORIENTATION_NORMAL -> 0
+            ExifInterface.ORIENTATION_ROTATE_90 -> 90
+            ExifInterface.ORIENTATION_ROTATE_180 -> 180
+            ExifInterface.ORIENTATION_ROTATE_270 -> 270
             else -> null
         }
+    }.getOrNull() ?: fallback
+
+    private fun jpegPixelSize(jpeg: ByteArray): CameraPixelSize? {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size, bounds)
+        return if (bounds.outWidth > 0 && bounds.outHeight > 0) {
+            CameraPixelSize(bounds.outWidth, bounds.outHeight)
+        } else null
     }
 
     private fun selectFpsRange(value: CameraCharacteristics): Range<Int>? {
@@ -377,6 +436,7 @@ internal class CameraH264Streamer(
                     .put("height", HEIGHT)
                     .put("fps", FPS)
                     .put("bitrate", BITRATE)
+                    .put("rotationDegrees", frameRotationDegrees)
                     .toString(),
                 payload = bytes,
             ),
@@ -435,7 +495,6 @@ internal class CameraH264Streamer(
         const val FPS = 20
         const val BITRATE = 5_000_000
         private const val IFRAME_SECONDS = 1
-        private const val JPEG_MAX_LONG_EDGE = 2_560
         private const val MAX_CAPTURE_CLOCK_SAMPLES = 256
         private const val CAMERA_RETRY_BASE_MS = 250L
         private const val CAMERA_RETRY_MAX_MS = 4_000L

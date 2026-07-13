@@ -57,6 +57,7 @@ internal class DecodedFrame(
     val nv21: ByteArray,
     val width: Int,
     val height: Int,
+    val rotationDegrees: Int,
     val frameId: Long,
     private val pool: Nv21BufferPool,
 ) : AutoCloseable {
@@ -91,12 +92,18 @@ internal class LatestFrameDecoder(
     private val worker = Thread(::decodeLoop, "lens-live-decoder").also { it.start() }
     private var codec: MediaCodec? = null
     private var config: ByteArray? = null
+    private var configuredRotationDegrees = 0
     @Volatile private var waitingForKeyFrame = true
 
-    fun configure(configPayload: ByteArray, width: Int, height: Int, fps: Int) {
+    fun configure(configPayload: ByteArray, width: Int, height: Int, fps: Int, rotationDegrees: Int) {
         if (!running.get() || width !in 1..MAX_EDGE || height !in 1..MAX_EDGE) return
+        val normalizedRotation = runCatching {
+            LiveFrameGeometry.normalizeRightAngle(rotationDegrees)
+        }.getOrNull() ?: return
         synchronized(lock) {
-            if (config?.contentEquals(configPayload) == true && codec != null) return
+            if (config?.contentEquals(configPayload) == true &&
+                configuredRotationDegrees == normalizedRotation && codec != null
+            ) return
             val sets = parameterSets(configPayload) ?: return onError("Incomplete H.264 codec config", null)
             frames.clear()
             received.clear()
@@ -118,6 +125,7 @@ internal class LatestFrameDecoder(
                     it.start()
                 }
                 config = configPayload.copyOf()
+                configuredRotationDegrees = normalizedRotation
                 waitingForKeyFrame = true
             }.onFailure { onError("H.264 decoder configure failed", it) }
         }
@@ -180,7 +188,16 @@ internal class LatestFrameDecoder(
                         image = decoder.getOutputImage(index) ?: error("Decoder output image unavailable")
                         val converted = imageToNv21(image)
                         if (received.remove(frameId) != null) {
-                            holder.offer(DecodedFrame(converted.bytes, converted.width, converted.height, frameId, pool))
+                            holder.offer(
+                                DecodedFrame(
+                                    converted.bytes,
+                                    converted.width,
+                                    converted.height,
+                                    configuredRotationDegrees,
+                                    frameId,
+                                    pool,
+                                ),
+                            )
                             onFrameReady()
                         } else {
                             pool.recycle(converted.bytes)
@@ -350,7 +367,7 @@ internal class LiveOcrRunner(
                     frame.nv21,
                     frame.width,
                     frame.height,
-                    0,
+                    frame.rotationDegrees,
                     InputImage.IMAGE_FORMAT_NV21,
                 ),
             )
