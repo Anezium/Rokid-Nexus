@@ -1,45 +1,62 @@
 package com.anezium.rokidbus.glasses
 
+internal enum class CameraLinkOfferRetryActionType {
+    OFFER,
+    RECREATE_GROUP,
+    TIMEOUT,
+}
+
 internal data class CameraLinkOfferRetryAction(
+    val type: CameraLinkOfferRetryActionType,
     val offerNumber: Int?,
     val nextDelayMs: Long,
-    val timedOut: Boolean,
 )
 
-/** Pure retry budget used by CameraLink's Android callback/scheduler shell. */
+/** Pure retry decision used by CameraLink's Android callback/scheduler shell. */
 internal class CameraLinkOfferRetryPolicy(
     private val coldGroupSettleMs: Long,
     private val intervalMs: Long,
     private val maxOffers: Int,
+    private val offersBeforeGroupRecreate: Int,
+    private val maxGroupRecreates: Int,
 ) {
     init {
         require(coldGroupSettleMs >= 0L)
         require(intervalMs > 0L)
         require(maxOffers > 0)
+        require(offersBeforeGroupRecreate in 1..maxOffers)
+        require(maxGroupRecreates >= 0)
     }
-
-    private var offersSent = 0
 
     fun initialDelayMs(groupCreated: Boolean): Long =
         if (groupCreated) coldGroupSettleMs else 0L
 
-    fun nextAction(): CameraLinkOfferRetryAction {
-        if (offersSent >= maxOffers) {
-            return CameraLinkOfferRetryAction(
+    fun nextAction(offersSent: Int, groupRecreatesDone: Int): CameraLinkOfferRetryAction {
+        require(offersSent >= 0)
+        require(groupRecreatesDone >= 0)
+
+        return when {
+            offersSent >= maxOffers -> CameraLinkOfferRetryAction(
+                type = CameraLinkOfferRetryActionType.TIMEOUT,
                 offerNumber = null,
                 nextDelayMs = 0L,
-                timedOut = true,
             )
+            groupRecreatesDone < maxGroupRecreates &&
+                offersSent >= offersBeforeGroupRecreate -> CameraLinkOfferRetryAction(
+                type = CameraLinkOfferRetryActionType.RECREATE_GROUP,
+                offerNumber = null,
+                nextDelayMs = 0L,
+            )
+            else -> {
+                val offerNumber = offersSent + 1
+                val recreateAfterOffer = groupRecreatesDone < maxGroupRecreates &&
+                    offerNumber >= offersBeforeGroupRecreate
+                CameraLinkOfferRetryAction(
+                    type = CameraLinkOfferRetryActionType.OFFER,
+                    offerNumber = offerNumber,
+                    nextDelayMs = if (recreateAfterOffer) 0L else intervalMs,
+                )
+            }
         }
-        offersSent += 1
-        return CameraLinkOfferRetryAction(
-            offerNumber = offersSent,
-            nextDelayMs = intervalMs,
-            timedOut = false,
-        )
-    }
-
-    fun reset() {
-        offersSent = 0
     }
 }

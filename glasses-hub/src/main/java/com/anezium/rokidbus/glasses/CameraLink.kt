@@ -65,6 +65,8 @@ internal class CameraLink(
         coldGroupSettleMs = COLD_GROUP_SETTLE_MS,
         intervalMs = OFFER_RETRY_MS,
         maxOffers = MAX_OFFER_SENDS,
+        offersBeforeGroupRecreate = OFFERS_BEFORE_GO_RECOVERY,
+        maxGroupRecreates = MAX_GO_RECREATES,
     )
     private val token = ByteArray(24).also(SecureRandom()::nextBytes).let {
         Base64.encodeToString(it, Base64.NO_WRAP or Base64.URL_SAFE or Base64.NO_PADDING)
@@ -90,7 +92,12 @@ internal class CameraLink(
     private var wifiRetry: Runnable? = null
     private var groupPoll: Runnable? = null
     private var offerRetry: Runnable? = null
+    private var goRecoveryCreate: Runnable? = null
     private var currentOffer: CameraLinkOffer? = null
+    private var offersSent = 0
+    private var groupRecreatesDone = 0
+    private var goRecoveryInProgress = false
+    private var goRecoveryRemovedGroup = false
     private var groupStageLogged = false
     private var initialOfferDelayMs = 0L
 
@@ -133,7 +140,7 @@ internal class CameraLink(
     fun resendOfferIfDisconnected() {
         if (authenticated) return
         mainHandler.post {
-            if (running && !authenticated && currentOffer != null) {
+            if (running && !authenticated && !goRecoveryInProgress && currentOffer != null) {
                 clearOfferRetry()
                 runNextOfferAction()
             }
@@ -345,6 +352,7 @@ internal class CameraLink(
         clearCreateRetry()
         clearGroupPoll()
         waitingForCreatedGroup = false
+        val recreatedGroup = goRecoveryInProgress && goRecoveryRemovedGroup
         val ssid = group.networkName
         val passphrase = group.passphrase
         val interfaceName = group.getInterface()
@@ -360,16 +368,24 @@ internal class CameraLink(
             // the settle window. The measured warm path starts with Wi-Fi/group active and stays immediate.
             val coldP2pStartup = path == "created" || createAttempts > 0 || wifiWaitAttempts > 0
             initialOfferDelayMs = offerRetryPolicy.initialDelayMs(coldP2pStartup)
-            val stage = if (coldP2pStartup) "group_created" else "group_reused"
-            Log.i(TAG, "cameraLinkStage stage=$stage path=$path elapsedMs=${stageElapsedMs()}")
+            if (recreatedGroup) {
+                groupRecreatesDone += 1
+                goRecoveryInProgress = false
+                goRecoveryRemovedGroup = false
+                clearGoRecoveryCreate()
+                Log.i(TAG, "cameraLinkStage stage=group_recreated elapsedMs=${stageElapsedMs()}")
+            } else {
+                val stage = if (coldP2pStartup) "group_created" else "group_reused"
+                Log.i(TAG, "cameraLinkStage stage=$stage path=$path elapsedMs=${stageElapsedMs()}")
+            }
         }
         if (serverSocket == null) startServer(interfaceName)
         requestOwnerAddress { address ->
-            if (!running) return@requestOwnerAddress
+            if (!running || goRecoveryInProgress) return@requestOwnerAddress
             val nextOffer = CameraLinkOffer(ssid, passphrase, PORT, token, address)
             if (currentOffer?.sameLinkAs(nextOffer) == true) return@requestOwnerAddress
             currentOffer = nextOffer
-            offerRetryPolicy.reset()
+            if (!recreatedGroup) offersSent = 0
             clearOfferRetry()
             scheduleOfferAction(initialOfferDelayMs)
             state("WAITING FOR PHONE")
@@ -392,12 +408,97 @@ internal class CameraLink(
     }
 
     private fun runNextOfferAction() {
-        if (!running || authenticated) return
+        if (!running || authenticated || goRecoveryInProgress) return
         val current = currentOffer ?: return
-        val action = offerRetryPolicy.nextAction()
-        if (action.timedOut) return fail("PHONE LINK TIMEOUT")
-        onOfferReady(current, checkNotNull(action.offerNumber))
-        scheduleOfferAction(action.nextDelayMs)
+        val action = offerRetryPolicy.nextAction(offersSent, groupRecreatesDone)
+        when (action.type) {
+            CameraLinkOfferRetryActionType.OFFER -> {
+                offersSent = checkNotNull(action.offerNumber)
+                onOfferReady(current, offersSent)
+                scheduleOfferAction(action.nextDelayMs)
+            }
+            CameraLinkOfferRetryActionType.RECREATE_GROUP -> recoverDeafGroup()
+            CameraLinkOfferRetryActionType.TIMEOUT -> fail("PHONE LINK TIMEOUT")
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun recoverDeafGroup() {
+        if (!running || authenticated || goRecoveryInProgress) return
+        val localManager = manager ?: return fail("WI-FI DIRECT LOST")
+        val localChannel = channel ?: return fail("WI-FI DIRECT LOST")
+        goRecoveryInProgress = true
+        goRecoveryRemovedGroup = false
+        clearOfferRetry()
+        state("RECOVERING CAMERA LINK")
+        Log.i(TAG, "cameraLinkGoRecovery offersSent=$offersSent elapsedMs=${stageElapsedMs()}")
+
+        // Authentication can finish on the accept thread while this main-thread action starts.
+        if (!running || authenticated) {
+            abortGoRecoveryBeforeRemoval()
+            return
+        }
+        runCatching {
+            localManager.removeGroup(localChannel, object : WifiP2pManager.ActionListener {
+                override fun onSuccess() {
+                    if (!running || !goRecoveryInProgress) return
+                    goRecoveryRemovedGroup = true
+                    clearCreateRetry()
+                    clearGroupPoll()
+                    waitingForCreatedGroup = false
+                    currentOffer = null
+                    closeServer()
+                    if (!authenticated) scheduleGoRecoveryCreate(RECOVERY_SETTLE_MS)
+                }
+
+                override fun onFailure(reason: Int) {
+                    if (!running || !goRecoveryInProgress) return
+                    if (authenticated) {
+                        abortGoRecoveryBeforeRemoval()
+                    } else {
+                        Log.e(TAG, "cameraLinkGoRecoveryRemoveFailed reason=$reason")
+                        fail("CAMERA LINK UNAVAILABLE")
+                    }
+                }
+            })
+        }.onFailure {
+            if (!running || !goRecoveryInProgress) return@onFailure
+            if (authenticated) {
+                abortGoRecoveryBeforeRemoval()
+            } else {
+                Log.e(TAG, "cameraLinkGoRecoveryRemoveFailed type=${it.javaClass.simpleName}")
+                fail("CAMERA LINK UNAVAILABLE")
+            }
+        }
+    }
+
+    private fun scheduleGoRecoveryCreate(delayMs: Long) {
+        clearGoRecoveryCreate()
+        goRecoveryCreate = Runnable {
+            goRecoveryCreate = null
+            if (!running || !goRecoveryInProgress || !goRecoveryRemovedGroup) return@Runnable
+            // A late HELLO wins over recovery. If that client later disconnects, recovery resumes.
+            if (authenticated) return@Runnable
+            resetCreateStateForGoRecovery()
+            createConfiguredGroup()
+        }.also { mainHandler.postDelayed(it, delayMs) }
+    }
+
+    private fun resetCreateStateForGoRecovery() {
+        clearCreateRetry()
+        clearGroupPoll()
+        configuredCreateAttempted = false
+        legacyCreateAttempted = false
+        conflictRecoveryAttempted = false
+        waitingForCreatedGroup = false
+        groupStageLogged = false
+        initialOfferDelayMs = 0L
+    }
+
+    private fun abortGoRecoveryBeforeRemoval() {
+        clearGoRecoveryCreate()
+        goRecoveryInProgress = false
+        goRecoveryRemovedGroup = false
     }
 
     @SuppressLint("MissingPermission")
@@ -432,6 +533,11 @@ internal class CameraLink(
         }
     }
 
+    private fun closeServer() {
+        runCatching { serverSocket?.close() }
+        serverSocket = null
+    }
+
     /** Client failures are contained inside this loop, so the listening socket survives. */
     private fun acceptLoop(server: ServerSocket) {
         while (running && !server.isClosed) {
@@ -463,7 +569,7 @@ internal class CameraLink(
             Log.i(TAG, "cameraLinkStage stage=connected elapsedMs=${stageElapsedMs()}")
             mainHandler.post {
                 clearOfferRetry()
-                offerRetryPolicy.reset()
+                offersSent = 0
                 onAuthenticated(true)
             }
             state("PHONE LINKED")
@@ -537,7 +643,12 @@ internal class CameraLink(
         if (notify) {
             mainHandler.post {
                 onAuthenticated(false)
-                if (running && !authenticated && currentOffer != null) scheduleOfferAction(0L)
+                if (!running || authenticated) return@post
+                if (goRecoveryInProgress && goRecoveryRemovedGroup) {
+                    if (goRecoveryCreate == null) scheduleGoRecoveryCreate(0L)
+                } else if (!goRecoveryInProgress && currentOffer != null) {
+                    scheduleOfferAction(0L)
+                }
             }
         }
     }
@@ -597,9 +708,11 @@ internal class CameraLink(
         clearWifiRetry()
         clearGroupPoll()
         clearOfferRetry()
+        clearGoRecoveryCreate()
+        goRecoveryInProgress = false
+        goRecoveryRemovedGroup = false
         closeClient()
-        runCatching { serverSocket?.close() }
-        serverSocket = null
+        closeServer()
         val localManager = manager
         val localChannel = channel
         if (localManager != null && localChannel != null) {
@@ -633,6 +746,11 @@ internal class CameraLink(
         offerRetry = null
     }
 
+    private fun clearGoRecoveryCreate() {
+        goRecoveryCreate?.let(mainHandler::removeCallbacks)
+        goRecoveryCreate = null
+    }
+
     private fun stageElapsedMs(): Long =
         (SystemClock.elapsedRealtime() - sessionStartedAtMs).coerceAtLeast(0L)
 
@@ -649,5 +767,7 @@ internal class CameraLink(
         private const val COLD_GROUP_SETTLE_MS = 350L
         private const val OFFER_RETRY_MS = 2_500L
         private const val MAX_OFFER_SENDS = 8
+        private const val OFFERS_BEFORE_GO_RECOVERY = 3
+        private const val MAX_GO_RECREATES = 1
     }
 }
