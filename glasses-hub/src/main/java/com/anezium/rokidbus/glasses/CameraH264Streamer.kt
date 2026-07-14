@@ -116,12 +116,12 @@ internal class CameraH264Streamer(
 
     fun captureFrozenJpeg(requestId: Long) {
         val requestedAtMs = SystemClock.elapsedRealtime()
-        cameraHandler?.post {
+        val accepted = cameraHandler?.post {
             val device = camera
             val activeSession = session
             val target = imageReader?.surface
             if (!running || device == null || activeSession == null || target == null) {
-                onError("CAMERA NOT READY", null)
+                onError("FREEZE CAPTURE FAILED", null)
                 return@post
             }
             val pending = PendingFreezeCapture(requestId, requestedAtMs)
@@ -162,7 +162,8 @@ internal class CameraH264Streamer(
                 pendingFreezeCaptures.remove(pending)
                 onError("FREEZE CAPTURE FAILED", it)
             }
-        }
+        } == true
+        if (!accepted) onError("FREEZE CAPTURE FAILED", null)
     }
 
     fun requestKeyFrame() {

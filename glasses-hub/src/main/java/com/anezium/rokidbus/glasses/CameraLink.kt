@@ -148,7 +148,7 @@ internal class CameraLink(
                 !transferPolicy.shouldAdmitVideo(packet.isKeyFrame())
             ) return false
             if (packet.type == CameraLinkPacketType.FROZEN_IMAGE) {
-                transferPolicy.beginFrozen(packet.requestId)
+                transferPolicy.beginFrozenMode(packet.requestId)
                 dropQueuedVideoFrames()
             }
             if (packets.offer(packet)) return true
@@ -164,17 +164,21 @@ internal class CameraLink(
     /** Starts the video gate at the tap, before the camera produces the large JPEG. */
     fun beginFrozenTransfer(requestId: Long): Boolean = synchronized(packetQueueLock) {
         if (!authenticated) return false
-        transferPolicy.beginFrozen(requestId)
+        transferPolicy.beginFrozenMode(requestId)
         dropQueuedVideoFrames()
         true
     }
 
-    /** Cancels queued transfer work and returns true when the encoder should request a key frame. */
-    fun cancelFrozenTransfer(requestId: Long): Boolean = synchronized(packetQueueLock) {
-        packets.removeIf {
-            it.type == CameraLinkPacketType.FROZEN_IMAGE && it.requestId == requestId
+    /** Ends frozen mode, cancels queued JPEG work, and requests a fresh resume key frame. */
+    fun cancelFrozenTransfer(requestId: Long): Boolean {
+        val shouldResume = synchronized(packetQueueLock) {
+            packets.removeIf {
+                it.type == CameraLinkPacketType.FROZEN_IMAGE && it.requestId == requestId
+            }
+            transferPolicy.endFrozenMode(requestId)
         }
-        transferPolicy.finishFrozen(requestId)
+        if (shouldResume) mainHandler.post { onFrozenTransferFinished(requestId) }
+        return shouldResume
     }
 
     fun abortClient() {
@@ -510,12 +514,6 @@ internal class CameraLink(
                             "cameraLinkStage stage=frozen_sent requestId=${packet.requestId} " +
                                 "bytes=${packet.payload.size} elapsedMs=${stageElapsedMs()}",
                         )
-                        val shouldResume = synchronized(packetQueueLock) {
-                            transferPolicy.finishFrozen(packet.requestId)
-                        }
-                        if (shouldResume) {
-                            mainHandler.post { onFrozenTransferFinished(packet.requestId) }
-                        }
                     }
                 }
                 .onFailure { closeClient() }

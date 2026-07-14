@@ -180,6 +180,7 @@ internal class LensCameraSession(
         onUpdates = ::onLiveTranslations,
     )
     private val liveOcr: LiveOcrRunner
+    private val frozenProcessingGate: FrozenProcessingGate
     private val decoder: LatestFrameDecoder
     private val imageLink: PhoneLensImageLink
     private val firstFrameLogged = AtomicBoolean(false)
@@ -192,6 +193,11 @@ internal class LensCameraSession(
             onRecognized = ::onLiveRecognized,
             onError = { host.log("live OCR failed") },
         )
+        frozenProcessingGate = FrozenProcessingGate(
+            pauseLive = liveOcr::pause,
+            cancelLiveTranslations = liveTranslation::reset,
+            resumeLive = liveOcr::resume,
+        )
         decoder = LatestFrameDecoder(
             holder = holder,
             pool = pool,
@@ -199,7 +205,7 @@ internal class LensCameraSession(
                 if (firstFrameLogged.compareAndSet(false, true)) {
                     host.log("cameraLinkStage stage=first_frame elapsedMs=${sessionElapsedMs()}")
                 }
-                liveOcr.kick()
+                frozenProcessingGate.runIfLive(liveOcr::kick)
             },
             onGeometry = { geometry ->
                 val oriented = geometry.orientedSize
@@ -319,7 +325,7 @@ internal class LensCameraSession(
         continuation: () -> Unit,
     ) {
         val activeSession = sessionId
-        if (closed.get() || activeSession == null) {
+        if (closed.get() || activeSession == null || frozenProcessingGate.isActive) {
             continuation()
             return
         }
@@ -347,11 +353,11 @@ internal class LensCameraSession(
         }
         val candidates = overlayComposer.translationCandidates(pending, activeGeneration)
         continuation()
-        liveTranslation.submit(candidates)
+        frozenProcessingGate.runIfLive { liveTranslation.submit(candidates) }
     }
 
     private fun onLiveTranslations(updates: List<LiveTranslationUpdate>) {
-        if (closed.get() || updates.isEmpty()) return
+        if (closed.get() || frozenProcessingGate.isActive || updates.isEmpty()) return
         val activeSession = sessionId ?: return
         val activeGeneration = sessionGeneration.get()
         val eligible = updates.filter { it.candidate.sessionGeneration == activeGeneration }
@@ -391,72 +397,147 @@ internal class LensCameraSession(
                 processedFrozenRequests.remove(processedFrozenRequests.first())
             }
         }
-        logFrozenStage(
-            stage = "frozen_received",
-            requestId = requestId,
-            detail = "transport=$transport bytes=${packet.payload.size}",
-        )
+        val frozenWork = runCatching { frozenProcessingGate.begin() }
+            .getOrElse { return }
+            ?: return
+        val targetScript = liveOcr.activeScript().toPhoneOcrScript()
         val jpeg = packet.payload
-        frozenExecutor.execute {
-            val bitmap = runCatching { decodeFrozenJpeg(jpeg, width, height, crop, rotation) }
-                .getOrNull() ?: return@execute
+        runCatching {
             logFrozenStage(
-                stage = "frozen_decoded",
+                stage = "frozen_received",
                 requestId = requestId,
-                detail = "width=${bitmap.width} height=${bitmap.height}",
+                detail = "transport=$transport bytes=${packet.payload.size}",
             )
-            activeFrozenBitmaps += bitmap
-            if (closed.get()) {
-                recycleFrozen(bitmap)
-                return@execute
-            }
-            frozenOcr.recognize(bitmap) { recognized ->
-                if (closed.get()) {
-                    recycleFrozen(bitmap)
-                    return@recognize
-                }
-                recognized.fold(
-                    onSuccess = { result ->
-                        val lines = frozenOcrLines(result.text)
-                        logFrozenStage(
-                            stage = "frozen_ocr_done",
-                            requestId = requestId,
-                            detail = "script=${result.script.wireValue} items=${lines.size}",
-                        )
-                        var translation: TranslationCall? = null
-                        val batch = FrozenTranslationBatch(
-                            translator = translator,
-                            requestPrefix = "freeze-$requestId",
-                            targetLanguage = targetLanguage(),
-                            mode = result.script.toRecognizerMode(),
-                            sources = lines.map(OcrLine::source),
-                            log = host::log,
-                            onComplete = { translations ->
-                                try {
-                                    translation?.let { activeFrozenTranslations -= it }
-                                    logFrozenStage(
-                                        stage = "frozen_translated",
-                                        requestId = requestId,
-                                        detail = "requested=${lines.size} results=${translations.size}",
-                                    )
-                                    if (!closed.get() && sessionId == activeSession) {
-                                        sendOverlay(
-                                            BusPaths.CAMERA_FREEZE_RESULT, activeSession, requestId,
-                                            lines, translations, bitmap.width, bitmap.height,
-                                        )
-                                    }
-                                } finally {
-                                    recycleFrozen(bitmap)
-                                }
+            frozenExecutor.execute {
+                val bitmap = runCatching { decodeFrozenJpeg(jpeg, width, height, crop, rotation) }
+                    .getOrElse {
+                        failFrozenProcessing(requestId, "decode", null, frozenWork, it)
+                        return@execute
+                    }
+                runCatching {
+                    logFrozenStage(
+                        stage = "frozen_decoded",
+                        requestId = requestId,
+                        detail = "width=${bitmap.width} height=${bitmap.height}",
+                    )
+                    activeFrozenBitmaps += bitmap
+                    if (closed.get()) {
+                        finishFrozenProcessing(bitmap, frozenWork)
+                        return@execute
+                    }
+                    frozenOcr.recognize(
+                        bitmap = bitmap,
+                        targetScriptPlan = listOf(targetScript),
+                    ) { recognized ->
+                        if (closed.get()) {
+                            finishFrozenProcessing(bitmap, frozenWork)
+                            return@recognize
+                        }
+                        recognized.fold(
+                            onSuccess = { result ->
+                                startFrozenTranslation(
+                                    activeSession = activeSession,
+                                    requestId = requestId,
+                                    bitmap = bitmap,
+                                    result = result,
+                                    frozenWork = frozenWork,
+                                )
+                            },
+                            onFailure = {
+                                failFrozenProcessing(requestId, "ocr", bitmap, frozenWork, it)
                             },
                         )
-                        translation = batch
-                        activeFrozenTranslations += batch
-                        batch.start()
-                    },
-                    onFailure = { recycleFrozen(bitmap) },
+                    }
+                }.onFailure {
+                    failFrozenProcessing(requestId, "pipeline_start", bitmap, frozenWork, it)
+                }
+            }
+        }.onFailure {
+            failFrozenProcessing(requestId, "queue", null, frozenWork, it)
+        }
+    }
+
+    private fun startFrozenTranslation(
+        activeSession: String,
+        requestId: Long,
+        bitmap: Bitmap,
+        result: PhoneFrozenOcrResult,
+        frozenWork: FrozenProcessingGate.Lease,
+    ) {
+        var translation: TranslationCall? = null
+        runCatching {
+            val lines = frozenOcrLines(result.text)
+            logFrozenStage(
+                stage = "frozen_ocr_done",
+                requestId = requestId,
+                detail = "script=${result.script.wireValue} items=${lines.size}",
+            )
+            val batch = FrozenTranslationBatch(
+                translator = translator,
+                requestPrefix = "freeze-$requestId",
+                targetLanguage = targetLanguage(),
+                mode = result.script.toRecognizerMode(),
+                sources = lines.map(OcrLine::source),
+                log = host::log,
+                onComplete = { translations ->
+                    try {
+                        translation?.let { activeFrozenTranslations -= it }
+                        logFrozenStage(
+                            stage = "frozen_translated",
+                            requestId = requestId,
+                            detail = "requested=${lines.size} results=${translations.size}",
+                        )
+                        if (!closed.get() && sessionId == activeSession) {
+                            sendOverlay(
+                                BusPaths.CAMERA_FREEZE_RESULT, activeSession, requestId,
+                                lines, translations, bitmap.width, bitmap.height,
+                            )
+                        }
+                    } finally {
+                        finishFrozenProcessing(bitmap, frozenWork)
+                    }
+                },
+            )
+            translation = batch
+            activeFrozenTranslations += batch
+            batch.start()
+        }.onFailure { failure ->
+            translation?.let {
+                activeFrozenTranslations -= it
+                it.cancel()
+            }
+            failFrozenProcessing(requestId, "translation_start", bitmap, frozenWork, failure)
+        }
+    }
+
+    private fun failFrozenProcessing(
+        requestId: Long,
+        step: String,
+        bitmap: Bitmap?,
+        frozenWork: FrozenProcessingGate.Lease,
+        failure: Throwable,
+    ) {
+        try {
+            if (!closed.get()) {
+                logFrozenStage(
+                    stage = "frozen_failed",
+                    requestId = requestId,
+                    detail = "step=$step type=${failure.javaClass.simpleName}",
                 )
             }
+        } finally {
+            finishFrozenProcessing(bitmap, frozenWork)
+        }
+    }
+
+    private fun finishFrozenProcessing(
+        bitmap: Bitmap?,
+        frozenWork: FrozenProcessingGate.Lease,
+    ) {
+        try {
+            bitmap?.let(::recycleFrozen)
+        } finally {
+            frozenWork.close()
         }
     }
 
@@ -685,6 +766,14 @@ internal class LensCameraSession(
         OcrScript.DEVANAGARI -> LensRecognizerMode.DEVANAGARI
     }
 
+    private fun OcrScript.toPhoneOcrScript(): PhoneOcrScript = when (this) {
+        OcrScript.LATIN -> PhoneOcrScript.LATIN
+        OcrScript.JAPANESE -> PhoneOcrScript.JAPANESE
+        OcrScript.CHINESE -> PhoneOcrScript.CHINESE
+        OcrScript.KOREAN -> PhoneOcrScript.KOREAN
+        OcrScript.DEVANAGARI -> PhoneOcrScript.DEVANAGARI
+    }
+
     private fun recycleFrozen(bitmap: Bitmap) {
         activeFrozenBitmaps -= bitmap
         if (!bitmap.isRecycled) bitmap.recycle()
@@ -693,6 +782,7 @@ internal class LensCameraSession(
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
         sessionId = null
+        frozenProcessingGate.close()
         frozenChunkAssembler.clear()
         synchronized(processedFrozenRequests) { processedFrozenRequests.clear() }
         imageLink.close()

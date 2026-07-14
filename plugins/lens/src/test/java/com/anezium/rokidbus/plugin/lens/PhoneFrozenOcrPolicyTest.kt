@@ -7,6 +7,41 @@ import org.junit.Test
 
 class PhoneFrozenOcrPolicyTest {
     @Test
+    fun `live Japanese script leads the sweep before Latin fallback`() {
+        assertEquals(
+            listOf(
+                PhoneOcrScript.JAPANESE,
+                PhoneOcrScript.LATIN,
+                PhoneOcrScript.CHINESE,
+                PhoneOcrScript.KOREAN,
+                PhoneOcrScript.DEVANAGARI,
+            ),
+            phoneFrozenOcrSweepOrder(listOf(PhoneOcrScript.JAPANESE)),
+        )
+    }
+
+    @Test
+    fun `empty target plan preserves the complete default sweep`() {
+        assertEquals(PhoneOcrScript.entries, phoneFrozenOcrSweepOrder(emptyList()))
+    }
+
+    @Test
+    fun `target plan order is retained without duplicate fallback passes`() {
+        assertEquals(
+            listOf(
+                PhoneOcrScript.KOREAN,
+                PhoneOcrScript.JAPANESE,
+                PhoneOcrScript.LATIN,
+                PhoneOcrScript.CHINESE,
+                PhoneOcrScript.DEVANAGARI,
+            ),
+            phoneFrozenOcrSweepOrder(
+                listOf(PhoneOcrScript.KOREAN, PhoneOcrScript.JAPANESE, PhoneOcrScript.KOREAN),
+            ),
+        )
+    }
+
+    @Test
     fun `Japanese accepts Han and kana`() {
         val text = "日本語の文章です"
         val stats = phoneOcrTextStats(text, PhoneOcrScript.JAPANESE)

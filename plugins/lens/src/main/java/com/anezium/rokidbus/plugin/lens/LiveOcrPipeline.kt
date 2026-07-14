@@ -343,6 +343,8 @@ internal class LiveOcrRunner(
 ) : AutoCloseable {
     private val inFlight = AtomicBoolean(false)
     private val closed = AtomicBoolean(false)
+    private val paused = AtomicBoolean(false)
+    private val runLock = Any()
     private val current = AtomicReference<DecodedFrame?>(null)
     private val recognizerLock = Any()
     private val recognizers = mutableMapOf<OcrScript, TextRecognizer>()
@@ -352,52 +354,67 @@ internal class LiveOcrRunner(
     private var lastNonLatinScript: OcrScript? = null
 
     fun kick() {
-        if (closed.get() || !inFlight.compareAndSet(false, true)) return
-        val startedAtMs = SystemClock.elapsedRealtime()
-        val cadenceAccepted = synchronized(policyLock) {
-            OcrCadencePolicy.evaluate(
-                state = cadenceState,
-                nowMs = startedAtMs,
-                minIntervalMs = LIVE_OCR_MIN_INTERVAL_MS,
-            ).also { cadenceState = it.nextState }.shouldStart
-        }
-        if (!cadenceAccepted) {
-            inFlight.set(false)
-            return
-        }
-        val frame = holder.takeNewest()
-        if (frame == null) {
-            inFlight.set(false)
-            return
-        }
-        current.set(frame)
-        val scriptPlan = synchronized(policyLock) {
-            AutoScriptPolicy.planLiveFrame(autoScriptState, startedAtMs)
-                .also { autoScriptState = it.nextState }
-        }
-        val task = runCatching {
-            recognizerFor(scriptPlan.script).process(
-                InputImage.fromByteArray(
-                    frame.nv21,
-                    frame.geometry.rasterWidth,
-                    frame.geometry.rasterHeight,
-                    frame.geometry.remainingRotationDegrees,
-                    InputImage.IMAGE_FORMAT_NV21,
-                ),
-            )
-        }.getOrElse {
-            finish(frame, null, scriptPlan, it.message)
-            return
-        }
-        task.addOnCompleteListener {
-            finish(
-                frame,
-                if (it.isSuccessful) it.result else null,
-                scriptPlan,
-                it.exception?.message,
-            )
+        synchronized(runLock) {
+            if (closed.get() || paused.get() || !inFlight.compareAndSet(false, true)) return
+            val startedAtMs = SystemClock.elapsedRealtime()
+            val cadenceAccepted = synchronized(policyLock) {
+                OcrCadencePolicy.evaluate(
+                    state = cadenceState,
+                    nowMs = startedAtMs,
+                    minIntervalMs = LIVE_OCR_MIN_INTERVAL_MS,
+                ).also { cadenceState = it.nextState }.shouldStart
+            }
+            if (!cadenceAccepted) {
+                inFlight.set(false)
+                return
+            }
+            val frame = holder.takeNewest()
+            if (frame == null) {
+                inFlight.set(false)
+                return
+            }
+            current.set(frame)
+            val scriptPlan = synchronized(policyLock) {
+                AutoScriptPolicy.planLiveFrame(autoScriptState, startedAtMs)
+                    .also { autoScriptState = it.nextState }
+            }
+            val task = runCatching {
+                recognizerFor(scriptPlan.script).process(
+                    InputImage.fromByteArray(
+                        frame.nv21,
+                        frame.geometry.rasterWidth,
+                        frame.geometry.rasterHeight,
+                        frame.geometry.remainingRotationDegrees,
+                        InputImage.IMAGE_FORMAT_NV21,
+                    ),
+                )
+            }.getOrElse {
+                finish(frame, null, scriptPlan, it.message)
+                return
+            }
+            task.addOnCompleteListener {
+                finish(
+                    frame,
+                    if (it.isSuccessful) it.result else null,
+                    scriptPlan,
+                    it.exception?.message,
+                )
+            }
         }
     }
+
+    fun pause() = synchronized(runLock) {
+        paused.set(true)
+    }
+
+    fun resume() {
+        val shouldKick = synchronized(runLock) {
+            !closed.get() && paused.compareAndSet(true, false)
+        }
+        if (shouldKick) kick()
+    }
+
+    fun activeScript(): OcrScript = synchronized(policyLock) { autoScriptState.effectiveScript }
 
     private fun finish(
         frame: DecodedFrame,
@@ -405,8 +422,8 @@ internal class LiveOcrRunner(
         scriptPlan: LiveScriptPlan,
         error: String?,
     ) {
-        if (closed.get() || result == null) {
-            if (error != null && !closed.get()) onError(error)
+        if (closed.get() || paused.get() || result == null) {
+            if (error != null && !closed.get() && !paused.get()) onError(error)
             releaseAndContinue(frame)
             return
         }
@@ -476,7 +493,7 @@ internal class LiveOcrRunner(
         current.compareAndSet(frame, null)
         frame.close()
         inFlight.set(false)
-        if (!closed.get()) kick()
+        if (!closed.get() && !paused.get()) kick()
     }
 
     override fun close() {

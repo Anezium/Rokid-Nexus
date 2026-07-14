@@ -6,15 +6,19 @@ import org.junit.Test
 
 class CameraLinkTransferPolicyTest {
     @Test
-    fun `frozen transfer blocks every live frame until a new key frame`() {
+    fun `frozen mode blocks every live frame until explicitly ended with a new key frame`() {
         val policy = CameraLinkTransferPolicy()
 
         assertTrue(policy.shouldAdmitVideo(isKeyFrame = false))
-        policy.beginFrozen(requestId = 41L)
+        policy.beginFrozenMode(requestId = 41L)
         assertFalse(policy.shouldAdmitVideo(isKeyFrame = false))
         assertFalse(policy.shouldAdmitVideo(isKeyFrame = true))
 
-        assertTrue(policy.finishFrozen(requestId = 41L))
+        // Sending the frozen image does not alter policy state. Only the explicit end below does.
+        assertTrue(policy.frozenModeActive)
+        assertFalse(policy.shouldAdmitVideo(isKeyFrame = true))
+
+        assertTrue(policy.endFrozenMode(requestId = 41L))
         assertFalse(policy.shouldAdmitVideo(isKeyFrame = false))
         assertTrue(policy.shouldAdmitVideo(isKeyFrame = true))
 
@@ -23,25 +27,25 @@ class CameraLinkTransferPolicyTest {
     }
 
     @Test
-    fun `overlapping frozen transfers resume only after the final packet`() {
+    fun `overlapping frozen modes resume only after the final explicit end`() {
         val policy = CameraLinkTransferPolicy()
-        policy.beginFrozen(requestId = 10L)
-        policy.beginFrozen(requestId = 11L)
+        policy.beginFrozenMode(requestId = 10L)
+        policy.beginFrozenMode(requestId = 11L)
 
-        assertFalse(policy.finishFrozen(requestId = 10L))
+        assertFalse(policy.endFrozenMode(requestId = 10L))
         assertFalse(policy.shouldAdmitVideo(isKeyFrame = true))
-        assertFalse(policy.finishFrozen(requestId = 99L))
-        assertTrue(policy.finishFrozen(requestId = 11L))
+        assertFalse(policy.endFrozenMode(requestId = 99L))
+        assertTrue(policy.endFrozenMode(requestId = 11L))
         assertTrue(policy.shouldAdmitVideo(isKeyFrame = true))
     }
 
     @Test
     fun `reset restores ordinary video admission`() {
         val policy = CameraLinkTransferPolicy()
-        policy.beginFrozen(requestId = 7L)
+        policy.beginFrozenMode(requestId = 7L)
         policy.reset()
 
-        assertFalse(policy.frozenTransferActive)
+        assertFalse(policy.frozenModeActive)
         assertTrue(policy.shouldAdmitVideo(isKeyFrame = false))
     }
 }

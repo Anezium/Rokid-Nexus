@@ -365,9 +365,7 @@ class CameraActivity : Activity(), TextureView.SurfaceTextureListener {
                     logError(message, failure)
                     if (message.startsWith("FREEZE")) {
                         currentFreezeRequestId?.let { requestId ->
-                            if (cameraLink?.cancelFrozenTransfer(requestId) == true) {
-                                streamer?.requestKeyFrame()
-                            }
+                            cameraLink?.cancelFrozenTransfer(requestId)
                         }
                         isFrozen = false
                         currentFreezeRequestId = null
@@ -490,9 +488,7 @@ class CameraActivity : Activity(), TextureView.SurfaceTextureListener {
         if (!ready || sessionId == null) return
         if (isFrozen) {
             currentFreezeRequestId?.let { requestId ->
-                if (cameraLink?.cancelFrozenTransfer(requestId) == true) {
-                    streamer?.requestKeyFrame()
-                }
+                cameraLink?.cancelFrozenTransfer(requestId)
             }
             isFrozen = false
             currentFreezeRequestId = null
@@ -504,6 +500,7 @@ class CameraActivity : Activity(), TextureView.SurfaceTextureListener {
             overlayView.updateStatus("LIVE", liveZoomLevel.hudLabel)
             return
         }
+        val activeStreamer = streamer ?: return
         cameraLink?.resendOfferIfDisconnected()
         val requestId = freezeSerial.incrementAndGet()
         currentFreezeRequestId = requestId
@@ -513,7 +510,7 @@ class CameraActivity : Activity(), TextureView.SurfaceTextureListener {
         overlayView.setMode(CameraOverlayMode.FROZEN)
         overlayView.updateOverlay(emptyList())
         overlayView.updateStatus("CAPTURING HD FRAME", liveZoomLevel.hudLabel)
-        streamer?.captureFrozenJpeg(requestId)
+        activeStreamer.captureFrozenJpeg(requestId)
     }
 
     private fun handleFrozenJpeg(
@@ -545,7 +542,7 @@ class CameraActivity : Activity(), TextureView.SurfaceTextureListener {
                     "elapsedMs=${cameraSessionElapsedMs()}",
             )
         } else {
-            if (cameraLink?.cancelFrozenTransfer(requestId) == true) streamer?.requestKeyFrame()
+            cameraLink?.cancelFrozenTransfer(requestId)
             frozenTransferExecutor.execute {
                 val sppSent = sendFrozenOverSpp(
                     requestId = requestId,

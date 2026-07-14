@@ -1,33 +1,33 @@
 package com.anezium.rokidbus.glasses
 
-/** Pure state for keeping live video off the socket while a frozen image has priority. */
+/** Pure state for keeping live video off the socket for the full frozen-mode lifetime. */
 internal class CameraLinkTransferPolicy {
-    private val frozenRequestIds = linkedSetOf<Long>()
+    private val frozenModeRequestIds = linkedSetOf<Long>()
     private var awaitingResumeKeyFrame = false
 
-    val frozenTransferActive: Boolean
-        get() = frozenRequestIds.isNotEmpty()
+    val frozenModeActive: Boolean
+        get() = frozenModeRequestIds.isNotEmpty()
 
-    fun beginFrozen(requestId: Long) {
-        frozenRequestIds += requestId
+    fun beginFrozenMode(requestId: Long) {
+        frozenModeRequestIds += requestId
     }
 
-    /** Returns true when video may resume once the encoder supplies a fresh key frame. */
-    fun finishFrozen(requestId: Long): Boolean {
-        if (!frozenRequestIds.remove(requestId) || frozenRequestIds.isNotEmpty()) return false
+    /** Explicitly ends frozen mode; writing its JPEG does not call this transition. */
+    fun endFrozenMode(requestId: Long): Boolean {
+        if (!frozenModeRequestIds.remove(requestId) || frozenModeRequestIds.isNotEmpty()) return false
         awaitingResumeKeyFrame = true
         return true
     }
 
     fun shouldAdmitVideo(isKeyFrame: Boolean): Boolean =
-        !frozenTransferActive && (!awaitingResumeKeyFrame || isKeyFrame)
+        !frozenModeActive && (!awaitingResumeKeyFrame || isKeyFrame)
 
     fun onVideoWriteStarted(isKeyFrame: Boolean) {
         if (awaitingResumeKeyFrame && isKeyFrame) awaitingResumeKeyFrame = false
     }
 
     fun reset() {
-        frozenRequestIds.clear()
+        frozenModeRequestIds.clear()
         awaitingResumeKeyFrame = false
     }
 }

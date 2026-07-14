@@ -64,6 +64,10 @@ internal fun isStrongPhoneOcrCandidate(text: String, script: PhoneOcrScript): Bo
     return stats.nonSpaceCharacters >= MIN_USEFUL_CHARACTERS && stats.matchingRatio >= MIN_SCRIPT_RATIO
 }
 
+internal fun phoneFrozenOcrSweepOrder(
+    targetScriptPlan: List<PhoneOcrScript>,
+): List<PhoneOcrScript> = (targetScriptPlan + PhoneOcrScript.entries).distinct()
+
 private fun matchesPhoneOcrScript(codePoint: Int, script: PhoneOcrScript): Boolean = when (script) {
     PhoneOcrScript.LATIN -> codePoint in 0x0041..0x024F
     PhoneOcrScript.JAPANESE -> isHan(codePoint) ||
@@ -98,9 +102,7 @@ internal class PhoneFrozenOcr : AutoCloseable {
             callback(Result.failure(IllegalStateException("Phone frozen OCR is closed")))
             return
         }
-        val order = (listOf(PhoneOcrScript.LATIN) +
-            targetScriptPlan.filter { it != PhoneOcrScript.LATIN } +
-            PhoneOcrScript.entries.filter { it != PhoneOcrScript.LATIN }).distinct()
+        val order = phoneFrozenOcrSweepOrder(targetScriptPlan)
         val successes = mutableListOf<PhoneFrozenOcrResult>()
         var index = 0
 
@@ -174,4 +176,3 @@ internal class PhoneFrozenOcr : AutoCloseable {
 
 private const val MIN_USEFUL_CHARACTERS = 8
 private const val MIN_SCRIPT_RATIO = 0.30
-
