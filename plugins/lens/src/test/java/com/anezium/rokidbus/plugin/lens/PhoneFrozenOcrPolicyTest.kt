@@ -42,6 +42,15 @@ class PhoneFrozenOcrPolicyTest {
     }
 
     @Test
+    fun `sweep stops after two empty passes but keeps searching once characters appear`() {
+        assertTrue(shouldContinueFrozenSweep(passesCompleted = 0, sawAnyCharacters = false))
+        assertTrue(shouldContinueFrozenSweep(passesCompleted = 1, sawAnyCharacters = false))
+        assertFalse(shouldContinueFrozenSweep(passesCompleted = 2, sawAnyCharacters = false))
+        assertTrue(shouldContinueFrozenSweep(passesCompleted = 2, sawAnyCharacters = true))
+        assertTrue(shouldContinueFrozenSweep(passesCompleted = 4, sawAnyCharacters = true))
+    }
+
+    @Test
     fun `Japanese accepts Han and kana`() {
         val text = "日本語の文章です"
         val stats = phoneOcrTextStats(text, PhoneOcrScript.JAPANESE)

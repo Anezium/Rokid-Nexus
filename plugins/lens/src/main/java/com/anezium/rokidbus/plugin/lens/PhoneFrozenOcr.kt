@@ -68,6 +68,15 @@ internal fun phoneFrozenOcrSweepOrder(
     targetScriptPlan: List<PhoneOcrScript>,
 ): List<PhoneOcrScript> = (targetScriptPlan + PhoneOcrScript.entries).distinct()
 
+/**
+ * A textless scene returns zero characters from every recognizer; two independent scripts
+ * agreeing on emptiness is enough evidence to stop paying ~1s per remaining model.
+ * Any recognized character keeps the sweep alive: short or ambiguous text still deserves
+ * the full script search.
+ */
+internal fun shouldContinueFrozenSweep(passesCompleted: Int, sawAnyCharacters: Boolean): Boolean =
+    sawAnyCharacters || passesCompleted < MIN_EMPTY_PASSES_BEFORE_BAIL
+
 private fun matchesPhoneOcrScript(codePoint: Int, script: PhoneOcrScript): Boolean = when (script) {
     PhoneOcrScript.LATIN -> codePoint in 0x0041..0x024F
     PhoneOcrScript.JAPANESE -> isHan(codePoint) ||
@@ -104,6 +113,7 @@ internal class PhoneFrozenOcr : AutoCloseable {
         }
         val order = phoneFrozenOcrSweepOrder(targetScriptPlan)
         val successes = mutableListOf<PhoneFrozenOcrResult>()
+        var sawAnyCharacters = false
         var index = 0
 
         fun finishBest() {
@@ -115,6 +125,7 @@ internal class PhoneFrozenOcr : AutoCloseable {
         fun recognizeNext() {
             if (closed) return callback(Result.failure(IllegalStateException("Phone frozen OCR is closed")))
             if (index >= order.size) return finishBest()
+            if (!shouldContinueFrozenSweep(successes.size, sawAnyCharacters)) return finishBest()
             val script = order[index++]
             val task = runCatching { recognizerFor(script).process(InputImage.fromBitmap(bitmap, 0)) }
                 .getOrElse {
@@ -130,6 +141,7 @@ internal class PhoneFrozenOcr : AutoCloseable {
                 val result = PhoneFrozenOcrResult(script, text)
                 successes += result
                 val chars = phoneOcrTextStats(text.text, script).nonSpaceCharacters
+                if (chars > 0) sawAnyCharacters = true
                 val accepted = if (script == PhoneOcrScript.LATIN) {
                     chars >= MIN_USEFUL_CHARACTERS
                 } else {
@@ -176,3 +188,4 @@ internal class PhoneFrozenOcr : AutoCloseable {
 
 private const val MIN_USEFUL_CHARACTERS = 8
 private const val MIN_SCRIPT_RATIO = 0.30
+private const val MIN_EMPTY_PASSES_BEFORE_BAIL = 2
