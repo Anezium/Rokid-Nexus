@@ -20,8 +20,15 @@ internal class FrozenImageChunkAssembler {
     @Synchronized
     fun accept(payload: JSONObject, data: ByteArray): AssembledFrozenImage? {
         val metadata = FrozenImageChunkContract.parse(payload, data.size) ?: return null
-        val transfer = transfers.getOrPut(metadata.transferId) {
-            Transfer(metadata, arrayOfNulls(metadata.chunkCount))
+        var transfer = transfers[metadata.transferId]
+        if (transfer == null) {
+            // Abandoned transfers never complete on their own; keep only the most
+            // recent few so a lossy link cannot accumulate partial images forever.
+            while (transfers.size >= MAX_PENDING_TRANSFERS) {
+                transfers.remove(transfers.keys.first())
+            }
+            transfer = Transfer(metadata, arrayOfNulls(metadata.chunkCount))
+            transfers[metadata.transferId] = transfer
         }
         if (!matches(transfer.first, metadata)) {
             transfers.remove(metadata.transferId)
@@ -51,6 +58,10 @@ internal class FrozenImageChunkAssembler {
     @Synchronized
     fun clear() {
         transfers.clear()
+    }
+
+    private companion object {
+        const val MAX_PENDING_TRANSFERS = 4
     }
 
     private fun matches(

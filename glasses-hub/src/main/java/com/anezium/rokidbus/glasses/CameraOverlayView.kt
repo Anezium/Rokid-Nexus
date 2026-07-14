@@ -675,9 +675,9 @@ internal class CameraOverlayView @JvmOverloads constructor(
     private fun ParagraphPanelRect.rectF() = RectF(left, top, right, bottom)
 
     private fun roleColor(role: String): Int = when (role.lowercase()) {
-        "source", "fallback" -> CYAN
+        "source", "fallback", "translation-fallback" -> CYAN
         "pending", "label", "status" -> AMBER
-        "failure", "error" -> RED
+        "failure", "error", "translation-failed" -> RED
         else -> GREEN
     }
 
