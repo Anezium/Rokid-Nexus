@@ -109,6 +109,11 @@ object GlassesHub {
             log("Glasses hub starting")
             SppServerManager.ensureStarted(context.applicationContext)
             CxrBusBridge.start(context.applicationContext)
+            // Rokid's firmware blocks MY_PACKAGE_REPLACED (and other manifest broadcasts)
+            // to third-party apps, so BootReceiver cannot re-arm accessibility after an
+            // update. Every process entry point funnels through here — including the
+            // launcher's boot auto-open — making this the reliable re-arm hook.
+            AccessibilityRearmWatcher.start(context.applicationContext, "hub_start")
         }
     }
 
