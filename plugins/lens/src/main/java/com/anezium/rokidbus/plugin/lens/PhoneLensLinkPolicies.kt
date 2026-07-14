@@ -44,3 +44,26 @@ internal class PhoneLensJoinRetryPolicy(
         attemptsStarted = 0
     }
 }
+
+internal enum class PhoneLensJoinRecoveryAction {
+    NONE,
+    REMOVE_GROUP,
+    RESET_CHANNEL,
+}
+
+/** Pure escalation ladder; WifiP2pManager operations remain in PhoneLensImageLink. */
+internal class PhoneLensJoinRecoveryPolicy(
+    private val removeGroupAfterFailures: Int = 2,
+    private val resetChannelAfterFailures: Int = 4,
+) {
+    init {
+        require(removeGroupAfterFailures > 0)
+        require(resetChannelAfterFailures > removeGroupAfterFailures)
+    }
+
+    fun actionAfter(consecutiveFailures: Int): PhoneLensJoinRecoveryAction = when {
+        consecutiveFailures == removeGroupAfterFailures -> PhoneLensJoinRecoveryAction.REMOVE_GROUP
+        consecutiveFailures == resetChannelAfterFailures -> PhoneLensJoinRecoveryAction.RESET_CHANNEL
+        else -> PhoneLensJoinRecoveryAction.NONE
+    }
+}

@@ -80,4 +80,17 @@ class PhoneLensLinkPoliciesTest {
         assertNull(policy.retryDelayAfter(6))
         assertNull(policy.startAttempt())
     }
+
+    @Test
+    fun `join recovery removes group after two failures and resets channel after four`() {
+        val policy = PhoneLensJoinRecoveryPolicy()
+
+        assertEquals(PhoneLensJoinRecoveryAction.NONE, policy.actionAfter(0))
+        assertEquals(PhoneLensJoinRecoveryAction.NONE, policy.actionAfter(1))
+        assertEquals(PhoneLensJoinRecoveryAction.REMOVE_GROUP, policy.actionAfter(2))
+        assertEquals(PhoneLensJoinRecoveryAction.NONE, policy.actionAfter(3))
+        assertEquals(PhoneLensJoinRecoveryAction.RESET_CHANNEL, policy.actionAfter(4))
+        assertEquals(PhoneLensJoinRecoveryAction.NONE, policy.actionAfter(5))
+        assertEquals(PhoneLensJoinRecoveryAction.NONE, policy.actionAfter(6))
+    }
 }
