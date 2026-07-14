@@ -437,8 +437,17 @@ internal class PhoneLensImageLink(
                 clearConnectionInfoPoll()
                 recoverConflictingGroup(expectedGeneration, currentOffer)
             }
-        }.also { mainHandler.postDelayed(it, JOIN_PROGRESS_TIMEOUT_MS) }
+        }.also { mainHandler.postDelayed(it, joinProgressTimeoutMs(attempt)) }
     }
+
+    /**
+     * Measured on RG glasses + S23: the very first connect against a freshly created GO is
+     * accepted by the framework but never reaches groupFormed, regardless of how long the GO
+     * has settled — while the retry consistently connects in ~2.4s. Cut the doomed first
+     * attempt short and give real attempts room to finish.
+     */
+    private fun joinProgressTimeoutMs(attempt: Int?): Long =
+        if (attempt == 1) FIRST_JOIN_PROGRESS_TIMEOUT_MS else JOIN_PROGRESS_TIMEOUT_MS
 
     private fun clearJoinAttemptTimeout() {
         joinAttemptTimeout?.let(mainHandler::removeCallbacks)
@@ -767,10 +776,8 @@ internal class PhoneLensImageLink(
         private const val TCP_RETRY_MS = 1_000L
         private const val CONNECTION_INFO_POLL_MS = 500L
         private const val GROUP_INFO_TIMEOUT_MS = 1_000L
-        // Measured on RG glasses + S23: a healthy join reaches groupFormed in ~1.5s, while the
-        // first join after GO creation can stall in the supplicant until cancelConnect unsticks
-        // it (~130ms). Fail fast and retry almost immediately rather than waiting out a stall.
-        private const val JOIN_PROGRESS_TIMEOUT_MS = 2_500L
+        private const val FIRST_JOIN_PROGRESS_TIMEOUT_MS = 1_500L
+        private const val JOIN_PROGRESS_TIMEOUT_MS = 4_500L
         private const val INITIAL_JOIN_RETRY_MS = 300L
         private const val JOIN_RETRY_STEP_MS = 1_000L
         private const val MAX_JOIN_RETRY_MS = 3_000L

@@ -293,7 +293,7 @@ internal class CameraLink(
             WifiP2pConfig.Builder()
                 .setNetworkName(profile.networkName)
                 .setPassphrase(profile.passphrase)
-                .setGroupOperatingBand(WifiP2pConfig.GROUP_OWNER_BAND_5GHZ)
+                .setGroupOperatingBand(WifiP2pConfig.GROUP_OWNER_BAND_2GHZ)
                 .enablePersistentMode(true)
                 .build()
         }.getOrElse {
