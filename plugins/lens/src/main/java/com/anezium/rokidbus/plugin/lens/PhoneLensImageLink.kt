@@ -521,10 +521,10 @@ internal class PhoneLensImageLink(
         consecutiveJoinFailures += 1
         val delayMs = joinRetryPolicy.retryDelayAfter(attempt)
             ?: return failP2p("lensLinkJoinExhausted attempts=$attempt cause=$cause")
-        cancelPendingConnect(attempt)
         val recoveryAction = joinRecoveryPolicy.actionAfter(consecutiveJoinFailures)
         when (recoveryAction) {
             PhoneLensJoinRecoveryAction.NONE -> {
+                cancelPendingConnect(attempt)
                 logJoinRetryScheduled(attempt, delayMs, cause)
                 scheduleJoinRetry(expectedGeneration, currentOffer, delayMs)
             }
@@ -532,14 +532,20 @@ internal class PhoneLensImageLink(
                 log("lensLinkRecovery step=remove_group attempt=$attempt")
                 val retryDelayMs = delayMs.coerceAtLeast(RESET_SETTLE_MS)
                 logJoinRetryScheduled(attempt, retryDelayMs, cause)
-                removeGroupForJoinRecovery(
-                    expectedGeneration,
-                    currentOffer,
-                    attempt,
-                    retryDelayMs,
-                )
+                // removeGroup while our own cancelConnect is still in flight returns BUSY;
+                // sequence it behind the cancel callback.
+                cancelPendingConnect(attempt) {
+                    if (!isP2pCurrent(expectedGeneration, currentOffer)) return@cancelPendingConnect
+                    removeGroupForJoinRecovery(
+                        expectedGeneration,
+                        currentOffer,
+                        attempt,
+                        retryDelayMs,
+                    )
+                }
             }
             PhoneLensJoinRecoveryAction.RESET_CHANNEL -> {
+                cancelPendingConnect(attempt)
                 log("lensLinkRecovery step=channel_reset attempt=$attempt")
                 if (!recreateP2pChannel(expectedGeneration, currentOffer)) return
                 val retryDelayMs = delayMs.coerceAtLeast(RESET_SETTLE_MS)
@@ -626,21 +632,29 @@ internal class PhoneLensImageLink(
     }
 
     @SuppressLint("MissingPermission")
-    private fun cancelPendingConnect(attempt: Int) {
+    private fun cancelPendingConnect(attempt: Int, onDone: (() -> Unit)? = null) {
         val localManager = manager
         val localChannel = channel
         if (localManager == null || localChannel == null) {
             log("lensLinkCancelSkipped attempt=$attempt reason=manager_or_channel_lost")
+            onDone?.invoke()
             return
         }
         runCatching {
             localManager.cancelConnect(localChannel, object : WifiP2pManager.ActionListener {
-                override fun onSuccess() = log("lensLinkCancelSucceeded attempt=$attempt")
-                override fun onFailure(reason: Int) =
+                override fun onSuccess() {
+                    log("lensLinkCancelSucceeded attempt=$attempt")
+                    onDone?.invoke()
+                }
+
+                override fun onFailure(reason: Int) {
                     log("lensLinkCancelFailed attempt=$attempt reason=$reason")
+                    onDone?.invoke()
+                }
             })
         }.onFailure {
             log("lensLinkCancelException attempt=$attempt type=${it.javaClass.simpleName}")
+            onDone?.invoke()
         }
     }
 
