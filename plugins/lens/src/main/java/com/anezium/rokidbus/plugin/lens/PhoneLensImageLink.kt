@@ -725,8 +725,11 @@ internal class PhoneLensImageLink(
         private const val TCP_RETRY_MS = 1_000L
         private const val CONNECTION_INFO_POLL_MS = 500L
         private const val GROUP_INFO_TIMEOUT_MS = 1_000L
-        private const val JOIN_PROGRESS_TIMEOUT_MS = 4_000L
-        private const val INITIAL_JOIN_RETRY_MS = 1_000L
+        // Measured on RG glasses + S23: a healthy join reaches groupFormed in ~1.5s, while the
+        // first join after GO creation can stall in the supplicant until cancelConnect unsticks
+        // it (~130ms). Fail fast and retry almost immediately rather than waiting out a stall.
+        private const val JOIN_PROGRESS_TIMEOUT_MS = 2_500L
+        private const val INITIAL_JOIN_RETRY_MS = 300L
         private const val JOIN_RETRY_STEP_MS = 1_000L
         private const val MAX_JOIN_RETRY_MS = 3_000L
         private const val MAX_JOIN_ATTEMPTS = 6
