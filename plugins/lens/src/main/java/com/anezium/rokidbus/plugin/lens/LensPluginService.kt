@@ -247,6 +247,7 @@ internal class LensCameraSession(
                     .toString(),
                 payload = assembled.jpeg,
             ),
+            transport = "spp",
         )
     }
 
@@ -306,7 +307,7 @@ internal class LensCameraSession(
                 decoder.configure(packet.payload, geometry, fps)
             }
             CameraLinkPacketType.VIDEO_FRAME -> decoder.queue(packet)
-            CameraLinkPacketType.FROZEN_IMAGE -> processFrozen(packet)
+            CameraLinkPacketType.FROZEN_IMAGE -> processFrozen(packet, transport = "wifi")
             else -> Unit
         }
     }
@@ -367,7 +368,7 @@ internal class LensCameraSession(
         }
     }
 
-    private fun processFrozen(packet: CameraLinkPacket) {
+    private fun processFrozen(packet: CameraLinkPacket, transport: String) {
         val meta = runCatching { JSONObject(packet.meta) }.getOrNull() ?: return
         val activeSession = sessionId ?: return
         val packetSession = meta.optString("sessionId")
@@ -390,10 +391,20 @@ internal class LensCameraSession(
                 processedFrozenRequests.remove(processedFrozenRequests.first())
             }
         }
+        logFrozenStage(
+            stage = "frozen_received",
+            requestId = requestId,
+            detail = "transport=$transport bytes=${packet.payload.size}",
+        )
         val jpeg = packet.payload
         frozenExecutor.execute {
             val bitmap = runCatching { decodeFrozenJpeg(jpeg, width, height, crop, rotation) }
                 .getOrNull() ?: return@execute
+            logFrozenStage(
+                stage = "frozen_decoded",
+                requestId = requestId,
+                detail = "width=${bitmap.width} height=${bitmap.height}",
+            )
             activeFrozenBitmaps += bitmap
             if (closed.get()) {
                 recycleFrozen(bitmap)
@@ -407,6 +418,11 @@ internal class LensCameraSession(
                 recognized.fold(
                     onSuccess = { result ->
                         val lines = frozenOcrLines(result.text)
+                        logFrozenStage(
+                            stage = "frozen_ocr_done",
+                            requestId = requestId,
+                            detail = "script=${result.script.wireValue} items=${lines.size}",
+                        )
                         var translation: TranslationCall? = null
                         val batch = FrozenTranslationBatch(
                             translator = translator,
@@ -418,6 +434,11 @@ internal class LensCameraSession(
                             onComplete = { translations ->
                                 try {
                                     translation?.let { activeFrozenTranslations -= it }
+                                    logFrozenStage(
+                                        stage = "frozen_translated",
+                                        requestId = requestId,
+                                        detail = "requested=${lines.size} results=${translations.size}",
+                                    )
                                     if (!closed.get() && sessionId == activeSession) {
                                         sendOverlay(
                                             BusPaths.CAMERA_FREEZE_RESULT, activeSession, requestId,
@@ -437,6 +458,13 @@ internal class LensCameraSession(
                 )
             }
         }
+    }
+
+    private fun logFrozenStage(stage: String, requestId: Long, detail: String) {
+        host.log(
+            "cameraLinkStage stage=$stage requestId=$requestId $detail " +
+                "elapsedMs=${sessionElapsedMs()}",
+        )
     }
 
     private fun sendOverlay(
@@ -481,7 +509,8 @@ internal class LensCameraSession(
             payload,
         )
         host.log(
-            "overlay dispatch path=$path candidates=${lines.size} requested=${translations.size} " +
+            "overlay dispatch path=$path requestId=${requestId ?: "-"} " +
+                "candidates=${lines.size} requested=${translations.size} " +
                 "covered=${items.length() - fallbackCount} fallback=$fallbackCount " +
                 "itemCount=${items.length()} jsonUtf8Bytes=$payloadBytes " +
                 "warningOver3KiB=${payloadBytes > THREE_KIB} dispatchAccepted=$dispatchAccepted",

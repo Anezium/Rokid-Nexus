@@ -18,6 +18,7 @@ import android.os.SystemClock
 import android.util.Base64
 import android.util.Log
 import com.anezium.rokidbus.shared.CameraLinkPacket
+import com.anezium.rokidbus.shared.CameraLinkPacketFlags
 import com.anezium.rokidbus.shared.CameraLinkPacketType
 import com.anezium.rokidbus.shared.CameraLinkProtocol
 import org.json.JSONObject
@@ -45,6 +46,7 @@ internal class CameraLink(
     private val sessionStartedAtMs: Long,
     private val onOfferReady: (CameraLinkOffer, Int) -> Unit,
     private val onAuthenticated: (Boolean) -> Unit,
+    private val onFrozenTransferFinished: (Long) -> Unit,
     private val onState: (String) -> Unit,
 ) : AutoCloseable {
     private val appContext = context.applicationContext
@@ -57,6 +59,8 @@ internal class CameraLink(
         Thread(runnable, "camera-link-writer").apply { isDaemon = true }
     }
     private val packets = ArrayBlockingQueue<CameraLinkPacket>(NETWORK_QUEUE_CAPACITY)
+    private val packetQueueLock = Any()
+    private val transferPolicy = CameraLinkTransferPolicy()
     private val offerRetryPolicy = CameraLinkOfferRetryPolicy(
         coldGroupSettleMs = COLD_GROUP_SETTLE_MS,
         intervalMs = OFFER_RETRY_MS,
@@ -80,6 +84,7 @@ internal class CameraLink(
     private var configuredCreateAttempted = false
     private var legacyCreateAttempted = false
     private var conflictRecoveryAttempted = false
+    private var bandMigrationAttempted = false
     private var waitingForCreatedGroup = false
     private var createRetry: Runnable? = null
     private var wifiRetry: Runnable? = null
@@ -137,14 +142,39 @@ internal class CameraLink(
 
     /** Never performs socket I/O on the codec callback thread. */
     fun enqueue(packet: CameraLinkPacket): Boolean {
-        if (!authenticated) return false
-        if (packets.offer(packet)) return true
-        return if (packet.type == CameraLinkPacketType.VIDEO_FRAME) {
-            dropOneVideoFrame() && packets.offer(packet)
-        } else {
-            while (packets.remainingCapacity() == 0 && dropOneVideoFrame()) Unit
-            packets.offer(packet)
+        synchronized(packetQueueLock) {
+            if (!authenticated) return false
+            if (packet.type == CameraLinkPacketType.VIDEO_FRAME &&
+                !transferPolicy.shouldAdmitVideo(packet.isKeyFrame())
+            ) return false
+            if (packet.type == CameraLinkPacketType.FROZEN_IMAGE) {
+                transferPolicy.beginFrozen(packet.requestId)
+                dropQueuedVideoFrames()
+            }
+            if (packets.offer(packet)) return true
+            return if (packet.type == CameraLinkPacketType.VIDEO_FRAME) {
+                dropOneVideoFrame() && packets.offer(packet)
+            } else {
+                while (packets.remainingCapacity() == 0 && dropOneVideoFrame()) Unit
+                packets.offer(packet)
+            }
         }
+    }
+
+    /** Starts the video gate at the tap, before the camera produces the large JPEG. */
+    fun beginFrozenTransfer(requestId: Long): Boolean = synchronized(packetQueueLock) {
+        if (!authenticated) return false
+        transferPolicy.beginFrozen(requestId)
+        dropQueuedVideoFrames()
+        true
+    }
+
+    /** Cancels queued transfer work and returns true when the encoder should request a key frame. */
+    fun cancelFrozenTransfer(requestId: Long): Boolean = synchronized(packetQueueLock) {
+        packets.removeIf {
+            it.type == CameraLinkPacketType.FROZEN_IMAGE && it.requestId == requestId
+        }
+        transferPolicy.finishFrozen(requestId)
     }
 
     fun abortClient() {
@@ -155,6 +185,13 @@ internal class CameraLink(
         val stale = packets.firstOrNull { it.type == CameraLinkPacketType.VIDEO_FRAME } ?: return false
         return packets.remove(stale)
     }
+
+    private fun dropQueuedVideoFrames() {
+        packets.removeIf { it.type == CameraLinkPacketType.VIDEO_FRAME }
+    }
+
+    private fun CameraLinkPacket.isKeyFrame(): Boolean =
+        flags and CameraLinkPacketFlags.KEY_FRAME != 0
 
     @SuppressLint("MissingPermission")
     private fun inspectGroup() {
@@ -180,7 +217,12 @@ internal class CameraLink(
     private fun handleGroup(group: WifiP2pGroup?) {
         if (!running) return
         if (isUsableOwnerGroup(group)) {
-            activateGroup(group!!, if (waitingForCreatedGroup) "created" else "active_reuse")
+            val activeGroup = group!!
+            if (shouldMigrateTo5Ghz(activeGroup)) {
+                migrateTo5Ghz(activeGroup)
+            } else {
+                activateGroup(activeGroup, if (waitingForCreatedGroup) "created" else "active_reuse")
+            }
             return
         }
         if (waitingForCreatedGroup) {
@@ -197,6 +239,26 @@ internal class CameraLink(
     private fun isUsableOwnerGroup(group: WifiP2pGroup?): Boolean =
         group != null && group.isGroupOwner && group.networkName.isNotBlank() &&
             group.passphrase.isNotBlank() && group.getInterface().isNotBlank()
+
+    private fun shouldMigrateTo5Ghz(group: WifiP2pGroup): Boolean =
+        !bandMigrationAttempted && createAttempts == 0 && group.frequency in 2_400..2_500
+
+    @SuppressLint("MissingPermission")
+    private fun migrateTo5Ghz(group: WifiP2pGroup) {
+        val localManager = manager ?: return fail("WI-FI DIRECT LOST")
+        val localChannel = channel ?: return fail("WI-FI DIRECT LOST")
+        bandMigrationAttempted = true
+        state("UPGRADING CAMERA LINK")
+        Log.i(TAG, "cameraLinkBandMigration fromMHz=${group.frequency} target=5ghz")
+        localManager.removeGroup(localChannel, object : WifiP2pManager.ActionListener {
+            override fun onSuccess() = scheduleCreate(RECOVERY_SETTLE_MS, ::createConfiguredGroup)
+
+            override fun onFailure(reason: Int) {
+                Log.w(TAG, "cameraLinkBandMigrationSkipped reason=$reason")
+                activateGroup(group, "active_reuse_2ghz")
+            }
+        })
+    }
 
     @SuppressLint("MissingPermission")
     private fun recoverConflictingGroup() {
@@ -218,16 +280,23 @@ internal class CameraLink(
         if (!running || configuredCreateAttempted) return
         val localManager = manager ?: return fail("WI-FI DIRECT LOST")
         val localChannel = channel ?: return fail("WI-FI DIRECT LOST")
-        val profile = profileStore.loadOrCreate()
-        val config = WifiP2pConfig.Builder()
-            .setNetworkName(profile.networkName)
-            .setPassphrase(profile.passphrase)
-            .enablePersistentMode(true)
-            .build()
         configuredCreateAttempted = true
         createAttempts += 1
         state("CREATING CAMERA LINK")
         Log.i(TAG, "cameraLinkCreate path=configured elapsedMs=${stageElapsedMs()}")
+        val profile = profileStore.loadOrCreate()
+        val config = runCatching {
+            WifiP2pConfig.Builder()
+                .setNetworkName(profile.networkName)
+                .setPassphrase(profile.passphrase)
+                .setGroupOperatingBand(WifiP2pConfig.GROUP_OWNER_BAND_5GHZ)
+                .enablePersistentMode(true)
+                .build()
+        }.getOrElse {
+            Log.w(TAG, "cameraLinkConfiguredBuildRejected type=${it.javaClass.simpleName}")
+            scheduleCreate(LEGACY_FALLBACK_MS, ::createLegacyGroup)
+            return
+        }
         localManager.createGroup(localChannel, config, object : WifiP2pManager.ActionListener {
             override fun onSuccess() = awaitCreatedGroup()
             override fun onFailure(reason: Int) {
@@ -275,6 +344,11 @@ internal class CameraLink(
         val ssid = group.networkName
         val passphrase = group.passphrase
         val interfaceName = group.getInterface()
+        Log.i(
+            TAG,
+            "cameraLinkGroup path=$path frequencyMHz=${group.frequency} " +
+                "band=${if (group.frequency >= 5_000) "5ghz" else "2ghz_or_unknown"}",
+        )
         profileStore.save(CameraP2pProfile(ssid, passphrase))
         if (!groupStageLogged) {
             groupStageLogged = true
@@ -419,8 +493,31 @@ internal class CameraLink(
     private fun writerLoop() {
         while (running) {
             val packet = runCatching { packets.poll(250L, TimeUnit.MILLISECONDS) }.getOrNull() ?: continue
+            if (packet.type == CameraLinkPacketType.VIDEO_FRAME) {
+                val shouldWrite = synchronized(packetQueueLock) {
+                    transferPolicy.shouldAdmitVideo(packet.isKeyFrame()).also { admitted ->
+                        if (admitted) transferPolicy.onVideoWriteStarted(packet.isKeyFrame())
+                    }
+                }
+                if (!shouldWrite) continue
+            }
             val output = synchronized(socketLock) { clientOutput } ?: continue
             runCatching { CameraLinkProtocol.write(output, packet) }
+                .onSuccess {
+                    if (packet.type == CameraLinkPacketType.FROZEN_IMAGE) {
+                        Log.i(
+                            TAG,
+                            "cameraLinkStage stage=frozen_sent requestId=${packet.requestId} " +
+                                "bytes=${packet.payload.size} elapsedMs=${stageElapsedMs()}",
+                        )
+                        val shouldResume = synchronized(packetQueueLock) {
+                            transferPolicy.finishFrozen(packet.requestId)
+                        }
+                        if (shouldResume) {
+                            mainHandler.post { onFrozenTransferFinished(packet.requestId) }
+                        }
+                    }
+                }
                 .onFailure { closeClient() }
         }
     }
@@ -432,9 +529,12 @@ internal class CameraLink(
             notify = authenticated
             authenticated = false
             clientOutput = null
-            packets.clear()
             runCatching { clientSocket?.close() }
             clientSocket = null
+        }
+        synchronized(packetQueueLock) {
+            packets.clear()
+            transferPolicy.reset()
         }
         if (notify) {
             mainHandler.post {

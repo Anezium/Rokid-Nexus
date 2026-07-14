@@ -277,6 +277,9 @@ class CameraActivity : Activity(), TextureView.SurfaceTextureListener {
                         overlayView.updateStatus("WAITING FOR PHONE", currentZoomLabel())
                     }
                 },
+                onFrozenTransferFinished = {
+                    streamer?.requestKeyFrame()
+                },
                 onState = { state -> overlayView.updateStatus(state, currentZoomLabel()) },
             ).also { it.start() }
         }
@@ -328,6 +331,7 @@ class CameraActivity : Activity(), TextureView.SurfaceTextureListener {
         streamer = CameraH264Streamer(
             context = applicationContext,
             packetSender = link::enqueue,
+            stageElapsedMs = ::cameraSessionElapsedMs,
             displayRotationDegrees = displayRotationDegrees,
             streamPlan = plan,
             onLiveFrameGeometry = { width, height, rotationDegrees ->
@@ -360,6 +364,11 @@ class CameraActivity : Activity(), TextureView.SurfaceTextureListener {
                 runOnUiThread {
                     logError(message, failure)
                     if (message.startsWith("FREEZE")) {
+                        currentFreezeRequestId?.let { requestId ->
+                            if (cameraLink?.cancelFrozenTransfer(requestId) == true) {
+                                streamer?.requestKeyFrame()
+                            }
+                        }
                         isFrozen = false
                         currentFreezeRequestId = null
                         overlayView.setMode(CameraOverlayMode.LIVE)
@@ -480,6 +489,11 @@ class CameraActivity : Activity(), TextureView.SurfaceTextureListener {
     private fun toggleFreeze() {
         if (!ready || sessionId == null) return
         if (isFrozen) {
+            currentFreezeRequestId?.let { requestId ->
+                if (cameraLink?.cancelFrozenTransfer(requestId) == true) {
+                    streamer?.requestKeyFrame()
+                }
+            }
             isFrozen = false
             currentFreezeRequestId = null
             frozenZoomLevel = LiveZoomLevel.ONE
@@ -495,6 +509,7 @@ class CameraActivity : Activity(), TextureView.SurfaceTextureListener {
         currentFreezeRequestId = requestId
         lastFreezeSeq = Long.MIN_VALUE
         isFrozen = true
+        cameraLink?.beginFrozenTransfer(requestId)
         overlayView.setMode(CameraOverlayMode.FROZEN)
         overlayView.updateOverlay(emptyList())
         overlayView.updateStatus("CAPTURING HD FRAME", liveZoomLevel.hudLabel)
@@ -509,21 +524,6 @@ class CameraActivity : Activity(), TextureView.SurfaceTextureListener {
         rotationDegrees: Int,
     ) {
         if (!isFrozen || currentFreezeRequestId != requestId || sessionId == null) return
-        val bitmap = decodeFrozenPreview(jpeg, rotationDegrees)
-        if (bitmap != null) {
-            val live = liveFrameGeometry?.orientedSize
-            val viewport = live?.let {
-                CameraPreviewGeometry.matchingFrozenSourceViewport(
-                    frozenWidth = bitmap.width,
-                    frozenHeight = bitmap.height,
-                    liveWidth = it.width,
-                    liveHeight = it.height,
-                    viewWidth = previewView.width,
-                    viewHeight = previewView.height,
-                )
-            }
-            overlayView.setFrozenBackground(bitmap, viewport)
-        }
         val packet = CameraLinkPacket(
             type = CameraLinkPacketType.FROZEN_IMAGE,
             requestId = requestId,
@@ -540,26 +540,50 @@ class CameraActivity : Activity(), TextureView.SurfaceTextureListener {
         val sent = jpeg.size <= CameraLinkProtocol.MAX_PAYLOAD_BYTES &&
             cameraLink?.enqueue(packet) == true
         if (sent) {
-            overlayView.updateStatus("FROZEN / PROCESSING", liveZoomLevel.hudLabel)
-            return
-        }
-        overlayView.updateStatus("FROZEN / SENDING VIA BLUETOOTH", liveZoomLevel.hudLabel)
-        frozenTransferExecutor.execute {
-            val sppSent = sendFrozenOverSpp(
-                requestId = requestId,
-                jpeg = jpeg,
-                width = width,
-                height = height,
-                rotationDegrees = rotationDegrees,
+            log(
+                "cameraLinkStage stage=frozen_enqueued requestId=$requestId bytes=${jpeg.size} " +
+                    "elapsedMs=${cameraSessionElapsedMs()}",
             )
-            runOnUiThread {
-                if (!isFrozen || currentFreezeRequestId != requestId) return@runOnUiThread
-                overlayView.updateStatus(
-                    if (sppSent) "FROZEN / PROCESSING VIA BLUETOOTH" else "FROZEN / LINK LOST",
-                    liveZoomLevel.hudLabel,
+        } else {
+            if (cameraLink?.cancelFrozenTransfer(requestId) == true) streamer?.requestKeyFrame()
+            frozenTransferExecutor.execute {
+                val sppSent = sendFrozenOverSpp(
+                    requestId = requestId,
+                    jpeg = jpeg,
+                    width = width,
+                    height = height,
+                    rotationDegrees = rotationDegrees,
                 )
+                runOnUiThread {
+                    if (!isFrozen || currentFreezeRequestId != requestId) return@runOnUiThread
+                    overlayView.updateStatus(
+                        if (sppSent) "FROZEN / PROCESSING VIA BLUETOOTH" else "FROZEN / LINK LOST",
+                        liveZoomLevel.hudLabel,
+                    )
+                }
             }
         }
+
+        // Local preview decode runs after dispatch so it overlaps the socket/SPP transfer.
+        val bitmap = decodeFrozenPreview(jpeg, rotationDegrees)
+        if (bitmap != null) {
+            val live = liveFrameGeometry?.orientedSize
+            val viewport = live?.let {
+                CameraPreviewGeometry.matchingFrozenSourceViewport(
+                    frozenWidth = bitmap.width,
+                    frozenHeight = bitmap.height,
+                    liveWidth = it.width,
+                    liveHeight = it.height,
+                    viewWidth = previewView.width,
+                    viewHeight = previewView.height,
+                )
+            }
+            overlayView.setFrozenBackground(bitmap, viewport)
+        }
+        overlayView.updateStatus(
+            if (sent) "FROZEN / PROCESSING" else "FROZEN / SENDING VIA BLUETOOTH",
+            liveZoomLevel.hudLabel,
+        )
     }
 
     private fun sendFrozenOverSpp(
@@ -697,6 +721,9 @@ class CameraActivity : Activity(), TextureView.SurfaceTextureListener {
 
     private fun currentZoomLabel(): String =
         if (isFrozen) frozenZoomLevel.hudLabel else liveZoomLevel.hudLabel
+
+    private fun cameraSessionElapsedMs(): Long =
+        (SystemClock.elapsedRealtime() - sessionStartedAtMs).coerceAtLeast(0L)
 
     private fun decodeFrozenPreview(jpeg: ByteArray, rotationDegrees: Int): Bitmap? = runCatching {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }

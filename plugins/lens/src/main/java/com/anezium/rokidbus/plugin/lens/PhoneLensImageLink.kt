@@ -8,12 +8,14 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.net.NetworkInfo
+import android.net.wifi.WifiManager
 import android.net.wifi.p2p.WifiP2pConfig
 import android.net.wifi.p2p.WifiP2pInfo
 import android.net.wifi.p2p.WifiP2pManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import android.os.SystemClock
 import android.util.Log
 import androidx.core.content.ContextCompat
@@ -74,6 +76,8 @@ internal class PhoneLensImageLink(
     private val generation = AtomicLong(0L)
     private val tcpConnecting = AtomicBoolean(false)
     private val random = SecureRandom()
+    private var wifiLock: WifiManager.WifiLock? = null
+    private var wakeLock: PowerManager.WakeLock? = null
     private val joinRetryPolicy = PhoneLensJoinRetryPolicy(
         initialDelayMs = INITIAL_JOIN_RETRY_MS,
         delayStepMs = JOIN_RETRY_STEP_MS,
@@ -186,6 +190,7 @@ internal class PhoneLensImageLink(
             return
         }
         p2pRunning = true
+        acquirePerformanceLocks()
         joinRetryPolicy.reset()
         conflictRecoveryAttempted = false
         state = PhoneLensLinkState.WAITING_NETWORK
@@ -278,7 +283,7 @@ internal class PhoneLensImageLink(
             WifiP2pConfig.Builder()
                 .setNetworkName(currentOffer.ssid)
                 .setPassphrase(currentOffer.passphrase)
-                .enablePersistentMode(true)
+                .enablePersistentMode(false)
                 .build()
         }.getOrElse {
             failP2p("lensLinkConfigBuildFailed")
@@ -678,6 +683,42 @@ internal class PhoneLensImageLink(
         tcpConnecting.set(false)
     }
 
+    private fun acquirePerformanceLocks() {
+        val cpuAcquired = runCatching {
+            if (wakeLock?.isHeld != true) {
+                wakeLock = appContext.getSystemService(PowerManager::class.java)
+                    .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "${appContext.packageName}:lens-link")
+                    .apply {
+                        setReferenceCounted(false)
+                        acquire()
+                    }
+            }
+            wakeLock?.isHeld == true
+        }.getOrDefault(false)
+        val wifiAcquired = runCatching {
+            if (wifiLock?.isHeld != true) {
+                wifiLock = appContext.getSystemService(WifiManager::class.java)
+                    .createWifiLock(
+                        WifiManager.WIFI_MODE_FULL_LOW_LATENCY,
+                        "${appContext.packageName}:lens-link-wifi",
+                    )
+                    .apply {
+                        setReferenceCounted(false)
+                        acquire()
+                    }
+            }
+            wifiLock?.isHeld == true
+        }.getOrDefault(false)
+        log("lensLinkPerformanceLocks cpu=$cpuAcquired wifiLowLatency=$wifiAcquired")
+    }
+
+    private fun releasePerformanceLocks() {
+        runCatching { wifiLock?.takeIf { it.isHeld }?.release() }
+        runCatching { wakeLock?.takeIf { it.isHeld }?.release() }
+        wifiLock = null
+        wakeLock = null
+    }
+
     private fun teardownP2p() {
         p2pRunning = false
         p2pConnecting = false
@@ -703,6 +744,7 @@ internal class PhoneLensImageLink(
         }
         manager = null
         channel = null
+        releasePerformanceLocks()
     }
 
     override fun close() {

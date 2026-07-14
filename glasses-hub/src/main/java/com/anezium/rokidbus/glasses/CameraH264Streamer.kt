@@ -43,6 +43,7 @@ import kotlin.math.abs
 internal class CameraH264Streamer(
     private val context: Context,
     private val packetSender: (CameraLinkPacket) -> Boolean,
+    private val stageElapsedMs: () -> Long,
     private val displayRotationDegrees: Int,
     private val streamPlan: CameraStreamPlan,
     private val onLiveFrameGeometry: (width: Int, height: Int, rotationDegrees: Int) -> Unit,
@@ -58,6 +59,11 @@ internal class CameraH264Streamer(
     ) -> Unit,
     private val onError: (String, Throwable?) -> Unit,
 ) : AutoCloseable {
+    private data class PendingFreezeCapture(
+        val requestId: Long,
+        val requestedAtMs: Long,
+    )
+
     private var cameraThread: HandlerThread? = null
     private var encoderThread: HandlerThread? = null
     private var cameraHandler: Handler? = null
@@ -75,7 +81,7 @@ internal class CameraH264Streamer(
     private var liveRotateAndCropMode: Int? = null
     private var stillRotateAndCropMode: Int? = null
     private var latestConfig: ByteArray? = null
-    private val pendingFreezeIds = ArrayDeque<Long>()
+    private val pendingFreezeCaptures = ArrayDeque<PendingFreezeCapture>()
     private val captureElapsedByPtsUs = ConcurrentSkipListMap<Long, Long>()
     private val nextFrameId = AtomicLong(1L)
     private var retryRunnable: Runnable? = null
@@ -109,6 +115,7 @@ internal class CameraH264Streamer(
     }
 
     fun captureFrozenJpeg(requestId: Long) {
+        val requestedAtMs = SystemClock.elapsedRealtime()
         cameraHandler?.post {
             val device = camera
             val activeSession = session
@@ -117,20 +124,29 @@ internal class CameraH264Streamer(
                 onError("CAMERA NOT READY", null)
                 return@post
             }
-            val request = runCatching {
-                device.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE).apply {
+            val pending = PendingFreezeCapture(requestId, requestedAtMs)
+            fun buildFreezeRequest(template: Int) =
+                device.createCaptureRequest(template).apply {
                     addTarget(target)
                     set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
+                    fpsRange?.let { set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, it) }
                     set(CaptureRequest.JPEG_QUALITY, 95.toByte())
                     set(CaptureRequest.JPEG_ORIENTATION, sensorToDisplayRotationDegrees)
                     stillRotateAndCropMode?.let { set(CaptureRequest.SCALER_ROTATE_AND_CROP, it) }
                     cropRegion()?.let { set(CaptureRequest.SCALER_CROP_REGION, it) }
                 }.build()
+            // The JPEG surface is already part of the live session. VIDEO_SNAPSHOT keeps the
+            // recording pipeline stable instead of asking the HAL to switch to still intent.
+            val request = runCatching {
+                buildFreezeRequest(CameraDevice.TEMPLATE_VIDEO_SNAPSHOT)
+            }.recoverCatching {
+                Log.w(TAG, "video snapshot template rejected; using still template")
+                buildFreezeRequest(CameraDevice.TEMPLATE_STILL_CAPTURE)
             }.getOrElse {
                 onError("FREEZE CAPTURE FAILED", it)
                 return@post
             }
-            pendingFreezeIds.addLast(requestId)
+            pendingFreezeCaptures.addLast(pending)
             runCatching {
                 activeSession.capture(request, object : CameraCaptureSession.CaptureCallback() {
                     override fun onCaptureFailed(
@@ -138,12 +154,12 @@ internal class CameraH264Streamer(
                         request: CaptureRequest,
                         failure: CaptureFailure,
                     ) {
-                        pendingFreezeIds.remove(requestId)
+                        pendingFreezeCaptures.remove(pending)
                         onError("FREEZE CAPTURE FAILED", null)
                     }
                 }, cameraHandler)
             }.onFailure {
-                pendingFreezeIds.remove(requestId)
+                pendingFreezeCaptures.remove(pending)
                 onError("FREEZE CAPTURE FAILED", it)
             }
         }
@@ -291,8 +307,13 @@ internal class CameraH264Streamer(
             setOnImageAvailableListener({ reader ->
                 val image = reader.acquireNextImage() ?: return@setOnImageAvailableListener
                 try {
-                    val requestId = if (pendingFreezeIds.isEmpty()) null else pendingFreezeIds.removeFirst()
-                    if (requestId == null) return@setOnImageAvailableListener
+                    val pending = if (pendingFreezeCaptures.isEmpty()) {
+                        null
+                    } else {
+                        pendingFreezeCaptures.removeFirst()
+                    }
+                    if (pending == null) return@setOnImageAvailableListener
+                    val requestId = pending.requestId
                     val buffer = image.planes[0].buffer
                     val bytes = ByteArray(buffer.remaining()).also(buffer::get)
                     val rawSize = jpegPixelSize(bytes) ?: CameraPixelSize(image.width, image.height)
@@ -300,9 +321,15 @@ internal class CameraH264Streamer(
                     val oriented = CameraOrientation.orientedSize(rawSize.width, rawSize.height, rotation)
                     Log.i(
                         TAG,
+                        "cameraLinkStage stage=frozen_captured requestId=$requestId bytes=${bytes.size} " +
+                            "elapsedMs=${stageElapsedMs().coerceAtLeast(0L)}",
+                    )
+                    Log.i(
+                        TAG,
                         "frozen geometry requestId=$requestId raw=${rawSize.width}x${rawSize.height} " +
                             "requested=$sensorToDisplayRotationDegrees applied=$rotation " +
-                            "oriented=${oriented.width}x${oriented.height}",
+                            "oriented=${oriented.width}x${oriented.height} " +
+                            "captureMs=${(SystemClock.elapsedRealtime() - pending.requestedAtMs).coerceAtLeast(0L)}",
                     )
                     onFrozenJpeg(requestId, bytes, oriented.width, oriented.height, rotation)
                 } finally {
@@ -557,7 +584,7 @@ internal class CameraH264Streamer(
         encoderSurface = null
         previewSurface = null
         latestConfig = null
-        pendingFreezeIds.clear()
+        pendingFreezeCaptures.clear()
         captureElapsedByPtsUs.clear()
         cameraThread?.quitSafely()
         encoderThread?.quitSafely()
