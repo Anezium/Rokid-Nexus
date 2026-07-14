@@ -42,7 +42,8 @@ internal data class CameraLinkOffer(
 /** Activity-scoped camera data plane. The server remains listening across client crashes. */
 internal class CameraLink(
     context: Context,
-    private val onOfferReady: (CameraLinkOffer) -> Unit,
+    private val sessionStartedAtMs: Long,
+    private val onOfferReady: (CameraLinkOffer, Int) -> Unit,
     private val onAuthenticated: (Boolean) -> Unit,
     private val onState: (String) -> Unit,
 ) : AutoCloseable {
@@ -56,6 +57,11 @@ internal class CameraLink(
         Thread(runnable, "camera-link-writer").apply { isDaemon = true }
     }
     private val packets = ArrayBlockingQueue<CameraLinkPacket>(NETWORK_QUEUE_CAPACITY)
+    private val offerRetryPolicy = CameraLinkOfferRetryPolicy(
+        coldGroupSettleMs = COLD_GROUP_SETTLE_MS,
+        intervalMs = OFFER_RETRY_MS,
+        maxOffers = MAX_OFFER_SENDS,
+    )
     private val token = ByteArray(24).also(SecureRandom()::nextBytes).let {
         Base64.encodeToString(it, Base64.NO_WRAP or Base64.URL_SAFE or Base64.NO_PADDING)
     }
@@ -78,7 +84,10 @@ internal class CameraLink(
     private var createRetry: Runnable? = null
     private var wifiRetry: Runnable? = null
     private var groupPoll: Runnable? = null
+    private var offerRetry: Runnable? = null
     private var currentOffer: CameraLinkOffer? = null
+    private var groupStageLogged = false
+    private var initialOfferDelayMs = 0L
 
     val isAuthenticated: Boolean get() = authenticated
 
@@ -117,7 +126,13 @@ internal class CameraLink(
     }
 
     fun resendOfferIfDisconnected() {
-        if (!authenticated) currentOffer?.let(onOfferReady)
+        if (authenticated) return
+        mainHandler.post {
+            if (running && !authenticated && currentOffer != null) {
+                clearOfferRetry()
+                runNextOfferAction()
+            }
+        }
     }
 
     /** Never performs socket I/O on the codec callback thread. */
@@ -212,7 +227,7 @@ internal class CameraLink(
         configuredCreateAttempted = true
         createAttempts += 1
         state("CREATING CAMERA LINK")
-        Log.i(TAG, "cameraLinkGroup path=configured_create elapsedMs=${SystemClock.elapsedRealtime()}")
+        Log.i(TAG, "cameraLinkCreate path=configured elapsedMs=${stageElapsedMs()}")
         localManager.createGroup(localChannel, config, object : WifiP2pManager.ActionListener {
             override fun onSuccess() = awaitCreatedGroup()
             override fun onFailure(reason: Int) {
@@ -230,7 +245,7 @@ internal class CameraLink(
         legacyCreateAttempted = true
         createAttempts += 1
         state("CREATING CAMERA LINK")
-        Log.i(TAG, "cameraLinkGroup path=legacy_create elapsedMs=${SystemClock.elapsedRealtime()}")
+        Log.i(TAG, "cameraLinkCreate path=legacy elapsedMs=${stageElapsedMs()}")
         localManager.createGroup(localChannel, object : WifiP2pManager.ActionListener {
             override fun onSuccess() = awaitCreatedGroup()
             override fun onFailure(reason: Int) {
@@ -261,15 +276,50 @@ internal class CameraLink(
         val passphrase = group.passphrase
         val interfaceName = group.getInterface()
         profileStore.save(CameraP2pProfile(ssid, passphrase))
-        Log.i(TAG, "cameraLinkGroup path=$path elapsedMs=${SystemClock.elapsedRealtime()}")
+        if (!groupStageLogged) {
+            groupStageLogged = true
+            // A group resurrected after Wi-Fi was off is still a cold supplicant start and needs
+            // the settle window. The measured warm path starts with Wi-Fi/group active and stays immediate.
+            val coldP2pStartup = path == "created" || createAttempts > 0 || wifiWaitAttempts > 0
+            initialOfferDelayMs = offerRetryPolicy.initialDelayMs(coldP2pStartup)
+            val stage = if (coldP2pStartup) "group_created" else "group_reused"
+            Log.i(TAG, "cameraLinkStage stage=$stage path=$path elapsedMs=${stageElapsedMs()}")
+        }
         if (serverSocket == null) startServer(interfaceName)
         requestOwnerAddress { address ->
             if (!running) return@requestOwnerAddress
-            val offer = CameraLinkOffer(ssid, passphrase, PORT, token, address)
-            currentOffer = offer
-            onOfferReady(offer)
+            val nextOffer = CameraLinkOffer(ssid, passphrase, PORT, token, address)
+            if (currentOffer?.sameLinkAs(nextOffer) == true) return@requestOwnerAddress
+            currentOffer = nextOffer
+            offerRetryPolicy.reset()
+            clearOfferRetry()
+            scheduleOfferAction(initialOfferDelayMs)
             state("WAITING FOR PHONE")
         }
+    }
+
+    private fun CameraLinkOffer.sameLinkAs(other: CameraLinkOffer): Boolean =
+        ssid == other.ssid && passphrase == other.passphrase && port == other.port && token == other.token
+
+    private fun scheduleOfferAction(delayMs: Long) {
+        clearOfferRetry()
+        if (delayMs <= 0L) {
+            runNextOfferAction()
+            return
+        }
+        offerRetry = Runnable {
+            offerRetry = null
+            runNextOfferAction()
+        }.also { mainHandler.postDelayed(it, delayMs) }
+    }
+
+    private fun runNextOfferAction() {
+        if (!running || authenticated) return
+        val current = currentOffer ?: return
+        val action = offerRetryPolicy.nextAction()
+        if (action.timedOut) return fail("PHONE LINK TIMEOUT")
+        onOfferReady(current, checkNotNull(action.offerNumber))
+        scheduleOfferAction(action.nextDelayMs)
     }
 
     @SuppressLint("MissingPermission")
@@ -332,7 +382,12 @@ internal class CameraLink(
                 packets.clear()
                 authenticated = true
             }
-            mainHandler.post { onAuthenticated(true) }
+            Log.i(TAG, "cameraLinkStage stage=connected elapsedMs=${stageElapsedMs()}")
+            mainHandler.post {
+                clearOfferRetry()
+                offerRetryPolicy.reset()
+                onAuthenticated(true)
+            }
             state("PHONE LINKED")
             while (running && !socket.isClosed) {
                 val startedAt = SystemClock.elapsedRealtime()
@@ -381,7 +436,12 @@ internal class CameraLink(
             runCatching { clientSocket?.close() }
             clientSocket = null
         }
-        if (notify) mainHandler.post { onAuthenticated(false) }
+        if (notify) {
+            mainHandler.post {
+                onAuthenticated(false)
+                if (running && !authenticated && currentOffer != null) scheduleOfferAction(0L)
+            }
+        }
     }
 
     private fun isWifiReady(): Boolean =
@@ -438,6 +498,7 @@ internal class CameraLink(
         clearCreateRetry()
         clearWifiRetry()
         clearGroupPoll()
+        clearOfferRetry()
         closeClient()
         runCatching { serverSocket?.close() }
         serverSocket = null
@@ -469,6 +530,14 @@ internal class CameraLink(
         groupPoll = null
     }
 
+    private fun clearOfferRetry() {
+        offerRetry?.let(mainHandler::removeCallbacks)
+        offerRetry = null
+    }
+
+    private fun stageElapsedMs(): Long =
+        (SystemClock.elapsedRealtime() - sessionStartedAtMs).coerceAtLeast(0L)
+
     companion object {
         private const val TAG = "CameraLink"
         const val PORT = 38_401
@@ -479,5 +548,8 @@ internal class CameraLink(
         private const val RECOVERY_SETTLE_MS = 350L
         private const val LEGACY_FALLBACK_MS = 150L
         private const val GROUP_POLL_MS = 500L
+        private const val COLD_GROUP_SETTLE_MS = 350L
+        private const val OFFER_RETRY_MS = 2_500L
+        private const val MAX_OFFER_SENDS = 8
     }
 }

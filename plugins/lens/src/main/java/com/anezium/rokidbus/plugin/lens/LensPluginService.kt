@@ -182,7 +182,9 @@ internal class LensCameraSession(
     private val liveOcr: LiveOcrRunner
     private val decoder: LatestFrameDecoder
     private val imageLink: PhoneLensImageLink
+    private val firstFrameLogged = AtomicBoolean(false)
     @Volatile private var sessionId: String? = null
+    @Volatile private var sessionStartedAtMs = 0L
 
     init {
         liveOcr = LiveOcrRunner(
@@ -193,7 +195,12 @@ internal class LensCameraSession(
         decoder = LatestFrameDecoder(
             holder = holder,
             pool = pool,
-            onFrameReady = liveOcr::kick,
+            onFrameReady = {
+                if (firstFrameLogged.compareAndSet(false, true)) {
+                    host.log("cameraLinkStage stage=first_frame elapsedMs=${sessionElapsedMs()}")
+                }
+                liveOcr.kick()
+            },
             onGeometry = { geometry ->
                 val oriented = geometry.orientedSize
                 host.log(
@@ -206,7 +213,12 @@ internal class LensCameraSession(
                 host.log("$message type=${failure?.javaClass?.simpleName ?: "unknown"}")
             },
         )
-        imageLink = PhoneLensImageLink(appContext, host::log, ::onLinkPacket)
+        imageLink = PhoneLensImageLink(
+            context = appContext,
+            logger = host::log,
+            onPacket = ::onLinkPacket,
+            stageElapsedMs = ::sessionElapsedMs,
+        )
     }
 
     override fun message(path: String, id: String, payload: JSONObject) {
@@ -251,6 +263,8 @@ internal class LensCameraSession(
                 ) return
                 sessionGeneration.incrementAndGet()
                 sessionId = incomingSession
+                sessionStartedAtMs = SystemClock.elapsedRealtime()
+                firstFrameLogged.set(false)
                 frozenChunkAssembler.clear()
                 synchronized(processedFrozenRequests) { processedFrozenRequests.clear() }
                 liveTranslation.reset()
@@ -267,6 +281,9 @@ internal class LensCameraSession(
         if (offer.sessionId != sessionId) return
         imageLink.updateOffer(payload)
     }
+
+    private fun sessionElapsedMs(): Long =
+        (SystemClock.elapsedRealtime() - sessionStartedAtMs).coerceAtLeast(0L)
 
     private fun onLinkPacket(packet: CameraLinkPacket) {
         if (closed.get() || sessionId == null) return

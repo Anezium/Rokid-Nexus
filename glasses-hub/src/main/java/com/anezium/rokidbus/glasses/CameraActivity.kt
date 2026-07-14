@@ -55,6 +55,7 @@ class CameraActivity : Activity(), TextureView.SurfaceTextureListener {
     private var rotationFallbackAttempted = false
     private var previewSurface: Surface? = null
     private var sessionId: String? = null
+    private var sessionStartedAtMs = 0L
     private var currentFreezeRequestId: Long? = null
     private var resumed = false
     private var ready = false
@@ -245,6 +246,7 @@ class CameraActivity : Activity(), TextureView.SurfaceTextureListener {
         if (!resumed || !ready || !hasRequiredPermissions()) return
         hideEmpty()
         if (sessionId == null) {
+            sessionStartedAtMs = SystemClock.elapsedRealtime()
             sessionId = UUID.randomUUID().toString()
             busClient?.send(
                 BusPaths.CAMERA_SESSION_STATE,
@@ -265,6 +267,7 @@ class CameraActivity : Activity(), TextureView.SurfaceTextureListener {
         if (cameraLink == null) {
             cameraLink = CameraLink(
                 context = applicationContext,
+                sessionStartedAtMs = sessionStartedAtMs,
                 onOfferReady = ::sendLinkOffer,
                 onAuthenticated = { authenticated ->
                     if (authenticated) {
@@ -287,6 +290,7 @@ class CameraActivity : Activity(), TextureView.SurfaceTextureListener {
         requestGlassesWifi(false)
         val closingSession = sessionId
         sessionId = null
+        sessionStartedAtMs = 0L
         if (sendClosed && closingSession != null) {
             busClient?.send(
                 BusPaths.CAMERA_SESSION_STATE,
@@ -443,7 +447,7 @@ class CameraActivity : Activity(), TextureView.SurfaceTextureListener {
         )
     }.onFailure { logError("camera stream plan failed", it) }.getOrNull()
 
-    private fun sendLinkOffer(offer: CameraLinkOffer) {
+    private fun sendLinkOffer(offer: CameraLinkOffer, offerNumber: Int) {
         val activeSession = sessionId ?: return
         if (!ready || !resumed) return
         busClient?.send(
@@ -456,6 +460,8 @@ class CameraActivity : Activity(), TextureView.SurfaceTextureListener {
                 .put("token", offer.token)
                 .put("goIp", offer.goIp),
         )
+        val elapsedMs = (SystemClock.elapsedRealtime() - sessionStartedAtMs).coerceAtLeast(0L)
+        log("cameraLinkStage stage=offer_sent#$offerNumber elapsedMs=$elapsedMs")
     }
 
     private fun requestGlassesWifi(enabled: Boolean) {
