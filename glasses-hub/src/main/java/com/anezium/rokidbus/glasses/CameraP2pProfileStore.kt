@@ -24,6 +24,16 @@ internal class CameraP2pProfileStore(context: Context) {
         ).also(::save)
     }
 
+    /**
+     * The phone's wpa_supplicant temporarily blocklists an SSID after consecutive failed
+     * handshakes (measured ~10-15s on the S23). Recreating a deaf group under the SAME name
+     * keeps every join inside that blocklist window; fresh credentials bypass it entirely.
+     */
+    fun rotate(): CameraP2pProfile = CameraP2pProfile(
+        networkName = "DIRECT-RN-${randomText(6)}",
+        passphrase = randomText(24),
+    ).also(::save)
+
     fun save(profile: CameraP2pProfile) {
         preferences.edit()
             .putInt(KEY_VERSION, VERSION)

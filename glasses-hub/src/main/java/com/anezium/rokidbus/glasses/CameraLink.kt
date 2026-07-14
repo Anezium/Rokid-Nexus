@@ -493,6 +493,11 @@ internal class CameraLink(
         waitingForCreatedGroup = false
         groupStageLogged = false
         initialOfferDelayMs = 0L
+        // A fresh SSID sidesteps the phone supplicant's failed-handshake blocklist, and the
+        // changed credentials make the phone treat the next offer as a new link with a full
+        // retry budget.
+        val rotated = profileStore.rotate()
+        Log.i(TAG, "cameraLinkGoRecovery rotatedSsid=${rotated.networkName}")
     }
 
     private fun abortGoRecoveryBeforeRemoval() {
