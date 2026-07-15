@@ -45,6 +45,11 @@
             <meta-data
                 android:name="com.anezium.rokidbus.plugin.ICON"
                 android:value="star" />
+            <!-- Alternative custom glyph (remove ICON above before enabling):
+            <meta-data
+                android:name="com.anezium.rokidbus.plugin.ICON_DRAWABLE"
+                android:resource="@drawable/nexus_glyph_sample" />
+            -->
             <meta-data
                 android:name="com.anezium.rokidbus.plugin.API_VERSION"
                 android:value="3" />

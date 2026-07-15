@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.Drawable
 import android.graphics.drawable.StateListDrawable
 import android.os.Build
 import android.text.InputType
@@ -376,6 +377,16 @@ object NexusUi {
     fun iconTileImage(context: Context, resId: Int, sizeDp: Int = 34): ImageView =
         ImageView(context).apply {
             setImageResource(resId)
+            val pad = dp(context, if (sizeDp > 40) 12 else 8)
+            setPadding(pad, pad, pad, pad)
+            background = rounded(context, alpha(GREEN, 0x14), if (sizeDp > 34) 11 else 9)
+            layoutParams = LinearLayout.LayoutParams(dp(context, sizeDp), dp(context, sizeDp))
+        }
+
+    /** Icon tile backed by an already-resolved drawable. */
+    fun iconTileDrawable(context: Context, drawable: Drawable, sizeDp: Int = 34): ImageView =
+        ImageView(context).apply {
+            setImageDrawable(drawable)
             val pad = dp(context, if (sizeDp > 40) 12 else 8)
             setPadding(pad, pad, pad, pad)
             background = rounded(context, alpha(GREEN, 0x14), if (sizeDp > 34) 11 else 9)

@@ -59,6 +59,38 @@ class PluginDescriptorTest {
     }
 
     @Test
+    fun `icon drawable resource id is optional and malformed values are ignored`() {
+        fun iconDrawableResIdFor(value: String?): Int? {
+            val metadata = if (value == null) {
+                validMetadata()
+            } else {
+                validMetadata() + (BusConstants.META_PLUGIN_ICON_DRAWABLE to value)
+            }
+            val result = PluginDescriptorParser.parse(metadata)
+            assertTrue(result is PluginDescriptorParseResult.Valid)
+            return (result as PluginDescriptorParseResult.Valid).descriptor.iconDrawableResId
+        }
+
+        assertNull(iconDrawableResIdFor(null))
+        assertEquals(2131230890, iconDrawableResIdFor("2131230890"))
+        assertNull(iconDrawableResIdFor("0"))
+        assertNull(iconDrawableResIdFor("not-a-resource-id"))
+    }
+
+    @Test
+    fun `conflicting icon drawable metadata cannot invalidate descriptor`() {
+        val entries = validMetadata().entries.map { it.key to it.value } + listOf(
+            BusConstants.META_PLUGIN_ICON_DRAWABLE to "123",
+            BusConstants.META_PLUGIN_ICON_DRAWABLE to "456",
+        )
+
+        val result = PluginDescriptorParser.parse(entries)
+
+        assertTrue(result is PluginDescriptorParseResult.Valid)
+        assertEquals(456, (result as PluginDescriptorParseResult.Valid).descriptor.iconDrawableResId)
+    }
+
+    @Test
     fun `plugin IDs follow protocol grammar`() {
         listOf("abc", "a.b-c_d", "z12").forEach { assertTrue(PluginDescriptor.isValidId(it)) }
         listOf("ab", "2bad", "Bad", "a/b", "a b").forEach { id ->

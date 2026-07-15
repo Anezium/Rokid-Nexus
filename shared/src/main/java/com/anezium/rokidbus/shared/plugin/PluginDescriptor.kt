@@ -11,6 +11,7 @@ data class PluginDescriptor(
     val settingsActivity: String?,
     val launchable: Boolean,
     val iconKey: String? = null,
+    val iconDrawableResId: Int? = null,
 ) {
     companion object {
         private val idPattern = Regex("[a-z][a-z0-9._-]{2,63}")
@@ -29,6 +30,7 @@ object PluginDescriptorParser {
         BusConstants.META_PLUGIN_ID,
         BusConstants.META_PLUGIN_DISPLAY_NAME,
         BusConstants.META_PLUGIN_ICON,
+        BusConstants.META_PLUGIN_ICON_DRAWABLE,
         BusConstants.META_PLUGIN_API_VERSION,
         BusConstants.META_PLUGIN_CAPABILITIES,
         BusConstants.META_PLUGIN_RECEIVE_PREFIXES,
@@ -43,7 +45,10 @@ object PluginDescriptorParser {
         val values = linkedMapOf<String, String?>()
         metadata.filter { it.first in knownKeys }.forEach { (key, value) ->
             if (
-                key != BusConstants.META_PLUGIN_ICON &&
+                key !in setOf(
+                    BusConstants.META_PLUGIN_ICON,
+                    BusConstants.META_PLUGIN_ICON_DRAWABLE,
+                ) &&
                 values.containsKey(key) &&
                 values[key] != value
             ) {
@@ -94,6 +99,10 @@ object PluginDescriptorParser {
             ?.trim()
             ?.lowercase()
             ?.takeIf(String::isNotEmpty)
+        val iconDrawableResId = values[BusConstants.META_PLUGIN_ICON_DRAWABLE]
+            ?.trim()
+            ?.toIntOrNull()
+            ?.takeIf { it != 0 }
         val launchable = when (values[BusConstants.META_PLUGIN_LAUNCHABLE]?.trim()?.lowercase()) {
             null, "", "true" -> true
             "false" -> false
@@ -109,6 +118,7 @@ object PluginDescriptorParser {
                 settingsActivity = settingsActivity,
                 launchable = launchable,
                 iconKey = iconKey,
+                iconDrawableResId = iconDrawableResId,
             ),
         )
     }

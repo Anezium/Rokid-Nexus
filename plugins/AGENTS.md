@@ -150,6 +150,30 @@ concatenating card content blew the 128-char cap on real data; hash instead).
 
 ## 8. Rendering rules
 
+### Plugin identity icon
+
+Both icon declarations are optional. Prefer a Nexus built-in by declaring
+`com.anezium.rokidbus.plugin.ICON` with one of these keys: `music`, `disc`,
+`bus`, `lens`, `mic`, `send`, `feed`, `weather`, `chat`, `calendar`, `clock`,
+`star`, `heart`, `game`, `globe`, `bell`, `terminal`, `grid`, `map`, `bolt`, or
+`bookmark`.
+
+If the built-in set does not fit your identity, declare your own drawable
+resource instead:
+
+```xml
+<meta-data
+    android:name="com.anezium.rokidbus.plugin.ICON_DRAWABLE"
+    android:resource="@drawable/my_glyph" />
+```
+
+The custom drawable must be a monochrome silhouette: use a `VectorDrawable`
+with alpha and a single-color shape on transparency. Nexus loads it from your
+package and tints it green. A full-color logo loses its colors and renders as a
+green blob. If both fields are present and `ICON` is a recognized built-in key,
+the built-in wins; otherwise Nexus tries `ICON_DRAWABLE`, then falls back to the
+grid glyph.
+
 The HUD renders **structured rows**, not free text: build `NexusCard` /
 `NexusTimedLines` / `NexusMedia` / image surfaces and let the glasses lay them out.
 Never pre-format monospace strings. Input arrives as DPAD-style events

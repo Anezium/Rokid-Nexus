@@ -2,6 +2,7 @@ package com.anezium.rokidbus.phone
 
 import com.anezium.rokidbus.client.ui.NexusPluginIcons
 import com.anezium.rokidbus.client.ui.NexusUi
+import com.anezium.rokidbus.client.ui.PluginCustomIcon
 import android.Manifest
 import android.app.Activity
 import android.content.ComponentName
@@ -9,6 +10,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.graphics.Typeface
+import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Bundle
@@ -187,7 +189,16 @@ class MainActivity : Activity() {
                 if (index > 0) pluginSection.addView(BusTheme.gap(this, 9))
                 pluginSection.addView(
                     pluginRow(
-                        iconRes = NexusPluginIcons.drawableFor(entry.iconKey, entry.id),
+                        icon = NexusPluginIcons.resolve(
+                            context = this,
+                            iconKey = entry.iconKey,
+                            customIcon = entry.iconDrawableResId?.let { resId ->
+                                entry.principal?.packageName?.let { packageName ->
+                                    PluginCustomIcon(packageName, resId)
+                                }
+                            },
+                            pluginId = entry.id,
+                        ),
                         title = entry.displayName,
                         subtitle = catalogStateLabel(entry),
                         badge = "DEV".takeIf {
@@ -335,7 +346,7 @@ class MainActivity : Activity() {
         }
 
     private fun pluginRow(
-        iconRes: Int,
+        icon: Drawable,
         title: String,
         subtitle: String,
         badge: String? = null,
@@ -355,7 +366,7 @@ class MainActivity : Activity() {
             isFocusable = true
             setOnClickListener { onClick() }
             addView(
-                NexusUi.iconTileImage(this@MainActivity, iconRes),
+                NexusUi.iconTileDrawable(this@MainActivity, icon),
                 LinearLayout.LayoutParams(
                     NexusUi.dp(this@MainActivity, 34),
                     NexusUi.dp(this@MainActivity, 34),

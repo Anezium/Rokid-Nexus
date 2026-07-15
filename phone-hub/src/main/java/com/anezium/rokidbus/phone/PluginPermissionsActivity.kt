@@ -2,11 +2,13 @@ package com.anezium.rokidbus.phone
 
 import com.anezium.rokidbus.client.ui.NexusPluginIcons
 import com.anezium.rokidbus.client.ui.NexusUi
+import com.anezium.rokidbus.client.ui.PluginCustomIcon
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.content.res.ColorStateList
 import android.graphics.Typeface
+import android.graphics.drawable.Drawable
 import android.os.Bundle
 import android.view.Gravity
 import android.view.ViewGroup
@@ -151,8 +153,14 @@ class PluginPermissionsActivity : Activity() {
         }
         card.addView(
             pluginHeaderRow(
-                iconKey = principal.descriptor.iconKey,
-                pluginId = principal.descriptor.id,
+                icon = NexusPluginIcons.resolve(
+                    context = this,
+                    iconKey = principal.descriptor.iconKey,
+                    customIcon = principal.descriptor.iconDrawableResId?.let { resId ->
+                        PluginCustomIcon(principal.packageName, resId)
+                    },
+                    pluginId = principal.descriptor.id,
+                ),
                 title = principal.descriptor.displayName,
                 provenance = provenanceLabel,
                 state = stateLabel,
@@ -296,8 +304,7 @@ class PluginPermissionsActivity : Activity() {
     }
 
     private fun pluginHeaderRow(
-        iconKey: String?,
-        pluginId: String,
+        icon: Drawable,
         title: String,
         provenance: String,
         state: String,
@@ -307,9 +314,9 @@ class PluginPermissionsActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             addView(
-                NexusUi.iconTileImage(
+                NexusUi.iconTileDrawable(
                     this@PluginPermissionsActivity,
-                    NexusPluginIcons.drawableFor(iconKey = iconKey, pluginId = pluginId),
+                    icon,
                     sizeDp = 30,
                 ),
                 LinearLayout.LayoutParams(

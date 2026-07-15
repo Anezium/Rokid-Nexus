@@ -80,6 +80,7 @@ dependencies { implementation(project(":bus-client")) }   // SDK: bus client + N
             </intent-filter>
             <meta-data android:name="com.anezium.rokidbus.plugin.ID" android:value="myid" />
             <meta-data android:name="com.anezium.rokidbus.plugin.DISPLAY_NAME" android:value="My Plugin" />
+            <meta-data android:name="com.anezium.rokidbus.plugin.ICON" android:value="star" />
             <meta-data android:name="com.anezium.rokidbus.plugin.API_VERSION" android:value="3" />
             <meta-data android:name="com.anezium.rokidbus.plugin.CAPABILITIES" android:value="surfaces" />
             <meta-data android:name="com.anezium.rokidbus.plugin.RECEIVE_PREFIXES" android:value="/plugin/myid,/system/plugin" />
@@ -93,6 +94,28 @@ dependencies { implementation(project(":bus-client")) }   // SDK: bus client + N
 **Absolute rule: no `MAIN`/`LAUNCHER` intent-filter anywhere.** A plugin that
 puts an icon in the launcher is not a plugin, it is an app. The application
 icon/label exist only for the system app list and the uninstall dialog.
+
+### Plugin icon
+
+Prefer the built-in `ICON` metadata shown above. Supported keys are `music`,
+`disc`, `bus`, `lens`, `mic`, `send`, `feed`, `weather`, `chat`, `calendar`,
+`clock`, `star`, `heart`, `game`, `globe`, `bell`, `terminal`, `grid`, `map`,
+`bolt`, and `bookmark`.
+
+For an identity that does not fit that set, omit `ICON` and supply a drawable
+from the plugin package:
+
+```xml
+<meta-data
+    android:name="com.anezium.rokidbus.plugin.ICON_DRAWABLE"
+    android:resource="@drawable/my_glyph" />
+```
+
+Use a monochrome silhouette, ideally a `VectorDrawable` with alpha, one color,
+and a transparent background. Nexus loads the resource cross-package and tints
+it green; a full-color logo will render as a green blob. If a recognized
+built-in key and a custom drawable are both declared, the built-in wins. If
+neither can be resolved, Nexus uses the grid glyph.
 
 ## 3. Service and runtime
 

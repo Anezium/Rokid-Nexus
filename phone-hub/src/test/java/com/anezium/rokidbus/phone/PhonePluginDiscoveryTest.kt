@@ -31,7 +31,14 @@ class PhonePluginDiscoveryTest {
     @Test
     fun `valid record binds package uid component signer and descriptor`() {
         val result = PhonePluginDiscovery.evaluate(
-            listOf(record(extraMetadata = listOf(BusConstants.META_PLUGIN_ICON to "STAR"))),
+            listOf(
+                record(
+                    extraMetadata = listOf(
+                        BusConstants.META_PLUGIN_ICON to "STAR",
+                        BusConstants.META_PLUGIN_ICON_DRAWABLE to "2131230890",
+                    ),
+                ),
+            ),
         ).single()
         assertTrue(result is PhonePluginCandidate.Valid)
         val principal = (result as PhonePluginCandidate.Valid).principal
@@ -39,6 +46,7 @@ class PhonePluginDiscoveryTest {
         assertEquals(10001, principal.uid)
         assertEquals("hello", principal.descriptor.id)
         assertEquals("star", principal.descriptor.iconKey)
+        assertEquals(2131230890, principal.descriptor.iconDrawableResId)
         assertEquals(64, principal.signingDigestSha256.length)
     }
 

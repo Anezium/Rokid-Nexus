@@ -5,6 +5,8 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class NexusPluginIconsTest {
+    private val customIcon = PluginCustomIcon("dev.example.plugin", 123)
+
     @Test
     fun `explicit icon keys resolve to their drawables`() {
         val icons = mapOf(
@@ -48,5 +50,60 @@ class NexusPluginIconsTest {
     fun `unknown icon and plugin id use grid fallback`() {
         assertEquals(R.drawable.ic_plugin_grid, NexusPluginIcons.drawableFor("unknown", "other"))
         assertEquals(R.drawable.ic_plugin_grid, NexusPluginIcons.drawableFor(null))
+    }
+
+    @Test
+    fun `built-in key wins over custom icon`() {
+        var customLoads = 0
+
+        val resolved = NexusPluginIcons.resolveWithLoaders(
+            iconKey = "star",
+            customIcon = customIcon,
+            builtInLoader = { "built-in:$it" },
+            customLoader = {
+                customLoads += 1
+                "custom"
+            },
+        )
+
+        assertEquals("built-in:${R.drawable.ic_plugin_star}", resolved)
+        assertEquals(0, customLoads)
+    }
+
+    @Test
+    fun `custom icon is used when no built-in key is supplied`() {
+        val resolved = NexusPluginIcons.resolveWithLoaders(
+            iconKey = null,
+            customIcon = customIcon,
+            pluginId = "lyrics",
+            builtInLoader = { "built-in:$it" },
+            customLoader = { "custom:${it.packageName}:${it.resId}" },
+        )
+
+        assertEquals("custom:dev.example.plugin:123", resolved)
+    }
+
+    @Test
+    fun `custom loader failure falls through to grid`() {
+        val resolved = NexusPluginIcons.resolveWithLoaders(
+            iconKey = null,
+            customIcon = customIcon,
+            builtInLoader = { it },
+            customLoader = { throw AssertionError("broken drawable") },
+        )
+
+        assertEquals(R.drawable.ic_plugin_grid, resolved)
+    }
+
+    @Test
+    fun `missing key and custom icon use grid`() {
+        val resolved = NexusPluginIcons.resolveWithLoaders(
+            iconKey = null,
+            customIcon = null,
+            builtInLoader = { it },
+            customLoader = { error("custom loader should not run") },
+        )
+
+        assertEquals(R.drawable.ic_plugin_grid, resolved)
     }
 }
