@@ -66,8 +66,10 @@ internal class CameraLink(
         intervalMs = OFFER_RETRY_MS,
         maxOffers = MAX_OFFER_SENDS,
         offersBeforeGroupRecreate = OFFERS_BEFORE_GO_RECOVERY,
+        offersBetweenGroupRecreates = OFFERS_BETWEEN_GO_RECOVERIES,
         maxGroupRecreates = MAX_GO_RECREATES,
     )
+    private val profileRecoveryPolicy = CameraP2pProfileRecoveryPolicy()
     private val groupRemovalGracePolicy = CameraLinkGroupRemovalGracePolicy(
         clientGraceMs = ASSOCIATED_CLIENT_GRACE_MS,
         maxPolls = MAX_GO_RECOVERY_CLIENT_POLLS,
@@ -582,11 +584,16 @@ internal class CameraLink(
         waitingForCreatedGroup = false
         groupStageLogged = false
         initialOfferDelayMs = 0L
-        // A fresh SSID sidesteps the phone supplicant's failed-handshake blocklist, and the
-        // changed credentials make the phone treat the next offer as a new link with a full
-        // retry budget.
-        val rotated = profileStore.rotate()
-        Log.i(TAG, "cameraLinkGoRecovery rotatedSsid=${rotated.networkName}")
+        when (profileRecoveryPolicy.actionFor(groupRecreatesDone)) {
+            CameraP2pProfileRecoveryAction.REUSE -> {
+                val stable = profileStore.loadOrCreate()
+                Log.i(TAG, "cameraLinkGoRecovery reusedSsid=${stable.networkName}")
+            }
+            CameraP2pProfileRecoveryAction.ROTATE -> {
+                val rotated = profileStore.rotate()
+                Log.i(TAG, "cameraLinkGoRecovery rotatedSsid=${rotated.networkName}")
+            }
+        }
     }
 
     private fun abortGoRecoveryBeforeRemoval() {
@@ -865,9 +872,10 @@ internal class CameraLink(
         private const val GROUP_POLL_MS = 500L
         private const val COLD_GROUP_SETTLE_MS = 350L
         private const val OFFER_RETRY_MS = 2_500L
-        private const val MAX_OFFER_SENDS = 9
+        private const val MAX_OFFER_SENDS = 10
         private const val OFFERS_BEFORE_GO_RECOVERY = 5
-        private const val MAX_GO_RECREATES = 1
+        private const val OFFERS_BETWEEN_GO_RECOVERIES = 4
+        private const val MAX_GO_RECREATES = 2
         private const val ASSOCIATED_CLIENT_GRACE_MS = 2_500L
         private const val MAX_GO_RECOVERY_CLIENT_POLLS = 2
         private const val GO_RECOVERY_GROUP_INFO_TIMEOUT_MS = 750L

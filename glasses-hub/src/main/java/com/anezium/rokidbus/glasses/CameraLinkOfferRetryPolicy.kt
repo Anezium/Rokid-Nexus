@@ -60,6 +60,7 @@ internal class CameraLinkOfferRetryPolicy(
     private val intervalMs: Long,
     private val maxOffers: Int,
     private val offersBeforeGroupRecreate: Int,
+    private val offersBetweenGroupRecreates: Int,
     private val maxGroupRecreates: Int,
 ) {
     init {
@@ -67,7 +68,14 @@ internal class CameraLinkOfferRetryPolicy(
         require(intervalMs > 0L)
         require(maxOffers > 0)
         require(offersBeforeGroupRecreate in 1..maxOffers)
+        require(offersBetweenGroupRecreates > 0)
         require(maxGroupRecreates >= 0)
+        if (maxGroupRecreates > 1) {
+            require(
+                offersBeforeGroupRecreate +
+                    (maxGroupRecreates - 1) * offersBetweenGroupRecreates < maxOffers,
+            )
+        }
     }
 
     fun initialDelayMs(groupCreated: Boolean): Long =
@@ -76,6 +84,8 @@ internal class CameraLinkOfferRetryPolicy(
     fun nextAction(offersSent: Int, groupRecreatesDone: Int): CameraLinkOfferRetryAction {
         require(offersSent >= 0)
         require(groupRecreatesDone >= 0)
+        val nextRecreateAt = offersBeforeGroupRecreate +
+            groupRecreatesDone * offersBetweenGroupRecreates
 
         return when {
             offersSent >= maxOffers -> CameraLinkOfferRetryAction(
@@ -84,7 +94,7 @@ internal class CameraLinkOfferRetryPolicy(
                 nextDelayMs = 0L,
             )
             groupRecreatesDone < maxGroupRecreates &&
-                offersSent >= offersBeforeGroupRecreate -> CameraLinkOfferRetryAction(
+                offersSent >= nextRecreateAt -> CameraLinkOfferRetryAction(
                 type = CameraLinkOfferRetryActionType.RECREATE_GROUP,
                 offerNumber = null,
                 nextDelayMs = 0L,
@@ -92,7 +102,7 @@ internal class CameraLinkOfferRetryPolicy(
             else -> {
                 val offerNumber = offersSent + 1
                 val recreateAfterOffer = groupRecreatesDone < maxGroupRecreates &&
-                    offerNumber >= offersBeforeGroupRecreate
+                    offerNumber >= nextRecreateAt
                 CameraLinkOfferRetryAction(
                     type = CameraLinkOfferRetryActionType.OFFER,
                     offerNumber = offerNumber,

@@ -8,6 +8,29 @@ internal data class CameraP2pProfile(
     val passphrase: String,
 )
 
+internal enum class CameraP2pProfileRecoveryAction {
+    REUSE,
+    ROTATE,
+}
+
+/** Pure credential escalation: preserve scan-cache identity before rotating past blocklists. */
+internal class CameraP2pProfileRecoveryPolicy(
+    private val rotateAfterCompletedRecreates: Int = 1,
+) {
+    init {
+        require(rotateAfterCompletedRecreates > 0)
+    }
+
+    fun actionFor(completedRecreates: Int): CameraP2pProfileRecoveryAction {
+        require(completedRecreates >= 0)
+        return if (completedRecreates < rotateAfterCompletedRecreates) {
+            CameraP2pProfileRecoveryAction.REUSE
+        } else {
+            CameraP2pProfileRecoveryAction.ROTATE
+        }
+    }
+}
+
 /** Stable P2P credentials; the per-session TCP token remains ephemeral. */
 internal class CameraP2pProfileStore(context: Context) {
     private val preferences = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -25,9 +48,8 @@ internal class CameraP2pProfileStore(context: Context) {
     }
 
     /**
-     * The phone's wpa_supplicant temporarily blocklists an SSID after consecutive failed
-     * handshakes (measured ~10-15s on the S23). Recreating a deaf group under the SAME name
-     * keeps every join inside that blocklist window; fresh credentials bypass it entirely.
+     * Late fallback for the phone supplicant's temporary failed-handshake blocklist. Routine
+     * recovery reuses the current profile first so recent SSID/channel discovery stays useful.
      */
     fun rotate(): CameraP2pProfile = CameraP2pProfile(
         networkName = "DIRECT-RN-${randomText(6)}",

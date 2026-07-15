@@ -10,6 +10,7 @@ class CameraLinkOfferRetryPolicyTest {
         intervalMs = 2_500L,
         maxOffers = 9,
         offersBeforeGroupRecreate = 5,
+        offersBetweenGroupRecreates = 4,
         maxGroupRecreates = 1,
     )
 
@@ -47,6 +48,32 @@ class CameraLinkOfferRetryPolicyTest {
         assertEquals(CameraLinkOfferRetryActionType.TIMEOUT, timeout.type)
         assertNull(timeout.offerNumber)
         assertEquals(0L, timeout.nextDelayMs)
+    }
+
+    @Test
+    fun `later rotation is reachable only after a full reused-profile window`() {
+        val escalationPolicy = CameraLinkOfferRetryPolicy(
+            coldGroupSettleMs = 350L,
+            intervalMs = 2_500L,
+            maxOffers = 10,
+            offersBeforeGroupRecreate = 5,
+            offersBetweenGroupRecreates = 4,
+            maxGroupRecreates = 2,
+        )
+
+        assertOffer(escalationPolicy.nextAction(5, 1), 6, 2_500L)
+        assertOffer(escalationPolicy.nextAction(6, 1), 7, 2_500L)
+        assertOffer(escalationPolicy.nextAction(7, 1), 8, 2_500L)
+        assertOffer(escalationPolicy.nextAction(8, 1), 9, 0L)
+        assertEquals(
+            CameraLinkOfferRetryActionType.RECREATE_GROUP,
+            escalationPolicy.nextAction(9, 1).type,
+        )
+        assertOffer(escalationPolicy.nextAction(9, 2), 10, 2_500L)
+        assertEquals(
+            CameraLinkOfferRetryActionType.TIMEOUT,
+            escalationPolicy.nextAction(10, 2).type,
+        )
     }
 
     @Test
