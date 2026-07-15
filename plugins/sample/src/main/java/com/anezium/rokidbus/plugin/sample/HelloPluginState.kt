@@ -1,4 +1,4 @@
-package com.anezium.rokidnexus.sample
+package com.anezium.rokidbus.plugin.sample
 
 internal class HelloPluginState(
     private val choices: List<String> = listOf("Hello", "SDK", "Open platform"),

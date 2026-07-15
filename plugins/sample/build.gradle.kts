@@ -5,15 +5,15 @@ plugins {
 apply(from = rootProject.file("gradle/plugin-release-signing.gradle"))
 
 android {
-    namespace = "com.anezium.rokidnexus.sample"
+    namespace = "com.anezium.rokidbus.plugin.sample"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.anezium.rokidnexus.sample"
-        minSdk = 26
+        applicationId = "com.anezium.rokidbus.plugin.sample"
+        minSdk = 31
         targetSdk = 36
         versionCode = 1
-        versionName = "0.1.0"
+        versionName = "1.0.0"
     }
 
     compileOptions {

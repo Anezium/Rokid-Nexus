@@ -1,4 +1,4 @@
-package com.anezium.rokidnexus.sample
+package com.anezium.rokidbus.plugin.sample
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue

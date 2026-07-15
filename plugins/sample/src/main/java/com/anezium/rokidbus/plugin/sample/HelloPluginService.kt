@@ -1,4 +1,4 @@
-package com.anezium.rokidnexus.sample
+package com.anezium.rokidbus.plugin.sample
 
 import android.view.KeyEvent
 import com.anezium.rokidbus.client.plugin.NexusCard
