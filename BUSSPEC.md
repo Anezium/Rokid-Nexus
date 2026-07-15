@@ -1,8 +1,7 @@
-# RokidBus — Bus Specification v1 (Round A)
+# RokidBus — current bus specification
 
-Status: 2026-07-04 — probe project validated both hardware gates (see TESTPLAN.md header).
-This spec turns the probe into the real hub + client library. Round A does NOT touch
-Rokid Relay yet; it must end with a bus a real app could ride.
+Status: API version 3. This main text describes the current contract. Superseded
+Round A/API v1 and API v2 details are retained only in the historical appendix.
 
 ## Non-negotiable constraints (validated on hardware, do not re-derive)
 
@@ -23,51 +22,56 @@ Rokid Relay yet; it must end with a bus a real app could ride.
   package is blocked (Android 12 bg limits): the supervisor mechanism is
   **bindService(BIND_AUTO_CREATE)**. Package visibility: the hub needs a `<queries>`
   entry (use the intent-action form below, not per-package).
-- Glasses Wi-Fi stays OFF. All glasses-side internet goes through the phone hub HTTP
-  proxy over the bus.
+- Glasses-side internet goes through the phone hub HTTP proxy over the bus. The
+  protected camera workflow may temporarily request hub-owned Wi-Fi changes through
+  `/glasses/wifi/request`; ordinary clients cannot use that control path.
 - Reference for CXR-L auth + lifecycle patterns: `E:\Tools\Rokid\Rokid Relay\phone\src\main\java\com\anezium\rokidrelay\phone\CxrLAuth.kt`
   (Hi Rokid AuthorizationActivity → token) and `RelayBridge.kt` (CXRLink lifecycle,
   reconnect, `ICXRLinkCbk`). Glasses CXR-S pattern: `Rokid Relay\glasses\...\RelayBridge.kt`
   (`CXRServiceBridge.subscribe(key, cb)`, `onReceive(msgType, caps, data)`).
 
-## Modules (evolve the existing repo in place)
+## Modules
 
 | Module | Type | Package | Contents |
 |---|---|---|---|
-| `:shared` | kotlin lib | `com.anezium.rokidbus.shared` | envelope + frame codec (exists — keep) |
+| `:shared` | kotlin lib | `com.anezium.rokidbus.shared` | envelope + frame codec |
 | `:bus-client` | android lib | `com.anezium.rokidbus.client` | AIDL files + `BusClient` wrapper + `BusClientService` base |
 | `:phone-hub` | app | `com.anezium.rokidbus.phone` | FGS hub: CXR-L owner, SPP client, AIDL server, HTTP proxy, auth UI |
 | `:glasses-hub` | app | `com.anezium.rokidbus.glasses` | a11y anchor, CXR-S owner, SPP server, AIDL server, supervisor |
 | `:phone-client-probe` | app | `com.anezium.rokidbus.phoneprobe` | sample client using `:bus-client` |
-| `:glasses-client-probe` | app | `com.anezium.rokidbus.clientprobe` | rework to use `:bus-client` |
+| `:glasses-client-probe` | app | `com.anezium.rokidbus.clientprobe` | sample client using `:bus-client` |
 
-**Build system: switch to standard AGP** (the hand-rolled aapt2/d8 pipeline was a
-sandbox workaround — delete it). Mirror the toolchain of `E:\Tools\Rokid\Rokid Relay`
-(AGP + Kotlin versions, `settings.gradle.kts` with google/mavenCentral +
-`maven.rokid.com`, and `includeBuild("../CxrGlobal")` dependency substitution for the
-phone hub). Do not build-verify in the sandbox if AGP can't run there — the operator
-builds locally with Gradle 9.5.1.
+## Wire envelope and binary frames
 
-## Wire envelope (unchanged, both planes)
+JSON uses `{ "v":1, "path":"/x/y", "id":"<uuid>", "payload":{...} }`.
+SPP keeps a 4-byte big-endian length prefix (length = body bytes, max 2 MiB).
+The first body byte selects the current frame format:
 
-JSON `{ "v":1, "path":"/x/y", "id":"<uuid>", "payload":{...} }`.
-SPP: 4-byte big-endian length prefix + JSON bytes, max 2 MB (exists in `:shared`).
+- `0x7B` (`{`) → JSON envelope, with the whole body parsed as JSON.
+- `0x01` → binary frame: `[0x01][u16 BE headerLen][header JSON UTF-8][raw data]`.
+  The header is `{"v":1,"path":"...","id":"...","meta":{...}}`; `meta` is
+  optional and becomes `BusEnvelope.payload`, while the raw body becomes
+  `BusEnvelope.binary`.
+
 CXR control plane: the same JSON bytes as a custom-cmd payload under the single key
 `"rokidbus"` in both directions (phone: CXRLink custom cmd / `onCustomCmdResult`;
 glasses: `CXRServiceBridge.subscribe("rokidbus", …)` / its send-command counterpart —
 copy the exact API usage from Relay's bridges).
 
-Binary payloads (images, audio later) ride SPP as `payload: {"bin": "<base64>"}` for
-now; leave a `// TODO raw binary frames` marker.
+Binary envelopes are SPP-only and never use the CXR control plane. Remote binary
+delivery fails with `NO_DATA_PLANE` while SPP is down, never wake-binds a sleeping
+client, and is not queued. Local Binder delivery is capped at 512 KiB; larger frames
+remain hub-internal. JSON keeps the 3 KiB CXR-else-SPP routing rule.
 
 ## Binder plugin registration v3
 
-Bus API v3 preserves the six v2 AIDL transactions in their original order and
-appends `registerPlugin(packageName, pluginId, callback)`. Phone plugins declare
-one exported service for `com.anezium.rokidbus.action.PLUGIN`. The hub derives the
-principal from the Binder calling UID, package ownership, the service manifest,
-and the current signing-certificate SHA-256 digest. Client payloads never supply
-trusted UID, certificate, route prefixes, or surface ownership.
+Bus API v3 preserves the first six AIDL transactions in their original order
+and appends `registerPlugin(packageName, pluginId, callback)` and `capabilities()`.
+Phone plugins declare one exported service for
+`com.anezium.rokidbus.action.PLUGIN`. The hub derives the principal from the
+Binder calling UID, package ownership, the service manifest, and the current
+signing-certificate SHA-256 digest. Client payloads never supply trusted UID,
+certificate, route prefixes, or surface ownership.
 
 Descriptor metadata keys are `com.anezium.rokidbus.plugin.ID`,
 `.DISPLAY_NAME`, `.API_VERSION`, `.CAPABILITIES`, `.RECEIVE_PREFIXES`,
@@ -103,29 +107,12 @@ principal checks, the phone hub injects `ownerPluginId`, rewrites the wire ID to
 `pluginId:localSurfaceId`, and assigns the monotonic sequence. Plugins never
 supply a trusted owner or global sequence.
 
-## Transit external plugin and one-release migration
+## Surface protocol v1
 
-Transit is an independent phone APK with plugin ID `transit`. It requests only
-Nexus `surfaces`; its own manifest owns `INTERNET`, foreground location, runtime
-location, and notification permissions. No Transit implementation, location
-permission, or location foreground-service type remains in the phone hub.
-
-For one compatibility release, an approved, signer-bound Transit principal may
-receive `/plugin/transit/migration/legacy`. The version 1 payload contains only
-validated favorite stops and the last selected mode plus a count/checksum; it
-never contains current coordinates or recent boards. Transit acknowledges on
-`/plugin/transit/migration/ack`. The hub clears legacy state and records
-completion only after the verified principal returns the exact migration ID,
-count, and checksum. Both sides deduplicate replay. These paths are internal to
-the verified callback/owned namespace and are not exported providers or general
-migration APIs.
-
-## Surface protocol v1 (Round B)
-
-Plugins do not install glasses APKs. External phone plugins run in their own APK
-process; temporary built-in adapters remain during migration. Both paths push
-declarative surfaces over the existing bus. The glasses hub renders those surfaces
-locally with the shared Rokid Nexus phosphor visual language.
+Plugins do not install glasses APKs. All phone plugins, including Lens, run as
+external headless APKs; the phone registry contains no built-ins. Plugins push
+declarative surfaces over the existing bus, and the glasses hub renders them locally
+with the shared Rokid Nexus phosphor visual language.
 
 Phone to glasses:
 
@@ -149,8 +136,8 @@ Every surface payload carries:
 }
 ```
 
-`seq` is monotonic per `surfaceId`. Because Round A proved there is no ordering
-guarantee across CXR-L and SPP, the glasses renderer MUST drop any show, update or
+`seq` is monotonic per `surfaceId`. Because there is no ordering guarantee across
+CXR-L and SPP, the glasses renderer MUST drop any show, update or
 hide whose `seq` is not newer than the last accepted sequence for that surface.
 Messages are idempotent: the phone can resend the latest complete state at any time.
 Timed-line and media anchor-only updates may also include a `contentKey`; the glasses
@@ -335,6 +322,8 @@ Glasses to phone:
   `protocolVersion`.
 - `/camera/link/offer` carries `sessionId`, `ssid`, `passphrase`, `port`,
   `token`, and `goIp`.
+- `/camera/freeze/image/chunk` carries the raw SPP frozen-image fallback as
+  binary chunks.
 
 Phone to glasses:
 
@@ -342,28 +331,37 @@ Phone to glasses:
 - `/camera/overlay` carries structured live-view overlay content; each item may include an
   optional string `id` (at most 64 characters) for stable live-item reuse.
 
-All four paths are protected. The phone hub itself may send or receive them; an
-external principal may receive only session state and link offers and may send
-only freeze results and overlays, after the current signer-bound `camera` grant
-is checked. Camera-session open binds the selected consumer with important
-process priority, sends `/system/plugin/open`, and forwards the opening state
-and subsequent offers. The matching close state sends `/system/plugin/close`
-and unbinds. Link loss, grant revocation, package removal, binder death, and
-registration timeout perform the same idempotent teardown. Duplicate and stale
-open/close events are ignored by `sessionId`.
+The protected camera set contains exactly six paths: `/camera/session/state`,
+`/camera/link/offer`, `/camera/freeze/result`, `/camera/freeze/image/chunk`,
+`/camera/freeze/image/ack`, and `/camera/overlay`. The phone hub itself may send
+or receive them; an external principal may receive session state, link offers,
+and frozen-image chunks and may send freeze results and overlays only after the
+current signer-bound `camera` grant is checked. `/glasses/wifi/request` is a
+separate trusted path carrying `{enabled: Boolean}` for hub-owned camera Wi-Fi
+changes; untrusted callers are rejected. Camera-session open binds the selected
+consumer with important process priority, sends `/system/plugin/open`, and
+forwards the opening state and subsequent offers. The matching close state sends
+`/system/plugin/close` and unbinds. Link loss, grant revocation, package removal,
+binder death, and registration timeout perform the same idempotent teardown.
+Duplicate and stale open/close events are ignored by `sessionId`.
 
-`IBusService.capabilities()` bit `4` is `CAMERA_CONSUMER_READY`. The phone hub
-sets it exactly while at least one installed camera principal has an approved,
-enabled `camera` grant. Grant and package changes recompute the bit. Bit `1` is
-retired and is no longer advertised by either hub.
+`IBusService.capabilities()` bit `4` is `CAMERA_CONSUMER_READY`, and bit `8` is
+`CAMERA_FROZEN_SPP`. The phone hub sets readiness while at least one installed
+camera principal has an approved, enabled `camera` grant; it adds
+`CAMERA_FROZEN_SPP` while that consumer receives frozen chunks and SPP is live.
+Grant, package, and link changes recompute the bits. Bit `1` is retired and is
+no longer advertised by either hub.
 
 ## Transport selection (hub-side routing)
 
-1. Destination local (a client on the same side registered the path) → deliver directly.
-2. Remote + envelope ≤ 3 KB → CXR control plane if link up, else SPP.
-3. Remote + envelope > 3 KB → SPP only; if SPP down, reply `/error`
+1. Destination local (a client on the same side registered the path) → deliver directly;
+   binary delivery is capped at 512 KiB.
+2. Remote binary envelope → SPP only; if SPP is down, reply `/error`
    `{code:"NO_DATA_PLANE", forId:<id>}` to the sender.
-4. Nothing up → `/error` `{code:"NO_LINK", forId:<id>}`.
+3. Remote JSON envelope ≤ 3 KB → CXR control plane if link up, else SPP.
+4. Remote JSON envelope > 3 KB → SPP only; if SPP down, reply `/error`
+   `{code:"NO_DATA_PLANE", forId:<id>}` to the sender.
+5. Nothing up → `/error` `{code:"NO_LINK", forId:<id>}`.
 
 ## AIDL contract (in `:bus-client`, package `com.anezium.rokidbus.client`)
 
@@ -372,23 +370,29 @@ retired and is no longer advertised by either hub.
 oneway interface IBusCallback {
     void onMessage(String path, String id, in byte[] payload); // payload = JSON bytes
     void onLinkState(int state); // bitmask below
+    void onBinaryMessage(String path, String id, in byte[] meta, in byte[] data);
 }
 
 // IBusService.aidl
 interface IBusService {
-    int apiVersion();                       // returns 1
+    int apiVersion();                       // returns 3
     void register(String clientId, in String[] pathPrefixes, IBusCallback cb);
     void unregister(in IBusCallback cb);
     oneway void send(String path, String id, in byte[] payload);
     int linkState();
+    oneway void sendBinary(String path, String id, in byte[] meta, in byte[] data);
+    int registerPlugin(String packageName, String pluginId, IBusCallback cb);
+    int capabilities();
 }
 ```
 
-Link-state bits: `1 = CXR_CONTROL_UP`, `2 = SPP_DATA_UP`, `4 = GLASSES_BT_BONDED`
-(phone) / `4 = PHONE_CONNECTED` (glasses).
+The method order is append-only so transaction codes remain stable. Link-state
+bits are `1 = CXR_CONTROL_UP`, `2 = SPP_DATA_UP`, and
+`4 = GLASSES_BT_BONDED_OR_PHONE_CONNECTED`.
 
 Hub feature bits are returned by `IBusService.capabilities()`. Bit `2` is
-`IMAGE_SURFACE` and bit `4` is `CAMERA_CONSUMER_READY`. The glasses hub announces its renderer after either remote link
+`IMAGE_SURFACE`, bit `4` is `CAMERA_CONSUMER_READY`, and bit `8` is
+`CAMERA_FROZEN_SPP`. The glasses hub announces its renderer after either remote link
 connects by sending `/system/hub/capabilities` with
 `{"version":1,"features":2,"imageSurfaceVersion":1,"maxImageBytes":65536}`.
 The phone hub exposes `IMAGE_SURFACE` to local plugins only after receiving a
@@ -404,17 +408,16 @@ Request/response is NOT in AIDL: the `BusClient` wrapper implements it — a req
 `send(path, id, payload)` + a pending map keyed by `id`; any reply is delivered by the
 responder to path `<request-path>/reply` carrying the same `id`. Timeout default 15 s.
 
-Audio (glasses mic via CXR-L `startAudioStream`) is **Round B** — leave the surface out
-of AIDL v1 entirely; bump `apiVersion` when it lands.
-
 ## Client wrapper API (Kotlin, `:bus-client`)
 
 ```kotlin
 class BusClient(context, clientId, pathPrefixes: List<String>, listener: (BusEvent) -> Unit)
     fun connect()                     // binds the local hub (action, see below), auto-reconnects
     fun send(path, payload: JSONObject)
+    fun sendBinary(path, meta: JSONObject, data: ByteArray)
     fun request(path, payload, timeoutMs = 15_000): JSONObject   // suspend + callback overloads
     fun linkState(): Int
+    fun capabilities(): Int
     fun close()
 ```
 
@@ -454,87 +457,23 @@ Hub manifests use `<queries><intent><action android:name="com.anezium.rokidbus.a
   button storing the token in prefs), SPP client with reconnect/backoff (exists),
   AIDL `BusHubService`, HTTP proxy.
 - HTTP proxy service listens on bus path `/http/request`
-  `{url, method?, headers?, body?}` → streams `/http/request/reply` chunks
-  `{id-correlated, status, chunk(base64), done, totalBytes}`. Keep the
-  `api.transitous.org` allowlist for now, make the list a constant.
+  `{url, method?, headers?, body?}`. Every `/http/request/reply` chunk, terminal
+  marker, and error is a binary frame with raw response bytes in `data` (empty
+  for terminal/error frames) and JSON metadata
+  `{status, bytes, done, totalBytes?, error?}`. Remote replies retain the request
+  `id` and stay on SPP, preserving FIFO order; local callers receive the same
+  binary shape over Binder. The allowlist currently contains `api.transitous.org`.
 - CXR link state changes broadcast to all registered clients via `onLinkState`.
 
 ## Glasses hub specifics
 
 - AccessibilityService anchor + BootReceiver (exists). Owns: SPP server (exists),
   CXR-S subscription (key `rokidbus`), AIDL `BusHubService`, supervisor above.
-- Keep the `ProbeBroadcastReceiver` debug entry point (component-targeted broadcasts).
+- `/hub/probe` is an internal diagnostic envelope sent by the glasses CXR bridge
+  after connection and consumed by the phone hub.
+- `ProbeBroadcastReceiver` remains a debug entry point for component-targeted broadcasts.
 
-## Probe clients (acceptance demo)
-
-Both probes use ONLY `:bus-client` (no direct BT/CXR imports). Phone probe app has
-buttons: Echo (small → control plane), Echo-big 64 KB (→ SPP), HTTP via bus. Glasses
-probe: headless `BusClientService` that answers `/probe/echo` and `/probe/echo/reply`
-logs; it must be woken by the hub from dead.
-
-## Acceptance criteria (operator validates on hardware)
-
-1. `gradle assembleDebug` green locally (AGP), 4 APKs + 1 AAR-equivalent lib.
-2. Phone probe → phone hub → **CXR-L** → glasses hub → **wakes dead glasses probe by
-   bind** → reply travels back → phone probe logs the reply. (End-to-end small path.)
-3. 64 KB echo takes the **SPP** route automatically, same client API.
-4. Glasses probe fetches a Transitous URL through `/http/request`, Wi-Fi OFF.
-5. Hi Rokid link stays connected throughout (no channel reset).
-6. TESTPLAN.md updated with the new adb/test steps (component-targeted broadcasts).
-
-## Out of scope for Round A
-
-Audio lease (mic streaming), Relay migration, install/bootstrap of glasses apps via
-Hi Rokid, permission hardening (custom signature permission), raw binary frames.
-
-## Binary frames v1 (Round B slice 2)
-
-Replaces the `payload.bin` base64 placeholder. The SPP frame keeps its 4-byte
-big-endian length prefix (length = body bytes, max 2 MiB); the first body byte now
-selects the format:
-
-- `0x7B` (`{`) → legacy JSON envelope, whole body parsed as before. Old peers are
-  wire-compatible for JSON traffic.
-- `0x01` → binary frame: `[0x01][u16 BE headerLen][header JSON UTF-8][raw data]`.
-  Header is `{"v":1,"path":"...","id":"...","meta":{...}}` (`meta` optional).
-
-`BusEnvelope` gains `binary: ByteArray? = null`; for binary envelopes the existing
-`payload` JSONObject carries the `meta`. Routing rules:
-
-- Binary envelopes are **SPP-only** — never CXR control plane regardless of size.
-  SPP down → `/error` `{code:"NO_DATA_PLANE", forId:<id>}` to the sender.
-- JSON envelopes keep the existing ≤ 3 KB CXR-else-SPP rule.
-- Binary envelopes never trigger wake-bind: no live registration → drop + log
-  (they are realtime/stream data; the supervisor queue stays JSON-only).
-- Local delivery of a binary message is capped at 512 KiB (binder transaction
-  headroom); bigger frames are hub-internal only.
-
-### AIDL v2 (append-only, transaction codes stable)
-
-`API_VERSION = 2`. New methods appended at the END of the interfaces:
-
-```aidl
-// IBusCallback.aidl (+)
-void onBinaryMessage(String path, String id, in byte[] meta, in byte[] data);
-// IBusService.aidl (+)
-oneway void sendBinary(String path, String id, in byte[] meta, in byte[] data);
-```
-
-`BusClient` adds `sendBinary(path, meta: JSONObject, data: ByteArray)` and emits
-`BusEvent.Binary(path, id, meta: JSONObject, data: ByteArray)`. Request/response
-convention is unchanged (a binary reply carrying the request `id` resolves a
-pending `request()` too).
-
-### HTTP proxy on binary frames (fixes the cross-plane ordering bug)
-
-ALL `/http/request/reply` envelopes — chunks, `done`, and errors — become binary
-frames: raw body bytes in `data` (empty for `done`/error), JSON meta
-`{status, bytes, done, totalBytes?, error?}`. No more base64. Because every reply
-of a request now rides the same SPP socket, replies are FIFO end-to-end and the
-Round A "done overtakes chunk" race disappears by construction. Local requesters
-receive the same shape via `onBinaryMessage`. Probes updated accordingly.
-
-## Audio lease v1 (Round B slice 2)
+## Audio lease v1
 
 Glasses mic PCM arrives ON THE PHONE via CXR-L (`setCXRAudioCbk` +
 `startAudioStream(CXR_AUDIO_PCM=1)`, format 16 kHz / mono / PCM16 LE, variable
@@ -554,22 +493,33 @@ Paths (single leaseholder at a time):
 - `/audio/lease/revoked` `{leaseId, reason:"LINK_DOWN"}` — hub → holder when
   CXR-L drops mid-lease (hub stops the stream).
 
+Audio request replies use the request path with `/reply` appended:
+`/audio/lease/acquire/reply` and `/audio/lease/release/reply`.
+
 Hub lifecycle: acquire → `setInterruptAiWake(true)`, `setCXRAudioCbk(cbk)`,
 `startAudioStream(1)`; release / holder binder death / CXR drop →
 `stopAudioStream()`, `setCXRAudioCbk(null)`, `setInterruptAiWake(false)`.
 Binder-death auto-release is mandatory (no orphan stream). No phone
 `RECORD_AUDIO` needed for the CXR PCM path (validated by Relay).
 
-Phone probe gains a `Mic 5 s` button: acquire → count frames/bytes for 5 s →
-release → log `frames=N bytes=M gaps=K`.
+## Appendix: historical protocol versions
 
-### Acceptance criteria (slice 2, operator validates on hardware)
+Everything in this appendix is historical and must not be implemented as the
+current contract. API version 3 and the main sections above are authoritative.
 
-1. `./gradlew assembleDebug` green; `apiVersion()` returns 2 on both hubs.
-2. Phone probe `Mic 5 s`: PCM frames flow (~50 frames / ~160 KB per 5 s), zero
-   seq gaps, lease released, second acquire while held returns `BUSY`.
-3. Glasses probe `wake-http`: binary-chunk replies, `done` arrives strictly after
-   all chunks (repeat 5×), Wi-Fi OFF.
-4. 64 KB echo and Lyrics surfaces unaffected (JSON path regression check).
-5. Hi Rokid/CXR-L stays connected through start/stop of the audio stream.
-6. TESTPLAN.md updated with the slice 2 steps.
+### Historical Round A / API v1
+
+The first contract returned API version 1. `IBusCallback` exposed only
+`onMessage` and `onLinkState`; `IBusService` exposed only `apiVersion`,
+`register`, `unregister`, `send`, and `linkState`. Binary was a temporary
+`payload.bin` base64 placeholder, raw binary frames were explicitly out of
+scope, and the HTTP proxy described base64 chunks in JSON. Those forms are
+superseded.
+
+### Historical API v2
+
+API version 2 appended `onBinaryMessage` and `sendBinary` without changing the
+existing Binder transaction order. It introduced the raw SPP binary frame and
+moved every HTTP reply chunk, terminal marker, and error to raw binary data with
+JSON metadata. API version 3 later appended plugin registration and capability
+reporting; the full current AIDL appears in the main contract.

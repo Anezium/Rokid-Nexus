@@ -5,6 +5,9 @@
 > document is the SDK reference: artifact coordinates, the service contract,
 > and the approval flow.
 
+For the complete self-contained plugin contract — endpoints, limits,
+lifecycle, and publishing — see [`plugins/AGENTS.md`](../plugins/AGENTS.md).
+
 The SDK artifact is `com.github.Anezium.Rokid-Nexus:bus-client`. The current
 repository can publish `0.1.0-SNAPSHOT` locally; this is not a public release.
 The `shared` artifact is resolved transitively.
@@ -19,7 +22,9 @@ dependencies {
 }
 ```
 
-Use `compileSdk = 36` and `minSdk >= 26`. The repository builds with JDK 17.
+Use `compileSdk = 36`. The bus-client AAR supports `minSdk >= 26`; the
+repository's canonical Sample and Transit plugin templates use `minSdk = 31`.
+The repository builds with JDK 17.
 
 ## 2. Declare the plugin service
 
@@ -42,8 +47,9 @@ does not approve it.
 ```
 
 Plugin IDs use `[a-z][a-z0-9._-]{2,63}`. Requested capabilities are `surfaces`,
-`http_proxy`, and `microphone`; microphone currently returns
-`CAPABILITY_NOT_AVAILABLE` until the required HUD indicator exists.
+`http_proxy`, `microphone`, and `camera`. Camera paths are protected by the
+approved signer-bound grant. Microphone approval is currently disabled in the
+phone UI.
 
 ## 3. Implement the service
 
@@ -142,8 +148,10 @@ For local software validation:
 .\gradlew.bat :plugin-sample:testDebugUnitTest :plugin-sample:assembleDebug
 ```
 
-The phone UI exposes package, signer, API, and route details only in developer
-mode. Logs and bug reports must redact device identifiers, signing digests,
+**Settings → Advanced → Developer mode** is a global toggle. It unlocks the
+Bus inspector, a live journal of plugin traffic and rejections, and shows DEV
+badges; package, signer, API, and route details are available with developer
+details. Logs and bug reports must redact device identifiers, signing digests,
 credentials, locations, user text, and full payloads.
 
 Normal use should not require ADB. The present repository still needs owner-run
@@ -163,8 +171,10 @@ normal SPP frame, glasses validation/decode, and HUD renderer. The receiver is
 present only in debug builds.
 
 Compatibility details and reserved lifecycle payloads live in
-[BUSSPEC.md](../BUSSPEC.md). The complete copyable implementation is in
-[`plugins/sample`](../plugins/sample).
+[BUSSPEC.md](../BUSSPEC.md). [`plugins/sample`](../plugins/sample) is the
+canonical headless template: package `com.anezium.rokidbus.plugin.sample`,
+`minSdk 31`, a headless manifest, and a NexusUi/BusTheme settings screen with
+the required uninstall row.
 
 A maintainer must choose a repository license before public distribution. No
 license or public artifact release is implied by these coordinates.

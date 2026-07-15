@@ -7,16 +7,20 @@ discovers it, the user approves its capabilities once, and from then on it
 lives entirely inside Nexus — launched from the glasses launcher, configured
 from the phone hub, removable from its own settings screen or the Store.
 
-Feeds, Transit, Lyrics, and Media Deck ship this way. Lens is still compiled
-into the hub as a legacy built-in and will migrate to this model.
+Feeds, Transit, Lyrics, Media Deck, and Lens all ship this way as external
+headless APKs. The phone hub registry has no built-in plugins.
 
 The wire/SDK contract (artifact coordinates, service base class, payload
 limits, approval flow) is specified in [PLUGIN_SDK.md](PLUGIN_SDK.md); this
 guide covers how to structure and skin a plugin so it feels native.
+For the complete self-contained plugin contract — endpoints, limits,
+lifecycle, and publishing — see [`plugins/AGENTS.md`](../plugins/AGENTS.md).
 
 ## 1. Module
 
-An ordinary application module:
+An ordinary application module. The bus-client AAR supports `minSdk 26`; the
+repository plugin-template convention used by Sample and Transit is
+`minSdk 31`:
 
 ```kotlin
 // plugins/<id>/build.gradle.kts — plugin modules live under plugins/,
@@ -102,24 +106,30 @@ HUD cards go through `nexusSurfaceSession(id).showCard/updateCard` with the
 limits from `SurfaceModels.kt` — in particular **contentKey ≤ 128 chars: hash
 it, never concatenate content into it**.
 
-If the plugin needs a foreground service (location sampling, background
-WebView), it declares the type and permissions in its own manifest and posts
-its own notification — see `TransitPluginService.startLocationForeground`.
+If the plugin needs an additional foreground-service type (location sampling,
+background WebView), it declares the type and permissions in its own manifest
+and re-promotes the SDK-managed session foreground service with that type —
+see `TransitPluginService.startLocationForeground`. The SDK constructs the
+required session notification object; the plugin does not post a separate one.
 
 ### Background policy
 
-A plugin is dormant unless its surface is open. The hub initiates plugin
-work: closed plugins must not keep engines, fetching, bindings, or pushes
-running, and must never initiate a surface themselves. Android may keep an
-enabled notification-listener component alive, but that listener must remain
-idle until the hub opens the plugin. While open, the SDK promotes the plugin
-service to a special-use foreground service so OEM app freezers leave it
-alone; when closed, it returns the plugin to dormant state.
+A plugin is dormant unless its surface is open. Closed plugins must not keep
+engines, fetching, bindings, or pushes running. The hub normally opens the
+plugin from the glasses launcher, but arbitration also contains a proactive
+surface: a `show` while the HUD is idle adopts its sender as foreground and
+delivers a real `PLUGIN_OPEN`; a `show` or `update` while another plugin owns
+the HUD returns `SURFACE_BUSY`. Give up quietly rather than retry-looping.
+Android may keep an enabled notification-listener component alive, but that
+listener must remain idle until the plugin is open. While open, the SDK
+promotes the plugin service to a special-use foreground service so OEM app
+freezers leave it alone; when closed, it returns the plugin to dormant state.
 
-Plugins never show notifications. Do **not** declare `POST_NOTIFICATIONS`:
-without it the session foreground service runs with its notification
-suppressed, and the Rokid Nexus hub notification — which names the plugin
-that is live on the glasses — stays the single user-facing one.
+The SDK always constructs the notification object required for the session
+foreground service. Do **not** declare or request `POST_NOTIFICATIONS`: on
+Android 13+ the SDK notification stays suppressed, and the Rokid Nexus hub
+notification — which names the plugin live on the glasses — remains the only
+user-visible one. Plugins must not post any additional notification.
 
 ## 4. Settings screen — the design kit
 
