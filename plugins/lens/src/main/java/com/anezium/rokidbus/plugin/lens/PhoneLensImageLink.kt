@@ -130,6 +130,7 @@ internal class PhoneLensImageLink(
     private var p2pCleanupInProgress = false
     private var discoveryPrimedForJoinCycle = false
     private var discoveryPriming = false
+    private var discoveryPrimeStartedAtMs = 0L
     private var discoveryStopPending = false
     private val p2pCleanupContinuations = mutableListOf<() -> Unit>()
     @Volatile var state: PhoneLensLinkState = PhoneLensLinkState.IDLE
@@ -176,12 +177,17 @@ internal class PhoneLensImageLink(
                 }
 
                 WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION -> {
-                    currentSession()?.let { (expectedGeneration, currentOffer) ->
-                        stopDiscoveryAfterPriming(
-                            expectedGeneration,
-                            currentOffer,
-                            cause = "peers_changed",
-                        )
+                    // A peers-changed event in the first instants is a stale replay from a
+                    // previous scan, not evidence the priming scan covered the GO's channel.
+                    val primeElapsed = SystemClock.elapsedRealtime() - discoveryPrimeStartedAtMs
+                    if (primeElapsed >= DISCOVERY_PRIME_MIN_WAIT_MS) {
+                        currentSession()?.let { (expectedGeneration, currentOffer) ->
+                            stopDiscoveryAfterPriming(
+                                expectedGeneration,
+                                currentOffer,
+                                cause = "peers_changed",
+                            )
+                        }
                     }
                 }
             }
@@ -417,6 +423,7 @@ internal class PhoneLensImageLink(
         discoveryPrimedForJoinCycle = true
         discoveryPriming = true
         discoveryStopPending = false
+        discoveryPrimeStartedAtMs = SystemClock.elapsedRealtime()
         clearDiscoveryPrimingCallbacks()
         log("lensLinkDiscoveryPrimeStarted waitMs=${decision.discoveryWaitMs}")
         discoveryPrimeTimeout = Runnable {
@@ -1395,7 +1402,10 @@ internal class PhoneLensImageLink(
         private const val STOP_DISCOVERY_FALLBACK_MS = 400L
         private const val UNSEEN_FIRST_JOIN_TIMEOUT_MS = 7_500L
         private const val KNOWN_RECENT_FIRST_JOIN_TIMEOUT_MS = 3_000L
-        private const val KNOWN_RECENT_WINDOW_MS = 5 * 60_000L
+        // The supplicant's scan cache only stays warm for roughly a minute; a
+        // "recently joined" identity older than that must take the long unseen window.
+        private const val KNOWN_RECENT_WINDOW_MS = 90_000L
+        private const val DISCOVERY_PRIME_MIN_WAIT_MS = 800L
         private const val JOIN_PROGRESS_TIMEOUT_MS = 4_500L
         private const val INITIAL_JOIN_RETRY_MS = 300L
         private const val JOIN_RETRY_STEP_MS = 1_000L
