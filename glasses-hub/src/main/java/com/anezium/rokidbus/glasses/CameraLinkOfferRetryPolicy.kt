@@ -12,6 +12,48 @@ internal data class CameraLinkOfferRetryAction(
     val nextDelayMs: Long,
 )
 
+internal enum class CameraLinkGroupRemovalActionType {
+    REMOVE_GROUP,
+    POLL_GROUP,
+}
+
+internal data class CameraLinkGroupRemovalAction(
+    val type: CameraLinkGroupRemovalActionType,
+    val nextPollNumber: Int?,
+    val delayMs: Long,
+)
+
+/** Pure bounded grace for an associated P2P client to deliver its TCP HELLO. */
+internal class CameraLinkGroupRemovalGracePolicy(
+    private val clientGraceMs: Long,
+    private val maxPolls: Int,
+) {
+    init {
+        require(clientGraceMs > 0L)
+        require(maxPolls > 1)
+    }
+
+    fun nextAction(
+        associatedClientPresent: Boolean,
+        pollNumber: Int,
+    ): CameraLinkGroupRemovalAction {
+        require(pollNumber in 1..maxPolls)
+        return if (associatedClientPresent && pollNumber < maxPolls) {
+            CameraLinkGroupRemovalAction(
+                type = CameraLinkGroupRemovalActionType.POLL_GROUP,
+                nextPollNumber = pollNumber + 1,
+                delayMs = clientGraceMs,
+            )
+        } else {
+            CameraLinkGroupRemovalAction(
+                type = CameraLinkGroupRemovalActionType.REMOVE_GROUP,
+                nextPollNumber = null,
+                delayMs = 0L,
+            )
+        }
+    }
+}
+
 /** Pure retry decision used by CameraLink's Android callback/scheduler shell. */
 internal class CameraLinkOfferRetryPolicy(
     private val coldGroupSettleMs: Long,

@@ -8,8 +8,8 @@ class CameraLinkOfferRetryPolicyTest {
     private val policy = CameraLinkOfferRetryPolicy(
         coldGroupSettleMs = 350L,
         intervalMs = 2_500L,
-        maxOffers = 8,
-        offersBeforeGroupRecreate = 3,
+        maxOffers = 9,
+        offersBeforeGroupRecreate = 5,
         maxGroupRecreates = 1,
     )
 
@@ -20,12 +20,14 @@ class CameraLinkOfferRetryPolicyTest {
     }
 
     @Test
-    fun `third unanswered offer immediately queues one group recreate`() {
+    fun `fifth unanswered offer queues one recreate ten seconds after offer one`() {
         assertOffer(policy.nextAction(offersSent = 0, groupRecreatesDone = 0), 1, 2_500L)
         assertOffer(policy.nextAction(offersSent = 1, groupRecreatesDone = 0), 2, 2_500L)
-        assertOffer(policy.nextAction(offersSent = 2, groupRecreatesDone = 0), 3, 0L)
+        assertOffer(policy.nextAction(offersSent = 2, groupRecreatesDone = 0), 3, 2_500L)
+        assertOffer(policy.nextAction(offersSent = 3, groupRecreatesDone = 0), 4, 2_500L)
+        assertOffer(policy.nextAction(offersSent = 4, groupRecreatesDone = 0), 5, 0L)
 
-        val recreate = policy.nextAction(offersSent = 3, groupRecreatesDone = 0)
+        val recreate = policy.nextAction(offersSent = 5, groupRecreatesDone = 0)
         assertEquals(CameraLinkOfferRetryActionType.RECREATE_GROUP, recreate.type)
         assertNull(recreate.offerNumber)
         assertEquals(0L, recreate.nextDelayMs)
@@ -33,7 +35,7 @@ class CameraLinkOfferRetryPolicyTest {
 
     @Test
     fun `remaining total offer budget continues after recreate`() {
-        for (offersSent in 3 until 8) {
+        for (offersSent in 5 until 9) {
             assertOffer(
                 policy.nextAction(offersSent = offersSent, groupRecreatesDone = 1),
                 offerNumber = offersSent + 1,
@@ -41,7 +43,7 @@ class CameraLinkOfferRetryPolicyTest {
             )
         }
 
-        val timeout = policy.nextAction(offersSent = 8, groupRecreatesDone = 1)
+        val timeout = policy.nextAction(offersSent = 9, groupRecreatesDone = 1)
         assertEquals(CameraLinkOfferRetryActionType.TIMEOUT, timeout.type)
         assertNull(timeout.offerNumber)
         assertEquals(0L, timeout.nextDelayMs)
@@ -49,10 +51,51 @@ class CameraLinkOfferRetryPolicyTest {
 
     @Test
     fun `same counters always produce the same action`() {
-        val first = policy.nextAction(offersSent = 3, groupRecreatesDone = 1)
-        val second = policy.nextAction(offersSent = 3, groupRecreatesDone = 1)
+        val first = policy.nextAction(offersSent = 5, groupRecreatesDone = 1)
+        val second = policy.nextAction(offersSent = 5, groupRecreatesDone = 1)
 
         assertEquals(first, second)
+    }
+
+    @Test
+    fun `associated client gets one bounded grace before the second poll removes`() {
+        val gracePolicy = CameraLinkGroupRemovalGracePolicy(
+            clientGraceMs = 2_500L,
+            maxPolls = 2,
+        )
+
+        assertEquals(
+            CameraLinkGroupRemovalAction(
+                type = CameraLinkGroupRemovalActionType.POLL_GROUP,
+                nextPollNumber = 2,
+                delayMs = 2_500L,
+            ),
+            gracePolicy.nextAction(associatedClientPresent = true, pollNumber = 1),
+        )
+        assertEquals(
+            CameraLinkGroupRemovalAction(
+                type = CameraLinkGroupRemovalActionType.REMOVE_GROUP,
+                nextPollNumber = null,
+                delayMs = 0L,
+            ),
+            gracePolicy.nextAction(associatedClientPresent = true, pollNumber = 2),
+        )
+    }
+
+    @Test
+    fun `empty client list removes without adding grace`() {
+        val gracePolicy = CameraLinkGroupRemovalGracePolicy(
+            clientGraceMs = 2_500L,
+            maxPolls = 2,
+        )
+
+        assertEquals(
+            CameraLinkGroupRemovalActionType.REMOVE_GROUP,
+            gracePolicy.nextAction(
+                associatedClientPresent = false,
+                pollNumber = 1,
+            ).type,
+        )
     }
 
     private fun assertOffer(

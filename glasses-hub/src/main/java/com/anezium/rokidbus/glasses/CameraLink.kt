@@ -68,6 +68,10 @@ internal class CameraLink(
         offersBeforeGroupRecreate = OFFERS_BEFORE_GO_RECOVERY,
         maxGroupRecreates = MAX_GO_RECREATES,
     )
+    private val groupRemovalGracePolicy = CameraLinkGroupRemovalGracePolicy(
+        clientGraceMs = ASSOCIATED_CLIENT_GRACE_MS,
+        maxPolls = MAX_GO_RECOVERY_CLIENT_POLLS,
+    )
     private val token = ByteArray(24).also(SecureRandom()::nextBytes).let {
         Base64.encodeToString(it, Base64.NO_WRAP or Base64.URL_SAFE or Base64.NO_PADDING)
     }
@@ -93,6 +97,8 @@ internal class CameraLink(
     private var groupPoll: Runnable? = null
     private var offerRetry: Runnable? = null
     private var goRecoveryCreate: Runnable? = null
+    private var goRecoveryClientPoll: Runnable? = null
+    private var goRecoveryGroupInfoTimeout: Runnable? = null
     private var currentOffer: CameraLinkOffer? = null
     private var offersSent = 0
     private var groupRecreatesDone = 0
@@ -100,6 +106,7 @@ internal class CameraLink(
     private var goRecoveryRemovedGroup = false
     private var groupStageLogged = false
     private var initialOfferDelayMs = 0L
+    private var goRecoveryGroupInfoRequestId = 0L
 
     val isAuthenticated: Boolean get() = authenticated
 
@@ -425,8 +432,7 @@ internal class CameraLink(
     @SuppressLint("MissingPermission")
     private fun recoverDeafGroup() {
         if (!running || authenticated || goRecoveryInProgress) return
-        val localManager = manager ?: return fail("WI-FI DIRECT LOST")
-        val localChannel = channel ?: return fail("WI-FI DIRECT LOST")
+        if (manager == null || channel == null) return fail("WI-FI DIRECT LOST")
         goRecoveryInProgress = true
         goRecoveryRemovedGroup = false
         clearOfferRetry()
@@ -438,6 +444,77 @@ internal class CameraLink(
             abortGoRecoveryBeforeRemoval()
             return
         }
+        requestGroupInfoBeforeGoRecoveryRemoval(pollNumber = 1)
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun requestGroupInfoBeforeGoRecoveryRemoval(pollNumber: Int) {
+        if (!running || !goRecoveryInProgress || goRecoveryRemovedGroup) return
+        if (authenticated) return abortGoRecoveryBeforeRemoval()
+        val localManager = manager ?: return fail("WI-FI DIRECT LOST")
+        val localChannel = channel ?: return fail("WI-FI DIRECT LOST")
+        goRecoveryClientPoll?.let(mainHandler::removeCallbacks)
+        goRecoveryClientPoll = null
+        clearGoRecoveryGroupInfoTimeout()
+        goRecoveryGroupInfoRequestId += 1L
+        val requestId = goRecoveryGroupInfoRequestId
+        goRecoveryGroupInfoTimeout = Runnable {
+            goRecoveryGroupInfoTimeout = null
+            if (!isGoRecoveryGroupInfoCurrent(requestId, localChannel)) return@Runnable
+            Log.w(TAG, "cameraLinkGoRecoveryGroupInfoTimeout poll=$pollNumber")
+            removeGroupAfterClientInspection(cause = "group_info_timeout")
+        }.also { mainHandler.postDelayed(it, GO_RECOVERY_GROUP_INFO_TIMEOUT_MS) }
+        runCatching {
+            localManager.requestGroupInfo(localChannel) { group ->
+                if (!isGoRecoveryGroupInfoCurrent(requestId, localChannel)) {
+                    return@requestGroupInfo
+                }
+                clearGoRecoveryGroupInfoTimeout()
+                if (authenticated) return@requestGroupInfo abortGoRecoveryBeforeRemoval()
+                val clientCount = group?.clientList?.size ?: 0
+                val action = groupRemovalGracePolicy.nextAction(
+                    associatedClientPresent = clientCount > 0,
+                    pollNumber = pollNumber,
+                )
+                when (action.type) {
+                    CameraLinkGroupRemovalActionType.POLL_GROUP -> {
+                        val nextPollNumber = checkNotNull(action.nextPollNumber)
+                        Log.i(
+                            TAG,
+                            "cameraLinkGoRecoveryClientGrace clients=$clientCount " +
+                                "poll=$pollNumber delayMs=${action.delayMs}",
+                        )
+                        goRecoveryClientPoll = Runnable {
+                            goRecoveryClientPoll = null
+                            requestGroupInfoBeforeGoRecoveryRemoval(nextPollNumber)
+                        }.also { mainHandler.postDelayed(it, action.delayMs) }
+                    }
+                    CameraLinkGroupRemovalActionType.REMOVE_GROUP ->
+                        removeGroupAfterClientInspection(cause = "client_poll_$pollNumber")
+                }
+            }
+        }.onFailure {
+            if (!isGoRecoveryGroupInfoCurrent(requestId, localChannel)) return@onFailure
+            clearGoRecoveryGroupInfoTimeout()
+            Log.w(TAG, "cameraLinkGoRecoveryGroupInfoFailed type=${it.javaClass.simpleName}")
+            removeGroupAfterClientInspection(cause = "group_info_exception")
+        }
+    }
+
+    private fun isGoRecoveryGroupInfoCurrent(
+        requestId: Long,
+        expectedChannel: WifiP2pManager.Channel,
+    ): Boolean = running && goRecoveryInProgress && !goRecoveryRemovedGroup &&
+        goRecoveryGroupInfoRequestId == requestId && channel === expectedChannel
+
+    @SuppressLint("MissingPermission")
+    private fun removeGroupAfterClientInspection(cause: String) {
+        if (!running || !goRecoveryInProgress || goRecoveryRemovedGroup) return
+        if (authenticated) return abortGoRecoveryBeforeRemoval()
+        val localManager = manager ?: return fail("WI-FI DIRECT LOST")
+        val localChannel = channel ?: return fail("WI-FI DIRECT LOST")
+        clearGoRecoveryClientInspection()
+        Log.i(TAG, "cameraLinkGoRecoveryRemove cause=$cause")
         runCatching {
             localManager.removeGroup(localChannel, object : WifiP2pManager.ActionListener {
                 override fun onSuccess() {
@@ -472,6 +549,18 @@ internal class CameraLink(
         }
     }
 
+    private fun clearGoRecoveryGroupInfoTimeout() {
+        goRecoveryGroupInfoTimeout?.let(mainHandler::removeCallbacks)
+        goRecoveryGroupInfoTimeout = null
+    }
+
+    private fun clearGoRecoveryClientInspection() {
+        goRecoveryGroupInfoRequestId += 1L
+        goRecoveryClientPoll?.let(mainHandler::removeCallbacks)
+        goRecoveryClientPoll = null
+        clearGoRecoveryGroupInfoTimeout()
+    }
+
     private fun scheduleGoRecoveryCreate(delayMs: Long) {
         clearGoRecoveryCreate()
         goRecoveryCreate = Runnable {
@@ -502,6 +591,7 @@ internal class CameraLink(
 
     private fun abortGoRecoveryBeforeRemoval() {
         clearGoRecoveryCreate()
+        clearGoRecoveryClientInspection()
         goRecoveryInProgress = false
         goRecoveryRemovedGroup = false
     }
@@ -574,6 +664,9 @@ internal class CameraLink(
             Log.i(TAG, "cameraLinkStage stage=connected elapsedMs=${stageElapsedMs()}")
             mainHandler.post {
                 clearOfferRetry()
+                if (goRecoveryInProgress && !goRecoveryRemovedGroup) {
+                    abortGoRecoveryBeforeRemoval()
+                }
                 offersSent = 0
                 onAuthenticated(true)
             }
@@ -714,6 +807,7 @@ internal class CameraLink(
         clearGroupPoll()
         clearOfferRetry()
         clearGoRecoveryCreate()
+        clearGoRecoveryClientInspection()
         goRecoveryInProgress = false
         goRecoveryRemovedGroup = false
         closeClient()
@@ -771,8 +865,11 @@ internal class CameraLink(
         private const val GROUP_POLL_MS = 500L
         private const val COLD_GROUP_SETTLE_MS = 350L
         private const val OFFER_RETRY_MS = 2_500L
-        private const val MAX_OFFER_SENDS = 8
-        private const val OFFERS_BEFORE_GO_RECOVERY = 3
+        private const val MAX_OFFER_SENDS = 9
+        private const val OFFERS_BEFORE_GO_RECOVERY = 5
         private const val MAX_GO_RECREATES = 1
+        private const val ASSOCIATED_CLIENT_GRACE_MS = 2_500L
+        private const val MAX_GO_RECOVERY_CLIENT_POLLS = 2
+        private const val GO_RECOVERY_GROUP_INFO_TIMEOUT_MS = 750L
     }
 }
