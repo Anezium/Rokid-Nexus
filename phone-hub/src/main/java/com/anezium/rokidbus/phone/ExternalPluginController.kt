@@ -23,6 +23,7 @@ class ExternalPluginController(
     private val logger: (String) -> Unit = {},
     private val onRegisteredPrincipal: (PhonePluginPrincipal) -> Unit = {},
     private val onForegroundChanged: () -> Unit = {},
+    private val journal: PluginBusJournal? = null,
 ) {
     private var pending: PhonePluginPrincipal? = null
     private var active: PhonePluginPrincipal? = null
@@ -50,6 +51,14 @@ class ExternalPluginController(
         pending = principal
         if (!runtime.bind(principal)) {
             pending = null
+            record(
+                principal,
+                PluginBusJournal.Category.LIFECYCLE,
+                PluginBusJournal.Direction.HUB_TO_PLUGIN,
+                BusPaths.PLUGIN_OPEN,
+                PluginBusJournal.Verdict.REJECTED,
+                "BIND_FAILED",
+            )
             return false
         }
         val timeoutKey = registrationTimeoutKey(principal)
@@ -57,6 +66,14 @@ class ExternalPluginController(
         scheduler.schedule(timeoutKey, REGISTRATION_TIMEOUT_MS) {
             if (generation == openGeneration && pending?.grantKey() == principal.grantKey()) {
                 pending = null
+                record(
+                    principal,
+                    PluginBusJournal.Category.REGISTRATION,
+                    PluginBusJournal.Direction.PLUGIN_TO_HUB,
+                    BusPaths.PLUGIN_REGISTRATION,
+                    PluginBusJournal.Verdict.REJECTED,
+                    "REGISTRATION_TIMEOUT",
+                )
                 if (automaticRebindAttempted) {
                     giveUpOpen(principal, generation)
                 } else {
@@ -162,6 +179,14 @@ class ExternalPluginController(
         active = null
         deliver(principal, BusPaths.PLUGIN_CLOSE, "self_hidden")
         runtime.unbind(principal)
+        record(
+            principal,
+            PluginBusJournal.Category.LIFECYCLE,
+            PluginBusJournal.Direction.PLUGIN_TO_HUB,
+            BusPaths.PLUGIN_CLOSE,
+            PluginBusJournal.Verdict.OK,
+            "SELF_CLOSE",
+        )
         logger("external plugin self-closed plugin=$pluginId")
     }
 
@@ -228,11 +253,27 @@ class ExternalPluginController(
     }
 
     private fun onOpenAckTimedOut(principal: PhonePluginPrincipal, generation: Long) {
+        record(
+            principal,
+            PluginBusJournal.Category.LIFECYCLE,
+            PluginBusJournal.Direction.HUB_TO_PLUGIN,
+            BusPaths.PLUGIN_OPEN,
+            PluginBusJournal.Verdict.REJECTED,
+            "OPEN_ACK_TIMEOUT",
+        )
         if (automaticRebindAttempted) {
             giveUpOpen(principal, generation)
             return
         }
         automaticRebindAttempted = true
+        record(
+            principal,
+            PluginBusJournal.Category.LIFECYCLE,
+            PluginBusJournal.Direction.HUB_TO_PLUGIN,
+            BusPaths.PLUGIN_OPEN,
+            PluginBusJournal.Verdict.OK,
+            "REBIND_ATTEMPT",
+        )
         logger("external plugin open unacknowledged plugin=${principal.descriptor.id}; rebinding")
         active = null
         runtime.unbind(principal)
@@ -246,7 +287,39 @@ class ExternalPluginController(
         active = null
         runtime.hideOwnedSurfaces(principal.descriptor.id)
         runtime.unbind(principal)
+        record(
+            principal,
+            PluginBusJournal.Category.LIFECYCLE,
+            PluginBusJournal.Direction.HUB_TO_PLUGIN,
+            BusPaths.PLUGIN_OPEN,
+            PluginBusJournal.Verdict.REJECTED,
+            "OPEN_FAILED",
+        )
         logger("external plugin open failed plugin=${principal.descriptor.id}")
+    }
+
+    private fun record(
+        principal: PhonePluginPrincipal,
+        category: PluginBusJournal.Category,
+        direction: PluginBusJournal.Direction,
+        path: String,
+        verdict: PluginBusJournal.Verdict,
+        reason: String,
+    ) {
+        val target = journal ?: return
+        if (!target.enabled.get()) return
+        try {
+            target.record(
+                pluginId = principal.descriptor.id,
+                category = category,
+                direction = direction,
+                path = path,
+                verdict = verdict,
+                reason = reason,
+            )
+        } catch (_: Throwable) {
+            // Diagnostics must never affect plugin lifecycle.
+        }
     }
 
     private fun deliver(

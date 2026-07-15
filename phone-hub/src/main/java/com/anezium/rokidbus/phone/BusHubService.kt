@@ -114,6 +114,7 @@ class BusHubService : Service() {
     private val debugImageSeq = AtomicLong(System.currentTimeMillis())
     private val externalSurfaceIds = ConcurrentHashMap<String, MutableSet<String>>()
     private val imageSurfaceRateLimiter = ImageSurfaceRateLimiter()
+    private val pluginBusJournal = PluginBusJournal()
     private val sppLoopStarted = AtomicBoolean(false)
     private val audioLeaseLock = Any()
     @Volatile private var sppLoopStop = false
@@ -193,29 +194,57 @@ class BusHubService : Service() {
         override fun registerPlugin(packageName: String, pluginId: String, cb: IBusCallback): Int {
             val callingUid = Binder.getCallingUid()
             val packages = packageManager.getPackagesForUid(callingUid).orEmpty()
-            if (packageName !in packages) return PluginRegistrationResult.IDENTITY_MISMATCH
+            if (packageName !in packages) {
+                return pluginRegistrationResult(
+                    pluginId,
+                    PluginRegistrationResult.IDENTITY_MISMATCH,
+                    "IDENTITY_MISMATCH",
+                )
+            }
 
             val candidates = pluginDiscovery.discoverPackage(packageName)
-            if (candidates.size != 1) return PluginRegistrationResult.INVALID_DESCRIPTOR
+            if (candidates.size != 1) {
+                return pluginRegistrationResult(
+                    pluginId,
+                    PluginRegistrationResult.INVALID_DESCRIPTOR,
+                    "INVALID_DESCRIPTOR",
+                )
+            }
             val candidate = candidates.single()
             if (candidate is PhonePluginCandidate.Invalid) {
-                return if (candidate.reason == "UNSUPPORTED_API" ||
+                val result = if (candidate.reason == "UNSUPPORTED_API" ||
                     candidate.reason == "SHARED_UID_UNSUPPORTED"
                 ) {
                     PluginRegistrationResult.UNSUPPORTED_API
                 } else {
                     PluginRegistrationResult.INVALID_DESCRIPTOR
                 }
+                return pluginRegistrationResult(pluginId, result, candidate.reason)
             }
             val principal = (candidate as PhonePluginCandidate.Valid).principal
             if (principal.uid != callingUid || principal.descriptor.id != pluginId) {
-                return PluginRegistrationResult.IDENTITY_MISMATCH
+                return pluginRegistrationResult(
+                    pluginId,
+                    PluginRegistrationResult.IDENTITY_MISMATCH,
+                    "IDENTITY_MISMATCH",
+                )
             }
             return when (val state = pluginGrantStore.stateFor(principal)) {
-                PluginGrantState.Pending -> PluginRegistrationResult.PENDING_USER_APPROVAL
-                PluginGrantState.Denied,
-                PluginGrantState.Disabled,
-                -> PluginRegistrationResult.DENIED
+                PluginGrantState.Pending -> pluginRegistrationResult(
+                    pluginId,
+                    PluginRegistrationResult.PENDING_USER_APPROVAL,
+                    "PENDING_USER_APPROVAL",
+                )
+                PluginGrantState.Denied -> pluginRegistrationResult(
+                    pluginId,
+                    PluginRegistrationResult.DENIED,
+                    "DENIED",
+                )
+                PluginGrantState.Disabled -> pluginRegistrationResult(
+                    pluginId,
+                    PluginRegistrationResult.DENIED,
+                    "DISABLED",
+                )
                 is PluginGrantState.Approved -> {
                     val prefixes = principal.descriptor.receivePrefixes.filter { prefix ->
                         PathRules.requiredCapabilityForReceivePrefix(prefix)?.let { it in state.capabilities } != false
@@ -237,9 +266,13 @@ class BusHubService : Service() {
                             cameraCompanionController.onRegistered(principal)
                         }
                         log("plugin registered package=$packageName plugin=$pluginId status=approved")
-                        PluginRegistrationResult.APPROVED
+                        pluginRegistrationResult(pluginId, PluginRegistrationResult.APPROVED)
                     } else {
-                        PluginRegistrationResult.REGISTRATION_FAILED
+                        pluginRegistrationResult(
+                            pluginId,
+                            PluginRegistrationResult.REGISTRATION_FAILED,
+                            "CALLBACK_UNAVAILABLE",
+                        )
                     }
                 }
             }
@@ -321,6 +354,7 @@ class BusHubService : Service() {
             logger = ::log,
             onRegisteredPrincipal = ::offerTransitLegacyMigration,
             onForegroundChanged = { updateStatusNotification(linkState()) },
+            journal = pluginBusJournal,
         )
         val cameraRuntime = AndroidExternalPluginRuntime(
             context = applicationContext,
@@ -354,6 +388,7 @@ class BusHubService : Service() {
                 )
             },
             externalController = externalPluginController,
+            journal = pluginBusJournal,
         )
         registerPluginPackageReceiver()
         hubEnabled = prefs().getBoolean(PREF_ENABLED, true)
@@ -449,11 +484,13 @@ class BusHubService : Service() {
     private fun routeLocal(envelope: BusEnvelope, senderUid: Int) {
         val sender = resolveSender(senderUid)
         if (!protectedPathAllowed(envelope.path, senderUid, sender.principal)) {
+            recordLocalRoute(envelope, senderUid, sender, PluginBusJournal.Verdict.REJECTED, "PROTECTED_CAMERA_PATH")
             deliverError(sender.replyBinder, envelope.id, "PROTECTED_CAMERA_PATH")
             return
         }
         val decision = PluginRoutePolicy.authorize(sender.caller, envelope.path)
         if (decision is PluginRouteDecision.Denied) {
+            recordLocalRoute(envelope, senderUid, sender, PluginBusJournal.Verdict.REJECTED, decision.code)
             deliverError(sender.replyBinder, envelope.id, decision.code)
             return
         }
@@ -463,6 +500,7 @@ class BusHubService : Service() {
         ) {
             val payload = PluginRoutePolicy.injectSurfaceOwner(sender.principal.descriptor.id, envelope.payload)
             if (payload == null) {
+                recordLocalRoute(envelope, senderUid, sender, PluginBusJournal.Verdict.REJECTED, "INVALID_SURFACE_ID")
                 deliverError(sender.replyBinder, envelope.id, "INVALID_SURFACE_ID")
                 return
             }
@@ -473,6 +511,7 @@ class BusHubService : Service() {
         if (ownedEnvelope.path == BusPaths.SURFACE_SHOW || ownedEnvelope.path == BusPaths.SURFACE_UPDATE) {
             val imageError = validateSurfaceImageEnvelope(ownedEnvelope)
             if (imageError != null) {
+                recordLocalRoute(ownedEnvelope, senderUid, sender, PluginBusJournal.Verdict.REJECTED, imageError)
                 deliverError(sender.replyBinder, ownedEnvelope.id, imageError)
                 return
             }
@@ -483,6 +522,7 @@ class BusHubService : Service() {
             ::pluginRegistry.isInitialized &&
             !pluginRegistry.allowExternalSurface(sender.principal, ownedEnvelope.path)
         ) {
+            recordLocalRoute(ownedEnvelope, senderUid, sender, PluginBusJournal.Verdict.REJECTED, "SURFACE_BUSY")
             deliverError(sender.replyBinder, ownedEnvelope.id, "SURFACE_BUSY")
             log("surface rejected path=${ownedEnvelope.path} plugin=${sender.principal.descriptor.id} reason=foreground_busy")
             return
@@ -524,9 +564,21 @@ class BusHubService : Service() {
                 pluginGrantStore.stateFor(sender.principal),
                 authorizedEnvelope.payload,
             )
-            if (!acknowledged) deliverError(sender.replyBinder, authorizedEnvelope.id, "INVALID_MIGRATION_ACK")
+            if (acknowledged) {
+                recordLocalRoute(authorizedEnvelope, senderUid, sender, PluginBusJournal.Verdict.OK)
+            } else {
+                recordLocalRoute(
+                    authorizedEnvelope,
+                    senderUid,
+                    sender,
+                    PluginBusJournal.Verdict.REJECTED,
+                    "INVALID_MIGRATION_ACK",
+                )
+                deliverError(sender.replyBinder, authorizedEnvelope.id, "INVALID_MIGRATION_ACK")
+            }
             return
         }
+        recordLocalRoute(authorizedEnvelope, senderUid, sender, PluginBusJournal.Verdict.OK)
         if (handleHubPath(
                 authorizedEnvelope,
                 replyRemote = false,
@@ -546,29 +598,204 @@ class BusHubService : Service() {
 
     private fun routeRemote(envelope: BusEnvelope) {
         if (envelope.path == "/hub/probe") {
+            recordRemoteRoute(envelope, PluginBusJournal.Verdict.OK)
             log("hub probe received from glasses")
             return
         }
         if (envelope.path == BusPaths.HUB_CAPABILITIES) {
+            recordRemoteRoute(envelope, PluginBusJournal.Verdict.OK)
             updateRemoteCapabilities(envelope.payload)
             return
         }
         if (::cameraCompanionController.isInitialized &&
             cameraCompanionController.onRemoteEnvelope(envelope)
-        ) return
+        ) {
+            recordRemoteRoute(envelope, PluginBusJournal.Verdict.OK)
+            return
+        }
         if (::pluginRegistry.isInitialized && pluginRegistry.handleRemote(envelope)) return
-        if (handleHubPath(envelope, replyRemote = true)) return
-        if (deliverLocal(envelope)) return
+        if (handleHubPath(envelope, replyRemote = true)) {
+            recordRemoteRoute(envelope, PluginBusJournal.Verdict.OK)
+            return
+        }
+        if (deliverLocal(envelope)) {
+            recordRemoteRoute(envelope, PluginBusJournal.Verdict.OK)
+            return
+        }
         if (envelope.path == BusPaths.ERROR) {
+            recordRemoteRoute(envelope, PluginBusJournal.Verdict.REJECTED, "UNDELIVERABLE_ERROR")
             log("dropping undeliverable remote error id=${envelope.id}")
             return
         }
         if (envelope.binary != null) {
+            recordRemoteRoute(envelope, PluginBusJournal.Verdict.REJECTED, "NO_LIVE_REGISTRATION")
             log("dropping undeliverable binary ${envelope.path} id=${envelope.id}; no live registration")
             return
         }
-        if (PhoneClientSupervisor.enqueue(applicationContext, envelope)) return
+        if (PhoneClientSupervisor.enqueue(applicationContext, envelope)) {
+            recordRemoteRoute(envelope, PluginBusJournal.Verdict.OK, "QUEUED_LOCAL")
+            return
+        }
+        recordRemoteRoute(envelope, PluginBusJournal.Verdict.REJECTED, "NO_LOCAL_CLIENT")
         sendRemote(errorEnvelope(envelope.id, "NO_LOCAL_CLIENT"))
+    }
+
+    private fun recordLocalRoute(
+        envelope: BusEnvelope,
+        senderUid: Int,
+        sender: AuthorizedSender,
+        verdict: PluginBusJournal.Verdict,
+        reason: String? = null,
+    ) {
+        if (senderUid == Process.myUid() || !pluginBusJournal.enabled.get()) return
+        try {
+            pluginBusJournal.record(
+                pluginId = sender.principal?.descriptor?.id,
+                category = journalCategory(envelope.path, envelope.binary != null),
+                direction = PluginBusJournal.Direction.PLUGIN_TO_HUB,
+                path = envelope.path,
+                sizeBytes = envelope.binary?.size,
+                verdict = verdict,
+                reason = journalRouteReason(reason),
+            )
+        } catch (_: Throwable) {
+            // Diagnostics must never affect bus routing.
+        }
+    }
+
+    private fun recordRemoteRoute(
+        envelope: BusEnvelope,
+        verdict: PluginBusJournal.Verdict,
+        reason: String? = null,
+    ) {
+        if (!pluginBusJournal.enabled.get()) return
+        try {
+            pluginBusJournal.record(
+                pluginId = journalPluginId(envelope),
+                category = journalCategory(envelope.path, envelope.binary != null),
+                direction = PluginBusJournal.Direction.GLASSES_TO_HUB,
+                path = envelope.path,
+                sizeBytes = envelope.binary?.size,
+                verdict = verdict,
+                reason = reason,
+            )
+        } catch (_: Throwable) {
+            // Diagnostics must never affect bus routing.
+        }
+    }
+
+    private fun recordLocalDelivery(
+        registration: Registration,
+        envelope: BusEnvelope,
+        verdict: PluginBusJournal.Verdict,
+        reason: String? = null,
+    ) {
+        if (!pluginBusJournal.enabled.get()) return
+        try {
+            pluginBusJournal.record(
+                pluginId = registration.principal?.descriptor?.id,
+                category = journalCategory(envelope.path, envelope.binary != null),
+                direction = PluginBusJournal.Direction.HUB_TO_PLUGIN,
+                path = envelope.path,
+                sizeBytes = envelope.binary?.size,
+                verdict = verdict,
+                reason = reason,
+            )
+        } catch (_: Throwable) {
+            // Diagnostics must never affect bus routing.
+        }
+    }
+
+    private fun recordExternalDelivery(
+        principal: PhonePluginPrincipal,
+        path: String,
+        sizeBytes: Int?,
+        verdict: PluginBusJournal.Verdict,
+        reason: String? = null,
+    ) {
+        if (!pluginBusJournal.enabled.get()) return
+        try {
+            pluginBusJournal.record(
+                pluginId = principal.descriptor.id,
+                category = journalCategory(path, sizeBytes != null),
+                direction = PluginBusJournal.Direction.HUB_TO_PLUGIN,
+                path = path,
+                sizeBytes = sizeBytes,
+                verdict = verdict,
+                reason = reason,
+            )
+        } catch (_: Throwable) {
+            // Diagnostics must never affect bus routing.
+        }
+    }
+
+    private fun recordOversizedBinary(
+        pluginId: String?,
+        direction: PluginBusJournal.Direction,
+        path: String,
+        sizeBytes: Int,
+    ) {
+        if (!pluginBusJournal.enabled.get()) return
+        try {
+            val sizeKiB = (sizeBytes.toLong() + 1023L) / 1024L
+            val limitKiB = LOCAL_BINARY_MAX_BYTES / 1024
+            pluginBusJournal.record(
+                pluginId = pluginId,
+                category = PluginBusJournal.Category.BINARY,
+                direction = direction,
+                path = path,
+                sizeBytes = sizeBytes,
+                verdict = PluginBusJournal.Verdict.REJECTED,
+                reason = "binary too large: ${sizeKiB}KiB > ${limitKiB}KiB",
+            )
+        } catch (_: Throwable) {
+            // Diagnostics must never affect bus routing.
+        }
+    }
+
+    private fun recordRemoteTransport(
+        envelope: BusEnvelope,
+        verdict: PluginBusJournal.Verdict,
+        reason: String,
+    ) {
+        if (!pluginBusJournal.enabled.get()) return
+        try {
+            pluginBusJournal.record(
+                pluginId = journalPluginId(envelope),
+                category = journalCategory(envelope.path, envelope.binary != null),
+                direction = PluginBusJournal.Direction.HUB_TO_GLASSES,
+                path = envelope.path,
+                sizeBytes = envelope.binary?.size,
+                verdict = verdict,
+                reason = reason,
+            )
+        } catch (_: Throwable) {
+            // Diagnostics must never affect bus routing.
+        }
+    }
+
+    private fun journalRouteReason(reason: String?): String? = when {
+        reason == "PENDING_APPROVAL" -> "PENDING_USER_APPROVAL"
+        reason?.startsWith("CAPABILITY_REQUIRED_") == true ->
+            "capability denied: ${reason.removePrefix("CAPABILITY_REQUIRED_").lowercase()}"
+        else -> reason
+    }
+
+    private fun journalPluginId(envelope: BusEnvelope): String? {
+        val explicit = envelope.payload.optString("ownerPluginId")
+            .ifBlank { envelope.payload.optString("pluginId") }
+        if (explicit.isNotBlank()) return explicit
+        val surfaceId = envelope.payload.optString("surfaceId")
+        return surfaceId.substringBefore(':').takeIf { ':' in surfaceId && it.isNotBlank() }
+    }
+
+    private fun journalCategory(path: String, hasBinary: Boolean): PluginBusJournal.Category = when (path) {
+        BusPaths.SURFACE_SHOW, BusPaths.SURFACE_UPDATE, BusPaths.SURFACE_HIDE -> PluginBusJournal.Category.SURFACE
+        BusPaths.SURFACE_INPUT, BusPaths.PLUGIN_INPUT -> PluginBusJournal.Category.INPUT
+        BusPaths.PLUGIN_OPEN, BusPaths.PLUGIN_CLOSE -> PluginBusJournal.Category.LIFECYCLE
+        BusPaths.PLUGIN_REGISTRATION -> PluginBusJournal.Category.REGISTRATION
+        BusPaths.LAUNCHER_LIST, BusPaths.LAUNCHER_OPEN -> PluginBusJournal.Category.LAUNCHER
+        else -> if (hasBinary) PluginBusJournal.Category.BINARY else PluginBusJournal.Category.TRANSPORT
     }
 
     private fun handleHubPath(
@@ -601,6 +828,12 @@ class BusHubService : Service() {
             if (excludeUid != null && registration.uid == excludeUid) return@forEach
             if (registrationMatches(registration, envelope)) {
                 if (binary != null && binary.size > LOCAL_BINARY_MAX_BYTES) {
+                    recordOversizedBinary(
+                        pluginId = registration.principal?.descriptor?.id,
+                        direction = PluginBusJournal.Direction.HUB_TO_PLUGIN,
+                        path = envelope.path,
+                        sizeBytes = binary.size,
+                    )
                     log("drop local binary ${envelope.path} id=${envelope.id} bytes=${binary.size} over cap=$LOCAL_BINARY_MAX_BYTES")
                     delivered = true
                     return@forEach
@@ -613,7 +846,10 @@ class BusHubService : Service() {
                     }
                     delivered = true
                     PhoneClientSupervisor.touch()
+                }.onSuccess {
+                    recordLocalDelivery(registration, envelope, PluginBusJournal.Verdict.OK, "LOCAL")
                 }.onFailure {
+                    recordLocalDelivery(registration, envelope, PluginBusJournal.Verdict.REJECTED, "DEAD_CALLBACK")
                     removeRegistration(registration, "dead callback")
                 }
             }
@@ -713,6 +949,15 @@ class BusHubService : Service() {
 
     private fun removeRegistration(registration: Registration, reason: String) {
         if (!registrations.remove(registration)) return
+        if (pluginBusJournal.enabled.get()) {
+            pluginBusJournal.record(
+                pluginId = registration.principal?.descriptor?.id,
+                category = PluginBusJournal.Category.REGISTRATION,
+                direction = PluginBusJournal.Direction.PLUGIN_TO_HUB,
+                path = BusPaths.PLUGIN_REGISTRATION,
+                reason = "CLIENT_REMOVED: $reason",
+            )
+        }
         runCatching { registration.callbackBinder.unlinkToDeath(registration.deathRecipient, 0) }
         releaseAudioLeaseForLocalBinder(registration.callbackBinder, reason)
         if (reason in setOf("binderDied", "dead callback", "unregister")) {
@@ -788,14 +1033,22 @@ class BusHubService : Service() {
         id: String,
         payload: JSONObject,
     ): Boolean {
-        if (!protectedPathAllowed(path, principal.uid, principal)) return false
+        if (!protectedPathAllowed(path, principal.uid, principal)) {
+            recordExternalDelivery(principal, path, null, PluginBusJournal.Verdict.REJECTED, "PROTECTED_CAMERA_PATH")
+            return false
+        }
         val registration = registrations.singleOrNull { it.principal?.grantKey() == principal.grantKey() }
-            ?: return false
+        if (registration == null) {
+            recordExternalDelivery(principal, path, null, PluginBusJournal.Verdict.REJECTED, "NO_LIVE_REGISTRATION")
+            return false
+        }
         val bytes = payload.toString().toByteArray(Charsets.UTF_8)
         return runCatching {
             registration.callback.onMessage(path, id, bytes)
+            recordExternalDelivery(principal, path, null, PluginBusJournal.Verdict.OK, "LOCAL")
             true
         }.getOrElse {
+            recordExternalDelivery(principal, path, null, PluginBusJournal.Verdict.REJECTED, "DEAD_CALLBACK")
             removeRegistration(registration, "dead callback")
             false
         }
@@ -808,16 +1061,32 @@ class BusHubService : Service() {
         payload: JSONObject,
         data: ByteArray,
     ): Boolean {
-        if (data.size > LOCAL_BINARY_MAX_BYTES ||
-            !protectedPathAllowed(path, principal.uid, principal)
-        ) return false
+        if (data.size > LOCAL_BINARY_MAX_BYTES) {
+            recordOversizedBinary(
+                pluginId = principal.descriptor.id,
+                direction = PluginBusJournal.Direction.HUB_TO_PLUGIN,
+                path = path,
+                sizeBytes = data.size,
+            )
+            log("drop external binary $path id=$id bytes=${data.size} over cap=$LOCAL_BINARY_MAX_BYTES")
+            return false
+        }
+        if (!protectedPathAllowed(path, principal.uid, principal)) {
+            recordExternalDelivery(principal, path, data.size, PluginBusJournal.Verdict.REJECTED, "PROTECTED_CAMERA_PATH")
+            return false
+        }
         val registration = registrations.singleOrNull { it.principal?.grantKey() == principal.grantKey() }
-            ?: return false
+        if (registration == null) {
+            recordExternalDelivery(principal, path, data.size, PluginBusJournal.Verdict.REJECTED, "NO_LIVE_REGISTRATION")
+            return false
+        }
         val bytes = payload.toString().toByteArray(Charsets.UTF_8)
         return runCatching {
             registration.callback.onBinaryMessage(path, id, bytes, data)
+            recordExternalDelivery(principal, path, data.size, PluginBusJournal.Verdict.OK, "LOCAL")
             true
         }.getOrElse {
+            recordExternalDelivery(principal, path, data.size, PluginBusJournal.Verdict.REJECTED, "DEAD_CALLBACK")
             removeRegistration(registration, "dead callback")
             false
         }
@@ -1034,18 +1303,36 @@ class BusHubService : Service() {
 
     private fun sendRemote(envelope: BusEnvelope): String? {
         if (envelope.binary != null) {
-            if (output == null) return "NO_DATA_PLANE"
-            return if (writeSpp(envelope)) null else "NO_DATA_PLANE"
+            if (output == null) {
+                recordRemoteTransport(envelope, PluginBusJournal.Verdict.REJECTED, "NO_DATA_PLANE")
+                return "NO_DATA_PLANE"
+            }
+            return if (writeSpp(envelope)) {
+                recordRemoteTransport(envelope, PluginBusJournal.Verdict.OK, "SPP")
+                null
+            } else {
+                recordRemoteTransport(envelope, PluginBusJournal.Verdict.REJECTED, "NO_DATA_PLANE")
+                "NO_DATA_PLANE"
+            }
         }
         val bytes = FrameProtocol.toJsonBytes(envelope)
         if (bytes.size <= BusConstants.CXR_CONTROL_MAX_BYTES && isCxrUp()) {
-            if (sendCxr(envelope)) return null
+            if (sendCxr(envelope)) {
+                recordRemoteTransport(envelope, PluginBusJournal.Verdict.OK, "CXR")
+                return null
+            }
         }
         if (bytes.size > BusConstants.CXR_CONTROL_MAX_BYTES && output == null) {
+            recordRemoteTransport(envelope, PluginBusJournal.Verdict.REJECTED, "NO_DATA_PLANE")
             return "NO_DATA_PLANE"
         }
-        if (writeSpp(envelope)) return null
-        return if (bytes.size > BusConstants.CXR_CONTROL_MAX_BYTES) "NO_DATA_PLANE" else "NO_LINK"
+        if (writeSpp(envelope)) {
+            recordRemoteTransport(envelope, PluginBusJournal.Verdict.OK, "SPP")
+            return null
+        }
+        val error = if (bytes.size > BusConstants.CXR_CONTROL_MAX_BYTES) "NO_DATA_PLANE" else "NO_LINK"
+        recordRemoteTransport(envelope, PluginBusJournal.Verdict.REJECTED, error)
+        return error
     }
 
     private fun sendBuiltInPluginEnvelope(envelope: BusEnvelope): String? {
@@ -1169,6 +1456,22 @@ class BusHubService : Service() {
         }
     }
 
+    private fun pluginRegistrationResult(pluginId: String, result: Int, reason: String? = null): Int {
+        pluginBusJournal.record(
+            pluginId = pluginId.ifBlank { null },
+            category = PluginBusJournal.Category.REGISTRATION,
+            direction = PluginBusJournal.Direction.PLUGIN_TO_HUB,
+            path = BusPaths.PLUGIN_REGISTRATION,
+            verdict = if (result == PluginRegistrationResult.APPROVED) {
+                PluginBusJournal.Verdict.OK
+            } else {
+                PluginBusJournal.Verdict.REJECTED
+            },
+            reason = reason,
+        )
+        return result
+    }
+
     private fun addRegistration(
         clientId: String,
         prefixes: List<String>,
@@ -1183,6 +1486,14 @@ class BusHubService : Service() {
             removeRegistrationsByBinder(callbackBinder, "binderDied")
         }
         if (runCatching { callbackBinder.linkToDeath(deathRecipient, 0) }.isFailure) {
+            pluginBusJournal.record(
+                pluginId = principal?.descriptor?.id,
+                category = PluginBusJournal.Category.REGISTRATION,
+                direction = PluginBusJournal.Direction.PLUGIN_TO_HUB,
+                path = BusPaths.PLUGIN_REGISTRATION,
+                verdict = PluginBusJournal.Verdict.REJECTED,
+                reason = "CALLBACK_UNAVAILABLE",
+            )
             log("client registration rejected status=callback_unavailable")
             return false
         }
@@ -1197,6 +1508,13 @@ class BusHubService : Service() {
             grantedCapabilities = grantedCapabilities,
         )
         registrations += registration
+        pluginBusJournal.record(
+            pluginId = principal?.descriptor?.id,
+            category = PluginBusJournal.Category.REGISTRATION,
+            direction = PluginBusJournal.Direction.PLUGIN_TO_HUB,
+            path = BusPaths.PLUGIN_REGISTRATION,
+            reason = "CLIENT_REGISTERED",
+        )
         runCatching { cb.onLinkState(linkState()) }
         PhoneClientSupervisor.onClientRegistered(applicationContext, prefixes, principal?.grantKey())
         return true
@@ -1614,6 +1932,8 @@ class BusHubService : Service() {
                         grantState = PluginGrantStore(appContext)::stateFor,
                     )
                 }
+
+        fun pluginBusJournal(): PluginBusJournal? = activeInstance?.pluginBusJournal
 
         fun startWithToken(context: android.content.Context, token: String) {
             val intent = Intent(context, BusHubService::class.java)

@@ -54,14 +54,63 @@ class PhonePluginRegistryTest {
         registry.close()
     }
 
+    @Test
+    fun `launcher rejection flows into journal`() {
+        val journal = PluginBusJournal()
+        val registry = registry(journal = journal)
+
+        assertFalse(
+            registry.handleRemote(
+                BusEnvelope(
+                    path = BusPaths.LAUNCHER_OPEN,
+                    payload = JSONObject().put("pluginId", "missing"),
+                ),
+            ),
+        )
+
+        val event = journal.snapshot().single()
+        assertEquals("missing", event.pluginId)
+        assertEquals(PluginBusJournal.Category.LAUNCHER, event.category)
+        assertEquals(PluginBusJournal.Direction.GLASSES_TO_HUB, event.direction)
+        assertEquals(PluginBusJournal.Verdict.REJECTED, event.verdict)
+        assertEquals("OPEN_FAILED", event.reason)
+        registry.close()
+    }
+
+    @Test
+    fun `undeliverable surface input flows into journal`() {
+        val journal = PluginBusJournal()
+        val registry = registry(journal = journal)
+
+        assertTrue(
+            registry.handleRemote(
+                BusEnvelope(
+                    path = BusPaths.SURFACE_INPUT,
+                    payload = JSONObject()
+                        .put("surfaceId", "missing:main")
+                        .put("ownerPluginId", "missing"),
+                ),
+            ),
+        )
+
+        val event = journal.snapshot().single()
+        assertEquals("missing", event.pluginId)
+        assertEquals(PluginBusJournal.Category.INPUT, event.category)
+        assertEquals(PluginBusJournal.Verdict.REJECTED, event.verdict)
+        assertEquals("NO_ACTIVE_PLUGIN", event.reason)
+        registry.close()
+    }
+
     private fun registry(
         sendEnvelope: (BusEnvelope) -> String? = { null },
         capabilitiesProvider: () -> Int = { 0 },
+        journal: PluginBusJournal? = null,
     ) = PhonePluginRegistry(
         context = RuntimeEnvironment.getApplication(),
         plugins = emptyList(),
         sendEnvelope = sendEnvelope,
         capabilitiesProvider = capabilitiesProvider,
         logger = {},
+        journal = journal,
     )
 }

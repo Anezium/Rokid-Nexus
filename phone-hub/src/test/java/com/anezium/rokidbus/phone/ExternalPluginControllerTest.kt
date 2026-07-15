@@ -283,4 +283,40 @@ class ExternalPluginControllerTest {
         controller.onRegistered(principal())
         assertEquals(listOf("hello"), offered)
     }
+
+    @Test
+    fun `timeouts rebinds and open failures flow into journal`() {
+        val journal = PluginBusJournal()
+
+        val bindFailure = ExternalPluginController(
+            runtime = FakeRuntime().apply { bindResult = false },
+            scheduler = FakeScheduler(),
+            journal = journal,
+        )
+        assertFalse(bindFailure.open(principal("bind-failure")))
+
+        val registrationScheduler = FakeScheduler()
+        val registrationTimeout = ExternalPluginController(
+            runtime = FakeRuntime(),
+            scheduler = registrationScheduler,
+            journal = journal,
+        )
+        registrationTimeout.open(principal("registration-timeout"))
+        registrationScheduler.runFirst("registration:")
+
+        val ackScheduler = FakeScheduler()
+        val ackTimeout = ExternalPluginController(
+            runtime = FakeRuntime().apply { registered = true },
+            scheduler = ackScheduler,
+            journal = journal,
+        )
+        ackTimeout.open(principal("ack-timeout"))
+        ackScheduler.runFirst("open-ack:")
+
+        val events = journal.snapshot()
+        assertTrue(events.any { it.pluginId == "bind-failure" && it.reason == "BIND_FAILED" && it.verdict == PluginBusJournal.Verdict.REJECTED })
+        assertTrue(events.any { it.pluginId == "registration-timeout" && it.reason == "REGISTRATION_TIMEOUT" && it.category == PluginBusJournal.Category.REGISTRATION })
+        assertTrue(events.any { it.pluginId == "ack-timeout" && it.reason == "OPEN_ACK_TIMEOUT" && it.verdict == PluginBusJournal.Verdict.REJECTED })
+        assertTrue(events.any { it.pluginId == "ack-timeout" && it.reason == "REBIND_ATTEMPT" && it.verdict == PluginBusJournal.Verdict.OK })
+    }
 }

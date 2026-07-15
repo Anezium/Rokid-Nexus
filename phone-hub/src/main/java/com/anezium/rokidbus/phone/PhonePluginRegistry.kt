@@ -25,6 +25,7 @@ class PhonePluginRegistry(
     private val logger: (String) -> Unit,
     private val catalogProvider: (() -> PluginCatalog)? = null,
     private val externalController: ExternalPluginController? = null,
+    private val journal: PluginBusJournal? = null,
 ) : NexusPluginHost {
     private data class Subscription(
         val pathPrefix: String,
@@ -105,7 +106,15 @@ class PhonePluginRegistry(
             BusPaths.LAUNCHER_OPEN -> {
                 val pluginId = envelope.payload.optString("pluginId")
                     .ifBlank { envelope.payload.optString("id") }
-                return open(pluginId)
+                val opened = open(pluginId)
+                recordRemote(
+                    pluginId = pluginId.ifBlank { null },
+                    category = PluginBusJournal.Category.LAUNCHER,
+                    path = envelope.path,
+                    verdict = if (opened) PluginBusJournal.Verdict.OK else PluginBusJournal.Verdict.REJECTED,
+                    reason = if (opened) null else if (pluginId.isBlank()) "MISSING_PLUGIN_ID" else "OPEN_FAILED",
+                )
+                return opened
             }
             BusPaths.SURFACE_INPUT -> {
                 handleSurfaceInput(envelope.payload)
@@ -218,18 +227,65 @@ class PhonePluginRegistry(
             .ifBlank { surfaceId.substringAfter(':', surfaceId) }
         if (ownerPluginId.isNotBlank() &&
             externalController?.input(ownerPluginId, localSurfaceId, keyCode, action) == true
-        ) return
-        val plugin = pluginsById[surfaceId] ?: activePluginId?.let { pluginsById[it] } ?: return
+        ) {
+            recordRemote(
+                pluginId = ownerPluginId,
+                category = PluginBusJournal.Category.INPUT,
+                path = BusPaths.SURFACE_INPUT,
+                verdict = PluginBusJournal.Verdict.OK,
+            )
+            return
+        }
+        val plugin = pluginsById[surfaceId] ?: activePluginId?.let { pluginsById[it] }
+        if (plugin == null) {
+            recordRemote(
+                pluginId = ownerPluginId.ifBlank { null },
+                category = PluginBusJournal.Category.INPUT,
+                path = BusPaths.SURFACE_INPUT,
+                verdict = PluginBusJournal.Verdict.REJECTED,
+                reason = "NO_ACTIVE_PLUGIN",
+            )
+            return
+        }
         val event = NexusInputEvent(
             surfaceId = surfaceId.ifBlank { plugin.id },
             keyCode = keyCode,
             action = action,
+        )
+        recordRemote(
+            pluginId = plugin.id,
+            category = PluginBusJournal.Category.INPUT,
+            path = BusPaths.SURFACE_INPUT,
+            verdict = PluginBusJournal.Verdict.OK,
         )
         enqueue("plugin onInput id=${plugin.id}") { plugin.onInput(event) }
         if (keyCode == KeyEvent.KEYCODE_BACK && action == KeyEvent.ACTION_DOWN) {
             if (!plugin.handlesBack) {
                 activePluginId = null
             }
+        }
+    }
+
+    private fun recordRemote(
+        pluginId: String?,
+        category: PluginBusJournal.Category,
+        path: String,
+        verdict: PluginBusJournal.Verdict,
+        reason: String? = null,
+    ) {
+        val target = journal ?: return
+        if (!target.enabled.get()) return
+        try {
+            target.record(
+                pluginId = pluginId,
+                category = category,
+                direction = PluginBusJournal.Direction.GLASSES_TO_HUB,
+                path = path,
+                verdict = verdict,
+                reason = reason,
+            )
+        } catch (_: Throwable) {
+            // Diagnostics must never affect plugin dispatch.
         }
     }
 
