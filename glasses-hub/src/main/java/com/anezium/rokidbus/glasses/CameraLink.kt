@@ -92,7 +92,6 @@ internal class CameraLink(
     private var configuredCreateAttempted = false
     private var legacyCreateAttempted = false
     private var conflictRecoveryAttempted = false
-    private var bandMigrationAttempted = false
     private var waitingForCreatedGroup = false
     private var createRetry: Runnable? = null
     private var wifiRetry: Runnable? = null
@@ -237,12 +236,7 @@ internal class CameraLink(
     private fun handleGroup(group: WifiP2pGroup?) {
         if (!running) return
         if (isUsableOwnerGroup(group)) {
-            val activeGroup = group!!
-            if (shouldMigrateTo5Ghz(activeGroup)) {
-                migrateTo5Ghz(activeGroup)
-            } else {
-                activateGroup(activeGroup, if (waitingForCreatedGroup) "created" else "active_reuse")
-            }
+            activateGroup(group!!, if (waitingForCreatedGroup) "created" else "active_reuse")
             return
         }
         if (waitingForCreatedGroup) {
@@ -259,26 +253,6 @@ internal class CameraLink(
     private fun isUsableOwnerGroup(group: WifiP2pGroup?): Boolean =
         group != null && group.isGroupOwner && group.networkName.isNotBlank() &&
             group.passphrase.isNotBlank() && group.getInterface().isNotBlank()
-
-    private fun shouldMigrateTo5Ghz(group: WifiP2pGroup): Boolean =
-        !bandMigrationAttempted && createAttempts == 0 && group.frequency in 2_400..2_500
-
-    @SuppressLint("MissingPermission")
-    private fun migrateTo5Ghz(group: WifiP2pGroup) {
-        val localManager = manager ?: return fail("WI-FI DIRECT LOST")
-        val localChannel = channel ?: return fail("WI-FI DIRECT LOST")
-        bandMigrationAttempted = true
-        state("UPGRADING CAMERA LINK")
-        Log.i(TAG, "cameraLinkBandMigration fromMHz=${group.frequency} target=5ghz")
-        localManager.removeGroup(localChannel, object : WifiP2pManager.ActionListener {
-            override fun onSuccess() = scheduleCreate(RECOVERY_SETTLE_MS, ::createConfiguredGroup)
-
-            override fun onFailure(reason: Int) {
-                Log.w(TAG, "cameraLinkBandMigrationSkipped reason=$reason")
-                activateGroup(group, "active_reuse_2ghz")
-            }
-        })
-    }
 
     @SuppressLint("MissingPermission")
     private fun recoverConflictingGroup() {
