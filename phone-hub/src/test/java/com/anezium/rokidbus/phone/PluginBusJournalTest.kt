@@ -10,7 +10,7 @@ import org.junit.Test
 class PluginBusJournalTest {
     @Test
     fun `oldest events are evicted past capacity`() {
-        val journal = PluginBusJournal(capacity = 3)
+        val journal = enabledJournal(capacity = 3)
 
         repeat(5) { index ->
             journal.record(
@@ -26,7 +26,7 @@ class PluginBusJournalTest {
 
     @Test
     fun `snapshot is isolated from later records`() {
-        val journal = PluginBusJournal(capacity = 3)
+        val journal = enabledJournal(capacity = 3)
         journal.record(
             category = PluginBusJournal.Category.REGISTRATION,
             direction = PluginBusJournal.Direction.PLUGIN_TO_HUB,
@@ -45,7 +45,6 @@ class PluginBusJournalTest {
     @Test
     fun `disabled journal short circuits recording`() {
         val journal = PluginBusJournal()
-        journal.enabled.set(false)
 
         journal.record(
             category = PluginBusJournal.Category.SURFACE,
@@ -65,7 +64,7 @@ class PluginBusJournalTest {
 
     @Test
     fun `stored diagnostic strings are bounded`() {
-        val journal = PluginBusJournal()
+        val journal = enabledJournal()
 
         journal.record(
             pluginId = "p".repeat(PluginBusJournal.MAX_PLUGIN_ID_CHARS + 10),
@@ -86,7 +85,7 @@ class PluginBusJournalTest {
     fun `concurrent records do not corrupt the journal`() {
         val workers = 8
         val recordsPerWorker = 250
-        val journal = PluginBusJournal(capacity = workers * recordsPerWorker)
+        val journal = enabledJournal(capacity = workers * recordsPerWorker)
         val executor = Executors.newFixedThreadPool(workers)
         val start = CountDownLatch(1)
         val done = CountDownLatch(workers)
@@ -111,4 +110,7 @@ class PluginBusJournalTest {
         executor.shutdownNow()
         assertEquals(workers * recordsPerWorker, journal.snapshot().size)
     }
+
+    private fun enabledJournal(capacity: Int = PluginBusJournal.DEFAULT_CAPACITY): PluginBusJournal =
+        PluginBusJournal(capacity).apply { enabled.set(true) }
 }

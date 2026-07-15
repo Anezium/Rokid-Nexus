@@ -286,7 +286,7 @@ class ExternalPluginControllerTest {
 
     @Test
     fun `timeouts rebinds and open failures flow into journal`() {
-        val journal = PluginBusJournal()
+        val journal = PluginBusJournal().apply { enabled.set(true) }
 
         val bindFailure = ExternalPluginController(
             runtime = FakeRuntime().apply { bindResult = false },

@@ -128,6 +128,8 @@ class BusHubService : Service() {
     private lateinit var pluginDiscovery: PhonePluginDiscovery
     private lateinit var pluginGrantStore: PluginGrantStore
     private lateinit var pluginGrantReconciler: PluginGrantReconciler
+    private lateinit var developerModeStore: DeveloperModeStore
+    private var developerModeJournalSubscription: DeveloperModeStore.Subscription? = null
     private lateinit var externalPluginController: ExternalPluginController
     private lateinit var cameraConsumerReadiness: CameraConsumerReadiness
     private lateinit var cameraCompanionController: CameraCompanionController
@@ -322,6 +324,8 @@ class BusHubService : Service() {
     override fun onCreate() {
         super.onCreate()
         activeInstance = this
+        developerModeStore = DeveloperModeStore(applicationContext)
+        developerModeJournalSubscription = bindDeveloperModeToJournal(developerModeStore, pluginBusJournal)
         PhoneClientSupervisor.attach(this)
         pluginDiscovery = PhonePluginDiscovery(packageManager)
         pluginGrantStore = PluginGrantStore(applicationContext)
@@ -471,6 +475,8 @@ class BusHubService : Service() {
             runCatching { unregisterReceiver(pluginPackageReceiver) }
             pluginPackageReceiverRegistered = false
         }
+        developerModeJournalSubscription?.close()
+        developerModeJournalSubscription = null
         if (::pluginRegistry.isInitialized) pluginRegistry.close()
         if (::cameraCompanionController.isInitialized) cameraCompanionController.close()
         registrations.clear()

@@ -39,8 +39,7 @@ class PluginBusJournal(
         val reason: String?,
     )
 
-    // B1 deliberately defaults on; the later Developer-mode settings task owns this switch.
-    val enabled = AtomicBoolean(true)
+    val enabled = AtomicBoolean(false)
 
     private val lock = Any()
     private val events = ArrayDeque<Event>()

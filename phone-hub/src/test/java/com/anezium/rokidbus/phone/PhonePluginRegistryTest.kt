@@ -56,7 +56,7 @@ class PhonePluginRegistryTest {
 
     @Test
     fun `launcher rejection flows into journal`() {
-        val journal = PluginBusJournal()
+        val journal = PluginBusJournal().apply { enabled.set(true) }
         val registry = registry(journal = journal)
 
         assertFalse(
@@ -79,7 +79,7 @@ class PhonePluginRegistryTest {
 
     @Test
     fun `undeliverable surface input flows into journal`() {
-        val journal = PluginBusJournal()
+        val journal = PluginBusJournal().apply { enabled.set(true) }
         val registry = registry(journal = journal)
 
         assertTrue(
