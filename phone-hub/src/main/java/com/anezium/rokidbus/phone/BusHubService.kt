@@ -126,6 +126,7 @@ class BusHubService : Service() {
     private lateinit var pluginRegistry: PhonePluginRegistry
     private lateinit var pluginDiscovery: PhonePluginDiscovery
     private lateinit var pluginGrantStore: PluginGrantStore
+    private lateinit var pluginGrantReconciler: PluginGrantReconciler
     private lateinit var externalPluginController: ExternalPluginController
     private lateinit var cameraConsumerReadiness: CameraConsumerReadiness
     private lateinit var cameraCompanionController: CameraCompanionController
@@ -291,6 +292,11 @@ class BusHubService : Service() {
         PhoneClientSupervisor.attach(this)
         pluginDiscovery = PhonePluginDiscovery(packageManager)
         pluginGrantStore = PluginGrantStore(applicationContext)
+        pluginGrantReconciler = PluginGrantReconciler(
+            discoverCandidates = pluginDiscovery::discover,
+            reconcileGrants = pluginGrantStore::reconcile,
+        )
+        executor.execute { pluginGrantReconciler.reconcile() }
         cameraConsumerReadiness = CameraConsumerReadiness(
             installedPrincipals = ::installedPluginPrincipals,
             grantState = pluginGrantStore::stateFor,
@@ -752,8 +758,7 @@ class BusHubService : Service() {
     }
 
     private fun reconcilePluginPackage(packageName: String) {
-        val validPrincipals = installedPluginPrincipals()
-        pluginGrantStore.reconcile(validPrincipals)
+        val validPrincipals = pluginGrantReconciler.reconcile().validPrincipals
         cameraConsumerReadiness.recompute()
         val available = validPrincipals.any { principal ->
             principal.packageName == packageName &&

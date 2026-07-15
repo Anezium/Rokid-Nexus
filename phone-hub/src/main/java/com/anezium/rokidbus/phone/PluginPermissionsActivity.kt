@@ -20,12 +20,17 @@ import com.anezium.rokidbus.shared.plugin.PluginCapability
 class PluginPermissionsActivity : Activity() {
     private lateinit var content: LinearLayout
     private lateinit var grantStore: PluginGrantStore
+    private lateinit var grantReconciler: PluginGrantReconciler
     private var developerDetails = false
     private var focusedTarget: PluginGrantTarget? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         grantStore = PluginGrantStore(applicationContext)
+        grantReconciler = PluginGrantReconciler(
+            discoverCandidates = PhonePluginDiscovery(packageManager)::discover,
+            reconcileGrants = grantStore::reconcile,
+        )
         focusedTarget = intent?.let(::targetFromIntent)
         focusedTarget?.let { PluginInstallRecoveryStore(applicationContext).clearSuccess(it) }
         developerDetails = getSharedPreferences(PREFERENCES, MODE_PRIVATE)
@@ -68,9 +73,7 @@ class PluginPermissionsActivity : Activity() {
         content.addView(developerToggle(), NexusUi.block())
         content.addView(BusTheme.gap(this, 22))
 
-        val allCandidates = PhonePluginDiscovery(packageManager).discover()
-        val valid = allCandidates.mapNotNull { (it as? PhonePluginCandidate.Valid)?.principal }
-        grantStore.reconcile(valid)
+        val allCandidates = grantReconciler.reconcile().candidates
         val candidates = focusedTarget?.let { target ->
             allCandidates.filter { candidate ->
                 when (candidate) {
