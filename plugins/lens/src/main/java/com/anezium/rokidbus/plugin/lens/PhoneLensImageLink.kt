@@ -29,6 +29,7 @@ import java.security.SecureRandom
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.ScheduledThreadPoolExecutor
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
@@ -75,6 +76,7 @@ internal class PhoneLensImageLink(
     private val executor = ScheduledThreadPoolExecutor(2) { runnable ->
         Thread(runnable, "lens-phone-link").apply { isDaemon = true }
     }.apply { setRemoveOnCancelPolicy(true) }
+    private val persistentGroupJanitor = LensPersistentGroupJanitor(::log)
     private val generation = AtomicLong(0L)
     private val tcpConnecting = AtomicBoolean(false)
     private val random = SecureRandom()
@@ -195,8 +197,9 @@ internal class PhoneLensImageLink(
         channel = null
         closeP2pChannel(oldChannel, phase = "start")
         manager = localManager
-        channel = localManager?.initialize(appContext, Looper.getMainLooper(), null)
-        if (manager == null || channel == null) {
+        val localChannel = localManager?.initialize(appContext, Looper.getMainLooper(), null)
+        channel = localChannel
+        if (localManager == null || localChannel == null) {
             state = PhoneLensLinkState.IDLE
             log("lensLinkP2pUnavailable")
             return
@@ -210,6 +213,7 @@ internal class PhoneLensImageLink(
         state = PhoneLensLinkState.WAITING_NETWORK
         registerReceiver()
         mainHandler.postDelayed(timeout, TIMEOUT_MS)
+        runPersistentGroupJanitor(localManager, localChannel)
         inspectGroupThenConnect(expectedGeneration, currentOffer)
     }
 
@@ -319,6 +323,7 @@ internal class PhoneLensImageLink(
                 .setPassphrase(currentOffer.passphrase)
                 .enablePersistentMode(false)
                 .build()
+                .also { LensTemporaryP2pConfig.apply(it, ::log) }
         }.getOrElse {
             failP2p("lensLinkConfigBuildFailed")
             return
@@ -1015,6 +1020,49 @@ internal class PhoneLensImageLink(
         }
     }
 
+    private fun runPersistentGroupJanitor(
+        localManager: WifiP2pManager,
+        localChannel: WifiP2pManager.Channel,
+    ) {
+        runCatching {
+            executor.execute {
+                persistentGroupJanitor.clean(localManager, localChannel)
+            }
+        }.onFailure(persistentGroupJanitor::reportFailure)
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun runPostTeardownPersistentGroupJanitor(localManager: WifiP2pManager) {
+        mainHandler.post {
+            val janitorChannel = runCatching {
+                localManager.initialize(appContext, Looper.getMainLooper(), null)
+            }.onFailure(persistentGroupJanitor::reportFailure).getOrNull()
+            if (janitorChannel == null) {
+                persistentGroupJanitor.reportFailure(
+                    IllegalStateException("janitor channel unavailable"),
+                )
+                return@post
+            }
+
+            val completed = AtomicBoolean(false)
+            var watchdog: Runnable? = null
+
+            fun finish() {
+                if (!completed.compareAndSet(false, true)) return
+                watchdog?.let(mainHandler::removeCallbacks)
+                closeP2pChannel(janitorChannel, phase = "janitor")
+            }
+
+            watchdog = Runnable {
+                persistentGroupJanitor.reportFailure(TimeoutException("janitor callback"))
+                finish()
+            }.also { mainHandler.postDelayed(it, JANITOR_CALLBACK_TIMEOUT_MS) }
+            persistentGroupJanitor.clean(localManager, janitorChannel) {
+                mainHandler.post(::finish)
+            }
+        }
+    }
+
     private fun teardownP2p(onComplete: (() -> Unit)? = null) {
         p2pRunning = false
         p2pConnecting = false
@@ -1054,9 +1102,22 @@ internal class PhoneLensImageLink(
                 closeP2pChannel(localChannel, phase = "teardown")
                 if (result == GroupRemovalResult.TIMED_OUT) {
                     log("lensLinkTeardownCleanupQuarantine delayMs=$RESET_SETTLE_MS")
-                    mainHandler.postDelayed(::finishP2pCleanup, RESET_SETTLE_MS)
+                    mainHandler.postDelayed(
+                        {
+                            try {
+                                finishP2pCleanup()
+                            } finally {
+                                runPostTeardownPersistentGroupJanitor(localManager)
+                            }
+                        },
+                        RESET_SETTLE_MS,
+                    )
                 } else {
-                    finishP2pCleanup()
+                    try {
+                        finishP2pCleanup()
+                    } finally {
+                        runPostTeardownPersistentGroupJanitor(localManager)
+                    }
                 }
             }
         } else {
@@ -1092,6 +1153,7 @@ internal class PhoneLensImageLink(
         private const val REUSED_GROUP_AUTH_TIMEOUT_MS = 4_500
         private const val MAX_REUSED_GROUP_TCP_PROBES = 2
         private const val GROUP_REMOVE_CALLBACK_TIMEOUT_MS = 1_000L
+        private const val JANITOR_CALLBACK_TIMEOUT_MS = 2_000L
         private const val TIMEOUT_MS = 60_000L
         private const val TCP_RETRY_MS = 1_000L
         private const val CONNECTION_INFO_POLL_MS = 500L
