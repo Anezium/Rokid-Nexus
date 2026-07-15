@@ -174,12 +174,14 @@ override fun onCreate(savedInstanceState: Bundle?) {
 }
 ```
 
-End the screen with a "Plugin" section containing an **Uninstall** row that
-fires the system dialog — plugins must always be removable from where the
-user configures them:
+End the screen with a "Plugin" section containing the canonical
+`NexusUi.uninstallCard` — plugins must always be removable from where the
+user configures them, and every plugin uses the exact same card:
 
 ```kotlin
-startActivity(Intent(Intent.ACTION_DELETE, Uri.parse("package:$packageName")))
+NexusUi.uninstallCard(this, "My Plugin") {
+    startActivity(Intent(Intent.ACTION_DELETE, Uri.parse("package:$packageName")))
+}
 ```
 
 ## 5. Install, approval, state

@@ -129,12 +129,7 @@ class LyricsSettingsActivity : Activity() {
             addView(NexusUi.sectionRow(this@LyricsSettingsActivity, "Plugin"), NexusUi.block())
             addView(BusTheme.gap(this@LyricsSettingsActivity, 12))
             addView(
-                settingRow(
-                    title = "Uninstall",
-                    subtitle = null,
-                    value = valueText("Remove", NexusUi.DANGER),
-                    danger = true,
-                ) {
+                NexusUi.uninstallCard(this@LyricsSettingsActivity, "Lyrics") {
                     startActivity(Intent(Intent.ACTION_DELETE, Uri.parse("package:$packageName")))
                 },
                 NexusUi.block(),

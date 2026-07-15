@@ -49,28 +49,10 @@ class MediaDeckSettingsActivity : Activity() {
                 NexusUi.block(),
             )
             addView(BusTheme.gap(this@MediaDeckSettingsActivity, 22))
-            addView(NexusUi.sectionRow(this@MediaDeckSettingsActivity, "Privacy"), NexusUi.block())
-            addView(BusTheme.gap(this@MediaDeckSettingsActivity, 10))
-            addView(
-                NexusUi.cardBody(
-                    this@MediaDeckSettingsActivity,
-                    "Media Deck reads only the active media session. Audio never passes " +
-                        "through Nexus; artwork is reduced locally to a 96 × 96 one-bit preview.",
-                ).apply {
-                    setPadding(NexusUi.dp(this@MediaDeckSettingsActivity, 4), 0, NexusUi.dp(this@MediaDeckSettingsActivity, 4), 0)
-                },
-                NexusUi.block(),
-            )
-            addView(BusTheme.gap(this@MediaDeckSettingsActivity, 22))
             addView(NexusUi.sectionRow(this@MediaDeckSettingsActivity, "Plugin"), NexusUi.block())
             addView(BusTheme.gap(this@MediaDeckSettingsActivity, 12))
             addView(
-                settingRow(
-                    title = "Uninstall",
-                    subtitle = null,
-                    value = valueText("Remove", NexusUi.DANGER),
-                    danger = true,
-                ) {
+                NexusUi.uninstallCard(this@MediaDeckSettingsActivity, "Media Deck") {
                     startActivity(Intent(Intent.ACTION_DELETE, Uri.parse("package:$packageName")))
                 },
                 NexusUi.block(),

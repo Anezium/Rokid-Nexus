@@ -165,17 +165,6 @@ class LensSettingsActivity : Activity() {
             addView(BusTheme.gap(this@LensSettingsActivity, 12))
             addView(offlineLanguagesCard(), NexusUi.block())
             addView(BusTheme.gap(this@LensSettingsActivity, 28))
-            addView(NexusUi.sectionRow(this@LensSettingsActivity, "Privacy"), NexusUi.block())
-            addView(BusTheme.gap(this@LensSettingsActivity, 8))
-            addView(
-                NexusUi.cardBody(
-                    this@LensSettingsActivity,
-                    "Online engines send only recognized text from live or frozen frames - never " +
-                        "images. On-device keeps everything local. API keys stay on this phone.",
-                ),
-                NexusUi.block(),
-            )
-            addView(BusTheme.gap(this@LensSettingsActivity, 28))
             addView(NexusUi.sectionRow(this@LensSettingsActivity, "Plugin"), NexusUi.block())
             addView(BusTheme.gap(this@LensSettingsActivity, 12))
             addView(uninstallCard(), NexusUi.block())
@@ -274,20 +263,8 @@ class LensSettingsActivity : Activity() {
     }
 
     private fun uninstallCard(): LinearLayout =
-        NexusUi.pressableCard(this).apply {
-            contentDescription = "Uninstall Lens plugin"
-            setOnClickListener {
-                startActivity(Intent(Intent.ACTION_DELETE, Uri.parse("package:$packageName")))
-            }
-            addView(
-                LinearLayout(this@LensSettingsActivity).apply {
-                    orientation = LinearLayout.VERTICAL
-                    addView(NexusUi.rowTitle(this@LensSettingsActivity, "Uninstall Lens"), NexusUi.block())
-                    addView(NexusUi.rowSub(this@LensSettingsActivity, "Remove the plugin and its encrypted settings"), NexusUi.block())
-                },
-                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
-            )
-            addView(NexusUi.rowSub(this@LensSettingsActivity, "REMOVE \u203a").apply { setTextColor(NexusUi.DANGER) })
+        NexusUi.uninstallCard(this, "Lens") {
+            startActivity(Intent(Intent.ACTION_DELETE, Uri.parse("package:$packageName")))
         }
 
     /** Fetches DeepL /v2/usage off the main thread and swaps the key row hint for live quota. */

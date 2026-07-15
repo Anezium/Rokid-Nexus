@@ -273,24 +273,7 @@ class FeedsSettingsActivity : Activity() {
             .onFailure { startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION)) }
     }
 
-    private fun uninstallRow() = NexusUi.pressableCard(this).apply {
-        val uninstall = {
-            startActivity(Intent(Intent.ACTION_DELETE, Uri.parse("package:$packageName")))
-        }
-        addView(
-            LinearLayout(this@FeedsSettingsActivity).apply {
-                orientation = LinearLayout.VERTICAL
-                addView(NexusUi.rowTitle(this@FeedsSettingsActivity, "Uninstall"))
-                addView(BusTheme.gap(this@FeedsSettingsActivity, 4))
-                addView(NexusUi.rowSub(this@FeedsSettingsActivity, "Remove Feeds from this phone"))
-            },
-            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
-        )
-        addView(
-            NexusUi.textButton(this@FeedsSettingsActivity, "Uninstall", danger = true).apply {
-                setOnClickListener { uninstall() }
-            },
-        )
-        setOnClickListener { uninstall() }
+    private fun uninstallRow() = NexusUi.uninstallCard(this, "Feeds") {
+        startActivity(Intent(Intent.ACTION_DELETE, Uri.parse("package:$packageName")))
     }
 }

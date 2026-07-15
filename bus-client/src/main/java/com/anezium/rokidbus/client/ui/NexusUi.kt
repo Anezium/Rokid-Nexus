@@ -429,6 +429,23 @@ object NexusUi {
             )
         }
 
+    /** Canonical end-of-settings uninstall card: every plugin settings screen ends with one. */
+    fun uninstallCard(context: Context, pluginName: String, onUninstall: () -> Unit): LinearLayout =
+        pressableCard(context).apply {
+            contentDescription = "Uninstall $pluginName"
+            setOnClickListener { onUninstall() }
+            addView(
+                LinearLayout(context).apply {
+                    orientation = LinearLayout.VERTICAL
+                    addView(rowTitle(context, "Uninstall $pluginName"))
+                    addView(BusTheme.gap(context, 4))
+                    addView(rowSub(context, "Remove the plugin from this phone"))
+                },
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+            )
+            addView(rowSub(context, "REMOVE ›").apply { setTextColor(DANGER) })
+        }
+
     fun field(context: Context, hintText: String): EditText =
         EditText(context).apply {
             hint = hintText

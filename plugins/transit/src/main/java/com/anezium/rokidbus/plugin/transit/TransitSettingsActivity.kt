@@ -242,25 +242,8 @@ class TransitSettingsActivity : Activity() {
         manager?.hideSoftInputFromWindow(searchInput.windowToken, 0)
     }
 
-    private fun uninstallRow() = NexusUi.pressableCard(this).apply {
-        val uninstall = {
-            startActivity(Intent(Intent.ACTION_DELETE, Uri.parse("package:$packageName")))
-        }
-        addView(
-            LinearLayout(this@TransitSettingsActivity).apply {
-                orientation = LinearLayout.VERTICAL
-                addView(NexusUi.rowTitle(this@TransitSettingsActivity, "Uninstall"))
-                addView(BusTheme.gap(this@TransitSettingsActivity, 4))
-                addView(NexusUi.rowSub(this@TransitSettingsActivity, "Remove Transit from this phone"))
-            },
-            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
-        )
-        addView(
-            NexusUi.textButton(this@TransitSettingsActivity, "Uninstall", danger = true).apply {
-                setOnClickListener { uninstall() }
-            },
-        )
-        setOnClickListener { uninstall() }
+    private fun uninstallRow() = NexusUi.uninstallCard(this, "Transit") {
+        startActivity(Intent(Intent.ACTION_DELETE, Uri.parse("package:$packageName")))
     }
 
     private companion object {

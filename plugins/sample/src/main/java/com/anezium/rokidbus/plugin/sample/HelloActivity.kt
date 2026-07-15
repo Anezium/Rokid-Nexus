@@ -52,24 +52,7 @@ class HelloActivity : Activity() {
         setContentView(root)
     }
 
-    private fun uninstallRow() = NexusUi.pressableCard(this).apply {
-        val uninstall = {
-            startActivity(Intent(Intent.ACTION_DELETE, Uri.parse("package:$packageName")))
-        }
-        addView(
-            LinearLayout(this@HelloActivity).apply {
-                orientation = LinearLayout.VERTICAL
-                addView(NexusUi.rowTitle(this@HelloActivity, "Uninstall"))
-                addView(BusTheme.gap(this@HelloActivity, 4))
-                addView(NexusUi.rowSub(this@HelloActivity, "Remove Sample Plugin from this phone"))
-            },
-            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
-        )
-        addView(
-            NexusUi.textButton(this@HelloActivity, "Uninstall", danger = true).apply {
-                setOnClickListener { uninstall() }
-            },
-        )
-        setOnClickListener { uninstall() }
+    private fun uninstallRow() = NexusUi.uninstallCard(this, "Hello Nexus") {
+        startActivity(Intent(Intent.ACTION_DELETE, Uri.parse("package:$packageName")))
     }
 }
