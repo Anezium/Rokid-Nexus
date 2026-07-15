@@ -195,7 +195,12 @@ class MainActivity : Activity() {
             }
             pluginSection.addView(BusTheme.gap(this, 6))
         }
-        pluginSection.addView(storeRow(), NexusUi.block())
+        val feed = RegistryClient.create(applicationContext).cachedSnapshot()?.feed
+            ?: RegistryFeed(RegistryClient.SUPPORTED_VERSION, emptyList())
+        val installedPackages = feed.plugins
+            .map { it.artifact.packageName }
+            .filterTo(linkedSetOf(), ::isPackageInstalled)
+        pluginSection.addView(storeRow(StoreTeaser.subtitle(feed, installedPackages)), NexusUi.block())
     }
 
     private fun catalogStateLabel(entry: PluginCatalogEntry): String = when (entry.state) {
@@ -371,7 +376,7 @@ class MainActivity : Activity() {
             addView(NexusUi.chevron(this@MainActivity))
         }
 
-    private fun storeRow(): LinearLayout =
+    private fun storeRow(subtitle: String): LinearLayout =
         LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -417,7 +422,7 @@ class MainActivity : Activity() {
                     orientation = LinearLayout.VERTICAL
                     addView(NexusUi.rowTitle(this@MainActivity, "Browse the Store").apply { textSize = 14f })
                     addView(BusTheme.gap(this@MainActivity, 4))
-                    addView(NexusUi.rowSub(this@MainActivity, "3 new plugins"))
+                    addView(NexusUi.rowSub(this@MainActivity, subtitle))
                 },
                 LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
                     marginStart = NexusUi.dp(this@MainActivity, 13)
@@ -425,6 +430,15 @@ class MainActivity : Activity() {
             )
             addView(NexusUi.chevron(this@MainActivity).apply { setTextColor(NexusUi.GREEN) })
         }
+
+    private fun isPackageInstalled(packageName: String): Boolean = runCatching {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            packageManager.getPackageInfo(packageName, PackageManager.PackageInfoFlags.of(0))
+        } else {
+            @Suppress("DEPRECATION")
+            packageManager.getPackageInfo(packageName, 0)
+        }
+    }.isSuccess
 
     private fun rebuildSetupSection() {
         if (!::setupSection.isInitialized) return

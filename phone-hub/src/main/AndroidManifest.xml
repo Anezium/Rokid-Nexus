@@ -56,7 +56,7 @@
 
         <activity
             android:name=".PluginPermissionsActivity"
-            android:exported="true"
+            android:exported="false"
             android:parentActivityName=".SettingsActivity" />
 
         <service
