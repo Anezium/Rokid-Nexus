@@ -176,5 +176,4 @@ canonical headless template: package `com.anezium.rokidbus.plugin.sample`,
 `minSdk 31`, a headless manifest, and a NexusUi/BusTheme settings screen with
 the required uninstall row.
 
-A maintainer must choose a repository license before public distribution. No
-license or public artifact release is implied by these coordinates.
+This project is licensed under the [Apache License 2.0](../LICENSE).

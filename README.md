@@ -41,6 +41,4 @@ See [Plugin SDK](docs/PLUGIN_SDK.md), [protocol guide](docs/PROTOCOL.md),
 [wire specification](BUSSPEC.md), [product vision](VISION.md), and
 [verification matrix](TESTPLAN.md).
 
-No public SDK release is claimed by this repository state. A repository license
-must be selected by the maintainer before public distribution; no license is
-included yet.
+This project is licensed under the [Apache License 2.0](LICENSE).

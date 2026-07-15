@@ -37,6 +37,29 @@ afterEvaluate {
             create<MavenPublication>("release") {
                 from(components["release"])
                 artifactId = "shared"
+                pom {
+                    name.set("Rokid Nexus Shared")
+                    description.set("Rokid Nexus shared wire contracts and constants")
+                    url.set("https://github.com/Anezium/Rokid-Nexus")
+                    licenses {
+                        license {
+                            name.set("The Apache License, Version 2.0")
+                            url.set("https://www.apache.org/licenses/LICENSE-2.0.txt")
+                            distribution.set("repo")
+                        }
+                    }
+                    developers {
+                        developer {
+                            id.set("Anezium")
+                            name.set("Anezium")
+                        }
+                    }
+                    scm {
+                        connection.set("scm:git:https://github.com/Anezium/Rokid-Nexus.git")
+                        developerConnection.set("scm:git:ssh://git@github.com/Anezium/Rokid-Nexus.git")
+                        url.set("https://github.com/Anezium/Rokid-Nexus")
+                    }
+                }
             }
         }
     }

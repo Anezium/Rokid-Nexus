@@ -1,0 +1,42 @@
+name: SDK Release
+
+on:
+  push:
+    tags:
+      - "sdk-v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release-sdk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Extract SDK version
+        id: version
+        shell: bash
+        run: echo "version=${GITHUB_REF_NAME#sdk-v}" >> "$GITHUB_OUTPUT"
+      - name: Test and lint public modules
+        run: ./gradlew :shared:testDebugUnitTest :bus-client:testDebugUnitTest :shared:lintDebug :bus-client:lintDebug -PskipCxrGlobal=true
+      - name: Publish SDK to the runner Maven local repository
+        run: ./gradlew :shared:publishToMavenLocal :bus-client:publishToMavenLocal -PversionName=${{ steps.version.outputs.version }} -PskipCxrGlobal=true
+      - name: Compile sample from published coordinates
+        run: ./gradlew :plugin-sample:assembleDebug -PusePublishedSdk=true -PversionName=${{ steps.version.outputs.version }} -PskipCxrGlobal=true
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SDK_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --verify-tag \
+            --latest=false \
+            --title "Rokid Nexus SDK ${SDK_VERSION}" \
+            --notes "Rokid Nexus SDK version ${SDK_VERSION} targets Nexus plugin API version 3.
+
+          JitPack coordinates: com.github.Anezium.Rokid-Nexus:bus-client:${GITHUB_REF_NAME}"

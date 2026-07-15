@@ -43,6 +43,29 @@ afterEvaluate {
             create<MavenPublication>("release") {
                 from(components["release"])
                 artifactId = "bus-client"
+                pom {
+                    name.set("Rokid Nexus Bus Client")
+                    description.set("Rokid Nexus plugin SDK: bus client, plugin service base classes, and the NexusUi kit")
+                    url.set("https://github.com/Anezium/Rokid-Nexus")
+                    licenses {
+                        license {
+                            name.set("The Apache License, Version 2.0")
+                            url.set("https://www.apache.org/licenses/LICENSE-2.0.txt")
+                            distribution.set("repo")
+                        }
+                    }
+                    developers {
+                        developer {
+                            id.set("Anezium")
+                            name.set("Anezium")
+                        }
+                    }
+                    scm {
+                        connection.set("scm:git:https://github.com/Anezium/Rokid-Nexus.git")
+                        developerConnection.set("scm:git:ssh://git@github.com/Anezium/Rokid-Nexus.git")
+                        url.set("https://github.com/Anezium/Rokid-Nexus")
+                    }
+                }
             }
         }
     }
