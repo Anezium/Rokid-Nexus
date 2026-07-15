@@ -94,4 +94,75 @@ class PluginCatalogTest {
         assertEquals(listOf("lens"), catalog.entries.mapNotNull { it.id })
         assertEquals(PluginCatalogState.PENDING, catalog.entry("lens")?.state)
     }
+
+    @Test
+    fun `catalog provenance requires an accepted registry identity match`() {
+        val installed = principal()
+        val approved = PluginGrantState.Approved(setOf(PluginCapability.SURFACES))
+
+        val registry = PluginCatalog.build(
+            builtIns = emptyList(),
+            candidates = listOf(PhonePluginCandidate.Valid(installed)),
+            registryFeed = RegistryFeed(1, listOf(registryPlugin(packageName = installed.packageName))),
+            grantState = { approved },
+        ).entry("hello")
+        assertEquals(PluginProvenance.REGISTRY, registry?.provenance)
+        assertEquals("Registry Author", registry?.registryAuthor)
+
+        val local = PluginCatalog.build(
+            builtIns = emptyList(),
+            candidates = listOf(PhonePluginCandidate.Valid(installed)),
+            grantState = { approved },
+        ).entry("hello")
+        assertEquals(PluginProvenance.LOCAL, local?.provenance)
+        assertEquals(null, local?.registryAuthor)
+
+        val mismatchedRegistryId = PluginCatalog.build(
+            builtIns = emptyList(),
+            candidates = listOf(PhonePluginCandidate.Valid(installed)),
+            registryFeed = RegistryFeed(
+                1,
+                listOf(registryPlugin(id = "other", packageName = installed.packageName)),
+            ),
+            grantState = { approved },
+        ).entry("hello")
+        assertEquals(PluginProvenance.LOCAL, mismatchedRegistryId?.provenance)
+
+        val mismatchedPackage = PluginCatalog.build(
+            builtIns = emptyList(),
+            candidates = listOf(PhonePluginCandidate.Valid(installed)),
+            registryFeed = RegistryFeed(1, listOf(registryPlugin(packageName = "dev.example.other"))),
+            grantState = { approved },
+        ).entry("hello")
+        assertEquals(PluginProvenance.LOCAL, mismatchedPackage?.provenance)
+    }
+
+    private fun registryPlugin(
+        id: String = "hello",
+        pluginId: String = "hello",
+        packageName: String,
+    ) = RegistryPlugin(
+        id = id,
+        name = "Hello",
+        category = "Utility",
+        summary = "Hello summary.",
+        description = "Hello description.",
+        author = "Registry Author",
+        sourceUrl = "https://example.com/source",
+        publishedAt = "2026-07-15",
+        iconAsset = "hello.png",
+        screenshotAssets = emptyList(),
+        listingDescriptionMarkdown = "Hello",
+        releases = emptyList(),
+        nexus = RegistryNexus(pluginId, 3, listOf("surfaces"), true, null, 1),
+        artifact = RegistryArtifact(
+            target = "phone",
+            url = "https://example.com/hello.apk",
+            sha256 = "ab".repeat(32),
+            sizeBytes = 123,
+            packageName = packageName,
+            versionCode = 1,
+            versionName = "1.0.0",
+        ),
+    )
 }

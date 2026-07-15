@@ -128,6 +128,7 @@ class BusHubService : Service() {
     private lateinit var pluginDiscovery: PhonePluginDiscovery
     private lateinit var pluginGrantStore: PluginGrantStore
     private lateinit var pluginGrantReconciler: PluginGrantReconciler
+    private lateinit var registryClient: RegistryClient
     private lateinit var developerModeStore: DeveloperModeStore
     private var developerModeJournalSubscription: DeveloperModeStore.Subscription? = null
     private lateinit var externalPluginController: ExternalPluginController
@@ -329,6 +330,7 @@ class BusHubService : Service() {
         PhoneClientSupervisor.attach(this)
         pluginDiscovery = PhonePluginDiscovery(packageManager)
         pluginGrantStore = PluginGrantStore(applicationContext)
+        registryClient = RegistryClient.create(applicationContext)
         pluginGrantReconciler = PluginGrantReconciler(
             discoverCandidates = pluginDiscovery::discover,
             reconcileGrants = pluginGrantStore::reconcile,
@@ -388,6 +390,8 @@ class BusHubService : Service() {
                 PluginCatalog.build(
                     builtIns = emptyList(),
                     candidates = pluginDiscovery.discover(),
+                    registryFeed = registryClient.cachedSnapshot()?.feed
+                        ?: RegistryFeed(RegistryClient.SUPPORTED_VERSION, emptyList()),
                     grantState = pluginGrantStore::stateFor,
                 )
             },
@@ -1935,6 +1939,8 @@ class BusHubService : Service() {
                     PluginCatalog.build(
                         builtIns = emptyList(),
                         candidates = PhonePluginDiscovery(appContext.packageManager).discover(),
+                        registryFeed = RegistryClient.create(appContext).cachedSnapshot()?.feed
+                            ?: RegistryFeed(RegistryClient.SUPPORTED_VERSION, emptyList()),
                         grantState = PluginGrantStore(appContext)::stateFor,
                     )
                 }

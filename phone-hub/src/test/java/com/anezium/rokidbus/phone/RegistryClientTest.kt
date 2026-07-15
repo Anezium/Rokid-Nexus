@@ -60,6 +60,25 @@ class RegistryClientTest {
     }
 
     @Test
+    fun `cached snapshot never invokes transport`() {
+        val cache = MemoryCache(RegistryCacheRecord(validFeed(), "etag-1", 123L))
+        var fetchCount = 0
+        val client = RegistryClient(
+            transport = RegistryTransport {
+                fetchCount += 1
+                RegistryHttpResponse(500)
+            },
+            cache = cache,
+        )
+
+        val snapshot = client.cachedSnapshot()
+
+        assertEquals(0, fetchCount)
+        assertEquals(RegistrySource.CACHE, snapshot?.source)
+        assertEquals("feeds", snapshot?.feed?.plugins?.single()?.id)
+    }
+
+    @Test
     fun `sends the cached etag and refreshes cache on network success`() {
         val cache = MemoryCache(RegistryCacheRecord(validFeed(), "old-etag", 123L))
         var requestedEtag: String? = null

@@ -27,6 +27,11 @@ enum class PluginCatalogState {
     MISSING_CAPABILITY,
 }
 
+enum class PluginProvenance {
+    REGISTRY,
+    LOCAL,
+}
+
 data class PluginCatalogEntry(
     val catalogKey: String,
     val id: String?,
@@ -37,6 +42,8 @@ data class PluginCatalogEntry(
     val principal: PhonePluginPrincipal? = null,
     val settingsComponent: PluginSettingsTarget? = null,
     val detail: String? = null,
+    val provenance: PluginProvenance = PluginProvenance.LOCAL,
+    val registryAuthor: String? = null,
 )
 
 data class PluginCatalog(val entries: List<PluginCatalogEntry>) {
@@ -57,6 +64,8 @@ data class PluginCatalog(val entries: List<PluginCatalogEntry>) {
                     runtime = plugin,
                 )
             },
+            registryFeed: RegistryFeed = RegistryFeed(RegistryClient.SUPPORTED_VERSION, emptyList()),
+            registryLogger: (String) -> Unit = {},
             grantState: (PhonePluginPrincipal) -> PluginGrantState,
         ): PluginCatalog {
             val entries = mutableListOf<PluginCatalogEntry>()
@@ -127,7 +136,23 @@ data class PluginCatalog(val entries: List<PluginCatalogEntry>) {
                     entry
                 }
             }.sortedWith(compareBy({ it.displayName.lowercase() }, { it.catalogKey }))
-            return PluginCatalog(resolved)
+            val matches = RegistryPluginMatcher.match(
+                feed = registryFeed,
+                localCatalog = PluginCatalog(resolved),
+                logger = registryLogger,
+            ).matches
+            val registryByCatalogKey = matches.mapNotNull { match ->
+                match.localEntry?.catalogKey?.let { it to match.plugin }
+            }.toMap()
+            return PluginCatalog(
+                resolved.map { entry ->
+                    val registryPlugin = registryByCatalogKey[entry.catalogKey] ?: return@map entry
+                    entry.copy(
+                        provenance = PluginProvenance.REGISTRY,
+                        registryAuthor = registryPlugin.author,
+                    )
+                },
+            )
         }
 
         private fun resolveClassName(packageName: String, className: String): String = when {

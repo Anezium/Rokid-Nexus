@@ -129,7 +129,17 @@ class PluginPermissionsActivity : Activity() {
         }
         card.addView(titleRow(principal.descriptor.displayName, stateLabel, stateColor), NexusUi.block())
         card.addView(BusTheme.gap(this, 4))
-        card.addView(NexusUi.metaLabel(this, "Unverified installed plugin", NexusUi.INK3))
+        val catalogEntry = BusHubService.pluginCatalog(this).entries.singleOrNull { entry ->
+            entry.principal?.packageName == principal.packageName && entry.id == principal.descriptor.id
+        }
+        val provenanceLabel = if (
+            catalogEntry?.provenance == PluginProvenance.REGISTRY && catalogEntry.registryAuthor != null
+        ) {
+            "Verified · ${catalogEntry.registryAuthor}"
+        } else {
+            "Unverified installed plugin"
+        }
+        card.addView(NexusUi.metaLabel(this, provenanceLabel, NexusUi.INK3))
         card.addView(BusTheme.gap(this, 12))
 
         val selected = ((state as? PluginGrantState.Approved)?.capabilities ?: emptySet()).toMutableSet()

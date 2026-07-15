@@ -21,6 +21,16 @@ data class StoreEntry(
 ) {
     val localGrantState: PluginCatalogState?
         get() = localEntry?.state
+
+    val provenance: PluginProvenance
+        get() = if (registryPlugin != null) {
+            PluginProvenance.REGISTRY
+        } else {
+            localEntry?.provenance ?: PluginProvenance.LOCAL
+        }
+
+    val registryAuthor: String?
+        get() = registryPlugin?.author ?: localEntry?.registryAuthor
 }
 
 data class StoreCatalog(val entries: List<StoreEntry>) {
@@ -37,46 +47,10 @@ data class StoreCatalog(val entries: List<StoreEntry>) {
             hostVersionCode: Long,
             logger: (String) -> Unit = {},
         ): StoreCatalog {
-            val localRemaining = localCatalog.entries.toMutableList()
-            val duplicateIds = feed.plugins
-                .groupingBy { it.nexus.pluginId }
-                .eachCount()
-                .filterValues { it > 1 }
-                .keys
-            duplicateIds.sorted().forEach { pluginId ->
-                logger("Dropping duplicate registry plugin id=$pluginId")
-            }
-
-            val acceptedRemote = feed.plugins.filter { plugin ->
-                when {
-                    plugin.nexus.pluginId in duplicateIds -> false
-                    plugin.id != plugin.nexus.pluginId -> {
-                        logger("Dropping registry plugin with mismatched descriptor id=${plugin.id}")
-                        false
-                    }
-                    plugin.artifact.target != "phone" -> {
-                        logger("Dropping registry plugin with non-phone artifact id=${plugin.id}")
-                        false
-                    }
-                    else -> true
-                }
-            }
-
-            val remoteEntries = acceptedRemote.mapNotNull { plugin ->
-                val sameId = localRemaining.singleOrNull { it.id == plugin.nexus.pluginId }
-                val samePackage = localRemaining.singleOrNull {
-                    it.installedPackageName() == plugin.artifact.packageName
-                }
-                val local = sameId ?: samePackage
-                if (local != null && (
-                        local.id != plugin.nexus.pluginId ||
-                            local.installedPackageName() != plugin.artifact.packageName
-                        )
-                ) {
-                    logger("Dropping registry identity mismatch id=${plugin.nexus.pluginId}")
-                    return@mapNotNull null
-                }
-                if (local != null) localRemaining.remove(local)
+            val matchResult = RegistryPluginMatcher.match(feed, localCatalog, logger)
+            val remoteEntries = matchResult.matches.map { match ->
+                val plugin = match.plugin
+                val local = match.localEntry
                 val installedVersion = installedVersionCodes[plugin.artifact.packageName]
                 val requiresNewerHost = plugin.nexus.minHostVersionCode > hostVersionCode
                 val hasNewerRelease = installedVersion != null && plugin.artifact.versionCode > installedVersion
@@ -100,7 +74,7 @@ data class StoreCatalog(val entries: List<StoreEntry>) {
                 )
             }
 
-            val localEntries = localRemaining.map { local ->
+            val localEntries = matchResult.localRemaining.map { local ->
                 val packageName = local.installedPackageName()
                 StoreEntry(
                     id = local.id ?: local.catalogKey,
@@ -127,7 +101,5 @@ data class StoreCatalog(val entries: List<StoreEntry>) {
 
         private const val LOCAL_CATEGORY = "Local"
 
-        private fun PluginCatalogEntry.installedPackageName(): String? =
-            principal?.packageName ?: settingsComponent?.packageName
     }
 }

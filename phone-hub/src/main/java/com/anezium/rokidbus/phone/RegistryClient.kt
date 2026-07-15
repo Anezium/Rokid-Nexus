@@ -123,6 +123,12 @@ class RegistryClient(
         )
     }
 
+    /** Reads only the on-disk feed. This never invokes [RegistryTransport]. */
+    fun cachedSnapshot(): RegistrySnapshot? {
+        val cached = runCatching { cache.read() }.getOrNull()
+        return cachedResult(cached)?.snapshot
+    }
+
     private fun handleResponse(
         response: RegistryHttpResponse,
         cached: RegistryCacheRecord?,

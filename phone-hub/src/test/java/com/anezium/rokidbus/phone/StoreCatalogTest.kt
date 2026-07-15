@@ -26,6 +26,8 @@ class StoreCatalogTest {
 
         assertEquals(StoreEntryState.UPDATE_AVAILABLE, catalog.entry("feeds")?.state)
         assertEquals(PluginCatalogState.ENABLED, catalog.entry("feeds")?.localGrantState)
+        assertEquals(PluginProvenance.REGISTRY, catalog.entry("feeds")?.provenance)
+        assertEquals("Anezium", catalog.entry("feeds")?.registryAuthor)
     }
 
     @Test
@@ -53,6 +55,7 @@ class StoreCatalogTest {
 
         assertEquals(StoreEntryState.SIDELOADED, catalog.entry("feeds")?.state)
         assertEquals(7L, catalog.entry("feeds")?.installedVersionCode)
+        assertEquals(PluginProvenance.LOCAL, catalog.entry("feeds")?.provenance)
     }
 
     @Test
