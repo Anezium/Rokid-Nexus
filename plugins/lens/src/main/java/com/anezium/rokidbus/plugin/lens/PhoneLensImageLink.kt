@@ -72,6 +72,10 @@ internal class PhoneLensImageLink(
     private val stageElapsedMs: () -> Long = { 0L },
 ) : AutoCloseable {
     private val appContext = context.applicationContext
+    private val joinHistoryPreferences = appContext.getSharedPreferences(
+        CAMERA_LINK_PREFS,
+        Context.MODE_PRIVATE,
+    )
     private val mainHandler = Handler(Looper.getMainLooper())
     private val executor = ScheduledThreadPoolExecutor(2) { runnable ->
         Thread(runnable, "lens-phone-link").apply { isDaemon = true }
@@ -92,6 +96,12 @@ internal class PhoneLensImageLink(
     private val discoveryPrimingPolicy = PhoneLensDiscoveryPrimingPolicy(
         discoveryWaitMs = DISCOVERY_PRIME_WAIT_MS,
         stopCallbackFallbackMs = STOP_DISCOVERY_FALLBACK_MS,
+    )
+    private val joinWatchdogPolicy = PhoneLensJoinWatchdogPolicy(
+        unseenFirstAttemptMs = UNSEEN_FIRST_JOIN_TIMEOUT_MS,
+        knownRecentFirstAttemptMs = KNOWN_RECENT_FIRST_JOIN_TIMEOUT_MS,
+        retryAttemptMs = JOIN_PROGRESS_TIMEOUT_MS,
+        recentWindowMs = KNOWN_RECENT_WINDOW_MS,
     )
 
     @Volatile private var closed = false
@@ -572,6 +582,7 @@ internal class PhoneLensImageLink(
             return
         }
 
+        recordSuccessfulJoin(expectedGeneration, currentOffer)
         val callbackAddress = info.groupOwnerAddress?.hostAddress.orEmpty()
         val ownerAddress = callbackAddress.ifBlank {
             log("lensLinkOwnerAddressFallback")
@@ -660,17 +671,64 @@ internal class PhoneLensImageLink(
                     cause = "group_reuse_timeout",
                 )
             }
-        }.also { mainHandler.postDelayed(it, joinProgressTimeoutMs(attempt)) }
+        }.also { mainHandler.postDelayed(it, joinProgressTimeoutMs(attempt, currentOffer)) }
     }
 
-    /**
-     * Measured on RG glasses + S23: the very first connect against a freshly created GO is
-     * accepted by the framework but never reaches groupFormed, regardless of how long the GO
-     * has settled — while the retry consistently connects in ~2.4s. Cut the doomed first
-     * attempt short and give real attempts room to finish.
-     */
-    private fun joinProgressTimeoutMs(attempt: Int?): Long =
-        if (attempt == 1) FIRST_JOIN_PROGRESS_TIMEOUT_MS else JOIN_PROGRESS_TIMEOUT_MS
+    private fun joinProgressTimeoutMs(
+        attempt: Int?,
+        currentOffer: PhoneLensLinkOffer,
+    ): Long {
+        val decision = joinWatchdogPolicy.decision(
+            attempt = attempt,
+            targetSsid = currentOffer.ssid,
+            targetBand = PhoneLensFrequencyBand.TWO_GHZ,
+            lastSuccessfulJoin = loadSuccessfulJoin(),
+            nowEpochMs = System.currentTimeMillis(),
+        )
+        if (attempt == 1) {
+            log(
+                "lensLinkJoinWatchdog identity=${decision.identityRecency.name.lowercase()} " +
+                    "timeoutMs=${decision.timeoutMs}",
+            )
+        }
+        return decision.timeoutMs
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun recordSuccessfulJoin(
+        expectedGeneration: Long,
+        currentOffer: PhoneLensLinkOffer,
+    ) {
+        val localManager = manager ?: return
+        val localChannel = channel ?: return
+        runCatching {
+            localManager.requestGroupInfo(localChannel) { group ->
+                if (channel !== localChannel || !isP2pCurrent(expectedGeneration, currentOffer) ||
+                    group == null || group.isGroupOwner || group.networkName != currentOffer.ssid ||
+                    group.frequency <= 0
+                ) return@requestGroupInfo
+                joinHistoryPreferences.edit()
+                    .putString(KEY_LAST_SUCCESS_SSID, currentOffer.ssid)
+                    .putInt(KEY_LAST_SUCCESS_FREQUENCY_MHZ, group.frequency)
+                    .putLong(KEY_LAST_SUCCESS_AT_EPOCH_MS, System.currentTimeMillis())
+                    .apply()
+                log(
+                    "lensLinkJoinHistorySaved frequencyMhz=${group.frequency} " +
+                        "band=${PhoneLensFrequencyBand.fromFrequencyMhz(group.frequency).name.lowercase()}",
+                )
+            }
+        }.onFailure {
+            log("lensLinkJoinHistoryFailed type=${it.javaClass.simpleName}")
+        }
+    }
+
+    private fun loadSuccessfulJoin(): PhoneLensSuccessfulJoin? {
+        val ssid = joinHistoryPreferences.getString(KEY_LAST_SUCCESS_SSID, null).orEmpty()
+        val frequencyMhz = joinHistoryPreferences.getInt(KEY_LAST_SUCCESS_FREQUENCY_MHZ, 0)
+        val recordedAtEpochMs = joinHistoryPreferences.getLong(KEY_LAST_SUCCESS_AT_EPOCH_MS, 0L)
+        if (ssid.isBlank() || frequencyMhz <= 0 || recordedAtEpochMs <= 0L) return null
+        return PhoneLensSuccessfulJoin(ssid, frequencyMhz, recordedAtEpochMs)
+    }
 
     private fun clearJoinAttemptTimeout() {
         joinAttemptTimeout?.let(mainHandler::removeCallbacks)
@@ -1318,6 +1376,10 @@ internal class PhoneLensImageLink(
 
     companion object {
         private const val TAG = "RokidBusLens"
+        private const val CAMERA_LINK_PREFS = "lens_camera_link"
+        private const val KEY_LAST_SUCCESS_SSID = "last_success_ssid"
+        private const val KEY_LAST_SUCCESS_FREQUENCY_MHZ = "last_success_frequency_mhz"
+        private const val KEY_LAST_SUCCESS_AT_EPOCH_MS = "last_success_at_epoch_ms"
         private const val PROBE_BYTES = 512 * 1024
         private const val CONNECT_TIMEOUT_MS = 5_000
         private const val REUSED_GROUP_TCP_TIMEOUT_MS = 1_500
@@ -1331,7 +1393,9 @@ internal class PhoneLensImageLink(
         private const val GROUP_INFO_TIMEOUT_MS = 1_000L
         private const val DISCOVERY_PRIME_WAIT_MS = 2_000L
         private const val STOP_DISCOVERY_FALLBACK_MS = 400L
-        private const val FIRST_JOIN_PROGRESS_TIMEOUT_MS = 1_500L
+        private const val UNSEEN_FIRST_JOIN_TIMEOUT_MS = 7_500L
+        private const val KNOWN_RECENT_FIRST_JOIN_TIMEOUT_MS = 3_000L
+        private const val KNOWN_RECENT_WINDOW_MS = 5 * 60_000L
         private const val JOIN_PROGRESS_TIMEOUT_MS = 4_500L
         private const val INITIAL_JOIN_RETRY_MS = 300L
         private const val JOIN_RETRY_STEP_MS = 1_000L

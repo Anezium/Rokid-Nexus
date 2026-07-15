@@ -83,6 +83,100 @@ class PhoneLensLinkPoliciesTest {
     }
 
     @Test
+    fun `unseen identity gets one uninterrupted seven and a half second first attempt`() {
+        val policy = joinWatchdogPolicy()
+
+        assertEquals(
+            PhoneLensJoinWatchdogDecision(
+                identityRecency = PhoneLensJoinIdentityRecency.UNSEEN,
+                timeoutMs = 7_500L,
+            ),
+            policy.decision(
+                attempt = 1,
+                targetSsid = "DIRECT-RN-new",
+                targetBand = PhoneLensFrequencyBand.TWO_GHZ,
+                lastSuccessfulJoin = null,
+                nowEpochMs = 1_000_000L,
+            ),
+        )
+    }
+
+    @Test
+    fun `recent same ssid and band gets a three second first attempt`() {
+        val policy = joinWatchdogPolicy()
+        val success = PhoneLensSuccessfulJoin(
+            ssid = "DIRECT-RN-stable",
+            frequencyMhz = 2_462,
+            recordedAtEpochMs = 900_000L,
+        )
+
+        assertEquals(
+            PhoneLensJoinWatchdogDecision(
+                identityRecency = PhoneLensJoinIdentityRecency.KNOWN_RECENT,
+                timeoutMs = 3_000L,
+            ),
+            policy.decision(
+                attempt = 1,
+                targetSsid = "DIRECT-RN-stable",
+                targetBand = PhoneLensFrequencyBand.TWO_GHZ,
+                lastSuccessfulJoin = success,
+                nowEpochMs = 1_000_000L,
+            ),
+        )
+    }
+
+    @Test
+    fun `stale changed or cross-band joins remain unseen and retries stay bounded`() {
+        val policy = joinWatchdogPolicy()
+        val success = PhoneLensSuccessfulJoin(
+            ssid = "DIRECT-RN-stable",
+            frequencyMhz = 2_437,
+            recordedAtEpochMs = 600_000L,
+        )
+
+        assertEquals(
+            PhoneLensJoinIdentityRecency.UNSEEN,
+            policy.decision(
+                attempt = 1,
+                targetSsid = "DIRECT-RN-stable",
+                targetBand = PhoneLensFrequencyBand.TWO_GHZ,
+                lastSuccessfulJoin = success,
+                nowEpochMs = 1_000_000L,
+            ).identityRecency,
+        )
+        assertEquals(
+            PhoneLensJoinIdentityRecency.UNSEEN,
+            policy.decision(
+                attempt = 1,
+                targetSsid = "DIRECT-RN-replaced",
+                targetBand = PhoneLensFrequencyBand.TWO_GHZ,
+                lastSuccessfulJoin = success.copy(recordedAtEpochMs = 900_000L),
+                nowEpochMs = 1_000_000L,
+            ).identityRecency,
+        )
+        assertEquals(
+            PhoneLensJoinIdentityRecency.UNSEEN,
+            policy.decision(
+                attempt = 1,
+                targetSsid = "DIRECT-RN-stable",
+                targetBand = PhoneLensFrequencyBand.FIVE_GHZ,
+                lastSuccessfulJoin = success.copy(recordedAtEpochMs = 900_000L),
+                nowEpochMs = 1_000_000L,
+            ).identityRecency,
+        )
+        assertEquals(
+            4_500L,
+            policy.decision(
+                attempt = 2,
+                targetSsid = "DIRECT-RN-stable",
+                targetBand = PhoneLensFrequencyBand.TWO_GHZ,
+                lastSuccessfulJoin = success.copy(recordedAtEpochMs = 900_000L),
+                nowEpochMs = 1_000_000L,
+            ).timeoutMs,
+        )
+    }
+
+    @Test
     fun `join retries use bounded one two three second backoff`() {
         val policy = PhoneLensJoinRetryPolicy(
             initialDelayMs = 1_000L,
@@ -118,4 +212,11 @@ class PhoneLensLinkPoliciesTest {
         assertEquals(PhoneLensJoinRecoveryAction.NONE, policy.actionAfter(5))
         assertEquals(PhoneLensJoinRecoveryAction.NONE, policy.actionAfter(6))
     }
+
+    private fun joinWatchdogPolicy() = PhoneLensJoinWatchdogPolicy(
+        unseenFirstAttemptMs = 7_500L,
+        knownRecentFirstAttemptMs = 3_000L,
+        retryAttemptMs = 4_500L,
+        recentWindowMs = 300_000L,
+    )
 }

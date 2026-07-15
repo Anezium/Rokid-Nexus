@@ -37,6 +37,81 @@ internal class PhoneLensDiscoveryPrimingPolicy(
         )
 }
 
+internal enum class PhoneLensFrequencyBand {
+    TWO_GHZ,
+    FIVE_GHZ,
+    SIX_GHZ,
+    UNKNOWN,
+    ;
+
+    companion object {
+        fun fromFrequencyMhz(frequencyMhz: Int): PhoneLensFrequencyBand = when (frequencyMhz) {
+            in 2_400..2_500 -> TWO_GHZ
+            in 4_900..5_900 -> FIVE_GHZ
+            in 5_925..7_125 -> SIX_GHZ
+            else -> UNKNOWN
+        }
+    }
+}
+
+internal data class PhoneLensSuccessfulJoin(
+    val ssid: String,
+    val frequencyMhz: Int,
+    val recordedAtEpochMs: Long,
+)
+
+internal enum class PhoneLensJoinIdentityRecency {
+    UNSEEN,
+    KNOWN_RECENT,
+}
+
+internal data class PhoneLensJoinWatchdogDecision(
+    val identityRecency: PhoneLensJoinIdentityRecency,
+    val timeoutMs: Long,
+)
+
+/** Pure identity-aware join window; persistence and Android timing remain in PhoneLensImageLink. */
+internal class PhoneLensJoinWatchdogPolicy(
+    private val unseenFirstAttemptMs: Long,
+    private val knownRecentFirstAttemptMs: Long,
+    private val retryAttemptMs: Long,
+    private val recentWindowMs: Long,
+) {
+    init {
+        require(unseenFirstAttemptMs > 0L)
+        require(knownRecentFirstAttemptMs > 0L)
+        require(retryAttemptMs > 0L)
+        require(recentWindowMs > 0L)
+    }
+
+    fun decision(
+        attempt: Int?,
+        targetSsid: String,
+        targetBand: PhoneLensFrequencyBand,
+        lastSuccessfulJoin: PhoneLensSuccessfulJoin?,
+        nowEpochMs: Long,
+    ): PhoneLensJoinWatchdogDecision {
+        val knownRecent = lastSuccessfulJoin?.let { success ->
+            val ageMs = nowEpochMs - success.recordedAtEpochMs
+            success.ssid == targetSsid &&
+                targetBand != PhoneLensFrequencyBand.UNKNOWN &&
+                PhoneLensFrequencyBand.fromFrequencyMhz(success.frequencyMhz) == targetBand &&
+                ageMs in 0..recentWindowMs
+        } == true
+        val identityRecency = if (knownRecent) {
+            PhoneLensJoinIdentityRecency.KNOWN_RECENT
+        } else {
+            PhoneLensJoinIdentityRecency.UNSEEN
+        }
+        val timeoutMs = when {
+            attempt != 1 -> retryAttemptMs
+            knownRecent -> knownRecentFirstAttemptMs
+            else -> unseenFirstAttemptMs
+        }
+        return PhoneLensJoinWatchdogDecision(identityRecency, timeoutMs)
+    }
+}
+
 /** Pure bounded backoff; Android operation cleanup remains in PhoneLensImageLink. */
 internal class PhoneLensJoinRetryPolicy(
     private val initialDelayMs: Long,
