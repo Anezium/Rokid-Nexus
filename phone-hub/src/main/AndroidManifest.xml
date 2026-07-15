@@ -55,6 +55,11 @@
             android:parentActivityName=".MainActivity" />
 
         <activity
+            android:name=".BusInspectorActivity"
+            android:exported="false"
+            android:parentActivityName=".SettingsActivity" />
+
+        <activity
             android:name=".PluginPermissionsActivity"
             android:exported="false"
             android:parentActivityName=".SettingsActivity" />

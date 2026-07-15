@@ -116,7 +116,7 @@ class BusHubService : Service() {
     private val debugImageSeq = AtomicLong(System.currentTimeMillis())
     private val externalSurfaceIds = ConcurrentHashMap<String, MutableSet<String>>()
     private val imageSurfaceRateLimiter = ImageSurfaceRateLimiter()
-    private val pluginBusJournal = PluginBusJournal()
+    private val pluginBusJournal = busJournal
     private val sppLoopStarted = AtomicBoolean(false)
     private val audioLeaseLock = Any()
     @Volatile private var sppLoopStop = false
@@ -1987,6 +1987,9 @@ class BusHubService : Service() {
 
     companion object {
         @Volatile private var activeInstance: BusHubService? = null
+
+        // Process-wide so the inspector can read events across service restarts.
+        val busJournal = PluginBusJournal()
 
         fun onPluginAuthorizationChanged(context: android.content.Context, key: PluginGrantKey) {
             PhoneClientSupervisor.onPrincipalRevoked(context.applicationContext, key)

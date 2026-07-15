@@ -6,6 +6,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.res.ColorStateList
 import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
 import android.os.Build
@@ -16,6 +17,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
 import androidx.core.content.ContextCompat
@@ -27,6 +29,7 @@ import com.anezium.rokidbus.shared.LinkStateBits
 private const val SETTINGS_TAG = "RokidNexusSettings"
 
 class SettingsActivity : Activity() {
+    private val developerModeStore by lazy { DeveloperModeStore(this) }
     private lateinit var cxrValue: TextView
     private lateinit var sppValue: TextView
     private lateinit var bondValue: TextView
@@ -129,6 +132,21 @@ class SettingsActivity : Activity() {
             addView(BusTheme.gap(this@SettingsActivity, 28))
             addView(NexusUi.sectionRow(this@SettingsActivity, "Advanced"), NexusUi.block())
             addView(BusTheme.gap(this@SettingsActivity, 12))
+            addView(developerModeRow(), NexusUi.block())
+            addView(BusTheme.gap(this@SettingsActivity, 10))
+            if (developerModeStore.isEnabled()) {
+                addView(
+                    actionRow(
+                        title = "Bus inspector",
+                        value = "Open",
+                        danger = false,
+                    ) {
+                        startActivity(Intent(this@SettingsActivity, BusInspectorActivity::class.java))
+                    },
+                    NexusUi.block(),
+                )
+                addView(BusTheme.gap(this@SettingsActivity, 10))
+            }
             addView(
                 logScroll,
                 LinearLayout.LayoutParams(
@@ -295,6 +313,47 @@ class SettingsActivity : Activity() {
                     "$value \u203A",
                     if (danger) NexusUi.DANGER else NexusUi.GREEN,
                 ),
+            )
+        }
+
+    private fun developerModeRow(): LinearLayout =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = NexusUi.bordered(this@SettingsActivity, NexusUi.PANEL, NexusUi.LINE, 15)
+            setPadding(
+                NexusUi.dp(this@SettingsActivity, 15),
+                NexusUi.dp(this@SettingsActivity, 10),
+                NexusUi.dp(this@SettingsActivity, 15),
+                NexusUi.dp(this@SettingsActivity, 10),
+            )
+            addView(
+                LinearLayout(this@SettingsActivity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    addView(NexusUi.rowTitle(this@SettingsActivity, "Developer mode"))
+                    addView(BusTheme.gap(this@SettingsActivity, 3))
+                    addView(
+                        NexusUi.rowSub(this@SettingsActivity, "Sideload alerts, DEV badges, bus inspector"),
+                    )
+                },
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+            )
+            addView(
+                Switch(this@SettingsActivity).apply {
+                    isChecked = developerModeStore.isEnabled()
+                    thumbTintList = ColorStateList(
+                        arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
+                        intArrayOf(NexusUi.GREEN, NexusUi.INK3),
+                    )
+                    trackTintList = ColorStateList(
+                        arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
+                        intArrayOf(NexusUi.GREEN_DIM, NexusUi.LINE),
+                    )
+                    setOnCheckedChangeListener { _, enabled ->
+                        developerModeStore.setEnabled(enabled)
+                        buildUi()
+                    }
+                },
             )
         }
 

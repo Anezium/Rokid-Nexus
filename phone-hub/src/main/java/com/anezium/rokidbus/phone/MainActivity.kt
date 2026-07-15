@@ -34,6 +34,7 @@ private const val NOTIFICATION_PERMISSION_REQUEST = 22
 
 /** Companion home: fixed status/settings menubar, setup cards, plugin list, store entry and hub toggle. */
 class MainActivity : Activity() {
+    private val developerModeStore by lazy { DeveloperModeStore(this) }
     private lateinit var setupSection: LinearLayout
     private lateinit var pluginSection: LinearLayout
     private lateinit var toggleButton: Button
@@ -189,6 +190,11 @@ class MainActivity : Activity() {
                         iconRes = iconFor(entry.id),
                         title = entry.displayName,
                         subtitle = catalogStateLabel(entry),
+                        badge = "DEV".takeIf {
+                            developerModeStore.isEnabled() &&
+                                entry.provenance == PluginProvenance.LOCAL &&
+                                entry.principal != null
+                        },
                     ) { openCatalogEntry(entry) },
                     NexusUi.block(),
                 )
@@ -340,6 +346,7 @@ class MainActivity : Activity() {
         iconRes: Int,
         title: String,
         subtitle: String,
+        badge: String? = null,
         onClick: () -> Unit,
     ): LinearLayout =
         LinearLayout(this).apply {
@@ -365,7 +372,18 @@ class MainActivity : Activity() {
             addView(
                 LinearLayout(this@MainActivity).apply {
                     orientation = LinearLayout.VERTICAL
-                    addView(NexusUi.rowTitle(this@MainActivity, title))
+                    if (badge == null) {
+                        addView(NexusUi.rowTitle(this@MainActivity, title))
+                    } else {
+                        addView(
+                            LinearLayout(this@MainActivity).apply {
+                                orientation = LinearLayout.HORIZONTAL
+                                gravity = Gravity.CENTER_VERTICAL
+                                addView(NexusUi.rowTitle(this@MainActivity, title))
+                                addView(devBadge(badge))
+                            },
+                        )
+                    }
                     addView(BusTheme.gap(this@MainActivity, 4))
                     addView(NexusUi.rowSub(this@MainActivity, subtitle))
                 },
@@ -374,6 +392,30 @@ class MainActivity : Activity() {
                 },
             )
             addView(NexusUi.chevron(this@MainActivity))
+        }
+
+    private fun devBadge(label: String): TextView =
+        TextView(this).apply {
+            text = label
+            textSize = 9f
+            letterSpacing = 0.08f
+            setTextColor(NexusUi.AMBER)
+            background = NexusUi.bordered(
+                this@MainActivity,
+                NexusUi.alpha(NexusUi.AMBER, 24),
+                NexusUi.alpha(NexusUi.AMBER, 90),
+                7,
+            )
+            setPadding(
+                NexusUi.dp(this@MainActivity, 6),
+                NexusUi.dp(this@MainActivity, 2),
+                NexusUi.dp(this@MainActivity, 6),
+                NexusUi.dp(this@MainActivity, 2),
+            )
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply { marginStart = NexusUi.dp(this@MainActivity, 8) }
         }
 
     private fun storeRow(subtitle: String): LinearLayout =
