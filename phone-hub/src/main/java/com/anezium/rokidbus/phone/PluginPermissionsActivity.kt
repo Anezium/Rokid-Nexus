@@ -1,18 +1,19 @@
 package com.anezium.rokidbus.phone
 
+import com.anezium.rokidbus.client.R as BusClientR
 import com.anezium.rokidbus.client.ui.NexusUi
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
-import android.graphics.Color
+import android.content.res.ColorStateList
 import android.graphics.Typeface
 import android.os.Bundle
 import android.view.Gravity
 import android.view.ViewGroup
-import android.widget.Button
 import android.widget.CheckBox
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import android.widget.Switch
 import android.widget.TextView
 import com.anezium.rokidbus.client.ui.BusTheme
 import com.anezium.rokidbus.shared.plugin.PluginCapability
@@ -104,7 +105,18 @@ class PluginPermissionsActivity : Activity() {
         }
 
     private fun renderInvalid(card: LinearLayout, candidate: PhonePluginCandidate.Invalid) {
-        card.addView(titleRow(candidate.displayName, "Invalid", NexusUi.DANGER), NexusUi.block())
+        card.addView(
+            LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                addView(
+                    NexusUi.cardTitle(this@PluginPermissionsActivity, candidate.displayName),
+                    LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+                )
+                addView(statePill("Invalid", NexusUi.DANGER))
+            },
+            NexusUi.block(),
+        )
         card.addView(BusTheme.gap(this, 8))
         card.addView(NexusUi.cardBody(this, "Nexus cannot use this plugin descriptor."), NexusUi.block())
         if (developerDetails) {
@@ -127,8 +139,6 @@ class PluginPermissionsActivity : Activity() {
             PluginGrantState.Disabled -> NexusUi.INK3
             PluginGrantState.Pending -> NexusUi.AMBER
         }
-        card.addView(titleRow(principal.descriptor.displayName, stateLabel, stateColor), NexusUi.block())
-        card.addView(BusTheme.gap(this, 4))
         val catalogEntry = BusHubService.pluginCatalog(this).entries.singleOrNull { entry ->
             entry.principal?.packageName == principal.packageName && entry.id == principal.descriptor.id
         }
@@ -139,13 +149,19 @@ class PluginPermissionsActivity : Activity() {
         } else {
             "Unverified installed plugin"
         }
-        card.addView(NexusUi.metaLabel(this, provenanceLabel, NexusUi.INK3))
-        card.addView(BusTheme.gap(this, 12))
+        card.addView(
+            pluginHeaderRow(principal.descriptor.id, principal.descriptor.displayName, provenanceLabel, stateLabel, stateColor),
+            NexusUi.block(),
+        )
+        card.addView(BusTheme.gap(this, 14))
 
-        val selected = ((state as? PluginGrantState.Approved)?.capabilities ?: emptySet()).toMutableSet()
+        val live = state is PluginGrantState.Approved
+        val selected = ((state as? PluginGrantState.Approved)?.capabilities
+            ?: principal.descriptor.requestedCapabilities).toMutableSet()
+        selected -= PluginCapability.MICROPHONE
         principal.descriptor.requestedCapabilities.sortedBy(PluginCapability::wireValue).forEach { capability ->
-            card.addView(capabilityToggle(capability, selected), NexusUi.block())
-            card.addView(BusTheme.gap(this, 6))
+            card.addView(capabilityRow(capability, selected, live, principal), NexusUi.block())
+            card.addView(BusTheme.gap(this, 8))
         }
 
         if (developerDetails) {
@@ -162,68 +178,174 @@ class PluginPermissionsActivity : Activity() {
             )
         }
 
-        card.addView(BusTheme.gap(this, 12))
-        card.addView(
-            LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                addView(actionButton("Approve") {
-                    grantStore.approve(principal, selected)
-                    BusHubService.onPluginAuthorizationChanged(applicationContext, principal.grantKey())
-                    render()
-                })
-                addView(actionButton("Deny", danger = true) {
-                    grantStore.deny(principal)
-                    BusHubService.onPluginAuthorizationChanged(applicationContext, principal.grantKey())
-                    render()
-                }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                    marginStart = NexusUi.dp(this@PluginPermissionsActivity, 8)
-                })
-                if (state !is PluginGrantState.Pending) {
-                    addView(actionButton("Revoke", danger = true) {
-                        grantStore.revoke(principal)
-                        BusHubService.onPluginAuthorizationChanged(applicationContext, principal.grantKey())
-                        render()
-                    }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                        marginStart = NexusUi.dp(this@PluginPermissionsActivity, 8)
-                    })
-                }
-            },
-            NexusUi.block(),
-        )
-    }
-
-    private fun capabilityToggle(
-        capability: PluginCapability,
-        selected: MutableSet<PluginCapability>,
-    ): CheckBox {
-        val unavailable = capability == PluginCapability.MICROPHONE
-        if (unavailable) selected -= capability
-        return CheckBox(this).apply {
-            text = when (capability) {
-                PluginCapability.SURFACES -> "Show surfaces on your glasses"
-                PluginCapability.MICROPHONE -> "Use the glasses microphone\nRequires Nexus microphone indicator support"
-                PluginCapability.HTTP_PROXY -> "Use the Nexus phone HTTP proxy"
-                PluginCapability.CAMERA -> "Use the glasses camera\nOnly while the camera view is open"
-            }
-            textSize = 13f
-            setTextColor(if (unavailable) NexusUi.INK3 else NexusUi.INK2)
-            buttonTintList = android.content.res.ColorStateList.valueOf(NexusUi.GREEN)
-            isChecked = capability in selected && !unavailable
-            isEnabled = !unavailable
-            setOnCheckedChangeListener { _, checked ->
-                if (checked) selected += capability else selected -= capability
-            }
+        card.addView(BusTheme.gap(this, 6))
+        if (live) {
+            // Approved: capability switches apply live; the only remaining action is quiet.
+            card.addView(
+                LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.END or Gravity.CENTER_VERTICAL
+                    addView(
+                        NexusUi.textButton(this@PluginPermissionsActivity, "Revoke access", danger = true).apply {
+                            setOnClickListener { applyDecision(principal) { grantStore.revoke(principal) } }
+                        },
+                    )
+                },
+                NexusUi.block(),
+            )
+        } else {
+            card.addView(
+                LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    addView(
+                        NexusUi.pillButton(this@PluginPermissionsActivity, "Allow on glasses").apply {
+                            setOnClickListener { applyDecision(principal) { grantStore.approve(principal, selected) } }
+                        },
+                        LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+                    )
+                    addView(
+                        NexusUi.textButton(this@PluginPermissionsActivity, "Deny", danger = true).apply {
+                            setOnClickListener { applyDecision(principal) { grantStore.deny(principal) } }
+                        },
+                        LinearLayout.LayoutParams(
+                            ViewGroup.LayoutParams.WRAP_CONTENT,
+                            ViewGroup.LayoutParams.WRAP_CONTENT,
+                        ).apply { marginStart = NexusUi.dp(this@PluginPermissionsActivity, 10) },
+                    )
+                },
+                NexusUi.block(),
+            )
         }
     }
 
-    private fun titleRow(title: String, state: String, stateColor: Int): LinearLayout =
+    private fun applyDecision(principal: PhonePluginPrincipal, decision: () -> Unit) {
+        decision()
+        BusHubService.onPluginAuthorizationChanged(applicationContext, principal.grantKey())
+        render()
+    }
+
+    private fun capabilityRow(
+        capability: PluginCapability,
+        selected: MutableSet<PluginCapability>,
+        live: Boolean,
+        principal: PhonePluginPrincipal,
+    ): LinearLayout {
+        val unavailable = capability == PluginCapability.MICROPHONE
+        val title = when (capability) {
+            PluginCapability.SURFACES -> "Show on your glasses"
+            PluginCapability.MICROPHONE -> "Glasses microphone"
+            PluginCapability.HTTP_PROXY -> "Nexus HTTP proxy"
+            PluginCapability.CAMERA -> "Glasses camera"
+        }
+        val note = when (capability) {
+            PluginCapability.SURFACES -> "Render cards and images on the HUD"
+            PluginCapability.MICROPHONE -> "Not available yet"
+            PluginCapability.HTTP_PROXY -> "Fetch through the phone connection"
+            PluginCapability.CAMERA -> "Only while the camera view is open"
+        }
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(
+                LinearLayout(this@PluginPermissionsActivity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    addView(
+                        TextView(this@PluginPermissionsActivity).apply {
+                            text = title
+                            textSize = 13f
+                            setTextColor(if (unavailable) NexusUi.INK3 else NexusUi.INK)
+                        },
+                    )
+                    addView(
+                        TextView(this@PluginPermissionsActivity).apply {
+                            text = note
+                            textSize = 10f
+                            setTextColor(NexusUi.INK3)
+                        },
+                    )
+                },
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+            )
+            addView(
+                Switch(this@PluginPermissionsActivity).apply {
+                    isChecked = capability in selected && !unavailable
+                    isEnabled = !unavailable
+                    thumbTintList = ColorStateList(
+                        arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
+                        intArrayOf(NexusUi.GREEN, NexusUi.INK3),
+                    )
+                    trackTintList = ColorStateList(
+                        arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
+                        intArrayOf(NexusUi.GREEN_DIM, NexusUi.LINE),
+                    )
+                    setOnCheckedChangeListener { _, checked ->
+                        if (checked) selected += capability else selected -= capability
+                        if (live) applyDecision(principal) { grantStore.approve(principal, selected.toSet()) }
+                    }
+                },
+            )
+        }
+    }
+
+    private fun pluginHeaderRow(
+        pluginId: String,
+        title: String,
+        provenance: String,
+        state: String,
+        stateColor: Int,
+    ): LinearLayout =
         LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            addView(NexusUi.cardTitle(this@PluginPermissionsActivity, title), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            addView(NexusUi.metaLabel(this@PluginPermissionsActivity, state, stateColor))
+            addView(
+                NexusUi.iconTileImage(this@PluginPermissionsActivity, iconFor(pluginId), sizeDp = 30),
+                LinearLayout.LayoutParams(
+                    NexusUi.dp(this@PluginPermissionsActivity, 30),
+                    NexusUi.dp(this@PluginPermissionsActivity, 30),
+                ),
+            )
+            addView(
+                LinearLayout(this@PluginPermissionsActivity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    addView(NexusUi.cardTitle(this@PluginPermissionsActivity, title))
+                    addView(BusTheme.gap(this@PluginPermissionsActivity, 2))
+                    addView(NexusUi.metaLabel(this@PluginPermissionsActivity, provenance, NexusUi.INK3))
+                },
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    marginStart = NexusUi.dp(this@PluginPermissionsActivity, 11)
+                },
+            )
+            addView(statePill(state, stateColor))
         }
+
+    private fun statePill(label: String, color: Int): TextView =
+        TextView(this).apply {
+            text = label
+            textSize = 10f
+            letterSpacing = 0.06f
+            setTextColor(color)
+            background = NexusUi.bordered(
+                this@PluginPermissionsActivity,
+                NexusUi.alpha(color, 22),
+                NexusUi.alpha(color, 80),
+                9,
+            )
+            setPadding(
+                NexusUi.dp(this@PluginPermissionsActivity, 8),
+                NexusUi.dp(this@PluginPermissionsActivity, 3),
+                NexusUi.dp(this@PluginPermissionsActivity, 8),
+                NexusUi.dp(this@PluginPermissionsActivity, 3),
+            )
+        }
+
+    private fun iconFor(id: String): Int = when (id) {
+        "lyrics" -> BusClientR.drawable.ic_plugin_music
+        "media" -> BusClientR.drawable.ic_plugin_disc
+        "transit" -> BusClientR.drawable.ic_plugin_bus
+        "lens" -> BusClientR.drawable.ic_plugin_lens
+        else -> BusClientR.drawable.ic_plugin_send
+    }
 
     private fun developerToggle(): CheckBox = CheckBox(this).apply {
         text = "Developer details"
@@ -247,20 +369,6 @@ class PluginPermissionsActivity : Activity() {
         setTextColor(NexusUi.INK3)
         setTextIsSelectable(true)
     }
-
-    private fun actionButton(label: String, danger: Boolean = false, onClick: () -> Unit): Button =
-        Button(this).apply {
-            text = label
-            textSize = 10f
-            typeface = Typeface.MONOSPACE
-            setTextColor(if (danger) NexusUi.DANGER else NexusUi.GREEN)
-            background = NexusUi.bordered(this@PluginPermissionsActivity, Color.TRANSPARENT, if (danger) NexusUi.DANGER else NexusUi.GREEN, 18)
-            stateListAnimator = null
-            minWidth = 0
-            minimumWidth = 0
-            setPadding(NexusUi.dp(this@PluginPermissionsActivity, 12), 0, NexusUi.dp(this@PluginPermissionsActivity, 12), 0)
-            setOnClickListener { onClick() }
-        }
 
     private fun header(): LinearLayout = LinearLayout(this).apply {
         orientation = LinearLayout.HORIZONTAL
