@@ -171,6 +171,7 @@ class StoreCatalogTest {
             target = target,
             url = "https://github.com/Anezium/Rokid-Nexus/releases/download/feeds-v0.1.0/feeds-phone-release.apk",
             sha256 = "ab".repeat(32),
+            signerSha256 = "cd".repeat(32),
             sizeBytes = 123L,
             packageName = packageName,
             versionCode = versionCode,

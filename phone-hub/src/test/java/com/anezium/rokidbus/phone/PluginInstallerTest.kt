@@ -32,7 +32,7 @@ class PluginInstallerTest {
     }
 
     @Test
-    fun `verified download is installed and success refreshes catalogue`() {
+    fun `single signer with matching digest is installed and success refreshes catalogue`() {
         val bytes = "verified apk".toByteArray()
         val gateway = FakeGateway()
         val states = mutableListOf<PluginInstallState>()
@@ -80,6 +80,72 @@ class PluginInstallerTest {
         assertEquals(0, gateway.installCount)
         assertEquals(
             PluginInstallState.Failure("Downloaded APK package does not match the registry"),
+            states.last(),
+        )
+    }
+
+    @Test
+    fun `apk signer digest mismatch aborts logs digests and deletes apk`() {
+        val bytes = "verified apk".toByteArray()
+        val gateway = FakeGateway()
+        val states = mutableListOf<PluginInstallState>()
+        val logs = mutableListOf<String>()
+        val unexpectedSigner = byteArrayOf(9, 8, 7)
+        val installer = installer(
+            bytes,
+            gateway,
+            inspectedSigners = listOf(unexpectedSigner),
+            logger = logs::add,
+        )
+
+        installer.install(entry(bytes), states::add)
+
+        val expectedDigest = signingCertificateSha256(SIGNER)
+        val actualDigest = signingCertificateSha256(unexpectedSigner)
+        assertEquals(0, gateway.installCount)
+        assertEquals(
+            PluginInstallState.Failure("Downloaded APK signer does not match the registry"),
+            states.last(),
+        )
+        assertEquals(
+            listOf("Plugin APK signer mismatch package=$PACKAGE expected=$expectedDigest actual=$actualDigest"),
+            logs,
+        )
+        assertTrue(temporaryFolder.root.walkTopDown().none { it.extension == "apk" })
+    }
+
+    @Test
+    fun `apk with multiple current signers aborts before package installer`() {
+        val bytes = "verified apk".toByteArray()
+        val gateway = FakeGateway()
+        val states = mutableListOf<PluginInstallState>()
+        val installer = installer(
+            bytes,
+            gateway,
+            inspectedSigners = listOf(SIGNER, byteArrayOf(4, 5, 6)),
+        )
+
+        installer.install(entry(bytes), states::add)
+
+        assertEquals(0, gateway.installCount)
+        assertEquals(
+            PluginInstallState.Failure("Downloaded APK uses an unsupported signer set"),
+            states.last(),
+        )
+    }
+
+    @Test
+    fun `apk version code mismatch aborts before package installer`() {
+        val bytes = "verified apk".toByteArray()
+        val gateway = FakeGateway()
+        val states = mutableListOf<PluginInstallState>()
+        val installer = installer(bytes, gateway, inspectedVersionCode = 8L)
+
+        installer.install(entry(bytes), states::add)
+
+        assertEquals(0, gateway.installCount)
+        assertEquals(
+            PluginInstallState.Failure("Downloaded APK version does not match the registry"),
             states.last(),
         )
     }
@@ -134,7 +200,9 @@ class PluginInstallerTest {
             cacheDirectory = temporaryFolder.root,
             hostVersionCode = 6,
             downloader = ArtifactDownloader { _, _, _, _ -> downloadCount++ },
-            packageInspector = ArtifactPackageInspector { PACKAGE },
+            packageInspector = ArtifactPackageInspector {
+                ArtifactArchiveInfo(PACKAGE, 7L, listOf(SIGNER))
+            },
             packageInstaller = gateway,
             ioExecutor = Executor(Runnable::run),
         )
@@ -153,6 +221,9 @@ class PluginInstallerTest {
         ioExecutor: Executor = Executor(Runnable::run),
         postInstall: (String) -> Unit = {},
         inspectedPackage: String? = PACKAGE,
+        inspectedVersionCode: Long = 7L,
+        inspectedSigners: List<ByteArray> = listOf(SIGNER),
+        logger: (String) -> Unit = {},
     ) = PluginInstaller(
         cacheDirectory = temporaryFolder.root,
         hostVersionCode = 6,
@@ -160,10 +231,15 @@ class PluginInstallerTest {
             destination.writeBytes(bytes)
             progress(bytes.size.toLong(), bytes.size.toLong())
         },
-        packageInspector = ArtifactPackageInspector { inspectedPackage },
+        packageInspector = ArtifactPackageInspector {
+            inspectedPackage?.let { packageName ->
+                ArtifactArchiveInfo(packageName, inspectedVersionCode, inspectedSigners)
+            }
+        },
         packageInstaller = gateway,
         ioExecutor = ioExecutor,
         postInstall = postInstall,
+        logger = logger,
     )
 
     private fun entry(
@@ -191,6 +267,7 @@ class PluginInstallerTest {
                 target = "phone",
                 url = "https://example.com/feeds.apk",
                 sha256 = sha,
+                signerSha256 = signingCertificateSha256(SIGNER),
                 sizeBytes = bytes.size.toLong(),
                 packageName = PACKAGE,
                 versionCode = 7,
@@ -202,5 +279,6 @@ class PluginInstallerTest {
 
     companion object {
         private const val PACKAGE = "com.anezium.rokidbus.plugin.feeds"
+        private val SIGNER = byteArrayOf(1, 2, 3)
     }
 }

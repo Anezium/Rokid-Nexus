@@ -55,6 +55,7 @@ data class RegistryArtifact(
     val target: String,
     val url: String,
     val sha256: String,
+    val signerSha256: String,
     val sizeBytes: Long,
     val packageName: String,
     val versionCode: Long,
@@ -255,6 +256,7 @@ class RegistryClient(
                     target = artifact.requiredString("target", "$path.artifact"),
                     url = artifact.requiredHttpsUrl("url", "$path.artifact"),
                     sha256 = artifact.requiredSha256("sha256", "$path.artifact"),
+                    signerSha256 = artifact.requiredLowercaseSha256("signerSha256", "$path.artifact"),
                     sizeBytes = artifact.requiredLong("sizeBytes", "$path.artifact"),
                     packageName = artifact.requiredString("packageName", "$path.artifact"),
                     versionCode = artifact.requiredLong("versionCode", "$path.artifact"),
@@ -333,6 +335,14 @@ class RegistryClient(
             val value = requiredString(key, path).lowercase()
             if (!value.matches(Regex("[0-9a-f]{64}"))) {
                 throw RegistryParseException("$path.$key is not a SHA-256 digest")
+            }
+            return value
+        }
+
+        private fun JSONObject.requiredLowercaseSha256(key: String, path: String): String {
+            val value = requiredString(key, path)
+            if (!value.matches(Regex("[0-9a-f]{64}"))) {
+                throw RegistryParseException("$path.$key is not a lowercase SHA-256 digest")
             }
             return value
         }

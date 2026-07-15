@@ -19,6 +19,7 @@ class RegistryClientTest {
         assertEquals("feeds", feed.plugins.single().nexus.pluginId)
         assertEquals("com.anezium.rokidbus.plugin.feeds", feed.plugins.single().artifact.packageName)
         assertEquals(7L, feed.plugins.single().artifact.versionCode)
+        assertEquals("cd".repeat(32), feed.plugins.single().artifact.signerSha256)
     }
 
     @Test
@@ -41,6 +42,16 @@ class RegistryClientTest {
     @Test(expected = RegistryParseException::class)
     fun `rejects an unknown top level version`() {
         RegistryClient.parse("{\"version\":2,\"plugins\":[]}")
+    }
+
+    @Test(expected = RegistryParseException::class)
+    fun `rejects an entry missing signer sha256`() {
+        RegistryClient.parse(validFeed(signerSha256Field = ""))
+    }
+
+    @Test(expected = RegistryParseException::class)
+    fun `rejects a signer sha256 that is not lowercase hex`() {
+        RegistryClient.parse(validFeed(signerSha256Field = "\"signerSha256\": \"${"CD".repeat(32)}\","))
     }
 
     @Test
@@ -119,6 +130,7 @@ class RegistryClientTest {
         pluginExtra: String = "",
         nexusExtra: String = "",
         artifactExtra: String = "",
+        signerSha256Field: String = "\"signerSha256\": \"${"cd".repeat(32)}\",",
     ): String = """
         {
           "version": 1,
@@ -149,6 +161,7 @@ class RegistryClientTest {
               "target": "phone",
               "url": "https://github.com/Anezium/Rokid-Nexus/releases/download/feeds-v0.1.0/feeds-phone-release.apk",
               "sha256": "${"ab".repeat(32)}",
+              $signerSha256Field
               "sizeBytes": 1234,
               "packageName": "com.anezium.rokidbus.plugin.feeds",
               "versionCode": 7,

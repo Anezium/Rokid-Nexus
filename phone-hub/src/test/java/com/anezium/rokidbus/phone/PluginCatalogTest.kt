@@ -159,6 +159,7 @@ class PluginCatalogTest {
             target = "phone",
             url = "https://example.com/hello.apk",
             sha256 = "ab".repeat(32),
+            signerSha256 = "cd".repeat(32),
             sizeBytes = 123,
             packageName = packageName,
             versionCode = 1,

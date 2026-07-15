@@ -9,7 +9,6 @@ import com.anezium.rokidbus.shared.BusConstants
 import com.anezium.rokidbus.shared.plugin.PluginDescriptor
 import com.anezium.rokidbus.shared.plugin.PluginDescriptorParseResult
 import com.anezium.rokidbus.shared.plugin.PluginDescriptorParser
-import java.security.MessageDigest
 
 data class PhonePluginPrincipal(
     val packageName: String,
@@ -166,9 +165,7 @@ class PhonePluginDiscovery(private val packageManager: PackageManager) {
             if (descriptor.apiVersion != BusConstants.API_VERSION) {
                 return invalid("UNSUPPORTED_API", descriptor.displayName)
             }
-            val digest = MessageDigest.getInstance("SHA-256")
-                .digest(record.signingCertificates.single())
-                .joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) }
+            val digest = signingCertificateSha256(record.signingCertificates.single())
             return PhonePluginCandidate.Valid(
                 PhonePluginPrincipal(
                     packageName = record.packageName,

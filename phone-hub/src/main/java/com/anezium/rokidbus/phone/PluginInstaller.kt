@@ -9,6 +9,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import java.io.File
 import java.io.FileInputStream
 import java.io.IOException
@@ -62,8 +63,44 @@ fun interface PackageInstallGateway {
     ): PackageInstallSession
 }
 
+data class ArtifactArchiveInfo(
+    val packageName: String,
+    val versionCode: Long,
+    val signingCertificates: List<ByteArray>,
+)
+
 fun interface ArtifactPackageInspector {
-    fun packageName(apk: File): String?
+    fun inspect(apk: File): ArtifactArchiveInfo?
+}
+
+internal sealed interface ArtifactArchiveVerification {
+    data object Verified : ArtifactArchiveVerification
+    data object PackageNameMismatch : ArtifactArchiveVerification
+    data object SignerSetUnsupported : ArtifactArchiveVerification
+    data class SignerMismatch(val expected: String, val actual: String) : ArtifactArchiveVerification
+    data object VersionCodeMismatch : ArtifactArchiveVerification
+}
+
+internal object ArtifactArchiveVerifier {
+    fun verify(
+        expected: RegistryArtifact,
+        actual: ArtifactArchiveInfo?,
+    ): ArtifactArchiveVerification {
+        if (actual == null || actual.packageName != expected.packageName) {
+            return ArtifactArchiveVerification.PackageNameMismatch
+        }
+        if (actual.signingCertificates.size != 1) {
+            return ArtifactArchiveVerification.SignerSetUnsupported
+        }
+        val actualSignerSha256 = signingCertificateSha256(actual.signingCertificates.single())
+        if (actualSignerSha256 != expected.signerSha256) {
+            return ArtifactArchiveVerification.SignerMismatch(expected.signerSha256, actualSignerSha256)
+        }
+        if (actual.versionCode != expected.versionCode) {
+            return ArtifactArchiveVerification.VersionCodeMismatch
+        }
+        return ArtifactArchiveVerification.Verified
+    }
 }
 
 class PluginInstallOperation internal constructor(
@@ -84,6 +121,7 @@ class PluginInstaller(
     private val ioExecutor: Executor = DEFAULT_IO_EXECUTOR,
     private val callbackExecutor: Executor = Executor(Runnable::run),
     private val postInstall: (packageName: String) -> Unit = {},
+    private val logger: (String) -> Unit = {},
 ) {
     fun install(
         entry: StoreEntry,
@@ -138,10 +176,28 @@ class PluginInstaller(
                     finish(PluginInstallState.Failure("Downloaded APK failed SHA-256 verification"))
                     return@execute
                 }
-                val actualPackageName = packageInspector.packageName(apk)
-                if (actualPackageName != plugin.artifact.packageName) {
-                    finish(PluginInstallState.Failure("Downloaded APK package does not match the registry"))
-                    return@execute
+                when (val verification = ArtifactArchiveVerifier.verify(plugin.artifact, packageInspector.inspect(apk))) {
+                    ArtifactArchiveVerification.Verified -> Unit
+                    ArtifactArchiveVerification.PackageNameMismatch -> {
+                        finish(PluginInstallState.Failure("Downloaded APK package does not match the registry"))
+                        return@execute
+                    }
+                    ArtifactArchiveVerification.SignerSetUnsupported -> {
+                        finish(PluginInstallState.Failure("Downloaded APK uses an unsupported signer set"))
+                        return@execute
+                    }
+                    is ArtifactArchiveVerification.SignerMismatch -> {
+                        logger(
+                            "Plugin APK signer mismatch package=${plugin.artifact.packageName} " +
+                                "expected=${verification.expected} actual=${verification.actual}",
+                        )
+                        finish(PluginInstallState.Failure("Downloaded APK signer does not match the registry"))
+                        return@execute
+                    }
+                    ArtifactArchiveVerification.VersionCodeMismatch -> {
+                        finish(PluginInstallState.Failure("Downloaded APK version does not match the registry"))
+                        return@execute
+                    }
                 }
                 if (cancelled.get()) {
                     finish(PluginInstallState.Cancelled)
@@ -203,6 +259,7 @@ class PluginInstaller(
                 packageInstaller = AndroidPackageInstallGateway(appContext),
                 callbackExecutor = Executor { runnable -> Handler(Looper.getMainLooper()).post(runnable) },
                 postInstall = postInstall,
+                logger = { message -> Log.w(LOG_TAG, message) },
             )
         }
 
@@ -220,20 +277,31 @@ class PluginInstaller(
             val actual = digest.digest().joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) }
             return actual.equals(expected, ignoreCase = true)
         }
+
+        private const val LOG_TAG = "NexusStore"
     }
 }
 
 private class AndroidArtifactPackageInspector(
     private val packageManager: PackageManager,
 ) : ArtifactPackageInspector {
-    override fun packageName(apk: File): String? {
+    override fun inspect(apk: File): ArtifactArchiveInfo? {
+        val flags = PackageManager.GET_SIGNING_CERTIFICATES
         val packageInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            packageManager.getPackageArchiveInfo(apk.absolutePath, PackageManager.PackageInfoFlags.of(0))
+            packageManager.getPackageArchiveInfo(
+                apk.absolutePath,
+                PackageManager.PackageInfoFlags.of(flags.toLong()),
+            )
         } else {
             @Suppress("DEPRECATION")
-            packageManager.getPackageArchiveInfo(apk.absolutePath, 0)
-        }
-        return packageInfo?.packageName
+            packageManager.getPackageArchiveInfo(apk.absolutePath, flags)
+        } ?: return null
+        return ArtifactArchiveInfo(
+            packageName = packageInfo.packageName,
+            versionCode = packageInfo.longVersionCode,
+            signingCertificates = packageInfo.signingInfo?.apkContentsSigners.orEmpty()
+                .map { signer -> signer.toByteArray() },
+        )
     }
 }
 
