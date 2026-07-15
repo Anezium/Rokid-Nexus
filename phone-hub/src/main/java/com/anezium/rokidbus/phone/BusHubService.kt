@@ -59,7 +59,9 @@ import java.util.concurrent.atomic.AtomicLong
 
 private const val TAG = "ROKIDBUS-PHONE"
 private const val CHANNEL_ID = "rokidbus_phone"
+private const val DEVELOPER_CHANNEL_ID = "developer"
 private const val NOTIFICATION_ID = 1
+private const val DEVELOPER_NOTIFICATION_ID = 2
 private const val ACTION_LOG = "com.anezium.rokidbus.phone.LOG"
 private const val ACTION_SET_TOKEN = "com.anezium.rokidbus.phone.SET_TOKEN"
 private const val ACTION_STOP = "com.anezium.rokidbus.phone.STOP"
@@ -143,16 +145,19 @@ class BusHubService : Service() {
     @Volatile private var remoteMaxImageBytes = 0
     @Volatile private var lastTransportLinkState = 0
     private var pluginPackageReceiverRegistered = false
+    private val notifiedDeveloperPackages = ConcurrentHashMap.newKeySet<String>()
 
     private val pluginPackageReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
+            val action = intent?.action
+            val replacing = intent?.getBooleanExtra(Intent.EXTRA_REPLACING, false) == true
             if (!PluginPackageChangePolicy.shouldReconcile(
-                    action = intent?.action,
-                    replacing = intent?.getBooleanExtra(Intent.EXTRA_REPLACING, false) == true,
+                    action = action,
+                    replacing = replacing,
                 )
             ) return
             val packageName = intent?.data?.schemeSpecificPart.orEmpty()
-            if (packageName.isNotBlank()) reconcilePluginPackage(packageName)
+            if (packageName.isNotBlank()) reconcilePluginPackage(packageName, action, replacing)
         }
     }
 
@@ -1012,8 +1017,10 @@ class BusHubService : Service() {
         pluginPackageReceiverRegistered = true
     }
 
-    private fun reconcilePluginPackage(packageName: String) {
-        val validPrincipals = pluginGrantReconciler.reconcile().validPrincipals
+    private fun reconcilePluginPackage(packageName: String, action: String?, replacing: Boolean) {
+        val reconciliation = pluginGrantReconciler.reconcile()
+        val validPrincipals = reconciliation.validPrincipals
+        handleSideloadNotification(packageName, action, replacing, reconciliation.candidates)
         cameraConsumerReadiness.recompute()
         val available = validPrincipals.any { principal ->
             principal.packageName == packageName &&
@@ -1027,6 +1034,59 @@ class BusHubService : Service() {
         if (!cameraAvailable) cameraCompanionController.onPackageUnavailable(packageName)
         notifyLinkState()
         if (::pluginRegistry.isInitialized && isCxrUp()) pluginRegistry.syncLauncherList()
+    }
+
+    private fun handleSideloadNotification(
+        packageName: String,
+        action: String?,
+        replacing: Boolean,
+        candidates: List<PhonePluginCandidate>,
+    ) {
+        if (action == Intent.ACTION_PACKAGE_REMOVED && !replacing) {
+            notifiedDeveloperPackages.remove(packageName)
+            getSystemService(NotificationManager::class.java)
+                .cancel(packageName, DEVELOPER_NOTIFICATION_ID)
+            return
+        }
+        val candidate = candidates.singleOrNull { it.packageName == packageName }
+        val principal = (candidate as? PhonePluginCandidate.Valid)?.principal
+        if (!PluginSideloadNotificationPolicy.shouldNotify(
+                developerModeEnabled = developerModeStore.isEnabled(),
+                action = action,
+                replacing = replacing,
+                candidate = candidate,
+                hasExistingGrant = principal?.let(pluginGrantStore::hasGrantFor) == true,
+            ) || principal == null || !notifiedDeveloperPackages.add(packageName)
+        ) return
+        postSideloadNotification(principal)
+    }
+
+    private fun postSideloadNotification(principal: PhonePluginPrincipal) {
+        val manager = getSystemService(NotificationManager::class.java)
+        manager.createNotificationChannel(
+            NotificationChannel(
+                DEVELOPER_CHANNEL_ID,
+                "Developer",
+                NotificationManager.IMPORTANCE_LOW,
+            ),
+        )
+        val target = PluginGrantTarget(principal.packageName, principal.descriptor.id)
+        val review = PendingIntent.getActivity(
+            this,
+            principal.packageName.hashCode(),
+            PluginPermissionsActivity.intent(this, target),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        val displayName = principal.descriptor.displayName
+        val notification = Notification.Builder(this, DEVELOPER_CHANNEL_ID)
+            .setContentTitle("New plugin detected: $displayName")
+            .setContentText("Tap to review access")
+            .setSmallIcon(R.drawable.ic_nexus_status)
+            .setContentIntent(review)
+            .setAutoCancel(true)
+            .setOnlyAlertOnce(true)
+            .build()
+        manager.notify(principal.packageName, DEVELOPER_NOTIFICATION_ID, notification)
     }
 
     private fun installedPluginPrincipals(): List<PhonePluginPrincipal> =

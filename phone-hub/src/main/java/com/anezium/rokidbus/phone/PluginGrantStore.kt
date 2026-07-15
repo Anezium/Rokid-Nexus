@@ -115,6 +115,10 @@ class PluginGrantStore(private val storage: PluginGrantStorage) {
     @Synchronized
     fun all(): List<PluginGrant> = readGrants().values.sortedWith(GRANT_ORDER)
 
+    @Synchronized
+    fun hasGrantFor(principal: PhonePluginPrincipal): Boolean =
+        readGrants().containsKey(principal.grantKey())
+
     private fun update(grant: PluginGrant) {
         val grants = readGrants().toMutableMap()
         grants.keys.removeAll { existing ->
