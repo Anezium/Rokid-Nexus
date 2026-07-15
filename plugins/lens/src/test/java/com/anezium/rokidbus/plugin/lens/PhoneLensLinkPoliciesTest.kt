@@ -58,6 +58,31 @@ class PhoneLensLinkPoliciesTest {
     }
 
     @Test
+    fun `discovery priming runs once per join cycle with bounded waits`() {
+        val policy = PhoneLensDiscoveryPrimingPolicy(
+            discoveryWaitMs = 2_000L,
+            stopCallbackFallbackMs = 400L,
+        )
+
+        assertEquals(
+            PhoneLensDiscoveryPrimingDecision(
+                shouldPrime = true,
+                discoveryWaitMs = 2_000L,
+                stopCallbackFallbackMs = 400L,
+            ),
+            policy.decision(alreadyPrimedForJoinCycle = false),
+        )
+        assertEquals(
+            PhoneLensDiscoveryPrimingDecision(
+                shouldPrime = false,
+                discoveryWaitMs = 2_000L,
+                stopCallbackFallbackMs = 400L,
+            ),
+            policy.decision(alreadyPrimedForJoinCycle = true),
+        )
+    }
+
+    @Test
     fun `join retries use bounded one two three second backoff`() {
         val policy = PhoneLensJoinRetryPolicy(
             initialDelayMs = 1_000L,

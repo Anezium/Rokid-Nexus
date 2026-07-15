@@ -13,6 +13,30 @@ internal object PhoneLensOfferUpdatePolicy {
             first.port == second.port
 }
 
+internal data class PhoneLensDiscoveryPrimingDecision(
+    val shouldPrime: Boolean,
+    val discoveryWaitMs: Long,
+    val stopCallbackFallbackMs: Long,
+)
+
+/** Pure per-join-cycle discovery decision; Android callbacks remain in PhoneLensImageLink. */
+internal class PhoneLensDiscoveryPrimingPolicy(
+    private val discoveryWaitMs: Long,
+    private val stopCallbackFallbackMs: Long,
+) {
+    init {
+        require(discoveryWaitMs > 0L)
+        require(stopCallbackFallbackMs > 0L)
+    }
+
+    fun decision(alreadyPrimedForJoinCycle: Boolean): PhoneLensDiscoveryPrimingDecision =
+        PhoneLensDiscoveryPrimingDecision(
+            shouldPrime = !alreadyPrimedForJoinCycle,
+            discoveryWaitMs = discoveryWaitMs,
+            stopCallbackFallbackMs = stopCallbackFallbackMs,
+        )
+}
+
 /** Pure bounded backoff; Android operation cleanup remains in PhoneLensImageLink. */
 internal class PhoneLensJoinRetryPolicy(
     private val initialDelayMs: Long,

@@ -89,6 +89,10 @@ internal class PhoneLensImageLink(
         maxAttempts = MAX_JOIN_ATTEMPTS,
     )
     private val joinRecoveryPolicy = PhoneLensJoinRecoveryPolicy()
+    private val discoveryPrimingPolicy = PhoneLensDiscoveryPrimingPolicy(
+        discoveryWaitMs = DISCOVERY_PRIME_WAIT_MS,
+        stopCallbackFallbackMs = STOP_DISCOVERY_FALLBACK_MS,
+    )
 
     @Volatile private var closed = false
     @Volatile private var offer: PhoneLensLinkOffer? = null
@@ -103,6 +107,8 @@ internal class PhoneLensImageLink(
     private var receiverRegistered = false
     private var connectionInfoPoll: Runnable? = null
     private var groupInspectionTimeout: Runnable? = null
+    private var discoveryPrimeTimeout: Runnable? = null
+    private var stopDiscoveryFallback: Runnable? = null
     private var joinAttemptTimeout: Runnable? = null
     private var joinRetry: Runnable? = null
     private var tcpRetry: ScheduledFuture<*>? = null
@@ -112,6 +118,9 @@ internal class PhoneLensImageLink(
     private var consecutiveJoinFailures = 0
     private var groupInspectionId = 0L
     private var p2pCleanupInProgress = false
+    private var discoveryPrimedForJoinCycle = false
+    private var discoveryPriming = false
+    private var discoveryStopPending = false
     private val p2pCleanupContinuations = mutableListOf<() -> Unit>()
     @Volatile var state: PhoneLensLinkState = PhoneLensLinkState.IDLE
         private set
@@ -153,6 +162,16 @@ internal class PhoneLensImageLink(
                         currentSession()?.let { (expectedGeneration, currentOffer) ->
                             requestConnectionInfo(expectedGeneration, currentOffer)
                         }
+                    }
+                }
+
+                WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION -> {
+                    currentSession()?.let { (expectedGeneration, currentOffer) ->
+                        stopDiscoveryAfterPriming(
+                            expectedGeneration,
+                            currentOffer,
+                            cause = "peers_changed",
+                        )
                     }
                 }
             }
@@ -208,6 +227,9 @@ internal class PhoneLensImageLink(
         acquirePerformanceLocks()
         joinRetryPolicy.reset()
         consecutiveJoinFailures = 0
+        discoveryPrimedForJoinCycle = false
+        discoveryPriming = false
+        discoveryStopPending = false
         conflictRecoveryAttempted = false
         probingReusedGroup = false
         state = PhoneLensLinkState.WAITING_NETWORK
@@ -302,16 +324,20 @@ internal class PhoneLensImageLink(
     }
 
     /**
-     * Joins the glasses' autonomous group directly by SSID + passphrase. An autonomous group
-     * owner is not returned by discoverPeers() on this hardware, so peer discovery/matching is
-     * skipped entirely; a credential-only WifiP2pConfig also avoids the WifiNetworkSpecifier
-     * system approval dialog.
+     * Joins the glasses' autonomous group directly by SSID + passphrase. Discovery is used only
+     * to prime the scan; the autonomous owner need not appear in the peer list. A credential-only
+     * WifiP2pConfig also avoids the WifiNetworkSpecifier system approval dialog.
      */
     @SuppressLint("MissingPermission")
     private fun connectByCredentials(expectedGeneration: Long, currentOffer: PhoneLensLinkOffer) {
         if (!isP2pCurrent(expectedGeneration, currentOffer) ||
-            isConnectedOrConnectingSocket() || p2pConnecting
+            isConnectedOrConnectingSocket() || p2pConnecting || discoveryPriming
         ) return
+        val primingDecision = discoveryPrimingPolicy.decision(discoveryPrimedForJoinCycle)
+        if (primingDecision.shouldPrime) {
+            primeDiscoveryThenConnect(expectedGeneration, currentOffer, primingDecision)
+            return
+        }
         clearJoinRetry()
         clearConnectionInfoPoll()
         clearJoinAttemptTimeout()
@@ -365,6 +391,146 @@ internal class PhoneLensImageLink(
                 cause = "connect_exception_${it.javaClass.simpleName}",
             )
         }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun primeDiscoveryThenConnect(
+        expectedGeneration: Long,
+        currentOffer: PhoneLensLinkOffer,
+        decision: PhoneLensDiscoveryPrimingDecision,
+    ) {
+        if (!isP2pCurrent(expectedGeneration, currentOffer) || discoveryPriming ||
+            discoveryPrimedForJoinCycle
+        ) return
+        val localManager = manager ?: return failP2p("lensLinkP2pManagerLost")
+        val localChannel = channel ?: return failP2p("lensLinkP2pChannelLost")
+        discoveryPrimedForJoinCycle = true
+        discoveryPriming = true
+        discoveryStopPending = false
+        clearDiscoveryPrimingCallbacks()
+        log("lensLinkDiscoveryPrimeStarted waitMs=${decision.discoveryWaitMs}")
+        discoveryPrimeTimeout = Runnable {
+            discoveryPrimeTimeout = null
+            stopDiscoveryAfterPriming(
+                expectedGeneration,
+                currentOffer,
+                cause = "timeout",
+            )
+        }.also { mainHandler.postDelayed(it, decision.discoveryWaitMs) }
+        runCatching {
+            localManager.discoverPeers(localChannel, object : WifiP2pManager.ActionListener {
+                override fun onSuccess() {
+                    if (!isDiscoveryPrimingCurrent(expectedGeneration, currentOffer, localChannel)) {
+                        return
+                    }
+                    log("lensLinkDiscoveryPrimeAccepted")
+                }
+
+                override fun onFailure(reason: Int) {
+                    if (!isDiscoveryPrimingCurrent(expectedGeneration, currentOffer, localChannel)) {
+                        return
+                    }
+                    log("lensLinkDiscoveryPrimeFailed reason=$reason")
+                    stopDiscoveryAfterPriming(
+                        expectedGeneration,
+                        currentOffer,
+                        cause = "callback_reason_$reason",
+                    )
+                }
+            })
+        }.onFailure {
+            if (isDiscoveryPrimingCurrent(expectedGeneration, currentOffer, localChannel)) {
+                log("lensLinkDiscoveryPrimeException type=${it.javaClass.simpleName}")
+                stopDiscoveryAfterPriming(
+                    expectedGeneration,
+                    currentOffer,
+                    cause = "exception",
+                )
+            }
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun stopDiscoveryAfterPriming(
+        expectedGeneration: Long,
+        currentOffer: PhoneLensLinkOffer,
+        cause: String,
+    ) {
+        if (!discoveryPriming || discoveryStopPending ||
+            !isP2pCurrent(expectedGeneration, currentOffer)
+        ) return
+        val localManager = manager ?: return failP2p("lensLinkP2pManagerLost")
+        val localChannel = channel ?: return failP2p("lensLinkP2pChannelLost")
+        discoveryStopPending = true
+        discoveryPrimeTimeout?.let(mainHandler::removeCallbacks)
+        discoveryPrimeTimeout = null
+        val fallbackMs = discoveryPrimingPolicy
+            .decision(alreadyPrimedForJoinCycle = true)
+            .stopCallbackFallbackMs
+        log("lensLinkDiscoveryPrimeStopping cause=$cause fallbackMs=$fallbackMs")
+        stopDiscoveryFallback = Runnable {
+            stopDiscoveryFallback = null
+            completeDiscoveryPriming(
+                expectedGeneration,
+                currentOffer,
+                localChannel,
+                cause = "stop_timeout",
+            )
+        }.also { mainHandler.postDelayed(it, fallbackMs) }
+        runCatching {
+            localManager.stopPeerDiscovery(localChannel, object : WifiP2pManager.ActionListener {
+                override fun onSuccess() = completeDiscoveryPriming(
+                    expectedGeneration,
+                    currentOffer,
+                    localChannel,
+                    cause = "stop_succeeded",
+                )
+
+                override fun onFailure(reason: Int) = completeDiscoveryPriming(
+                    expectedGeneration,
+                    currentOffer,
+                    localChannel,
+                    cause = "stop_failed_$reason",
+                )
+            })
+        }.onFailure {
+            completeDiscoveryPriming(
+                expectedGeneration,
+                currentOffer,
+                localChannel,
+                cause = "stop_exception_${it.javaClass.simpleName}",
+            )
+        }
+    }
+
+    private fun completeDiscoveryPriming(
+        expectedGeneration: Long,
+        currentOffer: PhoneLensLinkOffer,
+        expectedChannel: WifiP2pManager.Channel,
+        cause: String,
+    ) {
+        if (!isDiscoveryPrimingCurrent(expectedGeneration, currentOffer, expectedChannel) ||
+            !discoveryStopPending
+        ) return
+        clearDiscoveryPrimingCallbacks()
+        discoveryPriming = false
+        discoveryStopPending = false
+        log("lensLinkDiscoveryPrimeCompleted cause=$cause")
+        connectByCredentials(expectedGeneration, currentOffer)
+    }
+
+    private fun isDiscoveryPrimingCurrent(
+        expectedGeneration: Long,
+        currentOffer: PhoneLensLinkOffer,
+        expectedChannel: WifiP2pManager.Channel,
+    ): Boolean = discoveryPriming && channel === expectedChannel &&
+        isP2pCurrent(expectedGeneration, currentOffer)
+
+    private fun clearDiscoveryPrimingCallbacks() {
+        discoveryPrimeTimeout?.let(mainHandler::removeCallbacks)
+        discoveryPrimeTimeout = null
+        stopDiscoveryFallback?.let(mainHandler::removeCallbacks)
+        stopDiscoveryFallback = null
     }
 
     @SuppressLint("MissingPermission")
@@ -736,6 +902,7 @@ internal class PhoneLensImageLink(
         val filter = IntentFilter().apply {
             addAction(WifiP2pManager.WIFI_P2P_STATE_CHANGED_ACTION)
             addAction(WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION)
+            addAction(WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION)
         }
         ContextCompat.registerReceiver(
             appContext,
@@ -1068,6 +1235,9 @@ internal class PhoneLensImageLink(
         p2pConnecting = false
         groupInspecting = false
         probingReusedGroup = false
+        discoveryPrimedForJoinCycle = false
+        discoveryPriming = false
+        discoveryStopPending = false
         groupInspectionId += 1L
         activeJoinAttempt = 0
         consecutiveJoinFailures = 0
@@ -1076,6 +1246,7 @@ internal class PhoneLensImageLink(
         clearJoinRetry()
         clearConnectionInfoPoll()
         clearGroupInspectionTimeout()
+        clearDiscoveryPrimingCallbacks()
         clearJoinAttemptTimeout()
         clearTcpRetry()
         onComplete?.let(p2pCleanupContinuations::add)
@@ -1158,6 +1329,8 @@ internal class PhoneLensImageLink(
         private const val TCP_RETRY_MS = 1_000L
         private const val CONNECTION_INFO_POLL_MS = 500L
         private const val GROUP_INFO_TIMEOUT_MS = 1_000L
+        private const val DISCOVERY_PRIME_WAIT_MS = 2_000L
+        private const val STOP_DISCOVERY_FALLBACK_MS = 400L
         private const val FIRST_JOIN_PROGRESS_TIMEOUT_MS = 1_500L
         private const val JOIN_PROGRESS_TIMEOUT_MS = 4_500L
         private const val INITIAL_JOIN_RETRY_MS = 300L
