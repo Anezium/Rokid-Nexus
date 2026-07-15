@@ -64,20 +64,13 @@ class BusInspectorActivity : Activity() {
             addView(eventCard(), NexusUi.block())
         }
 
-        setContentView(
-            ScrollView(this).apply {
-                setBackgroundColor(NexusUi.BG)
-                isFillViewport = true
-                isVerticalScrollBarEnabled = false
-                addView(
-                    content,
-                    ViewGroup.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.WRAP_CONTENT,
-                    ),
-                )
-            },
-        )
+        val root = NexusUi.fixedRoot(this).apply {
+            addView(
+                NexusUi.screen(this@BusInspectorActivity, content),
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f),
+            )
+        }
+        setContentView(root)
     }
 
     override fun onResume() {
