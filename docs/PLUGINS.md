@@ -48,6 +48,8 @@ dependencies { implementation(project(":bus-client")) }   // SDK: bus client + N
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- required for the in-app Uninstall row to fire the system dialog -->
+    <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
 
     <queries>
         <intent><action android:name="com.anezium.rokidbus.action.HUB" /></intent>

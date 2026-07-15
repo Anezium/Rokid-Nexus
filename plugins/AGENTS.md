@@ -57,6 +57,9 @@ Copy `plugins/sample` as the canonical template. The hard rules:
 5. Foreground-service permissions: `FOREGROUND_SERVICE` +
    `FOREGROUND_SERVICE_SPECIAL_USE`. Do **not** declare `POST_NOTIFICATIONS` — the
    session FGS runs fine with its notification suppressed on Android 13+.
+6. `REQUEST_DELETE_PACKAGES` — required for the in-app Uninstall row
+   (`NexusUi.uninstallCard`) to open the system uninstall dialog. Without it the
+   `ACTION_DELETE` intent is silently rejected.
 
 ## 4. Descriptor rules (validated at discovery)
 
