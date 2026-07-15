@@ -47,6 +47,9 @@
                 android:name="com.anezium.rokidbus.plugin.DISPLAY_NAME"
                 android:value="Feeds" />
             <meta-data
+                android:name="com.anezium.rokidbus.plugin.ICON"
+                android:value="feed" />
+            <meta-data
                 android:name="com.anezium.rokidbus.plugin.API_VERSION"
                 android:value="3" />
             <meta-data

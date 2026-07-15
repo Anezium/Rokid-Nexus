@@ -38,6 +38,7 @@ data class PluginCatalogEntry(
     val displayName: String,
     val state: PluginCatalogState,
     val launchable: Boolean,
+    val iconKey: String? = null,
     val builtIn: NexusPlugin? = null,
     val principal: PhonePluginPrincipal? = null,
     val settingsComponent: PluginSettingsTarget? = null,
@@ -117,6 +118,7 @@ data class PluginCatalog(val entries: List<PluginCatalogEntry>) {
                             displayName = principal.descriptor.displayName,
                             state = state,
                             launchable = principal.descriptor.launchable && state == PluginCatalogState.ENABLED,
+                            iconKey = principal.descriptor.iconKey,
                             principal = principal,
                             settingsComponent = settings,
                         )

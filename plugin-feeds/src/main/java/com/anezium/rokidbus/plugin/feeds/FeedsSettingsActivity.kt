@@ -13,8 +13,8 @@ import android.webkit.CookieManager
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.Toast
-import com.anezium.rokidbus.client.R as BusClientR
 import com.anezium.rokidbus.client.ui.BusTheme
+import com.anezium.rokidbus.client.ui.NexusPluginIcons
 import com.anezium.rokidbus.client.ui.NexusUi
 
 class FeedsSettingsActivity : Activity() {
@@ -74,7 +74,7 @@ class FeedsSettingsActivity : Activity() {
             addView(
                 NexusUi.pluginHeader(
                     this@FeedsSettingsActivity,
-                    BusClientR.drawable.ic_plugin_send,
+                    NexusPluginIcons.drawableFor("feed"),
                     "Feeds",
                     "Social timelines · v1.0",
                 ),

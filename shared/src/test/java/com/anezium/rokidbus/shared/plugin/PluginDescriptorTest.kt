@@ -2,6 +2,7 @@ package com.anezium.rokidbus.shared.plugin
 
 import com.anezium.rokidbus.shared.BusConstants
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -22,6 +23,39 @@ class PluginDescriptorTest {
         val descriptor = (result as PluginDescriptorParseResult.Valid).descriptor
         assertEquals("hello.plugin", descriptor.id)
         assertEquals(listOf("/http/request/reply", "/plugin/hello.plugin", "/system/plugin"), descriptor.receivePrefixes)
+    }
+
+    @Test
+    fun `icon key is optional normalized and unrestricted`() {
+        fun iconKeyFor(value: String?): String? {
+            val metadata = if (value == null) {
+                validMetadata()
+            } else {
+                validMetadata() + (BusConstants.META_PLUGIN_ICON to value)
+            }
+            val result = PluginDescriptorParser.parse(metadata)
+            assertTrue(result is PluginDescriptorParseResult.Valid)
+            return (result as PluginDescriptorParseResult.Valid).descriptor.iconKey
+        }
+
+        assertNull(iconKeyFor(null))
+        assertNull(iconKeyFor("   "))
+        assertEquals("feed", iconKeyFor("feed"))
+        assertEquals("music", iconKeyFor("  MUSIC  "))
+        assertEquals("future-icon", iconKeyFor("future-icon"))
+    }
+
+    @Test
+    fun `conflicting icon metadata cannot invalidate descriptor`() {
+        val entries = validMetadata().entries.map { it.key to it.value } + listOf(
+            BusConstants.META_PLUGIN_ICON to "music",
+            BusConstants.META_PLUGIN_ICON to "star",
+        )
+
+        val result = PluginDescriptorParser.parse(entries)
+
+        assertTrue(result is PluginDescriptorParseResult.Valid)
+        assertEquals("star", (result as PluginDescriptorParseResult.Valid).descriptor.iconKey)
     }
 
     @Test

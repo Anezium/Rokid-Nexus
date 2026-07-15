@@ -1,6 +1,6 @@
 package com.anezium.rokidbus.phone
 
-import com.anezium.rokidbus.client.R as BusClientR
+import com.anezium.rokidbus.client.ui.NexusPluginIcons
 import com.anezium.rokidbus.client.ui.NexusUi
 import android.Manifest
 import android.app.Activity
@@ -187,7 +187,7 @@ class MainActivity : Activity() {
                 if (index > 0) pluginSection.addView(BusTheme.gap(this, 9))
                 pluginSection.addView(
                     pluginRow(
-                        iconRes = iconFor(entry.id),
+                        iconRes = NexusPluginIcons.drawableFor(entry.iconKey, entry.id),
                         title = entry.displayName,
                         subtitle = catalogStateLabel(entry),
                         badge = "DEV".takeIf {
@@ -217,14 +217,6 @@ class MainActivity : Activity() {
         PluginCatalogState.DENIED -> "Access denied"
         PluginCatalogState.INVALID -> "Invalid plugin${entry.detail?.let { " · $it" }.orEmpty()}"
         PluginCatalogState.MISSING_CAPABILITY -> "Missing surfaces access"
-    }
-
-    private fun iconFor(id: String?): Int = when (id) {
-        "lyrics" -> BusClientR.drawable.ic_plugin_music
-        "media" -> BusClientR.drawable.ic_plugin_disc
-        "transit" -> BusClientR.drawable.ic_plugin_bus
-        "lens" -> BusClientR.drawable.ic_plugin_lens
-        else -> BusClientR.drawable.ic_plugin_send
     }
 
     private fun openCatalogEntry(entry: PluginCatalogEntry) {

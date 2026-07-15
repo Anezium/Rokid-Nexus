@@ -18,8 +18,8 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
-import com.anezium.rokidbus.client.R as BusClientR
 import com.anezium.rokidbus.client.ui.BusTheme
+import com.anezium.rokidbus.client.ui.NexusPluginIcons
 import com.anezium.rokidbus.client.ui.NexusUi
 import java.util.concurrent.Executors
 
@@ -131,7 +131,7 @@ class TransitSettingsActivity : Activity() {
             addView(
                 NexusUi.pluginHeader(
                     this@TransitSettingsActivity,
-                    BusClientR.drawable.ic_plugin_bus,
+                    NexusPluginIcons.drawableFor("bus"),
                     "Transit",
                     "Stops and departures · v1.0",
                 ),

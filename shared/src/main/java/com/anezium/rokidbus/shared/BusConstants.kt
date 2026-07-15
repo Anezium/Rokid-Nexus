@@ -12,6 +12,7 @@ object BusConstants {
     const val META_DATA_PATHS = "com.anezium.rokidbus.paths"
     const val META_PLUGIN_ID = "com.anezium.rokidbus.plugin.ID"
     const val META_PLUGIN_DISPLAY_NAME = "com.anezium.rokidbus.plugin.DISPLAY_NAME"
+    const val META_PLUGIN_ICON = "com.anezium.rokidbus.plugin.ICON"
     const val META_PLUGIN_API_VERSION = "com.anezium.rokidbus.plugin.API_VERSION"
     const val META_PLUGIN_CAPABILITIES = "com.anezium.rokidbus.plugin.CAPABILITIES"
     const val META_PLUGIN_RECEIVE_PREFIXES = "com.anezium.rokidbus.plugin.RECEIVE_PREFIXES"

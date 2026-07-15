@@ -105,6 +105,7 @@ class PhonePluginDiscovery(private val packageManager: PackageManager) {
         private val METADATA_KEYS = listOf(
             BusConstants.META_PLUGIN_ID,
             BusConstants.META_PLUGIN_DISPLAY_NAME,
+            BusConstants.META_PLUGIN_ICON,
             BusConstants.META_PLUGIN_API_VERSION,
             BusConstants.META_PLUGIN_CAPABILITIES,
             BusConstants.META_PLUGIN_RECEIVE_PREFIXES,

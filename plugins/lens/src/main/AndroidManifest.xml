@@ -23,6 +23,7 @@
             <intent-filter><action android:name="com.anezium.rokidbus.action.PLUGIN" /></intent-filter>
             <meta-data android:name="com.anezium.rokidbus.plugin.ID" android:value="lens" />
             <meta-data android:name="com.anezium.rokidbus.plugin.DISPLAY_NAME" android:value="Lens" />
+            <meta-data android:name="com.anezium.rokidbus.plugin.ICON" android:value="lens" />
             <meta-data android:name="com.anezium.rokidbus.plugin.API_VERSION" android:value="3" />
             <meta-data android:name="com.anezium.rokidbus.plugin.CAPABILITIES" android:value="camera" />
             <meta-data android:name="com.anezium.rokidbus.plugin.RECEIVE_PREFIXES"

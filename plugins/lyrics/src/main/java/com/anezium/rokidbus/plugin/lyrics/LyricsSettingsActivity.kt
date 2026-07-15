@@ -1,6 +1,6 @@
 package com.anezium.rokidbus.plugin.lyrics
 
-import com.anezium.rokidbus.client.R as BusClientR
+import com.anezium.rokidbus.client.ui.NexusPluginIcons
 import com.anezium.rokidbus.client.ui.NexusUi
 import android.app.Activity
 import android.app.Dialog
@@ -153,7 +153,7 @@ class LyricsSettingsActivity : Activity() {
             addView(
                 NexusUi.pluginHeader(
                     this@LyricsSettingsActivity,
-                    BusClientR.drawable.ic_plugin_music,
+                    NexusPluginIcons.drawableFor("music"),
                     "Lyrics",
                     "Now-playing lyrics · v1.0",
                 ),

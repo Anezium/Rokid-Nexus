@@ -6,8 +6,8 @@ import android.net.Uri
 import android.os.Bundle
 import android.view.ViewGroup
 import android.widget.LinearLayout
-import com.anezium.rokidbus.client.R as BusClientR
 import com.anezium.rokidbus.client.ui.BusTheme
+import com.anezium.rokidbus.client.ui.NexusPluginIcons
 import com.anezium.rokidbus.client.ui.NexusUi
 
 class HelloActivity : Activity() {
@@ -38,7 +38,7 @@ class HelloActivity : Activity() {
             addView(
                 NexusUi.pluginHeader(
                     this@HelloActivity,
-                    BusClientR.drawable.ic_plugin_bus,
+                    NexusPluginIcons.drawableFor("star"),
                     "Sample Plugin",
                     "Headless plugin template · v1.0",
                 ),

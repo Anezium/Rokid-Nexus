@@ -20,7 +20,7 @@ class PluginCatalogTest {
         override fun onInput(event: NexusInputEvent) = Unit
     }
 
-    private fun principal(id: String = "hello") = PhonePluginPrincipal(
+    private fun principal(id: String = "hello", iconKey: String? = null) = PhonePluginPrincipal(
         packageName = "dev.example.$id",
         serviceComponent = ComponentName("dev.example.$id", "dev.example.$id.Service"),
         uid = 10,
@@ -33,18 +33,20 @@ class PluginCatalogTest {
             receivePrefixes = listOf("/plugin/$id", "/system/plugin"),
             settingsActivity = ".$id.SettingsActivity",
             launchable = true,
+            iconKey = iconKey,
         ),
     )
 
     @Test
     fun `catalog merges built-in and approved external deterministically`() {
-        val external = principal()
+        val external = principal(iconKey = "star")
         val catalog = PluginCatalog.build(
             listOf(BuiltIn("lyrics")),
             listOf(PhonePluginCandidate.Valid(external)),
         ) { PluginGrantState.Approved(setOf(PluginCapability.SURFACES)) }
         assertEquals(listOf("hello", "lyrics"), catalog.launchableEntries.mapNotNull { it.id })
         assertEquals("dev.example.hello.hello.SettingsActivity", catalog.entry("hello")?.settingsComponent?.className)
+        assertEquals("star", catalog.entry("hello")?.iconKey)
     }
 
     @Test

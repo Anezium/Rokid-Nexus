@@ -51,6 +51,9 @@
                 android:name="com.anezium.rokidbus.plugin.DISPLAY_NAME"
                 android:value="Media Deck" />
             <meta-data
+                android:name="com.anezium.rokidbus.plugin.ICON"
+                android:value="disc" />
+            <meta-data
                 android:name="com.anezium.rokidbus.plugin.API_VERSION"
                 android:value="3" />
             <meta-data

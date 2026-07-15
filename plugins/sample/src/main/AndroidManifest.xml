@@ -43,6 +43,9 @@
                 android:name="com.anezium.rokidbus.plugin.DISPLAY_NAME"
                 android:value="Hello Nexus" />
             <meta-data
+                android:name="com.anezium.rokidbus.plugin.ICON"
+                android:value="star" />
+            <meta-data
                 android:name="com.anezium.rokidbus.plugin.API_VERSION"
                 android:value="3" />
             <meta-data

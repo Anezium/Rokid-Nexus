@@ -56,6 +56,9 @@
                 android:name="com.anezium.rokidbus.plugin.DISPLAY_NAME"
                 android:value="Lyrics" />
             <meta-data
+                android:name="com.anezium.rokidbus.plugin.ICON"
+                android:value="music" />
+            <meta-data
                 android:name="com.anezium.rokidbus.plugin.API_VERSION"
                 android:value="3" />
             <meta-data

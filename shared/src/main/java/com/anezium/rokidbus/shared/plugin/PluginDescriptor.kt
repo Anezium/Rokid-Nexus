@@ -10,6 +10,7 @@ data class PluginDescriptor(
     val receivePrefixes: List<String>,
     val settingsActivity: String?,
     val launchable: Boolean,
+    val iconKey: String? = null,
 ) {
     companion object {
         private val idPattern = Regex("[a-z][a-z0-9._-]{2,63}")
@@ -27,6 +28,7 @@ object PluginDescriptorParser {
     private val knownKeys = setOf(
         BusConstants.META_PLUGIN_ID,
         BusConstants.META_PLUGIN_DISPLAY_NAME,
+        BusConstants.META_PLUGIN_ICON,
         BusConstants.META_PLUGIN_API_VERSION,
         BusConstants.META_PLUGIN_CAPABILITIES,
         BusConstants.META_PLUGIN_RECEIVE_PREFIXES,
@@ -40,7 +42,11 @@ object PluginDescriptorParser {
     fun parse(metadata: List<Pair<String, String?>>): PluginDescriptorParseResult {
         val values = linkedMapOf<String, String?>()
         metadata.filter { it.first in knownKeys }.forEach { (key, value) ->
-            if (values.containsKey(key) && values[key] != value) {
+            if (
+                key != BusConstants.META_PLUGIN_ICON &&
+                values.containsKey(key) &&
+                values[key] != value
+            ) {
                 return PluginDescriptorParseResult.Invalid("CONFLICTING_METADATA")
             }
             values[key] = value
@@ -84,6 +90,10 @@ object PluginDescriptorParser {
         val settingsActivity = values[BusConstants.META_PLUGIN_SETTINGS_ACTIVITY]
             ?.trim()
             ?.takeIf(String::isNotEmpty)
+        val iconKey = values[BusConstants.META_PLUGIN_ICON]
+            ?.trim()
+            ?.lowercase()
+            ?.takeIf(String::isNotEmpty)
         val launchable = when (values[BusConstants.META_PLUGIN_LAUNCHABLE]?.trim()?.lowercase()) {
             null, "", "true" -> true
             "false" -> false
@@ -98,6 +108,7 @@ object PluginDescriptorParser {
                 receivePrefixes = normalizedPrefixes.sorted(),
                 settingsActivity = settingsActivity,
                 launchable = launchable,
+                iconKey = iconKey,
             ),
         )
     }

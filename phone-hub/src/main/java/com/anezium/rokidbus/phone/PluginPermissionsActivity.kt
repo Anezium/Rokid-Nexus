@@ -1,6 +1,6 @@
 package com.anezium.rokidbus.phone
 
-import com.anezium.rokidbus.client.R as BusClientR
+import com.anezium.rokidbus.client.ui.NexusPluginIcons
 import com.anezium.rokidbus.client.ui.NexusUi
 import android.app.Activity
 import android.content.Context
@@ -150,7 +150,14 @@ class PluginPermissionsActivity : Activity() {
             "Unverified installed plugin"
         }
         card.addView(
-            pluginHeaderRow(principal.descriptor.id, principal.descriptor.displayName, provenanceLabel, stateLabel, stateColor),
+            pluginHeaderRow(
+                iconKey = principal.descriptor.iconKey,
+                pluginId = principal.descriptor.id,
+                title = principal.descriptor.displayName,
+                provenance = provenanceLabel,
+                state = stateLabel,
+                stateColor = stateColor,
+            ),
             NexusUi.block(),
         )
         card.addView(BusTheme.gap(this, 14))
@@ -289,6 +296,7 @@ class PluginPermissionsActivity : Activity() {
     }
 
     private fun pluginHeaderRow(
+        iconKey: String?,
         pluginId: String,
         title: String,
         provenance: String,
@@ -299,7 +307,11 @@ class PluginPermissionsActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             addView(
-                NexusUi.iconTileImage(this@PluginPermissionsActivity, iconFor(pluginId), sizeDp = 30),
+                NexusUi.iconTileImage(
+                    this@PluginPermissionsActivity,
+                    NexusPluginIcons.drawableFor(iconKey = iconKey, pluginId = pluginId),
+                    sizeDp = 30,
+                ),
                 LinearLayout.LayoutParams(
                     NexusUi.dp(this@PluginPermissionsActivity, 30),
                     NexusUi.dp(this@PluginPermissionsActivity, 30),
@@ -338,14 +350,6 @@ class PluginPermissionsActivity : Activity() {
                 NexusUi.dp(this@PluginPermissionsActivity, 3),
             )
         }
-
-    private fun iconFor(id: String): Int = when (id) {
-        "lyrics" -> BusClientR.drawable.ic_plugin_music
-        "media" -> BusClientR.drawable.ic_plugin_disc
-        "transit" -> BusClientR.drawable.ic_plugin_bus
-        "lens" -> BusClientR.drawable.ic_plugin_lens
-        else -> BusClientR.drawable.ic_plugin_send
-    }
 
     private fun developerToggle(): CheckBox = CheckBox(this).apply {
         text = "Developer details"
