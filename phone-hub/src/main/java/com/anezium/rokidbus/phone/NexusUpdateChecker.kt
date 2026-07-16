@@ -11,7 +11,6 @@ import java.nio.charset.StandardCharsets
 import java.nio.file.StandardCopyOption
 import java.util.concurrent.Executor
 import java.util.concurrent.Executors
-import org.json.JSONArray
 
 data class NexusSemVersion(
     val major: Long,
@@ -204,47 +203,14 @@ class NexusUpdateChecker internal constructor(
 
         @Throws(NexusUpdateParseException::class)
         internal fun parseLatestAppRelease(body: String): NexusAppRelease? {
-            val releases = try {
-                JSONArray(body)
-            } catch (failure: Exception) {
-                throw NexusUpdateParseException("GitHub releases body is not a JSON array", failure)
-            }
-            val candidates = buildList {
-                for (index in 0 until releases.length()) {
-                    val release = releases.optJSONObject(index) ?: continue
-                    if (release.optBoolean("draft") || release.optBoolean("prerelease")) continue
-                    val version = NexusSemVersion.fromAppTag(release.optString("tag_name")) ?: continue
-                    val expectedAssetName = "nexus-phone-$version.apk"
-                    val assets = release.optJSONArray("assets") ?: continue
-                    for (assetIndex in 0 until assets.length()) {
-                        val asset = assets.optJSONObject(assetIndex) ?: continue
-                        // nexus-glasses-<version>.apk is intentionally out of scope for the phone self-updater.
-                        if (asset.optString("name") != expectedAssetName) continue
-                        val apkUrl = asset.optString("browser_download_url")
-                            .takeIf(::isHttpsUrl) ?: continue
-                        add(
-                            NexusAppRelease(
-                                version = version,
-                                apkUrl = apkUrl,
-                                sha256 = asset.optString("digest")
-                                    .takeIf { it.matches(Regex("^sha256:[0-9a-fA-F]{64}$")) }
-                                    ?.substringAfter("sha256:")
-                                    ?.lowercase(),
-                            ),
-                        )
-                        break
-                    }
-                }
-            }
-            return candidates.maxByOrNull(NexusAppRelease::version)
+            val asset = NexusReleaseAssetResolver.parseLatest(body, NexusReleaseArtifact.PHONE)
+                ?: return null
+            return NexusAppRelease(asset.version, asset.apkUrl, asset.sha256)
         }
-
-        private fun isHttpsUrl(value: String): Boolean =
-            runCatching { URL(value).protocol == "https" }.getOrDefault(false)
     }
 }
 
-private class HttpsNexusUpdateTransport(private val url: URL) : NexusUpdateTransport {
+internal class HttpsNexusUpdateTransport(private val url: URL) : NexusUpdateTransport {
     init {
         require(url.protocol == "https") { "GitHub releases URL must use HTTPS" }
     }

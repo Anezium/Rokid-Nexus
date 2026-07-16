@@ -87,6 +87,52 @@ class NexusUpdateCheckerTest {
     }
 
     @Test
+    fun `release parser selects latest exact glasses asset`() {
+        val release = NexusReleaseAssetResolver.parseLatest(
+            """
+            [
+              {
+                "tag_name": "v1.0.2",
+                "assets": [{
+                  "name": "nexus-glasses-1.0.2-debug.apk",
+                  "browser_download_url": "https://example.com/wrong.apk"
+                }]
+              },
+              {
+                "tag_name": "v1.0.1",
+                "assets": [{
+                  "name": "nexus-glasses-1.0.1.apk",
+                  "browser_download_url": "https://example.com/old.apk"
+                }]
+              },
+              {
+                "tag_name": "v1.0.3",
+                "draft": false,
+                "prerelease": false,
+                "assets": [
+                  {
+                    "name": "nexus-phone-1.0.3.apk",
+                    "browser_download_url": "https://example.com/phone.apk"
+                  },
+                  {
+                    "name": "nexus-glasses-1.0.3.apk",
+                    "browser_download_url": "https://example.com/glasses.apk",
+                    "digest": "sha256:${"cd".repeat(32)}"
+                  }
+                ]
+              }
+            ]
+            """.trimIndent(),
+            NexusReleaseArtifact.GLASSES,
+        )
+
+        assertNotNull(release)
+        assertEquals(NexusSemVersion(1, 0, 3), release?.version)
+        assertEquals("https://example.com/glasses.apk", release?.apkUrl)
+        assertEquals("cd".repeat(32), release?.sha256)
+    }
+
+    @Test
     fun `signature mismatch install failure gives release reinstall guidance`() {
         val message = selfUpdateInstallFailureMessage(
             PackageInstallEvent.Failure("INSTALL_FAILED_UPDATE_INCOMPATIBLE: signatures do not match"),
