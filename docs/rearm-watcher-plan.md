@@ -1,5 +1,10 @@
 # Glasses accessibility re-arm watcher — implementation plan
 
+> Superseded for public first-run setup on 2026-07-16. The shipped flow uses authenticated
+> Wireless Debugging TLS and explicitly disables legacy TCP ADB instead of persisting port 5555.
+> See [`SELF_ARM_ONBOARDING.md`](SELF_ARM_ONBOARDING.md). The material below is retained as the
+> historical classic-loopback design record only.
+
 Branch: `glasses-rearm-watcher` (worktree `E:/Tools/Rokid/RokidNexus-rearm`).
 Goal: RokidNexus glasses keep their accessibility service enabled with **zero user
 input** and **survive being killed** — self-healing — without draining the battery.

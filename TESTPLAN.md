@@ -63,18 +63,29 @@ adb -s $phone shell pm grant com.anezium.rokidbus.phone android.permission.BLUET
 
 ## Arm Accessibility
 
-Append RokidBus to the existing Relay accessibility setting. Do not overwrite Relay.
+For the supported no-PC first launch, open the glasses app and follow the two HUD steps:
+
+1. Open Accessibility and enable only **Rokid Nexus Hub**.
+2. Start Wireless Setup, enable Wireless Debugging, and keep **Pair device with pairing code** open.
+
+Nexus preserves other enabled services, performs the grant plus accessibility plus watchdog setup
+in one authenticated KADB TLS shell, and disables legacy TCP ADB. See
+[`docs/SELF_ARM_ONBOARDING.md`](docs/SELF_ARM_ONBOARDING.md) for the complete flow and network
+posture.
+
+For an ADB-driven test, preserve the documented development-permission fallback and cold-launch the
+app. Do not replace the enabled-service list manually:
 
 ```powershell
-$busA11y = "com.anezium.rokidbus.glasses/.RokidBusAccessibilityService"
-$current = (adb -s $glasses shell settings get secure enabled_accessibility_services).Trim()
-if ($current -eq "null") { $current = "" }
-if ($current -notlike "*$busA11y*") {
-    $next = if ([string]::IsNullOrWhiteSpace($current)) { $busA11y } else { "$current`:$busA11y" }
-    adb -s $glasses shell settings put secure enabled_accessibility_services "$next"
-}
-adb -s $glasses shell settings put secure accessibility_enabled 1
+$pkg = "com.anezium.rokidbus.glasses"
+adb -s $glasses shell pm grant $pkg android.permission.WRITE_SECURE_SETTINGS
+adb -s $glasses shell am force-stop $pkg
+adb -s $glasses shell am start -W -n "$pkg/.MainActivity"
+adb -s $glasses shell settings get secure accessibility_enabled
 adb -s $glasses shell settings get secure enabled_accessibility_services
+adb -s $glasses shell getprop persist.adb.tcp.port
+adb -s $glasses shell getprop service.adb.tcp.port
+adb -s $glasses shell "ss -ltnp | grep ':5555' || true"
 ```
 
 ## Start Hubs
