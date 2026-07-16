@@ -14,6 +14,8 @@ internal object NexusPhoneState {
     const val EXTRA_GLASSES_APP_MESSAGE = "glasses_app_message"
     const val EXTRA_GLASSES_APP_RETRY = "glasses_app_retry"
     const val EXTRA_GLASSES_APP_VERSION_NAME = "glasses_app_version_name"
+    const val EXTRA_GLASSES_APP_UPDATE_STATE = "glasses_app_update_state"
+    const val EXTRA_GLASSES_APP_LATEST_VERSION_NAME = "glasses_app_latest_version_name"
 
     @Volatile var updateAvailable: Boolean = false
         private set
@@ -28,6 +30,8 @@ internal object NexusPhoneState {
     @Volatile var glassesAppInstallState: GlassesAppInstallState = GlassesAppInstallState.Unknown
         private set
     @Volatile var installedGlassesVersionName: String? = null
+        private set
+    @Volatile var glassesAppUpdateState: GlassesAppUpdateState = GlassesAppUpdateState.Unknown
         private set
 
     private val listeners = CopyOnWriteArraySet<() -> Unit>()
@@ -70,10 +74,36 @@ internal object NexusPhoneState {
         notifyListeners()
     }
 
+    fun setGlassesAppUpdateState(state: GlassesAppUpdateState) {
+        if (glassesAppUpdateState == state) return
+        glassesAppUpdateState = state
+        notifyListeners()
+    }
+
     fun updateGlassesAppInstallState(intent: Intent): Boolean {
         var updated = false
         if (intent.hasExtra(EXTRA_GLASSES_APP_VERSION_NAME)) {
             setInstalledGlassesVersionName(intent.getStringExtra(EXTRA_GLASSES_APP_VERSION_NAME))
+            updated = true
+        }
+        if (intent.hasExtra(EXTRA_GLASSES_APP_UPDATE_STATE)) {
+            val installed = installedGlassesVersionName?.let(NexusSemVersion::parse)
+            val latest = intent.getStringExtra(EXTRA_GLASSES_APP_LATEST_VERSION_NAME)
+                ?.let(NexusSemVersion::parse)
+            val updateState = when (intent.getStringExtra(EXTRA_GLASSES_APP_UPDATE_STATE)) {
+                "up_to_date" -> if (installed != null && latest != null) {
+                    GlassesAppUpdateState.UpToDate(installed, latest)
+                } else {
+                    GlassesAppUpdateState.Unknown
+                }
+                "update_available" -> if (installed != null && latest != null) {
+                    GlassesAppUpdateState.UpdateAvailable(installed, latest)
+                } else {
+                    GlassesAppUpdateState.Unknown
+                }
+                else -> GlassesAppUpdateState.Unknown
+            }
+            setGlassesAppUpdateState(updateState)
             updated = true
         }
         val value = intent.getStringExtra(EXTRA_GLASSES_APP_STATE) ?: return updated

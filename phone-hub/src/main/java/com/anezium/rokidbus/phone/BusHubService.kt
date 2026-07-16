@@ -81,6 +81,7 @@ private const val GLASSES_HUB_PACKAGE = "com.anezium.rokidbus.glasses"
 private const val PREFS = "rokidbus_phone"
 private const val PREF_TOKEN = "cxrl_token"
 private const val LOCAL_BINARY_MAX_BYTES = 512 * 1024
+private const val GLASSES_RELEASE_CHECK_INTERVAL_MILLIS = 4L * 60L * 60L * 1000L
 private const val AUDIO_LEASE_ACQUIRE = "/audio/lease/acquire"
 private const val AUDIO_LEASE_RELEASE = "/audio/lease/release"
 private const val AUDIO_FRAMES = "/audio/frames"
@@ -128,6 +129,7 @@ class BusHubService : Service() {
     private val audioLeaseLock = Any()
     private val glassesAppOperationLock = Any()
     private val glassesAppStateLock = Any()
+    private val glassesAppReleaseLock = Any()
     @Volatile private var sppLoopStop = false
     @Volatile private var hubEnabled = true
     @Volatile private var audioLease: AudioLease? = null
@@ -156,6 +158,10 @@ class BusHubService : Service() {
     @Volatile private var remoteImageSurfaceVersion = 0
     @Volatile private var remoteMaxImageBytes = 0
     @Volatile private var remoteGlassesVersionName: String? = null
+    @Volatile private var latestGlassesAppRelease: NexusReleaseAsset? = null
+    @Volatile private var glassesAppUpdateState: GlassesAppUpdateState = GlassesAppUpdateState.Unknown
+    @Volatile private var glassesReleaseCheckedAtMillis = 0L
+    private var glassesReleaseCheckInFlight = false
     @Volatile private var lastTransportLinkState = 0
     private var pluginPackageReceiverRegistered = false
     private val notifiedDeveloperPackages = ConcurrentHashMap.newKeySet<String>()
@@ -1876,6 +1882,69 @@ class BusHubService : Service() {
             ?: throw IOException("No stable glasses APK release was found")
     }
 
+    private fun updateRemoteGlassesVersionName(versionName: String?) {
+        val stateChanged = synchronized(glassesAppReleaseLock) {
+            val versionChanged = remoteGlassesVersionName != versionName
+            remoteGlassesVersionName = versionName
+            val updateStateChanged = recomputeGlassesAppUpdateStateLocked()
+            versionChanged || updateStateChanged
+        }
+        if (stateChanged) {
+            broadcastGlassesAppState(glassesAppInstallState)
+        }
+        if (versionName != null) refreshLatestGlassesAppRelease()
+    }
+
+    private fun refreshLatestGlassesAppRelease() {
+        val now = System.currentTimeMillis()
+        val shouldCheck = synchronized(glassesAppReleaseLock) {
+            val elapsed = now - glassesReleaseCheckedAtMillis
+            val checkIsDue = glassesReleaseCheckedAtMillis == 0L ||
+                elapsed < 0L || elapsed >= GLASSES_RELEASE_CHECK_INTERVAL_MILLIS
+            if (glassesReleaseCheckInFlight || !checkIsDue) {
+                false
+            } else {
+                glassesReleaseCheckInFlight = true
+                true
+            }
+        }
+        if (!shouldCheck) return
+        executor.execute {
+            val result = runCatching(::resolveLatestGlassesAppRelease)
+            synchronized(glassesAppReleaseLock) {
+                glassesReleaseCheckInFlight = false
+                glassesReleaseCheckedAtMillis = System.currentTimeMillis()
+                result.getOrNull()?.let { latestGlassesAppRelease = it }
+            }
+            result.exceptionOrNull()?.let { failure ->
+                log(
+                    "glasses release check failed type=${failure.javaClass.simpleName} " +
+                        "msg=${failure.message.orEmpty()}",
+                )
+            }
+            if (recomputeGlassesAppUpdateState()) {
+                broadcastGlassesAppState(glassesAppInstallState)
+            }
+        }
+    }
+
+    private fun recomputeGlassesAppUpdateState(): Boolean {
+        return synchronized(glassesAppReleaseLock) { recomputeGlassesAppUpdateStateLocked() }
+    }
+
+    private fun recomputeGlassesAppUpdateStateLocked(): Boolean {
+        val next = GlassesAppUpdatePolicy.compare(
+            installedVersionName = remoteGlassesVersionName,
+            latestRelease = latestGlassesAppRelease,
+        )
+        return if (glassesAppUpdateState == next) {
+            false
+        } else {
+            glassesAppUpdateState = next
+            true
+        }
+    }
+
     private fun beginGlassesAppOperation(): Long? = synchronized(glassesAppOperationLock) {
         if (activeGlassesAppOperationId != null) return@synchronized null
         glassesAppOperationSequence += 1L
@@ -1927,6 +1996,7 @@ class BusHubService : Service() {
     }
 
     private fun broadcastGlassesAppState(state: GlassesAppInstallState) {
+        val updateState = glassesAppUpdateState
         val intent = Intent(ACTION_LOG)
             .setPackage(packageName)
             .putExtra("line", glassesAppStatusLine(state))
@@ -1935,6 +2005,15 @@ class BusHubService : Service() {
                 NexusPhoneState.EXTRA_GLASSES_APP_VERSION_NAME,
                 remoteGlassesVersionName.orEmpty(),
             )
+            .putExtra(
+                NexusPhoneState.EXTRA_GLASSES_APP_UPDATE_STATE,
+                updateState.broadcastValue(),
+            )
+            .apply {
+                updateState.latestVersion()?.let { latest ->
+                    putExtra(NexusPhoneState.EXTRA_GLASSES_APP_LATEST_VERSION_NAME, latest.toString())
+                }
+            }
         when (state) {
             is GlassesAppInstallState.Downloading -> intent
                 .putExtra(NexusPhoneState.EXTRA_GLASSES_APP_DOWNLOADED, state.downloadedBytes)
@@ -1958,6 +2037,18 @@ class BusHubService : Service() {
         GlassesAppInstallState.Installing -> "installing"
         GlassesAppInstallState.Installed -> "installed"
         is GlassesAppInstallState.Error -> "error"
+    }
+
+    private fun GlassesAppUpdateState.broadcastValue(): String = when (this) {
+        GlassesAppUpdateState.Unknown -> "unknown"
+        is GlassesAppUpdateState.UpToDate -> "up_to_date"
+        is GlassesAppUpdateState.UpdateAvailable -> "update_available"
+    }
+
+    private fun GlassesAppUpdateState.latestVersion(): NexusSemVersion? = when (this) {
+        GlassesAppUpdateState.Unknown -> null
+        is GlassesAppUpdateState.UpToDate -> latest
+        is GlassesAppUpdateState.UpdateAvailable -> latest
     }
 
     private fun glassesAppStatusLine(state: GlassesAppInstallState): String = when (state) {
@@ -2065,11 +2156,7 @@ class BusHubService : Service() {
         if (state and (LinkStateBits.CXR_CONTROL_UP or LinkStateBits.SPP_DATA_UP) == 0) {
             remoteImageSurfaceVersion = 0
             remoteMaxImageBytes = 0
-            if (remoteGlassesVersionName != null) {
-                remoteGlassesVersionName = null
-                NexusPhoneState.setInstalledGlassesVersionName(null)
-                broadcastGlassesAppState(glassesAppInstallState)
-            }
+            updateRemoteGlassesVersionName(null)
             imageSurfaceRateLimiter.clear()
         }
         updateStatusNotification(state)
@@ -2140,11 +2227,7 @@ class BusHubService : Service() {
             advertised.maxImageBytes >= ImageSurfaceContract.MAX_IMAGE_BYTES
         remoteImageSurfaceVersion = if (supported) ImageSurfaceContract.VERSION else 0
         remoteMaxImageBytes = if (supported) advertised.maxImageBytes else 0
-        if (remoteGlassesVersionName != advertised.versionName) {
-            remoteGlassesVersionName = advertised.versionName
-            NexusPhoneState.setInstalledGlassesVersionName(advertised.versionName)
-            broadcastGlassesAppState(glassesAppInstallState)
-        }
+        updateRemoteGlassesVersionName(advertised.versionName)
         log("renderer capabilities image=$supported maxImageBytes=$remoteMaxImageBytes")
         // Link bits may be unchanged; repeat the callback so clients refresh capabilities().
         notifyLinkState()
