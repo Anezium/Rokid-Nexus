@@ -514,42 +514,134 @@ class MainActivity : Activity() {
         }
     }.isSuccess
 
+    private enum class StepState { DONE, ACTIVE, PENDING }
+
+    private data class OnboardingStep(
+        val title: String,
+        val body: String,
+        val done: Boolean,
+        val actionLabel: String? = null,
+        val onAction: (() -> Unit)? = null,
+    )
+
     private fun rebuildSetupSection() {
         if (!::setupSection.isInitialized) return
         setupSection.removeAllViews()
-        val cards = buildList {
-            if (savedToken().isBlank()) {
-                add(
-                    setupCard(
-                        title = "Connect your glasses",
-                        body = "Authorize Nexus with the Hi Rokid app so it can talk to your glasses.",
-                        action = "Authorize",
-                    ) { startAuthorization() },
-                )
-            }
-            if (needsBluetoothPermission()) {
-                add(
-                    setupCard(
-                        title = "Nearby devices",
-                        body = "Bluetooth permission is needed to reach the glasses.",
-                        action = "Allow",
-                    ) { requestBluetoothConnectIfNeeded() },
-                )
-            }
-        }
-        if (cards.isEmpty()) {
+
+        val glassesLinked = lastLinkState and LinkStateBits.CXR_CONTROL_UP != 0 &&
+            lastLinkState and LinkStateBits.SPP_DATA_UP != 0
+        val hasPlugin = BusHubService.pluginCatalog(this).entries.any { it.principal != null }
+
+        val steps = listOf(
+            OnboardingStep(
+                title = "Connect your glasses",
+                body = "Authorize Nexus with the Hi Rokid app so it can reach your glasses.",
+                done = savedToken().isNotBlank(),
+                actionLabel = "Authorize",
+                onAction = { startAuthorization() },
+            ),
+            OnboardingStep(
+                title = "Allow Bluetooth",
+                body = "Nexus needs the nearby-devices permission to hold the glasses link.",
+                done = !needsBluetoothPermission(),
+                actionLabel = "Allow",
+                onAction = { requestBluetoothConnectIfNeeded() },
+            ),
+            OnboardingStep(
+                title = "Install Nexus on your glasses",
+                body = "Sideload the glasses app, then turn on its accessibility service so " +
+                    "the HUD and touchpad work. Full steps are in the install guide.",
+                done = glassesLinked,
+                actionLabel = "Get the glasses app",
+                onAction = { openUrl("https://github.com/Anezium/Rokid-Nexus/releases/latest") },
+            ),
+            OnboardingStep(
+                title = "Add your first plugin",
+                body = "Open the Store and install a plugin, then approve its access.",
+                done = hasPlugin,
+                actionLabel = "Open the Store",
+                onAction = { startActivity(Intent(this, StoreActivity::class.java)) },
+            ),
+        )
+
+        if (steps.all { it.done }) {
             setupSection.visibility = View.GONE
             return
         }
         setupSection.visibility = View.VISIBLE
-        setupSection.addView(NexusUi.sectionRow(this, "Set up"), NexusUi.block())
+        setupSection.addView(NexusUi.sectionRow(this, "Get started"), NexusUi.block())
         setupSection.addView(BusTheme.gap(this, 12))
-        cards.forEachIndexed { index, card ->
+        val activeIndex = steps.indexOfFirst { !it.done }
+        steps.forEachIndexed { index, step ->
             if (index > 0) setupSection.addView(BusTheme.gap(this, 10))
-            setupSection.addView(card, NexusUi.block())
+            val state = when {
+                step.done -> StepState.DONE
+                index == activeIndex -> StepState.ACTIVE
+                else -> StepState.PENDING
+            }
+            setupSection.addView(onboardingStepCard(index + 1, state, step), NexusUi.block())
         }
         setupSection.addView(BusTheme.gap(this, 28))
     }
+
+    private fun openUrl(url: String) {
+        runCatching { startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url))) }
+    }
+
+    private fun onboardingStepCard(number: Int, state: StepState, step: OnboardingStep): LinearLayout =
+        NexusUi.card(this).apply {
+            if (state == StepState.PENDING) alpha = 0.55f
+            addView(
+                LinearLayout(this@MainActivity).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    addView(stepBadge(number, state))
+                    addView(
+                        LinearLayout(this@MainActivity).apply {
+                            orientation = LinearLayout.VERTICAL
+                            addView(NexusUi.cardTitle(this@MainActivity, step.title))
+                            addView(BusTheme.gap(this@MainActivity, 4))
+                            addView(NexusUi.rowSub(this@MainActivity, step.body))
+                        },
+                        LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                            marginStart = NexusUi.dp(this@MainActivity, 12)
+                        },
+                    )
+                },
+                NexusUi.block(),
+            )
+            if (state == StepState.ACTIVE && step.actionLabel != null && step.onAction != null) {
+                addView(BusTheme.gap(this@MainActivity, 8))
+                addView(
+                    NexusUi.textButton(this@MainActivity, step.actionLabel).apply {
+                        setOnClickListener { step.onAction.invoke() }
+                    },
+                    LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ).apply { gravity = Gravity.END },
+                )
+            }
+        }
+
+    private fun stepBadge(number: Int, state: StepState): TextView =
+        TextView(this).apply {
+            text = if (state == StepState.DONE) "✓" else number.toString()
+            textSize = 13f
+            gravity = Gravity.CENTER
+            setTextColor(if (state == StepState.DONE) NexusUi.ON_ACCENT else NexusUi.INK)
+            val size = NexusUi.dp(this@MainActivity, 26)
+            background = if (state == StepState.DONE) {
+                NexusUi.rounded(this@MainActivity, NexusUi.GREEN, 999)
+            } else {
+                NexusUi.bordered(
+                    this@MainActivity,
+                    if (state == StepState.ACTIVE) NexusUi.alpha(NexusUi.GREEN, 30) else NexusUi.PANEL,
+                    if (state == StepState.ACTIVE) NexusUi.GREEN else NexusUi.LINE,
+                    999,
+                )
+            }
+            layoutParams = LinearLayout.LayoutParams(size, size)
+        }
 
     private fun setupCard(
         title: String,
