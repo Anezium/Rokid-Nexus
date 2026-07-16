@@ -5,6 +5,7 @@ internal data class SelfArmOnboardingSnapshot(
     val accessibilityEnabled: Boolean,
     val secureSettingsGranted: Boolean,
     val bootstrapComplete: Boolean,
+    val legacyAdbSafe: Boolean,
     val setupRunning: Boolean,
     val failureState: String,
     val progressState: String,
@@ -45,7 +46,8 @@ internal object SelfArmOnboardingStateMachine {
                 SelfArmOnboardingState.Action.RETRY_WIRELESS,
                 snapshot.failureState,
             )
-        snapshot.secureSettingsGranted && snapshot.accessibilityEnabled ->
+        snapshot.secureSettingsGranted && snapshot.accessibilityEnabled &&
+            (snapshot.bootstrapComplete || snapshot.legacyAdbSafe) ->
             state(SelfArmOnboardingState.Stage.COMPLETE)
         !snapshot.wirelessDebuggingSupported ->
             state(SelfArmOnboardingState.Stage.UNSUPPORTED)

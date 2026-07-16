@@ -13,6 +13,8 @@ internal object SelfArmOnboardingStore {
     fun snapshot(context: Context): SelfArmOnboardingSnapshot {
         val appContext = context.applicationContext
         val prefs = prefs(appContext)
+        val legacyAdbSafe = SelfArmNetworkPostureVerifier.capture(appContext).teardownDecision() ==
+            SelfArmNetworkPosture.TeardownDecision.SAFE
         val accessibilityEnabled = runCatching {
             val resolver = appContext.contentResolver
             !SelfArmController.accessibilityRepairNeeded(
@@ -27,6 +29,7 @@ internal object SelfArmOnboardingStore {
                 Manifest.permission.WRITE_SECURE_SETTINGS,
             ) == PackageManager.PERMISSION_GRANTED,
             bootstrapComplete = SelfArmLocalAdbBootstrapper.isBootstrapComplete(appContext),
+            legacyAdbSafe = legacyAdbSafe,
             setupRunning = prefs.getBoolean(KEY_RUNNING, false),
             failureState = prefs.getString(KEY_FAILURE_STATE, "").orEmpty(),
             progressState = prefs.getString(KEY_PROGRESS_STATE, "").orEmpty(),

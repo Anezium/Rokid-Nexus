@@ -63,10 +63,24 @@ class SelfArmOnboardingStateMachineTest {
             accessibilityEnabled = true,
             secureSettingsGranted = true,
             bootstrapComplete = false,
+            legacyAdbSafe = true,
         )
 
         assertEquals(SelfArmOnboardingState.Stage.COMPLETE, state.stage)
         assertEquals(SelfArmOnboardingState.Action.NONE, state.action)
+    }
+
+    @Test
+    fun pmGrantCannotHideUnsafeLegacyAdbPosture() {
+        val state = evaluate(
+            accessibilityEnabled = true,
+            secureSettingsGranted = true,
+            bootstrapComplete = false,
+            legacyAdbSafe = false,
+        )
+
+        assertEquals(SelfArmOnboardingState.Stage.READY_FOR_WIRELESS, state.stage)
+        assertEquals(SelfArmOnboardingState.Action.START_WIRELESS, state.action)
     }
 
     @Test
@@ -84,6 +98,7 @@ class SelfArmOnboardingStateMachineTest {
         accessibilityEnabled: Boolean,
         secureSettingsGranted: Boolean = false,
         bootstrapComplete: Boolean = false,
+        legacyAdbSafe: Boolean = false,
         setupRunning: Boolean = false,
         failureState: String = "",
         progressState: String = "",
@@ -93,6 +108,7 @@ class SelfArmOnboardingStateMachineTest {
             accessibilityEnabled = accessibilityEnabled,
             secureSettingsGranted = secureSettingsGranted,
             bootstrapComplete = bootstrapComplete,
+            legacyAdbSafe = legacyAdbSafe,
             setupRunning = setupRunning,
             failureState = failureState,
             progressState = progressState,

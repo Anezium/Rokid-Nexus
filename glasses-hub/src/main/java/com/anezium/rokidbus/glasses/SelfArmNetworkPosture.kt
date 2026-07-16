@@ -58,7 +58,7 @@ internal object SelfArmNetworkPostureVerifier {
         )
     }
 
-    private fun capture(context: Context): SelfArmNetworkPosture =
+    fun capture(context: Context): SelfArmNetworkPosture =
         SelfArmNetworkPosture(
             wirelessDebuggingEnabled = runCatching {
                 Settings.Global.getInt(context.contentResolver, "adb_wifi_enabled", 0) == 1

@@ -245,7 +245,7 @@ class MainActivity : Activity() {
             statusView.text = if (snapshot.bootstrapComplete) {
                 "Self-arm ready\nEncrypted Wireless Debugging paired\nLegacy ADB 5555 disabled"
             } else {
-                "Accessibility armed\nWRITE_SECURE_SETTINGS granted\nADB fallback remains available"
+                "Accessibility armed\nWRITE_SECURE_SETTINGS granted\nLegacy ADB 5555 not detected"
             }
             return
         }
