@@ -56,18 +56,13 @@ internal object WirelessAdbShell {
     }
 
     internal fun candidateTargets(wirelessPort: Int): List<CandidateTarget> =
-        listOf(LOOPBACK_TCP_PORT, wirelessPort)
-            .filter { it > 0 }
-            .distinct()
-            .map { port -> CandidateTarget(LOCALHOST, port) }
+        listOfNotNull(wirelessPort.takeIf { it > 0 }?.let { CandidateTarget(LOCALHOST, it) })
 
     private fun shortMessage(exception: Exception): String =
         exception.message.orEmpty()
             .trim()
             .ifBlank { exception::class.java.simpleName }
             .take(MAX_LOG_REASON_LENGTH)
-
-    const val LOOPBACK_TCP_PORT = 5555
 
     private const val TAG = "NexusWirelessAdb"
     private const val MAX_LOG_REASON_LENGTH = 160

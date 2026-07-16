@@ -5,22 +5,16 @@ import org.junit.Test
 
 class WirelessAdbShellTest {
     @Test
-    fun classicLoopbackPrecedesWirelessTlsPort() {
+    fun onlyAuthenticatedWirelessTlsPortIsUsed() {
         assertEquals(
-            listOf(
-                WirelessAdbShell.CandidateTarget("127.0.0.1", 5555),
-                WirelessAdbShell.CandidateTarget("127.0.0.1", 37123),
-            ),
+            listOf(WirelessAdbShell.CandidateTarget("127.0.0.1", 37123)),
             WirelessAdbShell.candidateTargets(wirelessPort = 37123),
         )
     }
 
     @Test
-    fun invalidAndDuplicateWirelessPortsAreSkipped() {
-        val classicOnly = listOf(WirelessAdbShell.CandidateTarget("127.0.0.1", 5555))
-
-        assertEquals(classicOnly, WirelessAdbShell.candidateTargets(wirelessPort = 0))
-        assertEquals(classicOnly, WirelessAdbShell.candidateTargets(wirelessPort = -1))
-        assertEquals(classicOnly, WirelessAdbShell.candidateTargets(wirelessPort = 5555))
+    fun invalidWirelessPortsAreSkipped() {
+        assertEquals(emptyList<WirelessAdbShell.CandidateTarget>(), WirelessAdbShell.candidateTargets(0))
+        assertEquals(emptyList<WirelessAdbShell.CandidateTarget>(), WirelessAdbShell.candidateTargets(-1))
     }
 }

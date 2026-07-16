@@ -2,6 +2,7 @@
 
 PKG="com.anezium.rokidbus.glasses"
 SVC="com.anezium.rokidbus.glasses/com.anezium.rokidbus.glasses.RokidBusAccessibilityService"
+SVC_SHORT="com.anezium.rokidbus.glasses/.RokidBusAccessibilityService"
 NAME="rokid-nexus-a11y-watchdog"
 BASE="/data/local/tmp"
 PIDFILE="$BASE/$NAME.pid"
@@ -9,7 +10,7 @@ LOGFILE="$BASE/$NAME.log"
 HEARTBEAT="$BASE/$NAME.heartbeat"
 VERSIONFILE="$BASE/$NAME.version"
 RECOVERYFILE="$BASE/$NAME.recovery"
-VERSION="2026-07-10.1"
+VERSION="2026-07-16.1"
 HEALTHY_INTERVAL="${INTERVAL:-180}"
 RECOVERY_INTERVAL="${RECOVERY_INTERVAL:-30}"
 RECOVERY_CYCLES="${RECOVERY_CYCLES:-3}"
@@ -86,7 +87,7 @@ is_watchdog_running() {
 service_present() {
   enabled="$1"
   case ":$enabled:" in
-    *":$SVC:"*) return 0 ;;
+    *":$SVC:"*|*":$SVC_SHORT:"*) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -97,7 +98,7 @@ services_without_nexus() {
   old_ifs="$IFS"
   IFS=':'
   for service in $enabled; do
-    if [ -n "$service" ] && [ "$service" != "$SVC" ]; then
+    if [ -n "$service" ] && [ "$service" != "$SVC" ] && [ "$service" != "$SVC_SHORT" ]; then
       if [ -z "$without_nexus" ]; then
         without_nexus="$service"
       else

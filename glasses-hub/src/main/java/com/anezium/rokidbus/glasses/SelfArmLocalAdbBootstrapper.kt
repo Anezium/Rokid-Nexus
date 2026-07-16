@@ -49,20 +49,32 @@ internal class SelfArmLocalAdbBootstrapper(
             if (probe.exitCode != 0 || probe.output.trim() != "rokid-nexus") {
                 throw IOException("connect probe failed on 127.0.0.1:$connectPort: ${probe.allOutput.trim()}")
             }
-            val bootstrap = kadb.shell(buildBootstrapCommand())
-            if (bootstrap.exitCode != 0) {
+            val watchdogScript = appContext.assets.open(SelfArmConstants.WATCHDOG_ASSET)
+                .bufferedReader()
+                .use { it.readText() }
+            val bootstrap = kadb.shell(
+                SelfArmSessionCommand.build(
+                    watchdogScript = watchdogScript,
+                    restartWatchdog = true,
+                ),
+            )
+            if (bootstrap.exitCode != 0 || !SelfArmSessionCommand.succeeded(bootstrap.output)) {
                 throw IOException(
-                    "grant shell failed with exit ${bootstrap.exitCode}: " +
+                    "bootstrap shell failed with exit ${bootstrap.exitCode}: " +
                         (bootstrap.errorOutput + bootstrap.output).trim(),
                 )
             }
             val marker = bootstrap.output
                 .lineSequence()
-                .firstOrNull { it.contains("ROKID_NEXUS_WIRELESS_BOOTSTRAP") }
+                .firstOrNull { it.contains("ROKID_NEXUS_INSTALL_RESULT") }
                 .orEmpty()
+            val posture = SelfArmNetworkPostureVerifier.awaitSafe(appContext)
             markBootstrapComplete(appContext)
-            persistLoopbackTcpip(kadb)
             Log.i(TAG, "self-pair bootstrap success marker=${marker.ifBlank { "no-marker" }}")
+            Log.i(
+                TAG,
+                "legacy ADB disabled; wirelessDebuggingTls=${posture.wirelessDebuggingEnabled}",
+            )
             BootstrapResult(
                 pairHost = LOCALHOST,
                 pairPort = pairPort,
@@ -116,51 +128,6 @@ internal class SelfArmLocalAdbBootstrapper(
             throw IOException("Wireless Debugging self-pairing failed: ${shortMessage(cause)}", cause)
         }
         Log.i(TAG, "self-pair KADB success host=$LOCALHOST port=$port")
-    }
-
-    private fun buildBootstrapCommand(): String =
-        buildString {
-            appendLine("pm grant com.anezium.rokidbus.glasses android.permission.WRITE_SECURE_SETTINGS 2>/dev/null || true")
-            appendLine("settings put global adb_wifi_enabled 1 2>/dev/null || true")
-            appendLine(
-                "GRANTED=\$(dumpsys package com.anezium.rokidbus.glasses 2>/dev/null " +
-                    "| grep -A3 android.permission.WRITE_SECURE_SETTINGS | grep -c 'granted=true')",
-            )
-            appendLine("echo ROKID_NEXUS_WIRELESS_BOOTSTRAP grant=\$GRANTED port=\$(getprop persist.adb.tcp.port)")
-            appendLine("[ \"\$GRANTED\" != \"0\" ] || exit 1")
-        }
-
-    /**
-     * Make the classic loopback ADB port survive reboots. `persist.adb.tcp.port` is honoured by
-     * adbd on every boot (Wi-Fi independent), so once it is set the KADB Wi-Fi self-arm keeps
-     * working over 127.0.0.1:5555 after a restart without re-pairing. Runs over the already-open
-     * KADB connection as a best-effort tail: the bootstrap is already marked complete, so a dropped
-     * connection here never regresses success detection. `persist` is set before `service` so a
-     * mid-command drop still leaves the reboot-critical property in place.
-     */
-    private fun persistLoopbackTcpip(kadb: Kadb) {
-        runCatching {
-            val response = kadb.shell(buildPersistLoopbackTcpipCommand())
-            val marker = response.output
-                .lineSequence()
-                .firstOrNull { it.contains("ROKID_NEXUS_TCPIP") }
-                .orEmpty()
-            Log.i(TAG, "persist loopback tcpip ${marker.ifBlank { "no-marker exit=${response.exitCode}" }}")
-        }.onFailure {
-            Log.w(TAG, "persist loopback tcpip best-effort failed: ${shortMessage(it)}")
-        }
-    }
-
-    private fun buildPersistLoopbackTcpipCommand(): String {
-        val port = WirelessAdbShell.LOOPBACK_TCP_PORT
-        return buildString {
-            appendLine("setprop persist.adb.tcp.port $port 2>/dev/null || true")
-            appendLine("setprop service.adb.tcp.port $port 2>/dev/null || true")
-            appendLine(
-                "echo ROKID_NEXUS_TCPIP persist=\$(getprop persist.adb.tcp.port)" +
-                    " service=\$(getprop service.adb.tcp.port)",
-            )
-        }
     }
 
     private fun shortMessage(throwable: Throwable): String =
@@ -220,4 +187,3 @@ internal class SelfArmLocalAdbBootstrapper(
             Path::class.java.getMethod("get", String::class.java).invoke(null, value) as Path
     }
 }
-

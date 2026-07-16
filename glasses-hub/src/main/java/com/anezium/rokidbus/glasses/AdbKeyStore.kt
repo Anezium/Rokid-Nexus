@@ -15,6 +15,12 @@ import java.util.Base64
 
 /** App-private, KADB-compatible key identity. Enrollment is deliberately external. */
 internal object AdbKeyStore {
+    /** Loads only a classic identity that a maintainer may already have enrolled with adbd. */
+    fun loadExisting(context: Context): AdbKeyMaterial? {
+        if (!privateKeyFile(context).exists() && !publicKeyFile(context).exists()) return null
+        return loadOrCreate(context)
+    }
+
     fun loadOrCreate(context: Context): AdbKeyMaterial? {
         val privateFile = privateKeyFile(context)
         val publicFile = publicKeyFile(context)

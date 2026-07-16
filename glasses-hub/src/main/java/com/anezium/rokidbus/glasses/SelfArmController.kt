@@ -13,7 +13,6 @@ internal object SelfArmController {
     private const val ADB_PORT = 5555
     private const val WIFI_ENABLE_COMMAND = "svc wifi enable"
     private const val WIFI_DISABLE_COMMAND = "svc wifi disable"
-    private const val INSTALL_SENTINEL = "ROKID_NEXUS_INSTALL_RESULT"
     private const val STOP_SENTINEL = "ROKID_NEXUS_STOP_RESULT"
     private val operationRunning = AtomicBoolean(false)
 
@@ -40,7 +39,7 @@ internal object SelfArmController {
         return setWifiEnabled(
             enabled = enabled,
             seam = WifiControlSeam(
-                loadKey = { AdbKeyStore.loadOrCreate(appContext) },
+                loadKey = { AdbKeyStore.loadExisting(appContext) },
                 loopbackListening = ::adbLoopbackListening,
                 runShell = { command, key ->
                     AdbLoopbackClient(port = ADB_PORT).runShell(command, key)
@@ -82,7 +81,7 @@ internal object SelfArmController {
 
     internal fun stopWatchdog(context: Context, reason: String, onComplete: ((Boolean) -> Unit)? = null) {
         runAsync(context, reason, onComplete = null) { appContext ->
-            val key = AdbKeyStore.loadOrCreate(appContext)
+            val key = AdbKeyStore.loadExisting(appContext)
             if (key == null || !adbLoopbackListening()) {
                 log("Self-arm stop no-op reason=$reason: ADB key or loopback unavailable")
                 onComplete?.invoke(false)
@@ -99,48 +98,25 @@ internal object SelfArmController {
         val clean = current?.trim().orEmpty()
         if (clean.isBlank() || clean == "null") return SelfArmConstants.ACCESSIBILITY_SERVICE
         val services = clean.split(':').filter { it.isNotBlank() }
-        if (SelfArmConstants.ACCESSIBILITY_SERVICE in services) return clean
+        if (services.any(::isNexusAccessibilityService)) return clean
         return (services + SelfArmConstants.ACCESSIBILITY_SERVICE).joinToString(":")
     }
 
     internal fun accessibilityRepairNeeded(current: String?, accessibilityEnabled: Int): Boolean =
         accessibilityEnabled != 1 ||
-            current.orEmpty().split(':').none { it == SelfArmConstants.ACCESSIBILITY_SERVICE }
+            current.orEmpty().split(':').none(::isNexusAccessibilityService)
+
+    private fun isNexusAccessibilityService(service: String): Boolean =
+        service == SelfArmConstants.ACCESSIBILITY_SERVICE ||
+            service == SelfArmConstants.ACCESSIBILITY_SERVICE_SHORT
 
     internal fun buildInstallCommand(
         script: String,
         restartWatchdog: Boolean,
-    ): String = buildString {
-        appendLine("setprop persist.adb.tcp.port $ADB_PORT")
-        appendLine("setprop service.adb.tcp.port $ADB_PORT")
-        appendLine("cat > '${SelfArmConstants.WATCHDOG_REMOTE_PATH}' <<'ROKID_NEXUS_WATCHDOG'")
-        append(script.trimEnd())
-        appendLine()
-        appendLine("ROKID_NEXUS_WATCHDOG")
-        appendLine("chmod 700 '${SelfArmConstants.WATCHDOG_REMOTE_PATH}'")
-        appendLine(
-            "sh '${SelfArmConstants.WATCHDOG_REMOTE_PATH}' " +
-                if (restartWatchdog) "restart" else "start",
-        )
-        appendLine("sh '${SelfArmConstants.WATCHDOG_REMOTE_PATH}' repair")
-        appendLine("sleep 1")
-        appendLine("WATCHDOG_STATUS=\"\$(sh '${SelfArmConstants.WATCHDOG_REMOTE_PATH}' status 2>/dev/null || true)\"")
-        appendLine("case \"\$WATCHDOG_STATUS\" in")
-        appendLine("  *\"running=yes\"*) WATCHDOG_RUNNING=1 ;;")
-        appendLine("  *) WATCHDOG_RUNNING=0 ;;")
-        appendLine("esac")
-        appendLine("PERSIST_PORT=\"\$(getprop persist.adb.tcp.port)\"")
-        appendLine("SERVICE_PORT=\"\$(getprop service.adb.tcp.port)\"")
-        appendLine(
-            "echo '$INSTALL_SENTINEL watchdog='\"\$WATCHDOG_RUNNING\"" +
-                "' persist='\"\$PERSIST_PORT\"' service='\"\$SERVICE_PORT\"",
-        )
-    }
+    ): String = SelfArmSessionCommand.build(script, restartWatchdog)
 
     internal fun installCommandSucceeded(output: String): Boolean {
-        val values = sentinelValues(output, INSTALL_SENTINEL) ?: return false
-        val port = ADB_PORT.toString()
-        return values["watchdog"] == "1" && values["persist"] == port && values["service"] == port
+        return SelfArmSessionCommand.succeeded(output)
     }
 
     internal fun buildStopCommand(): String = buildString {
@@ -194,7 +170,7 @@ internal object SelfArmController {
     private fun runSelfArm(context: Context, reason: String, restartWatchdog: Boolean): Boolean {
         val scriptFile = ensureInternalWatchdog(context)
         val repairedDirectly = repairAccessibilityDirect(context)
-        val key = AdbKeyStore.loadOrCreate(context)
+        val key = AdbKeyStore.loadExisting(context)
         if (key == null) {
             log("Self-arm no-op reason=$reason directRepair=$repairedDirectly: ADB key unavailable")
             return repairedDirectly
@@ -209,16 +185,23 @@ internal object SelfArmController {
             key,
         )
         val started = result.authenticated && result.commandSent && installCommandSucceeded(result.output)
-        if (started) {
+        val safePosture = started && runCatching {
+            SelfArmNetworkPostureVerifier.awaitSafe(context)
+            true
+        }.onFailure {
+            logError("Self-arm legacy ADB teardown failed reason=$reason", it)
+        }.getOrDefault(false)
+        if (started && safePosture) {
             log("Self-arm ready reason=$reason directRepair=$repairedDirectly")
         } else {
             log(
                 "Self-arm no-op reason=$reason directRepair=$repairedDirectly " +
                     "connected=${result.connected} auth=${result.authenticated} sent=${result.commandSent} " +
+                    "safePosture=$safePosture " +
                     "output=${result.output.take(160)}",
             )
         }
-        return repairedDirectly || started
+        return repairedDirectly || (started && safePosture)
     }
 
     private fun accessibilityRepairNeeded(context: Context): Boolean =
