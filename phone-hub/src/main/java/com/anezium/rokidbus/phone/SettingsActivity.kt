@@ -43,6 +43,7 @@ class SettingsActivity : Activity() {
 
     private val logReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
+            NexusPhoneState.updateGlassesAppInstallState(intent)
             appendLog(intent.getStringExtra("line").orEmpty())
         }
     }
@@ -79,6 +80,9 @@ class SettingsActivity : Activity() {
     override fun onResume() {
         super.onResume()
         resumeRecoveredNexusUpdateInstall()
+        if (lastLinkState and LinkStateBits.CXR_CONTROL_UP != 0) {
+            BusHubService.queryGlassesApp(this)
+        }
         renderUpdateUi()
     }
 
@@ -198,18 +202,41 @@ class SettingsActivity : Activity() {
     private fun renderUpdateUi() {
         if (::updateSection.isInitialized) {
             updateSection.removeAllViews()
+            var hasContent = false
+
+            fun addBlock(view: View) {
+                if (hasContent) updateSection.addView(BusTheme.gap(this, 10))
+                updateSection.addView(view, NexusUi.block())
+                hasContent = true
+            }
+
             if (NexusPhoneState.updateAvailable) {
-                updateSection.addView(
+                addBlock(
                     NexusUi.updateBanner(
                         context = this,
                         versionLabel = NexusPhoneState.updateVersionLabel,
                         actionLabel = NexusPhoneState.updateActionLabel(),
                         actionEnabled = NexusPhoneState.updateActionEnabled(),
                     ) { NexusUpdateManager.performUpdateAction(applicationContext) },
-                    NexusUi.block(),
                 )
-                updateSection.addView(BusTheme.gap(this, 22))
             }
+            val glassesUpdateLabel = NexusPhoneState.glassesUpdateVersionLabel()
+            if (glassesUpdateLabel != null) {
+                val cxrReady = lastLinkState and LinkStateBits.CXR_CONTROL_UP != 0
+                addBlock(
+                    NexusUi.updateBanner(
+                        context = this,
+                        versionLabel = glassesUpdateLabel,
+                        actionLabel = NexusPhoneState.glassesUpdateActionLabel(),
+                        actionEnabled = cxrReady && NexusPhoneState.glassesUpdateActionEnabled(),
+                    ) { BusHubService.installGlassesApp(applicationContext) },
+                )
+            } else {
+                NexusPhoneState.glassesInstalledStatusLabel()?.let { status ->
+                    addBlock(NexusUi.sectionRow(this, "Glasses app", status))
+                }
+            }
+            if (hasContent) updateSection.addView(BusTheme.gap(this, 22))
         }
         if (::updateCheckValue.isInitialized) {
             val label = when {
@@ -452,8 +479,12 @@ class SettingsActivity : Activity() {
     private fun handleHubEvent(event: BusEvent) {
         when (event) {
             is BusEvent.LinkState -> {
+                val cxrWasReady = lastLinkState and LinkStateBits.CXR_CONTROL_UP != 0
                 lastLinkState = event.state
                 renderLinkState()
+                renderUpdateUi()
+                val cxrIsReady = lastLinkState and LinkStateBits.CXR_CONTROL_UP != 0
+                if (cxrIsReady && !cxrWasReady) BusHubService.queryGlassesApp(this)
             }
             is BusEvent.Error -> logLine("settings-ui: ${event.message}")
             is BusEvent.Message -> Unit

@@ -194,18 +194,41 @@ class MainActivity : Activity() {
     private fun renderUpdateSection() {
         if (!::updateSection.isInitialized) return
         updateSection.removeAllViews()
+        var hasContent = false
+
+        fun addBlock(view: View) {
+            if (hasContent) updateSection.addView(BusTheme.gap(this, 10))
+            updateSection.addView(view, NexusUi.block())
+            hasContent = true
+        }
+
         if (NexusPhoneState.updateAvailable) {
-            updateSection.addView(
+            addBlock(
                 NexusUi.updateBanner(
                     context = this,
                     versionLabel = NexusPhoneState.updateVersionLabel,
                     actionLabel = NexusPhoneState.updateActionLabel(),
                     actionEnabled = NexusPhoneState.updateActionEnabled(),
                 ) { NexusUpdateManager.performUpdateAction(applicationContext) },
-                NexusUi.block(),
             )
-            updateSection.addView(BusTheme.gap(this, 14))
         }
+        val glassesUpdateLabel = NexusPhoneState.glassesUpdateVersionLabel()
+        if (glassesUpdateLabel != null) {
+            val cxrReady = lastLinkState and LinkStateBits.CXR_CONTROL_UP != 0
+            addBlock(
+                NexusUi.updateBanner(
+                    context = this,
+                    versionLabel = glassesUpdateLabel,
+                    actionLabel = NexusPhoneState.glassesUpdateActionLabel(),
+                    actionEnabled = cxrReady && NexusPhoneState.glassesUpdateActionEnabled(),
+                ) { BusHubService.installGlassesApp(applicationContext) },
+            )
+        } else {
+            NexusPhoneState.glassesInstalledStatusLabel()?.let { status ->
+                addBlock(NexusUi.sectionRow(this, "Glasses app", status))
+            }
+        }
+        if (hasContent) updateSection.addView(BusTheme.gap(this, 14))
     }
 
     private fun rebuildPluginSection() {
@@ -553,7 +576,7 @@ class MainActivity : Activity() {
         val glassesAppState = NexusPhoneState.glassesAppInstallState
         val hasPlugin = BusHubService.pluginCatalog(this).entries.any { it.principal != null }
 
-        val glassesStatus = if (!cxrReady && glassesAppState != GlassesAppInstallState.Installed) {
+        val glassesStatus = if (!cxrReady && !NexusPhoneState.glassesAppInstalled) {
             "Connect your glasses first."
         } else {
             when (glassesAppState) {
@@ -622,7 +645,7 @@ class MainActivity : Activity() {
                 title = "Install Nexus on your glasses",
                 body = "Install the glasses app over Hi Rokid, then turn on its accessibility " +
                     "service so the HUD and touchpad work.",
-                done = glassesAppState == GlassesAppInstallState.Installed,
+                done = NexusPhoneState.glassesAppInstalled,
                 actionLabel = glassesActionLabel,
                 actionEnabled = glassesActionEnabled,
                 onAction = glassesAction,
@@ -837,6 +860,7 @@ class MainActivity : Activity() {
                 val cxrWasReady = lastLinkState and LinkStateBits.CXR_CONTROL_UP != 0
                 lastLinkState = event.state
                 renderLinkState()
+                renderUpdateSection()
                 refreshToggle()
                 rebuildSetupSection()
                 val cxrIsReady = lastLinkState and LinkStateBits.CXR_CONTROL_UP != 0
@@ -858,14 +882,16 @@ class MainActivity : Activity() {
         val cxrUp = lastLinkState and LinkStateBits.CXR_CONTROL_UP != 0
         val sppUp = lastLinkState and LinkStateBits.SPP_DATA_UP != 0
         val connected = hubEnabled && cxrUp && sppUp
+        val updateAvailable = NexusPhoneState.updateAvailable ||
+            NexusPhoneState.glassesAppUpdateState is GlassesAppUpdateState.UpdateAvailable
         val tint = when {
-            NexusPhoneState.updateAvailable -> NexusUi.AMBER
+            updateAvailable -> NexusUi.AMBER
             connected -> NexusUi.GREEN
             else -> NexusUi.INK3
         }
         if (::gearIcon.isInitialized) {
             gearIcon.imageTintList = ColorStateList.valueOf(tint)
-            gearPip.visibility = if (NexusPhoneState.updateAvailable) View.VISIBLE else View.GONE
+            gearPip.visibility = if (updateAvailable) View.VISIBLE else View.GONE
         }
     }
 

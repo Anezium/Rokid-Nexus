@@ -1752,6 +1752,8 @@ class BusHubService : Service() {
     private fun installGlassesApp() {
         val state = glassesAppInstallState
         val canInstall = state == GlassesAppInstallState.NotInstalled ||
+            (state == GlassesAppInstallState.Installed &&
+                glassesAppUpdateState is GlassesAppUpdateState.UpdateAvailable) ||
             state is GlassesAppInstallState.Error && state.retry == GlassesAppRetry.INSTALL
         if (!canInstall) {
             if (state == GlassesAppInstallState.Unknown) {
@@ -1852,6 +1854,7 @@ class BusHubService : Service() {
                         apk.delete()
                         if (!isGlassesAppOperationActive(operationId)) return
                         if (success) {
+                            updateRemoteGlassesVersionName(null)
                             transitionGlassesAppState(GlassesAppInstallEvent.InstallCompleted(true))
                             requestGlassesAppQuery(link, operationId)
                         } else {

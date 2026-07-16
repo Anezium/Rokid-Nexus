@@ -33,6 +33,8 @@ internal object NexusPhoneState {
         private set
     @Volatile var glassesAppUpdateState: GlassesAppUpdateState = GlassesAppUpdateState.Unknown
         private set
+    @Volatile var glassesAppInstalled: Boolean = false
+        private set
 
     private val listeners = CopyOnWriteArraySet<() -> Unit>()
 
@@ -133,8 +135,45 @@ internal object NexusPhoneState {
             )
             else -> return updated
         }
+        val installStateChanged = glassesAppInstallState != state
+        val wasInstalled = glassesAppInstalled
+        glassesAppInstalled = GlassesAppPresencePolicy.reduce(glassesAppInstalled, state)
+        val installedChanged = wasInstalled != glassesAppInstalled
         glassesAppInstallState = state
+        if (installStateChanged || installedChanged) notifyListeners()
         return true
+    }
+
+    fun glassesUpdateVersionLabel(): String? =
+        (glassesAppUpdateState as? GlassesAppUpdateState.UpdateAvailable)?.let { state ->
+            "Update glasses to v${state.latest}"
+        }
+
+    fun glassesUpdateActionLabel(): String = when (val state = glassesAppInstallState) {
+        GlassesAppInstallState.Resolving -> "Finding..."
+        is GlassesAppInstallState.Downloading -> state.totalBytes?.takeIf { it > 0L }?.let { total ->
+            "${(state.downloadedBytes * 100L / total).coerceIn(0L, 100L)}%"
+        } ?: "Downloading"
+        GlassesAppInstallState.Installing -> "Installing"
+        is GlassesAppInstallState.Error -> "Retry"
+        else -> "Update"
+    }
+
+    fun glassesUpdateActionEnabled(): Boolean =
+        glassesAppUpdateState is GlassesAppUpdateState.UpdateAvailable && when (val state = glassesAppInstallState) {
+            GlassesAppInstallState.Installed -> true
+            is GlassesAppInstallState.Error -> state.retry == GlassesAppRetry.INSTALL
+            else -> false
+        }
+
+    fun glassesInstalledStatusLabel(): String? = when (val state = glassesAppUpdateState) {
+        is GlassesAppUpdateState.UpToDate -> "v${state.installed}, up to date"
+        is GlassesAppUpdateState.UpdateAvailable -> null
+        GlassesAppUpdateState.Unknown -> when {
+            installedGlassesVersionName != null -> "v$installedGlassesVersionName, installed"
+            glassesAppInstalled -> "Installed, version unknown"
+            else -> null
+        }
     }
 
     fun updateActionLabel(): String = when (val state = updateInstallState) {

@@ -1,6 +1,7 @@
 package com.anezium.rokidbus.phone
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -62,5 +63,32 @@ class GlassesAppInstallStateTest {
         assertTrue(state is GlassesAppInstallState.Error)
         assertEquals(GlassesAppRetry.INSTALL, (state as GlassesAppInstallState.Error).retry)
         assertEquals("Connection lost", state.message)
+    }
+
+    @Test
+    fun `installed app can enter the existing install flow for an update`() {
+        val state = GlassesAppInstallStateMachine.reduce(
+            GlassesAppInstallState.Installed,
+            GlassesAppInstallEvent.InstallRequested,
+        )
+
+        assertEquals(GlassesAppInstallState.Resolving, state)
+    }
+
+    @Test
+    fun `update progress does not regress confirmed installed presence`() {
+        var installed = GlassesAppPresencePolicy.reduce(
+            currentlyInstalled = false,
+            state = GlassesAppInstallState.Installed,
+        )
+        installed = GlassesAppPresencePolicy.reduce(installed, GlassesAppInstallState.Resolving)
+        installed = GlassesAppPresencePolicy.reduce(installed, GlassesAppInstallState.Installing)
+        installed = GlassesAppPresencePolicy.reduce(
+            installed,
+            GlassesAppInstallState.Error("Connection lost", GlassesAppRetry.INSTALL),
+        )
+
+        assertTrue(installed)
+        assertFalse(GlassesAppPresencePolicy.reduce(installed, GlassesAppInstallState.NotInstalled))
     }
 }

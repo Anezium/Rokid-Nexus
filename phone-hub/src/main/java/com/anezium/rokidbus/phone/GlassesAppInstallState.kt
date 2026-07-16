@@ -47,7 +47,9 @@ internal object GlassesAppInstallStateMachine {
             GlassesAppInstallState.NotInstalled
         }
         GlassesAppInstallEvent.InstallRequested -> when (current) {
-            GlassesAppInstallState.NotInstalled -> GlassesAppInstallState.Resolving
+            GlassesAppInstallState.NotInstalled,
+            GlassesAppInstallState.Installed,
+            -> GlassesAppInstallState.Resolving
             is GlassesAppInstallState.Error -> if (current.retry == GlassesAppRetry.INSTALL) {
                 GlassesAppInstallState.Resolving
             } else {
@@ -83,5 +85,13 @@ internal object GlassesAppInstallStateMachine {
             GlassesAppInstallState.Error("The glasses rejected the APK install.", GlassesAppRetry.INSTALL)
         }
         is GlassesAppInstallEvent.Failed -> GlassesAppInstallState.Error(event.message, event.retry)
+    }
+}
+
+internal object GlassesAppPresencePolicy {
+    fun reduce(currentlyInstalled: Boolean, state: GlassesAppInstallState): Boolean = when (state) {
+        GlassesAppInstallState.Installed -> true
+        GlassesAppInstallState.NotInstalled -> false
+        else -> currentlyInstalled
     }
 }
