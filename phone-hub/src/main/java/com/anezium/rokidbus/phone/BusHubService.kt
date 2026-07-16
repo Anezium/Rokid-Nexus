@@ -46,10 +46,14 @@ import com.example.cxrglobal.CxrDefs
 import com.example.cxrglobal.callbacks.IAudioStreamCbk
 import com.example.cxrglobal.callbacks.ICXRLinkCbk
 import com.example.cxrglobal.callbacks.ICustomCmdCbk
+import com.example.cxrglobal.callbacks.IGlassAppCbk
 import com.rokid.cxr.Caps
 import org.json.JSONObject
+import java.io.File
+import java.io.IOException
 import java.io.OutputStream
 import java.net.HttpURLConnection
+import java.net.URL
 import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.ConcurrentHashMap
@@ -66,6 +70,8 @@ private const val ACTION_LOG = "com.anezium.rokidbus.phone.LOG"
 private const val ACTION_SET_TOKEN = "com.anezium.rokidbus.phone.SET_TOKEN"
 private const val ACTION_STOP = "com.anezium.rokidbus.phone.STOP"
 private const val ACTION_DEBUG_IMAGE = "com.anezium.rokidbus.phone.DEBUG_IMAGE_SURFACE"
+private const val ACTION_INSTALL_GLASSES_APP = "com.anezium.rokidbus.phone.INSTALL_GLASSES_APP"
+private const val ACTION_QUERY_GLASSES_APP = "com.anezium.rokidbus.phone.QUERY_GLASSES_APP"
 private const val EXTRA_AUTH_TOKEN = "auth_token"
 private const val PREF_ENABLED = "hub_enabled"
 private const val GLASSES_MAC = "AC:86:D1:55:1E:ED"
@@ -119,6 +125,8 @@ class BusHubService : Service() {
     private val pluginBusJournal = busJournal
     private val sppLoopStarted = AtomicBoolean(false)
     private val audioLeaseLock = Any()
+    private val glassesAppOperationLock = Any()
+    private val glassesAppStateLock = Any()
     @Volatile private var sppLoopStop = false
     @Volatile private var hubEnabled = true
     @Volatile private var audioLease: AudioLease? = null
@@ -139,6 +147,9 @@ class BusHubService : Service() {
     private lateinit var transitLegacyStateExporter: TransitLegacyStateExporter
     @Volatile private var cxrConnected = false
     @Volatile private var glassBtConnected = false
+    @Volatile private var glassesAppInstallState: GlassesAppInstallState = GlassesAppInstallState.Unknown
+    private var glassesAppOperationSequence = 0L
+    private var activeGlassesAppOperationId: Long? = null
     @Volatile private var lastAnnouncedPhoneCapabilities: PhoneHubCapabilities? = null
     @Volatile private var lastNotifiedStatus: String? = null
     @Volatile private var remoteImageSurfaceVersion = 0
@@ -292,6 +303,7 @@ class BusHubService : Service() {
             cxrConnected = connected
             log("CXR-L connected=$connected")
             notifyLinkState()
+            if (!connected) failActiveGlassesAppOperation("Connection to the glasses was lost.")
             if (!isCxrUp()) revokeAudioLease("LINK_DOWN")
         }
 
@@ -299,6 +311,7 @@ class BusHubService : Service() {
             glassBtConnected = connected
             log("Hi Rokid glass BT connected=$connected")
             notifyLinkState()
+            if (!connected) failActiveGlassesAppOperation("Connection to the glasses was lost.")
             if (!isCxrUp()) revokeAudioLease("LINK_DOWN")
         }
     }
@@ -438,6 +451,8 @@ class BusHubService : Service() {
                     log("debug image probe rejected status=release_build")
                 }
             }
+            ACTION_INSTALL_GLASSES_APP -> installGlassesApp()
+            ACTION_QUERY_GLASSES_APP -> queryGlassesApp()
             else -> {
                 enableHub()
                 startCxrIfTokenAvailable()
@@ -1685,6 +1700,265 @@ class BusHubService : Service() {
         }
     }
 
+    private fun queryGlassesApp() {
+        val link = cxrLink
+        if (!isCxrUp() || link == null) {
+            broadcastGlassesAppState(glassesAppInstallState)
+            return
+        }
+        val operationId = beginGlassesAppOperation()
+        if (operationId == null) {
+            broadcastGlassesAppState(glassesAppInstallState)
+            return
+        }
+        transitionGlassesAppState(GlassesAppInstallEvent.QueryRequested)
+        requestGlassesAppQuery(link, operationId)
+    }
+
+    private fun requestGlassesAppQuery(link: CXRLink, operationId: Long) {
+        runCatching {
+            link.appIsInstalled(
+                object : IGlassAppCbk {
+                    override fun onQueryAppResult(installed: Boolean) {
+                        if (!isGlassesAppOperationActive(operationId)) return
+                        transitionGlassesAppState(GlassesAppInstallEvent.QueryCompleted(installed))
+                        finishGlassesAppOperation(operationId)
+                    }
+                },
+            )
+        }.onFailure { failure ->
+            failGlassesAppOperation(
+                operationId,
+                "Could not check whether Nexus is installed on the glasses.",
+                GlassesAppRetry.QUERY,
+                failure,
+            )
+        }
+    }
+
+    private fun installGlassesApp() {
+        val state = glassesAppInstallState
+        val canInstall = state == GlassesAppInstallState.NotInstalled ||
+            state is GlassesAppInstallState.Error && state.retry == GlassesAppRetry.INSTALL
+        if (!canInstall) {
+            if (state != GlassesAppInstallState.Resolving &&
+                state !is GlassesAppInstallState.Downloading &&
+                state != GlassesAppInstallState.Installing
+            ) {
+                queryGlassesApp()
+            } else {
+                broadcastGlassesAppState(state)
+            }
+            return
+        }
+        if (!isCxrUp() || cxrLink == null) {
+            broadcastGlassesAppState(state)
+            return
+        }
+        val operationId = beginGlassesAppOperation()
+        if (operationId == null) {
+            broadcastGlassesAppState(glassesAppInstallState)
+            return
+        }
+        transitionGlassesAppState(GlassesAppInstallEvent.InstallRequested)
+        executor.execute { downloadAndInstallGlassesApp(operationId) }
+    }
+
+    private fun downloadAndInstallGlassesApp(operationId: Long) {
+        val release = runCatching { resolveLatestGlassesAppRelease() }.getOrElse { failure ->
+            failGlassesAppOperation(
+                operationId,
+                "Could not find the latest glasses APK release.",
+                GlassesAppRetry.INSTALL,
+                failure,
+            )
+            return
+        }
+        if (!isGlassesAppOperationActive(operationId)) return
+
+        val cacheDirectory = File(cacheDir, "glasses-app-installs").apply { mkdirs() }
+        val apk = File(cacheDirectory, "nexus-glasses-${release.version}.apk")
+        apk.delete()
+        transitionGlassesAppState(GlassesAppInstallEvent.DownloadStarted)
+        runCatching {
+            HttpsArtifactDownloader().download(
+                url = release.apkUrl,
+                destination = apk,
+                isCancelled = {
+                    !isGlassesAppOperationActive(operationId) || !isCxrUp()
+                },
+                onProgress = { downloaded, total ->
+                    if (isGlassesAppOperationActive(operationId)) {
+                        transitionGlassesAppState(
+                            GlassesAppInstallEvent.DownloadProgress(downloaded, total),
+                        )
+                    }
+                },
+            )
+            if (release.sha256 != null && !PluginInstaller.sha256Matches(apk, release.sha256)) {
+                throw IOException("GitHub release digest did not match")
+            }
+            val archive = AndroidArtifactPackageInspector(packageManager).inspect(apk)
+            if (archive?.packageName != GLASSES_HUB_PACKAGE) {
+                throw IOException("APK package was ${archive?.packageName ?: "unreadable"}")
+            }
+        }.onFailure { failure ->
+            apk.delete()
+            val message = if (!isCxrUp()) {
+                "Connection to the glasses was lost."
+            } else {
+                "Could not download or verify the glasses APK."
+            }
+            failGlassesAppOperation(operationId, message, GlassesAppRetry.INSTALL, failure)
+            return
+        }
+
+        if (!isGlassesAppOperationActive(operationId)) {
+            apk.delete()
+            return
+        }
+        val link = cxrLink
+        if (!isCxrUp() || link == null) {
+            apk.delete()
+            failGlassesAppOperation(
+                operationId,
+                "Connection to the glasses was lost.",
+                GlassesAppRetry.INSTALL,
+            )
+            return
+        }
+        transitionGlassesAppState(GlassesAppInstallEvent.UploadStarted)
+        runCatching {
+            link.appUploadAndInstall(
+                apk.absolutePath,
+                object : IGlassAppCbk {
+                    override fun onInstallAppResult(success: Boolean) {
+                        apk.delete()
+                        if (!isGlassesAppOperationActive(operationId)) return
+                        if (success) {
+                            transitionGlassesAppState(GlassesAppInstallEvent.InstallCompleted(true))
+                            requestGlassesAppQuery(link, operationId)
+                        } else {
+                            transitionGlassesAppState(GlassesAppInstallEvent.InstallCompleted(false))
+                            finishGlassesAppOperation(operationId)
+                        }
+                    }
+                },
+            )
+        }.onFailure { failure ->
+            apk.delete()
+            failGlassesAppOperation(
+                operationId,
+                "Could not send the glasses APK over CXR.",
+                GlassesAppRetry.INSTALL,
+                failure,
+            )
+        }
+    }
+
+    private fun resolveLatestGlassesAppRelease(): NexusReleaseAsset {
+        val response = HttpsNexusUpdateTransport(URL(NexusUpdateChecker.RELEASES_URL)).fetch(null)
+        if (response.statusCode != HttpURLConnection.HTTP_OK) {
+            throw IOException("GitHub releases request failed with HTTP ${response.statusCode}")
+        }
+        val body = response.body ?: throw IOException("GitHub releases response was empty")
+        return NexusReleaseAssetResolver.parseLatest(body, NexusReleaseArtifact.GLASSES)
+            ?: throw IOException("No stable glasses APK release was found")
+    }
+
+    private fun beginGlassesAppOperation(): Long? = synchronized(glassesAppOperationLock) {
+        if (activeGlassesAppOperationId != null) return@synchronized null
+        glassesAppOperationSequence += 1L
+        glassesAppOperationSequence.also { activeGlassesAppOperationId = it }
+    }
+
+    private fun isGlassesAppOperationActive(operationId: Long): Boolean =
+        synchronized(glassesAppOperationLock) { activeGlassesAppOperationId == operationId }
+
+    private fun finishGlassesAppOperation(operationId: Long): Boolean =
+        synchronized(glassesAppOperationLock) {
+            if (activeGlassesAppOperationId != operationId) return@synchronized false
+            activeGlassesAppOperationId = null
+            true
+        }
+
+    private fun failActiveGlassesAppOperation(message: String) {
+        val retry = synchronized(glassesAppOperationLock) {
+            if (activeGlassesAppOperationId == null) return
+            activeGlassesAppOperationId = null
+            if (glassesAppInstallState == GlassesAppInstallState.Querying) {
+                GlassesAppRetry.QUERY
+            } else {
+                GlassesAppRetry.INSTALL
+            }
+        }
+        transitionGlassesAppState(GlassesAppInstallEvent.Failed(message, retry))
+    }
+
+    private fun failGlassesAppOperation(
+        operationId: Long,
+        message: String,
+        retry: GlassesAppRetry,
+        failure: Throwable? = null,
+    ) {
+        if (!finishGlassesAppOperation(operationId)) return
+        if (failure != null) {
+            log("glasses app operation failed type=${failure.javaClass.simpleName} msg=${failure.message.orEmpty()}")
+        }
+        transitionGlassesAppState(GlassesAppInstallEvent.Failed(message, retry))
+    }
+
+    private fun transitionGlassesAppState(event: GlassesAppInstallEvent) {
+        val state = synchronized(glassesAppStateLock) {
+            GlassesAppInstallStateMachine.reduce(glassesAppInstallState, event)
+                .also { glassesAppInstallState = it }
+        }
+        broadcastGlassesAppState(state)
+    }
+
+    private fun broadcastGlassesAppState(state: GlassesAppInstallState) {
+        val intent = Intent(ACTION_LOG)
+            .setPackage(packageName)
+            .putExtra("line", glassesAppStatusLine(state))
+            .putExtra(NexusPhoneState.EXTRA_GLASSES_APP_STATE, state.broadcastValue())
+        when (state) {
+            is GlassesAppInstallState.Downloading -> intent
+                .putExtra(NexusPhoneState.EXTRA_GLASSES_APP_DOWNLOADED, state.downloadedBytes)
+                .apply {
+                    state.totalBytes?.let { putExtra(NexusPhoneState.EXTRA_GLASSES_APP_TOTAL, it) }
+                }
+            is GlassesAppInstallState.Error -> intent
+                .putExtra(NexusPhoneState.EXTRA_GLASSES_APP_MESSAGE, state.message)
+                .putExtra(NexusPhoneState.EXTRA_GLASSES_APP_RETRY, state.retry.name.lowercase())
+            else -> Unit
+        }
+        sendBroadcast(intent)
+    }
+
+    private fun GlassesAppInstallState.broadcastValue(): String = when (this) {
+        GlassesAppInstallState.Unknown -> "unknown"
+        GlassesAppInstallState.Querying -> "querying"
+        GlassesAppInstallState.NotInstalled -> "not_installed"
+        GlassesAppInstallState.Resolving -> "resolving"
+        is GlassesAppInstallState.Downloading -> "downloading"
+        GlassesAppInstallState.Installing -> "installing"
+        GlassesAppInstallState.Installed -> "installed"
+        is GlassesAppInstallState.Error -> "error"
+    }
+
+    private fun glassesAppStatusLine(state: GlassesAppInstallState): String = when (state) {
+        GlassesAppInstallState.Unknown -> "Glasses app status is unknown"
+        GlassesAppInstallState.Querying -> "Checking glasses app installation"
+        GlassesAppInstallState.NotInstalled -> "Glasses app is not installed"
+        GlassesAppInstallState.Resolving -> "Resolving glasses app release"
+        is GlassesAppInstallState.Downloading -> state.totalBytes?.takeIf { it > 0L }?.let { total ->
+            "Downloading glasses app ${(state.downloadedBytes * 100L / total).coerceIn(0L, 100L)}%"
+        } ?: "Downloading glasses app"
+        GlassesAppInstallState.Installing -> "Installing glasses app over CXR"
+        GlassesAppInstallState.Installed -> "Glasses app installation confirmed"
+        is GlassesAppInstallState.Error -> "Glasses app install error: ${state.message}"
+    }
+
     private fun decodeCxrPayload(payload: ByteArray): BusEnvelope? =
         runCatching {
             val caps = Caps.fromBytes(payload)
@@ -2037,6 +2311,18 @@ class BusHubService : Service() {
             } else {
                 context.startService(intent)
             }
+        }
+
+        fun installGlassesApp(context: android.content.Context) {
+            context.startService(
+                Intent(context, BusHubService::class.java).setAction(ACTION_INSTALL_GLASSES_APP),
+            )
+        }
+
+        fun queryGlassesApp(context: android.content.Context) {
+            context.startService(
+                Intent(context, BusHubService::class.java).setAction(ACTION_QUERY_GLASSES_APP),
+            )
         }
 
         /** Plain startService: callers are foreground UI; the hub must not re-promote itself. */

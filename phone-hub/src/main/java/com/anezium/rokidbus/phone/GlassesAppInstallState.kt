@@ -76,7 +76,9 @@ internal object GlassesAppInstallStateMachine {
         is GlassesAppInstallEvent.InstallCompleted -> if (current != GlassesAppInstallState.Installing) {
             current
         } else if (event.success) {
-            GlassesAppInstallState.Installed
+            // CXR's install callback only reports that the upload/install command succeeded.
+            // Confirm the package through appIsInstalled before marking onboarding done.
+            GlassesAppInstallState.Querying
         } else {
             GlassesAppInstallState.Error("The glasses rejected the APK install.", GlassesAppRetry.INSTALL)
         }

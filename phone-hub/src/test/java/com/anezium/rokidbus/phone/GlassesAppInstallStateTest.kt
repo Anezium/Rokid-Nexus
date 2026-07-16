@@ -44,6 +44,11 @@ class GlassesAppInstallStateTest {
             state,
             GlassesAppInstallEvent.InstallCompleted(success = true),
         )
+        assertEquals(GlassesAppInstallState.Querying, state)
+        state = GlassesAppInstallStateMachine.reduce(
+            state,
+            GlassesAppInstallEvent.QueryCompleted(installed = true),
+        )
         assertEquals(GlassesAppInstallState.Installed, state)
     }
 
