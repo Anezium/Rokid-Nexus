@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.0
+
+- Camera platform: generic `camera` capability with the phone-side OCR pipeline
+  over an app-owned Wi-Fi Direct link (freeze and live translation).
+- Cold-link reliability: discovery-primed joins, identity-aware watchdogs, and
+  group-owner protection so a healthy join is never torn down by recovery.
+- Live overlay reconciliation, adaptive OCR cadence, and multi-script frozen results.
+
 ## 0.9.0
 
 - Headless external Lens camera consumer.
