@@ -65,6 +65,14 @@ internal object SelfArmOnboardingStore {
         notifyChanged(context)
     }
 
+    fun pause(context: Context, progressState: String) {
+        prefs(context).edit()
+            .putBoolean(KEY_RUNNING, false)
+            .putString(KEY_PROGRESS_STATE, progressState.trim().take(MAX_STATE_LENGTH))
+            .apply()
+        notifyChanged(context)
+    }
+
     fun finish(context: Context, setupState: String, success: Boolean) {
         prefs(context).edit()
             .putBoolean(KEY_REQUESTED, false)

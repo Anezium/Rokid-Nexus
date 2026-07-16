@@ -39,6 +39,25 @@ class SelfArmOnboardingStateMachineTest {
     }
 
     @Test
+    fun partialGrantCannotHideRunningOrFailedSecureBootstrap() {
+        val running = evaluate(
+            accessibilityEnabled = true,
+            secureSettingsGranted = true,
+            setupRunning = true,
+            progressState = "verifying_legacy_adb_teardown",
+        )
+        val failed = evaluate(
+            accessibilityEnabled = true,
+            secureSettingsGranted = true,
+            failureState = "legacy_adb_teardown_failed",
+        )
+
+        assertEquals(SelfArmOnboardingState.Stage.RUNNING, running.stage)
+        assertEquals(SelfArmOnboardingState.Stage.FAILED, failed.stage)
+        assertEquals(SelfArmOnboardingState.Action.RETRY_WIRELESS, failed.action)
+    }
+
+    @Test
     fun pmGrantFallbackCompletesWithoutWirelessBootstrapMarker() {
         val state = evaluate(
             accessibilityEnabled = true,

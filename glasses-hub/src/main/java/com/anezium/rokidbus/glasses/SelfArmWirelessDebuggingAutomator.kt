@@ -1150,6 +1150,7 @@ internal class SelfArmWirelessDebuggingAutomator(
     private fun finish(setupState: String, success: Boolean) {
         active = false
         handler.removeCallbacks(stepRunnable)
+        service.onWirelessBootstrapFinished()
         report(setupState)
         SelfArmOnboardingStore.finish(service.applicationContext, setupState, success)
         android.util.Log.i(TAG, if (success) "Wireless Debugging ready" else "Wireless setup needs a tap")

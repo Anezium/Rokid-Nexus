@@ -20,6 +20,7 @@ class RokidBusAccessibilityService : AccessibilityService() {
     // Rokid launcher, whose key-up handler starts phone music playback).
     private val consumedDownKeys = mutableSetOf<Int>()
     private var wirelessDebuggingAutomator: SelfArmWirelessDebuggingAutomator? = null
+    private var wirelessBootstrapActive = false
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -90,6 +91,7 @@ class RokidBusAccessibilityService : AccessibilityService() {
 
     override fun onInterrupt() {
         wirelessDebuggingAutomator?.stop()
+        pauseWirelessBootstrapIfActive("wireless_setup_interrupted")
         log("AccessibilityService interrupted")
     }
 
@@ -97,6 +99,7 @@ class RokidBusAccessibilityService : AccessibilityService() {
         log("AccessibilityService destroyed")
         main.removeCallbacks(tapExpiry)
         wirelessDebuggingAutomator?.stop()
+        pauseWirelessBootstrapIfActive("wireless_setup_service_restarting")
         wirelessDebuggingAutomator = null
         if (liveInstance === this) liveInstance = null
         LauncherOverlayRenderer.onServiceDestroyed(this)
@@ -116,6 +119,7 @@ class RokidBusAccessibilityService : AccessibilityService() {
     }
 
     private fun startWirelessBootstrap() {
+        if (wirelessBootstrapActive) return
         val state = SelfArmOnboardingStateMachine.evaluate(
             SelfArmOnboardingStore.snapshot(applicationContext),
         )
@@ -124,9 +128,19 @@ class RokidBusAccessibilityService : AccessibilityService() {
             returnToOnboarding()
             return
         }
-        if (state.stage == SelfArmOnboardingState.Stage.RUNNING) return
+        wirelessBootstrapActive = true
         SelfArmOnboardingStore.markRunning(applicationContext)
         wirelessDebuggingAutomator?.start()
+    }
+
+    internal fun onWirelessBootstrapFinished() {
+        wirelessBootstrapActive = false
+    }
+
+    private fun pauseWirelessBootstrapIfActive(progressState: String) {
+        if (!wirelessBootstrapActive) return
+        wirelessBootstrapActive = false
+        SelfArmOnboardingStore.pause(applicationContext, progressState)
     }
 
     internal fun returnToOnboarding() {
