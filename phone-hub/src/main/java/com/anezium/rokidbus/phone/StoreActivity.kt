@@ -218,7 +218,10 @@ class StoreActivity : Activity() {
         return storeCard(
             iconRes = iconFor(entry.id),
             title = entry.displayName,
-            meta = metaFor(entry),
+            meta = buildString {
+                entry.registryAuthor?.takeIf(String::isNotBlank)?.let { append(it).append(" · ") }
+                append(metaFor(entry))
+            },
             description = entry.summary,
             size = sizeFor(entry),
             button = action.label,

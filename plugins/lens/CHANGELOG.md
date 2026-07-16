@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.2
+
+- Settings polish: larger, clearer API-key fields that read as real inputs, and a
+  version label that tracks the installed build.
+
 ## 1.0.1
 
 - Ship an arm64-only APK, dropping the duplicated 32-bit and x86 copies of the

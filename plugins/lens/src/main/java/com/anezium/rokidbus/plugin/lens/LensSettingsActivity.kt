@@ -176,7 +176,7 @@ class LensSettingsActivity : Activity() {
                     this@LensSettingsActivity,
                     NexusPluginIcons.drawableFor("lens"),
                     "Lens",
-                    "Camera translation \u00b7 v0.9.0",
+                    "Camera translation \u00b7 v${pluginVersionName()}",
                 ),
                 NexusUi.block(),
             )
@@ -753,16 +753,24 @@ class LensSettingsActivity : Activity() {
             )
         }
 
+    private fun pluginVersionName(): String =
+        runCatching { packageManager.getPackageInfo(packageName, 0).versionName }
+            .getOrNull()
+            .orEmpty()
+            .ifBlank { "1.0.1" }
+
     private fun keyField(prefKey: String): EditText =
-        NexusUi.field(this, "Paste key - empty disables").apply {
+        NexusUi.field(this, "Paste your key").apply {
             setText(translationPrefs.getString(prefKey, ""))
-            textSize = 12f
+            textSize = 14f
             isSingleLine = true
             inputType = InputType.TYPE_CLASS_TEXT or
                 InputType.TYPE_TEXT_VARIATION_PASSWORD or
                 InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
             transformationMethod = PasswordTransformationMethod.getInstance()
             typeface = Typeface.MONOSPACE
+            // Sink the field below the card so it reads as an input, not a flat row.
+            background = NexusUi.bordered(this@LensSettingsActivity, NexusUi.BG, NexusUi.LINE, 12)
             addTextChangedListener(object : TextWatcher {
                 override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
                 override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
