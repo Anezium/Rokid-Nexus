@@ -70,10 +70,6 @@ internal class SelfArmWirelessDebuggingAutomator(
     private val stepRunnable = Runnable { step() }
 
     fun start() {
-        if (SelfArmLocalAdbBootstrapper.isBootstrapComplete(service.applicationContext)) {
-            android.util.Log.i(TAG, "selfarm-wireless already_complete; start refused")
-            return
-        }
         active = true
         deadlineAt = SystemClock.uptimeMillis() + TIMEOUT_MS
         lastClickAt = 0L
