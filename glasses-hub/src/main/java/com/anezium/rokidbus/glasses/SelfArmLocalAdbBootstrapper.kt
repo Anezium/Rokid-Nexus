@@ -28,6 +28,13 @@ internal class SelfArmLocalAdbBootstrapper(
         val output: String,
     )
 
+    data class AuthenticatedShellResult(
+        val port: Int,
+        val exitCode: Int,
+        val output: String,
+        val errorOutput: String,
+    )
+
     fun bootstrap(pairPort: Int, pairingCode: String, connectPort: Int): BootstrapResult {
         val cleanCode = pairingCode.trim()
         if (cleanCode.isBlank()) {
@@ -140,6 +147,7 @@ internal class SelfArmLocalAdbBootstrapper(
         private const val CONNECT_TIMEOUT_MS = 5_000
         private const val SHELL_TIMEOUT_MS = 15_000
         private const val PAIRING_TIMEOUT_MS = 12_000L
+        private const val WIRELESS_PORT_TIMEOUT_MS = 5_000L
         private const val PREFS_NAME = "selfarm_wireless"
         const val BOOTSTRAP_COMPLETE_KEY = "wireless_bootstrap_complete"
         private val CERT_LOCK = Any()
@@ -149,6 +157,31 @@ internal class SelfArmLocalAdbBootstrapper(
             context.applicationContext
                 .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 .getBoolean(BOOTSTRAP_COMPLETE_KEY, false)
+
+        fun runPairedShell(context: Context, command: String): AuthenticatedShellResult? {
+            val appContext = context.applicationContext
+            configureKadbCert(appContext)
+            val port = SelfArmWirelessAdbController.waitForWirelessPort(WIRELESS_PORT_TIMEOUT_MS)
+            if (port <= 0) return null
+            val kadb = Kadb(LOCALHOST, port, CONNECT_TIMEOUT_MS, SHELL_TIMEOUT_MS)
+            return try {
+                val probe = kadb.shell("echo rokid-nexus-maintenance")
+                if (probe.exitCode != 0 || probe.output.trim() != "rokid-nexus-maintenance") {
+                    throw IOException(
+                        "paired TLS probe failed on 127.0.0.1:$port: ${probe.allOutput.trim()}",
+                    )
+                }
+                val shell = kadb.shell(command)
+                AuthenticatedShellResult(
+                    port = port,
+                    exitCode = shell.exitCode,
+                    output = shell.output,
+                    errorOutput = shell.errorOutput,
+                )
+            } finally {
+                runCatching { kadb.close() }
+            }
+        }
 
         fun configureKadbCert(context: Context) {
             synchronized(CERT_LOCK) {

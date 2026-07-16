@@ -507,6 +507,10 @@ object GlassesHub {
 
     private fun attemptWifiAutoEnroll(context: Context) {
         if (SelfArmLocalAdbBootstrapper.isBootstrapComplete(context)) return
+        if (!SelfArmOnboardingStore.isSetupRequested(context)) {
+            log("glassesWifi auto-enroll skipped: wireless setup was not explicitly requested")
+            return
+        }
         val attempted = autoEnrollAttempted.compareAndSet(false, true)
         val serviceConnected = attempted && RokidBusAccessibilityService.requestWirelessBootstrap(context)
         log("glassesWifi auto-enroll attempted=$attempted serviceConnected=$serviceConnected")

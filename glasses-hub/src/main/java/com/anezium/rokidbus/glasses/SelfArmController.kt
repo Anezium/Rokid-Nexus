@@ -170,6 +170,34 @@ internal object SelfArmController {
     private fun runSelfArm(context: Context, reason: String, restartWatchdog: Boolean): Boolean {
         val scriptFile = ensureInternalWatchdog(context)
         val repairedDirectly = repairAccessibilityDirect(context)
+        val installCommand = buildInstallCommand(scriptFile.readText(), restartWatchdog)
+        if (SelfArmLocalAdbBootstrapper.isBootstrapComplete(context)) {
+            val wirelessReady = runCatching {
+                val result = SelfArmLocalAdbBootstrapper.runPairedShell(context, installCommand)
+                if (result == null) {
+                    log("Self-arm TLS maintenance unavailable reason=$reason: wireless port unavailable")
+                    false
+                } else {
+                    val started = result.exitCode == 0 && installCommandSucceeded(result.output)
+                    val safePosture = started && runCatching {
+                        val posture = SelfArmNetworkPostureVerifier.awaitSafe(context)
+                        SelfArmOnboardingStore.recordNetworkPosture(context, posture)
+                        true
+                    }.onFailure {
+                        logError("Self-arm TLS legacy ADB teardown failed reason=$reason", it)
+                    }.getOrDefault(false)
+                    log(
+                        "Self-arm TLS maintenance reason=$reason port=${result.port} " +
+                            "started=$started safePosture=$safePosture",
+                    )
+                    started && safePosture
+                }
+            }.onFailure {
+                logError("Self-arm TLS maintenance failed reason=$reason", it)
+            }.getOrDefault(false)
+            if (wirelessReady) return true
+        }
+
         val key = AdbKeyStore.loadExisting(context)
         if (key == null) {
             log("Self-arm no-op reason=$reason directRepair=$repairedDirectly: ADB key unavailable")
@@ -181,12 +209,13 @@ internal object SelfArmController {
         }
 
         val result = AdbLoopbackClient(port = ADB_PORT).runShell(
-            buildInstallCommand(scriptFile.readText(), restartWatchdog),
+            installCommand,
             key,
         )
         val started = result.authenticated && result.commandSent && installCommandSucceeded(result.output)
         val safePosture = started && runCatching {
-            SelfArmNetworkPostureVerifier.awaitSafe(context)
+            val posture = SelfArmNetworkPostureVerifier.awaitSafe(context)
+            SelfArmOnboardingStore.recordNetworkPosture(context, posture)
             true
         }.onFailure {
             logError("Self-arm legacy ADB teardown failed reason=$reason", it)
