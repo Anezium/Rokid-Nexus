@@ -70,6 +70,7 @@ internal class SelfArmLocalAdbBootstrapper(
                 .orEmpty()
             val posture = SelfArmNetworkPostureVerifier.awaitSafe(appContext)
             markBootstrapComplete(appContext)
+            SelfArmOnboardingStore.recordNetworkPosture(appContext, posture)
             Log.i(TAG, "self-pair bootstrap success marker=${marker.ifBlank { "no-marker" }}")
             Log.i(
                 TAG,

@@ -34,6 +34,7 @@ class RokidBusAccessibilityService : AccessibilityService() {
         LauncherOverlayRenderer.onServiceConnected(this)
         GlassesHub.start(applicationContext)
         AccessibilityRearmWatcher.start(applicationContext, "accessibility_service_connected")
+        SelfArmOnboardingStore.refreshNetworkPosture(applicationContext)
         SelfArmOnboardingStore.notifyChanged(applicationContext)
         if (SelfArmOnboardingStore.isSetupRequested(applicationContext)) {
             startWirelessBootstrap()
@@ -155,10 +156,6 @@ class RokidBusAccessibilityService : AccessibilityService() {
         @Volatile private var liveInstance: RokidBusAccessibilityService? = null
 
         internal fun requestWirelessBootstrap(context: Context): Boolean {
-            val currentState = SelfArmOnboardingStateMachine.evaluate(
-                SelfArmOnboardingStore.snapshot(context.applicationContext),
-            )
-            if (currentState.stage == SelfArmOnboardingState.Stage.COMPLETE) return true
             SelfArmOnboardingStore.requestSetup(context.applicationContext)
             val service = liveInstance ?: return false
             service.main.post(service::startWirelessBootstrap)

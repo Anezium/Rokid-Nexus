@@ -46,8 +46,7 @@ internal object SelfArmOnboardingStateMachine {
                 SelfArmOnboardingState.Action.RETRY_WIRELESS,
                 snapshot.failureState,
             )
-        snapshot.secureSettingsGranted && snapshot.accessibilityEnabled &&
-            (snapshot.bootstrapComplete || snapshot.legacyAdbSafe) ->
+        snapshot.secureSettingsGranted && snapshot.accessibilityEnabled && snapshot.legacyAdbSafe ->
             state(SelfArmOnboardingState.Stage.COMPLETE)
         !snapshot.wirelessDebuggingSupported ->
             state(SelfArmOnboardingState.Stage.UNSUPPORTED)

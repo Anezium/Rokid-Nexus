@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.provider.Settings
+import java.util.concurrent.atomic.AtomicBoolean
 
 internal object SelfArmOnboardingStore {
     const val ACTION_CHANGED = "com.anezium.rokidbus.glasses.ACTION_SELFARM_ONBOARDING_CHANGED"
@@ -13,8 +14,6 @@ internal object SelfArmOnboardingStore {
     fun snapshot(context: Context): SelfArmOnboardingSnapshot {
         val appContext = context.applicationContext
         val prefs = prefs(appContext)
-        val legacyAdbSafe = SelfArmNetworkPostureVerifier.capture(appContext).teardownDecision() ==
-            SelfArmNetworkPosture.TeardownDecision.SAFE
         val accessibilityEnabled = runCatching {
             val resolver = appContext.contentResolver
             !SelfArmController.accessibilityRepairNeeded(
@@ -29,7 +28,7 @@ internal object SelfArmOnboardingStore {
                 Manifest.permission.WRITE_SECURE_SETTINGS,
             ) == PackageManager.PERMISSION_GRANTED,
             bootstrapComplete = SelfArmLocalAdbBootstrapper.isBootstrapComplete(appContext),
-            legacyAdbSafe = legacyAdbSafe,
+            legacyAdbSafe = prefs.getBoolean(KEY_LEGACY_ADB_SAFE, false),
             setupRunning = prefs.getBoolean(KEY_RUNNING, false),
             failureState = prefs.getString(KEY_FAILURE_STATE, "").orEmpty(),
             progressState = prefs.getString(KEY_PROGRESS_STATE, "").orEmpty(),
@@ -92,6 +91,33 @@ internal object SelfArmOnboardingStore {
         )
     }
 
+    fun refreshNetworkPosture(context: Context) {
+        val appContext = context.applicationContext
+        if (!networkPostureRefreshRunning.compareAndSet(false, true)) return
+        prefs(appContext).edit().putBoolean(KEY_LEGACY_ADB_SAFE, false).apply()
+        notifyChanged(appContext)
+        Thread {
+            try {
+                recordNetworkPosture(
+                    appContext,
+                    SelfArmNetworkPostureVerifier.capture(appContext),
+                )
+            } finally {
+                networkPostureRefreshRunning.set(false)
+            }
+        }.apply {
+            name = "RokidNexusAdbPosture"
+            isDaemon = true
+            start()
+        }
+    }
+
+    fun recordNetworkPosture(context: Context, posture: SelfArmNetworkPosture) {
+        val safe = posture.teardownDecision() == SelfArmNetworkPosture.TeardownDecision.SAFE
+        prefs(context).edit().putBoolean(KEY_LEGACY_ADB_SAFE, safe).apply()
+        notifyChanged(context)
+    }
+
     private fun prefs(context: Context) =
         context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
@@ -100,5 +126,7 @@ internal object SelfArmOnboardingStore {
     private const val KEY_RUNNING = "setup_running"
     private const val KEY_FAILURE_STATE = "failure_state"
     private const val KEY_PROGRESS_STATE = "progress_state"
+    private const val KEY_LEGACY_ADB_SAFE = "legacy_adb_safe"
     private const val MAX_STATE_LENGTH = 96
+    private val networkPostureRefreshRunning = AtomicBoolean(false)
 }

@@ -4,8 +4,10 @@ import android.content.Context
 import android.provider.Settings
 import android.os.SystemClock
 import java.io.IOException
+import java.net.ConnectException
 import java.net.InetSocketAddress
 import java.net.Socket
+import java.net.SocketTimeoutException
 
 internal data class SelfArmNetworkPosture(
     val wirelessDebuggingEnabled: Boolean,
@@ -74,14 +76,24 @@ internal object SelfArmNetworkPostureVerifier {
             systemProperties
                 .getMethod("get", String::class.java, String::class.java)
                 .invoke(null, name, "") as? String
-        }.getOrNull().orEmpty().trim()
+        }.getOrElse { PROPERTY_UNAVAILABLE }
+            ?.trim()
+            ?: PROPERTY_UNAVAILABLE
 
     private fun isLoopbackListening(): Boolean {
         val socket = Socket()
-        return runCatching {
+        return try {
             socket.connect(InetSocketAddress(LOOPBACK_HOST, LEGACY_ADB_PORT), SOCKET_TIMEOUT_MS)
             true
-        }.getOrDefault(false).also {
+        } catch (_: ConnectException) {
+            false
+        } catch (_: SocketTimeoutException) {
+            true
+        } catch (_: IOException) {
+            true
+        } catch (_: RuntimeException) {
+            true
+        } finally {
             runCatching { socket.close() }
         }
     }
@@ -90,4 +102,5 @@ internal object SelfArmNetworkPostureVerifier {
     private const val LEGACY_ADB_PORT = 5555
     private const val SOCKET_TIMEOUT_MS = 250
     private const val POLL_INTERVAL_MS = 200L
+    private const val PROPERTY_UNAVAILABLE = "<unavailable>"
 }
