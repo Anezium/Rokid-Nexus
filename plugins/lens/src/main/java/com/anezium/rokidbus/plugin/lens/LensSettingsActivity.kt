@@ -739,7 +739,7 @@ class LensSettingsActivity : Activity() {
                     gravity = Gravity.CENTER_VERTICAL
                     addView(
                         field,
-                        LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+                        LinearLayout.LayoutParams(0, NexusUi.dp(this@LensSettingsActivity, 52), 1f),
                     )
                     addView(
                         revealButton,
@@ -769,6 +769,7 @@ class LensSettingsActivity : Activity() {
                 InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
             transformationMethod = PasswordTransformationMethod.getInstance()
             typeface = Typeface.MONOSPACE
+            gravity = Gravity.CENTER_VERTICAL
             // Sink the field below the card so it reads as an input, not a flat row.
             background = NexusUi.bordered(this@LensSettingsActivity, NexusUi.BG, NexusUi.LINE, 12)
             addTextChangedListener(object : TextWatcher {

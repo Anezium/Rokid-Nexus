@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.3
+
+- API-key fields are now full-height inputs instead of a thin line.
+
 ## 1.0.2
 
 - Settings polish: larger, clearer API-key fields that read as real inputs, and a
