@@ -13,6 +13,7 @@ internal object NexusPhoneState {
     const val EXTRA_GLASSES_APP_TOTAL = "glasses_app_total"
     const val EXTRA_GLASSES_APP_MESSAGE = "glasses_app_message"
     const val EXTRA_GLASSES_APP_RETRY = "glasses_app_retry"
+    const val EXTRA_GLASSES_APP_VERSION_NAME = "glasses_app_version_name"
 
     @Volatile var updateAvailable: Boolean = false
         private set
@@ -25,6 +26,8 @@ internal object NexusPhoneState {
     @Volatile var checkingForUpdate: Boolean = false
         private set
     @Volatile var glassesAppInstallState: GlassesAppInstallState = GlassesAppInstallState.Unknown
+        private set
+    @Volatile var installedGlassesVersionName: String? = null
         private set
 
     private val listeners = CopyOnWriteArraySet<() -> Unit>()
@@ -60,8 +63,20 @@ internal object NexusPhoneState {
         setAvailableUpdate(null)
     }
 
+    fun setInstalledGlassesVersionName(versionName: String?) {
+        val normalized = versionName?.trim()?.takeIf { it.isNotEmpty() }
+        if (installedGlassesVersionName == normalized) return
+        installedGlassesVersionName = normalized
+        notifyListeners()
+    }
+
     fun updateGlassesAppInstallState(intent: Intent): Boolean {
-        val value = intent.getStringExtra(EXTRA_GLASSES_APP_STATE) ?: return false
+        var updated = false
+        if (intent.hasExtra(EXTRA_GLASSES_APP_VERSION_NAME)) {
+            setInstalledGlassesVersionName(intent.getStringExtra(EXTRA_GLASSES_APP_VERSION_NAME))
+            updated = true
+        }
+        val value = intent.getStringExtra(EXTRA_GLASSES_APP_STATE) ?: return updated
         val state = when (value) {
             "unknown" -> GlassesAppInstallState.Unknown
             "querying" -> GlassesAppInstallState.Querying
@@ -86,7 +101,7 @@ internal object NexusPhoneState {
                     GlassesAppRetry.INSTALL
                 },
             )
-            else -> return false
+            else -> return updated
         }
         glassesAppInstallState = state
         return true

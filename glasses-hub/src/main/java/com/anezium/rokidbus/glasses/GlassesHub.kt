@@ -16,6 +16,7 @@ import com.anezium.rokidbus.shared.BusConstants
 import com.anezium.rokidbus.shared.BusEnvelope
 import com.anezium.rokidbus.shared.BusPaths
 import com.anezium.rokidbus.shared.FrameProtocol
+import com.anezium.rokidbus.shared.GlassesHubCapabilitiesContract
 import com.anezium.rokidbus.shared.ImageSurfaceContract
 import com.anezium.rokidbus.shared.LinkStateBits
 import com.anezium.rokidbus.shared.PhoneHubCapabilities
@@ -221,14 +222,16 @@ object GlassesHub {
         sendRemote(BusEnvelope(path = BusPaths.SURFACE_INPUT, payload = payload))
 
     private fun announceRendererCapabilities() {
+        val capabilities = GlassesHubCapabilitiesContract.create(
+            features = BusCapabilityBits.IMAGE_SURFACE,
+            imageSurfaceVersion = ImageSurfaceContract.VERSION,
+            maxImageBytes = ImageSurfaceContract.MAX_IMAGE_BYTES,
+            versionName = BuildConfig.VERSION_NAME,
+        )
         val error = sendRemote(
             BusEnvelope(
                 path = BusPaths.HUB_CAPABILITIES,
-                payload = JSONObject()
-                    .put("version", 1)
-                    .put("features", BusCapabilityBits.IMAGE_SURFACE)
-                    .put("imageSurfaceVersion", ImageSurfaceContract.VERSION)
-                    .put("maxImageBytes", ImageSurfaceContract.MAX_IMAGE_BYTES),
+                payload = GlassesHubCapabilitiesContract.toJson(capabilities),
             ),
         )
         if (error == null) {

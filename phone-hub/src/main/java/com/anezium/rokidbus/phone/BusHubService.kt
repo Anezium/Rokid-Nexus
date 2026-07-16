@@ -31,6 +31,7 @@ import com.anezium.rokidbus.shared.BusConstants
 import com.anezium.rokidbus.shared.BusEnvelope
 import com.anezium.rokidbus.shared.BusPaths
 import com.anezium.rokidbus.shared.FrameProtocol
+import com.anezium.rokidbus.shared.GlassesHubCapabilitiesContract
 import com.anezium.rokidbus.shared.ImageSurfaceContract
 import com.anezium.rokidbus.shared.ImageSurfaceMetadata
 import com.anezium.rokidbus.shared.ImageSurfaceValidationResult
@@ -154,6 +155,7 @@ class BusHubService : Service() {
     @Volatile private var lastNotifiedStatus: String? = null
     @Volatile private var remoteImageSurfaceVersion = 0
     @Volatile private var remoteMaxImageBytes = 0
+    @Volatile private var remoteGlassesVersionName: String? = null
     @Volatile private var lastTransportLinkState = 0
     private var pluginPackageReceiverRegistered = false
     private val notifiedDeveloperPackages = ConcurrentHashMap.newKeySet<String>()
@@ -1929,6 +1931,10 @@ class BusHubService : Service() {
             .setPackage(packageName)
             .putExtra("line", glassesAppStatusLine(state))
             .putExtra(NexusPhoneState.EXTRA_GLASSES_APP_STATE, state.broadcastValue())
+            .putExtra(
+                NexusPhoneState.EXTRA_GLASSES_APP_VERSION_NAME,
+                remoteGlassesVersionName.orEmpty(),
+            )
         when (state) {
             is GlassesAppInstallState.Downloading -> intent
                 .putExtra(NexusPhoneState.EXTRA_GLASSES_APP_DOWNLOADED, state.downloadedBytes)
@@ -2059,6 +2065,11 @@ class BusHubService : Service() {
         if (state and (LinkStateBits.CXR_CONTROL_UP or LinkStateBits.SPP_DATA_UP) == 0) {
             remoteImageSurfaceVersion = 0
             remoteMaxImageBytes = 0
+            if (remoteGlassesVersionName != null) {
+                remoteGlassesVersionName = null
+                NexusPhoneState.setInstalledGlassesVersionName(null)
+                broadcastGlassesAppState(glassesAppInstallState)
+            }
             imageSurfaceRateLimiter.clear()
         }
         updateStatusNotification(state)
@@ -2122,13 +2133,18 @@ class BusHubService : Service() {
     }
 
     private fun updateRemoteCapabilities(payload: JSONObject) {
-        val features = payload.optInt("features", 0)
-        val supported = payload.optInt("version", 0) == 1 &&
-            features and BusCapabilityBits.IMAGE_SURFACE != 0 &&
-            payload.optInt("imageSurfaceVersion", 0) == ImageSurfaceContract.VERSION &&
-            payload.optInt("maxImageBytes", 0) >= ImageSurfaceContract.MAX_IMAGE_BYTES
+        val advertised = GlassesHubCapabilitiesContract.parse(payload)
+        val supported = advertised.protocolVersion == GlassesHubCapabilitiesContract.VERSION &&
+            advertised.features and BusCapabilityBits.IMAGE_SURFACE != 0 &&
+            advertised.imageSurfaceVersion == ImageSurfaceContract.VERSION &&
+            advertised.maxImageBytes >= ImageSurfaceContract.MAX_IMAGE_BYTES
         remoteImageSurfaceVersion = if (supported) ImageSurfaceContract.VERSION else 0
-        remoteMaxImageBytes = if (supported) payload.optInt("maxImageBytes") else 0
+        remoteMaxImageBytes = if (supported) advertised.maxImageBytes else 0
+        if (remoteGlassesVersionName != advertised.versionName) {
+            remoteGlassesVersionName = advertised.versionName
+            NexusPhoneState.setInstalledGlassesVersionName(advertised.versionName)
+            broadcastGlassesAppState(glassesAppInstallState)
+        }
         log("renderer capabilities image=$supported maxImageBytes=$remoteMaxImageBytes")
         // Link bits may be unchanged; repeat the callback so clients refresh capabilities().
         notifyLinkState()
