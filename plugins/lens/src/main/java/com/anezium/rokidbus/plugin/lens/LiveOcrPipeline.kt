@@ -340,7 +340,6 @@ internal class LiveOcrRunner(
     private val holder: LatestFrameHolder,
     private val onRecognized: (DecodedFrame, Text, OcrScript, () -> Unit) -> Unit,
     private val onError: (String) -> Unit,
-    private val onModuleUnavailable: (OcrScript) -> Unit = {},
 ) : AutoCloseable {
     private val inFlight = AtomicBoolean(false)
     private val closed = AtomicBoolean(false)
@@ -390,7 +389,7 @@ internal class LiveOcrRunner(
                     ),
                 )
             }.getOrElse {
-                finish(frame, null, scriptPlan, it)
+                finish(frame, null, scriptPlan, it.message)
                 return
             }
             task.addOnCompleteListener {
@@ -398,7 +397,7 @@ internal class LiveOcrRunner(
                     frame,
                     if (it.isSuccessful) it.result else null,
                     scriptPlan,
-                    it.exception,
+                    it.exception?.message,
                 )
             }
         }
@@ -421,18 +420,10 @@ internal class LiveOcrRunner(
         frame: DecodedFrame,
         result: Text?,
         scriptPlan: LiveScriptPlan,
-        failure: Throwable?,
+        error: String?,
     ) {
         if (closed.get() || paused.get() || result == null) {
-            if (failure != null && !closed.get() && !paused.get()) {
-                if (scriptPlan.script != OcrScript.LATIN &&
-                    isPlayServicesOcrModuleUnavailable(failure)
-                ) {
-                    onModuleUnavailable(scriptPlan.script)
-                } else {
-                    onError(failure.message.orEmpty())
-                }
-            }
+            if (error != null && !closed.get() && !paused.get()) onError(error)
             releaseAndContinue(frame)
             return
         }

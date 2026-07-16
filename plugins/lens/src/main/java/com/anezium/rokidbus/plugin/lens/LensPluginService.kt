@@ -162,9 +162,7 @@ internal class LensCameraSession(
     private val seq = AtomicLong(0L)
     private val preferences = lensPreferences(appContext)
     private val translator: TranslationProvider = TranslationEngineRouter(appContext)
-    private val frozenOcr = PhoneFrozenOcr { script ->
-        onOcrModuleUnavailable(script.wireValue)
-    }
+    private val frozenOcr = PhoneFrozenOcr()
     private val frozenExecutor: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "lens-frozen-pipeline").apply { isDaemon = true }
     }
@@ -190,12 +188,10 @@ internal class LensCameraSession(
     @Volatile private var sessionStartedAtMs = 0L
 
     init {
-        PlayServicesOcrModules.requestInstall(appContext, host::log)
         liveOcr = LiveOcrRunner(
             holder = holder,
             onRecognized = ::onLiveRecognized,
             onError = { host.log("live OCR failed") },
-            onModuleUnavailable = { script -> onOcrModuleUnavailable(script.name.lowercase()) },
         )
         frozenProcessingGate = FrozenProcessingGate(
             pauseLive = liveOcr::pause,
@@ -229,11 +225,6 @@ internal class LensCameraSession(
             onPacket = ::onLinkPacket,
             stageElapsedMs = ::sessionElapsedMs,
         )
-    }
-
-    private fun onOcrModuleUnavailable(script: String) {
-        PlayServicesOcrModules.reportUnavailable(host::log, "script=$script")
-        PlayServicesOcrModules.requestInstall(appContext, host::log)
     }
 
     override fun message(path: String, id: String, payload: JSONObject) {

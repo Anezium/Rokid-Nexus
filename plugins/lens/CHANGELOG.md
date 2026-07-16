@@ -2,9 +2,9 @@
 
 ## 1.0.1
 
-- Non-Latin OCR script models (Japanese, Chinese, Korean, Devanagari) now download
-  on demand via Google Play Services instead of being bundled, cutting the app size
-  from ~120 MB to ~20 MB. Latin recognition stays bundled and instant.
+- Ship an arm64-only APK, dropping the duplicated 32-bit and x86 copies of the
+  ML Kit native libraries. Cuts the download from ~120 MB to ~47 MB with no change
+  in behaviour: all OCR scripts stay bundled, offline, and instant.
 
 ## 1.0.0
 

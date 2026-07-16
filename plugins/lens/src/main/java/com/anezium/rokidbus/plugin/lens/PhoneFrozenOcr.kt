@@ -93,10 +93,8 @@ private fun isHan(codePoint: Int): Boolean =
     codePoint in 0x3400..0x4DBF || codePoint in 0x4E00..0x9FFF ||
         codePoint in 0xF900..0xFAFF || codePoint in 0x20000..0x2FA1F
 
-/** Lazy ML Kit recognizers; callbacks are serialized to preserve sweep order. */
-internal class PhoneFrozenOcr(
-    private val onModuleUnavailable: (PhoneOcrScript) -> Unit = {},
-) : AutoCloseable {
+/** Lazy bundled ML Kit recognizers; callbacks are serialized to preserve sweep order. */
+internal class PhoneFrozenOcr : AutoCloseable {
     private val lock = Any()
     private val callbackExecutor: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "lens-phone-ocr").apply { isDaemon = true }
@@ -131,20 +129,12 @@ internal class PhoneFrozenOcr(
             val script = order[index++]
             val task = runCatching { recognizerFor(script).process(InputImage.fromBitmap(bitmap, 0)) }
                 .getOrElse {
-                    if (script != PhoneOcrScript.LATIN && isPlayServicesOcrModuleUnavailable(it)) {
-                        onModuleUnavailable(script)
-                    }
                     callbackExecutor.execute(::recognizeNext)
                     return
                 }
             task.addOnCompleteListener(callbackExecutor) { completed ->
                 val text = if (completed.isSuccessful) completed.result else null
                 if (text == null) {
-                    if (script != PhoneOcrScript.LATIN &&
-                        isPlayServicesOcrModuleUnavailable(completed.exception)
-                    ) {
-                        onModuleUnavailable(script)
-                    }
                     recognizeNext()
                     return@addOnCompleteListener
                 }
