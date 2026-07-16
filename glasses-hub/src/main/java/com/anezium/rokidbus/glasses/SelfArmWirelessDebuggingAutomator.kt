@@ -22,7 +22,7 @@ import java.util.Locale
 import java.util.regex.Pattern
 
 internal class SelfArmWirelessDebuggingAutomator(
-    private val service: SelfArmWirelessAccessibilityService,
+    private val service: RokidBusAccessibilityService,
     private val handler: Handler,
 ) {
     private var active = false
@@ -1141,6 +1141,7 @@ internal class SelfArmWirelessDebuggingAutomator(
     }
 
     private fun report(setupState: String) {
+        SelfArmOnboardingStore.reportProgress(service.applicationContext, setupState)
         val wifiIp = wifiIpv4().ifBlank { lastPairingHost.ifBlank { lastConnectHost } }
         val connectPort = SelfArmWirelessAdbController.readWirelessPort().takeIf { it > 0 } ?: lastConnectPort
         android.util.Log.i(TAG, "selfarm-wireless $setupState wifiIp=$wifiIp connectPort=$connectPort")
@@ -1150,12 +1151,9 @@ internal class SelfArmWirelessDebuggingAutomator(
         active = false
         handler.removeCallbacks(stepRunnable)
         report(setupState)
+        SelfArmOnboardingStore.finish(service.applicationContext, setupState, success)
         android.util.Log.i(TAG, if (success) "Wireless Debugging ready" else "Wireless setup needs a tap")
-        if (success) {
-            handler.postDelayed({
-                runCatching { service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_HOME) }
-            }, 300L)
-        }
+        handler.postDelayed({ service.returnToOnboarding() }, 300L)
     }
 
     private fun canClickNow(): Boolean =
@@ -1193,4 +1191,3 @@ internal class SelfArmWirelessDebuggingAutomator(
         private val STANDALONE_PORT = Pattern.compile("\\b(\\d{4,5})\\b")
     }
 }
-

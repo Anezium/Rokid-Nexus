@@ -508,7 +508,7 @@ object GlassesHub {
     private fun attemptWifiAutoEnroll(context: Context) {
         if (SelfArmLocalAdbBootstrapper.isBootstrapComplete(context)) return
         val attempted = autoEnrollAttempted.compareAndSet(false, true)
-        val serviceConnected = attempted && SelfArmWirelessAccessibilityService.startConnectedService()
+        val serviceConnected = attempted && RokidBusAccessibilityService.requestWirelessBootstrap(context)
         log("glassesWifi auto-enroll attempted=$attempted serviceConnected=$serviceConnected")
     }
 

@@ -2,6 +2,8 @@ package com.anezium.rokidbus.glasses
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
+import android.content.Context
+import android.content.Intent
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -17,20 +19,29 @@ class RokidBusAccessibilityService : AccessibilityService() {
     // overlay before the UP arrives; the orphan ENTER UP then reaches the
     // Rokid launcher, whose key-up handler starts phone music playback).
     private val consumedDownKeys = mutableSetOf<Int>()
+    private var wirelessDebuggingAutomator: SelfArmWirelessDebuggingAutomator? = null
 
     override fun onServiceConnected() {
         super.onServiceConnected()
         serviceInfo = serviceInfo.apply {
             flags = flags or AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS
         }
+        wirelessDebuggingAutomator = SelfArmWirelessDebuggingAutomator(this, main)
+        liveInstance = this
         log("AccessibilityService connected; starting glasses hub")
         SurfaceOverlayRenderer.onServiceConnected(this)
         LauncherOverlayRenderer.onServiceConnected(this)
         GlassesHub.start(applicationContext)
         AccessibilityRearmWatcher.start(applicationContext, "accessibility_service_connected")
+        SelfArmOnboardingStore.notifyChanged(applicationContext)
+        if (SelfArmOnboardingStore.isSetupRequested(applicationContext)) {
+            startWirelessBootstrap()
+        }
     }
 
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) = Unit
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        wirelessDebuggingAutomator?.onAccessibilityEvent(event)
+    }
 
     override fun onKeyEvent(event: KeyEvent): Boolean {
         if (event.keyCode == KEYCODE_PROG_BLUE) return false
@@ -78,12 +89,16 @@ class RokidBusAccessibilityService : AccessibilityService() {
     }
 
     override fun onInterrupt() {
+        wirelessDebuggingAutomator?.stop()
         log("AccessibilityService interrupted")
     }
 
     override fun onDestroy() {
         log("AccessibilityService destroyed")
         main.removeCallbacks(tapExpiry)
+        wirelessDebuggingAutomator?.stop()
+        wirelessDebuggingAutomator = null
+        if (liveInstance === this) liveInstance = null
         LauncherOverlayRenderer.onServiceDestroyed(this)
         SurfaceOverlayRenderer.onServiceDestroyed(this)
         super.onDestroy()
@@ -100,7 +115,40 @@ class RokidBusAccessibilityService : AccessibilityService() {
         }
     }
 
-    private companion object {
+    private fun startWirelessBootstrap() {
+        val state = SelfArmOnboardingStateMachine.evaluate(
+            SelfArmOnboardingStore.snapshot(applicationContext),
+        )
+        if (state.stage == SelfArmOnboardingState.Stage.COMPLETE) {
+            SelfArmOnboardingStore.finish(applicationContext, "wireless_bootstrap_complete", true)
+            returnToOnboarding()
+            return
+        }
+        if (state.stage == SelfArmOnboardingState.Stage.RUNNING) return
+        SelfArmOnboardingStore.markRunning(applicationContext)
+        wirelessDebuggingAutomator?.start()
+    }
+
+    internal fun returnToOnboarding() {
+        startActivity(
+            Intent(this, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+        )
+    }
+
+    companion object {
         private const val KEYCODE_PROG_BLUE = 186
+        @Volatile private var liveInstance: RokidBusAccessibilityService? = null
+
+        internal fun requestWirelessBootstrap(context: Context): Boolean {
+            val currentState = SelfArmOnboardingStateMachine.evaluate(
+                SelfArmOnboardingStore.snapshot(context.applicationContext),
+            )
+            if (currentState.stage == SelfArmOnboardingState.Stage.COMPLETE) return true
+            SelfArmOnboardingStore.requestSetup(context.applicationContext)
+            val service = liveInstance ?: return false
+            service.main.post(service::startWirelessBootstrap)
+            return true
+        }
     }
 }

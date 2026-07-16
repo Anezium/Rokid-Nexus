@@ -3,17 +3,22 @@ package com.anezium.rokidbus.glasses
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.util.Log
 
 class SelfArmWirelessBootstrapReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
-        if (intent?.action != ACTION_SELFARM_WIRELESS_START) return
-        if (!BuildConfig.DEBUG) {
-            Log.w(TAG, "Ignoring wireless bootstrap broadcast in a non-debug build")
+        if (!SelfArmWirelessBootstrapPolicy.mayStart(
+                action = intent?.action,
+                callerTrust = SelfArmWirelessBootstrapPolicy.CallerTrust.SAME_APP_OR_SIGNATURE,
+                sdkInt = Build.VERSION.SDK_INT,
+            )
+        ) {
+            Log.w(TAG, "Ignoring wireless bootstrap request that failed policy")
             return
         }
-        if (!SelfArmWirelessAccessibilityService.startConnectedService()) {
-            Log.w(TAG, "Wireless bootstrap service is not enabled or connected")
+        if (!RokidBusAccessibilityService.requestWirelessBootstrap(context)) {
+            Log.w(TAG, "Main Nexus accessibility service is not enabled or connected")
         }
     }
 
