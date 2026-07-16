@@ -15,6 +15,9 @@
     </queries>
     <application android:allowBackup="false" android:icon="@drawable/ic_plugin_lens"
         android:label="@string/app_name" android:supportsRtl="true" android:theme="@style/Theme.Lens">
+        <meta-data
+            android:name="com.google.mlkit.vision.DEPENDENCIES"
+            android:value="ocr_chinese,ocr_devanagari,ocr_japanese,ocr_korean" />
         <activity android:name=".LensSettingsActivity" android:exported="true"
             android:windowSoftInputMode="adjustResize" />
         <service android:name=".LensPluginService" android:exported="true"

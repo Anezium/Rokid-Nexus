@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.1
+
+- Non-Latin OCR script models (Japanese, Chinese, Korean, Devanagari) now download
+  on demand via Google Play Services instead of being bundled, cutting the app size
+  from ~120 MB to ~20 MB. Latin recognition stays bundled and instant.
+
 ## 1.0.0
 
 - Camera platform: generic `camera` capability with the phone-side OCR pipeline
