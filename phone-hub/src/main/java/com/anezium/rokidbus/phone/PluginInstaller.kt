@@ -47,7 +47,7 @@ sealed interface PackageInstallEvent {
     data object AwaitingUserConfirmation : PackageInstallEvent
     data object Success : PackageInstallEvent
     data object Cancelled : PackageInstallEvent
-    data class Failure(val message: String) : PackageInstallEvent
+    data class Failure(val message: String, val statusCode: Int? = null) : PackageInstallEvent
 }
 
 fun interface PackageInstallSession {
@@ -68,6 +68,8 @@ data class ArtifactArchiveInfo(
     val packageName: String,
     val versionCode: Long,
     val signingCertificates: List<ByteArray>,
+    val versionName: String? = null,
+    val signingCertificateHistory: List<ByteArray> = signingCertificates,
 )
 
 fun interface ArtifactPackageInspector {
@@ -113,19 +115,31 @@ class PluginInstallOperation internal constructor(
     }
 }
 
-class PluginInstaller(
+internal data class ArtifactInstallRequest(
+    val cacheFileName: String,
+    val url: String,
+    val sha256: String?,
+    val expectedPackageName: String,
+    val installationId: String,
+    val sha256FailureMessage: String,
+    val fallbackFailureMessage: String,
+    val verifyArchive: (ArtifactArchiveInfo?) -> String?,
+    val mapInstallFailure: (PackageInstallEvent.Failure) -> String = { it.message },
+    val successState: () -> PluginInstallState.Success,
+    val postInstallFailureMessage: String,
+)
+
+/** Shared download, verification and user-confirmed PackageInstaller pipeline. */
+internal class ArtifactInstallPipeline(
     private val cacheDirectory: File,
-    private val hostVersionCode: Long,
     private val downloader: ArtifactDownloader,
     private val packageInspector: ArtifactPackageInspector,
     private val packageInstaller: PackageInstallGateway,
-    private val ioExecutor: Executor = DEFAULT_IO_EXECUTOR,
-    private val callbackExecutor: Executor = Executor(Runnable::run),
-    private val postInstall: (packageName: String) -> Unit = {},
-    private val logger: (String) -> Unit = {},
+    private val ioExecutor: Executor,
+    private val callbackExecutor: Executor,
 ) {
     fun install(
-        entry: StoreEntry,
+        request: ArtifactInstallRequest,
         listener: (PluginInstallState) -> Unit,
     ): PluginInstallOperation {
         val cancelled = AtomicBoolean(false)
@@ -145,23 +159,13 @@ class PluginInstaller(
             finish(PluginInstallState.Cancelled)
         }
 
-        val plugin = entry.registryPlugin
-        if (plugin == null || entry.state !in INSTALLABLE_STATES) {
-            finish(PluginInstallState.Failure("This plugin is not installable"))
-            return operation
-        }
-        if (plugin.nexus.minHostVersionCode > hostVersionCode) {
-            finish(PluginInstallState.Failure("This plugin requires a newer Nexus host"))
-            return operation
-        }
-
         ioExecutor.execute {
             cacheDirectory.mkdirs()
-            val apk = File(cacheDirectory, "plugin-${plugin.artifact.sha256.take(16)}.apk")
+            val apk = File(cacheDirectory, request.cacheFileName)
             try {
                 apk.delete()
                 downloader.download(
-                    url = plugin.artifact.url,
+                    url = request.url,
                     destination = apk,
                     isCancelled = cancelled::get,
                     onProgress = { downloaded, total ->
@@ -173,32 +177,13 @@ class PluginInstaller(
                     return@execute
                 }
                 emit(PluginInstallState.Verifying)
-                if (!sha256Matches(apk, plugin.artifact.sha256)) {
-                    finish(PluginInstallState.Failure("Downloaded APK failed SHA-256 verification"))
+                if (request.sha256 != null && !PluginInstaller.sha256Matches(apk, request.sha256)) {
+                    finish(PluginInstallState.Failure(request.sha256FailureMessage))
                     return@execute
                 }
-                when (val verification = ArtifactArchiveVerifier.verify(plugin.artifact, packageInspector.inspect(apk))) {
-                    ArtifactArchiveVerification.Verified -> Unit
-                    ArtifactArchiveVerification.PackageNameMismatch -> {
-                        finish(PluginInstallState.Failure("Downloaded APK package does not match the registry"))
-                        return@execute
-                    }
-                    ArtifactArchiveVerification.SignerSetUnsupported -> {
-                        finish(PluginInstallState.Failure("Downloaded APK uses an unsupported signer set"))
-                        return@execute
-                    }
-                    is ArtifactArchiveVerification.SignerMismatch -> {
-                        logger(
-                            "Plugin APK signer mismatch package=${plugin.artifact.packageName} " +
-                                "expected=${verification.expected} actual=${verification.actual}",
-                        )
-                        finish(PluginInstallState.Failure("Downloaded APK signer does not match the registry"))
-                        return@execute
-                    }
-                    ArtifactArchiveVerification.VersionCodeMismatch -> {
-                        finish(PluginInstallState.Failure("Downloaded APK version does not match the registry"))
-                        return@execute
-                    }
+                request.verifyArchive(packageInspector.inspect(apk))?.let { message ->
+                    finish(PluginInstallState.Failure(message))
+                    return@execute
                 }
                 if (cancelled.get()) {
                     finish(PluginInstallState.Cancelled)
@@ -207,38 +192,112 @@ class PluginInstaller(
                 emit(PluginInstallState.Installing)
                 activeSession = packageInstaller.install(
                     apk = apk,
-                    expectedPackageName = plugin.artifact.packageName,
-                    expectedPluginId = plugin.nexus.pluginId,
+                    expectedPackageName = request.expectedPackageName,
+                    expectedPluginId = request.installationId,
                 ) { event ->
                     when (event) {
                         PackageInstallEvent.AwaitingUserConfirmation ->
                             if (!completed.get()) emit(PluginInstallState.AwaitingUserConfirmation)
                         PackageInstallEvent.Success -> {
                             if (completed.compareAndSet(false, true)) {
-                                runCatching { postInstall(plugin.artifact.packageName) }
-                                    .onFailure {
-                                        emit(PluginInstallState.Failure("Plugin installed, but catalogue refresh failed"))
-                                    }
-                                    .onSuccess {
-                                        emit(PluginInstallState.Success(plugin.nexus.pluginId, plugin.artifact.packageName))
-                                    }
+                                val terminal = runCatching(request.successState)
+                                    .getOrElse { PluginInstallState.Failure(request.postInstallFailureMessage) }
+                                emit(terminal)
                             }
                         }
                         PackageInstallEvent.Cancelled -> finish(PluginInstallState.Cancelled)
-                        is PackageInstallEvent.Failure -> finish(PluginInstallState.Failure(event.message))
+                        is PackageInstallEvent.Failure ->
+                            finish(PluginInstallState.Failure(request.mapInstallFailure(event)))
                     }
                 }
                 if (cancelled.get()) runCatching { activeSession?.cancel() }
             } catch (_: DownloadCancelledException) {
                 finish(PluginInstallState.Cancelled)
             } catch (failure: Exception) {
-                finish(PluginInstallState.Failure(failure.message ?: "Plugin installation failed"))
+                finish(PluginInstallState.Failure(failure.message ?: request.fallbackFailureMessage))
             } finally {
                 apk.delete()
             }
         }
         return operation
     }
+}
+
+class PluginInstaller(
+    private val cacheDirectory: File,
+    private val hostVersionCode: Long,
+    private val downloader: ArtifactDownloader,
+    private val packageInspector: ArtifactPackageInspector,
+    private val packageInstaller: PackageInstallGateway,
+    private val ioExecutor: Executor = DEFAULT_IO_EXECUTOR,
+    private val callbackExecutor: Executor = Executor(Runnable::run),
+    private val postInstall: (packageName: String) -> Unit = {},
+    private val logger: (String) -> Unit = {},
+) {
+    fun install(
+        entry: StoreEntry,
+        listener: (PluginInstallState) -> Unit,
+    ): PluginInstallOperation {
+        val plugin = entry.registryPlugin
+        if (plugin == null || entry.state !in INSTALLABLE_STATES) {
+            return rejected(listener, "This plugin is not installable")
+        }
+        if (plugin.nexus.minHostVersionCode > hostVersionCode) {
+            return rejected(listener, "This plugin requires a newer Nexus host")
+        }
+        val pipeline = ArtifactInstallPipeline(
+            cacheDirectory,
+            downloader,
+            packageInspector,
+            packageInstaller,
+            ioExecutor,
+            callbackExecutor,
+        )
+        return pipeline.install(
+            ArtifactInstallRequest(
+                cacheFileName = "plugin-${plugin.artifact.sha256.take(16)}.apk",
+                url = plugin.artifact.url,
+                sha256 = plugin.artifact.sha256,
+                expectedPackageName = plugin.artifact.packageName,
+                installationId = plugin.nexus.pluginId,
+                sha256FailureMessage = "Downloaded APK failed SHA-256 verification",
+                fallbackFailureMessage = "Plugin installation failed",
+                verifyArchive = { actual -> pluginArchiveFailure(plugin, actual) },
+                successState = {
+                    postInstall(plugin.artifact.packageName)
+                    PluginInstallState.Success(plugin.nexus.pluginId, plugin.artifact.packageName)
+                },
+                postInstallFailureMessage = "Plugin installed, but catalogue refresh failed",
+            ),
+            listener,
+        )
+    }
+
+    private fun rejected(
+        listener: (PluginInstallState) -> Unit,
+        message: String,
+    ): PluginInstallOperation {
+        callbackExecutor.execute { listener(PluginInstallState.Failure(message)) }
+        return PluginInstallOperation(AtomicBoolean(true)) {}
+    }
+
+    private fun pluginArchiveFailure(plugin: RegistryPlugin, actual: ArtifactArchiveInfo?): String? =
+        when (val verification = ArtifactArchiveVerifier.verify(plugin.artifact, actual)) {
+            ArtifactArchiveVerification.Verified -> null
+            ArtifactArchiveVerification.PackageNameMismatch ->
+                "Downloaded APK package does not match the registry"
+            ArtifactArchiveVerification.SignerSetUnsupported ->
+                "Downloaded APK uses an unsupported signer set"
+            is ArtifactArchiveVerification.SignerMismatch -> {
+                logger(
+                    "Plugin APK signer mismatch package=${plugin.artifact.packageName} " +
+                        "expected=${verification.expected} actual=${verification.actual}",
+                )
+                "Downloaded APK signer does not match the registry"
+            }
+            ArtifactArchiveVerification.VersionCodeMismatch ->
+                "Downloaded APK version does not match the registry"
+        }
 
     companion object {
         private val INSTALLABLE_STATES = setOf(StoreEntryState.AVAILABLE, StoreEntryState.UPDATE_AVAILABLE)
@@ -283,7 +342,7 @@ class PluginInstaller(
     }
 }
 
-private class AndroidArtifactPackageInspector(
+internal class AndroidArtifactPackageInspector(
     private val packageManager: PackageManager,
 ) : ArtifactPackageInspector {
     override fun inspect(apk: File): ArtifactArchiveInfo? {
@@ -302,15 +361,18 @@ private class AndroidArtifactPackageInspector(
             versionCode = packageInfo.longVersionCode,
             signingCertificates = packageInfo.signingInfo?.apkContentsSigners.orEmpty()
                 .map { signer -> signer.toByteArray() },
+            versionName = packageInfo.versionName,
+            signingCertificateHistory = packageInfo.signingInfo?.signingCertificateHistory.orEmpty()
+                .map { signer -> signer.toByteArray() },
         )
     }
 }
 
-private class DownloadCancelledException : IOException("Download cancelled")
+internal class DownloadCancelledException : IOException("Download cancelled")
 
 private const val PROGRESS_EMIT_INTERVAL_MS = 250L
 
-private class HttpsArtifactDownloader : ArtifactDownloader {
+internal class HttpsArtifactDownloader : ArtifactDownloader {
     override fun download(
         url: String,
         destination: File,
@@ -318,7 +380,7 @@ private class HttpsArtifactDownloader : ArtifactDownloader {
         onProgress: (downloadedBytes: Long, totalBytes: Long?) -> Unit,
     ) {
         val parsedUrl = URL(url)
-        require(parsedUrl.protocol == "https") { "Plugin artifact URL must use HTTPS" }
+        require(parsedUrl.protocol == "https") { "Artifact URL must use HTTPS" }
         val connection = (parsedUrl.openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
             connectTimeout = 15_000
@@ -360,7 +422,7 @@ private class HttpsArtifactDownloader : ArtifactDownloader {
     }
 }
 
-private class AndroidPackageInstallGateway(private val context: Context) : PackageInstallGateway {
+internal class AndroidPackageInstallGateway(private val context: Context) : PackageInstallGateway {
     override fun install(
         apk: File,
         expectedPackageName: String,
@@ -476,7 +538,7 @@ class PluginInstallResultReceiver : BroadcastReceiver() {
                     callback,
                     expectedPackageName,
                     expectedPluginId,
-                    PackageInstallEvent.Failure(message),
+                    PackageInstallEvent.Failure(message, status),
                 )
             }
         }
@@ -491,6 +553,17 @@ class PluginInstallResultReceiver : BroadcastReceiver() {
     ) {
         if (callback != null) {
             callback(event)
+            return
+        }
+        if (expectedPluginId == NEXUS_SELF_UPDATE_INSTALL_ID) {
+            val recovered = when (event) {
+                PackageInstallEvent.Success -> RecoveredNexusUpdateInstall.Success
+                PackageInstallEvent.Cancelled -> RecoveredNexusUpdateInstall.Cancelled
+                is PackageInstallEvent.Failure ->
+                    RecoveredNexusUpdateInstall.Failure(selfUpdateInstallFailureMessage(event))
+                PackageInstallEvent.AwaitingUserConfirmation -> return
+            }
+            NexusUpdateInstallRecoveryStore(context).save(recovered)
             return
         }
         val recoveryStore = PluginInstallRecoveryStore(context)

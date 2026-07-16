@@ -506,7 +506,13 @@ object NexusUi {
         }
     }
 
-    fun updateBanner(context: Context, versionLabel: String, onInstall: () -> Unit): LinearLayout =
+    fun updateBanner(
+        context: Context,
+        versionLabel: String,
+        actionLabel: String = "Install",
+        actionEnabled: Boolean = true,
+        onInstall: () -> Unit,
+    ): LinearLayout =
         LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -530,7 +536,7 @@ object NexusUi {
             addView(textColumn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             addView(
                 Button(context).apply {
-                    text = "Install"
+                    text = actionLabel
                     textSize = 10f
                     typeface = mono
                     letterSpacing = 0.12f
@@ -544,6 +550,8 @@ object NexusUi {
                     includeFontPadding = false
                     setPadding(dp(context, 13), 0, dp(context, 13), 0)
                     background = rounded(context, AMBER, 18)
+                    isEnabled = actionEnabled
+                    alpha = if (actionEnabled) 1f else 0.65f
                     setOnClickListener { onInstall() }
                 },
                 LinearLayout.LayoutParams(

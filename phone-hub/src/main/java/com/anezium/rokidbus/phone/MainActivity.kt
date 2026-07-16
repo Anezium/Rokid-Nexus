@@ -37,6 +37,7 @@ private const val NOTIFICATION_PERMISSION_REQUEST = 22
 /** Companion home: fixed status/settings menubar, setup cards, plugin list, store entry and hub toggle. */
 class MainActivity : Activity() {
     private val developerModeStore by lazy { DeveloperModeStore(this) }
+    private lateinit var updateSection: LinearLayout
     private lateinit var setupSection: LinearLayout
     private lateinit var pluginSection: LinearLayout
     private lateinit var toggleButton: Button
@@ -44,6 +45,10 @@ class MainActivity : Activity() {
     private lateinit var gearPip: View
     private var hubUiClient: BusClient? = null
     private var lastLinkState = 0
+    private val updateStateListener: () -> Unit = {
+        renderUpdateSection()
+        renderLinkState()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -63,11 +68,24 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        resumeRecoveredNexusUpdateInstall()
         resumeRecoveredPluginInstall()
         rebuildSetupSection()
         rebuildPluginSection()
         refreshToggle()
         renderLinkState()
+        NexusUpdateManager.checkForUpdates(applicationContext)
+    }
+
+    override fun onStart() {
+        super.onStart()
+        NexusPhoneState.addUpdateListener(updateStateListener)
+        updateStateListener()
+    }
+
+    override fun onStop() {
+        NexusPhoneState.removeUpdateListener(updateStateListener)
+        super.onStop()
     }
 
     override fun onRequestPermissionsResult(
@@ -115,16 +133,9 @@ class MainActivity : Activity() {
         }
 
         pluginSection = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        updateSection = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val content = NexusUi.contentColumn(this).apply {
-            if (NexusPhoneState.updateAvailable) {
-                addView(
-                    NexusUi.updateBanner(this@MainActivity, NexusPhoneState.UPDATE_VERSION_LABEL) {
-                        Toast.makeText(this@MainActivity, "Coming soon", Toast.LENGTH_SHORT).show()
-                    },
-                    NexusUi.block(),
-                )
-                addView(BusTheme.gap(this@MainActivity, 14))
-            }
+            addView(updateSection, NexusUi.block())
             addView(setupSection, NexusUi.block())
             addView(pluginSection, NexusUi.block())
         }
@@ -159,7 +170,25 @@ class MainActivity : Activity() {
         refreshToggle()
         rebuildSetupSection()
         rebuildPluginSection()
+        renderUpdateSection()
         setContentView(root)
+    }
+
+    private fun renderUpdateSection() {
+        if (!::updateSection.isInitialized) return
+        updateSection.removeAllViews()
+        if (NexusPhoneState.updateAvailable) {
+            updateSection.addView(
+                NexusUi.updateBanner(
+                    context = this,
+                    versionLabel = NexusPhoneState.updateVersionLabel,
+                    actionLabel = NexusPhoneState.updateActionLabel(),
+                    actionEnabled = NexusPhoneState.updateActionEnabled(),
+                ) { NexusUpdateManager.performUpdateAction(applicationContext) },
+                NexusUi.block(),
+            )
+            updateSection.addView(BusTheme.gap(this, 14))
+        }
     }
 
     private fun rebuildPluginSection() {

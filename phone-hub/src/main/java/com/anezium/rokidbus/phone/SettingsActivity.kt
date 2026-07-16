@@ -30,6 +30,8 @@ private const val SETTINGS_TAG = "RokidNexusSettings"
 
 class SettingsActivity : Activity() {
     private val developerModeStore by lazy { DeveloperModeStore(this) }
+    private lateinit var updateSection: LinearLayout
+    private lateinit var updateCheckValue: TextView
     private lateinit var cxrValue: TextView
     private lateinit var sppValue: TextView
     private lateinit var bondValue: TextView
@@ -37,6 +39,7 @@ class SettingsActivity : Activity() {
     private lateinit var logScroll: ScrollView
     private var hubUiClient: BusClient? = null
     private var lastLinkState = 0
+    private val updateStateListener: () -> Unit = { renderUpdateUi() }
 
     private val logReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -56,6 +59,8 @@ class SettingsActivity : Activity() {
 
     override fun onStart() {
         super.onStart()
+        NexusPhoneState.addUpdateListener(updateStateListener)
+        updateStateListener()
         val filter = IntentFilter(NexusPhoneState.ACTION_LOG)
         ContextCompat.registerReceiver(
             this,
@@ -66,8 +71,15 @@ class SettingsActivity : Activity() {
     }
 
     override fun onStop() {
+        NexusPhoneState.removeUpdateListener(updateStateListener)
         runCatching { unregisterReceiver(logReceiver) }
         super.onStop()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        resumeRecoveredNexusUpdateInstall()
+        renderUpdateUi()
     }
 
     override fun onDestroy() {
@@ -102,17 +114,10 @@ class SettingsActivity : Activity() {
         bondValue = NexusUi.rowValue(this)
         logView = TextView(this)
         logScroll = NexusUi.console(this, logView)
+        updateSection = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
         val content = NexusUi.contentColumn(this).apply {
-            if (NexusPhoneState.updateAvailable) {
-                addView(
-                    NexusUi.updateBanner(this@SettingsActivity, NexusPhoneState.UPDATE_VERSION_LABEL) {
-                        Toast.makeText(this@SettingsActivity, "Coming soon", Toast.LENGTH_SHORT).show()
-                    },
-                    NexusUi.block(),
-                )
-                addView(BusTheme.gap(this@SettingsActivity, 22))
-            }
+            addView(updateSection, NexusUi.block())
             addView(NexusUi.sectionRow(this@SettingsActivity, "Connection"), NexusUi.block())
             addView(BusTheme.gap(this@SettingsActivity, 12))
             addView(connectionCard(), NexusUi.block())
@@ -186,7 +191,34 @@ class SettingsActivity : Activity() {
         }
 
         renderLinkState()
+        renderUpdateUi()
         setContentView(root)
+    }
+
+    private fun renderUpdateUi() {
+        if (::updateSection.isInitialized) {
+            updateSection.removeAllViews()
+            if (NexusPhoneState.updateAvailable) {
+                updateSection.addView(
+                    NexusUi.updateBanner(
+                        context = this,
+                        versionLabel = NexusPhoneState.updateVersionLabel,
+                        actionLabel = NexusPhoneState.updateActionLabel(),
+                        actionEnabled = NexusPhoneState.updateActionEnabled(),
+                    ) { NexusUpdateManager.performUpdateAction(applicationContext) },
+                    NexusUi.block(),
+                )
+                updateSection.addView(BusTheme.gap(this, 22))
+            }
+        }
+        if (::updateCheckValue.isInitialized) {
+            val label = when {
+                NexusPhoneState.updateAvailable -> NexusPhoneState.updateActionLabel()
+                NexusPhoneState.checkingForUpdate -> "Checking"
+                else -> "Check"
+            }
+            updateCheckValue.text = "$label \u203A"
+        }
     }
 
     private fun titleHeader(title: String): LinearLayout =
@@ -265,14 +297,18 @@ class SettingsActivity : Activity() {
                 setTextColor(NexusUi.INK3)
             }), NexusUi.block())
             addView(NexusUi.divider(this@SettingsActivity))
+            updateCheckValue = NexusUi.metaLabel(
+                this@SettingsActivity,
+                "Check \u203A",
+                NexusUi.GREEN,
+            )
             addView(
                 plainActionRow(
                     title = "Check for updates",
-                    value = if (NexusPhoneState.updateAvailable) "Install" else "Check",
                     danger = false,
-                ) {
-                    Toast.makeText(this@SettingsActivity, "Coming soon", Toast.LENGTH_SHORT).show()
-                },
+                    valueView = updateCheckValue,
+                    onClick = ::onUpdateRowClicked,
+                ),
                 NexusUi.block(),
             )
         }
@@ -290,8 +326,8 @@ class SettingsActivity : Activity() {
 
     private fun plainActionRow(
         title: String,
-        value: String,
         danger: Boolean,
+        valueView: TextView,
         onClick: () -> Unit,
     ): LinearLayout =
         LinearLayout(this).apply {
@@ -307,14 +343,27 @@ class SettingsActivity : Activity() {
                 },
                 LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
             )
-            addView(
-                NexusUi.metaLabel(
-                    this@SettingsActivity,
-                    "$value \u203A",
-                    if (danger) NexusUi.DANGER else NexusUi.GREEN,
-                ),
-            )
+            valueView.setTextColor(if (danger) NexusUi.DANGER else NexusUi.GREEN)
+            addView(valueView)
         }
+
+    private fun onUpdateRowClicked() {
+        if (NexusPhoneState.updateAvailable) {
+            NexusUpdateManager.performUpdateAction(applicationContext)
+            return
+        }
+        if (NexusPhoneState.checkingForUpdate) return
+        NexusUpdateManager.checkForUpdates(applicationContext, force = true) { result ->
+            if (isFinishing || isDestroyed) return@checkForUpdates
+            val message = when (result) {
+                is NexusUpdateCheckResult.Available -> "${result.release.versionLabel} is available"
+                is NexusUpdateCheckResult.Current -> "Rokid Nexus is up to date"
+                is NexusUpdateCheckResult.Failure ->
+                    "Could not check for updates: ${result.error.message ?: "Unknown error"}"
+            }
+            Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+        }
+    }
 
     private fun developerModeRow(): LinearLayout =
         LinearLayout(this).apply {
