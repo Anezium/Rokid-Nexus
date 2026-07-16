@@ -2,6 +2,8 @@ plugins {
     id("com.android.application")
 }
 
+apply(from = rootProject.file("gradle/plugin-release-signing.gradle"))
+
 android {
     namespace = "com.anezium.rokidbus.phone"
     compileSdk = 36
@@ -10,8 +12,8 @@ android {
         applicationId = "com.anezium.rokidbus.phone"
         minSdk = 31
         targetSdk = 36
-        versionCode = 6
-        versionName = "0.1.5-lens-m5"
+        versionCode = 10000
+        versionName = "1.0.0"
     }
 
     buildTypes {

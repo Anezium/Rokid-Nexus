@@ -2,6 +2,8 @@ plugins {
     id("com.android.application")
 }
 
+apply(from = rootProject.file("gradle/plugin-release-signing.gradle"))
+
 android {
     namespace = "com.anezium.rokidbus.glasses"
     compileSdk = 36
@@ -10,8 +12,8 @@ android {
         applicationId = "com.anezium.rokidbus.glasses"
         minSdk = 31
         targetSdk = 32
-        versionCode = 2
-        versionName = "0.1.1-selfarm"
+        versionCode = 10000
+        versionName = "1.0.0"
     }
 
     buildTypes {

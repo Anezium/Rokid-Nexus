@@ -1,0 +1,169 @@
+name: App release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  contents: write
+
+jobs:
+  release-apps:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: RokidNexus
+    steps:
+      - name: Check out the tagged revision
+        uses: actions/checkout@v6
+        with:
+          path: RokidNexus
+
+      - name: Check out CxrGlobal 0.2.0
+        uses: actions/checkout@v6
+        with:
+          repository: Anezium/CxrGlobal
+          ref: v0.2.0
+          path: CxrGlobal
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Parse and validate the app tag
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tag="$GITHUB_REF_NAME"
+          if [[ "$tag" =~ ^v((0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*))$ ]]; then
+            version="${BASH_REMATCH[1]}"
+          else
+            echo "::error::App release tag must have the form v<semver>; got '$tag'."
+            exit 1
+          fi
+
+          echo "APP_VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Verify app versionNames
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          for module in phone-hub glasses-hub; do
+            build_file="$module/build.gradle.kts"
+            mapfile -t version_names < <(
+              sed -nE 's/^[[:space:]]*versionName[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' "$build_file"
+            )
+            if [[ "${#version_names[@]}" -ne 1 ]]; then
+              echo "::error::Expected exactly one literal versionName in '$build_file'; found ${#version_names[@]}."
+              exit 1
+            fi
+            if [[ "${version_names[0]}" != "$APP_VERSION" ]]; then
+              echo "::error::$module versionName is '${version_names[0]}', but tag '$GITHUB_REF_NAME' requests '$APP_VERSION'."
+              exit 1
+            fi
+          done
+
+      - name: Decode release keystore outside the checkout
+        shell: bash
+        env:
+          NEXUS_RELEASE_KEYSTORE_B64: ${{ secrets.NEXUS_RELEASE_KEYSTORE_B64 }}
+          RELEASE_KEYSTORE_PASSWORD: ${{ secrets.NEXUS_RELEASE_KEYSTORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.NEXUS_RELEASE_KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "$NEXUS_RELEASE_KEYSTORE_B64" ]]; then
+            echo "::error::NEXUS_RELEASE_KEYSTORE_B64 is not configured."
+            exit 1
+          fi
+          if [[ -z "$RELEASE_KEYSTORE_PASSWORD" ]]; then
+            echo "::error::NEXUS_RELEASE_KEYSTORE_PASSWORD is not configured."
+            exit 1
+          fi
+          if [[ -z "$RELEASE_KEY_ALIAS" ]]; then
+            echo "::error::NEXUS_RELEASE_KEY_ALIAS is not configured."
+            exit 1
+          fi
+
+          keystore_path="$RUNNER_TEMP/nexus-release.keystore"
+          umask 077
+          printf '%s' "$NEXUS_RELEASE_KEYSTORE_B64" | base64 --decode > "$keystore_path"
+          {
+            echo "NEXUS_RELEASE_KEYSTORE=$keystore_path"
+            echo "NEXUS_RELEASE_KEYSTORE_PASSWORD=$RELEASE_KEYSTORE_PASSWORD"
+            echo "NEXUS_RELEASE_KEY_ALIAS=$RELEASE_KEY_ALIAS"
+          } >> "$GITHUB_ENV"
+
+      - name: Build signed release APKs
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew :phone-hub:assembleRelease :glasses-hub:assembleRelease
+
+      - name: Prepare artifacts and release notes
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          prepare_artifact() {
+            local module="$1"
+            local target="$2"
+            local apk_dir="$module/build/outputs/apk/release"
+            mapfile -t apks < <(find "$apk_dir" -maxdepth 1 -type f -name '*.apk' -print)
+            if [[ "${#apks[@]}" -ne 1 ]]; then
+              echo "::error::Expected exactly one release APK in '$apk_dir'; found ${#apks[@]}."
+              exit 1
+            fi
+            cp "${apks[0]}" "$target"
+          }
+
+          phone_apk="$RUNNER_TEMP/nexus-phone-$APP_VERSION.apk"
+          glasses_apk="$RUNNER_TEMP/nexus-glasses-$APP_VERSION.apk"
+          prepare_artifact phone-hub "$phone_apk"
+          prepare_artifact glasses-hub "$glasses_apk"
+
+          notes_path="$RUNNER_TEMP/app-release-notes.md"
+          if ! awk -v version="$APP_VERSION" '
+            $1 == "##" {
+              if (found) exit
+              if ($2 == version) {
+                found = 1
+                next
+              }
+            }
+            found { print }
+            END { if (!found) exit 42 }
+          ' CHANGELOG.md > "$notes_path" || ! grep -q '[^[:space:]]' "$notes_path"; then
+            printf 'Signed Rokid Nexus phone and glasses apps for version %s.\n' "$APP_VERSION" > "$notes_path"
+          fi
+
+          {
+            echo "PHONE_APK=$phone_apk"
+            echo "GLASSES_APK=$glasses_apk"
+            echo "RELEASE_NOTES_PATH=$notes_path"
+          } >> "$GITHUB_ENV"
+
+      - name: Create latest GitHub release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "$GITHUB_REF_NAME" "$PHONE_APK" "$GLASSES_APK" \
+            --title "Rokid Nexus $APP_VERSION" \
+            --notes-file "$RELEASE_NOTES_PATH" \
+            --verify-tag \
+            --latest
+
+      - name: Remove decoded keystore
+        if: always()
+        shell: bash
+        run: rm -f "$RUNNER_TEMP/nexus-release.keystore"
