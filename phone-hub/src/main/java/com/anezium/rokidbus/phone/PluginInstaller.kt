@@ -8,6 +8,7 @@ import android.content.pm.PackageInstaller as AndroidPackageInstaller
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Handler
+import android.os.SystemClock
 import android.os.Looper
 import android.util.Log
 import java.io.File
@@ -307,6 +308,8 @@ private class AndroidArtifactPackageInspector(
 
 private class DownloadCancelledException : IOException("Download cancelled")
 
+private const val PROGRESS_EMIT_INTERVAL_MS = 250L
+
 private class HttpsArtifactDownloader : ArtifactDownloader {
     override fun download(
         url: String,
@@ -332,14 +335,23 @@ private class HttpsArtifactDownloader : ArtifactDownloader {
                 connection.inputStream.buffered().use { input ->
                     val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
                     var downloaded = 0L
+                    // A large APK reads in thousands of buffers; emitting progress for each
+                    // one floods the UI thread. Throttle to a few updates per second and
+                    // always emit the final byte count.
+                    var lastEmit = SystemClock.elapsedRealtime()
                     while (true) {
                         if (isCancelled()) throw DownloadCancelledException()
                         val count = input.read(buffer)
                         if (count < 0) break
                         output.write(buffer, 0, count)
                         downloaded += count
-                        onProgress(downloaded, total)
+                        val now = SystemClock.elapsedRealtime()
+                        if (now - lastEmit >= PROGRESS_EMIT_INTERVAL_MS) {
+                            onProgress(downloaded, total)
+                            lastEmit = now
+                        }
                     }
+                    onProgress(downloaded, total)
                 }
             }
         } finally {
