@@ -52,6 +52,7 @@ internal object SelfArmOnboardingStore {
         prefs(context).edit()
             .putBoolean(KEY_REQUESTED, true)
             .putBoolean(KEY_RUNNING, true)
+            .putBoolean(KEY_LEGACY_ADB_SAFE, false)
             .putString(KEY_FAILURE_STATE, "")
             .putString(KEY_PROGRESS_STATE, "starting_wireless_debugging_setup")
             .apply()

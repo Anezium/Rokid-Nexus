@@ -35,6 +35,8 @@ internal data class SelfArmOnboardingState(
 
 internal object SelfArmOnboardingStateMachine {
     fun evaluate(snapshot: SelfArmOnboardingSnapshot): SelfArmOnboardingState = when {
+        snapshot.secureSettingsGranted && snapshot.accessibilityEnabled && snapshot.legacyAdbSafe ->
+            state(SelfArmOnboardingState.Stage.COMPLETE)
         snapshot.setupRunning ->
             state(
                 SelfArmOnboardingState.Stage.RUNNING,
@@ -46,8 +48,6 @@ internal object SelfArmOnboardingStateMachine {
                 SelfArmOnboardingState.Action.RETRY_WIRELESS,
                 snapshot.failureState,
             )
-        snapshot.secureSettingsGranted && snapshot.accessibilityEnabled && snapshot.legacyAdbSafe ->
-            state(SelfArmOnboardingState.Stage.COMPLETE)
         !snapshot.wirelessDebuggingSupported ->
             state(SelfArmOnboardingState.Stage.UNSUPPORTED)
         !snapshot.accessibilityEnabled ->

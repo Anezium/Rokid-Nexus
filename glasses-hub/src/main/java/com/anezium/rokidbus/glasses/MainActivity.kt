@@ -341,7 +341,6 @@ class MainActivity : Activity() {
     private fun performOnboardingAction() {
         when (onboardingState.action) {
             SelfArmOnboardingState.Action.OPEN_ACCESSIBILITY -> {
-                SelfArmOnboardingStore.requestSetup(applicationContext)
                 val settings = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
                     .setPackage("com.android.settings")
                 val opened = runCatching { startActivity(settings) }.isSuccess ||

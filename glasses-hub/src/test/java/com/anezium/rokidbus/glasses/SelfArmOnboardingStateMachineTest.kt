@@ -58,6 +58,25 @@ class SelfArmOnboardingStateMachineTest {
     }
 
     @Test
+    fun verifiedLivePostureClearsStaleProgressFromPmGrantFallback() {
+        val staleRunning = evaluate(
+            accessibilityEnabled = true,
+            secureSettingsGranted = true,
+            legacyAdbSafe = true,
+            setupRunning = true,
+        )
+        val staleFailure = evaluate(
+            accessibilityEnabled = true,
+            secureSettingsGranted = true,
+            legacyAdbSafe = true,
+            failureState = "old_wireless_setup_timeout",
+        )
+
+        assertEquals(SelfArmOnboardingState.Stage.COMPLETE, staleRunning.stage)
+        assertEquals(SelfArmOnboardingState.Stage.COMPLETE, staleFailure.stage)
+    }
+
+    @Test
     fun pmGrantFallbackCompletesWithoutWirelessBootstrapMarker() {
         val state = evaluate(
             accessibilityEnabled = true,
