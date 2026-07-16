@@ -1700,7 +1700,7 @@ class BusHubService : Service() {
         }
     }
 
-    private fun queryGlassesApp() {
+    private fun queryGlassesApp(installIfMissing: Boolean = false) {
         val link = cxrLink
         if (!isCxrUp() || link == null) {
             broadcastGlassesAppState(glassesAppInstallState)
@@ -1712,10 +1712,14 @@ class BusHubService : Service() {
             return
         }
         transitionGlassesAppState(GlassesAppInstallEvent.QueryRequested)
-        requestGlassesAppQuery(link, operationId)
+        requestGlassesAppQuery(link, operationId, installIfMissing)
     }
 
-    private fun requestGlassesAppQuery(link: CXRLink, operationId: Long) {
+    private fun requestGlassesAppQuery(
+        link: CXRLink,
+        operationId: Long,
+        installIfMissing: Boolean = false,
+    ) {
         runCatching {
             link.appIsInstalled(
                 object : IGlassAppCbk {
@@ -1723,6 +1727,7 @@ class BusHubService : Service() {
                         if (!isGlassesAppOperationActive(operationId)) return
                         transitionGlassesAppState(GlassesAppInstallEvent.QueryCompleted(installed))
                         finishGlassesAppOperation(operationId)
+                        if (!installed && installIfMissing) installGlassesApp()
                     }
                 },
             )
@@ -1741,9 +1746,12 @@ class BusHubService : Service() {
         val canInstall = state == GlassesAppInstallState.NotInstalled ||
             state is GlassesAppInstallState.Error && state.retry == GlassesAppRetry.INSTALL
         if (!canInstall) {
-            if (state != GlassesAppInstallState.Resolving &&
+            if (state == GlassesAppInstallState.Unknown) {
+                queryGlassesApp(installIfMissing = true)
+            } else if (state != GlassesAppInstallState.Resolving &&
                 state !is GlassesAppInstallState.Downloading &&
-                state != GlassesAppInstallState.Installing
+                state != GlassesAppInstallState.Installing &&
+                state != GlassesAppInstallState.Querying
             ) {
                 queryGlassesApp()
             } else {

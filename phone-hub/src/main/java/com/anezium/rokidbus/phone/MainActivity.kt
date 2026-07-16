@@ -5,8 +5,11 @@ import com.anezium.rokidbus.client.ui.NexusUi
 import com.anezium.rokidbus.client.ui.PluginCustomIcon
 import android.Manifest
 import android.app.Activity
+import android.content.BroadcastReceiver
 import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.graphics.Typeface
@@ -25,6 +28,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import androidx.core.content.ContextCompat
 import com.anezium.rokidbus.client.BusClient
 import com.anezium.rokidbus.client.BusEvent
 import com.anezium.rokidbus.client.ui.BusTheme
@@ -48,6 +52,11 @@ class MainActivity : Activity() {
     private val updateStateListener: () -> Unit = {
         renderUpdateSection()
         renderLinkState()
+    }
+    private val glassesAppStatusReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (NexusPhoneState.updateGlassesAppInstallState(intent)) rebuildSetupSection()
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -74,6 +83,7 @@ class MainActivity : Activity() {
         rebuildPluginSection()
         refreshToggle()
         renderLinkState()
+        queryGlassesAppIfConnected()
         NexusUpdateManager.checkForUpdates(applicationContext)
     }
 
@@ -81,10 +91,17 @@ class MainActivity : Activity() {
         super.onStart()
         NexusPhoneState.addUpdateListener(updateStateListener)
         updateStateListener()
+        ContextCompat.registerReceiver(
+            this,
+            glassesAppStatusReceiver,
+            IntentFilter(NexusPhoneState.ACTION_LOG),
+            ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
     }
 
     override fun onStop() {
         NexusPhoneState.removeUpdateListener(updateStateListener)
+        runCatching { unregisterReceiver(glassesAppStatusReceiver) }
         super.onStop()
     }
 
@@ -521,16 +538,70 @@ class MainActivity : Activity() {
         val body: String,
         val done: Boolean,
         val actionLabel: String? = null,
+        val actionEnabled: Boolean = true,
         val onAction: (() -> Unit)? = null,
+        val statusLine: String? = null,
+        val secondaryActionLabel: String? = null,
+        val onSecondaryAction: (() -> Unit)? = null,
     )
 
     private fun rebuildSetupSection() {
         if (!::setupSection.isInitialized) return
         setupSection.removeAllViews()
 
-        val glassesLinked = lastLinkState and LinkStateBits.CXR_CONTROL_UP != 0 &&
-            lastLinkState and LinkStateBits.SPP_DATA_UP != 0
+        val cxrReady = lastLinkState and LinkStateBits.CXR_CONTROL_UP != 0
+        val glassesAppState = NexusPhoneState.glassesAppInstallState
         val hasPlugin = BusHubService.pluginCatalog(this).entries.any { it.principal != null }
+
+        val glassesStatus = if (!cxrReady && glassesAppState != GlassesAppInstallState.Installed) {
+            "Connect your glasses first."
+        } else {
+            when (glassesAppState) {
+                GlassesAppInstallState.Unknown -> "Ready to check the glasses."
+                GlassesAppInstallState.Querying -> "Checking whether Nexus is installed..."
+                GlassesAppInstallState.NotInstalled -> "Ready to install over Hi Rokid."
+                GlassesAppInstallState.Resolving -> "Finding the latest glasses app..."
+                is GlassesAppInstallState.Downloading -> glassesAppState.totalBytes
+                    ?.takeIf { it > 0L }
+                    ?.let { total ->
+                        "Downloading... ${(glassesAppState.downloadedBytes * 100L / total).coerceIn(0L, 100L)}%"
+                    }
+                    ?: "Downloading the glasses app..."
+                GlassesAppInstallState.Installing -> "Installing on your glasses..."
+                GlassesAppInstallState.Installed -> "Nexus is installed on your glasses."
+                is GlassesAppInstallState.Error -> glassesAppState.message
+            }
+        }
+        val glassesActionLabel = when (glassesAppState) {
+            GlassesAppInstallState.Unknown -> "Install Nexus"
+            GlassesAppInstallState.Querying -> "Checking..."
+            GlassesAppInstallState.NotInstalled -> "Install Nexus"
+            GlassesAppInstallState.Resolving -> "Finding release..."
+            is GlassesAppInstallState.Downloading -> "Downloading..."
+            GlassesAppInstallState.Installing -> "Installing..."
+            GlassesAppInstallState.Installed -> null
+            is GlassesAppInstallState.Error -> if (glassesAppState.retry == GlassesAppRetry.QUERY) {
+                "Check again"
+            } else {
+                "Retry install"
+            }
+        }
+        val glassesActionEnabled = cxrReady && when (glassesAppState) {
+            GlassesAppInstallState.Unknown,
+            GlassesAppInstallState.NotInstalled,
+            is GlassesAppInstallState.Error,
+            -> true
+            else -> false
+        }
+        val glassesAction = {
+            if (glassesAppState is GlassesAppInstallState.Error &&
+                glassesAppState.retry == GlassesAppRetry.QUERY
+            ) {
+                BusHubService.queryGlassesApp(this)
+            } else {
+                BusHubService.installGlassesApp(this)
+            }
+        }
 
         val steps = listOf(
             OnboardingStep(
@@ -549,11 +620,17 @@ class MainActivity : Activity() {
             ),
             OnboardingStep(
                 title = "Install Nexus on your glasses",
-                body = "Sideload the glasses app, then turn on its accessibility service so " +
-                    "the HUD and touchpad work. Full steps are in the install guide.",
-                done = glassesLinked,
-                actionLabel = "Get the glasses app",
-                onAction = { openUrl("https://github.com/Anezium/Rokid-Nexus/releases/latest") },
+                body = "Install the glasses app over Hi Rokid, then turn on its accessibility " +
+                    "service so the HUD and touchpad work.",
+                done = glassesAppState == GlassesAppInstallState.Installed,
+                actionLabel = glassesActionLabel,
+                actionEnabled = glassesActionEnabled,
+                onAction = glassesAction,
+                statusLine = glassesStatus,
+                secondaryActionLabel = "Manual download",
+                onSecondaryAction = {
+                    openUrl("https://github.com/Anezium/Rokid-Nexus/releases/latest")
+                },
             ),
             OnboardingStep(
                 title = "Add your first plugin",
@@ -609,16 +686,45 @@ class MainActivity : Activity() {
                 },
                 NexusUi.block(),
             )
-            if (state == StepState.ACTIVE && step.actionLabel != null && step.onAction != null) {
+            step.statusLine?.let { status ->
+                addView(BusTheme.gap(this@MainActivity, 6))
+                addView(NexusUi.rowSub(this@MainActivity, status), NexusUi.block())
+            }
+            val hasPrimaryAction = step.actionLabel != null && step.onAction != null
+            val hasSecondaryAction = step.secondaryActionLabel != null && step.onSecondaryAction != null
+            if (state == StepState.ACTIVE && (hasPrimaryAction || hasSecondaryAction)) {
                 addView(BusTheme.gap(this@MainActivity, 8))
                 addView(
-                    NexusUi.textButton(this@MainActivity, step.actionLabel).apply {
-                        setOnClickListener { step.onAction.invoke() }
+                    LinearLayout(this@MainActivity).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        gravity = Gravity.END
+                        if (hasSecondaryAction) {
+                            addView(
+                                NexusUi.textButton(
+                                    this@MainActivity,
+                                    requireNotNull(step.secondaryActionLabel),
+                                ).apply {
+                                    setOnClickListener { step.onSecondaryAction?.invoke() }
+                                },
+                            )
+                        }
+                        if (hasPrimaryAction) {
+                            if (hasSecondaryAction) addView(BusTheme.gap(this@MainActivity, 8))
+                            addView(
+                                NexusUi.textButton(
+                                    this@MainActivity,
+                                    requireNotNull(step.actionLabel),
+                                ).apply {
+                                    isEnabled = step.actionEnabled
+                                    setOnClickListener { step.onAction?.invoke() }
+                                },
+                            )
+                        }
                     },
                     LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.WRAP_CONTENT,
-                        ViewGroup.LayoutParams.WRAP_CONTENT,
-                    ).apply { gravity = Gravity.END },
+                    ),
                 )
             }
         }
@@ -728,13 +834,23 @@ class MainActivity : Activity() {
     private fun handleHubEvent(event: BusEvent) {
         when (event) {
             is BusEvent.LinkState -> {
+                val cxrWasReady = lastLinkState and LinkStateBits.CXR_CONTROL_UP != 0
                 lastLinkState = event.state
                 renderLinkState()
                 refreshToggle()
+                rebuildSetupSection()
+                val cxrIsReady = lastLinkState and LinkStateBits.CXR_CONTROL_UP != 0
+                if (cxrIsReady && !cxrWasReady) BusHubService.queryGlassesApp(this)
             }
             is BusEvent.Error -> logLine("hub-ui: ${event.message}")
             is BusEvent.Message -> Unit
             is BusEvent.Binary -> Unit
+        }
+    }
+
+    private fun queryGlassesAppIfConnected() {
+        if (lastLinkState and LinkStateBits.CXR_CONTROL_UP != 0) {
+            BusHubService.queryGlassesApp(this)
         }
     }
 
