@@ -1,6 +1,6 @@
 # Transit
 
-Transit puts Île-de-France public transport on the glasses: nearby stops with
+Transit puts live public transport on the glasses: nearby stops with
 live departures ("Near Me"), and a favourites board for the stops you actually
 use.
 

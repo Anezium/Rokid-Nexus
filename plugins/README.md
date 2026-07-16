@@ -18,7 +18,7 @@ releases. The Gradle project names keep the historical `:plugin-<id>` form
 |---|---|---|
 | [Feeds](../plugin-feeds/) | `feeds` | Bluesky and X timelines on the HUD |
 | [Lens](lens/) | `lens` | Live and frozen camera OCR with phone-side translation |
-| [Transit](transit/) | `transit` | Nearby stops, departures, and favourites (Île-de-France) |
+| [Transit](transit/) | `transit` | Nearby stops, departures, and favourites |
 | [Lyrics](lyrics/) | `lyrics` | Live synced lyrics for whatever is playing |
 | [Media Deck](media/) | `media` | Universal now-playing surface with transport controls |
 | [Sample](sample/) | `hello` | Minimal copyable reference plugin |
