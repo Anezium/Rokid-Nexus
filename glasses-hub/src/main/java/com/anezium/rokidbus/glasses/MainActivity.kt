@@ -16,7 +16,6 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.LinearLayout
-import android.widget.ScrollView
 import android.widget.FrameLayout
 import android.widget.TextView
 import com.anezium.rokidbus.client.ui.BusTheme
@@ -25,7 +24,8 @@ import com.anezium.rokidbus.shared.BusConstants
 class MainActivity : Activity() {
     private lateinit var emptyView: TextView
     private lateinit var listContainer: LinearLayout
-    private lateinit var launcherScroll: ScrollView
+    private lateinit var previousItemsHint: View
+    private lateinit var nextItemsHint: View
     private lateinit var launcherView: View
     private lateinit var onboardingView: View
     private lateinit var onboardingStepView: TextView
@@ -34,6 +34,8 @@ class MainActivity : Activity() {
     private lateinit var onboardingActionView: TextView
     private var launcherEntries: List<GlassesHub.LauncherEntry> = emptyList()
     private var selectedIndex = 0
+    private var firstVisibleIndex = 0
+    private var visibleRows = 1
     private var onboardingState = SelfArmOnboardingState(
         stage = SelfArmOnboardingState.Stage.ENABLE_ACCESSIBILITY,
         action = SelfArmOnboardingState.Action.OPEN_ACCESSIBILITY,
@@ -153,6 +155,39 @@ class MainActivity : Activity() {
         }
         listContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
+            addOnLayoutChangeListener { view, _, top, _, bottom, _, oldTop, _, oldBottom ->
+                if (bottom - top != oldBottom - oldTop) {
+                    view.post { updateVisibleRowCount() }
+                }
+            }
+        }
+        previousItemsHint = scrollHint()
+        nextItemsHint = scrollHint()
+        val launcherListViewport = FrameLayout(this).apply {
+            setBackgroundColor(BusTheme.glassesBg)
+            addView(
+                listContainer,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                ),
+            )
+            addView(
+                previousItemsHint,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    Gravity.TOP or Gravity.END,
+                ),
+            )
+            addView(
+                nextItemsHint,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    Gravity.BOTTOM or Gravity.END,
+                ),
+            )
         }
         launcherView = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -174,25 +209,7 @@ class MainActivity : Activity() {
                 gravity = Gravity.CENTER_HORIZONTAL
             }, matchWrap())
             addView(gap(10))
-            launcherScroll = ScrollView(this@MainActivity).apply {
-                isFillViewport = true
-                // AR waveguides show pure black as transparent; a ScrollView's
-                // default fading edge (a dithered alpha layer), scrollbar and
-                // overscroll glow all render as a grey film. Kill them and pin
-                // the background to pure black.
-                isVerticalFadingEdgeEnabled = false
-                isVerticalScrollBarEnabled = false
-                overScrollMode = View.OVER_SCROLL_NEVER
-                setBackgroundColor(BusTheme.glassesBg)
-                addView(
-                    listContainer,
-                    ViewGroup.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.WRAP_CONTENT,
-                    ),
-                )
-            }
-            addView(launcherScroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+            addView(launcherListViewport, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         }
         onboardingStepView = text(11f, BusTheme.phosphor, bold = true).apply {
             gravity = Gravity.CENTER_HORIZONTAL
@@ -309,40 +326,70 @@ class MainActivity : Activity() {
     private fun renderLauncher() {
         if (!::listContainer.isInitialized) return
         listContainer.removeAllViews()
-        if (launcherEntries.isEmpty()) {
+        val entries = launcherEntries
+        if (entries.isEmpty()) {
+            firstVisibleIndex = 0
+            updateScrollHints(null)
             listContainer.addView(emptyView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
             return
         }
-        var selectedRow: View? = null
-        launcherEntries.forEachIndexed { index, entry ->
-            val row = pluginRow(entry, selected = index == selectedIndex)
-            if (index == selectedIndex) selectedRow = row
-            listContainer.addView(row, matchWrap().apply {
-                topMargin = if (index == 0) 0 else dp(8)
-            })
-        }
-        val target = selectedRow ?: return
-        if (::launcherScroll.isInitialized) {
-            launcherScroll.post {
-                launcherScroll.requestChildRectangleOnScreen(
-                    target,
-                    android.graphics.Rect(0, 0, target.width, target.height),
-                    false,
-                )
-            }
+        val window = LauncherWindowPolicy.window(
+            entryCount = entries.size,
+            visibleRows = visibleRows,
+            selectedIndex = selectedIndex,
+            currentStartIndex = firstVisibleIndex,
+        )
+        firstVisibleIndex = window.startIndex
+        updateScrollHints(window)
+        for (index in window.startIndex until window.endIndexExclusive) {
+            listContainer.addView(
+                pluginRow(entries[index], selected = index == selectedIndex),
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(PLUGIN_ROW_HEIGHT_DP)).apply {
+                    topMargin = dp(PLUGIN_ROW_MARGIN_DP)
+                },
+            )
         }
     }
+
+    private fun updateVisibleRowCount() {
+        if (!::listContainer.isInitialized) return
+        val availableHeight =
+            (listContainer.measuredHeight - listContainer.paddingTop - listContainer.paddingBottom)
+                .coerceAtLeast(0)
+        val measuredRows = LauncherWindowPolicy.visibleRowCount(
+            availableHeightPx = availableHeight,
+            rowStridePx = dp(PLUGIN_ROW_HEIGHT_DP) + dp(PLUGIN_ROW_MARGIN_DP),
+        )
+        if (visibleRows != measuredRows) {
+            visibleRows = measuredRows
+            renderLauncher()
+        }
+    }
+
+    private fun updateScrollHints(window: LauncherWindow?) {
+        if (!::previousItemsHint.isInitialized || !::nextItemsHint.isInitialized) return
+        previousItemsHint.visibility = if (window?.hasEntriesAbove == true) View.VISIBLE else View.GONE
+        nextItemsHint.visibility = if (window?.hasEntriesBelow == true) View.VISIBLE else View.GONE
+    }
+
+    private fun scrollHint(): View =
+        text(13f, BusTheme.phosphor).apply {
+            text = "•••"
+            gravity = Gravity.CENTER_HORIZONTAL
+            paint.isDither = false
+        }
 
     private fun pluginRow(
         entry: GlassesHub.LauncherEntry,
         selected: Boolean,
-    ): TextView =
+    ): View =
         text(18f, if (selected) BusTheme.phosphor else BusTheme.text, bold = selected).apply {
             text = if (selected) "> ${entry.displayName}" else "  ${entry.displayName}"
             minHeight = dp(52)
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(8), 0, dp(8), 0)
             background = outline(selected)
+            paint.isDither = false
         }
 
     private fun moveSelection(delta: Int) {
@@ -450,4 +497,9 @@ class MainActivity : Activity() {
 
     private fun dp(value: Int): Int =
         BusTheme.dp(this, value)
+
+    private companion object {
+        const val PLUGIN_ROW_HEIGHT_DP = 52
+        const val PLUGIN_ROW_MARGIN_DP = 8
+    }
 }
