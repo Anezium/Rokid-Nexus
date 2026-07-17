@@ -24,8 +24,7 @@ import com.anezium.rokidbus.shared.BusConstants
 class MainActivity : Activity() {
     private lateinit var emptyView: TextView
     private lateinit var listContainer: LinearLayout
-    private lateinit var previousItemsHint: View
-    private lateinit var nextItemsHint: View
+    private lateinit var launcherViewport: FrameLayout
     private lateinit var launcherView: View
     private lateinit var onboardingView: View
     private lateinit var onboardingStepView: TextView
@@ -34,8 +33,7 @@ class MainActivity : Activity() {
     private lateinit var onboardingActionView: TextView
     private var launcherEntries: List<GlassesHub.LauncherEntry> = emptyList()
     private var selectedIndex = 0
-    private var firstVisibleIndex = 0
-    private var visibleRows = 1
+    private var scrollOffset = 0
     private var onboardingState = SelfArmOnboardingState(
         stage = SelfArmOnboardingState.Stage.ENABLE_ACCESSIBILITY,
         action = SelfArmOnboardingState.Action.OPEN_ACCESSIBILITY,
@@ -155,40 +153,22 @@ class MainActivity : Activity() {
         }
         listContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            addOnLayoutChangeListener { view, _, top, _, bottom, _, oldTop, _, oldBottom ->
-                if (bottom - top != oldBottom - oldTop) {
-                    view.post { updateVisibleRowCount() }
-                }
-            }
         }
-        previousItemsHint = scrollHint()
-        nextItemsHint = scrollHint()
-        val launcherListViewport = FrameLayout(this).apply {
+        launcherViewport = FrameLayout(this).apply {
             setBackgroundColor(BusTheme.glassesBg)
+            // The list can be taller than this viewport; it's scrolled via
+            // translationY and clipped here. No ScrollView (its layers dither
+            // grey grain on the AR waveguide).
             addView(
                 listContainer,
                 FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                ),
-            )
-            addView(
-                previousItemsHint,
-                FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT,
-                    Gravity.TOP or Gravity.END,
-                ),
-            )
-            addView(
-                nextItemsHint,
-                FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.WRAP_CONTENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT,
-                    Gravity.BOTTOM or Gravity.END,
+                    Gravity.TOP,
                 ),
             )
         }
+        val launcherListViewport = launcherViewport
         launcherView = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.TOP
@@ -328,56 +308,51 @@ class MainActivity : Activity() {
         listContainer.removeAllViews()
         val entries = launcherEntries
         if (entries.isEmpty()) {
-            firstVisibleIndex = 0
-            updateScrollHints(null)
-            listContainer.addView(emptyView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+            listContainer.translationY = 0f
+            listContainer.addView(emptyView, matchWrap())
             return
         }
-        val window = LauncherWindowPolicy.window(
-            entryCount = entries.size,
-            visibleRows = visibleRows,
-            selectedIndex = selectedIndex,
-            currentStartIndex = firstVisibleIndex,
-        )
-        firstVisibleIndex = window.startIndex
-        updateScrollHints(window)
-        for (index in window.startIndex until window.endIndexExclusive) {
+        entries.forEachIndexed { index, entry ->
             listContainer.addView(
-                pluginRow(entries[index], selected = index == selectedIndex),
+                pluginRow(entry, selected = index == selectedIndex),
                 LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(PLUGIN_ROW_HEIGHT_DP)).apply {
-                    topMargin = dp(PLUGIN_ROW_MARGIN_DP)
+                    topMargin = if (index == 0) 0 else dp(PLUGIN_ROW_MARGIN_DP)
                 },
             )
         }
+        val n = entries.size
+        // Force the exact content height so it isn't clamped to the viewport
+        // (a WRAP_CONTENT child gets measured AT_MOST the parent height).
+        (listContainer.layoutParams as FrameLayout.LayoutParams).height =
+            n * dp(PLUGIN_ROW_HEIGHT_DP) + (n - 1) * dp(PLUGIN_ROW_MARGIN_DP)
+        listContainer.requestLayout()
+        launcherViewport.post { scrollToSelected() }
     }
 
-    private fun updateVisibleRowCount() {
-        if (!::listContainer.isInitialized) return
-        val availableHeight =
-            (listContainer.measuredHeight - listContainer.paddingTop - listContainer.paddingBottom)
-                .coerceAtLeast(0)
-        val measuredRows = LauncherWindowPolicy.visibleRowCount(
-            availableHeightPx = availableHeight,
-            rowStridePx = dp(PLUGIN_ROW_HEIGHT_DP) + dp(PLUGIN_ROW_MARGIN_DP),
-        )
-        if (visibleRows != measuredRows) {
-            visibleRows = measuredRows
-            renderLauncher()
+    private fun scrollToSelected() {
+        if (!::launcherViewport.isInitialized || !::listContainer.isInitialized) return
+        val viewport = launcherViewport.height
+        if (viewport <= 0) {
+            launcherViewport.post { scrollToSelected() }
+            return
         }
+        val n = launcherEntries.size
+        val content =
+            if (n == 0) 0 else n * dp(PLUGIN_ROW_HEIGHT_DP) + (n - 1) * dp(PLUGIN_ROW_MARGIN_DP)
+        val maxOffset = (content - viewport).coerceAtLeast(0)
+        val stride = dp(PLUGIN_ROW_HEIGHT_DP) + dp(PLUGIN_ROW_MARGIN_DP)
+        val selTop = selectedIndex * stride
+        val selBottom = selTop + dp(PLUGIN_ROW_HEIGHT_DP)
+        // Scroll ONLY when the selected row is off-screen, and only by the
+        // minimum needed — the list stays put while the selection is visible,
+        // then jumps once when you reach a row past the fold (e.g. the last one).
+        var offset = scrollOffset
+        if (selTop < offset) offset = selTop
+        else if (selBottom > offset + viewport) offset = selBottom - viewport
+        offset = offset.coerceIn(0, maxOffset)
+        scrollOffset = offset
+        listContainer.translationY = -offset.toFloat()
     }
-
-    private fun updateScrollHints(window: LauncherWindow?) {
-        if (!::previousItemsHint.isInitialized || !::nextItemsHint.isInitialized) return
-        previousItemsHint.visibility = if (window?.hasEntriesAbove == true) View.VISIBLE else View.GONE
-        nextItemsHint.visibility = if (window?.hasEntriesBelow == true) View.VISIBLE else View.GONE
-    }
-
-    private fun scrollHint(): View =
-        text(13f, BusTheme.phosphor).apply {
-            text = "•••"
-            gravity = Gravity.CENTER_HORIZONTAL
-            paint.isDither = false
-        }
 
     private fun pluginRow(
         entry: GlassesHub.LauncherEntry,
