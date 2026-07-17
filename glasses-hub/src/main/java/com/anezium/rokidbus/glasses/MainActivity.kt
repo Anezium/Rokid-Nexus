@@ -16,15 +16,16 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.FrameLayout
 import android.widget.TextView
 import com.anezium.rokidbus.client.ui.BusTheme
 import com.anezium.rokidbus.shared.BusConstants
 
 class MainActivity : Activity() {
-    private lateinit var statusView: TextView
     private lateinit var emptyView: TextView
     private lateinit var listContainer: LinearLayout
+    private lateinit var launcherScroll: ScrollView
     private lateinit var launcherView: View
     private lateinit var onboardingView: View
     private lateinit var onboardingStepView: TextView
@@ -146,10 +147,6 @@ class MainActivity : Activity() {
     }
 
     private fun buildUi() {
-        statusView = text(13f, BusTheme.muted).apply {
-            text = "SPP ${BusConstants.SERVICE_NAME}\n${BusConstants.SPP_UUID_STRING}\nAccessibility keeps the hub alive."
-            gravity = Gravity.CENTER_HORIZONTAL
-        }
         emptyView = text(17f, BusTheme.dim).apply {
             text = "No phone plugins synced"
             gravity = Gravity.CENTER
@@ -171,15 +168,31 @@ class MainActivity : Activity() {
                 text = "Launcher"
                 gravity = Gravity.CENTER_HORIZONTAL
             })
-            addView(gap(10))
-            addView(statusView, matchWrap())
-            addView(gap(26))
+            addView(gap(22))
             addView(text(10.5f, BusTheme.dim).apply {
                 text = "PLUGINS"
                 gravity = Gravity.CENTER_HORIZONTAL
             }, matchWrap())
             addView(gap(10))
-            addView(listContainer, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+            launcherScroll = ScrollView(this@MainActivity).apply {
+                isFillViewport = true
+                // AR waveguides show pure black as transparent; a ScrollView's
+                // default fading edge (a dithered alpha layer), scrollbar and
+                // overscroll glow all render as a grey film. Kill them and pin
+                // the background to pure black.
+                isVerticalFadingEdgeEnabled = false
+                isVerticalScrollBarEnabled = false
+                overScrollMode = View.OVER_SCROLL_NEVER
+                setBackgroundColor(BusTheme.glassesBg)
+                addView(
+                    listContainer,
+                    ViewGroup.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ),
+                )
+            }
+            addView(launcherScroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         }
         onboardingStepView = text(11f, BusTheme.phosphor, bold = true).apply {
             gravity = Gravity.CENTER_HORIZONTAL
@@ -242,14 +255,7 @@ class MainActivity : Activity() {
         val complete = onboardingState.stage == SelfArmOnboardingState.Stage.COMPLETE
         launcherView.visibility = if (complete) View.VISIBLE else View.GONE
         onboardingView.visibility = if (complete) View.GONE else View.VISIBLE
-        if (complete) {
-            statusView.text = if (snapshot.bootstrapComplete) {
-                "Self-arm ready\nEncrypted Wireless Debugging paired\nLegacy ADB 5555 disabled"
-            } else {
-                "Accessibility armed\nWRITE_SECURE_SETTINGS granted\nLegacy ADB 5555 not detected"
-            }
-            return
-        }
+        if (complete) return
 
         when (onboardingState.stage) {
             SelfArmOnboardingState.Stage.ENABLE_ACCESSIBILITY -> {
@@ -307,10 +313,23 @@ class MainActivity : Activity() {
             listContainer.addView(emptyView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
             return
         }
+        var selectedRow: View? = null
         launcherEntries.forEachIndexed { index, entry ->
-            listContainer.addView(pluginRow(entry, selected = index == selectedIndex), matchWrap().apply {
+            val row = pluginRow(entry, selected = index == selectedIndex)
+            if (index == selectedIndex) selectedRow = row
+            listContainer.addView(row, matchWrap().apply {
                 topMargin = if (index == 0) 0 else dp(8)
             })
+        }
+        val target = selectedRow ?: return
+        if (::launcherScroll.isInitialized) {
+            launcherScroll.post {
+                launcherScroll.requestChildRectangleOnScreen(
+                    target,
+                    android.graphics.Rect(0, 0, target.width, target.height),
+                    false,
+                )
+            }
         }
     }
 
