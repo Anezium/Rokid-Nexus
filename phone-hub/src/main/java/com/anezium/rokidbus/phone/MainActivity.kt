@@ -694,6 +694,9 @@ class MainActivity : Activity() {
                 body = "Put the glasses on and follow the two prompts on the lens — Nexus " +
                     "arms itself and the plugin launcher appears.",
                 done = NexusPhoneState.glassesSetupComplete,
+                actionLabel = "Open glasses app",
+                actionEnabled = cxrReady,
+                onAction = { BusHubService.openGlassesApp(this) },
                 statusLine = if (NexusPhoneState.glassesAppInstalled &&
                     !NexusPhoneState.glassesSetupComplete
                 ) {

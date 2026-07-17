@@ -73,6 +73,7 @@ private const val ACTION_STOP = "com.anezium.rokidbus.phone.STOP"
 private const val ACTION_DEBUG_IMAGE = "com.anezium.rokidbus.phone.DEBUG_IMAGE_SURFACE"
 private const val ACTION_INSTALL_GLASSES_APP = "com.anezium.rokidbus.phone.INSTALL_GLASSES_APP"
 private const val ACTION_QUERY_GLASSES_APP = "com.anezium.rokidbus.phone.QUERY_GLASSES_APP"
+private const val ACTION_OPEN_GLASSES_APP = "com.anezium.rokidbus.phone.OPEN_GLASSES_APP"
 private const val EXTRA_AUTH_TOKEN = "auth_token"
 private const val PREF_ENABLED = "hub_enabled"
 private const val GLASSES_MAC = "AC:86:D1:55:1E:ED"
@@ -479,6 +480,7 @@ class BusHubService : Service() {
             }
             ACTION_INSTALL_GLASSES_APP -> installGlassesApp()
             ACTION_QUERY_GLASSES_APP -> queryGlassesApp()
+            ACTION_OPEN_GLASSES_APP -> openGlassesAppOnLens()
             else -> {
                 enableHub()
                 startCxrIfTokenAvailable()
@@ -1730,6 +1732,24 @@ class BusHubService : Service() {
         }
     }
 
+    private fun openGlassesAppOnLens() {
+        val link = cxrLink
+        if (!isCxrUp() || link == null) {
+            log("glasses app open skipped: CXR link down")
+            return
+        }
+        runCatching {
+            link.appStart(
+                "$GLASSES_HUB_PACKAGE.MainActivity",
+                object : IGlassAppCbk {
+                    override fun onOpenAppResult(success: Boolean) {
+                        log("glasses app open result=$success")
+                    }
+                },
+            )
+        }.onFailure { log("glasses app open failed: ${it.message}") }
+    }
+
     private fun queryGlassesApp(installIfMissing: Boolean = false) {
         val link = cxrLink
         if (!isCxrUp() || link == null) {
@@ -2467,6 +2487,12 @@ class BusHubService : Service() {
         fun queryGlassesApp(context: android.content.Context) {
             context.startService(
                 Intent(context, BusHubService::class.java).setAction(ACTION_QUERY_GLASSES_APP),
+            )
+        }
+
+        fun openGlassesApp(context: android.content.Context) {
+            context.startService(
+                Intent(context, BusHubService::class.java).setAction(ACTION_OPEN_GLASSES_APP),
             )
         }
 
