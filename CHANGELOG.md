@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.7
+
+- The "Set up your glasses" step can open the Nexus app on the lens directly, so the wearer never hunts through the glasses launcher.
+
 ## 1.0.6
 
 - Fix a launch crash in 1.0.5: the install Wi-Fi check needed the ACCESS_WIFI_STATE permission.
