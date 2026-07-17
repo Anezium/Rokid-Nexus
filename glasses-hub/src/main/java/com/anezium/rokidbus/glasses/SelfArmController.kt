@@ -273,6 +273,7 @@ internal object SelfArmController {
         val currentVersion = if (file.exists()) watchdogScriptVersion(file) else null
         if (currentVersion == SelfArmConstants.WATCHDOG_VERSION) return file
         val script = context.assets.open(SelfArmConstants.WATCHDOG_ASSET).bufferedReader().use { it.readText() }
+            .replace("\r\n", "\n").replace("\r", "\n")
         val dir = file.parentFile ?: error("Watchdog has no parent directory")
         if (!dir.isDirectory && !dir.mkdirs() && !dir.isDirectory) error("Could not create self-arm directory")
         file.writeText(script)

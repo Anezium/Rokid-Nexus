@@ -1,0 +1,3 @@
+# Shell scripts run on Android (mksh), where a stray CR breaks parsing.
+# Force LF regardless of the checkout platform or core.autocrlf.
+*.sh text eol=lf
