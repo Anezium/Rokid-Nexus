@@ -128,9 +128,14 @@ internal object SelfArmOnboardingStore {
     }
 
     fun recordNetworkPosture(context: Context, posture: SelfArmNetworkPosture) {
+        val wasComplete = SelfArmOnboardingStateMachine.evaluate(snapshot(context)).stage ==
+            SelfArmOnboardingState.Stage.COMPLETE
         val safe = posture.teardownDecision() == SelfArmNetworkPosture.TeardownDecision.SAFE
         prefs(context).edit().putBoolean(KEY_LEGACY_ADB_SAFE, safe).apply()
         notifyChanged(context)
+        val setupComplete = SelfArmOnboardingStateMachine.evaluate(snapshot(context)).stage ==
+            SelfArmOnboardingState.Stage.COMPLETE
+        if (!wasComplete && setupComplete) GlassesHub.resendCapabilitiesNow()
     }
 
     private fun prefs(context: Context) =

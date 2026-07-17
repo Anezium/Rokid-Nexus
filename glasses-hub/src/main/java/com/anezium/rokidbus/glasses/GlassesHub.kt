@@ -222,12 +222,21 @@ object GlassesHub {
     fun sendSurfaceInput(payload: JSONObject): String? =
         sendRemote(BusEnvelope(path = BusPaths.SURFACE_INPUT, payload = payload))
 
+    fun resendCapabilitiesNow() {
+        val transportBits = LinkStateBits.CXR_CONTROL_UP or LinkStateBits.SPP_DATA_UP
+        if (linkState() and transportBits != 0) announceRendererCapabilities()
+    }
+
     private fun announceRendererCapabilities() {
+        val context = appContext ?: return
         val capabilities = GlassesHubCapabilitiesContract.create(
             features = BusCapabilityBits.IMAGE_SURFACE,
             imageSurfaceVersion = ImageSurfaceContract.VERSION,
             maxImageBytes = ImageSurfaceContract.MAX_IMAGE_BYTES,
             versionName = BuildConfig.VERSION_NAME,
+            setupComplete = SelfArmOnboardingStateMachine.evaluate(
+                SelfArmOnboardingStore.snapshot(context),
+            ).stage == SelfArmOnboardingState.Stage.COMPLETE,
         )
         val error = sendRemote(
             BusEnvelope(

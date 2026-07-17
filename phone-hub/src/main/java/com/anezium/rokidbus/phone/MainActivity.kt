@@ -664,16 +664,24 @@ class MainActivity : Activity() {
             ),
             OnboardingStep(
                 title = "Install Nexus on your glasses",
-                body = "Nexus installs itself onto the glasses. Then a quick one-time setup " +
-                    "on the lens turns it on — tap How it works to see the steps.",
+                body = "Nexus downloads the latest glasses app and installs it over Hi Rokid.",
                 done = NexusPhoneState.glassesAppInstalled,
                 actionLabel = glassesActionLabel,
                 actionEnabled = glassesActionEnabled,
                 onAction = glassesAction,
                 statusLine = glassesStatus,
-                secondaryActionLabel = "Manual download",
-                onSecondaryAction = {
-                    openUrl("https://github.com/Anezium/Rokid-Nexus/releases/latest")
+            ),
+            OnboardingStep(
+                title = "Set up your glasses",
+                body = "Put the glasses on and follow the two prompts on the lens — Nexus " +
+                    "arms itself and the plugin launcher appears.",
+                done = NexusPhoneState.glassesSetupComplete,
+                statusLine = if (NexusPhoneState.glassesAppInstalled &&
+                    !NexusPhoneState.glassesSetupComplete
+                ) {
+                    "Waiting for the glasses to finish setup..."
+                } else {
+                    null
                 },
                 onGuide = {
                     startActivity(Intent(this, GlassesSetupGuideActivity::class.java))
@@ -714,10 +722,6 @@ class MainActivity : Activity() {
             setupSection.addView(onboardingStepCard(index + 1, state, step), NexusUi.block())
         }
         setupSection.addView(BusTheme.gap(this, 28))
-    }
-
-    private fun openUrl(url: String) {
-        runCatching { startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url))) }
     }
 
     private fun onboardingStepCard(number: Int, state: StepState, step: OnboardingStep): LinearLayout =

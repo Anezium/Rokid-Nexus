@@ -4,6 +4,7 @@ import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class GlassesHubCapabilitiesContractTest {
@@ -14,13 +15,16 @@ class GlassesHubCapabilitiesContractTest {
             imageSurfaceVersion = ImageSurfaceContract.VERSION,
             maxImageBytes = ImageSurfaceContract.MAX_IMAGE_BYTES,
             versionName = " 1.0.1 ",
+            setupComplete = true,
         )
         val payload = GlassesHubCapabilitiesContract.toJson(capabilities)
             .put("futureField", true)
         val parsed = GlassesHubCapabilitiesContract.parse(payload)
 
         assertEquals("1.0.1", payload.getString("versionName"))
+        assertTrue(payload.getBoolean("setupComplete"))
         assertEquals("1.0.1", parsed.versionName)
+        assertTrue(parsed.setupComplete)
         assertEquals(BusCapabilityBits.IMAGE_SURFACE, parsed.features)
     }
 
@@ -42,6 +46,8 @@ class GlassesHubCapabilitiesContractTest {
         )
 
         assertNull(parsed.versionName)
+        assertFalse(parsed.setupComplete)
         assertFalse(versionlessPayload.has("versionName"))
+        assertFalse(versionlessPayload.getBoolean("setupComplete"))
     }
 }

@@ -16,6 +16,7 @@ internal object NexusPhoneState {
     const val EXTRA_GLASSES_APP_VERSION_NAME = "glasses_app_version_name"
     const val EXTRA_GLASSES_APP_UPDATE_STATE = "glasses_app_update_state"
     const val EXTRA_GLASSES_APP_LATEST_VERSION_NAME = "glasses_app_latest_version_name"
+    const val EXTRA_GLASSES_SETUP_COMPLETE = "glasses_setup_complete"
 
     @Volatile var updateAvailable: Boolean = false
         private set
@@ -34,6 +35,8 @@ internal object NexusPhoneState {
     @Volatile var glassesAppUpdateState: GlassesAppUpdateState = GlassesAppUpdateState.Unknown
         private set
     @Volatile var glassesAppInstalled: Boolean = false
+        private set
+    @Volatile var glassesSetupComplete: Boolean = false
         private set
 
     private val listeners = CopyOnWriteArraySet<() -> Unit>()
@@ -82,10 +85,20 @@ internal object NexusPhoneState {
         notifyListeners()
     }
 
+    fun setGlassesSetupComplete(complete: Boolean) {
+        if (glassesSetupComplete == complete) return
+        glassesSetupComplete = complete
+        notifyListeners()
+    }
+
     fun updateGlassesAppInstallState(intent: Intent): Boolean {
         var updated = false
         if (intent.hasExtra(EXTRA_GLASSES_APP_VERSION_NAME)) {
             setInstalledGlassesVersionName(intent.getStringExtra(EXTRA_GLASSES_APP_VERSION_NAME))
+            updated = true
+        }
+        if (intent.hasExtra(EXTRA_GLASSES_SETUP_COMPLETE)) {
+            setGlassesSetupComplete(intent.getBooleanExtra(EXTRA_GLASSES_SETUP_COMPLETE, false))
             updated = true
         }
         if (intent.hasExtra(EXTRA_GLASSES_APP_UPDATE_STATE)) {

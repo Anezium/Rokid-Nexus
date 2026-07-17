@@ -394,9 +394,12 @@ Hub feature bits are returned by `IBusService.capabilities()`. Bit `2` is
 `IMAGE_SURFACE`, bit `4` is `CAMERA_CONSUMER_READY`, and bit `8` is
 `CAMERA_FROZEN_SPP`. The glasses hub announces its renderer after either remote link
 connects by sending `/system/hub/capabilities` with
-`{"version":1,"features":2,"imageSurfaceVersion":1,"maxImageBytes":65536,"versionName":"1.0.0"}`.
+`{"version":1,"features":2,"imageSurfaceVersion":1,"maxImageBytes":65536,"versionName":"1.0.0","setupComplete":true}`.
 `versionName` is the optional glasses app `BuildConfig.VERSION_NAME`; older glasses
 omit it and newer phones treat the missing field as an unknown installed version.
+`setupComplete` reports whether the on-device self-arm onboarding state is `COMPLETE`;
+older payloads omit it and newer phones default the missing field to `false`. A glasses
+hub linked during the transition re-announces capabilities so the phone sees it live.
 The phone hub exposes `IMAGE_SURFACE` to local plugins only after receiving a
 valid announcement and only while `SPP_DATA_UP` is live. It clears the remote
 announcement when all glasses links are down. Capability changes are surfaced by

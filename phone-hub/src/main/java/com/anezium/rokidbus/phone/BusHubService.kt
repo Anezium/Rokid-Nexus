@@ -159,6 +159,7 @@ class BusHubService : Service() {
     @Volatile private var remoteImageSurfaceVersion = 0
     @Volatile private var remoteMaxImageBytes = 0
     @Volatile private var remoteGlassesVersionName: String? = null
+    @Volatile private var remoteGlassesSetupComplete = false
     @Volatile private var latestGlassesAppRelease: NexusReleaseAsset? = null
     @Volatile private var glassesAppUpdateState: GlassesAppUpdateState = GlassesAppUpdateState.Unknown
     @Volatile private var glassesReleaseCheckedAtMillis = 0L
@@ -1875,7 +1876,7 @@ class BusHubService : Service() {
                         apk.delete()
                         if (!isGlassesAppOperationActive(operationId)) return
                         if (success) {
-                            updateRemoteGlassesVersionName(null)
+                            updateRemoteGlassesAppState(null, setupComplete = false)
                             transitionGlassesAppState(GlassesAppInstallEvent.InstallCompleted(true))
                             requestGlassesAppQuery(link, operationId)
                         } else {
@@ -1906,12 +1907,14 @@ class BusHubService : Service() {
             ?: throw IOException("No stable glasses APK release was found")
     }
 
-    private fun updateRemoteGlassesVersionName(versionName: String?) {
+    private fun updateRemoteGlassesAppState(versionName: String?, setupComplete: Boolean) {
         val stateChanged = synchronized(glassesAppReleaseLock) {
             val versionChanged = remoteGlassesVersionName != versionName
+            val setupChanged = remoteGlassesSetupComplete != setupComplete
             remoteGlassesVersionName = versionName
+            remoteGlassesSetupComplete = setupComplete
             val updateStateChanged = recomputeGlassesAppUpdateStateLocked()
-            versionChanged || updateStateChanged
+            versionChanged || setupChanged || updateStateChanged
         }
         if (stateChanged) {
             broadcastGlassesAppState(glassesAppInstallState)
@@ -2029,6 +2032,7 @@ class BusHubService : Service() {
                 NexusPhoneState.EXTRA_GLASSES_APP_VERSION_NAME,
                 remoteGlassesVersionName.orEmpty(),
             )
+            .putExtra(NexusPhoneState.EXTRA_GLASSES_SETUP_COMPLETE, remoteGlassesSetupComplete)
             .putExtra(
                 NexusPhoneState.EXTRA_GLASSES_APP_UPDATE_STATE,
                 updateState.broadcastValue(),
@@ -2180,7 +2184,9 @@ class BusHubService : Service() {
         if (state and (LinkStateBits.CXR_CONTROL_UP or LinkStateBits.SPP_DATA_UP) == 0) {
             remoteImageSurfaceVersion = 0
             remoteMaxImageBytes = 0
-            updateRemoteGlassesVersionName(null)
+            // Keep the last-known setup state across link drops: powered-off glasses must
+            // not re-open the setup step. Only a live announcement may report false.
+            updateRemoteGlassesAppState(null, setupComplete = remoteGlassesSetupComplete)
             imageSurfaceRateLimiter.clear()
         }
         updateStatusNotification(state)
@@ -2251,7 +2257,7 @@ class BusHubService : Service() {
             advertised.maxImageBytes >= ImageSurfaceContract.MAX_IMAGE_BYTES
         remoteImageSurfaceVersion = if (supported) ImageSurfaceContract.VERSION else 0
         remoteMaxImageBytes = if (supported) advertised.maxImageBytes else 0
-        updateRemoteGlassesVersionName(advertised.versionName)
+        updateRemoteGlassesAppState(advertised.versionName, advertised.setupComplete)
         log("renderer capabilities image=$supported maxImageBytes=$remoteMaxImageBytes")
         // Link bits may be unchanged; repeat the callback so clients refresh capabilities().
         notifyLinkState()

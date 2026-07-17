@@ -8,6 +8,7 @@ data class GlassesHubCapabilities(
     val imageSurfaceVersion: Int,
     val maxImageBytes: Int,
     val versionName: String?,
+    val setupComplete: Boolean = false,
 )
 
 /** Additive glasses-to-phone hub capabilities payload. Unknown fields remain ignorable. */
@@ -20,12 +21,14 @@ object GlassesHubCapabilitiesContract {
         imageSurfaceVersion: Int,
         maxImageBytes: Int,
         versionName: String?,
+        setupComplete: Boolean = false,
     ): GlassesHubCapabilities = GlassesHubCapabilities(
         protocolVersion = VERSION,
         features = features,
         imageSurfaceVersion = imageSurfaceVersion,
         maxImageBytes = maxImageBytes,
         versionName = normalizeVersionName(versionName),
+        setupComplete = setupComplete,
     )
 
     fun toJson(capabilities: GlassesHubCapabilities): JSONObject = JSONObject()
@@ -33,6 +36,7 @@ object GlassesHubCapabilitiesContract {
         .put("features", capabilities.features)
         .put("imageSurfaceVersion", capabilities.imageSurfaceVersion)
         .put("maxImageBytes", capabilities.maxImageBytes)
+        .put("setupComplete", capabilities.setupComplete)
         .also { payload ->
             capabilities.versionName?.let { payload.put("versionName", it) }
         }
@@ -43,6 +47,7 @@ object GlassesHubCapabilitiesContract {
         imageSurfaceVersion = payload.optInt("imageSurfaceVersion", 0),
         maxImageBytes = payload.optInt("maxImageBytes", 0),
         versionName = normalizeVersionName(payload.optString("versionName", "")),
+        setupComplete = payload.optBoolean("setupComplete", false),
     )
 
     private fun normalizeVersionName(value: String?): String? = value
