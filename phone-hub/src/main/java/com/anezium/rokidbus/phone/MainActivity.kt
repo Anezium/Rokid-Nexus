@@ -647,8 +647,10 @@ class MainActivity : Activity() {
             is GlassesAppInstallState.Error -> glassesAppState.retry == GlassesAppRetry.INSTALL
             else -> false
         }
-        val wifiReady =
+        // Fail open: if Wi-Fi state cannot be read, keep the normal install action.
+        val wifiReady = runCatching {
             getSystemService(android.net.wifi.WifiManager::class.java)?.isWifiEnabled == true
+        }.getOrDefault(true)
         val wifiBlocksInstall = cxrReady && installNeedsWifi && !wifiReady
 
         val steps = listOf(
