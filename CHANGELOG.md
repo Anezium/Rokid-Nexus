@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.2
+
+- Fix a first-launch crash: the hub no longer starts its foreground service before the Bluetooth permission is granted, and it starts automatically once the permission arrives.
+- Ask for each permission from its own onboarding step — Bluetooth, notifications (skippable), and app installs — instead of prompting cold at launch.
+- Only mark the first-plugin onboarding step done once a plugin is approved.
+
 ## 1.0.1
 
 - Fix the self-arm watchdog script line endings so the secure bootstrap installs a working watchdog.
