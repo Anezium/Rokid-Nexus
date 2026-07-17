@@ -36,6 +36,11 @@ class RokidBusAccessibilityService : AccessibilityService() {
         AccessibilityRearmWatcher.start(applicationContext, "accessibility_service_connected")
         SelfArmOnboardingStore.refreshNetworkPosture(applicationContext)
         SelfArmOnboardingStore.notifyChanged(applicationContext)
+        if (SelfArmOnboardingStore.consumeAwaitingAccessibility(applicationContext)) {
+            // The user just switched us on inside Android Settings — pull them
+            // straight back to the onboarding instead of leaving them stranded.
+            returnToOnboarding()
+        }
         if (SelfArmOnboardingStore.isSetupRequested(applicationContext)) {
             startWirelessBootstrap()
         }

@@ -48,6 +48,20 @@ internal object SelfArmOnboardingStore {
     fun isSetupRequested(context: Context): Boolean =
         prefs(context).getBoolean(KEY_REQUESTED, false)
 
+    /** Set right before we send the user into Accessibility settings, so the
+     *  service can pull them straight back the moment they enable it. */
+    fun markAwaitingAccessibility(context: Context) {
+        prefs(context).edit().putBoolean(KEY_AWAITING_A11Y, true).apply()
+    }
+
+    /** True (once) if we were waiting for the user to enable accessibility. */
+    fun consumeAwaitingAccessibility(context: Context): Boolean {
+        val prefs = prefs(context)
+        if (!prefs.getBoolean(KEY_AWAITING_A11Y, false)) return false
+        prefs.edit().putBoolean(KEY_AWAITING_A11Y, false).apply()
+        return true
+    }
+
     fun markRunning(context: Context) {
         prefs(context).edit()
             .putBoolean(KEY_REQUESTED, true)
@@ -128,6 +142,7 @@ internal object SelfArmOnboardingStore {
     private const val KEY_FAILURE_STATE = "failure_state"
     private const val KEY_PROGRESS_STATE = "progress_state"
     private const val KEY_LEGACY_ADB_SAFE = "legacy_adb_safe"
+    private const val KEY_AWAITING_A11Y = "awaiting_accessibility_enable"
     private const val MAX_STATE_LENGTH = 96
     private val networkPostureRefreshRunning = AtomicBoolean(false)
 }

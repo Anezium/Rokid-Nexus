@@ -1,6 +1,6 @@
 <resources>
     <string name="app_name">Rokid Nexus Glasses</string>
-    <string name="accessibility_service_label">Rokid Nexus Hub</string>
+    <string name="accessibility_service_label">Rokid Nexus Glasses</string>
     <string name="accessibility_service_description">Runs Nexus controls and guides secure Wireless Debugging pairing during first-run setup.</string>
     <string name="accessibility_service_summary">Nexus controls and secure first-run setup</string>
 </resources>

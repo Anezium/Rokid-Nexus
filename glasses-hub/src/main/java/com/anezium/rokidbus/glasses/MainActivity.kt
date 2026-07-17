@@ -254,37 +254,37 @@ class MainActivity : Activity() {
         when (onboardingState.stage) {
             SelfArmOnboardingState.Stage.ENABLE_ACCESSIBILITY -> {
                 onboardingStepView.text = "FIRST-RUN SETUP  •  1/2"
-                onboardingTitleView.text = "Enable Nexus"
+                onboardingTitleView.text = "Turn on Rokid Nexus Glasses"
                 onboardingBodyView.text =
-                    "Open Accessibility and enable “Rokid Nexus Hub” once.\n\n" +
-                    "This is the only accessibility service Nexus needs. It handles normal " +
-                    "glasses controls and the secure setup flow."
-                onboardingActionView.text = "OPEN ACCESSIBILITY"
+                    "Tap Open settings, then switch on “Rokid Nexus Glasses” in the list.\n\n" +
+                    "Nexus brings you right back here the moment you do — no need to press Back."
+                onboardingActionView.text = "OPEN SETTINGS"
             }
             SelfArmOnboardingState.Stage.READY_FOR_WIRELESS -> {
                 onboardingStepView.text = "FIRST-RUN SETUP  •  2/2"
-                onboardingTitleView.text = "Arm securely"
+                onboardingTitleView.text = "Finish setup"
                 onboardingBodyView.text =
-                    "Nexus will open Developer options and Wireless Debugging. Keep “Pair device " +
-                    "with pairing code” open while Nexus reads the 6-digit code locally.\n\n" +
-                    "The grant uses encrypted, authenticated ADB. Legacy port 5555 is disabled."
-                onboardingActionView.text = "START WIRELESS SETUP"
+                    "Nexus takes it from here — it secures the connection and locks the setup " +
+                    "down on its own. Just keep the glasses on for a few seconds.\n\n" +
+                    "Everything stays on-device over an encrypted link."
+                onboardingActionView.text = "FINISH SETUP"
             }
             SelfArmOnboardingState.Stage.RUNNING -> {
-                onboardingStepView.text = "SECURE LOCAL PAIRING"
-                onboardingTitleView.text = "Keep Settings open"
+                onboardingStepView.text = "ARMING SECURELY"
+                onboardingTitleView.text = "Almost there"
                 onboardingBodyView.text =
-                    "Nexus is navigating Wireless Debugging and waiting for the pairing code.\n\n" +
+                    "Nexus is finishing the secure setup. Keep the glasses on — this only " +
+                    "takes a few seconds.\n\n" +
                     humanSetupState(onboardingState.detail)
-                onboardingActionView.text = "SETUP RUNNING"
+                onboardingActionView.text = "WORKING…"
             }
             SelfArmOnboardingState.Stage.FAILED -> {
-                onboardingStepView.text = "SETUP NEEDS ATTENTION"
-                onboardingTitleView.text = "Retry pairing"
+                onboardingStepView.text = "SETUP HIT A SNAG"
+                onboardingTitleView.text = "Let’s try again"
                 onboardingBodyView.text =
-                    humanSetupState(onboardingState.detail) + "\n\nOpen Wireless Debugging, choose “Pair " +
-                    "device with pairing code,” keep the 6-digit code visible, then retry."
-                onboardingActionView.text = "RETRY WIRELESS SETUP"
+                    humanSetupState(onboardingState.detail) + "\n\n" +
+                    "Tap retry — Nexus will reopen the secure setup and finish arming."
+                onboardingActionView.text = "RETRY"
             }
             SelfArmOnboardingState.Stage.UNSUPPORTED -> {
                 onboardingStepView.text = "SETUP UNAVAILABLE"
@@ -341,6 +341,7 @@ class MainActivity : Activity() {
     private fun performOnboardingAction() {
         when (onboardingState.action) {
             SelfArmOnboardingState.Action.OPEN_ACCESSIBILITY -> {
+                SelfArmOnboardingStore.markAwaitingAccessibility(applicationContext)
                 val settings = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
                     .setPackage("com.android.settings")
                 val opened = runCatching { startActivity(settings) }.isSuccess ||
@@ -377,7 +378,7 @@ class MainActivity : Activity() {
 
     private fun humanSetupState(value: String): String = when (value) {
         "" -> "Waiting to begin."
-        "waiting_for_nexus_accessibility" -> "Waiting for Rokid Nexus Hub to be enabled."
+        "waiting_for_nexus_accessibility" -> "Waiting for Rokid Nexus Glasses to be enabled."
         "starting_wireless_debugging_setup" -> "Opening Wireless Debugging…"
         "enabling_wifi" -> "Turning Wi-Fi on…"
         "opening_developer_options" -> "Opening Developer options…"
