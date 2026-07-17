@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.3
+
+- Fix onboarding steps hiding their main button whenever a secondary action was shown — the automated "Install Nexus" glasses install and the notifications "Allow" were invisible.
+- Drop the redundant Skip button from the notifications step; denying the system dialog already moves the setup along.
+
 ## 1.0.2
 
 - Fix a first-launch crash: the hub no longer starts its foreground service before the Bluetooth permission is granted, and it starts automatically once the permission arrives.
