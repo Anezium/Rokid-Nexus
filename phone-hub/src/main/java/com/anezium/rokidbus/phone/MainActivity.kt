@@ -657,15 +657,10 @@ class MainActivity : Activity() {
             OnboardingStep(
                 title = "Allow notifications",
                 body = "Nexus keeps a quiet status notification while it holds the " +
-                    "glasses link. Optional — Skip is fine.",
+                    "glasses link.",
                 done = notificationsSettled(),
                 actionLabel = "Allow",
                 onAction = { requestNotificationsIfNeeded() },
-                secondaryActionLabel = "Skip",
-                onSecondaryAction = {
-                    recordNotificationsAnswered()
-                    rebuildSetupSection()
-                },
             ),
             OnboardingStep(
                 title = "Install Nexus on your glasses",
