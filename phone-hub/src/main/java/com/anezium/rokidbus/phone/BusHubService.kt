@@ -132,6 +132,7 @@ class BusHubService : Service() {
     private val glassesAppReleaseLock = Any()
     @Volatile private var sppLoopStop = false
     @Volatile private var hubEnabled = true
+    @Volatile private var startupBlockedByBluetoothPermission = false
     @Volatile private var audioLease: AudioLease? = null
     private val writeLock = Any()
     private var socket: BluetoothSocket? = null
@@ -427,6 +428,12 @@ class BusHubService : Service() {
         registerPluginPackageReceiver()
         hubEnabled = prefs().getBoolean(PREF_ENABLED, true)
         if (hubEnabled) {
+            if (!canRunHub(this)) {
+                startupBlockedByBluetoothPermission = true
+                log("BusHubService start deferred: BLUETOOTH_CONNECT permission not granted; stopping service")
+                stopSelf()
+                return
+            }
             startForegroundWithType()
             startCxrIfTokenAvailable()
         }
@@ -437,6 +444,16 @@ class BusHubService : Service() {
     override fun onBind(intent: Intent?): IBinder = binder
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (startupBlockedByBluetoothPermission && !canRunHub(this)) {
+            if (intent?.action == ACTION_STOP) {
+                prefs().edit().putBoolean(PREF_ENABLED, false).apply()
+                hubEnabled = false
+            }
+            log("BusHubService command skipped: BLUETOOTH_CONNECT permission not granted")
+            stopSelf(startId)
+            return START_NOT_STICKY
+        }
+        startupBlockedByBluetoothPermission = false
         when (intent?.action) {
             ACTION_STOP -> {
                 stopHub()
@@ -473,7 +490,11 @@ class BusHubService : Service() {
     private fun enableHub() {
         prefs().edit().putBoolean(PREF_ENABLED, true).apply()
         hubEnabled = true
-        startForegroundWithType()
+        if (canRunHub(this)) {
+            startForegroundWithType()
+        } else {
+            log("Hub enabled; foreground start deferred until BLUETOOTH_CONNECT is granted")
+        }
     }
 
     /** Release every radio resource: SPP socket, CXR-L session, foreground state. */
@@ -1628,7 +1649,7 @@ class BusHubService : Service() {
                     sleepQuietly(750L)
                     continue
                 }
-                if (!hasBluetoothConnect()) {
+                if (!canRunHub(this)) {
                     log("Missing BLUETOOTH_CONNECT; SPP loop waiting")
                     sleepQuietly(5_000L)
                     continue
@@ -2138,7 +2159,7 @@ class BusHubService : Service() {
 
     @SuppressLint("MissingPermission")
     private fun isGlassesBonded(): Boolean =
-        hasBluetoothConnect() &&
+        canRunHub(this) &&
             BluetoothAdapter.getDefaultAdapter()?.bondedDevices.orEmpty().any {
                 it.address.equals(GLASSES_MAC, ignoreCase = true)
             }
@@ -2347,10 +2368,6 @@ class BusHubService : Service() {
         output = null
     }
 
-    private fun hasBluetoothConnect(): Boolean =
-        Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
-            checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
-
     private fun isDebuggableBuild(): Boolean =
         applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
 
@@ -2395,6 +2412,10 @@ class BusHubService : Service() {
         fun pluginBusJournal(): PluginBusJournal? = activeInstance?.pluginBusJournal
 
         fun startWithToken(context: android.content.Context, token: String) {
+            if (!canRunHub(context)) {
+                Log.i(TAG, "startWithToken skipped: BLUETOOTH_CONNECT permission not granted")
+                return
+            }
             val intent = Intent(context, BusHubService::class.java)
                 .setAction(ACTION_SET_TOKEN)
                 .putExtra(EXTRA_AUTH_TOKEN, token)
@@ -2406,6 +2427,10 @@ class BusHubService : Service() {
         }
 
         fun start(context: android.content.Context) {
+            if (!canRunHub(context)) {
+                Log.i(TAG, "start skipped: BLUETOOTH_CONNECT permission not granted")
+                return
+            }
             val intent = Intent(context, BusHubService::class.java)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
@@ -2415,6 +2440,10 @@ class BusHubService : Service() {
         }
 
         fun startDebugImage(context: android.content.Context) {
+            if (!canRunHub(context)) {
+                Log.i(TAG, "startDebugImage skipped: BLUETOOTH_CONNECT permission not granted")
+                return
+            }
             val intent = Intent(context, BusHubService::class.java).setAction(ACTION_DEBUG_IMAGE)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
@@ -2444,5 +2473,10 @@ class BusHubService : Service() {
 
         fun isEnabled(context: android.content.Context): Boolean =
             context.getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean(PREF_ENABLED, true)
+
+        fun canRunHub(context: android.content.Context): Boolean =
+            Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
+                context.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) ==
+                PackageManager.PERMISSION_GRANTED
     }
 }

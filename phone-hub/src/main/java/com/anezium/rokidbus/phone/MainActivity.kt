@@ -112,7 +112,16 @@ class MainActivity : Activity() {
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == BLUETOOTH_PERMISSION_REQUEST) {
+            val granted = grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED
+            if (granted &&
+                BusHubService.canRunHub(this) &&
+                savedToken().isNotBlank() &&
+                BusHubService.isEnabled(this)
+            ) {
+                BusHubService.start(this)
+            }
             rebuildSetupSection()
+            refreshToggle()
         }
     }
 
@@ -812,7 +821,7 @@ class MainActivity : Activity() {
         }
 
     private fun toggleHub() {
-        if (BusHubService.isEnabled(this)) {
+        if (BusHubService.isEnabled(this) && BusHubService.canRunHub(this)) {
             logLine("Stopping hub")
             BusHubService.stop(this)
             setToggle(enabled = false)
@@ -820,8 +829,9 @@ class MainActivity : Activity() {
         } else {
             logLine("Starting hub")
             BusHubService.start(this)
-            setToggle(enabled = true)
-            renderLinkState(hubEnabled = true)
+            val startRequested = BusHubService.canRunHub(this)
+            setToggle(enabled = startRequested)
+            renderLinkState(hubEnabled = startRequested)
         }
     }
 
@@ -844,8 +854,7 @@ class MainActivity : Activity() {
     }
 
     private fun needsBluetoothPermission(): Boolean =
-        Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
-            checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED
+        !BusHubService.canRunHub(this)
 
     private fun requestNotificationsIfNeeded() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
@@ -864,7 +873,7 @@ class MainActivity : Activity() {
             .orEmpty()
 
     private fun refreshToggle() {
-        setToggle(BusHubService.isEnabled(this))
+        setToggle(BusHubService.isEnabled(this) && BusHubService.canRunHub(this))
     }
 
     private fun setToggle(enabled: Boolean) {
