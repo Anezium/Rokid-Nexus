@@ -36,6 +36,7 @@ object GlassesHub {
     data class LauncherEntry(
         val id: String,
         val displayName: String,
+        val iconKey: String? = null,
     )
 
     private data class Registration(
@@ -364,6 +365,7 @@ object GlassesHub {
                             LauncherEntry(
                                 id = id,
                                 displayName = item.optString("displayName", id),
+                                iconKey = item.optString("iconKey").takeIf { it.isNotBlank() },
                             ),
                         )
                     }
@@ -431,6 +433,7 @@ object GlassesHub {
             LauncherEntry(
                 CAMERA_LAUNCHER_ID,
                 PhoneHubCapabilitiesContract.cameraLauncherLabel(remotePhoneCapabilities),
+                iconKey = "lens",
             ),
         ) +
             launcherEntries.filterNot { it.id == CAMERA_LAUNCHER_ID }

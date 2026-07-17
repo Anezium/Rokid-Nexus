@@ -15,6 +15,7 @@ import android.view.KeyEvent
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.FrameLayout
 import android.widget.TextView
@@ -357,15 +358,28 @@ class MainActivity : Activity() {
     private fun pluginRow(
         entry: GlassesHub.LauncherEntry,
         selected: Boolean,
-    ): View =
-        text(18f, if (selected) BusTheme.phosphor else BusTheme.text, bold = selected).apply {
-            text = if (selected) "> ${entry.displayName}" else "  ${entry.displayName}"
-            minHeight = dp(52)
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(8), 0, dp(8), 0)
-            background = outline(selected)
-            paint.isDither = false
+    ): View {
+        val icon = ImageView(this).apply {
+            setImageResource(
+                com.anezium.rokidbus.client.ui.NexusPluginIcons.drawableFor(entry.iconKey, entry.id),
+            )
+            layoutParams = LinearLayout.LayoutParams(dp(24), dp(24)).apply { marginEnd = dp(14) }
         }
+        val label = text(18f, if (selected) BusTheme.phosphor else BusTheme.text, bold = selected).apply {
+            text = entry.displayName
+            gravity = Gravity.CENTER_VERTICAL
+            paint.isDither = false
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(12), 0, dp(12), 0)
+            background = outline(selected)
+            addView(icon)
+            addView(label)
+        }
+    }
 
     private fun moveSelection(delta: Int) {
         if (launcherEntries.isEmpty()) return

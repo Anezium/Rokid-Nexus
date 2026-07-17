@@ -161,7 +161,8 @@ class PhonePluginRegistry(
                         array.put(
                             JSONObject()
                                 .put("id", entry.id)
-                                .put("displayName", entry.displayName),
+                                .put("displayName", entry.displayName)
+                                .apply { entry.iconKey?.let { put("iconKey", it) } },
                         )
                     }
                 },
