@@ -65,7 +65,7 @@ adb -s $phone shell pm grant com.anezium.rokidbus.phone android.permission.BLUET
 
 For the supported no-PC first launch, open the glasses app and follow the two HUD steps:
 
-1. Open Accessibility and enable only **Rokid Nexus Hub**.
+1. Open Accessibility and enable only **Rokid Nexus Glasses**.
 2. Start Wireless Setup, enable Wireless Debugging, and keep **Pair device with pairing code** open.
 
 Nexus preserves other enabled services, performs the grant plus accessibility plus watchdog setup

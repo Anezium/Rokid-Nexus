@@ -7,8 +7,8 @@ depend on the separate classic ADB key.
 ## No-PC first launch
 
 1. Launch **Rokid Nexus Glasses**.
-2. Select **Open Accessibility** and enable **Rokid Nexus Hub**. This is the only accessibility
-   service the user enables. Return to Nexus with Back.
+2. Select **Open Accessibility** and enable **Rokid Nexus Glasses**. This is the only accessibility
+   service the user enables. Nexus returns to the HUD on its own once the service connects.
 3. Select **Start Wireless Setup**.
 4. Enable Developer options and Wireless Debugging when Settings asks. Open **Pair device with
    pairing code** and keep the six-digit code visible.
