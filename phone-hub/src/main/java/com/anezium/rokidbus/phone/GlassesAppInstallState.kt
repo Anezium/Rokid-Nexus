@@ -82,7 +82,7 @@ internal object GlassesAppInstallStateMachine {
             // Confirm the package through appIsInstalled before marking onboarding done.
             GlassesAppInstallState.Querying
         } else {
-            GlassesAppInstallState.Error("The glasses rejected the APK install.", GlassesAppRetry.INSTALL)
+            GlassesAppInstallState.Error("Could not deliver the app to the glasses.", GlassesAppRetry.INSTALL)
         }
         is GlassesAppInstallEvent.Failed -> GlassesAppInstallState.Error(event.message, event.retry)
     }

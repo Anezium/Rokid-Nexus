@@ -638,6 +638,18 @@ class MainActivity : Activity() {
                 BusHubService.installGlassesApp(this)
             }
         }
+        // The APK reaches the glasses over a direct Wi-Fi link the phone must join, so an
+        // install started with Wi-Fi off always fails with an opaque CXR error.
+        val installNeedsWifi = when (glassesAppState) {
+            GlassesAppInstallState.Unknown,
+            GlassesAppInstallState.NotInstalled,
+            -> true
+            is GlassesAppInstallState.Error -> glassesAppState.retry == GlassesAppRetry.INSTALL
+            else -> false
+        }
+        val wifiReady =
+            getSystemService(android.net.wifi.WifiManager::class.java)?.isWifiEnabled == true
+        val wifiBlocksInstall = cxrReady && installNeedsWifi && !wifiReady
 
         val steps = listOf(
             OnboardingStep(
@@ -666,10 +678,14 @@ class MainActivity : Activity() {
                 title = "Install Nexus on your glasses",
                 body = "Nexus downloads the latest glasses app and installs it over Hi Rokid.",
                 done = NexusPhoneState.glassesAppInstalled,
-                actionLabel = glassesActionLabel,
-                actionEnabled = glassesActionEnabled,
-                onAction = glassesAction,
-                statusLine = glassesStatus,
+                actionLabel = if (wifiBlocksInstall) "Turn on Wi-Fi" else glassesActionLabel,
+                actionEnabled = if (wifiBlocksInstall) true else glassesActionEnabled,
+                onAction = if (wifiBlocksInstall) ::openWifiPanel else glassesAction,
+                statusLine = if (wifiBlocksInstall) {
+                    "The app reaches the glasses over Wi-Fi — turn it on first."
+                } else {
+                    glassesStatus
+                },
             ),
             OnboardingStep(
                 title = "Set up your glasses",
@@ -911,6 +927,12 @@ class MainActivity : Activity() {
     }
 
     private fun canInstallApps(): Boolean = packageManager.canRequestPackageInstalls()
+
+    private fun openWifiPanel() {
+        runCatching {
+            startActivity(Intent(android.provider.Settings.Panel.ACTION_WIFI))
+        }
+    }
 
     private fun openInstallSourceSettings() {
         runCatching {
