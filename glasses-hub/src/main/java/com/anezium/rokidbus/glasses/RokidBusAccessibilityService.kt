@@ -40,6 +40,14 @@ class RokidBusAccessibilityService : AccessibilityService() {
             // The user just switched us on inside Android Settings — pull them
             // straight back to the onboarding instead of leaving them stranded.
             returnToOnboarding()
+            // Tapping OPEN SETTINGS was the consent; chain straight into the secure
+            // self-arm instead of asking for a second FINISH SETUP tap.
+            val stage = SelfArmOnboardingStateMachine
+                .evaluate(SelfArmOnboardingStore.snapshot(applicationContext))
+                .stage
+            if (stage == SelfArmOnboardingState.Stage.READY_FOR_WIRELESS) {
+                SelfArmOnboardingStore.requestSetup(applicationContext)
+            }
         }
         if (SelfArmOnboardingStore.isSetupRequested(applicationContext)) {
             startWirelessBootstrap()
