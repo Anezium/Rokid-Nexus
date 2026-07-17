@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.5
+
+- The glasses install step now checks that phone Wi-Fi is on first — the APK travels over a direct Wi-Fi link — and offers to turn it on instead of failing with an opaque error.
+- On the glasses, enabling the accessibility service flows straight into the secure self-arm; no second tap needed.
+
 ## 1.0.4
 
 - Split the glasses onboarding into an install-only card and a dedicated "Set up your glasses" card that owns the How it works guide; drop the Manual download link.
