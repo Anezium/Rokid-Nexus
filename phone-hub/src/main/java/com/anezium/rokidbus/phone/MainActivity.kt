@@ -777,7 +777,14 @@ class MainActivity : Activity() {
                             )
                         }
                         if (hasPrimaryAction) {
-                            if (hasSecondaryAction) addView(BusTheme.gap(this@MainActivity, 8))
+                            if (hasSecondaryAction) {
+                                // Horizontal spacer: BusTheme.gap is MATCH_PARENT wide and
+                                // would shove the primary button off-screen in this row.
+                                addView(
+                                    View(this@MainActivity),
+                                    LinearLayout.LayoutParams(NexusUi.dp(this@MainActivity, 8), 0),
+                                )
+                            }
                             addView(
                                 NexusUi.textButton(
                                     this@MainActivity,
