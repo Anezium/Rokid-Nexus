@@ -566,6 +566,7 @@ class MainActivity : Activity() {
         val statusLine: String? = null,
         val secondaryActionLabel: String? = null,
         val onSecondaryAction: (() -> Unit)? = null,
+        val onGuide: (() -> Unit)? = null,
     )
 
     private fun rebuildSetupSection() {
@@ -643,8 +644,8 @@ class MainActivity : Activity() {
             ),
             OnboardingStep(
                 title = "Install Nexus on your glasses",
-                body = "Install the glasses app over Hi Rokid, then turn on its accessibility " +
-                    "service so the HUD and touchpad work.",
+                body = "Nexus installs itself onto the glasses. Then a quick one-time setup " +
+                    "on the lens turns it on — tap How it works to see the steps.",
                 done = NexusPhoneState.glassesAppInstalled,
                 actionLabel = glassesActionLabel,
                 actionEnabled = glassesActionEnabled,
@@ -653,6 +654,9 @@ class MainActivity : Activity() {
                 secondaryActionLabel = "Manual download",
                 onSecondaryAction = {
                     openUrl("https://github.com/Anezium/Rokid-Nexus/releases/latest")
+                },
+                onGuide = {
+                    startActivity(Intent(this, GlassesSetupGuideActivity::class.java))
                 },
             ),
             OnboardingStep(
@@ -709,6 +713,19 @@ class MainActivity : Activity() {
                 },
                 NexusUi.block(),
             )
+            step.onGuide?.takeIf { state == StepState.ACTIVE }?.let { guide ->
+                addView(BusTheme.gap(this@MainActivity, 8))
+                addView(
+                    NexusUi.metaLabel(this@MainActivity, "HOW IT WORKS  ›", NexusUi.GREEN).apply {
+                        textSize = 10.5f
+                        letterSpacing = 0.12f
+                        isClickable = true
+                        isFocusable = true
+                        setOnClickListener { guide() }
+                    },
+                    NexusUi.block(),
+                )
+            }
             step.statusLine?.let { status ->
                 addView(BusTheme.gap(this@MainActivity, 6))
                 addView(NexusUi.rowSub(this@MainActivity, status), NexusUi.block())
