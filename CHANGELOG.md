@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.4
+
+- Split the glasses onboarding into an install-only card and a dedicated "Set up your glasses" card that owns the How it works guide; drop the Manual download link.
+- The glasses report their self-arm setup state to the phone, so the setup step completes exactly when the launcher appears on the lens.
+
 ## 1.0.3
 
 - Fix onboarding steps hiding their main button whenever a secondary action was shown — the automated "Install Nexus" glasses install and the notifications "Allow" were invisible.
