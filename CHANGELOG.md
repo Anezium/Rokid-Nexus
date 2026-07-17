@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.6
+
+- Fix a launch crash in 1.0.5: the install Wi-Fi check needed the ACCESS_WIFI_STATE permission.
+
 ## 1.0.5
 
 - The glasses install step now checks that phone Wi-Fi is on first — the APK travels over a direct Wi-Fi link — and offers to turn it on instead of failing with an opaque error.
