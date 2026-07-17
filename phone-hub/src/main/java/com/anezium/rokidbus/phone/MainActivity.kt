@@ -37,6 +37,7 @@ import com.anezium.rokidbus.shared.LinkStateBits
 private const val TAG = "RokidNexusHome"
 private const val BLUETOOTH_PERMISSION_REQUEST = 20
 private const val NOTIFICATION_PERMISSION_REQUEST = 22
+private const val PREF_NOTIFICATIONS_ANSWERED = "onboarding_notifications_answered"
 
 /** Companion home: fixed status/settings menubar, setup cards, plugin list, store entry and hub toggle. */
 class MainActivity : Activity() {
@@ -67,8 +68,6 @@ class MainActivity : Activity() {
             clientId = "hub-ui",
             pathPrefixes = emptyList(),
         ) { event -> handleHubEvent(event) }.also { it.connect() }
-        requestBluetoothConnectIfNeeded()
-        requestNotificationsIfNeeded()
         if (savedToken().isNotBlank() && BusHubService.isEnabled(this)) {
             logLine("Saved Hi Rokid token present")
             BusHubService.start(this)
@@ -122,6 +121,10 @@ class MainActivity : Activity() {
             }
             rebuildSetupSection()
             refreshToggle()
+        }
+        if (requestCode == NOTIFICATION_PERMISSION_REQUEST) {
+            recordNotificationsAnswered()
+            rebuildSetupSection()
         }
     }
 
@@ -584,7 +587,7 @@ class MainActivity : Activity() {
 
         val cxrReady = lastLinkState and LinkStateBits.CXR_CONTROL_UP != 0
         val glassesAppState = NexusPhoneState.glassesAppInstallState
-        val hasPlugin = BusHubService.pluginCatalog(this).entries.any { it.principal != null }
+        val hasPlugin = BusHubService.pluginCatalog(this).entries.any { it.state == PluginCatalogState.ENABLED }
 
         val glassesStatus = if (!cxrReady && !NexusPhoneState.glassesAppInstalled) {
             "Connect your glasses first."
@@ -652,6 +655,19 @@ class MainActivity : Activity() {
                 onAction = { requestBluetoothConnectIfNeeded() },
             ),
             OnboardingStep(
+                title = "Allow notifications",
+                body = "Nexus keeps a quiet status notification while it holds the " +
+                    "glasses link. Optional — Skip is fine.",
+                done = notificationsSettled(),
+                actionLabel = "Allow",
+                onAction = { requestNotificationsIfNeeded() },
+                secondaryActionLabel = "Skip",
+                onSecondaryAction = {
+                    recordNotificationsAnswered()
+                    rebuildSetupSection()
+                },
+            ),
+            OnboardingStep(
                 title = "Install Nexus on your glasses",
                 body = "Nexus installs itself onto the glasses. Then a quick one-time setup " +
                     "on the lens turns it on — tap How it works to see the steps.",
@@ -667,6 +683,14 @@ class MainActivity : Activity() {
                 onGuide = {
                     startActivity(Intent(this, GlassesSetupGuideActivity::class.java))
                 },
+            ),
+            OnboardingStep(
+                title = "Allow app installs",
+                body = "Plugins and app updates install like regular Android apps, so " +
+                    "Android asks you to approve Nexus as an install source.",
+                done = canInstallApps(),
+                actionLabel = "Open settings",
+                onAction = { openInstallSourceSettings() },
             ),
             OnboardingStep(
                 title = "Add your first plugin",
@@ -713,7 +737,7 @@ class MainActivity : Activity() {
                             orientation = LinearLayout.VERTICAL
                             addView(NexusUi.cardTitle(this@MainActivity, step.title))
                             addView(BusTheme.gap(this@MainActivity, 4))
-                            addView(NexusUi.rowSub(this@MainActivity, step.body))
+                            addView(NexusUi.cardBody(this@MainActivity, step.body))
                         },
                         LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
                             marginStart = NexusUi.dp(this@MainActivity, 12)
@@ -863,6 +887,32 @@ class MainActivity : Activity() {
             requestPermissions(
                 arrayOf(Manifest.permission.POST_NOTIFICATIONS),
                 NOTIFICATION_PERMISSION_REQUEST,
+            )
+        }
+    }
+
+    private fun notificationsSettled(): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED ||
+            getSharedPreferences(NexusPhoneState.PREFS, MODE_PRIVATE)
+                .getBoolean(PREF_NOTIFICATIONS_ANSWERED, false)
+
+    private fun recordNotificationsAnswered() {
+        getSharedPreferences(NexusPhoneState.PREFS, MODE_PRIVATE)
+            .edit()
+            .putBoolean(PREF_NOTIFICATIONS_ANSWERED, true)
+            .apply()
+    }
+
+    private fun canInstallApps(): Boolean = packageManager.canRequestPackageInstalls()
+
+    private fun openInstallSourceSettings() {
+        runCatching {
+            startActivity(
+                Intent(
+                    android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                    android.net.Uri.parse("package:$packageName"),
+                ),
             )
         }
     }
