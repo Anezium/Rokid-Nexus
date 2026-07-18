@@ -16,6 +16,11 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 
+internal class SelfArmSessionUnavailableException(
+    message: String,
+    cause: Throwable? = null,
+) : IOException(message, cause)
+
 internal class SelfArmLocalAdbBootstrapper(
     context: Context,
 ) {
@@ -228,7 +233,7 @@ internal class SelfArmLocalAdbBootstrapper(
                     throw IOException("Wireless Debugging TLS reconnect was interrupted", exception)
                 }
             } while (SystemClock.elapsedRealtime() < deadline)
-            throw IOException(
+            throw SelfArmSessionUnavailableException(
                 "Wireless Debugging TLS session unavailable after $attempt attempts: " +
                     shortThrowable(lastFailure),
                 lastFailure,

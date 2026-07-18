@@ -15,11 +15,32 @@ internal object SelfArmController {
     private const val WIFI_DISABLE_COMMAND = "svc wifi disable"
     private const val STOP_SENTINEL = "ROKID_NEXUS_STOP_RESULT"
     private val operationRunning = AtomicBoolean(false)
+    private val idleCallbacksLock = Any()
+    private val idleCallbacks = mutableListOf<() -> Unit>()
 
-    fun ensureWatchdog(context: Context, reason: String, onComplete: (() -> Unit)? = null) {
-        runAsync(context, reason, onComplete) { appContext ->
+    fun ensureWatchdog(
+        context: Context,
+        reason: String,
+        onComplete: ((SelfArmWatchdogEnsureResult) -> Unit)? = null,
+    ): Boolean = runAsync(context, reason) { appContext ->
+        val result = runCatching {
             runSelfArm(appContext, reason, restartWatchdog = true)
+        }.onFailure {
+            logError("Self-arm failed reason=$reason", it)
+        }.getOrDefault(SelfArmWatchdogEnsureResult.FAILED)
+        onComplete?.invoke(result)
+    }
+
+    internal fun runWhenIdle(callback: () -> Unit) {
+        val runNow = synchronized(idleCallbacksLock) {
+            if (operationRunning.get()) {
+                idleCallbacks += callback
+                false
+            } else {
+                true
+            }
         }
+        if (runNow) callback()
     }
 
     fun repairNow(context: Context, reason: String) {
@@ -142,38 +163,56 @@ internal object SelfArmController {
         reason: String,
         onComplete: (() -> Unit)? = null,
         operation: (Context) -> Unit,
-    ) {
+    ): Boolean {
         val appContext = context.applicationContext
-        if (!operationRunning.compareAndSet(false, true)) {
+        val accepted = synchronized(idleCallbacksLock) {
+            operationRunning.compareAndSet(false, true)
+        }
+        if (!accepted) {
             log("Self-arm coalesced reason=$reason: operation already running")
             onComplete?.invoke()
-            return
+            return false
         }
         Thread {
             try {
                 runCatching { operation(appContext) }
                     .onFailure { logError("Self-arm failed reason=$reason", it) }
             } finally {
-                operationRunning.set(false)
+                val callbacks = synchronized(idleCallbacksLock) {
+                    operationRunning.set(false)
+                    idleCallbacks.toList().also { idleCallbacks.clear() }
+                }
                 onComplete?.invoke()
+                callbacks.forEach { callback ->
+                    runCatching { callback() }
+                        .onFailure { logError("Self-arm idle callback failed", it) }
+                }
             }
         }.apply {
             name = "RokidNexusSelfArm"
             isDaemon = true
             start()
         }
+        return true
     }
 
-    private fun runSelfArm(context: Context, reason: String, restartWatchdog: Boolean): Boolean {
+    private fun runSelfArm(
+        context: Context,
+        reason: String,
+        restartWatchdog: Boolean,
+    ): SelfArmWatchdogEnsureResult {
         val scriptFile = ensureInternalWatchdog(context)
         val repairedDirectly = repairAccessibilityDirect(context)
         val watchdogScript = scriptFile.readText()
         val bootstrapComplete = SelfArmLocalAdbBootstrapper.isBootstrapComplete(context)
+        var tlsSessionUnreachable = false
 
         if (bootstrapComplete) {
+            SelfArmWirelessAdbController.ensureEnabledForMaintenance(context)
             val initialTlsSession = runCatching {
                 SelfArmLocalAdbBootstrapper.openPairedSession(context)
             }.onFailure {
+                tlsSessionUnreachable = it.hasSessionUnavailableCause()
                 logError("Self-arm TLS session unavailable reason=$reason", it)
             }.getOrNull()
             if (initialTlsSession != null) {
@@ -194,7 +233,11 @@ internal object SelfArmController {
                 "Self-arm no-op reason=$reason directRepair=$repairedDirectly " +
                     "bootstrapComplete=$bootstrapComplete classicKey=${key != null}",
             )
-            return false
+            return if (tlsSessionUnreachable) {
+                SelfArmWatchdogEnsureResult.SESSION_UNREACHABLE
+            } else {
+                SelfArmWatchdogEnsureResult.FAILED
+            }
         }
 
         val classicSession = ClassicAdbShellSession(key)
@@ -215,7 +258,7 @@ internal object SelfArmController {
         initialSession: SelfArmShellSession,
         watchdogScript: String,
         restartWatchdog: Boolean,
-    ): Boolean = runCatching {
+    ): SelfArmWatchdogEnsureResult = runCatching {
         val result = SelfArmLocalAdbBootstrapper.runSequence(
             context = context,
             initialSession = initialSession,
@@ -227,10 +270,29 @@ internal object SelfArmController {
             "Self-arm ready reason=$reason directRepair=$repairedDirectly " +
                 "port=${result.port} restartedAdbd=${result.restartedAdbd}",
         )
-        true
+        SelfArmWatchdogEnsureResult.READY
     }.onFailure {
         logError("Self-arm sequence failed reason=$reason directRepair=$repairedDirectly", it)
-    }.getOrDefault(false)
+    }.fold(
+        onSuccess = { it },
+        onFailure = {
+            if (it.hasSessionUnavailableCause()) {
+                SelfArmWatchdogEnsureResult.SESSION_UNREACHABLE
+            } else {
+                SelfArmWatchdogEnsureResult.FAILED
+            }
+        },
+    )
+
+    private fun Throwable.hasSessionUnavailableCause(): Boolean {
+        val seen = HashSet<Throwable>()
+        var current: Throwable? = this
+        while (current != null && seen.add(current)) {
+            if (current is SelfArmSessionUnavailableException) return true
+            current = current.cause
+        }
+        return false
+    }
 
     private fun accessibilityRepairNeeded(context: Context): Boolean =
         runCatching {

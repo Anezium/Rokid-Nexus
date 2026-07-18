@@ -20,7 +20,7 @@ class BootReceiver : BroadcastReceiver() {
         }
         if (reason != null) {
             val pendingResult = goAsync()
-            SelfArmController.ensureWatchdog(appContext, reason) {
+            AccessibilityRearmWatcher.ensureWatchdog(appContext, reason) {
                 pendingResult.finish()
             }
         }

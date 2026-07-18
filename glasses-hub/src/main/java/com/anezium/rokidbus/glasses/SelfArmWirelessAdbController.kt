@@ -3,6 +3,7 @@ package com.anezium.rokidbus.glasses
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.wifi.WifiManager
 import android.os.IBinder
 import android.os.Parcel
 import android.os.SystemClock
@@ -22,15 +23,30 @@ internal object SelfArmWirelessAdbController {
     fun enableAdbWifi(context: Context): Boolean =
         runCatching {
             Settings.Global.putInt(context.contentResolver, ADB_WIFI_ENABLED, 1)
-            true
         }.getOrElse {
             Log.d(TAG, "enableAdbWifi failed", it)
             false
         }
 
+    fun ensureEnabledForMaintenance(context: Context): Boolean {
+        if (isEnabled(context)) return true
+        if (!isWifiEnabled(context)) {
+            Log.i(TAG, "maintenance enable skipped: Wi-Fi disabled")
+            return false
+        }
+        return enableAdbWifi(context).also { requested ->
+            Log.i(TAG, "maintenance wireless debugging enable requested=$requested")
+        }
+    }
+
     fun isEnabled(context: Context): Boolean =
         runCatching {
             Settings.Global.getInt(context.contentResolver, ADB_WIFI_ENABLED, 0) == 1
+        }.getOrDefault(false)
+
+    private fun isWifiEnabled(context: Context): Boolean =
+        runCatching {
+            context.getSystemService(WifiManager::class.java).isWifiEnabled
         }.getOrDefault(false)
 
     fun areDeveloperOptionsUsable(context: Context): Boolean =
@@ -115,6 +131,3 @@ internal object SelfArmWirelessAdbController {
             name.lowercase(Locale.US).contains("developmentsettingsdisabled")
         }.getOrDefault(false)
 }
-
-
-
