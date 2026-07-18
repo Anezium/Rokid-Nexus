@@ -197,22 +197,6 @@ object GlassesHub {
         return { launcherListeners.remove(listener) }
     }
 
-    /**
-     * Warm Wi-Fi up as soon as a camera session begins, so the P2P link finds it ready
-     * instead of waiting (and possibly timing out) on a lazy enable. Reuses the same request
-     * path as CameraLink's own request, so the a11y single-flight guard deduplicates the two.
-     * A no-op when Wi-Fi is already on.
-     */
-    fun requestCameraWifi(context: Context) {
-        val appCtx = context.applicationContext
-        wifiRequestExecutor.execute {
-            wifiEnableReleasePending.set(false)
-            wifiDisableFuture?.cancel(false)
-            wifiDisableFuture = null
-            handleGlassesWifiRequest(appCtx, true)
-        }
-    }
-
     fun openLauncherEntry(pluginId: String): String {
         if (pluginId.isBlank()) return "launcherOpen=false reason=blank"
         if (pluginId == CAMERA_LAUNCHER_ID) {

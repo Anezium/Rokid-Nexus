@@ -77,7 +77,6 @@ class CameraActivity : Activity(), TextureView.SurfaceTextureListener {
         window.decorView.setBackgroundColor(Color.BLACK)
         buildUi()
         startBusClient()
-        GlassesHub.requestCameraWifi(applicationContext)
         hideSystemUi()
     }
 
