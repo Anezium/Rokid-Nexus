@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.4
+
+- The app icon in Android settings and installer dialogs is now the plugin's own glyph on the Nexus dark background (adaptive icon), instead of a washed-out or generic mark.
+
 ## 1.0.3
 
 - API-key fields are now full-height inputs instead of a thin line.

@@ -13,7 +13,7 @@
     <queries>
         <intent><action android:name="com.anezium.rokidbus.action.HUB" /></intent>
     </queries>
-    <application android:allowBackup="false" android:icon="@drawable/ic_plugin_lens"
+    <application android:allowBackup="false" android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name" android:supportsRtl="true" android:theme="@style/Theme.Lens">
         <activity android:name=".LensSettingsActivity" android:exported="true"
             android:windowSoftInputMode="adjustResize" />
