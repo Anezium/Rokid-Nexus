@@ -131,11 +131,16 @@ HUD cards go through `nexusSurfaceSession(id).showCard/updateCard` with the
 limits from `SurfaceModels.kt` — in particular **contentKey ≤ 128 chars: hash
 it, never concatenate content into it**.
 
-If the plugin needs an additional foreground-service type (location sampling,
-background WebView), it declares the type and permissions in its own manifest
-and re-promotes the SDK-managed session foreground service with that type —
-see `TransitPluginService.startLocationForeground`. The SDK constructs the
-required session notification object; the plugin does not post a separate one.
+If the plugin needs an additional foreground-service type, there are two
+shipped shapes. For a type the session service itself can carry (location
+sampling), declare the type and permissions in your manifest and re-promote
+the SDK-managed session foreground service with it — see
+`TransitPluginService.startLocationForeground`; the SDK constructs the session
+notification, the plugin does not post one. For a capability Android forces
+into its own service (Feeds' overlay WebView host `XWebViewHostService`), run
+a dedicated foreground service with its own minimal notification — it must
+start with your surface and tear down with it (see the notification exception
+in [plugins/AGENTS.md](../plugins/AGENTS.md) §1).
 
 ### Background policy
 
@@ -153,8 +158,9 @@ freezers leave it alone; when closed, it returns the plugin to dormant state.
 The SDK always constructs the notification object required for the session
 foreground service. Do **not** declare or request `POST_NOTIFICATIONS`: on
 Android 13+ the SDK notification stays suppressed, and the Rokid Nexus hub
-notification — which names the plugin live on the glasses — remains the only
-user-visible one. Plugins must not post any additional notification.
+notification — which names the plugin live on the glasses — remains the
+primary user-visible one. Plugins must not post notifications beyond the
+open-scoped dedicated-foreground-service exception described above.
 
 ## 4. Settings screen — the design kit
 
@@ -170,7 +176,9 @@ caps/meta. Component vocabulary: `sectionRow`, `card`/`pressableCard`,
 `rowTitle`/`rowSub`/`rowLabel`/`rowValue`, `pillButton`/`outlinePillButton`/
 `textButton` (`danger = true`), `field`, `dot`, `divider`, `metaLabel`,
 `cardBody`, `iconTileImage` (plugin marks live in bus-client:
-`com.anezium.rokidbus.client.R.drawable.ic_plugin_*`).
+`com.anezium.rokidbus.client.R.drawable.ic_plugin_*`), and `updateBanner`
+(amber update strip with configurable `title`, `actionLabel`, and
+`actionEnabled`).
 
 Every plugin screen uses the same shell:
 

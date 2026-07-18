@@ -1,16 +1,17 @@
 # Lyrics
 
 Lyrics shows live, time-synced lyrics on the glasses for whatever is playing
-on the phone. Track detection comes from the plugin's own notification
-listener; lyrics come from Spotify's own synced lyrics (when signed in),
-Musixmatch (optional), LrcLib, and Netease, tried in that order by the
-provider chain.
+on the phone. Track detection uses the notification-listener grant to read
+active media sessions; lyrics come from Spotify's own synced lyrics (when
+signed in), Musixmatch (optional), Netease, and LrcLib, tried in that order by
+the provider chain.
 
 ## How it works
 
-- `MediaNotificationListenerService` follows the active media session and
-  keeps the plugin service alive through an internal binding, so the lyrics
-  surface can auto-open when playback changes (toggleable in settings).
+- `MediaNotificationListenerService` is an empty `NotificationListenerService`
+  that exists only to hold the notification-access grant; the actual media
+  session monitoring starts in `onNexusOpen` and stops on close — the plugin
+  stays dormant while its surface is closed.
 - `LyricsRuntime` drives the HUD through the SDK's timed-lines surface:
   the full line set is sent once per track, then only small playback anchors
   keep the glasses in sync.

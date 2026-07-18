@@ -6,33 +6,59 @@ depend on the separate classic ADB key.
 
 ## No-PC first launch
 
-1. Launch **Rokid Nexus Glasses**.
-2. Select **Open Accessibility** and enable **Rokid Nexus Glasses**. This is the only accessibility
-   service the user enables. Nexus returns to the HUD on its own once the service connects.
-3. Select **Start Wireless Setup**.
-4. Enable Developer options and Wireless Debugging when Settings asks. Open **Pair device with
-   pairing code** and keep the six-digit code visible.
-5. Nexus reads the code, pairing port, and connect port from the Settings accessibility tree. It
-   pairs only to `127.0.0.1` and returns to the Nexus HUD with success or a retry reason.
+The glasses UI is two HUD cards:
 
-The six-digit code never leaves the glasses and is not written to logs. The Settings automator is
-inactive outside an explicitly requested setup.
+1. **Enable accessibility** — opens Settings on the right screen; the user enables
+   **Rokid Nexus Glasses** (the only service they ever enable). Nexus returns to the
+   HUD on its own once the service connects, and the freshly armed service
+   immediately chains into the wireless bootstrap — no extra tap needed.
+2. **Finish setup** — the fallback card for re-running the bootstrap when the
+   automatic chain could not complete (for example Wi-Fi was off).
 
-## One authenticated shell
+During the bootstrap, the accessibility automator drives Settings itself: it
+enables Developer options and Wireless Debugging, opens **Pair device with pairing
+code**, and reads the six-digit code, pairing port, and connect port from the
+Settings accessibility tree. It pairs only to `127.0.0.1` and returns to the Nexus
+HUD with success or a human-readable retry reason; every phase has a status line
+on the card. The six-digit code never leaves the glasses and is not written to
+logs. The Settings automator is inactive outside an explicitly requested setup
+(its only other mode is a single Wi-Fi toggle used as the camera fallback).
 
-The KADB TLS connection performs one bootstrap command which:
+## The staged arm sequence
 
-1. grants `android.permission.WRITE_SECURE_SETTINGS` to
-   `com.anezium.rokidbus.glasses`;
-2. preserves the existing `enabled_accessibility_services` list while adding the main
-   `RokidBusAccessibilityService`, then sets `accessibility_enabled=1`;
-3. installs, repairs, and starts `/data/local/tmp/rokid-nexus-a11y-watchdog.sh`;
-4. verifies the grant, main service entry, global accessibility state, and running watchdog;
-5. disables both classic TCP ADB properties and restarts `adbd` after the watchdog detaches.
+The KADB TLS connection runs a staged **prepare / arm** sequence rather than one
+monolithic command:
 
-Later process, boot, or package-replacement entries first reconnect with the already paired TLS key
-to reinstall/start the watchdog. The classic `files/kadb` identity is consulted only when that key
-was already provisioned by a maintainer; a fresh install does not generate or require it.
+- **Prepare** installs the payloads: the accessibility watchdog
+  (`/data/local/tmp/rokid-nexus-a11y-watchdog.sh`) and the camera command bridge
+  (`rokid-nexus-cmd-bridge.sh`, a persistent shell-uid helper detached with
+  `nohup`, woken by a doorbell FIFO, no network port).
+- **Arm** grants `android.permission.WRITE_SECURE_SETTINGS` to
+  `com.anezium.rokidbus.glasses`, preserves the existing
+  `enabled_accessibility_services` list while adding the main
+  `RokidBusAccessibilityService`, sets `accessibility_enabled=1`, starts both
+  helpers, verifies grant/service/global state/watchdog, then disables both
+  classic TCP ADB properties and restarts `adbd`. The watchdog is detached
+  (PPID 1) and survives that restart; the sequence reconnects afterwards and
+  re-arms if anything was lost. The command bridge is best-effort: its status is
+  reported but never gates self-arm success.
+
+The bridge accepts only whitelisted commands (Wi-Fi toggling); each request
+carries a nonce and a keyed SHA-256 over an app-private random secret, with
+replay rejection. The app never reads bridge-written files (FUSE negative-cache
+trap) — it observes the resulting system state instead.
+
+Once `WRITE_SECURE_SETTINGS` is granted, the app also repairs its accessibility
+entry **directly** on every launch — no ADB session needed — so accessibility is
+covered from boot even while the watchdog is not yet running. Later process,
+boot, or package-replacement entries reconnect with the already paired TLS key to
+reinstall/start the watchdog; if the session is unreachable (this ROM boots with
+Wi-Fi off), a retry re-arms it as soon as Wireless Debugging or Wi-Fi
+reachability returns. Completion is reported to the phone through the additive
+`setupComplete` field of the glasses capabilities payload, which drives the
+phone onboarding's "Set up your glasses" step. The classic `files/kadb` identity
+is consulted only when that key was already provisioned by a maintainer; a fresh
+install does not generate or require it.
 
 ## Network posture
 

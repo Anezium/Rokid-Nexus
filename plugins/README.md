@@ -23,8 +23,8 @@ releases. The Gradle project names keep the historical `:plugin-<id>` form
 | [Media Deck](media/) | `media` | Universal now-playing surface with transport controls |
 | [Sample](sample/) | `hello` | Minimal copyable reference plugin |
 
-Feeds still sits at the repository root until the in-flight feeds branch
-lands; it moves here afterwards.
+Feeds lives at the repository root as `plugin-feeds/`; everything else about
+it follows the same layout and rules.
 
 ## Releases
 
@@ -37,6 +37,12 @@ tags**, one stream per plugin, separate from the app's `v*` releases:
 - The release notes are the matching section of the plugin's `CHANGELOG.md`.
 - The RokidBrew registry ingests the release (`--kind nexus-plugin`) and the
   Nexus Store serves it from `dist/nexus-plugins.v1.json`.
+- Before installing, the phone verifies the downloaded APK against the
+  registry entry's `sha256` and pins the signing certificate
+  (`signerSha256`); a mismatch aborts the install.
+- The phone home screen checks the registry for newer versions of installed
+  plugins (throttled) and shows an `UPDATE` badge per plugin plus an update
+  count on the Store row.
 
 Before pushing a plugin tag, set that module's `versionName` and add the
 matching `## <version>` changelog section; release CI rejects either mismatch.

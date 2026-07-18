@@ -40,6 +40,7 @@ Round A/API v1 and API v2 details are retained only in the historical appendix.
 | `:glasses-hub` | app | `com.anezium.rokidbus.glasses` | a11y anchor, CXR-S owner, SPP server, AIDL server, supervisor |
 | `:phone-client-probe` | app | `com.anezium.rokidbus.phoneprobe` | sample client using `:bus-client` |
 | `:glasses-client-probe` | app | `com.anezium.rokidbus.clientprobe` | sample client using `:bus-client` |
+| `:plugin-feeds`, `:plugin-lens`, `:plugin-transit`, `:plugin-lyrics`, `:plugin-media`, `:plugin-sample` | apps | `com.anezium.rokidbus.plugin.*` | external headless plugin APKs built on `:bus-client` (sources under `plugins/` and `plugin-feeds/`) |
 
 ## Wire envelope and binary frames
 
@@ -315,6 +316,14 @@ The generic camera contract is available only to an installed plugin whose exact
 package, descriptor ID, and signing digest have an approved, enabled `camera`
 grant. Installation or a shared signer alone never grants access.
 
+The bus carries control only. The heavy data path is out-of-band: during a
+session the glasses encode the camera as H.264 and serve it over a glasses-owned
+Wi-Fi Direct group; the consumer plugin joins with the credentials from
+`/camera/link/offer`, decodes on the phone, and runs its processing (Lens: ML
+Kit OCR + translation) there. Frozen captures ride the same link as full JPEGs,
+with `/camera/freeze/image/chunk` over SPP as the fallback when the link is
+down.
+
 Glasses to phone:
 
 - `/camera/session/state` carries `sessionId`, `state` (`opened` or `closed`),
@@ -338,7 +347,11 @@ or receive them; an external principal may receive session state, link offers,
 and frozen-image chunks and may send freeze results and overlays only after the
 current signer-bound `camera` grant is checked. `/glasses/wifi/request` is a
 separate trusted path carrying `{enabled: Boolean}` for hub-owned camera Wi-Fi
-changes; untrusted callers are rejected. Camera-session open binds the selected
+changes; untrusted callers are rejected. The glasses hub applies a Wi-Fi enable
+through the self-arm command bridge first (silent, nonce/replay-checked keyed
+SHA-256 requests to a persistent shell-uid helper) and falls back to the
+accessibility automator's Wi-Fi toggle; when the hub turned Wi-Fi on for a
+session, it schedules a silent disable 40 s after the session closes. Camera-session open binds the selected
 consumer with important process priority, sends `/system/plugin/open`, and
 forwards the opening state and subsequent offers. The matching close state sends
 `/system/plugin/close` and unbinds. Link loss, grant revocation, package removal,
@@ -351,6 +364,21 @@ camera principal has an approved, enabled `camera` grant; it adds
 `CAMERA_FROZEN_SPP` while that consumer receives frozen chunks and SPP is live.
 Grant, package, and link changes recompute the bits. Bit `1` is retired and is
 no longer advertised by either hub.
+
+## Hub capabilities announcements
+
+Both hubs announce an additive JSON payload on `/system/hub/capabilities`;
+unknown fields are ignorable in both directions, so fields only ever get added.
+
+- Glasses → phone (`GlassesHubCapabilitiesContract`): `version`, renderer
+  `features` bits, `imageSurfaceVersion`, `maxImageBytes`, the glasses app
+  `versionName` (drives the phone-side glasses update checker), and
+  `setupComplete` (self-arm onboarding state; the phone preserves the last
+  known value across link loss — only a live announcement can lower it).
+- Phone → glasses (`PhoneHubCapabilitiesContract`): `version`, `features` bits
+  (including `CAMERA_CONSUMER_READY`), and `cameraConsumerName` — the display
+  name the glasses launcher uses for the synthesized camera entry (present
+  only while a consumer is ready, ≤ 80 chars).
 
 ## Transport selection (hub-side routing)
 

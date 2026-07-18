@@ -19,9 +19,13 @@ opens by explicit component.
 
 Plugins are **dormant unless open**: the hub initiates everything. Your process runs
 only between `PLUGIN_OPEN` and `PLUGIN_CLOSE`. Do not register yourself at boot, do
-not poll in the background, do not post notifications — ever. The SDK holds a
-foreground-service session while you are open and drops it on close; the single
-user-facing notification belongs to the hub.
+not poll in the background, do not post notifications. The SDK holds a
+foreground-service session while you are open and drops it on close; the
+user-facing notification that names the live plugin belongs to the hub. The one
+sanctioned exception: a capability that Android forces into its own foreground
+service *while your surface is open* (Feeds' overlay WebView host is the
+precedent) may run that service with its own minimal notification — it must
+start with your surface, die with it, and never outlive a close.
 
 ## 2. Project setup
 
@@ -65,7 +69,7 @@ Copy `plugins/sample` as the canonical template. The hard rules:
 
 | Rule | Enforced value |
 |---|---|
-| Plugin id | 3–64 chars, `[A-Za-z0-9][A-Za-z0-9._-]*`, unique on the device |
+| Plugin id | 3–64 chars, `[a-z][a-z0-9._-]{2,63}` (lowercase start), unique on the device |
 | Display name | ≤ 80 chars |
 | API version | exactly **3** |
 | Capabilities | subset of `surfaces`, `http_proxy`, `microphone`, `camera` (microphone cannot currently be user-approved) |
@@ -115,7 +119,7 @@ Paths a plugin can **send to** (gated by capability):
 | `/surface/show`, `/surface/update`, `/surface/hide` | `surfaces` | HUD surface lifecycle (typed models: card, timed lines, media, image) |
 | `/http/request` → `/http/request/reply` | `http_proxy` | Phone-side HTTP proxy (strict policy, §9) |
 | `/audio/lease/acquire`, `/audio/lease/release` (+ `/reply` suffixes), `/audio/frames`, `/audio/lease/revoked` | `microphone` | Glasses mic lease + frames (approval currently disabled in UI) |
-| `/camera/session/state`, `/camera/link/offer`, `/camera/freeze/result`, `/camera/overlay`, `/camera/freeze/image/chunk` | `camera` | Camera platform (signer/grant-bound protected paths) |
+| `/camera/freeze/result`, `/camera/overlay` | `camera` | Camera platform sends (signer/grant-bound). The other protected camera paths — `/camera/session/state`, `/camera/link/offer`, `/camera/freeze/image/chunk` — are **receive-only** for a camera plugin (declare them in RECEIVE_PREFIXES); sending them is rejected |
 | `/plugin/<yourId>/…` | — | Your private namespace (must match your declared receive prefixes) |
 
 Paths a plugin **receives** (reserved, hub-generated — you never send these):
@@ -216,8 +220,10 @@ adb install -r your-plugin.apk        # grant survives -r (same signer + capabil
 # glasses: launcher → your plugin     # binding happens on open, not at boot
 ```
 
-The glasses launcher list is cached: restart the phone hub after (un)installing a
-plugin. `adb uninstall` revokes the grant (by design — reinstall means re-approval).
+The phone hub watches package added/changed/removed broadcasts and reconciles
+grants, readiness, and the glasses launcher list on its own — no hub restart
+needed after (un)installing a plugin. `adb uninstall` revokes the grant (by
+design — reinstall means re-approval).
 
 ## 12. Publishing
 

@@ -8,19 +8,24 @@
 For the complete self-contained plugin contract — endpoints, limits,
 lifecycle, and publishing — see [`plugins/AGENTS.md`](../plugins/AGENTS.md).
 
-The SDK artifact is `com.github.Anezium.Rokid-Nexus:bus-client`. The current
-repository can publish `0.1.0-SNAPSHOT` locally; this is not a public release.
-The `shared` artifact is resolved transitively.
+The SDK artifact is `com.github.Anezium.Rokid-Nexus:bus-client`, released
+through JitPack from `sdk-v*` tags on this repository (see the "Rokid Nexus
+SDK" GitHub releases for the current version). The `shared` artifact is
+resolved transitively.
 
 ## 1. Add the dependency
 
 ```kotlin
-repositories { mavenLocal() }
+repositories { maven("https://jitpack.io") }
 
 dependencies {
-    implementation("com.github.Anezium.Rokid-Nexus:bus-client:0.1.0-SNAPSHOT")
+    implementation("com.github.Anezium.Rokid-Nexus:bus-client:sdk-v0.1.1")
 }
 ```
+
+For local development against a checkout, publish a snapshot instead:
+`.\gradlew.bat :shared:publishToMavenLocal :bus-client:publishToMavenLocal
+'-PversionName=0.1.0-SNAPSHOT'` and consume it from `mavenLocal()`.
 
 Use `compileSdk = 36`. The bus-client AAR supports `minSdk >= 26`; the
 repository's canonical Sample and Transit plugin templates use `minSdk = 31`.
@@ -86,6 +91,16 @@ an Activity initializer or static factory. `onNexusOpen`, `onNexusClose`, input,
 link-state, and registration callbacks are serialized on the application main
 thread. Duplicate lifecycle IDs are ignored. The glasses path already deduplicates
 paired directional aliases; plugins should act once on each delivered input.
+
+Beyond the typed surface API, the service exposes `hubTarget` to select which
+hub the plugin binds (phone by default), and two raw hooks for traffic on the
+declared receive prefixes: `onNexusMessage` (JSON envelopes) and
+`onNexusBinaryMessage` (binary frames with their metadata). Hub state rides the
+additive capabilities contracts in `shared`: the phone announces `features`
+plus the camera consumer display name (`PhoneHubCapabilitiesContract`), the
+glasses announce renderer features, image-surface limits, their app version,
+and onboarding completion (`GlassesHubCapabilitiesContract`); unknown fields
+stay ignorable in both directions.
 
 Surface IDs are local to the plugin. The SDK validates fields and payload size;
 the hub injects verified ownership and global sequencing. High-level code cannot
