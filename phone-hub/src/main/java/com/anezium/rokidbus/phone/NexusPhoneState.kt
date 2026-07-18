@@ -1,5 +1,6 @@
 package com.anezium.rokidbus.phone
 
+import android.content.Context
 import android.content.Intent
 import java.util.concurrent.CopyOnWriteArraySet
 
@@ -8,6 +9,9 @@ internal object NexusPhoneState {
     const val AUTH_REQUEST = 42
     const val PREFS = "rokidbus_phone"
     const val PREF_TOKEN = "cxrl_token"
+    const val PREF_GLASSES_APP_INSTALLED = "glasses_app_installed"
+    const val PREF_GLASSES_SETUP_COMPLETE = "glasses_setup_complete"
+    const val PREF_INSTALLED_GLASSES_VERSION_NAME = "installed_glasses_version_name"
     const val EXTRA_GLASSES_APP_STATE = "glasses_app_state"
     const val EXTRA_GLASSES_APP_DOWNLOADED = "glasses_app_downloaded"
     const val EXTRA_GLASSES_APP_TOTAL = "glasses_app_total"
@@ -39,7 +43,21 @@ internal object NexusPhoneState {
     @Volatile var glassesSetupComplete: Boolean = false
         private set
 
+    @Volatile private var appContext: Context? = null
     private val listeners = CopyOnWriteArraySet<() -> Unit>()
+
+    fun restore(context: Context) {
+        if (appContext != null) return
+        synchronized(this) {
+            if (appContext != null) return
+            val applicationContext = context.applicationContext
+            val preferences = applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            glassesAppInstalled = preferences.getBoolean(PREF_GLASSES_APP_INSTALLED, false)
+            glassesSetupComplete = preferences.getBoolean(PREF_GLASSES_SETUP_COMPLETE, false)
+            installedGlassesVersionName = preferences.getString(PREF_INSTALLED_GLASSES_VERSION_NAME, null)
+            appContext = applicationContext
+        }
+    }
 
     fun addUpdateListener(listener: () -> Unit) {
         listeners += listener
@@ -76,6 +94,10 @@ internal object NexusPhoneState {
         val normalized = versionName?.trim()?.takeIf { it.isNotEmpty() }
         if (installedGlassesVersionName == normalized) return
         installedGlassesVersionName = normalized
+        appContext?.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            ?.edit()
+            ?.putString(PREF_INSTALLED_GLASSES_VERSION_NAME, normalized)
+            ?.apply()
         notifyListeners()
     }
 
@@ -88,6 +110,10 @@ internal object NexusPhoneState {
     fun setGlassesSetupComplete(complete: Boolean) {
         if (glassesSetupComplete == complete) return
         glassesSetupComplete = complete
+        appContext?.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            ?.edit()
+            ?.putBoolean(PREF_GLASSES_SETUP_COMPLETE, complete)
+            ?.apply()
         notifyListeners()
     }
 
@@ -152,6 +178,12 @@ internal object NexusPhoneState {
         val wasInstalled = glassesAppInstalled
         glassesAppInstalled = GlassesAppPresencePolicy.reduce(glassesAppInstalled, state)
         val installedChanged = wasInstalled != glassesAppInstalled
+        if (installedChanged) {
+            appContext?.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                ?.edit()
+                ?.putBoolean(PREF_GLASSES_APP_INSTALLED, glassesAppInstalled)
+                ?.apply()
+        }
         glassesAppInstallState = state
         if (installStateChanged || installedChanged) notifyListeners()
         return true

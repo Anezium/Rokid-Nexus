@@ -50,6 +50,7 @@ class SettingsActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        NexusPhoneState.restore(this)
         buildUi()
         hubUiClient = BusClient(
             context = applicationContext,
