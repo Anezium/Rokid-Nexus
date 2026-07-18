@@ -1,0 +1,15 @@
+<resources>
+    <style name="Theme.RokidBus.Glasses" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowActionBar">false</item>
+        <item name="android:windowFullscreen">true</item>
+        <item name="android:windowBackground">#000000</item>
+        <item name="android:navigationBarColor">#030C06</item>
+        <item name="android:statusBarColor">#030C06</item>
+        <item name="android:fontFamily">monospace</item>
+        <item name="android:colorAccent">#71FF97</item>
+        <item name="android:windowSplashScreenBackground">@color/ic_launcher_background</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@mipmap/ic_launcher_foreground</item>
+        <item name="android:windowSplashScreenIconBackgroundColor">@color/ic_launcher_background</item>
+    </style>
+</resources>
