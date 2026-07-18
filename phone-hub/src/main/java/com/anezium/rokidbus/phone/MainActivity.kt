@@ -42,6 +42,7 @@ private const val PREF_NOTIFICATIONS_ANSWERED = "onboarding_notifications_answer
 /** Companion home: fixed status/settings menubar, setup cards, plugin list, store entry and hub toggle. */
 class MainActivity : Activity() {
     private val developerModeStore by lazy { DeveloperModeStore(this) }
+    private var renderedPluginUpdateIds: Set<String> = emptySet()
     private lateinit var updateSection: LinearLayout
     private lateinit var setupSection: LinearLayout
     private lateinit var pluginSection: LinearLayout
@@ -85,6 +86,12 @@ class MainActivity : Activity() {
         renderLinkState()
         queryGlassesAppIfConnected()
         NexusUpdateManager.checkForUpdates(applicationContext)
+        PluginUpdateChecker.refreshIfStale(applicationContext) { updates ->
+            if (isDestroyed || isFinishing) return@refreshIfStale
+            if (updates.mapTo(mutableSetOf()) { it.pluginId } != renderedPluginUpdateIds) {
+                rebuildPluginSection()
+            }
+        }
     }
 
     override fun onStart() {
@@ -247,6 +254,8 @@ class MainActivity : Activity() {
     private fun rebuildPluginSection() {
         if (!::pluginSection.isInitialized) return
         pluginSection.removeAllViews()
+        val pluginUpdates = PluginUpdateChecker.cachedUpdates(this).associateBy { it.pluginId }
+        renderedPluginUpdateIds = pluginUpdates.keys
         val catalog = BusHubService.pluginCatalog(this)
         val activeCount = catalog.entries.count {
             it.state == PluginCatalogState.BUILT_IN || it.state == PluginCatalogState.ENABLED
@@ -283,11 +292,14 @@ class MainActivity : Activity() {
                         ),
                         title = entry.displayName,
                         subtitle = catalogStateLabel(entry),
-                        badge = "DEV".takeIf {
+                        badge = when {
+                            entry.id in pluginUpdates -> "UPDATE"
                             developerModeStore.isEnabled() &&
                                 entry.provenance == PluginProvenance.LOCAL &&
-                                entry.principal != null
+                                entry.principal != null -> "DEV"
+                            else -> null
                         },
+                        badgeColor = if (entry.id in pluginUpdates) NexusUi.GREEN else NexusUi.AMBER,
                     ) { openCatalogEntry(entry) },
                     NexusUi.block(),
                 )
@@ -299,7 +311,15 @@ class MainActivity : Activity() {
         val installedPackages = feed.plugins
             .map { it.artifact.packageName }
             .filterTo(linkedSetOf(), ::isPackageInstalled)
-        pluginSection.addView(storeRow(StoreTeaser.subtitle(feed, installedPackages)), NexusUi.block())
+        val storeSubtitle = when (pluginUpdates.size) {
+            0 -> StoreTeaser.subtitle(feed, installedPackages)
+            1 -> "1 update available"
+            else -> "${pluginUpdates.size} updates available"
+        }
+        pluginSection.addView(
+            storeRow(storeSubtitle, highlight = pluginUpdates.isNotEmpty()),
+            NexusUi.block(),
+        )
     }
 
     private fun catalogStateLabel(entry: PluginCatalogEntry): String = when (entry.state) {
@@ -432,6 +452,7 @@ class MainActivity : Activity() {
         title: String,
         subtitle: String,
         badge: String? = null,
+        badgeColor: Int = NexusUi.AMBER,
         onClick: () -> Unit,
     ): LinearLayout =
         LinearLayout(this).apply {
@@ -465,7 +486,7 @@ class MainActivity : Activity() {
                                 orientation = LinearLayout.HORIZONTAL
                                 gravity = Gravity.CENTER_VERTICAL
                                 addView(NexusUi.rowTitle(this@MainActivity, title))
-                                addView(devBadge(badge))
+                                addView(rowBadge(badge, badgeColor))
                             },
                         )
                     }
@@ -479,16 +500,16 @@ class MainActivity : Activity() {
             addView(NexusUi.chevron(this@MainActivity))
         }
 
-    private fun devBadge(label: String): TextView =
+    private fun rowBadge(label: String, color: Int): TextView =
         TextView(this).apply {
             text = label
             textSize = 9f
             letterSpacing = 0.08f
-            setTextColor(NexusUi.AMBER)
+            setTextColor(color)
             background = NexusUi.bordered(
                 this@MainActivity,
-                NexusUi.alpha(NexusUi.AMBER, 24),
-                NexusUi.alpha(NexusUi.AMBER, 90),
+                NexusUi.alpha(color, 24),
+                NexusUi.alpha(color, 90),
                 7,
             )
             setPadding(
@@ -503,7 +524,7 @@ class MainActivity : Activity() {
             ).apply { marginStart = NexusUi.dp(this@MainActivity, 8) }
         }
 
-    private fun storeRow(subtitle: String): LinearLayout =
+    private fun storeRow(subtitle: String, highlight: Boolean = false): LinearLayout =
         LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -549,7 +570,11 @@ class MainActivity : Activity() {
                     orientation = LinearLayout.VERTICAL
                     addView(NexusUi.rowTitle(this@MainActivity, "Browse the Store").apply { textSize = 14f })
                     addView(BusTheme.gap(this@MainActivity, 4))
-                    addView(NexusUi.rowSub(this@MainActivity, subtitle))
+                    addView(
+                        NexusUi.rowSub(this@MainActivity, subtitle).apply {
+                            if (highlight) setTextColor(NexusUi.GREEN)
+                        },
+                    )
                 },
                 LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
                     marginStart = NexusUi.dp(this@MainActivity, 13)

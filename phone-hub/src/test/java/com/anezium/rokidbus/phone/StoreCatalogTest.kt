@@ -31,6 +31,21 @@ class StoreCatalogTest {
     }
 
     @Test
+    fun `available updates expose installed and registry version names`() {
+        val installedVersions = mapOf(PACKAGE to InstalledPluginVersion(7L, "0.1.0"))
+        val catalog = build(
+            remote = listOf(plugin(versionCode = 8, versionName = "0.2.0")),
+            local = listOf(local()),
+            versions = installedVersions.mapValues { it.value.versionCode },
+        )
+
+        assertEquals(
+            listOf(PluginUpdateInfo("feeds", "Feeds", "0.1.0", "0.2.0")),
+            catalog.availableUpdates(installedVersions),
+        )
+    }
+
+    @Test
     fun `equal or older registry version is installed and carries every grant state`() {
         val grantStates = listOf(
             PluginCatalogState.ENABLED,
@@ -151,6 +166,7 @@ class StoreCatalogTest {
         id: String = pluginId,
         packageName: String = PACKAGE,
         versionCode: Long = 7,
+        versionName: String = "0.1.0",
         minHostVersionCode: Long = 6,
         target: String = "phone",
     ) = RegistryPlugin(
@@ -175,7 +191,7 @@ class StoreCatalogTest {
             sizeBytes = 123L,
             packageName = packageName,
             versionCode = versionCode,
-            versionName = "0.1.0",
+            versionName = versionName,
         ),
     )
 

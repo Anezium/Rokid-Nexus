@@ -39,6 +39,20 @@ data class StoreCatalog(val entries: List<StoreEntry>) {
 
     fun entry(id: String): StoreEntry? = entries.singleOrNull { it.id == id }
 
+    internal fun availableUpdates(
+        installedVersions: Map<String, InstalledPluginVersion>,
+    ): List<PluginUpdateInfo> = entries.mapNotNull { entry ->
+        if (entry.state != StoreEntryState.UPDATE_AVAILABLE) return@mapNotNull null
+        val registryPlugin = entry.registryPlugin ?: return@mapNotNull null
+        val installed = installedVersions[registryPlugin.artifact.packageName] ?: return@mapNotNull null
+        PluginUpdateInfo(
+            pluginId = entry.id,
+            name = entry.displayName,
+            installedVersionName = installed.versionName,
+            availableVersionName = registryPlugin.artifact.versionName,
+        )
+    }
+
     companion object {
         fun build(
             feed: RegistryFeed,
