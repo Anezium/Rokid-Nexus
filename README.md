@@ -1,9 +1,29 @@
-# Rokid Nexus
+<p align="center">
+  <img src="docs/assets/logo.png" width="180" alt="Rokid Nexus logo" />
+</p>
 
-**Install a phone app, get a glasses app.** Rokid Nexus is a plugin platform
-for Rokid AR glasses: one permanent hub lives on the glasses and renders
-everything; all features ship as ordinary Android APKs on the phone. Nothing
-is ever installed on the glasses again.
+<h1 align="center">Rokid Nexus</h1>
+
+<p align="center"><b>Install a phone app, get a glasses app.</b></p>
+
+<p align="center">
+  <a href="https://github.com/Anezium/Rokid-Nexus/releases"><img src="https://img.shields.io/github/v/release/Anezium/Rokid-Nexus?filter=v*&label=app&color=00c853" alt="App release" /></a>
+  <a href="https://github.com/Anezium/Rokid-Nexus/releases?q=sdk"><img src="https://img.shields.io/github/v/release/Anezium/Rokid-Nexus?filter=sdk-v*&label=SDK&color=00c853" alt="SDK release" /></a>
+  <img src="https://img.shields.io/badge/Kotlin-7F52FF?logo=kotlin&logoColor=white" alt="Kotlin" />
+  <img src="https://img.shields.io/badge/Android%2012%2B-3DDC84?logo=android&logoColor=white" alt="Android 12+" />
+  <img src="https://img.shields.io/badge/Rokid%20Glasses-0a0a0a" alt="Rokid Glasses" />
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/Anezium/Rokid-Nexus?color=blue" alt="License" /></a>
+</p>
+
+<p align="center">
+  <a href="https://ko-fi.com/M8R61ZTXMI" target="_blank">
+    <img height="36" style="border:0px;height:36px;" src="https://storage.ko-fi.com/cdn/kofi4.png?v=6" border="0" alt="Buy Me a Coffee at ko-fi.com" />
+  </a>
+</p>
+
+Rokid Nexus is a plugin platform for Rokid AR glasses: one permanent hub lives
+on the glasses and renders everything; all features ship as ordinary Android
+APKs on the phone. Nothing is ever installed on the glasses again.
 
 Plugins stay isolated in their own processes, appear only after explicit user
 approval, and draw on the HUD through declarative surfaces — cards, synced
