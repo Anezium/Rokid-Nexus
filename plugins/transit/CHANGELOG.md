@@ -1,5 +1,9 @@
 # Changelog — Transit
 
+## 1.0.2
+
+- The app icon in Android settings and installer dialogs is now the plugin's own glyph on the Nexus dark background (adaptive icon), instead of a washed-out or generic mark.
+
 ## 1.0.1
 
 - Near Me now takes a single fresh location fix (fused, GPS, then network)
