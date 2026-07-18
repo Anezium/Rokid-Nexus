@@ -20,11 +20,11 @@ jobs:
         with:
           path: RokidNexus
 
-      - name: Check out CxrGlobal 0.2.0
+      - name: Check out CxrGlobal 0.2.1
         uses: actions/checkout@v6
         with:
           repository: Anezium/CxrGlobal
-          ref: v0.2.0
+          ref: v0.2.1
           path: CxrGlobal
 
       - name: Set up JDK 17
