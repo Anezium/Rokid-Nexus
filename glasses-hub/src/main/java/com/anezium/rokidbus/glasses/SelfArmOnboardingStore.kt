@@ -109,8 +109,11 @@ internal object SelfArmOnboardingStore {
     fun refreshNetworkPosture(context: Context) {
         val appContext = context.applicationContext
         if (!networkPostureRefreshRunning.compareAndSet(false, true)) return
-        prefs(appContext).edit().putBoolean(KEY_LEGACY_ADB_SAFE, false).apply()
-        notifyChanged(appContext)
+        // Keep the last known posture until the async capture below produces a
+        // definitive value. Resetting to false here made an already-onboarded
+        // launcher flash the first-run screen on every resume/cold start while
+        // the re-check ran. recordNetworkPosture writes the real value and
+        // notifies; a genuinely unsafe posture still surfaces then.
         Thread {
             try {
                 recordNetworkPosture(
