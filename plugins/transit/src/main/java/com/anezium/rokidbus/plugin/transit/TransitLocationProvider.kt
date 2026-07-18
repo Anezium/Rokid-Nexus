@@ -1,9 +1,7 @@
 package com.anezium.rokidbus.plugin.transit
 
-import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
-import android.content.pm.PackageManager
 import android.location.Location
 import android.location.LocationManager
 import android.os.CancellationSignal
@@ -14,14 +12,12 @@ class TransitLocationProvider(private val context: Context) : TransitLocationSou
     private val locationManager: LocationManager? =
         context.getSystemService(LocationManager::class.java)
 
-    override fun hasLocationPermission(): Boolean =
-        context.checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
-            context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+    override fun access(): TransitLocationAccess = context.transitLocationAccess()
 
     @SuppressLint("MissingPermission")
     override suspend fun currentLocation(): TransitCoordinate? {
-        if (!hasLocationPermission()) return null
-        val provider = bestProvider() ?: return lastKnownLocation()
+        if (access() != TransitLocationAccess.READY) return null
+        val provider = bestProvider() ?: return null
         val current = suspendCancellableCoroutine<Location?> { continuation ->
             val signal = CancellationSignal()
             continuation.invokeOnCancellation { signal.cancel() }
@@ -37,23 +33,18 @@ class TransitLocationProvider(private val context: Context) : TransitLocationSou
                 if (continuation.isActive) continuation.resume(null)
             }
         }
-        return current?.toCoordinate() ?: lastKnownLocation()
-    }
-
-    @SuppressLint("MissingPermission")
-    private fun lastKnownLocation(): TransitCoordinate? {
-        if (!hasLocationPermission()) return null
-        val manager = locationManager ?: return null
-        return listOf(LocationManager.NETWORK_PROVIDER, LocationManager.GPS_PROVIDER)
-            .mapNotNull { provider -> runCatching { manager.getLastKnownLocation(provider) }.getOrNull() }
-            .maxByOrNull { it.time }
-            ?.toCoordinate()
+        return current?.toCoordinate()
     }
 
     private fun bestProvider(): String? {
         val manager = locationManager ?: return null
-        return listOf(LocationManager.NETWORK_PROVIDER, LocationManager.GPS_PROVIDER)
-            .firstOrNull { provider -> runCatching { manager.isProviderEnabled(provider) }.getOrDefault(false) }
+        return listOf(
+            LocationManager.FUSED_PROVIDER,
+            LocationManager.GPS_PROVIDER,
+            LocationManager.NETWORK_PROVIDER,
+        ).firstOrNull { provider ->
+            runCatching { manager.isProviderEnabled(provider) }.getOrDefault(false)
+        }
     }
 
     private fun Location.toCoordinate(): TransitCoordinate =

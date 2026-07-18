@@ -3,12 +3,11 @@ package com.anezium.rokidbus.plugin.transit
 import android.Manifest
 import android.app.Activity
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.net.Uri
-import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.provider.Settings
 import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
@@ -34,10 +33,14 @@ class TransitSettingsActivity : Activity() {
     private val repository = TransitRepository()
     private val searchExecutor = Executors.newSingleThreadExecutor()
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val onboardingPreferences by lazy {
+        getSharedPreferences(ONBOARDING_PREFERENCES, MODE_PRIVATE)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         buildUi()
+        maybeRequestPreciseLocationOnFirstOpen()
     }
 
     override fun onResume() {
@@ -93,8 +96,8 @@ class TransitSettingsActivity : Activity() {
                         orientation = LinearLayout.VERTICAL
                         addView(BusTheme.gap(this@TransitSettingsActivity, 12))
                         addView(
-                            NexusUi.pillButton(this@TransitSettingsActivity, "Allow location and notifications").apply {
-                                setOnClickListener { requestTransitPermissions() }
+                            NexusUi.pillButton(this@TransitSettingsActivity, "Set up location").apply {
+                                setOnClickListener { continueLocationSetup() }
                             },
                             NexusUi.block(),
                         )
@@ -147,28 +150,58 @@ class TransitSettingsActivity : Activity() {
     }
 
     private fun renderState() {
-        val granted = hasLocationPermission()
-        permissionStatus.text = if (granted) {
-            "Location granted. Near Me can run during an active glasses session."
-        } else {
-            "Location is required for Near Me. Nexus asks only when you grant it here."
+        val access = transitLocationAccess()
+        permissionStatus.text = when (access) {
+            TransitLocationAccess.MISSING_PRECISE ->
+                "Precise location is required. Near Me requests one current position each time you open it."
+            TransitLocationAccess.MISSING_BACKGROUND ->
+                "Allow location all the time so the glasses can request that one position while the phone screen is off. " +
+                    "Transit stops location immediately after the fix."
+            TransitLocationAccess.READY ->
+                "Location ready. Near Me takes one precise fix per opening, then refreshes departures without tracking you."
         }
-        permissionAction.visibility = if (granted) View.GONE else View.VISIBLE
+        permissionAction.visibility = if (access == TransitLocationAccess.READY) View.GONE else View.VISIBLE
         renderFavorites()
     }
 
-    private fun requestTransitPermissions() {
-        val permissions = buildList {
-            add(Manifest.permission.ACCESS_COARSE_LOCATION)
-            add(Manifest.permission.ACCESS_FINE_LOCATION)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) add(Manifest.permission.POST_NOTIFICATIONS)
-        }
-        requestPermissions(permissions.toTypedArray(), PERMISSION_REQUEST)
+    private fun maybeRequestPreciseLocationOnFirstOpen() {
+        if (transitLocationAccess() != TransitLocationAccess.MISSING_PRECISE) return
+        if (onboardingPreferences.getBoolean(KEY_PRECISE_REQUESTED, false)) return
+        onboardingPreferences.edit().putBoolean(KEY_PRECISE_REQUESTED, true).apply()
+        requestPreciseLocation()
     }
 
-    private fun hasLocationPermission(): Boolean =
-        checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
-            checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+    private fun continueLocationSetup() {
+        when (transitLocationAccess()) {
+            TransitLocationAccess.MISSING_PRECISE -> requestPreciseLocation()
+            TransitLocationAccess.MISSING_BACKGROUND -> openLocationSettings()
+            TransitLocationAccess.READY -> Unit
+        }
+    }
+
+    private fun requestPreciseLocation() {
+        requestPermissions(
+            arrayOf(
+                Manifest.permission.ACCESS_COARSE_LOCATION,
+                Manifest.permission.ACCESS_FINE_LOCATION,
+            ),
+            PERMISSION_REQUEST,
+        )
+    }
+
+    private fun openLocationSettings() {
+        val optionLabel = packageManager.backgroundPermissionOptionLabel
+        Toast.makeText(
+            this,
+            "Choose $optionLabel. Transit only uses it for one Near Me fix from your glasses.",
+            Toast.LENGTH_LONG,
+        ).show()
+        startActivity(
+            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                data = Uri.fromParts("package", packageName, null)
+            },
+        )
+    }
 
     private fun searchStops() {
         val query = searchInput.text.toString().trim()
@@ -248,5 +281,7 @@ class TransitSettingsActivity : Activity() {
 
     private companion object {
         const val PERMISSION_REQUEST = 70
+        const val ONBOARDING_PREFERENCES = "transit_location_onboarding"
+        const val KEY_PRECISE_REQUESTED = "precise_requested"
     }
 }

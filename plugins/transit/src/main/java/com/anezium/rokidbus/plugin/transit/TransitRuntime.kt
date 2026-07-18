@@ -12,6 +12,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import java.time.Instant
 import kotlin.coroutines.coroutineContext
 
@@ -20,6 +21,7 @@ internal class TransitRuntime(
     dependencies: TransitDependencies,
     private val refreshDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val refreshDelayMs: Long = REFRESH_MS,
+    private val locationTimeoutMs: Long = LOCATION_TIMEOUT_MS,
 ) {
     private val repository = dependencies.repository
     private val locationProvider = dependencies.location
@@ -31,29 +33,25 @@ internal class TransitRuntime(
     private var selectedMode = TransitMode.NEAR_ME
     private var activeMode = TransitMode.NEAR_ME
     private var lastSentKey: String? = null
-    private var cachedLocation: TransitCoordinate? = null
-    private var cachedStops: List<TransitStop> = emptyList()
-    private var stopDiscoveryAtMs = 0L
     private var boardStops: List<TransitStop> = emptyList()
     private var boardsByStopId: Map<String, TransitBoard> = emptyMap()
     private var staleStopIds: Set<String> = emptySet()
 
     fun open() {
         stopRefreshLoop()
+        host.setNearMeForeground(false)
         lastSentKey = null
         screen = Screen.CHOOSER
         selectedMode = favoritesStore.lastMode()
         activeMode = selectedMode
-        boardStops = emptyList()
-        boardsByStopId = emptyMap()
-        staleStopIds = emptySet()
-        pager.reset()
+        clearBoardState()
         sendCard(TransitCards.chooser(selectedMode), forceShow = true)
     }
 
     fun close() {
         stopRefreshLoop()
         host.setNearMeForeground(false)
+        clearBoardState()
         lastSentKey = null
         host.hideSurface()
     }
@@ -95,51 +93,115 @@ internal class TransitRuntime(
         host.setNearMeForeground(false)
         activeMode = mode
         screen = Screen.BOARD
-        boardStops = emptyList()
-        boardsByStopId = emptyMap()
-        staleStopIds = emptySet()
-        pager.reset()
+        clearBoardState()
         favoritesStore.setLastMode(mode)
 
         when (mode) {
-            TransitMode.NEAR_ME -> {
-                sendCard(DepartureFormatter.message("Transit", "Locating..."))
-                if (!locationProvider.hasLocationPermission()) {
-                    sendCard(DepartureFormatter.message("Transit", "Grant location in phone app."))
-                    return
-                }
-                if (!host.setNearMeForeground(true)) {
-                    sendCard(DepartureFormatter.message("Transit", "Open Transit on phone to start Near Me."))
-                    return
-                }
-            }
+            TransitMode.NEAR_ME -> enterNearMe()
             TransitMode.FAVORITES -> {
                 if (favoritesStore.list().isEmpty()) {
                     sendCard(noFavoritesCard())
                 } else {
                     sendCard(DepartureFormatter.message("Transit", "Loading favorites..."))
                 }
+                startFavoritesLoop()
             }
         }
-        startRefreshLoop()
+    }
+
+    private fun enterNearMe() {
+        sendCard(DepartureFormatter.message("Transit", "Locating..."))
+        when (locationProvider.access()) {
+            TransitLocationAccess.MISSING_PRECISE -> {
+                sendCard(DepartureFormatter.message("Transit", "Allow precise location in phone app."))
+                return
+            }
+            TransitLocationAccess.MISSING_BACKGROUND -> {
+                sendCard(
+                    DepartureFormatter.message(
+                        "Transit",
+                        listOf("Allow location", "all the time on phone."),
+                    ),
+                )
+                return
+            }
+            TransitLocationAccess.READY -> Unit
+        }
+        if (!host.setNearMeForeground(true)) {
+            sendCard(DepartureFormatter.message("Transit", "Reopen Transit settings on phone."))
+            return
+        }
+        startNearMeLoop()
     }
 
     private fun returnToChooser() {
         stopRefreshLoop()
         host.setNearMeForeground(false)
+        clearBoardState()
         screen = Screen.CHOOSER
         selectedMode = activeMode
         sendCard(TransitCards.chooser(selectedMode))
     }
 
-    private suspend fun refreshOnce(
-        generation: Long,
-        mode: TransitMode,
-        state: RefreshLoopState,
-    ): RefreshLoopState {
-        return when (mode) {
-            TransitMode.NEAR_ME -> refreshNearby(generation, mode, state)
-            TransitMode.FAVORITES -> refreshFavorites(generation, mode, state)
+    private fun startNearMeLoop() {
+        refreshJob?.cancel()
+        val generation = ++refreshGeneration
+        val mode = TransitMode.NEAR_ME
+        refreshJob = CoroutineScope(SupervisorJob() + refreshDispatcher).launch {
+            val location = try {
+                try {
+                    withTimeoutOrNull(locationTimeoutMs) { locationProvider.currentLocation() }
+                } catch (failure: CancellationException) {
+                    throw failure
+                } catch (failure: Throwable) {
+                    host.log("transit location failed: ${failure.javaClass.simpleName}")
+                    null
+                }
+            } finally {
+                releaseNearMeForeground(generation, mode)
+            }
+            if (location == null) {
+                postRefreshCard(
+                    generation,
+                    mode,
+                    DepartureFormatter.message("Transit", "Location unavailable. Reopen Near Me."),
+                )
+                return@launch
+            }
+
+            var loopState = RefreshLoopState(
+                nearby = NearbySessionState(location = location, stops = null),
+                previousBoards = emptyMap(),
+            )
+            while (isActive) {
+                try {
+                    loopState = refreshNearby(generation, mode, loopState)
+                } catch (failure: CancellationException) {
+                    throw failure
+                } catch (failure: Throwable) {
+                    renderRefreshFailure(generation, mode, failure)
+                }
+                delay(refreshDelayMs)
+            }
+        }
+    }
+
+    private fun startFavoritesLoop() {
+        refreshJob?.cancel()
+        val generation = ++refreshGeneration
+        val mode = TransitMode.FAVORITES
+        var loopState = RefreshLoopState(nearby = null, previousBoards = emptyMap())
+        refreshJob = CoroutineScope(SupervisorJob() + refreshDispatcher).launch {
+            while (isActive) {
+                try {
+                    loopState = refreshFavorites(generation, mode, loopState)
+                } catch (failure: CancellationException) {
+                    throw failure
+                } catch (failure: Throwable) {
+                    renderRefreshFailure(generation, mode, failure)
+                }
+                delay(refreshDelayMs)
+            }
         }
     }
 
@@ -148,54 +210,25 @@ internal class TransitRuntime(
         mode: TransitMode,
         state: RefreshLoopState,
     ): RefreshLoopState {
-        if (!locationProvider.hasLocationPermission()) {
-            postRefreshCard(generation, mode, DepartureFormatter.message("Transit", "Grant location in phone app."))
-            return state
-        }
-        val location = locationProvider.currentLocation()
-        if (location == null) {
-            postRefreshCard(generation, mode, DepartureFormatter.message("Transit", "Waiting for phone location."))
-            return state
-        }
-
-        val nowMs = System.currentTimeMillis()
-        val nearby = state.nearby
-        val shouldDiscover = nearby.cachedStops.isEmpty() ||
-            nearby.stopDiscoveryAtMs == 0L ||
-            nowMs - nearby.stopDiscoveryAtMs > STOP_DISCOVERY_MAX_AGE_MS ||
-            nearby.cachedLocation?.let { haversineMeters(it, location) > STOP_MOVE_METERS } == true
-        val nextCachedStops: List<TransitStop>
-        val nextDiscoveryAtMs: Long
-        if (shouldDiscover) {
-            nextCachedStops = repository.nearbyStops(location)
+        val nearby = checkNotNull(state.nearby)
+        val fixedStops = nearby.stops ?: selectNearbyBoardStops(
+            repository.nearbyStops(nearby.location)
                 .take(MAX_CACHED_STOPS)
-                .map { it.withDistanceFrom(location) }
-            nextDiscoveryAtMs = nowMs
-        } else {
-            nextCachedStops = nearby.cachedStops
-                .map { it.withDistanceFrom(location) }
-                .sortedBy { it.distanceMeters }
-            nextDiscoveryAtMs = nearby.stopDiscoveryAtMs
-        }
-        coroutineContext.ensureActive()
-
-        val nextNearby = NearbyLoopState(
-            cachedLocation = location,
-            cachedStops = nextCachedStops,
-            stopDiscoveryAtMs = nextDiscoveryAtMs,
+                .map { it.withDistanceFrom(nearby.location) },
+            BOARD_STOP_COUNT,
         )
-        val stops = selectNearbyBoardStops(nextCachedStops, BOARD_STOP_COUNT)
-        if (stops.isEmpty()) {
+        coroutineContext.ensureActive()
+        val nextNearby = nearby.copy(stops = fixedStops)
+        if (fixedStops.isEmpty()) {
             postRefreshEmptyBoard(
                 generation = generation,
                 mode = mode,
-                nearby = nextNearby,
                 card = DepartureFormatter.message("Transit", "No nearby stops found."),
             )
             return RefreshLoopState(nearby = nextNearby, previousBoards = emptyMap())
         }
-        val refresh = fetchDeparturesFor(stops, state.previousBoards)
-        postRefreshBoards(generation, mode, nearby = nextNearby, refresh = refresh)
+        val refresh = fetchDeparturesFor(fixedStops, state.previousBoards)
+        postRefreshBoards(generation, mode, refresh)
         return RefreshLoopState(nearby = nextNearby, previousBoards = refresh.boardsByStopId)
     }
 
@@ -204,29 +237,21 @@ internal class TransitRuntime(
         mode: TransitMode,
         state: RefreshLoopState,
     ): RefreshLoopState {
-        val stored = favoritesStore.list()
-        if (stored.isEmpty()) {
+        val stops = favoritesStore.list()
+            .take(FAVORITE_BOARD_STOP_LIMIT)
+            .map { it.withUnknownDistance() }
+        if (stops.isEmpty()) {
             postRefreshEmptyBoard(
                 generation = generation,
                 mode = mode,
-                nearby = null,
                 card = noFavoritesCard(),
             )
             return state.copy(previousBoards = emptyMap())
         }
 
-        val location = locationProvider.currentLocation()
-        val stops = if (location != null) {
-            stored.map { it.withDistanceFrom(location) }
-                .sortedBy { it.distanceMeters }
-                .take(FAVORITE_BOARD_STOP_LIMIT)
-        } else {
-            stored.take(FAVORITE_BOARD_STOP_LIMIT)
-                .map { it.withUnknownDistance() }
-        }
         coroutineContext.ensureActive()
         val refresh = fetchDeparturesFor(stops, state.previousBoards)
-        postRefreshBoards(generation, mode, nearby = null, refresh = refresh)
+        postRefreshBoards(generation, mode, refresh)
         return state.copy(previousBoards = refresh.boardsByStopId)
     }
 
@@ -265,6 +290,12 @@ internal class TransitRuntime(
             boardsByStopId = nextBoards,
             staleStopIds = nextStale,
         )
+    }
+
+    private fun releaseNearMeForeground(generation: Long, mode: TransitMode) {
+        host.post {
+            if (isRefreshCurrent(generation, mode)) host.setNearMeForeground(false)
+        }
     }
 
     private fun movePage(forward: Boolean) {
@@ -309,32 +340,6 @@ internal class TransitRuntime(
         }
     }
 
-    private fun startRefreshLoop() {
-        refreshJob?.cancel()
-        val generation = ++refreshGeneration
-        val mode = activeMode
-        var loopState = RefreshLoopState(
-            nearby = NearbyLoopState(
-                cachedLocation = cachedLocation,
-                cachedStops = cachedStops,
-                stopDiscoveryAtMs = stopDiscoveryAtMs,
-            ),
-            previousBoards = boardsByStopId,
-        )
-        refreshJob = CoroutineScope(SupervisorJob() + refreshDispatcher).launch {
-            while (isActive) {
-                try {
-                    loopState = refreshOnce(generation, mode, loopState)
-                } catch (failure: CancellationException) {
-                    throw failure
-                } catch (failure: Throwable) {
-                    renderRefreshFailure(generation, mode, failure)
-                }
-                delay(refreshDelayMs)
-            }
-        }
-    }
-
     private fun stopRefreshLoop() {
         refreshGeneration++
         refreshJob?.cancel()
@@ -350,11 +355,9 @@ internal class TransitRuntime(
     private fun postRefreshEmptyBoard(
         generation: Long,
         mode: TransitMode,
-        nearby: NearbyLoopState?,
         card: TransitCardContent,
     ) {
         postRefresh(generation, mode) {
-            nearby?.let(::applyNearbyState)
             clearBoardState()
             sendCard(card)
         }
@@ -363,11 +366,9 @@ internal class TransitRuntime(
     private fun postRefreshBoards(
         generation: Long,
         mode: TransitMode,
-        nearby: NearbyLoopState?,
         refresh: BoardFetchResult,
     ) {
         postRefresh(generation, mode) {
-            nearby?.let(::applyNearbyState)
             boardStops = refresh.stops
             boardsByStopId = refresh.boardsByStopId
             staleStopIds = refresh.staleStopIds
@@ -386,12 +387,6 @@ internal class TransitRuntime(
 
     private fun isRefreshCurrent(generation: Long, mode: TransitMode): Boolean =
         refreshGeneration == generation && screen == Screen.BOARD && activeMode == mode
-
-    private fun applyNearbyState(nearby: NearbyLoopState) {
-        cachedLocation = nearby.cachedLocation
-        cachedStops = nearby.cachedStops
-        stopDiscoveryAtMs = nearby.stopDiscoveryAtMs
-    }
 
     private fun clearBoardState() {
         boardStops = emptyList()
@@ -423,14 +418,13 @@ internal class TransitRuntime(
         BOARD,
     }
 
-    private data class NearbyLoopState(
-        val cachedLocation: TransitCoordinate?,
-        val cachedStops: List<TransitStop>,
-        val stopDiscoveryAtMs: Long,
+    private data class NearbySessionState(
+        val location: TransitCoordinate,
+        val stops: List<TransitStop>?,
     )
 
     private data class RefreshLoopState(
-        val nearby: NearbyLoopState,
+        val nearby: NearbySessionState?,
         val previousBoards: Map<String, TransitBoard>,
     )
 
@@ -442,8 +436,7 @@ internal class TransitRuntime(
 
     private companion object {
         private const val REFRESH_MS = 60_000L
-        private const val STOP_DISCOVERY_MAX_AGE_MS = 5 * 60_000L
-        private const val STOP_MOVE_METERS = 200
+        private const val LOCATION_TIMEOUT_MS = 15_000L
         private const val MAX_CACHED_STOPS = 5
         private const val BOARD_STOP_COUNT = 3
         // Bounds HTTP fan-out per refresh tick.

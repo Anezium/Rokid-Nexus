@@ -1,7 +1,5 @@
 package com.anezium.rokidbus.plugin.transit
 
-import android.Manifest
-import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.util.Log
 import com.anezium.rokidbus.client.PluginRegistrationResult
@@ -112,7 +110,11 @@ class TransitPluginService : NexusPluginService() {
     ).also { runtime = it }
 
     private fun startLocationForeground(): Boolean {
-        if (!hasLocationPermission()) return false
+        val access = transitLocationAccess()
+        if (access != TransitLocationAccess.READY) {
+            Log.w(TAG, "Location foreground blocked access=$access")
+            return false
+        }
         if (locationForeground) return true
         val started = promoteNexusSessionForeground(
             additionalTypes = ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION,
@@ -138,10 +140,6 @@ class TransitPluginService : NexusPluginService() {
             stopNexusSessionForeground()
         }
     }
-
-    private fun hasLocationPermission(): Boolean =
-        checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
-            checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
 
     private companion object {
         const val TAG = "NexusTransit"

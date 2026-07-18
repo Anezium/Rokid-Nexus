@@ -7,7 +7,7 @@ internal interface TransitRepositorySource {
 }
 
 internal interface TransitLocationSource {
-    fun hasLocationPermission(): Boolean
+    fun access(): TransitLocationAccess
     suspend fun currentLocation(): TransitCoordinate?
 }
 
