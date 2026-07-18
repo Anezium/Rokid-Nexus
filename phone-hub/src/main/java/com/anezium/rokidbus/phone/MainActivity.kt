@@ -227,6 +227,7 @@ class MainActivity : Activity() {
                 NexusUi.updateBanner(
                     context = this,
                     versionLabel = NexusPhoneState.updateVersionLabel,
+                    title = "Phone app update",
                     actionLabel = NexusPhoneState.updateActionLabel(),
                     actionEnabled = NexusPhoneState.updateActionEnabled(),
                 ) { NexusUpdateManager.performUpdateAction(applicationContext) },
@@ -239,6 +240,7 @@ class MainActivity : Activity() {
                 NexusUi.updateBanner(
                     context = this,
                     versionLabel = glassesUpdateLabel,
+                    title = "Glasses app update",
                     actionLabel = NexusPhoneState.glassesUpdateActionLabel(),
                     actionEnabled = cxrReady && NexusPhoneState.glassesUpdateActionEnabled(),
                 ) { BusHubService.installGlassesApp(applicationContext) },

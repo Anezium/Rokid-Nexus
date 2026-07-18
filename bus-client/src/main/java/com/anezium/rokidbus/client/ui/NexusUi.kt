@@ -509,6 +509,7 @@ object NexusUi {
     fun updateBanner(
         context: Context,
         versionLabel: String,
+        title: String = "Update available",
         actionLabel: String = "Install",
         actionEnabled: Boolean = true,
         onInstall: () -> Unit,
@@ -522,7 +523,7 @@ object NexusUi {
                 orientation = LinearLayout.VERTICAL
                 addView(
                     TextView(context).apply {
-                        text = "Update available"
+                        text = title
                         textSize = 13f
                         typeface = sans
                         setTextColor(AMBER)
