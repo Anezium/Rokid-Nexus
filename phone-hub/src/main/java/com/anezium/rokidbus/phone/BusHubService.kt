@@ -354,6 +354,21 @@ class BusHubService : Service() {
     override fun onCreate() {
         super.onCreate()
         activeInstance = this
+        // The glasses only re-advertise their setup state once CXR is back up. Without seeding
+        // these from the last persisted values, a hub restart (e.g. after an app update kills the
+        // process) would broadcast setupComplete=false and versionName="" before the glasses
+        // reconnect, which resets the phone's finished onboarding and strands the setup step on
+        // "Connect your glasses". Start from what we last knew; a live advertisement still wins.
+        prefs().let { stored ->
+            remoteGlassesSetupComplete = stored.getBoolean(
+                NexusPhoneState.PREF_GLASSES_SETUP_COMPLETE,
+                false,
+            )
+            remoteGlassesVersionName = stored.getString(
+                NexusPhoneState.PREF_INSTALLED_GLASSES_VERSION_NAME,
+                null,
+            )?.trim()?.takeIf { it.isNotEmpty() }
+        }
         developerModeStore = DeveloperModeStore(applicationContext)
         developerModeJournalSubscription = bindDeveloperModeToJournal(developerModeStore, pluginBusJournal)
         PhoneClientSupervisor.attach(this)
