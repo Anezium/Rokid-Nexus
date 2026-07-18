@@ -1,5 +1,17 @@
 # Changelog — Transit
 
+## 1.0.1
+
+- Near Me now takes a single fresh location fix (fused, GPS, then network)
+  instead of falling back to stale last-known positions, and releases the
+  location foreground service right after the fix.
+- Location setup is a guided two-step flow in the plugin settings: grant
+  precise location, then allow background access ("Allow all the time") so
+  Near Me works while the phone stays in your pocket.
+- Clearer HUD messages when a location permission is still missing.
+- Reworked Near Me and favourites refresh loops with lifecycle test
+  coverage.
+
 ## 1.0.0 — unreleased
 
 - First release as a headless plugin APK (previously an in-hub built-in).
