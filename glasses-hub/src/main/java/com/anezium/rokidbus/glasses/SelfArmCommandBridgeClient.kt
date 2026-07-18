@@ -72,7 +72,12 @@ internal object SelfArmCommandBridgeClient {
     private const val CHANNEL_NAME = "cmd_bridge"
     private const val DOORBELL_NAME = "doorbell"
     private const val SECRET_FILE_NAME = "rokid-nexus-cmd-bridge.secret"
-    private const val DEFAULT_TIMEOUT_MS = 3_000L
+    // svc wifi enable blocks in the bridge until the framework brings Wi-Fi up, and the bridge may
+    // wait up to its poll interval before it even sees the request, so the response can land a
+    // couple of seconds out. Wait long enough to read it instead of racing to the accessibility
+    // fallback (which would defeat the point of the silent bridge); a genuinely dead bridge still
+    // falls back within this window, and CameraLink waits longer still.
+    private const val DEFAULT_TIMEOUT_MS = 6_000L
     private const val RESPONSE_POLL_MS = 50L
     const val SECRET_PLACEHOLDER = "__ROKID_NEXUS_BRIDGE_SECRET_HEX__"
     private val secureRandom = SecureRandom()
