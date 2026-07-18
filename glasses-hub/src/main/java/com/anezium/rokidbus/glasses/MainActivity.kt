@@ -57,9 +57,14 @@ class MainActivity : Activity() {
         requestBluetoothConnectIfNeeded()
         GlassesHub.start(applicationContext)
         unsubscribeLauncher = GlassesHub.observeLauncher { entries ->
-            launcherEntries = entries
-            selectedIndex = selectedIndex.coerceIn(0, (entries.size - 1).coerceAtLeast(0))
-            renderLauncher()
+            // The hub notifies listeners from the CXR receive thread. Touching views off the main
+            // thread throws (swallowed by the hub's runCatching), so a launcher list that arrives
+            // while this activity is already up would silently never render. Marshal to the UI.
+            runOnUiThread {
+                launcherEntries = entries
+                selectedIndex = selectedIndex.coerceIn(0, (entries.size - 1).coerceAtLeast(0))
+                renderLauncher()
+            }
         }
         log("Launcher activity opened")
     }
