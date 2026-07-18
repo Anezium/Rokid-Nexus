@@ -49,39 +49,23 @@ class SelfArmControllerTest {
     }
 
     @Test
-    fun installCommandUsesOneSessionAndDisablesLegacyTcp() {
-        val command = SelfArmController.buildInstallCommand(
-            script = "#!/system/bin/sh\necho ok\n",
-            restartWatchdog = false,
-        )
+    fun selfArmCommandsKeepPreparationAndArmSeparate() {
+        val prepare = SelfArmController.buildPrepareCommand("#!/system/bin/sh\necho ok\n")
+        val arm = SelfArmController.buildArmCommand(restartWatchdog = false)
 
-        assertTrue(command.contains("pm grant \"\$PKG\" android.permission.WRITE_SECURE_SETTINGS"))
-        assertTrue(command.contains("settings put secure enabled_accessibility_services"))
-        assertTrue(command.contains("settings put secure accessibility_enabled 1"))
-        assertTrue(command.contains("base64 -d > \"\$WATCHDOG\""))
-        assertTrue(command.contains("sh \"\$WATCHDOG\" start"))
-        assertTrue(command.contains("sh \"\$WATCHDOG\" repair"))
-        assertTrue(command.contains("setprop persist.adb.tcp.port -1"))
-        assertTrue(command.contains("setprop service.adb.tcp.port -1"))
-        assertTrue(command.contains("setprop ctl.restart adbd"))
-        assertFalse(command.contains("setprop persist.adb.tcp.port 5555"))
-        assertFalse(command.contains("setprop service.adb.tcp.port 5555"))
+        assertTrue(prepare.contains("pm grant \"\$PKG\" android.permission.WRITE_SECURE_SETTINGS"))
+        assertTrue(prepare.contains("settings put secure enabled_accessibility_services"))
+        assertTrue(prepare.contains("base64 -d > \"\$WATCHDOG\""))
+        assertTrue(prepare.contains("setprop persist.adb.tcp.port -1"))
+        assertFalse(prepare.contains("sh \"\$WATCHDOG\" start"))
+        assertFalse(prepare.contains("setprop ctl.restart adbd"))
+        assertTrue(arm.contains("sh \"\$WATCHDOG\" start"))
+        assertTrue(arm.contains("sh \"\$WATCHDOG\" repair"))
+        assertFalse(arm.contains("setprop ctl.restart adbd"))
     }
 
     @Test
-    fun installAndStopRequireVerifiedSentinels() {
-        assertTrue(
-            SelfArmController.installCommandSucceeded(
-                "ROKID_NEXUS_INSTALL_RESULT grant=1 a11y=1 service=1 watchdog=1 " +
-                    "persist=-1 service_port=-1 legacy_tcp_disabled=1\n",
-            ),
-        )
-        assertFalse(
-            SelfArmController.installCommandSucceeded(
-                "ROKID_NEXUS_INSTALL_RESULT grant=1 a11y=1 service=1 watchdog=0 " +
-                    "persist=-1 service_port=-1 legacy_tcp_disabled=1\n",
-            ),
-        )
+    fun stopRequiresVerifiedSentinel() {
         assertTrue(SelfArmController.stopCommandSucceeded("ROKID_NEXUS_STOP_RESULT watchdog=1\n"))
         assertFalse(SelfArmController.stopCommandSucceeded("ROKID_NEXUS_STOP_RESULT watchdog=0\n"))
     }

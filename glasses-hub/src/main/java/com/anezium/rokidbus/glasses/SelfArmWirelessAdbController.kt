@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.IBinder
 import android.os.Parcel
+import android.os.SystemClock
 import android.provider.Settings
 import android.util.Log
 import java.util.Locale
@@ -63,18 +64,14 @@ internal object SelfArmWirelessAdbController {
         }
     }
 
+    @Throws(InterruptedException::class)
     fun waitForWirelessPort(timeoutMs: Long): Int {
-        val deadline = System.currentTimeMillis() + timeoutMs
+        val deadline = SystemClock.elapsedRealtime() + timeoutMs
         do {
             val port = readWirelessPort()
             if (port > 0) return port
-            try {
-                Thread.sleep(150L)
-            } catch (_: InterruptedException) {
-                Thread.currentThread().interrupt()
-                return 0
-            }
-        } while (System.currentTimeMillis() < deadline)
+            Thread.sleep(150L)
+        } while (SystemClock.elapsedRealtime() < deadline)
         return 0
     }
 

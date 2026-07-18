@@ -37,14 +37,26 @@ internal data class SelfArmNetworkPosture(
 }
 
 internal object SelfArmNetworkPostureVerifier {
-    fun awaitSafe(context: Context, timeoutMs: Long = 8_000L): SelfArmNetworkPosture {
+    fun awaitRestartDecision(context: Context, timeoutMs: Long = 3_000L): SelfArmNetworkPosture =
+        awaitDecision(context, timeoutMs) {
+            it != SelfArmNetworkPosture.TeardownDecision.CLEAR_LEGACY_PROPERTIES
+        }
+
+    fun awaitSafe(context: Context, timeoutMs: Long = 8_000L): SelfArmNetworkPosture =
+        awaitDecision(context, timeoutMs) {
+            it == SelfArmNetworkPosture.TeardownDecision.SAFE
+        }
+
+    private fun awaitDecision(
+        context: Context,
+        timeoutMs: Long,
+        accepted: (SelfArmNetworkPosture.TeardownDecision) -> Boolean,
+    ): SelfArmNetworkPosture {
         val deadline = SystemClock.elapsedRealtime() + timeoutMs
         var posture: SelfArmNetworkPosture
         do {
             posture = capture(context)
-            if (posture.teardownDecision() == SelfArmNetworkPosture.TeardownDecision.SAFE) {
-                return posture
-            }
+            if (accepted(posture.teardownDecision())) return posture
             try {
                 Thread.sleep(POLL_INTERVAL_MS)
             } catch (exception: InterruptedException) {

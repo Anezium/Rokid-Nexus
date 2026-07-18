@@ -1,6 +1,7 @@
 package com.anezium.rokidbus.glasses
 
 import android.content.Context
+import android.os.SystemClock
 import android.util.Log
 import com.flyfishxu.kadb.Kadb
 import com.flyfishxu.kadb.cert.KadbCert
@@ -28,76 +29,48 @@ internal class SelfArmLocalAdbBootstrapper(
         val output: String,
     )
 
-    data class AuthenticatedShellResult(
-        val port: Int,
-        val exitCode: Int,
-        val output: String,
-        val errorOutput: String,
-    )
-
     fun bootstrap(pairPort: Int, pairingCode: String, connectPort: Int): BootstrapResult {
         val cleanCode = pairingCode.trim()
-        if (cleanCode.isBlank()) {
-            throw IOException("Wireless Debugging pairing code is missing")
-        }
-        if (pairPort <= 0) {
-            throw IOException("Wireless Debugging pairing port is missing")
-        }
-        if (connectPort <= 0) {
-            throw IOException("Wireless Debugging connect port is missing")
-        }
+        if (cleanCode.isBlank()) throw IOException("Wireless Debugging pairing code is missing")
+        if (pairPort <= 0) throw IOException("Wireless Debugging pairing port is missing")
+        if (connectPort <= 0) throw IOException("Wireless Debugging connect port is missing")
 
         configureKadbCert(appContext)
         pairWirelessDebugging(pairPort, cleanCode)
-
-        val kadb = Kadb(LOCALHOST, connectPort, CONNECT_TIMEOUT_MS, SHELL_TIMEOUT_MS)
+        val initialSession = openExactPairedSession(connectPort, "rokid-nexus")
         return try {
-            val probe = kadb.shell("echo rokid-nexus")
-            if (probe.exitCode != 0 || probe.output.trim() != "rokid-nexus") {
-                throw IOException("connect probe failed on 127.0.0.1:$connectPort: ${probe.allOutput.trim()}")
-            }
             val watchdogScript = appContext.assets.open(SelfArmConstants.WATCHDOG_ASSET)
                 .bufferedReader()
                 .use { it.readText() }
-            val bootstrap = kadb.shell(
-                SelfArmSessionCommand.build(
-                    watchdogScript = watchdogScript,
-                    restartWatchdog = true,
-                ),
+                .replace("\r\n", "\n")
+                .replace("\r", "\n")
+            val result = runSequence(
+                context = appContext,
+                initialSession = initialSession,
+                watchdogScript = watchdogScript,
+                restartWatchdog = true,
             )
-            if (bootstrap.exitCode != 0 || !SelfArmSessionCommand.succeeded(bootstrap.output)) {
-                throw IOException(
-                    "bootstrap shell failed with exit ${bootstrap.exitCode}: " +
-                        (bootstrap.errorOutput + bootstrap.output).trim(),
-                )
-            }
-            val marker = bootstrap.output
-                .lineSequence()
-                .firstOrNull { it.contains("ROKID_NEXUS_INSTALL_RESULT") }
-                .orEmpty()
-            val posture = SelfArmNetworkPostureVerifier.awaitSafe(appContext)
             markBootstrapComplete(appContext)
-            SelfArmOnboardingStore.recordNetworkPosture(appContext, posture)
-            Log.i(TAG, "self-pair bootstrap success marker=${marker.ifBlank { "no-marker" }}")
+            SelfArmOnboardingStore.recordNetworkPosture(appContext, result.posture)
             Log.i(
                 TAG,
-                "legacy ADB disabled; wirelessDebuggingTls=${posture.wirelessDebuggingEnabled}",
+                "self-pair bootstrap success port=${result.port} restartedAdbd=${result.restartedAdbd}",
             )
             BootstrapResult(
                 pairHost = LOCALHOST,
                 pairPort = pairPort,
                 connectHost = LOCALHOST,
-                connectPort = connectPort,
-                output = bootstrap.output,
+                connectPort = result.port,
+                output = result.output,
             )
-        } catch (exception: RuntimeException) {
+        } catch (exception: Exception) {
+            runCatching { initialSession.close() }
+            if (exception is IOException) throw exception
             throw IOException(
                 "connect to 127.0.0.1:$connectPort failed: " +
                     exception.message.orEmpty().ifBlank { exception::class.java.simpleName },
                 exception,
             )
-        } finally {
-            runCatching { kadb.close() }
         }
     }
 
@@ -106,9 +79,7 @@ internal class SelfArmLocalAdbBootstrapper(
         val failure = AtomicReference<Throwable?>()
         val pairingThread = Thread {
             try {
-                runBlocking {
-                    Kadb.pair(LOCALHOST, port, code, "Rokid Nexus")
-                }
+                runBlocking { Kadb.pair(LOCALHOST, port, code, "Rokid Nexus") }
             } catch (throwable: Throwable) {
                 failure.set(throwable)
             } finally {
@@ -132,9 +103,7 @@ internal class SelfArmLocalAdbBootstrapper(
         }
         val cause = failure.get()
         if (cause is Error) throw cause
-        if (cause != null) {
-            throw IOException("Wireless Debugging self-pairing failed: ${shortMessage(cause)}", cause)
-        }
+        if (cause != null) throw IOException("Wireless Debugging self-pairing failed: ${shortMessage(cause)}", cause)
         Log.i(TAG, "self-pair KADB success host=$LOCALHOST port=$port")
     }
 
@@ -144,10 +113,12 @@ internal class SelfArmLocalAdbBootstrapper(
     companion object {
         private const val TAG = "NexusWirelessSetup"
         private const val LOCALHOST = "127.0.0.1"
-        private const val CONNECT_TIMEOUT_MS = 5_000
-        private const val SHELL_TIMEOUT_MS = 15_000
+        private const val CONNECT_TIMEOUT_MS = 2_000
+        private const val SHELL_TIMEOUT_MS = 8_000
         private const val PAIRING_TIMEOUT_MS = 12_000L
-        private const val WIRELESS_PORT_TIMEOUT_MS = 5_000L
+        private const val INITIAL_SESSION_TIMEOUT_MS = 8_000L
+        private const val RECONNECT_TIMEOUT_MS = 20_000L
+        private const val RETRY_INTERVAL_MS = 250L
         private const val PREFS_NAME = "selfarm_wireless"
         const val BOOTSTRAP_COMPLETE_KEY = "wireless_bootstrap_complete"
         private val CERT_LOCK = Any()
@@ -158,47 +129,138 @@ internal class SelfArmLocalAdbBootstrapper(
                 .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 .getBoolean(BOOTSTRAP_COMPLETE_KEY, false)
 
-        fun runPairedShell(context: Context, command: String): AuthenticatedShellResult? {
+        fun openPairedSession(context: Context): SelfArmShellSession {
             val appContext = context.applicationContext
             configureKadbCert(appContext)
-            val port = SelfArmWirelessAdbController.waitForWirelessPort(WIRELESS_PORT_TIMEOUT_MS)
-            if (port <= 0) return null
-            val kadb = Kadb(LOCALHOST, port, CONNECT_TIMEOUT_MS, SHELL_TIMEOUT_MS)
+            return openPairedSessionWithRetry(
+                oldAdbdPid = null,
+                preferredPort = null,
+                timeoutMs = INITIAL_SESSION_TIMEOUT_MS,
+            )
+        }
+
+        fun runSequence(
+            context: Context,
+            initialSession: SelfArmShellSession,
+            watchdogScript: String,
+            restartWatchdog: Boolean,
+        ): SelfArmSequenceResult {
+            val appContext = context.applicationContext
+            return SelfArmArmSequence.run(
+                initialSession = initialSession,
+                watchdogScript = watchdogScript,
+                restartWatchdog = restartWatchdog,
+                operations = SelfArmSequenceOperations(
+                    awaitRestartDecision = {
+                        SelfArmNetworkPostureVerifier.awaitRestartDecision(appContext)
+                    },
+                    reconnectTls = { oldAdbdPid, preferredPort ->
+                        openPairedSessionWithRetry(oldAdbdPid, preferredPort, RECONNECT_TIMEOUT_MS)
+                    },
+                    awaitSafe = { SelfArmNetworkPostureVerifier.awaitSafe(appContext) },
+                    log = { Log.i(TAG, it) },
+                ),
+            )
+        }
+
+        private fun openExactPairedSession(port: Int, probeMarker: String): SelfArmShellSession {
+            val session = KadbShellSession(port, Kadb(LOCALHOST, port, CONNECT_TIMEOUT_MS, SHELL_TIMEOUT_MS))
             return try {
-                val probe = kadb.shell("echo rokid-nexus-maintenance")
-                if (probe.exitCode != 0 || probe.output.trim() != "rokid-nexus-maintenance") {
-                    throw IOException(
-                        "paired TLS probe failed on 127.0.0.1:$port: ${probe.allOutput.trim()}",
-                    )
+                val probe = session.shell("echo $probeMarker")
+                if (probe.exitCode != 0 || probe.output.trim() != probeMarker) {
+                    throw IOException("paired TLS probe failed on 127.0.0.1:$port: ${allOutput(probe)}")
                 }
-                val shell = kadb.shell(command)
-                AuthenticatedShellResult(
-                    port = port,
-                    exitCode = shell.exitCode,
-                    output = shell.output,
-                    errorOutput = shell.errorOutput,
-                )
-            } finally {
-                runCatching { kadb.close() }
+                session
+            } catch (throwable: Throwable) {
+                runCatching { session.close() }
+                throw throwable
             }
         }
+
+        private fun openPairedSessionWithRetry(
+            oldAdbdPid: String?,
+            preferredPort: Int?,
+            timeoutMs: Long,
+        ): SelfArmShellSession {
+            val deadline = SystemClock.elapsedRealtime() + timeoutMs
+            var lastFailure: Throwable? = null
+            var attempt = 0
+            do {
+                attempt += 1
+                val discoveredPort = SelfArmWirelessAdbController.readWirelessPort()
+                val ports = listOfNotNull(
+                    discoveredPort.takeIf { it > 0 },
+                    preferredPort?.takeIf { it > 0 },
+                ).distinct()
+                for (port in ports) {
+                    var session: SelfArmShellSession? = null
+                    try {
+                        session = openExactPairedSession(port, "rokid-nexus-maintenance")
+                        val pidResult = session.shell("pidof adbd")
+                        val currentPids = pidSet(pidResult.output)
+                        val oldPids = pidSet(oldAdbdPid.orEmpty())
+                        if (pidResult.exitCode == 0 && currentPids.isNotEmpty() &&
+                            (oldPids.isEmpty() || currentPids.intersect(oldPids).isEmpty())
+                        ) {
+                            val readySession = session
+                            session = null
+                            Log.i(
+                                TAG,
+                                "paired TLS ready attempt=$attempt port=$port adbdPid=${currentPids.sorted()} " +
+                                    "oldAdbdPid=${oldPids.sorted().ifEmpty { listOf("none") }}",
+                            )
+                            return readySession
+                        }
+                        lastFailure = IOException(
+                            "paired TLS still belongs to old adbd pid=${currentPids.ifEmpty { setOf("missing") }}",
+                        )
+                    } catch (throwable: Throwable) {
+                        lastFailure = throwable
+                        Log.i(TAG, "paired TLS retry attempt=$attempt port=$port: ${shortThrowable(throwable)}")
+                    } finally {
+                        runCatching { session?.close() }
+                    }
+                }
+                try {
+                    Thread.sleep(RETRY_INTERVAL_MS)
+                } catch (exception: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    throw IOException("Wireless Debugging TLS reconnect was interrupted", exception)
+                }
+            } while (SystemClock.elapsedRealtime() < deadline)
+            throw IOException(
+                "Wireless Debugging TLS session unavailable after $attempt attempts: " +
+                    shortThrowable(lastFailure),
+                lastFailure,
+            )
+        }
+
+        private fun pidSet(value: String): Set<String> = value
+            .trim()
+            .replace(',', ' ')
+            .split(Regex("\\s+"))
+            .filter { it.isNotBlank() }
+            .toSet()
+
+        private fun shortThrowable(throwable: Throwable?): String = throwable
+            ?.message
+            .orEmpty()
+            .trim()
+            .ifBlank { throwable?.javaClass?.simpleName ?: "unknown error" }
+
+        private fun allOutput(result: SelfArmShellResult): String =
+            (result.errorOutput + result.output).trim().take(500)
 
         fun configureKadbCert(context: Context) {
             synchronized(CERT_LOCK) {
                 if (kadbCertConfigured) return
-                val privateKey = File(
-                    File(context.applicationContext.filesDir, "kadb-tls"),
-                    "adbkey.pem",
-                )
+                val privateKey = File(File(context.applicationContext.filesDir, "kadb-tls"), "adbkey.pem")
                 val dir = privateKey.parentFile
                 if (dir != null && !dir.isDirectory && !dir.mkdirs() && !dir.isDirectory) {
                     throw IllegalStateException("Could not create KADB key directory")
                 }
                 KadbCert.configure(
-                    OkioFilePrivateKeyStore(
-                        okioPath(privateKey.absolutePath),
-                        FileSystem.SYSTEM,
-                    ),
+                    OkioFilePrivateKeyStore(okioPath(privateKey.absolutePath), FileSystem.SYSTEM),
                     KadbCertPolicy(),
                     emptyList(),
                 )
@@ -219,5 +281,25 @@ internal class SelfArmLocalAdbBootstrapper(
 
         private fun okioPath(value: String): Path =
             Path::class.java.getMethod("get", String::class.java).invoke(null, value) as Path
+    }
+}
+
+private class KadbShellSession(
+    override val port: Int,
+    private val kadb: Kadb,
+) : SelfArmShellSession {
+    override val transport: SelfArmShellTransport = SelfArmShellTransport.PAIRED_TLS
+
+    override fun shell(command: String): SelfArmShellResult {
+        val result = kadb.shell(command)
+        return SelfArmShellResult(
+            exitCode = result.exitCode,
+            output = result.output,
+            errorOutput = result.errorOutput,
+        )
+    }
+
+    override fun close() {
+        kadb.close()
     }
 }

@@ -110,14 +110,11 @@ internal object SelfArmController {
         service == SelfArmConstants.ACCESSIBILITY_SERVICE ||
             service == SelfArmConstants.ACCESSIBILITY_SERVICE_SHORT
 
-    internal fun buildInstallCommand(
-        script: String,
-        restartWatchdog: Boolean,
-    ): String = SelfArmSessionCommand.build(script, restartWatchdog)
+    internal fun buildPrepareCommand(script: String): String =
+        SelfArmSessionCommand.buildPrepare(script)
 
-    internal fun installCommandSucceeded(output: String): Boolean {
-        return SelfArmSessionCommand.succeeded(output)
-    }
+    internal fun buildArmCommand(restartWatchdog: Boolean): String =
+        SelfArmSessionCommand.buildArm(restartWatchdog)
 
     internal fun buildStopCommand(): String = buildString {
         appendLine("sh '${SelfArmConstants.WATCHDOG_REMOTE_PATH}' stop >/dev/null 2>&1 || true")
@@ -170,68 +167,70 @@ internal object SelfArmController {
     private fun runSelfArm(context: Context, reason: String, restartWatchdog: Boolean): Boolean {
         val scriptFile = ensureInternalWatchdog(context)
         val repairedDirectly = repairAccessibilityDirect(context)
-        val installCommand = buildInstallCommand(scriptFile.readText(), restartWatchdog)
-        if (SelfArmLocalAdbBootstrapper.isBootstrapComplete(context)) {
-            val wirelessReady = runCatching {
-                val result = SelfArmLocalAdbBootstrapper.runPairedShell(context, installCommand)
-                if (result == null) {
-                    log("Self-arm TLS maintenance unavailable reason=$reason: wireless port unavailable")
-                    false
-                } else {
-                    val started = result.exitCode == 0 && installCommandSucceeded(result.output)
-                    val safePosture = started && runCatching {
-                        val posture = SelfArmNetworkPostureVerifier.awaitSafe(context)
-                        SelfArmOnboardingStore.recordNetworkPosture(context, posture)
-                        true
-                    }.onFailure {
-                        logError("Self-arm TLS legacy ADB teardown failed reason=$reason", it)
-                    }.getOrDefault(false)
-                    log(
-                        "Self-arm TLS maintenance reason=$reason port=${result.port} " +
-                            "started=$started safePosture=$safePosture",
-                    )
-                    started && safePosture
-                }
+        val watchdogScript = scriptFile.readText()
+        val bootstrapComplete = SelfArmLocalAdbBootstrapper.isBootstrapComplete(context)
+
+        if (bootstrapComplete) {
+            val initialTlsSession = runCatching {
+                SelfArmLocalAdbBootstrapper.openPairedSession(context)
             }.onFailure {
-                logError("Self-arm TLS maintenance failed reason=$reason", it)
-            }.getOrDefault(false)
-            if (wirelessReady) return true
+                logError("Self-arm TLS session unavailable reason=$reason", it)
+            }.getOrNull()
+            if (initialTlsSession != null) {
+                return runSequence(
+                    context = context,
+                    reason = reason,
+                    repairedDirectly = repairedDirectly,
+                    initialSession = initialTlsSession,
+                    watchdogScript = watchdogScript,
+                    restartWatchdog = restartWatchdog,
+                )
+            }
         }
 
         val key = AdbKeyStore.loadExisting(context)
-        if (key == null) {
-            log("Self-arm no-op reason=$reason directRepair=$repairedDirectly: ADB key unavailable")
-            return repairedDirectly
-        }
-        if (!adbLoopbackListening()) {
-            log("Self-arm no-op reason=$reason directRepair=$repairedDirectly: loopback ADB 5555 unavailable")
-            return repairedDirectly
-        }
-
-        val result = AdbLoopbackClient(port = ADB_PORT).runShell(
-            installCommand,
-            key,
-        )
-        val started = result.authenticated && result.commandSent && installCommandSucceeded(result.output)
-        val safePosture = started && runCatching {
-            val posture = SelfArmNetworkPostureVerifier.awaitSafe(context)
-            SelfArmOnboardingStore.recordNetworkPosture(context, posture)
-            true
-        }.onFailure {
-            logError("Self-arm legacy ADB teardown failed reason=$reason", it)
-        }.getOrDefault(false)
-        if (started && safePosture) {
-            log("Self-arm ready reason=$reason directRepair=$repairedDirectly")
-        } else {
+        if (!bootstrapComplete || key == null || !adbLoopbackListening()) {
             log(
                 "Self-arm no-op reason=$reason directRepair=$repairedDirectly " +
-                    "connected=${result.connected} auth=${result.authenticated} sent=${result.commandSent} " +
-                    "safePosture=$safePosture " +
-                    "output=${result.output.take(160)}",
+                    "bootstrapComplete=$bootstrapComplete classicKey=${key != null}",
             )
+            return false
         }
-        return repairedDirectly || (started && safePosture)
+
+        val classicSession = ClassicAdbShellSession(key)
+        return runSequence(
+            context = context,
+            reason = reason,
+            repairedDirectly = repairedDirectly,
+            initialSession = classicSession,
+            watchdogScript = watchdogScript,
+            restartWatchdog = restartWatchdog,
+        )
     }
+
+    private fun runSequence(
+        context: Context,
+        reason: String,
+        repairedDirectly: Boolean,
+        initialSession: SelfArmShellSession,
+        watchdogScript: String,
+        restartWatchdog: Boolean,
+    ): Boolean = runCatching {
+        val result = SelfArmLocalAdbBootstrapper.runSequence(
+            context = context,
+            initialSession = initialSession,
+            watchdogScript = watchdogScript,
+            restartWatchdog = restartWatchdog,
+        )
+        SelfArmOnboardingStore.recordNetworkPosture(context, result.posture)
+        log(
+            "Self-arm ready reason=$reason directRepair=$repairedDirectly " +
+                "port=${result.port} restartedAdbd=${result.restartedAdbd}",
+        )
+        true
+    }.onFailure {
+        logError("Self-arm sequence failed reason=$reason directRepair=$repairedDirectly", it)
+    }.getOrDefault(false)
 
     private fun accessibilityRepairNeeded(context: Context): Boolean =
         runCatching {
