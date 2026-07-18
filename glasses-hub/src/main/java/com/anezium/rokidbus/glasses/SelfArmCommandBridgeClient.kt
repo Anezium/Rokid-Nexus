@@ -1,6 +1,7 @@
 package com.anezium.rokidbus.glasses
 
 import android.content.Context
+import android.net.wifi.WifiManager
 import android.system.Os
 import android.system.OsConstants
 import java.io.File
@@ -89,7 +90,7 @@ internal object SelfArmCommandBridgeClient {
         } else {
             SelfArmCommandBridgeProtocol.WIFI_DISABLE
         }
-        return execute(context.applicationContext, command, timeoutMs)
+        return execute(context.applicationContext, command, enabled, timeoutMs)
     }
 
     internal fun ensureSecretHex(context: Context): String = synchronized(secretLock) {
@@ -143,20 +144,24 @@ internal object SelfArmCommandBridgeClient {
         return channel
     }
 
-    private fun execute(context: Context, command: String, timeoutMs: Long): Boolean {
+    private fun execute(context: Context, command: String, targetEnabled: Boolean, timeoutMs: Long): Boolean {
         if (timeoutMs <= 0L) return false
         val secret = loadSecretHex(context) ?: return false
         val channel = ensureChannelDir(context) ?: return false
+        val wifiManager = context.getSystemService(WifiManager::class.java) ?: return false
+        // Success is confirmed by observing the Wi-Fi state in-process rather than by reading a
+        // response file the shell bridge writes: a file created by the bridge's (shell) uid can be
+        // hidden from the app's uid for seconds by the FUSE negative-dentry cache, which made every
+        // request look like it failed. Watching WifiManager avoids the cross-uid channel entirely.
+        if (isWifiEnabledSafe(wifiManager) == targetEnabled) return true
         val nonce = randomHex(16)
         val requestFile = File(channel, "$nonce.request")
-        val responseFile = File(channel, "$nonce.response")
         val tempFile = File(channel, ".$nonce.request.${UUID.randomUUID()}.tmp")
         return try {
-            responseFile.delete()
             tempFile.writeText(SelfArmCommandBridgeProtocol.request(secret, command, nonce))
             if (!tempFile.renameTo(requestFile)) return false
             ringDoorbell(File(channel, DOORBELL_NAME), nonce)
-            awaitResponse(responseFile, nonce, timeoutMs)
+            awaitWifiState(wifiManager, targetEnabled, timeoutMs)
         } catch (interrupted: InterruptedException) {
             Thread.currentThread().interrupt()
             false
@@ -165,8 +170,20 @@ internal object SelfArmCommandBridgeClient {
         } finally {
             tempFile.delete()
             requestFile.delete()
-            responseFile.delete()
         }
+    }
+
+    private fun isWifiEnabledSafe(wifiManager: WifiManager): Boolean =
+        runCatching { wifiManager.isWifiEnabled }.getOrDefault(false)
+
+    @Throws(InterruptedException::class)
+    private fun awaitWifiState(wifiManager: WifiManager, target: Boolean, timeoutMs: Long): Boolean {
+        val deadline = System.nanoTime() + timeoutMs * 1_000_000L
+        while (System.nanoTime() < deadline) {
+            if (isWifiEnabledSafe(wifiManager) == target) return true
+            Thread.sleep(RESPONSE_POLL_MS)
+        }
+        return false
     }
 
     private fun ringDoorbell(doorbell: File, nonce: String) {
@@ -185,20 +202,6 @@ internal object SelfArmCommandBridgeClient {
         }
     }
 
-    @Throws(InterruptedException::class)
-    private fun awaitResponse(responseFile: File, nonce: String, timeoutMs: Long): Boolean {
-        val deadline = System.nanoTime() + timeoutMs * 1_000_000L
-        while (System.nanoTime() < deadline) {
-            if (responseFile.isFile) {
-                val size = responseFile.length()
-                if (size !in 1..96) return false
-                val fields = responseFile.readText().trimEnd('\n').split(':')
-                return fields.size == 2 && fields[0] == nonce && fields[1] == "ok"
-            }
-            Thread.sleep(RESPONSE_POLL_MS)
-        }
-        return false
-    }
 
     private fun secretFile(context: Context): File =
         File(File(context.applicationContext.filesDir, "self-arm"), SECRET_FILE_NAME)
