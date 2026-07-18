@@ -1,8 +1,9 @@
 # Rokid Nexus — Product Vision
 
-Status: 2026-07-07 — consolidated from the QUESTIONS.md working session. Wire and
-protocol details live in BUSSPEC.md; this document says what Nexus *is*, how it should
-feel, and in what order it gets built.
+Status: 2026-07-18 — sections 1–4 are the founding vision (consolidated
+2026-07-07 from the QUESTIONS.md working session) and still govern every design
+decision. Sections 5–6 track where the platform stands and what remains. Wire
+and protocol details live in BUSSPEC.md.
 
 ## 1. What Nexus is
 
@@ -68,87 +69,79 @@ Public release makes this non-negotiable:
   in the phone hub. The "custom signature permission" idea from BUSSPEC is dropped —
   it would kill third-party plugins. The model is Android's notification-listener
   pattern: request, then explicit user grant.
-- **Granular consent, three capabilities** approved separately per plugin:
+- **Granular consent, four capabilities** approved separately per plugin:
   1. *Surfaces* — may draw on the glasses.
   2. *Microphone* — may hold the audio lease.
   3. *HTTP proxy* — may send traffic out through the user's data plan.
+  4. *Camera* — may consume a glasses camera session (added with the camera
+     platform; signer-bound like the rest).
 - **Mic indicator on the HUD** whenever the audio lease is active — the Android "green
   dot", mandatory in the spec.
 - Protocol hygiene: an unknown surface `kind` (old glasses hub, newer plugin) is
   ignored and answered with a "update required" toast — graceful degradation is a spec
   rule, not a courtesy.
 
-## 5. Onboarding — the road off ADB
+## 5. Where the platform stands (2026-07-18)
 
-Today the glasses hub is armed once via ADB (APK install + accessibility secure
-setting + `BLUETOOTH_CONNECT` grant). Verified on device: the stock Accessibility
-settings screen launches by intent on the glasses, renders, and is touchpad-navigable
-— so accessibility activation has a no-ADB path (guided screen, like the
-Tasker-Bridge helper). `BLUETOOTH_CONNECT` is an ordinary runtime dialog. The one
-remaining gap is **APK install without ADB**; Tasker-Bridge already proved
-upload/install over CXR-L.
+Every gate the original roadmap defined has been cleared; all of it is validated
+on real hardware.
 
-Decision: developer rounds stay on ADB. The full no-ADB bootstrap (install via
-Hi Rokid/CXR-L + guided accessibility screen + runtime grants) is **the gate for the
-public beta** — built after the first two plugins prove the platform, before anyone
-outside power users touches it.
+- **The public beta gate is passed.** A stranger sets up Nexus with nothing but
+  their phone: seven onboarding steps on the phone, glasses app installed over
+  the Rokid CXR link from GitHub releases, then a two-card no-PC self-arm on the
+  glasses that enables accessibility and bootstraps its own privileged shell
+  (Wireless Debugging self-pairing, detached watchdog, hardened network
+  posture). No ADB, no PC, at any point.
+- **The distribution loop is closed.** The SDK publishes on JitPack from
+  `sdk-v*` tags; plugins release as namespaced GitHub tags, are ingested by the
+  public [RokidBrew-Registry](https://github.com/Anezium/RokidBrew-Registry),
+  and install from the in-app Store with SHA-256 and signer pinning. Installed
+  plugins surface update badges; the apps themselves self-update (phone from
+  GitHub releases, glasses over CXR).
+- **Six plugins ship**: Transit (the original leverage bet — it led, as
+  planned), Lyrics, Media Deck, Feeds, Lens, and the copyable Sample. All are
+  external headless APKs; the hubs contain no built-ins.
+- **Surfaces grew past text.** The image surface (v1) puts real photos on the
+  HUD over the SPP binary path — Feeds renders tweet and Bluesky photos
+  full-screen. The optics are green-mono; photos land as green luminance, and
+  that is fine in practice.
+- **Lens shipped as the flagship — with a better architecture than §8 of the
+  original vision imagined.** Instead of ~1 fps JPEG over SPP, the platform
+  grew a generic `camera` capability: the glasses stream live H.264 over a
+  glasses-owned Wi-Fi Direct link, the consumer plugin decodes and runs ML Kit
+  OCR + translation on the phone (offline, zero recurring cost), and structured
+  overlays come back over the bus. Freeze mode captures a full-FOV still
+  through the same link. The "two routes, decided later" question resolved into
+  a third: no glasses-side plugin code at all — the glasses half lives in the
+  hub as a platform capability, and Lens is an ordinary phone APK that the
+  launcher exposes under the consumer's own name.
 
-## 6. Distribution and ecosystem
+The founding claims held up: wake-on-message, the single hub-owned link, and
+declarative surfaces are exactly why none of the above required a user to ever
+touch the glasses again.
 
-- `:bus-client` publishes on **JitPack now** (zero setup, the GitHub repo suffices);
-  Maven Central once the AIDL surface is stable.
-- The phone hub gets an "install plugins" button pointing at RokidBrew; RokidBrew tags
-  Nexus-compatible apps. Store distributes plugins → plugins light up the glasses →
-  the ecosystem loop closes.
-- Host app: Hi Rokid Global only for now. Android only for now.
+## 6. What remains
 
-## 7. Plugin roadmap
+Ordered by the problem it solves, not by ambition:
 
-Ordered by leverage, not ambition:
+1. **Display arbitration** — the toast layer and a real `actionable` class
+   (§2's vocabulary is in the protocol; v1 still renders `actionable` as
+   `toast`). This is the first problem two chatty plugins will create.
+2. **Native-apps section in the menu** — phase 2 of §3: list and launch real
+   glasses APKs from the Nexus menu.
+3. **Rokid-Scribe** — first real audio-lease consumer (glasses mic → phone
+   STT). The lease protocol is specified and hardware-validated; microphone
+   approval stays disabled in the phone UI until a consumer exists.
+4. **Rokid-Relay migration** — notification listener + direct reply, per
+   BUSSPEC.
+5. **`nav` surface kind** — real navigation HUD (GMaps degrades to a text card
+   until then).
+6. **Maven Central** — once the AIDL surface is stable; JitPack carries the
+   SDK until then.
 
-1. **Transit plugin** (even-transit model, Motis/Transitous) — pure text `card`; the
-   data path was already a Round A acceptance criterion. First plugin a stranger can
-   actually use, so it leads.
-2. **Rokid-Scribe** — first real audio-lease consumer (glasses mic → phone STT).
-3. **Rokid-Relay migration** — notification listener + direct reply, per BUSSPEC.
-4. **Tasker-Bridge port** — deferred: too niche (requires Tasker, power-user paid app)
-   to justify even a cheap port right now. Remains the lowest-effort second plugin
-   whenever multi-plugin coexistence needs proving; its no-ADB install proof is
-   already banked either way.
-
-Degraded-or-later: GMaps as text card now, real nav HUD needs a `nav` surface kind;
-Live Studio needs a camera/media lease (Round C+). Non-fits stay non-fits: native
-glasses apps are launched by the menu, not ported into it.
-
-Future app families, by capability tier: live captions/translation and voice assistant
-(audio lease); teleprompter and glanceables (today's kinds); sport HUD, CGM glucose,
-nav (small protocol additions); visual assistant, FoodFacts, Lens (camera lease).
-
-## 8. The Lens project (flagship, later)
-
-Google-Lens-style live translation on the HUD, free and on-device: glasses camera →
-JPEG frames over SPP binary frames (~1 fps suffices, text is static) → ML Kit OCR +
-translation on the phone (offline, ~50 languages, zero recurring cost) → translated
-blocks + normalized coordinates back to the glasses, which render and keep the overlay
-alive locally between refreshes (IMU anchoring). Both display modes were proven by
-DragonBallScouter (camera-preview overlay: certain; angular pseudo-AR: feasible with
-per-user calibration).
-
-Friction: it needs glasses-side code. The plugin model doesn't forbid that — it
-defines what is *free* (surfaces = zero install). Two routes, decided later: a `lens`
-surface kind rendered by the glasses hub, or an autonomous glasses-side bus client
-installed through the same bootstrap channel as the hub itself.
-
-## 9. Roadmap (reordered)
-
-| Milestone | Contents | Gate |
-|---|---|---|
-| **Round B (in flight)** | Surfaces, binary frames, audio lease, wake supervisors | Hardware validation per TESTPLAN |
-| **Round C — first plugins** | Transit plugin first, then a second plugin for the coexistence gate (Scribe pulled forward, or the Tasker-Bridge port as cheap filler); interruption classes (`actionable`→`toast`); launcher order/favorites; disconnect state in overlay; granular consent UI + mic indicator | Two plugins living side by side without stepping on each other |
-| **Round D — platform hygiene** | Display arbitration (surface stack, toast layer, real `actionable`); native-apps section in menu; Scribe; unknown-kind degradation | A third-party dev could build a plugin from JitPack docs alone |
-| **Public beta gate** | No-ADB bootstrap (install via Hi Rokid/CXR-L, guided a11y, runtime grants); JitPack publish; RokidBrew loop | A stranger sets up Nexus with nothing but their phone |
-| **Beyond** | Relay migration, `nav` kind, camera lease, Live Studio, Lens | — |
-
-The two items this session promoted: **onboarding without ADB** (from "Round C+ list
-item" to public-beta gate with a validated a11y path) and **display arbitration**
-(first problem the second shipped plugin will hit).
+Future app families, by capability tier: live captions/translation and voice
+assistant (audio lease); teleprompter and glanceables (today's kinds); sport
+HUD, CGM glucose, nav (small protocol additions); visual assistant and
+FoodFacts (camera capability, now shipped). Non-fits stay non-fits: native
+glasses apps are launched by the menu, not ported into it. Host app: Hi Rokid
+Global only for now. Android only for now.
