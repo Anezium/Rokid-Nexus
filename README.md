@@ -45,6 +45,16 @@ All of them install from the in-app **Nexus Store**, backed by the public
 SHA-256 and signer pinning enforced before every install, and show update
 badges when a newer release is published.
 
+## Screenshots
+
+<p align="center">
+  <img src="docs/assets/shot-phone-home.png" width="270" alt="Phone home screen with the plugin list and update badges" />
+  &nbsp;
+  <img src="docs/assets/shot-store.png" width="270" alt="Nexus Store showing installable plugins and available updates" />
+</p>
+
+<p align="center"><i>The phone hub: your plugins, glasses-app status, and one-tap updates — and the Store they install from.</i></p>
+
 ## Setup — a phone is all you need
 
 1. Install the Nexus phone app from this repository's
