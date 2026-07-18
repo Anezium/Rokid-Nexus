@@ -430,22 +430,22 @@ object GlassesHub {
         remotePhoneCapabilities = next
         log("phone capabilities cameraConsumerReady=${next.features != 0}")
         if (next.features != previous.features) notifyLinkState()
-        if (PhoneHubCapabilitiesContract.cameraLauncherLabel(next) !=
-            PhoneHubCapabilitiesContract.cameraLauncherLabel(previous)
-        ) {
-            notifyLauncherEntries()
-        }
+        if (cameraLauncherEntry(next) != cameraLauncherEntry(previous)) notifyLauncherEntries()
     }
 
     private fun allLauncherEntries(): List<LauncherEntry> =
-        listOf(
-            LauncherEntry(
-                CAMERA_LAUNCHER_ID,
-                PhoneHubCapabilitiesContract.cameraLauncherLabel(remotePhoneCapabilities),
-                iconKey = "lens",
-            ),
-        ) +
+        listOfNotNull(cameraLauncherEntry(remotePhoneCapabilities)) +
             launcherEntries.filterNot { it.id == CAMERA_LAUNCHER_ID }
+
+    private fun cameraLauncherEntry(capabilities: PhoneHubCapabilities): LauncherEntry? {
+        val ready = capabilities.features and BusCapabilityBits.CAMERA_CONSUMER_READY != 0
+        val consumerName = capabilities.cameraConsumerName
+        return if (ready && consumerName != null) {
+            LauncherEntry(CAMERA_LAUNCHER_ID, consumerName, iconKey = "lens")
+        } else {
+            null
+        }
+    }
 
     private fun notifyLauncherEntries() {
         val visibleEntries = allLauncherEntries()
@@ -457,11 +457,7 @@ object GlassesHub {
     private fun clearRemotePhoneCapabilities() {
         val previous = remotePhoneCapabilities
         remotePhoneCapabilities = PhoneHubCapabilities(0, null)
-        if (PhoneHubCapabilitiesContract.cameraLauncherLabel(previous) !=
-            PhoneHubCapabilitiesContract.DEFAULT_CAMERA_LABEL
-        ) {
-            notifyLauncherEntries()
-        }
+        if (cameraLauncherEntry(previous) != null) notifyLauncherEntries()
     }
 
     private fun errorEnvelope(id: String, code: String): BusEnvelope =

@@ -10,7 +10,6 @@ data class PhoneHubCapabilities(
 /** Additive phone-to-glasses hub capabilities payload. Unknown fields remain ignorable. */
 object PhoneHubCapabilitiesContract {
     const val VERSION = 1
-    const val DEFAULT_CAMERA_LABEL = "Camera"
     const val MAX_CAMERA_CONSUMER_NAME_CHARS = 80
 
     fun create(features: Int, cameraConsumerName: String?): PhoneHubCapabilities {
@@ -32,9 +31,6 @@ object PhoneHubCapabilitiesContract {
         features = payload.optInt("features", payload.optInt("capabilities", 0)),
         cameraConsumerName = payload.optString("cameraConsumerName", ""),
     )
-
-    fun cameraLauncherLabel(capabilities: PhoneHubCapabilities): String =
-        capabilities.cameraConsumerName ?: DEFAULT_CAMERA_LABEL
 
     private fun normalizeName(value: String?): String? = value
         ?.trim()

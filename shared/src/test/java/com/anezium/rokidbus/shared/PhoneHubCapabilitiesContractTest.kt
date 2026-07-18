@@ -8,7 +8,7 @@ import org.junit.Test
 
 class PhoneHubCapabilitiesContractTest {
     @Test
-    fun `approved camera consumer name labels the generic launcher`() {
+    fun `approved camera consumer name survives round trip`() {
         val capabilities = PhoneHubCapabilitiesContract.create(
             BusCapabilityBits.CAMERA_CONSUMER_READY,
             " Lens ",
@@ -17,18 +17,16 @@ class PhoneHubCapabilitiesContractTest {
         val parsed = PhoneHubCapabilitiesContract.parse(payload)
 
         assertEquals("Lens", parsed.cameraConsumerName)
-        assertEquals("Lens", PhoneHubCapabilitiesContract.cameraLauncherLabel(parsed))
         assertEquals("Lens", payload.getString("cameraConsumerName"))
     }
 
     @Test
-    fun `legacy and unavailable consumers fall back to Camera`() {
+    fun `legacy and unavailable consumers omit camera consumer name`() {
         val legacy = PhoneHubCapabilitiesContract.parse(JSONObject().put("features", 0))
         val unready = PhoneHubCapabilitiesContract.create(0, "Lens")
 
         assertNull(legacy.cameraConsumerName)
         assertNull(unready.cameraConsumerName)
-        assertEquals("Camera", PhoneHubCapabilitiesContract.cameraLauncherLabel(legacy))
         assertFalse(PhoneHubCapabilitiesContract.toJson(unready).has("cameraConsumerName"))
     }
 
