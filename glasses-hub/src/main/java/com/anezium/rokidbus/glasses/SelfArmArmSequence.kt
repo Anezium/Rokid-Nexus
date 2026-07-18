@@ -45,6 +45,7 @@ internal object SelfArmArmSequence {
     fun run(
         initialSession: SelfArmShellSession,
         watchdogScript: String,
+        bridgeScript: String,
         restartWatchdog: Boolean,
         operations: SelfArmSequenceOperations,
     ): SelfArmSequenceResult {
@@ -54,7 +55,7 @@ internal object SelfArmArmSequence {
         val outputs = mutableListOf<String>()
         try {
             commandDispatched = true
-            val prepareCommand = SelfArmSessionCommand.buildPrepare(watchdogScript)
+            val prepareCommand = SelfArmSessionCommand.buildPrepare(watchdogScript, bridgeScript)
             val classicArmCommand = if (session.transport == SelfArmShellTransport.CLASSIC_LOOPBACK) {
                 SelfArmSessionCommand.buildArm(restartWatchdog)
             } else {

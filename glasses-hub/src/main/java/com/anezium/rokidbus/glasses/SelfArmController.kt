@@ -131,8 +131,8 @@ internal object SelfArmController {
         service == SelfArmConstants.ACCESSIBILITY_SERVICE ||
             service == SelfArmConstants.ACCESSIBILITY_SERVICE_SHORT
 
-    internal fun buildPrepareCommand(script: String): String =
-        SelfArmSessionCommand.buildPrepare(script)
+    internal fun buildPrepareCommand(watchdogScript: String, bridgeScript: String): String =
+        SelfArmSessionCommand.buildPrepare(watchdogScript, bridgeScript)
 
     internal fun buildArmCommand(restartWatchdog: Boolean): String =
         SelfArmSessionCommand.buildArm(restartWatchdog)
@@ -202,8 +202,10 @@ internal object SelfArmController {
         restartWatchdog: Boolean,
     ): SelfArmWatchdogEnsureResult {
         val scriptFile = ensureInternalWatchdog(context)
+        val bridgeFile = ensureInternalCommandBridge(context)
         val repairedDirectly = repairAccessibilityDirect(context)
         val watchdogScript = scriptFile.readText()
+        val bridgeScript = bridgeFile.readText()
         val bootstrapComplete = SelfArmLocalAdbBootstrapper.isBootstrapComplete(context)
         var tlsSessionUnreachable = false
 
@@ -222,6 +224,7 @@ internal object SelfArmController {
                     repairedDirectly = repairedDirectly,
                     initialSession = initialTlsSession,
                     watchdogScript = watchdogScript,
+                    bridgeScript = bridgeScript,
                     restartWatchdog = restartWatchdog,
                 )
             }
@@ -247,6 +250,7 @@ internal object SelfArmController {
             repairedDirectly = repairedDirectly,
             initialSession = classicSession,
             watchdogScript = watchdogScript,
+            bridgeScript = bridgeScript,
             restartWatchdog = restartWatchdog,
         )
     }
@@ -257,12 +261,14 @@ internal object SelfArmController {
         repairedDirectly: Boolean,
         initialSession: SelfArmShellSession,
         watchdogScript: String,
+        bridgeScript: String,
         restartWatchdog: Boolean,
     ): SelfArmWatchdogEnsureResult = runCatching {
         val result = SelfArmLocalAdbBootstrapper.runSequence(
             context = context,
             initialSession = initialSession,
             watchdogScript = watchdogScript,
+            bridgeScript = bridgeScript,
             restartWatchdog = restartWatchdog,
         )
         SelfArmOnboardingStore.recordNetworkPosture(context, result.posture)
@@ -328,6 +334,7 @@ internal object SelfArmController {
     }
 
     private val watchdogVersionRegex = Regex("^VERSION=\"([^\"]+)\"$")
+    private val bridgeVersionRegex = Regex("^VERSION=\"([^\"]+)\"$")
 
     private fun ensureInternalWatchdog(context: Context): File {
         val file = File(File(context.filesDir, "self-arm"), SelfArmConstants.WATCHDOG_ASSET)
@@ -347,6 +354,34 @@ internal object SelfArmController {
     private fun watchdogScriptVersion(file: File): String? = runCatching {
         file.useLines { lines ->
             lines.firstNotNullOfOrNull { watchdogVersionRegex.find(it)?.groupValues?.get(1) }
+        }
+    }.getOrNull()
+
+    internal fun ensureInternalCommandBridge(context: Context): File {
+        val secretHex = SelfArmCommandBridgeClient.ensureSecretHex(context)
+        val file = File(File(context.filesDir, "self-arm"), SelfArmConstants.BRIDGE_ASSET)
+        val currentVersion = if (file.exists()) bridgeScriptVersion(file) else null
+        val expectedSecretAssignment = "SECRET=\"$secretHex\""
+        if (currentVersion == SelfArmConstants.BRIDGE_VERSION &&
+            runCatching { file.useLines { lines -> lines.any { it == expectedSecretAssignment } } }.getOrDefault(false)
+        ) {
+            return file
+        }
+        val assetScript = context.assets.open(SelfArmConstants.BRIDGE_ASSET).bufferedReader().use { it.readText() }
+            .replace("\r\n", "\n").replace("\r", "\n")
+        val script = SelfArmCommandBridgeClient.renderBridgeScript(assetScript, secretHex)
+        val dir = file.parentFile ?: error("Bridge has no parent directory")
+        if (!dir.isDirectory && !dir.mkdirs() && !dir.isDirectory) error("Could not create self-arm directory")
+        file.writeText(script)
+        file.setReadable(true, true)
+        file.setWritable(true, true)
+        file.setExecutable(true, true)
+        return file
+    }
+
+    private fun bridgeScriptVersion(file: File): String? = runCatching {
+        file.useLines { lines ->
+            lines.firstNotNullOfOrNull { bridgeVersionRegex.find(it)?.groupValues?.get(1) }
         }
     }.getOrNull()
 

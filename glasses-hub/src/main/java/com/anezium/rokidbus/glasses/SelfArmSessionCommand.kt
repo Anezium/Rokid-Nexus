@@ -13,11 +13,16 @@ internal object SelfArmSessionCommand {
         val oldAdbdPid: String,
     )
 
-    fun buildPrepare(watchdogScript: String): String {
+    fun buildPrepare(watchdogScript: String, bridgeScript: String): String {
         val watchdogBytes = watchdogScript.toByteArray()
         val encodedWatchdog = Base64.getEncoder().encodeToString(watchdogBytes)
         val watchdogHash = MessageDigest.getInstance("SHA-256")
             .digest(watchdogBytes)
+            .joinToString("") { "%02x".format(it) }
+        val bridgeBytes = bridgeScript.toByteArray()
+        val encodedBridge = Base64.getEncoder().encodeToString(bridgeBytes)
+        val bridgeHash = MessageDigest.getInstance("SHA-256")
+            .digest(bridgeBytes)
             .joinToString("") { "%02x".format(it) }
         return buildString {
             appendCommonVariables()
@@ -27,13 +32,18 @@ internal object SelfArmSessionCommand {
             appendLine("chmod 700 \"\$WATCHDOG\"")
             appendLine("SCRIPT_HASH=\"\$(sha256sum \"\$WATCHDOG\" 2>/dev/null | cut -d' ' -f1)\"")
             appendLine("[ \"\$SCRIPT_HASH\" = '$watchdogHash' ] && SCRIPT_READY=1 || SCRIPT_READY=0")
+            appendLine("printf '%s' '$encodedBridge' | base64 -d > \"\$BRIDGE\"")
+            appendLine("chmod 700 \"\$BRIDGE\"")
+            appendLine("BRIDGE_HASH=\"\$(sha256sum \"\$BRIDGE\" 2>/dev/null | cut -d' ' -f1)\"")
+            appendLine("[ \"\$BRIDGE_HASH\" = '$bridgeHash' ] && BRIDGE_SCRIPT_READY=1 || BRIDGE_SCRIPT_READY=0")
             appendLine("setprop persist.adb.tcp.port -1")
             appendLine("setprop service.adb.tcp.port -1")
             appendVerification(includeWatchdog = false)
             appendLine(
                 "echo '$PREPARE_SENTINEL grant='\"\$GRANTED\"" +
                     "' a11y='\"\$A11Y_ENABLED\"' service='\"\$SERVICE_PRESENT\"" +
-                    "' script='\"\$SCRIPT_READY\"' persist='\"\$PERSIST_PORT\"" +
+                    "' script='\"\$SCRIPT_READY\"' bridge_script='\"\$BRIDGE_SCRIPT_READY\"" +
+                    "' persist='\"\$PERSIST_PORT\"" +
                     "' service_port='\"\$SERVICE_PORT\"' legacy_tcp_disabled='\"\$LEGACY_TCP_DISABLED\"",
             )
             appendLine("[ \"\$GRANTED\" != \"0\" ] || exit 1")
@@ -41,6 +51,9 @@ internal object SelfArmSessionCommand {
             appendLine("[ \"\$SERVICE_PRESENT\" = \"1\" ] || exit 3")
             appendLine("[ \"\$SCRIPT_READY\" = \"1\" ] || exit 4")
             appendLine("[ \"\$LEGACY_TCP_DISABLED\" = \"1\" ] || exit 5")
+            // The command bridge is a best-effort silent-Wi-Fi convenience with an accessibility
+            // fallback; its script/process state is reported for observability but never fails the
+            // self-arm, whose core job is accessibility + watchdog + a safe network posture.
         }
     }
 
@@ -58,12 +71,14 @@ internal object SelfArmSessionCommand {
         appendCommonVariables()
         appendLine("sh \"\$WATCHDOG\" ${if (restartWatchdog) "restart" else "start"}")
         appendLine("sh \"\$WATCHDOG\" repair")
+        appendLine("sh \"\$BRIDGE\" ${if (restartWatchdog) "restart" else "start"}")
         appendLine("sleep 1")
         appendVerification(includeWatchdog = true)
         appendLine(
             "echo '$ARM_SENTINEL grant='\"\$GRANTED\"" +
                 "' a11y='\"\$A11Y_ENABLED\"' service='\"\$SERVICE_PRESENT\"" +
-                "' watchdog='\"\$WATCHDOG_RUNNING\"' persist='\"\$PERSIST_PORT\"" +
+                "' watchdog='\"\$WATCHDOG_RUNNING\"' bridge='\"\$BRIDGE_RUNNING\"" +
+                "' persist='\"\$PERSIST_PORT\"" +
                 "' service_port='\"\$SERVICE_PORT\"' legacy_tcp_disabled='\"\$LEGACY_TCP_DISABLED\"",
         )
         appendLine("[ \"\$GRANTED\" != \"0\" ] || exit 1")
@@ -71,11 +86,15 @@ internal object SelfArmSessionCommand {
         appendLine("[ \"\$SERVICE_PRESENT\" = \"1\" ] || exit 3")
         appendLine("[ \"\$WATCHDOG_RUNNING\" = \"1\" ] || exit 4")
         appendLine("[ \"\$LEGACY_TCP_DISABLED\" = \"1\" ] || exit 5")
+        // Bridge state is reported (BRIDGE_RUNNING) but intentionally does not gate arm success —
+        // a failed bridge start must not fail the self-arm; Wi-Fi falls back to the accessibility
+        // toggle and the bridge is retried on the next re-arm.
     }
 
     fun prepareSucceeded(output: String): Boolean {
         val values = sentinelValues(output, PREPARE_SENTINEL) ?: return false
-        return commonSucceeded(values) && values["script"] == "1"
+        return commonSucceeded(values) &&
+            values["script"] == "1"
     }
 
     fun restartRequest(output: String): RestartRequest? {
@@ -87,7 +106,8 @@ internal object SelfArmSessionCommand {
 
     fun armSucceeded(output: String): Boolean {
         val values = sentinelValues(output, ARM_SENTINEL) ?: return false
-        return commonSucceeded(values) && values["watchdog"] == "1"
+        return commonSucceeded(values) &&
+            values["watchdog"] == "1"
     }
 
     private fun StringBuilder.appendCommonVariables() {
@@ -95,6 +115,7 @@ internal object SelfArmSessionCommand {
         appendLine("SVC='${SelfArmConstants.ACCESSIBILITY_SERVICE}'")
         appendLine("SVC_SHORT='${SelfArmConstants.ACCESSIBILITY_SERVICE_SHORT}'")
         appendLine("WATCHDOG='${SelfArmConstants.WATCHDOG_REMOTE_PATH}'")
+        appendLine("BRIDGE='${SelfArmConstants.BRIDGE_REMOTE_PATH}'")
     }
 
     private fun StringBuilder.appendAccessibilityRepair() {
@@ -128,6 +149,11 @@ internal object SelfArmSessionCommand {
             appendLine("case \"\$WATCHDOG_STATUS\" in")
             appendLine("  *\"running=yes\"*) WATCHDOG_RUNNING=1 ;;")
             appendLine("  *) WATCHDOG_RUNNING=0 ;;")
+            appendLine("esac")
+            appendLine("BRIDGE_STATUS=\"\$(sh \"\$BRIDGE\" status 2>/dev/null || true)\"")
+            appendLine("case \"\$BRIDGE_STATUS\" in")
+            appendLine("  *\"running=yes\"*) BRIDGE_RUNNING=1 ;;")
+            appendLine("  *) BRIDGE_RUNNING=0 ;;")
             appendLine("esac")
         }
         appendLine("PERSIST_PORT=\"\$(getprop persist.adb.tcp.port)\"")

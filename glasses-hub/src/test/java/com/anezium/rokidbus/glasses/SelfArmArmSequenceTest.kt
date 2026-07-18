@@ -14,6 +14,7 @@ class SelfArmArmSequenceTest {
         val result = SelfArmArmSequence.run(
             initialSession = session,
             watchdogScript = "script",
+            bridgeScript = "bridge",
             restartWatchdog = false,
             operations = operations(
                 posture = SAFE,
@@ -36,6 +37,7 @@ class SelfArmArmSequenceTest {
         val result = SelfArmArmSequence.run(
             initialSession = initial,
             watchdogScript = "script",
+            bridgeScript = "bridge",
             restartWatchdog = true,
             operations = operations(
                 posture = RESTART,
@@ -74,6 +76,7 @@ class SelfArmArmSequenceTest {
         val result = SelfArmArmSequence.run(
             initialSession = classic,
             watchdogScript = "script",
+            bridgeScript = "bridge",
             restartWatchdog = false,
             operations = operations(
                 posture = SAFE,
@@ -158,12 +161,12 @@ class SelfArmArmSequenceTest {
         val SAFE = SelfArmNetworkPosture(true, "-1", "-1", false)
         val RESTART = SelfArmNetworkPosture(true, "-1", "-1", true)
         const val PREPARE_OK =
-            "ROKID_NEXUS_PREPARE_RESULT grant=1 a11y=1 service=1 script=1 " +
+            "ROKID_NEXUS_PREPARE_RESULT grant=1 a11y=1 service=1 script=1 bridge_script=1 " +
                 "persist=-1 service_port=-1 legacy_tcp_disabled=1\n"
         const val RESTART_OK =
             "ROKID_NEXUS_ADBD_RESTART_RESULT scheduled=1 old_adbd_pid=101\n"
         const val ARM_OK =
-            "ROKID_NEXUS_ARM_RESULT grant=1 a11y=1 service=1 watchdog=1 " +
+            "ROKID_NEXUS_ARM_RESULT grant=1 a11y=1 service=1 watchdog=1 bridge=1 " +
                 "persist=-1 service_port=-1 legacy_tcp_disabled=1\n"
     }
 }

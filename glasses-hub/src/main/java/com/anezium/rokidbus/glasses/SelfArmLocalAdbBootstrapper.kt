@@ -49,10 +49,12 @@ internal class SelfArmLocalAdbBootstrapper(
                 .use { it.readText() }
                 .replace("\r\n", "\n")
                 .replace("\r", "\n")
+            val bridgeScript = SelfArmController.ensureInternalCommandBridge(appContext).readText()
             val result = runSequence(
                 context = appContext,
                 initialSession = initialSession,
                 watchdogScript = watchdogScript,
+                bridgeScript = bridgeScript,
                 restartWatchdog = true,
             )
             markBootstrapComplete(appContext)
@@ -148,12 +150,14 @@ internal class SelfArmLocalAdbBootstrapper(
             context: Context,
             initialSession: SelfArmShellSession,
             watchdogScript: String,
+            bridgeScript: String,
             restartWatchdog: Boolean,
         ): SelfArmSequenceResult {
             val appContext = context.applicationContext
             return SelfArmArmSequence.run(
                 initialSession = initialSession,
                 watchdogScript = watchdogScript,
+                bridgeScript = bridgeScript,
                 restartWatchdog = restartWatchdog,
                 operations = SelfArmSequenceOperations(
                     awaitRestartDecision = {

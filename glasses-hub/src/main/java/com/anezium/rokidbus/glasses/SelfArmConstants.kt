@@ -11,4 +11,8 @@ internal object SelfArmConstants {
     const val WATCHDOG_VERSION = "2026-07-17.1"
     const val WATCHDOG_REMOTE_PATH = "/data/local/tmp/rokid-nexus-a11y-watchdog.sh"
     const val WATCHDOG_PIDFILE = "/data/local/tmp/rokid-nexus-a11y-watchdog.pid"
+    const val BRIDGE_ASSET = "rokid-nexus-cmd-bridge.sh"
+    const val BRIDGE_VERSION = "2026-07-18.1"
+    const val BRIDGE_REMOTE_PATH = "/data/local/tmp/rokid-nexus-cmd-bridge.sh"
+    const val BRIDGE_PIDFILE = "/data/local/tmp/rokid-nexus-cmd-bridge.pid"
 }

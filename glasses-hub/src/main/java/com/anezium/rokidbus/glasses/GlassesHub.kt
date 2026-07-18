@@ -515,8 +515,8 @@ object GlassesHub {
             enabled = enabled,
             wifiCurrentlyEnabled = wifiCurrentlyEnabled,
             setWifiEnabled = { requested ->
-                val applied = runCatching { SelfArmController.setWifiEnabled(context, requested) }
-                    .onFailure { logError("glassesWifiRequest shell failed", it) }
+                val applied = runCatching { SelfArmCommandBridgeClient.setWifiEnabled(context, requested) }
+                    .onFailure { logError("glassesWifiRequest bridge failed", it) }
                     .getOrDefault(false)
                 // Camera-owned Wi-Fi acquisition must not start the onboarding-only
                 // wireless-debugging bootstrap; it gets only the Wi-Fi toggle mode.

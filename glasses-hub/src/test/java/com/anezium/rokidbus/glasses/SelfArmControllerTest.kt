@@ -50,16 +50,21 @@ class SelfArmControllerTest {
 
     @Test
     fun selfArmCommandsKeepPreparationAndArmSeparate() {
-        val prepare = SelfArmController.buildPrepareCommand("#!/system/bin/sh\necho ok\n")
+        val prepare = SelfArmController.buildPrepareCommand(
+            watchdogScript = "#!/system/bin/sh\necho watchdog\n",
+            bridgeScript = "#!/system/bin/sh\necho bridge\n",
+        )
         val arm = SelfArmController.buildArmCommand(restartWatchdog = false)
 
         assertTrue(prepare.contains("pm grant \"\$PKG\" android.permission.WRITE_SECURE_SETTINGS"))
         assertTrue(prepare.contains("settings put secure enabled_accessibility_services"))
         assertTrue(prepare.contains("base64 -d > \"\$WATCHDOG\""))
+        assertTrue(prepare.contains("base64 -d > \"\$BRIDGE\""))
         assertTrue(prepare.contains("setprop persist.adb.tcp.port -1"))
         assertFalse(prepare.contains("sh \"\$WATCHDOG\" start"))
         assertFalse(prepare.contains("setprop ctl.restart adbd"))
         assertTrue(arm.contains("sh \"\$WATCHDOG\" start"))
+        assertTrue(arm.contains("sh \"\$BRIDGE\" start"))
         assertTrue(arm.contains("sh \"\$WATCHDOG\" repair"))
         assertFalse(arm.contains("setprop ctl.restart adbd"))
     }
