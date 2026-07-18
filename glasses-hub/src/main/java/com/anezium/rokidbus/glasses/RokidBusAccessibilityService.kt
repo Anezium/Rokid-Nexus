@@ -21,6 +21,7 @@ class RokidBusAccessibilityService : AccessibilityService() {
     private val consumedDownKeys = mutableSetOf<Int>()
     private var wirelessDebuggingAutomator: SelfArmWirelessDebuggingAutomator? = null
     private var wirelessBootstrapActive = false
+    private var wifiEnableActive = false
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -105,6 +106,7 @@ class RokidBusAccessibilityService : AccessibilityService() {
 
     override fun onInterrupt() {
         wirelessDebuggingAutomator?.stop()
+        finishWifiEnableIfActive(false)
         pauseWirelessBootstrapIfActive("wireless_setup_interrupted")
         log("AccessibilityService interrupted")
     }
@@ -113,6 +115,7 @@ class RokidBusAccessibilityService : AccessibilityService() {
         log("AccessibilityService destroyed")
         main.removeCallbacks(tapExpiry)
         wirelessDebuggingAutomator?.stop()
+        finishWifiEnableIfActive(false)
         pauseWirelessBootstrapIfActive("wireless_setup_service_restarting")
         wirelessDebuggingAutomator = null
         if (liveInstance === this) liveInstance = null
@@ -134,6 +137,7 @@ class RokidBusAccessibilityService : AccessibilityService() {
 
     private fun startWirelessBootstrap() {
         if (wirelessBootstrapActive) return
+        finishWifiEnableIfActive(false)
         val state = SelfArmOnboardingStateMachine.evaluate(
             SelfArmOnboardingStore.snapshot(applicationContext),
         )
@@ -144,11 +148,41 @@ class RokidBusAccessibilityService : AccessibilityService() {
         }
         wirelessBootstrapActive = true
         SelfArmOnboardingStore.markRunning(applicationContext)
-        wirelessDebuggingAutomator?.start()
+        wirelessDebuggingAutomator?.start(
+            SelfArmWirelessDebuggingAutomator.OperationMode.FULL_BOOTSTRAP,
+        )
+    }
+
+    private fun startWifiEnable() {
+        if (wirelessBootstrapActive) {
+            GlassesHub.onWifiEnableAutomationFinished(false)
+            return
+        }
+        if (wifiEnableActive) return
+        val automator = wirelessDebuggingAutomator
+        if (automator == null) {
+            GlassesHub.onWifiEnableAutomationFinished(false)
+            return
+        }
+        wifiEnableActive = true
+        automator.start(SelfArmWirelessDebuggingAutomator.OperationMode.WIFI_ONLY)
     }
 
     internal fun onWirelessBootstrapFinished() {
         wirelessBootstrapActive = false
+    }
+
+    internal fun onWifiEnableFinished(success: Boolean) {
+        if (!wifiEnableActive) return
+        wifiEnableActive = false
+        GlassesHub.onWifiEnableAutomationFinished(success)
+    }
+
+    private fun finishWifiEnableIfActive(success: Boolean) {
+        if (!wifiEnableActive) return
+        wirelessDebuggingAutomator?.stop()
+        wifiEnableActive = false
+        GlassesHub.onWifiEnableAutomationFinished(success)
     }
 
     private fun pauseWirelessBootstrapIfActive(progressState: String) {
@@ -174,5 +208,13 @@ class RokidBusAccessibilityService : AccessibilityService() {
             service.main.post(service::startWirelessBootstrap)
             return true
         }
+
+        @Suppress("UNUSED_PARAMETER")
+        internal fun requestWifiEnable(context: Context): Boolean {
+            val service = liveInstance ?: return false
+            service.main.post(service::startWifiEnable)
+            return true
+        }
+
     }
 }

@@ -25,7 +25,13 @@ internal class SelfArmWirelessDebuggingAutomator(
     private val service: RokidBusAccessibilityService,
     private val handler: Handler,
 ) {
+    internal enum class OperationMode {
+        FULL_BOOTSTRAP,
+        WIFI_ONLY,
+    }
+
     private var active = false
+    private var operationMode = OperationMode.FULL_BOOTSTRAP
     private var deadlineAt = 0L
     private var lastClickAt = 0L
 
@@ -33,6 +39,7 @@ internal class SelfArmWirelessDebuggingAutomator(
     private var wifiClickIssued = false
     private var wifiClickAttempts = 0
     private var wifiScrolls = 0
+    private var wifiSettingsOpened = false
 
     private var pairingRequested = false
     private var pairingRequestedAt = 0L
@@ -69,14 +76,17 @@ internal class SelfArmWirelessDebuggingAutomator(
 
     private val stepRunnable = Runnable { step() }
 
-    fun start() {
+    fun start(mode: OperationMode = OperationMode.FULL_BOOTSTRAP) {
+        handler.removeCallbacks(stepRunnable)
         active = true
+        operationMode = mode
         deadlineAt = SystemClock.uptimeMillis() + TIMEOUT_MS
         lastClickAt = 0L
         wifiConfirmed = false
         wifiClickIssued = false
         wifiClickAttempts = 0
         wifiScrolls = 0
+        wifiSettingsOpened = false
         pairingRequested = false
         pairingRequestedAt = 0L
         pairingDialogDumped = false
@@ -109,9 +119,14 @@ internal class SelfArmWirelessDebuggingAutomator(
         developerScreenSeen = false
         lastConnectHost = lastPairingHost
         lastConnectPort = SelfArmWirelessAdbController.readWirelessPort()
-        Log.d(TAG, "start: wireless debugging setup automator started")
-        android.util.Log.i(TAG, "Wireless Debugging setup")
-        report("starting_wireless_debugging_setup")
+        if (operationMode == OperationMode.FULL_BOOTSTRAP) {
+            Log.d(TAG, "start: wireless debugging setup automator started")
+            android.util.Log.i(TAG, "Wireless Debugging setup")
+            report("starting_wireless_debugging_setup")
+        } else {
+            Log.d(TAG, "start: Wi-Fi enable automator started")
+            report("starting_wifi_enable")
+        }
         if (!wifiEnabled()) {
             report("enabling_wifi")
             openWifiSettings()
@@ -140,7 +155,14 @@ internal class SelfArmWirelessDebuggingAutomator(
     private fun step() {
         if (!active) return
         if (SystemClock.uptimeMillis() > deadlineAt) {
-            finish("wireless_setup_timeout", false)
+            finish(
+                if (operationMode == OperationMode.WIFI_ONLY) {
+                    "wifi_enable_timeout"
+                } else {
+                    "wireless_setup_timeout"
+                },
+                false,
+            )
             return
         }
         if (
@@ -259,6 +281,11 @@ internal class SelfArmWirelessDebuggingAutomator(
     private fun onWifiEnabled() {
         if (wifiConfirmed) return
         wifiConfirmed = true
+        if (operationMode == OperationMode.WIFI_ONLY) {
+            returnFromWifiSettings()
+            finish("wifi_on", true)
+            return
+        }
         report("wifi_on")
         runCatching {
             service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_HOME)
@@ -917,7 +944,18 @@ internal class SelfArmWirelessDebuggingAutomator(
     private fun openWifiSettings() {
         wifiSettingCandidates().forEach { candidate ->
             candidate.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            if (tryStart(candidate)) return
+            if (tryStart(candidate)) {
+                wifiSettingsOpened = true
+                return
+            }
+        }
+    }
+
+    private fun returnFromWifiSettings() {
+        if (!wifiSettingsOpened) return
+        wifiSettingsOpened = false
+        runCatching {
+            service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
         }
     }
 
@@ -1137,7 +1175,9 @@ internal class SelfArmWirelessDebuggingAutomator(
     }
 
     private fun report(setupState: String) {
-        SelfArmOnboardingStore.reportProgress(service.applicationContext, setupState)
+        if (operationMode == OperationMode.FULL_BOOTSTRAP) {
+            SelfArmOnboardingStore.reportProgress(service.applicationContext, setupState)
+        }
         val wifiIp = wifiIpv4().ifBlank { lastPairingHost.ifBlank { lastConnectHost } }
         val connectPort = SelfArmWirelessAdbController.readWirelessPort().takeIf { it > 0 } ?: lastConnectPort
         android.util.Log.i(TAG, "selfarm-wireless $setupState wifiIp=$wifiIp connectPort=$connectPort")
@@ -1146,6 +1186,13 @@ internal class SelfArmWirelessDebuggingAutomator(
     private fun finish(setupState: String, success: Boolean) {
         active = false
         handler.removeCallbacks(stepRunnable)
+        if (operationMode == OperationMode.WIFI_ONLY) {
+            returnFromWifiSettings()
+            report(setupState)
+            android.util.Log.i(TAG, if (success) "Wi-Fi enabled" else "Wi-Fi enable needs a tap")
+            service.onWifiEnableFinished(success)
+            return
+        }
         service.onWirelessBootstrapFinished()
         report(setupState)
         SelfArmOnboardingStore.finish(service.applicationContext, setupState, success)

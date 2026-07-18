@@ -54,6 +54,8 @@ object GlassesHub {
     private val launcherListeners = CopyOnWriteArrayList<(List<LauncherEntry>) -> Unit>()
     private val wifiOwnership = GlassesWifiOwnership()
     private val autoEnrollAttempted = AtomicBoolean(false)
+    private val wifiEnableA11yInFlight = AtomicBoolean(false)
+    private val wifiEnableReleasePending = AtomicBoolean(false)
     private val wifiRequestExecutor = Executors.newSingleThreadScheduledExecutor { runnable ->
         Thread(runnable, "RokidNexusWifi").apply { isDaemon = true }
     }
@@ -195,6 +197,22 @@ object GlassesHub {
         return { launcherListeners.remove(listener) }
     }
 
+    /**
+     * Warm Wi-Fi up as soon as a camera session begins, so the P2P link finds it ready
+     * instead of waiting (and possibly timing out) on a lazy enable. Reuses the same request
+     * path as CameraLink's own request, so the a11y single-flight guard deduplicates the two.
+     * A no-op when Wi-Fi is already on.
+     */
+    fun requestCameraWifi(context: Context) {
+        val appCtx = context.applicationContext
+        wifiRequestExecutor.execute {
+            wifiEnableReleasePending.set(false)
+            wifiDisableFuture?.cancel(false)
+            wifiDisableFuture = null
+            handleGlassesWifiRequest(appCtx, true)
+        }
+    }
+
     fun openLauncherEntry(pluginId: String): String {
         if (pluginId.isBlank()) return "launcherOpen=false reason=blank"
         if (pluginId == CAMERA_LAUNCHER_ID) {
@@ -279,11 +297,14 @@ object GlassesHub {
             }
             wifiRequestExecutor.execute {
                 if (rawEnabled) {
+                    wifiEnableReleasePending.set(false)
                     wifiDisableFuture?.cancel(false)
                     wifiDisableFuture = null
                     handleGlassesWifiRequest(context, true)
                 } else {
-                    scheduleGlassesWifiDisable(context)
+                    if (!deferWifiDisableUntilAccessibilityEnableCompletes()) {
+                        scheduleGlassesWifiDisable(context)
+                    }
                 }
             }
             return
@@ -502,6 +523,10 @@ object GlassesHub {
             log("glassesWifiRequest enabled=$enabled hubOwned=${wifiOwnership.isHubOwned()} applied=false")
             return
         }
+        if (wifiCurrentlyEnabled && wifiEnableA11yInFlight.getAndSet(false)) {
+            wifiOwnership.markEnabledByHub()
+            log("glassesWifi a11y enable observed=true")
+        }
         val result = wifiOwnership.handleRequest(
             enabled = enabled,
             wifiCurrentlyEnabled = wifiCurrentlyEnabled,
@@ -509,11 +534,45 @@ object GlassesHub {
                 val applied = runCatching { SelfArmController.setWifiEnabled(context, requested) }
                     .onFailure { logError("glassesWifiRequest shell failed", it) }
                     .getOrDefault(false)
-                if (requested && !applied) attemptWifiAutoEnroll(context)
+                // Camera-owned Wi-Fi acquisition must not start the onboarding-only
+                // wireless-debugging bootstrap; it gets only the Wi-Fi toggle mode.
+                if (requested && !applied) attemptWifiAccessibilityEnable(context)
                 applied
             },
         )
         log("glassesWifiRequest enabled=$enabled hubOwned=${result.hubOwned} applied=${result.applied}")
+    }
+
+    private fun attemptWifiAccessibilityEnable(context: Context) {
+        val attempted = wifiEnableA11yInFlight.compareAndSet(false, true)
+        val serviceConnected = attempted && RokidBusAccessibilityService.requestWifiEnable(context)
+        if (attempted && !serviceConnected) wifiEnableA11yInFlight.set(false)
+        log("glassesWifi a11y-enable attempted=$attempted serviceConnected=$serviceConnected")
+    }
+
+    private fun deferWifiDisableUntilAccessibilityEnableCompletes(): Boolean {
+        wifiEnableReleasePending.set(true)
+        if (wifiEnableA11yInFlight.get()) {
+            log("glassesWifi a11y-enable release deferred=true")
+            return true
+        }
+        wifiEnableReleasePending.set(false)
+        return false
+    }
+
+    internal fun onWifiEnableAutomationFinished(enabled: Boolean) {
+        val requested = wifiEnableA11yInFlight.getAndSet(false)
+        val releasePending = wifiEnableReleasePending.getAndSet(false)
+        if (enabled && requested) wifiOwnership.markEnabledByHub()
+        if (enabled && requested && releasePending) {
+            appContext?.let { context ->
+                wifiRequestExecutor.execute { scheduleGlassesWifiDisable(context) }
+            }
+        }
+        log(
+            "glassesWifi a11y-enable completed requested=$requested " +
+                "enabled=$enabled releasePending=$releasePending",
+        )
     }
 
     private fun attemptWifiAutoEnroll(context: Context) {

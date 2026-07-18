@@ -839,7 +839,10 @@ internal class CameraLink(
         const val PORT = 38_401
         private const val DEFAULT_GO_IP = "192.168.49.1"
         private const val NETWORK_QUEUE_CAPACITY = 12
-        private const val MAX_WIFI_WAIT_ATTEMPTS = 8
+        // Wi-Fi enable now runs through the accessibility toggle (opening the system
+        // Wi-Fi panel and tapping it), which is slower than the old silent shell path.
+        // Give it enough runway to open the panel, click, and associate before failing.
+        private const val MAX_WIFI_WAIT_ATTEMPTS = 16
         private const val WIFI_WAIT_MS = 750L
         private const val RECOVERY_SETTLE_MS = 350L
         private const val LEGACY_FALLBACK_MS = 150L

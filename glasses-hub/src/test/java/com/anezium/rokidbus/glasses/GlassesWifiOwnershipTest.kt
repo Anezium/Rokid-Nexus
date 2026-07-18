@@ -72,4 +72,13 @@ class GlassesWifiOwnershipTest {
         assertFalse(result.applied)
         assertFalse(result.hubOwned)
     }
+
+    @Test
+    fun confirmedAsynchronousEnableTakesOwnership() {
+        val ownership = GlassesWifiOwnership()
+
+        ownership.markEnabledByHub()
+
+        assertTrue(ownership.isHubOwned())
+    }
 }

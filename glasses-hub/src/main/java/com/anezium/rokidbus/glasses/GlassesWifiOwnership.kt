@@ -32,4 +32,9 @@ internal class GlassesWifiOwnership {
 
     @Synchronized
     fun isHubOwned(): Boolean = hubEnabledWifi
+
+    @Synchronized
+    fun markEnabledByHub() {
+        hubEnabledWifi = true
+    }
 }
