@@ -35,7 +35,7 @@ internal object PluginUpdateThrottle {
 }
 
 object PluginUpdateChecker {
-    private const val DEFAULT_MAX_AGE_MS = 6L * 60L * 60L * 1_000L
+    private const val DEFAULT_MAX_AGE_MS = 60L * 60L * 1_000L
     private const val PREFERENCES = "plugin-update-checker"
     private const val KEY_UPDATES = "updates"
     private const val KEY_LAST_SUCCESS = "last-success-epoch-ms"
@@ -52,6 +52,41 @@ object PluginUpdateChecker {
     fun cachedUpdates(context: Context): List<PluginUpdateInfo> {
         val raw = preferences(context).getString(KEY_UPDATES, null) ?: return emptyList()
         return decodeUpdates(raw)
+    }
+
+    /**
+     * Recomputes the badge from the registry snapshot already on disk — no network, no throttle.
+     * The Store's own live refresh keeps that snapshot current, so this makes the home badge agree
+     * with what the Store shows the moment the user comes back, instead of waiting out the network
+     * throttle. Returns the freshly computed updates (or the existing cache if no snapshot exists).
+     */
+    fun recomputeFromCachedRegistry(
+        context: Context,
+        onResult: (List<PluginUpdateInfo>) -> Unit,
+    ) {
+        val appContext = context.applicationContext
+        executor.execute {
+            val updates = runCatching {
+                val snapshot = RegistryClient.create(appContext).cachedSnapshot()
+                    ?: return@runCatching cachedUpdates(appContext)
+                val installedVersions = installedVersions(
+                    appContext,
+                    snapshot.feed.plugins.mapTo(linkedSetOf()) { it.artifact.packageName },
+                )
+                val hostVersionCode = packageInfo(appContext, appContext.packageName)
+                    ?.longVersionCode ?: 0L
+                val catalog = StoreCatalog.build(
+                    feed = snapshot.feed,
+                    localCatalog = BusHubService.pluginCatalog(appContext),
+                    installedVersionCodes = installedVersions.mapValues { it.value.versionCode },
+                    hostVersionCode = hostVersionCode,
+                )
+                catalog.availableUpdates(installedVersions).also { updates ->
+                    preferences(appContext).edit().putString(KEY_UPDATES, encodeUpdates(updates)).apply()
+                }
+            }.getOrDefault(cachedUpdates(appContext))
+            postToMain { onResult(updates) }
+        }
     }
 
     fun refreshIfStale(

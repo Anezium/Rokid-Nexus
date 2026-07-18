@@ -86,12 +86,17 @@ class MainActivity : Activity() {
         renderLinkState()
         queryGlassesAppIfConnected()
         NexusUpdateManager.checkForUpdates(applicationContext)
-        PluginUpdateChecker.refreshIfStale(applicationContext) { updates ->
-            if (isDestroyed || isFinishing) return@refreshIfStale
-            if (updates.mapTo(mutableSetOf()) { it.pluginId } != renderedPluginUpdateIds) {
+        val applyUpdates = { updates: List<PluginUpdateInfo> ->
+            if (!isDestroyed && !isFinishing &&
+                updates.mapTo(mutableSetOf()) { it.pluginId } != renderedPluginUpdateIds
+            ) {
                 rebuildPluginSection()
             }
         }
+        // Reflect the registry we already have on disk right away (the Store keeps it current),
+        // then let the throttled network refresh pick up anything newer.
+        PluginUpdateChecker.recomputeFromCachedRegistry(applicationContext, applyUpdates)
+        PluginUpdateChecker.refreshIfStale(applicationContext, onResult = applyUpdates)
     }
 
     override fun onStart() {
