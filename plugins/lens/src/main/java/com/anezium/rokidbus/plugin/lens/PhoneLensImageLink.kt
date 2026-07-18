@@ -82,6 +82,7 @@ internal class PhoneLensImageLink(
     }.apply { setRemoveOnCancelPolicy(true) }
     private val persistentGroupJanitor = LensPersistentGroupJanitor(::log)
     private val generation = AtomicLong(0L)
+    private val janitorRunToken = AtomicLong(0L)
     private val tcpConnecting = AtomicBoolean(false)
     private val random = SecureRandom()
     private var wifiLock: WifiManager.WifiLock? = null
@@ -128,11 +129,16 @@ internal class PhoneLensImageLink(
     private var consecutiveJoinFailures = 0
     private var groupInspectionId = 0L
     private var p2pCleanupInProgress = false
+    private var persistentGroupJanitorInProgress = false
+    private var persistentGroupJanitorHasRun = false
+    private var lastJanitorTargetSsid: String? = null
+    private var lastJanitorStartedAtMs = 0L
     private var discoveryPrimedForJoinCycle = false
     private var discoveryPriming = false
     private var discoveryPrimeStartedAtMs = 0L
     private var discoveryStopPending = false
     private val p2pCleanupContinuations = mutableListOf<() -> Unit>()
+    private val persistentGroupJanitorWaiters = mutableListOf<() -> Unit>()
     @Volatile var state: PhoneLensLinkState = PhoneLensLinkState.IDLE
         private set
 
@@ -201,28 +207,33 @@ internal class PhoneLensImageLink(
             log("lensLinkOfferRejected")
             return
         }
-        val nextGeneration = synchronized(this) {
+        val (nextGeneration, previousSsid) = synchronized(this) {
+            val previousOffer = offer
             val joinActive = offerStartPending || p2pRunning || state != PhoneLensLinkState.IDLE
             if (!PhoneLensOfferUpdatePolicy.shouldStart(offer, parsed, joinActive)) return
             offer = parsed
             offerStartPending = true
-            generation.incrementAndGet()
+            generation.incrementAndGet() to previousOffer?.ssid
         }
         closeSocket()
         mainHandler.post {
             teardownP2p {
                 if (isCurrent(nextGeneration, parsed)) {
-                    synchronized(this) { offerStartPending = false }
-                    startP2p(nextGeneration, parsed)
+                    startP2p(nextGeneration, parsed, previousSsid)
                 }
             }
         }
     }
 
     @SuppressLint("MissingPermission")
-    private fun startP2p(expectedGeneration: Long, currentOffer: PhoneLensLinkOffer) {
+    private fun startP2p(
+        expectedGeneration: Long,
+        currentOffer: PhoneLensLinkOffer,
+        previousSsid: String?,
+    ) {
         if (!isCurrent(expectedGeneration, currentOffer)) return
         if (!hasWifiPermission()) {
+            synchronized(this) { offerStartPending = false }
             state = PhoneLensLinkState.IDLE
             log("lensLinkPermissionMissing")
             return
@@ -235,10 +246,41 @@ internal class PhoneLensImageLink(
         val localChannel = localManager?.initialize(appContext, Looper.getMainLooper(), null)
         channel = localChannel
         if (localManager == null || localChannel == null) {
+            synchronized(this) { offerStartPending = false }
             state = PhoneLensLinkState.IDLE
             log("lensLinkP2pUnavailable")
             return
         }
+        state = PhoneLensLinkState.IDLE
+        val retainedNetworkNames = listOfNotNull(
+            currentOffer.ssid,
+            previousSsid,
+            loadLastSuccessfulSsid(),
+        )
+        runPersistentGroupJanitor(
+            localManager = localManager,
+            localChannel = localChannel,
+            targetSsid = currentOffer.ssid,
+            retainedNetworkNames = retainedNetworkNames,
+            isEligible = {
+                !closed && channel === localChannel &&
+                    isCurrent(expectedGeneration, currentOffer) && !p2pRunning
+            },
+        ) {
+            beginP2p(expectedGeneration, currentOffer, localManager, localChannel)
+        }
+    }
+
+    private fun beginP2p(
+        expectedGeneration: Long,
+        currentOffer: PhoneLensLinkOffer,
+        localManager: WifiP2pManager,
+        localChannel: WifiP2pManager.Channel,
+    ) {
+        if (closed || channel !== localChannel || !isCurrent(expectedGeneration, currentOffer) ||
+            p2pRunning
+        ) return
+        synchronized(this) { offerStartPending = false }
         p2pRunning = true
         acquirePerformanceLocks()
         joinRetryPolicy.reset()
@@ -251,7 +293,6 @@ internal class PhoneLensImageLink(
         state = PhoneLensLinkState.WAITING_NETWORK
         registerReceiver()
         mainHandler.postDelayed(timeout, TIMEOUT_MS)
-        runPersistentGroupJanitor(localManager, localChannel)
         inspectGroupThenConnect(expectedGeneration, currentOffer)
     }
 
@@ -736,6 +777,10 @@ internal class PhoneLensImageLink(
         if (ssid.isBlank() || frequencyMhz <= 0 || recordedAtEpochMs <= 0L) return null
         return PhoneLensSuccessfulJoin(ssid, frequencyMhz, recordedAtEpochMs)
     }
+
+    private fun loadLastSuccessfulSsid(): String? =
+        joinHistoryPreferences.getString(KEY_LAST_SUCCESS_SSID, null)
+            ?.takeIf { it.isNotBlank() }
 
     private fun clearJoinAttemptTimeout() {
         joinAttemptTimeout?.let(mainHandler::removeCallbacks)
@@ -1255,43 +1300,73 @@ internal class PhoneLensImageLink(
     private fun runPersistentGroupJanitor(
         localManager: WifiP2pManager,
         localChannel: WifiP2pManager.Channel,
+        targetSsid: String,
+        retainedNetworkNames: List<String>,
+        isEligible: () -> Boolean,
+        onComplete: () -> Unit,
     ) {
+        if (!isEligible()) return
+        if (persistentGroupJanitorInProgress) {
+            persistentGroupJanitorWaiters += {
+                runPersistentGroupJanitor(
+                    localManager,
+                    localChannel,
+                    targetSsid,
+                    retainedNetworkNames,
+                    isEligible,
+                    onComplete,
+                )
+            }
+            return
+        }
+
+        val now = SystemClock.elapsedRealtime()
+        val throttled = persistentGroupJanitorHasRun &&
+            lastJanitorTargetSsid == targetSsid &&
+            now - lastJanitorStartedAtMs < JANITOR_THROTTLE_MS
+        if (throttled) {
+            onComplete()
+            return
+        }
+
+        persistentGroupJanitorInProgress = true
+        persistentGroupJanitorHasRun = true
+        lastJanitorTargetSsid = targetSsid
+        lastJanitorStartedAtMs = now
+        val runToken = janitorRunToken.incrementAndGet()
+        val completed = AtomicBoolean(false)
+        var watchdog: Runnable? = null
+
+        fun finish() {
+            if (!completed.compareAndSet(false, true)) return
+            watchdog?.let(mainHandler::removeCallbacks)
+            janitorRunToken.compareAndSet(runToken, runToken + 1L)
+            persistentGroupJanitorInProgress = false
+            val waiters = persistentGroupJanitorWaiters.toList()
+            persistentGroupJanitorWaiters.clear()
+            if (isEligible()) onComplete()
+            waiters.forEach { it() }
+        }
+
+        watchdog = Runnable {
+            persistentGroupJanitor.reportFailure(TimeoutException("janitor callback"))
+            finish()
+        }.also { mainHandler.postDelayed(it, JANITOR_CALLBACK_TIMEOUT_MS) }
         runCatching {
             executor.execute {
-                persistentGroupJanitor.clean(localManager, localChannel)
+                persistentGroupJanitor.clean(
+                    manager = localManager,
+                    channel = localChannel,
+                    retainedNetworkNames = retainedNetworkNames,
+                    shouldContinue = { janitorRunToken.get() == runToken },
+                ) {
+                    mainHandler.post(::finish)
+                }
             }
-        }.onFailure(persistentGroupJanitor::reportFailure)
-    }
-
-    @SuppressLint("MissingPermission")
-    private fun runPostTeardownPersistentGroupJanitor(localManager: WifiP2pManager) {
-        mainHandler.post {
-            val janitorChannel = runCatching {
-                localManager.initialize(appContext, Looper.getMainLooper(), null)
-            }.onFailure(persistentGroupJanitor::reportFailure).getOrNull()
-            if (janitorChannel == null) {
-                persistentGroupJanitor.reportFailure(
-                    IllegalStateException("janitor channel unavailable"),
-                )
-                return@post
-            }
-
-            val completed = AtomicBoolean(false)
-            var watchdog: Runnable? = null
-
-            fun finish() {
-                if (!completed.compareAndSet(false, true)) return
-                watchdog?.let(mainHandler::removeCallbacks)
-                closeP2pChannel(janitorChannel, phase = "janitor")
-            }
-
-            watchdog = Runnable {
-                persistentGroupJanitor.reportFailure(TimeoutException("janitor callback"))
-                finish()
-            }.also { mainHandler.postDelayed(it, JANITOR_CALLBACK_TIMEOUT_MS) }
-            persistentGroupJanitor.clean(localManager, janitorChannel) {
-                mainHandler.post(::finish)
-            }
+        }.onFailure {
+            persistentGroupJanitor.reportFailure(it)
+            log("lensLinkJanitor deleted=0 of=0")
+            finish()
         }
     }
 
@@ -1338,22 +1413,9 @@ internal class PhoneLensImageLink(
                 closeP2pChannel(localChannel, phase = "teardown")
                 if (result == GroupRemovalResult.TIMED_OUT) {
                     log("lensLinkTeardownCleanupQuarantine delayMs=$RESET_SETTLE_MS")
-                    mainHandler.postDelayed(
-                        {
-                            try {
-                                finishP2pCleanup()
-                            } finally {
-                                runPostTeardownPersistentGroupJanitor(localManager)
-                            }
-                        },
-                        RESET_SETTLE_MS,
-                    )
+                    mainHandler.postDelayed(::finishP2pCleanup, RESET_SETTLE_MS)
                 } else {
-                    try {
-                        finishP2pCleanup()
-                    } finally {
-                        runPostTeardownPersistentGroupJanitor(localManager)
-                    }
+                    finishP2pCleanup()
                 }
             }
         } else {
@@ -1394,6 +1456,7 @@ internal class PhoneLensImageLink(
         private const val MAX_REUSED_GROUP_TCP_PROBES = 2
         private const val GROUP_REMOVE_CALLBACK_TIMEOUT_MS = 1_000L
         private const val JANITOR_CALLBACK_TIMEOUT_MS = 2_000L
+        private const val JANITOR_THROTTLE_MS = 30_000L
         private const val TIMEOUT_MS = 60_000L
         private const val TCP_RETRY_MS = 1_000L
         private const val CONNECTION_INFO_POLL_MS = 500L

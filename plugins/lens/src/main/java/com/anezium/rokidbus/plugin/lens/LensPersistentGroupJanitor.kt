@@ -16,13 +16,33 @@ internal data class LensPersistentGroup(
 
 internal object LensPersistentGroupPolicy {
     private const val NETWORK_NAME_PREFIX = "DIRECT-RN-"
+    private const val MAX_RETAINED_OWNED_GROUPS = 2
 
     fun isOwnedGroup(networkName: String): Boolean =
         networkName.startsWith(NETWORK_NAME_PREFIX)
 
-    fun networkIdsToDelete(groups: List<LensPersistentGroup>): List<Int> = groups
-        .filter { isOwnedGroup(it.networkName) }
-        .map { it.networkId }
+    /**
+     * Persistent group metadata has no usable creation time. The caller therefore supplies
+     * current/last-known SSIDs in newest-first order; at most two identifiable groups survive.
+     * With no matching identity, every owned group is stale and safe to recreate on the next join.
+     */
+    fun networkIdsToDelete(
+        groups: List<LensPersistentGroup>,
+        retainedNetworkNames: List<String> = emptyList(),
+    ): List<Int> {
+        val ownedGroups = groups.filter { isOwnedGroup(it.networkName) }
+        val retainedNetworkIds = retainedNetworkNames.asSequence()
+            .filter(::isOwnedGroup)
+            .distinct()
+            .mapNotNull { retainedName ->
+                ownedGroups.firstOrNull { it.networkName == retainedName }?.networkId
+            }
+            .take(MAX_RETAINED_OWNED_GROUPS)
+            .toSet()
+        return ownedGroups
+            .filterNot { it.networkId in retainedNetworkIds }
+            .map { it.networkId }
+    }
 }
 
 /** Reflection-free seam for testing persistent-group selection and deletion decisions. */
@@ -46,13 +66,22 @@ internal class LensPersistentGroupJanitor(
     fun clean(
         manager: WifiP2pManager,
         channel: WifiP2pManager.Channel,
+        retainedNetworkNames: List<String> = emptyList(),
+        shouldContinue: () -> Boolean = { true },
         onComplete: () -> Unit = {},
     ) {
-        clean(ReflectiveLensPersistentGroupStore(manager, channel), onComplete)
+        clean(
+            store = ReflectiveLensPersistentGroupStore(manager, channel),
+            retainedNetworkNames = retainedNetworkNames,
+            shouldContinue = shouldContinue,
+            onComplete = onComplete,
+        )
     }
 
     internal fun clean(
         store: LensPersistentGroupStore,
+        retainedNetworkNames: List<String> = emptyList(),
+        shouldContinue: () -> Boolean = { true },
         onComplete: () -> Unit = {},
     ) {
         val finished = AtomicBoolean(false)
@@ -63,14 +92,26 @@ internal class LensPersistentGroupJanitor(
 
         fun fail(failure: Throwable) {
             reportFailure(failure)
+            logger("lensLinkJanitor deleted=0 of=0")
             finish()
         }
 
         try {
+            if (!shouldContinue()) {
+                finish()
+                return
+            }
             store.requestGroups(
                 onGroups = groups@{ groups ->
+                    if (!shouldContinue()) {
+                        finish()
+                        return@groups
+                    }
                     val networkIds = try {
-                        LensPersistentGroupPolicy.networkIdsToDelete(groups)
+                        LensPersistentGroupPolicy.networkIdsToDelete(
+                            groups,
+                            retainedNetworkNames,
+                        )
                     } catch (failure: Throwable) {
                         fail(failure)
                         return@groups
@@ -90,15 +131,21 @@ internal class LensPersistentGroupJanitor(
                             if (!callbackDelivered.compareAndSet(false, true)) return
                             if (wasDeleted) deleted.incrementAndGet()
                             if (completed.incrementAndGet() == networkIds.size) {
-                                logger(
-                                    "lensLinkJanitor deleted=${deleted.get()} " +
-                                        "of=${networkIds.size}",
-                                )
+                                if (shouldContinue()) {
+                                    logger(
+                                        "lensLinkJanitor deleted=${deleted.get()} " +
+                                            "of=${networkIds.size}",
+                                    )
+                                }
                                 finish()
                             }
                         }
 
                         try {
+                            if (!shouldContinue()) {
+                                recordResult(false)
+                                return@forEach
+                            }
                             store.deleteGroup(
                                 networkId = networkId,
                                 onResult = ::recordResult,
@@ -137,6 +184,24 @@ internal class LensPersistentGroupJanitor(
     }
 }
 
+/**
+ * Looks up hidden members with Class.getDeclaredMethod invoked through Method.invoke. Android's
+ * hidden-API caller check then observes the boot-classpath Class implementation as the caller.
+ */
+private object LensHiddenApiReflection {
+    private val classGetDeclaredMethod: Method = Class::class.java.getMethod(
+        "getDeclaredMethod",
+        String::class.java,
+        arrayOf<Class<*>>()::class.java,
+    )
+
+    fun declaredMethod(
+        owner: Class<*>,
+        name: String,
+        vararg parameterTypes: Class<*>,
+    ): Method = classGetDeclaredMethod.invoke(owner, name, parameterTypes) as Method
+}
+
 /** Hidden WifiP2pManager APIs are contained here so the janitor remains unit-testable. */
 private class ReflectiveLensPersistentGroupStore(
     private val manager: WifiP2pManager,
@@ -150,15 +215,17 @@ private class ReflectiveLensPersistentGroupStore(
     ) {
         try {
             val listenerClass = Class.forName(PERSISTENT_GROUP_LISTENER_CLASS)
-            val requestPersistentGroupInfo = WifiP2pManager::class.java.getMethod(
+            val requestPersistentGroupInfo = LensHiddenApiReflection.declaredMethod(
+                WifiP2pManager::class.java,
                 "requestPersistentGroupInfo",
                 WifiP2pManager.Channel::class.java,
                 listenerClass,
             )
-            deletePersistentGroup = WifiP2pManager::class.java.getMethod(
+            deletePersistentGroup = LensHiddenApiReflection.declaredMethod(
+                WifiP2pManager::class.java,
                 "deletePersistentGroup",
                 WifiP2pManager.Channel::class.java,
-                Int::class.javaPrimitiveType,
+                Int::class.javaPrimitiveType!!,
                 WifiP2pManager.ActionListener::class.java,
             )
             val callbackDelivered = AtomicBoolean(false)
@@ -214,15 +281,15 @@ private class ReflectiveLensPersistentGroupStore(
 
     private fun readGroups(groupList: Any?): List<LensPersistentGroup> {
         if (groupList == null) return emptyList()
-        val groups = groupList.javaClass.getMethod("getGroupList").invoke(groupList) as? Iterable<*>
+        val getGroupList = LensHiddenApiReflection.declaredMethod(
+            groupList.javaClass,
+            "getGroupList",
+        )
+        val groups = getGroupList.invoke(groupList) as? Iterable<*>
             ?: throw ReflectiveOperationException("getGroupList returned a non-iterable value")
         return groups.mapNotNull { group ->
-            if (group == null) return@mapNotNull null
-            val networkName = group.javaClass.getMethod("getNetworkName").invoke(group) as? String
-                ?: return@mapNotNull null
-            val networkId = group.javaClass.getMethod("getNetworkId").invoke(group) as? Number
-                ?: return@mapNotNull null
-            LensPersistentGroup(networkName, networkId.toInt())
+            val p2pGroup = group as? WifiP2pGroup ?: return@mapNotNull null
+            LensPersistentGroup(p2pGroup.networkName, p2pGroup.networkId)
         }
     }
 
