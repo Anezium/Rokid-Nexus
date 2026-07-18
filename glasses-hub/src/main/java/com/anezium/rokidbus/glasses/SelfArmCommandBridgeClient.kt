@@ -125,12 +125,23 @@ internal object SelfArmCommandBridgeClient {
         return assetScript.replace(SECRET_PLACEHOLDER, secretHex)
     }
 
+    /**
+     * The channel directory must be owned by the app so that both the app (requests) and the
+     * shell-uid bridge (responses/FIFO, via the shared ext_data_rw group) can write into it.
+     * Create it here, from the app, before the bridge is ever spawned — if the bridge created it
+     * first it would be shell-owned and the app could not drop requests into it.
+     */
+    internal fun ensureChannelDir(context: Context): File? {
+        val externalFiles = context.applicationContext.getExternalFilesDir(null) ?: return null
+        val channel = File(externalFiles, CHANNEL_NAME)
+        if (!channel.isDirectory && !channel.mkdirs() && !channel.isDirectory) return null
+        return channel
+    }
+
     private fun execute(context: Context, command: String, timeoutMs: Long): Boolean {
         if (timeoutMs <= 0L) return false
         val secret = loadSecretHex(context) ?: return false
-        val externalFiles = context.getExternalFilesDir(null) ?: return false
-        val channel = File(externalFiles, CHANNEL_NAME)
-        if (!channel.isDirectory && !channel.mkdirs() && !channel.isDirectory) return false
+        val channel = ensureChannelDir(context) ?: return false
         val nonce = randomHex(16)
         val requestFile = File(channel, "$nonce.request")
         val responseFile = File(channel, "$nonce.response")

@@ -358,6 +358,10 @@ internal object SelfArmController {
     }.getOrNull()
 
     internal fun ensureInternalCommandBridge(context: Context): File {
+        // Create the app-owned channel directory before the bridge is spawned, so the shell-uid
+        // bridge inherits it (and can write the FIFO into it) instead of creating a shell-owned
+        // directory the app cannot drop requests into.
+        SelfArmCommandBridgeClient.ensureChannelDir(context)
         val secretHex = SelfArmCommandBridgeClient.ensureSecretHex(context)
         val file = File(File(context.filesDir, "self-arm"), SelfArmConstants.BRIDGE_ASSET)
         val currentVersion = if (file.exists()) bridgeScriptVersion(file) else null
