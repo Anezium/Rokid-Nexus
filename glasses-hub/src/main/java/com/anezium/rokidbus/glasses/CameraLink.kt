@@ -21,6 +21,8 @@ import com.anezium.rokidbus.shared.CameraLinkPacket
 import com.anezium.rokidbus.shared.CameraLinkPacketFlags
 import com.anezium.rokidbus.shared.CameraLinkPacketType
 import com.anezium.rokidbus.shared.CameraLinkProtocol
+import com.anezium.rokidbus.shared.CameraLinkEndpointOffer
+import com.anezium.rokidbus.shared.CameraLinkMode
 import org.json.JSONObject
 import java.net.Inet4Address
 import java.net.InetSocketAddress
@@ -31,6 +33,7 @@ import java.security.SecureRandom
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 internal data class CameraLinkOffer(
     val ssid: String,
@@ -40,6 +43,8 @@ internal data class CameraLinkOffer(
     val goIp: String,
 )
 
+private enum class CameraLinkTransportRole { P2P_SERVER, LOHS_CLIENT }
+
 /** Activity-scoped camera data plane. The server remains listening across client crashes. */
 internal class CameraLink(
     context: Context,
@@ -47,6 +52,7 @@ internal class CameraLink(
     private val onOfferReady: (CameraLinkOffer, Int) -> Unit,
     private val onAuthenticated: (Boolean) -> Unit,
     private val onFrozenTransferFinished: (Long) -> Unit,
+    private val onWifiJoinRequested: (CameraLinkEndpointOffer) -> Unit,
     private val onState: (String) -> Unit,
 ) : AutoCloseable {
     private val appContext = context.applicationContext
@@ -83,6 +89,9 @@ internal class CameraLink(
     @Volatile private var authenticated = false
     @Volatile private var serverSocket: ServerSocket? = null
     @Volatile private var clientSocket: Socket? = null
+    @Volatile private var transportRole = CameraLinkTransportRole.P2P_SERVER
+    @Volatile private var reverseConnecting = false
+    @Volatile private var reverseJoinReady = false
     private var clientOutput: java.io.OutputStream? = null
     private var manager: WifiP2pManager? = null
     private var channel: WifiP2pManager.Channel? = null
@@ -108,6 +117,11 @@ internal class CameraLink(
     private var groupStageLogged = false
     private var initialOfferDelayMs = 0L
     private var goRecoveryGroupInfoRequestId = 0L
+    private var reverseOffer: CameraLinkEndpointOffer? = null
+    private var reverseGatewayIp: String? = null
+    private var reverseJoinStartedAtMs = 0L
+    private var reverseNetworkPoll: Runnable? = null
+    private var reverseP2pTeardownTimeout: Runnable? = null
 
     val isAuthenticated: Boolean get() = authenticated
 
@@ -117,8 +131,12 @@ internal class CameraLink(
                 WifiP2pManager.WIFI_P2P_STATE_CHANGED_ACTION -> {
                     val enabled = intent.getIntExtra(WifiP2pManager.EXTRA_WIFI_STATE, -1) ==
                         WifiP2pManager.WIFI_P2P_STATE_ENABLED
-                    if (running && enabled && currentOffer == null) inspectGroup()
-                    if (running && !enabled) state("WAITING FOR WI-FI")
+                    if (running && transportRole == CameraLinkTransportRole.P2P_SERVER &&
+                        enabled && currentOffer == null
+                    ) inspectGroup()
+                    if (running && transportRole == CameraLinkTransportRole.P2P_SERVER && !enabled) {
+                        state("WAITING FOR WI-FI")
+                    }
                 }
                 WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION -> {
                     val info = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -127,7 +145,9 @@ internal class CameraLink(
                         @Suppress("DEPRECATION")
                         intent.getParcelableExtra(WifiP2pManager.EXTRA_NETWORK_INFO)
                     }
-                    if (running && (info?.isConnected == true || currentOffer == null)) requestGroupInfo()
+                    if (running && transportRole == CameraLinkTransportRole.P2P_SERVER &&
+                        (info?.isConnected == true || currentOffer == null)
+                    ) requestGroupInfo()
                 }
             }
         }
@@ -146,7 +166,7 @@ internal class CameraLink(
     }
 
     fun resendOfferIfDisconnected() {
-        if (authenticated) return
+        if (authenticated || transportRole != CameraLinkTransportRole.P2P_SERVER) return
         mainHandler.post {
             if (running && !authenticated && !goRecoveryInProgress && currentOffer != null) {
                 clearOfferRetry()
@@ -200,6 +220,25 @@ internal class CameraLink(
         runCatching { clientSocket?.close() }
     }
 
+    fun acceptReverseOffer(offer: CameraLinkEndpointOffer) {
+        if (!running || offer.mode != CameraLinkMode.LOHS_REVERSE || offer.token != token) return
+        mainHandler.post {
+            if (!running || offer.token != token) return@post
+            val sameOffer = reverseOffer == offer
+            reverseOffer = offer
+            if (!sameOffer) reverseGatewayIp = null
+            if (transportRole != CameraLinkTransportRole.LOHS_CLIENT) {
+                transportRole = CameraLinkTransportRole.LOHS_CLIENT
+                deactivateP2pForReverse(offer)
+            } else if (!sameOffer) {
+                closeClient()
+                beginReverseJoin(offer)
+            } else if (!authenticated) {
+                scheduleReverseNetworkPoll(0L)
+            }
+        }
+    }
+
     private fun dropOneVideoFrame(): Boolean {
         val stale = packets.firstOrNull { it.type == CameraLinkPacketType.VIDEO_FRAME } ?: return false
         return packets.remove(stale)
@@ -213,8 +252,186 @@ internal class CameraLink(
         flags and CameraLinkPacketFlags.KEY_FRAME != 0
 
     @SuppressLint("MissingPermission")
+    private fun deactivateP2pForReverse(offer: CameraLinkEndpointOffer) {
+        reverseJoinReady = false
+        clearCreateRetry()
+        clearWifiRetry()
+        clearGroupPoll()
+        clearOfferRetry()
+        clearGoRecoveryCreate()
+        clearGoRecoveryClientInspection()
+        goRecoveryInProgress = false
+        goRecoveryRemovedGroup = false
+        currentOffer = null
+        offersSent = 0
+        closeClient()
+        closeServer()
+
+        val localManager = manager
+        val localChannel = channel
+        manager = null
+        channel = null
+        if (receiverRegistered) runCatching { appContext.unregisterReceiver(receiver) }
+        receiverRegistered = false
+        if (localManager == null || localChannel == null) {
+            beginReverseJoin(offer)
+            return
+        }
+        runCatching { localManager.stopPeerDiscovery(localChannel, null) }
+        runCatching { localManager.cancelConnect(localChannel, null) }
+        val completed = AtomicBoolean(false)
+        fun finish() {
+            if (!completed.compareAndSet(false, true)) return
+            reverseP2pTeardownTimeout?.let(mainHandler::removeCallbacks)
+            reverseP2pTeardownTimeout = null
+            runCatching { localChannel.close() }
+            if (running && transportRole == CameraLinkTransportRole.LOHS_CLIENT &&
+                reverseOffer == offer
+            ) beginReverseJoin(offer)
+        }
+        reverseP2pTeardownTimeout = Runnable(::finish)
+            .also { mainHandler.postDelayed(it, REVERSE_P2P_TEARDOWN_TIMEOUT_MS) }
+        runCatching {
+            localManager.removeGroup(localChannel, object : WifiP2pManager.ActionListener {
+                override fun onSuccess() = finish()
+                override fun onFailure(reason: Int) {
+                    Log.w(TAG, "cameraLinkReverseP2pRemoveFailed reason=$reason")
+                    finish()
+                }
+            })
+        }.onFailure {
+            Log.w(TAG, "cameraLinkReverseP2pRemoveFailed type=${it.javaClass.simpleName}")
+            finish()
+        }
+    }
+
+    private fun beginReverseJoin(offer: CameraLinkEndpointOffer) {
+        if (!running || transportRole != CameraLinkTransportRole.LOHS_CLIENT ||
+            reverseOffer != offer
+        ) return
+        state("JOINING PHONE HOTSPOT")
+        reverseJoinReady = true
+        reverseJoinStartedAtMs = SystemClock.elapsedRealtime()
+        onWifiJoinRequested(offer)
+        scheduleReverseNetworkPoll(0L, resetDeadline = false)
+    }
+
+    private fun scheduleReverseNetworkPoll(delayMs: Long, resetDeadline: Boolean = false) {
+        clearReverseNetworkPoll()
+        if (resetDeadline || reverseJoinStartedAtMs == 0L) {
+            reverseJoinStartedAtMs = SystemClock.elapsedRealtime()
+        }
+        reverseNetworkPoll = Runnable {
+            reverseNetworkPoll = null
+            pollReverseNetwork()
+        }.also { mainHandler.postDelayed(it, delayMs) }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun pollReverseNetwork() {
+        val offer = reverseOffer ?: return
+        if (!running || transportRole != CameraLinkTransportRole.LOHS_CLIENT || authenticated ||
+            reverseConnecting || !reverseJoinReady
+        ) return
+        if (SystemClock.elapsedRealtime() - reverseJoinStartedAtMs >= REVERSE_JOIN_TIMEOUT_MS) {
+            fail("PHONE HOTSPOT LINK FAILED")
+            return
+        }
+        val wifiManager = appContext.getSystemService(WifiManager::class.java)
+        val connectedSsid = runCatching {
+            LohsGatewayResolver.normalizeSsid(wifiManager?.connectionInfo?.ssid)
+        }.getOrDefault("")
+        val gateway = runCatching {
+            LohsGatewayResolver.fromDhcpGateway(wifiManager?.dhcpInfo?.gateway ?: 0)
+        }.getOrNull()
+        if (connectedSsid == offer.ssid && gateway != null) {
+            reverseGatewayIp = gateway
+            connectToPhoneHotspot(offer, gateway)
+        } else {
+            scheduleReverseNetworkPoll(REVERSE_NETWORK_POLL_MS)
+        }
+    }
+
+    private fun connectToPhoneHotspot(offer: CameraLinkEndpointOffer, gateway: String) {
+        if (!isReverseCurrent(offer, gateway) || reverseConnecting || authenticated) return
+        reverseConnecting = true
+        state("CONNECTING TO PHONE")
+        acceptExecutor.execute {
+            var currentSocket: Socket? = null
+            try {
+                currentSocket = Socket().apply {
+                    tcpNoDelay = true
+                    keepAlive = true
+                    connect(InetSocketAddress(gateway, offer.port), REVERSE_CONNECT_TIMEOUT_MS)
+                }
+                if (!isReverseCurrent(offer, gateway)) return@execute
+                val input = currentSocket.getInputStream()
+                val output = currentSocket.getOutputStream()
+                CameraLinkProtocol.write(
+                    output,
+                    CameraLinkPacket(
+                        type = CameraLinkPacketType.HELLO,
+                        meta = JSONObject().put("token", token).toString(),
+                    ),
+                )
+                synchronized(socketLock) {
+                    if (!isReverseCurrent(offer, gateway)) return@synchronized
+                    clientSocket = currentSocket
+                    clientOutput = output
+                    packets.clear()
+                    authenticated = true
+                    reverseJoinStartedAtMs = 0L
+                }
+                if (!authenticated || clientSocket !== currentSocket) return@execute
+                Log.i(TAG, "cameraLinkStage stage=connected transport=lohs_reverse elapsedMs=${stageElapsedMs()}")
+                mainHandler.post { onAuthenticated(true) }
+                state("PHONE LINKED")
+                while (isReverseCurrent(offer, gateway) && !currentSocket.isClosed) {
+                    val packet = CameraLinkProtocol.read(input) ?: break
+                    when (packet.type) {
+                        CameraLinkPacketType.PROBE -> enqueue(
+                            CameraLinkPacket(
+                                type = CameraLinkPacketType.PROBE_ACK,
+                                requestId = packet.requestId,
+                                seq = packet.seq,
+                                meta = JSONObject().put("bytes", packet.payload.size).toString(),
+                            ),
+                        )
+                        CameraLinkPacketType.VIDEO_ACK, CameraLinkPacketType.PROBE_ACK -> Unit
+                        else -> Log.w(TAG, "cameraLinkUnexpectedPacket type=${packet.type.name}")
+                    }
+                }
+            } catch (failure: Throwable) {
+                if (isReverseCurrent(offer, gateway)) {
+                    Log.w(TAG, "cameraLinkReverseClientEnded type=${failure.javaClass.simpleName}")
+                }
+            } finally {
+                reverseConnecting = false
+                if (clientSocket === currentSocket) {
+                    closeClient(currentSocket)
+                } else {
+                    runCatching { currentSocket?.close() }
+                    if (running && transportRole == CameraLinkTransportRole.LOHS_CLIENT &&
+                        !authenticated
+                    ) {
+                        mainHandler.post {
+                            if (running && transportRole == CameraLinkTransportRole.LOHS_CLIENT) {
+                                scheduleReverseNetworkPoll(REVERSE_CONNECT_RETRY_MS)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private fun isReverseCurrent(offer: CameraLinkEndpointOffer, gateway: String): Boolean =
+        running && transportRole == CameraLinkTransportRole.LOHS_CLIENT &&
+            reverseOffer == offer && reverseGatewayIp == gateway
+
+    @SuppressLint("MissingPermission")
     private fun inspectGroup() {
-        if (!running) return
+        if (!running || transportRole != CameraLinkTransportRole.P2P_SERVER) return
         if (!isWifiReady()) return waitForWifi()
         state("INSPECTING CAMERA LINK")
         requestGroupInfo()
@@ -222,6 +439,7 @@ internal class CameraLink(
 
     @SuppressLint("MissingPermission")
     private fun requestGroupInfo() {
+        if (transportRole != CameraLinkTransportRole.P2P_SERVER) return
         val localManager = manager ?: return fail("WI-FI DIRECT LOST")
         val localChannel = channel ?: return fail("WI-FI DIRECT LOST")
         runCatching { localManager.requestGroupInfo(localChannel, ::handleGroup) }
@@ -234,7 +452,7 @@ internal class CameraLink(
     }
 
     private fun handleGroup(group: WifiP2pGroup?) {
-        if (!running) return
+        if (!running || transportRole != CameraLinkTransportRole.P2P_SERVER) return
         if (isUsableOwnerGroup(group)) {
             activateGroup(group!!, if (waitingForCreatedGroup) "created" else "active_reuse")
             return
@@ -332,6 +550,7 @@ internal class CameraLink(
     }
 
     private fun activateGroup(group: WifiP2pGroup, path: String) {
+        if (!running || transportRole != CameraLinkTransportRole.P2P_SERVER) return
         clearCreateRetry()
         clearGroupPoll()
         waitingForCreatedGroup = false
@@ -592,6 +811,7 @@ internal class CameraLink(
     }
 
     private fun startServer(interfaceName: String) {
+        if (!running || transportRole != CameraLinkTransportRole.P2P_SERVER) return
         runCatching {
             val address = NetworkInterface.getByName(interfaceName)?.inetAddresses?.asSequence()
                 ?.filterIsInstance<Inet4Address>()?.firstOrNull { !it.isLoopbackAddress }
@@ -628,6 +848,10 @@ internal class CameraLink(
     }
 
     private fun handleClient(socket: Socket) {
+        if (transportRole != CameraLinkTransportRole.P2P_SERVER) {
+            runCatching { socket.close() }
+            return
+        }
         closeClient()
         try {
             socket.tcpNoDelay = true
@@ -719,11 +943,15 @@ internal class CameraLink(
             packets.clear()
             transferPolicy.reset()
         }
-        if (notify) {
+        val reconnectReverse = running && transportRole == CameraLinkTransportRole.LOHS_CLIENT &&
+            reverseOffer != null
+        if (notify || reconnectReverse) {
             mainHandler.post {
-                onAuthenticated(false)
+                if (notify) onAuthenticated(false)
                 if (!running || authenticated) return@post
-                if (goRecoveryInProgress && goRecoveryRemovedGroup) {
+                if (transportRole == CameraLinkTransportRole.LOHS_CLIENT) {
+                    if (reverseJoinReady) scheduleReverseNetworkPoll(REVERSE_CONNECT_RETRY_MS)
+                } else if (goRecoveryInProgress && goRecoveryRemovedGroup) {
                     if (goRecoveryCreate == null) scheduleGoRecoveryCreate(0L)
                 } else if (!goRecoveryInProgress && currentOffer != null) {
                     scheduleOfferAction(0L)
@@ -753,7 +981,7 @@ internal class CameraLink(
         clearGroupPoll()
         groupPoll = Runnable {
             groupPoll = null
-            if (running) requestGroupInfo()
+            if (running && transportRole == CameraLinkTransportRole.P2P_SERVER) requestGroupInfo()
         }.also { mainHandler.postDelayed(it, delayMs) }
     }
 
@@ -789,8 +1017,13 @@ internal class CameraLink(
         clearOfferRetry()
         clearGoRecoveryCreate()
         clearGoRecoveryClientInspection()
+        clearReverseNetworkPoll()
+        reverseP2pTeardownTimeout?.let(mainHandler::removeCallbacks)
+        reverseP2pTeardownTimeout = null
         goRecoveryInProgress = false
         goRecoveryRemovedGroup = false
+        reverseJoinReady = false
+        reverseConnecting = false
         closeClient()
         closeServer()
         val localManager = manager
@@ -802,6 +1035,8 @@ internal class CameraLink(
         if (receiverRegistered) runCatching { appContext.unregisterReceiver(receiver) }
         receiverRegistered = false
         currentOffer = null
+        reverseOffer = null
+        reverseGatewayIp = null
         acceptExecutor.shutdownNow()
         writerExecutor.shutdownNow()
     }
@@ -824,6 +1059,11 @@ internal class CameraLink(
     private fun clearOfferRetry() {
         offerRetry?.let(mainHandler::removeCallbacks)
         offerRetry = null
+    }
+
+    private fun clearReverseNetworkPoll() {
+        reverseNetworkPoll?.let(mainHandler::removeCallbacks)
+        reverseNetworkPoll = null
     }
 
     private fun clearGoRecoveryCreate() {
@@ -856,5 +1096,10 @@ internal class CameraLink(
         private const val ASSOCIATED_CLIENT_GRACE_MS = 2_500L
         private const val MAX_GO_RECOVERY_CLIENT_POLLS = 2
         private const val GO_RECOVERY_GROUP_INFO_TIMEOUT_MS = 750L
+        private const val REVERSE_P2P_TEARDOWN_TIMEOUT_MS = 1_000L
+        private const val REVERSE_JOIN_TIMEOUT_MS = 15_000L
+        private const val REVERSE_NETWORK_POLL_MS = 250L
+        private const val REVERSE_CONNECT_RETRY_MS = 750L
+        private const val REVERSE_CONNECT_TIMEOUT_MS = 5_000
     }
 }

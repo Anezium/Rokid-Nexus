@@ -26,6 +26,9 @@ import com.anezium.rokidbus.client.BusEvent
 import com.anezium.rokidbus.client.HubTarget
 import com.anezium.rokidbus.shared.BusCapabilityBits
 import com.anezium.rokidbus.shared.BusPaths
+import com.anezium.rokidbus.shared.CameraLinkEndpointOffer
+import com.anezium.rokidbus.shared.CameraLinkMode
+import com.anezium.rokidbus.shared.CameraLinkOfferContract
 import com.anezium.rokidbus.shared.CameraLinkPacket
 import com.anezium.rokidbus.shared.CameraLinkPacketType
 import com.anezium.rokidbus.shared.CameraLinkProtocol
@@ -190,7 +193,11 @@ class CameraActivity : Activity(), TextureView.SurfaceTextureListener {
         val client = BusClient(
             context = applicationContext,
             clientId = "glasses-camera-domain",
-            pathPrefixes = listOf(BusPaths.CAMERA_OVERLAY, BusPaths.CAMERA_FREEZE_RESULT),
+            pathPrefixes = listOf(
+                BusPaths.CAMERA_OVERLAY,
+                BusPaths.CAMERA_FREEZE_RESULT,
+                BusPaths.CAMERA_LINK_OFFER,
+            ),
             hubTarget = HubTarget.GLASSES,
         ) { event -> handleBusEvent(event) }
         busClient = client
@@ -203,6 +210,7 @@ class CameraActivity : Activity(), TextureView.SurfaceTextureListener {
             is BusEvent.Message -> when (event.path) {
                 BusPaths.CAMERA_OVERLAY -> handleOverlay(event.payload)
                 BusPaths.CAMERA_FREEZE_RESULT -> handleFreezeResult(event.payload)
+                BusPaths.CAMERA_LINK_OFFER -> handleReverseLinkOffer(event.payload)
             }
             is BusEvent.Error -> {
                 overlayView.updateStatus("BUS LINK ERROR", currentZoomLabel())
@@ -280,6 +288,7 @@ class CameraActivity : Activity(), TextureView.SurfaceTextureListener {
                 onFrozenTransferFinished = {
                     streamer?.requestKeyFrame()
                 },
+                onWifiJoinRequested = ::requestLohsJoin,
                 onState = { state -> overlayView.updateStatus(state, currentZoomLabel()) },
             ).also { it.start() }
         }
@@ -473,6 +482,23 @@ class CameraActivity : Activity(), TextureView.SurfaceTextureListener {
 
     private fun requestGlassesWifi(enabled: Boolean) {
         busClient?.send(BusPaths.GLASSES_WIFI_REQUEST, JSONObject().put("enabled", enabled))
+    }
+
+    private fun handleReverseLinkOffer(payload: JSONObject) {
+        val offer = CameraLinkOfferContract.decode(payload) ?: return
+        if (offer.mode != CameraLinkMode.LOHS_REVERSE || offer.sessionId != sessionId) return
+        cameraLink?.acceptReverseOffer(offer)
+    }
+
+    private fun requestLohsJoin(offer: CameraLinkEndpointOffer) {
+        if (offer.sessionId != sessionId || offer.mode != CameraLinkMode.LOHS_REVERSE) return
+        busClient?.send(
+            BusPaths.GLASSES_WIFI_REQUEST,
+            JSONObject()
+                .put("action", "join")
+                .put("ssid", offer.ssid)
+                .put("passphrase", offer.passphrase),
+        )
     }
 
     private fun handleInput(decision: CameraInputDecision) {
