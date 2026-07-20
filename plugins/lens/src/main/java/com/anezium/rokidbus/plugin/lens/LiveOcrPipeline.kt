@@ -21,6 +21,7 @@ import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import java.nio.ByteBuffer
 import java.util.LinkedHashMap
 import java.util.concurrent.LinkedBlockingDeque
+import java.util.concurrent.Semaphore
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
@@ -77,6 +78,75 @@ internal class LatestFrameHolder : AutoCloseable {
     }
 }
 
+internal class DecoderConfiguration private constructor(
+    val payload: ByteArray,
+    val geometry: CameraFrameGeometry,
+    val fps: Int,
+) {
+    fun matches(other: DecoderConfiguration): Boolean = matches(other.payload, other.geometry)
+
+    fun matches(otherPayload: ByteArray, otherGeometry: CameraFrameGeometry): Boolean =
+        geometry == otherGeometry && payload.contentEquals(otherPayload)
+
+    companion object {
+        fun copyOf(payload: ByteArray, geometry: CameraFrameGeometry, fps: Int) =
+            DecoderConfiguration(payload.copyOf(), geometry, fps)
+    }
+}
+
+/** Deduplicates producer configs while the decoder worker owns and applies the latest one. */
+internal class DecoderConfigurationStage : AutoCloseable {
+    private var applied: DecoderConfiguration? = null
+    private var applying: DecoderConfiguration? = null
+    private var pending: DecoderConfiguration? = null
+    private var closed = false
+
+    @Synchronized
+    fun offer(payload: ByteArray, geometry: CameraFrameGeometry, fps: Int): Boolean {
+        if (closed) return false
+        val latest = pending ?: applying ?: applied
+        if (latest?.matches(payload, geometry) == true) return false
+        pending = DecoderConfiguration.copyOf(payload, geometry, fps)
+        return true
+    }
+
+    @Synchronized
+    fun takePending(): DecoderConfiguration? {
+        if (closed) return null
+        return pending?.also {
+            pending = null
+            applying = it
+        }
+    }
+
+    @Synchronized
+    fun markApplied(value: DecoderConfiguration) {
+        if (closed || applying !== value) return
+        applying = null
+        applied = value
+        if (pending?.matches(value) == true) pending = null
+    }
+
+    @Synchronized
+    fun markRejected(value: DecoderConfiguration) {
+        if (applying === value) applying = null
+    }
+
+    @Synchronized
+    fun markFailed(value: DecoderConfiguration) {
+        if (applying === value) applying = null
+        applied = null
+    }
+
+    @Synchronized
+    override fun close() {
+        closed = true
+        applied = null
+        applying = null
+        pending = null
+    }
+}
+
 /** No-surface AVC decoder using flexible YUV output and stride-aware pooled NV21 conversion. */
 internal class LatestFrameDecoder(
     private val holder: LatestFrameHolder,
@@ -85,55 +155,23 @@ internal class LatestFrameDecoder(
     private val onGeometry: (CameraFrameGeometry) -> Unit,
     private val onError: (String, Throwable?) -> Unit,
 ) : AutoCloseable {
-    private val lock = Any()
     private val running = AtomicBoolean(true)
     private val frames = LinkedBlockingDeque<EncodedFrame>(FRAME_QUEUE_CAPACITY)
+    private val configurationStage = DecoderConfigurationStage()
+    private val workAvailable = Semaphore(0)
     private val received = LinkedHashMap<Long, Unit>()
-    private val worker = Thread(::decodeLoop, "lens-live-decoder").also { it.start() }
     private var codec: MediaCodec? = null
     private var config: ByteArray? = null
     private var configuredGeometry: CameraFrameGeometry? = null
     private var reportedGeometry: CameraFrameGeometry? = null
     @Volatile private var waitingForKeyFrame = true
+    private val worker = Thread(::decodeLoop, "lens-live-decoder").also { it.start() }
 
     fun configure(configPayload: ByteArray, geometry: CameraFrameGeometry, fps: Int) {
         if (!running.get() || geometry.rasterWidth !in 1..MAX_EDGE ||
             geometry.rasterHeight !in 1..MAX_EDGE
         ) return
-        synchronized(lock) {
-            if (config?.contentEquals(configPayload) == true &&
-                configuredGeometry == geometry && codec != null
-            ) return
-            val sets = parameterSets(configPayload) ?: return onError("Incomplete H.264 codec config", null)
-            frames.clear()
-            received.clear()
-            releaseCodecLocked()
-            runCatching {
-                val format = MediaFormat.createVideoFormat(
-                    MediaFormat.MIMETYPE_VIDEO_AVC,
-                    geometry.rasterWidth,
-                    geometry.rasterHeight,
-                ).apply {
-                    setByteBuffer("csd-0", ByteBuffer.wrap(sets.first))
-                    setByteBuffer("csd-1", ByteBuffer.wrap(sets.second))
-                    setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, MAX_PACKET_BYTES)
-                    setInteger(MediaFormat.KEY_FRAME_RATE, fps.coerceIn(1, 60))
-                    setInteger(MediaFormat.KEY_LOW_LATENCY, 1)
-                    setInteger(
-                        MediaFormat.KEY_COLOR_FORMAT,
-                        MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible,
-                    )
-                }
-                codec = MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_VIDEO_AVC).also {
-                    it.configure(format, null, null, 0)
-                    it.start()
-                }
-                config = configPayload.copyOf()
-                configuredGeometry = geometry
-                reportedGeometry = null
-                waitingForKeyFrame = true
-            }.onFailure { onError("H.264 decoder configure failed", it) }
-        }
+        if (configurationStage.offer(configPayload, geometry, fps)) workAvailable.release()
     }
 
     fun queue(packet: CameraLinkPacket) {
@@ -147,19 +185,85 @@ internal class LatestFrameDecoder(
             waitingForKeyFrame = !keyFrame
             if (keyFrame) frames.offerLast(frame)
         }
+        workAvailable.release()
     }
 
     private fun decodeLoop() {
-        while (running.get()) {
-            val frame = runCatching { frames.poll(250, TimeUnit.MILLISECONDS) }.getOrNull() ?: continue
-            decode(frame)
+        try {
+            while (running.get()) {
+                applyPendingConfigurations()
+                if (!running.get()) break
+                val frame = frames.pollFirst()
+                if (frame != null) {
+                    decode(frame)
+                } else {
+                    runCatching { workAvailable.tryAcquire(250, TimeUnit.MILLISECONDS) }
+                }
+            }
+        } finally {
+            releaseCodec()
+            received.clear()
         }
     }
 
-    private fun decode(frame: EncodedFrame) = synchronized(lock) {
-        val decoder = codec ?: return@synchronized
+    private fun applyPendingConfigurations() {
+        while (running.get()) {
+            val next = configurationStage.takePending() ?: return
+            if (config?.contentEquals(next.payload) == true &&
+                configuredGeometry == next.geometry && codec != null
+            ) {
+                configurationStage.markApplied(next)
+                continue
+            }
+            val sets = parameterSets(next.payload)
+            if (sets == null) {
+                configurationStage.markRejected(next)
+                onError("Incomplete H.264 codec config", null)
+                continue
+            }
+            frames.clear()
+            received.clear()
+            releaseCodec()
+            var nextCodec: MediaCodec? = null
+            runCatching {
+                val format = MediaFormat.createVideoFormat(
+                    MediaFormat.MIMETYPE_VIDEO_AVC,
+                    next.geometry.rasterWidth,
+                    next.geometry.rasterHeight,
+                ).apply {
+                    setByteBuffer("csd-0", ByteBuffer.wrap(sets.first))
+                    setByteBuffer("csd-1", ByteBuffer.wrap(sets.second))
+                    setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, MAX_PACKET_BYTES)
+                    setInteger(MediaFormat.KEY_FRAME_RATE, next.fps.coerceIn(1, 60))
+                    setInteger(MediaFormat.KEY_LOW_LATENCY, 1)
+                    setInteger(
+                        MediaFormat.KEY_COLOR_FORMAT,
+                        MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible,
+                    )
+                }
+                nextCodec = MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
+                requireNotNull(nextCodec).configure(format, null, null, 0)
+                requireNotNull(nextCodec).start()
+                codec = nextCodec
+                config = next.payload
+                configuredGeometry = next.geometry
+                reportedGeometry = null
+                waitingForKeyFrame = true
+                configurationStage.markApplied(next)
+            }.onFailure {
+                runCatching { nextCodec?.stop() }
+                runCatching { nextCodec?.release() }
+                codec = null
+                configurationStage.markFailed(next)
+                onError("H.264 decoder configure failed", it)
+            }
+        }
+    }
+
+    private fun decode(frame: EncodedFrame) {
+        val decoder = codec ?: return
         runCatching {
-            drainLocked(decoder)
+            drain(decoder)
             val index = decoder.dequeueInputBuffer(DEQUEUE_TIMEOUT_US)
             if (index < 0) return@runCatching
             val input = decoder.getInputBuffer(index) ?: error("Decoder input buffer unavailable")
@@ -169,14 +273,14 @@ internal class LatestFrameDecoder(
             received[frame.id] = Unit
             while (received.size > MAX_RECEIVE_IDS) received.remove(received.keys.first())
             decoder.queueInputBuffer(index, 0, frame.payload.size, frame.id, 0)
-            drainLocked(decoder)
+            drain(decoder)
         }.onFailure {
             received.remove(frame.id)
             onError("H.264 decoder input failed", it)
         }
     }
 
-    private fun drainLocked(decoder: MediaCodec) {
+    private fun drain(decoder: MediaCodec) {
         val info = MediaCodec.BufferInfo()
         while (true) {
             when (val index = decoder.dequeueOutputBuffer(info, 0)) {
@@ -303,7 +407,7 @@ internal class LatestFrameDecoder(
         else -> 0
     }
 
-    private fun releaseCodecLocked() {
+    private fun releaseCodec() {
         runCatching { codec?.stop() }
         runCatching { codec?.release() }
         codec = null
@@ -311,12 +415,11 @@ internal class LatestFrameDecoder(
 
     override fun close() {
         if (!running.compareAndSet(true, false)) return
-        worker.interrupt()
+        configurationStage.close()
         frames.clear()
-        synchronized(lock) {
-            releaseCodecLocked()
-            received.clear()
-        }
+        workAvailable.release()
+        worker.join()
+        frames.clear()
         holder.close()
     }
 
