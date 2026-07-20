@@ -28,6 +28,7 @@ class CameraCompanionController(
     private data class Session(
         val sessionId: String,
         val principal: PhonePluginPrincipal,
+        val openedEnvelope: BusEnvelope,
         val pending: MutableList<BusEnvelope> = mutableListOf(),
         var openDelivered: Boolean = false,
     )
@@ -109,7 +110,13 @@ class CameraCompanionController(
 
     @Synchronized
     fun onBinderDied(key: PluginGrantKey) {
-        active?.takeIf { it.principal.grantKey() == key }?.let { terminate(it, "binder_died") }
+        val session = active?.takeIf { it.principal.grantKey() == key } ?: return
+        if (!session.openDelivered) return
+        session.openDelivered = false
+        session.pending.clear()
+        session.pending += session.openedEnvelope.snapshot()
+        awaitRegistration(session)
+        logger("camera companion registration lost session=${session.sessionId}; waiting for restart")
     }
 
     @Synchronized
@@ -138,20 +145,27 @@ class CameraCompanionController(
             logger("camera session ignored session=$sessionId reason=no_approved_consumer")
             return
         }
-        val session = Session(sessionId, principal).apply { pending += envelope.snapshot() }
+        val openedEnvelope = envelope.snapshot()
+        val session = Session(sessionId, principal, openedEnvelope).apply {
+            pending += openedEnvelope.snapshot()
+        }
         active = session
         if (!runtime.bind(principal)) {
             terminate(session, "bind_failed")
             return
         }
-        scheduler.schedule(timeoutKey(sessionId), REGISTRATION_TIMEOUT_MS) {
+        awaitRegistration(session)
+        if (runtime.isRegistered(principal)) onRegistered(principal)
+    }
+
+    private fun awaitRegistration(session: Session) {
+        scheduler.schedule(timeoutKey(session.sessionId), REGISTRATION_TIMEOUT_MS) {
             synchronized(this) {
-                active?.takeIf { it.sessionId == sessionId && !it.openDelivered }?.let {
+                active?.takeIf { it === session && !it.openDelivered }?.let {
                     terminate(it, "registration_timeout")
                 }
             }
         }
-        if (runtime.isRegistered(principal)) onRegistered(principal)
     }
 
     private fun closeSession(sessionId: String, envelope: BusEnvelope) {

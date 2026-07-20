@@ -142,19 +142,84 @@ class CameraCompanionControllerTest {
     }
 
     @Test
-    fun `binder death and revoke mid session teardown idempotently`() {
+    fun `binder death waits for restart and replays camera session state`() {
+        val runtime = FakeRuntime().apply { registered = true }
+        val scheduler = FakeScheduler()
+        val controller = CameraCompanionController(runtime, scheduler, { principal })
+        controller.onRemoteEnvelope(state("death", "opened"))
+        runtime.registered = false
+        controller.onBinderDied(principal.grantKey())
+        controller.onBinderDied(principal.grantKey())
+        controller.onRemoteEnvelope(offer("death"))
+
+        assertTrue(runtime.unbound.isEmpty())
+        assertEquals("death", controller.activeSessionId())
+
+        runtime.registered = true
+        controller.onRegistered(principal)
+        assertEquals(
+            listOf(
+                BusPaths.PLUGIN_OPEN,
+                BusPaths.CAMERA_SESSION_STATE,
+                BusPaths.PLUGIN_OPEN,
+                BusPaths.CAMERA_SESSION_STATE,
+                BusPaths.CAMERA_LINK_OFFER,
+            ),
+            runtime.deliveries.map { it.first },
+        )
+        assertTrue(scheduler.actions.isEmpty())
+    }
+
+    @Test
+    fun `registration restart timeout releases binding and next session binds fresh`() {
+        val runtime = FakeRuntime().apply { registered = true }
+        val scheduler = FakeScheduler()
+        val controller = CameraCompanionController(runtime, scheduler, { principal })
+        controller.onRemoteEnvelope(state("death", "opened"))
+        runtime.registered = false
+        controller.onBinderDied(principal.grantKey())
+        scheduler.runAll()
+
+        assertEquals(listOf("lens"), runtime.unbound)
+        assertNull(controller.activeSessionId())
+
+        runtime.registered = true
+        controller.onRemoteEnvelope(state("next", "opened"))
+        assertEquals(listOf("lens", "lens"), runtime.bound)
+        assertEquals("next", controller.activeSessionId())
+        assertEquals(BusPaths.CAMERA_SESSION_STATE, runtime.deliveries.last().first)
+    }
+
+    @Test
+    fun `session close after binder death lets next camera open bind fresh`() {
+        val runtime = FakeRuntime().apply { registered = true }
+        val scheduler = FakeScheduler()
+        val controller = CameraCompanionController(runtime, scheduler, { principal })
+        controller.onRemoteEnvelope(state("death", "opened"))
+        runtime.registered = false
+        controller.onBinderDied(principal.grantKey())
+        controller.onRemoteEnvelope(state("death", "closed"))
+
+        assertEquals(listOf("lens"), runtime.unbound)
+        assertNull(controller.activeSessionId())
+        assertTrue(scheduler.actions.isEmpty())
+
+        runtime.registered = true
+        controller.onRemoteEnvelope(state("next", "opened"))
+        assertEquals(listOf("lens", "lens"), runtime.bound)
+        assertEquals("next", controller.activeSessionId())
+        assertEquals(BusPaths.CAMERA_SESSION_STATE, runtime.deliveries.last().first)
+    }
+
+    @Test
+    fun `revoke mid session tears down`() {
         val runtime = FakeRuntime().apply { registered = true }
         val controller = CameraCompanionController(runtime, FakeScheduler(), { principal })
-        controller.onRemoteEnvelope(state("death", "opened"))
-        controller.onBinderDied(principal.grantKey())
-        controller.onBinderDied(principal.grantKey())
-        assertEquals(1, runtime.deliveries.count { it.first == BusPaths.PLUGIN_CLOSE })
-        assertEquals(listOf("lens"), runtime.unbound)
 
         controller.onRemoteEnvelope(state("revoke", "opened"))
         controller.onRevoked(principal.grantKey())
-        assertEquals(2, runtime.deliveries.count { it.first == BusPaths.PLUGIN_CLOSE })
-        assertEquals(listOf("lens", "lens"), runtime.unbound)
+        assertEquals(1, runtime.deliveries.count { it.first == BusPaths.PLUGIN_CLOSE })
+        assertEquals(listOf("lens"), runtime.unbound)
     }
 
     @Test
