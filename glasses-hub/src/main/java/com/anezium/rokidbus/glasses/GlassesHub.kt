@@ -272,7 +272,12 @@ object GlassesHub {
             if (envelope.payload.optString("action") == "join") {
                 val ssid = envelope.payload.optString("ssid")
                 val passphrase = envelope.payload.optString("passphrase")
-                if (ssid.isBlank() || ssid.length > 128 || passphrase.length !in 8..128) {
+                val security = WifiConnectSecurity.fromCommandKeyword(
+                    envelope.payload.optString("security", WifiConnectSecurity.WPA2.commandKeyword),
+                )
+                if (ssid.isBlank() || ssid.length > 128 || security == null ||
+                    !security.isValidPassphrase(passphrase)
+                ) {
                     log("glassesWifiJoin rejected reason=invalid_payload")
                     return
                 }
@@ -287,7 +292,12 @@ object GlassesHub {
                     wifiDisableFuture = null
                     handleGlassesWifiRequest(context, true)
                     val applied = runCatching {
-                        SelfArmCommandBridgeClient.connectWifiNetwork(context, ssid, passphrase)
+                        SelfArmCommandBridgeClient.connectWifiNetwork(
+                            context,
+                            ssid,
+                            passphrase,
+                            security,
+                        )
                     }.onFailure {
                         logError("glassesWifiJoin bridge failed", it)
                     }.getOrDefault(false)

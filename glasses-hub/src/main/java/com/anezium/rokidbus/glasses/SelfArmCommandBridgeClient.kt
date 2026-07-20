@@ -12,6 +12,24 @@ import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.UUID
 
+internal enum class WifiConnectSecurity(val commandKeyword: String) {
+    OPEN("open"),
+    WPA2("wpa2"),
+    WPA3("wpa3"),
+    ;
+
+    fun isValidPassphrase(passphrase: String): Boolean = when (this) {
+        OPEN -> passphrase.isEmpty()
+        WPA2, WPA3 -> passphrase.length in 8..128
+    }
+
+    companion object {
+        fun fromCommandKeyword(value: String?): WifiConnectSecurity? = entries.firstOrNull {
+            it.commandKeyword == value
+        }
+    }
+}
+
 internal object SelfArmCommandBridgeProtocol {
     const val WIFI_ENABLE = "wifi_enable"
     const val WIFI_DISABLE = "wifi_disable"
@@ -87,9 +105,15 @@ internal object SelfArmCommandBridgeProtocol {
         val arguments = fields.subList(2, fields.lastIndex)
         val validShape = when (command) {
             WIFI_ENABLE, WIFI_DISABLE -> arguments.isEmpty()
-            WIFI_CONNECT -> arguments.size == 2 && arguments.all {
-                it.length in 1..172 && encodedArgumentRegex.matches(it)
-            }
+            WIFI_CONNECT -> arguments.size == 3 &&
+                arguments[0].length in 1..172 && encodedArgumentRegex.matches(arguments[0]) &&
+                when (WifiConnectSecurity.fromCommandKeyword(arguments[2])) {
+                    WifiConnectSecurity.OPEN -> arguments[1].isEmpty()
+                    WifiConnectSecurity.WPA2,
+                    WifiConnectSecurity.WPA3,
+                    -> arguments[1].length in 1..172 && encodedArgumentRegex.matches(arguments[1])
+                    null -> false
+                }
             else -> false
         }
         if (!validShape) return Verification.Rejected("format")
@@ -135,16 +159,20 @@ internal object SelfArmCommandBridgeClient {
         context: Context,
         ssid: String,
         passphrase: String,
+        security: WifiConnectSecurity = WifiConnectSecurity.WPA2,
         timeoutMs: Long = DEFAULT_TIMEOUT_MS,
     ): Boolean {
-        if (ssid.isBlank() || ssid.length > 128 || passphrase.length !in 8..128 || timeoutMs <= 0L) {
+        if (ssid.isBlank() || ssid.length > 128 || !security.isValidPassphrase(passphrase) ||
+            timeoutMs <= 0L
+        ) {
             return false
         }
         val arguments = listOf(
             Base64.encodeToString(ssid.toByteArray(Charsets.UTF_8), Base64.NO_WRAP),
             Base64.encodeToString(passphrase.toByteArray(Charsets.UTF_8), Base64.NO_WRAP),
+            security.commandKeyword,
         )
-        if (arguments.any { it.length !in 1..172 }) return false
+        if (arguments[0].length !in 1..172 || arguments[1].length > 172) return false
         val wifiManager = context.applicationContext.getSystemService(WifiManager::class.java)
             ?: return false
         if (isConnectedTo(wifiManager, ssid)) return true

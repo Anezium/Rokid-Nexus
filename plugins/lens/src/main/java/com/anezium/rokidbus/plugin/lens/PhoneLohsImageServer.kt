@@ -2,6 +2,7 @@ package com.anezium.rokidbus.plugin.lens
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.net.wifi.SoftApConfiguration
 import android.net.wifi.WifiManager
 import android.os.Handler
 import android.os.Looper
@@ -11,6 +12,7 @@ import com.anezium.rokidbus.shared.CameraLinkMode
 import com.anezium.rokidbus.shared.CameraLinkPacket
 import com.anezium.rokidbus.shared.CameraLinkPacketType
 import com.anezium.rokidbus.shared.CameraLinkProtocol
+import com.anezium.rokidbus.shared.CameraLinkSecurity
 import org.json.JSONObject
 import java.net.InetSocketAddress
 import java.net.ServerSocket
@@ -62,13 +64,24 @@ internal class PhoneLohsImageServer(
                 return
             }
             val configuration = startedReservation.softApConfiguration
+            val security = cameraLinkSecurityForSoftAp(configuration.securityType)
+            if (security == null) {
+                fail("lensLinkLohsUnsupportedSecurity")
+                return
+            }
             val ssid = configuration.ssid
-            val passphrase = configuration.passphrase
-            if (ssid.isNullOrBlank() || passphrase.isNullOrBlank()) {
+            val passphrase = configuration.passphrase.orEmpty()
+            val validPassphrase = when (security) {
+                CameraLinkSecurity.OPEN -> passphrase.isEmpty()
+                CameraLinkSecurity.WPA2_PSK,
+                CameraLinkSecurity.WPA3_SAE,
+                -> passphrase.length in 8..128
+            }
+            if (ssid.isNullOrBlank() || !validPassphrase) {
                 fail("lensLinkLohsInvalidConfiguration")
                 return
             }
-            runCatching { executor.execute { startServer(ssid, passphrase) } }
+            runCatching { executor.execute { startServer(ssid, passphrase, security) } }
                 .onFailure { fail("lensLinkLohsServerDispatchFailed") }
         }
 
@@ -94,7 +107,7 @@ internal class PhoneLohsImageServer(
             .onFailure { fail("lensLinkLohsStartException type=${it.javaClass.simpleName}") }
     }
 
-    private fun startServer(ssid: String, passphrase: String) {
+    private fun startServer(ssid: String, passphrase: String, security: CameraLinkSecurity) {
         if (!running.get()) return
         val server = runCatching {
             ServerSocket().apply {
@@ -117,6 +130,7 @@ internal class PhoneLohsImageServer(
             port = sourceOffer.port,
             token = sourceOffer.token,
             mode = CameraLinkMode.LOHS_REVERSE,
+            security = security,
         )
         logger("cameraLinkStage stage=lohs_started elapsedMs=${stageElapsedMs().coerceAtLeast(0L)}")
         sendOfferAndScheduleRetry()
@@ -244,4 +258,13 @@ internal class PhoneLohsImageServer(
         const val PROBE_BYTES = 512 * 1024
         const val OFFER_RETRY_MS = 2_500L
     }
+}
+
+internal fun cameraLinkSecurityForSoftAp(securityType: Int): CameraLinkSecurity? = when (securityType) {
+    SoftApConfiguration.SECURITY_TYPE_OPEN -> CameraLinkSecurity.OPEN
+    SoftApConfiguration.SECURITY_TYPE_WPA2_PSK,
+    SoftApConfiguration.SECURITY_TYPE_WPA3_SAE_TRANSITION,
+    -> CameraLinkSecurity.WPA2_PSK
+    SoftApConfiguration.SECURITY_TYPE_WPA3_SAE -> CameraLinkSecurity.WPA3_SAE
+    else -> null
 }

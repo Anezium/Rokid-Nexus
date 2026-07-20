@@ -10,7 +10,7 @@ SEENFILE="$BASE/$NAME.seen"
 PENDING_DISABLE="$BASE/$NAME.pending-disable"
 CHANNEL="/sdcard/Android/data/com.anezium.rokidbus.glasses/files/cmd_bridge"
 DOORBELL="$CHANNEL/doorbell"
-VERSION="2026-07-20.1"
+VERSION="2026-07-21.1"
 SECRET="__ROKID_NEXUS_BRIDGE_SECRET_HEX__"
 POLL_INTERVAL=1
 DISABLE_DELAY=2
@@ -172,7 +172,7 @@ process_request() {
 
   request_line="$(cat "$request_file" 2>/dev/null)"
   old_ifs="$IFS"
-  IFS=':' read -r command nonce field3 field4 field5 extra <<EOF
+  IFS=':' read -r command nonce field3 field4 field5 field6 extra <<EOF
 $request_line
 EOF
   IFS="$old_ifs"
@@ -183,7 +183,8 @@ EOF
   case "$command" in
     wifi_enable|wifi_disable)
       token="$field3"
-      if [ -n "$field4" ] || [ -n "$field5" ] || [ "$request_line" != "$command:$nonce:$token" ]; then
+      if [ -n "$field4" ] || [ -n "$field5" ] || [ -n "$field6" ] ||
+        [ "$request_line" != "$command:$nonce:$token" ]; then
         reject_request "$request_file" "$file_nonce" format
         return
       fi
@@ -192,19 +193,33 @@ EOF
     wifi_connect)
       ssid_encoded="$field3"
       passphrase_encoded="$field4"
-      token="$field5"
-      case "$ssid_encoded:$passphrase_encoded" in
-        *[!A-Za-z0-9+/=:]*)
+      security="$field5"
+      token="$field6"
+      case "$ssid_encoded" in
+        ""|*[!A-Za-z0-9+/=]*)
           reject_request "$request_file" "$file_nonce" format
           return
           ;;
       esac
-      if [ -z "$ssid_encoded" ] || [ -z "$passphrase_encoded" ] || [ -z "$token" ] ||
-        [ "$request_line" != "$command:$nonce:$ssid_encoded:$passphrase_encoded:$token" ]; then
+      case "$passphrase_encoded" in
+        *[!A-Za-z0-9+/=]*)
+          reject_request "$request_file" "$file_nonce" format
+          return
+          ;;
+      esac
+      case "$security" in
+        open|wpa2|wpa3) ;;
+        *)
+          reject_request "$request_file" "$file_nonce" format
+          return
+          ;;
+      esac
+      if [ -z "$token" ] ||
+        [ "$request_line" != "$command:$nonce:$ssid_encoded:$passphrase_encoded:$security:$token" ]; then
         reject_request "$request_file" "$file_nonce" format
         return
       fi
-      token_input="${SECRET}:${command}:${nonce}:${ssid_encoded}:${passphrase_encoded}"
+      token_input="${SECRET}:${command}:${nonce}:${ssid_encoded}:${passphrase_encoded}:${security}"
       ;;
     *)
       reject_request "$request_file" "$file_nonce" command
@@ -262,16 +277,36 @@ EOF
         ! passphrase="$(printf '%s' "$passphrase_encoded" | base64 -d 2>/dev/null)"; then
         write_response "$nonce" error decode_failed
         log_line "command failed command=wifi_connect nonce=$nonce reason=decode"
-      elif [ -z "$ssid" ] || [ "${#ssid}" -gt 128 ] ||
-        [ "${#passphrase}" -lt 8 ] || [ "${#passphrase}" -gt 128 ]; then
+      elif [ -z "$ssid" ] || [ "${#ssid}" -gt 128 ]; then
         write_response "$nonce" error credentials_invalid
         log_line "command failed command=wifi_connect nonce=$nonce reason=credentials"
-      elif cmd wifi connect-network "$ssid" wpa2 "$passphrase" >/dev/null 2>&1; then
-        write_response "$nonce" ok ""
-        log_line "command completed command=wifi_connect nonce=$nonce"
       else
-        write_response "$nonce" error command_failed
-        log_line "command failed command=wifi_connect nonce=$nonce"
+        case "$security" in
+          open)
+            if [ -n "$passphrase" ]; then
+              write_response "$nonce" error credentials_invalid
+              log_line "command failed command=wifi_connect nonce=$nonce reason=credentials"
+            elif cmd wifi connect-network "$ssid" open >/dev/null 2>&1; then
+              write_response "$nonce" ok ""
+              log_line "command completed command=wifi_connect nonce=$nonce security=$security"
+            else
+              write_response "$nonce" error command_failed
+              log_line "command failed command=wifi_connect nonce=$nonce security=$security"
+            fi
+            ;;
+          wpa2|wpa3)
+            if [ "${#passphrase}" -lt 8 ] || [ "${#passphrase}" -gt 128 ]; then
+              write_response "$nonce" error credentials_invalid
+              log_line "command failed command=wifi_connect nonce=$nonce reason=credentials"
+            elif cmd wifi connect-network "$ssid" "$security" "$passphrase" >/dev/null 2>&1; then
+              write_response "$nonce" ok ""
+              log_line "command completed command=wifi_connect nonce=$nonce security=$security"
+            else
+              write_response "$nonce" error command_failed
+              log_line "command failed command=wifi_connect nonce=$nonce security=$security"
+            fi
+            ;;
+        esac
       fi
       ;;
   esac

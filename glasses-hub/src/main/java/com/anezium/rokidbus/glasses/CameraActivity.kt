@@ -490,14 +490,18 @@ class CameraActivity : Activity(), TextureView.SurfaceTextureListener {
         cameraLink?.acceptReverseOffer(offer)
     }
 
-    private fun requestLohsJoin(offer: CameraLinkEndpointOffer) {
+    private fun requestLohsJoin(
+        offer: CameraLinkEndpointOffer,
+        security: WifiConnectSecurity,
+    ) {
         if (offer.sessionId != sessionId || offer.mode != CameraLinkMode.LOHS_REVERSE) return
         busClient?.send(
             BusPaths.GLASSES_WIFI_REQUEST,
             JSONObject()
                 .put("action", "join")
                 .put("ssid", offer.ssid)
-                .put("passphrase", offer.passphrase),
+                .put("passphrase", offer.passphrase)
+                .put("security", security.commandKeyword),
         )
     }
 

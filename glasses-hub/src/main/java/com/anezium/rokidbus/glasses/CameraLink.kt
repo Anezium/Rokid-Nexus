@@ -23,6 +23,7 @@ import com.anezium.rokidbus.shared.CameraLinkPacketType
 import com.anezium.rokidbus.shared.CameraLinkProtocol
 import com.anezium.rokidbus.shared.CameraLinkEndpointOffer
 import com.anezium.rokidbus.shared.CameraLinkMode
+import com.anezium.rokidbus.shared.CameraLinkSecurity
 import org.json.JSONObject
 import java.net.Inet4Address
 import java.net.InetSocketAddress
@@ -45,6 +46,12 @@ internal data class CameraLinkOffer(
 
 private enum class CameraLinkTransportRole { P2P_SERVER, LOHS_CLIENT }
 
+internal fun CameraLinkSecurity.toWifiConnectSecurity(): WifiConnectSecurity = when (this) {
+    CameraLinkSecurity.OPEN -> WifiConnectSecurity.OPEN
+    CameraLinkSecurity.WPA2_PSK -> WifiConnectSecurity.WPA2
+    CameraLinkSecurity.WPA3_SAE -> WifiConnectSecurity.WPA3
+}
+
 /** Activity-scoped camera data plane. The server remains listening across client crashes. */
 internal class CameraLink(
     context: Context,
@@ -52,7 +59,7 @@ internal class CameraLink(
     private val onOfferReady: (CameraLinkOffer, Int) -> Unit,
     private val onAuthenticated: (Boolean) -> Unit,
     private val onFrozenTransferFinished: (Long) -> Unit,
-    private val onWifiJoinRequested: (CameraLinkEndpointOffer) -> Unit,
+    private val onWifiJoinRequested: (CameraLinkEndpointOffer, WifiConnectSecurity) -> Unit,
     private val onState: (String) -> Unit,
 ) : AutoCloseable {
     private val appContext = context.applicationContext
@@ -312,7 +319,7 @@ internal class CameraLink(
         state("JOINING PHONE HOTSPOT")
         reverseJoinReady = true
         reverseJoinStartedAtMs = SystemClock.elapsedRealtime()
-        onWifiJoinRequested(offer)
+        onWifiJoinRequested(offer, offer.security.toWifiConnectSecurity())
         scheduleReverseNetworkPoll(0L, resetDeadline = false)
     }
 

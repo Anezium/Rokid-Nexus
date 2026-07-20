@@ -36,8 +36,8 @@ class SelfArmCommandBridgeProtocolTest {
     }
 
     @Test
-    fun authenticatedConnectRequestCarriesEncodedCredentials() {
-        val arguments = listOf("QW5kcm9pZFNoYXJlXzEyMzQ=", "YWJjZGVmZ2gxMjM0")
+    fun authenticatedConnectRequestCarriesEncodedCredentialsAndSecurity() {
+        val arguments = listOf("QW5kcm9pZFNoYXJlXzEyMzQ=", "YWJjZGVmZ2gxMjM0", "wpa3")
         val request = SelfArmCommandBridgeProtocol.request(
             SECRET,
             SelfArmCommandBridgeProtocol.WIFI_CONNECT,
@@ -54,12 +54,48 @@ class SelfArmCommandBridgeProtocolTest {
             SelfArmCommandBridgeProtocol.verify(request, SECRET, emptySet()),
         )
         assertEquals(
-            SelfArmCommandBridgeProtocol.Verification.Rejected("format"),
+            SelfArmCommandBridgeProtocol.Verification.Rejected("auth"),
             SelfArmCommandBridgeProtocol.verify(
-                "wifi_connect:$NONCE:not-base64!:YWJjZGVmZ2g=:${"0".repeat(64)}\n",
+                request.replace(":wpa3:", ":wpa2:"),
                 SECRET,
                 emptySet(),
             ),
+        )
+        assertEquals(
+            SelfArmCommandBridgeProtocol.Verification.Rejected("format"),
+            SelfArmCommandBridgeProtocol.verify(
+                "wifi_connect:$NONCE:not-base64!:YWJjZGVmZ2g=:wpa3:${"0".repeat(64)}\n",
+                SECRET,
+                emptySet(),
+            ),
+        )
+        assertEquals(
+            SelfArmCommandBridgeProtocol.Verification.Rejected("format"),
+            SelfArmCommandBridgeProtocol.verify(
+                "wifi_connect:$NONCE:QW5kcm9pZFNoYXJlXzEyMzQ=:YWJjZGVmZ2g=:future:${"0".repeat(64)}\n",
+                SECRET,
+                emptySet(),
+            ),
+        )
+    }
+
+    @Test
+    fun authenticatedOpenConnectRequestCarriesNoPassphrase() {
+        val arguments = listOf("QW5kcm9pZFNoYXJlX09wZW4=", "", "open")
+        val request = SelfArmCommandBridgeProtocol.request(
+            SECRET,
+            SelfArmCommandBridgeProtocol.WIFI_CONNECT,
+            NONCE,
+            arguments,
+        )
+
+        assertEquals(
+            SelfArmCommandBridgeProtocol.Verification.Accepted(
+                SelfArmCommandBridgeProtocol.WIFI_CONNECT,
+                NONCE,
+                arguments,
+            ),
+            SelfArmCommandBridgeProtocol.verify(request, SECRET, emptySet()),
         )
     }
 
