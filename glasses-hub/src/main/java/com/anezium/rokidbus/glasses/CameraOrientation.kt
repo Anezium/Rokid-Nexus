@@ -47,6 +47,13 @@ internal object CameraOrientation {
         landscapeSize: CameraPixelSize = CameraPixelSize(1_280, 720),
     ): CameraStreamPlan? {
         val requiredRotation = normalizeRightAngle(sensorToDisplayRotationDegrees)
+        if (portraitSize in availableOutputSizes && requiredRotation in availableHardwareRotationDegrees) {
+            return CameraStreamPlan(
+                rasterSize = portraitSize,
+                requestedHardwareRotationDegrees = requiredRotation,
+                remainingRotationDegrees = 0,
+            )
+        }
         if (landscapeSize in availableOutputSizes && 0 in availableHardwareRotationDegrees &&
             requiredRotation in setOf(90, 270)
         ) {
