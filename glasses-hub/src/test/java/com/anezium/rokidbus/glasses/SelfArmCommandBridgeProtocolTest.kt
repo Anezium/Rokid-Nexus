@@ -25,7 +25,7 @@ class SelfArmCommandBridgeProtocolTest {
     }
 
     @Test
-    fun rejectsCommandsOutsideTheTwoLiteralWhitelist() {
+    fun rejectsCommandsOutsideTheLiteralWhitelist() {
         val result = SelfArmCommandBridgeProtocol.verify(
             "reboot:$NONCE:${"0".repeat(64)}\n",
             SECRET,
@@ -33,6 +33,34 @@ class SelfArmCommandBridgeProtocolTest {
         )
 
         assertEquals(SelfArmCommandBridgeProtocol.Verification.Rejected("command"), result)
+    }
+
+    @Test
+    fun authenticatedConnectRequestCarriesEncodedCredentials() {
+        val arguments = listOf("QW5kcm9pZFNoYXJlXzEyMzQ=", "YWJjZGVmZ2gxMjM0")
+        val request = SelfArmCommandBridgeProtocol.request(
+            SECRET,
+            SelfArmCommandBridgeProtocol.WIFI_CONNECT,
+            NONCE,
+            arguments,
+        )
+
+        assertEquals(
+            SelfArmCommandBridgeProtocol.Verification.Accepted(
+                SelfArmCommandBridgeProtocol.WIFI_CONNECT,
+                NONCE,
+                arguments,
+            ),
+            SelfArmCommandBridgeProtocol.verify(request, SECRET, emptySet()),
+        )
+        assertEquals(
+            SelfArmCommandBridgeProtocol.Verification.Rejected("format"),
+            SelfArmCommandBridgeProtocol.verify(
+                "wifi_connect:$NONCE:not-base64!:YWJjZGVmZ2g=:${"0".repeat(64)}\n",
+                SECRET,
+                emptySet(),
+            ),
+        )
     }
 
     @Test

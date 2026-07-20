@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.wifi.WifiManager
 import android.system.Os
 import android.system.OsConstants
+import android.util.Base64
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
@@ -14,34 +15,60 @@ import java.util.UUID
 internal object SelfArmCommandBridgeProtocol {
     const val WIFI_ENABLE = "wifi_enable"
     const val WIFI_DISABLE = "wifi_disable"
-    const val MAX_REQUEST_BYTES = 160
+    const val WIFI_CONNECT = "wifi_connect"
+    const val MAX_REQUEST_BYTES = 512
     private val secretRegex = Regex("[0-9a-f]{64}")
     private val nonceRegex = Regex("[0-9a-f]{32}")
     private val tokenRegex = Regex("[0-9a-f]{64}")
-    private val allowedCommands = setOf(WIFI_ENABLE, WIFI_DISABLE)
+    private val encodedArgumentRegex = Regex("[A-Za-z0-9+/]+={0,2}")
+    private val allowedCommands = setOf(WIFI_ENABLE, WIFI_DISABLE, WIFI_CONNECT)
 
     sealed interface Verification {
-        data class Accepted(val command: String, val nonce: String) : Verification
+        data class Accepted(
+            val command: String,
+            val nonce: String,
+            val arguments: List<String> = emptyList(),
+        ) : Verification
         data class Rejected(val reason: String) : Verification
     }
 
-    fun token(secretHex: String, command: String, nonce: String): String {
+    fun token(
+        secretHex: String,
+        command: String,
+        nonce: String,
+        arguments: List<String> = emptyList(),
+    ): String {
         require(secretRegex.matches(secretHex)) { "Secret must be 32-byte lowercase hex" }
         require(command in allowedCommands) { "Command is not allowed" }
         require(nonceRegex.matches(nonce)) { "Nonce must be 16-byte lowercase hex" }
         // Android 11+ scoped storage already prevents another app from writing this app's
         // external-files channel. The prefix-keyed digest is defense-in-depth for that threat.
         // SHA-256 length extension cannot yield an accepted request: the parser requires the
-        // exact fixed command:nonce form, only two literal commands exist, and an attacker cannot
-        // write the channel directory in the first place.
-        val input = "$secretHex:$command:$nonce".toByteArray(Charsets.UTF_8)
+        // exact command shape and authenticated arguments, and an attacker cannot write the
+        // channel directory in the first place.
+        require(arguments.none { ':' in it || '\n' in it }) { "Invalid command argument" }
+        val input = buildList {
+            add(secretHex)
+            add(command)
+            add(nonce)
+            addAll(arguments)
+        }.joinToString(":").toByteArray(Charsets.UTF_8)
         return MessageDigest.getInstance("SHA-256")
             .digest(input)
             .joinToString("") { byte -> "%02x".format(byte) }
     }
 
-    fun request(secretHex: String, command: String, nonce: String): String =
-        "$command:$nonce:${token(secretHex, command, nonce)}\n"
+    fun request(
+        secretHex: String,
+        command: String,
+        nonce: String,
+        arguments: List<String> = emptyList(),
+    ): String = buildList {
+        add(command)
+        add(nonce)
+        addAll(arguments)
+        add(token(secretHex, command, nonce, arguments))
+    }.joinToString(":", postfix = "\n")
 
     fun verify(request: String, secretHex: String, seenNonces: Set<String>): Verification {
         if (request.toByteArray(Charsets.UTF_8).size !in 1..MAX_REQUEST_BYTES) {
@@ -52,18 +79,29 @@ internal object SelfArmCommandBridgeProtocol {
         }
         if (!secretRegex.matches(secretHex)) return Verification.Rejected("secret")
         val fields = request.dropLast(1).split(':')
-        if (fields.size != 3) return Verification.Rejected("format")
-        val (command, nonce, suppliedToken) = fields
+        if (fields.size < 3) return Verification.Rejected("format")
+        val command = fields.first()
+        val nonce = fields.getOrNull(1).orEmpty()
+        val suppliedToken = fields.last()
         if (command !in allowedCommands) return Verification.Rejected("command")
+        val arguments = fields.subList(2, fields.lastIndex)
+        val validShape = when (command) {
+            WIFI_ENABLE, WIFI_DISABLE -> arguments.isEmpty()
+            WIFI_CONNECT -> arguments.size == 2 && arguments.all {
+                it.length in 1..172 && encodedArgumentRegex.matches(it)
+            }
+            else -> false
+        }
+        if (!validShape) return Verification.Rejected("format")
         if (!nonceRegex.matches(nonce) || !tokenRegex.matches(suppliedToken)) {
             return Verification.Rejected("format")
         }
         if (nonce in seenNonces) return Verification.Rejected("replay")
-        val expectedToken = token(secretHex, command, nonce)
+        val expectedToken = token(secretHex, command, nonce, arguments)
         if (!MessageDigest.isEqual(expectedToken.toByteArray(), suppliedToken.toByteArray())) {
             return Verification.Rejected("auth")
         }
-        return Verification.Accepted(command, nonce)
+        return Verification.Accepted(command, nonce, arguments)
     }
 
     fun isValidSecret(secretHex: String): Boolean = secretRegex.matches(secretHex)
@@ -91,6 +129,31 @@ internal object SelfArmCommandBridgeClient {
             SelfArmCommandBridgeProtocol.WIFI_DISABLE
         }
         return execute(context.applicationContext, command, enabled, timeoutMs)
+    }
+
+    fun connectWifiNetwork(
+        context: Context,
+        ssid: String,
+        passphrase: String,
+        timeoutMs: Long = DEFAULT_TIMEOUT_MS,
+    ): Boolean {
+        if (ssid.isBlank() || ssid.length > 128 || passphrase.length !in 8..128 || timeoutMs <= 0L) {
+            return false
+        }
+        val arguments = listOf(
+            Base64.encodeToString(ssid.toByteArray(Charsets.UTF_8), Base64.NO_WRAP),
+            Base64.encodeToString(passphrase.toByteArray(Charsets.UTF_8), Base64.NO_WRAP),
+        )
+        if (arguments.any { it.length !in 1..172 }) return false
+        val wifiManager = context.applicationContext.getSystemService(WifiManager::class.java)
+            ?: return false
+        if (isConnectedTo(wifiManager, ssid)) return true
+        return submit(
+            context.applicationContext,
+            SelfArmCommandBridgeProtocol.WIFI_CONNECT,
+            arguments,
+            timeoutMs,
+        ) { awaitWifiNetwork(wifiManager, ssid, timeoutMs) }
     }
 
     internal fun ensureSecretHex(context: Context): String = synchronized(secretLock) {
@@ -146,22 +209,38 @@ internal object SelfArmCommandBridgeClient {
 
     private fun execute(context: Context, command: String, targetEnabled: Boolean, timeoutMs: Long): Boolean {
         if (timeoutMs <= 0L) return false
-        val secret = loadSecretHex(context) ?: return false
-        val channel = ensureChannelDir(context) ?: return false
         val wifiManager = context.getSystemService(WifiManager::class.java) ?: return false
         // Success is confirmed by observing the Wi-Fi state in-process rather than by reading a
         // response file the shell bridge writes: a file created by the bridge's (shell) uid can be
         // hidden from the app's uid for seconds by the FUSE negative-dentry cache, which made every
         // request look like it failed. Watching WifiManager avoids the cross-uid channel entirely.
         if (isWifiEnabledSafe(wifiManager) == targetEnabled) return true
+        return submit(context, command, emptyList(), timeoutMs) {
+            awaitWifiState(wifiManager, targetEnabled, timeoutMs)
+        }
+    }
+
+    private fun submit(
+        context: Context,
+        command: String,
+        arguments: List<String>,
+        timeoutMs: Long,
+        awaitResult: () -> Boolean,
+    ): Boolean {
+        val secret = loadSecretHex(context) ?: return false
+        val channel = ensureChannelDir(context) ?: return false
         val nonce = randomHex(16)
         val requestFile = File(channel, "$nonce.request")
         val tempFile = File(channel, ".$nonce.request.${UUID.randomUUID()}.tmp")
         return try {
-            tempFile.writeText(SelfArmCommandBridgeProtocol.request(secret, command, nonce))
+            val request = SelfArmCommandBridgeProtocol.request(secret, command, nonce, arguments)
+            if (request.toByteArray(Charsets.UTF_8).size > SelfArmCommandBridgeProtocol.MAX_REQUEST_BYTES) {
+                return false
+            }
+            tempFile.writeText(request)
             if (!tempFile.renameTo(requestFile)) return false
             ringDoorbell(File(channel, DOORBELL_NAME), nonce)
-            awaitWifiState(wifiManager, targetEnabled, timeoutMs)
+            awaitResult()
         } catch (interrupted: InterruptedException) {
             Thread.currentThread().interrupt()
             false
@@ -176,11 +255,32 @@ internal object SelfArmCommandBridgeClient {
     private fun isWifiEnabledSafe(wifiManager: WifiManager): Boolean =
         runCatching { wifiManager.isWifiEnabled }.getOrDefault(false)
 
+    @Suppress("DEPRECATION")
+    private fun isConnectedTo(wifiManager: WifiManager, targetSsid: String): Boolean =
+        runCatching {
+            LohsGatewayResolver.normalizeSsid(wifiManager.connectionInfo?.ssid) == targetSsid
+        }.getOrDefault(false)
+
     @Throws(InterruptedException::class)
     private fun awaitWifiState(wifiManager: WifiManager, target: Boolean, timeoutMs: Long): Boolean {
         val deadline = System.nanoTime() + timeoutMs * 1_000_000L
         while (System.nanoTime() < deadline) {
             if (isWifiEnabledSafe(wifiManager) == target) return true
+            Thread.sleep(RESPONSE_POLL_MS)
+        }
+        return false
+    }
+
+    @Suppress("DEPRECATION")
+    @Throws(InterruptedException::class)
+    private fun awaitWifiNetwork(
+        wifiManager: WifiManager,
+        targetSsid: String,
+        timeoutMs: Long,
+    ): Boolean {
+        val deadline = System.nanoTime() + timeoutMs * 1_000_000L
+        while (System.nanoTime() < deadline) {
+            if (isConnectedTo(wifiManager, targetSsid)) return true
             Thread.sleep(RESPONSE_POLL_MS)
         }
         return false
