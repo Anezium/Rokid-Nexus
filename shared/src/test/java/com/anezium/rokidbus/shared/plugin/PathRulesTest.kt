@@ -48,5 +48,7 @@ class PathRulesTest {
             PluginCapability.CAMERA,
             PathRules.requiredCapabilityForReceivePrefix("/camera/link/offer"),
         )
+        assertEquals(PluginCapability.CAMERA, PathRules.requiredCapability("/camera/link/offer"))
+        assertNull(PathRules.requiredCapability("/camera/session/state"))
     }
 }
