@@ -11,6 +11,7 @@ import android.text.Spanned
 import android.text.TextUtils
 import android.text.style.ForegroundColorSpan
 import android.text.style.RelativeSizeSpan
+import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.widget.LinearLayout
@@ -142,8 +143,9 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
         imageView.visibility = GONE
         boardView.visibility = GONE
         currentView.visibility = VISIBLE
-        currentView.textSize = TIMED_BODY_SP
+        // Long lyric lines must never lose their tail: shrink to fit instead of clipping.
         currentView.maxLines = TIMED_BODY_MAX_LINES
+        fitTimedBody()
         currentView.gravity = Gravity.CENTER
         currentView.textAlignment = TEXT_ALIGNMENT_CENTER
         val index = currentTimedIndex(surface)
@@ -155,6 +157,19 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
             ?: ""
         nextView.text = surface.timedLines.getOrNull(index + 1)?.text.orEmpty()
         nextView.visibility = visibleIf(nextView.text.isNotBlank())
+    }
+
+    private fun fitTimedBody() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            currentView.setAutoSizeTextTypeUniformWithConfiguration(
+                TIMED_BODY_MIN_SP,
+                TIMED_BODY_MAX_SP,
+                TIMED_BODY_STEP_SP,
+                TypedValue.COMPLEX_UNIT_SP,
+            )
+        } else {
+            currentView.textSize = TIMED_BODY_SP
+        }
     }
 
     private fun renderCard(surface: NexusSurface) {
@@ -193,6 +208,9 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
     private fun renderPlainCard(rows: List<SurfaceRow>) {
         boardView.visibility = GONE
         currentView.visibility = VISIBLE
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            currentView.setAutoSizeTextTypeWithDefaults(TextView.AUTO_SIZE_TEXT_TYPE_NONE)
+        }
         currentView.textSize = CARD_BODY_SP
         currentView.maxLines = CARD_BODY_MAX_LINES
         // Plain cards align as a left block; per-line centering scatters the columns.
@@ -360,6 +378,11 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
         private const val CARD_BODY_MAX_LINES = 15
         private const val TIMED_BODY_SP = 25f
         private const val TIMED_BODY_MAX_LINES = 5
+
+        // Lyrics auto-fit: keep the big size for short lines, shrink long ones to fit.
+        private const val TIMED_BODY_MAX_SP = 25
+        private const val TIMED_BODY_MIN_SP = 14
+        private const val TIMED_BODY_STEP_SP = 1
 
         // Structured board rows: badge chip, destination, wait times.
         private const val BOARD_BADGE_SP = 15f
