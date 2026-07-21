@@ -21,11 +21,11 @@ class AndroidExternalPluginRuntime(
     private val connections = ConcurrentHashMap<PluginGrantKey, ServiceConnection>()
 
     override fun bind(principal: PhonePluginPrincipal): Boolean {
-        if (connections.containsKey(principal.grantKey())) return true
+        val key = principal.grantKey()
         val connection = object : ServiceConnection {
             override fun onServiceConnected(name: android.content.ComponentName, service: android.os.IBinder) = Unit
             override fun onServiceDisconnected(name: android.content.ComponentName) {
-                releaseDeadBinding()
+                if (connections[key] === this) disconnectedCallback(principal)
             }
 
             override fun onBindingDied(name: android.content.ComponentName) {
@@ -37,11 +37,12 @@ class AndroidExternalPluginRuntime(
             }
 
             private fun releaseDeadBinding() {
-                val wasCurrent = connections.remove(principal.grantKey(), this)
+                val wasCurrent = connections.remove(key, this)
                 runCatching { context.unbindService(this) }
                 if (wasCurrent) disconnectedCallback(principal)
             }
         }
+        if (connections.putIfAbsent(key, connection) != null) return true
         val bound = runCatching {
             context.bindService(
                 Intent(BusConstants.ACTION_PLUGIN).setComponent(principal.serviceComponent),
@@ -52,7 +53,7 @@ class AndroidExternalPluginRuntime(
                 Context.BIND_AUTO_CREATE or Context.BIND_IMPORTANT,
             )
         }.getOrDefault(false)
-        if (bound) connections[principal.grantKey()] = connection
+        if (!bound) connections.remove(key, connection)
         return bound
     }
 

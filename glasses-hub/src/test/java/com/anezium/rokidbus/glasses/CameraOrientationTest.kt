@@ -19,7 +19,7 @@ class CameraOrientationTest {
     }
 
     @Test
-    fun `RG plan preserves validated encoded contract when rotate and crop is advertised`() {
+    fun `future HAL uses an advertised hardware rotation`() {
         val plan = CameraOrientation.selectStreamPlan(
             sensorToDisplayRotationDegrees = 270,
             availableHardwareRotationDegrees = setOf(0, 270),
@@ -28,9 +28,9 @@ class CameraOrientationTest {
 
         assertEquals(
             CameraStreamPlan(
-                rasterSize = CameraPixelSize(1_280, 720),
-                requestedHardwareRotationDegrees = 0,
-                remainingRotationDegrees = 270,
+                rasterSize = CameraPixelSize(720, 1_280),
+                requestedHardwareRotationDegrees = 270,
+                remainingRotationDegrees = 0,
             ),
             plan,
         )
@@ -69,6 +69,39 @@ class CameraOrientationTest {
             plan,
         )
         assertEquals(CameraPixelSize(720, 1_280), plan?.orientedSize)
+    }
+
+    @Test
+    fun `software fallback moves failed hardware rotation into remaining rotation`() {
+        val outputs = setOf(CameraPixelSize(720, 1_280), CameraPixelSize(1_280, 720))
+        val hardwarePlan = CameraOrientation.selectStreamPlan(
+            sensorToDisplayRotationDegrees = 270,
+            availableHardwareRotationDegrees = setOf(0, 270),
+            availableOutputSizes = outputs,
+        )
+        val fallbackPlan = CameraOrientation.selectStreamPlan(
+            sensorToDisplayRotationDegrees = 270,
+            availableHardwareRotationDegrees = setOf(0),
+            availableOutputSizes = outputs,
+        )
+
+        assertEquals(
+            CameraStreamPlan(
+                rasterSize = CameraPixelSize(720, 1_280),
+                requestedHardwareRotationDegrees = 270,
+                remainingRotationDegrees = 0,
+            ),
+            hardwarePlan,
+        )
+        assertEquals(
+            CameraStreamPlan(
+                rasterSize = CameraPixelSize(1_280, 720),
+                requestedHardwareRotationDegrees = 0,
+                remainingRotationDegrees = 270,
+            ),
+            fallbackPlan,
+        )
+        assertEquals(hardwarePlan?.orientedSize, fallbackPlan?.orientedSize)
     }
 
     @Test

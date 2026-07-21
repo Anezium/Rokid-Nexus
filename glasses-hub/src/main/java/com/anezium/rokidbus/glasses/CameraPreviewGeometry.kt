@@ -162,7 +162,7 @@ internal object CameraPreviewGeometry {
     ): Float? {
         if (!normalizedDistance.isFinite() || normalizedDistance < 0f) return null
         val viewport = fillCenterViewport(sourceWidth, sourceHeight, viewWidth, viewHeight) ?: return null
-        return normalizedDistance * sourceHeight * viewport.scale / viewHeight
+        return (normalizedDistance * sourceHeight * viewport.scale / viewHeight).coerceAtMost(1f)
     }
 
     fun mapFillCenter(

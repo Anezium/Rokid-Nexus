@@ -19,6 +19,9 @@ import android.os.PowerManager
 import android.os.SystemClock
 import android.util.Log
 import androidx.core.content.ContextCompat
+import com.anezium.rokidbus.shared.CameraLinkEndpointOffer
+import com.anezium.rokidbus.shared.CameraLinkMode
+import com.anezium.rokidbus.shared.CameraLinkOfferContract
 import com.anezium.rokidbus.shared.CameraLinkPacket
 import com.anezium.rokidbus.shared.CameraLinkPacketType
 import com.anezium.rokidbus.shared.CameraLinkProtocol
@@ -40,22 +43,20 @@ internal data class PhoneLensLinkOffer(
     val port: Int,
     val token: String,
     val goIp: String,
+    val mode: CameraLinkMode = CameraLinkMode.P2P,
 ) {
     companion object {
         fun parse(payload: JSONObject): PhoneLensLinkOffer? {
-            if (payload.optInt("version", 1) != 1) return null
-            val sessionId = payload.optString("sessionId")
-            val ssid = payload.optString("ssid")
-            val passphrase = payload.optString("passphrase")
-            val token = payload.optString("token")
-            val goIp = payload.optString("goIp")
-            val port = payload.optInt("port")
-            if (sessionId.isBlank() || sessionId.length > 128 ||
-                ssid.isBlank() || ssid.length > 128 ||
-                passphrase.length !in 8..128 || token.length !in 16..256 ||
-                goIp.isBlank() || goIp.length > 64 || port !in 1..65535
-            ) return null
-            return PhoneLensLinkOffer(sessionId, ssid, passphrase, port, token, goIp)
+            val decoded = CameraLinkOfferContract.decode(payload) ?: return null
+            return PhoneLensLinkOffer(
+                decoded.sessionId,
+                decoded.ssid,
+                decoded.passphrase,
+                decoded.port,
+                decoded.token,
+                decoded.goIp.orEmpty(),
+                decoded.mode,
+            )
         }
     }
 }
@@ -64,12 +65,13 @@ internal enum class PhoneLensLinkState { IDLE, WAITING_NETWORK, CONNECTING, CONN
 
 private enum class GroupRemovalResult { COMPLETED, TIMED_OUT }
 
-/** Joins the offered Wi-Fi Direct group as a P2P client; default-data routing is unchanged. */
+/** Selects the P2P client or phone-owned LOHS server without changing default-data routing. */
 internal class PhoneLensImageLink(
     context: Context,
     private val logger: (String) -> Unit,
     private val onPacket: (CameraLinkPacket) -> Unit = {},
     private val stageElapsedMs: () -> Long = { 0L },
+    private val onReverseOffer: (CameraLinkEndpointOffer) -> Boolean = { false },
 ) : AutoCloseable {
     private val appContext = context.applicationContext
     private val joinHistoryPreferences = appContext.getSharedPreferences(
@@ -107,12 +109,14 @@ internal class PhoneLensImageLink(
 
     @Volatile private var closed = false
     @Volatile private var offer: PhoneLensLinkOffer? = null
+    @Volatile private var transportMode = PhoneLensTransportMode.P2P
     @Volatile private var p2pRunning = false
     @Volatile private var p2pConnecting = false
     @Volatile private var groupInspecting = false
     @Volatile private var probingReusedGroup = false
     @Volatile private var groupOwnerAddress: String? = null
     @Volatile private var socket: Socket? = null
+    @Volatile private var lohsServer: PhoneLohsImageServer? = null
     private var manager: WifiP2pManager? = null
     private var channel: WifiP2pManager.Channel? = null
     private var receiverRegistered = false
@@ -207,22 +211,86 @@ internal class PhoneLensImageLink(
             log("lensLinkOfferRejected")
             return
         }
+        if (parsed.mode != CameraLinkMode.P2P) {
+            log("lensLinkOfferRejected mode=${parsed.mode.wireValue}")
+            return
+        }
+        val wifiEnabled = runCatching {
+            appContext.getSystemService(WifiManager::class.java)?.isWifiEnabled
+        }.getOrNull()
+        val selectedMode = if (wifiEnabled == false) {
+            PhoneLensTransportModePolicy.select(isWifiEnabled = false)
+        } else {
+            // An unavailable state read preserves the existing P2P behavior.
+            PhoneLensTransportModePolicy.select(isWifiEnabled = true)
+        }
         val (nextGeneration, previousSsid) = synchronized(this) {
             val previousOffer = offer
-            val joinActive = offerStartPending || p2pRunning || state != PhoneLensLinkState.IDLE
+            val joinActive = offerStartPending || p2pRunning || lohsServer != null ||
+                state != PhoneLensLinkState.IDLE
             if (!PhoneLensOfferUpdatePolicy.shouldStart(offer, parsed, joinActive)) return
             offer = parsed
+            transportMode = selectedMode
             offerStartPending = true
             generation.incrementAndGet() to previousOffer?.ssid
         }
+        log("lensLinkTransport mode=${selectedMode.name.lowercase()} wifiStaEnabled=${wifiEnabled == true}")
+        teardownLohs()
         closeSocket()
         mainHandler.post {
             teardownP2p {
                 if (isCurrent(nextGeneration, parsed)) {
-                    startP2p(nextGeneration, parsed, previousSsid)
+                    when (selectedMode) {
+                        PhoneLensTransportMode.P2P -> startP2p(nextGeneration, parsed, previousSsid)
+                        PhoneLensTransportMode.LOHS_REVERSE -> startLohs(nextGeneration, parsed)
+                    }
                 }
             }
         }
+    }
+
+    private fun startLohs(expectedGeneration: Long, currentOffer: PhoneLensLinkOffer) {
+        if (!isCurrent(expectedGeneration, currentOffer) ||
+            transportMode != PhoneLensTransportMode.LOHS_REVERSE
+        ) return
+        if (!hasWifiPermission()) {
+            synchronized(this) { offerStartPending = false }
+            state = PhoneLensLinkState.IDLE
+            log("lensLinkPermissionMissing")
+            return
+        }
+        acquirePerformanceLocks()
+        state = PhoneLensLinkState.WAITING_NETWORK
+        lateinit var server: PhoneLohsImageServer
+        server = PhoneLohsImageServer(
+            context = appContext,
+            sourceOffer = currentOffer,
+            logger = ::log,
+            onPacket = onPacket,
+            onReverseOffer = onReverseOffer,
+            stageElapsedMs = stageElapsedMs,
+            onState = { nextState ->
+                if (lohsServer === server && isCurrent(expectedGeneration, currentOffer)) {
+                    state = nextState
+                }
+            },
+            onFailed = {
+                if (lohsServer === server) lohsServer = null
+                if (isCurrent(expectedGeneration, currentOffer)) {
+                    synchronized(this) { offerStartPending = false }
+                    state = PhoneLensLinkState.IDLE
+                    releasePerformanceLocks()
+                }
+            },
+        )
+        lohsServer = server
+        synchronized(this) { offerStartPending = false }
+        server.start()
+    }
+
+    private fun teardownLohs() {
+        lohsServer?.close()
+        lohsServer = null
     }
 
     @SuppressLint("MissingPermission")
@@ -1438,6 +1506,7 @@ internal class PhoneLensImageLink(
         state = PhoneLensLinkState.IDLE
         offer = null
         synchronized(this) { offerStartPending = false }
+        teardownLohs()
         closeSocket()
         teardownP2p()
         executor.shutdownNow()

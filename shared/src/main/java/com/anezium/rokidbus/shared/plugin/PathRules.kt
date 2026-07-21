@@ -44,7 +44,10 @@ object PathRules {
         "/surface/show", "/surface/update", "/surface/hide" -> PluginCapability.SURFACES
         "/audio/lease/acquire", "/audio/lease/release" -> PluginCapability.MICROPHONE
         "/http/request" -> PluginCapability.HTTP_PROXY
-        BusPaths.CAMERA_FREEZE_RESULT, BusPaths.CAMERA_OVERLAY -> PluginCapability.CAMERA
+        BusPaths.CAMERA_LINK_OFFER,
+        BusPaths.CAMERA_FREEZE_RESULT,
+        BusPaths.CAMERA_OVERLAY,
+        -> PluginCapability.CAMERA
         else -> null
     }
 

@@ -11,6 +11,8 @@ import android.util.Log
 import com.anezium.rokidbus.client.PluginRegistrationResult
 import com.anezium.rokidbus.client.plugin.NexusPluginService
 import com.anezium.rokidbus.shared.BusPaths
+import com.anezium.rokidbus.shared.CameraLinkEndpointOffer
+import com.anezium.rokidbus.shared.CameraLinkOfferContract
 import com.anezium.rokidbus.shared.CameraLinkPacket
 import com.anezium.rokidbus.shared.CameraLinkPacketType
 import com.anezium.rokidbus.shared.CameraOverlayContract
@@ -224,6 +226,7 @@ internal class LensCameraSession(
             logger = host::log,
             onPacket = ::onLinkPacket,
             stageElapsedMs = ::sessionElapsedMs,
+            onReverseOffer = ::sendReverseOffer,
         )
     }
 
@@ -291,6 +294,15 @@ internal class LensCameraSession(
 
     private fun sessionElapsedMs(): Long =
         (SystemClock.elapsedRealtime() - sessionStartedAtMs).coerceAtLeast(0L)
+
+    private fun sendReverseOffer(offer: CameraLinkEndpointOffer): Boolean {
+        if (closed.get() || sessionId != offer.sessionId) return false
+        return host.send(
+            BusPaths.CAMERA_LINK_OFFER,
+            UUID.randomUUID().toString(),
+            CameraLinkOfferContract.encode(offer),
+        )
+    }
 
     private fun onLinkPacket(packet: CameraLinkPacket) {
         if (closed.get() || sessionId == null) return

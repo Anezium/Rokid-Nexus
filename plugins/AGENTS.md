@@ -119,7 +119,7 @@ Paths a plugin can **send to** (gated by capability):
 | `/surface/show`, `/surface/update`, `/surface/hide` | `surfaces` | HUD surface lifecycle (typed models: card, timed lines, media, image) |
 | `/http/request` → `/http/request/reply` | `http_proxy` | Phone-side HTTP proxy (strict policy, §9) |
 | `/audio/lease/acquire`, `/audio/lease/release` (+ `/reply` suffixes), `/audio/frames`, `/audio/lease/revoked` | `microphone` | Glasses mic lease + frames (approval currently disabled in UI) |
-| `/camera/freeze/result`, `/camera/overlay` | `camera` | Camera platform sends (signer/grant-bound). The other protected camera paths — `/camera/session/state`, `/camera/link/offer`, `/camera/freeze/image/chunk` — are **receive-only** for a camera plugin (declare them in RECEIVE_PREFIXES); sending them is rejected |
+| `/camera/freeze/result`, `/camera/overlay`, `/camera/link/offer` | `camera` | Camera platform sends (signer/grant-bound). `/camera/link/offer` is bidirectional so an approved camera plugin can advertise a reverse transport role. `/camera/session/state` and `/camera/freeze/image/chunk` remain **receive-only** (declare them in RECEIVE_PREFIXES); sending them is rejected |
 | `/plugin/<yourId>/…` | — | Your private namespace (must match your declared receive prefixes) |
 
 Paths a plugin **receives** (reserved, hub-generated — you never send these):

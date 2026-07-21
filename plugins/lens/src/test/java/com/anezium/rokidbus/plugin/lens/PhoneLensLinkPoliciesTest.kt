@@ -22,6 +22,18 @@ class PhoneLensLinkPoliciesTest {
         )
 
     @Test
+    fun `wifi state selects P2P when on and LOHS reverse when off`() {
+        assertEquals(
+            PhoneLensTransportMode.P2P,
+            PhoneLensTransportModePolicy.select(isWifiEnabled = true),
+        )
+        assertEquals(
+            PhoneLensTransportMode.LOHS_REVERSE,
+            PhoneLensTransportModePolicy.select(isWifiEnabled = false),
+        )
+    }
+
+    @Test
     fun `active repeated offer is ignored by stable session and token identity`() {
         assertFalse(
             PhoneLensOfferUpdatePolicy.shouldStart(

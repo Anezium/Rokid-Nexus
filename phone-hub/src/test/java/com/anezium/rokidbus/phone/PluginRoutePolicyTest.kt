@@ -29,10 +29,10 @@ class PluginRoutePolicyTest {
     @Test
     fun `camera grant allows only phone to glasses camera routes`() {
         val granted = plugin(PluginCapability.CAMERA)
+        assertEquals(PluginRouteDecision.Allowed, PluginRoutePolicy.authorize(granted, "/camera/link/offer"))
         assertEquals(PluginRouteDecision.Allowed, PluginRoutePolicy.authorize(granted, "/camera/freeze/result"))
         assertEquals(PluginRouteDecision.Allowed, PluginRoutePolicy.authorize(granted, "/camera/overlay"))
         assertTrue(PluginRoutePolicy.authorize(granted, "/camera/session/state") is PluginRouteDecision.Denied)
-        assertTrue(PluginRoutePolicy.authorize(granted, "/camera/link/offer") is PluginRouteDecision.Denied)
         listOf(
             plugin(),
             PluginRouteCaller.Plugin("wrong", emptySet()),

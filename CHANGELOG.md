@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.22
+
+- Lens now works even when the phone's Wi-Fi is off: the phone hosts the camera link itself, brings the glasses onto it automatically, and no setting has to be toggled by hand.
+- Faster Lens connection when the phone's Wi-Fi is off — the glasses join on the first try instead of retrying.
+- Long lyric lines no longer lose their last words; the text shrinks to fit instead of clipping.
+- Lens is steadier in longer sessions: it recovers after a plugin update mid-session, handles camera rotation more gracefully, keeps its adaptive text layout in more cases, and reconfigures its video decoder without a brief stutter.
+
 ## 1.0.7
 
 - The "Set up your glasses" step can open the Nexus app on the lens directly, so the wearer never hunts through the glasses launcher.
