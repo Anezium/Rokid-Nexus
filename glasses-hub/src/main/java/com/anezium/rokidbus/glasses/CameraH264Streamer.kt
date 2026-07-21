@@ -100,7 +100,7 @@ internal class CameraH264Streamer(
         cameraHandler = Handler(requireNotNull(cameraThread).looper)
         encoderHandler = Handler(requireNotNull(encoderThread).looper)
         try {
-            prepareCameraMetadata()
+            if (!prepareCameraMetadata()) return
             prepareEncoder()
             openCamera()
         } catch (failure: Throwable) {
@@ -218,7 +218,7 @@ internal class CameraH264Streamer(
     @SuppressLint("MissingPermission")
     private fun openCamera() {
         if (!running) return
-        prepareCameraMetadata()
+        if (!prepareCameraMetadata()) return
         val manager = context.getSystemService(CameraManager::class.java)
         val selectedId = cameraId ?: error("No camera found")
         manager.openCamera(selectedId, object : CameraDevice.StateCallback() {
@@ -245,8 +245,8 @@ internal class CameraH264Streamer(
         }, cameraHandler)
     }
 
-    private fun prepareCameraMetadata() {
-        if (characteristics != null && cameraId != null && imageReader != null) return
+    private fun prepareCameraMetadata(): Boolean {
+        if (characteristics != null && cameraId != null && imageReader != null) return true
         val manager = context.getSystemService(CameraManager::class.java)
         val selectedId = cameraId ?: manager.cameraIdList.firstOrNull { it == "0" }
             ?: manager.cameraIdList.firstOrNull()
@@ -267,18 +267,24 @@ internal class CameraH264Streamer(
         check(streamPlan.orientedSize.width < streamPlan.orientedSize.height) {
             "camera stream plan must produce a portrait frame"
         }
-        onLiveFrameGeometry(
-            streamPlan.rasterSize.width,
-            streamPlan.rasterSize.height,
-            streamPlan.remainingRotationDegrees,
-        )
         val modes = selectedCharacteristics.get(
             CameraCharacteristics.SCALER_AVAILABLE_ROTATE_AND_CROP_MODES,
         )?.toSet().orEmpty()
         liveRotateAndCropMode = rotateAndCropModeForDegrees(
             streamPlan.requestedHardwareRotationDegrees,
         ).takeIf { it in modes }
-        check(liveRotateAndCropMode != null) { "selected camera rotation mode is unavailable" }
+        if (liveRotateAndCropMode == null && streamPlan.requestedHardwareRotationDegrees != 0) {
+            Log.w(TAG, "selected camera rotation mode is unavailable; retrying in software")
+            cameraHandler?.post {
+                if (running) onRotationMismatch(streamPlan.requestedHardwareRotationDegrees, 0)
+            }
+            return false
+        }
+        onLiveFrameGeometry(
+            streamPlan.rasterSize.width,
+            streamPlan.rasterSize.height,
+            streamPlan.remainingRotationDegrees,
+        )
         stillRotateAndCropMode = CaptureRequest.SCALER_ROTATE_AND_CROP_NONE.takeIf { it in modes }
         Log.i(
             TAG,
@@ -291,6 +297,7 @@ internal class CameraH264Streamer(
         )
         fpsRange = selectFpsRange(selectedCharacteristics)
         if (imageReader == null) prepareImageReader(selectedCharacteristics)
+        return true
     }
 
     private fun prepareImageReader(cameraCharacteristics: CameraCharacteristics) {

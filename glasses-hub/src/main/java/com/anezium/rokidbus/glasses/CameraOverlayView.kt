@@ -62,8 +62,13 @@ internal class CameraOverlayView @JvmOverloads constructor(
     private var frozenBitmapScale = 1f
     private var mode = CameraOverlayMode.LIVE
     private var lastStats: LayoutStats? = null
+    private var invalidAdaptiveLayoutLogged = false
 
     fun updateOverlay(next: List<CameraOverlayItem>) {
+        if (!invalidAdaptiveLayoutLogged && next.any { it.layout != null && !it.isAdaptiveParagraph() }) {
+            invalidAdaptiveLayoutLogged = true
+            Log.w(TAG, "invalid adaptive layout downgraded to legacy renderer")
+        }
         items = stabilizer.update(next)
         invalidate()
     }

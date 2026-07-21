@@ -117,6 +117,31 @@ class CameraPreviewGeometryTest {
     }
 
     @Test
+    fun `adaptive paragraph metrics clamp after fill center overflow`() {
+        val mapped = CameraPreviewGeometry.mapFillCenter(
+            item = CameraOverlayItem(
+                text = "translated paragraph",
+                box = CameraOverlayBounds(0.2f, 0.40f, 0.8f, 0.50f),
+                role = "translation",
+                layout = CameraOverlayLayout(
+                    kind = "paragraph",
+                    version = 1,
+                    medianLineHeight = 0.8f,
+                    growDown = 0.9f,
+                ),
+            ),
+            sourceWidth = 720,
+            sourceHeight = 1_280,
+            viewWidth = 480,
+            viewHeight = 640,
+        )!!
+
+        assertEquals(1f, mapped.layout!!.medianLineHeight, 0f)
+        assertEquals(1f, mapped.layout!!.growDown, 0f)
+        assertTrue(mapped.isAdaptiveParagraph())
+    }
+
+    @Test
     fun `boxes outside the displayed center crop are omitted`() {
         assertNull(
             CameraPreviewGeometry.mapFillCenter(

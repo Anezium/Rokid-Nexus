@@ -389,8 +389,8 @@ class CameraActivity : Activity(), TextureView.SurfaceTextureListener {
 
     private fun handleRotationMismatch(expectedDegrees: Int, effectiveDegrees: Int) {
         log("camera rotate-and-crop mismatch expected=$expectedDegrees effective=$effectiveDegrees")
-        val current = streamPlan ?: return
-        if (rotationFallbackAttempted || current.requestedHardwareRotationDegrees == 0) {
+        if (streamPlan == null) return
+        if (rotationFallbackAttempted) {
             stopStreamer()
             showEmpty("CAMERA ORIENTATION UNSUPPORTED")
             return
