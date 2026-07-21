@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.25
+
+- The phone now surfaces the glasses' AI-assist button presses and wearing status to plugins, opening the door to features that react to them.
+
 ## 1.0.24
 
 - The phone now checks for app and plugin updates on its own, even if you never open Rokid Nexus — you'll get a notification the moment one is available.
