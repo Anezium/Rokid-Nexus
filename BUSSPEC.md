@@ -97,11 +97,20 @@ reserved, hub-to-plugin paths only to the verified principal:
 - `/system/plugin/open`
 - `/system/plugin/close`
 - `/system/plugin/input`
+- `/glasses/device-info`
 
 Lifecycle payloads include `version`, `type`, `id`, and `pluginId`. Input also
 includes the plugin-local `localSurfaceId`, `keyCode`, and `action`. Version 1
 receivers ignore unknown fields and ignore duplicate event IDs. SDK lifecycle
 callbacks are serialized on the Android application main thread.
+
+`/glasses/device-info` is a zero-capability, phone-hub-to-plugin version-1 JSON
+message carrying `type=glasses_device_info`, `id`, `pluginId`, `deviceName`,
+`batteryLevel`, `sound`, `brightness`, `systemVersion`, `isCharging`, and
+`wearingStatus` — the hardware serial number (`GlassInfo.sn`) is deliberately
+never included, matching `GlassInfo`'s own `redactedSn` precedent for this
+sensitive field. The AI-assist start/stop edges use the direct callback below
+rather than a bus path.
 
 Plugins send only local surface IDs such as `main`. After capability and
 principal checks, the phone hub injects `ownerPluginId`, rewrites the wire ID to
@@ -429,6 +438,7 @@ oneway interface IBusCallback {
     void onMessage(String path, String id, in byte[] payload); // payload = JSON bytes
     void onLinkState(int state); // bitmask below
     void onBinaryMessage(String path, String id, in byte[] meta, in byte[] data);
+    void onGlassesAiButton(boolean active);
 }
 
 // IBusService.aidl
@@ -446,7 +456,7 @@ interface IBusService {
 
 The method order is append-only so transaction codes remain stable. Link-state
 bits are `1 = CXR_CONTROL_UP`, `2 = SPP_DATA_UP`, and
-`4 = GLASSES_BT_BONDED_OR_PHONE_CONNECTED`.
+`4 = GLASSES_BT_BONDED_OR_PHONE_CONNECTED`, and `8 = GLASSES_WORN`.
 
 Hub feature bits are returned by `IBusService.capabilities()`. Bit `2` is
 `IMAGE_SURFACE`, bit `4` is `CAMERA_CONSUMER_READY`, and bit `8` is
@@ -526,7 +536,9 @@ Hub manifests use `<queries><intent><action android:name="com.anezium.rokidbus.a
   `{status, bytes, done, totalBytes?, error?}`. Remote replies retain the request
   `id` and stay on SPP, preserving FIFO order; local callers receive the same
   binary shape over Binder. The allowlist currently contains `api.transitous.org`.
-- CXR link state changes broadcast to all registered clients via `onLinkState`.
+- CXR link state changes broadcast to all registered clients via `onLinkState`;
+  AI-assist start/stop edges broadcast via `onGlassesAiButton` with no capability
+  gate and no assistant side effect.
 
 ## Glasses hub specifics
 

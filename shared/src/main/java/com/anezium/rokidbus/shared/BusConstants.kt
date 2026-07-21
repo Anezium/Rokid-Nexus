@@ -45,6 +45,7 @@ object BusPaths {
     const val CAMERA_FREEZE_IMAGE_ACK = "/camera/freeze/image/ack"
     const val CAMERA_OVERLAY = "/camera/overlay"
     const val GLASSES_WIFI_REQUEST = "/glasses/wifi/request"
+    const val GLASSES_DEVICE_INFO = "/glasses/device-info"
     const val PLUGIN_OPEN = "/system/plugin/open"
     const val PLUGIN_CLOSE = "/system/plugin/close"
     const val PLUGIN_INPUT = "/system/plugin/input"
@@ -72,4 +73,5 @@ object LinkStateBits {
     const val CXR_CONTROL_UP = 1
     const val SPP_DATA_UP = 2
     const val GLASSES_BT_BONDED_OR_PHONE_CONNECTED = 4
+    const val GLASSES_WORN = 8
 }

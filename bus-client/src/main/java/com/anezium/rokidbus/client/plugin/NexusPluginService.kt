@@ -83,6 +83,7 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
 
     final override fun onInput(event: NexusInputEvent) = onNexusInput(event)
     final override fun onLinkState(state: Int) = onNexusLinkState(state)
+    final override fun onGlassesAiButton(active: Boolean) = onNexusGlassesAiButton(active)
     final override fun onRegistrationState(result: Int) {
         if (result == PluginRegistrationResult.APPROVED) {
             onNexusRegistrationState(result)
@@ -104,6 +105,7 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
     protected abstract fun onNexusClose()
     protected abstract fun onNexusInput(event: NexusInputEvent)
     protected open fun onNexusLinkState(state: Int) = Unit
+    protected open fun onNexusGlassesAiButton(active: Boolean) = Unit
     protected open fun onNexusRegistrationState(result: Int) = Unit
     protected open fun onNexusMessage(path: String, id: String, payload: JSONObject) = Unit
     protected open fun onNexusBinaryMessage(

@@ -34,6 +34,7 @@ class NexusPluginClientTest {
         override fun onClose() { events += "close" }
         override fun onInput(event: NexusInputEvent) { events += "input:${event.keyCode}" }
         override fun onLinkState(state: Int) { events += "link:$state" }
+        override fun onGlassesAiButton(active: Boolean) { events += "ai:$active" }
         override fun onRegistrationState(result: Int) { events += "registration:$result" }
         override fun onMessage(path: String, id: String, payload: JSONObject) { events += "message:$path" }
     }
@@ -138,6 +139,37 @@ class NexusPluginClientTest {
         transport.listener.onMessage("/plugin/hello/migration", "m1", payload().put("future", true))
         assertEquals(
             listOf("registration:0", "message:/plugin/hello/migration"),
+            callbacks.events,
+        )
+        client.close()
+    }
+
+    @Test
+    fun `glasses AI button start and stop reach the service callback`() {
+        val (client, transport, callbacks) = fixture()
+        transport.listener.onRegistrationState(PluginRegistrationResult.APPROVED)
+        transport.listener.onGlassesAiButton(true)
+        transport.listener.onGlassesAiButton(false)
+
+        assertEquals(
+            listOf("registration:0", "ai:true", "ai:false"),
+            callbacks.events,
+        )
+        client.close()
+    }
+
+    @Test
+    fun `approved plugin receives glasses device info through the raw message hook`() {
+        val (client, transport, callbacks) = fixture()
+        transport.listener.onRegistrationState(PluginRegistrationResult.APPROVED)
+        transport.listener.onMessage(
+            BusPaths.GLASSES_DEVICE_INFO,
+            "device-1",
+            payload().put("batteryLevel", 87),
+        )
+
+        assertEquals(
+            listOf("registration:0", "message:/glasses/device-info"),
             callbacks.events,
         )
         client.close()

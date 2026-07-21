@@ -74,6 +74,11 @@ class NexusPluginClient internal constructor(
         callbacks.onLinkState(state)
     }
 
+    override fun onGlassesAiButton(active: Boolean) {
+        if (closed) return
+        callbacks.onGlassesAiButton(active)
+    }
+
     override fun onMessage(path: String, id: String, payload: JSONObject) {
         if (closed || payload.optString("pluginId") != pluginId || !rememberEvent(id)) return
         when (path) {

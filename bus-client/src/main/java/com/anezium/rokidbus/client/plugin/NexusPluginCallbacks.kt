@@ -8,6 +8,7 @@ interface NexusPluginCallbacks {
     fun onClose()
     fun onInput(event: NexusInputEvent)
     fun onLinkState(state: Int)
+    fun onGlassesAiButton(active: Boolean) = Unit
     fun onRegistrationState(result: Int)
     fun onMessage(path: String, id: String, payload: JSONObject) = Unit
     fun onBinary(path: String, id: String, payload: JSONObject, data: ByteArray) = Unit

@@ -124,9 +124,16 @@ Paths a plugin can **send to** (gated by capability):
 
 Paths a plugin **receives** (reserved, hub-generated — you never send these):
 `/system/plugin/registration`, `/system/plugin/open`, `/system/plugin/close`,
-`/system/plugin/input`, plus deliveries into your `/plugin/<id>/…` namespace.
+`/system/plugin/input`, `/glasses/device-info`, plus deliveries into your
+`/plugin/<id>/…` namespace.
 Reserved sender roots you can never use: `/launcher`, `/surface/input`, `/system`,
 `/security`, `/error`. Rejections and undeliverable traffic come back on `/error`.
+
+Every approved, live registration receives glasses hardware signals without an
+additional capability grant. `onNexusLinkState` includes
+`LinkStateBits.GLASSES_WORN`; `onNexusGlassesAiButton(active)` reports the AI
+button start/stop edges; and `/glasses/device-info` reaches `onNexusMessage` with
+the versioned `GlassInfo` fields.
 
 Transport is the hub's business: local delivery first, CXR for JSON ≤ 3 KiB,
 SPP otherwise. Binary is never queued for a sleeping client — an undeliverable
