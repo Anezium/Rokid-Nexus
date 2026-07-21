@@ -747,6 +747,20 @@ class MainActivity : Activity() {
                 } else {
                     null
                 },
+                // Surfaced only once the glasses have reported a self-arm failure: the automatic
+                // setup couldn't complete on this unit, so offer the phone-driven manual fallback.
+                secondaryActionLabel = if (
+                    cxrReady &&
+                    !NexusPhoneState.glassesSetupComplete &&
+                    NexusPhoneState.glassesSetupFailureDiagnostic.isNotBlank()
+                ) {
+                    "Manual setup"
+                } else {
+                    null
+                },
+                onSecondaryAction = {
+                    startActivity(Intent(this, GlassesManualSetupActivity::class.java))
+                },
                 onGuide = {
                     startActivity(Intent(this, GlassesSetupGuideActivity::class.java))
                 },
