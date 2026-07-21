@@ -273,9 +273,11 @@ class CameraActivity : Activity(), TextureView.SurfaceTextureListener {
             requestGlassesWifi(true)
         }
         if (cameraLink == null) {
+            val startupMode = CameraLinkStartupModePolicy.select(busClient?.capabilities() ?: 0)
             cameraLink = CameraLink(
                 context = applicationContext,
                 sessionStartedAtMs = sessionStartedAtMs,
+                startupMode = startupMode,
                 onOfferReady = ::sendLinkOffer,
                 onAuthenticated = { authenticated ->
                     if (authenticated) {

@@ -56,6 +56,7 @@ internal fun CameraLinkSecurity.toWifiConnectSecurity(): WifiConnectSecurity = w
 internal class CameraLink(
     context: Context,
     private val sessionStartedAtMs: Long,
+    private val startupMode: CameraLinkStartupMode,
     private val onOfferReady: (CameraLinkOffer, Int) -> Unit,
     private val onAuthenticated: (Boolean) -> Unit,
     private val onFrozenTransferFinished: (Long) -> Unit,
@@ -86,6 +87,9 @@ internal class CameraLink(
     private val groupRemovalGracePolicy = CameraLinkGroupRemovalGracePolicy(
         clientGraceMs = ASSOCIATED_CLIENT_GRACE_MS,
         maxPolls = MAX_GO_RECOVERY_CLIENT_POLLS,
+    )
+    private val reverseOfferFallbackPolicy = CameraLinkReverseOfferFallbackPolicy(
+        timeoutMs = REVERSE_OFFER_FALLBACK_MS,
     )
     private val token = ByteArray(24).also(SecureRandom()::nextBytes).let {
         Base64.encodeToString(it, Base64.NO_WRAP or Base64.URL_SAFE or Base64.NO_PADDING)
@@ -129,6 +133,9 @@ internal class CameraLink(
     private var reverseJoinStartedAtMs = 0L
     private var reverseNetworkPoll: Runnable? = null
     private var reverseP2pTeardownTimeout: Runnable? = null
+    private var reverseOfferFallback: Runnable? = null
+    private var writerStarted = false
+    private var p2pStartupStarted = false
 
     val isAuthenticated: Boolean get() = authenticated
 
@@ -164,13 +171,51 @@ internal class CameraLink(
     fun start() {
         if (running) return
         running = true
+        if (startupMode == CameraLinkStartupMode.WAIT_FOR_LOHS_REVERSE) {
+            startWriter()
+            waitForReverseOffer()
+        } else {
+            startP2pPath()
+        }
+    }
+
+    private fun startP2pPath() {
+        if (!running || p2pStartupStarted || transportRole != CameraLinkTransportRole.P2P_SERVER) return
+        p2pStartupStarted = true
         manager = appContext.getSystemService(Context.WIFI_P2P_SERVICE) as? WifiP2pManager
         channel = manager?.initialize(appContext, Looper.getMainLooper(), null)
         if (manager == null || channel == null) return fail("WI-FI DIRECT UNAVAILABLE")
         registerReceiver()
-        writerExecutor.execute(::writerLoop)
+        startWriter()
         if (isWifiReady()) inspectGroup() else waitForWifi()
     }
+
+    private fun startWriter() {
+        if (writerStarted) return
+        writerStarted = true
+        writerExecutor.execute(::writerLoop)
+    }
+
+    private fun waitForReverseOffer() {
+        if (!running || startupMode != CameraLinkStartupMode.WAIT_FOR_LOHS_REVERSE) return
+        state("WAITING FOR PHONE")
+        onOfferReady(reverseBootstrapOffer(), REVERSE_BOOTSTRAP_OFFER_NUMBER)
+        reverseOfferFallback = Runnable {
+            reverseOfferFallback = null
+            if (reverseOfferFallbackPolicy.shouldStartP2p(startupMode, reverseOffer != null)) {
+                Log.w(TAG, "cameraLinkReverseOfferTimeout fallback=p2p elapsedMs=${stageElapsedMs()}")
+                startP2pPath()
+            }
+        }.also { mainHandler.postDelayed(it, reverseOfferFallbackPolicy.timeoutMs) }
+    }
+
+    private fun reverseBootstrapOffer(): CameraLinkOffer = CameraLinkOffer(
+        ssid = "DIRECT-LR-${token.take(6)}",
+        passphrase = token.take(24),
+        port = PORT,
+        token = token,
+        goIp = DEFAULT_GO_IP,
+    )
 
     fun resendOfferIfDisconnected() {
         if (authenticated || transportRole != CameraLinkTransportRole.P2P_SERVER) return
@@ -231,6 +276,7 @@ internal class CameraLink(
         if (!running || offer.mode != CameraLinkMode.LOHS_REVERSE || offer.token != token) return
         mainHandler.post {
             if (!running || offer.token != token) return@post
+            clearReverseOfferFallback()
             val sameOffer = reverseOffer == offer
             reverseOffer = offer
             if (!sameOffer) reverseGatewayIp = null
@@ -1025,6 +1071,7 @@ internal class CameraLink(
         clearGoRecoveryCreate()
         clearGoRecoveryClientInspection()
         clearReverseNetworkPoll()
+        clearReverseOfferFallback()
         reverseP2pTeardownTimeout?.let(mainHandler::removeCallbacks)
         reverseP2pTeardownTimeout = null
         goRecoveryInProgress = false
@@ -1073,6 +1120,11 @@ internal class CameraLink(
         reverseNetworkPoll = null
     }
 
+    private fun clearReverseOfferFallback() {
+        reverseOfferFallback?.let(mainHandler::removeCallbacks)
+        reverseOfferFallback = null
+    }
+
     private fun clearGoRecoveryCreate() {
         goRecoveryCreate?.let(mainHandler::removeCallbacks)
         goRecoveryCreate = null
@@ -1108,5 +1160,7 @@ internal class CameraLink(
         private const val REVERSE_NETWORK_POLL_MS = 250L
         private const val REVERSE_CONNECT_RETRY_MS = 750L
         private const val REVERSE_CONNECT_TIMEOUT_MS = 5_000
+        internal const val REVERSE_OFFER_FALLBACK_MS = 3_000L
+        private const val REVERSE_BOOTSTRAP_OFFER_NUMBER = 0
     }
 }

@@ -101,8 +101,7 @@ object GlassesHub {
         override fun linkState(): Int = this@GlassesHub.linkState()
 
         override fun capabilities(): Int =
-            remotePhoneCapabilities.features and
-                (BusCapabilityBits.CAMERA_CONSUMER_READY or BusCapabilityBits.CAMERA_FROZEN_SPP)
+            supportedPhoneCameraCapabilities(remotePhoneCapabilities.features)
 
         override fun registerPlugin(packageName: String, pluginId: String, cb: IBusCallback): Int =
             PluginRegistrationResult.DENIED
@@ -464,8 +463,7 @@ object GlassesHub {
     private fun updateRemotePhoneCapabilities(payload: JSONObject) {
         val advertised = PhoneHubCapabilitiesContract.parse(payload)
         val next = PhoneHubCapabilitiesContract.create(
-            features = advertised.features and
-                (BusCapabilityBits.CAMERA_CONSUMER_READY or BusCapabilityBits.CAMERA_FROZEN_SPP),
+            features = supportedPhoneCameraCapabilities(advertised.features),
             cameraConsumerName = advertised.cameraConsumerName,
         )
         val previous = remotePhoneCapabilities

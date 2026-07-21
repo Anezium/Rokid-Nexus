@@ -65,6 +65,7 @@ object BusCapabilityBits {
     const val IMAGE_SURFACE = 1 shl 1
     const val CAMERA_CONSUMER_READY = 1 shl 2
     const val CAMERA_FROZEN_SPP = 1 shl 3
+    const val CAMERA_LOHS_REVERSE_REQUIRED = 1 shl 4
 }
 
 object LinkStateBits {

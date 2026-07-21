@@ -17,6 +17,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Binder
 import android.os.IBinder
@@ -167,6 +168,7 @@ class BusHubService : Service() {
     private var glassesReleaseCheckInFlight = false
     @Volatile private var lastTransportLinkState = 0
     private var pluginPackageReceiverRegistered = false
+    private var wifiStateReceiverRegistered = false
     private val notifiedDeveloperPackages = ConcurrentHashMap.newKeySet<String>()
 
     private val pluginPackageReceiver = object : BroadcastReceiver() {
@@ -180,6 +182,17 @@ class BusHubService : Service() {
             ) return
             val packageName = intent?.data?.schemeSpecificPart.orEmpty()
             if (packageName.isNotBlank()) reconcilePluginPackage(packageName, action, replacing)
+        }
+    }
+
+    private val wifiStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action != WifiManager.WIFI_STATE_CHANGED_ACTION) return
+            when (intent.getIntExtra(WifiManager.EXTRA_WIFI_STATE, WifiManager.WIFI_STATE_UNKNOWN)) {
+                WifiManager.WIFI_STATE_ENABLED,
+                WifiManager.WIFI_STATE_DISABLED,
+                -> announcePhoneCapabilities()
+            }
         }
     }
 
@@ -443,6 +456,7 @@ class BusHubService : Service() {
             journal = pluginBusJournal,
         )
         registerPluginPackageReceiver()
+        registerWifiStateReceiver()
         hubEnabled = prefs().getBoolean(PREF_ENABLED, true)
         if (hubEnabled) {
             if (!canRunHub(this)) {
@@ -545,6 +559,10 @@ class BusHubService : Service() {
         if (pluginPackageReceiverRegistered) {
             runCatching { unregisterReceiver(pluginPackageReceiver) }
             pluginPackageReceiverRegistered = false
+        }
+        if (wifiStateReceiverRegistered) {
+            runCatching { unregisterReceiver(wifiStateReceiver) }
+            wifiStateReceiverRegistered = false
         }
         developerModeJournalSubscription?.close()
         developerModeJournalSubscription = null
@@ -1077,6 +1095,17 @@ class BusHubService : Service() {
             registerReceiver(pluginPackageReceiver, filter)
         }
         pluginPackageReceiverRegistered = true
+    }
+
+    private fun registerWifiStateReceiver() {
+        val filter = IntentFilter(WifiManager.WIFI_STATE_CHANGED_ACTION)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(wifiStateReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("DEPRECATION")
+            registerReceiver(wifiStateReceiver, filter)
+        }
+        wifiStateReceiverRegistered = true
     }
 
     private fun reconcilePluginPackage(packageName: String, action: String?, replacing: Boolean) {
@@ -2281,7 +2310,10 @@ class BusHubService : Service() {
         ) {
             capabilities = capabilities or BusCapabilityBits.IMAGE_SURFACE
         }
-        return capabilities
+        val wifiEnabled = runCatching {
+            getSystemService(WifiManager::class.java)?.isWifiEnabled
+        }.getOrNull()
+        return PhoneHubCameraCapabilityPolicy.applyLohsRequirement(capabilities, wifiEnabled)
     }
 
     private fun updateRemoteCapabilities(payload: JSONObject) {
