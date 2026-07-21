@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.1
+
+- Greek is now available as a translation target language.
+
 ## 1.1.0
 
 - Lens now works even when the phone's Wi-Fi is off: the phone hosts the camera link itself and the glasses join it automatically, no setting to toggle by hand.
