@@ -9,8 +9,8 @@ android {
         applicationId = "com.anezium.rokidbus.plugin.lens"
         minSdk = 31
         targetSdk = 36
-        versionCode = 14
-        versionName = "1.0.4"
+        versionCode = 15
+        versionName = "1.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // The ML Kit translate/OCR native libraries dominate the APK. Every phone that
         // can drive Rokid glasses is arm64; 32-bit armeabi-v7a and x86 emulator images

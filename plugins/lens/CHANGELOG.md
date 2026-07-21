@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.0
+
+- Lens now works even when the phone's Wi-Fi is off: the phone hosts the camera link itself and the glasses join it automatically, no setting to toggle by hand.
+- Recovers after a plugin update mid-session instead of requiring a hub restart.
+- Camera rotation falls back to a software path instead of tearing the stream down on a hardware mismatch.
+- The live overlay keeps its adaptive text layout in more cases instead of silently downgrading.
+- The video decoder reconfigures without a brief stutter in the live feed.
+
 ## 1.0.4
 
 - The app icon in Android settings and installer dialogs is now the plugin's own glyph on the Nexus dark background (adaptive icon), instead of a washed-out or generic mark.
