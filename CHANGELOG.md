@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.24
+
+- The phone now checks for app and plugin updates on its own, even if you never open Rokid Nexus — you'll get a notification the moment one is available.
+
 ## 1.0.23
 
 - Lens opens noticeably faster when the phone's Wi-Fi is off: the glasses no longer set up a Wi-Fi Direct group they were just going to discard, connecting straight to the phone's hotspot instead.
