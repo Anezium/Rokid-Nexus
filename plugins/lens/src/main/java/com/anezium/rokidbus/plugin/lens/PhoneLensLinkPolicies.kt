@@ -1,5 +1,15 @@
 package com.anezium.rokidbus.plugin.lens
 
+internal enum class PhoneLensTransportMode {
+    P2P,
+    LOHS_REVERSE,
+}
+
+internal object PhoneLensTransportModePolicy {
+    fun select(isWifiEnabled: Boolean): PhoneLensTransportMode =
+        if (isWifiEnabled) PhoneLensTransportMode.P2P else PhoneLensTransportMode.LOHS_REVERSE
+}
+
 internal object PhoneLensOfferUpdatePolicy {
     fun shouldStart(
         current: PhoneLensLinkOffer?,

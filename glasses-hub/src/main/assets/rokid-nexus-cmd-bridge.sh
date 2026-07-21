@@ -10,11 +10,11 @@ SEENFILE="$BASE/$NAME.seen"
 PENDING_DISABLE="$BASE/$NAME.pending-disable"
 CHANNEL="/sdcard/Android/data/com.anezium.rokidbus.glasses/files/cmd_bridge"
 DOORBELL="$CHANNEL/doorbell"
-VERSION="2026-07-18.1"
+VERSION="2026-07-21.1"
 SECRET="__ROKID_NEXUS_BRIDGE_SECRET_HEX__"
 POLL_INTERVAL=1
 DISABLE_DELAY=2
-MAX_REQUEST_BYTES=160
+MAX_REQUEST_BYTES=512
 
 rotate_log_if_needed() {
   if [ ! -f "$LOGFILE" ]; then
@@ -163,7 +163,7 @@ process_request() {
     reject_request "$request_file" "$file_nonce" size
     return
   fi
-  safe_size="$(LC_ALL=C tr -cd '[:alnum:]_:\n' < "$request_file" 2>/dev/null | wc -c | tr -d '[:space:]')"
+  safe_size="$(LC_ALL=C tr -cd '[:alnum:]_:+/=\n-' < "$request_file" 2>/dev/null | wc -c | tr -d '[:space:]')"
   newline_count="$(tr -cd '\n' < "$request_file" 2>/dev/null | wc -c | tr -d '[:space:]')"
   if [ "$safe_size" != "$request_size" ] || [ "$newline_count" != "1" ]; then
     reject_request "$request_file" "$file_nonce" characters
@@ -172,16 +172,55 @@ process_request() {
 
   request_line="$(cat "$request_file" 2>/dev/null)"
   old_ifs="$IFS"
-  IFS=':' read -r command nonce token extra <<EOF
+  IFS=':' read -r command nonce field3 field4 field5 field6 extra <<EOF
 $request_line
 EOF
   IFS="$old_ifs"
-  if [ -n "$extra" ] || [ "$request_line" != "$command:$nonce:$token" ]; then
+  if [ -n "$extra" ]; then
     reject_request "$request_file" "$file_nonce" format
     return
   fi
   case "$command" in
-    wifi_enable|wifi_disable) ;;
+    wifi_enable|wifi_disable)
+      token="$field3"
+      if [ -n "$field4" ] || [ -n "$field5" ] || [ -n "$field6" ] ||
+        [ "$request_line" != "$command:$nonce:$token" ]; then
+        reject_request "$request_file" "$file_nonce" format
+        return
+      fi
+      token_input="${SECRET}:${command}:${nonce}"
+      ;;
+    wifi_connect)
+      ssid_encoded="$field3"
+      passphrase_encoded="$field4"
+      security="$field5"
+      token="$field6"
+      case "$ssid_encoded" in
+        ""|*[!A-Za-z0-9+/=]*)
+          reject_request "$request_file" "$file_nonce" format
+          return
+          ;;
+      esac
+      case "$passphrase_encoded" in
+        *[!A-Za-z0-9+/=]*)
+          reject_request "$request_file" "$file_nonce" format
+          return
+          ;;
+      esac
+      case "$security" in
+        open|wpa2|wpa3) ;;
+        *)
+          reject_request "$request_file" "$file_nonce" format
+          return
+          ;;
+      esac
+      if [ -z "$token" ] ||
+        [ "$request_line" != "$command:$nonce:$ssid_encoded:$passphrase_encoded:$security:$token" ]; then
+        reject_request "$request_file" "$file_nonce" format
+        return
+      fi
+      token_input="${SECRET}:${command}:${nonce}:${ssid_encoded}:${passphrase_encoded}:${security}"
+      ;;
     *)
       reject_request "$request_file" "$file_nonce" command
       return
@@ -201,7 +240,7 @@ EOF
   # SHA-256 length extension cannot produce an accepted request because parsing requires the
   # exact fixed command:nonce form, only two literal commands are allowed, and an attacker
   # cannot write the channel directory in the first place.
-  expected_token="$(printf '%s' "${SECRET}:${command}:${nonce}" | sha256sum | cut -d' ' -f1)"
+  expected_token="$(printf '%s' "$token_input" | sha256sum | cut -d' ' -f1)"
   if [ -z "$expected_token" ] || [ "$expected_token" != "$token" ]; then
     reject_request "$request_file" "$nonce" auth
     return
@@ -230,6 +269,44 @@ EOF
       else
         write_response "$nonce" error schedule_failed
         log_line "command failed command=wifi_disable nonce=$nonce reason=schedule"
+      fi
+      ;;
+    wifi_connect)
+      rm -f "$PENDING_DISABLE"
+      if ! ssid="$(printf '%s' "$ssid_encoded" | base64 -d 2>/dev/null)" ||
+        ! passphrase="$(printf '%s' "$passphrase_encoded" | base64 -d 2>/dev/null)"; then
+        write_response "$nonce" error decode_failed
+        log_line "command failed command=wifi_connect nonce=$nonce reason=decode"
+      elif [ -z "$ssid" ] || [ "${#ssid}" -gt 128 ]; then
+        write_response "$nonce" error credentials_invalid
+        log_line "command failed command=wifi_connect nonce=$nonce reason=credentials"
+      else
+        case "$security" in
+          open)
+            if [ -n "$passphrase" ]; then
+              write_response "$nonce" error credentials_invalid
+              log_line "command failed command=wifi_connect nonce=$nonce reason=credentials"
+            elif cmd wifi connect-network "$ssid" open >/dev/null 2>&1; then
+              write_response "$nonce" ok ""
+              log_line "command completed command=wifi_connect nonce=$nonce security=$security"
+            else
+              write_response "$nonce" error command_failed
+              log_line "command failed command=wifi_connect nonce=$nonce security=$security"
+            fi
+            ;;
+          wpa2|wpa3)
+            if [ "${#passphrase}" -lt 8 ] || [ "${#passphrase}" -gt 128 ]; then
+              write_response "$nonce" error credentials_invalid
+              log_line "command failed command=wifi_connect nonce=$nonce reason=credentials"
+            elif cmd wifi connect-network "$ssid" "$security" "$passphrase" >/dev/null 2>&1; then
+              write_response "$nonce" ok ""
+              log_line "command completed command=wifi_connect nonce=$nonce security=$security"
+            else
+              write_response "$nonce" error command_failed
+              log_line "command failed command=wifi_connect nonce=$nonce security=$security"
+            fi
+            ;;
+        esac
       fi
       ;;
   esac

@@ -269,6 +269,42 @@ object GlassesHub {
                 log("blocked untrusted glasses Wi-Fi request uid=$senderUid")
                 return
             }
+            if (envelope.payload.optString("action") == "join") {
+                val ssid = envelope.payload.optString("ssid")
+                val passphrase = envelope.payload.optString("passphrase")
+                val security = WifiConnectSecurity.fromCommandKeyword(
+                    envelope.payload.optString("security", WifiConnectSecurity.WPA2.commandKeyword),
+                )
+                if (ssid.isBlank() || ssid.length > 128 || security == null ||
+                    !security.isValidPassphrase(passphrase)
+                ) {
+                    log("glassesWifiJoin rejected reason=invalid_payload")
+                    return
+                }
+                val context = appContext
+                if (context == null) {
+                    log("glassesWifiJoin applied=false reason=no_context")
+                    return
+                }
+                wifiRequestExecutor.execute {
+                    wifiEnableReleasePending.set(false)
+                    wifiDisableFuture?.cancel(false)
+                    wifiDisableFuture = null
+                    handleGlassesWifiRequest(context, true)
+                    val applied = runCatching {
+                        SelfArmCommandBridgeClient.connectWifiNetwork(
+                            context,
+                            ssid,
+                            passphrase,
+                            security,
+                        )
+                    }.onFailure {
+                        logError("glassesWifiJoin bridge failed", it)
+                    }.getOrDefault(false)
+                    log("glassesWifiJoin applied=$applied")
+                }
+                return
+            }
             val rawEnabled = envelope.payload.opt("enabled")
             if (rawEnabled !is Boolean) {
                 log("glassesWifiRequest rejected reason=invalid_payload")
