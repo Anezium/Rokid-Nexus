@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Glasses app updates now ask you to turn on phone Wi-Fi before starting instead of failing during delivery.
+- First-run glasses setup now waits for the glasses to join a Wi-Fi network and explains how to recover when none is connected.
+
 ## 1.0.25
 
 - The phone now surfaces the glasses' AI-assist button presses and wearing status to plugins, opening the door to features that react to them.

@@ -15,6 +15,7 @@ import android.content.res.ColorStateList
 import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
@@ -241,14 +242,25 @@ class MainActivity : Activity() {
         val glassesUpdateLabel = NexusPhoneState.glassesUpdateVersionLabel()
         if (glassesUpdateLabel != null) {
             val cxrReady = lastLinkState and LinkStateBits.CXR_CONTROL_UP != 0
+            val wifiReady = isPhoneWifiEnabled()
             addBlock(
                 NexusUi.updateBanner(
                     context = this,
                     versionLabel = glassesUpdateLabel,
                     title = "Glasses app update",
-                    actionLabel = NexusPhoneState.glassesUpdateActionLabel(),
-                    actionEnabled = cxrReady && NexusPhoneState.glassesUpdateActionEnabled(),
-                ) { BusHubService.installGlassesApp(applicationContext) },
+                    actionLabel = if (wifiReady) {
+                        NexusPhoneState.glassesUpdateActionLabel()
+                    } else {
+                        "Turn on Wi-Fi"
+                    },
+                    actionEnabled = if (wifiReady) {
+                        cxrReady && NexusPhoneState.glassesUpdateActionEnabled()
+                    } else {
+                        true
+                    },
+                ) {
+                    if (wifiReady) BusHubService.installGlassesApp(applicationContext) else openWifiPanel()
+                },
             )
         } else {
             NexusPhoneState.glassesInstalledStatusLabel()?.let { status ->
@@ -681,9 +693,7 @@ class MainActivity : Activity() {
             else -> false
         }
         // Fail open: if Wi-Fi state cannot be read, keep the normal install action.
-        val wifiReady = runCatching {
-            getSystemService(android.net.wifi.WifiManager::class.java)?.isWifiEnabled == true
-        }.getOrDefault(true)
+        val wifiReady = isPhoneWifiEnabled()
         val wifiBlocksInstall = cxrReady && installNeedsWifi && !wifiReady
 
         val steps = listOf(
@@ -724,8 +734,8 @@ class MainActivity : Activity() {
             ),
             OnboardingStep(
                 title = "Set up your glasses",
-                body = "Put the glasses on and follow the two prompts on the lens — Nexus " +
-                    "arms itself and the plugin launcher appears.",
+                body = "Connect the glasses to Wi-Fi in the Hi Rokid app, then put them on and " +
+                    "follow the two prompts on the lens — Nexus arms itself and the plugin launcher appears.",
                 done = NexusPhoneState.glassesSetupComplete,
                 actionLabel = "Open glasses app",
                 actionEnabled = cxrReady,
@@ -965,6 +975,11 @@ class MainActivity : Activity() {
     }
 
     private fun canInstallApps(): Boolean = packageManager.canRequestPackageInstalls()
+
+    private fun isPhoneWifiEnabled(): Boolean =
+        runCatching {
+            getSystemService(WifiManager::class.java)?.isWifiEnabled == true
+        }.getOrDefault(true)
 
     private fun openWifiPanel() {
         runCatching {

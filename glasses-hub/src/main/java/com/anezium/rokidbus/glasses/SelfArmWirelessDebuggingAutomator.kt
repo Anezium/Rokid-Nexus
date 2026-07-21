@@ -40,6 +40,7 @@ internal class SelfArmWirelessDebuggingAutomator(
     private var wifiClickAttempts = 0
     private var wifiScrolls = 0
     private var wifiSettingsOpened = false
+    private var wifiNetworkWaitStartedAt = 0L
 
     private var pairingRequested = false
     private var pairingRequestedAt = 0L
@@ -87,6 +88,7 @@ internal class SelfArmWirelessDebuggingAutomator(
         wifiClickAttempts = 0
         wifiScrolls = 0
         wifiSettingsOpened = false
+        wifiNetworkWaitStartedAt = 0L
         pairingRequested = false
         pairingRequestedAt = 0L
         pairingDialogDumped = false
@@ -280,12 +282,24 @@ internal class SelfArmWirelessDebuggingAutomator(
 
     private fun onWifiEnabled() {
         if (wifiConfirmed) return
-        wifiConfirmed = true
         if (operationMode == OperationMode.WIFI_ONLY) {
+            wifiConfirmed = true
             returnFromWifiSettings()
             finish("wifi_on", true)
             return
         }
+        val now = SystemClock.uptimeMillis()
+        if (wifiIpv4().isBlank()) {
+            if (wifiNetworkWaitStartedAt == 0L) wifiNetworkWaitStartedAt = now
+            if (now - wifiNetworkWaitStartedAt >= WIFI_NETWORK_WAIT_MS) {
+                finish("wifi_network_required", false)
+                return
+            }
+            report("waiting_for_wifi_network")
+            schedule(WIFI_NETWORK_POLL_INTERVAL_MS)
+            return
+        }
+        wifiConfirmed = true
         report("wifi_on")
         runCatching {
             service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_HOME)
@@ -1218,6 +1232,8 @@ internal class SelfArmWirelessDebuggingAutomator(
         private const val DEVELOPER_OPEN_TIMEOUT_MS = 5_500L
         private const val WIFI_POLL_INTERVAL_MS = 1_000L
         private const val WIFI_CLICK_RETRY_WAIT_MS = 13_000L
+        private const val WIFI_NETWORK_WAIT_MS = 30_000L
+        private const val WIFI_NETWORK_POLL_INTERVAL_MS = 1_500L
         private const val PAIRING_DIALOG_POLL_MS = 600L
         private const val PAIRING_DIALOG_MAX_WAIT_MS = 9_000L
         private const val PAIRING_DIALOG_HOLD_MS = 60_000L

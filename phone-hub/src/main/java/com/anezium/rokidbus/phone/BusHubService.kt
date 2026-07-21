@@ -1950,6 +1950,15 @@ class BusHubService : Service() {
             }
             return
         }
+        if (!isPhoneWifiEnabled()) {
+            transitionGlassesAppState(
+                GlassesAppInstallEvent.Failed(
+                    "Turn on Wi-Fi first — the update travels to the glasses over Wi-Fi.",
+                    GlassesAppRetry.INSTALL,
+                ),
+            )
+            return
+        }
         if (!isCxrUp() || cxrLink == null) {
             broadcastGlassesAppState(state)
             return
@@ -1962,6 +1971,11 @@ class BusHubService : Service() {
         transitionGlassesAppState(GlassesAppInstallEvent.InstallRequested)
         executor.execute { downloadAndInstallGlassesApp(operationId) }
     }
+
+    private fun isPhoneWifiEnabled(): Boolean =
+        runCatching {
+            getSystemService(WifiManager::class.java)?.isWifiEnabled == true
+        }.getOrDefault(true)
 
     private fun downloadAndInstallGlassesApp(operationId: Long) {
         val release = runCatching { resolveLatestGlassesAppRelease() }.getOrElse { failure ->

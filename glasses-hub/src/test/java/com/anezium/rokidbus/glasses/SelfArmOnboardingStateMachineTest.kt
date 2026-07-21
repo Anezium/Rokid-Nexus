@@ -39,6 +39,18 @@ class SelfArmOnboardingStateMachineTest {
     }
 
     @Test
+    fun missingWifiNetworkFailureRemainsActionable() {
+        val state = evaluate(
+            accessibilityEnabled = true,
+            failureState = "wifi_network_required",
+        )
+
+        assertEquals(SelfArmOnboardingState.Stage.FAILED, state.stage)
+        assertEquals(SelfArmOnboardingState.Action.RETRY_WIRELESS, state.action)
+        assertEquals("wifi_network_required", state.detail)
+    }
+
+    @Test
     fun partialGrantCannotHideRunningOrFailedSecureBootstrap() {
         val running = evaluate(
             accessibilityEnabled = true,

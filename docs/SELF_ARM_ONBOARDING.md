@@ -13,7 +13,16 @@ The glasses UI is two HUD cards:
    HUD on its own once the service connects, and the freshly armed service
    immediately chains into the wireless bootstrap — no extra tap needed.
 2. **Finish setup** — the fallback card for re-running the bootstrap when the
-   automatic chain could not complete (for example Wi-Fi was off).
+   automatic chain could not complete (for example Wi-Fi was off or the glasses
+   were not connected to a network).
+
+The full bootstrap requires the glasses to be joined to a Wi-Fi network through
+the Hi Rokid app; having the Wi-Fi toggle on is not enough. After enabling Wi-Fi,
+the automator reports `waiting_for_wifi_network` while it waits up to 30 seconds
+for a Wi-Fi IPv4 address. If the glasses are still not joined, it stops with
+`wifi_network_required`, and the Retry card tells the user to connect in Hi Rokid
+before trying again. The separate camera fallback remains a Wi-Fi-toggle-only
+operation and still finishes as soon as Wi-Fi is on.
 
 During the bootstrap, the accessibility automator drives Settings itself: it
 enables Developer options and Wireless Debugging, opens **Pair device with pairing
