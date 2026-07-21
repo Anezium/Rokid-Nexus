@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.0.26
 
 - Glasses app updates now ask you to turn on phone Wi-Fi before starting instead of failing during delivery.
 - First-run glasses setup now waits for the glasses to join a Wi-Fi network and explains how to recover when none is connected.
