@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.0.28
 
 - First-run glasses setup is much more resilient: if the secure channel drops mid-arm (including during the planned adbd restart), Nexus reconnects and resumes instead of failing with a support code.
 
