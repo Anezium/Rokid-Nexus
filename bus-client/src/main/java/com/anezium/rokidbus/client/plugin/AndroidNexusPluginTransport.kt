@@ -30,6 +30,7 @@ internal class AndroidNexusPluginTransport(
 
     override fun connect(listener: NexusPluginTransport.Listener) {
         this.listener = listener
+        client.setGlassesAiButtonListener { active -> this.listener?.onGlassesAiButton(active) }
         client.connect()
     }
 

@@ -47,6 +47,7 @@ import com.anezium.rokidbus.shared.plugin.PluginCapability
 import com.anezium.rokidbus.shared.plugin.PluginCapability.Companion.serialize
 import com.example.cxrglobal.CXRLink
 import com.example.cxrglobal.CxrDefs
+import com.example.cxrglobal.GlassInfo
 import com.example.cxrglobal.callbacks.IAudioStreamCbk
 import com.example.cxrglobal.callbacks.ICXRLinkCbk
 import com.example.cxrglobal.callbacks.ICustomCmdCbk
@@ -173,6 +174,7 @@ class BusHubService : Service() {
     private lateinit var transitLegacyStateExporter: TransitLegacyStateExporter
     @Volatile private var cxrConnected = false
     @Volatile private var glassBtConnected = false
+    @Volatile private var glassesWorn = false
     @Volatile private var glassesAppInstallState: GlassesAppInstallState = GlassesAppInstallState.Unknown
     private var glassesAppOperationSequence = 0L
     private var activeGlassesAppOperationId: Long? = null
@@ -345,6 +347,7 @@ class BusHubService : Service() {
     private val linkCallback = object : ICXRLinkCbk {
         override fun onCXRLConnected(connected: Boolean) {
             cxrConnected = connected
+            if (!connected) glassesWorn = false
             log("CXR-L connected=$connected")
             notifyLinkState()
             if (!connected) failActiveGlassesAppOperation("Connection to the glasses was lost.")
@@ -353,10 +356,28 @@ class BusHubService : Service() {
 
         override fun onGlassBtConnected(connected: Boolean) {
             glassBtConnected = connected
+            if (!connected) glassesWorn = false
             log("Hi Rokid glass BT connected=$connected")
             notifyLinkState()
             if (!connected) failActiveGlassesAppOperation("Connection to the glasses was lost.")
             if (!isCxrUp()) revokeAudioLease("LINK_DOWN")
+        }
+
+        override fun onGlassDeviceInfo(info: GlassInfo) {
+            notifyGlassesDeviceInfo(info)
+        }
+
+        override fun onGlassWearingStatus(wearing: Boolean) {
+            glassesWorn = wearing
+            notifyLinkState()
+        }
+
+        override fun onGlassAiAssistStart() {
+            notifyGlassesAiButton(active = true)
+        }
+
+        override fun onGlassAiAssistStop() {
+            notifyGlassesAiButton(active = false)
         }
     }
 
@@ -559,6 +580,7 @@ class BusHubService : Service() {
         cxrLink = null
         cxrConnected = false
         glassBtConnected = false
+        glassesWorn = false
         closeSocket()
         notifyLinkState()
         log("Hub stopped; SPP socket and CXR-L session released")
@@ -1794,6 +1816,7 @@ class BusHubService : Service() {
         if (!bound) {
             cxrConnected = false
             glassBtConnected = false
+            glassesWorn = false
             notifyLinkState()
         }
     }
@@ -2353,13 +2376,12 @@ class BusHubService : Service() {
             .notify(NOTIFICATION_ID, buildStatusNotification(state))
     }
 
-    private fun linkState(): Int {
-        var state = 0
-        if (isCxrUp()) state = state or LinkStateBits.CXR_CONTROL_UP
-        if (output != null && socket?.isConnected == true) state = state or LinkStateBits.SPP_DATA_UP
-        if (isGlassesBonded()) state = state or LinkStateBits.GLASSES_BT_BONDED_OR_PHONE_CONNECTED
-        return state
-    }
+    private fun linkState(): Int = PhoneLinkState.compose(
+        cxrControlUp = isCxrUp(),
+        sppDataUp = output != null && socket?.isConnected == true,
+        glassesBondedOrPhoneConnected = isGlassesBonded(),
+        glassesWorn = glassesWorn,
+    )
 
     @SuppressLint("MissingPermission")
     private fun isGlassesBonded(): Boolean =
@@ -2370,6 +2392,31 @@ class BusHubService : Service() {
 
     private fun isCxrUp(): Boolean =
         cxrConnected && glassBtConnected && cxrLink?.isServiceConnected() == true
+
+    private fun notifyGlassesAiButton(active: Boolean) {
+        registrations.forEach { registration ->
+            runCatching { registration.callback.onGlassesAiButton(active) }
+                .onFailure { removeRegistration(registration, "dead callback") }
+        }
+    }
+
+    private fun notifyGlassesDeviceInfo(info: GlassInfo) {
+        val eventId = UUID.randomUUID().toString()
+        registrations.mapNotNull { it.principal }
+            .distinctBy { it.grantKey() }
+            .forEach { principal ->
+                deliverExternalLifecycle(
+                    principal = principal,
+                    path = BusPaths.GLASSES_DEVICE_INFO,
+                    id = eventId,
+                    payload = GlassesDeviceInfoPayload.create(
+                        info = info,
+                        pluginId = principal.descriptor.id,
+                        eventId = eventId,
+                    ),
+                )
+            }
+    }
 
     private fun notifyLinkState() {
         val state = linkState()

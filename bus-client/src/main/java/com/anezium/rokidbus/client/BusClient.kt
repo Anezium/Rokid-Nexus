@@ -55,6 +55,7 @@ class BusClient(
     private var closed = false
     private var reconnectPosted = false
     private var pluginRegistrationState: Int? = null
+    private var glassesAiButtonListener: (Boolean) -> Unit = {}
     @Volatile private var hubCapabilities = 0
 
     private val callback = object : IBusCallback.Stub() {
@@ -72,6 +73,10 @@ class BusClient(
             val json = runCatching { JSONObject(String(meta, Charsets.UTF_8)) }
                 .getOrElse { JSONObject().put("raw", String(meta, Charsets.UTF_8)) }
             main.post { handleBinaryMessage(path, id, json, data) }
+        }
+
+        override fun onGlassesAiButton(active: Boolean) {
+            main.post { glassesAiButtonListener(active) }
         }
     }
 
@@ -271,6 +276,10 @@ class BusClient(
 
     fun linkState(): Int =
         runCatching { service?.linkState() ?: 0 }.getOrDefault(0)
+
+    internal fun setGlassesAiButtonListener(listener: (Boolean) -> Unit) {
+        glassesAiButtonListener = listener
+    }
 
     /** Reads the live Binder value; feature availability may change without a rebind. */
     fun capabilities(): Int =
