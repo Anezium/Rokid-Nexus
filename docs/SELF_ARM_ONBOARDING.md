@@ -43,10 +43,15 @@ monolithic command:
   re-arms if anything was lost. The command bridge is best-effort: its status is
   reported but never gates self-arm success.
 
-The bridge accepts only whitelisted commands (Wi-Fi toggling); each request
+The bridge accepts only whitelisted commands: toggling Wi-Fi on/off, and
+joining a specific SSID/passphrase (`wifi_connect`, with a `security` argument
+of `open`/`wpa2`/`wpa3` — used by the Lens camera link's phone-hosted-hotspot
+fallback to join the phone's `LocalOnlyHotspot` by credentials). Each request
 carries a nonce and a keyed SHA-256 over an app-private random secret, with
-replay rejection. The app never reads bridge-written files (FUSE negative-cache
-trap) — it observes the resulting system state instead.
+replay rejection — the `wifi_connect` SSID/passphrase/security are part of
+that same signed payload, not separately injectable. The app never reads
+bridge-written files (FUSE negative-cache trap) — it observes the resulting
+system state instead.
 
 Once `WRITE_SECURE_SETTINGS` is granted, the app also repairs its accessibility
 entry **directly** on every launch — no ADB session needed — so accessibility is

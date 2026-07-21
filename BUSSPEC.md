@@ -317,12 +317,29 @@ package, descriptor ID, and signing digest have an approved, enabled `camera`
 grant. Installation or a shared signer alone never grants access.
 
 The bus carries control only. The heavy data path is out-of-band: during a
-session the glasses encode the camera as H.264 and serve it over a glasses-owned
-Wi-Fi Direct group; the consumer plugin joins with the credentials from
-`/camera/link/offer`, decodes on the phone, and runs its processing (Lens: ML
-Kit OCR + translation) there. Frozen captures ride the same link as full JPEGs,
-with `/camera/freeze/image/chunk` over SPP as the fallback when the link is
-down.
+session the glasses encode the camera as H.264 and serve it over a link
+negotiated by `/camera/link/offer`; the consumer plugin joins with the
+credentials it carries, decodes on the phone, and runs its processing (Lens:
+ML Kit OCR + translation) there. Frozen captures ride the same link as full
+JPEGs, with `/camera/freeze/image/chunk` over SPP as the fallback when the
+link is down.
+
+The link has two modes, chosen by the phone from its own Wi-Fi state at
+session start (`PhoneLensTransportModePolicy`) and carried in the offer's
+`mode` field:
+
+- `p2p` (default when the field is absent, for backward compatibility): the
+  glasses are Group Owner of a Wi-Fi Direct group; the phone joins it.
+- `lohs_reverse`: used when the phone's own Wi-Fi is off (it cannot enable its
+  own Wi-Fi from user-space). The phone hosts a `LocalOnlyHotspot` itself and
+  sends a reverse offer; the glasses enable their Wi-Fi (self-arm command
+  bridge, falling back to the accessibility automator) and join the phone's
+  hotspot by credentials, then connect as the TCP client — the transport
+  roles invert, but `CameraLinkProtocol`'s wire framing is unchanged either
+  way. The glasses skip Wi-Fi Direct group setup entirely when they already
+  know (from the phone's last capabilities announcement, see below) that
+  `lohs_reverse` is likely, falling back to the normal `p2p` startup after a
+  bounded wait if no reverse offer arrives (`CameraLinkStartupPolicy`).
 
 Glasses to phone:
 
@@ -330,7 +347,14 @@ Glasses to phone:
   and, when opened, `config` with `width`, `height`, `fps`, and
   `protocolVersion`.
 - `/camera/link/offer` carries `sessionId`, `ssid`, `passphrase`, `port`,
-  `token`, and `goIp`.
+  `token`, `goIp` (required for `p2p`, absent for `lohs_reverse`), and two
+  fields that default when absent for backward compatibility: `mode` (`p2p` or
+  `lohs_reverse`) and, for `lohs_reverse` only, `security` (`open`, `wpa2_psk`,
+  or `wpa3_sae` — the phone's actual `LocalOnlyHotspot` security type, so the
+  glasses associate on the first attempt instead of a rejection-then-retry).
+  This same path carries the reverse offer in `lohs_reverse` mode (phone to
+  glasses) — the envelope shape is identical, only `CameraLinkOfferContract`'s
+  `mode`/`security` fields and the missing `goIp` distinguish it.
 - `/camera/freeze/image/chunk` carries the raw SPP frozen-image fallback as
   binary chunks.
 
@@ -358,12 +382,18 @@ forwards the opening state and subsequent offers. The matching close state sends
 binder death, and registration timeout perform the same idempotent teardown.
 Duplicate and stale open/close events are ignored by `sessionId`.
 
-`IBusService.capabilities()` bit `4` is `CAMERA_CONSUMER_READY`, and bit `8` is
-`CAMERA_FROZEN_SPP`. The phone hub sets readiness while at least one installed
-camera principal has an approved, enabled `camera` grant; it adds
-`CAMERA_FROZEN_SPP` while that consumer receives frozen chunks and SPP is live.
-Grant, package, and link changes recompute the bits. Bit `1` is retired and is
-no longer advertised by either hub.
+`IBusService.capabilities()` bit `4` is `CAMERA_CONSUMER_READY`, bit `8` is
+`CAMERA_FROZEN_SPP`, and bit `16` is `CAMERA_LOHS_REVERSE_REQUIRED`. The phone
+hub sets readiness while at least one installed camera principal has an
+approved, enabled `camera` grant; it adds `CAMERA_FROZEN_SPP` while that
+consumer receives frozen chunks and SPP is live, and it adds
+`CAMERA_LOHS_REVERSE_REQUIRED` whenever its own Wi-Fi is off (re-announced
+immediately on the phone's own Wi-Fi state changes, not just on grant/package/
+link changes, so the glasses learn it as early as possible — ideally before a
+camera session even starts, letting them skip straight to the `lohs_reverse`
+startup path instead of standing up a Wi-Fi Direct group that would only be
+torn down). Grant, package, and link changes recompute the bits. Bit `1` is
+retired and is no longer advertised by either hub.
 
 ## Hub capabilities announcements
 

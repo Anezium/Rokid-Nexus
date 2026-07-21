@@ -108,13 +108,20 @@ on real hardware.
 - **Lens shipped as the flagship — with a better architecture than §8 of the
   original vision imagined.** Instead of ~1 fps JPEG over SPP, the platform
   grew a generic `camera` capability: the glasses stream live H.264 over a
-  glasses-owned Wi-Fi Direct link, the consumer plugin decodes and runs ML Kit
+  Wi-Fi Direct link normally, the consumer plugin decodes and runs ML Kit
   OCR + translation on the phone (offline, zero recurring cost), and structured
   overlays come back over the bus. Freeze mode captures a full-FOV still
   through the same link. The "two routes, decided later" question resolved into
   a third: no glasses-side plugin code at all — the glasses half lives in the
   hub as a platform capability, and Lens is an ordinary phone APK that the
   launcher exposes under the consumer's own name.
+- **Camera works even with the phone's Wi-Fi off.** A phone app can't enable its
+  own Wi-Fi, so the glasses-owned Wi-Fi Direct link above only works if the
+  phone's Wi-Fi is already on. When it's off, the phone hosts a
+  `LocalOnlyHotspot` itself and the glasses join it instead — the transport
+  roles invert (phone becomes server, glasses become client) but the wire
+  protocol and everything downstream (OCR, overlays, freeze) is unchanged.
+  This closes what used to be a hard dead end for Lens.
 
 The founding claims held up: wake-on-message, the single hub-owned link, and
 declarative surfaces are exactly why none of the above required a user to ever

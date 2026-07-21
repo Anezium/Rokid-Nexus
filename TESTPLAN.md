@@ -476,3 +476,45 @@ adb -s $phone uninstall com.anezium.rokidbus.phoneprobe
   pause/resume the glasses camera activity; restart the phone hub mid-session.
 - Run the Store lifecycle: install, approve, open, update, and uninstall Lens while
   confirming CXR/SPP transport continuity throughout.
+
+## LOHS reverse camera link on-device validation
+
+> Validated 2026-07-21 on reference hardware (S23+ phone, RG glasses); numbers
+> below are that session's measurements, re-check if the client-l SDK or the
+> P2P/LOHS policies change.
+
+- Cold-open with the phone's Wi-Fi off and the glasses' Wi-Fi off: opening
+  Lens must enable the glasses' Wi-Fi automatically (no manual toggle), have
+  the phone host a `LocalOnlyHotspot`, and connect within the P2P-fallback
+  timeout. Confirm via `cameraLinkStage stage=connected transport=lohs_reverse`
+  in the glasses log; measured 5.5s (warm Wi-Fi radio) to 9-14s (glasses
+  Wi-Fi chip cold boot).
+- Confirm the first join attempt succeeds without a WPA2-then-retry-SAE
+  association rejection (`Association rejection ... statusCode`) — the offer's
+  `security` field must match the hotspot's actual security type.
+- Confirm the glasses skip Wi-Fi Direct group creation (no `group_created`/
+  `offer_sent#1` in the log) when they already know `CAMERA_LOHS_REVERSE_REQUIRED`
+  from a recent phone capabilities announcement, going straight to
+  `offer_sent#0` (the reverse-mode bootstrap offer) instead.
+- With the phone's Wi-Fi ON, confirm the P2P path is completely unaffected:
+  same group-owner/offer/join sequence and timings as before this feature
+  existed.
+- Toggle the phone's Wi-Fi off mid-session (already open, live-streaming):
+  confirm the existing P2P link keeps working until the session ends — LOHS
+  mode is only selected at session start, not renegotiated mid-session.
+
+## Background update checks on-device validation
+
+- With the phone app's UI never opened, wait for the hourly background tick
+  (or force it by restarting `BusHubService`) and confirm both
+  `NexusUpdateManager.checkForUpdates` and `PluginUpdateChecker.refreshIfStale`
+  run on their own schedule.
+- With a genuinely newer app version published, confirm a system notification
+  ("Rokid Nexus update available") appears without the app UI ever being
+  opened, and that re-ticking with the same available version does not
+  re-notify.
+- Same check for a newer plugin version: notification text pluralizes
+  correctly for 1 vs N pending plugin updates, and a repeat tick with the same
+  pending set does not re-notify.
+- Deny the `POST_NOTIFICATIONS` runtime permission and confirm the periodic
+  checks still run without crashing (notification post is silently skipped).
