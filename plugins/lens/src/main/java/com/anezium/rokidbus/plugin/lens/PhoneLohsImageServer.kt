@@ -262,9 +262,11 @@ internal class PhoneLohsImageServer(
 
 internal fun cameraLinkSecurityForSoftAp(securityType: Int): CameraLinkSecurity? = when (securityType) {
     SoftApConfiguration.SECURITY_TYPE_OPEN -> CameraLinkSecurity.OPEN
-    SoftApConfiguration.SECURITY_TYPE_WPA2_PSK,
+    SoftApConfiguration.SECURITY_TYPE_WPA2_PSK -> CameraLinkSecurity.WPA2_PSK
+    // A transition-mode hotspot advertises both, but measured hardware rejects the WPA2
+    // association outright and only completes over SAE, so join transition mode as SAE.
     SoftApConfiguration.SECURITY_TYPE_WPA3_SAE_TRANSITION,
-    -> CameraLinkSecurity.WPA2_PSK
-    SoftApConfiguration.SECURITY_TYPE_WPA3_SAE -> CameraLinkSecurity.WPA3_SAE
+    SoftApConfiguration.SECURITY_TYPE_WPA3_SAE,
+    -> CameraLinkSecurity.WPA3_SAE
     else -> null
 }

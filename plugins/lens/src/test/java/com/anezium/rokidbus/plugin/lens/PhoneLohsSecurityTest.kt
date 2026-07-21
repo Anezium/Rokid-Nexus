@@ -17,8 +17,9 @@ class PhoneLohsSecurityTest {
             CameraLinkSecurity.WPA2_PSK,
             cameraLinkSecurityForSoftAp(SoftApConfiguration.SECURITY_TYPE_WPA2_PSK),
         )
+        // Transition mode joins as SAE: measured hardware rejects the WPA2 association.
         assertEquals(
-            CameraLinkSecurity.WPA2_PSK,
+            CameraLinkSecurity.WPA3_SAE,
             cameraLinkSecurityForSoftAp(SoftApConfiguration.SECURITY_TYPE_WPA3_SAE_TRANSITION),
         )
         assertEquals(
