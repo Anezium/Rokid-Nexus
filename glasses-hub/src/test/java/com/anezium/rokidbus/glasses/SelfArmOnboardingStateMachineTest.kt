@@ -39,6 +39,54 @@ class SelfArmOnboardingStateMachineTest {
     }
 
     @Test
+    fun failureDiagnosticPassesThroughOnlyForFailedStage() {
+        val supportCode = "PAIR-NOPORT"
+        val failed = evaluate(
+            accessibilityEnabled = true,
+            failureState = "pairing_code_expired",
+            failureDiagnostic = supportCode,
+        )
+
+        assertEquals(SelfArmOnboardingState.Stage.FAILED, failed.stage)
+        assertEquals(supportCode, failed.diagnostic)
+
+        val otherStates = listOf(
+            evaluate(
+                wirelessDebuggingSupported = false,
+                accessibilityEnabled = true,
+                failureDiagnostic = supportCode,
+            ),
+            evaluate(accessibilityEnabled = false, failureDiagnostic = supportCode),
+            evaluate(accessibilityEnabled = true, failureDiagnostic = supportCode),
+            evaluate(
+                accessibilityEnabled = true,
+                setupRunning = true,
+                failureState = "pairing_code_expired",
+                failureDiagnostic = supportCode,
+            ),
+            evaluate(
+                accessibilityEnabled = true,
+                secureSettingsGranted = true,
+                legacyAdbSafe = true,
+                failureState = "pairing_code_expired",
+                failureDiagnostic = supportCode,
+            ),
+        )
+
+        assertEquals(
+            setOf(
+                SelfArmOnboardingState.Stage.UNSUPPORTED,
+                SelfArmOnboardingState.Stage.ENABLE_ACCESSIBILITY,
+                SelfArmOnboardingState.Stage.READY_FOR_WIRELESS,
+                SelfArmOnboardingState.Stage.RUNNING,
+                SelfArmOnboardingState.Stage.COMPLETE,
+            ),
+            otherStates.map { it.stage }.toSet(),
+        )
+        otherStates.forEach { assertEquals("", it.diagnostic) }
+    }
+
+    @Test
     fun missingWifiNetworkFailureRemainsActionable() {
         val state = evaluate(
             accessibilityEnabled = true,
@@ -132,6 +180,7 @@ class SelfArmOnboardingStateMachineTest {
         legacyAdbSafe: Boolean = false,
         setupRunning: Boolean = false,
         failureState: String = "",
+        failureDiagnostic: String = "",
         progressState: String = "",
     ): SelfArmOnboardingState = SelfArmOnboardingStateMachine.evaluate(
         SelfArmOnboardingSnapshot(
@@ -142,6 +191,7 @@ class SelfArmOnboardingStateMachineTest {
             legacyAdbSafe = legacyAdbSafe,
             setupRunning = setupRunning,
             failureState = failureState,
+            failureDiagnostic = failureDiagnostic,
             progressState = progressState,
         ),
     )

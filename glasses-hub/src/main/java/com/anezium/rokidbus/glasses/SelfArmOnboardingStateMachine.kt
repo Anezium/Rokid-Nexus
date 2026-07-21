@@ -8,6 +8,7 @@ internal data class SelfArmOnboardingSnapshot(
     val legacyAdbSafe: Boolean,
     val setupRunning: Boolean,
     val failureState: String,
+    val failureDiagnostic: String,
     val progressState: String,
 )
 
@@ -15,6 +16,7 @@ internal data class SelfArmOnboardingState(
     val stage: Stage,
     val action: Action,
     val detail: String,
+    val diagnostic: String = "",
 ) {
     enum class Stage {
         UNSUPPORTED,
@@ -47,6 +49,7 @@ internal object SelfArmOnboardingStateMachine {
                 SelfArmOnboardingState.Stage.FAILED,
                 SelfArmOnboardingState.Action.RETRY_WIRELESS,
                 snapshot.failureState,
+                snapshot.failureDiagnostic,
             )
         !snapshot.wirelessDebuggingSupported ->
             state(SelfArmOnboardingState.Stage.UNSUPPORTED)
@@ -68,5 +71,6 @@ internal object SelfArmOnboardingStateMachine {
         stage: SelfArmOnboardingState.Stage,
         action: SelfArmOnboardingState.Action = SelfArmOnboardingState.Action.NONE,
         detail: String = "",
-    ) = SelfArmOnboardingState(stage, action, detail)
+        diagnostic: String = "",
+    ) = SelfArmOnboardingState(stage, action, detail, diagnostic)
 }

@@ -61,6 +61,7 @@ internal class SelfArmWirelessDebuggingAutomator(
     private var localSelfPairingLastError = ""
     private var localSelfPairingThread: Thread? = null
     private var lastLocalSelfPairingStatusAt = 0L
+    private var lastReportedProgressState = ""
 
     private var awaitingWirelessDebugConfirmation = false
     private var deviceInfoFallback = false
@@ -109,6 +110,7 @@ internal class SelfArmWirelessDebuggingAutomator(
         localSelfPairingThread?.interrupt()
         localSelfPairingThread = null
         lastLocalSelfPairingStatusAt = 0L
+        lastReportedProgressState = ""
         awaitingWirelessDebugConfirmation = false
         deviceInfoFallback = false
         developerEnableFlow = false
@@ -157,14 +159,15 @@ internal class SelfArmWirelessDebuggingAutomator(
     private fun step() {
         if (!active) return
         if (SystemClock.uptimeMillis() > deadlineAt) {
-            finish(
-                if (operationMode == OperationMode.WIFI_ONLY) {
-                    "wifi_enable_timeout"
-                } else {
-                    "wireless_setup_timeout"
-                },
-                false,
-            )
+            if (operationMode == OperationMode.WIFI_ONLY) {
+                finish("wifi_enable_timeout", false)
+            } else {
+                finish(
+                    "wireless_setup_timeout",
+                    false,
+                    sanitizeSupportDiagnostic("TMO: $lastReportedProgressState"),
+                )
+            }
             return
         }
         if (
@@ -172,7 +175,14 @@ internal class SelfArmWirelessDebuggingAutomator(
             pairingReadyReportedAt > 0L &&
             SystemClock.uptimeMillis() - pairingReadyReportedAt > PAIRING_DIALOG_HOLD_MS
         ) {
-            finish("pairing_code_expired", false)
+            val diagnostic = when {
+                localSelfPairingLastError.isNotBlank() ->
+                    pairingFailureDiagnostic(localSelfPairingLastError)
+                lastPairingPort <= 0 -> "PAIR-NOPORT"
+                lastPairingConnectPort <= 0 -> "PAIR-NOTLS"
+                else -> "PAIR-STALL"
+            }
+            finish("pairing_code_expired", false, diagnostic)
             return
         }
 
@@ -673,10 +683,11 @@ internal class SelfArmWirelessDebuggingAutomator(
                 }.onFailure { throwable ->
                     localSelfPairingFailedToken = token
                     localSelfPairingLastError = causeChainMessage(throwable)
-                    Log.w(TAG, "local self-pair bootstrap failed: $localSelfPairingLastError", throwable)
+                    val diagnostic = pairingFailureDiagnostic(localSelfPairingLastError)
+                    Log.w(TAG, "local self-pair bootstrap failed: $diagnostic")
                     if (!active) return@post
                     android.util.Log.i(TAG, "Phone fallback pairing")
-                    android.util.Log.i(TAG, "selfarm-wireless self_pairing_failed wifiIp=$host pairPort=$pairPort connectPort=$connectPort error=$localSelfPairingLastError")
+                    android.util.Log.i(TAG, "selfarm-wireless self_pairing_failed wifiIp=$host pairPort=$pairPort connectPort=$connectPort error=$diagnostic")
                     sendPairingReadyStatus(token, code, host, pairPort, connectPort)
                     schedule(PAIRING_DIALOG_POLL_MS)
                 }
@@ -687,6 +698,7 @@ internal class SelfArmWirelessDebuggingAutomator(
         }
         localSelfPairingThread = worker
         worker.start()
+        report("self_pairing_in_progress")
         return true
     }
 
@@ -1136,8 +1148,8 @@ internal class SelfArmWirelessDebuggingAutomator(
         throwable.message.orEmpty().trim().ifBlank { throwable::class.java.simpleName }
 
     /**
-     * Full failure detail for the phone log: walk the cause chain so we never drop the underlying
-     * KADB/socket reason (e.g. "connection closed", "Connection refused") behind a generic wrapper.
+     * Walk the cause chain so the sanitized support detail keeps the underlying KADB/socket reason
+     * (e.g. "connection closed", "Connection refused") instead of only a generic wrapper.
      */
     private fun causeChainMessage(throwable: Throwable): String {
         val parts = mutableListOf<String>()
@@ -1189,6 +1201,7 @@ internal class SelfArmWirelessDebuggingAutomator(
     }
 
     private fun report(setupState: String) {
+        lastReportedProgressState = setupState
         if (operationMode == OperationMode.FULL_BOOTSTRAP) {
             SelfArmOnboardingStore.reportProgress(service.applicationContext, setupState)
         }
@@ -1197,7 +1210,7 @@ internal class SelfArmWirelessDebuggingAutomator(
         android.util.Log.i(TAG, "selfarm-wireless $setupState wifiIp=$wifiIp connectPort=$connectPort")
     }
 
-    private fun finish(setupState: String, success: Boolean) {
+    private fun finish(setupState: String, success: Boolean, diagnostic: String = "") {
         active = false
         handler.removeCallbacks(stepRunnable)
         if (operationMode == OperationMode.WIFI_ONLY) {
@@ -1209,7 +1222,7 @@ internal class SelfArmWirelessDebuggingAutomator(
         }
         service.onWirelessBootstrapFinished()
         report(setupState)
-        SelfArmOnboardingStore.finish(service.applicationContext, setupState, success)
+        SelfArmOnboardingStore.finish(service.applicationContext, setupState, success, diagnostic)
         android.util.Log.i(TAG, if (success) "Wireless Debugging ready" else "Wireless setup needs a tap")
         handler.postDelayed({ service.returnToOnboarding() }, 300L)
     }

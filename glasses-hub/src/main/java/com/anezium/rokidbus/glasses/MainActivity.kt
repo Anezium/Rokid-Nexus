@@ -31,6 +31,7 @@ class MainActivity : Activity() {
     private lateinit var onboardingStepView: TextView
     private lateinit var onboardingTitleView: TextView
     private lateinit var onboardingBodyView: TextView
+    private lateinit var onboardingDiagnosticView: TextView
     private lateinit var onboardingActionView: TextView
     private var launcherEntries: List<GlassesHub.LauncherEntry> = emptyList()
     private var selectedIndex = 0
@@ -207,6 +208,11 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER_HORIZONTAL
             setLineSpacing(0f, 1.18f)
         }
+        onboardingDiagnosticView = text(12f, BusTheme.dim).apply {
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(0, 0, 0, dp(12))
+            visibility = View.GONE
+        }
         onboardingActionView = text(17f, BusTheme.phosphor, bold = true).apply {
             minHeight = dp(58)
             gravity = Gravity.CENTER
@@ -223,6 +229,7 @@ class MainActivity : Activity() {
             addView(onboardingTitleView, matchWrap())
             addView(gap(24))
             addView(onboardingBodyView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+            addView(onboardingDiagnosticView, matchWrap())
             addView(onboardingActionView, matchWrap())
             addView(gap(10))
             addView(text(11f, BusTheme.dim).apply {
@@ -259,6 +266,12 @@ class MainActivity : Activity() {
         launcherView.visibility = if (complete) View.VISIBLE else View.GONE
         onboardingView.visibility = if (complete) View.GONE else View.VISIBLE
         if (complete) return
+
+        val diagnostic = onboardingState.diagnostic.takeIf {
+            onboardingState.stage == SelfArmOnboardingState.Stage.FAILED && it.isNotBlank()
+        }
+        onboardingDiagnosticView.text = diagnostic?.let { "Support code: $it" }.orEmpty()
+        onboardingDiagnosticView.visibility = if (diagnostic == null) View.GONE else View.VISIBLE
 
         when (onboardingState.stage) {
             SelfArmOnboardingState.Stage.ENABLE_ACCESSIBILITY -> {
@@ -451,7 +464,8 @@ class MainActivity : Activity() {
         "searching_pairing_code",
         -> "Waiting for the 6-digit pairing code and ports…"
         "wireless_bootstrap_complete" -> "Secure self-arm completed."
-        "pairing_code_expired" -> "The pairing code expired. Generate a new code."
+        "self_pairing_in_progress" -> "Code read — finishing the secure setup…"
+        "pairing_code_expired" -> "The pairing step timed out. Restart the glasses, then tap retry."
         "wireless_setup_timeout" -> "Wireless Debugging setup timed out."
         "wifi_network_required" -> "No Wi-Fi network. Connect the glasses to Wi-Fi in the Hi Rokid app, then retry."
         "wireless_debugging_manual_step_needed" -> "Wireless Debugging needs a manual tap."

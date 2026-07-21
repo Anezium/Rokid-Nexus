@@ -33,6 +33,14 @@ on the card. The six-digit code never leaves the glasses and is not written to
 logs. The Settings automator is inactive outside an explicitly requested setup
 (its only other mode is a single Wi-Fi toggle used as the camera fallback).
 
+For photo-based support, the retry card also shows a compact support code:
+`PAIR-NOPORT` when the pairing port was unavailable, `PAIR-NOTLS` when the TLS
+connect port was unavailable, `PAIR-FAIL` for a local KADB pairing error,
+`PAIR-STALL` when pairing did not complete, or `TMO` with the last reported setup
+phase after an overall timeout. The six-digit pairing code itself is never shown
+or logged; diagnostics redact it before they can reach logs, preferences, or the
+HUD.
+
 ## The staged arm sequence
 
 The KADB TLS connection runs a staged **prepare / arm** sequence rather than one

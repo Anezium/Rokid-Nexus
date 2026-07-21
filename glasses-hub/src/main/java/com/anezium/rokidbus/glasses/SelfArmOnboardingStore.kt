@@ -31,6 +31,7 @@ internal object SelfArmOnboardingStore {
             legacyAdbSafe = prefs.getBoolean(KEY_LEGACY_ADB_SAFE, false),
             setupRunning = prefs.getBoolean(KEY_RUNNING, false),
             failureState = prefs.getString(KEY_FAILURE_STATE, "").orEmpty(),
+            failureDiagnostic = prefs.getString(KEY_FAILURE_DIAGNOSTIC, "").orEmpty(),
             progressState = prefs.getString(KEY_PROGRESS_STATE, "").orEmpty(),
         )
     }
@@ -40,6 +41,7 @@ internal object SelfArmOnboardingStore {
             .putBoolean(KEY_REQUESTED, true)
             .putBoolean(KEY_RUNNING, false)
             .putString(KEY_FAILURE_STATE, "")
+            .putString(KEY_FAILURE_DIAGNOSTIC, "")
             .putString(KEY_PROGRESS_STATE, "waiting_for_nexus_accessibility")
             .apply()
         notifyChanged(context)
@@ -68,6 +70,7 @@ internal object SelfArmOnboardingStore {
             .putBoolean(KEY_RUNNING, true)
             .putBoolean(KEY_LEGACY_ADB_SAFE, false)
             .putString(KEY_FAILURE_STATE, "")
+            .putString(KEY_FAILURE_DIAGNOSTIC, "")
             .putString(KEY_PROGRESS_STATE, "starting_wireless_debugging_setup")
             .apply()
         notifyChanged(context)
@@ -90,12 +93,17 @@ internal object SelfArmOnboardingStore {
         notifyChanged(context)
     }
 
-    fun finish(context: Context, setupState: String, success: Boolean) {
+    fun finish(context: Context, setupState: String, success: Boolean, diagnostic: String = "") {
         prefs(context).edit()
             .putBoolean(KEY_REQUESTED, false)
             .putBoolean(KEY_RUNNING, false)
             .putString(KEY_PROGRESS_STATE, setupState.trim().take(MAX_STATE_LENGTH))
             .putString(KEY_FAILURE_STATE, if (success) "" else setupState.trim().take(MAX_STATE_LENGTH))
+            .putString(
+                KEY_FAILURE_DIAGNOSTIC,
+                if (success) "" else sanitizeSupportDiagnostic(diagnostic)
+                    .take(MAX_SUPPORT_DIAGNOSTIC_LENGTH),
+            )
             .apply()
         notifyChanged(context)
     }
@@ -148,6 +156,7 @@ internal object SelfArmOnboardingStore {
     private const val KEY_REQUESTED = "setup_requested"
     private const val KEY_RUNNING = "setup_running"
     private const val KEY_FAILURE_STATE = "failure_state"
+    private const val KEY_FAILURE_DIAGNOSTIC = "failure_diagnostic"
     private const val KEY_PROGRESS_STATE = "progress_state"
     private const val KEY_LEGACY_ADB_SAFE = "legacy_adb_safe"
     private const val KEY_AWAITING_A11Y = "awaiting_accessibility_enable"

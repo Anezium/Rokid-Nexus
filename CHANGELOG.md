@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Setup failures on the glasses now show a short support code on the retry card, so a photo of the lens is enough to diagnose what went wrong.
+
 ## 1.0.26
 
 - Glasses app updates now ask you to turn on phone Wi-Fi before starting instead of failing during delivery.
