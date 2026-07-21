@@ -98,9 +98,10 @@ no descriptor capability or extra grant is required. Test
 `onNexusGlassesAiButton(active)` for the AI-assist button (`true` on start,
 `false` on stop), and handle `BusPaths.GLASSES_DEVICE_INFO` in `onNexusMessage`.
 The version-1 device payload contains `deviceName`, `batteryLevel`, `sound`,
-`brightness`, `systemVersion`, `isCharging`, `sn`, and `wearingStatus`, in
-addition to `type`, `id`, and `pluginId` envelope fields. These callbacks are
-observational and do not alter Hi Rokid's assistant behavior.
+`brightness`, `systemVersion`, `isCharging`, and `wearingStatus`, in addition to
+`type`, `id`, and `pluginId` envelope fields — the hardware serial number is
+never included. These callbacks are observational and do not alter Hi Rokid's
+assistant behavior.
 
 Beyond the typed surface API, the service exposes `hubTarget` to select which
 hub the plugin binds (phone by default), and two raw hooks for traffic on the

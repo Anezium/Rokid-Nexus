@@ -106,8 +106,10 @@ callbacks are serialized on the Android application main thread.
 
 `/glasses/device-info` is a zero-capability, phone-hub-to-plugin version-1 JSON
 message carrying `type=glasses_device_info`, `id`, `pluginId`, `deviceName`,
-`batteryLevel`, `sound`, `brightness`, `systemVersion`, `isCharging`, `sn`, and
-`wearingStatus`. The AI-assist start/stop edges use the direct callback below
+`batteryLevel`, `sound`, `brightness`, `systemVersion`, `isCharging`, and
+`wearingStatus` — the hardware serial number (`GlassInfo.sn`) is deliberately
+never included, matching `GlassInfo`'s own `redactedSn` precedent for this
+sensitive field. The AI-assist start/stop edges use the direct callback below
 rather than a bus path.
 
 Plugins send only local surface IDs such as `main`. After capability and

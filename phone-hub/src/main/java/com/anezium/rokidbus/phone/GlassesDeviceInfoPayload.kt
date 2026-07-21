@@ -16,6 +16,5 @@ internal object GlassesDeviceInfoPayload {
             .put("brightness", info.brightness)
             .put("systemVersion", info.systemVersion)
             .put("isCharging", info.isCharging)
-            .put("sn", info.sn)
             .put("wearingStatus", info.wearingStatus)
 }

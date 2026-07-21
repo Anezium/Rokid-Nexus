@@ -2,12 +2,13 @@ package com.anezium.rokidbus.phone
 
 import com.example.cxrglobal.GlassInfo
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class GlassesDeviceInfoPayloadTest {
     @Test
-    fun `payload maps every GlassInfo field without changing its shape`() {
+    fun `payload maps GlassInfo fields but never the hardware serial number`() {
         val payload = GlassesDeviceInfoPayload.create(
             info = GlassInfo(
                 deviceName = "Rokid Glasses",
@@ -33,8 +34,8 @@ class GlassesDeviceInfoPayloadTest {
         assertEquals(4, payload.getInt("brightness"))
         assertEquals("2.3.4", payload.getString("systemVersion"))
         assertTrue(payload.getBoolean("isCharging"))
-        assertEquals("SERIAL-123", payload.getString("sn"))
         assertEquals("wearing", payload.getString("wearingStatus"))
-        assertEquals(12, payload.length())
+        assertFalse("the hardware serial number must never reach a plugin", payload.has("sn"))
+        assertEquals(11, payload.length())
     }
 }
