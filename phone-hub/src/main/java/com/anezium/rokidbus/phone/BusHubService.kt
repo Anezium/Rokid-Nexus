@@ -622,6 +622,16 @@ class BusHubService : Service() {
 
     private fun routeLocal(envelope: BusEnvelope, senderUid: Int) {
         val sender = resolveSender(senderUid)
+        if (isGlassesControlRequest(envelope.path)) {
+            if (senderUid != Process.myUid() && !isDebuggableBuild()) {
+                recordLocalRoute(envelope, senderUid, sender, PluginBusJournal.Verdict.REJECTED, "TRUSTED_LOCAL_ONLY")
+                deliverError(sender.replyBinder, envelope.id, "TRUSTED_LOCAL_ONLY")
+                return
+            }
+            recordLocalRoute(envelope, senderUid, sender, PluginBusJournal.Verdict.OK)
+            executor.execute { handleGlassesControlRequest(envelope, sender.replyBinder) }
+            return
+        }
         if (!protectedPathAllowed(envelope.path, senderUid, sender.principal)) {
             recordLocalRoute(envelope, senderUid, sender, PluginBusJournal.Verdict.REJECTED, "PROTECTED_CAMERA_PATH")
             deliverError(sender.replyBinder, envelope.id, "PROTECTED_CAMERA_PATH")
@@ -952,6 +962,46 @@ class BusHubService : Service() {
             else -> return false
         }
         return true
+    }
+
+    private fun isGlassesControlRequest(path: String): Boolean =
+        path == BusPaths.GLASSES_BRIGHTNESS_REQUEST || path == BusPaths.GLASSES_VOLUME_REQUEST
+
+    private fun handleGlassesControlRequest(envelope: BusEnvelope, replyBinder: IBinder?) {
+        val level = GlassesControlLevelPolicy.parseAndClamp(envelope.payload.opt("level"))
+        if (level == null) {
+            deliverError(replyBinder, envelope.id, "INVALID_LEVEL")
+            return
+        }
+        val link = cxrLink
+        if (link == null || !isCxrUp()) {
+            deliverError(replyBinder, envelope.id, "NO_CXR")
+            return
+        }
+        val applied = runCatching {
+            when (envelope.path) {
+                BusPaths.GLASSES_BRIGHTNESS_REQUEST -> link.setBrightness(level)
+                BusPaths.GLASSES_VOLUME_REQUEST -> link.setVolume(level)
+                else -> false
+            }
+        }.getOrElse {
+            log("CXR glasses control failed ${it.javaClass.simpleName}: ${it.message}")
+            false
+        }
+        when (envelope.path) {
+            BusPaths.GLASSES_BRIGHTNESS_REQUEST -> log("glassesBrightnessRequest level=$level applied=$applied")
+            BusPaths.GLASSES_VOLUME_REQUEST -> log("glassesVolumeRequest level=$level applied=$applied")
+        }
+        if (!applied) {
+            deliverError(replyBinder, envelope.id, "APPLY_FAILED")
+            return
+        }
+        val response = BusEnvelope(
+            path = envelope.path + "/reply",
+            id = envelope.id,
+            payload = JSONObject().put("applied", true).put("level", level),
+        )
+        deliverLocal(response, targetBinder = replyBinder)
     }
 
     private fun deliverLocal(
