@@ -20,7 +20,9 @@ import android.content.pm.PackageManager
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Binder
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.os.Process
 import android.os.SystemClock
 import android.util.Log
@@ -66,8 +68,11 @@ import java.util.concurrent.atomic.AtomicLong
 private const val TAG = "ROKIDBUS-PHONE"
 private const val CHANNEL_ID = "rokidbus_phone"
 private const val DEVELOPER_CHANNEL_ID = "developer"
+private const val UPDATES_CHANNEL_ID = "updates"
 private const val NOTIFICATION_ID = 1
 private const val DEVELOPER_NOTIFICATION_ID = 2
+private const val APP_UPDATE_NOTIFICATION_ID = 3
+private const val PLUGIN_UPDATE_NOTIFICATION_ID = 4
 private const val ACTION_LOG = "com.anezium.rokidbus.phone.LOG"
 private const val ACTION_SET_TOKEN = "com.anezium.rokidbus.phone.SET_TOKEN"
 private const val ACTION_STOP = "com.anezium.rokidbus.phone.STOP"
@@ -82,8 +87,12 @@ private const val GLASSES_NAME = "Glasses_3723"
 private const val GLASSES_HUB_PACKAGE = "com.anezium.rokidbus.glasses"
 private const val PREFS = "rokidbus_phone"
 private const val PREF_TOKEN = "cxrl_token"
+private const val UPDATE_NOTIFICATION_PREFERENCES = "update-notification-state"
+private const val PREF_LAST_NOTIFIED_APP_VERSION = "last-notified-app-version"
+private const val PREF_LAST_NOTIFIED_PLUGIN_UPDATES = "last-notified-plugin-updates"
 private const val LOCAL_BINARY_MAX_BYTES = 512 * 1024
 private const val GLASSES_RELEASE_CHECK_INTERVAL_MILLIS = 4L * 60L * 60L * 1000L
+private const val BACKGROUND_UPDATE_CHECK_INTERVAL_MILLIS = 60L * 60L * 1000L
 private const val AUDIO_LEASE_ACQUIRE = "/audio/lease/acquire"
 private const val AUDIO_LEASE_RELEASE = "/audio/lease/release"
 private const val AUDIO_FRAMES = "/audio/frames"
@@ -121,6 +130,17 @@ class BusHubService : Service() {
     )
 
     private val executor = Executors.newCachedThreadPool()
+    private val updateCheckHandler = Handler(Looper.getMainLooper())
+    @Volatile private var updateCheckLoopStopped = true
+    private val updateCheckTick = object : Runnable {
+        override fun run() {
+            if (updateCheckLoopStopped) return
+            runBackgroundUpdateChecks()
+            if (!updateCheckLoopStopped) {
+                updateCheckHandler.postDelayed(this, BACKGROUND_UPDATE_CHECK_INTERVAL_MILLIS)
+            }
+        }
+    }
     private val registrations = CopyOnWriteArrayList<Registration>()
     private val externalSurfaceSeq = ConcurrentHashMap<String, AtomicLong>()
     private val debugImageSeq = AtomicLong(System.currentTimeMillis())
@@ -469,6 +489,7 @@ class BusHubService : Service() {
             startCxrIfTokenAvailable()
         }
         connectSpp()
+        startPeriodicUpdateChecks()
         log("BusHubService created enabled=$hubEnabled")
     }
 
@@ -551,6 +572,7 @@ class BusHubService : Service() {
     }
 
     override fun onDestroy() {
+        stopPeriodicUpdateChecks()
         sppLoopStop = true
         stopAudioLease()
         runCatching { cxrLink?.disconnect() }
@@ -2164,6 +2186,120 @@ class BusHubService : Service() {
         }.onFailure {
             log("CXR decode failed: ${it.message}")
         }.getOrNull()
+
+    private fun startPeriodicUpdateChecks() {
+        updateCheckLoopStopped = false
+        createUpdateNotificationChannel()
+        updateCheckHandler.post(updateCheckTick)
+    }
+
+    private fun stopPeriodicUpdateChecks() {
+        updateCheckLoopStopped = true
+        updateCheckHandler.removeCallbacks(updateCheckTick)
+    }
+
+    private fun runBackgroundUpdateChecks() {
+        runCatching {
+            NexusUpdateManager.checkForUpdates(applicationContext) { result ->
+                if (!updateCheckLoopStopped && result is NexusUpdateCheckResult.Available) {
+                    maybeNotifyAppUpdate(result.release)
+                }
+            }
+        }.onFailure { failure ->
+            Log.w(TAG, "Could not start app update check", failure)
+        }
+        runCatching {
+            PluginUpdateChecker.refreshIfStale(applicationContext) { updates ->
+                if (!updateCheckLoopStopped) maybeNotifyPluginUpdates(updates)
+            }
+        }.onFailure { failure ->
+            Log.w(TAG, "Could not start plugin update check", failure)
+        }
+    }
+
+    private fun maybeNotifyAppUpdate(release: NexusAppRelease) {
+        val preferences = updateNotificationPreferences()
+        val version = release.versionName
+        val lastNotifiedVersion = preferences.getString(PREF_LAST_NOTIFIED_APP_VERSION, null)
+        if (!UpdateNotificationPolicy.shouldNotifyAppUpdate(version, lastNotifiedVersion)) return
+
+        if (postUpdateNotification(
+                notificationId = APP_UPDATE_NOTIFICATION_ID,
+                title = "Rokid Nexus update available",
+                text = "Version $version is available.",
+            )
+        ) {
+            preferences.edit().putString(PREF_LAST_NOTIFIED_APP_VERSION, version).apply()
+        }
+    }
+
+    private fun maybeNotifyPluginUpdates(updates: List<PluginUpdateInfo>) {
+        val updateSet = UpdateNotificationPolicy.pluginUpdateSet(updates)
+        val preferences = updateNotificationPreferences()
+        val lastNotifiedSet = preferences.getStringSet(PREF_LAST_NOTIFIED_PLUGIN_UPDATES, null)?.toSet()
+        if (!UpdateNotificationPolicy.shouldNotifyPluginUpdates(updateSet, lastNotifiedSet)) return
+
+        val count = updateSet.size
+        val title = if (count == 1) {
+            "1 plugin update available"
+        } else {
+            "$count plugin updates available"
+        }
+        if (postUpdateNotification(
+                notificationId = PLUGIN_UPDATE_NOTIFICATION_ID,
+                title = title,
+                text = "Open Rokid Nexus to review and install.",
+            )
+        ) {
+            preferences.edit().putStringSet(PREF_LAST_NOTIFIED_PLUGIN_UPDATES, updateSet).apply()
+        }
+    }
+
+    private fun createUpdateNotificationChannel() {
+        getSystemService(NotificationManager::class.java).createNotificationChannel(
+            NotificationChannel(
+                UPDATES_CHANNEL_ID,
+                "Updates available",
+                NotificationManager.IMPORTANCE_DEFAULT,
+            ),
+        )
+    }
+
+    private fun postUpdateNotification(
+        notificationId: Int,
+        title: String,
+        text: String,
+    ): Boolean {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            Log.d(TAG, "Update notification skipped: POST_NOTIFICATIONS permission not granted")
+            return false
+        }
+        val openApp = PendingIntent.getActivity(
+            this,
+            0,
+            Intent(this, MainActivity::class.java),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        val notification = Notification.Builder(this, UPDATES_CHANNEL_ID)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setSmallIcon(R.drawable.ic_nexus_status)
+            .setContentIntent(openApp)
+            .setAutoCancel(true)
+            .setOngoing(false)
+            .build()
+        return runCatching {
+            getSystemService(NotificationManager::class.java).notify(notificationId, notification)
+            true
+        }.onFailure { failure ->
+            Log.w(TAG, "Could not post update notification", failure)
+        }.getOrDefault(false)
+    }
+
+    private fun updateNotificationPreferences() =
+        getSharedPreferences(UPDATE_NOTIFICATION_PREFERENCES, MODE_PRIVATE)
 
     private fun startForegroundWithType() {
         val manager = getSystemService(NotificationManager::class.java)
