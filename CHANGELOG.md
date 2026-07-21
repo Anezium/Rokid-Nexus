@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.30
+
+- Automatic glasses setup now has a clear recovery path: after the initial secure-transport attempt and two internal retries fail, the phone surfaces a guided **Manual setup** action.
+- The manual wizard opens the required Wireless Debugging pairing screen on compatible glasses, waits for their acknowledgement, and guides the user through the remaining values without storing the six-digit code.
+
 ## 1.0.29
 
 - Failed automatic setup now offers a guided phone-side pairing fallback that opens the required glasses settings itself. The phone waits for a glasses acknowledgement and asks for an app update instead of showing a pairing form when the glasses build is too old.
