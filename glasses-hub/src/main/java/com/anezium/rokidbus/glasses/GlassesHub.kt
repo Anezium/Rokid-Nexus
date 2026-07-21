@@ -32,6 +32,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 object GlassesHub {
     private const val LOCAL_BINARY_MAX_BYTES = 512 * 1024
+    internal const val LOHS_REVERSE_JOIN_TIMEOUT_MS = 15_000L
 
     data class LauncherEntry(
         val id: String,
@@ -297,6 +298,7 @@ object GlassesHub {
                             ssid,
                             passphrase,
                             security,
+                            timeoutMs = LOHS_REVERSE_JOIN_TIMEOUT_MS,
                         )
                     }.onFailure {
                         logError("glassesWifiJoin bridge failed", it)
