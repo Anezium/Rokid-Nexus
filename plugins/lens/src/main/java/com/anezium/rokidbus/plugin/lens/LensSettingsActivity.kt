@@ -108,6 +108,7 @@ class LensSettingsActivity : Activity() {
         LanguageChoice("nl", "Nederlands"),
         LanguageChoice("pl", "Polski"),
         LanguageChoice("ru", "\u0420\u0443\u0441\u0441\u043a\u0438\u0439"),
+        LanguageChoice("el", "\u0395\u03bb\u03bb\u03b7\u03bd\u03b9\u03ba\u03ac"),
         LanguageChoice("ja", "\u65e5\u672c\u8a9e"),
         LanguageChoice("ko", "\ud55c\uad6d\uc5b4"),
         LanguageChoice("zh", "\u4e2d\u6587"),
