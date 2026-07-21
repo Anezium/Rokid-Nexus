@@ -2,9 +2,12 @@
 
 ## 1.0.29
 
-- First-run glasses setup is much more resilient: if the secure channel drops mid-arm (including during the planned adbd restart), Nexus reconnects and resumes instead of failing with a support code.
 - Failed automatic setup now offers a guided phone-side pairing fallback that opens the required glasses settings itself. The phone waits for a glasses acknowledgement and asks for an app update instead of showing a pairing form when the glasses build is too old.
 - Developer mode on the phone now exposes the manual glasses setup wizard for support and testing.
+
+## 1.0.28
+
+- First-run glasses setup is much more resilient: if the secure channel drops mid-arm (including during the planned adbd restart), Nexus reconnects and resumes instead of failing with a support code.
 
 ## 1.0.27
 
