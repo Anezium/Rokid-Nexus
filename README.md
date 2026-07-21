@@ -47,6 +47,8 @@ badges when a newer release is published.
 
 ## Screenshots
 
+### Phone app
+
 <p align="center">
   <img src="docs/assets/shot-phone-home.png" width="270" alt="Phone home screen with the plugin list and update badges" />
   &nbsp;
@@ -54,6 +56,32 @@ badges when a newer release is published.
 </p>
 
 <p align="center"><i>The phone hub: your plugins, glasses-app status, and one-tap updates — and the Store they install from.</i></p>
+
+### Plugins on the HUD
+
+<p align="center">
+  <img src="docs/assets/shot-lens-live.png" width="270" alt="Lens live mode translating a screen of English text into French in real time" />
+  &nbsp;
+  <img src="docs/assets/shot-lens-freeze.png" width="270" alt="Lens freeze mode showing a full-resolution still with the translated result" />
+</p>
+
+<p align="center"><i>Lens — live translation streamed to the phone and back, plus a freeze mode for full-resolution stills.</i></p>
+
+<p align="center">
+  <img src="docs/assets/shot-feeds.png" width="270" alt="Feeds plugin showing an X timeline post on the glasses HUD" />
+  &nbsp;
+  <img src="docs/assets/shot-media.png" width="270" alt="Media Deck plugin showing album art, track, and progress" />
+</p>
+
+<p align="center"><i>Feeds — Bluesky and X timelines. &nbsp;·&nbsp; Media Deck — now playing with album art and transport.</i></p>
+
+<p align="center">
+  <img src="docs/assets/shot-transit.png" width="270" alt="Transit plugin showing nearby stops and live departure countdowns" />
+  &nbsp;
+  <img src="docs/assets/shot-lyrics.png" width="270" alt="Lyrics plugin showing the current line time-synced to the playing track" />
+</p>
+
+<p align="center"><i>Transit — nearby stops and live departures. &nbsp;·&nbsp; Lyrics — time-synced to whatever is playing.</i></p>
 
 ## Setup — a phone is all you need
 
