@@ -57,6 +57,14 @@ badges when a newer release is published.
 
 <p align="center"><i>The phone hub: your plugins, glasses-app status, and one-tap updates — and the Store they install from.</i></p>
 
+### Glasses launcher
+
+<p align="center">
+  <img src="docs/assets/shot-glasses-launcher.png" width="270" alt="Nexus launcher on the glasses HUD, listing installed plugins" />
+</p>
+
+<p align="center"><i>Triple-tap the touchpad from anywhere to bring this up — the only gesture Nexus claims. Pick a plugin, hit back to return to whatever was underneath.</i></p>
+
 ### Plugins on the HUD
 
 <p align="center">
