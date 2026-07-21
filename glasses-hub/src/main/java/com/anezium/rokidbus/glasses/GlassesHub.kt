@@ -147,6 +147,10 @@ object GlassesHub {
             updateRemotePhoneCapabilities(envelope.payload)
             return
         }
+        if (envelope.path == BusPaths.GLASSES_SELFARM_MANUAL) {
+            handleManualSelfArmRequest(envelope)
+            return
+        }
         appContext?.let { context ->
             if (SurfaceController.handleSurfaceEnvelope(context, envelope)) return
         }
@@ -231,14 +235,17 @@ object GlassesHub {
 
     private fun announceRendererCapabilities() {
         val context = appContext ?: return
+        val onboarding = SelfArmOnboardingStore.snapshot(context)
         val capabilities = GlassesHubCapabilitiesContract.create(
             features = BusCapabilityBits.IMAGE_SURFACE,
             imageSurfaceVersion = ImageSurfaceContract.VERSION,
             maxImageBytes = ImageSurfaceContract.MAX_IMAGE_BYTES,
             versionName = BuildConfig.VERSION_NAME,
             setupComplete = SelfArmOnboardingStateMachine.evaluate(
-                SelfArmOnboardingStore.snapshot(context),
+                onboarding,
             ).stage == SelfArmOnboardingState.Stage.COMPLETE,
+            setupFailureState = onboarding.failureState,
+            setupFailureDiagnostic = onboarding.failureDiagnostic,
         )
         val error = sendRemote(
             BusEnvelope(
@@ -262,6 +269,14 @@ object GlassesHub {
         }
         if (BusPaths.isProtectedCameraPath(envelope.path) && !isTrustedUid(senderUid)) {
             log("blocked untrusted protected camera send uid=$senderUid")
+            return
+        }
+        if (envelope.path == BusPaths.GLASSES_SELFARM_MANUAL) {
+            if (!isTrustedUid(senderUid)) {
+                log("blocked untrusted manual self-arm request uid=$senderUid")
+                return
+            }
+            handleManualSelfArmRequest(envelope)
             return
         }
         if (envelope.path == BusPaths.GLASSES_WIFI_REQUEST) {
@@ -364,6 +379,24 @@ object GlassesHub {
             }
         }
         return delivered
+    }
+
+    private fun handleManualSelfArmRequest(envelope: BusEnvelope) {
+        val action = SelfArmManualAction.fromWireValue(envelope.payload.optString("action"))
+        if (action == null) {
+            log("manual self-arm request rejected reason=invalid_action")
+            sendRemote(errorEnvelope(envelope.id, "INVALID_ACTION"))
+            return
+        }
+        val armed = action == SelfArmManualAction.CLOSE && envelope.payload.optBoolean("armed", false)
+        val context = appContext
+        val accepted = context != null && RokidBusAccessibilityService.requestManualAction(
+            context,
+            action,
+            armed,
+        )
+        log("manual self-arm action=${action.wireValue} accepted=$accepted armed=$armed")
+        if (!accepted) sendRemote(errorEnvelope(envelope.id, "ACCESSIBILITY_UNAVAILABLE"))
     }
 
     private fun addRegistration(

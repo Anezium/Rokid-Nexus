@@ -22,6 +22,7 @@ class RokidBusAccessibilityService : AccessibilityService() {
     private var wirelessDebuggingAutomator: SelfArmWirelessDebuggingAutomator? = null
     private var wirelessBootstrapActive = false
     private var wifiEnableActive = false
+    private var manualNavigationActive = false
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -108,6 +109,7 @@ class RokidBusAccessibilityService : AccessibilityService() {
         wirelessDebuggingAutomator?.stop()
         finishWifiEnableIfActive(false)
         pauseWirelessBootstrapIfActive("wireless_setup_interrupted")
+        pauseManualNavigationIfActive("manual_pairing_interrupted")
         log("AccessibilityService interrupted")
     }
 
@@ -117,6 +119,7 @@ class RokidBusAccessibilityService : AccessibilityService() {
         wirelessDebuggingAutomator?.stop()
         finishWifiEnableIfActive(false)
         pauseWirelessBootstrapIfActive("wireless_setup_service_restarting")
+        pauseManualNavigationIfActive("manual_pairing_service_restarting")
         wirelessDebuggingAutomator = null
         if (liveInstance === this) liveInstance = null
         LauncherOverlayRenderer.onServiceDestroyed(this)
@@ -136,6 +139,7 @@ class RokidBusAccessibilityService : AccessibilityService() {
     }
 
     private fun startWirelessBootstrap() {
+        if (manualNavigationActive) return
         if (wirelessBootstrapActive) return
         finishWifiEnableIfActive(false)
         val state = SelfArmOnboardingStateMachine.evaluate(
@@ -154,7 +158,7 @@ class RokidBusAccessibilityService : AccessibilityService() {
     }
 
     private fun startWifiEnable() {
-        if (wirelessBootstrapActive) {
+        if (wirelessBootstrapActive || manualNavigationActive) {
             GlassesHub.onWifiEnableAutomationFinished(false)
             return
         }
@@ -178,6 +182,52 @@ class RokidBusAccessibilityService : AccessibilityService() {
         GlassesHub.onWifiEnableAutomationFinished(success)
     }
 
+    internal fun onManualNavigationFinished() {
+        manualNavigationActive = false
+    }
+
+    private fun openManualNavigation(target: SelfArmManualTarget) {
+        finishWifiEnableIfActive(false)
+        if (wirelessBootstrapActive) {
+            wirelessDebuggingAutomator?.stop()
+            pauseWirelessBootstrapIfActive("manual_pairing_opening")
+        }
+        val automator = wirelessDebuggingAutomator ?: run {
+            SelfArmOnboardingStore.reportProgress(applicationContext, "manual_pairing_service_unavailable")
+            return
+        }
+        if (!manualNavigationActive) {
+            val staged = runCatching { SelfArmManualArmAssets.stage(applicationContext) }
+                .onFailure {
+                    log(
+                        "Manual self-arm asset staging failed: " +
+                            sanitizeSupportDiagnostic(it.message.orEmpty()),
+                    )
+                }
+                .isSuccess
+            if (!staged) {
+                SelfArmOnboardingStore.reportProgress(applicationContext, "manual_pairing_assets_failed")
+                returnToOnboarding()
+                return
+            }
+            manualNavigationActive = true
+            automator.start(SelfArmWirelessDebuggingAutomator.OperationMode.MANUAL_NAVIGATION, target)
+        } else {
+            automator.updateManualTarget(target)
+        }
+    }
+
+    private fun closeManualNavigation(armed: Boolean) {
+        if (manualNavigationActive) {
+            wirelessDebuggingAutomator?.closeManual()
+        } else {
+            SelfArmManualArmAssets.cleanup(applicationContext)
+            returnToOnboarding()
+        }
+        manualNavigationActive = false
+        if (armed) SelfArmPhoneArmConfirmation.confirm(applicationContext)
+    }
+
     private fun finishWifiEnableIfActive(success: Boolean) {
         if (!wifiEnableActive) return
         wirelessDebuggingAutomator?.stop()
@@ -188,6 +238,13 @@ class RokidBusAccessibilityService : AccessibilityService() {
     private fun pauseWirelessBootstrapIfActive(progressState: String) {
         if (!wirelessBootstrapActive) return
         wirelessBootstrapActive = false
+        SelfArmOnboardingStore.pause(applicationContext, progressState)
+    }
+
+    private fun pauseManualNavigationIfActive(progressState: String) {
+        if (!manualNavigationActive) return
+        manualNavigationActive = false
+        SelfArmManualArmAssets.cleanup(applicationContext)
         SelfArmOnboardingStore.pause(applicationContext, progressState)
     }
 
@@ -213,6 +270,27 @@ class RokidBusAccessibilityService : AccessibilityService() {
         internal fun requestWifiEnable(context: Context): Boolean {
             val service = liveInstance ?: return false
             service.main.post(service::startWifiEnable)
+            return true
+        }
+
+        @Suppress("UNUSED_PARAMETER")
+        internal fun requestManualAction(
+            context: Context,
+            action: SelfArmManualAction,
+            armed: Boolean = false,
+        ): Boolean {
+            val service = liveInstance ?: return false
+            service.main.post {
+                when (action) {
+                    SelfArmManualAction.OPEN_DEVELOPER_OPTIONS ->
+                        service.openManualNavigation(SelfArmManualTarget.DEVELOPER_OPTIONS)
+                    SelfArmManualAction.OPEN_WIRELESS_DEBUGGING ->
+                        service.openManualNavigation(SelfArmManualTarget.WIRELESS_DEBUGGING)
+                    SelfArmManualAction.OPEN_PAIRING_DIALOG ->
+                        service.openManualNavigation(SelfArmManualTarget.PAIRING_DIALOG)
+                    SelfArmManualAction.CLOSE -> service.closeManualNavigation(armed)
+                }
+            }
             return true
         }
 

@@ -45,6 +45,7 @@ object BusPaths {
     const val CAMERA_FREEZE_IMAGE_ACK = "/camera/freeze/image/ack"
     const val CAMERA_OVERLAY = "/camera/overlay"
     const val GLASSES_WIFI_REQUEST = "/glasses/wifi/request"
+    const val GLASSES_SELFARM_MANUAL = "/glasses/selfarm/manual"
     const val GLASSES_BRIGHTNESS_REQUEST = "/glasses/brightness/request"
     const val GLASSES_VOLUME_REQUEST = "/glasses/volume/request"
     const val GLASSES_DEVICE_INFO = "/glasses/device-info"

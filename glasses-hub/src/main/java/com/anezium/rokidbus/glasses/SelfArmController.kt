@@ -336,7 +336,7 @@ internal object SelfArmController {
     private val watchdogVersionRegex = Regex("^VERSION=\"([^\"]+)\"$")
     private val bridgeVersionRegex = Regex("^VERSION=\"([^\"]+)\"$")
 
-    private fun ensureInternalWatchdog(context: Context): File {
+    internal fun ensureInternalWatchdog(context: Context): File {
         val file = File(File(context.filesDir, "self-arm"), SelfArmConstants.WATCHDOG_ASSET)
         val currentVersion = if (file.exists()) watchdogScriptVersion(file) else null
         if (currentVersion == SelfArmConstants.WATCHDOG_VERSION) return file

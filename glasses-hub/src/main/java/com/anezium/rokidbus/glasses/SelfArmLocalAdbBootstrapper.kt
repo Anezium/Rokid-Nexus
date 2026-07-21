@@ -57,7 +57,7 @@ internal class SelfArmLocalAdbBootstrapper(
                 bridgeScript = bridgeScript,
                 restartWatchdog = true,
             )
-            markBootstrapComplete(appContext)
+            recordBootstrapComplete(appContext)
             SelfArmOnboardingStore.recordNetworkPosture(appContext, result.posture)
             Log.i(
                 TAG,
@@ -277,7 +277,7 @@ internal class SelfArmLocalAdbBootstrapper(
             }
         }
 
-        private fun markBootstrapComplete(context: Context) {
+        internal fun recordBootstrapComplete(context: Context) {
             if (!context.applicationContext
                     .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                     .edit()

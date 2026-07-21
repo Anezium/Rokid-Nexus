@@ -11,6 +11,8 @@ internal object NexusPhoneState {
     const val PREF_TOKEN = "cxrl_token"
     const val PREF_GLASSES_APP_INSTALLED = "glasses_app_installed"
     const val PREF_GLASSES_SETUP_COMPLETE = "glasses_setup_complete"
+    const val PREF_GLASSES_SETUP_FAILURE_STATE = "glasses_setup_failure_state"
+    const val PREF_GLASSES_SETUP_FAILURE_DIAGNOSTIC = "glasses_setup_failure_diagnostic"
     const val PREF_INSTALLED_GLASSES_VERSION_NAME = "installed_glasses_version_name"
     const val EXTRA_GLASSES_APP_STATE = "glasses_app_state"
     const val EXTRA_GLASSES_APP_DOWNLOADED = "glasses_app_downloaded"
@@ -21,6 +23,8 @@ internal object NexusPhoneState {
     const val EXTRA_GLASSES_APP_UPDATE_STATE = "glasses_app_update_state"
     const val EXTRA_GLASSES_APP_LATEST_VERSION_NAME = "glasses_app_latest_version_name"
     const val EXTRA_GLASSES_SETUP_COMPLETE = "glasses_setup_complete"
+    const val EXTRA_GLASSES_SETUP_FAILURE_STATE = "glasses_setup_failure_state"
+    const val EXTRA_GLASSES_SETUP_FAILURE_DIAGNOSTIC = "glasses_setup_failure_diagnostic"
 
     @Volatile var updateAvailable: Boolean = false
         private set
@@ -42,6 +46,10 @@ internal object NexusPhoneState {
         private set
     @Volatile var glassesSetupComplete: Boolean = false
         private set
+    @Volatile var glassesSetupFailureState: String = ""
+        private set
+    @Volatile var glassesSetupFailureDiagnostic: String = ""
+        private set
 
     @Volatile private var appContext: Context? = null
     private val listeners = CopyOnWriteArraySet<() -> Unit>()
@@ -54,6 +62,13 @@ internal object NexusPhoneState {
             val preferences = applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             glassesAppInstalled = preferences.getBoolean(PREF_GLASSES_APP_INSTALLED, false)
             glassesSetupComplete = preferences.getBoolean(PREF_GLASSES_SETUP_COMPLETE, false)
+            glassesSetupFailureState = preferences.getString(
+                PREF_GLASSES_SETUP_FAILURE_STATE,
+                "",
+            ).orEmpty()
+            glassesSetupFailureDiagnostic = ManualPairingSupportDiagnostic.sanitize(
+                preferences.getString(PREF_GLASSES_SETUP_FAILURE_DIAGNOSTIC, "").orEmpty(),
+            )
             installedGlassesVersionName = preferences.getString(PREF_INSTALLED_GLASSES_VERSION_NAME, null)
             appContext = applicationContext
         }
@@ -117,6 +132,22 @@ internal object NexusPhoneState {
         notifyListeners()
     }
 
+    fun setGlassesSetupFailure(state: String, diagnostic: String) {
+        val cleanState = state.trim().take(96)
+        val cleanDiagnostic = ManualPairingSupportDiagnostic.sanitize(diagnostic)
+        if (glassesSetupFailureState == cleanState &&
+            glassesSetupFailureDiagnostic == cleanDiagnostic
+        ) return
+        glassesSetupFailureState = cleanState
+        glassesSetupFailureDiagnostic = cleanDiagnostic
+        appContext?.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            ?.edit()
+            ?.putString(PREF_GLASSES_SETUP_FAILURE_STATE, cleanState)
+            ?.putString(PREF_GLASSES_SETUP_FAILURE_DIAGNOSTIC, cleanDiagnostic)
+            ?.apply()
+        notifyListeners()
+    }
+
     fun updateGlassesAppInstallState(intent: Intent): Boolean {
         var updated = false
         if (intent.hasExtra(EXTRA_GLASSES_APP_VERSION_NAME)) {
@@ -125,6 +156,15 @@ internal object NexusPhoneState {
         }
         if (intent.hasExtra(EXTRA_GLASSES_SETUP_COMPLETE)) {
             setGlassesSetupComplete(intent.getBooleanExtra(EXTRA_GLASSES_SETUP_COMPLETE, false))
+            updated = true
+        }
+        if (intent.hasExtra(EXTRA_GLASSES_SETUP_FAILURE_STATE) ||
+            intent.hasExtra(EXTRA_GLASSES_SETUP_FAILURE_DIAGNOSTIC)
+        ) {
+            setGlassesSetupFailure(
+                intent.getStringExtra(EXTRA_GLASSES_SETUP_FAILURE_STATE).orEmpty(),
+                intent.getStringExtra(EXTRA_GLASSES_SETUP_FAILURE_DIAGNOSTIC).orEmpty(),
+            )
             updated = true
         }
         if (intent.hasExtra(EXTRA_GLASSES_APP_UPDATE_STATE)) {

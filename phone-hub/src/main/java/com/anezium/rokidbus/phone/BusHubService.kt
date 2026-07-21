@@ -78,10 +78,15 @@ private const val ACTION_LOG = "com.anezium.rokidbus.phone.LOG"
 private const val ACTION_SET_TOKEN = "com.anezium.rokidbus.phone.SET_TOKEN"
 private const val ACTION_STOP = "com.anezium.rokidbus.phone.STOP"
 private const val ACTION_DEBUG_IMAGE = "com.anezium.rokidbus.phone.DEBUG_IMAGE_SURFACE"
+private const val ACTION_DEBUG_MANUAL_PAIRING = "com.anezium.rokidbus.phone.DEBUG_MANUAL_PAIRING"
 private const val ACTION_INSTALL_GLASSES_APP = "com.anezium.rokidbus.phone.INSTALL_GLASSES_APP"
 private const val ACTION_QUERY_GLASSES_APP = "com.anezium.rokidbus.phone.QUERY_GLASSES_APP"
 private const val ACTION_OPEN_GLASSES_APP = "com.anezium.rokidbus.phone.OPEN_GLASSES_APP"
 private const val EXTRA_AUTH_TOKEN = "auth_token"
+private const val EXTRA_MANUAL_OPERATION = "manual_operation"
+private const val EXTRA_MANUAL_HOST = "manual_host"
+private const val EXTRA_MANUAL_PAIR_PORT = "manual_pair_port"
+private const val EXTRA_MANUAL_CODE = "manual_code"
 private const val PREF_ENABLED = "hub_enabled"
 private const val GLASSES_MAC = "AC:86:D1:55:1E:ED"
 private const val GLASSES_NAME = "Glasses_3723"
@@ -171,6 +176,7 @@ class BusHubService : Service() {
     private lateinit var externalPluginController: ExternalPluginController
     private lateinit var cameraConsumerReadiness: CameraConsumerReadiness
     private lateinit var cameraCompanionController: CameraCompanionController
+    private lateinit var manualPairingEngine: GlassesManualPairingEngine
     private lateinit var transitLegacyStateExporter: TransitLegacyStateExporter
     @Volatile private var cxrConnected = false
     @Volatile private var glassBtConnected = false
@@ -184,6 +190,8 @@ class BusHubService : Service() {
     @Volatile private var remoteMaxImageBytes = 0
     @Volatile private var remoteGlassesVersionName: String? = null
     @Volatile private var remoteGlassesSetupComplete = false
+    @Volatile private var remoteGlassesSetupFailureState = ""
+    @Volatile private var remoteGlassesSetupFailureDiagnostic = ""
     @Volatile private var latestGlassesAppRelease: NexusReleaseAsset? = null
     @Volatile private var glassesAppUpdateState: GlassesAppUpdateState = GlassesAppUpdateState.Unknown
     @Volatile private var glassesReleaseCheckedAtMillis = 0L
@@ -408,6 +416,11 @@ class BusHubService : Service() {
     override fun onCreate() {
         super.onCreate()
         activeInstance = this
+        manualPairingEngine = GlassesManualPairingEngine.create(
+            context = applicationContext,
+            control = GlassesManualControlSender(::sendManualSelfArmControl),
+            logger = ::log,
+        )
         // The glasses only re-advertise their setup state once CXR is back up. Without seeding
         // these from the last persisted values, a hub restart (e.g. after an app update kills the
         // process) would broadcast setupComplete=false and versionName="" before the glasses
@@ -422,6 +435,14 @@ class BusHubService : Service() {
                 NexusPhoneState.PREF_INSTALLED_GLASSES_VERSION_NAME,
                 null,
             )?.trim()?.takeIf { it.isNotEmpty() }
+            remoteGlassesSetupFailureState = stored.getString(
+                NexusPhoneState.PREF_GLASSES_SETUP_FAILURE_STATE,
+                "",
+            ).orEmpty()
+            remoteGlassesSetupFailureDiagnostic = stored.getString(
+                NexusPhoneState.PREF_GLASSES_SETUP_FAILURE_DIAGNOSTIC,
+                "",
+            ).orEmpty()
         }
         developerModeStore = DeveloperModeStore(applicationContext)
         developerModeJournalSubscription = bindDeveloperModeToJournal(developerModeStore, pluginBusJournal)
@@ -549,6 +570,25 @@ class BusHubService : Service() {
                     log("debug image probe rejected status=release_build")
                 }
             }
+            ACTION_DEBUG_MANUAL_PAIRING -> {
+                if (isDebuggableBuild()) {
+                    enableHub()
+                    startCxrIfTokenAvailable()
+                    when (intent.getStringExtra(EXTRA_MANUAL_OPERATION)) {
+                        "start" -> manualPairingEngine.start()
+                        "submit" -> {
+                            val host = intent.getStringExtra(EXTRA_MANUAL_HOST).orEmpty()
+                            val pairPort = intent.getIntExtra(EXTRA_MANUAL_PAIR_PORT, 0)
+                            val code = intent.getStringExtra(EXTRA_MANUAL_CODE).orEmpty()
+                            intent.removeExtra(EXTRA_MANUAL_CODE)
+                            manualPairingEngine.submit(host, pairPort, code)
+                        }
+                        "cancel" -> manualPairingEngine.cancel()
+                    }
+                } else {
+                    log("debug manual pairing rejected status=release_build")
+                }
+            }
             ACTION_INSTALL_GLASSES_APP -> installGlassesApp()
             ACTION_QUERY_GLASSES_APP -> queryGlassesApp()
             ACTION_OPEN_GLASSES_APP -> openGlassesAppOnLens()
@@ -612,6 +652,7 @@ class BusHubService : Service() {
         developerModeJournalSubscription = null
         if (::pluginRegistry.isInitialized) pluginRegistry.close()
         if (::cameraCompanionController.isInitialized) cameraCompanionController.close()
+        if (::manualPairingEngine.isInitialized) manualPairingEngine.close()
         registrations.clear()
         if (activeInstance === this) activeInstance = null
         super.onDestroy()
@@ -623,7 +664,8 @@ class BusHubService : Service() {
     private fun routeLocal(envelope: BusEnvelope, senderUid: Int) {
         val sender = resolveSender(senderUid)
         if (isGlassesControlRequest(envelope.path)) {
-            if (senderUid != Process.myUid() && !isDebuggableBuild()) {
+            val strictlyHubOwned = envelope.path == BusPaths.GLASSES_SELFARM_MANUAL
+            if (senderUid != Process.myUid() && (strictlyHubOwned || !isDebuggableBuild())) {
                 recordLocalRoute(envelope, senderUid, sender, PluginBusJournal.Verdict.REJECTED, "TRUSTED_LOCAL_ONLY")
                 deliverError(sender.replyBinder, envelope.id, "TRUSTED_LOCAL_ONLY")
                 return
@@ -965,9 +1007,23 @@ class BusHubService : Service() {
     }
 
     private fun isGlassesControlRequest(path: String): Boolean =
-        path == BusPaths.GLASSES_BRIGHTNESS_REQUEST || path == BusPaths.GLASSES_VOLUME_REQUEST
+        path == BusPaths.GLASSES_BRIGHTNESS_REQUEST ||
+            path == BusPaths.GLASSES_VOLUME_REQUEST ||
+            path == BusPaths.GLASSES_SELFARM_MANUAL
 
     private fun handleGlassesControlRequest(envelope: BusEnvelope, replyBinder: IBinder?) {
+        if (envelope.path == BusPaths.GLASSES_SELFARM_MANUAL) {
+            val action = envelope.payload.optString("action")
+            if (GlassesManualControlAction.entries.none { it.wireValue == action }) {
+                deliverError(replyBinder, envelope.id, "INVALID_ACTION")
+                return
+            }
+            val error = sendRemote(envelope)
+            if (error != null) {
+                deliverError(replyBinder, envelope.id, error)
+            }
+            return
+        }
         val level = GlassesControlLevelPolicy.parseAndClamp(envelope.payload.opt("level"))
         if (level == null) {
             deliverError(replyBinder, envelope.id, "INVALID_LEVEL")
@@ -1972,6 +2028,21 @@ class BusHubService : Service() {
         executor.execute { downloadAndInstallGlassesApp(operationId) }
     }
 
+    private fun sendManualSelfArmControl(
+        action: GlassesManualControlAction,
+        armed: Boolean,
+    ): String? = sendRemote(
+        BusEnvelope(
+            path = BusPaths.GLASSES_SELFARM_MANUAL,
+            payload = JSONObject()
+                .put("version", 1)
+                .put("action", action.wireValue)
+                .apply {
+                    if (action == GlassesManualControlAction.CLOSE) put("armed", armed)
+                },
+        ),
+    )
+
     private fun isPhoneWifiEnabled(): Boolean =
         runCatching {
             getSystemService(WifiManager::class.java)?.isWifiEnabled == true
@@ -2049,7 +2120,12 @@ class BusHubService : Service() {
                         apk.delete()
                         if (!isGlassesAppOperationActive(operationId)) return
                         if (success) {
-                            updateRemoteGlassesAppState(null, setupComplete = false)
+                            updateRemoteGlassesAppState(
+                                null,
+                                setupComplete = false,
+                                setupFailureState = "",
+                                setupFailureDiagnostic = "",
+                            )
                             transitionGlassesAppState(GlassesAppInstallEvent.InstallCompleted(true))
                             requestGlassesAppQuery(link, operationId)
                         } else {
@@ -2080,14 +2156,23 @@ class BusHubService : Service() {
             ?: throw IOException("No stable glasses APK release was found")
     }
 
-    private fun updateRemoteGlassesAppState(versionName: String?, setupComplete: Boolean) {
+    private fun updateRemoteGlassesAppState(
+        versionName: String?,
+        setupComplete: Boolean,
+        setupFailureState: String = remoteGlassesSetupFailureState,
+        setupFailureDiagnostic: String = remoteGlassesSetupFailureDiagnostic,
+    ) {
         val stateChanged = synchronized(glassesAppReleaseLock) {
             val versionChanged = remoteGlassesVersionName != versionName
             val setupChanged = remoteGlassesSetupComplete != setupComplete
+            val failureChanged = remoteGlassesSetupFailureState != setupFailureState ||
+                remoteGlassesSetupFailureDiagnostic != setupFailureDiagnostic
             remoteGlassesVersionName = versionName
             remoteGlassesSetupComplete = setupComplete
+            remoteGlassesSetupFailureState = setupFailureState
+            remoteGlassesSetupFailureDiagnostic = setupFailureDiagnostic
             val updateStateChanged = recomputeGlassesAppUpdateStateLocked()
-            versionChanged || setupChanged || updateStateChanged
+            versionChanged || setupChanged || failureChanged || updateStateChanged
         }
         if (stateChanged) {
             broadcastGlassesAppState(glassesAppInstallState)
@@ -2206,6 +2291,14 @@ class BusHubService : Service() {
                 remoteGlassesVersionName.orEmpty(),
             )
             .putExtra(NexusPhoneState.EXTRA_GLASSES_SETUP_COMPLETE, remoteGlassesSetupComplete)
+            .putExtra(
+                NexusPhoneState.EXTRA_GLASSES_SETUP_FAILURE_STATE,
+                remoteGlassesSetupFailureState,
+            )
+            .putExtra(
+                NexusPhoneState.EXTRA_GLASSES_SETUP_FAILURE_DIAGNOSTIC,
+                remoteGlassesSetupFailureDiagnostic,
+            )
             .putExtra(
                 NexusPhoneState.EXTRA_GLASSES_APP_UPDATE_STATE,
                 updateState.broadcastValue(),
@@ -2571,7 +2664,15 @@ class BusHubService : Service() {
             advertised.maxImageBytes >= ImageSurfaceContract.MAX_IMAGE_BYTES
         remoteImageSurfaceVersion = if (supported) ImageSurfaceContract.VERSION else 0
         remoteMaxImageBytes = if (supported) advertised.maxImageBytes else 0
-        updateRemoteGlassesAppState(advertised.versionName, advertised.setupComplete)
+        updateRemoteGlassesAppState(
+            advertised.versionName,
+            advertised.setupComplete,
+            advertised.setupFailureState,
+            advertised.setupFailureDiagnostic,
+        )
+        if (::manualPairingEngine.isInitialized) {
+            manualPairingEngine.onGlassesSetupReported(advertised.setupComplete)
+        }
         log("renderer capabilities image=$supported maxImageBytes=$remoteMaxImageBytes")
         // Link bits may be unchanged; repeat the callback so clients refresh capabilities().
         notifyLinkState()
@@ -2730,6 +2831,9 @@ class BusHubService : Service() {
                 }
 
         fun pluginBusJournal(): PluginBusJournal? = activeInstance?.pluginBusJournal
+
+        internal fun manualPairingEngine(): GlassesManualPairingEngine? =
+            activeInstance?.manualPairingEngine
 
         fun startWithToken(context: android.content.Context, token: String) {
             if (!canRunHub(context)) {

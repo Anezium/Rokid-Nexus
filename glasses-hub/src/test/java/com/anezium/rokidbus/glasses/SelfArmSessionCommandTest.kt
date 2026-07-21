@@ -5,8 +5,27 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.security.MessageDigest
 
 class SelfArmSessionCommandTest {
+    @Test
+    fun commandSequencePublishesParityDigestForPhoneMirror() {
+        val material = buildString {
+            append(SelfArmSessionCommand.buildPrepare(PARITY_WATCHDOG, PARITY_BRIDGE))
+            append('\u0000')
+            append(SelfArmSessionCommand.buildRestartAdbd())
+            append('\u0000')
+            append(SelfArmSessionCommand.buildArm(restartWatchdog = false))
+            append('\u0000')
+            append(SelfArmSessionCommand.buildArm(restartWatchdog = true))
+        }
+        val digest = MessageDigest.getInstance("SHA-256")
+            .digest(material.toByteArray())
+            .joinToString("") { "%02x".format(it) }
+
+        assertEquals(EXPECTED_PARITY_DIGEST, digest)
+    }
+
     @Test
     fun prepareInstallsAndDisablesLegacyWithoutStartingOrRestarting() {
         val command = SelfArmSessionCommand.buildPrepare(
@@ -106,5 +125,12 @@ class SelfArmSessionCommandTest {
                     "persist=-1 service_port=-1 legacy_tcp_disabled=1\n",
             ),
         )
+    }
+
+    private companion object {
+        const val PARITY_WATCHDOG = "#!/system/bin/sh\necho parity-watchdog\n"
+        const val PARITY_BRIDGE = "#!/system/bin/sh\necho parity-bridge\n"
+        const val EXPECTED_PARITY_DIGEST =
+            "16504bbf597b5c0a5926272f69412f70e73a0ab653b59fd743464fcc69cf5aa7"
     }
 }
