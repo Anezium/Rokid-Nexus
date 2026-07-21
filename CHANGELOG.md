@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.0.27
 
 - Setup failures on the glasses now show a short support code on the retry card, so a photo of the lens is enough to diagnose what went wrong.
 
