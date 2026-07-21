@@ -60,6 +60,11 @@ monolithic command:
   re-arms if anything was lost. The command bridge is best-effort: its status is
   reported but never gates self-arm success.
 
+If the secure KADB stream dies during prepare or either arm phase, Nexus closes the dead session,
+reconnects over paired TLS, and retries that idempotent phase up to two times. If the stream dies
+during the planned `adbd` restart, Nexus assumes the restart was dispatched, reconnects, and resumes
+with the post-restart arm verification so the final state is still converged and checked.
+
 The bridge accepts only whitelisted commands: toggling Wi-Fi on/off, and
 joining a specific SSID/passphrase (`wifi_connect`, with a `security` argument
 of `open`/`wpa2`/`wpa3` — used by the Lens camera link's phone-hosted-hotspot

@@ -61,11 +61,18 @@ internal object SelfArmArmSequence {
             } else {
                 ""
             }
-            val prepare = session.shell(prepareCommand + classicArmCommand)
+            val prepareStep = executeStepWithTransportRetry(
+                step = "prepare",
+                initialSession = session,
+                command = prepareCommand + classicArmCommand,
+                operations = operations,
+            )
+            session = prepareStep.session
+            val prepare = prepareStep.result
             outputs += prepare.output
             if (prepare.exitCode != 0 || !SelfArmSessionCommand.prepareSucceeded(prepare.output)) {
                 throw SelfArmSequenceException(
-                    "self-arm preparation failed: ${allOutput(prepare)}",
+                    "prepare: self-arm preparation failed: ${allOutput(prepare)}",
                     commandDispatched = true,
                 )
             }
@@ -74,16 +81,23 @@ internal object SelfArmArmSequence {
             if (classicArmCommand.isNotEmpty()) {
                 if (!SelfArmSessionCommand.armSucceeded(prepare.output)) {
                     throw SelfArmSequenceException(
-                        "classic watchdog arm failed before network teardown: ${allOutput(prepare)}",
+                        "arm: classic watchdog arm failed before network teardown: ${allOutput(prepare)}",
                         commandDispatched = true,
                     )
                 }
             } else {
-                arm = session.shell(SelfArmSessionCommand.buildArm(restartWatchdog))
+                val armStep = executeStepWithTransportRetry(
+                    step = "arm",
+                    initialSession = session,
+                    command = SelfArmSessionCommand.buildArm(restartWatchdog),
+                    operations = operations,
+                )
+                session = armStep.session
+                arm = armStep.result
                 outputs += arm.output
                 if (arm.exitCode != 0 || !SelfArmSessionCommand.armSucceeded(arm.output)) {
                     throw SelfArmSequenceException(
-                        "watchdog arm failed before network teardown: ${allOutput(arm)}",
+                        "arm: watchdog arm failed before network teardown: ${allOutput(arm)}",
                         commandDispatched = true,
                     )
                 }
@@ -93,37 +107,71 @@ internal object SelfArmArmSequence {
             var posture = operations.awaitRestartDecision()
             operations.log("self-arm network decision=${posture.teardownDecision()}")
             if (posture.teardownDecision() == SelfArmNetworkPosture.TeardownDecision.RESTART_ADBD) {
-                val restart = session.shell(SelfArmSessionCommand.buildRestartAdbd())
-                outputs += restart.output
-                val request = if (restart.exitCode == 0) {
-                    SelfArmSessionCommand.restartRequest(restart.output)
-                } else {
+                val previousPort = session.port
+                val restart = try {
+                    session.shell(SelfArmSessionCommand.buildRestartAdbd())
+                } catch (exception: IOException) {
+                    restartedAdbd = true
+                    operations.log("adbd restart stream died; assuming restart and reconnecting")
+                    runCatching { session.close() }
+                    session = reconnectTls(
+                        operations = operations,
+                        oldAdbdPid = null,
+                        preferredPort = previousPort,
+                        context = "after adbd restart stream failure",
+                    )
                     null
+                } catch (exception: Exception) {
+                    throw stepException("adbd-restart", exception)
                 }
-                if (request == null) {
-                    throw SelfArmSequenceException(
-                        "adbd restart was not scheduled: ${allOutput(restart)}",
-                        commandDispatched = true,
+                if (restart != null) {
+                    outputs += restart.output
+                    val request = if (restart.exitCode == 0) {
+                        SelfArmSessionCommand.restartRequest(restart.output)
+                    } else {
+                        null
+                    }
+                    if (request == null) {
+                        throw SelfArmSequenceException(
+                            "adbd-restart: adbd restart was not scheduled: ${allOutput(restart)}",
+                            commandDispatched = true,
+                        )
+                    }
+                    restartedAdbd = true
+                    operations.log("self-arm adbd restart scheduled oldPid=${request.oldAdbdPid}")
+                    runCatching { session.close() }
+                    session = reconnectTls(
+                        operations = operations,
+                        oldAdbdPid = request.oldAdbdPid,
+                        preferredPort = previousPort,
+                        context = "after scheduled adbd restart",
                     )
                 }
-                restartedAdbd = true
-                val previousPort = session.port
-                operations.log("self-arm adbd restart scheduled oldPid=${request.oldAdbdPid}")
-                session.close()
-                session = operations.reconnectTls(request.oldAdbdPid, previousPort)
                 operations.log("self-arm adbd reconnected port=${session.port}")
             } else if (session.transport == SelfArmShellTransport.CLASSIC_LOOPBACK) {
-                session.close()
-                session = operations.reconnectTls(null, null)
+                runCatching { session.close() }
+                session = reconnectTls(
+                    operations = operations,
+                    oldAdbdPid = null,
+                    preferredPort = null,
+                    context = "while switching from classic ADB",
+                )
                 operations.log("self-arm switched from classic ADB to TLS port=${session.port}")
             }
 
             if (restartedAdbd) {
-                arm = session.shell(SelfArmSessionCommand.buildArm(restartWatchdog))
+                val postRestartArmStep = executeStepWithTransportRetry(
+                    step = "post-restart arm",
+                    initialSession = session,
+                    command = SelfArmSessionCommand.buildArm(restartWatchdog),
+                    operations = operations,
+                )
+                session = postRestartArmStep.session
+                arm = postRestartArmStep.result
                 outputs += arm.output
                 if (arm.exitCode != 0 || !SelfArmSessionCommand.armSucceeded(arm.output)) {
                     throw SelfArmSequenceException(
-                        "post-restart watchdog arm failed: ${allOutput(arm)}",
+                        "post-restart arm: post-restart watchdog arm failed: ${allOutput(arm)}",
                         commandDispatched = true,
                     )
                 }
@@ -156,6 +204,86 @@ internal object SelfArmArmSequence {
         }
     }
 
+    private fun executeStepWithTransportRetry(
+        step: String,
+        initialSession: SelfArmShellSession,
+        command: String,
+        operations: SelfArmSequenceOperations,
+    ): StepExecution {
+        var session = initialSession
+        var transportRetries = 0
+        while (true) {
+            try {
+                return StepExecution(session, session.shell(command))
+            } catch (exception: IOException) {
+                runCatching { session.close() }
+                if (transportRetries >= MAX_TRANSPORT_RETRIES_PER_STEP) {
+                    throw SelfArmSequenceException(
+                        "$step: shell transport failed after $transportRetries retries: " +
+                            failureMessage(exception),
+                        exception,
+                        commandDispatched = true,
+                    )
+                }
+                transportRetries += 1
+                val previousPort = session.port
+                operations.log(
+                    "$step stream died; reconnecting " +
+                        "retry=$transportRetries/$MAX_TRANSPORT_RETRIES_PER_STEP",
+                )
+                session = reconnectTls(
+                    operations = operations,
+                    oldAdbdPid = null,
+                    preferredPort = previousPort,
+                    context = "while retrying $step",
+                )
+            } catch (exception: Exception) {
+                throw stepException(step, exception)
+            }
+        }
+    }
+
+    private fun reconnectTls(
+        operations: SelfArmSequenceOperations,
+        oldAdbdPid: String?,
+        preferredPort: Int?,
+        context: String,
+    ): SelfArmShellSession = try {
+        operations.reconnectTls(oldAdbdPid, preferredPort)
+    } catch (exception: InterruptedException) {
+        Thread.currentThread().interrupt()
+        throw SelfArmSequenceException(
+            "reconnect: $context was interrupted",
+            exception,
+            commandDispatched = true,
+        )
+    } catch (exception: Exception) {
+        throw SelfArmSequenceException(
+            "reconnect: $context failed: ${failureMessage(exception)}",
+            exception,
+            commandDispatched = true,
+        )
+    }
+
+    private fun stepException(step: String, exception: Exception): SelfArmSequenceException {
+        if (exception is InterruptedException) Thread.currentThread().interrupt()
+        return SelfArmSequenceException(
+            "$step: ${failureMessage(exception)}",
+            exception,
+            commandDispatched = true,
+        )
+    }
+
+    private fun failureMessage(exception: Throwable): String =
+        exception.message.orEmpty().ifBlank { exception::class.java.simpleName }
+
     private fun allOutput(result: SelfArmShellResult): String =
         (result.errorOutput + result.output).trim().take(500)
+
+    private data class StepExecution(
+        val session: SelfArmShellSession,
+        val result: SelfArmShellResult,
+    )
+
+    private const val MAX_TRANSPORT_RETRIES_PER_STEP = 2
 }

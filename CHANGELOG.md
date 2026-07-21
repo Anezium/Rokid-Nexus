@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- First-run glasses setup is much more resilient: if the secure channel drops mid-arm (including during the planned adbd restart), Nexus reconnects and resumes instead of failing with a support code.
+
 ## 1.0.27
 
 - Setup failures on the glasses now show a short support code on the retry card, so a photo of the lens is enough to diagnose what went wrong.
