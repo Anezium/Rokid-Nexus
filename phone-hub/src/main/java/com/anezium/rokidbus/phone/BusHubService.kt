@@ -798,6 +798,7 @@ class BusHubService : Service() {
             updateRemoteCapabilities(envelope.payload)
             return
         }
+        if (handleManualSelfArmResponse(envelope)) return
         if (::cameraCompanionController.isInitialized &&
             cameraCompanionController.onRemoteEnvelope(envelope)
         ) {
@@ -2029,11 +2030,13 @@ class BusHubService : Service() {
     }
 
     private fun sendManualSelfArmControl(
+        requestId: String,
         action: GlassesManualControlAction,
         armed: Boolean,
     ): String? = sendRemote(
         BusEnvelope(
             path = BusPaths.GLASSES_SELFARM_MANUAL,
+            id = requestId,
             payload = JSONObject()
                 .put("version", 1)
                 .put("action", action.wireValue)
@@ -2042,6 +2045,36 @@ class BusHubService : Service() {
                 },
         ),
     )
+
+    private fun handleManualSelfArmResponse(envelope: BusEnvelope): Boolean {
+        if (!::manualPairingEngine.isInitialized) return false
+        val errorCode = when (envelope.path) {
+            BusPaths.GLASSES_SELFARM_MANUAL_REPLY -> if (
+                envelope.payload.optBoolean("accepted", false)
+            ) {
+                null
+            } else {
+                envelope.payload.optString("code", "REJECTED")
+            }
+            BusPaths.ERROR -> envelope.payload.optString("code", "REMOTE_ERROR")
+            else -> return false
+        }
+        val requestId = envelope.payload.optString("forId", envelope.id).ifBlank { envelope.id }
+        if (!manualPairingEngine.onManualControlResponse(requestId, errorCode)) return false
+        recordRemoteRoute(
+            envelope,
+            if (errorCode == null) PluginBusJournal.Verdict.OK else PluginBusJournal.Verdict.REJECTED,
+            errorCode,
+        )
+        log(
+            if (errorCode == null) {
+                "manual self-arm control acknowledged"
+            } else {
+                "manual self-arm control rejected code=$errorCode"
+            },
+        )
+        return true
+    }
 
     private fun isPhoneWifiEnabled(): Boolean =
         runCatching {

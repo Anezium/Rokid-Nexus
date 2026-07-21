@@ -60,6 +60,12 @@ monolithic command:
   re-arms if anything was lost. The command bridge is best-effort: its status is
   reported but never gates self-arm success.
 
+Each idempotent prepare or arm step retries on a fresh TLS session when its shell
+stream dies, with at most two transport retries per step. If the stream dies while
+dispatching the planned `adbd` restart, Nexus assumes the restart was likely
+scheduled, reconnects, and resumes with the post-restart arm verification so the
+device still converges to the same safe state even if the restart did not run.
+
 The bridge accepts only whitelisted commands: toggling Wi-Fi on/off, and
 joining a specific SSID/passphrase (`wifi_connect`, with a `security` argument
 of `open`/`wpa2`/`wpa3` — used by the Lens camera link's phone-hosted-hotspot

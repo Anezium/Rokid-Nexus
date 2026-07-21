@@ -396,7 +396,22 @@ object GlassesHub {
             armed,
         )
         log("manual self-arm action=${action.wireValue} accepted=$accepted armed=$armed")
-        if (!accepted) sendRemote(errorEnvelope(envelope.id, "ACCESSIBILITY_UNAVAILABLE"))
+        if (!accepted) {
+            sendRemote(errorEnvelope(envelope.id, "ACCESSIBILITY_UNAVAILABLE"))
+            return
+        }
+        // Closing is fire-and-forget; the phone only waits for acknowledgement while opening.
+        if (action == SelfArmManualAction.CLOSE) return
+        sendRemote(
+            BusEnvelope(
+                path = BusPaths.GLASSES_SELFARM_MANUAL_REPLY,
+                id = envelope.id,
+                payload = JSONObject()
+                    .put("version", 1)
+                    .put("action", action.wireValue)
+                    .put("accepted", true),
+            ),
+        )
     }
 
     private fun addRegistration(

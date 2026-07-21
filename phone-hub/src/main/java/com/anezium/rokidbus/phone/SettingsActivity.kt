@@ -156,6 +156,19 @@ class SettingsActivity : Activity() {
                     NexusUi.block(),
                 )
                 addView(BusTheme.gap(this@SettingsActivity, 10))
+                addView(
+                    actionRow(
+                        title = "Manual glasses setup",
+                        value = "Open",
+                        danger = false,
+                    ) {
+                        startActivity(
+                            Intent(this@SettingsActivity, GlassesManualSetupActivity::class.java),
+                        )
+                    },
+                    NexusUi.block(),
+                )
+                addView(BusTheme.gap(this@SettingsActivity, 10))
             }
             addView(
                 logScroll,
@@ -410,7 +423,10 @@ class SettingsActivity : Activity() {
                     addView(NexusUi.rowTitle(this@SettingsActivity, "Developer mode"))
                     addView(BusTheme.gap(this@SettingsActivity, 3))
                     addView(
-                        NexusUi.rowSub(this@SettingsActivity, "Sideload alerts, DEV badges, bus inspector"),
+                        NexusUi.rowSub(
+                            this@SettingsActivity,
+                            "Sideload alerts, manual setup, bus inspector",
+                        ),
                     )
                 },
                 LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),

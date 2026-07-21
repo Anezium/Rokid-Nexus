@@ -42,7 +42,11 @@ internal class SelfArmLocalAdbBootstrapper(
 
         configureKadbCert(appContext)
         pairWirelessDebugging(pairPort, cleanCode)
-        val initialSession = openExactPairedSession(connectPort, "rokid-nexus")
+        val initialSession = openPairedSessionWithRetry(
+            oldAdbdPid = null,
+            preferredPort = connectPort,
+            timeoutMs = INITIAL_SESSION_TIMEOUT_MS,
+        )
         return try {
             val watchdogScript = appContext.assets.open(SelfArmConstants.WATCHDOG_ASSET)
                 .bufferedReader()

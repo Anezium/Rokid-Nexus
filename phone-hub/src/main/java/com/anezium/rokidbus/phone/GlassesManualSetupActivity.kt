@@ -178,13 +178,43 @@ class GlassesManualSetupActivity : Activity() {
         body.addView(
             NexusUi.cardBody(
                 this,
-                "Your glasses now show a pairing screen. Copy the three values from the lens into " +
-                    "the boxes below. It looks like this:",
+                "Your glasses should now show a pairing screen. Copy the three values from the lens " +
+                    "into the boxes below. It looks like this:",
             ),
             NexusUi.block(),
         )
         body.addView(BusTheme.gap(this, 14))
         body.addView(pairingDialogMock(), NexusUi.block())
+        body.addView(BusTheme.gap(this, 14))
+
+        // The glasses open the pairing screen on their own when the flow starts, but if the wearer
+        // doesn't see the 6-digit code on the lens, this re-opens it for them — no glasses menus to
+        // navigate by hand.
+        body.addView(
+            NexusUi.outlinePillButton(this, "Open the pairing screen on my glasses").apply {
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                )
+                setOnClickListener {
+                    engine?.reopenPairingScreen()
+                    android.widget.Toast.makeText(
+                        this@GlassesManualSetupActivity,
+                        "Opening it on your glasses — look at the lens.",
+                        android.widget.Toast.LENGTH_SHORT,
+                    ).show()
+                }
+            },
+            NexusUi.block(),
+        )
+        body.addView(BusTheme.gap(this, 6))
+        body.addView(
+            NexusUi.cardBody(
+                this,
+                "Don't see a code on the lens? Tap the button above and watch your glasses.",
+            ).apply { textSize = 12f },
+            NexusUi.block(),
+        )
         body.addView(BusTheme.gap(this, 20))
 
         val ipField = labelledField("Wi-Fi IP address", "192.168.1.84", numeric = false)

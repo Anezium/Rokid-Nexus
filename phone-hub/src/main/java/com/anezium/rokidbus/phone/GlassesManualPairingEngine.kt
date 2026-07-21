@@ -7,6 +7,7 @@ import java.io.IOException
 import java.util.concurrent.CopyOnWriteArraySet
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.UUID
 
 internal sealed interface GlassesManualPairingState {
     data object IDLE : GlassesManualPairingState
@@ -31,7 +32,7 @@ internal enum class GlassesManualControlAction(val wireValue: String) {
 
 internal fun interface GlassesManualControlSender {
     /** Returns null on success or a non-sensitive transport error code. */
-    fun send(action: GlassesManualControlAction, armed: Boolean): String?
+    fun send(requestId: String, action: GlassesManualControlAction, armed: Boolean): String?
 }
 
 internal fun interface ManualPairingCancellation {
@@ -55,16 +56,26 @@ internal class GlassesManualPairingEngine(
     private val backend: GlassesManualPairingBackend,
     private val worker: ManualPairingTaskExecutor,
     private val timeoutScheduler: ManualPairingTimeoutScheduler,
+    private val controlAckTimeoutMs: Long = DEFAULT_CONTROL_ACK_TIMEOUT_MS,
     private val confirmationTimeoutMs: Long = DEFAULT_CONFIRMATION_TIMEOUT_MS,
+    private val nextRequestId: () -> String = { UUID.randomUUID().toString() },
     private val logger: (String) -> Unit = {},
     private val shutdownResources: () -> Unit = {},
 ) : Closeable {
     private enum class WorkStage { PAIRING, CONNECTING, ARMING }
+    private enum class OpeningPurpose { INITIAL, REOPEN }
+    private data class PendingControl(
+        val requestId: String,
+        val attempt: Long,
+        val purpose: OpeningPurpose,
+    )
 
     private val lock = Any()
     private val observers = CopyOnWriteArraySet<(GlassesManualPairingState) -> Unit>()
     private var generation = 0L
     private var activeWork: ManualPairingCancellation? = null
+    private var controlAckTimeout: ManualPairingCancellation? = null
+    private var pendingControl: PendingControl? = null
     private var confirmationTimeout: ManualPairingCancellation? = null
     private var awaitingGlassesConfirmation = false
 
@@ -83,24 +94,56 @@ internal class GlassesManualPairingEngine(
             generation += 1L
             activeWork?.cancel()
             activeWork = null
+            controlAckTimeout?.cancel()
+            controlAckTimeout = null
+            pendingControl = null
             confirmationTimeout?.cancel()
             confirmationTimeout = null
             awaitingGlassesConfirmation = false
             generation
         }
         transition(attempt, GlassesManualPairingState.OPENING_SCREEN)
-        for (action in OPENING_ACTIONS) {
-            val error = control.send(action, false)
-            if (error != null) {
-                fail(
-                    attempt,
-                    "Could not open Wireless Debugging on the glasses.",
-                    IOException("Manual setup control failed: $error"),
-                )
-                return false
-            }
+        return requestPairingScreen(attempt, OpeningPurpose.INITIAL)
+    }
+
+    /**
+     * Re-asks the glasses to open (or re-open) the pairing screen without resetting the flow. The
+     * user taps this when the code is not visible on the lens yet, so it must stay callable while we
+     * are waiting for them to read and type the values.
+     */
+    fun reopenPairingScreen(): Boolean {
+        if (state != GlassesManualPairingState.WAITING_FOR_CODE &&
+            state != GlassesManualPairingState.OPENING_SCREEN
+        ) {
+            return false
         }
-        transition(attempt, GlassesManualPairingState.WAITING_FOR_CODE)
+        val attempt = synchronized(lock) { generation }
+        return requestPairingScreen(attempt, OpeningPurpose.REOPEN)
+    }
+
+    /** Correlates a glasses acknowledgement or `/error` with the active open request. */
+    fun onManualControlResponse(requestId: String, errorCode: String?): Boolean {
+        val pending = synchronized(lock) {
+            val current = pendingControl
+            if (current?.requestId != requestId) {
+                null
+            } else {
+                pendingControl = null
+                controlAckTimeout?.cancel()
+                controlAckTimeout = null
+                current
+            }
+        } ?: return false
+
+        if (!errorCode.isNullOrBlank()) {
+            fail(
+                pending.attempt,
+                manualControlUserMessage(errorCode),
+                IOException("Manual setup control rejected: $errorCode"),
+            )
+        } else if (pending.purpose == OpeningPurpose.INITIAL) {
+            transition(pending.attempt, GlassesManualPairingState.WAITING_FOR_CODE)
+        }
         return true
     }
 
@@ -163,12 +206,15 @@ internal class GlassesManualPairingEngine(
             generation += 1L
             activeWork?.cancel()
             activeWork = null
+            controlAckTimeout?.cancel()
+            controlAckTimeout = null
+            pendingControl = null
             confirmationTimeout?.cancel()
             confirmationTimeout = null
             awaitingGlassesConfirmation = false
             state != GlassesManualPairingState.IDLE
         }
-        control.send(GlassesManualControlAction.CLOSE, false)
+        sendClose(armed = false)
         if (shouldNotify) transitionUnconditionally(GlassesManualPairingState.IDLE)
     }
 
@@ -200,7 +246,7 @@ internal class GlassesManualPairingEngine(
             awaitingGlassesConfirmation = true
             activeWork = null
         }
-        val closeError = control.send(GlassesManualControlAction.CLOSE, true)
+        val closeError = sendClose(armed = true)
         if (closeError != null) {
             fail(
                 attempt,
@@ -232,6 +278,9 @@ internal class GlassesManualPairingEngine(
                 false
             } else {
                 activeWork = null
+                controlAckTimeout?.cancel()
+                controlAckTimeout = null
+                pendingControl = null
                 awaitingGlassesConfirmation = false
                 confirmationTimeout?.cancel()
                 confirmationTimeout = null
@@ -239,7 +288,7 @@ internal class GlassesManualPairingEngine(
             }
         }
         if (!accepted) return
-        control.send(GlassesManualControlAction.CLOSE, false)
+        sendClose(armed = false)
         logger("manual self-arm failed: $detail")
         transitionUnconditionally(GlassesManualPairingState.ERROR(userMessage, detail))
     }
@@ -259,6 +308,58 @@ internal class GlassesManualPairingEngine(
 
     private fun isCurrent(attempt: Long): Boolean = synchronized(lock) { attempt == generation }
 
+    private fun requestPairingScreen(attempt: Long, purpose: OpeningPurpose): Boolean {
+        val requestId = nextRequestId()
+        val pending = PendingControl(requestId, attempt, purpose)
+        val accepted = synchronized(lock) {
+            if (attempt != generation || pendingControl != null) {
+                false
+            } else {
+                pendingControl = pending
+                true
+            }
+        }
+        if (!accepted) return false
+
+        val scheduled = timeoutScheduler.schedule(controlAckTimeoutMs) {
+            onManualControlResponse(requestId, CONTROL_ACK_TIMEOUT)
+        }
+        synchronized(lock) {
+            if (pendingControl?.requestId == requestId) {
+                controlAckTimeout = scheduled
+            } else {
+                scheduled.cancel()
+            }
+        }
+
+        val error = control.send(
+            requestId,
+            GlassesManualControlAction.OPEN_PAIRING_DIALOG,
+            false,
+        )
+        if (error != null) {
+            onManualControlResponse(requestId, error)
+            return false
+        }
+        return true
+    }
+
+    private fun sendClose(armed: Boolean): String? = control.send(
+        nextRequestId(),
+        GlassesManualControlAction.CLOSE,
+        armed,
+    )
+
+    private fun manualControlUserMessage(errorCode: String): String = when (errorCode) {
+        "NO_LOCAL_CLIENT", "INVALID_ACTION" ->
+            "Manual setup needs a newer Nexus app on the glasses. Update the glasses app and try again."
+        "ACCESSIBILITY_UNAVAILABLE" ->
+            "Nexus lost Accessibility access on the glasses. Enable it there, then try again."
+        CONTROL_ACK_TIMEOUT ->
+            "The glasses did not confirm manual setup. Check the connection or update the glasses app."
+        else -> "Could not open the pairing screen on the glasses."
+    }
+
     private fun userMessage(stage: WorkStage): String = when (stage) {
         WorkStage.PAIRING -> "The pairing code was not accepted. Check the code and try again."
         WorkStage.CONNECTING ->
@@ -267,13 +368,10 @@ internal class GlassesManualPairingEngine(
     }
 
     companion object {
+        private const val DEFAULT_CONTROL_ACK_TIMEOUT_MS = 5_000L
         private const val DEFAULT_CONFIRMATION_TIMEOUT_MS = 30_000L
+        private const val CONTROL_ACK_TIMEOUT = "CONTROL_ACK_TIMEOUT"
         private val PAIRING_CODE = Regex("""\d{6}""")
-        private val OPENING_ACTIONS = listOf(
-            GlassesManualControlAction.OPEN_DEVELOPER_OPTIONS,
-            GlassesManualControlAction.OPEN_WIRELESS_DEBUGGING,
-            GlassesManualControlAction.OPEN_PAIRING_DIALOG,
-        )
 
         fun create(
             context: Context,

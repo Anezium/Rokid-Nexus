@@ -16,6 +16,8 @@ class GlassesManualPairingEngineTest {
         fixture.engine.observe(states::add)
 
         assertTrue(fixture.engine.start())
+        assertEquals(GlassesManualPairingState.OPENING_SCREEN, fixture.engine.state)
+        fixture.ackOpening()
         assertTrue(fixture.engine.submit(HOST, PAIR_PORT, CODE))
 
         assertEquals(GlassesManualPairingState.ARMING, fixture.engine.state)
@@ -32,8 +34,6 @@ class GlassesManualPairingEngineTest {
         )
         assertEquals(
             listOf(
-                GlassesManualControlAction.OPEN_DEVELOPER_OPTIONS,
-                GlassesManualControlAction.OPEN_WIRELESS_DEBUGGING,
                 GlassesManualControlAction.OPEN_PAIRING_DIALOG,
                 GlassesManualControlAction.CLOSE,
             ),
@@ -52,6 +52,7 @@ class GlassesManualPairingEngineTest {
         val fixture = fixture(backend)
 
         fixture.engine.start()
+        fixture.ackOpening()
         fixture.engine.submit(HOST, PAIR_PORT, CODE)
 
         val error = fixture.engine.state as GlassesManualPairingState.ERROR
@@ -66,6 +67,7 @@ class GlassesManualPairingEngineTest {
         val fixture = fixture(FakeBackend(armFailure = IOException("watchdog verification failed")))
 
         fixture.engine.start()
+        fixture.ackOpening()
         fixture.engine.submit(HOST, PAIR_PORT, CODE)
 
         val error = fixture.engine.state as GlassesManualPairingState.ERROR
@@ -79,6 +81,7 @@ class GlassesManualPairingEngineTest {
         val fixture = fixture(worker = queued)
 
         fixture.engine.start()
+        fixture.ackOpening()
         fixture.engine.submit(HOST, PAIR_PORT, CODE)
         assertEquals(GlassesManualPairingState.PAIRING, fixture.engine.state)
 
@@ -87,6 +90,48 @@ class GlassesManualPairingEngineTest {
 
         assertEquals(GlassesManualPairingState.IDLE, fixture.engine.state)
         assertEquals(GlassesManualControlAction.CLOSE, fixture.control.actions.last())
+    }
+
+    @Test
+    fun oldGlassesManualControlErrorIsShownInsteadOfOpeningTheForm() {
+        val fixture = fixture()
+
+        fixture.engine.start()
+        val requestId = fixture.control.requestIds.single()
+        assertTrue(fixture.engine.onManualControlResponse(requestId, "NO_LOCAL_CLIENT"))
+
+        val error = fixture.engine.state as GlassesManualPairingState.ERROR
+        assertTrue(error.userMessage.contains("newer Nexus app"))
+        assertTrue(error.userMessage.contains("Update the glasses app"))
+        assertEquals(
+            listOf(
+                GlassesManualControlAction.OPEN_PAIRING_DIALOG,
+                GlassesManualControlAction.CLOSE,
+            ),
+            fixture.control.actions,
+        )
+    }
+
+    @Test
+    fun reopenUsesOneAtomicActionAndKeepsTheCodeFormState() {
+        val fixture = fixture()
+
+        fixture.engine.start()
+        fixture.ackOpening()
+        assertEquals(GlassesManualPairingState.WAITING_FOR_CODE, fixture.engine.state)
+
+        assertTrue(fixture.engine.reopenPairingScreen())
+        val reopenId = fixture.control.requestIds.last()
+        assertEquals(GlassesManualPairingState.WAITING_FOR_CODE, fixture.engine.state)
+        assertTrue(fixture.engine.onManualControlResponse(reopenId, null))
+        assertEquals(GlassesManualPairingState.WAITING_FOR_CODE, fixture.engine.state)
+        assertEquals(
+            listOf(
+                GlassesManualControlAction.OPEN_PAIRING_DIALOG,
+                GlassesManualControlAction.OPEN_PAIRING_DIALOG,
+            ),
+            fixture.control.actions,
+        )
     }
 
     @Test
@@ -125,12 +170,22 @@ class GlassesManualPairingEngineTest {
     private data class Fixture(
         val engine: GlassesManualPairingEngine,
         val control: FakeControl,
-    )
+    ) {
+        fun ackOpening() {
+            assertTrue(engine.onManualControlResponse(control.requestIds.last(), null))
+        }
+    }
 
     private class FakeControl : GlassesManualControlSender {
         val actions = mutableListOf<GlassesManualControlAction>()
+        val requestIds = mutableListOf<String>()
 
-        override fun send(action: GlassesManualControlAction, armed: Boolean): String? {
+        override fun send(
+            requestId: String,
+            action: GlassesManualControlAction,
+            armed: Boolean,
+        ): String? {
+            requestIds += requestId
             actions += action
             return null
         }
