@@ -743,17 +743,21 @@ class MainActivity : Activity() {
                 statusLine = if (NexusPhoneState.glassesAppInstalled &&
                     !NexusPhoneState.glassesSetupComplete
                 ) {
-                    "Waiting for the glasses to finish setup..."
+                    if (NexusPhoneState.glassesSetupFailureState.isNotBlank()) {
+                        "Automatic setup failed — use Manual setup below."
+                    } else {
+                        "Waiting for setup. If it stalls, use Manual setup below."
+                    }
                 } else {
                     null
                 },
-                // Surfaced only once the glasses have reported a self-arm failure: the automatic
-                // setup couldn't complete on this unit, so offer the phone-driven manual fallback.
-                secondaryActionLabel = if (
-                    cxrReady &&
-                    !NexusPhoneState.glassesSetupComplete &&
-                    NexusPhoneState.glassesSetupFailureDiagnostic.isNotBlank()
-                ) {
+                // Never gate recovery on a diagnostic from the failing transport. If the app is
+                // installed but setup is incomplete, the fallback must already be reachable.
+                secondaryActionLabel = if (shouldOfferManualSetup(
+                    cxrReady = cxrReady,
+                    glassesAppInstalled = NexusPhoneState.glassesAppInstalled,
+                    glassesSetupComplete = NexusPhoneState.glassesSetupComplete,
+                )) {
                     "Manual setup"
                 } else {
                     null

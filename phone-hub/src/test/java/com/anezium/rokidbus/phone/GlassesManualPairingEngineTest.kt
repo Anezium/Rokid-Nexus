@@ -16,15 +16,13 @@ class GlassesManualPairingEngineTest {
         fixture.engine.observe(states::add)
 
         assertTrue(fixture.engine.start())
-        assertEquals(GlassesManualPairingState.OPENING_SCREEN, fixture.engine.state)
-        fixture.ackOpening()
+        assertEquals(GlassesManualPairingState.WAITING_FOR_CODE, fixture.engine.state)
         assertTrue(fixture.engine.submit(HOST, PAIR_PORT, CODE))
 
         assertEquals(GlassesManualPairingState.ARMING, fixture.engine.state)
         assertEquals(
             listOf(
                 GlassesManualPairingState.IDLE,
-                GlassesManualPairingState.OPENING_SCREEN,
                 GlassesManualPairingState.WAITING_FOR_CODE,
                 GlassesManualPairingState.PAIRING,
                 GlassesManualPairingState.CONNECTING,
@@ -32,13 +30,7 @@ class GlassesManualPairingEngineTest {
             ),
             states,
         )
-        assertEquals(
-            listOf(
-                GlassesManualControlAction.OPEN_PAIRING_DIALOG,
-                GlassesManualControlAction.CLOSE,
-            ),
-            fixture.control.actions,
-        )
+        assertEquals(listOf(GlassesManualControlAction.CLOSE), fixture.control.actions)
 
         fixture.engine.onGlassesSetupReported(true)
 
@@ -52,7 +44,6 @@ class GlassesManualPairingEngineTest {
         val fixture = fixture(backend)
 
         fixture.engine.start()
-        fixture.ackOpening()
         fixture.engine.submit(HOST, PAIR_PORT, CODE)
 
         val error = fixture.engine.state as GlassesManualPairingState.ERROR
@@ -67,7 +58,6 @@ class GlassesManualPairingEngineTest {
         val fixture = fixture(FakeBackend(armFailure = IOException("watchdog verification failed")))
 
         fixture.engine.start()
-        fixture.ackOpening()
         fixture.engine.submit(HOST, PAIR_PORT, CODE)
 
         val error = fixture.engine.state as GlassesManualPairingState.ERROR
@@ -81,7 +71,6 @@ class GlassesManualPairingEngineTest {
         val fixture = fixture(worker = queued)
 
         fixture.engine.start()
-        fixture.ackOpening()
         fixture.engine.submit(HOST, PAIR_PORT, CODE)
         assertEquals(GlassesManualPairingState.PAIRING, fixture.engine.state)
 
@@ -93,10 +82,11 @@ class GlassesManualPairingEngineTest {
     }
 
     @Test
-    fun oldGlassesManualControlErrorIsShownInsteadOfOpeningTheForm() {
+    fun oldGlassesManualControlErrorIsShownFromASettingsButton() {
         val fixture = fixture()
 
         fixture.engine.start()
+        assertTrue(fixture.engine.openDeveloperOptions())
         val requestId = fixture.control.requestIds.single()
         assertTrue(fixture.engine.onManualControlResponse(requestId, "NO_LOCAL_CLIENT"))
 
@@ -105,7 +95,7 @@ class GlassesManualPairingEngineTest {
         assertTrue(error.userMessage.contains("Update the glasses app"))
         assertEquals(
             listOf(
-                GlassesManualControlAction.OPEN_PAIRING_DIALOG,
+                GlassesManualControlAction.OPEN_DEVELOPER_OPTIONS,
                 GlassesManualControlAction.CLOSE,
             ),
             fixture.control.actions,
@@ -113,22 +103,26 @@ class GlassesManualPairingEngineTest {
     }
 
     @Test
-    fun reopenUsesOneAtomicActionAndKeepsTheCodeFormState() {
+    fun manualSettingsButtonsUseSeparateActionsAndKeepTheCodeFormState() {
         val fixture = fixture()
 
         fixture.engine.start()
-        fixture.ackOpening()
         assertEquals(GlassesManualPairingState.WAITING_FOR_CODE, fixture.engine.state)
+        assertTrue(fixture.control.actions.isEmpty())
 
-        assertTrue(fixture.engine.reopenPairingScreen())
-        val reopenId = fixture.control.requestIds.last()
+        assertTrue(fixture.engine.openDeveloperOptions())
+        val developerId = fixture.control.requestIds.last()
         assertEquals(GlassesManualPairingState.WAITING_FOR_CODE, fixture.engine.state)
-        assertTrue(fixture.engine.onManualControlResponse(reopenId, null))
+        assertTrue(fixture.engine.onManualControlResponse(developerId, null))
+
+        assertTrue(fixture.engine.showWirelessDebugging())
+        val wirelessId = fixture.control.requestIds.last()
+        assertTrue(fixture.engine.onManualControlResponse(wirelessId, null))
         assertEquals(GlassesManualPairingState.WAITING_FOR_CODE, fixture.engine.state)
         assertEquals(
             listOf(
-                GlassesManualControlAction.OPEN_PAIRING_DIALOG,
-                GlassesManualControlAction.OPEN_PAIRING_DIALOG,
+                GlassesManualControlAction.OPEN_DEVELOPER_OPTIONS,
+                GlassesManualControlAction.OPEN_WIRELESS_DEBUGGING,
             ),
             fixture.control.actions,
         )
@@ -170,11 +164,7 @@ class GlassesManualPairingEngineTest {
     private data class Fixture(
         val engine: GlassesManualPairingEngine,
         val control: FakeControl,
-    ) {
-        fun ackOpening() {
-            assertTrue(engine.onManualControlResponse(control.requestIds.last(), null))
-        }
-    }
+    )
 
     private class FakeControl : GlassesManualControlSender {
         val actions = mutableListOf<GlassesManualControlAction>()

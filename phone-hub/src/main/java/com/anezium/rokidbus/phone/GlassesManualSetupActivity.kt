@@ -127,11 +127,6 @@ class GlassesManualSetupActivity : Activity() {
         body.removeAllViews()
         when (state) {
             GlassesManualPairingState.IDLE -> renderIntro()
-            GlassesManualPairingState.OPENING_SCREEN ->
-                renderWorking(
-                    "Opening the pairing screen…",
-                    "Look at your glasses — a screen with a 6-digit code is about to appear.",
-                )
             GlassesManualPairingState.WAITING_FOR_CODE -> renderCodeForm()
             GlassesManualPairingState.PAIRING ->
                 renderWorking("Pairing…", "Connecting to your glasses. Keep them on.")
@@ -152,7 +147,8 @@ class GlassesManualSetupActivity : Activity() {
                 this,
                 "Your glasses' automatic setup didn't take, so we'll do it together — it takes " +
                     "about two minutes. Put the glasses on, keep this phone in front of you, and " +
-                    "tap Start. I'll walk you through every step.",
+                    "tap Start. Nexus will give you direct Settings buttons instead of trying to " +
+                    "drive the glasses menus automatically.",
             ),
             NexusUi.block(),
         )
@@ -173,34 +169,28 @@ class GlassesManualSetupActivity : Activity() {
     }
 
     private fun renderCodeForm() {
-        body.addView(NexusUi.hero(this, 26f).apply { text = "Type what you see" }, NexusUi.block())
+        body.addView(NexusUi.hero(this, 26f).apply { text = "Open the pairing screen" }, NexusUi.block())
         body.addView(BusTheme.gap(this, 10))
         body.addView(
             NexusUi.cardBody(
                 this,
-                "Your glasses should now show a pairing screen. Copy the three values from the lens " +
-                    "into the boxes below. It looks like this:",
+                "These buttons open Android Settings on the glasses directly. Nexus will not tap or " +
+                    "scroll through the menus for you.",
             ),
             NexusUi.block(),
         )
         body.addView(BusTheme.gap(this, 14))
-        body.addView(pairingDialogMock(), NexusUi.block())
-        body.addView(BusTheme.gap(this, 14))
-
-        // The glasses open the pairing screen on their own when the flow starts, but if the wearer
-        // doesn't see the 6-digit code on the lens, this re-opens it for them — no glasses menus to
-        // navigate by hand.
         body.addView(
-            NexusUi.outlinePillButton(this, "Open the pairing screen on my glasses").apply {
+            NexusUi.outlinePillButton(this, "1. Open Developer options").apply {
                 layoutParams = LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT,
                 )
                 setOnClickListener {
-                    engine?.reopenPairingScreen()
+                    engine?.openDeveloperOptions()
                     android.widget.Toast.makeText(
                         this@GlassesManualSetupActivity,
-                        "Opening it on your glasses — look at the lens.",
+                        "Developer options opened on the glasses.",
                         android.widget.Toast.LENGTH_SHORT,
                     ).show()
                 }
@@ -211,10 +201,41 @@ class GlassesManualSetupActivity : Activity() {
         body.addView(
             NexusUi.cardBody(
                 this,
-                "Don't see a code on the lens? Tap the button above and watch your glasses.",
+                "Only needed if Developer options are off. Turn on the main switch, then come back here.",
             ).apply { textSize = 12f },
             NexusUi.block(),
         )
+        body.addView(BusTheme.gap(this, 12))
+        body.addView(
+            NexusUi.outlinePillButton(this, "2. Show Wireless debugging").apply {
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                )
+                setOnClickListener {
+                    engine?.showWirelessDebugging()
+                    android.widget.Toast.makeText(
+                        this@GlassesManualSetupActivity,
+                        "Wireless debugging is visible on the glasses.",
+                        android.widget.Toast.LENGTH_SHORT,
+                    ).show()
+                }
+            },
+            NexusUi.block(),
+        )
+        body.addView(BusTheme.gap(this, 6))
+        body.addView(
+            NexusUi.cardBody(
+                this,
+                "On the glasses, tap Wireless debugging, turn it on, then tap “Pair device with " +
+                    "pairing code”.",
+            ).apply { textSize = 12f },
+            NexusUi.block(),
+        )
+        body.addView(BusTheme.gap(this, 18))
+        body.addView(NexusUi.hero(this, 24f).apply { text = "Type what you see" }, NexusUi.block())
+        body.addView(BusTheme.gap(this, 10))
+        body.addView(pairingDialogMock(), NexusUi.block())
         body.addView(BusTheme.gap(this, 20))
 
         val ipField = labelledField("Wi-Fi IP address", "192.168.1.84", numeric = false)
@@ -448,7 +469,6 @@ class GlassesManualSetupActivity : Activity() {
 
     private fun activeStepFor(state: GlassesManualPairingState): Int = when (state) {
         GlassesManualPairingState.IDLE -> 0
-        GlassesManualPairingState.OPENING_SCREEN -> 0
         GlassesManualPairingState.WAITING_FOR_CODE -> 1
         GlassesManualPairingState.PAIRING,
         GlassesManualPairingState.CONNECTING,

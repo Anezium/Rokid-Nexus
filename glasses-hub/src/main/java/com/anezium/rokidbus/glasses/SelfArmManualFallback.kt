@@ -1,6 +1,9 @@
 package com.anezium.rokidbus.glasses
 
 import android.content.Context
+import android.content.Intent
+import android.os.Bundle
+import android.provider.Settings
 import java.io.File
 import java.io.IOException
 import java.util.UUID
@@ -19,10 +22,39 @@ internal enum class SelfArmManualAction(val wireValue: String) {
     }
 }
 
-internal enum class SelfArmManualTarget {
-    DEVELOPER_OPTIONS,
-    WIRELESS_DEBUGGING,
-    PAIRING_DIALOG,
+internal const val WIRELESS_DEBUGGING_PREFERENCE_KEY = "toggle_adb_wireless"
+
+internal enum class SelfArmManualTarget(val settingsPreferenceKey: String?) {
+    DEVELOPER_OPTIONS(null),
+    WIRELESS_DEBUGGING(WIRELESS_DEBUGGING_PREFERENCE_KEY),
+    // Kept for older phone builds. It now opens the manual Wireless Debugging route instead of
+    // starting the locale-sensitive Settings automator.
+    PAIRING_DIALOG(WIRELESS_DEBUGGING_PREFERENCE_KEY),
+    ;
+}
+
+/** Opens only public Android Settings surfaces; it never clicks or traverses Settings UI. */
+internal object SelfArmManualSettingsLauncher {
+    fun open(context: Context, target: SelfArmManualTarget): Boolean {
+        val explicit = intent(target).setPackage(SETTINGS_PACKAGE)
+        if (runCatching { context.startActivity(explicit) }.isSuccess) return true
+        return runCatching { context.startActivity(intent(target)) }.isSuccess
+    }
+
+    private fun intent(target: SelfArmManualTarget): Intent =
+        Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            .also { intent ->
+                target.settingsPreferenceKey?.let { key ->
+                    val args = Bundle().apply { putString(EXTRA_FRAGMENT_ARG_KEY, key) }
+                    intent.putExtra(EXTRA_FRAGMENT_ARG_KEY, key)
+                    intent.putExtra(EXTRA_SHOW_FRAGMENT_ARGUMENTS, args)
+                }
+            }
+
+    private const val SETTINGS_PACKAGE = "com.android.settings"
+    private const val EXTRA_FRAGMENT_ARG_KEY = ":settings:fragment_args_key"
+    private const val EXTRA_SHOW_FRAGMENT_ARGUMENTS = ":settings:show_fragment_args"
 }
 
 /**

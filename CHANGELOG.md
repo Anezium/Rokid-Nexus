@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.31
+
+- Manual setup is now always available from onboarding while the glasses app is installed but setup is incomplete, even when the failing transport never delivers a diagnostic.
+- The manual wizard no longer drives the glasses Settings menus automatically. It provides separate **Open Developer options** and **Show Wireless debugging** buttons; the latter opens the public Developer options screen already positioned with Wireless Debugging visible for the wearer to select.
+
 ## 1.0.30
 
 - Automatic glasses setup now has a clear recovery path: after the initial secure-transport attempt and two internal retries fail, the phone surfaces a guided **Manual setup** action.

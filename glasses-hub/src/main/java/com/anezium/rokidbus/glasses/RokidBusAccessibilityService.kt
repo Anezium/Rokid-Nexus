@@ -192,10 +192,6 @@ class RokidBusAccessibilityService : AccessibilityService() {
             wirelessDebuggingAutomator?.stop()
             pauseWirelessBootstrapIfActive("manual_pairing_opening")
         }
-        val automator = wirelessDebuggingAutomator ?: run {
-            SelfArmOnboardingStore.reportProgress(applicationContext, "manual_pairing_service_unavailable")
-            return
-        }
         if (!manualNavigationActive) {
             val staged = runCatching { SelfArmManualArmAssets.stage(applicationContext) }
                 .onFailure {
@@ -211,20 +207,19 @@ class RokidBusAccessibilityService : AccessibilityService() {
                 return
             }
             manualNavigationActive = true
-            automator.start(SelfArmWirelessDebuggingAutomator.OperationMode.MANUAL_NAVIGATION, target)
-        } else {
-            automator.updateManualTarget(target)
+        }
+        if (!SelfArmManualSettingsLauncher.open(applicationContext, target)) {
+            manualNavigationActive = false
+            SelfArmManualArmAssets.cleanup(applicationContext)
+            SelfArmOnboardingStore.reportProgress(applicationContext, "manual_pairing_settings_unavailable")
+            returnToOnboarding()
         }
     }
 
     private fun closeManualNavigation(armed: Boolean) {
-        if (manualNavigationActive) {
-            wirelessDebuggingAutomator?.closeManual()
-        } else {
-            SelfArmManualArmAssets.cleanup(applicationContext)
-            returnToOnboarding()
-        }
+        SelfArmManualArmAssets.cleanup(applicationContext)
         manualNavigationActive = false
+        returnToOnboarding()
         if (armed) SelfArmPhoneArmConfirmation.confirm(applicationContext)
     }
 
