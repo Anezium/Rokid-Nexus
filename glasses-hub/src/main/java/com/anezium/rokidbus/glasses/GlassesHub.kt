@@ -8,6 +8,7 @@ import android.net.wifi.WifiManager
 import android.os.Binder
 import android.os.IBinder
 import android.os.Process
+import android.provider.Settings
 import com.anezium.rokidbus.client.IBusCallback
 import com.anezium.rokidbus.client.IBusService
 import com.anezium.rokidbus.client.PluginRegistrationResult
@@ -388,6 +389,10 @@ object GlassesHub {
             sendRemote(errorEnvelope(envelope.id, "INVALID_ACTION"))
             return
         }
+        if (action == SelfArmManualAction.OPEN_ACCESSIBILITY_SETTINGS) {
+            handleOpenAccessibilitySettings(envelope, action)
+            return
+        }
         val armed = action == SelfArmManualAction.CLOSE && envelope.payload.optBoolean("armed", false)
         val context = appContext
         if (context != null && action.requiresDeveloperOptions() &&
@@ -441,6 +446,45 @@ object GlassesHub {
         this == SelfArmManualAction.OPEN_DEVELOPER_OPTIONS ||
             this == SelfArmManualAction.OPEN_WIRELESS_DEBUGGING ||
             this == SelfArmManualAction.OPEN_PAIRING_DIALOG
+
+    /**
+     * Opens the Accessibility settings screen without going through the AccessibilityService: the
+     * whole point of this action is to let the user grant accessibility when it is still off.
+     */
+    private fun handleOpenAccessibilitySettings(envelope: BusEnvelope, action: SelfArmManualAction) {
+        val context = appContext
+        if (context == null) {
+            sendRemote(errorEnvelope(envelope.id, "SETTINGS_UNAVAILABLE"))
+            return
+        }
+        if (!RokidBusAccessibilityService.isLive()) {
+            // Bring the glasses back to Nexus the moment the user flips the toggle. Skipped when
+            // the service is already connected so the flag cannot go stale and fire on a later
+            // service reconnect.
+            SelfArmOnboardingStore.markAwaitingAccessibility(context)
+        }
+        val opened = runCatching {
+            context.startActivity(
+                Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
+        }.isSuccess
+        log("manual self-arm action=${action.wireValue} opened=$opened")
+        if (!opened) {
+            sendRemote(errorEnvelope(envelope.id, "SETTINGS_UNAVAILABLE"))
+            return
+        }
+        sendRemote(
+            BusEnvelope(
+                path = BusPaths.GLASSES_SELFARM_MANUAL_REPLY,
+                id = envelope.id,
+                payload = JSONObject()
+                    .put("version", 1)
+                    .put("action", action.wireValue)
+                    .put("accepted", true),
+            ),
+        )
+    }
 
     private fun addRegistration(
         clientId: String,

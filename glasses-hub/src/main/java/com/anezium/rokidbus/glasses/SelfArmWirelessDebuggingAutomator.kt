@@ -168,6 +168,9 @@ internal class SelfArmWirelessDebuggingAutomator(
             return
         }
         manualTarget = target
+        // Each wizard button press deserves a fresh manual window; without this the 5-minute
+        // budget runs from the first step and can expire while the wearer is still typing.
+        deadlineAt = SystemClock.uptimeMillis() + MANUAL_TIMEOUT_MS
         schedule(0L)
     }
 

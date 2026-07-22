@@ -163,7 +163,7 @@ class GlassesManualSetupActivity : Activity() {
         addView(BusTheme.gap(this@GlassesManualSetupActivity, 10))
         addView(bullet("The glasses are on your face and turned on"))
         addView(BusTheme.gap(this@GlassesManualSetupActivity, 6))
-        addView(bullet("A known Wi-Fi network is available; step 3 turns glasses Wi-Fi on"))
+        addView(bullet("A known Wi-Fi network is available; step 4 turns glasses Wi-Fi on"))
         addView(BusTheme.gap(this@GlassesManualSetupActivity, 6))
         addView(bullet("This phone is on the same Wi-Fi as the glasses"))
     }
@@ -174,14 +174,42 @@ class GlassesManualSetupActivity : Activity() {
         body.addView(
             NexusUi.cardBody(
                 this,
-                "The first button performs only the six fast Build number taps. Step 3 turns on " +
-                    "glasses Wi-Fi, then opens Wireless debugging directly.",
+                "Button 1 lets Nexus move through the glasses menus for you. Button 2 performs " +
+                    "only the six fast Build number taps. Step 4 turns on glasses Wi-Fi, then " +
+                    "walks to Wireless debugging.",
             ),
             NexusUi.block(),
         )
         body.addView(BusTheme.gap(this, 14))
         body.addView(
-            NexusUi.outlinePillButton(this, "1. Enable Developer options (6 taps)").apply {
+            NexusUi.outlinePillButton(this, "1. Allow Nexus to move through menus").apply {
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                )
+                setOnClickListener {
+                    engine?.openAccessibilitySettings()
+                    android.widget.Toast.makeText(
+                        this@GlassesManualSetupActivity,
+                        "Opening Accessibility settings on the glasses...",
+                        android.widget.Toast.LENGTH_SHORT,
+                    ).show()
+                }
+            },
+            NexusUi.block(),
+        )
+        body.addView(BusTheme.gap(this, 6))
+        body.addView(
+            NexusUi.cardBody(
+                this,
+                "On the glasses screen, pick Rokid Nexus and switch it on. Skip this step if " +
+                    "Nexus already drives the glasses menus.",
+            ).apply { textSize = 12f },
+            NexusUi.block(),
+        )
+        body.addView(BusTheme.gap(this, 12))
+        body.addView(
+            NexusUi.outlinePillButton(this, "2. Enable Developer options (6 taps)").apply {
                 layoutParams = LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -207,7 +235,7 @@ class GlassesManualSetupActivity : Activity() {
         )
         body.addView(BusTheme.gap(this, 12))
         body.addView(
-            NexusUi.outlinePillButton(this, "2. Open Developer options").apply {
+            NexusUi.outlinePillButton(this, "3. Open Developer options").apply {
                 layoutParams = LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -227,13 +255,13 @@ class GlassesManualSetupActivity : Activity() {
         body.addView(
             NexusUi.cardBody(
                 this,
-                "If Android says they are disabled, run step 1 once, then tap this button again.",
+                "If Android says they are disabled, run step 2 once, then tap this button again.",
             ).apply { textSize = 12f },
             NexusUi.block(),
         )
         body.addView(BusTheme.gap(this, 12))
         body.addView(
-            NexusUi.outlinePillButton(this, "3. Enable Wi-Fi & open Wireless debugging").apply {
+            NexusUi.outlinePillButton(this, "4. Enable Wi-Fi & open Wireless debugging").apply {
                 layoutParams = LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT,

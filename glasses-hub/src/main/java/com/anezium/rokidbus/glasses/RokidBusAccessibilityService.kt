@@ -290,10 +290,12 @@ class RokidBusAccessibilityService : AccessibilityService() {
 
     private fun launchPendingManualNavigation() {
         val target = pendingManualTarget ?: return finishManualNavigationRequest(false)
-        if (!SelfArmManualSettingsLauncher.open(applicationContext, target)) {
+        val automator = wirelessDebuggingAutomator
+        if (automator == null) {
             finishManualNavigationRequest(false)
             return
         }
+        automator.updateManualTarget(target)
         manualOpenDeadlineAt = SystemClock.uptimeMillis() + MANUAL_OPEN_TIMEOUT_MS
         main.removeCallbacks(manualOpenVerifier)
         main.postDelayed(manualOpenVerifier, MANUAL_OPEN_INITIAL_DELAY_MS)
@@ -336,6 +338,7 @@ class RokidBusAccessibilityService : AccessibilityService() {
         main.removeCallbacks(manualOpenVerifier)
         if (!success && completion != null) {
             manualNavigationActive = false
+            wirelessDebuggingAutomator?.stop()
             SelfArmManualArmAssets.cleanup(applicationContext)
             SelfArmOnboardingStore.reportProgress(
                 applicationContext,
@@ -433,10 +436,13 @@ class RokidBusAccessibilityService : AccessibilityService() {
         private const val MANUAL_OPEN_INITIAL_DELAY_MS = 350L
         private const val MANUAL_OPEN_EVENT_SETTLE_MS = 120L
         private const val MANUAL_OPEN_POLL_MS = 250L
-        private const val MANUAL_OPEN_TIMEOUT_MS = 6_000L
+        private const val MANUAL_OPEN_TIMEOUT_MS = 30_000L
         private const val MANUAL_WIFI_NETWORK_POLL_MS = 500L
         private const val MANUAL_WIFI_NETWORK_TIMEOUT_MS = 30_000L
         @Volatile private var liveInstance: RokidBusAccessibilityService? = null
+
+        /** True while the AccessibilityService is connected and able to drive Settings. */
+        internal fun isLive(): Boolean = liveInstance != null
 
         internal fun requestWirelessBootstrap(context: Context): Boolean {
             SelfArmOnboardingStore.requestSetup(context.applicationContext)
@@ -470,6 +476,9 @@ class RokidBusAccessibilityService : AccessibilityService() {
                         service.openManualNavigation(SelfArmManualTarget.WIRELESS_DEBUGGING, onFinished)
                     SelfArmManualAction.OPEN_PAIRING_DIALOG ->
                         service.openManualNavigation(SelfArmManualTarget.PAIRING_DIALOG, onFinished)
+                    // Handled directly by GlassesHub without the accessibility service; a request
+                    // arriving here is unexpected, so report failure instead of guessing.
+                    SelfArmManualAction.OPEN_ACCESSIBILITY_SETTINGS -> onFinished(false)
                     SelfArmManualAction.CLOSE -> {
                         service.closeManualNavigation(armed)
                         onFinished(true)

@@ -26,6 +26,33 @@ class SelfArmManualTargetTest {
     }
 
     @Test
+    fun accessibilitySettingsActionRoundTripsItsWireValue() {
+        assertEquals(
+            "open_accessibility_settings",
+            SelfArmManualAction.OPEN_ACCESSIBILITY_SETTINGS.wireValue,
+        )
+        assertEquals(
+            SelfArmManualAction.OPEN_ACCESSIBILITY_SETTINGS,
+            SelfArmManualAction.fromWireValue("open_accessibility_settings"),
+        )
+    }
+
+    @Test
+    fun manualActionWireValuesStayStable() {
+        assertEquals(
+            listOf(
+                "enable_developer_options",
+                "open_developer_options",
+                "open_wireless_debugging",
+                "open_pairing_dialog",
+                "open_accessibility_settings",
+                "close",
+            ),
+            SelfArmManualAction.entries.map { it.wireValue },
+        )
+    }
+
+    @Test
     fun wirelessAndLegacyPairingActionsOpenTheWirelessFragmentDirectly() {
         assertEquals(
             WIRELESS_DEBUGGING_PREFERENCE_KEY,

@@ -14,6 +14,7 @@ internal enum class SelfArmManualAction(val wireValue: String) {
     OPEN_DEVELOPER_OPTIONS("open_developer_options"),
     OPEN_WIRELESS_DEBUGGING("open_wireless_debugging"),
     OPEN_PAIRING_DIALOG("open_pairing_dialog"),
+    OPEN_ACCESSIBILITY_SETTINGS("open_accessibility_settings"),
     CLOSE("close"),
     ;
 

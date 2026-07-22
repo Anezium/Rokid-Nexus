@@ -103,7 +103,7 @@ class GlassesManualPairingEngineTest {
     }
 
     @Test
-    fun disabledDeveloperOptionsExplainsThatStepOneMustFinish() {
+    fun disabledDeveloperOptionsExplainsThatStepTwoMustFinish() {
         val fixture = fixture()
 
         fixture.engine.start()
@@ -113,7 +113,7 @@ class GlassesManualPairingEngineTest {
 
         val error = fixture.engine.state as GlassesManualPairingState.ERROR
         assertTrue(error.userMessage.contains("still disabled"))
-        assertTrue(error.userMessage.contains("step 1"))
+        assertTrue(error.userMessage.contains("step 2"))
     }
 
     @Test
@@ -127,7 +127,42 @@ class GlassesManualPairingEngineTest {
 
         val error = fixture.engine.state as GlassesManualPairingState.ERROR
         assertTrue(error.userMessage.contains("Wi-Fi"))
-        assertTrue(error.userMessage.contains("retry step 3"))
+        assertTrue(error.userMessage.contains("retry step 4"))
+    }
+
+    @Test
+    fun accessibilitySettingsButtonSendsItsOwnActionAndKeepsTheCodeFormState() {
+        val fixture = fixture()
+
+        fixture.engine.start()
+        assertTrue(fixture.engine.openAccessibilitySettings())
+        assertEquals(GlassesManualPairingState.WAITING_FOR_CODE, fixture.engine.state)
+
+        val requestId = fixture.control.requestIds.single()
+        assertTrue(fixture.engine.onManualControlResponse(requestId, null))
+        assertEquals(GlassesManualPairingState.WAITING_FOR_CODE, fixture.engine.state)
+        assertEquals(
+            listOf(GlassesManualControlAction.OPEN_ACCESSIBILITY_SETTINGS),
+            fixture.control.actions,
+        )
+        assertEquals(
+            "open_accessibility_settings",
+            GlassesManualControlAction.OPEN_ACCESSIBILITY_SETTINGS.wireValue,
+        )
+    }
+
+    @Test
+    fun accessibilityUnavailableTellsTheUserToRunStepOne() {
+        val fixture = fixture()
+
+        fixture.engine.start()
+        assertTrue(fixture.engine.openDeveloperOptions())
+        val requestId = fixture.control.requestIds.single()
+        assertTrue(fixture.engine.onManualControlResponse(requestId, "ACCESSIBILITY_UNAVAILABLE"))
+
+        val error = fixture.engine.state as GlassesManualPairingState.ERROR
+        assertTrue(error.userMessage.contains("step 1"))
+        assertTrue(error.userMessage.contains("Accessibility access"))
     }
 
     @Test
@@ -137,6 +172,10 @@ class GlassesManualPairingEngineTest {
         fixture.engine.start()
         assertEquals(GlassesManualPairingState.WAITING_FOR_CODE, fixture.engine.state)
         assertTrue(fixture.control.actions.isEmpty())
+
+        assertTrue(fixture.engine.openAccessibilitySettings())
+        val accessibilityId = fixture.control.requestIds.last()
+        assertTrue(fixture.engine.onManualControlResponse(accessibilityId, null))
 
         assertTrue(fixture.engine.enableDeveloperOptions())
         val enableId = fixture.control.requestIds.last()
@@ -153,6 +192,7 @@ class GlassesManualPairingEngineTest {
         assertEquals(GlassesManualPairingState.WAITING_FOR_CODE, fixture.engine.state)
         assertEquals(
             listOf(
+                GlassesManualControlAction.OPEN_ACCESSIBILITY_SETTINGS,
                 GlassesManualControlAction.ENABLE_DEVELOPER_OPTIONS,
                 GlassesManualControlAction.OPEN_DEVELOPER_OPTIONS,
                 GlassesManualControlAction.OPEN_WIRELESS_DEBUGGING,

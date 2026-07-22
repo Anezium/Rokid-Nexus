@@ -27,6 +27,7 @@ internal enum class GlassesManualControlAction(val wireValue: String) {
     OPEN_DEVELOPER_OPTIONS("open_developer_options"),
     OPEN_WIRELESS_DEBUGGING("open_wireless_debugging"),
     OPEN_PAIRING_DIALOG("open_pairing_dialog"),
+    OPEN_ACCESSIBILITY_SETTINGS("open_accessibility_settings"),
     CLOSE("close"),
 }
 
@@ -103,6 +104,9 @@ internal class GlassesManualPairingEngine(
         transition(attempt, GlassesManualPairingState.WAITING_FOR_CODE)
         return true
     }
+
+    fun openAccessibilitySettings(): Boolean =
+        requestSettings(GlassesManualControlAction.OPEN_ACCESSIBILITY_SETTINGS)
 
     fun enableDeveloperOptions(): Boolean =
         requestSettings(GlassesManualControlAction.ENABLE_DEVELOPER_OPTIONS)
@@ -351,15 +355,16 @@ internal class GlassesManualPairingEngine(
         "NO_LOCAL_CLIENT", "INVALID_ACTION" ->
             "Manual setup needs a newer Nexus app on the glasses. Update the glasses app and try again."
         "ACCESSIBILITY_UNAVAILABLE" ->
-            "Nexus lost Accessibility access on the glasses. Enable it there, then try again."
+            "Nexus can't move through the glasses menus. Run step 1 to turn on Accessibility " +
+                "access, then try again."
         "DEVELOPER_OPTIONS_DISABLED" ->
-            "Developer options are still disabled on the glasses. Run step 1 and wait for it to finish."
+            "Developer options are still disabled on the glasses. Run step 2 and wait for it to finish."
         "DEVELOPER_OPTIONS_ENABLE_FAILED" ->
-            "Nexus could not enable Developer options. Run step 1 again while wearing the glasses."
+            "Nexus could not enable Developer options. Run step 2 again while wearing the glasses."
         "SETTINGS_UNAVAILABLE" ->
             "Android Settings could not open the requested page on the glasses."
         "WIRELESS_DEBUGGING_UNAVAILABLE" ->
-            "Nexus could not turn on glasses Wi-Fi or open Wireless debugging. Keep the glasses on and retry step 3."
+            "Nexus could not turn on glasses Wi-Fi or open Wireless debugging. Keep the glasses on and retry step 4."
         CONTROL_ACK_TIMEOUT ->
             "The glasses did not confirm manual setup. Check the connection or update the glasses app."
         else -> "Could not open the requested settings on the glasses."
