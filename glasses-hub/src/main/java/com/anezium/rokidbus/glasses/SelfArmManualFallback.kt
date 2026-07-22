@@ -43,7 +43,7 @@ internal object SelfArmManualSettingsLauncher {
 
     private fun intent(target: SelfArmManualTarget): Intent =
         Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
             .also { intent ->
                 target.settingsPreferenceKey?.let { key ->
                     val args = Bundle().apply { putString(EXTRA_FRAGMENT_ARG_KEY, key) }
