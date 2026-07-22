@@ -192,7 +192,7 @@ class RokidBusAccessibilityService : AccessibilityService() {
         manualNavigationActive = false
     }
 
-    private fun openManualNavigation(target: SelfArmManualTarget) {
+    private fun openManualNavigation(target: SelfArmManualTarget): Boolean {
         developerOptionsEnabler?.stop()
         finishWifiEnableIfActive(false)
         if (wirelessBootstrapActive) {
@@ -211,7 +211,7 @@ class RokidBusAccessibilityService : AccessibilityService() {
             if (!staged) {
                 SelfArmOnboardingStore.reportProgress(applicationContext, "manual_pairing_assets_failed")
                 returnToOnboarding()
-                return
+                return false
             }
             manualNavigationActive = true
         }
@@ -220,10 +220,12 @@ class RokidBusAccessibilityService : AccessibilityService() {
             SelfArmManualArmAssets.cleanup(applicationContext)
             SelfArmOnboardingStore.reportProgress(applicationContext, "manual_pairing_settings_unavailable")
             returnToOnboarding()
+            return false
         }
+        return true
     }
 
-    private fun enableDeveloperOptionsManually() {
+    private fun enableDeveloperOptionsManually(onFinished: (Boolean) -> Unit) {
         finishWifiEnableIfActive(false)
         if (wirelessBootstrapActive) {
             wirelessDebuggingAutomator?.stop()
@@ -234,15 +236,29 @@ class RokidBusAccessibilityService : AccessibilityService() {
             if (!staged) {
                 SelfArmOnboardingStore.reportProgress(applicationContext, "manual_pairing_assets_failed")
                 returnToOnboarding()
+                onFinished(false)
                 return
             }
             manualNavigationActive = true
         }
-        if (developerOptionsEnabler?.start() != true) {
+        val enabler = developerOptionsEnabler
+        if (enabler == null) {
             manualNavigationActive = false
             SelfArmManualArmAssets.cleanup(applicationContext)
-            SelfArmOnboardingStore.reportProgress(applicationContext, "manual_developer_enable_unavailable")
-            returnToOnboarding()
+            onFinished(false)
+            return
+        }
+        enabler.start { success ->
+            if (!success) {
+                manualNavigationActive = false
+                SelfArmManualArmAssets.cleanup(applicationContext)
+                SelfArmOnboardingStore.reportProgress(
+                    applicationContext,
+                    "manual_developer_enable_failed",
+                )
+                returnToOnboarding()
+            }
+            onFinished(success)
         }
     }
 
@@ -305,19 +321,23 @@ class RokidBusAccessibilityService : AccessibilityService() {
             context: Context,
             action: SelfArmManualAction,
             armed: Boolean = false,
+            onFinished: (Boolean) -> Unit = {},
         ): Boolean {
             val service = liveInstance ?: return false
             service.main.post {
                 when (action) {
                     SelfArmManualAction.ENABLE_DEVELOPER_OPTIONS ->
-                        service.enableDeveloperOptionsManually()
+                        service.enableDeveloperOptionsManually(onFinished)
                     SelfArmManualAction.OPEN_DEVELOPER_OPTIONS ->
-                        service.openManualNavigation(SelfArmManualTarget.DEVELOPER_OPTIONS)
+                        onFinished(service.openManualNavigation(SelfArmManualTarget.DEVELOPER_OPTIONS))
                     SelfArmManualAction.OPEN_WIRELESS_DEBUGGING ->
-                        service.openManualNavigation(SelfArmManualTarget.WIRELESS_DEBUGGING)
+                        onFinished(service.openManualNavigation(SelfArmManualTarget.WIRELESS_DEBUGGING))
                     SelfArmManualAction.OPEN_PAIRING_DIALOG ->
-                        service.openManualNavigation(SelfArmManualTarget.PAIRING_DIALOG)
-                    SelfArmManualAction.CLOSE -> service.closeManualNavigation(armed)
+                        onFinished(service.openManualNavigation(SelfArmManualTarget.PAIRING_DIALOG))
+                    SelfArmManualAction.CLOSE -> {
+                        service.closeManualNavigation(armed)
+                        onFinished(true)
+                    }
                 }
             }
             return true

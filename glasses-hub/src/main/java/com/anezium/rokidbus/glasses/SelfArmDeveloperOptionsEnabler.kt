@@ -12,13 +12,19 @@ internal class SelfArmDeveloperOptionsEnabler(
     private val handler: Handler,
 ) {
     private var active = false
+    private var completion: ((Boolean) -> Unit)? = null
     private var successfulTaps = 0
     private var activationChecks = 0
     private var deadlineAt = 0L
     private val stepRunnable = Runnable(::step)
 
-    fun start(): Boolean {
+    fun start(onFinished: (Boolean) -> Unit) {
         stop()
+        if (SelfArmWirelessAdbController.areDeveloperOptionsUsable(service)) {
+            onFinished(true)
+            return
+        }
+        completion = onFinished
         active = true
         successfulTaps = 0
         activationChecks = 0
@@ -28,11 +34,10 @@ internal class SelfArmDeveloperOptionsEnabler(
                 SelfArmManualTarget.ENABLE_DEVELOPER_OPTIONS,
             )
         ) {
-            active = false
-            return false
+            finish(false)
+            return
         }
         schedule(INITIAL_SCREEN_DELAY_MS)
-        return true
     }
 
     fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -41,8 +46,7 @@ internal class SelfArmDeveloperOptionsEnabler(
     }
 
     fun stop() {
-        active = false
-        handler.removeCallbacks(stepRunnable)
+        if (active || completion != null) finish(false)
     }
 
     private fun step() {
@@ -164,15 +168,19 @@ internal class SelfArmDeveloperOptionsEnabler(
         }
 
     private fun finish(success: Boolean) {
+        val verified = success && SelfArmWirelessAdbController.areDeveloperOptionsUsable(service)
+        val callback = completion
+        completion = null
         active = false
         handler.removeCallbacks(stepRunnable)
         log(
-            if (success) {
+            if (verified) {
                 "Manual developer enable completed taps=$successfulTaps"
             } else {
-                "Manual developer enable could not find Build number"
+                "Manual developer enable failed taps=$successfulTaps"
             },
         )
+        callback?.invoke(verified)
     }
 
     private fun schedule(delayMs: Long) {

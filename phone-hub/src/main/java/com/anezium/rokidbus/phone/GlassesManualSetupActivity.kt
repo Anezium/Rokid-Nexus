@@ -190,7 +190,7 @@ class GlassesManualSetupActivity : Activity() {
                     engine?.enableDeveloperOptions()
                     android.widget.Toast.makeText(
                         this@GlassesManualSetupActivity,
-                        "Tapping Build number 6 times on the glasses.",
+                        "Enabling Developer options on the glasses. Wait for it to finish.",
                         android.widget.Toast.LENGTH_SHORT,
                     ).show()
                 }
@@ -216,7 +216,7 @@ class GlassesManualSetupActivity : Activity() {
                     engine?.openDeveloperOptions()
                     android.widget.Toast.makeText(
                         this@GlassesManualSetupActivity,
-                        "Developer options opened on the glasses.",
+                        "Opening Developer options on the glasses...",
                         android.widget.Toast.LENGTH_SHORT,
                     ).show()
                 }
@@ -242,7 +242,7 @@ class GlassesManualSetupActivity : Activity() {
                     engine?.showWirelessDebugging()
                     android.widget.Toast.makeText(
                         this@GlassesManualSetupActivity,
-                        "Wireless debugging is visible on the glasses.",
+                        "Opening Wireless debugging on the glasses...",
                         android.widget.Toast.LENGTH_SHORT,
                     ).show()
                 }

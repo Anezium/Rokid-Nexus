@@ -352,6 +352,12 @@ internal class GlassesManualPairingEngine(
             "Manual setup needs a newer Nexus app on the glasses. Update the glasses app and try again."
         "ACCESSIBILITY_UNAVAILABLE" ->
             "Nexus lost Accessibility access on the glasses. Enable it there, then try again."
+        "DEVELOPER_OPTIONS_DISABLED" ->
+            "Developer options are still disabled on the glasses. Run step 1 and wait for it to finish."
+        "DEVELOPER_OPTIONS_ENABLE_FAILED" ->
+            "Nexus could not enable Developer options. Run step 1 again while wearing the glasses."
+        "SETTINGS_UNAVAILABLE" ->
+            "Android Settings could not open the requested page on the glasses."
         CONTROL_ACK_TIMEOUT ->
             "The glasses did not confirm manual setup. Check the connection or update the glasses app."
         else -> "Could not open the requested settings on the glasses."
@@ -365,7 +371,7 @@ internal class GlassesManualPairingEngine(
     }
 
     companion object {
-        private const val DEFAULT_CONTROL_ACK_TIMEOUT_MS = 5_000L
+        private const val DEFAULT_CONTROL_ACK_TIMEOUT_MS = 20_000L
         private const val DEFAULT_CONFIRMATION_TIMEOUT_MS = 30_000L
         private const val CONTROL_ACK_TIMEOUT = "CONTROL_ACK_TIMEOUT"
         private val PAIRING_CODE = Regex("""\d{6}""")

@@ -390,29 +390,52 @@ object GlassesHub {
         }
         val armed = action == SelfArmManualAction.CLOSE && envelope.payload.optBoolean("armed", false)
         val context = appContext
+        if (context != null && action.requiresDeveloperOptions() &&
+            !SelfArmWirelessAdbController.areDeveloperOptionsUsable(context)
+        ) {
+            log("manual self-arm action=${action.wireValue} rejected reason=developer_options_disabled")
+            sendRemote(errorEnvelope(envelope.id, "DEVELOPER_OPTIONS_DISABLED"))
+            return
+        }
         val accepted = context != null && RokidBusAccessibilityService.requestManualAction(
             context,
             action,
             armed,
-        )
+        ) { completed ->
+            log("manual self-arm action=${action.wireValue} completed=$completed armed=$armed")
+            if (action == SelfArmManualAction.CLOSE) return@requestManualAction
+            if (!completed) {
+                val code = if (action == SelfArmManualAction.ENABLE_DEVELOPER_OPTIONS) {
+                    "DEVELOPER_OPTIONS_ENABLE_FAILED"
+                } else {
+                    "SETTINGS_UNAVAILABLE"
+                }
+                sendRemote(errorEnvelope(envelope.id, code))
+                return@requestManualAction
+            }
+            sendRemote(
+                BusEnvelope(
+                    path = BusPaths.GLASSES_SELFARM_MANUAL_REPLY,
+                    id = envelope.id,
+                    payload = JSONObject()
+                        .put("version", 1)
+                        .put("action", action.wireValue)
+                        .put("accepted", true),
+                ),
+            )
+        }
         log("manual self-arm action=${action.wireValue} accepted=$accepted armed=$armed")
         if (!accepted) {
             sendRemote(errorEnvelope(envelope.id, "ACCESSIBILITY_UNAVAILABLE"))
             return
         }
-        // Closing is fire-and-forget; the phone only waits for acknowledgement while opening.
-        if (action == SelfArmManualAction.CLOSE) return
-        sendRemote(
-            BusEnvelope(
-                path = BusPaths.GLASSES_SELFARM_MANUAL_REPLY,
-                id = envelope.id,
-                payload = JSONObject()
-                    .put("version", 1)
-                    .put("action", action.wireValue)
-                    .put("accepted", true),
-            ),
-        )
+        // Completion (and therefore acknowledgement) is asynchronous for the six-tap action.
     }
+
+    private fun SelfArmManualAction.requiresDeveloperOptions(): Boolean =
+        this == SelfArmManualAction.OPEN_DEVELOPER_OPTIONS ||
+            this == SelfArmManualAction.OPEN_WIRELESS_DEBUGGING ||
+            this == SelfArmManualAction.OPEN_PAIRING_DIALOG
 
     private fun addRegistration(
         clientId: String,

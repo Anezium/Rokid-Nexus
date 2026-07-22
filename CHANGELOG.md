@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.34
+
+- Manual setup now confirms the Build-number taps only after Developer options are truly enabled on the glasses.
+- Developer options and Wireless debugging no longer bounce back to the launcher when step 1 did not complete; the phone explains exactly which step to retry.
+
 ## 1.0.33
 
 - Manual pairing now has three explicit controls: six rapid Build-number taps to enable Developer options, direct Developer options, and direct Wireless debugging positioning.

@@ -103,6 +103,20 @@ class GlassesManualPairingEngineTest {
     }
 
     @Test
+    fun disabledDeveloperOptionsExplainsThatStepOneMustFinish() {
+        val fixture = fixture()
+
+        fixture.engine.start()
+        assertTrue(fixture.engine.showWirelessDebugging())
+        val requestId = fixture.control.requestIds.single()
+        assertTrue(fixture.engine.onManualControlResponse(requestId, "DEVELOPER_OPTIONS_DISABLED"))
+
+        val error = fixture.engine.state as GlassesManualPairingState.ERROR
+        assertTrue(error.userMessage.contains("still disabled"))
+        assertTrue(error.userMessage.contains("step 1"))
+    }
+
+    @Test
     fun manualSettingsButtonsUseSeparateActionsAndKeepTheCodeFormState() {
         val fixture = fixture()
 
