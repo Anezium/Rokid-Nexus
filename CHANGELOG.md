@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.36
+
+- Manual setup step 3 now enables glasses Wi-Fi through the privileged local command bridge before falling back to Settings accessibility.
+- The flow still waits for a connected Wi-Fi network and the real Wireless debugging page before reporting success.
+
 ## 1.0.35
 
 - Manual setup step 3 now turns on glasses Wi-Fi before opening Wireless debugging directly.

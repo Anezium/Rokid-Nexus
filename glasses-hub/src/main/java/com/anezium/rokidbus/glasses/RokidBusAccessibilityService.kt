@@ -29,6 +29,7 @@ class RokidBusAccessibilityService : AccessibilityService() {
     private var pendingManualCompletion: ((Boolean) -> Unit)? = null
     private var manualWaitingForNetwork = false
     private var manualOpenDeadlineAt = 0L
+    private var manualWifiRequestGeneration = 0L
     private val manualOpenVerifier = Runnable(::verifyManualNavigation)
 
     override fun onServiceConnected() {
@@ -245,16 +246,46 @@ class RokidBusAccessibilityService : AccessibilityService() {
         pendingManualTarget = target
         pendingManualCompletion = onFinished
         if (target.requiresWifi() && !SelfArmWirelessAdbController.isWifiEnabled(applicationContext)) {
-            val automator = wirelessDebuggingAutomator
-            if (automator == null) {
-                finishManualNavigationRequest(false)
-                return
-            }
-            manualWifiEnableActive = true
-            automator.start(SelfArmWirelessDebuggingAutomator.OperationMode.WIFI_ONLY)
+            startManualWifiEnable()
             return
         }
         launchPendingManualNavigation()
+    }
+
+    private fun startManualWifiEnable() {
+        val automator = wirelessDebuggingAutomator
+        if (automator == null) {
+            finishManualNavigationRequest(false)
+            return
+        }
+        manualWifiEnableActive = true
+        val generation = ++manualWifiRequestGeneration
+        Thread {
+            val enabledThroughBridge = runCatching {
+                SelfArmCommandBridgeClient.setWifiEnabled(applicationContext, true)
+            }.onFailure {
+                log("Manual Wi-Fi bridge enable failed: ${sanitizeSupportDiagnostic(it.message.orEmpty())}")
+            }.getOrDefault(false)
+            main.post {
+                if (
+                    generation != manualWifiRequestGeneration ||
+                    pendingManualCompletion == null ||
+                    !manualWifiEnableActive
+                ) {
+                    return@post
+                }
+                if (enabledThroughBridge || SelfArmWirelessAdbController.isWifiEnabled(applicationContext)) {
+                    onWifiEnableFinished(true)
+                } else {
+                    log("Manual Wi-Fi bridge unavailable; using Settings accessibility fallback")
+                    automator.start(SelfArmWirelessDebuggingAutomator.OperationMode.WIFI_ONLY)
+                }
+            }
+        }.apply {
+            name = "RokidNexusManualWifi"
+            isDaemon = true
+            start()
+        }
     }
 
     private fun launchPendingManualNavigation() {
@@ -296,6 +327,7 @@ class RokidBusAccessibilityService : AccessibilityService() {
 
     private fun finishManualNavigationRequest(success: Boolean) {
         val completion = pendingManualCompletion
+        manualWifiRequestGeneration++
         pendingManualCompletion = null
         pendingManualTarget = null
         manualWifiEnableActive = false
