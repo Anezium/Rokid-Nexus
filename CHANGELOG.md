@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.33
+
+- Manual pairing now has three explicit controls: six rapid Build-number taps to enable Developer options, direct Developer options, and direct Wireless debugging positioning.
+- The six-tap helper targets the displayed build identifier instead of relying on the Settings language and does not automate the rest of the Settings menus.
+
 ## 1.0.32
 
 - Direct manual Settings buttons now clear any stale Settings sub-screen before opening, so **Open Developer options** reliably returns to the main developer screen and **Show Wireless debugging** reliably positions the Wireless Debugging row even when Settings was already open.

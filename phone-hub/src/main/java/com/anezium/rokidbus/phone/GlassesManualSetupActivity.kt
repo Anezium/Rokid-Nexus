@@ -174,14 +174,40 @@ class GlassesManualSetupActivity : Activity() {
         body.addView(
             NexusUi.cardBody(
                 this,
-                "These buttons open Android Settings on the glasses directly. Nexus will not tap or " +
-                    "scroll through the menus for you.",
+                "The first button performs only the six fast Build number taps. The other buttons " +
+                    "open their Android Settings pages directly.",
             ),
             NexusUi.block(),
         )
         body.addView(BusTheme.gap(this, 14))
         body.addView(
-            NexusUi.outlinePillButton(this, "1. Open Developer options").apply {
+            NexusUi.outlinePillButton(this, "1. Enable Developer options (6 taps)").apply {
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                )
+                setOnClickListener {
+                    engine?.enableDeveloperOptions()
+                    android.widget.Toast.makeText(
+                        this@GlassesManualSetupActivity,
+                        "Tapping Build number 6 times on the glasses.",
+                        android.widget.Toast.LENGTH_SHORT,
+                    ).show()
+                }
+            },
+            NexusUi.block(),
+        )
+        body.addView(BusTheme.gap(this, 6))
+        body.addView(
+            NexusUi.cardBody(
+                this,
+                "Skip this step if Developer options are already enabled.",
+            ).apply { textSize = 12f },
+            NexusUi.block(),
+        )
+        body.addView(BusTheme.gap(this, 12))
+        body.addView(
+            NexusUi.outlinePillButton(this, "2. Open Developer options").apply {
                 layoutParams = LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -201,13 +227,13 @@ class GlassesManualSetupActivity : Activity() {
         body.addView(
             NexusUi.cardBody(
                 this,
-                "Only needed if Developer options are off. Turn on the main switch, then come back here.",
+                "If Android says they are disabled, run step 1 once, then tap this button again.",
             ).apply { textSize = 12f },
             NexusUi.block(),
         )
         body.addView(BusTheme.gap(this, 12))
         body.addView(
-            NexusUi.outlinePillButton(this, "2. Show Wireless debugging").apply {
+            NexusUi.outlinePillButton(this, "3. Show Wireless debugging").apply {
                 layoutParams = LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT,

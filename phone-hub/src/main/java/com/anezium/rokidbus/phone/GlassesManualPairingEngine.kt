@@ -23,6 +23,7 @@ internal sealed interface GlassesManualPairingState {
 }
 
 internal enum class GlassesManualControlAction(val wireValue: String) {
+    ENABLE_DEVELOPER_OPTIONS("enable_developer_options"),
     OPEN_DEVELOPER_OPTIONS("open_developer_options"),
     OPEN_WIRELESS_DEBUGGING("open_wireless_debugging"),
     OPEN_PAIRING_DIALOG("open_pairing_dialog"),
@@ -102,6 +103,9 @@ internal class GlassesManualPairingEngine(
         transition(attempt, GlassesManualPairingState.WAITING_FOR_CODE)
         return true
     }
+
+    fun enableDeveloperOptions(): Boolean =
+        requestSettings(GlassesManualControlAction.ENABLE_DEVELOPER_OPTIONS)
 
     fun openDeveloperOptions(): Boolean = requestSettings(GlassesManualControlAction.OPEN_DEVELOPER_OPTIONS)
 

@@ -9,6 +9,7 @@ import java.io.IOException
 import java.util.UUID
 
 internal enum class SelfArmManualAction(val wireValue: String) {
+    ENABLE_DEVELOPER_OPTIONS("enable_developer_options"),
     OPEN_DEVELOPER_OPTIONS("open_developer_options"),
     OPEN_WIRELESS_DEBUGGING("open_wireless_debugging"),
     OPEN_PAIRING_DIALOG("open_pairing_dialog"),
@@ -23,13 +24,24 @@ internal enum class SelfArmManualAction(val wireValue: String) {
 }
 
 internal const val WIRELESS_DEBUGGING_PREFERENCE_KEY = "toggle_adb_wireless"
+internal const val BUILD_NUMBER_PREFERENCE_KEY = "build_number"
 
-internal enum class SelfArmManualTarget(val settingsPreferenceKey: String?) {
-    DEVELOPER_OPTIONS(null),
-    WIRELESS_DEBUGGING(WIRELESS_DEBUGGING_PREFERENCE_KEY),
+internal enum class SelfArmManualTarget(
+    val settingsAction: String,
+    val settingsPreferenceKey: String?,
+) {
+    ENABLE_DEVELOPER_OPTIONS(Settings.ACTION_DEVICE_INFO_SETTINGS, BUILD_NUMBER_PREFERENCE_KEY),
+    DEVELOPER_OPTIONS(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS, null),
+    WIRELESS_DEBUGGING(
+        Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS,
+        WIRELESS_DEBUGGING_PREFERENCE_KEY,
+    ),
     // Kept for older phone builds. It now opens the manual Wireless Debugging route instead of
     // starting the locale-sensitive Settings automator.
-    PAIRING_DIALOG(WIRELESS_DEBUGGING_PREFERENCE_KEY),
+    PAIRING_DIALOG(
+        Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS,
+        WIRELESS_DEBUGGING_PREFERENCE_KEY,
+    ),
     ;
 }
 
@@ -42,7 +54,7 @@ internal object SelfArmManualSettingsLauncher {
     }
 
     private fun intent(target: SelfArmManualTarget): Intent =
-        Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)
+        Intent(target.settingsAction)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
             .also { intent ->
                 target.settingsPreferenceKey?.let { key ->

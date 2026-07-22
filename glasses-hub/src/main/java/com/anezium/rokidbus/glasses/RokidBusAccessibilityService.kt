@@ -20,6 +20,7 @@ class RokidBusAccessibilityService : AccessibilityService() {
     // Rokid launcher, whose key-up handler starts phone music playback).
     private val consumedDownKeys = mutableSetOf<Int>()
     private var wirelessDebuggingAutomator: SelfArmWirelessDebuggingAutomator? = null
+    private var developerOptionsEnabler: SelfArmDeveloperOptionsEnabler? = null
     private var wirelessBootstrapActive = false
     private var wifiEnableActive = false
     private var manualNavigationActive = false
@@ -30,6 +31,7 @@ class RokidBusAccessibilityService : AccessibilityService() {
             flags = flags or AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS
         }
         wirelessDebuggingAutomator = SelfArmWirelessDebuggingAutomator(this, main)
+        developerOptionsEnabler = SelfArmDeveloperOptionsEnabler(this, main)
         liveInstance = this
         log("AccessibilityService connected; starting glasses hub")
         SurfaceOverlayRenderer.onServiceConnected(this)
@@ -58,6 +60,7 @@ class RokidBusAccessibilityService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         wirelessDebuggingAutomator?.onAccessibilityEvent(event)
+        developerOptionsEnabler?.onAccessibilityEvent(event)
     }
 
     override fun onKeyEvent(event: KeyEvent): Boolean {
@@ -107,6 +110,7 @@ class RokidBusAccessibilityService : AccessibilityService() {
 
     override fun onInterrupt() {
         wirelessDebuggingAutomator?.stop()
+        developerOptionsEnabler?.stop()
         finishWifiEnableIfActive(false)
         pauseWirelessBootstrapIfActive("wireless_setup_interrupted")
         pauseManualNavigationIfActive("manual_pairing_interrupted")
@@ -117,10 +121,12 @@ class RokidBusAccessibilityService : AccessibilityService() {
         log("AccessibilityService destroyed")
         main.removeCallbacks(tapExpiry)
         wirelessDebuggingAutomator?.stop()
+        developerOptionsEnabler?.stop()
         finishWifiEnableIfActive(false)
         pauseWirelessBootstrapIfActive("wireless_setup_service_restarting")
         pauseManualNavigationIfActive("manual_pairing_service_restarting")
         wirelessDebuggingAutomator = null
+        developerOptionsEnabler = null
         if (liveInstance === this) liveInstance = null
         LauncherOverlayRenderer.onServiceDestroyed(this)
         SurfaceOverlayRenderer.onServiceDestroyed(this)
@@ -187,6 +193,7 @@ class RokidBusAccessibilityService : AccessibilityService() {
     }
 
     private fun openManualNavigation(target: SelfArmManualTarget) {
+        developerOptionsEnabler?.stop()
         finishWifiEnableIfActive(false)
         if (wirelessBootstrapActive) {
             wirelessDebuggingAutomator?.stop()
@@ -216,7 +223,31 @@ class RokidBusAccessibilityService : AccessibilityService() {
         }
     }
 
+    private fun enableDeveloperOptionsManually() {
+        finishWifiEnableIfActive(false)
+        if (wirelessBootstrapActive) {
+            wirelessDebuggingAutomator?.stop()
+            pauseWirelessBootstrapIfActive("manual_developer_enable_opening")
+        }
+        if (!manualNavigationActive) {
+            val staged = runCatching { SelfArmManualArmAssets.stage(applicationContext) }.isSuccess
+            if (!staged) {
+                SelfArmOnboardingStore.reportProgress(applicationContext, "manual_pairing_assets_failed")
+                returnToOnboarding()
+                return
+            }
+            manualNavigationActive = true
+        }
+        if (developerOptionsEnabler?.start() != true) {
+            manualNavigationActive = false
+            SelfArmManualArmAssets.cleanup(applicationContext)
+            SelfArmOnboardingStore.reportProgress(applicationContext, "manual_developer_enable_unavailable")
+            returnToOnboarding()
+        }
+    }
+
     private fun closeManualNavigation(armed: Boolean) {
+        developerOptionsEnabler?.stop()
         SelfArmManualArmAssets.cleanup(applicationContext)
         manualNavigationActive = false
         returnToOnboarding()
@@ -238,6 +269,7 @@ class RokidBusAccessibilityService : AccessibilityService() {
 
     private fun pauseManualNavigationIfActive(progressState: String) {
         if (!manualNavigationActive) return
+        developerOptionsEnabler?.stop()
         manualNavigationActive = false
         SelfArmManualArmAssets.cleanup(applicationContext)
         SelfArmOnboardingStore.pause(applicationContext, progressState)
@@ -277,6 +309,8 @@ class RokidBusAccessibilityService : AccessibilityService() {
             val service = liveInstance ?: return false
             service.main.post {
                 when (action) {
+                    SelfArmManualAction.ENABLE_DEVELOPER_OPTIONS ->
+                        service.enableDeveloperOptionsManually()
                     SelfArmManualAction.OPEN_DEVELOPER_OPTIONS ->
                         service.openManualNavigation(SelfArmManualTarget.DEVELOPER_OPTIONS)
                     SelfArmManualAction.OPEN_WIRELESS_DEBUGGING ->

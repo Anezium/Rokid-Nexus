@@ -110,6 +110,10 @@ class GlassesManualPairingEngineTest {
         assertEquals(GlassesManualPairingState.WAITING_FOR_CODE, fixture.engine.state)
         assertTrue(fixture.control.actions.isEmpty())
 
+        assertTrue(fixture.engine.enableDeveloperOptions())
+        val enableId = fixture.control.requestIds.last()
+        assertTrue(fixture.engine.onManualControlResponse(enableId, null))
+
         assertTrue(fixture.engine.openDeveloperOptions())
         val developerId = fixture.control.requestIds.last()
         assertEquals(GlassesManualPairingState.WAITING_FOR_CODE, fixture.engine.state)
@@ -121,6 +125,7 @@ class GlassesManualPairingEngineTest {
         assertEquals(GlassesManualPairingState.WAITING_FOR_CODE, fixture.engine.state)
         assertEquals(
             listOf(
+                GlassesManualControlAction.ENABLE_DEVELOPER_OPTIONS,
                 GlassesManualControlAction.OPEN_DEVELOPER_OPTIONS,
                 GlassesManualControlAction.OPEN_WIRELESS_DEBUGGING,
             ),
