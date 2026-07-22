@@ -1,6 +1,7 @@
 package com.anezium.rokidbus.glasses
 
 import android.content.Context
+import android.content.ComponentName
 import android.content.Intent
 import android.os.Bundle
 import android.provider.Settings
@@ -29,18 +30,21 @@ internal const val BUILD_NUMBER_PREFERENCE_KEY = "build_number"
 internal enum class SelfArmManualTarget(
     val settingsAction: String,
     val settingsPreferenceKey: String?,
+    val directFragmentClassName: String? = null,
 ) {
     ENABLE_DEVELOPER_OPTIONS(Settings.ACTION_DEVICE_INFO_SETTINGS, BUILD_NUMBER_PREFERENCE_KEY),
     DEVELOPER_OPTIONS(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS, null),
     WIRELESS_DEBUGGING(
         Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS,
         WIRELESS_DEBUGGING_PREFERENCE_KEY,
+        WIRELESS_DEBUGGING_FRAGMENT_CLASS,
     ),
     // Kept for older phone builds. It now opens the manual Wireless Debugging route instead of
     // starting the locale-sensitive Settings automator.
     PAIRING_DIALOG(
         Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS,
         WIRELESS_DEBUGGING_PREFERENCE_KEY,
+        WIRELESS_DEBUGGING_FRAGMENT_CLASS,
     ),
     ;
 }
@@ -48,6 +52,16 @@ internal enum class SelfArmManualTarget(
 /** Opens only public Android Settings surfaces; it never clicks or traverses Settings UI. */
 internal object SelfArmManualSettingsLauncher {
     fun open(context: Context, target: SelfArmManualTarget): Boolean {
+        target.directFragmentClassName?.let { fragmentClassName ->
+            val direct = Intent(Intent.ACTION_MAIN)
+                .setComponent(ComponentName(SETTINGS_PACKAGE, SETTINGS_SUB_SETTINGS_CLASS))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                .putExtra(EXTRA_SHOW_FRAGMENT, fragmentClassName)
+                .putExtra(EXTRA_SHOW_FRAGMENT_ARGUMENTS, Bundle())
+            if (runCatching { context.startActivity(direct) }.isSuccess) return true
+        }
+        // Older Settings builds may not export SubSettings. Preserve the public developer-screen
+        // route as a launch fallback, while the caller still verifies the requested page before ACK.
         val explicit = intent(target).setPackage(SETTINGS_PACKAGE)
         if (runCatching { context.startActivity(explicit) }.isSuccess) return true
         return runCatching { context.startActivity(intent(target)) }.isSuccess
@@ -65,9 +79,14 @@ internal object SelfArmManualSettingsLauncher {
             }
 
     private const val SETTINGS_PACKAGE = "com.android.settings"
+    private const val SETTINGS_SUB_SETTINGS_CLASS = "com.android.settings.SubSettings"
+    private const val EXTRA_SHOW_FRAGMENT = ":settings:show_fragment"
     private const val EXTRA_FRAGMENT_ARG_KEY = ":settings:fragment_args_key"
     private const val EXTRA_SHOW_FRAGMENT_ARGUMENTS = ":settings:show_fragment_args"
 }
+
+internal const val WIRELESS_DEBUGGING_FRAGMENT_CLASS =
+    "com.android.settings.development.WirelessDebuggingFragment"
 
 /**
  * Stages the glasses-owned watchdog and rendered command bridge for the authenticated phone ADB

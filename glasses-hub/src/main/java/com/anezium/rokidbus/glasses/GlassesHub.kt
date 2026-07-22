@@ -407,6 +407,11 @@ object GlassesHub {
             if (!completed) {
                 val code = if (action == SelfArmManualAction.ENABLE_DEVELOPER_OPTIONS) {
                     "DEVELOPER_OPTIONS_ENABLE_FAILED"
+                } else if (
+                    action == SelfArmManualAction.OPEN_WIRELESS_DEBUGGING ||
+                    action == SelfArmManualAction.OPEN_PAIRING_DIALOG
+                ) {
+                    "WIRELESS_DEBUGGING_UNAVAILABLE"
                 } else {
                     "SETTINGS_UNAVAILABLE"
                 }

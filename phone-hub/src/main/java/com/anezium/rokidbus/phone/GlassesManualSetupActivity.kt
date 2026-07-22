@@ -163,7 +163,7 @@ class GlassesManualSetupActivity : Activity() {
         addView(BusTheme.gap(this@GlassesManualSetupActivity, 10))
         addView(bullet("The glasses are on your face and turned on"))
         addView(BusTheme.gap(this@GlassesManualSetupActivity, 6))
-        addView(bullet("The glasses are connected to Wi-Fi (any network)"))
+        addView(bullet("A known Wi-Fi network is available; step 3 turns glasses Wi-Fi on"))
         addView(BusTheme.gap(this@GlassesManualSetupActivity, 6))
         addView(bullet("This phone is on the same Wi-Fi as the glasses"))
     }
@@ -174,8 +174,8 @@ class GlassesManualSetupActivity : Activity() {
         body.addView(
             NexusUi.cardBody(
                 this,
-                "The first button performs only the six fast Build number taps. The other buttons " +
-                    "open their Android Settings pages directly.",
+                "The first button performs only the six fast Build number taps. Step 3 turns on " +
+                    "glasses Wi-Fi, then opens Wireless debugging directly.",
             ),
             NexusUi.block(),
         )
@@ -233,7 +233,7 @@ class GlassesManualSetupActivity : Activity() {
         )
         body.addView(BusTheme.gap(this, 12))
         body.addView(
-            NexusUi.outlinePillButton(this, "3. Show Wireless debugging").apply {
+            NexusUi.outlinePillButton(this, "3. Enable Wi-Fi & open Wireless debugging").apply {
                 layoutParams = LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -242,7 +242,7 @@ class GlassesManualSetupActivity : Activity() {
                     engine?.showWirelessDebugging()
                     android.widget.Toast.makeText(
                         this@GlassesManualSetupActivity,
-                        "Opening Wireless debugging on the glasses...",
+                        "Turning on glasses Wi-Fi and opening Wireless debugging...",
                         android.widget.Toast.LENGTH_SHORT,
                     ).show()
                 }
@@ -253,7 +253,7 @@ class GlassesManualSetupActivity : Activity() {
         body.addView(
             NexusUi.cardBody(
                 this,
-                "On the glasses, tap Wireless debugging, turn it on, then tap “Pair device with " +
+                "Nexus opens Wireless debugging directly. Turn it on, then tap “Pair device with " +
                     "pairing code”.",
             ).apply { textSize = 12f },
             NexusUi.block(),

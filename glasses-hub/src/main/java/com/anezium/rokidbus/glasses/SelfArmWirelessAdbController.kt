@@ -3,6 +3,8 @@ package com.anezium.rokidbus.glasses
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.wifi.WifiManager
 import android.os.IBinder
 import android.os.Parcel
@@ -44,9 +46,17 @@ internal object SelfArmWirelessAdbController {
             Settings.Global.getInt(context.contentResolver, ADB_WIFI_ENABLED, 0) == 1
         }.getOrDefault(false)
 
-    private fun isWifiEnabled(context: Context): Boolean =
+    fun isWifiEnabled(context: Context): Boolean =
         runCatching {
             context.getSystemService(WifiManager::class.java).isWifiEnabled
+        }.getOrDefault(false)
+
+    fun isWifiNetworkReady(context: Context): Boolean =
+        runCatching {
+            val manager = context.getSystemService(ConnectivityManager::class.java)
+            val network = manager.activeNetwork ?: return@runCatching false
+            manager.getNetworkCapabilities(network)
+                ?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
         }.getOrDefault(false)
 
     fun areDeveloperOptionsUsable(context: Context): Boolean =

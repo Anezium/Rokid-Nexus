@@ -26,7 +26,7 @@ class SelfArmManualTargetTest {
     }
 
     @Test
-    fun wirelessAndLegacyPairingActionsHighlightTheWirelessPreference() {
+    fun wirelessAndLegacyPairingActionsOpenTheWirelessFragmentDirectly() {
         assertEquals(
             WIRELESS_DEBUGGING_PREFERENCE_KEY,
             SelfArmManualTarget.WIRELESS_DEBUGGING.settingsPreferenceKey,
@@ -34,6 +34,14 @@ class SelfArmManualTargetTest {
         assertEquals(
             WIRELESS_DEBUGGING_PREFERENCE_KEY,
             SelfArmManualTarget.PAIRING_DIALOG.settingsPreferenceKey,
+        )
+        assertEquals(
+            WIRELESS_DEBUGGING_FRAGMENT_CLASS,
+            SelfArmManualTarget.WIRELESS_DEBUGGING.directFragmentClassName,
+        )
+        assertEquals(
+            WIRELESS_DEBUGGING_FRAGMENT_CLASS,
+            SelfArmManualTarget.PAIRING_DIALOG.directFragmentClassName,
         )
     }
 }

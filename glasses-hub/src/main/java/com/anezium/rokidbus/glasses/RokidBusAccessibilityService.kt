@@ -23,7 +23,13 @@ class RokidBusAccessibilityService : AccessibilityService() {
     private var developerOptionsEnabler: SelfArmDeveloperOptionsEnabler? = null
     private var wirelessBootstrapActive = false
     private var wifiEnableActive = false
+    private var manualWifiEnableActive = false
     private var manualNavigationActive = false
+    private var pendingManualTarget: SelfArmManualTarget? = null
+    private var pendingManualCompletion: ((Boolean) -> Unit)? = null
+    private var manualWaitingForNetwork = false
+    private var manualOpenDeadlineAt = 0L
+    private val manualOpenVerifier = Runnable(::verifyManualNavigation)
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -61,6 +67,10 @@ class RokidBusAccessibilityService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         wirelessDebuggingAutomator?.onAccessibilityEvent(event)
         developerOptionsEnabler?.onAccessibilityEvent(event)
+        if (pendingManualCompletion != null && !manualWifiEnableActive) {
+            main.removeCallbacks(manualOpenVerifier)
+            main.postDelayed(manualOpenVerifier, MANUAL_OPEN_EVENT_SETTLE_MS)
+        }
     }
 
     override fun onKeyEvent(event: KeyEvent): Boolean {
@@ -183,6 +193,18 @@ class RokidBusAccessibilityService : AccessibilityService() {
     }
 
     internal fun onWifiEnableFinished(success: Boolean) {
+        if (manualWifiEnableActive) {
+            manualWifiEnableActive = false
+            if (success) {
+                manualWaitingForNetwork = true
+                manualOpenDeadlineAt = SystemClock.uptimeMillis() + MANUAL_WIFI_NETWORK_TIMEOUT_MS
+                main.removeCallbacks(manualOpenVerifier)
+                main.post(manualOpenVerifier)
+            } else {
+                finishManualNavigationRequest(false)
+            }
+            return
+        }
         if (!wifiEnableActive) return
         wifiEnableActive = false
         GlassesHub.onWifiEnableAutomationFinished(success)
@@ -192,9 +214,13 @@ class RokidBusAccessibilityService : AccessibilityService() {
         manualNavigationActive = false
     }
 
-    private fun openManualNavigation(target: SelfArmManualTarget): Boolean {
+    private fun openManualNavigation(
+        target: SelfArmManualTarget,
+        onFinished: (Boolean) -> Unit,
+    ) {
         developerOptionsEnabler?.stop()
         finishWifiEnableIfActive(false)
+        finishManualNavigationRequest(false)
         if (wirelessBootstrapActive) {
             wirelessDebuggingAutomator?.stop()
             pauseWirelessBootstrapIfActive("manual_pairing_opening")
@@ -211,18 +237,81 @@ class RokidBusAccessibilityService : AccessibilityService() {
             if (!staged) {
                 SelfArmOnboardingStore.reportProgress(applicationContext, "manual_pairing_assets_failed")
                 returnToOnboarding()
-                return false
+                onFinished(false)
+                return
             }
             manualNavigationActive = true
         }
+        pendingManualTarget = target
+        pendingManualCompletion = onFinished
+        if (target.requiresWifi() && !SelfArmWirelessAdbController.isWifiEnabled(applicationContext)) {
+            val automator = wirelessDebuggingAutomator
+            if (automator == null) {
+                finishManualNavigationRequest(false)
+                return
+            }
+            manualWifiEnableActive = true
+            automator.start(SelfArmWirelessDebuggingAutomator.OperationMode.WIFI_ONLY)
+            return
+        }
+        launchPendingManualNavigation()
+    }
+
+    private fun launchPendingManualNavigation() {
+        val target = pendingManualTarget ?: return finishManualNavigationRequest(false)
         if (!SelfArmManualSettingsLauncher.open(applicationContext, target)) {
+            finishManualNavigationRequest(false)
+            return
+        }
+        manualOpenDeadlineAt = SystemClock.uptimeMillis() + MANUAL_OPEN_TIMEOUT_MS
+        main.removeCallbacks(manualOpenVerifier)
+        main.postDelayed(manualOpenVerifier, MANUAL_OPEN_INITIAL_DELAY_MS)
+    }
+
+    private fun verifyManualNavigation() {
+        val target = pendingManualTarget ?: return
+        if (manualWaitingForNetwork) {
+            if (SelfArmWirelessAdbController.isWifiNetworkReady(applicationContext)) {
+                manualWaitingForNetwork = false
+                launchPendingManualNavigation()
+                return
+            }
+            if (SystemClock.uptimeMillis() >= manualOpenDeadlineAt) {
+                finishManualNavigationRequest(false)
+                return
+            }
+            main.postDelayed(manualOpenVerifier, MANUAL_WIFI_NETWORK_POLL_MS)
+            return
+        }
+        if (wirelessDebuggingAutomator?.isManualTargetVisible(target) == true) {
+            finishManualNavigationRequest(true)
+            return
+        }
+        if (SystemClock.uptimeMillis() >= manualOpenDeadlineAt) {
+            finishManualNavigationRequest(false)
+            return
+        }
+        main.postDelayed(manualOpenVerifier, MANUAL_OPEN_POLL_MS)
+    }
+
+    private fun finishManualNavigationRequest(success: Boolean) {
+        val completion = pendingManualCompletion
+        pendingManualCompletion = null
+        pendingManualTarget = null
+        manualWifiEnableActive = false
+        manualWaitingForNetwork = false
+        manualOpenDeadlineAt = 0L
+        main.removeCallbacks(manualOpenVerifier)
+        if (!success && completion != null) {
             manualNavigationActive = false
             SelfArmManualArmAssets.cleanup(applicationContext)
-            SelfArmOnboardingStore.reportProgress(applicationContext, "manual_pairing_settings_unavailable")
+            SelfArmOnboardingStore.reportProgress(
+                applicationContext,
+                "manual_pairing_settings_unavailable",
+            )
             returnToOnboarding()
-            return false
         }
-        return true
+        completion?.invoke(success)
     }
 
     private fun enableDeveloperOptionsManually(onFinished: (Boolean) -> Unit) {
@@ -264,6 +353,8 @@ class RokidBusAccessibilityService : AccessibilityService() {
 
     private fun closeManualNavigation(armed: Boolean) {
         developerOptionsEnabler?.stop()
+        wirelessDebuggingAutomator?.stop()
+        finishManualNavigationRequest(false)
         SelfArmManualArmAssets.cleanup(applicationContext)
         manualNavigationActive = false
         returnToOnboarding()
@@ -271,6 +362,11 @@ class RokidBusAccessibilityService : AccessibilityService() {
     }
 
     private fun finishWifiEnableIfActive(success: Boolean) {
+        if (manualWifiEnableActive) {
+            wirelessDebuggingAutomator?.stop()
+            manualWifiEnableActive = false
+            finishManualNavigationRequest(false)
+        }
         if (!wifiEnableActive) return
         wirelessDebuggingAutomator?.stop()
         wifiEnableActive = false
@@ -286,6 +382,8 @@ class RokidBusAccessibilityService : AccessibilityService() {
     private fun pauseManualNavigationIfActive(progressState: String) {
         if (!manualNavigationActive) return
         developerOptionsEnabler?.stop()
+        wirelessDebuggingAutomator?.stop()
+        finishManualNavigationRequest(false)
         manualNavigationActive = false
         SelfArmManualArmAssets.cleanup(applicationContext)
         SelfArmOnboardingStore.pause(applicationContext, progressState)
@@ -300,6 +398,12 @@ class RokidBusAccessibilityService : AccessibilityService() {
 
     companion object {
         private const val KEYCODE_PROG_BLUE = 186
+        private const val MANUAL_OPEN_INITIAL_DELAY_MS = 350L
+        private const val MANUAL_OPEN_EVENT_SETTLE_MS = 120L
+        private const val MANUAL_OPEN_POLL_MS = 250L
+        private const val MANUAL_OPEN_TIMEOUT_MS = 6_000L
+        private const val MANUAL_WIFI_NETWORK_POLL_MS = 500L
+        private const val MANUAL_WIFI_NETWORK_TIMEOUT_MS = 30_000L
         @Volatile private var liveInstance: RokidBusAccessibilityService? = null
 
         internal fun requestWirelessBootstrap(context: Context): Boolean {
@@ -329,11 +433,11 @@ class RokidBusAccessibilityService : AccessibilityService() {
                     SelfArmManualAction.ENABLE_DEVELOPER_OPTIONS ->
                         service.enableDeveloperOptionsManually(onFinished)
                     SelfArmManualAction.OPEN_DEVELOPER_OPTIONS ->
-                        onFinished(service.openManualNavigation(SelfArmManualTarget.DEVELOPER_OPTIONS))
+                        service.openManualNavigation(SelfArmManualTarget.DEVELOPER_OPTIONS, onFinished)
                     SelfArmManualAction.OPEN_WIRELESS_DEBUGGING ->
-                        onFinished(service.openManualNavigation(SelfArmManualTarget.WIRELESS_DEBUGGING))
+                        service.openManualNavigation(SelfArmManualTarget.WIRELESS_DEBUGGING, onFinished)
                     SelfArmManualAction.OPEN_PAIRING_DIALOG ->
-                        onFinished(service.openManualNavigation(SelfArmManualTarget.PAIRING_DIALOG))
+                        service.openManualNavigation(SelfArmManualTarget.PAIRING_DIALOG, onFinished)
                     SelfArmManualAction.CLOSE -> {
                         service.closeManualNavigation(armed)
                         onFinished(true)
@@ -345,3 +449,6 @@ class RokidBusAccessibilityService : AccessibilityService() {
 
     }
 }
+
+private fun SelfArmManualTarget.requiresWifi(): Boolean =
+    this == SelfArmManualTarget.WIRELESS_DEBUGGING || this == SelfArmManualTarget.PAIRING_DIALOG

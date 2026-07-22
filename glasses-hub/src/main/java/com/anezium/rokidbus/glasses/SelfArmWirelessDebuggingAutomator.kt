@@ -189,6 +189,17 @@ internal class SelfArmWirelessDebuggingAutomator(
         schedule(180L)
     }
 
+    fun isManualTargetVisible(target: SelfArmManualTarget): Boolean {
+        val root = AccessibilityWindowRoots.getNavigationRoot(service) ?: return false
+        return when (target) {
+            SelfArmManualTarget.DEVELOPER_OPTIONS -> isDeveloperOptionsScreen(root)
+            SelfArmManualTarget.WIRELESS_DEBUGGING,
+            SelfArmManualTarget.PAIRING_DIALOG,
+            -> isWirelessDebuggingPage(root)
+            SelfArmManualTarget.ENABLE_DEVELOPER_OPTIONS -> false
+        }
+    }
+
     private fun step() {
         if (!active) return
         if (SystemClock.uptimeMillis() > deadlineAt) {

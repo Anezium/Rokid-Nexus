@@ -117,6 +117,20 @@ class GlassesManualPairingEngineTest {
     }
 
     @Test
+    fun wirelessDebuggingFailureExplainsThatWifiOrSettingsCouldNotOpen() {
+        val fixture = fixture()
+
+        fixture.engine.start()
+        assertTrue(fixture.engine.showWirelessDebugging())
+        val requestId = fixture.control.requestIds.single()
+        assertTrue(fixture.engine.onManualControlResponse(requestId, "WIRELESS_DEBUGGING_UNAVAILABLE"))
+
+        val error = fixture.engine.state as GlassesManualPairingState.ERROR
+        assertTrue(error.userMessage.contains("Wi-Fi"))
+        assertTrue(error.userMessage.contains("retry step 3"))
+    }
+
+    @Test
     fun manualSettingsButtonsUseSeparateActionsAndKeepTheCodeFormState() {
         val fixture = fixture()
 

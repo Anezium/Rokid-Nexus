@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.35
+
+- Manual setup step 3 now turns on glasses Wi-Fi before opening Wireless debugging directly.
+- The phone waits until the real Wireless debugging page is visible instead of treating a Settings launch request as success.
+
 ## 1.0.34
 
 - Manual setup now confirms the Build-number taps only after Developer options are truly enabled on the glasses.
