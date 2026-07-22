@@ -1052,6 +1052,19 @@ internal class SelfArmWirelessDebuggingAutomator(
 
     private fun wifiSettingCandidates(): List<Intent> {
         val candidates = mutableListOf<Intent>()
+        // YodaOS exposes the full Wi-Fi page reliably, while its Android Q Wi-Fi panel can
+        // immediately return to the launcher and does not expose a usable accessibility switch.
+        // Match the proven R08 Access Bridge flow: full Wi-Fi Settings first, panel last.
+        candidates += Intent(Settings.ACTION_WIFI_SETTINGS)
+        candidates += Intent(Settings.ACTION_WIFI_SETTINGS)
+            .setPackage("com.android.settings")
+        candidates += Intent()
+            .setComponent(
+                ComponentName(
+                    "com.android.settings",
+                    "com.android.settings.Settings\$WifiSettingsActivity",
+                ),
+            )
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             candidates += Intent("android.settings.panel.action.WIFI")
                 .setPackage("com.android.settings")
@@ -1063,16 +1076,6 @@ internal class SelfArmWirelessDebuggingAutomator(
                     ),
                 )
         }
-        candidates += Intent(Settings.ACTION_WIFI_SETTINGS)
-            .setPackage("com.android.settings")
-        candidates += Intent()
-            .setComponent(
-                ComponentName(
-                    "com.android.settings",
-                    "com.android.settings.Settings\$WifiSettingsActivity",
-                ),
-            )
-        candidates += Intent(Settings.ACTION_WIFI_SETTINGS)
         return candidates
     }
 

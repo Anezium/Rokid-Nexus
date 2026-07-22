@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.37
+
+- Wi-Fi activation now opens the full YodaOS Wi-Fi Settings page first, matching the proven R08 Access Bridge flow.
+- The incompatible Android Wi-Fi panel remains only as a final fallback instead of bouncing users back to the launcher.
+
 ## 1.0.36
 
 - Manual setup step 3 now enables glasses Wi-Fi through the privileged local command bridge before falling back to Settings accessibility.
