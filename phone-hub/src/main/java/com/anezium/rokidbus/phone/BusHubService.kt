@@ -1991,7 +1991,8 @@ class BusHubService : Service() {
         val state = glassesAppInstallState
         val canInstall = state == GlassesAppInstallState.NotInstalled ||
             (state == GlassesAppInstallState.Installed &&
-                glassesAppUpdateState is GlassesAppUpdateState.UpdateAvailable) ||
+                (glassesAppUpdateState is GlassesAppUpdateState.UpdateAvailable ||
+                    glassesAppUpdateState == GlassesAppUpdateState.Unknown)) ||
             state is GlassesAppInstallState.Error && state.retry == GlassesAppRetry.INSTALL
         if (!canInstall) {
             if (state == GlassesAppInstallState.Unknown) {

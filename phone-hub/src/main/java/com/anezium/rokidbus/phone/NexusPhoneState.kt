@@ -229,10 +229,18 @@ internal object NexusPhoneState {
         return true
     }
 
-    fun glassesUpdateVersionLabel(): String? =
-        (glassesAppUpdateState as? GlassesAppUpdateState.UpdateAvailable)?.let { state ->
-            "Update glasses to v${state.latest}"
+    fun glassesUpdateVersionLabel(): String? = when (val state = glassesAppUpdateState) {
+        is GlassesAppUpdateState.UpdateAvailable -> "Update glasses to v${state.latest}"
+        GlassesAppUpdateState.Unknown -> if (
+            glassesAppInstallState == GlassesAppInstallState.Installed &&
+            installedGlassesVersionName == null
+        ) {
+            "Reinstall latest glasses app"
+        } else {
+            null
         }
+        is GlassesAppUpdateState.UpToDate -> null
+    }
 
     fun glassesUpdateActionLabel(): String = when (val state = glassesAppInstallState) {
         GlassesAppInstallState.Resolving -> "Finding..."
@@ -241,11 +249,13 @@ internal object NexusPhoneState {
         } ?: "Downloading"
         GlassesAppInstallState.Installing -> "Installing"
         is GlassesAppInstallState.Error -> "Retry"
-        else -> "Update"
+        else -> if (glassesAppUpdateState == GlassesAppUpdateState.Unknown) "Reinstall" else "Update"
     }
 
     fun glassesUpdateActionEnabled(): Boolean =
-        glassesAppUpdateState is GlassesAppUpdateState.UpdateAvailable && when (val state = glassesAppInstallState) {
+        (glassesAppUpdateState is GlassesAppUpdateState.UpdateAvailable ||
+            glassesAppUpdateState == GlassesAppUpdateState.Unknown) &&
+            when (val state = glassesAppInstallState) {
             GlassesAppInstallState.Installed -> true
             is GlassesAppInstallState.Error -> state.retry == GlassesAppRetry.INSTALL
             else -> false

@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.38
+
+- The phone now offers a forced reinstall when the glasses package exists but its hub cannot report a version.
+- Wi-Fi activation continues to use the full YodaOS Wi-Fi Settings page before the incompatible panel fallback.
+
 ## 1.0.37
 
 - Wi-Fi activation now opens the full YodaOS Wi-Fi Settings page first, matching the proven R08 Access Bridge flow.
