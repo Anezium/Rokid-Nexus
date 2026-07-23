@@ -173,7 +173,6 @@ class PluginPermissionsActivity : Activity() {
         val live = state is PluginGrantState.Approved
         val selected = ((state as? PluginGrantState.Approved)?.capabilities
             ?: principal.descriptor.requestedCapabilities).toMutableSet()
-        selected -= PluginCapability.MICROPHONE
         principal.descriptor.requestedCapabilities.sortedBy(PluginCapability::wireValue).forEach { capability ->
             card.addView(capabilityRow(capability, selected, live, principal), NexusUi.block())
             card.addView(BusTheme.gap(this, 8))
@@ -246,7 +245,7 @@ class PluginPermissionsActivity : Activity() {
         live: Boolean,
         principal: PhonePluginPrincipal,
     ): LinearLayout {
-        val unavailable = capability == PluginCapability.MICROPHONE
+        val unavailable = false
         val title = when (capability) {
             PluginCapability.SURFACES -> "Show on your glasses"
             PluginCapability.MICROPHONE -> "Glasses microphone"
@@ -255,7 +254,7 @@ class PluginPermissionsActivity : Activity() {
         }
         val note = when (capability) {
             PluginCapability.SURFACES -> "Render cards and images on the HUD"
-            PluginCapability.MICROPHONE -> "Not available yet"
+            PluginCapability.MICROPHONE -> "Listen through the glasses microphone"
             PluginCapability.HTTP_PROXY -> "Fetch through the phone connection"
             PluginCapability.CAMERA -> "Only while the camera view is open"
         }

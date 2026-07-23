@@ -221,11 +221,252 @@ class SurfaceModelsTest {
     }
 
     @Test
-    fun `capability helpers fail locally and microphone stays unavailable`() {
+    fun `capability helpers fail locally without their grants`() {
         val (client, transport) = client("surfaces")
         assertEquals(NexusSdkResult.CAPABILITY_NOT_GRANTED, client.requestHttp(JSONObject().put("url", "https://example.com")))
-        assertEquals(NexusSdkResult.CAPABILITY_NOT_AVAILABLE, client.requestAudioLease())
+        assertEquals(
+            NexusSdkResult.CAPABILITY_NOT_GRANTED,
+            client.audioSession(
+                object : NexusAudioCallbacks {
+                    override fun onAudioStarted(format: NexusAudioFormat) = Unit
+                    override fun onAudioFrame(pcm: ByteArray, seq: Long, elapsedRealtimeMs: Long) = Unit
+                    override fun onAudioStopped(reason: NexusAudioStopReason) = Unit
+                },
+            ).start(),
+        )
         assertEquals(0, transport.sends.size)
+    }
+
+    @Test
+    fun `audio session requires approval before sending acquire`() {
+        val transport = FakeTransport()
+        val unapproved = NexusPluginClient("hello", callbacks, transport)
+        unapproved.connect()
+        val stopped = mutableListOf<NexusAudioStopReason>()
+        val session = unapproved.audioSession(
+            object : NexusAudioCallbacks {
+                override fun onAudioStarted(format: NexusAudioFormat) = Unit
+                override fun onAudioFrame(pcm: ByteArray, seq: Long, elapsedRealtimeMs: Long) = Unit
+                override fun onAudioStopped(reason: NexusAudioStopReason) {
+                    stopped += reason
+                }
+            },
+        )
+
+        assertEquals(NexusSdkResult.NOT_REGISTERED, session.start())
+        assertTrue(transport.sends.isEmpty())
+        assertTrue(stopped.isEmpty())
+    }
+
+    @Test
+    fun `audio session routes granted frame and revoke without raw callbacks`() {
+        val genericMessages = mutableListOf<String>()
+        val transport = FakeTransport()
+        val genericCallbacks = object : NexusPluginCallbacks {
+            override fun onOpen() = Unit
+            override fun onClose() = Unit
+            override fun onInput(event: NexusInputEvent) = Unit
+            override fun onLinkState(state: Int) = Unit
+            override fun onRegistrationState(result: Int) = Unit
+            override fun onMessage(path: String, id: String, payload: JSONObject) {
+                genericMessages += path
+            }
+            override fun onBinary(path: String, id: String, payload: JSONObject, data: ByteArray) {
+                genericMessages += path
+            }
+        }
+        val client = NexusPluginClient("hello", genericCallbacks, transport)
+        client.connect()
+        transport.listener.onMessage(
+            BusPaths.PLUGIN_REGISTRATION,
+            "registration-audio",
+            JSONObject()
+                .put("pluginId", "hello")
+                .put("result", PluginRegistrationResult.APPROVED)
+                .put("capabilities", "microphone"),
+        )
+
+        val started = mutableListOf<NexusAudioFormat>()
+        val frames = mutableListOf<Triple<ByteArray, Long, Long>>()
+        val stopped = mutableListOf<NexusAudioStopReason>()
+        val session = client.audioSession(
+            object : NexusAudioCallbacks {
+                override fun onAudioStarted(format: NexusAudioFormat) {
+                    started += format
+                }
+                override fun onAudioFrame(pcm: ByteArray, seq: Long, elapsedRealtimeMs: Long) {
+                    frames += Triple(pcm.copyOf(), seq, elapsedRealtimeMs)
+                }
+                override fun onAudioStopped(reason: NexusAudioStopReason) {
+                    stopped += reason
+                }
+            },
+        )
+
+        assertEquals(NexusSdkResult.SENT, session.start())
+        assertEquals(NEXUS_AUDIO_LEASE_ACQUIRE_PATH, transport.sends.single().first)
+        assertEquals(0, transport.sends.single().second.length())
+        transport.listener.onMessage(
+            NEXUS_AUDIO_LEASE_ACQUIRE_REPLY_PATH,
+            "acquire-reply-1",
+            JSONObject()
+                .put("pluginId", "hello")
+                .put("granted", true)
+                .put("leaseId", "lease-1")
+                .put("sampleRate", 16_000)
+                .put("channels", 1)
+                .put("encoding", "s16le"),
+        )
+        assertEquals(listOf(NexusAudioFormat(16_000, 1, "s16le")), started)
+        assertTrue(session.isActive)
+
+        val pcm = byteArrayOf(1, 2, 3, 4)
+        transport.listener.onBinary(
+            NEXUS_AUDIO_FRAMES_PATH,
+            "frame-1",
+            JSONObject()
+                .put("pluginId", "hello")
+                .put("leaseId", "lease-1")
+                .put("seq", 42L)
+                .put("elapsedRealtime", 7_654L),
+            pcm,
+        )
+        transport.listener.onBinary(
+            NEXUS_AUDIO_FRAMES_PATH,
+            "frame-1",
+            JSONObject()
+                .put("pluginId", "hello")
+                .put("leaseId", "lease-1")
+                .put("seq", 43L)
+                .put("elapsedRealtime", 7_674L),
+            byteArrayOf(5, 6),
+        )
+        transport.listener.onBinary(
+            NEXUS_AUDIO_FRAMES_PATH,
+            "frame-other-lease",
+            JSONObject()
+                .put("pluginId", "hello")
+                .put("leaseId", "other-lease")
+                .put("seq", 44L)
+                .put("elapsedRealtime", 7_694L),
+            byteArrayOf(7, 8),
+        )
+        assertEquals(1, frames.size)
+        assertTrue(pcm.contentEquals(frames.single().first))
+        assertEquals(42L, frames.single().second)
+        assertEquals(7_654L, frames.single().third)
+
+        transport.listener.onMessage(
+            NEXUS_AUDIO_LEASE_REVOKED_PATH,
+            "revoked-1",
+            JSONObject()
+                .put("pluginId", "hello")
+                .put("leaseId", "lease-1")
+                .put("reason", "PREEMPTED"),
+        )
+        assertEquals(listOf(NexusAudioStopReason.REVOKED), stopped)
+        assertFalse(session.isActive)
+        assertTrue(genericMessages.isEmpty())
+    }
+
+    @Test
+    fun `audio stop releases once and registration loss terminates once`() {
+        val (client, transport) = client("microphone")
+        val stopped = mutableListOf<NexusAudioStopReason>()
+        val session = client.audioSession(
+            object : NexusAudioCallbacks {
+                override fun onAudioStarted(format: NexusAudioFormat) = Unit
+                override fun onAudioFrame(pcm: ByteArray, seq: Long, elapsedRealtimeMs: Long) = Unit
+                override fun onAudioStopped(reason: NexusAudioStopReason) {
+                    stopped += reason
+                }
+            },
+        )
+        assertEquals(NexusSdkResult.SENT, session.start())
+        transport.listener.onMessage(
+            NEXUS_AUDIO_LEASE_ACQUIRE_REPLY_PATH,
+            "acquire-reply-stop",
+            JSONObject()
+                .put("pluginId", "hello")
+                .put("granted", true)
+                .put("leaseId", "lease-stop")
+                .put("sampleRate", 16_000)
+                .put("channels", 1)
+                .put("encoding", "s16le"),
+        )
+
+        session.stop()
+        assertEquals(NEXUS_AUDIO_LEASE_RELEASE_PATH, transport.sends.last().first)
+        assertEquals("lease-stop", transport.sends.last().second.getString("leaseId"))
+        assertEquals(listOf(NexusAudioStopReason.RELEASED), stopped)
+        assertFalse(session.isActive)
+
+        transport.listener.onMessage(
+            NEXUS_AUDIO_LEASE_RELEASE_REPLY_PATH,
+            "release-reply-stop",
+            JSONObject().put("pluginId", "hello").put("released", true),
+        )
+        transport.listener.onMessage(
+            NEXUS_AUDIO_LEASE_REVOKED_PATH,
+            "late-revoke",
+            JSONObject().put("pluginId", "hello").put("leaseId", "lease-stop"),
+        )
+        assertEquals(listOf(NexusAudioStopReason.RELEASED), stopped)
+
+        assertEquals(NexusSdkResult.SENT, session.start())
+        transport.listener.onMessage(
+            NEXUS_AUDIO_LEASE_ACQUIRE_REPLY_PATH,
+            "acquire-reply-drop",
+            JSONObject()
+                .put("pluginId", "hello")
+                .put("granted", true)
+                .put("leaseId", "lease-drop")
+                .put("sampleRate", 16_000)
+                .put("channels", 1)
+                .put("encoding", "s16le"),
+        )
+        assertTrue(session.isActive)
+        transport.listener.onRegistrationState(PluginRegistrationResult.DENIED)
+        assertEquals(
+            listOf(NexusAudioStopReason.RELEASED, NexusAudioStopReason.ERROR),
+            stopped,
+        )
+        assertFalse(session.isActive)
+    }
+
+    @Test
+    fun `audio acquire denial reasons map to SDK stop reasons`() {
+        val (client, transport) = client("microphone")
+        val stopped = mutableListOf<NexusAudioStopReason>()
+        val session = client.audioSession(
+            object : NexusAudioCallbacks {
+                override fun onAudioStarted(format: NexusAudioFormat) = Unit
+                override fun onAudioFrame(pcm: ByteArray, seq: Long, elapsedRealtimeMs: Long) = Unit
+                override fun onAudioStopped(reason: NexusAudioStopReason) {
+                    stopped += reason
+                }
+            },
+        )
+        val cases = listOf(
+            "BUSY" to NexusAudioStopReason.DENIED_BUSY,
+            "NO_CXR" to NexusAudioStopReason.DENIED_NO_LINK,
+            "START_FAILED" to NexusAudioStopReason.DENIED_START_FAILED,
+            "NOT_GRANTED" to NexusAudioStopReason.ERROR,
+        )
+
+        cases.forEachIndexed { index, (wireReason, _) ->
+            assertEquals(NexusSdkResult.SENT, session.start())
+            transport.listener.onMessage(
+                NEXUS_AUDIO_LEASE_ACQUIRE_REPLY_PATH,
+                "denied-$index",
+                JSONObject()
+                    .put("pluginId", "hello")
+                    .put("granted", false)
+                    .put("reason", wireReason),
+            )
+        }
+
+        assertEquals(cases.map { it.second }, stopped)
     }
 
     @Test

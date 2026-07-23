@@ -53,8 +53,10 @@ does not approve it.
 
 Plugin IDs use `[a-z][a-z0-9._-]{2,63}`. Requested capabilities are `surfaces`,
 `http_proxy`, `microphone`, and `camera`. Camera paths are protected by the
-approved signer-bound grant. Microphone approval is currently disabled in the
-phone UI.
+approved signer-bound grant. `microphone` is grantable from the phone UI for any
+plugin that requests it (see §3.1); the plugin needs no Android `RECORD_AUDIO`
+permission — glasses-microphone PCM reaches the plugin over the hub, not through
+the phone's own recorder.
 
 ## 3. Implement the service
 
@@ -161,6 +163,79 @@ frames for the same surface. A faster frame is rejected with `/error` code
 `IMAGE_RATE_LIMITED`; the SDK preflight returns
 `NexusSdkResult.IMAGE_RATE_LIMITED` immediately. Plugins should not build
 animation loops around v1.
+
+### 3.1 Microphone (audio lease)
+
+Request the `microphone` capability and add `/audio` to the plugin's receive
+prefixes:
+
+```xml
+<meta-data android:name="com.anezium.rokidbus.plugin.CAPABILITIES"
+    android:value="surfaces,microphone" />
+<meta-data android:name="com.anezium.rokidbus.plugin.RECEIVE_PREFIXES"
+    android:value="/plugin/yourid,/system/plugin,/audio" />
+```
+
+Once the owner grants `microphone`, acquire a lease through
+`nexusAudioSession(callbacks)` and drive it with `start()` / `stop()`. The hub
+holds a single glasses-microphone lease at a time and streams the raw PCM to the
+current holder; the SDK routes the reply, frames, and revocation to your
+callbacks — you never handle the raw `/audio/*` envelopes yourself.
+
+```kotlin
+class DictationService : NexusPluginService() {
+    private var audio: NexusAudioSession? = null
+
+    fun beginListening() {
+        val session = nexusAudioSession(object : NexusAudioCallbacks {
+            override fun onAudioStarted(format: NexusAudioFormat) {
+                // format is 16000 Hz, 1 channel, "pcm16le"
+            }
+
+            override fun onAudioFrame(pcm: ByteArray, seq: Long, elapsedRealtimeMs: Long) {
+                // ~50 frames/s of little-endian 16-bit mono PCM. Feed your STT,
+                // recorder, VAD, etc. `pcm` is owned by the caller — copy it if
+                // you keep it past this call.
+            }
+
+            override fun onAudioStopped(reason: NexusAudioStopReason) {
+                // RELEASED, REVOKED (link lost), or a DENIED_* / ERROR terminal.
+                audio = null
+            }
+        }) ?: return
+        audio = session
+        when (session.start()) {
+            NexusSdkResult.SENT -> Unit                       // lease requested
+            NexusSdkResult.CAPABILITY_NOT_GRANTED -> Unit     // owner hasn't granted mic
+            NexusSdkResult.NOT_REGISTERED -> Unit             // hub not connected yet
+            else -> Unit
+        }
+    }
+
+    fun stopListening() {
+        audio?.stop()   // fires onAudioStopped(RELEASED); safe if already stopped
+    }
+}
+```
+
+Format is fixed at **16 kHz, mono, signed 16-bit little-endian PCM**
+(`NexusAudioFormat`). `onAudioStopped` fires exactly once per active session —
+on your own `stop()`, on a hub revoke (e.g. the glasses link drops), or on a
+denied acquire (`DENIED_BUSY` when another plugin holds the lease,
+`DENIED_NO_LINK`, `DENIED_START_FAILED`). The session also tears down (with
+`onAudioStopped`) if the plugin loses approval or the service is destroyed, so
+you do not need to release on `onNexusClose` yourself.
+
+Two hardware facts to design around:
+
+- **The glasses must be worn.** The on-glasses microphone DSP beamforms toward
+  the wearer's mouth and gates otherwise, so a lease acquired while the glasses
+  sit unworn yields near-silence. Gate your UX on
+  `LinkStateBits.GLASSES_WORN` from `onNexusLinkState` if silence would confuse
+  the user.
+- **The level is conservative.** Captured speech peaks well below full scale;
+  if you play the audio back or show a meter, apply gain (roughly 5×) or
+  normalize.
 
 ## 4. Approve and debug
 

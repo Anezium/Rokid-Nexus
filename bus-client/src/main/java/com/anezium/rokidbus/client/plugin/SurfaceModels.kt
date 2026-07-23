@@ -420,9 +420,6 @@ fun NexusPluginClient.requestHttp(request: JSONObject): NexusSdkResult {
     }
 }
 
-fun NexusPluginClient.requestAudioLease(): NexusSdkResult =
-    NexusSdkResult.CAPABILITY_NOT_AVAILABLE
-
 private val LOCAL_SURFACE_ID = Regex("[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
 private const val MAX_TITLE_CHARS = 120
 private const val MAX_LINE_CHARS = 240

@@ -19,10 +19,13 @@ class NexusPluginClient internal constructor(
 ) : NexusPluginTransport.Listener, AutoCloseable {
     private val seenEventIds = ArrayDeque<String>()
     private val seenEventIdSet = linkedSetOf<String>()
+    private val audioSessionLock = Any()
     private var registrationState = PluginRegistrationResult.REGISTRATION_FAILED
     private var opened = false
     private var closed = false
     private var approvedCapabilities: Set<PluginCapability> = emptySet()
+    private var registeredAudioSession: NexusAudioSession? = null
+    private var audioSessionApiUsed = false
     @Volatile private var currentLinkState = 0
     @Volatile private var hubCapabilities = 0
 
@@ -56,10 +59,60 @@ class NexusPluginClient internal constructor(
         return sent
     }
 
+    internal fun isApprovedForAudio(): Boolean = !closed && isApproved
+
+    internal fun registerAudioSession(session: NexusAudioSession): Boolean =
+        synchronized(audioSessionLock) {
+            if (closed || registeredAudioSession?.let { it !== session } == true) {
+                false
+            } else {
+                registeredAudioSession = session
+                audioSessionApiUsed = true
+                true
+            }
+        }
+
+    internal fun unregisterAudioSession(session: NexusAudioSession) {
+        synchronized(audioSessionLock) {
+            if (registeredAudioSession === session) registeredAudioSession = null
+        }
+    }
+
+    internal fun sendAudioAcquire(session: NexusAudioSession, id: String): Boolean {
+        if (synchronized(audioSessionLock) { registeredAudioSession !== session }) return false
+        return send(NEXUS_AUDIO_LEASE_ACQUIRE_PATH, id, JSONObject())
+    }
+
+    internal fun sendAudioRelease(
+        session: NexusAudioSession,
+        id: String,
+        leaseId: String,
+    ): Boolean {
+        if (synchronized(audioSessionLock) { registeredAudioSession !== session }) return false
+        return send(
+            NEXUS_AUDIO_LEASE_RELEASE_PATH,
+            id,
+            JSONObject().put("leaseId", leaseId),
+        )
+    }
+
+    internal fun releaseAudioSession() {
+        currentAudioSession()?.terminate(
+            reason = NexusAudioStopReason.RELEASED,
+            releaseActiveLease = true,
+        )
+    }
+
     override fun onRegistrationState(result: Int) {
         if (closed) return
         registrationState = result
-        if (result != PluginRegistrationResult.APPROVED) approvedCapabilities = emptySet()
+        if (result != PluginRegistrationResult.APPROVED) {
+            approvedCapabilities = emptySet()
+            terminateAudioSession(
+                reason = NexusAudioStopReason.ERROR,
+                releaseActiveLease = false,
+            )
+        }
         callbacks.onRegistrationState(result)
         if (result != PluginRegistrationResult.APPROVED && opened) {
             opened = false
@@ -81,6 +134,7 @@ class NexusPluginClient internal constructor(
 
     override fun onMessage(path: String, id: String, payload: JSONObject) {
         if (closed || payload.optString("pluginId") != pluginId || !rememberEvent(id)) return
+        if (routeAudioMessage(path, payload)) return
         when (path) {
             // A duplicate PLUGIN_OPEN (fresh event id) is the hub asking an already-open
             // plugin to re-present itself — e.g. the glasses fell back to the launcher
@@ -92,6 +146,7 @@ class NexusPluginClient internal constructor(
             }
             BusPaths.PLUGIN_CLOSE -> if (opened) {
                 opened = false
+                releaseAudioSession()
                 callbacks.onClose()
             }
             BusPaths.PLUGIN_INPUT -> if (opened && isApproved) {
@@ -126,6 +181,7 @@ class NexusPluginClient internal constructor(
 
     override fun onBinary(path: String, id: String, payload: JSONObject, data: ByteArray) {
         if (closed || !isApproved || payload.optString("pluginId") != pluginId || !rememberEvent(id)) return
+        if (routeAudioBinary(path, payload, data)) return
         callbacks.onBinary(path, id, payload, data)
     }
 
@@ -134,6 +190,10 @@ class NexusPluginClient internal constructor(
     override fun close() {
         if (closed) return
         closed = true
+        terminateAudioSession(
+            reason = NexusAudioStopReason.ERROR,
+            releaseActiveLease = false,
+        )
         if (opened) {
             opened = false
             callbacks.onClose()
@@ -143,6 +203,43 @@ class NexusPluginClient internal constructor(
         hubCapabilities = 0
         seenEventIds.clear()
         seenEventIdSet.clear()
+    }
+
+    private fun routeAudioMessage(path: String, payload: JSONObject): Boolean {
+        if (path != NEXUS_AUDIO_LEASE_ACQUIRE_REPLY_PATH &&
+            path != NEXUS_AUDIO_LEASE_RELEASE_REPLY_PATH &&
+            path != NEXUS_AUDIO_LEASE_REVOKED_PATH
+        ) {
+            return false
+        }
+        val (session, consume) = synchronized(audioSessionLock) {
+            registeredAudioSession to audioSessionApiUsed
+        }
+        when (path) {
+            NEXUS_AUDIO_LEASE_ACQUIRE_REPLY_PATH -> session?.onAcquireReply(payload)
+            NEXUS_AUDIO_LEASE_RELEASE_REPLY_PATH -> session?.onReleaseReply(payload)
+            NEXUS_AUDIO_LEASE_REVOKED_PATH -> session?.onRevoked(payload)
+        }
+        return consume
+    }
+
+    private fun routeAudioBinary(path: String, payload: JSONObject, data: ByteArray): Boolean {
+        if (path != NEXUS_AUDIO_FRAMES_PATH) return false
+        val (session, consume) = synchronized(audioSessionLock) {
+            registeredAudioSession to audioSessionApiUsed
+        }
+        session?.onAudioFrame(payload, data)
+        return consume
+    }
+
+    private fun currentAudioSession(): NexusAudioSession? =
+        synchronized(audioSessionLock) { registeredAudioSession }
+
+    private fun terminateAudioSession(
+        reason: NexusAudioStopReason,
+        releaseActiveLease: Boolean,
+    ) {
+        currentAudioSession()?.terminate(reason, releaseActiveLease)
     }
 
     private fun rememberEvent(id: String): Boolean {

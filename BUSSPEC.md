@@ -563,8 +563,12 @@ Paths (single leaseholder at a time):
   channels:1, encoding:"pcm16le"}` or `{granted:false, reason:"BUSY"|"NO_CXR"|"START_FAILED"}`.
 - `/audio/lease/release` `{leaseId}` → reply `{released:true}`.
 - `/audio/frames` — binary frames to the leaseholder only: meta
-  `{leaseId, seq, elapsedRealtime}`, data = raw PCM buffer as received.
-  `seq` monotonic; receiver detects gaps.
+  `{leaseId, seq, elapsedRealtime, pluginId}`, data = raw PCM buffer as received.
+  `seq` monotonic; receiver detects gaps. Each frame envelope's `id` MUST be
+  unique (`leaseId:seq`) — the plugin client dedups inbound events by envelope
+  `id`, so a constant `id` collapses the whole stream to a single frame. For a
+  local plugin holder the payload also carries `pluginId` (the client drops
+  events whose `pluginId` does not match).
 - `/audio/lease/revoked` `{leaseId, reason:"LINK_DOWN"}` — hub → holder when
   CXR-L drops mid-lease (hub stops the stream).
 
@@ -575,7 +579,12 @@ Hub lifecycle: acquire → `setInterruptAiWake(true)`, `setCXRAudioCbk(cbk)`,
 `startAudioStream(1)`; release / holder binder death / CXR drop →
 `stopAudioStream()`, `setCXRAudioCbk(null)`, `setInterruptAiWake(false)`.
 Binder-death auto-release is mandatory (no orphan stream). No phone
-`RECORD_AUDIO` needed for the CXR PCM path (validated by Relay).
+`RECORD_AUDIO` needed for the CXR PCM path (validated by Relay). The
+glasses-side mic DSP beamforms toward the wearer and gates when the glasses are
+unworn, so a lease acquired while unworn streams near-silence — this is a
+hardware property, not a bus fault. Plugins consume this through the SDK's
+`nexusAudioSession(callbacks)`; the raw `/audio/*` paths above are the wire
+contract behind it.
 
 ## Appendix: historical protocol versions
 

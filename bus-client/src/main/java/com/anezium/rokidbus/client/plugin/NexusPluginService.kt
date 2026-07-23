@@ -39,6 +39,9 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
     protected fun nexusSurfaceSession(localSurfaceId: String): NexusSurfaceSession? =
         client?.surfaceSession(localSurfaceId)
 
+    protected fun nexusAudioSession(callbacks: NexusAudioCallbacks): NexusAudioSession? =
+        client?.audioSession(callbacks)
+
     override fun onCreate() {
         super.onCreate()
         val descriptor = readOwnDescriptor()
@@ -59,6 +62,7 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
     override fun onBind(intent: Intent?): IBinder = localBinder
 
     override fun onDestroy() {
+        client?.releaseAudioSession()
         client?.close()
         client = null
         sessionOpen = false
@@ -73,6 +77,7 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
     }
 
     final override fun onClose() {
+        client?.releaseAudioSession()
         try {
             onNexusClose()
         } finally {
@@ -89,6 +94,7 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
             onNexusRegistrationState(result)
             return
         }
+        client?.releaseAudioSession()
         sessionOpen = false
         try {
             onNexusRegistrationState(result)
