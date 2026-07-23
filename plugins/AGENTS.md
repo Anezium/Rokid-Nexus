@@ -169,7 +169,10 @@ Both icon declarations are optional. Prefer a Nexus built-in by declaring
 `clock`, `star`, `heart`, `game`, `globe`, `bell`, `terminal`, `grid`, `map`,
 `bolt`, or `bookmark`. A built-in key also renders natively on the glasses
 launcher — a custom `ICON_DRAWABLE` cannot reach the glasses (it lives in your
-phone APK), so declare a built-in `ICON` too whenever one fits.
+phone APK), so declare a built-in `ICON` too whenever one fits. **Never remove
+your `ICON` key to force the custom drawable to show**: the glasses fall back
+to the generic grid glyph and your plugin loses its identity there. Declare
+both and keep both.
 
 If the built-in set does not fit your identity, declare your own drawable
 resource instead:
@@ -192,8 +195,11 @@ Your glyph lives in **one file** and feeds every surface: the sample template's
 as `ICON_DRAWABLE`, so the Android app icon (Settings → Apps) and the themed
 icon follow automatically. Do not edit `ic_launcher_foreground.xml` — replace
 the glyph drawable it references. Registry submissions should also ship a
-512×512 `iconAsset` PNG (green glyph on `#030C06`, glyph in the central ~60%);
-the Store downloads and shows it via the feed's `iconUrl`.
+512×512 `iconAsset` PNG (green glyph on `#030C06`, **centered**, occupying the
+central ~60% of the canvas); the Store downloads and shows it via the feed's
+`iconUrl`. To **change** that artwork later, submit it under a **new filename**
+(and update `iconAsset` accordingly): phones cache store icons by URL for seven
+days, so replacing the bytes at the same URL leaves stale icons on devices.
 
 The HUD renders **structured rows**, not free text: build `NexusCard` /
 `NexusTimedLines` / `NexusMedia` / image surfaces and let the glasses lay them out.
