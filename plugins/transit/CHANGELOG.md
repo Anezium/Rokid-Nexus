@@ -1,5 +1,9 @@
 # Changelog — Transit
 
+## 1.0.3
+
+- Android 11 support: the plugin now installs on Android 11 (API 30) phones.
+
 ## 1.0.2
 
 - The app icon in Android settings and installer dialogs is now the plugin's own glyph on the Nexus dark background (adaptive icon), instead of a washed-out or generic mark.

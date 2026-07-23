@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.2
+
+- Android 11 support: the plugin now installs on Android 11 (API 30) phones. Declares ACCESS_COARSE_LOCATION alongside FINE for the Wi-Fi Direct link.
+
 ## 1.1.1
 
 - Greek is now available as a translation target language.
