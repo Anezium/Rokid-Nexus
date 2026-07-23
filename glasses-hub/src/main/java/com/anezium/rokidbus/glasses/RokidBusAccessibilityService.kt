@@ -87,6 +87,9 @@ class RokidBusAccessibilityService : AccessibilityService() {
     }
 
     override fun onKeyEvent(event: KeyEvent): Boolean {
+        if (event.device?.name?.uppercase()?.contains("R08") == true) {
+            return handleRingKeyEvent(event)
+        }
         if (event.keyCode == KEYCODE_PROG_BLUE) return false
         // Raw gesture trace: the temple firmware's key bursts keep surprising us
         // (duplicated swipe pairs, tap contacts); keep the evidence cheap to grab.
@@ -129,6 +132,21 @@ class RokidBusAccessibilityService : AccessibilityService() {
             if (handled) consumedDownKeys.add(event.keyCode) else consumedDownKeys.remove(event.keyCode)
         }
         return handled
+    }
+
+    private fun handleRingKeyEvent(event: KeyEvent): Boolean {
+        // Preserve the DOWN/UP pair even if the DOWN action hides the overlay.
+        if (event.action == KeyEvent.ACTION_UP && consumedDownKeys.remove(event.keyCode)) {
+            return true
+        }
+        if (!LauncherOverlayRenderer.isShown()) return false
+
+        if (event.action != KeyEvent.ACTION_DOWN) return false
+        if (event.repeatCount == 0) {
+            LauncherOverlayRenderer.handleRingKey(event.keyCode, event.eventTime)
+        }
+        consumedDownKeys.add(event.keyCode)
+        return true
     }
 
     override fun onInterrupt() {

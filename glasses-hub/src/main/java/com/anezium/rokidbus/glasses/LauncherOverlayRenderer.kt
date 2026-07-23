@@ -8,6 +8,9 @@ import android.graphics.Typeface
 import android.graphics.text.LineBreaker
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
 import android.text.Layout
 import android.text.TextUtils
 import android.view.Gravity
@@ -23,6 +26,11 @@ import com.anezium.rokidbus.client.ui.BusTheme
 
 object LauncherOverlayRenderer {
     private const val KEYCODE_PROG_BLUE = 186
+    private const val RING_KEYCODE_TAP = 85
+    private const val RING_KEYCODE_FORWARD = 87
+    private const val RING_KEYCODE_BACKWARD = 88
+    private const val RING_FOCUS_ACTION = "com.anezium.r08accessbridge.action.NEXUS_RING_FOCUS"
+    private const val RING_BRIDGE_PACKAGE = "com.anezium.r08accessbridge"
 
     private var service: AccessibilityService? = null
     private var windowManager: WindowManager? = null
@@ -31,6 +39,9 @@ object LauncherOverlayRenderer {
     private var launcherEntries: List<GlassesHub.LauncherEntry> = emptyList()
     private var selectedIndex = 0
     private val swipeDedupe = DpadPairDedupe()
+    private val main = Handler(Looper.getMainLooper())
+    private val ringTapPolicy = RingTapPolicy()
+    private val ringTapExpiry = Runnable(::resolveRingTaps)
 
     fun onServiceConnected(service: AccessibilityService) {
         this.service = service
@@ -57,6 +68,7 @@ object LauncherOverlayRenderer {
         launcherReturnCoordinator.clearPendingLauncherOpen()
         GlassesHub.start(activeService.applicationContext)
         val manager = windowManager ?: activeService.getSystemService(WindowManager::class.java) ?: return false
+        val wasShown = root != null
         val currentRoot = root ?: LauncherOverlayRoot(activeService).also { next ->
             root = next
             val params = WindowManager.LayoutParams(
@@ -79,18 +91,40 @@ object LauncherOverlayRenderer {
         currentRoot.render(launcherEntries, selectedIndex)
         currentRoot.requestFocus()
         log("Launcher overlay opened")
+        if (!wasShown) {
+            sendRingFocus(activeService.applicationContext, focused = true)
+        }
         return true
     }
 
     fun hide() {
         unsubscribeLauncher?.invoke()
         unsubscribeLauncher = null
+        main.removeCallbacks(ringTapExpiry)
+        ringTapPolicy.reset()
         val manager = windowManager
         val currentRoot = root ?: return
         runCatching { manager?.removeView(currentRoot) }
         currentRoot.render(emptyList(), 0)
         root = null
+        service?.applicationContext?.let { context ->
+            sendRingFocus(context, focused = false)
+        }
         log("Launcher overlay closed")
+    }
+
+    fun handleRingKey(keyCode: Int, eventTimeMs: Long): Boolean {
+        if (root == null) return false
+        when (keyCode) {
+            RING_KEYCODE_FORWARD -> moveSelection(1)
+            RING_KEYCODE_BACKWARD -> moveSelection(-1)
+            RING_KEYCODE_TAP -> {
+                ringTapPolicy.onTap(eventTimeMs)
+                main.removeCallbacks(ringTapExpiry)
+                main.postDelayed(ringTapExpiry, RingTapPolicy.DEFAULT_WINDOW_MS + 1L)
+            }
+        }
+        return true
     }
 
     fun handleKeyEvent(event: KeyEvent): Boolean {
@@ -125,6 +159,25 @@ object LauncherOverlayRenderer {
             }
             else -> true
         }
+    }
+
+    private fun resolveRingTaps() {
+        when (ringTapPolicy.resolveExpired(SystemClock.uptimeMillis())) {
+            RingTapPolicy.Resolution.SINGLE -> openSelected()
+            RingTapPolicy.Resolution.DOUBLE -> hide()
+            RingTapPolicy.Resolution.IGNORE,
+            null,
+            -> Unit
+        }
+    }
+
+    private fun sendRingFocus(context: Context, focused: Boolean) {
+        context.sendBroadcast(
+            android.content.Intent(RING_FOCUS_ACTION)
+                .setPackage(RING_BRIDGE_PACKAGE)
+                .putExtra("focused", focused)
+                .putExtra("ts", System.currentTimeMillis()),
+        )
     }
 
     private fun moveSelection(delta: Int) {
