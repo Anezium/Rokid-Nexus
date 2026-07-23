@@ -32,7 +32,7 @@ and `RokidBrew-Registry` (main), 2026-07-15. Anchors below reference that snapsh
 
 - No HUD simulator on the phone (explicitly deferred; developers need the glasses).
 - No automated publishing without human PR review (validation is automated, merge is not).
-- No microphone capability enablement (the approval UI keeps it disabled).
+- No microphone capability work (that shipped separately on the mic-capability branch).
 - No app self-update work (that is plan 005 Part C, unchanged).
 
 ## What already exists (do not rebuild)

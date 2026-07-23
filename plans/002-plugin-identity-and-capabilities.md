@@ -211,9 +211,6 @@ it deliberately, but normal logs use package/plugin ID and a redacted status.
   Maven/JitPack publication, or README tutorial; Plan 003 owns them.
 - Migrating Transit, Lyrics, or Lens to separate APKs.
 - Display stack, toast/actionable arbitration, rate limiting, or launcher ordering.
-- Granting microphone to third-party release plugins before the mandatory HUD
-  microphone indicator exists. Plan 002 may model/request the capability, but
-  release approval must remain disabled with a clear `not available yet` state.
 - General public approval of glasses-side companion APKs. Release glasses hub
   should reject unknown legacy clients; debug compatibility may remain until a
   later companion-install/grant plan.
@@ -332,8 +329,7 @@ or remote forwarding. Requirements:
 - plugin-private routes stay inside `/plugin/<pluginId>`;
 - surface sends require `surfaces`, and the hub overwrites/injects the verified
   owner plugin ID instead of trusting payload identity;
-- audio acquisition/release requires `microphone`; third-party release grants
-  remain unavailable until the indicator plan;
+- audio acquisition/release requires `microphone`;
 - HTTP requests require `http_proxy`;
 - plugins cannot send launcher lists/open commands, surface input, security, or
   other system-control paths;
@@ -382,9 +378,8 @@ show package, service component, plugin ID, API version, signing digest, and
 declared receive prefixes. Side-loaded plugins are still approvable; the UI must
 label them unverified rather than silently blocking them.
 
-The microphone toggle is visible but disabled with `Requires Nexus microphone
-indicator support` until the display-arbitration plan lands. Do not silently
-grant it.
+The microphone toggle is grantable for any plugin that requests the capability;
+the owner approves it per plugin like the other grants.
 
 **Verify**: build the phone hub and use a fake/debug descriptor to confirm
 pending -> partial approval -> active -> revoked state transitions. No external
@@ -441,7 +436,7 @@ Expected: all commands exit 0 and only scoped files plus the plan index changed.
 - [x] External release callers cannot use legacy `register`.
 - [x] Debug probe compatibility is isolated to debuggable builds without weakening release policy.
 - [x] Normal and developer consent views are implemented and build successfully.
-- [x] Third-party microphone approval remains disabled pending HUD indication.
+- [x] Microphone approval is grantable to any plugin that requests the capability.
 - [x] `.\gradlew.bat test lintDebug assembleDebug` exits 0.
 - [ ] Hardware regression steps: pending owner on-device verification; device interaction was prohibited for this execution.
 - [x] Only in-scope files, `TESTPLAN.md`, and plan status files are modified.
@@ -487,8 +482,7 @@ Stop and report if:
   second identity or consent format.
 - Plan 004 should request only `surfaces`; Transit uses its own phone network and
   Android location permissions, not the Nexus HTTP proxy.
-- The display-arbitration plan must enable third-party microphone grants only
-  after a hub-owned HUD indicator is impossible for plugins to suppress.
+- Microphone grants are available to any plugin that requests the capability.
 - Public glasses companion approval remains a separate design: phone approval
   must eventually provision package/certificate grants to the glasses hub over
   a reserved hub-to-hub path.

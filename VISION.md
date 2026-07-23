@@ -75,8 +75,6 @@ Public release makes this non-negotiable:
   3. *HTTP proxy* — may send traffic out through the user's data plan.
   4. *Camera* — may consume a glasses camera session (added with the camera
      platform; signer-bound like the rest).
-- **Mic indicator on the HUD** whenever the audio lease is active — the Android "green
-  dot", mandatory in the spec.
 - Protocol hygiene: an unknown surface `kind` (old glasses hub, newer plugin) is
   ignored and answered with a "update required" toast — graceful degradation is a spec
   rule, not a courtesy.

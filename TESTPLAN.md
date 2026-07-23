@@ -396,7 +396,7 @@ adb -s $phone uninstall com.anezium.rokidbus.phoneprobe
 > - Approving only `surfaces` enables its surface while HTTP/audio stay denied.
 > - Revocation unregisters/closes the plugin and prevents wake-on-message.
 > - Normal and developer consent views transition pending -> partially approved
->   -> active -> revoked; microphone remains disabled with the HUD-indicator note.
+>   -> active -> revoked; microphone is grantable to any plugin that requests it.
 > - CXR-L and SPP remain connected and the built-in Lyrics/Transit flows still work.
 
 ## Plan 003 external plugin SDK acceptance

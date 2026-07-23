@@ -189,7 +189,7 @@ fields but rejects unsupported required versions cleanly.
 
 - Converting Transit, Lyrics, or Lens; Plan 004 starts with Transit.
 - Removing built-in plugin support before both current plugins have external APKs.
-- Display arbitration, toast/actionable layers, microphone indicator, camera
+- Display arbitration, toast/actionable layers, camera
   companion provisioning, no-ADB setup, or RokidBrew network integration.
 - Publishing to the internet, creating a release/tag, or pushing a branch.
 - Adding a repository license without maintainer confirmation. Apache-2.0 is the
@@ -263,9 +263,9 @@ must not expose a trusted `pluginId`, global sequence, or arbitrary system path
 field in the high-level surface API.
 
 Expose HTTP/audio helpers only when the corresponding capability was approved.
-Because Plan 002 keeps third-party microphone disabled until a HUD indicator
-exists, the SDK must return a stable `CAPABILITY_NOT_AVAILABLE` result instead of
-falling back to the phone microphone.
+When `microphone` is not granted, `nexusAudioSession(...).start()` returns a
+stable `CAPABILITY_NOT_GRANTED` result and never falls back to the phone
+microphone.
 
 **Verify**: tests cover valid/invalid card and timed-lines payloads, anchor-only
 update, local surface IDs, capability denial, and unknown response fields.
