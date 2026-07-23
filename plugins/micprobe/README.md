@@ -1,1 +1,0 @@
-THROWAWAY diagnostic -- never release.
