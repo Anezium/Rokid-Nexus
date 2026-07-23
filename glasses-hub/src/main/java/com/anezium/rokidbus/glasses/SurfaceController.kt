@@ -6,6 +6,7 @@ import android.graphics.Bitmap
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
+import android.os.SystemClock
 import android.view.KeyEvent
 import com.anezium.rokidbus.shared.BusEnvelope
 import com.anezium.rokidbus.shared.BusPaths
@@ -25,6 +26,8 @@ object SurfaceController {
     private val listeners = CopyOnWriteArrayList<(NexusSurface?) -> Unit>()
     private val inputDedupe = DpadPairDedupe()
     private val suppressedDpadUps = mutableSetOf<Int>()
+    private val ringInputPolicy = RingSurfaceInputPolicy()
+    private val ringTapExpiry = Runnable(::resolveRingTaps)
     private val imageDecodeCoordinator = ImageDecodeCoordinator<Bitmap>()
     private val imageDecodeExecutor = Executors.newFixedThreadPool(2) { runnable ->
         Thread(runnable, "RokidNexusImageDecode").apply { isDaemon = true }
@@ -206,14 +209,24 @@ object SurfaceController {
             forwardSurfaceInput(event.keyCode, event.action)
         }
         if (event.keyCode == KeyEvent.KEYCODE_BACK && event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
-            if (surface.handlesBack) {
-                armBackFailsafe(surface.surfaceId)
-            } else {
-                hideLocal()
-            }
+            handleBackDown(surface)
             return true
         }
         return event.keyCode in FORWARDED_KEYS
+    }
+
+    fun handleRingKey(keyCode: Int, eventTimeMs: Long): Boolean {
+        if (active == null) return false
+        applyRingResolution(ringInputPolicy.onKeyDown(keyCode, eventTimeMs))
+        if (keyCode == RingSurfaceInputPolicy.RING_KEYCODE_TAP) {
+            main.removeCallbacks(ringTapExpiry)
+            main.postDelayed(ringTapExpiry, RingTapPolicy.DEFAULT_WINDOW_MS + 1L)
+        }
+        return true
+    }
+
+    fun cancelRingInput() {
+        runOnMain(::resetRingInputOnMain)
     }
 
     fun forwardSurfaceInput(keyCode: Int, action: Int): Boolean {
@@ -233,7 +246,8 @@ object SurfaceController {
         forcedPath: SurfaceDisplayPath? = null,
         launcherShow: Boolean = false,
     ) {
-        if (launcherShow) launcherReturnCoordinator.onSurfaceShown(surface.surfaceId)
+        val completesRingHandoff =
+            launcherShow && launcherReturnCoordinator.onSurfaceShown(surface.surfaceId)
         runOnMain {
             val keepMediaDecode = surface.isMedia && surface.mediaArtworkMetadata != null &&
                 imageDecodeCoordinator.isCurrent(surface.surfaceId, surface.contentKey)
@@ -243,7 +257,13 @@ object SurfaceController {
             cancelBackFailsafeOnMain(surface.surfaceId)
             wakeScreen(context)
             deactivateReplacedSurface(surface.surfaceId)
+            prepareRingInputForSurface(surface.surfaceId)
             active = surface
+            RingFocusBroadcastCoordinator.setSurfaceActive(
+                context,
+                active = true,
+                completesHandoff = completesRingHandoff,
+            )
             notifyListeners(surface)
             displaySurface(context, surface, forcedPath)
         }
@@ -256,7 +276,8 @@ object SurfaceController {
         baseOrder: SurfaceOrder,
         launcherShow: Boolean = false,
     ) {
-        if (launcherShow) launcherReturnCoordinator.onSurfaceShown(surface.surfaceId)
+        val completesRingHandoff =
+            launcherShow && launcherReturnCoordinator.onSurfaceShown(surface.surfaceId)
         val metadata = surface.imageMetadata ?: surface.mediaArtworkMetadata ?: return
         val key = ImageDecodeKey(surface.surfaceId, baseOrder.seq, metadata.contentKey)
         runOnMain {
@@ -269,7 +290,13 @@ object SurfaceController {
                 cancelBackFailsafeOnMain(surface.surfaceId)
                 wakeScreen(context)
                 deactivateReplacedSurface(surface.surfaceId)
+                prepareRingInputForSurface(surface.surfaceId)
                 active = surface
+                RingFocusBroadcastCoordinator.setSurfaceActive(
+                    context,
+                    active = true,
+                    completesHandoff = completesRingHandoff,
+                )
                 notifyListeners(surface)
                 displaySurface(context, surface, null)
             }
@@ -303,7 +330,13 @@ object SurfaceController {
                             val published = target.copy(imageBitmap = decoded)
                             cancelBackFailsafeOnMain(target.surfaceId)
                             wakeScreen(context)
+                            prepareRingInputForSurface(target.surfaceId)
                             active = published
+                            RingFocusBroadcastCoordinator.setSurfaceActive(
+                                context,
+                                active = true,
+                                completesHandoff = completesRingHandoff,
+                            )
                             notifyListeners(published)
                             displaySurface(context, published, null)
                         }
@@ -362,10 +395,12 @@ object SurfaceController {
         val coordinated = activeSurfaceId?.let(imageDecodeCoordinator::invalidate)
         coordinated?.recycleSafely()
         recycleActiveImageUnless(coordinated)
+        resetRingInputOnMain()
         active = null
         notifyListeners(null)
         SurfaceOverlayRenderer.hide()
         if (returnToLauncher) LauncherOverlayRenderer.show()
+        RingFocusBroadcastCoordinator.setSurfaceInactive()
     }
 
     private fun deactivateReplacedSurface(surfaceId: String) {
@@ -414,6 +449,44 @@ object SurfaceController {
         if (direction != null) return false
         suppressedDpadUps += event.keyCode
         return true
+    }
+
+    private fun resolveRingTaps() {
+        applyRingResolution(ringInputPolicy.resolveExpired(SystemClock.uptimeMillis()))
+    }
+
+    private fun applyRingResolution(resolution: RingSurfaceInputPolicy.Resolution?) {
+        when (resolution) {
+            is RingSurfaceInputPolicy.Resolution.Forward ->
+                resolution.events.forEach { event ->
+                    forwardSurfaceInput(event.keyCode, event.action)
+                }
+            RingSurfaceInputPolicy.Resolution.Back -> {
+                val surface = active ?: return
+                forwardSurfaceInput(KeyEvent.KEYCODE_BACK, KeyEvent.ACTION_DOWN)
+                handleBackDown(surface)
+            }
+            RingSurfaceInputPolicy.Resolution.Ignore,
+            null,
+            -> Unit
+        }
+    }
+
+    private fun handleBackDown(surface: NexusSurface) {
+        if (surface.handlesBack) {
+            armBackFailsafe(surface.surfaceId)
+        } else {
+            hideLocal()
+        }
+    }
+
+    private fun prepareRingInputForSurface(surfaceId: String) {
+        if (active?.surfaceId != surfaceId) resetRingInputOnMain()
+    }
+
+    private fun resetRingInputOnMain() {
+        main.removeCallbacks(ringTapExpiry)
+        ringInputPolicy.reset()
     }
 
     private fun armBackFailsafe(surfaceId: String) {

@@ -226,6 +226,8 @@ object GlassesHub {
         }
     }
 
+    internal fun launcherEntryOpensSurface(pluginId: String): Boolean = pluginId != CAMERA_LAUNCHER_ID
+
     fun sendSurfaceInput(payload: JSONObject): String? =
         sendRemote(BusEnvelope(path = BusPaths.SURFACE_INPUT, payload = payload))
 

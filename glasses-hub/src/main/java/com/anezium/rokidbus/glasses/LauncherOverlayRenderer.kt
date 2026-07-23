@@ -29,8 +29,6 @@ object LauncherOverlayRenderer {
     private const val RING_KEYCODE_TAP = 85
     private const val RING_KEYCODE_FORWARD = 87
     private const val RING_KEYCODE_BACKWARD = 88
-    private const val RING_FOCUS_ACTION = "com.anezium.r08accessbridge.action.NEXUS_RING_FOCUS"
-    private const val RING_BRIDGE_PACKAGE = "com.anezium.r08accessbridge"
 
     private var service: AccessibilityService? = null
     private var windowManager: WindowManager? = null
@@ -68,7 +66,6 @@ object LauncherOverlayRenderer {
         launcherReturnCoordinator.clearPendingLauncherOpen()
         GlassesHub.start(activeService.applicationContext)
         val manager = windowManager ?: activeService.getSystemService(WindowManager::class.java) ?: return false
-        val wasShown = root != null
         val currentRoot = root ?: LauncherOverlayRoot(activeService).also { next ->
             root = next
             val params = WindowManager.LayoutParams(
@@ -91,9 +88,7 @@ object LauncherOverlayRenderer {
         currentRoot.render(launcherEntries, selectedIndex)
         currentRoot.requestFocus()
         log("Launcher overlay opened")
-        if (!wasShown) {
-            sendRingFocus(activeService.applicationContext, focused = true)
-        }
+        RingFocusBroadcastCoordinator.setLauncherShown(activeService.applicationContext, shown = true)
         return true
     }
 
@@ -103,13 +98,16 @@ object LauncherOverlayRenderer {
         main.removeCallbacks(ringTapExpiry)
         ringTapPolicy.reset()
         val manager = windowManager
-        val currentRoot = root ?: return
-        runCatching { manager?.removeView(currentRoot) }
-        currentRoot.render(emptyList(), 0)
+        val currentRoot = root
+        if (currentRoot != null) {
+            runCatching { manager?.removeView(currentRoot) }
+            currentRoot.render(emptyList(), 0)
+        }
         root = null
         service?.applicationContext?.let { context ->
-            sendRingFocus(context, focused = false)
+            RingFocusBroadcastCoordinator.setLauncherShown(context, shown = false)
         }
+        if (currentRoot == null) return
         log("Launcher overlay closed")
     }
 
@@ -171,15 +169,6 @@ object LauncherOverlayRenderer {
         }
     }
 
-    private fun sendRingFocus(context: Context, focused: Boolean) {
-        context.sendBroadcast(
-            android.content.Intent(RING_FOCUS_ACTION)
-                .setPackage(RING_BRIDGE_PACKAGE)
-                .putExtra("focused", focused)
-                .putExtra("ts", System.currentTimeMillis()),
-        )
-    }
-
     private fun moveSelection(delta: Int) {
         if (launcherEntries.isEmpty()) return
         selectedIndex = (selectedIndex + delta + launcherEntries.size) % launcherEntries.size
@@ -192,6 +181,9 @@ object LauncherOverlayRenderer {
         log("Launcher overlay open result: $result")
         if (result.startsWith("launcherOpen=true")) {
             launcherReturnCoordinator.recordLauncherOpen(entry.id)
+            if (GlassesHub.launcherEntryOpensSurface(entry.id)) {
+                service?.applicationContext?.let(RingFocusBroadcastCoordinator::beginSurfaceHandoff)
+            }
             hide()
         }
     }

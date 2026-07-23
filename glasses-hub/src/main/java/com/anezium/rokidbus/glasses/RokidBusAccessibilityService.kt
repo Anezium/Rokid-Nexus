@@ -41,6 +41,10 @@ class RokidBusAccessibilityService : AccessibilityService() {
         developerOptionsEnabler = SelfArmDeveloperOptionsEnabler(this, main)
         liveInstance = this
         log("AccessibilityService connected; starting glasses hub")
+        RingFocusBroadcastCoordinator.onServiceConnected(
+            this,
+            surfaceActive = SurfaceController.activeSurface() != null,
+        )
         SurfaceOverlayRenderer.onServiceConnected(this)
         LauncherOverlayRenderer.onServiceConnected(this)
         GlassesHub.start(applicationContext)
@@ -135,15 +139,22 @@ class RokidBusAccessibilityService : AccessibilityService() {
     }
 
     private fun handleRingKeyEvent(event: KeyEvent): Boolean {
-        // Preserve the DOWN/UP pair even if the DOWN action hides the overlay.
+        // Preserve the raw R08 DOWN/UP pair even if its translated action hides
+        // the current owner before the physical UP arrives.
         if (event.action == KeyEvent.ACTION_UP && consumedDownKeys.remove(event.keyCode)) {
             return true
         }
-        if (!LauncherOverlayRenderer.isShown()) return false
+        val launcherShown = LauncherOverlayRenderer.isShown()
+        val surfaceActive = SurfaceController.activeSurface() != null
+        if (!launcherShown && !surfaceActive) return false
 
-        if (event.action != KeyEvent.ACTION_DOWN) return false
+        if (event.action != KeyEvent.ACTION_DOWN) return true
         if (event.repeatCount == 0) {
-            LauncherOverlayRenderer.handleRingKey(event.keyCode, event.eventTime)
+            if (launcherShown) {
+                LauncherOverlayRenderer.handleRingKey(event.keyCode, event.eventTime)
+            } else {
+                SurfaceController.handleRingKey(event.keyCode, event.eventTime)
+            }
         }
         consumedDownKeys.add(event.keyCode)
         return true
@@ -171,6 +182,9 @@ class RokidBusAccessibilityService : AccessibilityService() {
         if (liveInstance === this) liveInstance = null
         LauncherOverlayRenderer.onServiceDestroyed(this)
         SurfaceOverlayRenderer.onServiceDestroyed(this)
+        SurfaceController.cancelRingInput()
+        RingFocusBroadcastCoordinator.onServiceDestroyed(this)
+        consumedDownKeys.clear()
         super.onDestroy()
     }
 
