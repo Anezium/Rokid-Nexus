@@ -15,6 +15,7 @@ object NexusPluginIcons {
         iconKey: String?,
         customIcon: PluginCustomIcon?,
         pluginId: String? = null,
+        fallbackResId: Int? = null,
     ): Drawable = resolveWithLoaders(
         iconKey = iconKey,
         customIcon = customIcon,
@@ -23,6 +24,7 @@ object NexusPluginIcons {
             requireNotNull(ContextCompat.getDrawable(context, resId))
         },
         customLoader = { icon -> loadCustomDrawable(context, icon) },
+        fallbackResId = fallbackResId,
     )
 
     fun drawableFor(iconKey: String?, pluginId: String? = null): Int {
@@ -38,6 +40,7 @@ object NexusPluginIcons {
         pluginId: String? = null,
         builtInLoader: (Int) -> T,
         customLoader: (PluginCustomIcon) -> T,
+        fallbackResId: Int? = null,
     ): T {
         drawableForBuiltInKey(iconKey)?.let { return builtInLoader(it) }
         if (customIcon != null) {
@@ -47,7 +50,7 @@ object NexusPluginIcons {
                 // A plugin resource can disappear or fail to inflate at any time.
             }
         }
-        return builtInLoader(drawableForLegacyPlugin(pluginId))
+        return builtInLoader(fallbackResId ?: drawableForLegacyPlugin(pluginId))
     }
 
     private fun loadCustomDrawable(context: Context, customIcon: PluginCustomIcon): Drawable {

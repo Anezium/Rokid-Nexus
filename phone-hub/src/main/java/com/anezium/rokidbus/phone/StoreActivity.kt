@@ -5,6 +5,8 @@ import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Typeface
+import android.graphics.drawable.BitmapDrawable
+import android.graphics.drawable.Drawable
 import android.os.Build
 import android.os.Bundle
 import android.text.SpannableString
@@ -15,18 +17,21 @@ import android.view.Gravity
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.HorizontalScrollView
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
-import com.anezium.rokidbus.client.R as BusClientR
 import com.anezium.rokidbus.client.ui.BusTheme
+import com.anezium.rokidbus.client.ui.NexusPluginIcons
 import com.anezium.rokidbus.client.ui.NexusUi
+import com.anezium.rokidbus.client.ui.PluginCustomIcon
 
 class StoreActivity : Activity() {
     private lateinit var list: LinearLayout
     private lateinit var chipRow: LinearLayout
     private lateinit var registryClient: RegistryClient
+    private lateinit var iconLoader: StoreIconLoader
     private lateinit var pluginInstaller: PluginInstaller
     private lateinit var postInstallCoordinator: PluginPostInstallCoordinator
     private var registrySnapshot: RegistrySnapshot? = null
@@ -42,6 +47,7 @@ class StoreActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         registryClient = RegistryClient.create(applicationContext)
+        iconLoader = StoreIconLoader(applicationContext)
         postInstallCoordinator = PluginPostInstallCoordinator(
             discoverPackage = PhonePluginDiscovery(packageManager)::discoverPackage,
             grantState = PluginGrantStore(applicationContext)::stateFor,
@@ -216,7 +222,7 @@ class StoreActivity : Activity() {
     private fun storeEntryCard(entry: StoreEntry): LinearLayout {
         val action = actionFor(entry)
         return storeCard(
-            iconRes = iconFor(entry.id),
+            icon = storeIconView(entry),
             title = entry.displayName,
             meta = buildString {
                 entry.registryAuthor?.takeIf(String::isNotBlank)?.let { append(it).append(" · ") }
@@ -229,6 +235,44 @@ class StoreActivity : Activity() {
             buttonFilled = action.filled,
             onClick = action.onClick,
         )
+    }
+
+    private fun storeIconView(entry: StoreEntry): ImageView {
+        val imageView = NexusUi.iconTileDrawable(this, fallbackIcon(entry), 40)
+        val iconUrl = entry.registryPlugin?.iconUrl ?: return imageView
+        imageView.tag = iconUrl
+        iconLoader.load(iconUrl) { bitmap ->
+            if (isFinishing || isDestroyed || imageView.tag != iconUrl) return@load
+            NexusUi.applyIconTileArtwork(
+                imageView,
+                BitmapDrawable(resources, bitmap),
+                sizeDp = 40,
+            )
+        }
+        return imageView
+    }
+
+    private fun fallbackIcon(entry: StoreEntry): Drawable {
+        val local = entry.localEntry
+        return when (
+            val fallback = selectStoreIconFallback(
+                pluginId = entry.id,
+                installedPackageName = local?.principal?.packageName,
+                iconKey = local?.iconKey,
+                customIconResId = local?.iconDrawableResId,
+            )
+        ) {
+            is StoreIconFallback.InstalledDescriptor -> NexusPluginIcons.resolve(
+                context = this,
+                iconKey = fallback.iconKey,
+                customIcon = fallback.customIconResId?.let { resId ->
+                    PluginCustomIcon(fallback.packageName, resId)
+                },
+                pluginId = fallback.pluginId,
+                fallbackResId = fallback.legacyResId,
+            )
+            is StoreIconFallback.Legacy -> requireNotNull(getDrawable(fallback.resId))
+        }
     }
 
     private data class StoreAction(
@@ -348,14 +392,6 @@ class StoreActivity : Activity() {
         }
     }
 
-    private fun iconFor(id: String): Int = when (id) {
-        "lyrics" -> BusClientR.drawable.ic_plugin_music
-        "media" -> BusClientR.drawable.ic_plugin_disc
-        "transit" -> BusClientR.drawable.ic_plugin_bus
-        "lens" -> BusClientR.drawable.ic_plugin_lens
-        else -> BusClientR.drawable.ic_plugin_send
-    }
-
     private fun openCatalogEntry(entry: PluginCatalogEntry?) {
         if (entry == null) return
         if (entry.principal != null && entry.state != PluginCatalogState.ENABLED) {
@@ -435,7 +471,7 @@ class StoreActivity : Activity() {
         }
 
     private fun storeCard(
-        iconRes: Int,
+        icon: ImageView,
         title: String,
         meta: String,
         description: String,
@@ -457,7 +493,7 @@ class StoreActivity : Activity() {
             LinearLayout(this@StoreActivity).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
-                addView(NexusUi.iconTileImage(this@StoreActivity, iconRes, 40))
+                addView(icon)
                 addView(
                     LinearLayout(this@StoreActivity).apply {
                         orientation = LinearLayout.VERTICAL

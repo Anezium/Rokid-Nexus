@@ -29,6 +29,7 @@ data class RegistryPlugin(
     val sourceUrl: String,
     val publishedAt: String,
     val iconAsset: String,
+    val iconUrl: String? = null,
     val screenshotAssets: List<String>,
     val listingDescriptionMarkdown: String,
     val releases: List<RegistryRelease>,
@@ -241,6 +242,7 @@ class RegistryClient(
                 sourceUrl = value.requiredHttpsUrl("sourceUrl", path),
                 publishedAt = value.requiredString("publishedAt", path),
                 iconAsset = value.requiredString("iconAsset", path),
+                iconUrl = validatedHttpsUrl(value.opt("iconUrl") as? String),
                 screenshotAssets = value.requiredStringList("screenshotAssets", path),
                 listingDescriptionMarkdown = listing.requiredString("descriptionMarkdown", "$path.listing", allowEmpty = true),
                 releases = releases,
@@ -346,6 +348,14 @@ class RegistryClient(
             }
             return value
         }
+    }
+}
+
+internal fun validatedHttpsUrl(value: String?): String? {
+    val candidate = value?.takeIf(String::isNotBlank) ?: return null
+    val url = runCatching { URL(candidate) }.getOrNull() ?: return null
+    return candidate.takeIf {
+        url.protocol.equals("https", ignoreCase = true) && url.host.isNotBlank()
     }
 }
 

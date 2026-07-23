@@ -393,6 +393,23 @@ object NexusUi {
             layoutParams = LinearLayout.LayoutParams(dp(context, sizeDp), dp(context, sizeDp))
         }
 
+    /** Full-bleed square artwork, clipped to the same rounded tile outline. */
+    fun applyIconTileArtwork(imageView: ImageView, drawable: Drawable, sizeDp: Int = 34) {
+        val context = imageView.context
+        imageView.setImageDrawable(drawable)
+        imageView.imageTintList = null
+        imageView.clearColorFilter()
+        imageView.scaleType = ImageView.ScaleType.CENTER_CROP
+        imageView.setPadding(0, 0, 0, 0)
+        imageView.background = rounded(
+            context,
+            Color.TRANSPARENT,
+            if (sizeDp > 34) 11 else 9,
+        )
+        imageView.clipToOutline = true
+        imageView.layoutParams = LinearLayout.LayoutParams(dp(context, sizeDp), dp(context, sizeDp))
+    }
+
     fun iconTile(context: Context, glyph: String, sizeDp: Int = 34): TextView =
         TextView(context).apply {
             text = glyph

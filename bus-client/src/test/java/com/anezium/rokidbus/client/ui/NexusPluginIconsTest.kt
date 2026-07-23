@@ -96,6 +96,20 @@ class NexusPluginIconsTest {
     }
 
     @Test
+    fun `caller fallback is used after descriptor resolution fails`() {
+        val resolved = NexusPluginIcons.resolveWithLoaders(
+            iconKey = "unknown",
+            customIcon = customIcon,
+            pluginId = "lyrics",
+            builtInLoader = { it },
+            customLoader = { throw AssertionError("broken drawable") },
+            fallbackResId = R.drawable.ic_plugin_star,
+        )
+
+        assertEquals(R.drawable.ic_plugin_star, resolved)
+    }
+
+    @Test
     fun `missing key and custom icon use grid`() {
         val resolved = NexusPluginIcons.resolveWithLoaders(
             iconKey = null,

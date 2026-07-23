@@ -2,6 +2,7 @@ package com.anezium.rokidbus.phone
 
 import java.io.IOException
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -20,6 +21,37 @@ class RegistryClientTest {
         assertEquals("com.anezium.rokidbus.plugin.feeds", feed.plugins.single().artifact.packageName)
         assertEquals(7L, feed.plugins.single().artifact.versionCode)
         assertEquals("cd".repeat(32), feed.plugins.single().artifact.signerSha256)
+        assertEquals(
+            "https://cdn.example.com/icons/feeds.png",
+            feed.plugins.single().iconUrl,
+        )
+    }
+
+    @Test
+    fun `optional icon url is absent when missing invalid or non-https`() {
+        val invalidFields = listOf(
+            "",
+            "\"iconUrl\": null,",
+            "\"iconUrl\": true,",
+            "\"iconUrl\": \"\",",
+            "\"iconUrl\": \"not a URL\",",
+            "\"iconUrl\": \"https:relative\",",
+            "\"iconUrl\": \"http://cdn.example.com/feeds.png\",",
+        )
+
+        invalidFields.forEach { field ->
+            assertNull(RegistryClient.parse(validFeed(iconUrlField = field)).plugins.single().iconUrl)
+        }
+    }
+
+    @Test
+    fun `icon url validation accepts only absolute https urls`() {
+        val url = "https://cdn.example.com/icons/shoplist.png"
+
+        assertEquals(url, validatedHttpsUrl(url))
+        assertNull(validatedHttpsUrl("http://cdn.example.com/icons/shoplist.png"))
+        assertNull(validatedHttpsUrl("https:shoplist.png"))
+        assertNull(validatedHttpsUrl(null))
     }
 
     @Test
@@ -131,6 +163,7 @@ class RegistryClientTest {
         nexusExtra: String = "",
         artifactExtra: String = "",
         signerSha256Field: String = "\"signerSha256\": \"${"cd".repeat(32)}\",",
+        iconUrlField: String = "\"iconUrl\": \"https://cdn.example.com/icons/feeds.png\",",
     ): String = """
         {
           "version": 1,
@@ -145,6 +178,7 @@ class RegistryClientTest {
             "sourceUrl": "https://github.com/Anezium/Rokid-Nexus",
             "publishedAt": "2026-07-12",
             "iconAsset": "feeds-icon.png",
+            $iconUrlField
             "screenshotAssets": ["feeds-1.jpg"],
             "listing": {"descriptionMarkdown": "Feed details."},
             "releases": [{"version":"0.1.0","date":"2026-07-12","notes":"First."}],
