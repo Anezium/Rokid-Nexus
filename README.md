@@ -119,7 +119,7 @@ A plugin is a headless phone APK against the published SDK:
 repositories { maven("https://jitpack.io") }
 
 dependencies {
-    implementation("com.github.Anezium.Rokid-Nexus:bus-client:sdk-v0.1.1")
+    implementation("com.github.Anezium.Rokid-Nexus:bus-client:sdk-v0.2.0")
 }
 ```
 
