@@ -7,7 +7,7 @@ android {
     compileSdk = 36
     defaultConfig {
         applicationId = "com.anezium.rokidbus.plugin.lens"
-        minSdk = 31
+        minSdk = 30
         targetSdk = 36
         versionCode = 16
         versionName = "1.1.1"

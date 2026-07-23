@@ -10,7 +10,7 @@ android {
 
     defaultConfig {
         applicationId = "com.anezium.rokidbus.plugin.transit"
-        minSdk = 31
+        minSdk = 30
         targetSdk = 36
         versionCode = 3
         versionName = "1.0.2"

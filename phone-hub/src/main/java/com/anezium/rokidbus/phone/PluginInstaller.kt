@@ -433,7 +433,12 @@ internal class AndroidPackageInstallGateway(private val context: Context) : Pack
         val params = AndroidPackageInstaller.SessionParams(AndroidPackageInstaller.SessionParams.MODE_FULL_INSTALL).apply {
             setAppPackageName(expectedPackageName)
             setSize(apk.length())
-            setRequireUserAction(AndroidPackageInstaller.SessionParams.USER_ACTION_REQUIRED)
+            // setRequireUserAction is API 31+. On Android 11 the installer always
+            // prompts the user for a full-install session anyway, so the default
+            // behaviour already matches USER_ACTION_REQUIRED.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                setRequireUserAction(AndroidPackageInstaller.SessionParams.USER_ACTION_REQUIRED)
+            }
         }
         val sessionId = packageInstaller.createSession(params)
         val token = UUID.randomUUID().toString()

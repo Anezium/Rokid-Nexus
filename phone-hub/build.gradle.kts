@@ -10,7 +10,7 @@ android {
 
     defaultConfig {
         applicationId = "com.anezium.rokidbus.phone"
-        minSdk = 31
+        minSdk = 30
         targetSdk = 36
         versionCode = 10039
         versionName = "1.0.39"
