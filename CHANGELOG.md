@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.0.41
+
+### R08 ring compatibility
+
+- The Rokid R08 ring can now drive the Nexus HUD end to end alongside the R08 Access Bridge companion app: a triple tap opens the Nexus launcher, ring swipes move the selection, a single tap opens the selected plugin, and a double tap goes back.
+- Ring control follows you into plugin surfaces. The hub translates ring gestures into the same key input plugins already receive from the temple touchpad, so every existing plugin works with the ring without an update.
+- The glasses hub exposes an OPEN_LAUNCHER broadcast endpoint, and hands the ring back to R08 Access Bridge the moment no Nexus UI is on screen (with a bounded handoff while a plugin surface is opening). Requires R08 Access Bridge with the matching "Nexus launcher" ring action.
+
+### Plugin microphone capability
+
+- Plugins can request the glasses microphone and receive 16 kHz mono PCM through the new SDK audio session, with the grant managed from the phone permissions screen. No Android record permission is involved; audio comes from the glasses over the hub.
+
+### Phone app
+
+- The phone app now supports Android 11 and newer (previously Android 12+).
+
 ## 1.0.38
 
 - The phone now offers a forced reinstall when the glasses package exists but its hub cannot report a version.
