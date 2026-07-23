@@ -19,10 +19,12 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import com.anezium.rokidbus.client.ui.BusTheme
+import com.anezium.rokidbus.client.ui.NexusPluginIcons
 
 object LauncherOverlayRenderer {
     private const val KEYCODE_PROG_BLUE = 186
@@ -286,16 +288,28 @@ object LauncherOverlayRenderer {
         private fun pluginRow(
             entry: GlassesHub.LauncherEntry,
             selected: Boolean,
-        ): TextView =
-            monoText(18f, if (selected) BusTheme.phosphor else BusTheme.text, bold = selected).apply {
-                text = if (selected) "> ${entry.displayName}" else "  ${entry.displayName}"
-                minHeight = dp(52)
+        ): View {
+            val icon = ImageView(context).apply {
+                setImageResource(NexusPluginIcons.drawableFor(entry.iconKey, entry.id))
+                layoutParams = LinearLayout.LayoutParams(dp(24), dp(24)).apply { marginEnd = dp(14) }
+            }
+            val label = monoText(18f, if (selected) BusTheme.phosphor else BusTheme.text, bold = selected).apply {
+                text = entry.displayName
                 gravity = Gravity.CENTER_VERTICAL
                 maxLines = 2
                 ellipsize = TextUtils.TruncateAt.END
-                setPadding(dp(8), 0, dp(8), 0)
-                background = outline(selected)
+                layoutParams = LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
             }
+            return LinearLayout(context).apply {
+                orientation = HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                minimumHeight = dp(52)
+                setPadding(dp(12), 0, dp(12), 0)
+                background = outline(selected)
+                addView(icon)
+                addView(label)
+            }
+        }
 
         private fun monoText(sizeSp: Float, color: Int, bold: Boolean = false): TextView =
             TextView(context).apply {

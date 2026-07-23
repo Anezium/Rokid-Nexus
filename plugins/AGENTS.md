@@ -185,6 +185,14 @@ green blob. If both fields are present and `ICON` is a recognized built-in key,
 the built-in wins; otherwise Nexus tries `ICON_DRAWABLE`, then falls back to the
 grid glyph.
 
+Your glyph lives in **one file** and feeds every surface: the sample template's
+`ic_launcher_foreground.xml` is an `<inset>` (20%) pointing at the same drawable
+as `ICON_DRAWABLE`, so the Android app icon (Settings → Apps) and the themed
+icon follow automatically. Do not edit `ic_launcher_foreground.xml` — replace
+the glyph drawable it references. Registry submissions should also ship a
+512×512 `iconAsset` PNG (green glyph on `#030C06`, glyph in the central ~60%);
+the Store downloads and shows it via the feed's `iconUrl`.
+
 The HUD renders **structured rows**, not free text: build `NexusCard` /
 `NexusTimedLines` / `NexusMedia` / image surfaces and let the glasses lay them out.
 Never pre-format monospace strings. Input arrives as DPAD-style events
