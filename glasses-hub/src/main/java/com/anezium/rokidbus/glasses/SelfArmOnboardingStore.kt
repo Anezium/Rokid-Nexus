@@ -40,6 +40,7 @@ internal object SelfArmOnboardingStore {
         prefs(context).edit()
             .putBoolean(KEY_REQUESTED, true)
             .putBoolean(KEY_RUNNING, false)
+            .putBoolean(KEY_MANUAL_ARM_IN_PROGRESS, false)
             .putString(KEY_FAILURE_STATE, "")
             .putString(KEY_FAILURE_DIAGNOSTIC, "")
             .putString(KEY_PROGRESS_STATE, "waiting_for_nexus_accessibility")
@@ -64,11 +65,30 @@ internal object SelfArmOnboardingStore {
         return true
     }
 
+    /**
+     * Set once the manual self-arm assets are staged, and held true until the phone finishes (or
+     * abandons) the arm. While set, a transient AccessibilityService teardown must NOT delete the
+     * staged watchdog/bridge scripts: the ROM churns the service during the Wireless Debugging
+     * toggle, and the phone still needs to read those files to arm. Lives in prefs (not on the
+     * service instance) so it survives the service being destroyed and recreated mid-pairing.
+     */
+    fun markManualArmInProgress(context: Context) {
+        prefs(context).edit().putBoolean(KEY_MANUAL_ARM_IN_PROGRESS, true).apply()
+    }
+
+    fun clearManualArmInProgress(context: Context) {
+        prefs(context).edit().putBoolean(KEY_MANUAL_ARM_IN_PROGRESS, false).apply()
+    }
+
+    fun isManualArmInProgress(context: Context): Boolean =
+        prefs(context).getBoolean(KEY_MANUAL_ARM_IN_PROGRESS, false)
+
     fun markRunning(context: Context) {
         prefs(context).edit()
             .putBoolean(KEY_REQUESTED, true)
             .putBoolean(KEY_RUNNING, true)
             .putBoolean(KEY_LEGACY_ADB_SAFE, false)
+            .putBoolean(KEY_MANUAL_ARM_IN_PROGRESS, false)
             .putString(KEY_FAILURE_STATE, "")
             .putString(KEY_FAILURE_DIAGNOSTIC, "")
             .putString(KEY_PROGRESS_STATE, "starting_wireless_debugging_setup")
@@ -97,6 +117,7 @@ internal object SelfArmOnboardingStore {
         prefs(context).edit()
             .putBoolean(KEY_REQUESTED, false)
             .putBoolean(KEY_RUNNING, false)
+            .putBoolean(KEY_MANUAL_ARM_IN_PROGRESS, false)
             .putString(KEY_PROGRESS_STATE, setupState.trim().take(MAX_STATE_LENGTH))
             .putString(KEY_FAILURE_STATE, if (success) "" else setupState.trim().take(MAX_STATE_LENGTH))
             .putString(
@@ -160,6 +181,7 @@ internal object SelfArmOnboardingStore {
     private const val KEY_PROGRESS_STATE = "progress_state"
     private const val KEY_LEGACY_ADB_SAFE = "legacy_adb_safe"
     private const val KEY_AWAITING_A11Y = "awaiting_accessibility_enable"
+    private const val KEY_MANUAL_ARM_IN_PROGRESS = "manual_arm_in_progress"
     private const val MAX_STATE_LENGTH = 96
     private val networkPostureRefreshRunning = AtomicBoolean(false)
 }

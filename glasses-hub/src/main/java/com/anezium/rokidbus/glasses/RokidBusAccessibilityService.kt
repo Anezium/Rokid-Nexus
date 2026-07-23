@@ -45,6 +45,18 @@ class RokidBusAccessibilityService : AccessibilityService() {
         LauncherOverlayRenderer.onServiceConnected(this)
         GlassesHub.start(applicationContext)
         AccessibilityRearmWatcher.start(applicationContext, "accessibility_service_connected")
+        // If a manual pairing was awaiting the phone's arm when the ROM tore the service down,
+        // the staged assets may have been lost with it — put them back so the phone can still read
+        // them once it reconnects. Best-effort; a genuine terminal event clears the flag.
+        if (SelfArmOnboardingStore.isManualArmInProgress(applicationContext)) {
+            runCatching { SelfArmManualArmAssets.stage(applicationContext) }
+                .onFailure {
+                    log(
+                        "Manual self-arm asset re-stage on reconnect failed: " +
+                            sanitizeSupportDiagnostic(it.message.orEmpty()),
+                    )
+                }
+        }
         SelfArmOnboardingStore.refreshNetworkPosture(applicationContext)
         SelfArmOnboardingStore.notifyChanged(applicationContext)
         if (SelfArmOnboardingStore.consumeAwaitingAccessibility(applicationContext)) {
@@ -243,6 +255,9 @@ class RokidBusAccessibilityService : AccessibilityService() {
             }
             manualNavigationActive = true
         }
+        // Assets are now staged for the phone to read; protect them from the AccessibilityService
+        // churn the ROM inflicts during the Wireless Debugging toggle until the phone is done.
+        SelfArmOnboardingStore.markManualArmInProgress(applicationContext)
         pendingManualTarget = target
         pendingManualCompletion = onFinished
         if (target.requiresWifi() && !SelfArmWirelessAdbController.isWifiEnabled(applicationContext)) {
@@ -339,7 +354,7 @@ class RokidBusAccessibilityService : AccessibilityService() {
         if (!success && completion != null) {
             manualNavigationActive = false
             wirelessDebuggingAutomator?.stop()
-            SelfArmManualArmAssets.cleanup(applicationContext)
+            cleanupManualAssetsUnlessArmInProgress()
             SelfArmOnboardingStore.reportProgress(
                 applicationContext,
                 "manual_pairing_settings_unavailable",
@@ -368,14 +383,14 @@ class RokidBusAccessibilityService : AccessibilityService() {
         val enabler = developerOptionsEnabler
         if (enabler == null) {
             manualNavigationActive = false
-            SelfArmManualArmAssets.cleanup(applicationContext)
+            cleanupManualAssetsUnlessArmInProgress()
             onFinished(false)
             return
         }
         enabler.start { success ->
             if (!success) {
                 manualNavigationActive = false
-                SelfArmManualArmAssets.cleanup(applicationContext)
+                cleanupManualAssetsUnlessArmInProgress()
                 SelfArmOnboardingStore.reportProgress(
                     applicationContext,
                     "manual_developer_enable_failed",
@@ -386,7 +401,22 @@ class RokidBusAccessibilityService : AccessibilityService() {
         }
     }
 
+    /**
+     * Deletes the staged manual-arm assets, but ONLY when no manual arm is in progress. During a
+     * manual pairing the ROM churns the AccessibilityService (destroy/recreate) while the wearer
+     * toggles Wireless Debugging; those transient teardowns must not wipe the scripts the phone
+     * still needs to read. The genuine terminal paths (phone CLOSE, success, timeout) clear the
+     * in-progress flag first, so cleanup runs normally there.
+     */
+    private fun cleanupManualAssetsUnlessArmInProgress() {
+        if (SelfArmOnboardingStore.isManualArmInProgress(applicationContext)) return
+        SelfArmManualArmAssets.cleanup(applicationContext)
+    }
+
     private fun closeManualNavigation(armed: Boolean) {
+        // Terminal: the phone is done with the manual flow, so let the assets go. Clear the
+        // in-progress flag first so both this cleanup and the automator.stop() below actually run.
+        SelfArmOnboardingStore.clearManualArmInProgress(applicationContext)
         developerOptionsEnabler?.stop()
         wirelessDebuggingAutomator?.stop()
         finishManualNavigationRequest(false)
@@ -420,7 +450,7 @@ class RokidBusAccessibilityService : AccessibilityService() {
         wirelessDebuggingAutomator?.stop()
         finishManualNavigationRequest(false)
         manualNavigationActive = false
-        SelfArmManualArmAssets.cleanup(applicationContext)
+        cleanupManualAssetsUnlessArmInProgress()
         SelfArmOnboardingStore.pause(applicationContext, progressState)
     }
 

@@ -159,7 +159,12 @@ internal class SelfArmWirelessDebuggingAutomator(
         handler.removeCallbacks(stepRunnable)
         localSelfPairingThread?.interrupt()
         localSelfPairingThread = null
-        if (wasManual) SelfArmManualArmAssets.cleanup(service.applicationContext)
+        // Don't wipe the staged assets on a transient stop (the ROM churns the AccessibilityService
+        // during the Wireless Debugging toggle); the phone still needs them. Terminal paths clear
+        // the in-progress flag first so this cleanup runs then.
+        if (wasManual && !SelfArmOnboardingStore.isManualArmInProgress(service.applicationContext)) {
+            SelfArmManualArmAssets.cleanup(service.applicationContext)
+        }
     }
 
     fun updateManualTarget(target: SelfArmManualTarget) {
@@ -1294,6 +1299,8 @@ internal class SelfArmWirelessDebuggingAutomator(
         if (operationMode == OperationMode.MANUAL_NAVIGATION) {
             report(setupState)
             SelfArmOnboardingStore.pause(service.applicationContext, setupState)
+            // Terminal for the manual flow (timeout or explicit close): release the assets.
+            SelfArmOnboardingStore.clearManualArmInProgress(service.applicationContext)
             SelfArmManualArmAssets.cleanup(service.applicationContext)
             service.onManualNavigationFinished()
             handler.postDelayed({ service.returnToOnboarding() }, 300L)
