@@ -72,6 +72,7 @@ object NexusPluginIcons {
             "music" -> R.drawable.ic_plugin_music
             "disc" -> R.drawable.ic_plugin_disc
             "bus" -> R.drawable.ic_plugin_bus
+            "cart" -> R.drawable.ic_plugin_cart
             "lens" -> R.drawable.ic_plugin_lens
             "mic" -> R.drawable.ic_plugin_mic
             "send" -> R.drawable.ic_plugin_send
@@ -99,6 +100,7 @@ object NexusPluginIcons {
             "media" -> R.drawable.ic_plugin_disc
             "transit" -> R.drawable.ic_plugin_bus
             "lens" -> R.drawable.ic_plugin_lens
+            "shoplist" -> R.drawable.ic_plugin_cart
             else -> R.drawable.ic_plugin_grid
         }
 }

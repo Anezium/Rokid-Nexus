@@ -165,9 +165,11 @@ concatenating card content blew the 128-char cap on real data; hash instead).
 
 Both icon declarations are optional. Prefer a Nexus built-in by declaring
 `com.anezium.rokidbus.plugin.ICON` with one of these keys: `music`, `disc`,
-`bus`, `lens`, `mic`, `send`, `feed`, `weather`, `chat`, `calendar`, `clock`,
-`star`, `heart`, `game`, `globe`, `bell`, `terminal`, `grid`, `map`, `bolt`, or
-`bookmark`.
+`bus`, `cart`, `lens`, `mic`, `send`, `feed`, `weather`, `chat`, `calendar`,
+`clock`, `star`, `heart`, `game`, `globe`, `bell`, `terminal`, `grid`, `map`,
+`bolt`, or `bookmark`. A built-in key also renders natively on the glasses
+launcher — a custom `ICON_DRAWABLE` cannot reach the glasses (it lives in your
+phone APK), so declare a built-in `ICON` too whenever one fits.
 
 If the built-in set does not fit your identity, declare your own drawable
 resource instead:

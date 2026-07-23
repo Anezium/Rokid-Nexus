@@ -9,7 +9,7 @@ class StoreIconFallbackTest {
     @Test
     fun `legacy map assigns send only to feeds and grid to unknown plugins`() {
         assertEquals(BusClientR.drawable.ic_plugin_send, iconFor("feeds"))
-        assertEquals(BusClientR.drawable.ic_plugin_grid, iconFor("shoplist"))
+        assertEquals(BusClientR.drawable.ic_plugin_cart, iconFor("shoplist"))
         assertEquals(BusClientR.drawable.ic_plugin_grid, iconFor("unknown"))
     }
 
@@ -40,7 +40,7 @@ class StoreIconFallbackTest {
         )
 
         assertEquals(
-            StoreIconFallback.Legacy(BusClientR.drawable.ic_plugin_grid),
+            StoreIconFallback.Legacy(BusClientR.drawable.ic_plugin_cart),
             selected,
         )
     }

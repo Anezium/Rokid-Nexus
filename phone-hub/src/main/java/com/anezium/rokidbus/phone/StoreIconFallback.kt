@@ -38,5 +38,6 @@ internal fun iconFor(id: String): Int = when (id) {
     "transit" -> BusClientR.drawable.ic_plugin_bus
     "lens" -> BusClientR.drawable.ic_plugin_lens
     "feeds" -> BusClientR.drawable.ic_plugin_send
+    "shoplist" -> BusClientR.drawable.ic_plugin_cart
     else -> BusClientR.drawable.ic_plugin_grid
 }

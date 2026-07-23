@@ -44,6 +44,12 @@ class NexusPluginIconsTest {
         assertEquals(R.drawable.ic_plugin_disc, NexusPluginIcons.drawableFor(null, "media"))
         assertEquals(R.drawable.ic_plugin_bus, NexusPluginIcons.drawableFor(null, "transit"))
         assertEquals(R.drawable.ic_plugin_lens, NexusPluginIcons.drawableFor("unknown", "lens"))
+        assertEquals(R.drawable.ic_plugin_cart, NexusPluginIcons.drawableFor(null, "shoplist"))
+    }
+
+    @Test
+    fun `cart resolves as a built-in icon key`() {
+        assertEquals(R.drawable.ic_plugin_cart, NexusPluginIcons.drawableFor("cart"))
     }
 
     @Test
