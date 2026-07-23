@@ -258,3 +258,9 @@ Distribution is F-Droid-like — you host, the registry indexes:
    merges after CI is green.
 4. Updates: publish the new APK on your releases, PR the manifest bump. Keep the
    same signing certificate forever — Android and the grant system both pin it.
+5. Build **after** you commit and tag, never from a dirty tree. AGP embeds the
+   git revision of your checkout in the APK (`META-INF/version-control-info.textproto`),
+   and review authenticates the APK against the release tag through it: an APK
+   whose recorded revision is not the tagged commit cannot be verified against
+   your source and will be held. The correct order is: commit everything
+   (version bump included) → tag → build → publish that exact APK.
