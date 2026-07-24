@@ -38,7 +38,7 @@ dependencies { implementation("com.github.Anezium.Rokid-Nexus:bus-client:<versio
 
 - `applicationId` / namespace: `com.<you>.<something>.plugin.<id>` (first-party
   plugins use `com.anezium.rokidbus.plugin.<id>`).
-- `minSdk 31`, `targetSdk 36`, `versionName` semver (`1.0.0`).
+- `minSdk 30` (Android 11), `targetSdk 36`, `versionName` semver (`1.0.0`).
 - Sign every build with **one** certificate. Multi-signer APKs are rejected outright
   (`SIGNER_SET_UNSUPPORTED`). Your signing certificate is part of your identity: the
   user's approval is keyed to `package + pluginId + signerSha256`, so switching from

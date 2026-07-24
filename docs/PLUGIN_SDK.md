@@ -28,7 +28,9 @@ For local development against a checkout, publish a snapshot instead:
 '-PversionName=0.1.0-SNAPSHOT'` and consume it from `mavenLocal()`.
 
 Use `compileSdk = 36`. The bus-client AAR supports `minSdk >= 26`; the
-repository's canonical Sample and Transit plugin templates use `minSdk = 31`.
+repository's canonical Sample and Transit plugin templates use `minSdk = 30`
+(Android 11), matching the phone hub — don't require a newer API level without
+a reason, or your plugin won't install on Android 11 phones the hub supports.
 The repository builds with JDK 17.
 
 ## 2. Declare the plugin service
@@ -274,7 +276,7 @@ present only in debug builds.
 Compatibility details and reserved lifecycle payloads live in
 [BUSSPEC.md](../BUSSPEC.md). [`plugins/sample`](../plugins/sample) is the
 canonical headless template: package `com.anezium.rokidbus.plugin.sample`,
-`minSdk 31`, a headless manifest, and a NexusUi/BusTheme settings screen with
+`minSdk 30`, a headless manifest, and a NexusUi/BusTheme settings screen with
 the required uninstall row.
 
 This project is licensed under the [Apache License 2.0](../LICENSE).

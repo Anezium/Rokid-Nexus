@@ -10,7 +10,7 @@
   <a href="https://github.com/Anezium/Rokid-Nexus/releases"><img src="https://img.shields.io/github/v/release/Anezium/Rokid-Nexus?filter=v*&label=app&color=00c853" alt="App release" /></a>
   <a href="https://github.com/Anezium/Rokid-Nexus/releases?q=sdk"><img src="https://img.shields.io/github/v/release/Anezium/Rokid-Nexus?filter=sdk-v*&label=SDK&color=00c853" alt="SDK release" /></a>
   <img src="https://img.shields.io/badge/Kotlin-7F52FF?logo=kotlin&logoColor=white" alt="Kotlin" />
-  <img src="https://img.shields.io/badge/Android%2012%2B-3DDC84?logo=android&logoColor=white" alt="Android 12+" />
+  <img src="https://img.shields.io/badge/Android%2011%2B-3DDC84?logo=android&logoColor=white" alt="Android 11+" />
   <img src="https://img.shields.io/badge/Rokid%20Glasses-0a0a0a" alt="Rokid Glasses" />
   <a href="LICENSE"><img src="https://img.shields.io/github/license/Anezium/Rokid-Nexus?color=blue" alt="License" /></a>
 </p>

@@ -20,7 +20,7 @@ lifecycle, and publishing — see [`plugins/AGENTS.md`](../plugins/AGENTS.md).
 
 An ordinary application module. The bus-client AAR supports `minSdk 26`; the
 repository plugin-template convention used by Sample and Transit is
-`minSdk 31`:
+`minSdk 30` (Android 11), matching the phone hub:
 
 ```kotlin
 // plugins/<id>/build.gradle.kts — plugin modules live under plugins/,
@@ -31,7 +31,7 @@ android {
     compileSdk = 36
     defaultConfig {
         applicationId = "com.anezium.rokidbus.plugin.<id>"
-        minSdk = 31
+        minSdk = 30
         targetSdk = 36
         versionCode = 1
         versionName = "1.0.0"
