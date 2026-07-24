@@ -28,6 +28,43 @@ jobs:
         run: ./gradlew :shared:publishToMavenLocal :bus-client:publishToMavenLocal -PversionName=${{ steps.version.outputs.version }} -PskipCxrGlobal=true
       - name: Compile sample from published coordinates
         run: ./gradlew :plugin-sample:assembleDebug -PusePublishedSdk=true -PversionName=${{ steps.version.outputs.version }} -PskipCxrGlobal=true
+      - name: Verify JitPack publication
+        shell: bash
+        env:
+          SDK_TAG: ${{ github.ref_name }}
+        run: |
+          artifact_url="https://jitpack.io/com/github/Anezium/Rokid-Nexus/bus-client/${SDK_TAG}/bus-client-${SDK_TAG}.pom"
+          build_api_url="https://jitpack.io/api/builds/com.github.Anezium/Rokid-Nexus/${SDK_TAG}"
+          build_log_url="https://jitpack.io/com/github/Anezium/Rokid-Nexus/${SDK_TAG}/build.log"
+
+          # Requesting the artifact starts the on-demand JitPack build.
+          curl --silent --show-error --max-time 900 --output /tmp/jitpack-pom \
+            --write-out "Initial JitPack response: HTTP %{http_code}\n" \
+            "$artifact_url" || true
+
+          for attempt in {1..60}; do
+            build_status="$(curl --silent --show-error --max-time 30 "$build_api_url" || true)"
+
+            if grep -q '"status"[[:space:]]*:[[:space:]]*"ok"' <<< "$build_status"; then
+              if curl --fail --silent --show-error --max-time 30 "$artifact_url" --output /tmp/jitpack-pom; then
+                echo "JitPack published ${SDK_TAG} successfully."
+                exit 0
+              fi
+            fi
+
+            if grep -q '"status"[[:space:]]*:[[:space:]]*"Error"' <<< "$build_status"; then
+              echo "::error::JitPack failed to publish ${SDK_TAG}. Build log: ${build_log_url}"
+              curl --silent --show-error "$build_log_url" || true
+              exit 1
+            fi
+
+            echo "Waiting for JitPack (${attempt}/60)..."
+            sleep 15
+          done
+
+          echo "::error::Timed out waiting for JitPack to publish ${SDK_TAG}. Build log: ${build_log_url}"
+          curl --silent --show-error "$build_log_url" || true
+          exit 1
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}

@@ -1,4 +1,4 @@
 jdk:
   - openjdk17
 install:
-  - ./gradlew :shared:publishToMavenLocal :bus-client:publishToMavenLocal -PversionName=${VERSION}
+  - ./gradlew :shared:publishToMavenLocal :bus-client:publishToMavenLocal -PversionName=${VERSION} -PskipCxrGlobal=true

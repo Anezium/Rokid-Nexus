@@ -1,5 +1,13 @@
 # Changelog
 
+## SDK 0.2.1
+
+- Restore JitPack distribution after the `sdk-v0.2.0` build failed while
+  resolving an unused Kotlin Gradle plugin.
+- Make SDK releases wait for the published JitPack POM before creating their
+  GitHub release, so a green release can no longer advertise a missing
+  artifact.
+
 ## 1.0.41
 
 ### R08 ring compatibility
