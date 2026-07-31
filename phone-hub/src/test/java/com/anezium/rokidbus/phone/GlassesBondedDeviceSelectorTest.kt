@@ -27,6 +27,38 @@ class GlassesBondedDeviceSelectorTest {
     }
 
     @Test
+    fun `uses the persistent local alias while the remote name and UUID cache are unavailable`() {
+        val devices = listOf(
+            device("Google Pixel Watch"),
+            device(name = null, alias = "Glasses_1899"),
+        )
+
+        assertEquals(1, GlassesBondedDeviceSelector.pickIndex(devices))
+    }
+
+    @Test
+    fun `reuses a remembered address only while it remains bonded`() {
+        val devices = listOf(
+            device("Google Pixel Watch", address = "AA:BB:CC:DD:EE:01"),
+            device(name = null, address = "AA:BB:CC:DD:EE:02"),
+        )
+
+        assertEquals(
+            1,
+            GlassesBondedDeviceSelector.pickIndex(
+                devices,
+                preferredAddress = "aa:bb:cc:dd:ee:02",
+            ),
+        )
+        assertNull(
+            GlassesBondedDeviceSelector.pickIndex(
+                devices,
+                preferredAddress = "AA:BB:CC:DD:EE:03",
+            ),
+        )
+    }
+
+    @Test
     fun `service UUID wins over a merely glasses-shaped name`() {
         val devices = listOf(
             device("Glasses_Other"),
@@ -46,8 +78,15 @@ class GlassesBondedDeviceSelectorTest {
         assertNull(GlassesBondedDeviceSelector.pickIndex(devices))
     }
 
-    private fun device(name: String, vararg serviceUuids: String) = BondedBluetoothDevice(
+    private fun device(
+        name: String?,
+        vararg serviceUuids: String,
+        address: String = "00:00:00:00:00:00",
+        alias: String? = null,
+    ) = BondedBluetoothDevice(
+        address = address,
         name = name,
+        alias = alias,
         serviceUuids = serviceUuids.toSet(),
     )
 }

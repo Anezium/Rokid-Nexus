@@ -119,6 +119,7 @@ private const val EXTRA_MANUAL_HOST = "manual_host"
 private const val EXTRA_MANUAL_PAIR_PORT = "manual_pair_port"
 private const val EXTRA_MANUAL_CODE = "manual_code"
 private const val PREF_ENABLED = "hub_enabled"
+private const val PREF_LAST_GLASSES_ADDRESS = "last_glasses_address"
 private const val GLASSES_HUB_PACKAGE = "com.anezium.rokidbus.glasses"
 private const val PREFS = "rokidbus_phone"
 private const val PREF_TOKEN = "cxrl_token"
@@ -3429,15 +3430,23 @@ class BusHubService : Service() {
     @SuppressLint("MissingPermission")
     private fun pickBondedDevice(): BluetoothDevice? {
         val bonded = BluetoothAdapter.getDefaultAdapter()?.bondedDevices?.toList().orEmpty()
+        val rememberedAddress = prefs().getString(PREF_LAST_GLASSES_ADDRESS, null)
         val selectedIndex = GlassesBondedDeviceSelector.pickIndex(
             bonded.map { device ->
                 BondedBluetoothDevice(
+                    address = device.address,
                     name = device.name,
+                    alias = device.alias,
                     serviceUuids = device.uuids.orEmpty().map { it.uuid.toString() }.toSet(),
                 )
             },
+            preferredAddress = rememberedAddress,
         ) ?: return null
-        return bonded[selectedIndex]
+        return bonded[selectedIndex].also { selected ->
+            if (!selected.address.equals(rememberedAddress, ignoreCase = true)) {
+                prefs().edit().putString(PREF_LAST_GLASSES_ADDRESS, selected.address).apply()
+            }
+        }
     }
 
     private fun startCxrIfTokenAvailable() {
