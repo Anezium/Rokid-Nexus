@@ -784,13 +784,17 @@ object GlassesHub {
             return if (SppServerManager.send(envelope)) null else "NO_DATA_PLANE"
         }
         val bytes = FrameProtocol.toJsonBytes(envelope)
-        if (bytes.size <= BusConstants.CXR_CONTROL_MAX_BYTES && CxrBusBridge.isUp()) {
-            if (CxrBusBridge.send(envelope)) return null
+        GlassesOutboundTransportPolicy.order(
+            sppConnected = SppServerManager.isConnected(),
+            cxrUp = CxrBusBridge.isUp(),
+            payloadBytes = bytes.size,
+        ).forEach { transport ->
+            val sent = when (transport) {
+                GlassesOutboundTransport.SPP -> SppServerManager.send(envelope)
+                GlassesOutboundTransport.CXR -> CxrBusBridge.send(envelope)
+            }
+            if (sent) return null
         }
-        if (bytes.size > BusConstants.CXR_CONTROL_MAX_BYTES && !SppServerManager.isConnected()) {
-            return "NO_DATA_PLANE"
-        }
-        if (SppServerManager.send(envelope)) return null
         return if (bytes.size > BusConstants.CXR_CONTROL_MAX_BYTES) "NO_DATA_PLANE" else "NO_LINK"
     }
 
