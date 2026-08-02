@@ -1,0 +1,65 @@
+{
+  "kind": "snapshot",
+  "snapshot": {
+    "snapshotSequence": 91,
+    "updatedAt": "2026-07-29T12:00:00Z",
+    "projects": [
+      {
+        "id": "project-nexus",
+        "title": "Rokid Nexus",
+        "workspaceRoot": "E:\\Tools\\Rokid\\RokidAINexus",
+        "defaultModelSelection": {
+          "instanceId": "codex",
+          "model": "gpt-5.6-codex",
+          "options": [{"id": "reasoningEffort", "value": "high"}]
+        }
+      }
+    ],
+    "threads": [
+      {
+        "id": "thread-recent",
+        "projectId": "project-nexus",
+        "title": "Build the glasses plugin",
+        "modelSelection": {"instanceId": "codex", "model": "openai/gpt-5.6-codex", "options": []},
+        "updatedAt": "2026-07-29T11:58:00Z",
+        "archivedAt": null,
+        "hasPendingApprovals": false,
+        "hasPendingUserInput": false,
+        "session": {"status": "running", "providerName": "Codex", "activeTurnId": "turn-1", "lastError": null}
+      },
+      {
+        "id": "thread-alert",
+        "projectId": "project-nexus",
+        "title": "Approve the release command",
+        "modelSelection": {"instanceId": "claudeAgent", "model": "claude-opus-4-1", "options": []},
+        "updatedAt": "2026-07-29T10:00:00Z",
+        "archivedAt": null,
+        "hasPendingApprovals": true,
+        "hasPendingUserInput": false,
+        "session": {"status": "running", "providerName": "Claude", "activeTurnId": null, "lastError": null}
+      },
+      {
+        "id": "thread-old",
+        "projectId": "project-nexus",
+        "title": "Old settled work",
+        "modelSelection": {"instanceId": "opencode", "model": "anthropic/claude-sonnet", "options": []},
+        "updatedAt": "2026-07-28T20:00:00Z",
+        "archivedAt": null,
+        "hasPendingApprovals": false,
+        "hasPendingUserInput": false,
+        "session": {"status": "ready", "providerName": "OpenCode", "activeTurnId": null, "lastError": null}
+      },
+      {
+        "id": "thread-archived",
+        "projectId": "project-nexus",
+        "title": "Archived work",
+        "modelSelection": {"instanceId": "codex", "model": "gpt-5.6", "options": []},
+        "updatedAt": "2026-07-29T11:59:00Z",
+        "archivedAt": "2026-07-29T12:00:00Z",
+        "hasPendingApprovals": false,
+        "hasPendingUserInput": false,
+        "session": {"status": "ready", "providerName": "Codex", "activeTurnId": null, "lastError": null}
+      }
+    ]
+  }
+}
