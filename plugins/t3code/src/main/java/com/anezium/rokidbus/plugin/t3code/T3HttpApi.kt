@@ -79,9 +79,9 @@ internal class T3HttpApi(
         T3TicketResult.Success(ticket)
     }.getOrElse { error -> T3TicketResult.Failure(error.message ?: "Could not reach T3 Code") }
 
+    // OkHttp websockets take an http(s) URL; HttpUrl rejects the ws scheme outright.
     fun webSocketUrl(endpoint: T3Endpoint, ticket: String): HttpUrl =
         baseUrl(endpoint.host, endpoint.port).newBuilder()
-            .scheme("ws")
             .addPathSegment("ws")
             .addQueryParameter("wsTicket", ticket)
             .build()

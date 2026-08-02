@@ -118,6 +118,12 @@ internal class T3Connection(
     }
 
     private fun connect(expectedGeneration: Long) {
+        runCatching { connectOnce(expectedGeneration) }.onFailure { error ->
+            scheduleReconnect(error.message ?: "Connect failed", expectedGeneration)
+        }
+    }
+
+    private fun connectOnce(expectedGeneration: Long) {
         if (!active || generation != expectedGeneration) return
         val target = endpoint ?: return
         when (val ticket = http.ticket(target)) {
