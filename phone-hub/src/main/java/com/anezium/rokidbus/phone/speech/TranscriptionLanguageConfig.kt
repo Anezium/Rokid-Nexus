@@ -82,6 +82,15 @@ enum class TranscriptionLanguage(
         androidTag = "pt-BR",
         uiNote = "Azure and Android use the Brazilian locale (pt-BR).",
     ),
+    POLISH(
+        id = "pl",
+        label = "Polski",
+        summaryName = "Polish",
+        openAiCode = "pl",
+        elevenLabsCode = "pl",
+        azureLocale = "pl-PL",
+        androidTag = "pl-PL",
+    ),
     JAPANESE(
         id = "ja",
         label = "日本語",
