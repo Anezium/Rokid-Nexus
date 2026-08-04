@@ -163,6 +163,19 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
         nextView.visibility = visibleIf(nextView.text.isNotBlank())
     }
 
+    private fun fitCardBody() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            currentView.setAutoSizeTextTypeUniformWithConfiguration(
+                CARD_BODY_MIN_SP,
+                CARD_BODY_MAX_SP,
+                CARD_BODY_STEP_SP,
+                TypedValue.COMPLEX_UNIT_SP,
+            )
+        } else {
+            currentView.textSize = CARD_BODY_SP
+        }
+    }
+
     private fun fitTimedBody() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             currentView.setAutoSizeTextTypeUniformWithConfiguration(
@@ -439,10 +452,9 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
     private fun renderPlainCard(rows: List<SurfaceRow>) {
         boardView.visibility = GONE
         currentView.visibility = VISIBLE
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            currentView.setAutoSizeTextTypeWithDefaults(TextView.AUTO_SIZE_TEXT_TYPE_NONE)
-        }
-        currentView.textSize = CARD_BODY_SP
+        // Long card bodies (assistant replies, article text) must never lose
+        // their tail: shrink to fit instead of clipping, like timed lines do.
+        fitCardBody()
         currentView.maxLines = CARD_BODY_MAX_LINES
         // Plain cards align as a left block; per-line centering scatters the columns.
         currentView.gravity = Gravity.CENTER_VERTICAL or Gravity.START
@@ -609,8 +621,13 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
         private const val MEDIA_TICK_MS = 500L
 
         // Plain card bodies (messages, chooser): smaller mono, more lines.
+        // Auto-fit mirrors the lyrics pattern: short bodies keep the full
+        // size, long ones shrink to fit instead of clipping their tail.
         private const val CARD_BODY_SP = 17f
         private const val CARD_BODY_MAX_LINES = 15
+        private const val CARD_BODY_MAX_SP = 17
+        private const val CARD_BODY_MIN_SP = 12
+        private const val CARD_BODY_STEP_SP = 1
         private const val TIMED_BODY_SP = 25f
         private const val TIMED_BODY_MAX_LINES = 5
 
