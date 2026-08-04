@@ -626,7 +626,7 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
         private const val CARD_BODY_SP = 17f
         private const val CARD_BODY_MAX_LINES = 15
         private const val CARD_BODY_MAX_SP = 17
-        private const val CARD_BODY_MIN_SP = 12
+        private const val CARD_BODY_MIN_SP = 14
         private const val CARD_BODY_STEP_SP = 1
         private const val TIMED_BODY_SP = 25f
         private const val TIMED_BODY_MAX_LINES = 5
