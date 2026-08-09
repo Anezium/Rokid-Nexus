@@ -144,9 +144,37 @@ class PluginRegistrationRetryTest {
         repeat(7) { assertTrue(fixture.scheduler.runNext()) }
 
         assertEquals(
-            listOf(1_000L, 2_000L, 4_000L, 8_000L, 16_000L, 32_000L, 32_000L, 32_000L),
+            listOf(1_000L, 2_000L, 4_000L, 8_000L, 15_000L, 15_000L, 15_000L, 15_000L),
             fixture.scheduler.scheduledDelays,
         )
         assertTrue(fixture.scheduler.hasPendingTask())
+    }
+
+    @Test
+    fun `a flat ceiling keeps every retry at the historical cadence`() {
+        val scheduler = FakeScheduler()
+        val retry = PluginRegistrationRetry(
+            scheduler = scheduler,
+            retry = {},
+            maxDelayMs = 1_000L,
+        )
+
+        repeat(4) {
+            retry.onConnectionFailure("failure $it")
+            assertTrue(scheduler.runNext())
+        }
+
+        assertEquals(listOf(1_000L, 1_000L, 1_000L, 1_000L), scheduler.scheduledDelays)
+    }
+
+    @Test
+    fun `a failure while an attempt is pending never double-schedules`() {
+        val fixture = Fixture(PluginRegistrationResult.PENDING_USER_APPROVAL)
+
+        fixture.attemptRegistration()
+        fixture.retry.onConnectionFailure("send failed meanwhile")
+        fixture.retry.onConnectionFailure("and again")
+
+        assertEquals(listOf(1_000L), fixture.scheduler.scheduledDelays)
     }
 }

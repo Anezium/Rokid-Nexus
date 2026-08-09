@@ -11,6 +11,13 @@ internal fun interface RetryScheduler {
 internal class PluginRegistrationRetry(
     private val scheduler: RetryScheduler,
     private val retry: () -> Unit,
+    /**
+     * Ceiling of the backoff. Plugins wait on a wearer who may approve
+     * minutes later, so they keep knocking at this cadence forever; generic
+     * clients pass the historical flat delay instead so released devices
+     * keep their reconnect behavior.
+     */
+    private val maxDelayMs: Long = MAX_RETRY_DELAY_MS,
     private val onRetryScheduled: (attempt: Int, delayMs: Long, reason: String) -> Unit = { _, _, _ -> },
 ) {
     private var cancellation: RetryCancellation? = null
@@ -18,46 +25,60 @@ internal class PluginRegistrationRetry(
     private var nextDelayMs = INITIAL_RETRY_DELAY_MS
     private var closed = false
 
+    @Synchronized
     fun onRegistrationResult(result: Int) {
         when (result) {
             PluginRegistrationResult.PENDING_USER_APPROVAL,
             PluginRegistrationResult.REGISTRATION_FAILED -> schedule("registration result=$result")
 
-            else -> reset()
+            else -> resetLocked()
         }
     }
 
+    @Synchronized
     fun onConnectionFailure(reason: String) {
         schedule(reason)
     }
 
+    @Synchronized
     fun reset() {
+        resetLocked()
+    }
+
+    @Synchronized
+    fun close() {
+        if (closed) return
+        closed = true
+        resetLocked()
+    }
+
+    private fun resetLocked() {
         cancellation?.cancel()
         cancellation = null
         retryAttempt = 0
         nextDelayMs = INITIAL_RETRY_DELAY_MS
     }
 
-    fun close() {
-        if (closed) return
-        closed = true
-        reset()
-    }
-
+    /** Callers hold the monitor: sends race in from arbitrary binder threads. */
     private fun schedule(reason: String) {
         if (closed || cancellation != null) return
-        val delayMs = nextDelayMs
+        val delayMs = nextDelayMs.coerceAtMost(maxDelayMs)
         val attempt = ++retryAttempt
         onRetryScheduled(attempt, delayMs, reason)
         cancellation = scheduler.schedule(delayMs) {
-            cancellation = null
-            if (!closed) retry()
+            if (onRetryFired()) retry()
         }
-        nextDelayMs = (delayMs * 2).coerceAtMost(MAX_RETRY_DELAY_MS)
+        nextDelayMs = (delayMs * 2).coerceAtMost(maxDelayMs)
+    }
+
+    @Synchronized
+    private fun onRetryFired(): Boolean {
+        cancellation = null
+        return !closed
     }
 
     private companion object {
         const val INITIAL_RETRY_DELAY_MS = 1_000L
-        const val MAX_RETRY_DELAY_MS = 32_000L
+        const val MAX_RETRY_DELAY_MS = 15_000L
     }
 }

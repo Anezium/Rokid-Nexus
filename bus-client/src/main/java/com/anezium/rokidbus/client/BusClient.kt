@@ -63,6 +63,10 @@ class BusClient(
             RetryCancellation { main.removeCallbacks(runnable) }
         },
         retry = ::retryConnectionOrRegistration,
+        // Generic clients keep the historical flat one-second reconnect the
+        // released devices were tuned around; only plugins — which may wait
+        // minutes for a wearer's approval — earn the exponential ceiling.
+        maxDelayMs = if (pluginId == null) 1_000L else 15_000L,
         onRetryScheduled = { attempt, delayMs, reason ->
             Log.d(TAG, "scheduling retry attempt=$attempt delayMs=$delayMs reason=$reason")
         },
@@ -413,17 +417,18 @@ class BusClient(
 
     private fun retryConnectionOrRegistration() {
         if (closed) return
-        if (
-            pluginId != null &&
-            service != null &&
-            pluginRegistrationState != PluginRegistrationResult.APPROVED
-        ) {
-            registerConnectedService(refreshConnectionState = false)
+        val hub = service
+        if (hub != null) {
+            if (pluginId != null && pluginRegistrationState != PluginRegistrationResult.APPROVED) {
+                registerConnectedService(refreshConnectionState = false)
+            }
+            // A live binding that is approved (or a generic client) has nothing
+            // to retry: a stale timer must not tear down a healthy connection.
+            // If the binder is actually dead, its death callback re-arms us.
             return
         }
         if (bound) runCatching { appContext.unbindService(connection) }
         bound = false
-        service = null
         connect()
     }
 
