@@ -10,9 +10,9 @@ const {
   codexApprovalRequestId,
   codexApprovalResponse,
   codexSpawnSpec,
-  codexTerminateSpec,
   describeCodexApproval,
   normalizeCodexThread,
+  resolveCodexExecutable,
 } = require("../dist/codex/monitor.js");
 const {
   codexThreadMessages,
@@ -182,6 +182,27 @@ function listen(server, port = 0) {
   });
 }
 
+function mockCodexFileSystem(files, directories = []) {
+  const normalize = (filePath) => filePath.replaceAll("/", "\\").toLowerCase();
+  const fileEntries = new Map(
+    Object.entries(files).map(([filePath, contents]) => [normalize(filePath), contents]),
+  );
+  const directoryEntries = new Set(directories.map(normalize));
+  return {
+    readText(filePath) {
+      const contents = fileEntries.get(normalize(filePath));
+      if (contents === undefined) throw new Error(`missing mock file: ${filePath}`);
+      return contents;
+    },
+    isFile(filePath) {
+      return fileEntries.has(normalize(filePath));
+    },
+    isDirectory(filePath) {
+      return directoryEntries.has(normalize(filePath));
+    },
+  };
+}
+
 async function closeServer(server) {
   for (const client of server.clients) client.terminate();
   await new Promise((resolve) => server.close(resolve));
@@ -202,16 +223,15 @@ function makeHarness(port, overrides = {}) {
     },
     store,
     approvals,
-    logger: silentLogger,
     connectTimeoutMs: 80,
     requestTimeoutMs: 1000,
     startTimeoutMs: 500,
     reconnectDelayMs: 20,
     sweepIntervalMs: overrides.sweepIntervalMs,
+    logger: overrides.logger ?? silentLogger,
     launch: overrides.launch ?? (() => {
       throw new Error("codex executable not found");
     }),
-    terminate: overrides.terminate,
   });
   return { store, transport, approvals, monitor };
 }
@@ -405,30 +425,77 @@ test("approval projections and responses use the JSON-RPC id and exact stable co
   });
 });
 
-test("spawn command is loopback-only and honors the Windows .cmd shim", () => {
+test("spawn specs launch the real Windows executable without a shell", () => {
   assert.equal(CODEX_APP_SERVER_BINDINGS_VERSION, "0.145.0");
-  const windows = codexSpawnSpec(8390, "win32");
-  assert.equal(windows.command, "codex");
+  const executable = "C:\\npm\\node_modules\\@openai\\codex-win32-x64" +
+    "\\vendor\\x86_64-pc-windows-msvc\\bin\\codex.exe";
+  const bundledPath = "C:\\npm\\node_modules\\@openai\\codex-win32-x64" +
+    "\\vendor\\x86_64-pc-windows-msvc\\codex-path";
+  const windows = codexSpawnSpec(
+    8390,
+    "win32",
+    () => ({ command: executable, pathDirs: [bundledPath] }),
+    { Path: "C:\\Windows\\System32" },
+  );
+  assert.equal(windows.command, executable);
   assert.deepEqual(windows.args, [
     "app-server",
     "--listen",
     "ws://127.0.0.1:8390",
   ]);
-  assert.equal(windows.options.shell, true);
+  assert.equal(windows.options.shell, false);
+  assert.equal(windows.options.detached, true);
   assert.equal(windows.options.windowsHide, true);
+  assert.deepEqual(windows.options.stdio, ["ignore", "ignore", "pipe"]);
+  assert.equal(
+    windows.options.env.Path,
+    `${bundledPath};C:\\Windows\\System32`,
+  );
   assert.equal(windows.args.some((arg) => arg.includes("0.0.0.0")), false);
-  assert.deepEqual(codexTerminateSpec(4321, "win32"), {
-    command: "taskkill.exe",
-    args: ["/pid", "4321", "/t", "/f"],
-    options: {
-      shell: false,
-      windowsHide: true,
-      stdio: "ignore",
-    },
-  });
 
-  assert.equal(codexSpawnSpec(8390, "linux").options.shell, false);
-  assert.equal(codexTerminateSpec(4321, "linux"), undefined);
+  for (const platform of ["linux", "darwin"]) {
+    const spec = codexSpawnSpec(8390, platform, () => {
+      throw new Error("non-Windows specs must not resolve a .cmd shim");
+    });
+    assert.equal(spec.command, "codex");
+    assert.equal(spec.options.shell, false);
+    assert.equal(spec.options.detached, true);
+    assert.deepEqual(spec.options.stdio, ["ignore", "ignore", "pipe"]);
+  }
+});
+
+test("Windows shim resolution finds nested current Codex npm binaries", () => {
+  const shim = "C:\\npm\\codex.cmd";
+  const executable = "C:\\npm\\node_modules\\@openai\\codex\\node_modules\\@openai" +
+    "\\codex-win32-x64\\vendor\\x86_64-pc-windows-msvc\\bin\\codex.exe";
+  const bundledPath = "C:\\npm\\node_modules\\@openai\\codex\\node_modules\\@openai" +
+    "\\codex-win32-x64\\vendor\\x86_64-pc-windows-msvc\\codex-path";
+  const fileSystem = mockCodexFileSystem({
+    [shim]: '@"%dp0%\\node.exe" "%dp0%\\node_modules\\@openai\\codex\\bin\\codex.js" %*',
+    [executable]: "",
+  }, [bundledPath]);
+
+  assert.deepEqual(
+    resolveCodexExecutable("x64", { Path: '"C:\\missing";C:\\npm' }, fileSystem),
+    { command: executable, pathDirs: [bundledPath] },
+  );
+});
+
+test("Windows shim resolution accepts absolute shims and hoisted legacy binaries", () => {
+  const shim = "D:\\links\\codex.cmd";
+  const executable = "C:\\npm\\node_modules\\@openai\\codex-win32-arm64" +
+    "\\vendor\\aarch64-pc-windows-msvc\\codex\\codex.exe";
+  const bundledPath = "C:\\npm\\node_modules\\@openai\\codex-win32-arm64" +
+    "\\vendor\\aarch64-pc-windows-msvc\\path";
+  const fileSystem = mockCodexFileSystem({
+    [shim]: '@node "C:\\npm\\node_modules\\@openai\\codex\\bin\\codex.js" %*',
+    [executable]: "",
+  }, [bundledPath]);
+
+  assert.deepEqual(
+    resolveCodexExecutable("arm64", { PATH: "D:\\links" }, fileSystem),
+    { command: executable, pathDirs: [bundledPath] },
+  );
 });
 
 test("startThread creates, adopts, and optionally starts a turn in binding order", async () => {
@@ -727,7 +794,7 @@ test("monitor caps discovery at the session cap and never requests an extra page
   }
 });
 
-test("when attach fails the monitor starts and owns a loopback app-server lifecycle", async () => {
+test("the monitor tracks the spawned app-server pid and leaves it alive on stop", async () => {
   const probe = new WebSocketServer({ port: 0, host: "127.0.0.1" });
   await new Promise((resolve) => probe.once("listening", resolve));
   const port = probe.address().port;
@@ -735,16 +802,20 @@ test("when attach fails the monitor starts and owns a loopback app-server lifecy
 
   let ownedServer;
   let killed = false;
+  const logEvents = [];
   class FakeChild extends EventEmitter {
     pid = 4242;
     stderr = new PassThrough();
     exitCode = null;
     signalCode = null;
+    unreferenced = false;
+    unref() {
+      this.unreferenced = true;
+    }
     kill() {
       killed = true;
       this.exitCode = 0;
       for (const client of ownedServer.clients) client.terminate();
-      ownedServer.close();
       this.emit("exit", 0, null);
       return true;
     }
@@ -758,17 +829,33 @@ test("when attach fails the monitor starts and owns a loopback app-server lifecy
   };
   const { store, approvals, monitor } = makeHarness(port, {
     launch,
-    terminate: async (owned) => {
-      owned.kill();
+    logger: {
+      ...silentLogger,
+      info(event, meta) {
+        logEvents.push({ event, meta });
+      },
     },
   });
   try {
     monitor.start();
     await waitUntil(() => monitor.availability().available, "owned server was not reached");
     assert.equal(store.get("codex-thread-1").provider, "codex");
+    assert.equal(child.unreferenced, true);
+    assert.deepEqual(
+      logEvents.find((entry) => entry.event === "codex_app_server_started")?.meta,
+      { endpoint: `ws://127.0.0.1:${port}`, pid: 4242 },
+    );
   } finally {
     await monitor.stop();
-    assert.equal(killed, true, "monitor did not terminate the app-server it started");
+    assert.equal(killed, false, "normal monitor shutdown must preserve the app-server");
+    assert.deepEqual(
+      logEvents.find((entry) => entry.event === "codex_app_server_left_running")?.meta,
+      { pid: 4242 },
+    );
+    if (ownedServer) {
+      child.kill();
+      await closeServer(ownedServer);
+    }
     approvals.dispose();
     store.dispose();
   }

@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import WebSocket from "ws";
 import {
   type ApprovalDecision,
@@ -20,6 +20,7 @@ import type {
   ThreadStartResult,
 } from "../types";
 import { codexThreadMessages } from "./messages";
+import { codexSpawnSpec } from "./process";
 import type {
   AdditionalFileSystemPermissions,
   AdditionalNetworkPermissions,
@@ -63,50 +64,7 @@ export interface CodexAvailability {
   reason?: string;
 }
 
-export interface CodexSpawnSpec {
-  command: string;
-  args: string[];
-  options: SpawnOptions;
-}
-
-export interface CodexTerminateSpec {
-  command: string;
-  args: string[];
-  options: SpawnOptions;
-}
-
-export function codexSpawnSpec(
-  port: number,
-  platform = process.platform,
-): CodexSpawnSpec {
-  return {
-    command: "codex",
-    args: ["app-server", "--listen", `ws://127.0.0.1:${port}`],
-    options: {
-      shell: platform === "win32",
-      windowsHide: true,
-      stdio: ["ignore", "ignore", "pipe"],
-    },
-  };
-}
-
-export function codexTerminateSpec(
-  pid: number,
-  platform = process.platform,
-): CodexTerminateSpec | undefined {
-  if (platform !== "win32") {
-    return undefined;
-  }
-  return {
-    command: "taskkill.exe",
-    args: ["/pid", String(pid), "/t", "/f"],
-    options: {
-      shell: false,
-      windowsHide: true,
-      stdio: "ignore",
-    },
-  };
-}
+export { codexSpawnSpec, resolveCodexExecutable } from "./process";
 
 interface PendingRpc {
   timer: NodeJS.Timeout;
@@ -134,7 +92,6 @@ export interface CodexMonitorOptions {
   sweepIntervalMs?: number;
   now?: () => number;
   launch?: (port: number) => ChildProcess;
-  terminate?: (child: ChildProcess) => Promise<void>;
 }
 
 type ApprovalParams =
@@ -436,11 +393,8 @@ export class CodexMonitor {
     const child = this.ownedProcess;
     this.ownedProcess = undefined;
     if (child && child.exitCode === null && child.signalCode === null) {
-      if (this.options.terminate) {
-        await this.options.terminate(child);
-      } else {
-        await this.terminateOwnedProcess(child);
-      }
+      child.unref();
+      this.options.logger.info("codex_app_server_left_running", { pid: child.pid });
     }
     this.state = {
       enabled: this.options.config.codex.enabled,
@@ -544,26 +498,12 @@ export class CodexMonitor {
         }
       }
     });
+    child.unref();
+    (child.stderr as (NodeJS.ReadableStream & { unref?: () => void }) | null)?.unref?.();
     this.options.logger.info("codex_app_server_started", {
       endpoint: this.endpoint(),
       pid: child.pid,
     });
-  }
-
-  private async terminateOwnedProcess(child: ChildProcess): Promise<void> {
-    const spec = child.pid ? codexTerminateSpec(child.pid) : undefined;
-    if (!spec) {
-      child.kill();
-      return;
-    }
-    const killer = spawn(spec.command, spec.args, spec.options);
-    const succeeded = await new Promise<boolean>((resolve) => {
-      killer.once("error", () => resolve(false));
-      killer.once("exit", (code) => resolve(code === 0));
-    });
-    if (!succeeded && child.exitCode === null && child.signalCode === null) {
-      child.kill();
-    }
   }
 
   private async waitForStartedServer(): Promise<WebSocket> {
