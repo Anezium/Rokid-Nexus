@@ -5,7 +5,11 @@ const fsp = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
 const { SessionStore } = require("../dist/session-store.js");
-const { TranscriptTailer } = require("../dist/transcript.js");
+const {
+  MAX_TRANSCRIPT_LINE_BYTES,
+  TranscriptLineParser,
+  TranscriptTailer,
+} = require("../dist/transcript.js");
 const { silentLogger } = require("../dist/logger.js");
 
 test("tailer reads appends, buffers partial lines, and applies tool and error entries", async () => {
@@ -56,6 +60,70 @@ test("tailer reads appends, buffers partial lines, and applies tool and error en
   } finally {
     tailer.stop();
     store.dispose();
+    await fsp.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("oversized unterminated records stay bounded and parsing resumes after their newline", () => {
+  const entries = [];
+  const updates = [];
+  const logger = {
+    info(event, meta) { entries.push({ level: "info", event, meta }); },
+    warn(event, meta) { entries.push({ level: "warn", event, meta }); },
+    error(event, meta) { entries.push({ level: "error", event, meta }); },
+  };
+  const parser = new TranscriptLineParser((update) => updates.push(update), logger, () => 123);
+  const chunk = Buffer.alloc(64 * 1024, 0x78);
+
+  for (let offset = 0; offset < MAX_TRANSCRIPT_LINE_BYTES; offset += chunk.length) {
+    parser.push(chunk);
+  }
+  parser.push(chunk);
+  parser.push(chunk);
+
+  assert.equal(parser.remainderBytes, 0);
+  assert.equal(parser.remainder.length, 0);
+  assert.equal(parser.discardingOversizedRecord, true);
+  assert.equal(
+    entries.filter((entry) => entry.event === "transcript_line_oversized").length,
+    1,
+  );
+
+  const validLine = JSON.stringify({
+    type: "assistant",
+    timestamp: 123,
+    message: { role: "assistant", content: "recovered" },
+  });
+  parser.push(Buffer.from(`discarded tail\n${validLine}\n`));
+
+  assert.equal(parser.discardingOversizedRecord, false);
+  assert.equal(updates.length, 1);
+  assert.equal(updates[0].lastAssistantText, "recovered");
+  assert.equal(
+    entries.filter((entry) => entry.event === "transcript_line_oversized").length,
+    1,
+  );
+});
+
+test("stop during start prevents the pending stat from resurrecting watchers or timers", async () => {
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), "nexus-agentd-start-race-"));
+  const transcriptPath = path.join(tempDir, "session.jsonl");
+  await fsp.writeFile(transcriptPath, "");
+  const tailer = new TranscriptTailer(transcriptPath, () => undefined, silentLogger, {
+    pollIntervalMs: 5,
+  });
+
+  try {
+    const starting = tailer.start();
+    tailer.stop();
+    await starting;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    assert.equal(tailer.running, false);
+    assert.equal(tailer.watcher, undefined);
+    assert.equal(tailer.pollTimer, undefined);
+  } finally {
+    tailer.stop();
     await fsp.rm(tempDir, { recursive: true, force: true });
   }
 });

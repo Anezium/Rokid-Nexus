@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
 import { homedir, networkInterfaces, platform } from "node:os";
 import { connect, type Socket as TcpSocket } from "node:net";
+import { StringDecoder } from "node:string_decoder";
 import type {
   ApprovalDecision,
   ApprovalOutcome,
@@ -74,6 +75,7 @@ export interface PhoneLinkOptions {
   configFilePath?: string;
   tailnetDiscovery?: TailnetPeerSource;
   now?: () => number;
+  connector?: (options: { host: string; port: number }) => TcpSocket;
 }
 
 export interface TailnetPeerSource {
@@ -102,7 +104,7 @@ function parseAnnouncement(raw: Buffer, host: string): PhoneAnnouncement | undef
       return undefined;
     }
     const port = typeof record.port === "number" ? record.port : undefined;
-    if (!port || port < 1 || port > 65535) {
+    if (port === undefined || !Number.isInteger(port) || port < 1 || port > 65535) {
       return undefined;
     }
     return {
@@ -177,6 +179,8 @@ export class PhoneLink {
   private pendingDetailSessionId?: string;
   private pingTimer?: NodeJS.Timeout;
   private buffer = "";
+  private bufferedLineBytes = 0;
+  private decoder = new StringDecoder("utf8");
   private sequence = 0;
   private openSessionId?: string;
   private connectedTo?: string;
@@ -400,19 +404,30 @@ export class PhoneLink {
     if ((this.retryAt.get(target) ?? 0) > now) {
       return;
     }
-    const socket = connect({ host: announcement.host, port: announcement.port });
-    this.socket = socket;
     this.connectedTo = target;
     this.phoneName = announcement.name;
     this.authenticated = false;
+    this.startHelloTimer(target);
+    let socket: TcpSocket;
+    try {
+      socket = (this.options.connector ?? connect)({
+        host: announcement.host,
+        port: announcement.port,
+      });
+    } catch (error) {
+      this.options.logger.warn("phone_link_error", {
+        reason: error instanceof Error ? error.name : "unknown",
+      });
+      this.onClose();
+      return;
+    }
+    this.socket = socket;
     socket.setNoDelay(true);
     socket.setKeepAlive(true, 30_000);
     socket.on("connect", () => {
-      this.helloTimer = setTimeout(
-        () => this.onHelloTimeout(socket),
-        this.options.helloTimeoutMs ?? PHONE_HELLO_TIMEOUT_MS,
-      );
-      this.helloTimer.unref();
+      if (this.socket !== socket) {
+        return;
+      }
       this.write({
         type: "hello",
         v: 1,
@@ -447,7 +462,7 @@ export class PhoneLink {
     this.socket = undefined;
     this.authenticated = false;
     this.publishedSessions.clear();
-    this.buffer = "";
+    this.resetLineBuffer();
     this.clearDetailRefreshTimer();
     this.pendingDetailSessionId = undefined;
     this.openSessionId = undefined;
@@ -474,21 +489,35 @@ export class PhoneLink {
   }
 
   private onData(chunk: Buffer): void {
-    this.buffer += chunk.toString("utf8");
-    if (this.buffer.length > MAX_LINE_BYTES) {
-      this.options.logger.warn("phone_link_flood");
-      this.socket?.destroy();
-      return;
-    }
-    let newline = this.buffer.indexOf("\n");
-    while (newline >= 0) {
-      const line = this.buffer.slice(0, newline).trim();
-      this.buffer = this.buffer.slice(newline + 1);
+    let start = 0;
+    while (start < chunk.length) {
+      const newline = chunk.indexOf(0x0a, start);
+      const end = newline >= 0 ? newline : chunk.length;
+      const segment = chunk.subarray(start, end);
+      this.bufferedLineBytes += segment.length;
+      if (this.bufferedLineBytes > MAX_LINE_BYTES) {
+        this.options.logger.warn("phone_link_flood");
+        this.socket?.destroy();
+        return;
+      }
+      this.buffer += this.decoder.write(segment);
+      if (newline < 0) {
+        return;
+      }
+      this.buffer += this.decoder.end();
+      const line = this.buffer.trim();
+      this.resetLineBuffer();
       if (line) {
         this.handleLine(line);
       }
-      newline = this.buffer.indexOf("\n");
+      start = newline + 1;
     }
+  }
+
+  private resetLineBuffer(): void {
+    this.buffer = "";
+    this.bufferedLineBytes = 0;
+    this.decoder = new StringDecoder("utf8");
   }
 
   private handleLine(line: string): void {
@@ -660,8 +689,18 @@ export class PhoneLink {
     this.socket?.destroy();
   }
 
-  private onHelloTimeout(socket: TcpSocket): void {
-    if (this.socket !== socket || this.authenticated) {
+  private startHelloTimer(target: string): void {
+    this.clearHelloTimer();
+    this.helloTimer = setTimeout(
+      () => this.onHelloTimeout(target),
+      this.options.helloTimeoutMs ?? PHONE_HELLO_TIMEOUT_MS,
+    );
+    this.helloTimer.unref();
+  }
+
+  private onHelloTimeout(target: string): void {
+    const socket = this.socket;
+    if (!socket || this.connectedTo !== target || this.authenticated) {
       return;
     }
     this.options.logger.warn("phone_link_hello_timeout", {

@@ -5,6 +5,7 @@ import { truncateText } from "./session-store";
 import { extractMessage } from "./transcript-messages";
 
 const READ_CHUNK_BYTES = 64 * 1024;
+export const MAX_TRANSCRIPT_LINE_BYTES = 8 * 1024 * 1024;
 
 function recordValue(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -133,7 +134,9 @@ export function extractTranscriptUpdate(
 }
 
 export class TranscriptLineParser {
-  private remainder = Buffer.alloc(0);
+  private remainder: Buffer[] = [];
+  private remainderBytes = 0;
+  private discardingOversizedRecord = false;
 
   constructor(
     private readonly onUpdate: (update: TranscriptUpdate) => void,
@@ -144,11 +147,46 @@ export class TranscriptLineParser {
   ) {}
 
   push(chunk: Buffer): void {
-    this.remainder = Buffer.concat([this.remainder, chunk]);
-    let newlineIndex = this.remainder.indexOf(0x0a);
-    while (newlineIndex >= 0) {
-      let line = this.remainder.subarray(0, newlineIndex);
-      this.remainder = this.remainder.subarray(newlineIndex + 1);
+    let start = 0;
+    while (start < chunk.length) {
+      if (this.discardingOversizedRecord) {
+        const newlineIndex = chunk.indexOf(0x0a, start);
+        if (newlineIndex < 0) {
+          return;
+        }
+        this.discardingOversizedRecord = false;
+        start = newlineIndex + 1;
+        continue;
+      }
+
+      const newlineIndex = chunk.indexOf(0x0a, start);
+      const end = newlineIndex >= 0 ? newlineIndex : chunk.length;
+      const segment = chunk.subarray(start, end);
+      if (this.remainderBytes + segment.length > MAX_TRANSCRIPT_LINE_BYTES) {
+        this.clearRemainder();
+        this.logger.info("transcript_line_oversized", {
+          maxLineBytes: MAX_TRANSCRIPT_LINE_BYTES,
+        });
+        if (newlineIndex < 0) {
+          this.discardingOversizedRecord = true;
+          return;
+        }
+        start = newlineIndex + 1;
+        continue;
+      }
+      if (segment.length > 0) {
+        this.remainder.push(segment);
+        this.remainderBytes += segment.length;
+      }
+      if (newlineIndex < 0) {
+        return;
+      }
+
+      let line =
+        this.remainder.length === 1
+          ? this.remainder[0]
+          : Buffer.concat(this.remainder, this.remainderBytes);
+      this.clearRemainder();
       if (line.at(-1) === 0x0d) {
         line = line.subarray(0, -1);
       }
@@ -169,12 +207,18 @@ export class TranscriptLineParser {
           this.logger.warn("transcript_line_unparseable", { lineBytes: line.length });
         }
       }
-      newlineIndex = this.remainder.indexOf(0x0a);
+      start = newlineIndex + 1;
     }
   }
 
   reset(): void {
-    this.remainder = Buffer.alloc(0);
+    this.clearRemainder();
+    this.discardingOversizedRecord = false;
+  }
+
+  private clearRemainder(): void {
+    this.remainder = [];
+    this.remainderBytes = 0;
   }
 }
 
@@ -192,6 +236,8 @@ export class TranscriptTailer {
   private running = false;
   private rerun = false;
   private reading?: Promise<void>;
+  private readingGeneration?: number;
+  private generation = 0;
 
   constructor(
     private readonly filePath: string,
@@ -207,36 +253,53 @@ export class TranscriptTailer {
       return;
     }
     this.running = true;
+    const generation = ++this.generation;
+    let fileSize = 0;
     try {
-      const fileStat = await stat(this.filePath);
-      this.offset = this.options.startAtEnd === false ? 0 : fileStat.size;
-    } catch {
-      this.offset = 0;
+      fileSize = (await stat(this.filePath)).size;
+    } catch {}
+    if (!this.isActive(generation)) {
+      return;
     }
-    this.ensureWatcher();
+    this.offset = this.options.startAtEnd === false ? 0 : fileSize;
+    this.ensureWatcher(generation);
     const pollIntervalMs = this.options.pollIntervalMs ?? 3000;
-    this.pollTimer = setInterval(() => void this.pollNow(), pollIntervalMs);
+    this.pollTimer = setInterval(() => void this.pollGeneration(generation), pollIntervalMs);
     this.pollTimer.unref();
     if (this.options.startAtEnd === false) {
-      await this.pollNow();
+      await this.pollGeneration(generation);
+      if (!this.isActive(generation)) {
+        return;
+      }
     }
   }
 
   pollNow(): Promise<void> {
-    if (!this.running) {
+    return this.pollGeneration(this.generation);
+  }
+
+  private pollGeneration(generation: number): Promise<void> {
+    if (!this.isActive(generation)) {
       return Promise.resolve();
     }
     this.rerun = true;
-    if (!this.reading) {
-      this.reading = this.drainReads().finally(() => {
-        this.reading = undefined;
+    if (!this.reading || this.readingGeneration !== generation) {
+      const operation = this.drainReads(generation).finally(() => {
+        if (this.reading === operation) {
+          this.reading = undefined;
+          this.readingGeneration = undefined;
+        }
       });
+      this.reading = operation;
+      this.readingGeneration = generation;
     }
     return this.reading;
   }
 
   stop(): void {
     this.running = false;
+    this.generation += 1;
+    this.rerun = false;
     if (this.pollTimer) {
       clearInterval(this.pollTimer);
       this.pollTimer = undefined;
@@ -246,21 +309,27 @@ export class TranscriptTailer {
     this.parser.reset();
   }
 
-  private async drainReads(): Promise<void> {
-    while (this.rerun && this.running) {
+  private async drainReads(generation: number): Promise<void> {
+    while (this.rerun && this.isActive(generation)) {
       this.rerun = false;
-      await this.readAppended();
+      await this.readAppended(generation);
+      if (!this.isActive(generation)) {
+        return;
+      }
     }
   }
 
-  private async readAppended(): Promise<void> {
+  private async readAppended(generation: number): Promise<void> {
     let fileSize: number;
     try {
       fileSize = (await stat(this.filePath)).size;
-      this.ensureWatcher();
     } catch {
       return;
     }
+    if (!this.isActive(generation)) {
+      return;
+    }
+    this.ensureWatcher(generation);
 
     if (fileSize < this.offset) {
       this.offset = 0;
@@ -273,10 +342,16 @@ export class TranscriptTailer {
     let handle;
     try {
       handle = await open(this.filePath, "r");
-      while (this.running && this.offset < fileSize) {
+      if (!this.isActive(generation)) {
+        return;
+      }
+      while (this.isActive(generation) && this.offset < fileSize) {
         const length = Math.min(READ_CHUNK_BYTES, fileSize - this.offset);
         const buffer = Buffer.allocUnsafe(length);
         const { bytesRead } = await handle.read(buffer, 0, length, this.offset);
+        if (!this.isActive(generation)) {
+          return;
+        }
         if (bytesRead === 0) {
           break;
         }
@@ -297,12 +372,16 @@ export class TranscriptTailer {
     }
   }
 
-  private ensureWatcher(): void {
-    if (!this.running || this.watcher) {
+  private isActive(generation: number): boolean {
+    return this.running && this.generation === generation;
+  }
+
+  private ensureWatcher(generation: number): void {
+    if (!this.isActive(generation) || this.watcher) {
       return;
     }
     try {
-      const watcher = watch(this.filePath, () => void this.pollNow());
+      const watcher = watch(this.filePath, () => void this.pollGeneration(generation));
       watcher.on("error", () => {
         watcher.close();
         if (this.watcher === watcher) {

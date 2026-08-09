@@ -1,5 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const dgram = require("node:dgram");
+const { EventEmitter } = require("node:events");
 const fsp = require("node:fs/promises");
 const net = require("node:net");
 const os = require("node:os");
@@ -117,6 +119,35 @@ function createLink(overrides = {}) {
   return { link, store, logs };
 }
 
+class StubSocket extends EventEmitter {
+  destroyed = false;
+
+  setNoDelay() {}
+
+  setKeepAlive() {}
+
+  write() { return true; }
+
+  destroy() {
+    if (!this.destroyed) {
+      this.destroyed = true;
+      this.emit("close");
+    }
+    return this;
+  }
+}
+
+function sendDatagram(payload, port) {
+  const socket = dgram.createSocket("udp4");
+  return new Promise((resolve, reject) => {
+    socket.send(Buffer.from(JSON.stringify(payload)), port, "127.0.0.1", (error) => {
+      socket.close();
+      if (error) reject(error);
+      else resolve();
+    });
+  });
+}
+
 test("discovered targets are deduplicated by host against static and backing-off targets", () => {
   const discovered = ["100.64.1.2:8792", "100.64.1.2:8792"];
 
@@ -132,6 +163,109 @@ test("discovered targets are deduplicated by host against static and backing-off
     { host: "100.64.1.2", port: 8792, name: "100.64.1.2" },
   ]);
   assert.deepEqual(buildPhoneDialTargets([], discovered, new Set(["100.64.1.2"])), []);
+});
+
+test("fractional and absurd discovery ports are ignored without disrupting later replies", async () => {
+  const dialed = [];
+  const { link, store } = createLink({
+    connector(options) {
+      dialed.push(options);
+      return new StubSocket();
+    },
+  });
+
+  try {
+    link.start();
+    await waitUntil(() => {
+      try {
+        return typeof link.discovery?.address().port === "number";
+      } catch {
+        return false;
+      }
+    }, "discovery socket did not bind");
+    const replyPort = link.discovery.address().port;
+
+    await sendDatagram({ nexus: "agents-phone", port: 8792.5 }, replyPort);
+    await sendDatagram({ nexus: "agents-phone", port: Number.MAX_VALUE }, replyPort);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.deepEqual(dialed, []);
+
+    await sendDatagram({ nexus: "agents-phone", port: 18792, name: "valid phone" }, replyPort);
+    await waitUntil(() => dialed.length === 1, "valid discovery reply was not dialed");
+    assert.deepEqual(dialed, [{ host: "127.0.0.1", port: 18792 }]);
+  } finally {
+    link.stop();
+    store.dispose();
+  }
+});
+
+test("the handshake deadline abandons a pre-connect candidate and tries the next target", async () => {
+  const sockets = [];
+  const dialed = [];
+  const { link, store, logs } = createLink({
+    config: {
+      ...config,
+      phoneHosts: ["192.0.2.1:18792", "198.51.100.2:18793"],
+    },
+    helloTimeoutMs: 20,
+    reconnectDelayMs: 40,
+    now: () => 1_000,
+    connector(options) {
+      dialed.push(options);
+      const socket = new StubSocket();
+      sockets.push(socket);
+      return socket;
+    },
+  });
+
+  try {
+    link.start();
+    await waitUntil(() => dialed.length >= 2, "next target was not tried after connect timeout");
+    assert.deepEqual(dialed.slice(0, 2), [
+      { host: "192.0.2.1", port: 18792 },
+      { host: "198.51.100.2", port: 18793 },
+    ]);
+    assert.equal(sockets[0].destroyed, true);
+    assert.equal(
+      logs.entries.filter((entry) => entry.event === "phone_link_hello_timeout").length,
+      1,
+    );
+  } finally {
+    link.stop();
+    store.dispose();
+  }
+});
+
+test("synchronous connector failures follow normal cleanup and do not divert the target loop", async () => {
+  const dialed = [];
+  const fallbackSocket = new StubSocket();
+  const { link, store, logs } = createLink({
+    config: {
+      ...config,
+      phoneHosts: ["192.0.2.3:18794", "198.51.100.4:18795"],
+    },
+    reconnectDelayMs: 1_000,
+    connector(options) {
+      dialed.push(options);
+      if (dialed.length === 1) {
+        throw new RangeError("invalid connection options");
+      }
+      return fallbackSocket;
+    },
+  });
+
+  try {
+    link.start();
+    await waitUntil(() => dialed.length === 2, "fallback target was not dialed");
+    assert.equal(link.socket, fallbackSocket);
+    assert.equal(
+      logs.entries.filter((entry) => entry.event === "phone_link_error").length,
+      1,
+    );
+  } finally {
+    link.stop();
+    store.dispose();
+  }
 });
 
 test("disabled tailnet discovery does not invoke the peer scanner", async () => {
@@ -622,6 +756,78 @@ test("thread_start replies Timed out when the daemon callback hangs", async () =
     store.dispose();
     await closeServer(server, sockets);
     await fsp.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("TCP frames preserve a path split inside a multibyte UTF-8 codepoint", async () => {
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), "nexus-agentd-utf8-"));
+  const unicodePath = path.join(tempDir, "caf\u00e9-\u6f22");
+  await fsp.mkdir(unicodePath);
+  const sockets = [];
+  let acceptConnection;
+  const accepted = new Promise((resolve) => { acceptConnection = resolve; });
+  const server = net.createServer((socket) => {
+    sockets.push(socket);
+    acceptConnection({ socket, lines: collectLines(socket) });
+  });
+  const port = await listen(server);
+  const starts = [];
+  const { link, store } = createLink({
+    async onThreadStart(provider, projectPath, prompt) {
+      starts.push({ provider, projectPath, prompt });
+      return { ok: true, sessionId: "utf8-thread" };
+    },
+  });
+
+  try {
+    link.connectToPhone({ host: "127.0.0.1", port, name: "test phone" });
+    const { socket, lines } = await accepted;
+    await lines.waitFor((frame) => frame.type === "hello");
+    socket.write('{"type":"hello_ack","v":1}\n');
+    await lines.waitFor((frame) => frame.type === "snapshot");
+
+    const frame = Buffer.from(`${JSON.stringify({
+      type: "thread_start",
+      id: "utf8-path",
+      provider: "codex",
+      path: unicodePath,
+      prompt: "open it",
+    })}\n`, "utf8");
+    const codepoint = Buffer.from("\u6f22", "utf8");
+    const codepointStart = frame.indexOf(codepoint);
+    assert.notEqual(codepointStart, -1);
+    const splitAt = codepointStart + 1;
+    link.onData(frame.subarray(0, splitAt));
+    link.onData(frame.subarray(splitAt));
+
+    await waitUntil(() => starts.length === 1, "split UTF-8 frame was not handled");
+    assert.deepEqual(starts, [{ provider: "codex", projectPath: unicodePath, prompt: "open it" }]);
+  } finally {
+    link.stop();
+    store.dispose();
+    await closeServer(server, sockets);
+    await fsp.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("the TCP line limit counts encoded bytes rather than UTF-16 characters", () => {
+  const socket = new StubSocket();
+  const { link, store, logs } = createLink();
+  link.socket = socket;
+  link.authenticated = true;
+  const multibyteLine = Buffer.from("\u00e9".repeat(300 * 1024), "utf8");
+
+  try {
+    assert.equal(multibyteLine.length, 600 * 1024);
+    link.onData(multibyteLine);
+    assert.equal(socket.destroyed, true);
+    assert.equal(
+      logs.entries.filter((entry) => entry.event === "phone_link_flood").length,
+      1,
+    );
+  } finally {
+    link.stop();
+    store.dispose();
   }
 });
 
