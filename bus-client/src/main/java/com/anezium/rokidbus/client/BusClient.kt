@@ -53,10 +53,20 @@ class BusClient(
     private var service: IBusService? = null
     private var bound = false
     private var closed = false
-    private var reconnectPosted = false
     private var pluginRegistrationState: Int? = null
     private var glassesAiButtonListener: (Boolean) -> Unit = {}
     @Volatile private var hubCapabilities = 0
+    private val registrationRetry = PluginRegistrationRetry(
+        scheduler = RetryScheduler { delayMs, action ->
+            val runnable = Runnable(action)
+            main.postDelayed(runnable, delayMs)
+            RetryCancellation { main.removeCallbacks(runnable) }
+        },
+        retry = ::retryConnectionOrRegistration,
+        onRetryScheduled = { attempt, delayMs, reason ->
+            Log.d(TAG, "scheduling retry attempt=$attempt delayMs=$delayMs reason=$reason")
+        },
+    )
 
     private val callback = object : IBusCallback.Stub() {
         override fun onMessage(path: String, id: String, payload: ByteArray) {
@@ -83,58 +93,32 @@ class BusClient(
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName, binder: IBinder) {
             service = IBusService.Stub.asInterface(binder)
-            reconnectPosted = false
-            runCatching {
-                val registrationResult = if (pluginId == null) {
-                    service?.register(clientId, receivePrefixes, callback)
-                    null
-                } else {
-                    service?.registerPlugin(appContext.packageName, pluginId, callback)
-                }
-                if (registrationResult != null) {
-                    pluginRegistrationState = registrationResult
-                    pluginRegistrationListener(registrationResult)
-                }
-                hubCapabilities = runCatching { service?.capabilities() ?: 0 }.getOrDefault(0)
-                service?.linkState()?.let { listener(BusEvent.LinkState(it)) }
-                if (pluginId == null || registrationResult == PluginRegistrationResult.APPROVED) {
-                    flushQueued()
-                } else {
-                    queued.clear()
-                }
-            }.onFailure {
-                pluginRegistrationState = PluginRegistrationResult.REGISTRATION_FAILED
-                if (pluginId != null) {
-                    pluginRegistrationListener(PluginRegistrationResult.REGISTRATION_FAILED)
-                }
-                listener(BusEvent.Error("Hub registration failed", it))
-                scheduleReconnect()
-            }
+            registerConnectedService(refreshConnectionState = true)
         }
 
         override fun onServiceDisconnected(name: ComponentName) {
             service = null
             pluginRegistrationState = null
             hubCapabilities = 0
-            if (!closed) scheduleReconnect()
+            if (!closed) registrationRetry.onConnectionFailure("service disconnected")
         }
 
         override fun onBindingDied(name: ComponentName) {
             service = null
             pluginRegistrationState = null
             hubCapabilities = 0
-            if (!closed) scheduleReconnect()
+            if (!closed) registrationRetry.onConnectionFailure("binding died")
         }
 
         override fun onNullBinding(name: ComponentName) {
             service = null
-            pluginRegistrationState = PluginRegistrationResult.REGISTRATION_FAILED
             hubCapabilities = 0
             if (pluginId != null) {
-                pluginRegistrationListener(PluginRegistrationResult.REGISTRATION_FAILED)
+                handlePluginRegistrationResult(PluginRegistrationResult.REGISTRATION_FAILED)
+            } else {
+                registrationRetry.onConnectionFailure("null binding")
             }
             listener(BusEvent.Error("Hub returned a null binding"))
-            if (!closed) scheduleReconnect()
         }
     }
 
@@ -143,7 +127,7 @@ class BusClient(
         val intent = resolveHubIntent()
         if (intent == null) {
             listener(BusEvent.Error("No RokidBus hub service visible"))
-            scheduleReconnect()
+            registrationRetry.onConnectionFailure("hub service not visible")
             return
         }
         if (bound) return
@@ -153,7 +137,7 @@ class BusClient(
             listener(BusEvent.Error("bindService failed", it))
             false
         }
-        if (!bound) scheduleReconnect()
+        if (!bound) registrationRetry.onConnectionFailure("binding failed")
     }
 
     fun send(path: String, payload: JSONObject): String =
@@ -197,7 +181,7 @@ class BusClient(
                         ?: "json send failed; queued for reconnect",
                 ),
             )
-            scheduleReconnect()
+            registrationRetry.onConnectionFailure("json send failed")
             mutation.accepted
         }
     }
@@ -234,7 +218,7 @@ class BusClient(
                 queued.rejectBinary(),
                 operation = "binary send failed; payload not retained",
             )
-            scheduleReconnect()
+            registrationRetry.onConnectionFailure("binary send failed")
         }.getOrDefault(false)
     }
 
@@ -315,6 +299,7 @@ class BusClient(
 
     fun close() {
         closed = true
+        registrationRetry.close()
         pending.values.forEach { it.onFailure(IllegalStateException("BusClient closed")) }
         pending.clear()
         runCatching { service?.unregister(callback) }
@@ -374,7 +359,7 @@ class BusClient(
                             ?: "json resend failed; queued for reconnect",
                     ),
                 )
-                scheduleReconnect()
+                registrationRetry.onConnectionFailure("json resend failed")
                 return
             }
         }
@@ -386,17 +371,60 @@ class BusClient(
         }
     }
 
-    private fun scheduleReconnect() {
-        if (closed || reconnectPosted) return
-        reconnectPosted = true
-        main.postDelayed({
-            reconnectPosted = false
-            if (!closed) {
-                if (bound) runCatching { appContext.unbindService(connection) }
-                bound = false
-                connect()
+    private fun registerConnectedService(refreshConnectionState: Boolean) {
+        val hub = service ?: return
+        runCatching {
+            val registrationResult = if (pluginId == null) {
+                hub.register(clientId, receivePrefixes, callback)
+                null
+            } else {
+                hub.registerPlugin(appContext.packageName, pluginId, callback)
             }
-        }, 1_000L)
+            if (registrationResult != null) {
+                handlePluginRegistrationResult(registrationResult)
+            } else {
+                registrationRetry.reset()
+            }
+            if (refreshConnectionState) {
+                hubCapabilities = runCatching { hub.capabilities() }.getOrDefault(0)
+                listener(BusEvent.LinkState(hub.linkState()))
+            }
+            if (pluginId == null || registrationResult == PluginRegistrationResult.APPROVED) {
+                flushQueued()
+            } else {
+                queued.clear()
+            }
+        }.onFailure {
+            service = null
+            if (pluginId != null) {
+                handlePluginRegistrationResult(PluginRegistrationResult.REGISTRATION_FAILED)
+            } else {
+                registrationRetry.onConnectionFailure("hub registration failed")
+            }
+            listener(BusEvent.Error("Hub registration failed", it))
+        }
+    }
+
+    private fun handlePluginRegistrationResult(result: Int) {
+        pluginRegistrationState = result
+        pluginRegistrationListener(result)
+        registrationRetry.onRegistrationResult(result)
+    }
+
+    private fun retryConnectionOrRegistration() {
+        if (closed) return
+        if (
+            pluginId != null &&
+            service != null &&
+            pluginRegistrationState != PluginRegistrationResult.APPROVED
+        ) {
+            registerConnectedService(refreshConnectionState = false)
+            return
+        }
+        if (bound) runCatching { appContext.unbindService(connection) }
+        bound = false
+        service = null
+        connect()
     }
 
     private fun resolveHubIntent(): Intent? {
