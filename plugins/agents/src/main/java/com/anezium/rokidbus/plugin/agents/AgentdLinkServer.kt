@@ -131,11 +131,11 @@ class AgentdLinkServer(
                 when (val decision = gate.receive(codec.parse(line))) {
                     is AgentdInboundDecision.HelloAccepted -> {
                         connection.machineId = decision.hello.machineId
-                        activate(connection)
                         if (decision.newlyTrusted) {
                             onMachineTrusted(decision.hello.machineName)
                         }
                         if (!connection.send(HELLO_ACK)) return@lines false
+                        activate(connection)
                         configStore.touchMachineSeen(decision.hello.machineId)
                         store.setLinkMachine(
                             LinkMachine(
@@ -149,6 +149,9 @@ class AgentdLinkServer(
                             ConnectionState.CONNECTED,
                             decision.hello.machineName,
                         )
+                        store.detailOpenForReconnect()?.let { detailOpen ->
+                            if (!connection.send(detailOpen)) return@lines false
+                        }
                         true
                     }
                     is AgentdInboundDecision.AuthRejected -> {

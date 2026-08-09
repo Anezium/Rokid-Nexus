@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Refresh an open conversation after either daemon transport reconnects.
+
 ## 1.0.0
 
 - Add Claude Code, Codex, and OpenClaw session monitoring.

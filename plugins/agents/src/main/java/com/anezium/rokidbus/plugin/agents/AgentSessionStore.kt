@@ -72,6 +72,14 @@ class AgentSessionStore {
         _conversation.value = null
     }
 
+    /** An authenticated daemon transport restores only the detail still on the HUD. */
+    @Synchronized
+    internal fun detailOpenForReconnect(): String? {
+        val current = _conversation.value ?: return null
+        if (current.provider !in AgentProvider.AGENTD_PROVIDERS) return null
+        return AgentdProtocolCodec.detailOpen(current.sessionId)
+    }
+
     @Synchronized
     fun setConversation(
         provider: AgentProvider,

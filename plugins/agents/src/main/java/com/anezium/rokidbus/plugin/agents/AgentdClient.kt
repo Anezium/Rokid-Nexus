@@ -15,6 +15,7 @@ import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 
 class AgentdClient(
     private val httpClient: OkHttpClient,
@@ -24,35 +25,38 @@ class AgentdClient(
 ) {
     private var loopJob: Job? = null
     private val sockets = GenerationSlot<WebSocket>()
-
-    /** Survives reconnects: the daemon forgets, the wearer should not. */
-    @Volatile private var openSessionId: String? = null
+    private val authenticatedSocket = AtomicReference<WebSocket?>()
 
     fun openDetail(sessionId: String) {
-        openSessionId = sessionId
-        sockets.current()?.send(AgentdProtocolCodec.detailOpen(sessionId))
+        send(AgentdProtocolCodec.detailOpen(sessionId))
     }
 
     fun closeDetail() {
-        openSessionId = null
-        sockets.current()?.send(AgentdProtocolCodec.DETAIL_CLOSE)
+        send(AgentdProtocolCodec.DETAIL_CLOSE)
     }
 
     fun decideApproval(requestId: String, decision: ApprovalDecision) {
-        sockets.current()?.send(AgentdProtocolCodec.approvalDecision(requestId, decision))
+        send(AgentdProtocolCodec.approvalDecision(requestId, decision))
     }
 
     fun requestFolders(requestId: String, path: String?) {
-        sockets.current()?.send(AgentdProtocolCodec.fsList(requestId, path))
+        send(AgentdProtocolCodec.fsList(requestId, path))
     }
 
     fun requestThreadStart(requestId: String, provider: AgentProvider, path: String, prompt: String) {
-        sockets.current()?.send(AgentdProtocolCodec.threadStart(requestId, provider, path, prompt))
+        send(AgentdProtocolCodec.threadStart(requestId, provider, path, prompt))
+    }
+
+    /** OkHttp queues this write; only the authenticated socket is made visible here. */
+    private fun send(payload: String): Boolean {
+        val socket = authenticatedSocket.get() ?: return false
+        return socket.send(payload)
     }
 
     @Synchronized
     fun start(config: AgentdConfig) {
         loopJob?.cancel()
+        authenticatedSocket.set(null)
         val advance = sockets.advance()
         advance.previous?.cancel()
         val job = scope.launch(start = CoroutineStart.LAZY) {
@@ -66,6 +70,7 @@ class AgentdClient(
     fun stop(clearSessions: Boolean) {
         loopJob?.cancel()
         loopJob = null
+        authenticatedSocket.set(null)
         sockets.advance().previous?.cancel()
         store.setConnection(AgentProvider.CLAUDE, ConnectionState.DISCONNECTED)
         store.clearApprovals(AgentProvider.AGENTD_PROVIDERS)
@@ -157,11 +162,17 @@ class AgentdClient(
                         deadlines.clear(DEADLINE_HELLO)
                         deadlines.arm(DEADLINE_SNAPSHOT, "Daemon snapshot timed out")
                         backoff.reset()
+                        authenticatedSocket.set(webSocket)
                         store.setConnection(
                             AgentProvider.CLAUDE,
                             ConnectionState.CONNECTED,
                             action.machineName,
                         )
+                        store.detailOpenForReconnect()?.let { detailOpen ->
+                            if (!send(detailOpen)) {
+                                ended.complete(ConnectionOutcome.Retry)
+                            }
+                        }
                     }
                     is AgentdAction.Snapshot -> {
                         if (!connected.get()) return
@@ -170,8 +181,6 @@ class AgentdClient(
                             AgentProvider.AGENTD_PROVIDERS,
                             action.sessions,
                         )
-                        // A fresh connection knows nothing of the open conversation.
-                        openSessionId?.let { webSocket.send(AgentdProtocolCodec.detailOpen(it)) }
                     }
                     is AgentdAction.Upsert -> {
                         if (connected.get()) store.upsert(action.session)
@@ -261,6 +270,7 @@ class AgentdClient(
         try {
             ended.await()
         } finally {
+            authenticatedSocket.compareAndSet(candidate, null)
             deadlines.clearAll()
         }
     }

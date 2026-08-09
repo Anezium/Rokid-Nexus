@@ -2,6 +2,7 @@ package com.anezium.rokidbus.plugin.agents
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 class AgentSessionStoreTest {
@@ -91,6 +92,43 @@ class AgentSessionStoreTest {
         // Gone for good: pruning again has nothing left to drop.
         assertEquals(emptySet<String>(), store.prune(now))
         assertEquals(listOf("live"), store.sessions.value.map(AgentSession::id))
+    }
+
+    @Test
+    fun openConversationReemitsDetailAfterReconnect() {
+        val store = AgentSessionStore()
+        val open = session("thread-1", AgentProvider.CODEX, AgentStatus.WORKING)
+
+        store.openConversation(open)
+
+        assertEquals(
+            AgentdProtocolCodec.detailOpen(open.id),
+            store.detailOpenForReconnect(),
+        )
+        assertEquals(AgentProvider.CODEX, store.conversation.value?.provider)
+    }
+
+    @Test
+    fun closedConversationDoesNotReemitDetailAfterReconnect() {
+        val store = AgentSessionStore()
+        store.openConversation(session("thread-1", AgentProvider.CLAUDE, AgentStatus.IDLE))
+
+        store.closeConversation()
+
+        assertNull(store.detailOpenForReconnect())
+    }
+
+    @Test
+    fun neverOpenedConversationDoesNotReemitDetailAfterReconnect() {
+        assertNull(AgentSessionStore().detailOpenForReconnect())
+    }
+
+    @Test
+    fun nonDaemonConversationDoesNotReemitOnDaemonReconnect() {
+        val store = AgentSessionStore()
+        store.openConversation(session("thread-1", AgentProvider.OPENCLAW, AgentStatus.IDLE))
+
+        assertNull(store.detailOpenForReconnect())
     }
 
     private fun session(
