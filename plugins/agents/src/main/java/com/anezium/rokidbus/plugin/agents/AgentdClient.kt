@@ -162,17 +162,26 @@ class AgentdClient(
                         deadlines.clear(DEADLINE_HELLO)
                         deadlines.arm(DEADLINE_SNAPSHOT, "Daemon snapshot timed out")
                         backoff.reset()
-                        authenticatedSocket.set(webSocket)
+                        // The reopen goes out before the socket becomes visible
+                        // to wearer-driven sends: anything the wearer does after
+                        // this lands later on the wire, so the daemon always
+                        // converges on the wearer's most recent intent.
+                        store.detailOpenForReconnect()?.let { detailOpen ->
+                            if (!webSocket.send(detailOpen)) {
+                                ended.complete(ConnectionOutcome.Retry)
+                            }
+                        }
+                        // A superseded attempt must never install itself over
+                        // the socket of a newer start(); its teardown could not
+                        // tell the difference afterwards.
+                        if (sockets.current() === webSocket) {
+                            authenticatedSocket.set(webSocket)
+                        }
                         store.setConnection(
                             AgentProvider.CLAUDE,
                             ConnectionState.CONNECTED,
                             action.machineName,
                         )
-                        store.detailOpenForReconnect()?.let { detailOpen ->
-                            if (!send(detailOpen)) {
-                                ended.complete(ConnectionOutcome.Retry)
-                            }
-                        }
                     }
                     is AgentdAction.Snapshot -> {
                         if (!connected.get()) return

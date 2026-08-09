@@ -135,6 +135,13 @@ class AgentdLinkServer(
                             onMachineTrusted(decision.hello.machineName)
                         }
                         if (!connection.send(HELLO_ACK)) return@lines false
+                        // The reopen rides directly on this authenticated socket
+                        // before activation makes it the target of wearer-driven
+                        // sends: whatever the wearer does next is guaranteed to
+                        // reach the daemon after this frame, never before.
+                        store.detailOpenForReconnect()?.let { detailOpen ->
+                            if (!connection.send(detailOpen)) return@lines false
+                        }
                         activate(connection)
                         configStore.touchMachineSeen(decision.hello.machineId)
                         store.setLinkMachine(
@@ -149,9 +156,6 @@ class AgentdLinkServer(
                             ConnectionState.CONNECTED,
                             decision.hello.machineName,
                         )
-                        store.detailOpenForReconnect()?.let { detailOpen ->
-                            if (!connection.send(detailOpen)) return@lines false
-                        }
                         true
                     }
                     is AgentdInboundDecision.AuthRejected -> {
