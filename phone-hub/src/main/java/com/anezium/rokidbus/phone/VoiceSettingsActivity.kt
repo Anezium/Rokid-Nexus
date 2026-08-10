@@ -1,11 +1,19 @@
 package com.anezium.rokidbus.phone
 
 import android.app.Activity
+import android.app.Dialog
 import android.graphics.Color
+import android.graphics.drawable.ColorDrawable
 import android.os.Bundle
+import android.text.Editable
+import android.text.TextWatcher
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.view.Window
+import android.view.WindowManager
+import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -25,9 +33,8 @@ class VoiceSettingsActivity : Activity() {
 
     private lateinit var introCard: TextView
     private lateinit var headerMeta: TextView
-    private lateinit var languageHeaderMeta: TextView
     private lateinit var speedHost: LinearLayout
-    private lateinit var languageGridHost: LinearLayout
+    private lateinit var languageHost: LinearLayout
     private lateinit var voiceListHost: LinearLayout
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -49,9 +56,8 @@ class VoiceSettingsActivity : Activity() {
 
         introCard = NexusUi.cardBody(this, "")
         headerMeta = NexusUi.metaLabel(this, "", NexusUi.GREEN_DIM)
-        languageHeaderMeta = NexusUi.metaLabel(this, "", NexusUi.GREEN_DIM)
         speedHost = host()
-        languageGridHost = host()
+        languageHost = host()
         voiceListHost = host()
 
         val phoneSettingsHost = host().apply {
@@ -59,9 +65,15 @@ class VoiceSettingsActivity : Activity() {
             addView(BusTheme.gap(this@VoiceSettingsActivity, 12))
             addView(speedHost, NexusUi.block())
             addView(BusTheme.gap(this@VoiceSettingsActivity, 26))
-            addView(sectionHeaderRow("Language", languageHeaderMeta), NexusUi.block())
+            addView(
+                sectionHeaderRow(
+                    "Language",
+                    NexusUi.metaLabel(this@VoiceSettingsActivity, "", NexusUi.INK4),
+                ),
+                NexusUi.block(),
+            )
             addView(BusTheme.gap(this@VoiceSettingsActivity, 12))
-            addView(languageGridHost, NexusUi.block())
+            addView(languageHost, NexusUi.block())
             addView(BusTheme.gap(this@VoiceSettingsActivity, 26))
             addView(
                 sectionHeaderRow(
@@ -208,12 +220,9 @@ class VoiceSettingsActivity : Activity() {
             ?.let(Locale::forLanguageTag)
             ?: Locale.getDefault()
         val languages = availableLanguages(allVoices)
-        languageHeaderMeta.text = selectedLanguageTag
-            ?.let { displayLanguageName(selectedLocale).uppercase() }
-            ?: "SYSTEM"
-        languageGridHost.removeAllViews()
-        languageGridHost.addView(
-            languageGrid(languages, selectedLanguageTag),
+        languageHost.removeAllViews()
+        languageHost.addView(
+            languageRow(selectedLanguageTag, selectedLocale, languages),
             NexusUi.block(),
         )
 
@@ -263,95 +272,239 @@ class VoiceSettingsActivity : Activity() {
             .map { option ->
                 TtsLanguageOption(
                     languageTag = option.locale.toLanguageTag(),
-                    label = displayLanguageName(option.locale),
+                    label = autonym(option.locale),
+                    altLabel = uiLanguageName(option.locale),
                 )
             }
             .sortedBy { it.label.lowercase(Locale.getDefault()) }
-        return listOf(TtsLanguageOption(null, "System")) + available
+        return listOf(TtsLanguageOption(null, "System", "System")) + available
     }
 
-    private fun displayLanguageName(locale: Locale): String {
-        val displayName = locale.getDisplayName(Locale.getDefault())
-            .ifBlank { locale.toLanguageTag() }
-        return displayName.replaceFirstChar { first ->
-            if (first.isLowerCase()) first.titlecase(Locale.getDefault()) else first.toString()
+    /** The language's name in its own tongue, so you recognize it whatever the phone UI. */
+    private fun autonym(locale: Locale): String = capitalize(
+        locale.getDisplayName(locale).ifBlank { locale.toLanguageTag() },
+        locale,
+    )
+
+    /** The same language named in the phone's UI language, for search and the sub-line. */
+    private fun uiLanguageName(locale: Locale): String = capitalize(
+        locale.getDisplayName(Locale.getDefault()).ifBlank { locale.toLanguageTag() },
+        Locale.getDefault(),
+    )
+
+    private fun capitalize(text: String, locale: Locale): String =
+        text.replaceFirstChar { first ->
+            if (first.isLowerCase()) first.titlecase(locale) else first.toString()
+        }
+
+    /** The single Language row: shows the current choice and opens the picker. */
+    private fun languageRow(
+        selectedLanguageTag: String?,
+        selectedLocale: Locale,
+        languages: List<TtsLanguageOption>,
+    ): LinearLayout {
+        val value = if (selectedLanguageTag == null) "System" else autonym(selectedLocale)
+        val sub = if (selectedLanguageTag == null) {
+            "Follows your phone's language"
+        } else {
+            "Answers are spoken in this language"
+        }
+        return NexusUi.pressableCard(this).apply {
+            contentDescription = "Language, $value"
+            addView(
+                LinearLayout(this@VoiceSettingsActivity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    addView(NexusUi.rowTitle(this@VoiceSettingsActivity, value), NexusUi.block())
+                    addView(
+                        NexusUi.rowSub(this@VoiceSettingsActivity, sub).apply {
+                            (layoutParams as? LinearLayout.LayoutParams)?.topMargin =
+                                NexusUi.dp(this@VoiceSettingsActivity, 3)
+                        },
+                        NexusUi.block(),
+                    )
+                },
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+            )
+            addView(NexusUi.chevron(this@VoiceSettingsActivity))
+            setOnClickListener { showLanguagePicker(languages, selectedLanguageTag) }
         }
     }
 
-    private fun languageGrid(
+    /** Full searchable list — the right home for ~90 languages, not a wall of chips. */
+    private fun showLanguagePicker(
         languages: List<TtsLanguageOption>,
         selectedLanguageTag: String?,
-    ): LinearLayout =
-        LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            languages.chunked(3).forEachIndexed { rowIndex, row ->
-                addView(
-                    LinearLayout(this@VoiceSettingsActivity).apply {
-                        orientation = LinearLayout.HORIZONTAL
-                        row.forEachIndexed { index, language ->
-                            addView(
-                                languageChip(language, selectedLanguageTag),
-                                LinearLayout.LayoutParams(
-                                    0,
-                                    NexusUi.dp(this@VoiceSettingsActivity, 40),
-                                    1f,
-                                ).apply {
-                                    if (index > 0) {
-                                        marginStart = NexusUi.dp(this@VoiceSettingsActivity, 8)
-                                    }
-                                },
-                            )
-                        }
-                        repeat(3 - row.size) {
-                            addView(
-                                View(this@VoiceSettingsActivity),
-                                LinearLayout.LayoutParams(0, 1, 1f).apply {
-                                    marginStart = NexusUi.dp(this@VoiceSettingsActivity, 8)
-                                },
-                            )
-                        }
+    ) {
+        val dialog = Dialog(this)
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+
+        val listHost = host()
+        val search = NexusUi.field(this, "Search languages")
+
+        fun rebuild(query: String) {
+            listHost.removeAllViews()
+            val needle = query.trim().lowercase(Locale.getDefault())
+            val matches = languages.filter { option ->
+                needle.isEmpty() ||
+                    option.label.lowercase(Locale.getDefault()).contains(needle) ||
+                    option.altLabel.lowercase(Locale.getDefault()).contains(needle) ||
+                    option.languageTag?.lowercase(Locale.ROOT)?.contains(needle) == true
+            }
+            if (matches.isEmpty()) {
+                listHost.addView(
+                    NexusUi.metaLabel(this, "NO MATCH", NexusUi.INK4).apply {
+                        setPadding(
+                            0,
+                            NexusUi.dp(this@VoiceSettingsActivity, 18),
+                            0,
+                            NexusUi.dp(this@VoiceSettingsActivity, 18),
+                        )
                     },
-                    NexusUi.block().apply {
-                        if (rowIndex > 0) {
-                            topMargin = NexusUi.dp(this@VoiceSettingsActivity, 8)
+                    NexusUi.block(),
+                )
+                return
+            }
+            matches.forEach { option ->
+                listHost.addView(
+                    pickerRow(option, selectedLanguageTag) {
+                        if (!option.languageTag.equals(selectedLanguageTag, ignoreCase = true)) {
+                            voiceSettings.setLanguageTag(option.languageTag)
+                            render()
+                            hearSample()
                         }
+                        dialog.dismiss()
                     },
+                    NexusUi.block(),
                 )
             }
         }
 
-    private fun languageChip(
-        language: TtsLanguageOption,
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = NexusUi.rounded(this@VoiceSettingsActivity, NexusUi.CARD, 20)
+            setPadding(
+                NexusUi.dp(this@VoiceSettingsActivity, 18),
+                NexusUi.dp(this@VoiceSettingsActivity, 18),
+                NexusUi.dp(this@VoiceSettingsActivity, 18),
+                NexusUi.dp(this@VoiceSettingsActivity, 14),
+            )
+            addView(
+                NexusUi.sectionLabel(this@VoiceSettingsActivity, "Language"),
+                NexusUi.block(),
+            )
+            addView(BusTheme.gap(this@VoiceSettingsActivity, 12))
+            addView(search, NexusUi.block())
+            addView(BusTheme.gap(this@VoiceSettingsActivity, 6))
+            addView(
+                ScrollView(this@VoiceSettingsActivity).apply {
+                    isVerticalScrollBarEnabled = false
+                    addView(
+                        listHost,
+                        ViewGroup.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.WRAP_CONTENT,
+                        ),
+                    )
+                },
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    0,
+                    1f,
+                ),
+            )
+        }
+
+        search.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = Unit
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = Unit
+            override fun afterTextChanged(s: Editable?) = rebuild(s?.toString().orEmpty())
+        })
+        rebuild("")
+
+        val frame = FrameLayout(this).apply {
+            // Vertical padding sets the sheet inset when the keyboard is down; when it opens,
+            // adjustResize shrinks this frame and the MATCH_PARENT panel shrinks with it, so the
+            // search field and first results stay on screen instead of being clipped off the top.
+            val padX = NexusUi.dp(this@VoiceSettingsActivity, 18)
+            val padY = NexusUi.dp(this@VoiceSettingsActivity, 36)
+            setPadding(padX, padY, padX, padY)
+            addView(
+                panel,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    Gravity.CENTER,
+                ),
+            )
+        }
+
+        dialog.setContentView(frame)
+        dialog.window?.apply {
+            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            setLayout(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            )
+            setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+        }
+        dialog.show()
+    }
+
+    private fun pickerRow(
+        option: TtsLanguageOption,
         selectedLanguageTag: String?,
-    ): TextView =
-        TextView(this).apply {
-            text = language.label
-            textSize = 12f
-            gravity = Gravity.CENTER
-            includeFontPadding = false
-            maxLines = 1
-            val selected = language.languageTag.equals(selectedLanguageTag, ignoreCase = true)
-            setTextColor(if (selected) NexusUi.GREEN else NexusUi.INK2)
-            background = if (selected) {
-                NexusUi.bordered(
-                    this@VoiceSettingsActivity,
-                    NexusUi.alpha(NexusUi.GREEN, 0x14),
-                    NexusUi.alpha(NexusUi.GREEN, 0x50),
-                    11,
-                )
-            } else {
-                NexusUi.pressedBordered(this@VoiceSettingsActivity, NexusUi.PANEL, 11)
-            }
+        onClick: () -> Unit,
+    ): LinearLayout {
+        val selected = option.languageTag.equals(selectedLanguageTag, ignoreCase = true)
+        val showAlt = option.languageTag != null && !option.altLabel.equals(
+            option.label,
+            ignoreCase = true,
+        )
+        val dot = NexusUi.dot(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                NexusUi.dp(this@VoiceSettingsActivity, 8),
+                NexusUi.dp(this@VoiceSettingsActivity, 8),
+            ).apply { marginStart = NexusUi.dp(this@VoiceSettingsActivity, 12) }
+        }
+        NexusUi.setDotColor(dot, if (selected) NexusUi.GREEN else NexusUi.INK4)
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = NexusUi.pressed(this@VoiceSettingsActivity, Color.TRANSPARENT, 12)
             isClickable = true
             isFocusable = true
-            setOnClickListener {
-                if (!language.languageTag.equals(selectedLanguageTag, ignoreCase = true)) {
-                    voiceSettings.setLanguageTag(language.languageTag)
-                    render()
-                    hearSample()
-                }
-            }
+            contentDescription = option.label
+            setPadding(
+                NexusUi.dp(this@VoiceSettingsActivity, 6),
+                NexusUi.dp(this@VoiceSettingsActivity, 10),
+                NexusUi.dp(this@VoiceSettingsActivity, 6),
+                NexusUi.dp(this@VoiceSettingsActivity, 10),
+            )
+            setOnClickListener { onClick() }
+            addView(
+                LinearLayout(this@VoiceSettingsActivity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    addView(
+                        NexusUi.rowTitle(this@VoiceSettingsActivity, option.label).apply {
+                            if (selected) setTextColor(NexusUi.GREEN)
+                        },
+                        NexusUi.block(),
+                    )
+                    if (showAlt) {
+                        addView(
+                            NexusUi.rowSub(this@VoiceSettingsActivity, option.altLabel).apply {
+                                (layoutParams as? LinearLayout.LayoutParams)?.topMargin =
+                                    NexusUi.dp(this@VoiceSettingsActivity, 2)
+                            },
+                            NexusUi.block(),
+                        )
+                    }
+                },
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+            )
+            addView(dot)
         }
+    }
 
     private fun speedChip(rate: Float, current: Float, first: Boolean): TextView =
         TextView(this).apply {
@@ -470,6 +623,7 @@ class VoiceSettingsActivity : Activity() {
 private data class TtsLanguageOption(
     val languageTag: String?,
     val label: String,
+    val altLabel: String,
 )
 
 private val SPEECH_RATES = listOf(0.75f, 1.0f, 1.25f, 1.5f)
