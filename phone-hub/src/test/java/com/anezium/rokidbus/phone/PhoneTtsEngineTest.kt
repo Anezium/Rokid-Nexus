@@ -21,11 +21,15 @@ class PhoneTtsEngineTest {
 
     @Before
     fun clearSettings() {
-        context.getSharedPreferences(NexusPhoneState.PREFS, Context.MODE_PRIVATE)
-            .edit()
+        val preferences = context.getSharedPreferences(NexusPhoneState.PREFS, Context.MODE_PRIVATE)
+        val editor = preferences.edit()
             .remove(PhoneTtsSettingsStore.KEY_SPEECH_RATE)
+            .remove(PhoneTtsSettingsStore.KEY_LANGUAGE_TAG)
             .remove(PhoneTtsSettingsStore.KEY_VOICE_NAME)
-            .commit()
+        preferences.all.keys
+            .filter { it.startsWith(PhoneTtsSettingsStore.KEY_VOICE_NAME_PREFIX) }
+            .forEach { editor.remove(it) }
+        editor.commit()
     }
 
     @Test
@@ -85,11 +89,9 @@ class PhoneTtsEngineTest {
     @Test
     fun `stored voice that no longer exists falls back without clearing preference`() {
         val settings = PhoneTtsSettingsStore(context)
-        settings.setVoiceName("removed.voice")
-        val default = voice("default.voice", Locale.US)
+        settings.setVoiceName(Locale.US, "removed.voice")
         val backend = FakePhoneTtsBackend(
             voices = linkedSetOf(voice("available.voice", Locale.US)),
-            defaultVoice = default,
         )
         val engine = PhoneTtsEngine(context, backend)
 
@@ -98,20 +100,38 @@ class PhoneTtsEngineTest {
             engine.speak("plugin-id", "private", Locale.US),
         )
 
-        assertEquals(default, backend.selectedVoices.first())
-        assertEquals("removed.voice", settings.voiceName())
+        assertTrue(backend.selectedVoices.isEmpty())
+        assertEquals(listOf(Locale.US), backend.languages)
+        assertEquals("removed.voice", settings.voiceName(Locale.US))
     }
 
     @Test
     fun `stored voice is applied when it still exists`() {
         val selected = voice("selected.voice", Locale.US)
-        PhoneTtsSettingsStore(context).setVoiceName(selected.name)
+        PhoneTtsSettingsStore(context).setVoiceName(Locale.US, selected.name)
         val backend = FakePhoneTtsBackend(voices = linkedSetOf(selected))
         val engine = PhoneTtsEngine(context, backend)
 
         engine.speak("plugin-id", "private", Locale.US)
 
         assertEquals(listOf(selected), backend.selectedVoices)
+    }
+
+    @Test
+    fun `stored voice with a different locale is rejected after language selection`() {
+        val portuguese = Locale.forLanguageTag("pt-BR")
+        val englishVoice = voice("shared.voice.name", Locale.US)
+        PhoneTtsSettingsStore(context).setVoiceName(portuguese, englishVoice.name)
+        val backend = FakePhoneTtsBackend(voices = linkedSetOf(englishVoice))
+        val engine = PhoneTtsEngine(context, backend)
+
+        assertEquals(
+            PhoneTtsSpeakResult.ACCEPTED,
+            engine.speak("plugin-id", "resposta", portuguese),
+        )
+
+        assertEquals(listOf(portuguese), backend.languages)
+        assertTrue(backend.selectedVoices.isEmpty())
     }
 
     @Test
@@ -179,12 +199,16 @@ class PhoneTtsEngineTest {
         override val defaultVoice: Voice? = null,
     ) : PhoneTtsBackend {
         private lateinit var listener: UtteranceProgressListener
+        val languages = mutableListOf<Locale>()
         val speechRates = mutableListOf<Float>()
         val selectedVoices = mutableListOf<Voice>()
         val spokenUtterances = mutableListOf<SpokenUtterance>()
         val silentUtterances = mutableListOf<SilentUtterance>()
 
-        override fun setLanguage(locale: Locale): Int = TextToSpeech.LANG_AVAILABLE
+        override fun setLanguage(locale: Locale): Int {
+            languages += locale
+            return TextToSpeech.LANG_AVAILABLE
+        }
 
         override fun setSpeechRate(rate: Float): Int {
             speechRates += rate

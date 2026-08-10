@@ -50,7 +50,7 @@ internal interface PhoneTtsOutput {
     fun initialize()
     fun speak(utteranceId: String, text: String, locale: Locale): PhoneTtsSpeakResult
     fun prewarm(): Boolean
-    fun availableVoices(locale: Locale): List<PhoneTtsVoiceOption>
+    fun availableVoices(locale: Locale? = null): List<PhoneTtsVoiceOption>
     fun speakSample(text: String, locale: Locale): Boolean
     fun stop()
     fun shutdown()
@@ -249,14 +249,14 @@ internal class PhoneTtsEngine private constructor(
         true
     }
 
-    override fun availableVoices(locale: Locale): List<PhoneTtsVoiceOption> {
+    override fun availableVoices(locale: Locale?): List<PhoneTtsVoiceOption> {
         val current = synchronized(lock) {
             engine.takeIf { state == State.READY }
         } ?: return emptyList()
         return runCatching {
             current.voices.orEmpty()
                 .asSequence()
-                .filter { it.locale == locale }
+                .filter { voice -> locale == null || voice.locale.matchesLanguageTag(locale) }
                 .map {
                     PhoneTtsVoiceOption(
                         name = it.name,
@@ -325,16 +325,6 @@ internal class PhoneTtsEngine private constructor(
         textLength: Int,
         locale: Locale,
     ): PhoneTtsSpeakResult {
-        val storedVoiceName = runCatching(settings::voiceName).getOrNull()
-        val selectedVoice = storedVoiceName?.let { name ->
-            runCatching { current.voices.orEmpty().firstOrNull { it.name == name } }.getOrNull()
-        }
-        if (selectedVoice == null) {
-            runCatching { current.defaultVoice }
-                .getOrNull()
-                ?.let { default -> runCatching { current.setVoice(default) } }
-        }
-
         val languageResult = runCatching { current.setLanguage(locale) }
             .getOrElse {
                 logger("phone TTS speak id=$utteranceId result=LANGUAGE_ERROR chars=$textLength")
@@ -345,6 +335,15 @@ internal class PhoneTtsEngine private constructor(
         ) {
             logger("phone TTS speak id=$utteranceId result=LANGUAGE_UNAVAILABLE chars=$textLength")
             return PhoneTtsSpeakResult.LANGUAGE_UNAVAILABLE
+        }
+
+        val storedVoiceName = runCatching { settings.voiceName(locale) }.getOrNull()
+        val selectedVoice = storedVoiceName?.let { name ->
+            runCatching {
+                current.voices.orEmpty().firstOrNull { voice ->
+                    voice.name == name && voice.locale.matchesLanguageTag(locale)
+                }
+            }.getOrNull()
         }
 
         val rate = runCatching(settings::speechRate)
@@ -462,3 +461,6 @@ internal class PhoneTtsEngine private constructor(
         const val PREWARM_INTERVAL_MS = 10_000L
     }
 }
+
+private fun Locale.matchesLanguageTag(other: Locale): Boolean =
+    toLanguageTag().equals(other.toLanguageTag(), ignoreCase = true)

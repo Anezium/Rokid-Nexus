@@ -25,7 +25,9 @@ class VoiceSettingsActivity : Activity() {
 
     private lateinit var introCard: TextView
     private lateinit var headerMeta: TextView
+    private lateinit var languageHeaderMeta: TextView
     private lateinit var speedHost: LinearLayout
+    private lateinit var languageGridHost: LinearLayout
     private lateinit var voiceListHost: LinearLayout
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -47,13 +49,19 @@ class VoiceSettingsActivity : Activity() {
 
         introCard = NexusUi.cardBody(this, "")
         headerMeta = NexusUi.metaLabel(this, "", NexusUi.GREEN_DIM)
+        languageHeaderMeta = NexusUi.metaLabel(this, "", NexusUi.GREEN_DIM)
         speedHost = host()
+        languageGridHost = host()
         voiceListHost = host()
 
         val phoneSettingsHost = host().apply {
             addView(sectionHeaderRow("Speed", headerMeta), NexusUi.block())
             addView(BusTheme.gap(this@VoiceSettingsActivity, 12))
             addView(speedHost, NexusUi.block())
+            addView(BusTheme.gap(this@VoiceSettingsActivity, 26))
+            addView(sectionHeaderRow("Language", languageHeaderMeta), NexusUi.block())
+            addView(BusTheme.gap(this@VoiceSettingsActivity, 12))
+            addView(languageGridHost, NexusUi.block())
             addView(BusTheme.gap(this@VoiceSettingsActivity, 26))
             addView(
                 sectionHeaderRow(
@@ -194,9 +202,23 @@ class VoiceSettingsActivity : Activity() {
             NexusUi.block(),
         )
 
+        val allVoices = PhoneTtsUiApi.availableVoices()
+        val selectedLanguageTag = voiceSettings.languageTag()
+        val selectedLocale = selectedLanguageTag
+            ?.let(Locale::forLanguageTag)
+            ?: Locale.getDefault()
+        val languages = availableLanguages(allVoices)
+        languageHeaderMeta.text = selectedLanguageTag
+            ?.let { displayLanguageName(selectedLocale).uppercase() }
+            ?: "SYSTEM"
+        languageGridHost.removeAllViews()
+        languageGridHost.addView(
+            languageGrid(languages, selectedLanguageTag),
+            NexusUi.block(),
+        )
+
         voiceListHost.removeAllViews()
-        val voices = PhoneTtsUiApi.availableVoices(Locale.getDefault())
-        if (voices.isEmpty()) {
+        if (allVoices.isEmpty()) {
             // An empty list means the hub is not running, not that the phone has no voices.
             voiceListHost.addView(
                 NexusUi.metaLabel(this, "START THE HUB TO CHOOSE A VOICE", NexusUi.INK4),
@@ -204,10 +226,16 @@ class VoiceSettingsActivity : Activity() {
             )
             return
         }
-        val selected = voiceSettings.voiceName()
+        val voices = allVoices.filter { option ->
+            option.locale.toLanguageTag().equals(
+                selectedLocale.toLanguageTag(),
+                ignoreCase = true,
+            )
+        }
+        val selected = voiceSettings.voiceName(selectedLocale)
         voiceListHost.addView(
             selectableRow("Default", null, selected == null) {
-                voiceSettings.setVoiceName(null)
+                voiceSettings.setVoiceName(selectedLocale, null)
                 render()
                 hearSample()
             },
@@ -220,7 +248,7 @@ class VoiceSettingsActivity : Activity() {
                     if (option.needsNetwork) "needs network" else "on device",
                     selected == option.name,
                 ) {
-                    voiceSettings.setVoiceName(option.name)
+                    voiceSettings.setVoiceName(selectedLocale, option.name)
                     render()
                     hearSample()
                 },
@@ -228,6 +256,102 @@ class VoiceSettingsActivity : Activity() {
             )
         }
     }
+
+    private fun availableLanguages(voices: List<PhoneTtsVoiceOption>): List<TtsLanguageOption> {
+        val available = voices
+            .distinctBy { it.locale.toLanguageTag().lowercase(Locale.ROOT) }
+            .map { option ->
+                TtsLanguageOption(
+                    languageTag = option.locale.toLanguageTag(),
+                    label = displayLanguageName(option.locale),
+                )
+            }
+            .sortedBy { it.label.lowercase(Locale.getDefault()) }
+        return listOf(TtsLanguageOption(null, "System")) + available
+    }
+
+    private fun displayLanguageName(locale: Locale): String {
+        val displayName = locale.getDisplayName(Locale.getDefault())
+            .ifBlank { locale.toLanguageTag() }
+        return displayName.replaceFirstChar { first ->
+            if (first.isLowerCase()) first.titlecase(Locale.getDefault()) else first.toString()
+        }
+    }
+
+    private fun languageGrid(
+        languages: List<TtsLanguageOption>,
+        selectedLanguageTag: String?,
+    ): LinearLayout =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            languages.chunked(3).forEachIndexed { rowIndex, row ->
+                addView(
+                    LinearLayout(this@VoiceSettingsActivity).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        row.forEachIndexed { index, language ->
+                            addView(
+                                languageChip(language, selectedLanguageTag),
+                                LinearLayout.LayoutParams(
+                                    0,
+                                    NexusUi.dp(this@VoiceSettingsActivity, 40),
+                                    1f,
+                                ).apply {
+                                    if (index > 0) {
+                                        marginStart = NexusUi.dp(this@VoiceSettingsActivity, 8)
+                                    }
+                                },
+                            )
+                        }
+                        repeat(3 - row.size) {
+                            addView(
+                                View(this@VoiceSettingsActivity),
+                                LinearLayout.LayoutParams(0, 1, 1f).apply {
+                                    marginStart = NexusUi.dp(this@VoiceSettingsActivity, 8)
+                                },
+                            )
+                        }
+                    },
+                    NexusUi.block().apply {
+                        if (rowIndex > 0) {
+                            topMargin = NexusUi.dp(this@VoiceSettingsActivity, 8)
+                        }
+                    },
+                )
+            }
+        }
+
+    private fun languageChip(
+        language: TtsLanguageOption,
+        selectedLanguageTag: String?,
+    ): TextView =
+        TextView(this).apply {
+            text = language.label
+            textSize = 12f
+            gravity = Gravity.CENTER
+            includeFontPadding = false
+            maxLines = 1
+            val selected = language.languageTag.equals(selectedLanguageTag, ignoreCase = true)
+            setTextColor(if (selected) NexusUi.GREEN else NexusUi.INK2)
+            background = if (selected) {
+                NexusUi.bordered(
+                    this@VoiceSettingsActivity,
+                    NexusUi.alpha(NexusUi.GREEN, 0x14),
+                    NexusUi.alpha(NexusUi.GREEN, 0x50),
+                    11,
+                )
+            } else {
+                NexusUi.pressedBordered(this@VoiceSettingsActivity, NexusUi.PANEL, 11)
+            }
+            isClickable = true
+            isFocusable = true
+            setOnClickListener {
+                if (!language.languageTag.equals(selectedLanguageTag, ignoreCase = true)) {
+                    voiceSettings.setLanguageTag(language.languageTag)
+                    render()
+                    hearSample()
+                }
+            }
+        }
 
     private fun speedChip(rate: Float, current: Float, first: Boolean): TextView =
         TextView(this).apply {
@@ -319,7 +443,10 @@ class VoiceSettingsActivity : Activity() {
     }
 
     private fun hearSample() {
-        if (!PhoneTtsUiApi.speakSample(sampleText())) {
+        val locale = voiceSettings.languageTag()
+            ?.let(Locale::forLanguageTag)
+            ?: Locale.getDefault()
+        if (!PhoneTtsUiApi.speakSample(sampleText(locale), locale)) {
             Toast.makeText(this, "Start the hub to hear the voice.", Toast.LENGTH_SHORT).show()
         }
     }
@@ -329,13 +456,20 @@ class VoiceSettingsActivity : Activity() {
      * the wrong thing entirely — a French voice reading English is exactly the mismatch
      * this screen exists to let you avoid.
      */
-    private fun sampleText(): String = when (Locale.getDefault().language) {
+    private fun sampleText(locale: Locale): String = when (locale.language) {
+        "en" -> "This is how I will read your answers."
         "fr" -> "Voilà comment je vais lire vos réponses."
-        else -> "This is how I will read your answers."
+        "pt" -> "É assim que vou ler suas respostas."
+        else -> "Rokid Nexus. 1, 2, 3."
     }
 
     private fun formatRate(rate: Float): String =
         if (rate == rate.toInt().toFloat()) "${rate.toInt()}x" else "${rate}x"
 }
+
+private data class TtsLanguageOption(
+    val languageTag: String?,
+    val label: String,
+)
 
 private val SPEECH_RATES = listOf(0.75f, 1.0f, 1.25f, 1.5f)

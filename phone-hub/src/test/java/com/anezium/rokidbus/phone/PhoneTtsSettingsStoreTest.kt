@@ -2,11 +2,13 @@ package com.anezium.rokidbus.phone
 
 import android.content.Context
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
+import java.util.Locale
 
 @RunWith(RobolectricTestRunner::class)
 class PhoneTtsSettingsStoreTest {
@@ -27,15 +29,64 @@ class PhoneTtsSettingsStoreTest {
     }
 
     @Test
-    fun `voice name persists and null restores engine default`() {
+    fun `language tag persists and null restores system default`() {
         clearPreferences()
         val store = PhoneTtsSettingsStore(context)
 
-        assertNull(store.voiceName())
-        store.setVoiceName("engine.voice.id")
-        assertEquals("engine.voice.id", PhoneTtsSettingsStore(context).voiceName())
-        store.setVoiceName(null)
-        assertNull(PhoneTtsSettingsStore(context).voiceName())
+        assertNull(store.languageTag())
+        store.setLanguageTag("pt-br")
+        assertEquals("pt-BR", PhoneTtsSettingsStore(context).languageTag())
+        store.setLanguageTag(null)
+        assertNull(PhoneTtsSettingsStore(context).languageTag())
+    }
+
+    @Test
+    fun `voice names persist independently for each language`() {
+        clearPreferences()
+        val store = PhoneTtsSettingsStore(context)
+        val english = Locale.forLanguageTag("en-US")
+        val portuguese = Locale.forLanguageTag("pt-BR")
+
+        store.setVoiceName(english, "english.voice")
+        store.setVoiceName(portuguese, "portuguese.voice")
+
+        val restored = PhoneTtsSettingsStore(context)
+        assertEquals("english.voice", restored.voiceName(english))
+        assertEquals("portuguese.voice", restored.voiceName(portuguese))
+        restored.setVoiceName(english, null)
+        assertNull(PhoneTtsSettingsStore(context).voiceName(english))
+        assertEquals("portuguese.voice", PhoneTtsSettingsStore(context).voiceName(portuguese))
+    }
+
+    @Test
+    fun `legacy global voice migrates to the current default locale`() {
+        clearPreferences()
+        val originalLocale = Locale.getDefault()
+        val portuguese = Locale.forLanguageTag("pt-BR")
+        try {
+            Locale.setDefault(portuguese)
+            val preferences = context.getSharedPreferences(
+                NexusPhoneState.PREFS,
+                Context.MODE_PRIVATE,
+            )
+            preferences.edit()
+                .putString(PhoneTtsSettingsStore.KEY_VOICE_NAME, "legacy.voice")
+                .commit()
+
+            val store = PhoneTtsSettingsStore(context)
+
+            assertEquals("legacy.voice", store.voiceName(portuguese))
+            assertFalse(preferences.contains(PhoneTtsSettingsStore.KEY_VOICE_NAME))
+            assertEquals(
+                "legacy.voice",
+                preferences.getString(
+                    PhoneTtsSettingsStore.KEY_VOICE_NAME_PREFIX + portuguese.toLanguageTag(),
+                    null,
+                ),
+            )
+        } finally {
+            Locale.setDefault(originalLocale)
+        }
     }
 
     @Test
@@ -49,17 +100,21 @@ class PhoneTtsSettingsStoreTest {
         val store = PhoneTtsSettingsStore(context)
 
         assertEquals(PhoneTtsSettingsStore.DEFAULT_SPEECH_RATE, store.speechRate())
-        store.setVoiceName("engine.voice.id")
-        assertEquals("engine.voice.id", PhoneTtsSettingsStore(context).voiceName())
+        store.setVoiceName(Locale.US, "engine.voice.id")
+        assertEquals("engine.voice.id", PhoneTtsSettingsStore(context).voiceName(Locale.US))
     }
 
     private fun clearPreferences() {
-        context.getSharedPreferences(NexusPhoneState.PREFS, Context.MODE_PRIVATE)
-            .edit()
+        val preferences = context.getSharedPreferences(NexusPhoneState.PREFS, Context.MODE_PRIVATE)
+        val editor = preferences.edit()
             .remove(PhoneTtsSettingsStore.KEY_SPEECH_RATE)
+            .remove(PhoneTtsSettingsStore.KEY_LANGUAGE_TAG)
             .remove(PhoneTtsSettingsStore.KEY_VOICE_NAME)
             .remove(LEGACY_OUTPUT_MODE_KEY)
-            .commit()
+        preferences.all.keys
+            .filter { it.startsWith(PhoneTtsSettingsStore.KEY_VOICE_NAME_PREFIX) }
+            .forEach { editor.remove(it) }
+        editor.commit()
     }
 
     private companion object {

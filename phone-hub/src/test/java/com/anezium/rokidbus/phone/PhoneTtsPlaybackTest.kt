@@ -116,20 +116,31 @@ class PhoneTtsPlaybackTest {
     }
 
     @Test
-    fun `absent language uses default locale and present language is honored`() {
+    fun `locale resolution uses system then setting while wire language wins`() {
         val output = FakePhoneTtsOutput(ready = true)
+        var storedLanguageTag: String? = null
         val playback = PhoneTtsPlayback(
             output = output,
-            defaultLocale = { Locale.CANADA_FRENCH },
+            storedLanguageTag = { storedLanguageTag },
+            systemLocale = { Locale.CANADA_FRENCH },
             engineId = sequenceIds(),
             emitStarted = { _, _ -> },
             emitDone = {},
         )
 
         playback.speak(speak("alpha", "u1", "bonjour"))
-        playback.speak(speak("alpha", "u2", "bonjour", "fr-FR"))
+        storedLanguageTag = "pt-BR"
+        playback.speak(speak("alpha", "u2", "olá"))
+        playback.speak(speak("alpha", "u3", "bonjour", "fr-FR"))
 
-        assertEquals(listOf(Locale.CANADA_FRENCH, Locale.forLanguageTag("fr-FR")), output.locales)
+        assertEquals(
+            listOf(
+                Locale.CANADA_FRENCH,
+                Locale.forLanguageTag("pt-BR"),
+                Locale.forLanguageTag("fr-FR"),
+            ),
+            output.locales,
+        )
     }
 
     @Test
@@ -508,7 +519,7 @@ class PhoneTtsPlaybackTest {
             return ready
         }
 
-        override fun availableVoices(locale: Locale): List<PhoneTtsVoiceOption> = emptyList()
+        override fun availableVoices(locale: Locale?): List<PhoneTtsVoiceOption> = emptyList()
 
         override fun speakSample(text: String, locale: Locale): Boolean {
             sampleCount += 1

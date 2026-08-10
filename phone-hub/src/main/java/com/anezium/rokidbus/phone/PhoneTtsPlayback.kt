@@ -17,7 +17,8 @@ import java.util.UUID
 
 internal class PhoneTtsPlayback(
     private val output: PhoneTtsOutput,
-    private val defaultLocale: () -> Locale = Locale::getDefault,
+    private val storedLanguageTag: () -> String? = { null },
+    private val systemLocale: () -> Locale = Locale::getDefault,
     private val engineId: () -> String = { UUID.randomUUID().toString() },
     private val emitStarted: (ownerPluginId: String, utteranceId: String) -> Unit,
     private val emitDone: (TtsDoneEvent) -> Unit,
@@ -40,7 +41,7 @@ internal class PhoneTtsPlayback(
         output.prewarm()
     }
 
-    fun availableVoices(locale: Locale): List<PhoneTtsVoiceOption> =
+    fun availableVoices(locale: Locale? = null): List<PhoneTtsVoiceOption> =
         output.availableVoices(locale)
 
     fun speakSample(text: String, locale: Locale): Boolean = synchronized(lock) {
@@ -58,7 +59,7 @@ internal class PhoneTtsPlayback(
         val accepted =
             state.accept(ownerPluginId, request.utteranceId, engineId(), request.text)
         accepted.preempted?.let(emitDone)
-        val locale = request.lang?.let(Locale::forLanguageTag) ?: defaultLocale()
+        val locale = resolvePhoneTtsLocale(request.lang, storedLanguageTag(), systemLocale())
         val result = output.speak(
             accepted.active.engineId,
             accepted.active.text,
@@ -125,6 +126,15 @@ internal class PhoneTtsPlayback(
     }
 }
 
+internal fun resolvePhoneTtsLocale(
+    wireLanguageTag: String?,
+    storedLanguageTag: String?,
+    systemLocale: Locale,
+): Locale = wireLanguageTag
+    ?.let(Locale::forLanguageTag)
+    ?: storedLanguageTag?.let(Locale::forLanguageTag)
+    ?: systemLocale
+
 internal sealed interface PhoneTtsDispatchResult {
     data object PhoneHandled : PhoneTtsDispatchResult
     data class Invalid(val error: String) : PhoneTtsDispatchResult
@@ -172,7 +182,7 @@ internal class PhoneTtsDispatcher(
 
     fun prewarm(): Boolean = synchronized(dispatchLock) { playback.prewarm() }
 
-    fun availableVoices(locale: Locale): List<PhoneTtsVoiceOption> =
+    fun availableVoices(locale: Locale? = null): List<PhoneTtsVoiceOption> =
         synchronized(dispatchLock) { playback.availableVoices(locale) }
 
     fun speakSample(text: String, locale: Locale): Boolean = synchronized(dispatchLock) {
