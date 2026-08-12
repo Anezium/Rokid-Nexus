@@ -14,7 +14,38 @@ internal data class NutrientsPer100g(
     val sugarsGrams: Double?,
     val fiberGrams: Double?,
     val saltGrams: Double?,
+    val saturatedFatGrams: Double? = null,
+    val sodiumMilligrams: Double? = null,
+    val cholesterolMilligrams: Double? = null,
+    val potassiumMilligrams: Double? = null,
+    val calciumMilligrams: Double? = null,
+    val ironMilligrams: Double? = null,
+    val caffeineMilligrams: Double? = null,
 )
+
+internal enum class MealType { BREAKFAST, LUNCH, DINNER, SNACK, UNKNOWN }
+
+internal enum class FoodEntrySource { SCANNED, SEARCHED, CUSTOM, RECIPE, IMPORTED, UNKNOWN }
+
+internal data class NutritionGoals(
+    val caloriesKcal: Double? = null,
+    val proteinGrams: Double? = null,
+    val carbohydrateGrams: Double? = null,
+    val fatGrams: Double? = null,
+)
+
+internal data class RecipeIngredient(val product: FoodProduct, val grams: Double)
+
+internal data class FoodRecipe(
+    val uuid: String,
+    val name: String,
+    val servings: Double,
+    val ingredients: List<RecipeIngredient>,
+    val createdAtMillis: Long,
+) {
+    init { require(uuid.isNotBlank()); require(name.isNotBlank()); require(servings > 0.0); require(ingredients.isNotEmpty()) }
+    fun nutrientsPerServing(): NutrientsPer100g = nutrientsForIngredients(ingredients, servings)
+}
 
 internal data class FoodProduct(
     val barcode: String,
@@ -33,6 +64,10 @@ internal data class FoodEntry(
     val consumedAtMillis: Long,
     val quantityGrams: Double,
     val product: FoodProduct,
+    val uuid: String = "",
+    val mealType: MealType = MealType.UNKNOWN,
+    val source: FoodEntrySource = FoodEntrySource.UNKNOWN,
+    val recipeId: String? = null,
 )
 
 internal data class NutritionTotal(
@@ -46,6 +81,13 @@ internal data class DailyNutritionTotals(
     val proteinGrams: NutritionTotal,
     val carbohydrateGrams: NutritionTotal,
     val fatGrams: NutritionTotal,
+    val saturatedFatGrams: NutritionTotal = NutritionTotal(0.0, true),
+    val sodiumMilligrams: NutritionTotal = NutritionTotal(0.0, true),
+    val cholesterolMilligrams: NutritionTotal = NutritionTotal(0.0, true),
+    val potassiumMilligrams: NutritionTotal = NutritionTotal(0.0, true),
+    val calciumMilligrams: NutritionTotal = NutritionTotal(0.0, true),
+    val ironMilligrams: NutritionTotal = NutritionTotal(0.0, true),
+    val caffeineMilligrams: NutritionTotal = NutritionTotal(0.0, true),
 )
 
 internal fun aggregateNutrition(entries: List<FoodEntry>): DailyNutritionTotals = DailyNutritionTotals(
@@ -54,7 +96,28 @@ internal fun aggregateNutrition(entries: List<FoodEntry>): DailyNutritionTotals 
     proteinGrams = aggregate(entries) { it.product.nutrients.proteinGrams },
     carbohydrateGrams = aggregate(entries) { it.product.nutrients.carbohydrateGrams },
     fatGrams = aggregate(entries) { it.product.nutrients.fatGrams },
+    saturatedFatGrams = aggregate(entries) { it.product.nutrients.saturatedFatGrams },
+    sodiumMilligrams = aggregate(entries) { it.product.nutrients.sodiumMilligrams },
+    cholesterolMilligrams = aggregate(entries) { it.product.nutrients.cholesterolMilligrams },
+    potassiumMilligrams = aggregate(entries) { it.product.nutrients.potassiumMilligrams },
+    calciumMilligrams = aggregate(entries) { it.product.nutrients.calciumMilligrams },
+    ironMilligrams = aggregate(entries) { it.product.nutrients.ironMilligrams },
+    caffeineMilligrams = aggregate(entries) { it.product.nutrients.caffeineMilligrams },
 )
+
+internal fun nutrientsForIngredients(ingredients: List<RecipeIngredient>, servings: Double): NutrientsPer100g {
+    require(servings > 0.0)
+    fun value(selector: (NutrientsPer100g) -> Double?): Double? {
+        var unknown = false; var total = 0.0
+        ingredients.forEach { ingredient ->
+            if (ingredient.grams <= 0.0) unknown = true
+            val v = selector(ingredient.product.nutrients)
+            if (v == null) unknown = true else total += v * ingredient.grams / 100.0
+        }
+        return if (unknown) null else total / servings
+    }
+    return NutrientsPer100g(value { it.caloriesKcal }, value { it.proteinGrams }, value { it.carbohydrateGrams }, value { it.fatGrams }, value { it.sugarsGrams }, value { it.fiberGrams }, value { it.saltGrams }, value { it.saturatedFatGrams }, value { it.sodiumMilligrams }, value { it.cholesterolMilligrams }, value { it.potassiumMilligrams }, value { it.calciumMilligrams }, value { it.ironMilligrams }, value { it.caffeineMilligrams })
+}
 
 private fun aggregate(
     entries: List<FoodEntry>,
