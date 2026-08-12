@@ -11,6 +11,11 @@ import com.anezium.rokidbus.client.plugin.NexusSdkResult
 import com.anezium.rokidbus.client.plugin.NexusSnapshotCallbacks
 import com.anezium.rokidbus.client.plugin.NexusSnapshotError
 import com.anezium.rokidbus.client.plugin.NexusSnapshotSession
+import com.anezium.rokidbus.client.plugin.NexusSpeechCallbacks
+import com.anezium.rokidbus.client.plugin.NexusSpeechError
+import com.anezium.rokidbus.client.plugin.NexusSpeechSession
+import com.anezium.rokidbus.client.plugin.NexusSpeechState
+import com.anezium.rokidbus.client.plugin.NexusSpeechStopReason
 import com.anezium.rokidbus.client.plugin.NexusSurfaceSession
 import com.anezium.rokidbus.shared.plugin.NexusInputEvent
 import java.time.Instant
@@ -27,6 +32,7 @@ class FoodLogPluginService : NexusPluginService() {
 
     private var surface: NexusSurfaceSession? = null
     private var snapshotSession: NexusSnapshotSession? = null
+    private var speechSession: NexusSpeechSession? = null
     private var generation = 0L
     private var screen = Screen.HOME
     private var selectedIndex = 0
@@ -37,6 +43,57 @@ class FoodLogPluginService : NexusPluginService() {
     private var undoCandidate: FoodEntry? = null
     private var messageTitle = "Food Log"
     private var messageLines = emptyList<String>()
+    private val voiceFinalSegments = mutableListOf<String>()
+    private var voicePartial = ""
+    private var voiceStatus = "Starting…"
+    private var stopVoiceWhenStarted = false
+    private val speechCallbacks = object : NexusSpeechCallbacks {
+        override fun onSpeechStarted(realtime: Boolean) {
+            val active = speechSession ?: return
+            if (stopVoiceWhenStarted || screen != Screen.VOICE) {
+                active.stop()
+                return
+            }
+            voiceStatus = if (realtime) "Listening…" else "Listening in batch mode…"
+            render(show = false)
+        }
+
+        override fun onSpeechState(state: NexusSpeechState) {
+            if (screen != Screen.VOICE) return
+            voiceStatus = when (state) {
+                NexusSpeechState.LISTENING -> "Listening…"
+                NexusSpeechState.RECOGNIZING -> "Recognizing…"
+                NexusSpeechState.PROCESSING -> "Processing…"
+            }
+            render(show = false)
+        }
+
+        override fun onSpeechPartial(text: String) {
+            if (screen != Screen.VOICE) return
+            voicePartial = text.trim().take(MAX_VOICE_TRANSCRIPT_CHARS)
+            render(show = false)
+        }
+
+        override fun onSpeechFinal(text: String) {
+            if (screen != Screen.VOICE) return
+            text.trim().takeIf(String::isNotBlank)?.let { segment ->
+                voiceFinalSegments += segment.take(MAX_VOICE_TRANSCRIPT_CHARS)
+            }
+            voicePartial = ""
+            render(show = false)
+        }
+
+        override fun onSpeechStopped(reason: NexusSpeechStopReason, error: NexusSpeechError?) {
+            speechSession = null
+            stopVoiceWhenStarted = false
+            if (screen != Screen.VOICE) return
+            if (reason != NexusSpeechStopReason.COMPLETED && voiceTranscript().isBlank()) {
+                showMessage("Voice entry", voiceStopMessage(reason, error))
+                return
+            }
+            resolveVoiceTranscript()
+        }
+    }
 
     override fun onNexusOpen() {
         generation += 1
@@ -44,6 +101,7 @@ class FoodLogPluginService : NexusPluginService() {
         selectedIndex = 0
         selectedProduct = null
         undoCandidate = null
+        clearVoice()
         refreshLocalState()
         surface = nexusSurfaceSession(SURFACE_ID)
         render(show = true)
@@ -53,17 +111,24 @@ class FoodLogPluginService : NexusPluginService() {
         generation += 1
         snapshotSession?.cancel()
         snapshotSession = null
+        stopVoiceWhenStarted = true
+        speechSession?.stop()
+        speechSession = null
         surface?.hide()
         surface = null
         selectedProduct = null
         undoCandidate = null
         screen = Screen.HOME
+        clearVoice()
     }
 
     override fun onDestroy() {
         generation += 1
         snapshotSession?.cancel()
         snapshotSession = null
+        stopVoiceWhenStarted = true
+        speechSession?.stop()
+        speechSession = null
         barcodeScanner.close()
         ioExecutor.shutdownNow()
         store.close()
@@ -109,9 +174,10 @@ class FoodLogPluginService : NexusPluginService() {
         when (screen) {
             Screen.HOME -> when (selectedIndex) {
                 0 -> startSnapshot()
-                1 -> showToday()
-                2 -> showRecents()
-                3 -> confirmUndo()
+                1 -> startVoiceEntry()
+                2 -> showToday()
+                3 -> showRecents()
+                4 -> confirmUndo()
             }
             Screen.PRODUCT -> {
                 screen = Screen.PORTION
@@ -120,6 +186,10 @@ class FoodLogPluginService : NexusPluginService() {
             Screen.PORTION -> addSelectedProduct()
             Screen.RECENTS -> recentProducts.getOrNull(selectedIndex)?.let(::showProduct)
             Screen.CONFIRM_UNDO -> deleteUndoCandidate()
+            Screen.VOICE -> {
+                stopVoiceWhenStarted = true
+                speechSession?.stop()
+            }
             Screen.MESSAGE -> showHome()
             Screen.TODAY,
             Screen.SCANNING,
@@ -135,6 +205,9 @@ class FoodLogPluginService : NexusPluginService() {
         generation += 1
         snapshotSession?.cancel()
         snapshotSession = null
+        stopVoiceWhenStarted = true
+        speechSession?.stop()
+        speechSession = null
         showHome()
     }
 
@@ -144,6 +217,7 @@ class FoodLogPluginService : NexusPluginService() {
         selectedIndex = 0
         selectedProduct = null
         undoCandidate = null
+        clearVoice()
         render(show = false)
     }
 
@@ -252,6 +326,82 @@ class FoodLogPluginService : NexusPluginService() {
         }
     }
 
+    private fun startVoiceEntry() {
+        refreshLocalState()
+        if (recentProducts.isEmpty()) {
+            showMessage(
+                "Voice entry",
+                "Log or create a food on the phone first, then say its name.",
+            )
+            return
+        }
+        clearVoice()
+        screen = Screen.VOICE
+        render(show = false)
+        val session = nexusSpeechSession(speechCallbacks)
+        speechSession = session
+        val result = session?.start()
+        if (result != NexusSdkResult.SENT) {
+            speechSession = null
+            val message = when (result) {
+                NexusSdkResult.CAPABILITY_NOT_GRANTED ->
+                    "Grant Speech to text access to Food Log in Nexus settings."
+                NexusSdkResult.CAPABILITY_NOT_AVAILABLE -> "Speech recognition is unavailable."
+                else -> "Speech recognition could not start."
+            }
+            showMessage("Voice entry", message)
+        }
+    }
+
+    private fun resolveVoiceTranscript() {
+        when (val match = FoodVoiceParser.match(voiceTranscript(), recentProducts)) {
+            is FoodVoiceMatch.Matched -> {
+                selectedProduct = match.product
+                quantityGrams = match.quantityGrams
+                screen = Screen.PORTION
+                render(show = false)
+            }
+            is FoodVoiceMatch.Ambiguous -> showMessage(
+                "Several foods match",
+                match.products.joinToString(" · ") { it.name }.hud(240),
+                "Try again with a more precise name.",
+            )
+            FoodVoiceMatch.InvalidQuantity -> showMessage(
+                "Invalid amount",
+                "Say an amount between 1 and 5,000 grams.",
+            )
+            FoodVoiceMatch.NoProduct -> showMessage(
+                "Food not recognized",
+                "Try the exact name of a recent food.",
+            )
+        }
+    }
+
+    private fun voiceTranscript(): String =
+        (voiceFinalSegments + listOfNotNull(voicePartial.takeIf(String::isNotBlank)))
+            .joinToString(" ")
+            .trim()
+            .take(MAX_VOICE_TRANSCRIPT_CHARS)
+
+    private fun clearVoice() {
+        voiceFinalSegments.clear()
+        voicePartial = ""
+        voiceStatus = "Starting…"
+        stopVoiceWhenStarted = false
+    }
+
+    private fun voiceStopMessage(reason: NexusSpeechStopReason, error: NexusSpeechError?): String = when (reason) {
+        NexusSpeechStopReason.NO_SPEECH -> "No speech was detected."
+        NexusSpeechStopReason.LINK_LOST -> "The glasses link was lost."
+        NexusSpeechStopReason.REVOKED -> "Speech access was revoked."
+        NexusSpeechStopReason.DENIED_BUSY -> "Speech recognition is already busy."
+        NexusSpeechStopReason.DENIED_NO_LINK -> "The glasses link is unavailable."
+        NexusSpeechStopReason.DENIED_NOT_READY -> "Configure speech recognition in Nexus first."
+        NexusSpeechStopReason.CANCELLED -> "Voice entry cancelled."
+        else -> error?.kind?.takeIf(String::isNotBlank)?.let { "Speech failed: $it" }
+            ?: "Speech recognition failed."
+    }
+
     private fun loadProduct(barcode: String, operationGeneration: Long) {
         store.product(barcode)?.let {
             showProduct(it)
@@ -327,6 +477,7 @@ class FoodLogPluginService : NexusPluginService() {
         val card = when (screen) {
             Screen.HOME -> homeCard()
             Screen.SCANNING -> messageCard(messageTitle, messageLines, "back to cancel")
+            Screen.VOICE -> voiceCard()
             Screen.PRODUCT -> productCard(selectedProduct)
             Screen.PORTION -> portionCard(selectedProduct)
             Screen.TODAY -> todayCard()
@@ -346,7 +497,7 @@ class FoodLogPluginService : NexusPluginService() {
             richLines = HOME_ITEMS.mapIndexed { index, item ->
                 NexusCardLine(
                     text = item.first,
-                    sub = if (index == 1) {
+                    sub = if (index == 2) {
                         "${totals.caloriesKcal.display("kcal")} · P ${totals.proteinGrams.display("g")}"
                     } else {
                         item.second
@@ -358,6 +509,18 @@ class FoodLogPluginService : NexusPluginService() {
             contentKey = "foodlog-home-v1",
         )
     }
+
+    private fun voiceCard(): NexusCard = NexusCard(
+        title = "Add by voice",
+        subtitle = voiceStatus.hud(240),
+        lines = listOf(
+            voiceTranscript().ifBlank { "Say: 200 grams of rice" }.hud(240),
+            "Food names are matched locally against your recent foods.",
+        ),
+        footer = "tap to stop · back to cancel",
+        contentKey = "foodlog-voice",
+        handlesBack = true,
+    )
 
     private fun productCard(product: FoodProduct?): NexusCard {
         if (product == null) return messageCard("Product", listOf("Product unavailable."), "back")
@@ -485,6 +648,7 @@ class FoodLogPluginService : NexusPluginService() {
     private enum class Screen {
         HOME,
         SCANNING,
+        VOICE,
         PRODUCT,
         PORTION,
         TODAY,
@@ -498,8 +662,10 @@ class FoodLogPluginService : NexusPluginService() {
         const val DEFAULT_QUANTITY_GRAMS = 100.0
         const val QUANTITY_STEP_GRAMS = 10.0
         const val MAX_HUD_ENTRIES = 8
+        const val MAX_VOICE_TRANSCRIPT_CHARS = 240
         val HOME_ITEMS = listOf(
             "Scan product" to "EAN or UPC with the glasses camera",
+            "Add by voice" to "Say an amount and a recent food",
             "Today" to "Daily nutrition and entries",
             "Recent foods" to "Log something again",
             "Undo last" to "Exact last entry from today",

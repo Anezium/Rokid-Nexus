@@ -51,10 +51,10 @@
                 android:value="3" />
             <meta-data
                 android:name="com.anezium.rokidbus.plugin.CAPABILITIES"
-                android:value="surfaces,camera" />
+                android:value="surfaces,camera,stt" />
             <meta-data
                 android:name="com.anezium.rokidbus.plugin.RECEIVE_PREFIXES"
-                android:value="/plugin/foodlog,/system/plugin,/camera/snapshot/result,/camera/snapshot/error" />
+                android:value="/plugin/foodlog,/system/plugin,/camera/snapshot/result,/camera/snapshot/error,/stt" />
             <meta-data
                 android:name="com.anezium.rokidbus.plugin.SETTINGS_ACTIVITY"
                 android:value=".FoodLogActivity" />
