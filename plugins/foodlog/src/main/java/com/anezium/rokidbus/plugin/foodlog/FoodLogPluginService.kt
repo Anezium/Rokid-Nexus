@@ -18,6 +18,11 @@ import com.anezium.rokidbus.client.plugin.NexusSpeechState
 import com.anezium.rokidbus.client.plugin.NexusSpeechStopReason
 import com.anezium.rokidbus.client.plugin.NexusSurfaceSession
 import com.anezium.rokidbus.shared.plugin.NexusInputEvent
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -26,9 +31,11 @@ import java.util.concurrent.Executors
 class FoodLogPluginService : NexusPluginService() {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val ioExecutor = Executors.newSingleThreadExecutor()
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val store by lazy { FoodLogStore(applicationContext) }
     private val foodFacts = FoodFactsClient()
     private val barcodeScanner by lazy { FoodBarcodeScanner(ioExecutor) }
+    private val healthBridge by lazy { FoodLogHealthConnectBridge(applicationContext) }
 
     private var surface: NexusSurfaceSession? = null
     private var snapshotSession: NexusSnapshotSession? = null
@@ -37,9 +44,14 @@ class FoodLogPluginService : NexusPluginService() {
     private var screen = Screen.HOME
     private var selectedIndex = 0
     private var selectedProduct: FoodProduct? = null
+    private var selectedSource = FoodEntrySource.UNKNOWN
+    private var selectedRecipeId: String? = null
     private var quantityGrams = DEFAULT_QUANTITY_GRAMS
     private var todayEntries: List<FoodEntry> = emptyList()
     private var recentProducts: List<FoodProduct> = emptyList()
+    private var favoriteProducts: List<FoodProduct> = emptyList()
+    private var recipes: List<FoodRecipe> = emptyList()
+    private var goals: NutritionGoals? = null
     private var undoCandidate: FoodEntry? = null
     private var messageTitle = "Food Log"
     private var messageLines = emptyList<String>()
@@ -100,6 +112,8 @@ class FoodLogPluginService : NexusPluginService() {
         screen = Screen.HOME
         selectedIndex = 0
         selectedProduct = null
+        selectedSource = FoodEntrySource.UNKNOWN
+        selectedRecipeId = null
         undoCandidate = null
         clearVoice()
         refreshLocalState()
@@ -117,6 +131,8 @@ class FoodLogPluginService : NexusPluginService() {
         surface?.hide()
         surface = null
         selectedProduct = null
+        selectedSource = FoodEntrySource.UNKNOWN
+        selectedRecipeId = null
         undoCandidate = null
         screen = Screen.HOME
         clearVoice()
@@ -130,6 +146,7 @@ class FoodLogPluginService : NexusPluginService() {
         speechSession?.stop()
         speechSession = null
         barcodeScanner.close()
+        serviceScope.cancel()
         ioExecutor.shutdownNow()
         store.close()
         super.onDestroy()
@@ -161,6 +178,14 @@ class FoodLogPluginService : NexusPluginService() {
                 selectedIndex = Math.floorMod(selectedIndex + delta, recentProducts.size)
                 render(show = false)
             }
+            Screen.FAVORITES -> if (favoriteProducts.isNotEmpty()) {
+                selectedIndex = Math.floorMod(selectedIndex + delta, favoriteProducts.size)
+                render(show = false)
+            }
+            Screen.RECIPES -> if (recipes.isNotEmpty()) {
+                selectedIndex = Math.floorMod(selectedIndex + delta, recipes.size)
+                render(show = false)
+            }
             Screen.PORTION -> {
                 quantityGrams = (quantityGrams + delta * QUANTITY_STEP_GRAMS)
                     .coerceIn(MIN_QUANTITY_GRAMS, MAX_QUANTITY_GRAMS)
@@ -176,15 +201,25 @@ class FoodLogPluginService : NexusPluginService() {
                 0 -> startSnapshot()
                 1 -> startVoiceEntry()
                 2 -> showToday()
-                3 -> showRecents()
-                4 -> confirmUndo()
+                3 -> showFavorites()
+                4 -> showRecipes()
+                5 -> showRecents()
+                6 -> confirmUndo()
             }
             Screen.PRODUCT -> {
                 screen = Screen.PORTION
                 render(show = false)
             }
             Screen.PORTION -> addSelectedProduct()
-            Screen.RECENTS -> recentProducts.getOrNull(selectedIndex)?.let(::showProduct)
+            Screen.RECENTS -> recentProducts.getOrNull(selectedIndex)?.let { product ->
+                showProduct(product, sourceFor(product))
+            }
+            Screen.FAVORITES -> favoriteProducts.getOrNull(selectedIndex)?.let { product ->
+                showProduct(product, sourceFor(product))
+            }
+            Screen.RECIPES -> recipes.getOrNull(selectedIndex)?.let { recipe ->
+                showProduct(recipe.asProduct(), FoodEntrySource.RECIPE, recipe.uuid)
+            }
             Screen.CONFIRM_UNDO -> deleteUndoCandidate()
             Screen.VOICE -> {
                 stopVoiceWhenStarted = true
@@ -216,6 +251,8 @@ class FoodLogPluginService : NexusPluginService() {
         screen = Screen.HOME
         selectedIndex = 0
         selectedProduct = null
+        selectedSource = FoodEntrySource.UNKNOWN
+        selectedRecipeId = null
         undoCandidate = null
         clearVoice()
         render(show = false)
@@ -238,6 +275,28 @@ class FoodLogPluginService : NexusPluginService() {
         render(show = false)
     }
 
+    private fun showFavorites() {
+        refreshLocalState()
+        if (favoriteProducts.isEmpty()) {
+            showMessage("Favorites", "Add favorites from Food Log on the phone.")
+            return
+        }
+        selectedIndex = 0
+        screen = Screen.FAVORITES
+        render(show = false)
+    }
+
+    private fun showRecipes() {
+        refreshLocalState()
+        if (recipes.isEmpty()) {
+            showMessage("Recipes", "Create a recipe from Food Log on the phone.")
+            return
+        }
+        selectedIndex = 0
+        screen = Screen.RECIPES
+        render(show = false)
+    }
+
     private fun confirmUndo() {
         val candidate = store.latestEntryForDay()
         if (candidate == null) {
@@ -252,6 +311,7 @@ class FoodLogPluginService : NexusPluginService() {
     private fun deleteUndoCandidate() {
         val candidate = undoCandidate ?: return showHome()
         val removed = store.deleteEntry(candidate.id)
+        if (removed) deleteHealthEntryIfEnabled(candidate)
         undoCandidate = null
         refreshLocalState()
         showMessage(
@@ -357,6 +417,9 @@ class FoodLogPluginService : NexusPluginService() {
         when (val match = FoodVoiceParser.match(voiceTranscript(), recentProducts)) {
             is FoodVoiceMatch.Matched -> {
                 selectedProduct = match.product
+                selectedSource = sourceFor(match.product)
+                selectedRecipeId = match.product.barcode.removePrefix("recipe-")
+                    .takeIf { match.product.barcode.startsWith("recipe-") }
                 quantityGrams = match.quantityGrams
                 screen = Screen.PORTION
                 render(show = false)
@@ -404,7 +467,7 @@ class FoodLogPluginService : NexusPluginService() {
 
     private fun loadProduct(barcode: String, operationGeneration: Long) {
         store.product(barcode)?.let {
-            showProduct(it)
+            showProduct(it, FoodEntrySource.SCANNED)
             return
         }
         messageTitle = "Open Food Facts"
@@ -423,7 +486,7 @@ class FoodLogPluginService : NexusPluginService() {
                                 "Add it manually from Food Log settings on the phone.",
                             )
                         } else {
-                            showProduct(product)
+                            showProduct(product, FoodEntrySource.SCANNED)
                         }
                     },
                     onFailure = {
@@ -437,8 +500,14 @@ class FoodLogPluginService : NexusPluginService() {
         }
     }
 
-    private fun showProduct(product: FoodProduct) {
+    private fun showProduct(
+        product: FoodProduct,
+        source: FoodEntrySource,
+        recipeId: String? = null,
+    ) {
         selectedProduct = product
+        selectedSource = source
+        selectedRecipeId = recipeId
         quantityGrams = product.servingGrams
             ?.takeIf { it in MIN_QUANTITY_GRAMS..MAX_QUANTITY_GRAMS }
             ?: DEFAULT_QUANTITY_GRAMS
@@ -448,7 +517,16 @@ class FoodLogPluginService : NexusPluginService() {
 
     private fun addSelectedProduct() {
         val product = selectedProduct ?: return showHome()
-        store.addEntry(product, quantityGrams)
+        val consumedAt = System.currentTimeMillis()
+        val entryId = store.addEntry(
+            product = product,
+            quantityGrams = quantityGrams,
+            consumedAtMillis = consumedAt,
+            mealType = inferredMealType(consumedAt),
+            source = selectedSource,
+            recipeId = selectedRecipeId,
+        )
+        val entry = store.entry(entryId)
         refreshLocalState()
         val totals = aggregateNutrition(todayEntries)
         showMessage(
@@ -456,6 +534,7 @@ class FoodLogPluginService : NexusPluginService() {
             "${product.name} · ${formatNutritionNumber(quantityGrams)} g",
             "Today: ${totals.caloriesKcal.display("kcal")}",
         )
+        entry?.let(::syncEntryIfEnabled)
     }
 
     private fun showMessage(title: String, vararg lines: String) {
@@ -468,6 +547,36 @@ class FoodLogPluginService : NexusPluginService() {
     private fun refreshLocalState() {
         todayEntries = store.entriesForDay()
         recentProducts = store.recentProducts()
+        favoriteProducts = store.favoriteProducts()
+        recipes = store.recipes()
+        goals = store.goals()
+    }
+
+    private fun syncEntryIfEnabled(entry: FoodEntry) {
+        val enabled = getSharedPreferences(FOOD_LOG_PREFERENCES, MODE_PRIVATE)
+            .getBoolean(FOOD_LOG_HEALTH_SYNC_KEY, false)
+        if (!enabled) return
+        serviceScope.launch {
+            when (healthBridge.syncEntry(entry, userOptedIn = true)) {
+                FoodLogHealthConnectSyncResult.PermissionRequired -> {
+                    getSharedPreferences(FOOD_LOG_PREFERENCES, MODE_PRIVATE)
+                        .edit()
+                        .putBoolean(FOOD_LOG_HEALTH_SYNC_KEY, false)
+                        .apply()
+                }
+                else -> Unit
+            }
+        }
+    }
+
+    private fun deleteHealthEntryIfEnabled(entry: FoodEntry) {
+        val preferences = getSharedPreferences(FOOD_LOG_PREFERENCES, MODE_PRIVATE)
+        if (!preferences.getBoolean(FOOD_LOG_HEALTH_SYNC_KEY, false)) return
+        serviceScope.launch {
+            if (healthBridge.deleteEntry(entry, userOptedIn = true) == FoodLogHealthConnectSyncResult.PermissionRequired) {
+                preferences.edit().putBoolean(FOOD_LOG_HEALTH_SYNC_KEY, false).apply()
+            }
+        }
     }
 
     private fun isCurrent(operationGeneration: Long): Boolean =
@@ -482,6 +591,8 @@ class FoodLogPluginService : NexusPluginService() {
             Screen.PORTION -> portionCard(selectedProduct)
             Screen.TODAY -> todayCard()
             Screen.RECENTS -> recentsCard()
+            Screen.FAVORITES -> productListCard("Favorites", favoriteProducts, "foodlog-favorites")
+            Screen.RECIPES -> recipeListCard()
             Screen.CONFIRM_UNDO -> undoCard(undoCandidate)
             Screen.MESSAGE -> messageCard(messageTitle, messageLines, "tap or back")
         }
@@ -498,7 +609,10 @@ class FoodLogPluginService : NexusPluginService() {
                 NexusCardLine(
                     text = item.first,
                     sub = if (index == 2) {
-                        "${totals.caloriesKcal.display("kcal")} · P ${totals.proteinGrams.display("g")}"
+                        buildString {
+                            append("${totals.caloriesKcal.display("kcal")} · P ${totals.proteinGrams.display("g")}")
+                            goals?.caloriesKcal?.let { append(" · goal ${formatNutritionNumber(it)}") }
+                        }
                     } else {
                         item.second
                     },
@@ -615,6 +729,36 @@ class FoodLogPluginService : NexusPluginService() {
         handlesBack = true,
     )
 
+    private fun productListCard(title: String, products: List<FoodProduct>, key: String): NexusCard = NexusCard(
+        title = title,
+        lines = emptyList(),
+        richLines = products.mapIndexed { index, product ->
+            NexusCardLine(
+                text = product.name.hud(240),
+                sub = product.brand.hud(240).ifBlank { product.barcode },
+                selected = index == selectedIndex,
+            )
+        },
+        footer = "swipe · tap · back",
+        contentKey = key,
+        handlesBack = true,
+    )
+
+    private fun recipeListCard(): NexusCard = NexusCard(
+        title = "Recipes",
+        lines = emptyList(),
+        richLines = recipes.mapIndexed { index, recipe ->
+            NexusCardLine(
+                text = recipe.name.hud(240),
+                sub = "${recipe.ingredients.size} ingredients · ${formatNutritionNumber(recipe.servings)} servings",
+                selected = index == selectedIndex,
+            )
+        },
+        footer = "swipe · tap · back",
+        contentKey = "foodlog-recipes",
+        handlesBack = true,
+    )
+
     private fun undoCard(entry: FoodEntry?): NexusCard {
         if (entry == null) return messageCard("Undo last", listOf("Nothing to remove."), "back")
         return NexusCard(
@@ -653,6 +797,8 @@ class FoodLogPluginService : NexusPluginService() {
         PORTION,
         TODAY,
         RECENTS,
+        FAVORITES,
+        RECIPES,
         CONFIRM_UNDO,
         MESSAGE,
     }
@@ -667,10 +813,18 @@ class FoodLogPluginService : NexusPluginService() {
             "Scan product" to "EAN or UPC with the glasses camera",
             "Add by voice" to "Say an amount and a recent food",
             "Today" to "Daily nutrition and entries",
+            "Favorites" to "Foods saved on the phone",
+            "Recipes" to "Log one saved serving",
             "Recent foods" to "Log something again",
             "Undo last" to "Exact last entry from today",
         )
     }
+}
+
+private fun sourceFor(product: FoodProduct): FoodEntrySource = when {
+    product.barcode.startsWith("custom-") -> FoodEntrySource.CUSTOM
+    product.barcode.startsWith("recipe-") -> FoodEntrySource.RECIPE
+    else -> FoodEntrySource.SEARCHED
 }
 
 private fun String.hud(limit: Int): String = trim().take(limit)

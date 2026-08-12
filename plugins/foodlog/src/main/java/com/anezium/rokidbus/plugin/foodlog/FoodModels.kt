@@ -23,7 +23,13 @@ internal data class NutrientsPer100g(
     val caffeineMilligrams: Double? = null,
 )
 
-internal enum class MealType { BREAKFAST, LUNCH, DINNER, SNACK, UNKNOWN }
+internal enum class MealType(val displayName: String) {
+    BREAKFAST("Breakfast"),
+    LUNCH("Lunch"),
+    DINNER("Dinner"),
+    SNACK("Snack"),
+    UNKNOWN("Unassigned"),
+}
 
 internal enum class FoodEntrySource { SCANNED, SEARCHED, CUSTOM, RECIPE, IMPORTED, UNKNOWN }
 
@@ -32,9 +38,20 @@ internal data class NutritionGoals(
     val proteinGrams: Double? = null,
     val carbohydrateGrams: Double? = null,
     val fatGrams: Double? = null,
-)
+) {
+    init {
+        require(caloriesKcal == null || caloriesKcal in 1.0..20_000.0)
+        require(proteinGrams == null || proteinGrams in 1.0..2_000.0)
+        require(carbohydrateGrams == null || carbohydrateGrams in 1.0..3_000.0)
+        require(fatGrams == null || fatGrams in 1.0..2_000.0)
+    }
+}
 
-internal data class RecipeIngredient(val product: FoodProduct, val grams: Double)
+internal data class RecipeIngredient(val product: FoodProduct, val grams: Double) {
+    init {
+        require(grams in MIN_QUANTITY_GRAMS..MAX_RECIPE_INGREDIENT_GRAMS)
+    }
+}
 
 internal data class FoodRecipe(
     val uuid: String,
@@ -43,8 +60,30 @@ internal data class FoodRecipe(
     val ingredients: List<RecipeIngredient>,
     val createdAtMillis: Long,
 ) {
-    init { require(uuid.isNotBlank()); require(name.isNotBlank()); require(servings > 0.0); require(ingredients.isNotEmpty()) }
+    init {
+        require(uuid.matches(FOOD_UUID_PATTERN))
+        require(name.isNotBlank() && name.length <= MAX_RECIPE_NAME_CHARS)
+        require(servings in 0.25..100.0)
+        require(ingredients.size in 1..MAX_RECIPE_INGREDIENTS)
+        require(ingredients.map { it.product.barcode }.toSet().size == ingredients.size)
+    }
+
+    val totalIngredientGrams: Double
+        get() = ingredients.sumOf(RecipeIngredient::grams)
+
     fun nutrientsPerServing(): NutrientsPer100g = nutrientsForIngredients(ingredients, servings)
+
+    fun asProduct(fetchedAtMillis: Long = createdAtMillis): FoodProduct = FoodProduct(
+        barcode = "recipe-$uuid",
+        name = name,
+        brand = "Recipe",
+        servingLabel = "1 serving",
+        servingGrams = totalIngredientGrams / servings,
+        nutritionGrade = null,
+        novaGroup = null,
+        nutrients = nutrientsForIngredients(ingredients, totalIngredientGrams / 100.0),
+        fetchedAtMillis = fetchedAtMillis,
+    )
 }
 
 internal data class FoodProduct(
@@ -167,3 +206,21 @@ internal fun dayBounds(
     val endExclusive = date.plusDays(1).atStartOfDay(zoneId).toInstant().toEpochMilli()
     return start until endExclusive
 }
+
+internal fun inferredMealType(
+    atMillis: Long,
+    zoneId: ZoneId = ZoneId.systemDefault(),
+): MealType = when (Instant.ofEpochMilli(atMillis).atZone(zoneId).hour) {
+    in 5..10 -> MealType.BREAKFAST
+    in 11..15 -> MealType.LUNCH
+    in 16..21 -> MealType.DINNER
+    else -> MealType.SNACK
+}
+
+internal val FOOD_UUID_PATTERN = Regex(
+    "[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}",
+)
+internal val FOOD_ENTRY_ID_PATTERN = Regex("(?:${FOOD_UUID_PATTERN.pattern}|[0-9a-f]{32})")
+internal const val MAX_RECIPE_NAME_CHARS = 120
+internal const val MAX_RECIPE_INGREDIENTS = 64
+internal const val MAX_RECIPE_INGREDIENT_GRAMS = 20_000.0

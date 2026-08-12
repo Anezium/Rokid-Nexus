@@ -5,10 +5,15 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
-    <!-- No phone-camera or notification permission: capture belongs to the
-         explicitly granted glasses-camera snapshot session. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.health.WRITE_NUTRITION" />
+    <!-- No phone-camera permission: capture belongs to the explicitly granted
+         glasses-camera snapshot session. Notification access is reminder-only. -->
 
     <queries>
+        <package android:name="com.google.android.apps.healthdata" />
         <intent>
             <action android:name="com.anezium.rokidbus.action.HUB" />
         </intent>
@@ -26,6 +31,44 @@
             android:name=".FoodLogActivity"
             android:exported="true"
             android:windowSoftInputMode="adjustResize" />
+
+        <activity
+            android:name=".FoodLogHealthRationaleActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="androidx.health.ACTION_SHOW_PERMISSIONS_RATIONALE" />
+            </intent-filter>
+        </activity>
+
+        <activity-alias
+            android:name=".FoodLogViewPermissionUsageActivity"
+            android:exported="true"
+            android:permission="android.permission.START_VIEW_PERMISSION_USAGE"
+            android:targetActivity=".FoodLogHealthRationaleActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW_PERMISSION_USAGE" />
+                <category android:name="android.intent.category.HEALTH_PERMISSIONS" />
+            </intent-filter>
+        </activity-alias>
+
+        <receiver
+            android:name=".FoodLogReminderReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.anezium.rokidbus.plugin.foodlog.action.REMINDER_FIRE" />
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
+        <service
+            android:name=".FoodLogReminderDeliveryService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="scheduled-food-log-reminder" />
+        </service>
 
         <service
             android:name=".FoodLogPluginService"

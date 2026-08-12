@@ -29,19 +29,30 @@ import java.util.concurrent.Executors
 class FoodLogReminderReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action == FoodLogReminderContract.ACTION_FIRE) {
-            intent.getStringExtra(FoodLogReminderContract.EXTRA_ID)?.let { FoodLogReminderDeliveryService.start(context, it, false) }
+            intent.getStringExtra(FoodLogReminderContract.EXTRA_ID)?.let {
+                FoodLogReminderDeliveryService.start(
+                    context,
+                    it,
+                    intent.getBooleanExtra(FoodLogReminderContract.EXTRA_LATE, false),
+                )
+            }
             return
         }
         if (intent.action != Intent.ACTION_BOOT_COMPLETED && intent.action != Intent.ACTION_MY_PACKAGE_REPLACED) return
         val result = goAsync()
-        EXECUTOR.execute {
+        val executor = Executors.newSingleThreadExecutor()
+        executor.execute {
             try {
                 val scheduler = foodLogReminderScheduler(context)
-                FoodLogReminderStore(context).all().filter(FoodLogReminder::enabled).forEach { scheduler.reschedule(it) }
-            } finally { result.finish() }
+                FoodLogReminderStore(context).all().filter(FoodLogReminder::enabled).forEach {
+                    runCatching { scheduler.reschedule(it) }
+                }
+            } finally {
+                result.finish()
+                executor.shutdown()
+            }
         }
     }
-    private companion object { val EXECUTOR = Executors.newSingleThreadExecutor() }
 }
 
 class FoodLogReminderDeliveryService : Service() {
@@ -85,9 +96,19 @@ class FoodLogReminderDeliveryService : Service() {
         notifications.createNotificationChannel(NotificationChannel(DELIVERY_CHANNEL, "Food Log reminder delivery", NotificationManager.IMPORTANCE_LOW).apply { setShowBadge(false) })
     }
     private fun finish(startId: Int) { if (stopSelfResult(startId)) stopForeground(STOP_FOREGROUND_REMOVE) }
-    private companion object {
-        const val REMINDER_CHANNEL = "food_log_reminders"; const val DELIVERY_CHANNEL = "food_log_reminder_delivery"; const val DELIVERY_ID = 0x464c; const val DELIVERY_LIFETIME_MS = 8_000L
-        fun start(context: Context, id: String, late: Boolean) = context.startForegroundService(Intent(context, FoodLogReminderDeliveryService::class.java).putExtra(FoodLogReminderContract.EXTRA_ID, id).putExtra(FoodLogReminderContract.EXTRA_LATE, late))
+    companion object {
+        private const val REMINDER_CHANNEL = "food_log_reminders"
+        private const val DELIVERY_CHANNEL = "food_log_reminder_delivery"
+        private const val DELIVERY_ID = 0x464c
+        private const val DELIVERY_LIFETIME_MS = 8_000L
+
+        internal fun start(context: Context, id: String, late: Boolean) {
+            context.startForegroundService(
+                Intent(context, FoodLogReminderDeliveryService::class.java)
+                    .putExtra(FoodLogReminderContract.EXTRA_ID, id)
+                    .putExtra(FoodLogReminderContract.EXTRA_LATE, late),
+            )
+        }
     }
 }
 
