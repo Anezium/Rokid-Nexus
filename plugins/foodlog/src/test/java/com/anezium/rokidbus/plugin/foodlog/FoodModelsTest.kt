@@ -10,6 +10,20 @@ import java.time.ZoneId
 
 class FoodModelsTest {
     @Test
+    fun recipe_calculatesPerServingFromIngredientSnapshots() {
+        val recipe = FoodRecipe("recipe-1", "Oats", 2.0, listOf(RecipeIngredient(product(nutrients = NutrientsPer100g(100.0, 10.0, 20.0, 5.0, null, null, null)), 200.0)), 1L)
+        assertEquals(100.0, recipe.nutrientsPerServing().caloriesKcal!!, 0.0)
+        assertEquals(10.0, recipe.nutrientsPerServing().proteinGrams!!, 0.0)
+    }
+
+    @Test
+    fun backup_roundTripAndRejectsDuplicateStableUuid() {
+        val entry = FoodEntry(1, 100, 50.0, product(nutrients = NutrientsPer100g(1.0, null, null, null, null, null, null)), "entry-1")
+        assertEquals("entry-1", FoodLogBackup.decode(FoodLogBackup.encode(listOf(entry))).single().uuid)
+        val duplicated = "{\"schemaVersion\":2,\"entries\":[" + FoodLogBackup.encode(listOf(entry)).let { org.json.JSONObject(it).getJSONArray("entries").getJSONObject(0) } + "," + FoodLogBackup.encode(listOf(entry)).let { org.json.JSONObject(it).getJSONArray("entries").getJSONObject(0) } + "]}"
+        try { FoodLogBackup.decode(duplicated); throw AssertionError("Expected validation failure") } catch (_: IllegalArgumentException) { }
+    }
+    @Test
     fun normalizeBarcode_keepsDigitsAndEnforcesSupportedLengths() {
         assertEquals("3012345678901", normalizeBarcode(" 3-012345 678901 "))
         assertEquals("1234", normalizeBarcode("1 2 3 4"))
