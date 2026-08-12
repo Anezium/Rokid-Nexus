@@ -22,7 +22,7 @@ individual plan headers are the detail of record.
 | [003](003-external-plugin-sdk.md) | Deliver the external SDK, lifecycle, sample, and publication path | DONE |
 | [004](004-externalize-transit.md) | Ship Transit as the first independent phone plugin APK | DONE |
 | [005](005-nexus-store-registry.md) | Nexus Store from the RokidBrew registry (plugins) + app self-update | DONE |
-| [006](006-video-playback-on-glasses.md) | Video playback on the glasses | TODO — Feeds video in the timeline builds on it |
+| [006](006-video-playback-on-glasses.md) | Video playback on the glasses | IN PROGRESS — software MVP implemented; device gate pending |
 | [007](007-camera-platform-and-lens-plugin.md) | Camera as a platform capability + Lens as its consumer | DONE |
 | [008](008-plugin-devex.md) | Plugin developer experience, developer mode | DONE |
 | [009](009-stt-capability.md) | Speech to text | IN PROGRESS — slices 1–3 shipped; slice 4 is the roadmap's continuous speech |

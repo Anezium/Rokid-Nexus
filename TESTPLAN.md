@@ -599,6 +599,37 @@ adb -s $phone uninstall com.anezium.rokidbus.phoneprobe
   confirm the existing P2P link keeps working until the session ends — LOHS
   mode is only selected at session start, not renegotiated mid-session.
 
+## Video playback MVP on-device validation
+
+> **DEFERRED — NOT RUN FOR THE SOFTWARE MVP (2026-08-12).** Do not mark Plan 006
+> done or release the feature as hardware-ready until this matrix passes.
+
+- Install matching phone/glasses hubs and Feeds, re-approve its new
+  `video_playback` grant, and grant Feeds Nearby devices access on the phone.
+- From X, play AVC MP4 variants at 360p and 720p for at least 10 minutes. Confirm
+  real motion, correct cadence, pause/resume without skipping to the end, BACK
+  teardown, and no display sleep, thermal throttling, or stale P2P group.
+- From Bluesky, play VOD HLS using both MPEG-TS and fMP4/CMAF examples if the
+  service exposes both. Confirm bounded prefetch, first-frame latency, cleanup of
+  the private cache file, and honest poster fallback for live/encrypted/
+  incompatible playlists.
+- Play a GIF/video variant in a loop and confirm it stays muted, returns to the
+  first frame cleanly, and releases the link when gallery selection changes.
+- Exercise AAC mono/stereo at 44.1 and 48 kHz. Record the actual routed output;
+  verify the phone speaker is never used and measure lip sync against a
+  flash/click clip before accepting sound.
+- Start Camera and MediaSync before video: video must report `busy`. While video
+  is active, explicitly open Camera: video must stop and Camera/Lens must regain
+  its normal P2P/LOHS behavior. Re-run Lens live/freeze on both transports.
+- Force-stop, revoke and uninstall Feeds at each playback stage; drop CXR and
+  SPP; turn either Wi-Fi radio off; and kill `:video`. Every path must close the
+  decoder/audio/socket, release only the group it created, and restore the
+  poster/normal HUD.
+- Record sustained throughput, dropped frames, decoder identity/profile/level,
+  battery, temperature and A/V error. Treat decoder instability, unintended
+  audio routing, repeated sync error above 120 ms, or Lens regression as a stop
+  condition requiring architecture work.
+
 ## Background update checks on-device validation
 
 - With the phone app's UI never opened, wait for the hourly background tick

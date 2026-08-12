@@ -189,6 +189,8 @@ class BusHubService : Service() {
         val principal: PhonePluginPrincipal? = null,
     )
 
+    private data class ActiveVideoSession(val sessionId: String, val ownerPluginId: String)
+
     private enum class AudioLeaseSide { LOCAL, REMOTE, INTERNAL }
 
     private data class AudioLease(
@@ -242,6 +244,8 @@ class BusHubService : Service() {
         }
     }
     private val registrations = CopyOnWriteArrayList<Registration>()
+    private val videoSessionLock = Any()
+    @Volatile private var activeVideoSession: ActiveVideoSession? = null
     private val glassAiAssistActive = AtomicBoolean(false)
     private val snapshotCaptureScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val snapshotCapture = CxrSnapshotCapture()
@@ -310,6 +314,7 @@ class BusHubService : Service() {
     @Volatile private var remoteNoticeSurfaceVersion = 0
     @Volatile private var remoteActivitySurfaceVersion = 0
     @Volatile private var remoteInkSurfaceVersion = 0
+    @Volatile private var remoteVideoPlaybackSupported = false
     @Volatile private var remoteMaxImageBytes = 0
     @Volatile private var remoteGlassesVersionName: String? = null
     @Volatile private var remoteGlassesSetupComplete = false
@@ -1004,6 +1009,7 @@ class BusHubService : Service() {
         if (::pluginGuardianCoordinator.isInitialized) pluginGuardianCoordinator.close()
         if (::pluginRegistry.isInitialized) pluginRegistry.close()
         inkSurfaceCoordinator.close()
+        stopActiveVideo(ownerPluginId = null, reason = "hub_destroyed")
         if (::cameraCompanionController.isInitialized) cameraCompanionController.close()
         if (::mediaSyncCoordinator.isInitialized) mediaSyncCoordinator.close()
         synchronized(phoneAssistedPairingLock) { activePhoneAssistedPairing = null }
@@ -1034,6 +1040,8 @@ class BusHubService : Service() {
         if (!protectedPathAllowed(envelope.path, senderUid, sender.principal)) {
             val code = if (BusPaths.isProtectedMediaSyncPath(envelope.path)) {
                 "PROTECTED_MEDIASYNC_PATH"
+            } else if (BusPaths.isProtectedVideoPath(envelope.path)) {
+                "PROTECTED_VIDEO_PATH"
             } else {
                 "PROTECTED_CAMERA_PATH"
             }
@@ -1261,11 +1269,19 @@ class BusHubService : Service() {
         } else {
             ownedEnvelope
         }
-        if (authorizedEnvelope.path == TransitLegacyStateExporter.ACK_PATH && sender.principal != null) {
+        val videoOwnedEnvelope = if (
+            sender.principal != null && BusPaths.isProtectedVideoPath(authorizedEnvelope.path)
+        ) {
+            authorizedEnvelope.copy(payload = JSONObject(authorizedEnvelope.payload.toString())
+                .put("pluginId", sender.principal.descriptor.id)
+                .put("ownerPluginId", sender.principal.descriptor.id))
+        } else authorizedEnvelope
+        trackVideoRequest(videoOwnedEnvelope, sender.principal)
+        if (videoOwnedEnvelope.path == TransitLegacyStateExporter.ACK_PATH && sender.principal != null) {
             val acknowledged = transitLegacyStateExporter.acknowledge(
                 sender.principal,
                 pluginGrantStore.stateFor(sender.principal),
-                authorizedEnvelope.payload,
+                videoOwnedEnvelope.payload,
             )
             if (acknowledged) {
                 recordLocalRoute(authorizedEnvelope, senderUid, sender, PluginBusJournal.Verdict.OK)
@@ -1281,22 +1297,22 @@ class BusHubService : Service() {
             }
             return
         }
-        recordLocalRoute(authorizedEnvelope, senderUid, sender, PluginBusJournal.Verdict.OK)
+        recordLocalRoute(videoOwnedEnvelope, senderUid, sender, PluginBusJournal.Verdict.OK)
         if (handleHubPath(
-                authorizedEnvelope,
+                videoOwnedEnvelope,
                 replyRemote = false,
                 senderUid = senderUid,
                 replyBinder = sender.replyBinder,
                 principal = sender.principal,
             )
         ) return
-        if (deliverLocal(authorizedEnvelope, excludeUid = senderUid)) return
-        if (authorizedEnvelope.path != BusPaths.ERROR &&
-            PhoneClientSupervisor.enqueue(applicationContext, authorizedEnvelope, excludeUid = senderUid)
+        if (deliverLocal(videoOwnedEnvelope, excludeUid = senderUid)) return
+        if (videoOwnedEnvelope.path != BusPaths.ERROR &&
+            PhoneClientSupervisor.enqueue(applicationContext, videoOwnedEnvelope, excludeUid = senderUid)
         ) return
-        val errorCode = sendRemote(authorizedEnvelope)
+        val errorCode = sendRemote(videoOwnedEnvelope)
         if (errorCode != null) {
-            deliverError(sender.replyBinder, authorizedEnvelope.id, errorCode)
+            deliverError(sender.replyBinder, videoOwnedEnvelope.id, errorCode)
         }
     }
 
@@ -1364,6 +1380,9 @@ class BusHubService : Service() {
         ) {
             recordRemoteRoute(envelope, PluginBusJournal.Verdict.OK)
             return
+        }
+        if (envelope.path == BusPaths.VIDEO_SESSION_STATE) {
+            trackVideoState(envelope.payload)
         }
         if (envelope.path == BusPaths.INK_EVENT) {
             handleGlassesInkEvent(envelope)
@@ -2754,6 +2773,54 @@ class BusHubService : Service() {
         runCatching { callback.onMessage(BusPaths.PLUGIN_REGISTRATION, eventId, payload) }
     }
 
+    private fun trackVideoRequest(envelope: BusEnvelope, principal: PhonePluginPrincipal?) {
+        if (envelope.path != BusPaths.VIDEO_SESSION_OPEN || principal == null) return
+        val sessionId = envelope.payload.optString("sessionId")
+        if (runCatching { UUID.fromString(sessionId).toString() == sessionId.lowercase() }.getOrDefault(false).not()) {
+            return
+        }
+        synchronized(videoSessionLock) {
+            if (activeVideoSession == null) {
+                activeVideoSession = ActiveVideoSession(sessionId, principal.descriptor.id)
+            }
+        }
+    }
+
+    private fun trackVideoState(payload: JSONObject) {
+        val sessionId = payload.optString("sessionId")
+        val ownerPluginId = payload.optString("pluginId")
+        if (sessionId.isBlank() || ownerPluginId.isBlank()) return
+        synchronized(videoSessionLock) {
+            when (payload.optString("state")) {
+                "opened" -> {
+                    activeVideoSession = ActiveVideoSession(sessionId, ownerPluginId)
+                }
+                "closed", "error", "busy" -> if (activeVideoSession?.sessionId == sessionId) {
+                    activeVideoSession = null
+                }
+            }
+        }
+    }
+
+    private fun stopActiveVideo(ownerPluginId: String?, reason: String) {
+        val session = synchronized(videoSessionLock) {
+            activeVideoSession
+                ?.takeIf { ownerPluginId == null || it.ownerPluginId == ownerPluginId }
+                ?.also { activeVideoSession = null }
+        } ?: return
+        sendRemote(
+            BusEnvelope(
+                path = BusPaths.VIDEO_SESSION_CONTROL,
+                payload = JSONObject()
+                    .put("sessionId", session.sessionId)
+                    .put("pluginId", session.ownerPluginId)
+                    .put("ownerPluginId", session.ownerPluginId)
+                    .put("action", "stop")
+                    .put("reason", reason),
+            ),
+        )
+    }
+
     private fun removeRegistrationsByBinder(callbackBinder: IBinder, reason: String) {
         registrations.filter { it.callbackBinder == callbackBinder }.forEach { registration ->
             removeRegistration(registration, reason)
@@ -2783,6 +2850,7 @@ class BusHubService : Service() {
                 reason != "authorizationChanged"
             ) {
                 clearActivityForDisconnectedOwner(pluginId, reason)
+                stopActiveVideo(pluginId, reason)
             }
         }
         // A registration going away is normal: the hub unbinds dormant plugins, and a
@@ -2803,6 +2871,7 @@ class BusHubService : Service() {
     }
 
     private fun revokePrincipal(key: PluginGrantKey) {
+        stopActiveVideo(key.pluginId, "authorizationChanged")
         if (::cameraCompanionController.isInitialized) cameraCompanionController.onRevoked(key)
         if (::externalPluginController.isInitialized) externalPluginController.onRevoked(key)
         clearPinForRevokedOwner(key.pluginId, "authorizationChanged")
@@ -5541,8 +5610,10 @@ class BusHubService : Service() {
         }
         if (state and (LinkStateBits.CXR_CONTROL_UP or LinkStateBits.SPP_DATA_UP) == 0) {
             if (::mediaSyncCoordinator.isInitialized) mediaSyncCoordinator.onLinkLost()
+            synchronized(videoSessionLock) { activeVideoSession = null }
             remoteImageSurfaceVersion = 0
             remoteInkSurfaceVersion = 0
+            remoteVideoPlaybackSupported = false
             remoteMaxImageBytes = 0
             // remotePinSurfaceVersion and remoteActivitySurfaceVersion deliberately survive,
             // for the same reason as the setup state below: support is a property of the
@@ -5649,6 +5720,11 @@ class BusHubService : Service() {
         if (remoteActivitySurfaceVersion == ActivitySurfaceContract.VERSION) {
             capabilities = capabilities or BusCapabilityBits.ACTIVITY_SURFACE
         }
+        if (remoteVideoPlaybackSupported &&
+            linkState() and (LinkStateBits.CXR_CONTROL_UP or LinkStateBits.SPP_DATA_UP) != 0
+        ) {
+            capabilities = capabilities or BusCapabilityBits.VIDEO_PLAYBACK
+        }
         capabilities = capabilities or BusCapabilityBits.TTS
         // Unconditional: this build can always take a pairing offer off the glasses. Gating it on
         // link or session state would make the glasses read "no phone help available" during the
@@ -5698,6 +5774,9 @@ class BusHubService : Service() {
         remoteNoticeSurfaceVersion = if (noticeSupported) NoticeSurfaceContract.VERSION else 0
         remoteActivitySurfaceVersion = if (activitySupported) ActivitySurfaceContract.VERSION else 0
         remoteInkSurfaceVersion = acceptedInkVersion
+        remoteVideoPlaybackSupported =
+            advertised.protocolVersion == GlassesHubCapabilitiesContract.VERSION &&
+                advertised.features and BusCapabilityBits.VIDEO_PLAYBACK != 0
         remoteMaxImageBytes = if (imageSupported) advertised.maxImageBytes else 0
         updateRemoteGlassesAppState(
             advertised.versionName,

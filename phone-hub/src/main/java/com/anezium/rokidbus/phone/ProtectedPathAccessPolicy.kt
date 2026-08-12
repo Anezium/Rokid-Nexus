@@ -22,6 +22,7 @@ object ProtectedPathAccessPolicy {
         val required = when {
             BusPaths.isProtectedCameraPath(path) -> PluginCapability.CAMERA
             BusPaths.isProtectedMediaSyncPath(path) -> PluginCapability.MEDIA_SYNC
+            BusPaths.isProtectedVideoPath(path) -> PluginCapability.VIDEO_PLAYBACK
             else -> return true
         }
         if (isHubUid) return true

@@ -80,6 +80,10 @@ object BusPaths {
     const val CAMERA_SNAPSHOT_REQUEST = "/camera/snapshot/request"
     const val CAMERA_SNAPSHOT_RESULT = "/camera/snapshot/result"
     const val CAMERA_SNAPSHOT_ERROR = "/camera/snapshot/error"
+    const val VIDEO_SESSION_OPEN = "/video/session/open"
+    const val VIDEO_SESSION_CONTROL = "/video/session/control"
+    const val VIDEO_SESSION_STATE = "/video/session/state"
+    const val VIDEO_LINK_OFFER = "/video/link/offer"
     const val MEDIA_SYNC_STATUS = "/mediasync/status"
     const val MEDIA_SYNC_SETTINGS = "/mediasync/settings"
     const val MEDIA_SYNC_NOW = "/mediasync/now"
@@ -174,6 +178,10 @@ object BusPaths {
             path == CAMERA_SNAPSHOT_REQUEST || path.startsWith("$CAMERA_SNAPSHOT_REQUEST/") ||
             path == CAMERA_SNAPSHOT_RESULT || path.startsWith("$CAMERA_SNAPSHOT_RESULT/") ||
             path == CAMERA_SNAPSHOT_ERROR || path.startsWith("$CAMERA_SNAPSHOT_ERROR/")
+
+    /** Video playback is owner-scoped: a plugin can never observe another plugin's session. */
+    fun isProtectedVideoPath(path: String): Boolean =
+        path == "/video" || path.startsWith("/video/")
 }
 
 object BusCapabilityBits {
@@ -187,6 +195,7 @@ object BusCapabilityBits {
     const val PHONE_ASSISTED_SETUP = 1 shl 8
     const val TTS = 1 shl 9
     const val INK_SURFACE = 1 shl 10
+    const val VIDEO_PLAYBACK = 1 shl 11
 }
 
 object LinkStateBits {

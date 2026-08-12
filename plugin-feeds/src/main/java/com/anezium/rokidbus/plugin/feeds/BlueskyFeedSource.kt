@@ -147,6 +147,13 @@ class BlueskyFeedSource(
                             previewUrl = thumbnail.ifBlank { playlist },
                             altText = embed.optString("alt").trim(),
                             durationMs = null,
+                            variants = listOf(
+                                FeedMediaVariant(
+                                    url = playlist,
+                                    container = FeedMediaContainer.HLS,
+                                    mimeType = "application/x-mpegURL",
+                                ),
+                            ),
                         ),
                     )
                 }

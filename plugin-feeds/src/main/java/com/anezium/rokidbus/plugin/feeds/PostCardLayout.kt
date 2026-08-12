@@ -121,7 +121,10 @@ object PostCardLayout {
         return FeedCardContent(
             title = "Feeds",
             lines = header + visibleBody,
-            footer = "${post.source} media ${index + 1}/${post.media.size}".take(LINE_CHARS),
+            footer = buildString {
+                append("${post.source} media ${index + 1}/${post.media.size}")
+                if (item.type != FeedMediaType.PHOTO) append(" · TAP PLAY")
+            }.take(LINE_CHARS),
             truncated = truncated,
             pageIndex = index,
             pageCount = post.media.size,

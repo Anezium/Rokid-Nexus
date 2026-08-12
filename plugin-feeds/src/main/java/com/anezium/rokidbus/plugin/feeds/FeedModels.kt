@@ -23,7 +23,37 @@ data class FeedMedia(
     val previewUrl: String,
     val altText: String,
     val durationMs: Long?,
+    /** All advertised streams, kept so playback can choose a glasses-compatible rendition. */
+    val variants: List<FeedMediaVariant> = emptyList(),
 )
+
+enum class FeedMediaContainer { MP4, HLS }
+
+data class FeedMediaVariant(
+    val url: String,
+    val container: FeedMediaContainer,
+    val mimeType: String,
+    val bitrate: Long? = null,
+    val width: Int? = null,
+    val height: Int? = null,
+    val codecs: String? = null,
+) {
+    val isAvc: Boolean
+        get() = codecs.isNullOrBlank() || codecs.contains("avc", ignoreCase = true)
+}
+
+/** Prefer an AVC MP4 that fits the first glasses MVP, but keep a deterministic fallback. */
+fun FeedMedia.selectPlaybackVariant(): FeedMediaVariant? {
+    val candidates = variants.filter { it.url.startsWith("https://", ignoreCase = true) }
+    if (candidates.isEmpty()) return null
+    val avcMp4 = candidates.filter {
+        it.container == FeedMediaContainer.MP4 && it.isAvc &&
+            (it.width == null || it.width <= 1280) && (it.height == null || it.height <= 720) &&
+            (it.bitrate == null || it.bitrate <= 4_500_000L)
+    }
+    if (avcMp4.isNotEmpty()) return avcMp4.maxByOrNull { it.bitrate ?: 0L }
+    return candidates.firstOrNull { it.container == FeedMediaContainer.HLS } ?: candidates.first()
+}
 
 data class FeedPage(
     val posts: List<FeedPost>,

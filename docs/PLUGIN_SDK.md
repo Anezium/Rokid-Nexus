@@ -55,7 +55,7 @@ does not approve it.
 
 Plugin IDs use `[a-z][a-z0-9._-]{2,63}`. Requested capabilities are `surfaces`,
 `ink_surface`, `http_proxy`, `microphone`, `stt`, `tts`, `camera`, `mediasync`,
-`assistant`, and `wireless_debugging`. `ink_surface` is distinct from `surfaces`:
+`assistant`, `wireless_debugging`, and `video_playback`. `ink_surface` is distinct from `surfaces`:
 it grants the phone-side compiler and native glasses renderer for interactive
 Ink pages, and adding it to an existing descriptor requires re-approval. Camera paths
 are protected by the approved signer-bound grant. `microphone` is grantable from
@@ -66,6 +66,13 @@ hub-produced transcript text and does not require the plugin to request raw
 `microphone` access. `tts` is its opposite number, speech out rather than in
 (§3.3); it is likewise independent of `microphone`, since the plugin supplies
 text and never touches audio.
+
+`video_playback` grants the owner-scoped video session routes. Plugins send
+`/video/session/open` and `/video/session/control`, and declare
+`/video/session/state,/video/link/offer` to receive their own replies. The phone hub
+overwrites `pluginId` and `ownerPluginId` from the authenticated registration.
+`NexusPluginClient.supportsVideoPlayback` reports the live glasses feature bit;
+plugins must retain a poster or ordinary surface fallback when it is false.
 
 Descriptor capabilities authorize Nexus hub resources and routes. They do not
 replace Android permissions for a phone-local platform API. A headless plugin

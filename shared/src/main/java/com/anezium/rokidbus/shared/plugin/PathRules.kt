@@ -11,7 +11,11 @@ object PathRules {
         "/security",
         "/error",
     )
-    private val hubOnlyPaths = setOf(BusPaths.TTS_CANCEL)
+    private val hubOnlyPaths = setOf(
+        BusPaths.TTS_CANCEL,
+        BusPaths.VIDEO_SESSION_STATE,
+        BusPaths.VIDEO_LINK_OFFER,
+    )
     private val lifecyclePrefixes = setOf("/system/plugin")
     private val httpReplyPrefixes = setOf("/http/request/reply")
     private val audioReplyPrefixes = setOf(
@@ -30,6 +34,7 @@ object PathRules {
         BusPaths.CAMERA_SNAPSHOT_ERROR,
     )
     private val mediaSyncReceivePrefixes = setOf(BusPaths.MEDIA_SYNC_STATUS)
+    private val videoReceivePrefixes = setOf(BusPaths.VIDEO_SESSION_STATE, BusPaths.VIDEO_LINK_OFFER)
 
     fun normalizeAbsolute(path: String): String? {
         val trimmed = path.trim()
@@ -79,6 +84,7 @@ object PathRules {
         BusPaths.CAMERA_SNAPSHOT_RESULT, BusPaths.CAMERA_SNAPSHOT_ERROR,
         BusPaths.WIRELESS_ADB_REPLY,
         BusPaths.INK_EVENT,
+        BusPaths.VIDEO_SESSION_STATE, BusPaths.VIDEO_LINK_OFFER,
         -> true
         else -> false
     }
@@ -90,6 +96,7 @@ object PathRules {
         BusPaths.CAMERA_SNAPSHOT_RESULT, BusPaths.CAMERA_SNAPSHOT_ERROR,
         BusPaths.WIRELESS_ADB_REPLY,
         BusPaths.INK_EVENT,
+        BusPaths.VIDEO_SESSION_STATE, BusPaths.VIDEO_LINK_OFFER,
         -> true
         else -> matchesPrefix(path, "/system/plugin")
     }
@@ -115,6 +122,8 @@ object PathRules {
         BusPaths.MEDIA_SYNC_NOW,
         -> PluginCapability.MEDIA_SYNC
         BusPaths.WIRELESS_ADB_REQUEST -> PluginCapability.WIRELESS_DEBUGGING
+        BusPaths.VIDEO_SESSION_OPEN, BusPaths.VIDEO_SESSION_CONTROL ->
+            PluginCapability.VIDEO_PLAYBACK
         else -> null
     }
 
@@ -144,6 +153,9 @@ object PathRules {
         if (PluginCapability.MEDIA_SYNC in requestedCapabilities &&
             mediaSyncReceivePrefixes.any { matchesPrefix(normalized, it) }
         ) return true
+        if (PluginCapability.VIDEO_PLAYBACK in requestedCapabilities &&
+            videoReceivePrefixes.any { matchesPrefix(normalized, it) }
+        ) return true
         return false
     }
 
@@ -166,6 +178,9 @@ object PathRules {
         }
         if (mediaSyncReceivePrefixes.any { matchesPrefix(normalized, it) }) {
             return PluginCapability.MEDIA_SYNC
+        }
+        if (videoReceivePrefixes.any { matchesPrefix(normalized, it) }) {
+            return PluginCapability.VIDEO_PLAYBACK
         }
         return null
     }

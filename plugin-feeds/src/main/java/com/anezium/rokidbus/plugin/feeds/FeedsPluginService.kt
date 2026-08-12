@@ -8,11 +8,13 @@ import com.anezium.rokidbus.client.plugin.NexusPluginService
 import com.anezium.rokidbus.client.plugin.NexusSurfaceSession
 import com.anezium.rokidbus.shared.plugin.NexusInputEvent
 import org.json.JSONObject
+import java.util.UUID
 
 class FeedsPluginService : NexusPluginService() {
     private var runtime: FeedsRuntime? = null
     private var surface: NexusSurfaceSession? = null
     private var surfaceShown = false
+    private var video: VideoPlaybackSession? = null
     private val settingsStore by lazy { FeedsSettingsStore(applicationContext) }
 
     private val runtimeHost = object : FeedsRuntimeHost {
@@ -57,6 +59,31 @@ class FeedsPluginService : NexusPluginService() {
             surfaceShown = false
         }
 
+        override fun openVideo(media: FeedMedia): Boolean {
+            if (nexusClient?.supportsVideoPlayback != true) {
+                Log.i(TAG, "video renderer unavailable")
+                return false
+            }
+            val session = video ?: VideoPlaybackSession(
+                context = applicationContext,
+                sendBus = { path, payload -> nexusClient?.send(path, UUID.randomUUID().toString(), payload) == true },
+                onState = { message ->
+                    Log.i(TAG, "video $message")
+                    mainExecutor.execute { runtime?.onVideoState(message) }
+                },
+                log = { message -> Log.i(TAG, message) },
+            ).also { video = it }
+            return session.open(media)
+        }
+
+        override fun controlVideo(action: String) {
+            video?.control(action)
+            if (action == "stop") {
+                video?.close()
+                video = null
+            }
+        }
+
         override fun post(action: () -> Unit) {
             mainExecutor.execute(action)
         }
@@ -74,6 +101,8 @@ class FeedsPluginService : NexusPluginService() {
 
     override fun onNexusClose() {
         runtime?.close()
+        video?.close()
+        video = null
         surface = null
         surfaceShown = false
     }
@@ -82,12 +111,25 @@ class FeedsPluginService : NexusPluginService() {
         runtime?.input(event)
     }
 
+    override fun onNexusMessage(path: String, id: String, payload: JSONObject) {
+        when (path) {
+            "/video/session/state" -> video?.handleState(payload)
+            "/video/link/offer" -> video?.handleOffer(payload)
+        }
+    }
+
     override fun onNexusRegistrationState(result: Int) {
-        if (result != PluginRegistrationResult.APPROVED) runtime?.close()
+        if (result != PluginRegistrationResult.APPROVED) {
+            runtime?.close()
+            video?.close()
+            video = null
+        }
     }
 
     override fun onDestroy() {
         runtime?.close()
+        video?.close()
+        video = null
         runtime = null
         surface = null
         super.onDestroy()

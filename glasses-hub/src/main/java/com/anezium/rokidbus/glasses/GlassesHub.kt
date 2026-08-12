@@ -86,6 +86,8 @@ object GlassesHub {
         val deathRecipient: IBinder.DeathRecipient,
     )
 
+    private data class ActiveVideoSession(val sessionId: String, val ownerPluginId: String)
+
     private val started = AtomicBoolean(false)
     private val registrations = CopyOnWriteArrayList<Registration>()
     private val launcherListeners = CopyOnWriteArrayList<(List<LauncherEntry>) -> Unit>()
@@ -94,7 +96,7 @@ object GlassesHub {
     // A lambda, not a method reference: the :camera process also loads this object, and a
     // reference would drag MediaSyncEngine's class init (and its executor thread) in with it.
     private val cameraSessionTracker = CameraSessionTracker { active ->
-        MediaSyncEngine.onCameraSessionChanged(active)
+        MediaSyncEngine.onCameraSessionChanged(active || activeVideoSession != null)
         appContext?.let { context ->
             wifiRequestExecutor.execute {
                 if (active) {
@@ -133,6 +135,7 @@ object GlassesHub {
     private var manualSetupScreenLock: PowerManager.WakeLock? = null
     @Volatile private var launcherEntries: List<LauncherEntry> = emptyList()
     @Volatile private var appContext: Context? = null
+    @Volatile private var activeVideoSession: ActiveVideoSession? = null
     @Volatile private var cxrUp = false
     @Volatile private var phoneConnected = false
     @Volatile private var remotePhoneCapabilities = PhoneHubCapabilities(0, null)
@@ -347,6 +350,59 @@ object GlassesHub {
             handleWirelessAdbRequest(envelope)
             return
         }
+        if (envelope.path == BusPaths.VIDEO_SESSION_OPEN) {
+            val sessionId = envelope.payload.optString("sessionId")
+            val ownerPluginId = envelope.payload.optString(
+                "ownerPluginId",
+                envelope.payload.optString("pluginId"),
+            )
+            val context = appContext
+            if (!VIDEO_SESSION_ID.matches(sessionId) || !PLUGIN_ID.matches(ownerPluginId) || context == null) {
+                sendRemote(errorEnvelope(envelope.id, "INVALID_VIDEO_SESSION"))
+                return
+            }
+            if (cameraSessionTracker.isActive() || MediaSyncEngine.isSessionActive() ||
+                activeVideoSession != null
+            ) {
+                sendRemote(
+                    BusEnvelope(
+                        path = BusPaths.VIDEO_SESSION_STATE,
+                        payload = JSONObject()
+                            .put("sessionId", sessionId)
+                            .put("state", "busy")
+                            .put("pluginId", ownerPluginId),
+                    ),
+                )
+                return
+            }
+            activeVideoSession = ActiveVideoSession(sessionId, ownerPluginId)
+            onVideoSessionActivityChanged(active = true, trigger = "video_session_open")
+            runCatching {
+                context.startActivity(
+                    Intent(context, VideoActivity::class.java)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        .putExtra(VideoActivity.EXTRA_SESSION_ID, sessionId)
+                        .putExtra(
+                            VideoActivity.EXTRA_OWNER_PLUGIN_ID,
+                            ownerPluginId,
+                        ),
+                )
+            }.onFailure {
+                activeVideoSession = null
+                onVideoSessionActivityChanged(active = false, trigger = "video_launch_failed")
+                logError("video activity launch failed", it)
+                sendRemote(
+                    BusEnvelope(
+                        path = BusPaths.VIDEO_SESSION_STATE,
+                        payload = JSONObject()
+                            .put("sessionId", sessionId)
+                            .put("state", "error")
+                            .put("pluginId", ownerPluginId),
+                    ),
+                )
+            }
+            return
+        }
         MediaSyncEngine.trafficMonitor.note(envelope.path)
         if (envelope.path == BusPaths.MEDIA_SYNC_CONFIG) {
             MediaSyncEngine.onConfig(envelope.payload)
@@ -518,6 +574,19 @@ object GlassesHub {
         if (pluginId.isBlank()) return "launcherOpen=false reason=blank"
         if (pluginId == CAMERA_LAUNCHER_ID) {
             val context = appContext ?: return "launcherOpen=false reason=hub_not_started"
+            activeVideoSession?.let { video ->
+                deliverLocal(
+                    BusEnvelope(
+                        path = BusPaths.VIDEO_SESSION_CONTROL,
+                        payload = JSONObject()
+                            .put("sessionId", video.sessionId)
+                            .put("ownerPluginId", video.ownerPluginId)
+                            .put("action", "stop"),
+                    ),
+                )
+                activeVideoSession = null
+                onVideoSessionActivityChanged(active = false, trigger = "camera_preempt")
+            }
             return runCatching {
                 context.startActivity(
                     Intent(context, CameraActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
@@ -643,6 +712,7 @@ object GlassesHub {
                 BusCapabilityBits.NOTICE_SURFACE or
                 BusCapabilityBits.ACTIVITY_SURFACE or
                 BusCapabilityBits.INK_SURFACE or
+                BusCapabilityBits.VIDEO_PLAYBACK or
                 (if (ttsAvailable) BusCapabilityBits.TTS else 0),
             imageSurfaceVersion = ImageSurfaceContract.VERSION,
             pinSurfaceVersion = PinSurfaceContract.VERSION,
@@ -707,6 +777,19 @@ object GlassesHub {
                 envelope.payload.optString("sessionId"),
                 envelope.payload.optString("state"),
             )
+        }
+        if (envelope.path == BusPaths.VIDEO_SESSION_STATE) {
+            val sessionId = envelope.payload.optString("sessionId")
+            val ownerPluginId = envelope.payload.optString("pluginId")
+            when (envelope.payload.optString("state")) {
+                "opened" -> if (sessionId.isNotBlank() && ownerPluginId.isNotBlank()) {
+                    activeVideoSession = ActiveVideoSession(sessionId, ownerPluginId)
+                }
+                "closed", "error" -> if (activeVideoSession?.sessionId == sessionId) {
+                    activeVideoSession = null
+                    onVideoSessionActivityChanged(active = false, trigger = "video_session_closed")
+                }
+            }
         }
         if (envelope.path == BusPaths.GLASSES_SELFARM_MANUAL) {
             if (!isTrustedUid(senderUid)) {
@@ -1035,6 +1118,11 @@ object GlassesHub {
             }
             log("camera client disconnected reason=$reason trackerReset=$reset")
         }
+        if (registration.clientId == VIDEO_CLIENT_ID && activeVideoSession != null) {
+            activeVideoSession = null
+            onVideoSessionActivityChanged(active = false, trigger = "video_${reason}")
+            log("video client disconnected reason=$reason")
+        }
     }
 
     private fun isDebuggableBuild(): Boolean =
@@ -1150,7 +1238,25 @@ object GlassesHub {
         binary: ByteArray? = null,
     ): Boolean = sendRemote(BusEnvelope(path = path, payload = payload, binary = binary)) == null
 
-    internal fun isCameraSessionActive(): Boolean = cameraSessionTracker.isActive()
+    internal fun isCameraSessionActive(): Boolean =
+        cameraSessionTracker.isActive() || activeVideoSession != null
+
+    private fun onVideoSessionActivityChanged(active: Boolean, trigger: String) {
+        MediaSyncEngine.onCameraSessionChanged(cameraSessionTracker.isActive() || active)
+        appContext?.let { context ->
+            wifiRequestExecutor.execute {
+                if (active) {
+                    cancelPendingWifiDisable(trigger)
+                } else {
+                    reconcileWifiOwnership(
+                        context = context,
+                        trigger = trigger,
+                        cameraGraceRequested = true,
+                    )
+                }
+            }
+        }
+    }
 
     internal fun isWifiHubOwned(): Boolean {
         val context = appContext ?: return wifiOwnership?.isHubOwned() == true
@@ -1392,7 +1498,8 @@ object GlassesHub {
             val cameraEnableRequestActive =
                 ownership.isEnableRequestPossiblyInFlight() ||
                     wifiEnableA11yInFlight.get() ||
-                    cameraSessionTracker.isActive()
+                    cameraSessionTracker.isActive() ||
+                    activeVideoSession != null
             if (setupEnableRequestActive || cameraEnableRequestActive) {
                 log(
                     "glassesWifi reconcile trigger=$trigger action=none " +
@@ -1410,7 +1517,7 @@ object GlassesHub {
         val action = WifiOwnershipReconciliationPolicy.decide(
             cameraLeaseOwned = ownership.isHubOwned(),
             setupWifiOwned = SelfArmSetupWifiOwnershipStore.isNexusOwned(context),
-            cameraSessionActive = cameraSessionTracker.isActive(),
+            cameraSessionActive = cameraSessionTracker.isActive() || activeVideoSession != null,
             setupSessionActive = SelfArmOnboardingStore.isWifiStillNeededBySetup(context),
             mediaSyncSessionActive = MediaSyncEngine.isSessionActive(),
             selfArmOperationActive = SelfArmController.isOperationRunning(),
@@ -1487,4 +1594,9 @@ object GlassesHub {
     private const val MANUAL_SETUP_SCREEN_TIMEOUT_MS = 5 * 60_000L
     private const val CAMERA_LAUNCHER_ID = "camera"
     private const val CAMERA_CLIENT_ID = "glasses-camera-domain"
+    internal const val VIDEO_CLIENT_ID = "glasses-video-domain"
+    private val VIDEO_SESSION_ID = Regex(
+        "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
+    )
+    private val PLUGIN_ID = Regex("[a-z][a-z0-9._-]{2,63}")
 }

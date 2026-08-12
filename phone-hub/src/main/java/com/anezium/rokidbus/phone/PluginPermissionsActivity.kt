@@ -255,6 +255,7 @@ class PluginPermissionsActivity : Activity() {
             PluginCapability.ASSISTANT -> "Replace the glasses assistant"
             PluginCapability.WIRELESS_DEBUGGING -> "Wireless debugging"
             PluginCapability.INK_SURFACE -> "Ink pages on your glasses"
+            PluginCapability.VIDEO_PLAYBACK -> "Video playback on your glasses"
         }
         val note = when (capability) {
             PluginCapability.SURFACES -> "Render cards and images on the HUD"
@@ -267,6 +268,7 @@ class PluginPermissionsActivity : Activity() {
             PluginCapability.ASSISTANT -> "Close Rokid's assistant while this plugin is open"
             PluginCapability.WIRELESS_DEBUGGING -> "Enable ADB and create temporary pairing codes"
             PluginCapability.INK_SURFACE -> "Render compiled interactive Ink pages on the HUD"
+            PluginCapability.VIDEO_PLAYBACK -> "Play compressed video and supported audio on the glasses"
         }
         return LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL

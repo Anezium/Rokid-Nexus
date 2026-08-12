@@ -91,6 +91,16 @@
             android:screenOrientation="portrait"
             android:theme="@style/Theme.RokidBus.Surface" />
 
+        <activity
+            android:name=".VideoActivity"
+            android:configChanges="keyboardHidden|orientation|screenSize"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:launchMode="singleTask"
+            android:process=":video"
+            android:screenOrientation="portrait"
+            android:theme="@style/Theme.RokidBus.Surface" />
+
         <service
             android:name=".RokidBusAccessibilityService"
             android:exported="false"

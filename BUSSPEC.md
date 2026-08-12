@@ -1269,6 +1269,55 @@ startup path instead of standing up a Wi-Fi Direct group that would only be
 torn down). Grant, package, and link changes recompute the bits. Bit `1` is
 retired and is no longer advertised by either hub.
 
+## Video playback contract (`/video/*`, experimental MVP)
+
+Video playback requires an approved `video_playback` grant. The phone hub
+rebuilds every plugin-originated video control envelope with the authenticated
+`pluginId` and `ownerPluginId`; the glasses bind the session, link offer and
+controls to that owner. `/video/session/state` and `/video/link/offer` are direct,
+owner-scoped replies and never reach another plugin.
+
+The bus is control-only:
+
+| Path | Direction | Payload |
+|---|---|---|
+| `/video/session/open` | plugin → glasses | `sessionId` (UUID), local `surfaceId`, `mediaType`, `loop`, `muted`; identity fields are overwritten by the phone hub |
+| `/video/session/control` | plugin → glasses | matching `sessionId` and `action` (`pause`, `resume`, `stop`) |
+| `/video/session/state` | glasses → owner plugin | matching `sessionId`, hub-stamped `pluginId`, and `state` (`opened`, `playing`, `paused`, `ended`, `busy`, `error`, `closed`) |
+| `/video/link/offer` | glasses → owner plugin | matching session, `epoch`, `mode=p2p`, framework SSID/passphrase, port, random token and group-owner IP |
+
+Compressed media uses the distinct `MediaLinkProtocol` v1 TCP framing (`MLNK`),
+not `CameraLinkProtocol` and never SPP. Its fixed header carries type, owner-lease
+epoch, sequence, presentation timestamp and flags, followed by at most 64 KiB of
+UTF-8 metadata and 8 MiB of payload. Packet types are `HELLO`, `VIDEO_CONFIG`,
+`VIDEO_SAMPLE`, `AUDIO_CONFIG`, `AUDIO_SAMPLE`, `WINDOW_UPDATE`, `EOS`, and
+`ERROR`. The receiver accepts packets only after a `HELLO` matches the session,
+random token and epoch. Video samples are AVC with key-frame flags and PTS; audio
+samples are optional AAC with PTS. V1 pacing is sender-side and socket-bounded;
+`WINDOW_UPDATE` reserves an additive explicit receive window for a later revision.
+
+The glasses run a foreground `VideoActivity` in `:video`, decode AVC with
+`MediaCodec` onto a `SurfaceView`, and decode optional AAC through `MediaCodec`
+to `AudioTrack`. BACK, stop, link loss, plugin death, revocation and package loss
+all close the session and release the P2P group. Camera and MediaSync exclude
+video from their high-bandwidth window; an explicit Camera launch preempts video,
+while an ordinary video open receives `busy` instead of silently evicting them.
+The video endpoint never removes a P2P group it did not create.
+
+Feeds prefetches a selected AVC asset into bounded private cache before joining
+Wi-Fi Direct, so media download does not depend on concurrent Internet routing.
+X MP4 is copied directly. Bluesky VOD HLS accepts one bounded public HTTPS
+playlist, selects an AVC rendition no larger than 1280×720/4.5 Mbit/s, rejects
+live, encrypted, byte-range, oversized and overlong playlists, and concatenates
+the init/segments for local `MediaExtractor` demux without transcoding. Temporary
+files are deleted on teardown and pruned on the next video session. Redirects and
+every HLS resource remain restricted to public `bsky.app`/`twimg.com` hosts.
+
+Glasses capability bit `2048` (`1 << 11`) advertises this MVP. It is not a
+hardware-readiness claim: the decoder surface, audio route, A/V sync, thermals,
+battery, P2P behavior and HLS container path remain release-gated on the physical
+Rokid device.
+
 ## Photo sync contract (`/mediasync/*`)
 
 Photo sync copies the captures the native camera button writes to the glasses'

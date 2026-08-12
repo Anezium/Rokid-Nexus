@@ -112,10 +112,10 @@ internal object XGraphQlParser {
                 val poster = item.optString("media_url_https").trim()
                 if (poster.isBlank()) continue
                 val videoInfo = item.optJSONObject("video_info")
-                val videoUrl = bestMp4Url(videoInfo?.optJSONArray("variants"))
+                val variants = videoVariants(videoInfo?.optJSONArray("variants"))
                 val url = when (type) {
                     FeedMediaType.PHOTO -> photoUrl(poster, "large")
-                    FeedMediaType.GIF, FeedMediaType.VIDEO -> videoUrl ?: continue
+                    FeedMediaType.GIF, FeedMediaType.VIDEO -> variants.firstOrNull()?.url ?: continue
                 }
                 add(
                     FeedMedia(
@@ -125,6 +125,7 @@ internal object XGraphQlParser {
                         altText = item.optString("ext_alt_text").trim(),
                         durationMs = videoInfo?.optLong("duration_millis")
                             ?.takeIf { videoInfo.has("duration_millis") && it >= 0L },
+                        variants = variants,
                     ),
                 )
             }
@@ -147,22 +148,26 @@ internal object XGraphQlParser {
         if (knownIds.add(post.id)) posts += post
     }
 
-    private fun bestMp4Url(variants: JSONArray?): String? {
-        if (variants == null) return null
-        var bestUrl: String? = null
-        var bestBitrate = Long.MIN_VALUE
-        for (index in 0 until variants.length()) {
-            val variant = variants.optJSONObject(index) ?: continue
-            if (variant.optString("content_type") != "video/mp4") continue
-            val url = variant.optString("url").trim()
-            if (url.isBlank()) continue
-            val bitrate = variant.optLong("bit_rate", -1L)
-            if (bestUrl == null || bitrate > bestBitrate) {
-                bestUrl = url
-                bestBitrate = bitrate
+    private fun videoVariants(variants: JSONArray?): List<FeedMediaVariant> {
+        if (variants == null) return emptyList()
+        return buildList {
+            for (index in 0 until variants.length()) {
+                val variant = variants.optJSONObject(index) ?: continue
+                if (variant.optString("content_type") != "video/mp4") continue
+                val url = variant.optString("url").trim()
+                if (url.isBlank()) continue
+                val bitrate = variant.optLong("bit_rate", -1L)
+                add(
+                    FeedMediaVariant(
+                        url = url,
+                        container = FeedMediaContainer.MP4,
+                        mimeType = "video/mp4",
+                        bitrate = bitrate.takeIf { it > 0L },
+                    ),
+                )
             }
         }
-        return bestUrl
+            .sortedByDescending { it.bitrate ?: 0L }
     }
 
     private fun photoUrl(url: String, size: String): String = "${url.substringBefore('?')}?name=$size"

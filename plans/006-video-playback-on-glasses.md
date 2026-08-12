@@ -8,16 +8,41 @@
 > Follow the phases and verification gates in order. Stop on any listed STOP
 > condition. Do not ship a "preview" or frame-poster and call it video. Update
 > `plans/README.md` when execution status changes.
+>
+> **Owner override, 2026-08-12:** implement the software MVP before the owner is
+> available for hardware tests. The implementation may be rebuilt after those
+> tests, but it must remain marked unverified and must not be released as
+> hardware-ready until the deferred device gate passes.
 
 ## Status
 
-- **Status**: TODO
+- **Status**: IN PROGRESS — software MVP implemented, build/device verification pending
 - **Priority**: P2 (owner asked to plan it for later, after the current Feeds work ships)
 - **Effort**: XL
 - **Risk**: HIGH
-- **Depends on**: the Feeds image surface + gallery (`feat/feeds-images`), the Lens Wi‑Fi Direct link (`LensImageLink` / `PhoneLensImageLink`)
+- **Depends on**: the Feeds image surface + gallery and the delivered Camera/Lens Wi‑Fi platform (`CameraLinkProtocol` / `PhoneLensImageLink`)
 - **Category**: media, transport, glasses-runtime
 - **Planned at**: main `5e38ca6`, 2026-07-12
+
+## Implementation update — 2026-08-12
+
+The isolated `feat/video-playback-mvp` worktree now contains an unverified
+end-to-end implementation:
+
+- an additive `video_playback` grant and owner-scoped `/video/*` control paths;
+- a separate bounded `MediaLinkProtocol` v1, leaving `CameraLinkProtocol` intact;
+- a foreground glasses `VideoActivity`, Wi-Fi Direct receiver, MediaCodec AVC
+  surface decoder, and optional AAC-to-`AudioTrack` path;
+- Feeds MP4 and bounded VOD HLS prefetch, compressed sample demux, PTS pacing,
+  pause/resume, GIF looping, and poster fallback;
+- Camera/MediaSync arbitration, owner/epoch/token validation, link-loss and
+  plugin-death cleanup, and bounded temporary media storage.
+
+The MVP deliberately uses its own P2P endpoint instead of completing the large
+Camera/Lens link extraction. That extraction remains a likely post-device-test
+refactor. LOHS reverse mode is also still deferred. No hardware behavior has
+been claimed: codec compatibility, audio routing, A/V sync, thermals, battery,
+P2P stability, and the HLS concatenation path all remain device gates.
 
 ## Why this matters
 

@@ -21,6 +21,8 @@ internal interface FeedsRuntimeHost {
     fun sendImage(payload: JSONObject, bytes: ByteArray)
     fun supportsImage(): Boolean
     fun hideSurface()
+    fun openVideo(media: FeedMedia): Boolean = false
+    fun controlVideo(action: String) = Unit
     fun post(action: () -> Unit)
     fun log(message: String)
 }
@@ -55,6 +57,8 @@ internal class FeedsRuntime(
     private var imageGeneration = 0L
     @Volatile private var lastImageSendNanos = 0L
     private var visible = false
+    private var videoPlaying = false
+    private var videoPaused = false
 
     fun open() {
         closeFetch()
@@ -69,6 +73,8 @@ internal class FeedsRuntime(
         threadState = null
         galleryIndex = 0
         visible = true
+        videoPlaying = false
+        videoPaused = false
         host.sendCard(PostCardLayout.renderSourceMenu(sources, menuIndex), show = true)
     }
 
@@ -76,6 +82,7 @@ internal class FeedsRuntime(
         visible = false
         closeFetch()
         closeSource()
+        stopVideo()
         host.hideSurface()
     }
 
@@ -86,6 +93,28 @@ internal class FeedsRuntime(
             event.keyCode in FORWARD_KEYS -> moveForward()
             event.keyCode in BACKWARD_KEYS -> moveBackward()
             event.keyCode in TAP_KEYS -> tap()
+        }
+    }
+
+    fun onVideoState(message: String) {
+        when {
+            message.endsWith("PAUSED") -> {
+                videoPlaying = false
+                videoPaused = true
+            }
+            message.endsWith("PLAYING") -> {
+                videoPlaying = true
+                videoPaused = false
+            }
+            message.endsWith("ENDED") || message.endsWith("CLOSED") ||
+                message.endsWith("ERROR") || message.endsWith("BUSY") ||
+                message.endsWith("FAILED") || message.endsWith("UNAVAILABLE") ||
+                message.endsWith("NOT AVAILABLE") || message.endsWith("NOT SUPPORTED") ||
+                message.endsWith("REQUIRED") || message.endsWith("TIMEOUT") ||
+                message.endsWith("INVALID") -> {
+                videoPlaying = false
+                videoPaused = false
+            }
         }
     }
 
@@ -114,7 +143,10 @@ internal class FeedsRuntime(
             }
             NavigationLevel.GALLERY -> {
                 val post = currentThreadPost() ?: return
-                if (galleryIndex + 1 < post.media.size) galleryIndex++
+                if (galleryIndex + 1 < post.media.size) {
+                    stopVideo()
+                    galleryIndex++
+                }
                 renderCurrent()
             }
         }
@@ -142,7 +174,10 @@ internal class FeedsRuntime(
                 renderCurrent()
             }
             NavigationLevel.GALLERY -> {
-                if (galleryIndex > 0) galleryIndex--
+                if (galleryIndex > 0) {
+                    stopVideo()
+                    galleryIndex--
+                }
                 renderCurrent()
             }
         }
@@ -159,7 +194,21 @@ internal class FeedsRuntime(
                 level = NavigationLevel.GALLERY
                 renderCurrent()
             }
-            NavigationLevel.GALLERY -> Unit
+            NavigationLevel.GALLERY -> {
+                val media = currentThreadPost()?.media?.getOrNull(galleryIndex) ?: return
+                if (media.type == FeedMediaType.PHOTO) return
+                if (videoPlaying) {
+                    host.controlVideo("pause")
+                    videoPlaying = false
+                    videoPaused = true
+                } else if (videoPaused) {
+                    host.controlVideo("resume")
+                    videoPlaying = true
+                    videoPaused = false
+                } else {
+                    videoPlaying = host.openVideo(media)
+                }
+            }
         }
     }
 
@@ -176,6 +225,7 @@ internal class FeedsRuntime(
                 renderCurrent()
             }
             NavigationLevel.GALLERY -> {
+                stopVideo()
                 level = NavigationLevel.THREAD
                 galleryIndex = 0
                 renderCurrent()
@@ -445,6 +495,12 @@ internal class FeedsRuntime(
         source = null
     }
 
+    private fun stopVideo() {
+        if (videoPlaying || videoPaused) host.controlVideo("stop")
+        videoPlaying = false
+        videoPaused = false
+    }
+
     private companion object {
         const val NANOS_PER_MILLISECOND = 1_000_000L
 
@@ -462,7 +518,8 @@ internal class FeedsRuntime(
                     duration(media.durationMs)?.let { append(" $it") }
                 }
             }
-            return "${post.source} $type ${index + 1}/${post.media.size}"
+            val action = if (media.type == FeedMediaType.PHOTO) "" else " · TAP PLAY"
+            return "${post.source} $type ${index + 1}/${post.media.size}$action"
                 .take(ImageSurfaceContract.MAX_TEXT_CHARS)
         }
 

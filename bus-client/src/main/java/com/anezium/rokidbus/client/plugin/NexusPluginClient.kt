@@ -61,6 +61,10 @@ class NexusPluginClient internal constructor(
         get() = currentLinkState and LinkStateBits.SPP_DATA_UP != 0 &&
             hubCapabilities and BusCapabilityBits.INK_SURFACE != 0
 
+    val supportsVideoPlayback: Boolean
+        get() = currentLinkState and (LinkStateBits.CXR_CONTROL_UP or LinkStateBits.SPP_DATA_UP) != 0 &&
+            hubCapabilities and BusCapabilityBits.VIDEO_PLAYBACK != 0
+
     /**
      * Whether these glasses can show a pin — not whether one would appear this instant.
      * Unlike [supportsImageSurface] this ignores the link: a pin pushed while the glasses
