@@ -54,6 +54,32 @@ internal class FoodLogReminderStore internal constructor(
         true
     }
 
+    /** Merges a fully validated backup by stable UUID and returns the imported values. */
+    fun merge(reminders: List<FoodLogReminder>): List<FoodLogReminder> = synchronized(lock) {
+        require(reminders.size <= MAX_REMINDERS)
+        reminders.forEach(::validate)
+        require(reminders.map(FoodLogReminder::id).toSet().size == reminders.size)
+        val existing = try {
+            read()
+        } catch (exception: Exception) {
+            quarantineCorruptFile()
+            emptyList()
+        }
+        val merged = existing.associateByTo(linkedMapOf(), FoodLogReminder::id)
+        reminders.forEach { merged[it.id] = it }
+        require(merged.size <= MAX_REMINDERS)
+        persist(merged.values.toList())
+        reminders
+    }
+
+    private fun quarantineCorruptFile() {
+        if (!file.isFile) return
+        val quarantine = generateSequence(0) { it + 1 }
+            .map { suffix -> File(file.parentFile, "${file.name}.corrupt-$suffix") }
+            .first { !it.exists() }
+        check(file.renameTo(quarantine)) { "Corrupt reminder data could not be preserved" }
+    }
+
     /** Removes exactly the supplied UUID after rereading the current persistent state. */
     fun delete(id: String): FoodLogReminder? = synchronized(lock) {
         val existing = read()
@@ -90,24 +116,27 @@ internal class FoodLogReminderStore internal constructor(
         require(value.epochMillis > 0L)
     }
 
-    private fun read(): List<FoodLogReminder> = runCatching {
+    private fun read(): List<FoodLogReminder> {
         if (!file.isFile) return emptyList()
-        val array = JSONObject(file.readText()).getJSONArray("reminders")
-        buildList {
+        val root = JSONObject(file.readText())
+        require(root.getInt("version") == FILE_VERSION) { "Unsupported reminder file" }
+        val array = root.getJSONArray("reminders")
+        require(array.length() <= MAX_REMINDERS) { "Too many reminders" }
+        val reminders = buildList {
             for (index in 0 until array.length()) {
                 val item = array.getJSONObject(index)
                 val id = item.getString("id")
-                val kind = runCatching { FoodLogReminderKind.valueOf(item.getString("kind")) }.getOrNull()
-                val label = item.getString("label").trim().take(MAX_LABEL_CHARS)
-                if (kind != null && UUID_PATTERN.matches(id) && label.isNotEmpty()) {
-                    add(FoodLogReminder(id, kind, label, item.getLong("epochMillis"), item.getBoolean("enabled")))
-                }
+                val kind = FoodLogReminderKind.valueOf(item.getString("kind"))
+                val label = item.getString("label")
+                add(FoodLogReminder(id, kind, label, item.getLong("epochMillis"), item.getBoolean("enabled")).also(::validate))
             }
         }
-    }.getOrDefault(emptyList())
+        require(reminders.map(FoodLogReminder::id).toSet().size == reminders.size) { "Duplicate reminder UUID" }
+        return reminders
+    }
 
     private fun persist(reminders: List<FoodLogReminder>) {
-        val json = JSONObject().put("version", 1).put("reminders", JSONArray().apply {
+        val json = JSONObject().put("version", FILE_VERSION).put("reminders", JSONArray().apply {
             reminders.forEach { value -> put(JSONObject()
                 .put("id", value.id).put("kind", value.kind.name).put("label", value.label)
                 .put("epochMillis", value.epochMillis).put("enabled", value.enabled)) }
@@ -117,6 +146,8 @@ internal class FoodLogReminderStore internal constructor(
 
     internal companion object {
         const val MAX_LABEL_CHARS = 80
+        const val MAX_REMINDERS = 5_000
+        private const val FILE_VERSION = 1
         private const val FILE_NAME = "food_log_reminders_v1.json"
         private val UUID_PATTERN = Regex("[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")
         private val LOCKS = ConcurrentHashMap<String, Any>()
@@ -125,8 +156,18 @@ internal class FoodLogReminderStore internal constructor(
 
 internal interface FoodLogAtomicFileOperations { fun atomicReplace(source: File, target: File); fun replace(source: File, target: File) }
 internal object NioFoodLogAtomicFileOperations : FoodLogAtomicFileOperations {
-    override fun atomicReplace(source: File, target: File) = Files.move(source.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
-    override fun replace(source: File, target: File) = Files.move(source.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
+    override fun atomicReplace(source: File, target: File) {
+        Files.move(
+            source.toPath(),
+            target.toPath(),
+            StandardCopyOption.ATOMIC_MOVE,
+            StandardCopyOption.REPLACE_EXISTING,
+        )
+    }
+
+    override fun replace(source: File, target: File) {
+        Files.move(source.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
+    }
 }
 internal fun writeFoodLogJsonAtomically(target: File, text: String, ops: FoodLogAtomicFileOperations = NioFoodLogAtomicFileOperations) {
     val parent = checkNotNull(target.parentFile); if (!parent.isDirectory && !parent.mkdirs()) error("Reminder directory unavailable.")

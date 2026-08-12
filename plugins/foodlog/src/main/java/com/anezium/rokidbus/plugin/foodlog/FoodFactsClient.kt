@@ -66,6 +66,13 @@ internal class FoodFactsClient(
                     sugarsGrams = nutriments.optionalDouble("sugars_100g"),
                     fiberGrams = nutriments.optionalDouble("fiber_100g"),
                     saltGrams = nutriments.optionalDouble("salt_100g"),
+                    saturatedFatGrams = nutriments.optionalDouble("saturated-fat_100g"),
+                    sodiumMilligrams = nutriments.optionalGramsAsMilligrams("sodium_100g"),
+                    cholesterolMilligrams = nutriments.optionalGramsAsMilligrams("cholesterol_100g"),
+                    potassiumMilligrams = nutriments.optionalGramsAsMilligrams("potassium_100g"),
+                    calciumMilligrams = nutriments.optionalGramsAsMilligrams("calcium_100g"),
+                    ironMilligrams = nutriments.optionalGramsAsMilligrams("iron_100g"),
+                    caffeineMilligrams = nutriments.optionalGramsAsMilligrams("caffeine_100g"),
                 ),
                 fetchedAtMillis = fetchedAtMillis,
             )
@@ -83,6 +90,9 @@ private fun JSONObject.optionalInt(name: String): Int? {
     if (!has(name) || isNull(name)) return null
     return optInt(name).takeIf { it != 0 }
 }
+
+private fun JSONObject.optionalGramsAsMilligrams(name: String): Double? =
+    optionalDouble(name)?.times(1_000.0)
 
 private fun getProductJson(urlText: String): String? {
     val connection = (URL(urlText).openConnection() as HttpURLConnection).apply {
