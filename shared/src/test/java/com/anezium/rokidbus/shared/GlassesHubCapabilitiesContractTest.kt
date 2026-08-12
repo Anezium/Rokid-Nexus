@@ -15,6 +15,7 @@ class GlassesHubCapabilitiesContractTest {
             features = BusCapabilityBits.IMAGE_SURFACE or
                 BusCapabilityBits.PIN_SURFACE or
                 BusCapabilityBits.NOTICE_SURFACE or
+                BusCapabilityBits.NOTICE_TEXT_INPUT or
                 BusCapabilityBits.ACTIVITY_SURFACE or
                 BusCapabilityBits.TTS or
                 BusCapabilityBits.INK_SURFACE,
@@ -40,6 +41,7 @@ class GlassesHubCapabilitiesContractTest {
             BusCapabilityBits.IMAGE_SURFACE or
                 BusCapabilityBits.PIN_SURFACE or
                 BusCapabilityBits.NOTICE_SURFACE or
+                BusCapabilityBits.NOTICE_TEXT_INPUT or
                 BusCapabilityBits.ACTIVITY_SURFACE or
                 BusCapabilityBits.TTS or
                 BusCapabilityBits.INK_SURFACE,
@@ -54,6 +56,7 @@ class GlassesHubCapabilitiesContractTest {
         assertEquals(128, BusCapabilityBits.ACTIVITY_SURFACE)
         assertEquals(512, BusCapabilityBits.TTS)
         assertEquals(1024, BusCapabilityBits.INK_SURFACE)
+        assertEquals(2048, BusCapabilityBits.NOTICE_TEXT_INPUT)
     }
 
     @Test

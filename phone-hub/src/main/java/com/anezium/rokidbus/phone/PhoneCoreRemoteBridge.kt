@@ -483,6 +483,7 @@ internal class PhoneCoreRemoteBridge(
                 imeAction = localImeAction(session.imeOptions),
             )
             publishInputState()
+            if (session.autoOpenPhoneKeyboard) openPhoneKeyboard(session.sessionId)
             return true
         }
         val closed = RemoteInputContract.decodeSessionClosed(envelope.payload) ?: return false
@@ -545,6 +546,18 @@ internal class PhoneCoreRemoteBridge(
 
     private fun publishInputState() {
         appContext.sendBroadcast(RemoteInputPhoneContract.stateIntent(appContext, inputState))
+    }
+
+    private fun openPhoneKeyboard(sessionId: String) {
+        val intent = Intent(appContext, RemoteInputActivity::class.java)
+            .addFlags(
+                Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                    Intent.FLAG_ACTIVITY_SINGLE_TOP,
+            )
+            .putExtra(RemoteInputActivity.EXTRA_AUTO_SHOW_KEYBOARD, true)
+            .putExtra(RemoteInputActivity.EXTRA_AUTO_SHOW_KEYBOARD_SESSION_ID, sessionId)
+        runCatching { appContext.startActivity(intent) }
     }
 
     private fun publishNativeApps(state: NativeAppsUiState) {

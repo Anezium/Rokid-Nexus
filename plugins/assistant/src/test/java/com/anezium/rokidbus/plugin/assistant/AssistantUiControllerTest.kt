@@ -1,7 +1,9 @@
 package com.anezium.rokidbus.plugin.assistant
 
 import com.anezium.rokidbus.client.plugin.NexusNotice
+import com.anezium.rokidbus.client.plugin.NexusNoticeAction
 import com.anezium.rokidbus.client.plugin.NexusNoticeCloseReason
+import com.anezium.rokidbus.client.plugin.NexusNoticeTextInput
 import com.anezium.rokidbus.client.plugin.NexusNoticeUpdate
 import com.anezium.rokidbus.client.plugin.NexusSdkResult
 import com.anezium.rokidbus.shared.NoticeSurfaceContract
@@ -16,6 +18,49 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class AssistantUiControllerTest {
+    @Test
+    fun `write stays on listening updates then becomes a phone text field`() =
+        runTest {
+            val renderer = FakeRenderer(supportsNotice = true, supportsTextInput = true)
+            val controller = controller(renderer)
+            controller.onOpen()
+            controller.cancelLauncherHint()
+
+            controller.showListening("Listening…", offerWrite = true)
+            controller.showTranscript("partial question")
+
+            assertEquals(AssistantUiController.WRITE_ACTION_ID, renderer.noticeActions.single()?.id)
+            assertTrue(renderer.calls[1] is RenderCall.UpdateNotice)
+
+            controller.showTextInput()
+
+            assertTrue(renderer.calls.last() is RenderCall.ShowNotice)
+            assertEquals(
+                AssistantUiController.WRITE_INPUT_ID,
+                renderer.noticeTextInputs.last()?.id,
+            )
+
+            controller.showTransient("Thinking…")
+
+            assertTrue(renderer.calls.last() is RenderCall.ShowNotice)
+            assertEquals(null, renderer.noticeTextInputs.last())
+            controller.onClose()
+        }
+
+    @Test
+    fun `write is omitted when the glasses do not support notice text input`() =
+        runTest {
+            val renderer = FakeRenderer(supportsNotice = true, supportsTextInput = false)
+            val controller = controller(renderer)
+            controller.onOpen()
+            controller.cancelLauncherHint()
+
+            controller.showListening("Listening…", offerWrite = true)
+
+            assertEquals(null, renderer.noticeActions.single())
+            controller.onClose()
+        }
+
     @Test
     fun `transient states use notices when supported and cards in legacy mode`() =
         runTest {
@@ -717,19 +762,27 @@ class AssistantUiControllerTest {
 
     private class FakeRenderer(
         private val supportsNotice: Boolean,
+        private val supportsTextInput: Boolean = false,
     ) : AssistantUiRenderer {
         val calls = mutableListOf<RenderCall>()
 
         /** Kept beside [calls] so the existing call assertions stay about bodies alone. */
         val updateTtls = mutableListOf<Long?>()
         val noticeEngagement = mutableListOf<Boolean?>()
+        val noticeActions = mutableListOf<NexusNoticeAction?>()
+        val noticeTextInputs = mutableListOf<NexusNoticeTextInput?>()
 
         override val supportsNoticeSurface: Boolean
             get() = supportsNotice
 
+        override val supportsNoticeTextInput: Boolean
+            get() = supportsTextInput
+
         override fun showNotice(notice: NexusNotice): NexusSdkResult {
             calls += RenderCall.ShowNotice(notice.title, notice.body, notice.lines)
             noticeEngagement += notice.interactive
+            noticeActions += notice.actions.singleOrNull()
+            noticeTextInputs += notice.textInput
             return NexusSdkResult.SENT
         }
 

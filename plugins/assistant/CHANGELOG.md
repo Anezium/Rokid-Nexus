@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add an optional **Voice + Write** mode. The listening notice can stop speech,
+  open the Nexus phone keyboard, and submit the typed question with Enter.
+
 ## 1.4.2
 
 - **Reminders, notes, timers and the calendar now work on Hermes.** A server that

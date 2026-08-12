@@ -383,6 +383,47 @@ class PhoneNoticeStateTest {
     }
 
     @Test
+    fun `a notice text field submits once only to its canonical owner`() {
+        state.show(
+            "relay",
+            showPayload("relay").put(
+                "textInput",
+                JSONObject()
+                    .put("id", "question")
+                    .put("hint", "Ask Assistant"),
+            ),
+        )
+
+        assertEquals(
+            PhoneNoticeActionResult.NotCurrent,
+            state.takeTextSubmission(noticeId, "wrong"),
+        )
+        assertEquals(
+            PhoneNoticeActionResult.Owner("relay"),
+            state.takeTextSubmission(noticeId, "question"),
+        )
+        assertEquals(
+            PhoneNoticeActionResult.AlreadyAnswered,
+            state.takeTextSubmission(noticeId, "question"),
+        )
+    }
+
+    @Test
+    fun `a text input patch cannot inherit an action row`() {
+        state.show("relay", showPayload("relay").put("actions", actions()))
+
+        val rejected = state.update(
+            "relay",
+            JSONObject().put(
+                "textInput",
+                JSONObject().put("id", "question").put("hint", "Ask Assistant"),
+            ),
+        )
+
+        assertTrue(rejected is PhoneNoticeUpdateResult.Rejected)
+    }
+
+    @Test
     fun `an invalid patch is rejected before anything is forwarded`() {
         state.show("relay", showPayload("relay"))
         val before = state.ownerPluginId()

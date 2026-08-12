@@ -138,18 +138,23 @@ internal class PhoneNoticeState(
         ) {
             return PhoneNoticeUpdateResult.Rejected(NoticeSurfaceContract.ERROR_INVALID_NOTICE)
         }
+        if (!NoticeSurfaceContract.hasValidInteraction(patched)) {
+            return PhoneNoticeUpdateResult.Rejected(NoticeSurfaceContract.ERROR_INVALID_NOTICE)
+        }
         val now = nowMs()
         if (!admit(ownerPluginId, now)) {
             return PhoneNoticeUpdateResult.Rejected(NoticeSurfaceContract.ERROR_NOTICE_RATE_LIMITED)
         }
 
         val surfaceId = "$ownerPluginId:${NoticeSurfaceContract.LOCAL_SURFACE_ID}"
-        // An update carrying either field that grants the band its
-        // interactivity -- the row, or the plain interactive flag -- is the
-        // owner asking again and is owed a new answer. One that carries neither
-        // is the owner driving an answered band as a display and must not
-        // reopen it.
-        val answered = if (patch.patch.actions != null || patch.patch.interactive != null) {
+        // A row, the plain interactive flag, or a text field is the owner
+        // asking again and is owed a new answer. A display-only update must not
+        // quietly reopen an answered notice.
+        val answered = if (
+            patch.patch.actions != null ||
+            patch.patch.interactive != null ||
+            patch.patch.textInput != null
+        ) {
             false
         } else {
             current.answered
@@ -238,6 +243,19 @@ internal class PhoneNoticeState(
         val expected = "${current.ownerPluginId}:${NoticeSurfaceContract.LOCAL_SURFACE_ID}"
         if (surfaceId != expected) return PhoneNoticeActionResult.NotCurrent
         if (!current.content.expectsInput) return PhoneNoticeActionResult.NotCurrent
+        if (current.answered) return PhoneNoticeActionResult.AlreadyAnswered
+        active = current.copy(answered = true)
+        return PhoneNoticeActionResult.Owner(current.ownerPluginId)
+    }
+
+    /** Owner gate for one submitted platform text field. Text itself never enters canonical state. */
+    @Synchronized
+    fun takeTextSubmission(surfaceId: String, inputId: String): PhoneNoticeActionResult {
+        val current = active ?: return PhoneNoticeActionResult.NotCurrent
+        val expected = "${current.ownerPluginId}:${NoticeSurfaceContract.LOCAL_SURFACE_ID}"
+        if (surfaceId != expected || current.content.textInput?.id != inputId) {
+            return PhoneNoticeActionResult.NotCurrent
+        }
         if (current.answered) return PhoneNoticeActionResult.AlreadyAnswered
         active = current.copy(answered = true)
         return PhoneNoticeActionResult.Owner(current.ownerPluginId)

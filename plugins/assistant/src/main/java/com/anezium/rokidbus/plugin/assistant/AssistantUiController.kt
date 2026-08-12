@@ -1,7 +1,9 @@
 package com.anezium.rokidbus.plugin.assistant
 
 import com.anezium.rokidbus.client.plugin.NexusNotice
+import com.anezium.rokidbus.client.plugin.NexusNoticeAction
 import com.anezium.rokidbus.client.plugin.NexusNoticeCloseReason
+import com.anezium.rokidbus.client.plugin.NexusNoticeTextInput
 import com.anezium.rokidbus.client.plugin.NexusNoticeUpdate
 import com.anezium.rokidbus.client.plugin.NexusSdkResult
 import com.anezium.rokidbus.shared.NoticeSurfaceContract
@@ -12,6 +14,7 @@ import kotlinx.coroutines.launch
 
 internal interface AssistantUiRenderer {
     val supportsNoticeSurface: Boolean
+    val supportsNoticeTextInput: Boolean get() = false
 
     fun showNotice(notice: NexusNotice): NexusSdkResult
 
@@ -31,6 +34,13 @@ internal enum class AssistantNoticeMode {
     PASSIVE,
 }
 
+private enum class AssistantNoticePresentation {
+    NONE,
+    STANDARD,
+    WRITE_ACTION,
+    TEXT_INPUT,
+}
+
 internal class AssistantUiController(
     private val scope: CoroutineScope,
     private val renderer: AssistantUiRenderer,
@@ -47,6 +57,7 @@ internal class AssistantUiController(
     private var keepaliveJob: Job? = null
     private var lastInFlightBody: String? = null
     private var lastInFlightUsesLines = false
+    private var lastInFlightPresentation = AssistantNoticePresentation.NONE
 
     /** The answer the voice is about to read, kept so speech can hold its band open. */
     private var spokenAnswerBody: String? = null
@@ -55,6 +66,7 @@ internal class AssistantUiController(
     private var surfaceShown = false
     private var noticeShown = false
     private var noticeMode = AssistantNoticeMode.NONE
+    private var noticePresentation = AssistantNoticePresentation.NONE
     private var answerCardStarted = false
 
     /**
@@ -75,6 +87,7 @@ internal class AssistantUiController(
         surfaceShown = false
         noticeShown = false
         noticeMode = AssistantNoticeMode.NONE
+        noticePresentation = AssistantNoticePresentation.NONE
         answerCardStarted = false
         launcherHintJob = scope.launch {
             delay(launcherHintDelayMs)
@@ -95,6 +108,7 @@ internal class AssistantUiController(
         surfaceShown = false
         noticeShown = false
         noticeMode = AssistantNoticeMode.NONE
+        noticePresentation = AssistantNoticePresentation.NONE
         answerCardStarted = false
     }
 
@@ -123,11 +137,50 @@ internal class AssistantUiController(
             // body until a terminal state (answer, error, hide) takes over.
             lastInFlightBody = body
             lastInFlightUsesLines = false
-            showOrUpdateNotice(body)
+            lastInFlightPresentation = AssistantNoticePresentation.STANDARD
+            showOrUpdateNotice(body, presentation = AssistantNoticePresentation.STANDARD)
             startKeepalive()
         } else {
             showCard(listOf(body), forceShow = legacyForceShow || !surfaceShown)
         }
+    }
+
+    fun showListening(
+        body: String,
+        offerWrite: Boolean,
+        legacyForceShow: Boolean = false,
+    ) {
+        cancelLauncherHint()
+        startNewState()
+        answerCardStarted = false
+        if (useNoticeBand()) {
+            val presentation = if (offerWrite && renderer.supportsNoticeTextInput) {
+                AssistantNoticePresentation.WRITE_ACTION
+            } else {
+                AssistantNoticePresentation.STANDARD
+            }
+            lastInFlightBody = body
+            lastInFlightUsesLines = false
+            lastInFlightPresentation = presentation
+            showOrUpdateNotice(body, presentation = presentation)
+            startKeepalive()
+        } else {
+            showCard(listOf(body), forceShow = legacyForceShow || !surfaceShown)
+        }
+    }
+
+    fun showTextInput() {
+        cancelLauncherHint()
+        stopKeepalive()
+        startNewState(flushTranscript = false)
+        answerCardStarted = false
+        if (!useNoticeBand() || !renderer.supportsNoticeTextInput) return
+        showOrUpdateNotice(
+            body = WRITE_PROMPT,
+            mode = AssistantNoticeMode.ENGAGED,
+            ttlMs = NoticeSurfaceContract.MAX_TTL_MS,
+            presentation = AssistantNoticePresentation.TEXT_INPUT,
+        )
     }
 
     fun showTranscript(text: String) {
@@ -248,6 +301,7 @@ internal class AssistantUiController(
         startNewState(flushTranscript = false)
         noticeShown = false
         noticeMode = AssistantNoticeMode.NONE
+        noticePresentation = AssistantNoticePresentation.NONE
         if (reason == NexusNoticeCloseReason.USER) {
             cancelPipeline()
             resetCapture()
@@ -260,10 +314,11 @@ internal class AssistantUiController(
         body: String,
         mode: AssistantNoticeMode = AssistantNoticeMode.ENGAGED,
         ttlMs: Long? = null,
+        presentation: AssistantNoticePresentation = AssistantNoticePresentation.STANDARD,
     ): Boolean {
         val safeBody = truncateNoticeHead(body)
         val modeUpdate = mode.takeIf { !noticeShown || it != noticeMode }
-        val result = if (noticeShown) {
+        val result = if (noticeShown && noticePresentation == presentation) {
             renderer.updateNotice(
                 NexusNoticeUpdate(
                     body = safeBody,
@@ -276,7 +331,18 @@ internal class AssistantUiController(
                 NexusNotice(
                     title = NOTICE_TITLE,
                     body = safeBody,
-                    interactive = mode == AssistantNoticeMode.ENGAGED,
+                    interactive = mode == AssistantNoticeMode.ENGAGED &&
+                        presentation != AssistantNoticePresentation.TEXT_INPUT,
+                    actions = if (presentation == AssistantNoticePresentation.WRITE_ACTION) {
+                        listOf(NexusNoticeAction(WRITE_ACTION_ID, "phone", WRITE_ACTION_LABEL))
+                    } else {
+                        emptyList()
+                    },
+                    textInput = if (presentation == AssistantNoticePresentation.TEXT_INPUT) {
+                        NexusNoticeTextInput(WRITE_INPUT_ID, WRITE_INPUT_HINT)
+                    } else {
+                        null
+                    },
                     ttlMs = ttlMs,
                 ),
             )
@@ -284,10 +350,12 @@ internal class AssistantUiController(
         if (result == NexusSdkResult.SENT) {
             noticeShown = true
             noticeMode = mode
+            noticePresentation = presentation
             return true
         }
         noticeShown = false
         noticeMode = AssistantNoticeMode.NONE
+        noticePresentation = AssistantNoticePresentation.NONE
         return false
     }
 
@@ -299,7 +367,9 @@ internal class AssistantUiController(
         val modeUpdate = AssistantNoticeMode.ENGAGED.takeIf {
             !noticeShown || noticeMode != AssistantNoticeMode.ENGAGED
         }
-        val result = if (noticeShown) {
+        val result = if (
+            noticeShown && noticePresentation == AssistantNoticePresentation.STANDARD
+        ) {
             renderer.updateNotice(
                 NexusNoticeUpdate(
                     interactive = modeUpdate?.let { true },
@@ -320,10 +390,12 @@ internal class AssistantUiController(
         if (result == NexusSdkResult.SENT) {
             noticeShown = true
             noticeMode = AssistantNoticeMode.ENGAGED
+            noticePresentation = AssistantNoticePresentation.STANDARD
             return true
         }
         noticeShown = false
         noticeMode = AssistantNoticeMode.NONE
+        noticePresentation = AssistantNoticePresentation.NONE
         return false
     }
 
@@ -331,10 +403,12 @@ internal class AssistantUiController(
         stopKeepalive()
         if (!noticeShown) {
             noticeMode = AssistantNoticeMode.NONE
+            noticePresentation = AssistantNoticePresentation.NONE
             return
         }
         noticeShown = false
         noticeMode = AssistantNoticeMode.NONE
+        noticePresentation = AssistantNoticePresentation.NONE
         renderer.hideNotice()
     }
 
@@ -348,7 +422,7 @@ internal class AssistantUiController(
                 if (lastInFlightUsesLines) {
                     showOrUpdateAnswerNotice(body)
                 } else {
-                    showOrUpdateNotice(body)
+                    showOrUpdateNotice(body, presentation = lastInFlightPresentation)
                 }
             }
             keepaliveJob = null
@@ -360,6 +434,7 @@ internal class AssistantUiController(
         keepaliveJob = null
         lastInFlightBody = null
         lastInFlightUsesLines = false
+        lastInFlightPresentation = AssistantNoticePresentation.NONE
     }
 
     private fun renderPendingTranscript() {
@@ -368,7 +443,11 @@ internal class AssistantUiController(
         if (useNoticeBand()) {
             lastInFlightBody = body
             lastInFlightUsesLines = false
-            showOrUpdateNotice(body)
+            val presentation = noticePresentation.takeIf {
+                it == AssistantNoticePresentation.WRITE_ACTION
+            } ?: AssistantNoticePresentation.STANDARD
+            lastInFlightPresentation = presentation
+            showOrUpdateNotice(body, presentation = presentation)
             startKeepalive()
         }
     }
@@ -488,6 +567,11 @@ internal class AssistantUiController(
         const val TRANSCRIPT_TAIL_CHARS = 200
         const val LAUNCHER_HINT = "Press the assist button, then speak."
         const val NOTICE_TITLE = "Assistant"
+        const val WRITE_ACTION_ID = "write"
+        const val WRITE_ACTION_LABEL = "Write"
+        const val WRITE_INPUT_ID = "assistant-question"
+        const val WRITE_INPUT_HINT = "Ask Assistant"
+        const val WRITE_PROMPT = "Type on your phone, then press Enter."
         const val ELLIPSIS = "…"
     }
 }

@@ -8,19 +8,26 @@ import android.graphics.PixelFormat
 import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
+import android.text.InputFilter
+import android.text.InputType
 import android.text.Layout
 import android.text.StaticLayout
 import android.text.TextPaint
 import android.text.TextUtils
 import android.util.TypedValue
 import android.view.Gravity
+import android.view.KeyEvent
 import android.view.View
 import android.view.WindowManager
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputMethodManager
+import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.anezium.rokidbus.client.ui.BusTheme
+import com.anezium.rokidbus.shared.NoticeSurfaceContract
 /**
  * The ROM sleeps the display five seconds after the last input (vendor-set
  * `screen_off_timeout`), which is shorter than a notice's own life -- a dictated
@@ -30,10 +37,10 @@ import com.anezium.rokidbus.client.ui.BusTheme
  * panel; the assistant's episode wake lock is what does. Both are kept: the
  * flag costs nothing and other firmware honours it.
  */
-internal fun noticeWindowFlags(): Int =
-    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-        WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
-        WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+internal fun noticeWindowFlags(textInputActive: Boolean = false): Int =
+    WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+        WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
+        (if (textInputActive) 0 else WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)
 
 internal fun noticeBackdropAlpha(fadeAlpha: Float, backdrop: Boolean): Float =
     if (backdrop) fadeAlpha else 0f
@@ -85,9 +92,9 @@ internal data class NoticeInkMorphToken(
  * window can only translate and resize a rectangle where a view can also fade,
  * clip and morph. The window stays put and only child bounds move. See plan 013.
  *
- * Like the pin and like Relay's own overlay, the window is never focusable and
- * never touchable: it does not steal focus from what is underneath, and the
- * touchpad keeps working for everything the notice has not explicitly claimed.
+ * Like the pin and like Relay's own overlay, the window is normally neither
+ * focusable nor touchable. A notice text field temporarily makes it focusable
+ * so the trusted Nexus IME can bind to that field; it remains not touchable.
  * Ordinary notices never keep the screen on. The assistant marks only its
  * listening, thinking, and answer-review episode as engaged. The window keeps
  * its existing flag, but the fixed [AssistantDisplayEpisode] owner holds the
@@ -104,6 +111,7 @@ object NoticeOverlayRenderer {
     private var insetUnsubscribe: (() -> Unit)? = null
     private var bandHeightPx = 0
     private var backdrop = false
+    private var textInputActive = false
     private var hudTopInsetDp = 0
     private var exitRunning = false
     private var renderedSeq: Long? = null
@@ -141,7 +149,7 @@ object NoticeOverlayRenderer {
         val root = container ?: return
         runCatching {
             manager.removeView(root)
-            manager.addView(root, params(root.context))
+            manager.addView(root, params(textInputActive))
         }.onFailure { logError("Notice overlay z-order refresh failed", it) }
     }
 
@@ -210,9 +218,11 @@ object NoticeOverlayRenderer {
             slide.snapTo(0f)
         }
         backdrop = notice.content.backdrop
+        val nextTextInputActive = notice.liveTextInput != null
         scrim?.alpha = noticeBackdropAlpha(fade.current, backdrop)
         val activeService = service ?: return
-        val view = ensureWindow(activeService) ?: return
+        val view = ensureWindow(activeService, nextTextInputActive) ?: return
+        updateWindowInputMode(nextTextInputActive)
         val motion = if (interruptedInkMorph) {
             NoticeRenderMotion.REENTER
         } else {
@@ -221,6 +231,7 @@ object NoticeOverlayRenderer {
         val fadeWasRunning = fade.isRunning
         renderedSeq = notice.seq
         view.render(notice)
+        if (nextTextInputActive) view.activateTextInput()
         log(
             "renderer seq=${notice.seq} event=render attached=${container != null} " +
                 "fadeRunning=$fadeWasRunning",
@@ -257,7 +268,10 @@ object NoticeOverlayRenderer {
         fade.animateTo(0f, HudMotion.EXIT_MS, HudMotion.exit) { teardown() }
     }
 
-    private fun ensureWindow(service: AccessibilityService): NoticeBandView? {
+    private fun ensureWindow(
+        service: AccessibilityService,
+        textInputActive: Boolean,
+    ): NoticeBandView? {
         band?.let { return it }
         val manager = windowManager
             ?: service.getSystemService(WindowManager::class.java)
@@ -278,7 +292,11 @@ object NoticeOverlayRenderer {
                 FrameLayout.LayoutParams.MATCH_PARENT,
             ),
         )
-        val view = NoticeBandView(service, NoticeController::setPageCount).apply {
+        val view = NoticeBandView(
+            service,
+            NoticeController::setPageCount,
+            NoticeController::submitText,
+        ).apply {
             setHudTopInsetDp(hudTopInsetDp)
         }
         val metrics = service.resources.displayMetrics
@@ -292,10 +310,11 @@ object NoticeOverlayRenderer {
                 topMargin = HudBandGeometry.topPx(service, hudTopInsetDp)
             },
         )
-        if (runCatching { manager.addView(root, params(service)) }.isFailure) {
+        if (runCatching { manager.addView(root, params(textInputActive)) }.isFailure) {
             logError("Notice overlay window could not be added")
             return null
         }
+        this.textInputActive = textInputActive
         container = root
         scrim = shade
         band = view
@@ -315,14 +334,28 @@ object NoticeOverlayRenderer {
         container?.requestLayout()
     }
 
-    private fun params(context: Context): WindowManager.LayoutParams {
+    private fun updateWindowInputMode(active: Boolean) {
+        if (textInputActive == active || container == null) return
+        runCatching {
+            val manager = checkNotNull(windowManager)
+            val root = checkNotNull(container)
+            manager.updateViewLayout(root, params(active))
+        }.onSuccess {
+            textInputActive = active
+        }.onFailure { logError("Notice overlay input mode could not be updated", it) }
+    }
+
+    private fun params(textInputActive: Boolean): WindowManager.LayoutParams {
         return WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-            noticeWindowFlags(),
+            noticeWindowFlags(textInputActive),
             PixelFormat.TRANSLUCENT,
-        ).apply { gravity = Gravity.TOP or Gravity.START }
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING
+        }
     }
 
     private fun teardown() {
@@ -331,6 +364,7 @@ object NoticeOverlayRenderer {
             return
         }
         val seq = renderedSeq ?: -1L
+        band?.releaseTextInput()
         runCatching { windowManager?.removeView(root) }
             .onFailure { logError("Notice overlay removal failed", it) }
         container = null
@@ -338,6 +372,7 @@ object NoticeOverlayRenderer {
         band = null
         inkMorph = null
         backdrop = false
+        textInputActive = false
         exitRunning = false
         slide.snapTo(0f)
         fade.snapTo(0f)
@@ -352,6 +387,7 @@ object NoticeOverlayRenderer {
     internal class NoticeBandView(
         context: Context,
         private val pageCountChanged: ((String, Long, Int) -> Unit)? = null,
+        private val textSubmitted: ((String, String, String) -> Unit)? = null,
     ) : LinearLayout(context) {
         private val title = row(bold = true, sizeSp = TITLE_SP, color = BusTheme.phosphor)
         private val image = NoticeImageView(context)
@@ -382,7 +418,36 @@ object NoticeOverlayRenderer {
             )
         }
         private val actions = HudActionRowView(context)
+        private val textInput = EditText(context).apply {
+            setSingleLine(true)
+            maxLines = 1
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+            imeOptions = EditorInfo.IME_ACTION_DONE or EditorInfo.IME_FLAG_NO_EXTRACT_UI
+            privateImeOptions = NoticeTextInputImeTrust.privateImeOptions
+            filters = arrayOf(InputFilter.LengthFilter(NoticeSurfaceContract.MAX_TEXT_INPUT_CHARS))
+            setTextColor(BusTheme.phosphor)
+            setHintTextColor(BusTheme.muted)
+            textSize = BODY_SP
+            typeface = Typeface.create(Typeface.MONOSPACE, Typeface.NORMAL)
+            includeFontPadding = false
+            isSaveEnabled = false
+            importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
+            setPadding(
+                BusTheme.dp(context, 8),
+                BusTheme.dp(context, 6),
+                BusTheme.dp(context, 8),
+                BusTheme.dp(context, 6),
+            )
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                setColor(0xFF000000.toInt())
+                setStroke(BusTheme.dp(context, 1), BusTheme.hairline)
+                cornerRadius = BusTheme.dp(context, 5).toFloat()
+            }
+            visibility = View.GONE
+        }
         private var noticeIdentity: Pair<String, Long>? = null
+        private var textInputIdentity: Pair<String, String>? = null
         private var pluginFooter: String? = null
         private var renderedPageIndex = 0
         private var measuredPageCount = 1
@@ -433,6 +498,23 @@ object NoticeOverlayRenderer {
                     topMargin = BusTheme.dp(context, 6)
                 },
             )
+            addView(
+                textInput,
+                LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
+                    topMargin = BusTheme.dp(context, 6)
+                },
+            )
+            textInput.setOnEditorActionListener { _, actionId, event ->
+                val enterDown = event?.keyCode == KeyEvent.KEYCODE_ENTER &&
+                    event.action == KeyEvent.ACTION_DOWN
+                if (actionId != EditorInfo.IME_ACTION_DONE && !enterDown) {
+                    return@setOnEditorActionListener false
+                }
+                val identity = textInputIdentity ?: return@setOnEditorActionListener true
+                val submitted = textInput.text?.toString().orEmpty()
+                textSubmitted?.invoke(identity.first, identity.second, submitted)
+                true
+            }
         }
 
         override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
@@ -530,6 +612,7 @@ object NoticeOverlayRenderer {
                 notice.liveActions.map { HudActionChip(it.glyph, it.label) },
                 notice.selectedActionIndex,
             )
+            renderTextInput(notice)
         }
 
         /**
@@ -563,6 +646,45 @@ object NoticeOverlayRenderer {
             )
             updateFooter()
             actions.render(actionChips, selectedActionIndex)
+            clearTextInput()
+        }
+
+        fun activateTextInput() {
+            if (textInput.visibility != View.VISIBLE) return
+            textInput.requestFocus()
+            textInput.post {
+                if (textInput.visibility != View.VISIBLE || !textInput.hasFocus()) return@post
+                (context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager)
+                    ?.showSoftInput(textInput, InputMethodManager.SHOW_IMPLICIT)
+            }
+        }
+
+        fun releaseTextInput() {
+            (context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager)
+                ?.hideSoftInputFromWindow(textInput.windowToken, 0)
+            clearTextInput()
+        }
+
+        private fun renderTextInput(notice: NexusNoticeSurface) {
+            val input = notice.liveTextInput ?: run {
+                clearTextInput()
+                return
+            }
+            val nextIdentity = notice.surfaceId to input.id
+            if (textInputIdentity != nextIdentity) {
+                textInput.setText("")
+                textInputIdentity = nextIdentity
+            }
+            textInput.hint = input.hint
+            textInput.contentDescription = input.hint
+            textInput.visibility = View.VISIBLE
+        }
+
+        private fun clearTextInput() {
+            textInput.clearFocus()
+            textInput.setText("")
+            textInput.visibility = View.GONE
+            textInputIdentity = null
         }
 
         private fun renderTitle(titleText: String?, leadingGlyph: Drawable?) {

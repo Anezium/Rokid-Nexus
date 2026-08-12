@@ -23,6 +23,7 @@ internal object RemoteInputHubBridge {
     private var observing = false
     private var lastState = RemoteInputSessionState()
     private var closeReason = RemoteInputCloseReason.FOCUS_LOST
+    private var autoOpenedSessionId: String? = null
     private val navigationReplay = RemoteNavigationReplayCache(MAX_NAVIGATION_RESULTS)
 
     fun initialize(send: (String, JSONObject) -> Boolean) {
@@ -127,6 +128,7 @@ internal object RemoteInputHubBridge {
             state.active && (!previous.active || previous.sessionId != state.sessionId) -> {
                 if (previous.active) sendSessionClosed(previous, RemoteInputCloseReason.SUPERSEDED)
                 closeReason = RemoteInputCloseReason.FOCUS_LOST
+                autoOpenedSessionId = null
                 sendSessionOpen(state)
             }
             !state.active && previous.active -> {
@@ -137,7 +139,8 @@ internal object RemoteInputHubBridge {
     }
 
     private fun sendSessionOpen(state: RemoteInputSessionState) {
-        send(
+        val requestAutoOpen = state.autoOpenPhoneKeyboard && autoOpenedSessionId != state.sessionId
+        val sent = send(
             RemoteInputContract.SESSION_PATH,
             RemoteInputContract.encodeSessionOpen(
                 RemoteInputSessionOpen(
@@ -147,9 +150,11 @@ internal object RemoteInputHubBridge {
                     imeOptions = state.imeOptions,
                     sensitive = isSensitiveInput(state.inputType),
                     nextSequence = state.nextSequence,
+                    autoOpenPhoneKeyboard = requestAutoOpen,
                 ),
             ),
         )
+        if (sent && requestAutoOpen) autoOpenedSessionId = state.sessionId
     }
 
     private fun sendSessionClosed(
@@ -241,9 +246,8 @@ internal object RemoteInputHubBridge {
         }
     }
 
-    private fun send(path: String, payload: JSONObject) {
-        sender?.invoke(path, payload)
-    }
+    private fun send(path: String, payload: JSONObject): Boolean =
+        sender?.invoke(path, payload) == true
 
     private const val MAX_NAVIGATION_RESULTS = 64
 }

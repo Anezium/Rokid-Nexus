@@ -308,6 +308,7 @@ class BusHubService : Service() {
     @Volatile private var remoteImageSurfaceVersion = 0
     @Volatile private var remotePinSurfaceVersion = 0
     @Volatile private var remoteNoticeSurfaceVersion = 0
+    @Volatile private var remoteNoticeTextInputSupported = false
     @Volatile private var remoteActivitySurfaceVersion = 0
     @Volatile private var remoteInkSurfaceVersion = 0
     @Volatile private var remoteMaxImageBytes = 0
@@ -1384,6 +1385,11 @@ class BusHubService : Service() {
             handleGlassesNoticeAction(envelope)
             return
         }
+        if (envelope.path == BusPaths.NOTICE_TEXT_SUBMIT) {
+            recordRemoteRoute(envelope, PluginBusJournal.Verdict.OK)
+            handleGlassesNoticeTextSubmit(envelope)
+            return
+        }
         if (envelope.path == BusPaths.NOTICE_CLOSED) {
             recordRemoteRoute(envelope, PluginBusJournal.Verdict.OK)
             handleGlassesNoticeClosed(envelope)
@@ -1578,7 +1584,8 @@ class BusHubService : Service() {
         BusPaths.ACTIVITY_START, BusPaths.ACTIVITY_UPDATE, BusPaths.ACTIVITY_END,
         -> PluginBusJournal.Category.SURFACE
         BusPaths.SURFACE_INPUT, BusPaths.PLUGIN_INPUT,
-        BusPaths.NOTICE_INPUT, BusPaths.NOTICE_ACTION, BusPaths.NOTICE_CLOSED,
+        BusPaths.NOTICE_INPUT, BusPaths.NOTICE_ACTION, BusPaths.NOTICE_TEXT_SUBMIT,
+        BusPaths.NOTICE_CLOSED,
         BusPaths.ACTIVITY_ACTION, BusPaths.ACTIVITY_CLOSED,
         -> PluginBusJournal.Category.INPUT
         BusPaths.PLUGIN_OPEN, BusPaths.PLUGIN_CLOSE -> PluginBusJournal.Category.LIFECYCLE
@@ -1603,6 +1610,13 @@ class BusHubService : Service() {
             return
         }
         if (capabilities() and BusCapabilityBits.NOTICE_SURFACE == 0) {
+            rejectNotice(envelope, senderUid, sender, NoticeSurfaceContract.ERROR_CAPABILITY_NOT_AVAILABLE)
+            return
+        }
+        if (
+            envelope.payload.has("textInput") &&
+            capabilities() and BusCapabilityBits.NOTICE_TEXT_INPUT == 0
+        ) {
             rejectNotice(envelope, senderUid, sender, NoticeSurfaceContract.ERROR_CAPABILITY_NOT_AVAILABLE)
             return
         }
@@ -1761,6 +1775,42 @@ class BusHubService : Service() {
         val payload = JSONObject(envelope.payload.toString()).put("pluginId", owner)
         if (!deliverLocal(envelope.copy(payload = payload))) {
             log("notice action undelivered owner=$owner; no live registration")
+        }
+    }
+
+    /** Routes submitted text to the canonical notice owner without logging or retaining it. */
+    private fun handleGlassesNoticeTextSubmit(envelope: BusEnvelope) {
+        if (envelope.binary != null) return
+        val submission = NoticeSurfaceContract.parseTextSubmission(envelope.payload) ?: return
+        val owner = when (
+            val result = phoneNoticeState.takeTextSubmission(
+                submission.surfaceId,
+                submission.inputId,
+            )
+        ) {
+            PhoneNoticeActionResult.NotCurrent -> {
+                log(
+                    "notice text ignored id=${submission.surfaceId.take(80)} " +
+                        "inputId=${submission.inputId.take(64)} reason=not_current",
+                )
+                return
+            }
+            PhoneNoticeActionResult.AlreadyAnswered -> {
+                log(
+                    "notice text ignored id=${submission.surfaceId.take(80)} " +
+                        "inputId=${submission.inputId.take(64)} reason=already_answered",
+                )
+                return
+            }
+            is PhoneNoticeActionResult.Owner -> result.ownerPluginId
+        }
+        val payload = NoticeSurfaceContract.textSubmissionPayload(
+            submission.surfaceId,
+            submission.inputId,
+            submission.text,
+        ).put("pluginId", owner)
+        if (!deliverLocal(envelope.copy(payload = payload))) {
+            log("notice text undelivered owner=$owner; no live registration")
         }
     }
 
@@ -5642,6 +5692,9 @@ class BusHubService : Service() {
             linkState() and LinkStateBits.SPP_DATA_UP != 0
         ) {
             capabilities = capabilities or BusCapabilityBits.NOTICE_SURFACE
+            if (remoteNoticeTextInputSupported) {
+                capabilities = capabilities or BusCapabilityBits.NOTICE_TEXT_INPUT
+            }
         }
         // Like pins, activities have canonical phone-side state and an announce-time
         // resend. Their owner must stay connected, but a transient glasses-link loss does
@@ -5690,12 +5743,15 @@ class BusHubService : Service() {
         val noticeSupported = advertised.protocolVersion == GlassesHubCapabilitiesContract.VERSION &&
             advertised.features and BusCapabilityBits.NOTICE_SURFACE != 0 &&
             advertised.noticeSurfaceVersion == NoticeSurfaceContract.VERSION
+        val noticeTextInputSupported = noticeSupported &&
+            advertised.features and BusCapabilityBits.NOTICE_TEXT_INPUT != 0
         val activitySupported = advertised.protocolVersion == GlassesHubCapabilitiesContract.VERSION &&
             advertised.features and BusCapabilityBits.ACTIVITY_SURFACE != 0 &&
             advertised.activitySurfaceVersion == ActivitySurfaceContract.VERSION
         val acceptedInkVersion = PhoneInkCapabilityPolicy.acceptedVersion(advertised)
         remotePinSurfaceVersion = if (pinSupported) PinSurfaceContract.VERSION else 0
         remoteNoticeSurfaceVersion = if (noticeSupported) NoticeSurfaceContract.VERSION else 0
+        remoteNoticeTextInputSupported = noticeTextInputSupported
         remoteActivitySurfaceVersion = if (activitySupported) ActivitySurfaceContract.VERSION else 0
         remoteInkSurfaceVersion = acceptedInkVersion
         remoteMaxImageBytes = if (imageSupported) advertised.maxImageBytes else 0
@@ -5733,6 +5789,7 @@ class BusHubService : Service() {
         log(
             "renderer capabilities image=$imageSupported pin=$pinSupported " +
                 "notice=${advertised.features and BusCapabilityBits.NOTICE_SURFACE != 0} " +
+                "noticeText=$noticeTextInputSupported " +
                 "activity=$activitySupported " +
                 "maxImageBytes=$remoteMaxImageBytes",
         )

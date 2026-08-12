@@ -108,6 +108,8 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
     final override fun onGlassesAiButton(active: Boolean) = onNexusGlassesAiButton(active)
     final override fun onNoticeInput(event: NexusInputEvent) = onNexusNoticeInput(event)
     final override fun onNoticeAction(id: String) = onNexusNoticeAction(id)
+    final override fun onNoticeTextSubmitted(id: String, text: String) =
+        onNexusNoticeTextSubmitted(id, text)
     final override fun onNoticeClosed(reason: NexusNoticeCloseReason) = onNexusNoticeClosed(reason)
     final override fun onActivityAction(id: String) = onNexusActivityAction(id)
     final override fun onActivityClosed(reason: String) = onNexusActivityClosed(reason)
@@ -157,6 +159,9 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
      * likewise once per question.
      */
     protected open fun onNexusNoticeAction(id: String) = Unit
+
+    /** Submitted notice text. Avoid logs and apply the plugin's explicit storage policy. */
+    protected open fun onNexusNoticeTextSubmitted(id: String, text: String) = Unit
 
     /** This plugin's notice is gone, once, whatever ended it. */
     protected open fun onNexusNoticeClosed(reason: NexusNoticeCloseReason) = Unit

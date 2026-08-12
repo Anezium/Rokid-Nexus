@@ -48,6 +48,9 @@ interface NexusPluginCallbacks {
      */
     fun onNoticeAction(id: String) = Unit
 
+    /** The wearer submitted one platform-owned notice field with phone-keyboard Enter. */
+    fun onNoticeTextSubmitted(id: String, text: String) = Unit
+
     /** The wearer fired one of this plugin's current activity actions. */
     fun onActivityAction(id: String) = Unit
 

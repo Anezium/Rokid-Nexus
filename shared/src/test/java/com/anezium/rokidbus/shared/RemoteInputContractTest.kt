@@ -49,6 +49,28 @@ class RemoteInputContractTest {
     }
 
     @Test
+    fun `trusted editor may request one phone keyboard launch`() {
+        val open = RemoteInputSessionOpen(
+            sessionId = sessionId,
+            packageName = "com.anezium.rokidbus.glasses",
+            inputType = 1,
+            imeOptions = 6,
+            sensitive = false,
+            autoOpenPhoneKeyboard = true,
+        )
+
+        val payload = RemoteInputContract.encodeSessionOpen(open)
+
+        assertTrue(payload.getBoolean("autoOpenPhoneKeyboard"))
+        assertEquals(open, RemoteInputContract.decodeSessionOpen(payload))
+        assertNull(
+            RemoteInputContract.decodeSessionOpen(
+                JSONObject(payload.toString()).put("autoOpenPhoneKeyboard", "true"),
+            ),
+        )
+    }
+
+    @Test
     fun `session closure round trips the final applied sequence`() {
         val closed = RemoteInputSessionClosed(
             sessionId,

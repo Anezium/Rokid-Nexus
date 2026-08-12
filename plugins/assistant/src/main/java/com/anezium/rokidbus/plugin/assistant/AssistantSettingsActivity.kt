@@ -87,6 +87,8 @@ class AssistantSettingsActivity : Activity() {
     private val photosNames = mutableMapOf<Boolean, TextView>()
     private val voiceDots = mutableMapOf<Boolean, View>()
     private val voiceNames = mutableMapOf<Boolean, TextView>()
+    private val keyboardDots = mutableMapOf<Boolean, View>()
+    private val keyboardNames = mutableMapOf<Boolean, TextView>()
     private val windowDots = mutableMapOf<Int, View>()
     private val windowNames = mutableMapOf<Int, TextView>()
     private val syncDots = mutableMapOf<Boolean, View>()
@@ -183,7 +185,8 @@ class AssistantSettingsActivity : Activity() {
                     this@AssistantSettingsActivity,
                     "Hold the assist button on your glasses and ask out loud. The answer " +
                         "streams onto the HUD, riding your ChatGPT plan or any AI " +
-                        "provider you connect below.",
+                        "provider you connect below. Phone input can add a Write choice " +
+                        "to the listening notice.",
                 ),
                 NexusUi.block(),
             )
@@ -237,6 +240,13 @@ class AssistantSettingsActivity : Activity() {
             )
             addView(BusTheme.gap(this@AssistantSettingsActivity, 12))
             addView(voiceCard(), NexusUi.block())
+            addView(BusTheme.gap(this@AssistantSettingsActivity, 18))
+            addView(
+                NexusUi.sectionRow(this@AssistantSettingsActivity, "Phone input"),
+                NexusUi.block(),
+            )
+            addView(BusTheme.gap(this@AssistantSettingsActivity, 12))
+            addView(keyboardCard(), NexusUi.block())
             addView(BusTheme.gap(this@AssistantSettingsActivity, 12))
             conversationsSlot = LinearLayout(this@AssistantSettingsActivity).apply {
                 orientation = LinearLayout.VERTICAL
@@ -1349,6 +1359,39 @@ class AssistantSettingsActivity : Activity() {
             dotSink = { voiceDots[enabled] = it },
         )
 
+    private fun keyboardCard(): LinearLayout =
+        NexusUi.card(this).apply {
+            addView(
+                keyboardRow(true, "Voice + Write", "type from the phone while listening"),
+                NexusUi.block(),
+            )
+            addView(NexusUi.divider(this@AssistantSettingsActivity))
+            addView(
+                keyboardRow(false, "Voice only", "keep the listening notice unchanged"),
+                NexusUi.block(),
+            )
+        }
+
+    private fun keyboardRow(
+        enabled: Boolean,
+        title: String,
+        hint: String,
+    ): LinearLayout = pickerRow(
+        title = title,
+        hint = hint,
+        description = if (enabled) {
+            "Offer phone keyboard input while Assistant listens"
+        } else {
+            "Use voice input only"
+        },
+        onClick = {
+            authStore.setPhoneKeyboardInputEnabled(enabled)
+            renderConversationSettings()
+        },
+        nameSink = { keyboardNames[enabled] = it },
+        dotSink = { keyboardDots[enabled] = it },
+    )
+
     private fun windowCard(): LinearLayout =
         NexusUi.card(this).apply {
             CodexAuthStore.SUPPORTED_IDLE_WINDOW_MINUTES.forEachIndexed { index, minutes ->
@@ -1471,6 +1514,14 @@ class AssistantSettingsActivity : Activity() {
         }
         voiceNames.forEach { (value, nameView) ->
             nameView.setTextColor(if (value == speakAnswers) NexusUi.INK else NexusUi.INK2)
+        }
+
+        val phoneKeyboard = authStore.phoneKeyboardInputEnabled()
+        keyboardDots.forEach { (value, dotView) ->
+            NexusUi.setDotColor(dotView, if (value == phoneKeyboard) NexusUi.GREEN else NexusUi.INK4)
+        }
+        keyboardNames.forEach { (value, nameView) ->
+            nameView.setTextColor(if (value == phoneKeyboard) NexusUi.INK else NexusUi.INK2)
         }
 
         renderConversationsCard()

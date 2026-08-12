@@ -64,6 +64,9 @@ class NexusNoticeActionTest {
         override fun onNoticeAction(id: String) {
             events += "action:$id"
         }
+        override fun onNoticeTextSubmitted(id: String, text: String) {
+            events += "text:$id:$text"
+        }
         override fun onRegistrationState(result: Int) = Unit
     }
 
@@ -321,9 +324,45 @@ class NexusNoticeActionTest {
         assertEquals(listOf("action:reply", "input:66"), fixture.callbacks.events)
     }
 
-    private fun approvedFixture(): Fixture = fixture().also { fixture ->
-        fixture.transport.featureBits =
-            BusCapabilityBits.NOTICE_SURFACE or BusCapabilityBits.IMAGE_SURFACE
+    @Test
+    fun `notice text input is capability gated and submission is owner checked`() {
+        val legacyFixture = approvedFixture(BusCapabilityBits.NOTICE_SURFACE)
+        val fixture = approvedFixture()
+        val notice = NexusNotice(
+            title = "Assistant",
+            body = "Type on your phone",
+            textInput = NexusNoticeTextInput("question", "Ask Assistant"),
+        )
+
+        assertEquals(
+            NexusSdkResult.CAPABILITY_NOT_AVAILABLE,
+            legacyFixture.client.showNotice(notice),
+        )
+        assertTrue(legacyFixture.transport.sends.isEmpty())
+        assertEquals(NexusSdkResult.SENT, fixture.client.showNotice(notice))
+        assertEquals(
+            "question",
+            fixture.transport.sends.single().second
+                .getJSONObject("textInput")
+                .getString("id"),
+        )
+
+        val submission = pluginPayload()
+            .put("noticeId", "hello:notice")
+            .put("inputId", "question")
+            .put("text", "private question")
+        fixture.transport.listener.onMessage(BusPaths.NOTICE_TEXT_SUBMIT, "text-1", submission)
+        fixture.transport.listener.onMessage(BusPaths.NOTICE_TEXT_SUBMIT, "text-1", submission)
+
+        assertEquals(listOf("text:question:private question"), fixture.callbacks.events)
+    }
+
+    private fun approvedFixture(
+        featureBits: Int = BusCapabilityBits.NOTICE_SURFACE or
+            BusCapabilityBits.NOTICE_TEXT_INPUT or
+            BusCapabilityBits.IMAGE_SURFACE,
+    ): Fixture = fixture().also { fixture ->
+        fixture.transport.featureBits = featureBits
         fixture.transport.listener.onMessage(
             BusPaths.PLUGIN_REGISTRATION,
             "registration-${System.identityHashCode(fixture)}",

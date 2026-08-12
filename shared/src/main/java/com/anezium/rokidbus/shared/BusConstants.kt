@@ -55,6 +55,7 @@ object BusPaths {
     const val NOTICE_HIDE = "/notice/hide"
     const val NOTICE_INPUT = "/notice/input"
     const val NOTICE_ACTION = "/notice/action"
+    const val NOTICE_TEXT_SUBMIT = "/notice/text-submit"
     const val NOTICE_CLOSED = "/notice/closed"
     const val ACTIVITY_START = "/activity/start"
     const val ACTIVITY_UPDATE = "/activity/update"
@@ -187,6 +188,7 @@ object BusCapabilityBits {
     const val PHONE_ASSISTED_SETUP = 1 shl 8
     const val TTS = 1 shl 9
     const val INK_SURFACE = 1 shl 10
+    const val NOTICE_TEXT_INPUT = 1 shl 11
 }
 
 object LinkStateBits {

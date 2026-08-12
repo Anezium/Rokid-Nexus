@@ -5,6 +5,7 @@ import com.anezium.rokidbus.shared.NoticeCloseReason
 import com.anezium.rokidbus.shared.NoticeField
 import com.anezium.rokidbus.shared.NoticeSurfaceContent
 import com.anezium.rokidbus.shared.NoticeSurfacePatch
+import com.anezium.rokidbus.shared.NoticeTextInput
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -330,6 +331,33 @@ class NoticeStateMachineTest {
 
         assertTrue(state.answer(CONFIRM_KEY) is NoticeStateDecision.Ignored)
         assertFalse(state.activeNotice()!!.answered)
+    }
+
+    @Test
+    fun `a notice text field submits once and never falls back to a gesture`() {
+        val state = NoticeStateMachine()
+        state.show(
+            "assistant:notice",
+            seq = 1,
+            content = content(textInput = NoticeTextInput("question", "Ask Assistant")),
+            nowMs = 0L,
+        )
+
+        assertTrue(noticeClaimsAllInput(state.activeNotice(), cameraOverlayActive = false))
+        assertTrue(state.answer(CONFIRM_KEY) is NoticeStateDecision.Ignored)
+        val answered = state.submitText("assistant:notice", "question", " private question ")
+            as NoticeStateDecision.Answered
+        val answer = answered.answer as NoticeAnswer.Text
+
+        assertEquals("question", answer.inputId)
+        assertEquals("private question", answer.text)
+        assertFalse(answer.toString().contains("private question"))
+        assertNull(answered.notice.liveTextInput)
+        assertFalse(noticeClaimsAllInput(answered.notice, cameraOverlayActive = false))
+        assertTrue(
+            state.submitText("assistant:notice", "question", "again")
+                is NoticeStateDecision.Ignored,
+        )
     }
 
     @Test
@@ -900,6 +928,7 @@ class NoticeStateMachineTest {
         footer: String? = null,
         actions: List<NoticeAction> = emptyList(),
         backdrop: Boolean = false,
+        textInput: NoticeTextInput? = null,
     ) = NoticeSurfaceContent(
         title = "Marie",
         body = "On my way",
@@ -908,5 +937,6 @@ class NoticeStateMachineTest {
         actions = actions,
         ttlMs = ttlMs,
         backdrop = backdrop,
+        textInput = textInput,
     )
 }

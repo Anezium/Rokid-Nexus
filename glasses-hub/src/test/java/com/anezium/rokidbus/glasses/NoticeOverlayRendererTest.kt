@@ -76,6 +76,15 @@ class NoticeOverlayRendererTest {
     }
 
     @Test
+    fun `a notice editor is focusable but remains untouchable`() {
+        val flags = noticeWindowFlags(textInputActive = true)
+
+        assertTrue(flags and WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON != 0)
+        assertFalse(flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE != 0)
+        assertTrue(flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE != 0)
+    }
+
+    @Test
     fun `Ink morph dismissal fades in place while ordinary dismissal still slides`() {
         assertEquals(
             NoticeDismissMotion.INK_FADE_IN_PLACE,

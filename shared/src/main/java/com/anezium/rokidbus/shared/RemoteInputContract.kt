@@ -71,6 +71,8 @@ data class RemoteInputSessionOpen(
     val imeOptions: Int,
     val sensitive: Boolean,
     val nextSequence: Long = 1L,
+    /** Trusted hub-owned field explicitly asks the phone UI to come forward. */
+    val autoOpenPhoneKeyboard: Boolean = false,
 )
 
 data class RemoteInputSessionClosed(
@@ -191,6 +193,9 @@ object RemoteInputContract {
             .put("imeOptions", value.imeOptions)
             .put("sensitive", value.sensitive)
             .put("nextSequence", value.nextSequence)
+            .apply {
+                if (value.autoOpenPhoneKeyboard) put("autoOpenPhoneKeyboard", true)
+            }
     }
 
     fun decodeSessionOpen(payload: JSONObject): RemoteInputSessionOpen? {
@@ -205,6 +210,11 @@ object RemoteInputContract {
         val sensitive = payload.strictBoolean("sensitive") ?: return null
         val nextSequence = payload.strictLong("nextSequence")
             ?.takeIf(::isValidCommandSequence) ?: return null
+        val autoOpenPhoneKeyboard = when (val raw = payload.opt("autoOpenPhoneKeyboard")) {
+            null -> false
+            is Boolean -> raw
+            else -> return null
+        }
         return RemoteInputSessionOpen(
             sessionId = payload.getString("sessionId"),
             packageName = packageName,
@@ -212,6 +222,7 @@ object RemoteInputContract {
             imeOptions = imeOptions,
             sensitive = sensitive,
             nextSequence = nextSequence,
+            autoOpenPhoneKeyboard = autoOpenPhoneKeyboard,
         )
     }
 

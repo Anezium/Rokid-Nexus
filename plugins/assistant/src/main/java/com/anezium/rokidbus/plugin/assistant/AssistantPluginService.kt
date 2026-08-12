@@ -186,6 +186,9 @@ class AssistantPluginService : NexusPluginService() {
             override val supportsNoticeSurface: Boolean
                 get() = nexusClient?.supportsNoticeSurface == true
 
+            override val supportsNoticeTextInput: Boolean
+                get() = nexusClient?.supportsNoticeTextInput == true
+
             override fun showNotice(notice: NexusNotice): NexusSdkResult =
                 nexusClient?.showNotice(notice) ?: NexusSdkResult.NOT_REGISTERED
 
@@ -244,6 +247,24 @@ class AssistantPluginService : NexusPluginService() {
     override fun onNexusNoticeClosed(reason: NexusNoticeCloseReason) {
         if (reason == NexusNoticeCloseReason.USER) stopAnswerSpeech()
         uiController.onNoticeClosed(reason)
+    }
+
+    override fun onNexusNoticeAction(id: String) {
+        if (
+            id != AssistantUiController.WRITE_ACTION_ID ||
+            !authStore.phoneKeyboardInputEnabled() ||
+            nexusClient?.supportsNoticeTextInput != true
+        ) {
+            return
+        }
+        resetCapture()
+        cancelPipeline()
+        uiController.showTextInput()
+    }
+
+    override fun onNexusNoticeTextSubmitted(id: String, text: String) {
+        if (id != AssistantUiController.WRITE_INPUT_ID) return
+        launchAssistantPipeline(text)
     }
 
     override fun onNexusInkReady(surfaceId: String) {
@@ -347,7 +368,11 @@ class AssistantPluginService : NexusPluginService() {
         fallbackStopJob = null
         audioFormat = null
         pcmBuffer = ByteArrayOutputStream()
-        uiController.showTransient("Listening…", legacyForceShow = true)
+        uiController.showListening(
+            "Listening…",
+            offerWrite = authStore.phoneKeyboardInputEnabled(),
+            legacyForceShow = true,
+        )
         startSpeechCapture(generation)
     }
 
@@ -360,7 +385,10 @@ class AssistantPluginService : NexusPluginService() {
                     createdSpeech?.stop()
                     return
                 }
-                uiController.showTransient("Listening…")
+                uiController.showListening(
+                    "Listening…",
+                    offerWrite = authStore.phoneKeyboardInputEnabled(),
+                )
             }
 
             override fun onSpeechState(state: NexusSpeechState) = Unit
@@ -416,7 +444,10 @@ class AssistantPluginService : NexusPluginService() {
         fallbackTranscribePending = false
         audioFormat = null
         pcmBuffer = ByteArrayOutputStream()
-        uiController.showTransient("Listening…")
+        uiController.showListening(
+            "Listening…",
+            offerWrite = authStore.phoneKeyboardInputEnabled(),
+        )
 
         var createdAudio: NexusAudioSession? = null
         val callbacks = object : NexusAudioCallbacks {

@@ -535,6 +535,11 @@ data class NexusNoticeImage(
     val pixelHeight: Int,
 )
 
+data class NexusNoticeTextInput(
+    val id: String,
+    val hint: String,
+)
+
 data class NexusNotice(
     val title: String? = null,
     val body: String? = null,
@@ -546,6 +551,7 @@ data class NexusNotice(
     val wakeDisplay: Boolean = false,
     val lines: List<String> = emptyList(),
     val backdrop: Boolean = false,
+    val textInput: NexusNoticeTextInput? = null,
 )
 
 data class NexusNoticeUpdate(
@@ -556,9 +562,11 @@ data class NexusNoticeUpdate(
     val actions: List<NexusNoticeAction> = emptyList(),
     val ttlMs: Long? = null,
     val lines: List<String> = emptyList(),
+    val textInput: NexusNoticeTextInput? = null,
 )
 
 val supportsNoticeSurface: Boolean
+val supportsNoticeTextInput: Boolean
 fun showNotice(notice: NexusNotice): NexusSdkResult
 fun showNotice(notice: NexusNotice, imageBytes: ByteArray): NexusSdkResult
 fun updateNotice(update: NexusNoticeUpdate): NexusSdkResult
@@ -567,12 +575,43 @@ fun hideNotice(): NexusSdkResult
 interface NexusPluginCallbacks {
     fun onNoticeInput(event: NexusInputEvent) = Unit
     fun onNoticeAction(id: String) = Unit
+    fun onNoticeTextSubmitted(id: String, text: String) = Unit
     fun onNoticeClosed(reason: NexusNoticeCloseReason) = Unit
 }
 ```
 
 `NexusPluginService` forwards those to the overridable `onNexusNoticeInput`,
-`onNexusNoticeAction(id)`, and `onNexusNoticeClosed(reason)` hooks.
+`onNexusNoticeAction(id)`, `onNexusNoticeTextSubmitted(id, text)`, and
+`onNexusNoticeClosed(reason)` hooks.
+
+When `supportsNoticeTextInput` is true, a fresh notice may carry one
+`NexusNoticeTextInput`. Nexus renders the single-line field below the band,
+focuses its glasses-owned editor, and opens the existing phone keyboard screen.
+Pressing Enter submits at most once through `onNexusNoticeTextSubmitted`; the
+phone hub validates the current owner and field id before delivery. Text is
+limited to 1024 UTF-16 characters and 3072 UTF-8 bytes and must not be logged or
+persisted by transport code. A text field is mutually exclusive with
+`interactive` and `actions`, so switch from a choice row to typing with a fresh
+`showNotice`, not an ambiguous mixed notice. Plugins never receive or send the
+trusted `/core/remote-input/*` routes.
+
+```kotlin
+nexusClient?.showNotice(
+    NexusNotice(
+        title = "Assistant",
+        body = "Type on your phone, then press Enter.",
+        textInput = NexusNoticeTextInput(
+            id = "question",
+            hint = "Ask Assistant",
+        ),
+        ttlMs = 45_000,
+    ),
+)
+
+override fun onNexusNoticeTextSubmitted(id: String, text: String) {
+    if (id == "question") submitQuestion(text)
+}
+```
 
 Give a band up to three actions and the platform draws a row of glyph chips
 under the footer: forward and backward step along it, confirm fires the selected
@@ -734,6 +773,8 @@ plain one-page notice claims no direction at all.
 Check the live `supportsNoticeSurface` value immediately before use. Unlike
 pins it accounts for the link: a notice is a moment, so the hub never holds one
 for glasses it cannot reach and tells you instead.
+Check `supportsNoticeTextInput` separately before adding an editor; older
+glasses may still support ordinary notices without the phone-backed field.
 
 Set `wakeDisplay = true` on `NexusNotice` only for a new event the wearer must
 not miss. It is serialized only when true and is honored only by `showNotice`;

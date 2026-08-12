@@ -1,6 +1,20 @@
 package com.anezium.rokidbus.glasses
 
 import android.view.inputmethod.EditorInfo
+import java.util.UUID
+
+/** Process-private proof that an editor was created by the hub notice renderer. */
+internal object NoticeTextInputImeTrust {
+    val privateImeOptions: String =
+        "com.anezium.rokidbus.NOTICE_TEXT_INPUT:${UUID.randomUUID()}"
+
+    fun requestsPhoneKeyboard(
+        packageName: String?,
+        privateOptions: String?,
+        hubPackageName: String,
+    ): Boolean =
+        packageName == hubPackageName && privateOptions == privateImeOptions
+}
 
 internal data class RemoteInputSessionState(
     val active: Boolean = false,
@@ -9,6 +23,7 @@ internal data class RemoteInputSessionState(
     val inputType: Int = 0,
     val imeOptions: Int = 0,
     val nextSequence: Long = 0L,
+    val autoOpenPhoneKeyboard: Boolean = false,
 )
 
 internal enum class RemoteInputResultCode {

@@ -107,8 +107,16 @@ class NexusPluginClient internal constructor(
         get() = currentLinkState and LinkStateBits.SPP_DATA_UP != 0 &&
             hubCapabilities and BusCapabilityBits.NOTICE_SURFACE != 0
 
+    /** Whether the current glasses can host a notice editor backed by the phone keyboard. */
+    val supportsNoticeTextInput: Boolean
+        get() = supportsNoticeSurface &&
+            hubCapabilities and BusCapabilityBits.NOTICE_TEXT_INPUT != 0
+
     fun showNotice(notice: NexusNotice): NexusSdkResult {
         noticePreflight()?.let { return it }
+        if (notice.textInput != null && !supportsNoticeTextInput) {
+            return NexusSdkResult.CAPABILITY_NOT_AVAILABLE
+        }
         if (notice.image != null) return NexusSdkResult.INVALID_PAYLOAD
         val payload = notice.toPayload()
         if (NoticeSurfaceContract.validateShow(payload) !is NoticeSurfaceValidationResult.Valid) {
@@ -123,6 +131,9 @@ class NexusPluginClient internal constructor(
 
     fun showNotice(notice: NexusNotice, imageBytes: ByteArray): NexusSdkResult {
         noticePreflight()?.let { return it }
+        if (notice.textInput != null && !supportsNoticeTextInput) {
+            return NexusSdkResult.CAPABILITY_NOT_AVAILABLE
+        }
         if (!supportsImageSurface) return NexusSdkResult.CAPABILITY_NOT_AVAILABLE
         if (notice.image == null) return NexusSdkResult.INVALID_PAYLOAD
         val payload = notice.toPayload(imageBytes)
@@ -143,6 +154,9 @@ class NexusPluginClient internal constructor(
 
     fun updateNotice(update: NexusNoticeUpdate): NexusSdkResult {
         noticePreflight()?.let { return it }
+        if (update.textInput != null && !supportsNoticeTextInput) {
+            return NexusSdkResult.CAPABILITY_NOT_AVAILABLE
+        }
         return if (send(BusPaths.NOTICE_UPDATE, UUID.randomUUID().toString(), update.toPayload())) {
             NexusSdkResult.SENT
         } else {
@@ -523,6 +537,16 @@ class NexusPluginClient internal constructor(
                 actionId.isNotBlank()
             ) {
                 callbacks.onNoticeAction(actionId)
+            }
+            return
+        }
+        if (path == BusPaths.NOTICE_TEXT_SUBMIT) {
+            val submission = NoticeSurfaceContract.parseTextSubmission(payload)
+            if (
+                isApproved &&
+                submission?.surfaceId == "$pluginId:${NoticeSurfaceContract.LOCAL_SURFACE_ID}"
+            ) {
+                callbacks.onNoticeTextSubmitted(submission.inputId, submission.text)
             }
             return
         }

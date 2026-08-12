@@ -46,6 +46,11 @@ internal object RemoteInputController {
                     inputType = editorInfo.inputType,
                     imeOptions = editorInfo.imeOptions,
                     nextSequence = gate.nextSequence,
+                    autoOpenPhoneKeyboard = NoticeTextInputImeTrust.requestsPhoneKeyboard(
+                        editorInfo.packageName,
+                        editorInfo.privateImeOptions,
+                        BuildConfig.APPLICATION_ID,
+                    ),
                 ),
             )
         }

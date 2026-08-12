@@ -602,6 +602,78 @@ class NoticeSurfaceContractTest {
     }
 
     @Test
+    fun `text input round trips and cannot compete with gesture replies`() {
+        val input = NoticeTextInput("assistant-question", "Ask Assistant")
+        val content = NoticeSurfaceContent(
+            title = "Assistant",
+            body = "Type on your phone",
+            footer = null,
+            textInput = input,
+        )
+
+        val wire = NoticeSurfaceContract.toPayload("assistant:notice", content)
+        val parsed = NoticeSurfaceContract.validateShow(wire) as NoticeSurfaceValidationResult.Valid
+
+        assertEquals(input, parsed.content.textInput)
+        assertTrue(NoticeSurfaceContract.hasValidInteraction(parsed.content))
+        assertTrue(
+            NoticeSurfaceContract.validateShow(wire.put("interactive", true))
+                is NoticeSurfaceValidationResult.Invalid,
+        )
+    }
+
+    @Test
+    fun `text input patch can install and clear the editor exactly`() {
+        val current = NoticeSurfaceContent("Assistant", "Listening", null)
+        val inputWire = JSONObject()
+            .put("id", "assistant-question")
+            .put("hint", "Ask Assistant")
+        val installedPatch = NoticeSurfaceContract.validateUpdate(
+            JSONObject().put("textInput", inputWire),
+        ) as NoticeSurfacePatchResult.Valid
+        val installed = installedPatch.patch.applyTo(current)
+        assertEquals("assistant-question", installed.textInput?.id)
+
+        val clearWire = NoticeSurfaceContract.toUpdatePayload(
+            "assistant:notice",
+            NoticeSurfacePatch(textInput = NoticeField(null)),
+        )
+        val clearedPatch = NoticeSurfaceContract.validateUpdate(clearWire)
+            as NoticeSurfacePatchResult.Valid
+        assertNull(clearedPatch.patch.applyTo(installed).textInput)
+    }
+
+    @Test
+    fun `submitted text is bounded trimmed and redacted`() {
+        val payload = NoticeSurfaceContract.textSubmissionPayload(
+            "assistant:notice",
+            "assistant-question",
+            "  private question  ",
+        )
+        val parsed = NoticeSurfaceContract.parseTextSubmission(payload)!!
+
+        assertEquals("private question", parsed.text)
+        assertFalse(parsed.toString().contains("private question"))
+        assertEquals(
+            NoticeSurfaceContract.MAX_TEXT_INPUT_CHARS,
+            NoticeSurfaceContract.parseTextSubmission(
+                JSONObject(payload.toString()).put(
+                    "text",
+                    "界".repeat(NoticeSurfaceContract.MAX_TEXT_INPUT_CHARS),
+                ),
+            )?.text?.length,
+        )
+        assertNull(
+            NoticeSurfaceContract.parseTextSubmission(
+                JSONObject(payload.toString()).put(
+                    "text",
+                    "x".repeat(NoticeSurfaceContract.MAX_TEXT_INPUT_CHARS + 1),
+                ),
+            ),
+        )
+    }
+
+    @Test
     fun `closed payload carries the reason`() {
         val payload = NoticeSurfaceContract.closedPayload("relay:notice", NoticeCloseReason.TIMEOUT)
 

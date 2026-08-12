@@ -43,6 +43,22 @@ data class NoticeAction(
     val label: String,
 )
 
+/** One platform-owned, single-line editor rendered below a notice. */
+data class NoticeTextInput(
+    val id: String,
+    val hint: String,
+)
+
+/** Text submitted by the wearer. The contents must never appear in logs. */
+data class NoticeTextSubmission(
+    val surfaceId: String,
+    val inputId: String,
+    val text: String,
+) {
+    override fun toString(): String =
+        "NoticeTextSubmission(surfaceId=$surfaceId, inputId=$inputId, text=<redacted:${text.length}>)"
+}
+
 data class NoticeSurfaceContent(
     val title: String?,
     val body: String?,
@@ -57,6 +73,8 @@ data class NoticeSurfaceContent(
     val lines: List<String> = emptyList(),
     /** Whether the notice should hide the rest of the glasses display. */
     val backdrop: Boolean = false,
+    /** Optional platform-owned editor. Mutually exclusive with gesture replies. */
+    val textInput: NoticeTextInput? = null,
 ) {
     /**
      * Whether the band expects a gesture at all. Actions are an interaction by
@@ -84,6 +102,7 @@ data class NoticeSurfacePatch(
     val actions: NoticeField<List<NoticeAction>>? = null,
     val ttlMs: NoticeField<Long>? = null,
     val lines: NoticeField<List<String>>? = null,
+    val textInput: NoticeField<NoticeTextInput?>? = null,
 ) {
     // Presence is the test, never the value: `?:` here would treat a field sent
     // empty as a field left out, and clearing a footer would silently keep it.
@@ -103,6 +122,7 @@ data class NoticeSurfacePatch(
         interactive = if (interactive != null) interactive.value else content.interactive,
         actions = if (actions != null) actions.value else content.actions,
         ttlMs = if (ttlMs != null) ttlMs.value else content.ttlMs,
+        textInput = if (textInput != null) textInput.value else content.textInput,
     )
 }
 
@@ -157,6 +177,13 @@ object NoticeSurfaceContract {
      * turning into a menu. Past it the notice is rejected, never truncated.
      */
     const val MAX_ACTIONS = 3
+    const val MAX_TEXT_INPUT_ID_CHARS = 64
+    const val MAX_TEXT_INPUT_HINT_CHARS = 48
+    const val MAX_TEXT_INPUT_CHARS = 1_024
+    // Three bytes per UTF-16 code unit covers every BMP character accepted by
+    // the editor's character filter, so a visibly accepted value can always be
+    // submitted instead of failing only when Enter is pressed.
+    const val MAX_TEXT_INPUT_UTF8_BYTES = 3_072
 
     const val DEFAULT_TTL_MS = 8_000L
     const val MIN_TTL_MS = 2_000L
@@ -184,6 +211,9 @@ object NoticeSurfaceContract {
     const val ERROR_INVALID_NOTICE = "INVALID_NOTICE"
     const val ERROR_NOTICE_RATE_LIMITED = "NOTICE_RATE_LIMITED"
     const val ERROR_CAPABILITY_NOT_AVAILABLE = "CAPABILITY_NOT_AVAILABLE"
+
+    fun hasValidInteraction(content: NoticeSurfaceContent): Boolean =
+        content.textInput == null || (!content.interactive && content.actions.isEmpty())
 
     fun validateShow(
         payload: JSONObject,
@@ -241,6 +271,14 @@ object NoticeSurfaceContract {
             is ActionsResult.Absent -> emptyList()
             is ActionsResult.Present -> result.value.orEmpty()
         }
+        val textInput = when (val result = readTextInput(payload, "textInput")) {
+            is TextInputResult.Invalid -> return invalid(result.reason)
+            is TextInputResult.Absent -> null
+            is TextInputResult.Present -> result.value
+        }
+        if (textInput != null && (interactive || actions.isNotEmpty())) {
+            return invalid("textInput is mutually exclusive with interactive and actions")
+        }
 
         val ttlMs = when (val value = payload.opt("ttlMs")) {
             null -> derivedTtlMs(
@@ -276,6 +314,7 @@ object NoticeSurfaceContract {
                 image = image,
                 wakeDisplay = wakeDisplay,
                 backdrop = backdrop,
+                textInput = textInput,
             ),
         )
     }
@@ -336,6 +375,11 @@ object NoticeSurfaceContract {
             is ActionsResult.Absent -> null
             is ActionsResult.Present -> NoticeField(result.value.orEmpty())
         }
+        val textInput = when (val result = readTextInput(payload, "textInput")) {
+            is TextInputResult.Invalid -> return patchInvalid(result.reason)
+            is TextInputResult.Absent -> null
+            is TextInputResult.Present -> NoticeField(result.value)
+        }
 
         val ttlMs = when (val value = payload.opt("ttlMs")) {
             null -> null
@@ -355,6 +399,7 @@ object NoticeSurfaceContract {
                 interactive = interactive,
                 actions = actions,
                 ttlMs = ttlMs,
+                textInput = textInput,
             ),
         )
     }
@@ -385,6 +430,7 @@ object NoticeSurfaceContract {
             // for byte the way it did. An activity always sends its array; a
             // notice cannot, because its payload is the compatibility surface.
             if (content.actions.isNotEmpty()) put("actions", actionsJson(content.actions))
+            content.textInput?.let { put("textInput", textInputJson(it)) }
             content.image?.let { image ->
                 put("imageVersion", ImageSurfaceContract.VERSION)
                 put("contentKey", image.contentKey)
@@ -418,6 +464,9 @@ object NoticeSurfaceContract {
             patch.interactive?.let { put("interactive", it.value) }
             patch.actions?.let { put("actions", actionsJson(it.value)) }
             patch.ttlMs?.let { put("ttlMs", it.value.coerceIn(MIN_TTL_MS, MAX_TTL_MS)) }
+            patch.textInput?.let { field ->
+                put("textInput", field.value?.let(::textInputJson) ?: JSONObject.NULL)
+            }
         }
 
     /**
@@ -428,6 +477,26 @@ object NoticeSurfaceContract {
     fun actionPayload(surfaceId: String, actionId: String): JSONObject = JSONObject()
         .put("noticeId", surfaceId)
         .put("id", actionId)
+
+    fun textSubmissionPayload(
+        surfaceId: String,
+        inputId: String,
+        text: String,
+    ): JSONObject {
+        val submission = validateTextSubmission(surfaceId, inputId, text)
+            ?: throw IllegalArgumentException("Invalid notice text submission")
+        return JSONObject()
+            .put("noticeId", submission.surfaceId)
+            .put("inputId", submission.inputId)
+            .put("text", submission.text)
+    }
+
+    fun parseTextSubmission(payload: JSONObject): NoticeTextSubmission? {
+        val surfaceId = payload.opt("noticeId") as? String ?: return null
+        val inputId = payload.opt("inputId") as? String ?: return null
+        val text = payload.opt("text") as? String ?: return null
+        return validateTextSubmission(surfaceId, inputId, text)
+    }
 
     fun closedPayload(surfaceId: String, reason: NoticeCloseReason): JSONObject = JSONObject()
         .put("noticeId", surfaceId)
@@ -449,6 +518,51 @@ object NoticeSurfaceContract {
         data object Absent : LinesResult
         data class Present(val value: List<String>) : LinesResult
         data class Invalid(val reason: String) : LinesResult
+    }
+
+    private sealed interface TextInputResult {
+        data object Absent : TextInputResult
+        data class Present(val value: NoticeTextInput?) : TextInputResult
+        data class Invalid(val reason: String) : TextInputResult
+    }
+
+    private fun readTextInput(payload: JSONObject, key: String): TextInputResult {
+        if (!payload.has(key)) return TextInputResult.Absent
+        val raw = payload.opt(key)
+        if (raw == JSONObject.NULL) return TextInputResult.Present(null)
+        val value = raw as? JSONObject ?: return TextInputResult.Invalid("$key must be an object")
+        val id = (value.opt("id") as? String)?.trim()
+            ?: return TextInputResult.Invalid("text input id must be a string")
+        if (!TEXT_INPUT_ID.matches(id)) {
+            return TextInputResult.Invalid("text input id is invalid")
+        }
+        val hint = (value.opt("hint") as? String)?.let(::normalizeText)
+            ?: return TextInputResult.Invalid("text input hint must be a string")
+        if (hint.isEmpty()) return TextInputResult.Invalid("text input hint must contain text")
+        if (hint.length > MAX_TEXT_INPUT_HINT_CHARS) {
+            return TextInputResult.Invalid(
+                "text input hint exceeds $MAX_TEXT_INPUT_HINT_CHARS characters",
+            )
+        }
+        return TextInputResult.Present(NoticeTextInput(id, hint))
+    }
+
+    private fun textInputJson(input: NoticeTextInput): JSONObject = JSONObject()
+        .put("id", input.id)
+        .put("hint", input.hint)
+
+    private fun validateTextSubmission(
+        surfaceId: String,
+        inputId: String,
+        text: String,
+    ): NoticeTextSubmission? {
+        if (surfaceId.isBlank() || surfaceId.length > 160) return null
+        val normalizedId = inputId.trim()
+        if (!TEXT_INPUT_ID.matches(normalizedId)) return null
+        val normalizedText = text.trim()
+        if (normalizedText.isEmpty() || normalizedText.length > MAX_TEXT_INPUT_CHARS) return null
+        if (normalizedText.toByteArray(Charsets.UTF_8).size > MAX_TEXT_INPUT_UTF8_BYTES) return null
+        return NoticeTextSubmission(surfaceId, normalizedId, normalizedText)
     }
 
     /**
@@ -552,6 +666,8 @@ object NoticeSurfaceContract {
     private fun patchInvalid(reason: String) = NoticeSurfacePatchResult.Invalid(reason)
 
     private val NEWLINES = Regex("[\\r\\n]+")
+    private val TEXT_INPUT_ID =
+        Regex("[A-Za-z0-9][A-Za-z0-9._-]{0,${MAX_TEXT_INPUT_ID_CHARS - 1}}")
     private val IMAGE_FIELDS = listOf(
         "imageVersion",
         "contentKey",

@@ -13,6 +13,7 @@ import com.anezium.rokidbus.shared.PinSurfaceContent
 import com.anezium.rokidbus.shared.PinSurfaceContract
 import com.anezium.rokidbus.shared.PinSurfaceEmphasis
 import com.anezium.rokidbus.shared.NoticeAction
+import com.anezium.rokidbus.shared.NoticeTextInput
 import com.anezium.rokidbus.shared.NoticeCloseReason
 import com.anezium.rokidbus.shared.NoticeSurfaceContract
 import com.anezium.rokidbus.shared.PinSurfaceLine
@@ -708,6 +709,20 @@ data class NexusNoticeAction(
     )
 }
 
+/** A single-line, platform-owned notice editor submitted on phone-keyboard Enter. */
+data class NexusNoticeTextInput(
+    val id: String,
+    val hint: String,
+) {
+    init {
+        require(id.matches(Regex("[A-Za-z0-9][A-Za-z0-9._-]{0,63}")))
+        require(hint.trim().isNotEmpty())
+        require(hint.trim().length <= NoticeSurfaceContract.MAX_TEXT_INPUT_HINT_CHARS)
+    }
+
+    internal fun toContract(): NoticeTextInput = NoticeTextInput(id.trim(), hint.trim())
+}
+
 /** Metadata for the JPEG or PNG frame sent with a [NexusNotice]. */
 data class NexusNoticeImage(
     val contentKey: String,
@@ -751,6 +766,8 @@ data class NexusNoticeImage(
  * @property lines Structured alternative to [body]. Empty entries are dropped;
  * an empty result is absent from the wire.
  * @property backdrop Hide the rest of the glasses display behind this notice.
+ * @property textInput A platform-owned single-line editor. It cannot be combined
+ * with [interactive] or [actions]; the entered text is returned only on Enter.
  */
 data class NexusNotice(
     val title: String? = null,
@@ -763,6 +780,7 @@ data class NexusNotice(
     val wakeDisplay: Boolean = false,
     val lines: List<String> = emptyList(),
     val backdrop: Boolean = false,
+    val textInput: NexusNoticeTextInput? = null,
 ) {
     init {
         val normalizedLines = normalizedNoticeLines(lines)
@@ -781,6 +799,7 @@ data class NexusNotice(
                 normalizedLines.isNotEmpty(),
         )
         require(actions.size <= NoticeSurfaceContract.MAX_ACTIONS)
+        require(textInput == null || (!interactive && actions.isEmpty()))
     }
 
     internal fun toPayload(imageBytes: ByteArray? = null): JSONObject = JSONObject()
@@ -795,6 +814,14 @@ data class NexusNotice(
             // A notice with no answers sends no actions key at all, so every
             // banner written before this existed still goes out unchanged.
             if (actions.isNotEmpty()) putActions(actions)
+            textInput?.let { input ->
+                put(
+                    "textInput",
+                    JSONObject()
+                        .put("id", input.id)
+                        .put("hint", input.hint.trim()),
+                )
+            }
             ttlMs?.let { put("ttlMs", it) }
             if (wakeDisplay) put("wakeDisplay", true)
             if (backdrop) put("backdrop", true)
@@ -831,6 +858,7 @@ data class NexusNoticeUpdate(
     val actions: List<NexusNoticeAction> = emptyList(),
     val ttlMs: Long? = null,
     val lines: List<String> = emptyList(),
+    val textInput: NexusNoticeTextInput? = null,
 ) {
     init {
         require(body == null || lines.isEmpty())
@@ -840,6 +868,7 @@ data class NexusNoticeUpdate(
                 NoticeSurfaceContract.MAX_BODY_CHARS,
         )
         require(actions.size <= NoticeSurfaceContract.MAX_ACTIONS)
+        require(textInput == null || (interactive != true && actions.isEmpty()))
     }
 
     internal fun toPayload(): JSONObject = JSONObject()
@@ -854,6 +883,14 @@ data class NexusNoticeUpdate(
             // as the owner asking the question again.
             interactive?.let { put("interactive", it) }
             if (actions.isNotEmpty()) putActions(actions)
+            textInput?.let { input ->
+                put(
+                    "textInput",
+                    JSONObject()
+                        .put("id", input.id)
+                        .put("hint", input.hint.trim()),
+                )
+            }
             ttlMs?.let { put("ttlMs", it) }
         }
 }

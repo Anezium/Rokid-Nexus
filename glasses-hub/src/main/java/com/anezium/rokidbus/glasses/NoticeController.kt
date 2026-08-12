@@ -49,6 +49,12 @@ internal data class NexusNoticeSurface(
     val liveActions: List<NoticeAction>
         get() = if (answered) emptyList() else content.actions
 
+    val liveTextInput
+        get() = content.textInput.takeUnless { answered }
+
+    val isDisplayEngaged: Boolean
+        get() = content.interactive || liveTextInput != null
+
     /**
      * Whether the band still wants a gesture. An answered one never does again
      * -- not another action, and not the plain confirming input either.
@@ -84,13 +90,18 @@ internal fun noticeVisibleForInput(
 internal fun noticeClaimsAllInput(
     activeNotice: NexusNoticeSurface?,
     cameraOverlayActive: Boolean,
-): Boolean = noticeVisibleForInput(activeNotice, cameraOverlayActive)?.content?.backdrop == true
+): Boolean = noticeVisibleForInput(activeNotice, cameraOverlayActive)?.let { notice ->
+    notice.content.backdrop || notice.liveTextInput != null
+} == true
 
 internal fun noticeOwnsRingInput(
     activeNotice: NexusNoticeSurface?,
     cameraOverlayActive: Boolean,
 ): Boolean = noticeVisibleForInput(activeNotice, cameraOverlayActive)?.let { notice ->
-    notice.expectsInput || notice.claimsDirection || notice.content.backdrop
+    notice.expectsInput ||
+        notice.liveTextInput != null ||
+        notice.claimsDirection ||
+        notice.content.backdrop
 } == true
 
 /**
@@ -220,6 +231,10 @@ internal fun noticeBodyText(content: NoticeSurfaceContent): String? =
 internal sealed interface NoticeAnswer {
     data class Action(val action: NoticeAction) : NoticeAnswer
     data class Input(val keyCode: Int) : NoticeAnswer
+    data class Text(val inputId: String, val text: String) : NoticeAnswer {
+        override fun toString(): String =
+            "Text(inputId=$inputId, text=<redacted:${text.length}>)"
+    }
 }
 
 internal sealed interface NoticeStateDecision {
@@ -304,6 +319,9 @@ internal class NoticeStateMachine {
         ) {
             return NoticeStateDecision.Ignored
         }
+        if (!NoticeSurfaceContract.hasValidInteraction(patched)) {
+            return NoticeStateDecision.Ignored
+        }
         latestSeq = seq
         val remainsEngaged = current.engaged && !patched.expectsInput
         val notice = current.copy(
@@ -322,15 +340,13 @@ internal class NoticeStateMachine {
                 previousIndex = current.selectedActionIndex,
                 next = patched.actions,
             ),
-            // An update that carries either field granting the band its
-            // interactivity -- the row, or the plain interactive flag -- is the
-            // owner asking again, so it is owed a new answer. An update that
-            // carries neither is the owner driving an already-answered band as
-            // a display, and must not quietly reopen it. Emptying the row or
-            // clearing the flag resets too: there is then nothing left to
-            // answer, and a flag left set would only be inherited by whatever
-            // the owner asks next.
-            answered = if (patch.actions != null || patch.interactive != null) {
+            // Carrying a row, the plain interactive flag, or a text field is
+            // the owner asking again, so the band is owed a new answer. A
+            // display-only update must not quietly reopen an answered notice.
+            // Explicitly clearing one of those interaction fields resets too.
+            answered = if (
+                patch.actions != null || patch.interactive != null || patch.textInput != null
+            ) {
                 false
             } else {
                 current.answered
@@ -366,6 +382,24 @@ internal class NoticeStateMachine {
         val notice = current.copy(answered = true)
         active = notice
         return NoticeStateDecision.Answered(notice, answer)
+    }
+
+    fun submitText(surfaceId: String, inputId: String, text: String): NoticeStateDecision {
+        val current = active ?: return NoticeStateDecision.Ignored
+        if (current.surfaceId != surfaceId || current.liveTextInput?.id != inputId) {
+            return NoticeStateDecision.Ignored
+        }
+        val submission = runCatching {
+            NoticeSurfaceContract.parseTextSubmission(
+                NoticeSurfaceContract.textSubmissionPayload(surfaceId, inputId, text),
+            )
+        }.getOrNull() ?: return NoticeStateDecision.Ignored
+        val notice = current.copy(answered = true)
+        active = notice
+        return NoticeStateDecision.Answered(
+            notice,
+            NoticeAnswer.Text(submission.inputId, submission.text),
+        )
     }
 
     /**
@@ -650,7 +684,7 @@ internal object NoticeController {
     fun claimsDirection(): Boolean =
         visibleNotice()?.claimsDirection == true
 
-    /** A backdrop hides the native UI, so none of its touchpad input may leak through. */
+    /** A backdrop or live editor keeps touchpad input out of the native UI underneath. */
     fun claimsAllInput(): Boolean =
         noticeClaimsAllInput(state.activeNotice(), cameraOverlayActive)
 
@@ -700,6 +734,10 @@ internal object NoticeController {
 
     fun setPageCount(surfaceId: String, seq: Long, count: Int) {
         main.post { applyDecision(state.setPageCount(surfaceId, seq, count)) }
+    }
+
+    fun submitText(surfaceId: String, inputId: String, text: String) {
+        runOnMain { applyDecision(state.submitText(surfaceId, inputId, text)) }
     }
 
     /**
@@ -761,6 +799,13 @@ internal object NoticeController {
                 .put("noticeId", surfaceId)
                 .put("keyCode", keyCode)
                 .put("action", KeyEvent.ACTION_DOWN),
+        )
+    }
+
+    private fun forwardText(surfaceId: String, inputId: String, text: String) {
+        GlassesHub.sendToPhone(
+            BusPaths.NOTICE_TEXT_SUBMIT,
+            NoticeSurfaceContract.textSubmissionPayload(surfaceId, inputId, text),
         )
     }
 
@@ -889,12 +934,12 @@ internal object NoticeController {
         }
         val surfaceId = envelope.payload.optString("surfaceId")
         val seq = envelope.payload.optLong("seq", Long.MIN_VALUE)
-        val wasEngaged = state.activeNotice()?.content?.interactive == true
+        val wasEngaged = state.activeNotice()?.isDisplayEngaged == true
         val decision = state.update(surfaceId, seq, patch.patch, SystemClock.elapsedRealtime())
         applyDecision(
             decision,
             genuineEngagement = decision is NoticeStateDecision.Updated &&
-                !wasEngaged && decision.notice.content.interactive,
+                !wasEngaged && decision.notice.isDisplayEngaged,
         )
     }
 
@@ -917,7 +962,7 @@ internal object NoticeController {
                         surfaceId = decision.notice.surfaceId,
                         ownerPluginId = decision.notice.ownerPluginId,
                         seq = decision.notice.seq,
-                        engaged = decision.notice.content.interactive,
+                        engaged = decision.notice.isDisplayEngaged,
                     ),
                 )
                 log(
@@ -933,13 +978,13 @@ internal object NoticeController {
                         surfaceId = decision.notice.surfaceId,
                         ownerPluginId = decision.notice.ownerPluginId,
                         seq = decision.notice.seq,
-                        engaged = decision.notice.content.interactive,
+                        engaged = decision.notice.isDisplayEngaged,
                     )
                 } else {
                     assistantEpisodeNoticeRedrawSignal(
                         surfaceId = decision.notice.surfaceId,
                         seq = decision.notice.seq,
-                        engaged = decision.notice.content.interactive,
+                        engaged = decision.notice.isDisplayEngaged,
                         reason = DisplayHoldRenewReason.BAND_UPDATE,
                     )
                 }
@@ -953,7 +998,7 @@ internal object NoticeController {
                     assistantEpisodeNoticeRedrawSignal(
                         surfaceId = decision.notice.surfaceId,
                         seq = decision.notice.seq,
-                        engaged = decision.notice.content.interactive,
+                        engaged = decision.notice.isDisplayEngaged,
                         reason = DisplayHoldRenewReason.BAND_ANSWER,
                     ),
                 )
@@ -965,6 +1010,8 @@ internal object NoticeController {
                         forwardAction(decision.notice.surfaceId, answer.action.id)
                     is NoticeAnswer.Input ->
                         forwardInput(decision.notice.surfaceId, answer.keyCode)
+                    is NoticeAnswer.Text ->
+                        forwardText(decision.notice.surfaceId, answer.inputId, answer.text)
                 }
                 notifyChanged()
             }

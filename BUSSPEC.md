@@ -574,6 +574,11 @@ different version declines the capability outright and the plugin hears
 `CAPABILITY_NOT_AVAILABLE` — which it can act on — instead of having its band
 accepted and then silently dropped.
 
+Phone-backed notice text entry is an additive renderer feature announced with
+bit 2048 (`NOTICE_TEXT_INPUT`). The base notice version is unchanged: a pair
+without that bit may still exchange ordinary notices, while a plugin that asks
+for `textInput` receives `CAPABILITY_NOT_AVAILABLE` before anything is shown.
+
 ### Paths
 
 Phone to glasses:
@@ -610,16 +615,19 @@ Glasses to phone to plugin:
 - `/notice/action` — `{noticeId, id}`, where `id` is the selected action's
   plugin-supplied identifier. Sent instead of `/notice/input` whenever the band
   carries actions, and **at most once per question**.
+- `/notice/text-submit` — `{noticeId, inputId, text}`. Enter from the
+  platform-owned notice editor, **at most once per field**. Text is nonblank,
+  at most 1024 UTF-16 characters and 3072 UTF-8 bytes, and must never be logged.
 
 - `/notice/closed` — `{noticeId, reason}` with `reason` in
   `user | timeout | owner | replaced | disconnect`. Delivered exactly once per
   notice, including when the owner hid it itself. Not delivered when the owner
   is what disappeared.
 
-Both replies go through the same gate on the phone hub: the notice must be the
-one it currently holds, it must actually have asked for a gesture, and it only
-answers once — an action id it never offered, a pick that raced a replacement,
-and a second reply of either kind are all refused. The refusals log distinct
+All three replies go through the same gate on the phone hub: the notice must be
+the one it currently holds, the action or field id must be one it offered, and
+it only answers once — a stale reply, a pick that raced a replacement, and a
+second reply of any kind are all refused. The refusals log distinct
 reasons, `not_current` and `already_answered`, because they mean different
 things.
 
@@ -717,6 +725,11 @@ run long enough to page.
   shape-validated, not membership-checked, so a name from a newer platform
   degrades to `dot` on an older one, and there is no numeric cap on an id or
   label beyond nonblank and the three-action limit.
+- `textInput` optional object `{id, hint}` and omitted when absent. `id` is a
+  stable 1–64 character identifier using letters, digits, `.`, `_`, or `-`;
+  `hint` is nonblank and at most 48 normalized characters. It is mutually
+  exclusive with `interactive` and `actions`. A show carrying it is refused
+  unless `NOTICE_TEXT_INPUT` is currently available.
 - `ttlMs` optional. When absent, the hub computes `2000 ms + 45 ms` per
   normalized title/body/footer character and clamps the result to
   `[4000, 45000]`. An explicit value is clamped to `[2000, 45000]`. Every
@@ -747,10 +760,10 @@ absent key keeps the current representation. The normalized patch, including an
 empty lines array, is relayed as sent so those replacement semantics survive the
 phone hop.
 
-**An update that carries the `actions` key or the `interactive` key is a new
-question** and reopens the band for another answer; one that carries neither is
-the owner driving an already-answered band as a display and does not. Clearing
-either — an empty array, or `interactive: false` — resets the flag as well:
+**An update that carries `actions`, `interactive`, or `textInput` is a new
+question** and reopens the band for another answer; one that carries none of
+them is the owner driving an already-answered band as a display and does not.
+Clearing one of those fields resets the flag as well:
 there is then nothing left to answer, and a flag left set would only be
 inherited by whatever the owner asks next.
 
@@ -842,8 +855,10 @@ By default the band is superimposed over whatever is already on screen. A show
 with `backdrop: true` fades the platform's opaque black scrim with the band and
 hides everything behind it until that notice leaves or is replaced.
 
-The window is never focusable and never touchable, and it never keeps the
-screen on. A show with `wakeDisplay: true` may wake a dark display through the
+The window is normally not focusable and is never touchable. While a live
+`textInput` is shown it becomes focusable only long enough to own the Android
+editor and Nexus IME; the field is rendered below the notice body and actions
+are absent. A show with `wakeDisplay: true` may wake a dark display through the
 global policy below. Updates and hides never wake it.
 
 ### Input claim
@@ -852,6 +867,11 @@ While a notice that expects input is visible, and only then. A notice expects
 input when `interactive` is true **or** it carries actions: offering answers is
 already asking for one, so a plugin shipping a choice does not also have to set
 the flag.
+
+A live `textInput` does not claim the glasses confirm gesture: the phone
+keyboard owns editing and its Enter action submits. It does own remote-input
+focus so ring or pointer input cannot leak into the UI underneath. BACK still
+dismisses the notice platform-side.
 
 - **Confirm** — ENTER or centre, meaning the firmware's *classification* of a
   touch and never the raw contact that opens one — is claimed and forwarded to
@@ -889,11 +909,11 @@ the flag.
 
 ### One question, one answer
 
-**A notice takes exactly one answer, of either kind.** Measured on device, two
+**A notice takes exactly one answer, of any kind.** Measured on device, two
 temple taps 188 ms apart fired the same reply twice; for a messaging plugin
 that is two messages sent. So the first confirm answers the band — firing
-`/notice/action` when it has a row, `/notice/input` when it does not — and from
-then on:
+`/notice/action` when it has a row, `/notice/input` when it asks for a gesture,
+or `/notice/text-submit` when its editor receives Enter — and from then on:
 
 - the row, if there was one, leaves the band and the band becomes an inert
   display;
@@ -914,13 +934,13 @@ rather than redundant: the thing being defended against is a race, and a race
 is precisely what survives one side losing its state.
 
 Asking again means sending a new question — a `/notice/update` carrying
-`actions` or `interactive`, or a fresh `/notice/show`. Answering changes nothing
+`actions`, `interactive`, or `textInput`, or a fresh `/notice/show`. Answering changes nothing
 about the band's life: the TTL and the 90 s absolute lifetime run exactly as
 they would have.
 
-A notice with actions still dies on its TTL. There is no hold-open rule, no
-scrolling inside the band, and no text entry: a notice is a question with a
-short life, not a menu. Anything the wearer needs to browse is a surface.
+A notice with actions or text input still dies on its TTL. There is no
+hold-open rule: a notice is a question with a short life, not a form or menu.
+Anything the wearer needs to browse is a surface.
 
 ## Activity protocol v1
 
@@ -1532,11 +1552,13 @@ Hub feature bits share one value space regardless of direction. Bit `2` is
 phone-to-glasses camera announcements), bit `32` is `PIN_SURFACE`, bit `64` is
 `NOTICE_SURFACE`, bit `128` is `ACTIVITY_SURFACE`, bit `256` is
 `PHONE_ASSISTED_SETUP`, bit `512` is `TTS`, and bit `1024` is `INK_SURFACE`.
+Bit `2048` is `NOTICE_TEXT_INPUT`; it is meaningful only together with
+`NOTICE_SURFACE` and the exact notice-surface version.
 The phone does not
 include renderer bits in camera announcements. The glasses hub announces its
 renderer after either remote link connects by sending
 `/system/hub/capabilities` with
-`{"version":1,"features":1762,"imageSurfaceVersion":1,"pinSurfaceVersion":1,"noticeSurfaceVersion":3,"activitySurfaceVersion":1,"inkSurfaceVersion":1,"ttsVersion":1,"maxImageBytes":65536,"versionName":"1.0.0","setupComplete":true}`
+`{"version":1,"features":3810,"imageSurfaceVersion":1,"pinSurfaceVersion":1,"noticeSurfaceVersion":3,"activitySurfaceVersion":1,"inkSurfaceVersion":1,"ttsVersion":1,"maxImageBytes":65536,"versionName":"1.0.0","setupComplete":true}`
 when every current renderer feature, including runtime TTS, is available. The
 `features` value is the bitwise sum; TTS may be absent at runtime.
 `versionName` is the optional glasses app `BuildConfig.VERSION_NAME`; older glasses
@@ -1725,6 +1747,13 @@ text, password, or extracted document. The phone keeps typed/composing text
 ephemeral, redacts text-bearing model strings, sets `FLAG_SECURE` for sensitive
 sessions, and clears state on close or transport loss. Implementations must not
 persist or log command JSON.
+
+`session_open` may additionally carry `autoOpenPhoneKeyboard: true`. The
+glasses emit it once only when the active editor belongs to the glasses hub
+package and carries its process-private notice-input marker. The phone then
+brings `RemoteInputActivity` forward and requests its keyboard once for that
+session. Native third-party fields cannot know the per-process marker, and no
+plugin can originate this trusted `/core/` metadata.
 
 ### Remote navigation
 

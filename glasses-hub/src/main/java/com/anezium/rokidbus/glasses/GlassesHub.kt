@@ -641,6 +641,7 @@ object GlassesHub {
             features = BusCapabilityBits.IMAGE_SURFACE or
                 BusCapabilityBits.PIN_SURFACE or
                 BusCapabilityBits.NOTICE_SURFACE or
+                BusCapabilityBits.NOTICE_TEXT_INPUT or
                 BusCapabilityBits.ACTIVITY_SURFACE or
                 BusCapabilityBits.INK_SURFACE or
                 (if (ttsAvailable) BusCapabilityBits.TTS else 0),

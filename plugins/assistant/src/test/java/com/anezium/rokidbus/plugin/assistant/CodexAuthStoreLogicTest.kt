@@ -15,6 +15,7 @@ class CodexAuthStoreLogicTest {
         assertTrue(store.keepConversation())
         assertTrue(store.keepPhotosInConversations())
         assertTrue(store.speakAnswers())
+        assertFalse(store.phoneKeyboardInputEnabled())
         assertEquals(CodexAuthStore.DEFAULT_IDLE_WINDOW_MINUTES, store.conversationIdleWindowMinutes())
         assertEquals("", store.assistantMemory())
         assertTrue(store.syncAccountContext())
@@ -34,6 +35,17 @@ class CodexAuthStoreLogicTest {
 
         store.setSpeakAnswers(true)
         assertTrue(store.speakAnswers())
+    }
+
+    @Test
+    fun phoneKeyboardInputDefaultsOffAndRoundTrips() {
+        val store = CodexAuthStore(FakeSharedPreferences())
+
+        assertFalse(store.phoneKeyboardInputEnabled())
+        store.setPhoneKeyboardInputEnabled(true)
+        assertTrue(store.phoneKeyboardInputEnabled())
+        store.setPhoneKeyboardInputEnabled(false)
+        assertFalse(store.phoneKeyboardInputEnabled())
     }
 
     @Test
@@ -228,12 +240,14 @@ class CodexAuthStoreLogicTest {
         store.setKeepConversation(false)
         store.setKeepPhotosInConversations(false)
         store.setSpeakAnswers(false)
+        store.setPhoneKeyboardInputEnabled(true)
         store.setConversationIdleWindowMinutes(30)
         store.setAssistantMemory("Uses metric units.")
 
         assertFalse(store.keepConversation())
         assertFalse(store.keepPhotosInConversations())
         assertFalse(store.speakAnswers())
+        assertTrue(store.phoneKeyboardInputEnabled())
         assertEquals(30, store.conversationIdleWindowMinutes())
         assertEquals("Uses metric units.", store.assistantMemory())
 
@@ -242,6 +256,7 @@ class CodexAuthStoreLogicTest {
         assertTrue(store.keepConversation())
         assertTrue(store.keepPhotosInConversations())
         assertTrue(store.speakAnswers())
+        assertFalse(store.phoneKeyboardInputEnabled())
         assertEquals(CodexAuthStore.DEFAULT_IDLE_WINDOW_MINUTES, store.conversationIdleWindowMinutes())
         assertEquals("", store.assistantMemory())
     }

@@ -41,6 +41,14 @@ progress band while Assistant prepares the text fallback.
 These are Nexus surfaces rendered with native glasses Views, not windows from
 Rokid's private AIUI runtime.
 
+Phone input is optional and disabled by default. When enabled in Assistant
+settings, the listening notice offers **Write** alongside normal speech. Picking
+it cancels the active speech capture, replaces the choice with a platform-owned
+notice field, and opens Nexus's phone keyboard. Phone-keyboard Enter submits the
+field through the owner-scoped notice callback and follows the same assistant
+pipeline as a final speech transcript. The plugin never receives access to the
+trusted `/core/remote-input/*` routes.
+
 Calendar access is local to the phone plugin. It uses Android's Calendar
 Provider under the standard `READ_CALENDAR` and `WRITE_CALENDAR` runtime
 permissions; it is not a Nexus descriptor capability, SDK surface, receive

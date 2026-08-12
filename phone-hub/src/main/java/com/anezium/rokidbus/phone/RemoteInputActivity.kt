@@ -46,6 +46,8 @@ class RemoteInputActivity : Activity() {
     private var viewState = RemoteInputViewState.INITIAL
     private var receiverRegistered = false
     private var closeSent = false
+    private var autoShowKeyboardSessionId: String? = null
+    private var autoShownSessionId: String? = null
 
     private val stateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -56,10 +58,19 @@ class RemoteInputActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        consumeLaunchIntent(intent)
         publisher = BroadcastRemoteInputPublisher(applicationContext)
         trackpadPublisher = RemoteTrackpadPublisher(applicationContext)
         buildUi()
         renderState()
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        consumeLaunchIntent(intent)
+        if (::publisher.isInitialized) publisher.requestState()
+        maybeShowKeyboard()
     }
 
     override fun onStart() {
@@ -398,10 +409,43 @@ class RemoteInputActivity : Activity() {
             resetLocalEditor()
             sequence.reset(next.sessionId)
         }
+        if (sessionChanged && next.sessionId != autoShowKeyboardSessionId) {
+            autoShowKeyboardSessionId = null
+        }
+        if (!next.editorEnabled) {
+            hideKeyboard()
+            editor.clearFocus()
+        }
         renderState()
-        // The keyboard opens when the wearer asks for it, never because the
-        // glasses focused a field: navigating through a screen full of inputs
-        // otherwise reopens the IME under your thumb on every step.
+        maybeShowKeyboard()
+    }
+
+    private fun consumeLaunchIntent(intent: Intent?) {
+        if (intent?.getBooleanExtra(EXTRA_AUTO_SHOW_KEYBOARD, false) == true) {
+            autoShowKeyboardSessionId = intent
+                .getStringExtra(EXTRA_AUTO_SHOW_KEYBOARD_SESSION_ID)
+                ?.takeIf(String::isNotBlank)
+            intent.removeExtra(EXTRA_AUTO_SHOW_KEYBOARD)
+            intent.removeExtra(EXTRA_AUTO_SHOW_KEYBOARD_SESSION_ID)
+        }
+    }
+
+    private fun maybeShowKeyboard() {
+        val sessionId = viewState.sessionId ?: return
+        val requestedSessionId = autoShowKeyboardSessionId ?: return
+        if (requestedSessionId == sessionId && autoShownSessionId == sessionId) {
+            autoShowKeyboardSessionId = null
+            return
+        }
+        if (
+            requestedSessionId != sessionId ||
+            !viewState.editorEnabled
+        ) {
+            return
+        }
+        autoShowKeyboardSessionId = null
+        autoShownSessionId = sessionId
+        editor.post(::showKeyboard)
     }
 
     private fun renderState() {
@@ -553,6 +597,13 @@ class RemoteInputActivity : Activity() {
     private fun hideKeyboard() {
         (getSystemService(INPUT_METHOD_SERVICE) as? InputMethodManager)
             ?.hideSoftInputFromWindow(editor.windowToken, 0)
+    }
+
+    companion object {
+        internal const val EXTRA_AUTO_SHOW_KEYBOARD =
+            "com.anezium.rokidbus.phone.extra.AUTO_SHOW_KEYBOARD"
+        internal const val EXTRA_AUTO_SHOW_KEYBOARD_SESSION_ID =
+            "com.anezium.rokidbus.phone.extra.AUTO_SHOW_KEYBOARD_SESSION_ID"
     }
 }
 
