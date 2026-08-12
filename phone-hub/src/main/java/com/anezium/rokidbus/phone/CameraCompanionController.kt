@@ -127,6 +127,10 @@ class CameraCompanionController(
     @Synchronized
     fun activeSessionId(): String? = active?.sessionId
 
+    @Synchronized
+    fun activePrincipal(sessionId: String): PhonePluginPrincipal? =
+        active?.takeIf { it.sessionId == sessionId }?.principal
+
     private fun handleSessionState(envelope: BusEnvelope) {
         val sessionId = envelope.payload.optString("sessionId")
         if (sessionId.isBlank()) return

@@ -14,7 +14,6 @@ object PathRules {
     private val hubOnlyPaths = setOf(
         BusPaths.TTS_CANCEL,
         BusPaths.VIDEO_SESSION_STATE,
-        BusPaths.VIDEO_LINK_OFFER,
     )
     private val lifecyclePrefixes = setOf("/system/plugin")
     private val httpReplyPrefixes = setOf("/http/request/reply")
@@ -34,7 +33,7 @@ object PathRules {
         BusPaths.CAMERA_SNAPSHOT_ERROR,
     )
     private val mediaSyncReceivePrefixes = setOf(BusPaths.MEDIA_SYNC_STATUS)
-    private val videoReceivePrefixes = setOf(BusPaths.VIDEO_SESSION_STATE, BusPaths.VIDEO_LINK_OFFER)
+    private val videoReceivePrefixes = setOf(BusPaths.VIDEO_SESSION_STATE)
 
     fun normalizeAbsolute(path: String): String? {
         val trimmed = path.trim()
@@ -84,7 +83,7 @@ object PathRules {
         BusPaths.CAMERA_SNAPSHOT_RESULT, BusPaths.CAMERA_SNAPSHOT_ERROR,
         BusPaths.WIRELESS_ADB_REPLY,
         BusPaths.INK_EVENT,
-        BusPaths.VIDEO_SESSION_STATE, BusPaths.VIDEO_LINK_OFFER,
+        BusPaths.VIDEO_SESSION_STATE,
         -> true
         else -> false
     }
@@ -96,7 +95,7 @@ object PathRules {
         BusPaths.CAMERA_SNAPSHOT_RESULT, BusPaths.CAMERA_SNAPSHOT_ERROR,
         BusPaths.WIRELESS_ADB_REPLY,
         BusPaths.INK_EVENT,
-        BusPaths.VIDEO_SESSION_STATE, BusPaths.VIDEO_LINK_OFFER,
+        BusPaths.VIDEO_SESSION_STATE,
         -> true
         else -> matchesPrefix(path, "/system/plugin")
     }

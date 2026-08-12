@@ -24,6 +24,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.Process
+import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.util.Log
 import com.anezium.rokidbus.client.IBusCallback
@@ -37,6 +38,11 @@ import com.anezium.rokidbus.shared.BusCapabilityBits
 import com.anezium.rokidbus.shared.BusConstants
 import com.anezium.rokidbus.shared.BusEnvelope
 import com.anezium.rokidbus.shared.BusPaths
+import com.anezium.rokidbus.shared.BulkLinkContract
+import com.anezium.rokidbus.shared.BulkLinkLeaseState
+import com.anezium.rokidbus.shared.BulkLinkOffer
+import com.anezium.rokidbus.shared.BulkLinkPurpose
+import com.anezium.rokidbus.shared.BulkLinkState
 import com.anezium.rokidbus.shared.FrameProtocol
 import com.anezium.rokidbus.shared.ForegroundSurfacePathPolicy
 import com.anezium.rokidbus.shared.GlassesHubCapabilitiesContract
@@ -246,6 +252,7 @@ class BusHubService : Service() {
     private val registrations = CopyOnWriteArrayList<Registration>()
     private val videoSessionLock = Any()
     @Volatile private var activeVideoSession: ActiveVideoSession? = null
+    @Volatile private var pendingBulkOffer: BulkLinkOffer? = null
     private val glassAiAssistActive = AtomicBoolean(false)
     private val snapshotCaptureScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val snapshotCapture = CxrSnapshotCapture()
@@ -285,6 +292,7 @@ class BusHubService : Service() {
     private lateinit var externalPluginController: ExternalPluginController
     private lateinit var cameraConsumerReadiness: CameraConsumerReadiness
     private lateinit var cameraCompanionController: CameraCompanionController
+    private lateinit var phoneBulkLinkCoordinator: PhoneBulkLinkCoordinator
     private lateinit var pluginGuardianCoordinator: PluginGuardianCoordinator
     private lateinit var mediaSyncCoordinator: MediaSyncCoordinator
     private lateinit var coreRemoteBridge: PhoneCoreRemoteBridge
@@ -405,6 +413,30 @@ class BusHubService : Service() {
         override fun linkState(): Int = this@BusHubService.linkState()
 
         override fun capabilities(): Int = this@BusHubService.capabilities()
+
+        override fun openBulkChannel(sessionId: String, purpose: String): ParcelFileDescriptor? {
+            val requestedPurpose = BulkLinkPurpose.fromWireValue(purpose) ?: return null
+            val matches = registrations.filter { it.uid == Binder.getCallingUid() && it.principal != null }
+            if (matches.size != 1) return null
+            val registration = matches.single()
+            val principal = registration.principal ?: return null
+            val requiredCapability = when (requestedPurpose) {
+                BulkLinkPurpose.CAMERA -> PluginCapability.CAMERA
+                BulkLinkPurpose.VIDEO -> PluginCapability.VIDEO_PLAYBACK
+            }
+            if (requiredCapability !in registration.grantedCapabilities) return null
+            val ownsFeatureSession = when (requestedPurpose) {
+                BulkLinkPurpose.CAMERA ->
+                    cameraCompanionController.activePrincipal(sessionId)?.grantKey() == principal.grantKey()
+                BulkLinkPurpose.VIDEO -> synchronized(videoSessionLock) {
+                    activeVideoSession?.let {
+                        it.sessionId == sessionId && it.ownerPluginId == principal.descriptor.id
+                    } == true
+                }
+            }
+            if (!ownsFeatureSession) return null
+            return phoneBulkLinkCoordinator.openChannel(sessionId, requestedPurpose, principal)
+        }
 
         /**
          * Answered from the registration this UID already holds, so it can only ever
@@ -818,6 +850,11 @@ class BusHubService : Service() {
             resolveApprovedConsumer = cameraConsumerReadiness::resolveApproved,
             logger = ::log,
         )
+        phoneBulkLinkCoordinator = PhoneBulkLinkCoordinator(
+            context = applicationContext,
+            notifyOwner = ::deliverBulkLinkState,
+            logger = ::log,
+        )
         pluginRegistry = PhonePluginRegistry(
             context = applicationContext,
             plugins = emptyList(),
@@ -1010,6 +1047,8 @@ class BusHubService : Service() {
         if (::pluginRegistry.isInitialized) pluginRegistry.close()
         inkSurfaceCoordinator.close()
         stopActiveVideo(ownerPluginId = null, reason = "hub_destroyed")
+        pendingBulkOffer = null
+        if (::phoneBulkLinkCoordinator.isInitialized) phoneBulkLinkCoordinator.close()
         if (::cameraCompanionController.isInitialized) cameraCompanionController.close()
         if (::mediaSyncCoordinator.isInitialized) mediaSyncCoordinator.close()
         synchronized(phoneAssistedPairingLock) { activePhoneAssistedPairing = null }
@@ -1317,6 +1356,11 @@ class BusHubService : Service() {
     }
 
     private fun routeRemote(envelope: BusEnvelope) {
+        if (envelope.path == BusPaths.CORE_BULK_LINK_OFFER) {
+            handleBulkLinkOffer(envelope.payload)
+            recordRemoteRoute(envelope, PluginBusJournal.Verdict.OK)
+            return
+        }
         if (envelope.path == "/hub/probe") {
             recordRemoteRoute(envelope, PluginBusJournal.Verdict.OK)
             log("hub probe received from glasses")
@@ -1375,9 +1419,25 @@ class BusHubService : Service() {
             recordRemoteRoute(envelope, PluginBusJournal.Verdict.OK)
             return
         }
+        if (envelope.path == BusPaths.CAMERA_SESSION_STATE &&
+            envelope.payload.optString("state") == "closed" &&
+            ::cameraCompanionController.isInitialized &&
+            ::phoneBulkLinkCoordinator.isInitialized
+        ) {
+            val sessionId = envelope.payload.optString("sessionId")
+            if (pendingBulkOffer?.sessionId == sessionId) pendingBulkOffer = null
+            cameraCompanionController.activePrincipal(sessionId)?.let { principal ->
+                phoneBulkLinkCoordinator.release(principal, sessionId)
+            }
+        }
         if (::cameraCompanionController.isInitialized &&
             cameraCompanionController.onRemoteEnvelope(envelope)
         ) {
+            if (envelope.path == BusPaths.CAMERA_SESSION_STATE &&
+                envelope.payload.optString("state") == "opened"
+            ) {
+                drainPendingBulkOffer(envelope.payload.optString("sessionId"))
+            }
             recordRemoteRoute(envelope, PluginBusJournal.Verdict.OK)
             return
         }
@@ -1438,6 +1498,78 @@ class BusHubService : Service() {
         }
         recordRemoteRoute(envelope, PluginBusJournal.Verdict.REJECTED, "NO_LOCAL_CLIENT")
         sendRemote(errorEnvelope(envelope.id, "NO_LOCAL_CLIENT"))
+    }
+
+    private fun handleBulkLinkOffer(payload: JSONObject) {
+        val offer = BulkLinkContract.fromJson(payload) ?: return
+        val owner = when (offer.purpose) {
+            BulkLinkPurpose.VIDEO -> synchronized(videoSessionLock) {
+                activeVideoSession
+                    ?.takeIf { it.sessionId == offer.sessionId && it.ownerPluginId == offer.ownerPluginId }
+                    ?.ownerPluginId
+                    ?.let(::findLivePrincipal)
+            }
+            BulkLinkPurpose.CAMERA -> cameraCompanionController.activePrincipal(offer.sessionId)
+        }
+        if (owner == null) {
+            if (offer.purpose == BulkLinkPurpose.CAMERA) pendingBulkOffer = offer
+            return
+        }
+        if (offer.purpose == BulkLinkPurpose.VIDEO && offer.ownerPluginId != owner.descriptor.id) return
+        if (offer.purpose == BulkLinkPurpose.CAMERA &&
+            offer.ownerPluginId != null && offer.ownerPluginId != owner.descriptor.id
+        ) {
+            return
+        }
+        pendingBulkOffer = null
+        phoneBulkLinkCoordinator.acceptOffer(offer.copy(ownerPluginId = owner.descriptor.id), owner)
+    }
+
+    private fun drainPendingBulkOffer(sessionId: String) {
+        val pending = pendingBulkOffer?.takeIf {
+            it.purpose == BulkLinkPurpose.CAMERA && it.sessionId == sessionId
+        } ?: return
+        pendingBulkOffer = null
+        handleBulkLinkOffer(BulkLinkContract.toJson(pending))
+    }
+
+    private fun findLivePrincipal(pluginId: String): PhonePluginPrincipal? = registrations
+        .mapNotNull(Registration::principal)
+        .filter { it.descriptor.id == pluginId }
+        .distinctBy(PhonePluginPrincipal::grantKey)
+        .singleOrNull()
+
+    private fun deliverBulkLinkState(principal: PhonePluginPrincipal, path: String, payload: JSONObject) {
+        if (path != BusPaths.CORE_BULK_LINK_STATE) return
+        val purpose = BulkLinkPurpose.fromWireValue(payload.optString("purpose")) ?: return
+        val state = when (payload.optString("state")) {
+            "link_ready" -> BulkLinkState.OPEN
+            "error" -> BulkLinkState.ERROR
+            else -> return
+        }
+        val sessionId = payload.optString("sessionId")
+        val epoch = payload.optLong("epoch")
+        val reason = payload.optString("code").takeIf { it.isNotBlank() }
+        runCatching {
+            BulkLinkContract.stateToJson(
+                BulkLinkLeaseState(sessionId, purpose, epoch, state, reason),
+            )
+        }.getOrNull()?.let { statePayload ->
+            sendRemote(BusEnvelope(path = BusPaths.CORE_BULK_LINK_STATE, payload = statePayload))
+        }
+        val featurePath = when (purpose) {
+            BulkLinkPurpose.CAMERA -> BusPaths.CAMERA_LINK_OFFER
+            BulkLinkPurpose.VIDEO -> BusPaths.VIDEO_SESSION_STATE
+        }
+        deliverExternalLifecycle(
+            principal,
+            featurePath,
+            UUID.randomUUID().toString(),
+            JSONObject(payload.toString())
+                .put("pluginId", principal.descriptor.id)
+                .put("ownerPluginId", principal.descriptor.id)
+                .put("mode", "nexus_p2p"),
+        )
     }
 
     private fun recordLocalRoute(
@@ -2796,6 +2928,13 @@ class BusHubService : Service() {
                     activeVideoSession = ActiveVideoSession(sessionId, ownerPluginId)
                 }
                 "closed", "error", "busy" -> if (activeVideoSession?.sessionId == sessionId) {
+                    activeVideoSession?.let { ended ->
+                        findLivePrincipal(ended.ownerPluginId)?.let { principal ->
+                            if (::phoneBulkLinkCoordinator.isInitialized) {
+                                phoneBulkLinkCoordinator.release(principal, sessionId)
+                            }
+                        }
+                    }
                     activeVideoSession = null
                 }
             }
@@ -2808,6 +2947,11 @@ class BusHubService : Service() {
                 ?.takeIf { ownerPluginId == null || it.ownerPluginId == ownerPluginId }
                 ?.also { activeVideoSession = null }
         } ?: return
+        findLivePrincipal(session.ownerPluginId)?.let { principal ->
+            if (::phoneBulkLinkCoordinator.isInitialized) {
+                phoneBulkLinkCoordinator.release(principal, session.sessionId)
+            }
+        }
         sendRemote(
             BusEnvelope(
                 path = BusPaths.VIDEO_SESSION_CONTROL,
@@ -5609,6 +5753,10 @@ class BusHubService : Service() {
             cameraCompanionController.onLinkLost()
         }
         if (state and (LinkStateBits.CXR_CONTROL_UP or LinkStateBits.SPP_DATA_UP) == 0) {
+            pendingBulkOffer = null
+            if (::phoneBulkLinkCoordinator.isInitialized) {
+                phoneBulkLinkCoordinator.onControlLinkLost()
+            }
             if (::mediaSyncCoordinator.isInitialized) mediaSyncCoordinator.onLinkLost()
             synchronized(videoSessionLock) { activeVideoSession = null }
             remoteImageSurfaceVersion = 0

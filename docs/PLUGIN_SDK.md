@@ -69,10 +69,19 @@ text and never touches audio.
 
 `video_playback` grants the owner-scoped video session routes. Plugins send
 `/video/session/open` and `/video/session/control`, and declare
-`/video/session/state,/video/link/offer` to receive their own replies. The phone hub
+`/video/session/state` to receive their own replies. The phone hub
 overwrites `pluginId` and `ownerPluginId` from the authenticated registration.
 `NexusPluginClient.supportsVideoPlayback` reports the live glasses feature bit;
 plugins must retain a poster or ordinary surface fallback when it is false.
+
+High-bandwidth camera and video bytes use the hub-owned Core Bulk Link. A plugin
+can request an already-authorized local endpoint with
+`nexusClient?.openBulkChannel(sessionId, BulkLinkPurpose.VIDEO)` (or the protected
+`nexusBulkChannel` helper in `NexusPluginService`). This returns a
+`NexusBulkChannel` only for the authenticated owner of a live session with the
+matching capability; it returns null otherwise. It exposes input/output streams
+only. Wi-Fi SSID, passphrase, group-owner address, port, lease token, and internal
+handshake metadata are never included in plugin messages or APIs.
 
 Descriptor capabilities authorize Nexus hub resources and routes. They do not
 replace Android permissions for a phone-local platform API. A headless plugin

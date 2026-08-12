@@ -149,7 +149,7 @@ Paths a plugin can **send to** (gated by capability):
 | `/stt/session/start`, `/stt/session/stop` (+ replies), `/stt/state`, `/stt/partial`, `/stt/final`, `/stt/session/ended` | `stt` | Hub speech-to-text, targeted to the verified session binder. Use `nexusSpeechSession(callbacks)`; never log transcripts. |
 | `/tts/speak`, `/tts/stop` | `tts` | Speech out of the glasses. Use `nexusTtsSession(callbacks)`. `/tts/started` and `/tts/done` are **receive-only** — declare exactly those two in RECEIVE_PREFIXES, not `/tts`. Text is capped at 1024 characters, five commands per second, one utterance at a time on the glasses. Voice and speed belong to the wearer's Rokid assistant settings; nothing may change them. |
 | `/camera/freeze/result`, `/camera/overlay`, `/camera/link/offer` | `camera` | Camera platform sends (signer/grant-bound). `/camera/link/offer` is bidirectional so an approved camera plugin can advertise a reverse transport role. `/camera/session/state` and `/camera/freeze/image/chunk` remain **receive-only** (declare them in RECEIVE_PREFIXES); sending them is rejected |
-| `/video/session/open`, `/video/session/control` | `video_playback` | Open, pause, resume, or stop the plugin's compressed-media session. `/video/session/state` and `/video/link/offer` are owner-scoped receive paths; credentials and media packets never travel on the Bluetooth bus. |
+| `/video/session/open`, `/video/session/control` | `video_playback` | Open, pause, resume, or stop the plugin's compressed-media session. `/video/session/state` is the owner-scoped receive path; credentials and media packets never travel on the Bluetooth bus. |
 | `/mediasync/settings`, `/mediasync/now` | `mediasync` | Photo sync control: partial settings updates (`autoSyncOnCharge`, `deleteAfterSync`; an empty request is a refresh) and a manual "sync now". `/mediasync/status` is **receive-only** (declare it in RECEIVE_PREFIXES); every other `/mediasync/…` path is hub-to-hub and rejected if you send it |
 | `/debug/adb/request` → `/debug/adb/reply` | `wireless_debugging` | High-risk wireless ADB control. Actions are `status`, `enable`, `start_pairing`, `cancel_pairing`, and `disable`. Replies are owner-scoped direct replies and need no receive prefix. The phone hub stamps the authenticated plugin id; plugins must not add or trust one themselves. Pairing codes expire after two minutes and must not be persisted or logged; code-bearing windows use `FLAG_SECURE`, and only an explicit user action may copy a sensitive-marked command to the Android clipboard. |
 | `/plugin/<yourId>/…` | — | Your private namespace (must match your declared receive prefixes) |
@@ -181,6 +181,14 @@ the versioned `GlassInfo` fields.
 Transport is the hub's business: local delivery first, CXR for JSON ≤ 3 KiB,
 SPP otherwise. Binary is never queued for a sleeping client — an undeliverable
 binary frame is dropped, not retried.
+
+Camera and video high-bandwidth bytes are the exception to the control bus, not
+an invitation to manage networking in a plugin. After the matching owner-scoped
+`link_ready` state, use `NexusPluginClient.openBulkChannel(sessionId, purpose)`
+or `NexusPluginService.nexusBulkChannel`. The returned `NexusBulkChannel` is one
+full-duplex stream for that live feature session. It exposes no SSID, passphrase,
+peer address, TCP port, handshake token, or Wi-Fi group operation; `null` means
+the lease is not live or the caller is not its approved owner.
 
 ## 7. Enforced limits (the ones that reject or crash)
 

@@ -13,6 +13,10 @@
     <string name="onb_bluetooth_body">Nexus needs the nearby-devices permission to hold the glasses link.</string>
     <string name="onb_bluetooth_action">Allow</string>
 
+    <string name="onb_bulk_link_title">Allow direct media links</string>
+    <string name="onb_bulk_link_body">Nexus uses a private Wi-Fi Direct link for camera frames, video, and future high-bandwidth plugins. No router or Internet connection is required.</string>
+    <string name="onb_bulk_link_action">Allow</string>
+
     <string name="onb_install_title">Install Nexus on your glasses</string>
     <string name="onb_install_body">Nexus downloads the latest glasses app and installs it over Hi Rokid.</string>
     <string name="onb_install_action">Install Nexus</string>

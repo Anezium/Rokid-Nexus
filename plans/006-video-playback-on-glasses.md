@@ -44,6 +44,16 @@ refactor. LOHS reverse mode is also still deferred. No hardware behavior has
 been claimed: codec compatibility, audio routing, A/V sync, thermals, battery,
 P2P stability, and the HLS concatenation path all remain device gates.
 
+### Bulk Link contract update — 2026-08-12
+
+The camera and video P2P endpoints now converge on the shared Core Bulk Link v1
+lease. Its hub-only offer contains the P2P credentials, token and a fresh positive
+epoch; plugins receive only a hub-authorized local file descriptor after
+their session and grant are checked. The core handshake precedes raw bytes, is
+bounded to 4096 bytes, and the lease has a 40000 ms warm grace. The fixed P2P port
+is 38400. This contract replaces sending video P2P credentials through the
+owner-scoped `/video/link/offer` callback.
+
 ## Why this matters
 
 Feeds now shows a photo, and for GIFs/videos it shows the **poster** — one still

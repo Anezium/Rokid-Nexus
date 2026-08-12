@@ -10,6 +10,8 @@ import android.os.SystemClock
 import android.util.Log
 import com.anezium.rokidbus.client.PluginRegistrationResult
 import com.anezium.rokidbus.client.plugin.NexusPluginService
+import com.anezium.rokidbus.client.plugin.NexusBulkChannel
+import com.anezium.rokidbus.shared.BulkLinkPurpose
 import com.anezium.rokidbus.shared.BusPaths
 import com.anezium.rokidbus.shared.CameraLinkEndpointOffer
 import com.anezium.rokidbus.shared.CameraLinkOfferContract
@@ -29,6 +31,7 @@ import java.util.concurrent.atomic.AtomicLong
 
 internal interface LensRuntimeHost {
     fun send(path: String, id: String, payload: JSONObject): Boolean
+    fun openBulkChannel(sessionId: String, purpose: BulkLinkPurpose): NexusBulkChannel?
     fun log(message: String)
 }
 
@@ -113,6 +116,9 @@ class LensPluginService : NexusPluginService() {
         override fun send(path: String, id: String, payload: JSONObject): Boolean =
             nexusClient?.send(path, id, payload) == true
 
+        override fun openBulkChannel(sessionId: String, purpose: BulkLinkPurpose): NexusBulkChannel? =
+            nexusBulkChannel(sessionId, purpose)
+
         override fun log(message: String) {
             Log.i(TAG, message)
         }
@@ -185,9 +191,11 @@ internal class LensCameraSession(
     private val frozenProcessingGate: FrozenProcessingGate
     private val decoder: LatestFrameDecoder
     private val imageLink: PhoneLensImageLink
+    private var coreImageLink: CorePhoneLensImageLink? = null
     private val firstFrameLogged = AtomicBoolean(false)
     @Volatile private var sessionId: String? = null
     @Volatile private var sessionStartedAtMs = 0L
+    @Volatile private var legacyLinkMode = false
 
     init {
         liveOcr = LiveOcrRunner(
@@ -272,6 +280,10 @@ internal class LensCameraSession(
                     config.optInt("fps") !in 1..60
                 ) return
                 sessionGeneration.incrementAndGet()
+                coreImageLink?.close()
+                coreImageLink = null
+                legacyLinkMode = config.optString("linkMode") ==
+                    com.anezium.rokidbus.shared.CameraLinkMode.LOHS_REVERSE.wireValue
                 sessionId = incomingSession
                 sessionStartedAtMs = SystemClock.elapsedRealtime()
                 firstFrameLogged.set(false)
@@ -287,8 +299,19 @@ internal class LensCameraSession(
     }
 
     private fun handleLinkOffer(payload: JSONObject) {
+        if (!legacyLinkMode &&
+            payload.optString("mode") == "nexus_p2p" &&
+            payload.optString("state") == "link_ready"
+        ) {
+            val incomingSession = payload.optString("sessionId")
+            if (incomingSession == sessionId) {
+                coreImageLink?.close()
+                coreImageLink = CorePhoneLensImageLink(host::openBulkChannel, ::onLinkPacket, host::log).also { it.open(incomingSession) }
+            }
+            return
+        }
         val offer = PhoneLensLinkOffer.parse(payload) ?: return
-        if (offer.sessionId != sessionId) return
+        if (!legacyLinkMode || offer.sessionId != sessionId) return
         imageLink.updateOffer(payload)
     }
 
@@ -794,10 +817,13 @@ internal class LensCameraSession(
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
         sessionId = null
+        legacyLinkMode = false
         frozenProcessingGate.close()
         frozenChunkAssembler.clear()
         synchronized(processedFrozenRequests) { processedFrozenRequests.clear() }
         imageLink.close()
+        coreImageLink?.close()
+        coreImageLink = null
         decoder.close()
         liveOcr.close()
         sessionGeneration.incrementAndGet()

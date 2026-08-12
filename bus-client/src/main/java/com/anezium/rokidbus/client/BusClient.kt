@@ -10,10 +10,12 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.RemoteException
+import android.os.ParcelFileDescriptor
 import android.util.Log
 import com.anezium.rokidbus.shared.BusConstants
 import com.anezium.rokidbus.shared.BusCapabilityBits
 import com.anezium.rokidbus.shared.BusPaths
+import com.anezium.rokidbus.shared.BulkLinkPurpose
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.withTimeout
 import org.json.JSONObject
@@ -308,6 +310,10 @@ class BusClient(
         val id = pluginId ?: return null
         return runCatching { service?.approvedCapabilities(id) }.getOrNull()
     }
+
+    /** Returns a hub-authorized endpoint for a live lease, or null when unavailable or denied. */
+    fun openBulkChannel(sessionId: String, purpose: BulkLinkPurpose): ParcelFileDescriptor? =
+        runCatching { service?.openBulkChannel(sessionId, purpose.wireValue) }.getOrNull()
 
     fun supportsImageSurface(): Boolean =
         capabilities() and BusCapabilityBits.IMAGE_SURFACE != 0 &&

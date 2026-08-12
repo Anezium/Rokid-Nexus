@@ -4,6 +4,7 @@ import android.app.Activity
 import android.util.Base64
 import android.graphics.Color
 import android.os.Bundle
+import android.os.ParcelFileDescriptor
 import android.view.KeyEvent
 import android.view.SurfaceHolder
 import android.view.SurfaceView
@@ -17,18 +18,23 @@ import com.anezium.rokidbus.client.BusClient
 import com.anezium.rokidbus.client.BusEvent
 import com.anezium.rokidbus.client.HubTarget
 import com.anezium.rokidbus.shared.BusPaths
+import com.anezium.rokidbus.shared.BulkLinkPurpose
 import com.anezium.rokidbus.shared.LinkStateBits
 import com.anezium.rokidbus.shared.MediaLinkPacket
 import com.anezium.rokidbus.shared.MediaLinkPacketType
+import com.anezium.rokidbus.shared.MediaLinkProtocol
 import org.json.JSONObject
 import java.util.UUID
+import java.io.FileInputStream
+import java.util.concurrent.Executors
 
 /** Full-screen, foreground video consumer. It is intentionally independent of SurfaceController. */
 class VideoActivity : Activity(), SurfaceHolder.Callback {
     private lateinit var videoSurface: SurfaceView
     private lateinit var status: TextView
     private var busClient: BusClient? = null
-    private var link: VideoLink? = null
+    private var bulkChannel: ParcelFileDescriptor? = null
+    private val bulkReader = Executors.newSingleThreadExecutor { Thread(it, "video-bulk-reader").apply { isDaemon = true } }
     private var decoder: VideoH264Decoder? = null
     private var audioDecoder: VideoAacDecoder? = null
     private var surfaceReady = false
@@ -36,6 +42,7 @@ class VideoActivity : Activity(), SurfaceHolder.Callback {
     private var sessionId: String = ""
     private var ownerPluginId: String = ""
     private var epoch = Long.MIN_VALUE
+    private var helloAccepted = false
     private var hadPhoneLink = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -66,6 +73,7 @@ class VideoActivity : Activity(), SurfaceHolder.Callback {
         stopSession("closed")
         busClient?.close()
         busClient = null
+        bulkReader.shutdownNow()
         super.onDestroy()
     }
 
@@ -79,6 +87,7 @@ class VideoActivity : Activity(), SurfaceHolder.Callback {
             sessionId = requested
             ownerPluginId = requestedOwner
             epoch = Long.MIN_VALUE
+            helloAccepted = false
             startLinkIfReady()
         }
     }
@@ -158,36 +167,41 @@ class VideoActivity : Activity(), SurfaceHolder.Callback {
     }
 
     private fun startLinkIfReady() {
-        if (!surfaceReady || link != null || isFinishing) return
-        val activeSession = sessionId
-        requestGlassesWifi(true)
+        if (!surfaceReady || bulkChannel != null || isFinishing) return
         decoder = VideoH264Decoder(videoSurface.holder.surface)
-        val newLink = VideoLink(
-            context = applicationContext,
-            sessionId = activeSession,
-            onOffer = { offer ->
-                if (activeSession == sessionId) {
-                    offer.put("pluginId", ownerPluginId)
-                    busClient?.send(BusPaths.VIDEO_LINK_OFFER, offer)
+        val channel = busClient?.openBulkChannel(sessionId, BulkLinkPurpose.VIDEO) ?: run {
+            showStatus("VIDEO LINK UNAVAILABLE")
+            publishState("error")
+            return
+        }
+        bulkChannel = channel
+        bulkReader.execute {
+            runCatching {
+                FileInputStream(channel.fileDescriptor).use { input ->
+                    while (bulkChannel === channel) {
+                        val packet = MediaLinkProtocol.read(input) ?: break
+                        handlePacket(packet)
+                    }
                 }
-            },
-            onPacket = ::handlePacket,
-            onState = { message -> runOnUiThread { showStatus(message) } },
-            onFailure = {
-                runOnUiThread {
-                    publishState("error")
-                    finish()
-                }
-            },
-        )
-        link = newLink
-        newLink.start()
-        if (newLink.isRunning()) publishState("opened")
+            }.onFailure {
+                if (bulkChannel === channel) runOnUiThread { showStatus("VIDEO LINK LOST") }
+            }
+        }
+        publishState("opened")
     }
 
     private fun handlePacket(packet: MediaLinkPacket) {
-        if (packet.epoch == 0L || (epoch != Long.MIN_VALUE && packet.epoch != epoch)) return
-        epoch = packet.epoch
+        if (packet.type == MediaLinkPacketType.HELLO) {
+            val helloSession = runCatching { JSONObject(packet.meta).optString("sessionId") }.getOrNull()
+            if (helloAccepted || packet.epoch <= 0L || helloSession != sessionId || packet.payload.isNotEmpty()) {
+                rejectStream("VIDEO LINK REJECTED")
+                return
+            }
+            epoch = packet.epoch
+            helloAccepted = true
+            return
+        }
+        if (!helloAccepted || packet.epoch != epoch) return
         when (packet.type) {
             MediaLinkPacketType.VIDEO_CONFIG -> {
                 val metadata = runCatching { JSONObject(packet.meta) }.getOrNull() ?: return
@@ -225,10 +239,19 @@ class VideoActivity : Activity(), SurfaceHolder.Callback {
             MediaLinkPacketType.AUDIO_SAMPLE -> if (!paused) audioDecoder?.queue(packet.payload, packet.ptsUs)
             MediaLinkPacketType.EOS -> runOnUiThread {
                 showStatus("VIDEO ENDED")
-                publishState("ended")
+                stopSession("closed")
+                finish()
             }
             MediaLinkPacketType.ERROR -> runOnUiThread { showStatus("VIDEO LINK ERROR") }
             else -> Unit
+        }
+    }
+
+    private fun rejectStream(message: String) {
+        runOnUiThread {
+            showStatus(message)
+            stopSession("error")
+            finish()
         }
     }
 
@@ -243,21 +266,15 @@ class VideoActivity : Activity(), SurfaceHolder.Callback {
     }
 
     private fun stopSession(state: String) {
-        if (link == null && decoder == null && audioDecoder == null) return
-        val active = link
-        link = null
-        active?.close()
+        if (bulkChannel == null && decoder == null && audioDecoder == null) return
+        val active = bulkChannel
+        bulkChannel = null
+        runCatching { active?.close() }
         decoder?.close(); decoder = null
         audioDecoder?.close(); audioDecoder = null
-        requestGlassesWifi(false)
+        epoch = Long.MIN_VALUE
+        helloAccepted = false
         publishState(state)
-    }
-
-    private fun requestGlassesWifi(enabled: Boolean) {
-        busClient?.send(
-            BusPaths.GLASSES_WIFI_REQUEST,
-            JSONObject().put("enabled", enabled).put("sessionId", sessionId),
-        )
     }
 
     private fun publishState(state: String) {

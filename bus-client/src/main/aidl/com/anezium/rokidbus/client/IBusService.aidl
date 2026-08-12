@@ -1,6 +1,7 @@
 package com.anezium.rokidbus.client;
 
 import com.anezium.rokidbus.client.IBusCallback;
+import android.os.ParcelFileDescriptor;
 
 interface IBusService {
     int apiVersion();
@@ -24,4 +25,6 @@ interface IBusService {
      * fails this one call and the SDK falls back to waiting for the message.
      */
     String approvedCapabilities(String pluginId);
+    /** Appended last: the hub authenticates the caller and validates its live bulk-link lease. */
+    ParcelFileDescriptor openBulkChannel(String sessionId, String purpose);
 }

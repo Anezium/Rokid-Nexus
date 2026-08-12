@@ -8,6 +8,7 @@ import com.anezium.rokidbus.shared.ActivitySurfacePatchResult
 import com.anezium.rokidbus.shared.ActivitySurfaceValidationResult
 import com.anezium.rokidbus.shared.BusCapabilityBits
 import com.anezium.rokidbus.shared.BusPaths
+import com.anezium.rokidbus.shared.BulkLinkPurpose
 import com.anezium.rokidbus.shared.LinkStateBits
 import com.anezium.rokidbus.shared.InkSurfaceContract
 import com.anezium.rokidbus.shared.NoticeSurfaceContract
@@ -244,6 +245,17 @@ class NexusPluginClient internal constructor(
     fun send(path: String, id: String, payload: JSONObject): Boolean {
         if (closed || !isApproved) return false
         return transport.send(path, id, payload)
+    }
+
+    /** Opens no network connection itself; the authenticated hub returns an already-authorized endpoint. */
+    fun openBulkChannel(sessionId: String, purpose: BulkLinkPurpose): NexusBulkChannel? {
+        if (closed || !isApproved) return null
+        val required = when (purpose) {
+            BulkLinkPurpose.CAMERA -> PluginCapability.CAMERA
+            BulkLinkPurpose.VIDEO -> PluginCapability.VIDEO_PLAYBACK
+        }
+        if (!hasCapability(required)) return null
+        return transport.openBulkChannel(sessionId, purpose)?.let { NexusBulkChannel(sessionId, purpose, it) }
     }
 
     internal fun sendBinary(path: String, id: String, payload: JSONObject, data: ByteArray): Boolean {

@@ -66,6 +66,7 @@ class FeedsPluginService : NexusPluginService() {
             }
             val session = video ?: VideoPlaybackSession(
                 context = applicationContext,
+                openBulkChannel = ::nexusBulkChannel,
                 sendBus = { path, payload -> nexusClient?.send(path, UUID.randomUUID().toString(), payload) == true },
                 onState = { message ->
                     Log.i(TAG, "video $message")
@@ -114,7 +115,6 @@ class FeedsPluginService : NexusPluginService() {
     override fun onNexusMessage(path: String, id: String, payload: JSONObject) {
         when (path) {
             "/video/session/state" -> video?.handleState(payload)
-            "/video/link/offer" -> video?.handleOffer(payload)
         }
     }
 

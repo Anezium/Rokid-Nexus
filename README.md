@@ -144,7 +144,7 @@ Store.
 
 Trust model: any APK may request bus access, but capabilities (`surfaces`,
 `ink_surface`, `http_proxy`, `microphone`, `stt`, `tts`, `camera`, `mediasync`,
-`assistant`, `wireless_debugging`) are granted per
+`assistant`, `wireless_debugging`, `video_playback`) are granted per
 plugin by the user, keyed to package + plugin id + signing certificate. Installation alone never grants
 anything. Developer mode adds package, signer, protocol, and route diagnostics
 plus a live bus inspector.

@@ -52,13 +52,14 @@ class CameraActivity : Activity(), TextureView.SurfaceTextureListener {
     }
 
     private var busClient: BusClient? = null
-    private var cameraLink: CameraLink? = null
+    private var cameraLink: CameraDataLink? = null
     private var streamer: CameraH264Streamer? = null
     private var streamPlan: CameraStreamPlan? = null
     private var rotationFallbackAttempted = false
     private var previewSurface: Surface? = null
     private var sessionId: String? = null
     private var sessionStartedAtMs = 0L
+    private var cameraStartupMode: CameraLinkStartupMode? = null
     private var currentFreezeRequestId: Long? = null
     private var resumed = false
     private var ready = false
@@ -208,7 +209,11 @@ class CameraActivity : Activity(), TextureView.SurfaceTextureListener {
         when (event) {
             is BusEvent.LinkState -> {
                 refreshAvailability()
-                sessionId?.let(::publishCameraSessionOpened)
+                val activeSessionId = sessionId
+                val activeStartupMode = cameraStartupMode
+                if (activeSessionId != null && activeStartupMode != null) {
+                    publishCameraSessionOpened(activeSessionId, activeStartupMode)
+                }
             }
             is BusEvent.Message -> when (event.path) {
                 BusPaths.CAMERA_OVERLAY -> handleOverlay(event.payload)
@@ -256,14 +261,17 @@ class CameraActivity : Activity(), TextureView.SurfaceTextureListener {
     private fun activateCameraSession() {
         if (!resumed || !ready || !hasRequiredPermissions()) return
         hideEmpty()
+        val startupMode = cameraStartupMode
+            ?: CameraLinkStartupModePolicy.select(busClient?.capabilities() ?: 0).also {
+                cameraStartupMode = it
+            }
         if (sessionId == null) {
             sessionStartedAtMs = SystemClock.elapsedRealtime()
             sessionId = UUID.randomUUID().toString()
-            publishCameraSessionOpened(sessionId.orEmpty())
+            publishCameraSessionOpened(sessionId.orEmpty(), startupMode)
         }
         if (cameraLink == null) {
-            val startupMode = CameraLinkStartupModePolicy.select(busClient?.capabilities() ?: 0)
-            cameraLink = CameraLink(
+            cameraLink = if (startupMode == CameraLinkStartupMode.WAIT_FOR_LOHS_REVERSE) CameraLink(
                 context = applicationContext,
                 sessionStartedAtMs = sessionStartedAtMs,
                 startupMode = startupMode,
@@ -281,7 +289,11 @@ class CameraActivity : Activity(), TextureView.SurfaceTextureListener {
                 },
                 onWifiJoinRequested = ::requestLohsJoin,
                 onState = { state -> overlayView.updateStatus(state, currentZoomLabel()) },
-            ).also { it.start() }
+            ).also { it.start() } else CoreCameraDataLink(
+                busClient,
+                sessionId.orEmpty(),
+                onFrozenTransferFinished = { streamer?.requestKeyFrame() },
+            )
         }
         startStreamerIfReady()
     }
@@ -294,6 +306,7 @@ class CameraActivity : Activity(), TextureView.SurfaceTextureListener {
         requestGlassesWifi(false, closingSession)
         sessionId = null
         sessionStartedAtMs = 0L
+        cameraStartupMode = null
         if (sendClosed && closingSession != null) {
             busClient?.send(
                 BusPaths.CAMERA_SESSION_STATE,
@@ -471,7 +484,10 @@ class CameraActivity : Activity(), TextureView.SurfaceTextureListener {
         log("cameraLinkStage stage=offer_sent#$offerNumber elapsedMs=$elapsedMs")
     }
 
-    private fun publishCameraSessionOpened(activeSessionId: String) {
+    private fun publishCameraSessionOpened(
+        activeSessionId: String,
+        startupMode: CameraLinkStartupMode,
+    ) {
         if (activeSessionId.isBlank()) return
         busClient?.send(
             BusPaths.CAMERA_SESSION_STATE,
@@ -484,7 +500,15 @@ class CameraActivity : Activity(), TextureView.SurfaceTextureListener {
                         .put("width", streamPlan?.rasterSize?.width ?: CameraH264Streamer.PREFERRED_RASTER_SIZE.width)
                         .put("height", streamPlan?.rasterSize?.height ?: CameraH264Streamer.PREFERRED_RASTER_SIZE.height)
                         .put("fps", CameraH264Streamer.FPS)
-                        .put("protocolVersion", CameraLinkProtocol.VERSION),
+                        .put("protocolVersion", CameraLinkProtocol.VERSION)
+                        .put(
+                            "linkMode",
+                            if (startupMode == CameraLinkStartupMode.WAIT_FOR_LOHS_REVERSE) {
+                                CameraLinkMode.LOHS_REVERSE.wireValue
+                            } else {
+                                "bulk"
+                            },
+                        ),
                 ),
         )
         requestGlassesWifi(true, activeSessionId)

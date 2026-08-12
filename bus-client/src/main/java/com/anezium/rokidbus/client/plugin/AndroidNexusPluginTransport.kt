@@ -4,6 +4,8 @@ import android.content.Context
 import com.anezium.rokidbus.client.BusClient
 import com.anezium.rokidbus.client.BusEvent
 import com.anezium.rokidbus.client.HubTarget
+import android.os.ParcelFileDescriptor
+import com.anezium.rokidbus.shared.BulkLinkPurpose
 import org.json.JSONObject
 
 internal class AndroidNexusPluginTransport(
@@ -45,6 +47,9 @@ internal class AndroidNexusPluginTransport(
     override fun capabilities(): Int = client.capabilities()
 
     override fun approvedCapabilities(): String? = client.approvedCapabilities()
+
+    override fun openBulkChannel(sessionId: String, purpose: BulkLinkPurpose): ParcelFileDescriptor? =
+        client.openBulkChannel(sessionId, purpose)
 
     override fun close() {
         client.close()

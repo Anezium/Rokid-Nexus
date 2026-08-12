@@ -9,6 +9,7 @@ import android.net.wifi.WifiManager
 import android.os.Binder
 import android.os.IBinder
 import android.os.PowerManager
+import android.os.ParcelFileDescriptor
 import android.os.Process
 import android.provider.Settings
 import com.anezium.rokidbus.client.IBusCallback
@@ -21,6 +22,7 @@ import com.anezium.rokidbus.shared.BusCapabilityBits
 import com.anezium.rokidbus.shared.BusConstants
 import com.anezium.rokidbus.shared.BusEnvelope
 import com.anezium.rokidbus.shared.BusPaths
+import com.anezium.rokidbus.shared.BulkLinkPurpose
 import com.anezium.rokidbus.shared.FrameProtocol
 import com.anezium.rokidbus.shared.GlassesHubCapabilitiesContract
 import com.anezium.rokidbus.shared.GlassesRepairContract
@@ -136,6 +138,7 @@ object GlassesHub {
     @Volatile private var launcherEntries: List<LauncherEntry> = emptyList()
     @Volatile private var appContext: Context? = null
     @Volatile private var activeVideoSession: ActiveVideoSession? = null
+    @Volatile private var bulkLink: GlassesBulkLinkCoordinator? = null
     @Volatile private var cxrUp = false
     @Volatile private var phoneConnected = false
     @Volatile private var remotePhoneCapabilities = PhoneHubCapabilities(0, null)
@@ -181,6 +184,19 @@ object GlassesHub {
 
         /** Nothing is ever approved here, since [registerPlugin] denies everything. */
         override fun approvedCapabilities(pluginId: String): String = ""
+
+        override fun openBulkChannel(sessionId: String, purpose: String): ParcelFileDescriptor? {
+            if (Binder.getCallingUid() != Process.myUid()) return null
+            val parsedPurpose = BulkLinkPurpose.fromWireValue(purpose) ?: return null
+            return when (parsedPurpose) {
+                BulkLinkPurpose.VIDEO -> if (activeVideoSession?.sessionId == sessionId) {
+                    bulkLink?.openChannel(GlassesBulkLeasePurpose.VIDEO, sessionId)
+                } else null
+                BulkLinkPurpose.CAMERA -> if (cameraSessionTracker.activeSessionId() == sessionId) {
+                    bulkLink?.openChannel(GlassesBulkLeasePurpose.CAMERA, sessionId)
+                } else null
+            }
+        }
     }
 
     fun start(context: Context) {
@@ -197,6 +213,26 @@ object GlassesHub {
             synchronized(this) {
                 if (wifiOwnership == null) {
                     wifiOwnership = GlassesWifiOwnership(GlassesWifiLeaseStore(applicationContext))
+                }
+            }
+        }
+        if (bulkLink == null) {
+            synchronized(this) {
+                if (bulkLink == null) {
+                    bulkLink = GlassesBulkLinkCoordinator(
+                        applicationContext,
+                        offerSink = { offer ->
+                            sendRemote(BusEnvelope(path = BusPaths.CORE_BULK_LINK_OFFER, payload = offer))
+                        },
+                        stateSink = { state -> log("bulkLink state=$state") },
+                        onWarmExpired = {
+                            appContext?.let { current ->
+                                wifiRequestExecutor.execute {
+                                    reconcileWifiOwnership(current, "bulk_warm_expired", cameraGraceRequested = false, cameraGraceSatisfied = true)
+                                }
+                            }
+                        },
+                    )
                 }
             }
         }
@@ -225,6 +261,7 @@ object GlassesHub {
     fun onSppConnected(connected: Boolean) {
         phoneConnected = connected || CxrBusBridge.isUp()
         if (!phoneConnected) {
+            bulkLink?.onControlLinkLost()
             clearRemotePhoneCapabilities()
             AssistantDisplayEpisode.end(DisplayHoldReleaseReason.LINK_LOSS)
             RemotePointerHubBridge.onLinkLost()
@@ -243,6 +280,7 @@ object GlassesHub {
         cxrUp = connected
         phoneConnected = connected || SppServerManager.isConnected()
         if (!phoneConnected) {
+            bulkLink?.onControlLinkLost()
             clearRemotePhoneCapabilities()
             AssistantDisplayEpisode.end(DisplayHoldReleaseReason.LINK_LOSS)
             RemotePointerHubBridge.onLinkLost()
@@ -259,6 +297,12 @@ object GlassesHub {
 
     fun onRemoteEnvelope(envelope: BusEnvelope) {
         log("remote RX ${envelope.path} id=${envelope.id}")
+        if (envelope.path == BusPaths.CORE_BULK_LINK_STATE) {
+            if (bulkLink?.acceptPeerState(envelope.payload) != true) {
+                log("bulkLink state=peer_state_rejected")
+            }
+            return
+        }
         if (envelope.path == RemoteInputContract.COMMAND_PATH ||
             envelope.path == RemoteNavigationContract.REQUEST_PATH
         ) {
@@ -376,6 +420,17 @@ object GlassesHub {
                 return
             }
             activeVideoSession = ActiveVideoSession(sessionId, ownerPluginId)
+            handleGlassesWifiRequest(context, sessionId)
+            if (bulkLink?.acquire(GlassesBulkLeasePurpose.VIDEO, sessionId, ownerPluginId) != true) {
+                activeVideoSession = null
+                sendRemote(
+                    BusEnvelope(
+                        path = BusPaths.VIDEO_SESSION_STATE,
+                        payload = JSONObject().put("sessionId", sessionId).put("state", "busy").put("pluginId", ownerPluginId),
+                    ),
+                )
+                return
+            }
             onVideoSessionActivityChanged(active = true, trigger = "video_session_open")
             runCatching {
                 context.startActivity(
@@ -388,6 +443,7 @@ object GlassesHub {
                         ),
                 )
             }.onFailure {
+                bulkLink?.release(GlassesBulkLeasePurpose.VIDEO, sessionId)
                 activeVideoSession = null
                 onVideoSessionActivityChanged(active = false, trigger = "video_launch_failed")
                 logError("video activity launch failed", it)
@@ -584,6 +640,7 @@ object GlassesHub {
                             .put("action", "stop"),
                     ),
                 )
+                bulkLink?.release(GlassesBulkLeasePurpose.VIDEO, video.sessionId)
                 activeVideoSession = null
                 onVideoSessionActivityChanged(active = false, trigger = "camera_preempt")
             }
@@ -773,10 +830,23 @@ object GlassesHub {
         if (envelope.path == BusPaths.CAMERA_SESSION_STATE) {
             // The camera session lives in the :camera process; this envelope is the only way the
             // main process can know a session is live, which photo sync must never fight.
-            cameraSessionTracker.onSessionState(
-                envelope.payload.optString("sessionId"),
-                envelope.payload.optString("state"),
-            )
+            val sessionId = envelope.payload.optString("sessionId")
+            val state = envelope.payload.optString("state")
+            cameraSessionTracker.onSessionState(sessionId, state)
+            when (state) {
+                CameraSessionTracker.STATE_OPENED -> {
+                    val linkMode = envelope.payload.optJSONObject("config")
+                        ?.optString("linkMode", "bulk")
+                        .orEmpty()
+                    if (linkMode == com.anezium.rokidbus.shared.CameraLinkMode.LOHS_REVERSE.wireValue) {
+                        bulkLink?.yieldToLegacyLink()
+                    } else {
+                        bulkLink?.acquire(GlassesBulkLeasePurpose.CAMERA, sessionId)
+                    }
+                }
+                CameraSessionTracker.STATE_CLOSED ->
+                    bulkLink?.release(GlassesBulkLeasePurpose.CAMERA, sessionId)
+            }
         }
         if (envelope.path == BusPaths.VIDEO_SESSION_STATE) {
             val sessionId = envelope.payload.optString("sessionId")
@@ -787,6 +857,7 @@ object GlassesHub {
                 }
                 "closed", "error" -> if (activeVideoSession?.sessionId == sessionId) {
                     activeVideoSession = null
+                    bulkLink?.release(GlassesBulkLeasePurpose.VIDEO, sessionId)
                     onVideoSessionActivityChanged(active = false, trigger = "video_session_closed")
                 }
             }
@@ -1119,6 +1190,7 @@ object GlassesHub {
             log("camera client disconnected reason=$reason trackerReset=$reset")
         }
         if (registration.clientId == VIDEO_CLIENT_ID && activeVideoSession != null) {
+            bulkLink?.release(GlassesBulkLeasePurpose.VIDEO, activeVideoSession!!.sessionId)
             activeVideoSession = null
             onVideoSessionActivityChanged(active = false, trigger = "video_${reason}")
             log("video client disconnected reason=$reason")
@@ -1517,7 +1589,8 @@ object GlassesHub {
         val action = WifiOwnershipReconciliationPolicy.decide(
             cameraLeaseOwned = ownership.isHubOwned(),
             setupWifiOwned = SelfArmSetupWifiOwnershipStore.isNexusOwned(context),
-            cameraSessionActive = cameraSessionTracker.isActive() || activeVideoSession != null,
+            cameraSessionActive = cameraSessionTracker.isActive() || activeVideoSession != null ||
+                bulkLink?.isWarm() == true,
             setupSessionActive = SelfArmOnboardingStore.isWifiStillNeededBySetup(context),
             mediaSyncSessionActive = MediaSyncEngine.isSessionActive(),
             selfArmOperationActive = SelfArmController.isOperationRunning(),

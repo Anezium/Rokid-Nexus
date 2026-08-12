@@ -40,6 +40,7 @@ import com.anezium.rokidbus.shared.SetupStage
 private const val TAG = "RokidNexusHome"
 private const val BLUETOOTH_PERMISSION_REQUEST = 20
 private const val NOTIFICATION_PERMISSION_REQUEST = 22
+private const val BULK_LINK_PERMISSION_REQUEST = 23
 private const val PREF_NOTIFICATIONS_ANSWERED = "onboarding_notifications_answered"
 
 /** Companion home: fixed status/settings menubar, setup cards, plugin list, store entry and hub toggle. */
@@ -149,6 +150,9 @@ class MainActivity : Activity() {
         }
         if (requestCode == NOTIFICATION_PERMISSION_REQUEST) {
             recordNotificationsAnswered()
+            rebuildSetupSection()
+        }
+        if (requestCode == BULK_LINK_PERMISSION_REQUEST) {
             rebuildSetupSection()
         }
     }
@@ -881,6 +885,13 @@ class MainActivity : Activity() {
                 onAction = { requestBluetoothConnectIfNeeded() },
             ),
             OnboardingStep(
+                title = getString(R.string.onb_bulk_link_title),
+                body = getString(R.string.onb_bulk_link_body),
+                done = !needsBulkLinkPermission(),
+                actionLabel = getString(R.string.onb_bulk_link_action),
+                onAction = { requestBulkLinkPermissionIfNeeded() },
+            ),
+            OnboardingStep(
                 title = getString(R.string.onb_install_title),
                 body = getString(R.string.onb_install_body),
                 done = NexusPhoneState.glassesAppInstalled,
@@ -1208,6 +1219,21 @@ class MainActivity : Activity() {
 
     private fun needsBluetoothPermission(): Boolean =
         !BusHubService.canRunHub(this)
+
+    private fun requestBulkLinkPermissionIfNeeded() {
+        if (needsBulkLinkPermission()) {
+            requestPermissions(arrayOf(bulkLinkPermission()), BULK_LINK_PERMISSION_REQUEST)
+        }
+    }
+
+    private fun needsBulkLinkPermission(): Boolean =
+        checkSelfPermission(bulkLinkPermission()) != PackageManager.PERMISSION_GRANTED
+
+    private fun bulkLinkPermission(): String = if (Build.VERSION.SDK_INT >= 33) {
+        Manifest.permission.NEARBY_WIFI_DEVICES
+    } else {
+        Manifest.permission.ACCESS_FINE_LOCATION
+    }
 
     private fun requestNotificationsIfNeeded() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&

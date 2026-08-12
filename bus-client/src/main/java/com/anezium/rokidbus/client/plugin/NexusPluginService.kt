@@ -16,6 +16,7 @@ import com.anezium.rokidbus.client.HubTarget
 import com.anezium.rokidbus.client.PluginRegistrationResult
 import com.anezium.rokidbus.client.R
 import com.anezium.rokidbus.shared.BusConstants
+import com.anezium.rokidbus.shared.BulkLinkPurpose
 import com.anezium.rokidbus.shared.plugin.NexusInputEvent
 import com.anezium.rokidbus.shared.plugin.PluginDescriptor
 import com.anezium.rokidbus.shared.plugin.PluginDescriptorParseResult
@@ -52,6 +53,9 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
         client?.ttsSession(callbacks)
     protected fun nexusSnapshotSession(callbacks: NexusSnapshotCallbacks): NexusSnapshotSession? =
         client?.snapshotSession(callbacks)
+
+    protected fun nexusBulkChannel(sessionId: String, purpose: BulkLinkPurpose): NexusBulkChannel? =
+        client?.openBulkChannel(sessionId, purpose)
 
     override fun onCreate() {
         super.onCreate()

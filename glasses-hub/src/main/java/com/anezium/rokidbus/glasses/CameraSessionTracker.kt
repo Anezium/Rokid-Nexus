@@ -15,6 +15,9 @@ class CameraSessionTracker(private val onChanged: (Boolean) -> Unit = {}) {
     @Synchronized
     fun isActive(): Boolean = activeSessionId != null
 
+    @Synchronized
+    fun activeSessionId(): String? = activeSessionId
+
     /**
      * Applies one `/camera/session/state` payload. Returns true when the active/idle edge moved.
      * Unknown states and blank session ids are ignored rather than guessed at: a missed close is

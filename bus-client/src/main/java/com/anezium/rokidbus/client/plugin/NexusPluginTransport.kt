@@ -1,5 +1,7 @@
 package com.anezium.rokidbus.client.plugin
 
+import android.os.ParcelFileDescriptor
+import com.anezium.rokidbus.shared.BulkLinkPurpose
 import org.json.JSONObject
 
 interface NexusPluginTransport {
@@ -24,6 +26,9 @@ interface NexusPluginTransport {
      * every later change.
      */
     fun approvedCapabilities(): String?
+
+    /** Nullable default keeps existing transports and test fakes source-compatible. */
+    fun openBulkChannel(sessionId: String, purpose: BulkLinkPurpose): ParcelFileDescriptor? = null
 
     fun close()
 }

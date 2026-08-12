@@ -1190,19 +1190,19 @@ package, descriptor ID, and signing digest have an approved, enabled `camera`
 grant. Installation or a shared signer alone never grants access.
 
 The bus carries control only. The heavy data path is out-of-band: during a
-session the glasses encode the camera as H.264 and serve it over a link
-negotiated by `/camera/link/offer`; the consumer plugin joins with the
-credentials it carries, decodes on the phone, and runs its processing (Lens:
-ML Kit OCR + translation) there. Frozen captures ride the same link as full
-JPEGs, with `/camera/freeze/image/chunk` over SPP as the fallback when the
-link is down.
+normal session the glasses encode the camera as H.264 over Core Bulk Link; the
+consumer plugin receives only an authorized local descriptor, decodes on the
+phone, and runs its processing (Lens: ML Kit OCR + translation) there. P2P
+credentials remain between the hubs. Frozen captures ride the same descriptor
+as full JPEGs, with `/camera/freeze/image/chunk` over SPP as the fallback when
+the link is down.
 
 The link has two modes, chosen by the phone from its own Wi-Fi state at
 session start (`PhoneLensTransportModePolicy`) and carried in the offer's
 `mode` field:
 
-- `p2p` (default when the field is absent, for backward compatibility): the
-  glasses are Group Owner of a Wi-Fi Direct group; the phone joins it.
+- normal P2P: the glasses core is Group Owner, the phone core joins it, and the
+  `linkMode` in session config is `bulk`.
 - `lohs_reverse`: used when the phone's own Wi-Fi is off (it cannot enable its
   own Wi-Fi from user-space). The phone hosts a `LocalOnlyHotspot` itself and
   sends a reverse offer; the glasses enable their Wi-Fi (self-arm command
@@ -1218,16 +1218,13 @@ Glasses to phone:
 
 - `/camera/session/state` carries `sessionId`, `state` (`opened` or `closed`),
   and, when opened, `config` with `width`, `height`, `fps`, and
-  `protocolVersion`.
-- `/camera/link/offer` carries `sessionId`, `ssid`, `passphrase`, `port`,
-  `token`, `goIp` (required for `p2p`, absent for `lohs_reverse`), and two
-  fields that default when absent for backward compatibility: `mode` (`p2p` or
-  `lohs_reverse`) and, for `lohs_reverse` only, `security` (`open`, `wpa2_psk`,
-  or `wpa3_sae` — the phone's actual `LocalOnlyHotspot` security type, so the
-  glasses associate on the first attempt instead of a rejection-then-retry).
-  This same path carries the reverse offer in `lohs_reverse` mode (phone to
-  glasses) — the envelope shape is identical, only `CameraLinkOfferContract`'s
-  `mode`/`security` fields and the missing `goIp` distinguish it.
+  `protocolVersion`, and `linkMode` (`bulk` or `lohs_reverse`).
+- For `bulk`, `/camera/link/offer` carries only `sessionId`, `state=link_ready`,
+  `mode=nexus_p2p`, and the non-secret epoch from the phone hub to the owner.
+- For the explicit legacy `lohs_reverse` session only, `/camera/link/offer`
+  retains `CameraLinkOfferContract`: `sessionId`, `ssid`, `passphrase`, `port`,
+  `token`, optional `goIp`, `mode`, and `security`. It carries the phone's
+  reverse LOHS offer and the bounded legacy P2P fallback if reverse setup fails.
 - `/camera/freeze/image/chunk` carries the raw SPP frozen-image fallback as
   binary chunks.
 
@@ -1273,9 +1270,38 @@ retired and is no longer advertised by either hub.
 
 Video playback requires an approved `video_playback` grant. The phone hub
 rebuilds every plugin-originated video control envelope with the authenticated
-`pluginId` and `ownerPluginId`; the glasses bind the session, link offer and
-controls to that owner. `/video/session/state` and `/video/link/offer` are direct,
-owner-scoped replies and never reach another plugin.
+`pluginId` and `ownerPluginId`; the glasses bind the session and controls to that
+owner. `/video/session/state` is a direct, owner-scoped reply and never reaches
+another plugin.
+
+## Core Bulk Link v1 (`/core/bulk-link/*`)
+
+Bulk Link is the shared, hub-owned P2P lease used only for `camera` and `video`.
+`/core/bulk-link/offer` and `/core/bulk-link/state` are trusted hub-to-hub paths:
+they are under `/core`, are never plugin capabilities or receive prefixes, and are
+never forwarded to a plugin. A v1 offer is
+`{version:1,sessionId,purpose,ownerPluginId?,epoch,token,ssid,passphrase,goIp,port}`.
+`purpose` is `camera` or `video`; `epoch` is positive; `port` is fixed at **38400**.
+The receiver rejects unknown versions, malformed UUID session IDs, invalid plugin
+owners, non-positive epochs, malformed IPs, any other port, and fields over their
+contract bounds. Credentials and tokens are secrets: they must not be logged,
+persisted, or delivered beyond the two hubs.
+
+State is `{version:1,sessionId,purpose,epoch,state,reason?}` where `state` is
+`offered`, `connecting`, `open`, `released`, or `error`; `reason` is bounded to
+160 characters and carries no credential or token material.
+
+Before either endpoint accepts raw bytes, it exchanges a core handshake metadata
+object `{version:1,sessionId,purpose,epoch,token}` framed as a four-byte big-endian
+length followed by UTF-8 JSON. The JSON is capped at 4096 bytes and must exactly
+match the live offer. A lease may remain warm for at
+most 40000 ms after its user leaves; a newer epoch always supersedes it.
+
+Plugins access a live, owner-authorized lease only through the appended Binder call
+`openBulkChannel(sessionId, purpose)`, which returns a local
+`ParcelFileDescriptor` or null. The hub authenticates the calling UID and checks
+the session, purpose and capability at that boundary. Plugins receive neither the
+offer, credentials nor token.
 
 The bus is control-only:
 
@@ -1283,16 +1309,16 @@ The bus is control-only:
 |---|---|---|
 | `/video/session/open` | plugin → glasses | `sessionId` (UUID), local `surfaceId`, `mediaType`, `loop`, `muted`; identity fields are overwritten by the phone hub |
 | `/video/session/control` | plugin → glasses | matching `sessionId` and `action` (`pause`, `resume`, `stop`) |
-| `/video/session/state` | glasses → owner plugin | matching `sessionId`, hub-stamped `pluginId`, and `state` (`opened`, `playing`, `paused`, `ended`, `busy`, `error`, `closed`) |
-| `/video/link/offer` | glasses → owner plugin | matching session, `epoch`, `mode=p2p`, framework SSID/passphrase, port, random token and group-owner IP |
+| `/video/session/state` | hubs → owner plugin | matching `sessionId`, hub-stamped `pluginId`, and `state` (`link_ready`, `opened`, `playing`, `paused`, `ended`, `busy`, `error`, `closed`); `link_ready` also carries the non-secret lease epoch |
 
 Compressed media uses the distinct `MediaLinkProtocol` v1 TCP framing (`MLNK`),
 not `CameraLinkProtocol` and never SPP. Its fixed header carries type, owner-lease
 epoch, sequence, presentation timestamp and flags, followed by at most 64 KiB of
 UTF-8 metadata and 8 MiB of payload. Packet types are `HELLO`, `VIDEO_CONFIG`,
 `VIDEO_SAMPLE`, `AUDIO_CONFIG`, `AUDIO_SAMPLE`, `WINDOW_UPDATE`, `EOS`, and
-`ERROR`. The receiver accepts packets only after a `HELLO` matches the session,
-random token and epoch. Video samples are AVC with key-frame flags and PTS; audio
+`ERROR`. The core handshake validates the random token before feature bytes are
+bridged; the media receiver then accepts packets only after `HELLO` matches the
+session and epoch. Video samples are AVC with key-frame flags and PTS; audio
 samples are optional AAC with PTS. V1 pacing is sender-side and socket-bounded;
 `WINDOW_UPDATE` reserves an additive explicit receive window for a later revision.
 
@@ -1572,6 +1598,7 @@ interface IBusService {
     int registerPlugin(String packageName, String pluginId, IBusCallback cb);
     int capabilities();
     String approvedCapabilities(String pluginId);   // the caller's own grants
+    ParcelFileDescriptor openBulkChannel(String sessionId, String purpose); // appended last
 }
 ```
 
@@ -1585,6 +1612,11 @@ on hardware at 16 ms apart — so a plugin acting the instant it is approved rea
 an empty grant set and was refused a capability the wearer had approved. A hub
 too old to answer fails this one call, the SDK reads null, and the message path
 stays in charge exactly as before.
+
+`openBulkChannel` is an authenticated, capability-gated local endpoint for a live
+Core Bulk Link lease. It returns null if the caller is not the live owner or if
+the requested purpose (`camera` or `video`) is not authorized. It exposes no
+network offer metadata or secrets.
 
 The method order is append-only so transaction codes remain stable. Link-state
 bits are `1 = CXR_CONTROL_UP`, `2 = SPP_DATA_UP`, and
@@ -1641,6 +1673,7 @@ class BusClient(context, clientId, pathPrefixes: List<String>, listener: (BusEve
     fun linkState(): Int
     fun capabilities(): Int
     fun approvedCapabilities(): String?   // null when the hub predates the call
+    fun openBulkChannel(sessionId: String, purpose: BulkLinkPurpose): ParcelFileDescriptor?
     fun close()
 ```
 

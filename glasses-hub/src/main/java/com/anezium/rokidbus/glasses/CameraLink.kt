@@ -62,7 +62,7 @@ internal class CameraLink(
     private val onFrozenTransferFinished: (Long) -> Unit,
     private val onWifiJoinRequested: (CameraLinkEndpointOffer, WifiConnectSecurity) -> Unit,
     private val onState: (String) -> Unit,
-) : AutoCloseable {
+) : CameraDataLink {
     private val appContext = context.applicationContext
     private val profileStore = CameraP2pProfileStore(appContext)
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -137,7 +137,7 @@ internal class CameraLink(
     private var writerStarted = false
     private var p2pStartupStarted = false
 
-    val isAuthenticated: Boolean get() = authenticated
+    override val isAuthenticated: Boolean get() = authenticated
 
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -217,7 +217,7 @@ internal class CameraLink(
         goIp = DEFAULT_GO_IP,
     )
 
-    fun resendOfferIfDisconnected() {
+    override fun resendOfferIfDisconnected() {
         if (authenticated || transportRole != CameraLinkTransportRole.P2P_SERVER) return
         mainHandler.post {
             if (running && !authenticated && !goRecoveryInProgress && currentOffer != null) {
@@ -228,7 +228,7 @@ internal class CameraLink(
     }
 
     /** Never performs socket I/O on the codec callback thread. */
-    fun enqueue(packet: CameraLinkPacket): Boolean {
+    override fun enqueue(packet: CameraLinkPacket): Boolean {
         synchronized(packetQueueLock) {
             if (!authenticated) return false
             if (packet.type == CameraLinkPacketType.VIDEO_FRAME &&
@@ -249,7 +249,7 @@ internal class CameraLink(
     }
 
     /** Starts the video gate at the tap, before the camera produces the large JPEG. */
-    fun beginFrozenTransfer(requestId: Long): Boolean = synchronized(packetQueueLock) {
+    override fun beginFrozenTransfer(requestId: Long): Boolean = synchronized(packetQueueLock) {
         if (!authenticated) return false
         transferPolicy.beginFrozenMode(requestId)
         dropQueuedVideoFrames()
@@ -257,7 +257,7 @@ internal class CameraLink(
     }
 
     /** Ends frozen mode, cancels queued JPEG work, and requests a fresh resume key frame. */
-    fun cancelFrozenTransfer(requestId: Long): Boolean {
+    override fun cancelFrozenTransfer(requestId: Long): Boolean {
         val shouldResume = synchronized(packetQueueLock) {
             packets.removeIf {
                 it.type == CameraLinkPacketType.FROZEN_IMAGE && it.requestId == requestId
@@ -272,7 +272,7 @@ internal class CameraLink(
         runCatching { clientSocket?.close() }
     }
 
-    fun acceptReverseOffer(offer: CameraLinkEndpointOffer) {
+    override fun acceptReverseOffer(offer: CameraLinkEndpointOffer) {
         if (!running || offer.mode != CameraLinkMode.LOHS_REVERSE || offer.token != token) return
         mainHandler.post {
             if (!running || offer.token != token) return@post

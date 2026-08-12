@@ -63,6 +63,9 @@ object BusPaths {
     const val ACTIVITY_CLOSED = "/activity/closed"
     const val TTS_SPEAK = "/tts/speak"
     const val TTS_STOP = "/tts/stop"
+    /** Trusted hub-to-hub lease negotiation; never a plugin capability or receive path. */
+    const val CORE_BULK_LINK_OFFER = "/core/bulk-link/offer"
+    const val CORE_BULK_LINK_STATE = "/core/bulk-link/state"
 
     /** Phone hub to glasses hub only; plugins cannot send or subscribe to this path. */
     const val TTS_CANCEL = "/tts/cancel"
@@ -83,7 +86,6 @@ object BusPaths {
     const val VIDEO_SESSION_OPEN = "/video/session/open"
     const val VIDEO_SESSION_CONTROL = "/video/session/control"
     const val VIDEO_SESSION_STATE = "/video/session/state"
-    const val VIDEO_LINK_OFFER = "/video/link/offer"
     const val MEDIA_SYNC_STATUS = "/mediasync/status"
     const val MEDIA_SYNC_SETTINGS = "/mediasync/settings"
     const val MEDIA_SYNC_NOW = "/mediasync/now"

@@ -1,12 +1,9 @@
 package com.anezium.rokidbus.plugin.feeds
 
 import android.app.Activity
-import android.Manifest
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
-import android.os.Build
 import android.provider.Settings
 import android.text.Editable
 import android.text.InputType
@@ -56,10 +53,6 @@ class FeedsSettingsActivity : Activity() {
                 NexusUi.block(),
             )
             addView(BusTheme.gap(this@FeedsSettingsActivity, 18))
-            addView(NexusUi.sectionRow(this@FeedsSettingsActivity, "Video playback"), NexusUi.block())
-            addView(BusTheme.gap(this@FeedsSettingsActivity, 10))
-            addView(videoPermissionCard(), NexusUi.block())
-            addView(BusTheme.gap(this@FeedsSettingsActivity, 22))
             addView(NexusUi.sectionRow(this@FeedsSettingsActivity, "Source"), NexusUi.block())
             addView(BusTheme.gap(this@FeedsSettingsActivity, 10))
             addView(sourceList, NexusUi.block())
@@ -97,51 +90,6 @@ class FeedsSettingsActivity : Activity() {
         renderContext()
     }
 
-    private fun videoPermissionCard() = NexusUi.card(this).apply {
-        addView(
-            NexusUi.rowTitle(
-                this@FeedsSettingsActivity,
-                if (hasVideoLinkPermission()) "Nearby link granted" else "Nearby link required",
-            ),
-        )
-        addView(BusTheme.gap(this@FeedsSettingsActivity, 5))
-        addView(
-            NexusUi.rowSub(
-                this@FeedsSettingsActivity,
-                "Lets Feeds stream compressed video directly to the glasses over Wi-Fi Direct.",
-            ),
-        )
-        if (!hasVideoLinkPermission()) {
-            addView(BusTheme.gap(this@FeedsSettingsActivity, 10))
-            addView(
-                NexusUi.textButton(this@FeedsSettingsActivity, "Grant").apply {
-                    setOnClickListener { requestVideoLinkPermission() }
-                },
-            )
-        }
-    }
-
-    private fun hasVideoLinkPermission(): Boolean =
-        checkSelfPermission(videoLinkPermission()) == PackageManager.PERMISSION_GRANTED
-
-    private fun requestVideoLinkPermission() {
-        requestPermissions(arrayOf(videoLinkPermission()), REQUEST_VIDEO_LINK_PERMISSION)
-    }
-
-    private fun videoLinkPermission(): String = if (Build.VERSION.SDK_INT >= 33) {
-        Manifest.permission.NEARBY_WIFI_DEVICES
-    } else {
-        Manifest.permission.ACCESS_FINE_LOCATION
-    }
-
-    override fun onRequestPermissionsResult(
-        requestCode: Int,
-        permissions: Array<out String>,
-        grantResults: IntArray,
-    ) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == REQUEST_VIDEO_LINK_PERMISSION) buildUi()
-    }
 
     private fun renderSourceList() {
         sourceList.removeAllViews()
@@ -328,9 +276,5 @@ class FeedsSettingsActivity : Activity() {
 
     private fun uninstallRow() = NexusUi.uninstallCard(this, "Feeds") {
         startActivity(Intent(Intent.ACTION_DELETE, Uri.parse("package:$packageName")))
-    }
-
-    private companion object {
-        const val REQUEST_VIDEO_LINK_PERMISSION = 701
     }
 }
