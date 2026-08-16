@@ -283,6 +283,7 @@ class BusHubService : Service() {
     private lateinit var externalPluginController: ExternalPluginController
     private lateinit var cameraConsumerReadiness: CameraConsumerReadiness
     private lateinit var cameraCompanionController: CameraCompanionController
+    private lateinit var mediaTriggerCoordinator: MediaTriggerCoordinator
     private lateinit var pluginGuardianCoordinator: PluginGuardianCoordinator
     private lateinit var mediaSyncCoordinator: MediaSyncCoordinator
     private lateinit var coreRemoteBridge: PhoneCoreRemoteBridge
@@ -843,6 +844,15 @@ class BusHubService : Service() {
             publishStatus = ::publishMediaSyncStatus,
             logger = ::log,
         )
+        mediaTriggerCoordinator = MediaTriggerCoordinator(
+            clock = SystemClock::elapsedRealtime,
+            externalPluginController = externalPluginController,
+            resolveRegisteredPlugin = { resolveMediaTriggerPlugin() },
+            pluginOwnsVisibleSurface = ::mediaTriggerPluginOwnsVisibleSurface,
+            logger = ::log,
+        )
+        MediaTriggerSensorStore.coordinator =
+            mediaTriggerCoordinator
         refreshMediaSyncConsent()
         registerPluginPackageReceiver()
         registerWifiStateReceiver()
@@ -3020,6 +3030,31 @@ class BusHubService : Service() {
         pluginDiscovery.discover().mapNotNull { candidate ->
             (candidate as? PhonePluginCandidate.Valid)?.principal
         }
+
+    /**
+     * The plugin a media-trigger open should target: an installed, approved plugin whose
+     * declared descriptor opts into [BusConstants.META_PLUGIN_MEDIA_TRIGGER]. Currently the
+     * lyrics plugin. The trigger is inert while the plugin has not been granted.
+     */
+    private fun resolveMediaTriggerPlugin(): PhonePluginPrincipal? {
+        if (!::pluginGrantStore.isInitialized) return null
+        val candidates = runCatching(::installedPluginPrincipals).getOrDefault(emptyList())
+        return candidates.firstOrNull { principal ->
+            if (!principal.descriptor.mediaTrigger) return@firstOrNull false
+            val grant = pluginGrantStore.stateFor(principal) as? PluginGrantState.Approved ?: return@firstOrNull false
+            PluginCapability.SURFACES in grant.capabilities
+        }
+    }
+
+    /**
+     * Whether the media-trigger plugin currently owns a visible foreground surface. A close
+     * is deferred while true so an ambient close never yanks the wearer off what they are
+     * actively using.
+     */
+    private fun mediaTriggerPluginOwnsVisibleSurface(): Boolean {
+        val pluginId = resolveMediaTriggerPlugin()?.descriptor?.id ?: return false
+        return externalSurfaceIds[pluginId]?.isNotEmpty() == true
+    }
 
     private fun approvedGuardianTargets(): List<PluginGuardianTarget> =
         selectApprovedGuardianTargets(installedPluginPrincipals(), pluginGrantStore::stateFor)

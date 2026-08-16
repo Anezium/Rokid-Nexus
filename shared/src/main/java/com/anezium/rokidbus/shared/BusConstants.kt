@@ -27,6 +27,7 @@ object BusConstants {
     const val META_PLUGIN_SETTINGS_ACTIVITY = "com.anezium.rokidbus.plugin.SETTINGS_ACTIVITY"
     const val META_PLUGIN_LAUNCHABLE = "com.anezium.rokidbus.plugin.LAUNCHABLE"
     const val META_PLUGIN_GUARDIAN_SERVICE = "com.anezium.rokidbus.plugin.GUARDIAN_SERVICE"
+    const val META_PLUGIN_MEDIA_TRIGGER = "com.anezium.rokidbus.plugin.MEDIA_TRIGGER"
     const val API_VERSION = 3
     const val CXR_CONTROL_MAX_BYTES = 3 * 1024
     val SPP_UUID: UUID = UUID.fromString(SPP_UUID_STRING)
