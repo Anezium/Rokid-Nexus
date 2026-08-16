@@ -50,6 +50,9 @@ object BusPaths {
     const val INK_EVENT = "/ink/event"
     const val PIN_SHOW = "/pin/show"
     const val PIN_HIDE = "/pin/hide"
+    const val WIDGET_SHOW = "/widget/show"
+    const val WIDGET_UPDATE = "/widget/update"
+    const val WIDGET_HIDE = "/widget/hide"
     const val NOTICE_SHOW = "/notice/show"
     const val NOTICE_UPDATE = "/notice/update"
     const val NOTICE_HIDE = "/notice/hide"
@@ -187,6 +190,7 @@ object BusCapabilityBits {
     const val PHONE_ASSISTED_SETUP = 1 shl 8
     const val TTS = 1 shl 9
     const val INK_SURFACE = 1 shl 10
+    const val WIDGET_SURFACE = 1 shl 11
 }
 
 object LinkStateBits {
