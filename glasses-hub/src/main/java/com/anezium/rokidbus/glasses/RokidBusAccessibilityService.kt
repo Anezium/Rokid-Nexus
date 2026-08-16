@@ -82,6 +82,7 @@ class RokidBusAccessibilityService : AccessibilityService() {
         )
         SurfaceOverlayRenderer.onServiceConnected(this)
         PinOverlayRenderer.onServiceConnected(this)
+        LyricsWidgetOverlayRenderer.onServiceConnected(this)
         ActivityController.onServiceConnected(applicationContext) {
             performGlobalAction(GLOBAL_ACTION_BACK)
         }
@@ -379,6 +380,7 @@ class RokidBusAccessibilityService : AccessibilityService() {
         LauncherOverlayRenderer.onServiceDestroyed(this)
         StatusBadgeOverlayRenderer.onServiceDestroyed(this)
         PinOverlayRenderer.onServiceDestroyed(this)
+        LyricsWidgetOverlayRenderer.onServiceDestroyed(this)
         ActivityOverlayRenderer.onServiceDestroyed(this)
         ActivityController.onServiceDestroyed()
         NoticeController.onServiceDestroyed()

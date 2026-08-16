@@ -468,6 +468,31 @@ class NexusPluginClientTest {
     }
 
     @Test
+    fun `widget show carries karaoke holdDisplay on the wire`() {
+        val (client, transport, _) = fixture()
+        transport.featureBits = BusCapabilityBits.WIDGET_SURFACE
+        transport.listener.onMessage(
+            BusPaths.PLUGIN_REGISTRATION,
+            "widget-karaoke",
+            payload()
+                .put("result", PluginRegistrationResult.APPROVED)
+                .put("capabilities", "surfaces"),
+        )
+        transport.listener.onLinkState(LinkStateBits.SPP_DATA_UP)
+
+        client.showWidget(
+            NexusLyricsWidget(
+                contentKey = "track-42",
+                lines = listOf(NexusTimedLine(0, "lyric")),
+                anchor = NexusPlaybackAnchor(0, true, 0),
+                holdDisplay = true,
+            ),
+        )
+        assertEquals(BusPaths.WIDGET_SHOW, transport.sends[0].first)
+        assertTrue(transport.sends[0].second.getBoolean("holdDisplay"))
+    }
+
+    @Test
     fun `widget calls require approval grant and feature bit`() {
         val (unapproved, _, _) = fixture()
         assertEquals(NexusSdkResult.NOT_REGISTERED, unapproved.showWidget(widget()))

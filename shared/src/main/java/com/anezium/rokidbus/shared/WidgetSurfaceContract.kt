@@ -38,6 +38,11 @@ data class WidgetSurfaceContent(
     val contentKey: String,
     val lines: List<WidgetTimedLine>,
     val anchor: WidgetAnchor,
+    /**
+     * Implies the plugin is in Karaoke mode: the glasses may hold the display while this
+     * widget is visible and playing. Glance mode (false) must never wake or hold the display.
+     */
+    val holdDisplay: Boolean = false,
 )
 
 sealed interface WidgetSurfaceValidationResult {
@@ -75,8 +80,13 @@ object WidgetSurfaceContract {
         if (lines.isEmpty()) return invalid("lines must not be empty")
 
         val anchor = parseAnchor(payload.opt("anchor")) ?: return invalid("anchor is invalid")
+        val holdDisplay = when (val raw = payload.opt("holdDisplay")) {
+            null -> false
+            is Boolean -> raw
+            else -> return invalid("holdDisplay must be a boolean")
+        }
         return WidgetSurfaceValidationResult.Valid(
-            WidgetSurfaceContent(contentKey = contentKey, lines = lines, anchor = anchor),
+            WidgetSurfaceContent(contentKey = contentKey, lines = lines, anchor = anchor, holdDisplay = holdDisplay),
         )
     }
 
@@ -109,6 +119,7 @@ object WidgetSurfaceContract {
                 )
             }
             put("anchor", content.anchor.toJson())
+            if (content.holdDisplay) put("holdDisplay", true)
         }
 
     fun toAnchorOnlyPayload(surfaceId: String, contentKey: String, anchor: WidgetAnchor): JSONObject =

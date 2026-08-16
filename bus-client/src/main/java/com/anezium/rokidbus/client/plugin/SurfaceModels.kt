@@ -263,6 +263,8 @@ data class NexusLyricsWidget(
     val contentKey: String,
     val lines: List<NexusTimedLine>,
     val anchor: NexusPlaybackAnchor,
+    /** Set when the plugin runs in Karaoke mode; the glasses may hold the display while visible+playing. */
+    val holdDisplay: Boolean = false,
 ) {
     init {
         require(contentKey.isNotBlank() && contentKey.length <= MAX_CONTENT_KEY_CHARS)
@@ -275,6 +277,7 @@ data class NexusLyricsWidget(
             contentKey = contentKey,
             lines = lines.map { WidgetTimedLine(it.timeMs, it.text) },
             anchor = WidgetAnchor(anchor.positionMs, anchor.playing, anchor.sentAtElapsedRealtime),
+            holdDisplay = holdDisplay,
         ),
     )
 }

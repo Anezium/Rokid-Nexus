@@ -41,6 +41,26 @@ class WidgetSurfaceContractTest {
     }
 
     @Test
+    fun `karaoke mode is carried as holdDisplay and defaults to false`() {
+        val off = WidgetSurfaceContract.validateShow(
+            JSONObject().put("kind", "widget").put("contentKey", "t")
+                .put("lines", JSONArray().put(line(0, "a")))
+                .put("anchor", anchorConfig()),
+        )
+        assertFalse((off as WidgetSurfaceValidationResult.Valid).content.holdDisplay)
+
+        val on = WidgetSurfaceContract.validateShow(
+            JSONObject().put("kind", "widget").put("contentKey", "t").put("holdDisplay", true)
+                .put("lines", JSONArray().put(line(0, "a")))
+                .put("anchor", anchorConfig()),
+        )
+        assertTrue((on as WidgetSurfaceValidationResult.Valid).content.holdDisplay)
+    }
+
+    private fun anchorConfig(): JSONObject =
+        JSONObject().put("positionMs", 0).put("playing", true).put("sentAtElapsedRealtime", 0)
+
+    @Test
     fun `cycles through to payload`() {
         val content = WidgetSurfaceContent(
             contentKey = "track-42",

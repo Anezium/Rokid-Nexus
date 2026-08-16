@@ -23,6 +23,7 @@ import com.anezium.rokidbus.shared.BusEnvelope
 import com.anezium.rokidbus.shared.BusPaths
 import com.anezium.rokidbus.shared.FrameProtocol
 import com.anezium.rokidbus.shared.GlassesHubCapabilitiesContract
+import com.anezium.rokidbus.shared.WidgetSurfaceContract
 import com.anezium.rokidbus.shared.GlassesRepairContract
 import com.anezium.rokidbus.shared.GlyphContract
 import com.anezium.rokidbus.shared.ImageSurfaceContract
@@ -364,6 +365,7 @@ object GlassesHub {
         appContext?.let { context ->
             if (TtsController.handleEnvelope(context, envelope)) return
             if (PinController.handlePinEnvelope(envelope)) return
+            if (WidgetStateMachine.handleWidgetEnvelope(envelope)) return
             if (NoticeController.handleNoticeEnvelope(context, envelope)) return
             if (ActivityController.handleActivityEnvelope(context, envelope)) return
             if (SurfaceController.handleSurfaceEnvelope(context, envelope)) return
@@ -643,12 +645,14 @@ object GlassesHub {
                 BusCapabilityBits.NOTICE_SURFACE or
                 BusCapabilityBits.ACTIVITY_SURFACE or
                 BusCapabilityBits.INK_SURFACE or
+                BusCapabilityBits.WIDGET_SURFACE or
                 (if (ttsAvailable) BusCapabilityBits.TTS else 0),
             imageSurfaceVersion = ImageSurfaceContract.VERSION,
             pinSurfaceVersion = PinSurfaceContract.VERSION,
             noticeSurfaceVersion = NoticeSurfaceContract.VERSION,
             activitySurfaceVersion = ActivitySurfaceContract.VERSION,
             inkSurfaceVersion = InkWire.VERSION,
+            widgetSurfaceVersion = WidgetSurfaceContract.VERSION,
             maxImageBytes = ImageSurfaceContract.MAX_IMAGE_BYTES,
             versionName = BuildConfig.VERSION_NAME,
             setupComplete = onboardingState.stage == SelfArmOnboardingState.Stage.COMPLETE,
