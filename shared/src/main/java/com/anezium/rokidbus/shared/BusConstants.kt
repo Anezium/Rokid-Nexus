@@ -143,6 +143,9 @@ object BusPaths {
     const val PHONE_BATTERY = "/phone/battery"
     const val PLUGIN_OPEN = "/system/plugin/open"
     const val PLUGIN_CLOSE = "/system/plugin/close"
+
+    /** The PLUGIN_OPEN `type` when the hub opens a plugin to drive an ambient widget on playback. */
+    const val PLUGIN_OPEN_TYPE_MEDIA_TRIGGER = "media_trigger"
     const val PLUGIN_INPUT = "/system/plugin/input"
     const val PLUGIN_REGISTRATION = "/system/plugin/registration"
     const val HUB_CAPABILITIES = "/system/hub/capabilities"

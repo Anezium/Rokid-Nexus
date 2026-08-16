@@ -31,6 +31,14 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
     protected val nexusClient: NexusPluginClient?
         get() = client
 
+    /**
+     * The `type` carried by the last PLUGIN_OPEN (empty for the default launcher open).
+     * The hub opens with an explicit reason (e.g. "media_trigger") when it initiates the
+     * open itself; a plugin can use it to decide whether it was user-launched.
+     */
+    protected val currentOpenType: String
+        get() = client?.currentOpenType ?: ""
+
     protected open val hubTarget: HubTarget = HubTarget.PHONE
 
     protected val isNexusSessionOpen: Boolean

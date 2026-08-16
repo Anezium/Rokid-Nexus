@@ -2222,7 +2222,13 @@ class BusHubService : Service() {
         // rate-limited state machine. The plugin keeps its current line locally from the
         // anchor, so show carries full lines and update carries an anchor-only patch.
         recordLocalRoute(envelope, senderUid, sender, PluginBusJournal.Verdict.OK)
-        sendRemote(envelope)?.let { deliverError(sender.replyBinder, envelope.id, it) }
+        val forwarded = envelope.copy(
+            payload = envelope.payload
+                .put("seq", externalSurfaceSeq
+                    .computeIfAbsent(WidgetSurfaceContract.LOCAL_SURFACE_ID, { AtomicLong(System.currentTimeMillis()) })
+                    .incrementAndGet()),
+        )
+        sendRemote(forwarded)?.let { deliverError(sender.replyBinder, envelope.id, it) }
     }
 
     private fun handleHubPath(

@@ -13,6 +13,7 @@ data class GlassesHubCapabilities(
     val noticeSurfaceVersion: Int = 0,
     val activitySurfaceVersion: Int = 0,
     val inkSurfaceVersion: Int = 0,
+    val widgetSurfaceVersion: Int = 0,
     val maxImageBytes: Int,
     val versionName: String?,
     val setupComplete: Boolean = false,
@@ -45,6 +46,7 @@ object GlassesHubCapabilitiesContract {
         noticeSurfaceVersion: Int = 0,
         activitySurfaceVersion: Int = 0,
         inkSurfaceVersion: Int = 0,
+        widgetSurfaceVersion: Int = 0,
         maxImageBytes: Int,
         versionName: String?,
         setupComplete: Boolean = false,
@@ -67,6 +69,7 @@ object GlassesHubCapabilitiesContract {
         noticeSurfaceVersion = noticeSurfaceVersion,
         activitySurfaceVersion = activitySurfaceVersion,
         inkSurfaceVersion = inkSurfaceVersion,
+        widgetSurfaceVersion = widgetSurfaceVersion,
         maxImageBytes = maxImageBytes,
         versionName = normalizeVersionName(versionName),
         setupComplete = setupComplete,
@@ -91,6 +94,7 @@ object GlassesHubCapabilitiesContract {
         .put("noticeSurfaceVersion", capabilities.noticeSurfaceVersion)
         .put("activitySurfaceVersion", capabilities.activitySurfaceVersion)
         .put("inkSurfaceVersion", capabilities.inkSurfaceVersion)
+        .put("widgetSurfaceVersion", capabilities.widgetSurfaceVersion)
         .put("maxImageBytes", capabilities.maxImageBytes)
         .put("setupComplete", capabilities.setupComplete)
         .put("setupFailureState", capabilities.setupFailureState)
@@ -119,6 +123,7 @@ object GlassesHubCapabilitiesContract {
         noticeSurfaceVersion = payload.optInt("noticeSurfaceVersion", 0),
         activitySurfaceVersion = payload.optInt("activitySurfaceVersion", 0),
         inkSurfaceVersion = payload.optInt("inkSurfaceVersion", 0),
+        widgetSurfaceVersion = payload.optInt("widgetSurfaceVersion", 0),
         maxImageBytes = payload.optInt("maxImageBytes", 0),
         versionName = normalizeVersionName(payload.optString("versionName", "")),
         setupComplete = payload.optBoolean("setupComplete", false),

@@ -1,5 +1,7 @@
 package com.anezium.rokidbus.phone
 
+import com.anezium.rokidbus.shared.BusPaths
+
 /**
  * Hub side of the ambient media trigger: bridges a [MediaPlaybackTrigger] to the plugin
  * lifecycle through [externalPluginController]. Pure Kotlin so the open/close contract can
@@ -50,7 +52,7 @@ class MediaTriggerCoordinator(
         }
         isHoldingOpen = externalPluginController.open(
             principal,
-            ExternalPluginOpenRequest(type = PLUGIN_MEDIA_TRIGGER_OPEN_TYPE),
+            ExternalPluginOpenRequest(type = BusPaths.PLUGIN_OPEN_TYPE_MEDIA_TRIGGER),
         )
         logger("media trigger: opening plugin=${principal.descriptor.id}")
     }
@@ -63,7 +65,8 @@ class MediaTriggerCoordinator(
     }
 
     companion object {
-        const val PLUGIN_MEDIA_TRIGGER_OPEN_TYPE = "media_trigger"
+        /** Alias for the shared wire token, kept for callers that pair open/close type. */
+        const val PLUGIN_MEDIA_TRIGGER_OPEN_TYPE = BusPaths.PLUGIN_OPEN_TYPE_MEDIA_TRIGGER
         const val PLUGIN_MEDIA_TRIGGER_CLOSE_REASON = "media_idle"
     }
 }

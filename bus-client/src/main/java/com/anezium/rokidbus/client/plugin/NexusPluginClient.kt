@@ -49,6 +49,11 @@ class NexusPluginClient internal constructor(
     private var snapshotSessionApiUsed = false
     @Volatile private var currentLinkState = 0
     @Volatile private var hubCapabilities = 0
+    @Volatile private var currentOpenTypeInternal = ""
+
+    /** The type of the most recent PLUGIN_OPEN (empty = user/launcher open). */
+    internal val currentOpenType: String
+        get() = currentOpenTypeInternal
 
     val isApproved: Boolean
         get() = registrationState == PluginRegistrationResult.APPROVED
@@ -635,6 +640,7 @@ class NexusPluginClient internal constructor(
             // reset and re-show, which also acknowledges the hub's open watchdog.
             BusPaths.PLUGIN_OPEN -> if (isApproved) {
                 opened = true
+                currentOpenTypeInternal = payload.optString("type", "")
                 callbacks.onOpen()
             }
             BusPaths.PLUGIN_CLOSE -> if (opened) {
