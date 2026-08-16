@@ -56,6 +56,8 @@ import com.anezium.rokidbus.shared.NoticeSurfaceValidationResult
 import com.anezium.rokidbus.shared.PhoneHubCapabilitiesContract
 import com.anezium.rokidbus.shared.PinSurfaceContract
 import com.anezium.rokidbus.shared.PinSurfaceValidationResult
+import com.anezium.rokidbus.shared.WidgetSurfaceContract
+import com.anezium.rokidbus.shared.WidgetSurfaceValidationResult
 import com.anezium.rokidbus.shared.RemoteInputContract
 import com.anezium.rokidbus.shared.RemoteNavigationContract
 import com.anezium.rokidbus.shared.RemotePointerContract
@@ -309,6 +311,7 @@ class BusHubService : Service() {
     @Volatile private var remotePinSurfaceVersion = 0
     @Volatile private var remoteNoticeSurfaceVersion = 0
     @Volatile private var remoteActivitySurfaceVersion = 0
+    @Volatile private var remoteWidgetSurfaceVersion = 0
     @Volatile private var remoteInkSurfaceVersion = 0
     @Volatile private var remoteMaxImageBytes = 0
     @Volatile private var remoteGlassesVersionName: String? = null
@@ -1072,6 +1075,28 @@ class BusHubService : Service() {
                 return
             }
         }
+        if (isWidgetPath(envelope.path)) {
+            val invalidWidget = envelope.binary != null ||
+                envelope.payload.optString("surfaceId") != WidgetSurfaceContract.LOCAL_SURFACE_ID ||
+                when (envelope.path) {
+                    BusPaths.WIDGET_SHOW ->
+                        WidgetSurfaceContract.validateShow(envelope.payload) !is WidgetSurfaceValidationResult.Valid
+                    BusPaths.WIDGET_UPDATE ->
+                        WidgetSurfaceContract.validateAnchorUpdate(envelope.payload) !is WidgetSurfaceValidationResult.Valid
+                    else -> false
+                }
+            if (invalidWidget) {
+                recordLocalRoute(
+                    envelope,
+                    senderUid,
+                    sender,
+                    PluginBusJournal.Verdict.REJECTED,
+                    WidgetSurfaceContract.ERROR_INVALID_WIDGET,
+                )
+                deliverError(sender.replyBinder, envelope.id, WidgetSurfaceContract.ERROR_INVALID_WIDGET)
+                return
+            }
+        }
         if (isNoticePath(envelope.path)) {
             val invalidNotice = !isValidLocalNoticeEnvelope(envelope)
             if (invalidNotice) {
@@ -1139,6 +1164,8 @@ class BusHubService : Service() {
                     envelope.path == BusPaths.PIN_SHOW || envelope.path == BusPaths.PIN_HIDE
                 ) {
                     PinSurfaceContract.ERROR_INVALID_PIN
+                } else if (isWidgetPath(envelope.path)) {
+                    WidgetSurfaceContract.ERROR_INVALID_WIDGET
                 } else if (isNoticePath(envelope.path)) {
                     NoticeSurfaceContract.ERROR_INVALID_NOTICE
                 } else if (isActivityPath(envelope.path)) {
@@ -1172,6 +1199,7 @@ class BusHubService : Service() {
                 BusPaths.SURFACE_SHOW, BusPaths.SURFACE_UPDATE, BusPaths.SURFACE_HIDE,
                 BusPaths.NOTICE_SHOW, BusPaths.NOTICE_UPDATE, BusPaths.NOTICE_HIDE,
                 BusPaths.PIN_SHOW, BusPaths.PIN_HIDE,
+                BusPaths.WIDGET_SHOW, BusPaths.WIDGET_UPDATE, BusPaths.WIDGET_HIDE,
                 BusPaths.ACTIVITY_START, BusPaths.ACTIVITY_UPDATE, BusPaths.ACTIVITY_END,
                 BusPaths.INK_SHOW, BusPaths.INK_UPDATE, BusPaths.INK_HIDE,
             ) &&
@@ -1208,6 +1236,10 @@ class BusHubService : Service() {
         }
         if (ownedEnvelope.path == BusPaths.PIN_SHOW || ownedEnvelope.path == BusPaths.PIN_HIDE) {
             handleLocalPin(ownedEnvelope, senderUid, sender)
+            return
+        }
+        if (isWidgetPath(ownedEnvelope.path)) {
+            handleLocalWidget(ownedEnvelope, senderUid, sender)
             return
         }
         if (isNoticePath(ownedEnvelope.path)) {
@@ -1574,6 +1606,7 @@ class BusHubService : Service() {
     private fun journalCategory(path: String, hasBinary: Boolean): PluginBusJournal.Category = when (path) {
         BusPaths.SURFACE_SHOW, BusPaths.SURFACE_UPDATE, BusPaths.SURFACE_HIDE,
         BusPaths.PIN_SHOW, BusPaths.PIN_HIDE,
+        BusPaths.WIDGET_SHOW, BusPaths.WIDGET_UPDATE, BusPaths.WIDGET_HIDE,
         BusPaths.NOTICE_SHOW, BusPaths.NOTICE_UPDATE, BusPaths.NOTICE_HIDE,
         BusPaths.ACTIVITY_START, BusPaths.ACTIVITY_UPDATE, BusPaths.ACTIVITY_END,
         -> PluginBusJournal.Category.SURFACE
@@ -1591,6 +1624,11 @@ class BusHubService : Service() {
         path == BusPaths.NOTICE_SHOW ||
             path == BusPaths.NOTICE_UPDATE ||
             path == BusPaths.NOTICE_HIDE
+
+    private fun isWidgetPath(path: String): Boolean =
+        path == BusPaths.WIDGET_SHOW ||
+            path == BusPaths.WIDGET_UPDATE ||
+            path == BusPaths.WIDGET_HIDE
 
     private fun handleLocalNotice(
         envelope: BusEnvelope,
@@ -2136,6 +2174,45 @@ class BusHubService : Service() {
                 }
             }
         }
+    }
+
+    private fun handleLocalWidget(
+        envelope: BusEnvelope,
+        senderUid: Int,
+        sender: AuthorizedSender,
+    ) {
+        val principal = sender.principal
+        if (principal == null || envelope.binary != null) {
+            recordLocalRoute(
+                envelope,
+                senderUid,
+                sender,
+                PluginBusJournal.Verdict.REJECTED,
+                WidgetSurfaceContract.ERROR_INVALID_WIDGET,
+            )
+            deliverError(sender.replyBinder, envelope.id, WidgetSurfaceContract.ERROR_INVALID_WIDGET)
+            return
+        }
+        if (capabilities() and BusCapabilityBits.WIDGET_SURFACE == 0) {
+            recordLocalRoute(
+                envelope,
+                senderUid,
+                sender,
+                PluginBusJournal.Verdict.REJECTED,
+                WidgetSurfaceContract.ERROR_CAPABILITY_NOT_AVAILABLE,
+            )
+            deliverError(
+                sender.replyBinder,
+                envelope.id,
+                WidgetSurfaceContract.ERROR_CAPABILITY_NOT_AVAILABLE,
+            )
+            return
+        }
+        // Ambient passthrough: the widget never owns a foreground slot and never holds a
+        // rate-limited state machine. The plugin keeps its current line locally from the
+        // anchor, so show carries full lines and update carries an anchor-only patch.
+        recordLocalRoute(envelope, senderUid, sender, PluginBusJournal.Verdict.OK)
+        sendRemote(envelope)?.let { deliverError(sender.replyBinder, envelope.id, it) }
     }
 
     private fun handleHubPath(
@@ -5649,6 +5726,11 @@ class BusHubService : Service() {
         if (remoteActivitySurfaceVersion == ActivitySurfaceContract.VERSION) {
             capabilities = capabilities or BusCapabilityBits.ACTIVITY_SURFACE
         }
+        // Ambient like a pin: the widget is re-asserted on every glasses redraw, so it is
+        // never gated on the link -- an asleep glasses simply does not show it yet.
+        if (remoteWidgetSurfaceVersion == WidgetSurfaceContract.VERSION) {
+            capabilities = capabilities or BusCapabilityBits.WIDGET_SURFACE
+        }
         capabilities = capabilities or BusCapabilityBits.TTS
         // Unconditional: this build can always take a pairing offer off the glasses. Gating it on
         // link or session state would make the glasses read "no phone help available" during the
@@ -5693,10 +5775,14 @@ class BusHubService : Service() {
         val activitySupported = advertised.protocolVersion == GlassesHubCapabilitiesContract.VERSION &&
             advertised.features and BusCapabilityBits.ACTIVITY_SURFACE != 0 &&
             advertised.activitySurfaceVersion == ActivitySurfaceContract.VERSION
+        val widgetSupported = advertised.protocolVersion == GlassesHubCapabilitiesContract.VERSION &&
+            advertised.features and BusCapabilityBits.WIDGET_SURFACE != 0 &&
+            advertised.widgetSurfaceVersion == WidgetSurfaceContract.VERSION
         val acceptedInkVersion = PhoneInkCapabilityPolicy.acceptedVersion(advertised)
         remotePinSurfaceVersion = if (pinSupported) PinSurfaceContract.VERSION else 0
         remoteNoticeSurfaceVersion = if (noticeSupported) NoticeSurfaceContract.VERSION else 0
         remoteActivitySurfaceVersion = if (activitySupported) ActivitySurfaceContract.VERSION else 0
+        remoteWidgetSurfaceVersion = if (widgetSupported) WidgetSurfaceContract.VERSION else 0
         remoteInkSurfaceVersion = acceptedInkVersion
         remoteMaxImageBytes = if (imageSupported) advertised.maxImageBytes else 0
         updateRemoteGlassesAppState(
