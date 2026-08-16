@@ -421,4 +421,100 @@ class NexusPluginClientTest {
             NexusPin(richLines = listOf(NexusPinLine(" ", NexusPinEmphasis.BRIGHT)))
         }
     }
+
+    @Test
+    fun `widget show update-anchor and hide use the widget scoped paths`() {
+        val (client, transport, _) = fixture()
+        transport.featureBits = BusCapabilityBits.WIDGET_SURFACE
+        transport.listener.onMessage(
+            BusPaths.PLUGIN_REGISTRATION,
+            "widget-registration",
+            payload()
+                .put("result", PluginRegistrationResult.APPROVED)
+                .put("capabilities", "surfaces"),
+        )
+        transport.listener.onLinkState(LinkStateBits.SPP_DATA_UP)
+
+        val widget = NexusLyricsWidget(
+            contentKey = "track-42",
+            lines = listOf(
+                NexusTimedLine(0, "first line"),
+                NexusTimedLine(1_000, "second line"),
+            ),
+            anchor = NexusPlaybackAnchor(positionMs = 500, playing = true, sentAtElapsedRealtime = 1000),
+        )
+        assertEquals(NexusSdkResult.SENT, client.showWidget(widget))
+        assertEquals(
+            NexusSdkResult.SENT,
+            client.updateWidgetAnchor("track-42", NexusPlaybackAnchor(600, true, 2000)),
+        )
+        assertEquals(NexusSdkResult.SENT, client.hideWidget())
+
+        assertEquals(BusPaths.WIDGET_SHOW, transport.sends[0].first)
+        val shown = transport.sends[0].second
+        assertEquals("widget", shown.getString("kind"))
+        assertEquals("track-42", shown.getString("contentKey"))
+        assertEquals(2, shown.getJSONArray("lines").length())
+        assertEquals(500, shown.getJSONObject("anchor").getLong("positionMs"))
+        assertTrue(shown.getJSONObject("anchor").getBoolean("playing"))
+
+        assertEquals(BusPaths.WIDGET_UPDATE, transport.sends[1].first)
+        val update = transport.sends[1].second
+        assertEquals("widget", update.getString("kind"))
+        assertFalse(update.has("lines"))
+        assertEquals(600, update.getJSONObject("anchor").getLong("positionMs"))
+
+        assertEquals(BusPaths.WIDGET_HIDE, transport.sends[2].first)
+    }
+
+    @Test
+    fun `widget calls require approval grant and feature bit`() {
+        val (unapproved, _, _) = fixture()
+        assertEquals(NexusSdkResult.NOT_REGISTERED, unapproved.showWidget(widget()))
+        assertEquals(NexusSdkResult.NOT_REGISTERED, unapproved.hideWidget())
+
+        val (client, transport, _) = fixture()
+        transport.listener.onMessage(
+            BusPaths.PLUGIN_REGISTRATION,
+            "widget-no-grant",
+            payload()
+                .put("result", PluginRegistrationResult.APPROVED)
+                .put("capabilities", "http_proxy"),
+        )
+        assertEquals(NexusSdkResult.CAPABILITY_NOT_GRANTED, client.showWidget(widget()))
+
+        transport.listener.onMessage(
+            BusPaths.PLUGIN_REGISTRATION,
+            "widget-granted",
+            payload()
+                .put("result", PluginRegistrationResult.APPROVED)
+                .put("capabilities", "surfaces"),
+        )
+        // No WIDGET_SURFACE bit: the hub will not understand the path.
+        assertEquals(NexusSdkResult.CAPABILITY_NOT_AVAILABLE, client.showWidget(widget()))
+    }
+
+    @Test
+    fun `widget model enforces content and anchor caps`() {
+        assertThrows(IllegalArgumentException::class.java) {
+            NexusLyricsWidget(
+                contentKey = "",
+                lines = listOf(NexusTimedLine(0, "line")),
+                anchor = NexusPlaybackAnchor(0, true, 0),
+            )
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            NexusLyricsWidget(
+                contentKey = "track",
+                lines = listOf(NexusTimedLine(-1, "line")),
+                anchor = NexusPlaybackAnchor(0, true, 0),
+            )
+        }
+    }
+
+    private fun widget(): NexusLyricsWidget = NexusLyricsWidget(
+        contentKey = "track-1",
+        lines = listOf(NexusTimedLine(0, "lyric")),
+        anchor = NexusPlaybackAnchor(0, true, 0),
+    )
 }

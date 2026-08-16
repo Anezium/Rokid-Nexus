@@ -18,6 +18,10 @@ import com.anezium.rokidbus.shared.NoticeSurfaceContract
 import com.anezium.rokidbus.shared.PinSurfaceLine
 import com.anezium.rokidbus.shared.PinSurfacePosition
 import com.anezium.rokidbus.shared.PinSurfaceSize
+import com.anezium.rokidbus.shared.WidgetAnchor
+import com.anezium.rokidbus.shared.WidgetSurfaceContent
+import com.anezium.rokidbus.shared.WidgetSurfaceContract
+import com.anezium.rokidbus.shared.WidgetTimedLine
 import com.anezium.rokidbus.shared.plugin.PluginCapability
 import org.json.JSONArray
 import org.json.JSONObject
@@ -246,6 +250,33 @@ data class NexusTimedLines(
             subtitle?.let { put("subtitle", it) }
             footer?.let { put("footer", it) }
         }
+}
+
+/**
+ * The ambient lyrics home widget: full timed lines plus a playback anchor, sent once.
+ * The glasses advance the current/next line locally from [anchor]; a trigger-opened
+ * plugin updates only the anchor over `/widget/update` as playback drifts, seeks, or
+ * pauses. The widget is ambient -- it never counts as a foreground surface and never
+ * blocks or is blocked by `SURFACE_BUSY`.
+ */
+data class NexusLyricsWidget(
+    val contentKey: String,
+    val lines: List<NexusTimedLine>,
+    val anchor: NexusPlaybackAnchor,
+) {
+    init {
+        require(contentKey.isNotBlank() && contentKey.length <= MAX_CONTENT_KEY_CHARS)
+        require(lines.size <= MAX_TIMED_LINES)
+    }
+
+    internal fun toWidgetPayload(surfaceId: String): JSONObject = WidgetSurfaceContract.toPayload(
+        surfaceId,
+        WidgetSurfaceContent(
+            contentKey = contentKey,
+            lines = lines.map { WidgetTimedLine(it.timeMs, it.text) },
+            anchor = WidgetAnchor(anchor.positionMs, anchor.playing, anchor.sentAtElapsedRealtime),
+        ),
+    )
 }
 
 data class NexusMonoArtwork(
