@@ -8,6 +8,7 @@ scope_globs:
   - "phone-hub/src/**"
   - "glasses-hub/src/**"
   - "plugins/lyrics/**"
+  - "plugins/AGENTS.md"
   - "BUSSPEC.md"
   - "docs/PLUGIN_SDK.md"
 forbidden_globs:
@@ -34,6 +35,13 @@ the display state) / Karaoke (glasses hold the display on while a track is activ
 playing). Default: Karaoke. The existing full-screen lyrics surface keeps working
 exactly as today; the widget is additive.
 
+The always-on part lives in the HUB, not the plugin (owner decision 2026-08-16 after
+escalation): phone-hub gains a **media playback trigger** — it watches media sessions
+itself and OPENS the lyrics plugin (hub-initiated background open) when playback
+starts, closing it when playback ends. Plugins stay dormant-unless-open; the doctrine
+of `plugins/AGENTS.md` is preserved, with the media trigger documented as a new
+hub-initiated open reason.
+
 # Non-goals
 
 - No changes to the ROM's own widget/card system (CXR) — we draw our own overlay, we do
@@ -45,6 +53,12 @@ exactly as today; the widget is additive.
   registry/dist regeneration, no publishing.
 - No phone-side UI redesign; the mode setting is one new row in the existing
   LyricsSettingsActivity, following its current visual style.
+- No onboarding wizard changes. The hub's notification access (needed for
+  MediaSessionManager) is requested lazily: the widget mode setting shows the grant
+  state and deep-links to the system screen (ACTION_NOTIFICATION_LISTENER_SETTINGS)
+  when missing. Without the grant the trigger is simply inert.
+- The media trigger ships hub-side as a reusable mechanism but only the lyrics plugin
+  registers for it now; no other plugin is modified.
 
 # Constraints
 
@@ -76,17 +90,35 @@ exactly as today; the widget is additive.
   renderers. MUST hide (not overlap) when any full-screen surface or the launcher
   overlay is up — same visibility gating StatusBadge uses for foreign fullscreen
   windows.
-- Auto show/hide (phone side, lyrics plugin): show when a media snapshot transitions to
-  `isPlaying && lyrics available` (synced lines present); hide when playback pauses or
-  stops for more than a 5 s grace period, when the media session disappears, or when the
-  track has no lyrics. Wire it from the existing `MediaSessionMonitor` →
-  `LyricsRuntimeEngine` flow (`plugins/lyrics/.../LyricsRuntimeEngine.kt`
-  `onMediaPlaybackSnapshot` L82-140, `applyMediaSnapshot` L378-383); the engine currently
-  never drives visibility — that is the gap being closed.
-- The widget MUST work without the plugin's full-screen lyrics UI being open, i.e. the
-  plugin service reacts to playback in the background exactly as it already does for
-  state pushes. When the full-screen lyrics surface IS open, the widget MUST hide (the
-  surface supersedes it) and reappear when the surface closes, music still playing.
+- HUB MEDIA TRIGGER (the always-on piece — replaces the earlier false premise that the
+  plugin monitors in the background): phone-hub declares a NotificationListenerService
+  component (the hub has NONE today — verified 2026-08-16) so
+  `MediaSessionManager.getActiveSessions` works, and watches sessions passively
+  (`OnActiveSessionsChangedListener` + controller callbacks; zero polling while nothing
+  plays). On a playback-started edge, if a registered plugin exists, the hub opens it
+  through the existing hub-initiated lifecycle in `ExternalPluginController.kt` (the
+  `deliver(principal, BusPaths.PLUGIN_OPEN, request.type)` path, ~L261 — add a new open
+  request type for the media trigger, following how existing open types are modeled).
+  On playback stopped/ended: after a 60 s grace with no playing session, the hub closes
+  the plugin (`PLUGIN_CLOSE`) — UNLESS the plugin currently owns a visible foreground
+  surface (user is actively using it), in which case leave it alone.
+- Trigger registration is declarative so it works while the plugin is dormant: follow
+  the existing `PLUGIN.Capabilities` manifest meta-data convention
+  (`plugins/lyrics/src/main/AndroidManifest.xml` L65-66) — add a media-trigger
+  declaration the hub reads from the installed plugin's manifest. Document the token in
+  BUSSPEC.md / PLUGIN_SDK.md.
+- Auto show/hide (plugin side, once opened by the trigger): the plugin's existing
+  `MediaSessionMonitor` → `LyricsRuntimeEngine` flow starts in `onNexusOpen` as today
+  (`LyricsPluginService.kt:43-53` — lifecycle unchanged); NEW logic reacts to snapshot
+  transitions: show the widget when `isPlaying && synced lyrics available`; hide it when
+  playback pauses/stops for more than a 5 s grace, when the media session disappears, or
+  when the track has no lyrics. A trigger-opened (background) plugin instance MUST NOT
+  show any surface other than the widget.
+- When the full-screen lyrics surface IS open, the widget MUST hide (the surface
+  supersedes it) and reappear when the surface closes, music still playing.
+- `plugins/AGENTS.md`: add a short paragraph documenting the media trigger as a
+  hub-initiated open reason (like scheduled delivery). The dormant-unless-open doctrine
+  itself MUST NOT be weakened or reworded.
 - Karaoke display-hold: implemented in glasses-hub, driven by the widget's anchor state
   (`playing == true` AND widget visible). Clone the renewable wake-lock pattern of
   `AssistantDisplayEpisode` (`glasses-hub/.../AssistantDisplayEpisode.kt:405` area):
@@ -130,13 +162,19 @@ exactly as today; the widget is additive.
 | 5 | Local line advance | new glasses-hub unit test: given lines+anchor, renderer selects correct current/next line at t, t+n without new messages | test present and green |
 | 6 | Auto show/hide transitions | new plugin-lyrics unit test: snapshot playing+lyrics → show sent; pause >5 s → hide sent; no lyrics → no show | test present and green |
 | 7 | Karaoke hold bounded | new glasses-hub unit test: hold acquired only when playing+visible, released ≤5 s after pause/hide, ceiling enforced | test present and green |
-| 8 | Docs updated | `grep -n "widget" BUSSPEC.md docs/PLUGIN_SDK.md` | new channel documented |
+| 8 | Docs updated | `grep -n "widget" BUSSPEC.md docs/PLUGIN_SDK.md plugins/AGENTS.md` | new channel + media trigger documented |
+| 9 | Trigger opens/closes plugin | new phone-hub unit test: playback-start edge with registered plugin → PLUGIN_OPEN with the media-trigger type; 60 s no-playing grace → PLUGIN_CLOSE; no close while plugin owns a visible surface | test present and green |
+| 10 | Trigger inert without grant | new phone-hub unit test: notification access absent → no session watching, no open attempts, no crash | test present and green |
 
 Device validation (screencaps, real Spotify playback, karaoke hold measurement) is done
 by the supervisor after review — not part of this run.
 
 # Plan sketch
 
+0. `phone-hub`: media trigger — NLS component declaration, passive session watcher,
+   playback edge detection, declarative registration read from plugin manifests,
+   open/close through `ExternalPluginController` with a new request type (+ tests #9,
+   #10).
 1. `shared`: add `/widget/*` path constants + PathRules capability entries (+ tests).
 2. `bus-client`: SDK model (`NexusLyricsWidget`: timed lines, anchor, mode-independent)
    + session methods `showWidget`/`updateWidgetAnchor`/`hideWidget` + payload tests,
@@ -179,6 +217,15 @@ by the supervisor after review — not part of this run.
   `WAKE_LOCK_MS = 3000`. `AssistantDisplayEpisode` ceiling: `DISPLAY_HOLD_CEILING_MS =
   90_000` (~L373) — the widget episode may renew beyond 90 s while playing, but must
   enforce its own 10 min per-track ceiling.
+- Escalation history (why the hub trigger exists): a first execution attempt stopped
+  correctly on a real conflict — the contract assumed the plugin monitors media in the
+  background, but `plugins/AGENTS.md` mandates plugins be dormant unless open and
+  `LyricsPluginService.kt:43-53` starts/stops the monitor strictly on open/close. The
+  owner chose the hub-side trigger (doctrine preserved) over an ambient-plugin
+  exception. Do not resurrect the plugin-side background monitoring idea.
+- phone-hub has NO NotificationListenerService today (grep-verified 2026-08-16); the
+  NLS component and its grant handling are new work. `ExternalPluginController.kt`
+  L261/L280-314 is the hub-initiated PLUGIN_OPEN machinery; open requests carry a type.
 - Line-number caution: all L-numbers above were read on 2026-08-16 from main; treat
   them as strong hints, re-locate by symbol if a file has drifted.
 
