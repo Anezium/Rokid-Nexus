@@ -128,8 +128,14 @@ internal object RelayInboxCatalog {
             }
             .toList()
 
-    /** The newest thing said, for the row's second line. Empty if there is none. */
-    fun previewFor(entry: RelayInboxEntry, width: Int = PREVIEW_CHARS): String {
+    /**
+     * The newest thing said, for the row's second line. Empty if there is none.
+     * When `hidden`, the row names the sender only — no message text — which is
+     * the list's counterpart to the band's hidden state; opening the
+     * conversation still reads it in full.
+     */
+    fun previewFor(entry: RelayInboxEntry, width: Int = PREVIEW_CHARS, hidden: Boolean = false): String {
+        if (hidden) return fitWithEllipsis(RelayPrivacy.HIDDEN_BODY, width)
         val newest = entry.snapshot.renderedText
             .lineSequence()
             .map(::compact)

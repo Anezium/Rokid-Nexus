@@ -42,6 +42,7 @@ class RelayPluginService : NexusPluginService() {
     }
 
     private val main = android.os.Handler(android.os.Looper.getMainLooper())
+    private val settings by lazy { RelaySettings(this) }
     private var sendDeadlineMs: Long? = null
     private var surface: NexusSurfaceSession? = null
     private var entries: List<RelayInboxEntry> = emptyList()
@@ -222,7 +223,10 @@ class RelayPluginService : NexusPluginService() {
             val selected = index == selection.selectedIndex
             NexusCardLine(
                 text = RelayInboxCatalog.lineFor(entry, selected),
-                sub = RelayInboxCatalog.previewFor(entry).takeIf(String::isNotBlank),
+                // Tapping a conversation open is the wearer's deliberate act, the
+                // equivalent of the band's Show — so the preview can hide while
+                // the opened thread still reads in full.
+                sub = RelayInboxCatalog.previewFor(entry, hidden = settings.hideInboxPreviews()).takeIf(String::isNotBlank),
                 // A thread that can no longer be answered is present but is not
                 // competing for the wearer's attention.
                 tone = if (entry.availability == RelayReplyAvailability.REPLIABLE) {

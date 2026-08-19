@@ -12,9 +12,14 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
+import android.text.InputFilter
+import android.text.InputType
 import android.view.Gravity
 import android.view.ViewGroup
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputMethodManager
 import android.widget.Button
+import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.Switch
 import android.widget.TextView
@@ -132,6 +137,24 @@ class RelaySettingsActivity : Activity() {
         content.addView(BusTheme.gap(this, 10))
         content.addView(
             switchCard(
+                "Hide message text on the glasses",
+                "The band names the sender · tap Show to read",
+                settings.hideNoticeText(),
+            ) { enabled -> settings.setHideNoticeText(enabled) },
+            NexusUi.block(),
+        )
+        content.addView(BusTheme.gap(this, 8))
+        content.addView(
+            switchCard(
+                "Hide previews in the inbox",
+                "The list names senders · open a conversation to read",
+                settings.hideInboxPreviews(),
+            ) { enabled -> settings.setHideInboxPreviews(enabled) },
+            NexusUi.block(),
+        )
+        content.addView(BusTheme.gap(this, 8))
+        content.addView(
+            switchCard(
                 "Image previews",
                 "Off by default · 512 px / 64 KiB maximum",
                 settings.imagePreviewsEnabled(),
@@ -172,6 +195,15 @@ class RelaySettingsActivity : Activity() {
         )
         content.addView(BusTheme.gap(this, 8))
         content.addView(noticeDisplayTimeCard(), NexusUi.block())
+        content.addView(BusTheme.gap(this, 8))
+        content.addView(
+            switchCard(
+                "Longer for long messages",
+                "Adds time per character, up to 45 seconds",
+                settings.noticeScalesWithLength(),
+            ) { enabled -> settings.setNoticeScalesWithLength(enabled) },
+            NexusUi.block(),
+        )
         content.addView(BusTheme.gap(this, 8))
         content.addView(
             switchCard(
@@ -500,24 +532,51 @@ class RelaySettingsActivity : Activity() {
                 orientation = LinearLayout.VERTICAL
                 addView(NexusUi.rowTitle(this@RelaySettingsActivity, "Message display time"))
                 addView(BusTheme.gap(this@RelaySettingsActivity, 4))
-                addView(NexusUi.rowSub(this@RelaySettingsActivity, "Auto scales with the message length"))
+                addView(NexusUi.rowSub(this@RelaySettingsActivity, "Seconds before the band leaves · 2 to 45"))
             },
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
         )
-        addView(stepButton("−") { changeNoticeDisplayTime(-1) })
-        addView(NexusUi.rowValue(this@RelaySettingsActivity).apply {
-            val seconds = settings.noticeDisplaySeconds()
-            text = if (seconds == RelaySettings.DEFAULT_NOTICE_DISPLAY_SECONDS) "Auto" else "${seconds}s"
+        val seconds = settings.noticeDisplaySeconds()
+        val field = NexusUi.field(this@RelaySettingsActivity, "3").apply {
+            textSize = 14f
+            inputType = InputType.TYPE_CLASS_NUMBER
+            imeOptions = EditorInfo.IME_ACTION_DONE
             gravity = Gravity.CENTER
-        }, LinearLayout.LayoutParams(NexusUi.dp(this@RelaySettingsActivity, 48), ViewGroup.LayoutParams.WRAP_CONTENT))
-        addView(stepButton("+") { changeNoticeDisplayTime(1) })
+            filters = arrayOf(InputFilter.LengthFilter(2))
+            setText(seconds.toString())
+            setSelection(text.length)
+            // Commit on DONE and on focus loss. Parsing happens once per commit,
+            // and the field is reset to the stored (coerced) value, so the wearer
+            // sees what was kept. render() is not called here: it rebuilds the
+            // whole screen and would drop focus mid-edit.
+            setOnEditorActionListener { _, actionId, _ ->
+                if (actionId == EditorInfo.IME_ACTION_DONE) {
+                    commitNoticeDisplaySeconds(this)
+                    val imm = getSystemService(InputMethodManager::class.java)
+                    imm?.hideSoftInputFromWindow(windowToken, 0)
+                    clearFocus()
+                    true
+                } else {
+                    false
+                }
+            }
+            setOnFocusChangeListener { _, hasFocus ->
+                if (!hasFocus) commitNoticeDisplaySeconds(this)
+            }
+        }
+        addView(
+            field,
+            LinearLayout.LayoutParams(NexusUi.dp(this@RelaySettingsActivity, 64), ViewGroup.LayoutParams.WRAP_CONTENT),
+        )
+        addView(NexusUi.rowValue(this@RelaySettingsActivity).apply { text = "s" })
     }
 
-    private fun changeNoticeDisplayTime(steps: Int) {
-        settings.setNoticeDisplaySeconds(
-            RelaySettings.stepNoticeDisplaySeconds(settings.noticeDisplaySeconds(), steps),
-        )
-        render()
+    private fun commitNoticeDisplaySeconds(field: EditText) {
+        val parsed = field.text?.toString()?.toIntOrNull()
+        if (parsed != null) {
+            settings.setNoticeDisplaySeconds(parsed)
+        }
+        field.setText(settings.noticeDisplaySeconds().toString())
     }
 
     private fun harnessCard(): LinearLayout = NexusUi.card(this).apply {

@@ -6,13 +6,19 @@ import com.anezium.rokidbus.shared.TtsContract
 internal object RelayReadAloud {
     fun textFor(
         enabled: Boolean,
+        senderOnly: Boolean,
         sender: String,
         renderedThread: String,
     ): String? {
         if (!enabled) return null
-        val newest = RelayInboxCatalog.threadMessages(renderedThread).lastOrNull() ?: return null
-        val speaker = newest.speaker.ifBlank { sender.trim() }
-        val spoken = if (speaker.isBlank()) newest.text else "$speaker: ${newest.text}"
+        val spoken = if (senderOnly) {
+            // Who wrote is all the glasses may say; the words stay on the phone.
+            sender.trim().takeIf(String::isNotBlank)?.let { "Message from $it" } ?: return null
+        } else {
+            val newest = RelayInboxCatalog.threadMessages(renderedThread).lastOrNull() ?: return null
+            val speaker = newest.speaker.ifBlank { sender.trim() }
+            if (speaker.isBlank()) newest.text else "$speaker: ${newest.text}"
+        }
         return spoken
             .replace(LINE_BREAKS, " ")
             .trim()

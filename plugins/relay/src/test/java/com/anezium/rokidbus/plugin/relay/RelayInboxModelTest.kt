@@ -62,6 +62,26 @@ class RelayInboxModelTest {
     }
 
     @Test
+    fun `a hidden preview names the message and keeps no thread text`() {
+        val entry = RelayInboxEntry(
+            snapshot = snapshot(
+                id = "signal-alice",
+                sender = "Alice",
+                appLabel = "Signal",
+                text = "Alice: older\nAlice: newest message",
+            ),
+            availability = RelayReplyAvailability.REPLIABLE,
+        )
+
+        // Hidden, the row shows the placeholder and not the conversation.
+        assertEquals(RelayPrivacy.HIDDEN_BODY, RelayInboxCatalog.previewFor(entry, hidden = true))
+        assertFalse(RelayInboxCatalog.previewFor(entry, hidden = true).contains("newest message"))
+
+        // Not hidden, it behaves as before.
+        assertEquals("Alice: newest message", RelayInboxCatalog.previewFor(entry, hidden = false))
+    }
+
+    @Test
     fun `dead thread row remains readable and is labelled read only`() {
         val entry = RelayInboxEntry(
             snapshot = snapshot(id = "dead", sender = "Bob", appLabel = "Bob", text = "Still readable"),

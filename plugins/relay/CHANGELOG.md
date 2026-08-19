@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **The glasses can name who messaged without showing what.** Two new switches:
+  *Hide message text on the glasses* keeps the band to the sender and a Show chip
+  — tap it when the moment is right, and Reply is still one tap away — and *Hide
+  previews in the inbox* keeps the list to names; opening a conversation still
+  reads it. Read-aloud names the sender only while the band is hidden.
+- **Message display time is now a number you type.** Two to 45 seconds, 3 by
+  default, with a separate *Longer for long messages* switch that adds reading
+  time per character. Existing settings carry over: Auto becomes 3 seconds with
+  scaling on, a fixed value stays fixed.
+
 ## 1.2.0
 
 - **Inbox conversations now open as full-screen reader documents.** Messages

@@ -12,6 +12,7 @@ class RelayReadAloudTest {
         assertNull(
             RelayReadAloud.textFor(
                 enabled = false,
+                senderOnly = false,
                 sender = "Alice",
                 renderedThread = "Alice: This stays silent",
             ),
@@ -24,6 +25,7 @@ class RelayReadAloudTest {
             "Bob: The newest message in full",
             RelayReadAloud.textFor(
                 enabled = true,
+                senderOnly = false,
                 sender = "Weekend plans",
                 renderedThread = "Alice: The older message\nBob: The newest message in full",
             ),
@@ -36,6 +38,7 @@ class RelayReadAloudTest {
             "Alice: Message without a label",
             RelayReadAloud.textFor(
                 enabled = true,
+                senderOnly = false,
                 sender = "Alice",
                 renderedThread = "Message without a label",
             ),
@@ -47,11 +50,49 @@ class RelayReadAloudTest {
         val newestWords = "n".repeat(TtsContract.MAX_TEXT_CHARS)
         val spoken = RelayReadAloud.textFor(
             enabled = true,
+            senderOnly = false,
             sender = "Alice",
             renderedThread = "Alice: old\nAlice: prefix-$newestWords",
         )
 
         assertEquals(newestWords, spoken)
         assertTrue(spoken!!.length <= TtsContract.MAX_TEXT_CHARS)
+    }
+
+    @Test
+    fun `sender-only mode names the sender and never the thread text`() {
+        assertEquals(
+            "Message from Alice",
+            RelayReadAloud.textFor(
+                enabled = true,
+                senderOnly = true,
+                sender = "Alice",
+                renderedThread = "Alice: The secret text that must not be spoken",
+            ),
+        )
+    }
+
+    @Test
+    fun `sender-only mode with a blank sender produces no speech`() {
+        assertNull(
+            RelayReadAloud.textFor(
+                enabled = true,
+                senderOnly = true,
+                sender = "",
+                renderedThread = "Alice: The secret text that must not be spoken",
+            ),
+        )
+    }
+
+    @Test
+    fun `disabled reading in sender-only mode produces no speech`() {
+        assertNull(
+            RelayReadAloud.textFor(
+                enabled = false,
+                senderOnly = true,
+                sender = "Alice",
+                renderedThread = "Alice: The secret text that must not be spoken",
+            ),
+        )
     }
 }

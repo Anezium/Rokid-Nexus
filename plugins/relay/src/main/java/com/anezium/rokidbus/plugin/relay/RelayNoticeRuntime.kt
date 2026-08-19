@@ -131,6 +131,7 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
         cancelSendCountdown()
         stopReadAloud()
         when (id) {
+            ACTION_SHOW -> revealNotice()
             ACTION_REPLY, ACTION_RETRY -> startListening()
             ACTION_SEND -> sendConfirmedReply()
             ACTION_DISMISS, ACTION_CANCEL -> dismissNotice()
@@ -164,7 +165,15 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
             return
         }
 
-        val preview = reply.imagePreview
+        val hidden = settings.hideNoticeText()
+        val lines = if (hidden) {
+            listOf(RelayPrivacy.HIDDEN_BODY)
+        } else {
+            messageLines(reply.content.renderedText)
+        }
+        // An image is message content; while the text is hidden, do not send its
+        // preview bytes — the no-image overload keeps the band to the sender.
+        val preview = if (hidden) null else reply.imagePreview
         val image = preview?.let {
             NexusNoticeImage(
                 contentKey = it.id,
@@ -173,19 +182,20 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
                 pixelHeight = it.height,
             )
         }
+        val shownCharacterCount = lines.sumOf { it.length }
         val notice = NexusNotice(
             title = reply.content.title,
             // The extractor already separates messages with newlines; sending them
             // as lines is what stops the band flattening a conversation into one
             // paragraph. Newest win when a thread runs longer than the tier allows,
             // for the same reason the character trim drops from the top.
-            lines = messageLines(reply.content.renderedText),
+            lines = lines,
             footer = reply.footer.takeIf(String::isNotBlank),
-            actions = INITIAL_ACTIONS,
+            actions = if (hidden) HIDDEN_ACTIONS else INITIAL_ACTIONS,
             image = image?.takeIf { currentClient.supportsImageSurface },
             wakeDisplay = true,
             backdrop = settings.noticeBackdrop(),
-            ttlMs = explicitNoticeTtlMs(settings.noticeDisplaySeconds()),
+            ttlMs = noticeTtlMs(settings.noticeDisplaySeconds(), settings.noticeScalesWithLength(), shownCharacterCount),
         )
         val result = if (notice.image != null && preview != null) {
             currentClient.showNotice(notice, preview.bytes)
@@ -194,7 +204,7 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
         }
         Log.i(
             TAG,
-            "notice show generation=$showGeneration result=$result textChars=${reply.content.renderedText.length} " +
+            "notice show generation=$showGeneration result=$result textChars=$shownCharacterCount " +
                 "imageBytes=${preview?.bytes?.size ?: 0}",
         )
         if (result == NexusSdkResult.SENT) {
@@ -239,6 +249,7 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
     private fun readNoticeAloud(reply: ReplyRepository.PendingReply) {
         val text = RelayReadAloud.textFor(
             enabled = settings.readAloud(),
+            senderOnly = settings.hideNoticeText(),
             sender = reply.content.title,
             renderedThread = reply.content.renderedText,
         ) ?: return
@@ -482,6 +493,26 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
         )
     }
 
+    private fun revealNotice() {
+        val reply = currentReply ?: return
+        if (!activeNotice) return
+        // An update restarts the band's TTL, so the wearer gets the full reading
+        // time after tapping Show. Images are not revealed by Show — updates
+        // cannot carry image bytes — so a hidden image stays hidden.
+        queueEssential(
+            NexusNoticeUpdate(
+                lines = messageLines(reply.content.renderedText),
+                actions = INITIAL_ACTIONS,
+                ttlMs = noticeTtlMs(
+                    settings.noticeDisplaySeconds(),
+                    settings.noticeScalesWithLength(),
+                    reply.content.renderedText.length,
+                ),
+            ),
+            dropPartial = false,
+        )
+    }
+
     private fun dismissNotice() {
         invalidateSpeech()
         pendingPartial = null
@@ -613,8 +644,19 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
         const val HIDE_FALLBACK_MS = 500L
         const val MIN_NOTICE_MESSAGE_INTERVAL_MS = 210L
 
-        fun explicitNoticeTtlMs(displaySeconds: Int): Long? =
-            if (displaySeconds == 0) null else displaySeconds * 1_000L
+        /**
+         * The time the band stays, given the wearer's base seconds, whether it
+         * scales with length, and how much text is on it.
+         *
+         * The same per-character rate the hub uses when a plugin sends no TTL,
+         * on top of a base the wearer chose — so "scale with length" still means
+         * exactly what Auto always meant, and a fixed value still holds for its
+         * whole duration. Clamped to the contract's floors and ceiling.
+         */
+        fun noticeTtlMs(displaySeconds: Int, scalesWithLength: Boolean, characterCount: Int): Long =
+            (RelaySettings.coerceNoticeDisplaySeconds(displaySeconds) * 1_000L +
+                (if (scalesWithLength) characterCount.coerceAtLeast(0) * NoticeSurfaceContract.DERIVED_TTL_PER_CHAR_MS else 0L))
+                .coerceIn(NoticeSurfaceContract.MIN_TTL_MS, NoticeSurfaceContract.MAX_TTL_MS)
 
         /**
          * None of these is a refusal — each means "not yet", and each is
@@ -659,6 +701,7 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
         const val ACTION_SEND = "send"
         const val ACTION_RETRY = "retry"
         const val ACTION_CANCEL = "cancel"
+        const val ACTION_SHOW = "show"
 
         /** Deliberately handled by nothing: the chip says a thing, it is not one. */
         const val ACTION_SENT = "sent"
@@ -687,6 +730,12 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
          * read the message they were interrupted about.
          */
         val INITIAL_ACTIONS = listOf(
+            NexusNoticeAction(ACTION_REPLY, "reply", "Reply"),
+        )
+        // Hiding the text must not turn the band into a dead end: Show is the
+        // wearer saying "now is fine", and Reply stays one tap away either way.
+        val HIDDEN_ACTIONS = listOf(
+            NexusNoticeAction(ACTION_SHOW, "show", "Show"),
             NexusNoticeAction(ACTION_REPLY, "reply", "Reply"),
         )
         /**

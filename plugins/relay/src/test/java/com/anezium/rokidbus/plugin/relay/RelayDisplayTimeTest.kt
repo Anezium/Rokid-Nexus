@@ -1,36 +1,31 @@
 package com.anezium.rokidbus.plugin.relay
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
 import org.junit.Test
 
 class RelayDisplayTimeTest {
     @Test
-    fun `auto omits an explicit notice ttl while fixed durations use milliseconds`() {
-        assertNull(RelayNoticeRuntime.explicitNoticeTtlMs(0))
-        assertEquals(5_000L, RelayNoticeRuntime.explicitNoticeTtlMs(5))
-        assertEquals(45_000L, RelayNoticeRuntime.explicitNoticeTtlMs(45))
+    fun `notice ttl combines a base with optional per-character scaling`() {
+        assertEquals(3_000L, RelayNoticeRuntime.noticeTtlMs(3, false, 500))
+        assertEquals(3_000L, RelayNoticeRuntime.noticeTtlMs(3, true, 0))
+        assertEquals(7_500L, RelayNoticeRuntime.noticeTtlMs(3, true, 100))
+        assertEquals(45_000L, RelayNoticeRuntime.noticeTtlMs(45, true, 10_000))
+        assertEquals(2_000L, RelayNoticeRuntime.noticeTtlMs(2, false, 0))
+        // Below the floor is clamped up, not sent short.
+        assertEquals(2_000L, RelayNoticeRuntime.noticeTtlMs(1, false, 0))
     }
 
     @Test
-    fun `display time coercion keeps auto and snaps arbitrary values to valid durations`() {
-        (0..45 step 5).forEach { value ->
-            assertEquals(value, RelaySettings.coerceNoticeDisplaySeconds(value))
-        }
-        assertEquals(5, RelaySettings.coerceNoticeDisplaySeconds(-1))
-        assertEquals(5, RelaySettings.coerceNoticeDisplaySeconds(4))
-        assertEquals(10, RelaySettings.coerceNoticeDisplaySeconds(12))
-        assertEquals(15, RelaySettings.coerceNoticeDisplaySeconds(13))
+    fun `display seconds coerce into the 2 to 45 range`() {
+        assertEquals(2, RelaySettings.coerceNoticeDisplaySeconds(1))
+        assertEquals(3, RelaySettings.coerceNoticeDisplaySeconds(3))
         assertEquals(45, RelaySettings.coerceNoticeDisplaySeconds(46))
     }
 
     @Test
-    fun `display time stepping crosses the auto boundary and stops at the ceiling`() {
-        assertEquals(5, RelaySettings.stepNoticeDisplaySeconds(0, 1))
-        assertEquals(0, RelaySettings.stepNoticeDisplaySeconds(5, -1))
-        assertEquals(0, RelaySettings.stepNoticeDisplaySeconds(0, -1))
-        assertEquals(20, RelaySettings.stepNoticeDisplaySeconds(15, 1))
-        assertEquals(10, RelaySettings.stepNoticeDisplaySeconds(15, -1))
-        assertEquals(45, RelaySettings.stepNoticeDisplaySeconds(45, 1))
+    fun `legacy display time maps auto to scaling and fixed values to held`() {
+        assertEquals(RelaySettings.LegacyDisplayTime(3, true), RelaySettings.legacyDisplayTime(0))
+        assertEquals(RelaySettings.LegacyDisplayTime(10, false), RelaySettings.legacyDisplayTime(10))
+        assertEquals(RelaySettings.LegacyDisplayTime(45, false), RelaySettings.legacyDisplayTime(50))
     }
 }
