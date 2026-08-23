@@ -108,6 +108,42 @@ class KaraokeHoldPolicyTest {
     }
 
     @Test
+    fun `renewal tick while playing reacquires before the previous hold timeout`() {
+        val h = Harness()
+        h.playing = true
+        h.holdDisplay = true
+        h.now = 0
+        h.drive()
+        assertTrue(h.actions.single() is KaraokeHoldPolicy.Action.Acquire)
+
+        h.now = 4_000
+        h.drive()
+        assertEquals(2, h.actions.size)
+        assertTrue(h.actions.last() is KaraokeHoldPolicy.Action.Acquire)
+        assertTrue(h.policy.isHeld)
+    }
+
+    @Test
+    fun `after the ceiling fires the same track stays released`() {
+        val h = Harness()
+        h.playing = true
+        h.holdDisplay = true
+        h.now = 0
+        h.drive()
+        h.now = 601_000
+        h.drive()
+        assertFalse(h.policy.isHeld)
+        assertTrue(h.actions.last() is KaraokeHoldPolicy.Action.Release)
+
+        h.now = 605_000
+        h.drive()
+        h.now = 620_000
+        h.drive()
+        assertFalse(h.policy.isHeld)
+        assertEquals(1, h.actions.count { it is KaraokeHoldPolicy.Action.Acquire })
+    }
+
+    @Test
     fun `force release clears the hold capacity`() {
         val h = Harness()
         h.playing = true

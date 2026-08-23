@@ -15,7 +15,6 @@ import android.widget.TextView
 import com.anezium.rokidbus.client.ui.BusTheme
 import com.anezium.rokidbus.shared.WidgetAnchor
 import com.anezium.rokidbus.shared.WidgetTimedLine
-import kotlin.math.min
 import kotlin.math.roundToInt
 
 /**
@@ -155,6 +154,8 @@ internal object LyricsWidgetOverlayRenderer {
             root = nextView
             params = nextParams
         }
+        val maxWidthPx = (metrics.widthPixels * MAX_WIDTH_FRACTION).roundToInt()
+        currentRoot.applyMaxWidth(maxWidthPx)
         currentRoot.render(current, next, metrics.density)
         params?.let { layout ->
             applyGeometry(layout, activeService)
@@ -184,8 +185,6 @@ internal object LyricsWidgetOverlayRenderer {
     }
 
     private fun baseParams(activeService: AccessibilityService): WindowManager.LayoutParams {
-        val metrics = activeService.resources.displayMetrics
-        val maxWidthPx = (metrics.widthPixels * MAX_WIDTH_FRACTION).roundToInt()
         return WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -195,7 +194,6 @@ internal object LyricsWidgetOverlayRenderer {
             PixelFormat.TRANSLUCENT,
         ).apply {
             gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-            width = min(WindowManager.LayoutParams.WRAP_CONTENT, maxWidthPx)
         }
     }
 
@@ -218,12 +216,17 @@ internal object LyricsWidgetOverlayRenderer {
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
             addView(
                 currentLine,
-                LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT),
+                LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT),
             )
             addView(
                 nextLine,
-                LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT),
+                LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT),
             )
+        }
+
+        fun applyMaxWidth(maxWidthPx: Int) {
+            currentLine.maxWidth = maxWidthPx
+            nextLine.maxWidth = maxWidthPx
         }
 
         fun render(current: WidgetTimedLine?, next: WidgetTimedLine?, density: Float) {

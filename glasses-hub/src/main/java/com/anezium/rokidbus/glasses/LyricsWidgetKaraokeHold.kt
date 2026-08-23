@@ -44,17 +44,32 @@ class KaraokeHoldPolicy(
         if (contentKey != trackKey) {
             trackKey = contentKey
             ceilingFrom = now()
+            sawCeilingReset = false
         }
         val nowAt = now()
-        val pastCeiling = held && nowAt - ceilingFrom >= ceilingMs
+        if (sawCeilingReset) {
+            if (held) {
+                held = false
+                return Action.Release
+            }
+            return Action.Nothing
+        }
+        val pastCeiling = nowAt - ceilingFrom >= ceilingMs
+        if (held && pastCeiling) {
+            held = false
+            sawCeilingReset = true
+            return Action.Release
+        }
         val idleOut = held && !wantHold && nowAt - heldSince >= releaseGraceMs
-        if (held && (pastCeiling || idleOut)) {
+        if (idleOut) {
             held = false
             return Action.Release
         }
-        if (!held && wantHold) {
-            held = true
-            heldSince = nowAt
+        if (wantHold && !pastCeiling) {
+            if (!held) {
+                held = true
+                heldSince = nowAt
+            }
             return Action.Acquire(holdMs)
         }
         return Action.Nothing

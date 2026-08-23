@@ -122,6 +122,44 @@ class MediaTriggerCoordinatorTest {
     }
 
     @Test
+    fun `grace close does not close a different active plugin`() {
+        val other = PhonePluginPrincipal(
+            packageName = "com.anezium.rokidbus.plugin.relay",
+            serviceComponent = ComponentName("com.anezium.rokidbus.plugin.relay", "RelayPluginService"),
+            uid = 12,
+            signingDigestSha256 = "digest-relay",
+            descriptor = PluginDescriptor(
+                id = "relay",
+                displayName = "Relay",
+                apiVersion = 3,
+                requestedCapabilities = setOf(PluginCapability.SURFACES),
+                receivePrefixes = listOf("/plugin/relay", "/system/plugin"),
+                settingsActivity = null,
+                launchable = true,
+                mediaTrigger = false,
+            ),
+        )
+        val h = Harness()
+        h.resolveTo = principal
+        h.coordinator.onPlaybackChanged(true)
+        assertEquals(1, h.opens.size)
+        assertEquals("lyrics", h.controller.activeId())
+
+        h.controller.open(other)
+        assertEquals("relay", h.controller.activeId())
+        val closesAfterSwitch = h.closes.size
+
+        h.now = 1_000
+        h.coordinator.onPlaybackChanged(false)
+        h.now = 1_000 + 61_000
+        h.coordinator.tickGrace()
+
+        assertEquals(closesAfterSwitch, h.closes.size)
+        assertEquals("relay", h.controller.activeId())
+        assertTrue(!h.coordinator.isHoldingOpen)
+    }
+
+    @Test
     fun `without a registered plugin the trigger stays inert`() {
         val h = Harness()
         h.resolveTo = null

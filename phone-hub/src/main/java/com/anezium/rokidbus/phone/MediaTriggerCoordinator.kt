@@ -59,9 +59,16 @@ class MediaTriggerCoordinator(
 
     private fun closeTriggeredPlugin() {
         if (!isHoldingOpen) return
-        externalPluginController.closeActive(PLUGIN_MEDIA_TRIGGER_CLOSE_REASON)
+        val registered = resolveRegisteredPlugin()
+        val stillOurs = registered != null &&
+            externalPluginController.activeId() == registered.descriptor.id
+        if (stillOurs) {
+            externalPluginController.closeActive(PLUGIN_MEDIA_TRIGGER_CLOSE_REASON)
+            logger("media trigger: closing plugin after idle grace")
+        } else {
+            logger("media trigger: dropping hold; active plugin is no longer the trigger target")
+        }
         isHoldingOpen = false
-        logger("media trigger: closing plugin after idle grace")
     }
 
     companion object {
