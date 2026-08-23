@@ -246,12 +246,9 @@ In order.
 2. **Agents, as a private alpha.** Already in the tree (`plugins/agents`):
    Claude Code, Codex, and OpenClaw sessions on the HUD, notices for
    permission prompts, a pin for progress. It is the Terminal/Agent product,
-   not a rehearsal in front of it. It is not Store-listed until the monitor
-   service has an honest background rule and the pairing crypto is not
-   hand-rolled.
-
-T3code is not a committed row. If it appears later, it is a consumer of
-Agents, not a plugin of its own.
+   and it is being reworked to speak [litter](https://github.com/0xSero/litter)'s
+   protocol instead of a hand-rolled one. It is not Store-listed until that
+   rework lands and the monitor service has an honest background rule.
 
 ### Ideas
 
@@ -261,7 +258,6 @@ Not committed.
 |---|---|
 | A visual assistant, FoodFacts | camera capability, shipped |
 | Sport HUD | activity tier + a small protocol addition · possibly fed by the R08 ring |
-| T3code | a consumer of Agents, not a plugin of its own |
 
 ---
 

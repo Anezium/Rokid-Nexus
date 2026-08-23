@@ -1,9 +1,10 @@
 # Plan 021 — Daily-driver platform
 
-Status: TODO. Depends on the shipped display tiers (010–018, 020) and
-speech slices 1–3 (009). This is the next chapter after the plugin
-boundary: the platform exists, and several plugins will now share one
-eye.
+Status: TODO. Decisions below ratified by the owner 2026-08-23 (with
+amendments; the drafted text predates that review). Depends on the
+shipped display tiers (010–018, 020) and speech slices 1–3 (009). This
+is the next chapter after the plugin boundary: the platform exists, and
+several plugins will now share one eye.
 
 The public story lives in [ROADMAP.md](../ROADMAP.md). This file is the
 execution spec. Do not start a later wave until the earlier one has run
@@ -37,7 +38,11 @@ These are settled here, not left for the implementer:
 2. **Slots stay slots.** One pin, one notice, one activity, one
    foreground surface (card or Ink), one ambient widget. The arbiter
    ranks *within* a slot and decides wake. It does not flatten every
-   tier into a single newest-wins queue.
+   tier into a single newest-wins queue. Overlay is not eviction: a
+   notice still *draws over* whatever is beneath for its few seconds —
+   the temporary passes in front of the near-permanent — and the stack
+   beneath survives untouched. What a slot can never do is destroy or
+   take ownership of another slot's content.
 3. **Mute, demote, and notices-only are display policy, not
    capabilities.** They live on the grant record. Changing them does
    not send the grant back to Pending. They do not exist in the phone
@@ -45,12 +50,16 @@ These are settled here, not left for the implementer:
 4. **Plugins still do not talk to each other.** Composition goes through
    a hub-mediated skill registry (wave E), or through a phone-local
    Android API the way Assistant already uses Calendar.
-5. **Agents is the Terminal/Agent rehearsal.** T3code is not a
-   committed row. Agents stays a private alpha until its crypto and
-   background rule are honest.
-6. **Do not grow Assistant into the OS.** Music pause may be a local
-   MediaSession tool. Transit departures may be a skill the Transit
-   plugin advertises. Assistant does not reimplement other plugins.
+5. **T3code is deprecated outright; Agents reworks around litter.**
+   T3code was an experiment, not a product — it is not a row, not
+   even an idea. The Agents plugin drops its hand-rolled protocol
+   instead of hardening it; see the parallel track below.
+6. **Do not grow Assistant into the OS — and native-first for tools.**
+   When Android exposes a capability to any app (MediaSession
+   transport controls, the calendar provider), Assistant uses the
+   native path directly. A skill exists only for data or capability
+   that lives *inside* a plugin (Transit's favourite stops). Assistant
+   never reimplements another plugin.
 
 ## Non-goals (this chapter)
 
@@ -185,8 +194,12 @@ rows under an approved plugin, not under Developer details:
 - Demote — glanceables only, never the full display, never a wake
 - Notices only
 
-Copy is plain language. Developer details may show the enum.
-Revoke/deny stay as they are.
+Copy is plain language, and every switch carries a one-line
+explanation of what it actually does. Demote's line must say it will
+never light the screen — its notices can go unseen on a dark display,
+and the wearer should learn that from the switch, not from a missed
+message. Developer details may show the enum. Revoke/deny stay as
+they are.
 
 ### Slices
 
@@ -271,6 +284,10 @@ user-visible behaviour.
 
 ## Wave C — Continuous speech and captions
 
+**Deferred (owner, 2026-08-23): no shipped consumer needs continuous
+mode yet. Waves D and E run first; this spec stays so plan 009
+slice 4 has a home the day a consumer appears.**
+
 **Problem:** STT can only take short turns. Live captions, long
 dictation, and any assistant that stays listening are blocked on
 plan 009 slice 4.
@@ -346,6 +363,13 @@ by the platform) when the notification extract has proven which
 fields are actually stable. Putting the kind first is how you draw
 a HUD for data you do not have.
 
+The long-term bar is higher than a text kind: a real navigation HUD —
+map, maneuver glyphs, the way Rokid's native navigation and the Meta
+Ray-Ban Display do it. Before designing `kind:"nav"`, survey how the
+Meta Ray-Ban Display renders guidance (what they draw, what they
+deliberately omit at that field of view). That survey belongs to the
+later `nav` plan, not to this wave.
+
 ### Plugin rules
 
 - Ordinary APK, `surfaces` only, no new capability.
@@ -387,10 +411,15 @@ same splitting rules as capabilities):
 
 ```
 com.anezium.rokidbus.plugin.SKILLS = pause,next,now_playing
+com.anezium.rokidbus.plugin.SKILL_pause = Pause the phone's media playback
 ```
 
 Skill ids: `[a-z][a-z0-9_]{1,31}`, unique *within* the plugin.
 The hub addresses them as `pluginId.skillId` (`media.pause`).
+Each skill should carry a one-line human description
+(`SKILL_<id>` metadata); the hub shows it in settings and returns
+it on discovery, so a caller knows what it is invoking and where
+that comes from.
 
 Well-known aliases (hub allowlist, v1):
 
@@ -399,12 +428,21 @@ Well-known aliases (hub allowlist, v1):
 | `media.pause` / `media.next` / `media.now_playing` | the granted Media Deck plugin, if exactly one |
 | `transit.next_departure` | the granted Transit plugin, if exactly one |
 
-Ambiguous or missing provider: invoke fails `SKILL_UNAVAILABLE`.
-Do not pick a winner.
+Provider resolution, in order (owner, 2026-08-23):
+
+1. The caller named a `provider` explicitly — honour it if that
+   plugin is granted and advertises the skill.
+2. The wearer picked a default provider for this alias in Plugin
+   access (the Android default-app pattern: "Music: handled by
+   Media Deck ▾", shown only when two granted plugins collide).
+3. Exactly one granted provider — use it.
+4. Otherwise fail `SKILL_UNAVAILABLE`. The hub never picks a
+   winner on its own.
 
 Wire:
 
-- `/skill/invoke` `{version:1, skill, args}` from the caller.
+- `/skill/invoke` `{version:1, skill, provider?, args}` from the
+  caller.
   Requires the caller to be approved. No new capability in v1 —
   an approved plugin may ask; the hub decides whether anyone
   may answer.
@@ -417,12 +455,15 @@ Wire:
 `/skill/*` is reserved. Plugins cannot subscribe to someone else's
 skill traffic.
 
-First providers: Media Deck (`pause`, `next`, `now_playing` over
-the MediaSession the plugin already holds). Transit
-(`next_departure` for a favourite or the nearest stop). First
-caller: Assistant tools that invoke aliases, not plugin ids, so a
-fork of Media Deck can take the alias by being the only granted
-provider.
+First real case: Transit (`next_departure` for a favourite or the
+nearest stop) — no Android API knows the wearer's stops, so a skill
+is the only route. Media control is *not* the motivating case:
+decision 6 says Assistant pauses music through MediaSession
+natively. Media Deck may still advertise `pause`/`next`/
+`now_playing` for other callers, but wave E does not depend on it.
+First caller: Assistant tools that invoke aliases, not plugin ids,
+so a fork of a provider can take the alias by being the only
+granted one.
 
 Calendar stays a phone-local API. It is not a skill.
 
@@ -446,28 +487,37 @@ Calendar stays a phone-local API. It is not a skill.
 
 ---
 
-## Parallel track — Agents, private
+## Parallel track — Agents, reworked around litter
 
-Not a Store plugin and not a committed public row until the list
-below is true. It *is* the Terminal/Agent product, already in
-tree.
+Direction decided 2026-08-23: the Agents plugin drops the
+hand-rolled protocol (agentd pairing, homemade Ed25519) instead of
+hardening it, and becomes a compatible client of
+[litter](https://github.com/0xSero/litter) — the native iOS/Android
+client for Codex and Local Studio (shared Rust core, Slingshot
+HTTP/stream transport). The glasses become one more client of that
+stack, not the maintainer of a private one.
 
-Before any Store or root-catalogue mention:
+First step, immediately and read-only: an investigation. What the
+litter server / `npx litter` actually exposes (transport, auth,
+session model), what a third-party client must implement, and the
+license. No Agents code before that report exists.
+
+The old gates still apply before any Store or root-catalogue
+mention:
 
 1. Decide: include `:plugin-agents` in the root Gradle tree, or
    move the folder to its own repository like Lume. Do not leave
    an unbuildable module in `plugins/`.
-2. Replace the hand-rolled Ed25519. Tokens stay out of logs.
-3. Write the background exception into `plugins/AGENTS.md`: a
+2. Write the background exception into `plugins/AGENTS.md`: a
    wearer-enabled monitor FGS is a third sanctioned exception,
    next to overlay-while-open and scheduled delivery. If that
    sentence cannot be written honestly, the FGS does not ship.
-4. Fix the README so it matches approve/deny and thread start.
-5. No `POST_NOTIFICATIONS` surprise. If the phone must ring, say
+3. Fix the README so it matches approve/deny and thread start.
+4. No `POST_NOTIFICATIONS` surprise. If the phone must ring, say
    so and request the permission at the point of use.
 
-T3code is not scheduled. If someone later wants it, it is a
-consumer of this plugin, not a rehearsal in front of it.
+T3code is deprecated outright — it was an experiment, and it is
+not coming back as a row or an idea.
 
 ---
 
@@ -503,10 +553,12 @@ still use plain `SharedPreferences`).
 A1 epochs
 B1 extract surface/notice/pin/activity out of BusHubService
 A2–A4 policy + UI + widget
-C  continuous speech + caption          (009 slice 4)
 D  navigation plugin
 E  skills + Assistant keyboard
-   Agents private track, any time after A (it needs mute)
+C  continuous speech + caption          (009 slice 4; deferred —
+                                         no consumer needs it yet)
+   litter investigation, immediately (read-only, blocks nothing)
+   Agents rework, any time after A (it needs mute)
 ```
 
 A1 before B1 is acceptable if B1 is not ready; do not implement
@@ -524,10 +576,11 @@ Transit, and Navigation installed:
 - Mute on Relay is silent; demote on Lyrics keeps the widget
   and refuses an auto full-surface.
 - Hold-to-talk can run long enough to dictate a paragraph, with
-  captions over whatever was already on the HUD.
-- "Pause" and "when is my bus?" are Assistant tools that hit
-  Media Deck and Transit through the hub, not through a local
-  reimplementation.
+  captions over whatever was already on the HUD. (Wave C — lands
+  whenever C does; the chapter does not wait for it.)
+- "When is my bus?" is an Assistant tool that hits Transit through
+  the hub; "pause" goes through MediaSession natively. Neither is
+  a local reimplementation of another plugin.
 - Typed questions work on the phone without opening the mic.
 
 Nothing in that list installs code on the glasses. Nothing in
