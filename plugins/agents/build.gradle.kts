@@ -1,12 +1,8 @@
 plugins {
-    id("com.android.application") version "9.2.0"
+    id("com.android.application")
 }
 
-apply(from = rootProject.file("../../gradle/plugin-release-signing.gradle"))
-
-subprojects {
-    layout.buildDirectory.set(rootProject.layout.buildDirectory.dir("dependencies/$name"))
-}
+apply(from = rootProject.file("gradle/plugin-release-signing.gradle"))
 
 android {
     namespace = "com.anezium.rokidbus.plugin.agents"
