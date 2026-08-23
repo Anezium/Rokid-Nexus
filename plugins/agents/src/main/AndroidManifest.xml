@@ -1,7 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature
+        android:name="android.hardware.camera"
+        android:required="false" />
+    <!--
+        CAMERA is requested at the point of use in Add a computer (kittylitter
+        QR). ACCESS_NETWORK_STATE is required for Iroh to read Android DNS
+        via LinkProperties after IrohAndroid.installAndroidContext.
+    -->
     <!--
         POST_NOTIFICATIONS is deliberately absent. Agents alerts belong on the
         glasses, never in the phone's shade. Without the permission Android keeps
@@ -53,6 +64,15 @@
             android:name=".NewThreadActivity"
             android:exported="false"
             android:windowSoftInputMode="adjustResize" />
+
+        <activity
+            android:name="com.journeyapps.barcodescanner.CaptureActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            android:stateNotNeeded="true"
+            android:theme="@style/Theme.Agents"
+            android:windowSoftInputMode="stateAlwaysHidden"
+            tools:replace="android:screenOrientation,android:theme" />
 
         <service
             android:name=".AgentsMonitorService"

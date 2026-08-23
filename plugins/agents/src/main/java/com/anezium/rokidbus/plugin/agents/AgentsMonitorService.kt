@@ -44,7 +44,39 @@ class AgentsMonitorService : Service() {
     private val codexDirect by lazy {
         CodexDirectBroker(httpClient, AgentsRuntime.store, serviceScope)
     }
+    private val alleycatHooks by lazy {
+        AlleycatSessionHooks(
+            onAdvertisedAgents = { id, agents ->
+                val current = configStore.alleycatComputers().firstOrNull { it.computerId == id } ?: return@AlleycatSessionHooks
+                configStore.updateAlleycatComputer(current.copy(advertisedAgents = agents))
+            },
+            onSelectedAgent = { id, agent ->
+                val current = configStore.alleycatComputers().firstOrNull { it.computerId == id } ?: return@AlleycatSessionHooks
+                if (current.selectedAgent != agent) {
+                    configStore.updateAlleycatComputer(current.copy(selectedAgent = agent))
+                }
+            },
+            onLastSeq = { id, seq ->
+                val current = configStore.alleycatComputers().firstOrNull { it.computerId == id } ?: return@AlleycatSessionHooks
+                configStore.updateAlleycatComputer(current.copy(lastSeq = seq, lastSeenAtMs = System.currentTimeMillis()))
+            },
+            onNeedsRePair = { id, needs ->
+                val current = configStore.alleycatComputers().firstOrNull { it.computerId == id } ?: return@AlleycatSessionHooks
+                configStore.updateAlleycatComputer(current.copy(needsRePair = needs))
+            },
+        )
+    }
+    private val alleycat by lazy {
+        AlleycatBroker(
+            store = AgentsRuntime.store,
+            scope = serviceScope,
+            secrets = configStore.secrets(),
+            opener = IrohAlleycatOpener(applicationContext, configStore.secrets()),
+            hooks = alleycatHooks,
+        )
+    }
     private var runningDirectIds: Set<String> = emptySet()
+    private var runningAlleycatIds: Set<String> = emptySet()
     private val linkServer by lazy {
         AgentdLinkServer(AgentsRuntime.store, configStore, serviceScope) { machineName ->
             AgentsRuntime.announceLinkedMachine(machineName)
@@ -82,22 +114,29 @@ class AgentsMonitorService : Service() {
                     agentdClient.openDetail(sessionId)
                     linkServer.openDetail(sessionId)
                     codexDirect.openDetail(sessionId)
+                    alleycat.openDetail(sessionId)
                 }
             }
             ACTION_CLOSE_DETAIL -> {
                 agentdClient.closeDetail()
                 linkServer.closeDetail()
                 codexDirect.closeDetail()
+                alleycat.closeDetail()
             }
             ACTION_DROP_MACHINE -> {
                 intent.getStringExtra(EXTRA_MACHINE_ID)?.let { machineId ->
                     linkServer.dropMachine(machineId)
                     codexDirect.drop(machineId)
+                    alleycat.drop(machineId)
                 }
             }
             ACTION_TEST_DIRECT -> {
                 if (configStore.load().shouldMonitor) reconcile()
                 testDirect()
+            }
+            ACTION_TEST_ALLEYCAT -> {
+                if (configStore.load().shouldMonitor) reconcile()
+                testAlleycat()
             }
             ACTION_FS_LIST -> {
                 val requestId = intent.getStringExtra(EXTRA_REQUEST_ID)
@@ -116,9 +155,10 @@ class AgentsMonitorService : Service() {
                 if (requestId != null && provider != null && path != null) {
                     agentdClient.requestThreadStart(requestId, provider, path, prompt)
                     linkServer.requestThreadStart(requestId, provider, path, prompt)
-                    if (machineId != null && machineId.startsWith(DirectComputer.ID_PREFIX)) {
+                    if (machineId != null && isCodexRemoteComputer(machineId)) {
                         val cwd = path.takeIf { it.isNotBlank() && it != "/" }
                         codexDirect.requestThreadStart(requestId, machineId, prompt, cwd)
+                        alleycat.requestThreadStart(requestId, machineId, prompt, cwd)
                     }
                 }
             }
@@ -131,7 +171,10 @@ class AgentsMonitorService : Service() {
                         agentdClient.decideApproval(requestId, decision)
                         linkServer.decideApproval(requestId, decision)
                     }
-                    decision.toVerdict()?.let { codexDirect.decideApproval(requestId, it) }
+                    decision.toVerdict()?.let {
+                        codexDirect.decideApproval(requestId, it)
+                        alleycat.decideApproval(requestId, it)
+                    }
                     // The wearer answered: the question is gone from the board
                     // whether or not the daemon's acknowledgement makes it back.
                     AgentsRuntime.store.resolveApproval(requestId)
@@ -151,7 +194,9 @@ class AgentsMonitorService : Service() {
         linkServer.stop(clearSessions = true)
         openClawClient.stop(clearSessions = true)
         codexDirect.stop(clearSessions = true)
+        alleycat.stop(clearSessions = true)
         runningDirectIds = emptySet()
+        runningAlleycatIds = emptySet()
         releasePluginService()
         httpClient.dispatcher.executorService.shutdown()
         serviceScope.cancel()
@@ -214,6 +259,16 @@ class AgentsMonitorService : Service() {
             }
             runningDirectIds = wantedIds
         }
+        val wantedAlleycat = config.alleycatComputers
+        val wantedAlleycatKey = wantedAlleycat.map { "${it.computerId}:${it.selectedAgent.orEmpty()}" }.toSet()
+        if (wantedAlleycatKey != runningAlleycatIds) {
+            if (wantedAlleycat.isEmpty()) {
+                alleycat.stop(clearSessions = true)
+            } else {
+                alleycat.reconcile(wantedAlleycat)
+            }
+            runningAlleycatIds = wantedAlleycatKey
+        }
     }
 
     private fun testAgentd() {
@@ -255,9 +310,20 @@ class AgentsMonitorService : Service() {
 
     private fun testDirect() {
         val computers = configStore.load().directComputers
+        if (computers.isEmpty() && configStore.load().alleycatComputers.isEmpty()) {
+            return stopIfNoConfiguredProvider()
+        }
+        if (computers.isNotEmpty()) {
+            codexDirect.reconcile(computers)
+            runningDirectIds = computers.map { it.computerId }.toSet()
+        }
+    }
+
+    private fun testAlleycat() {
+        val computers = configStore.load().alleycatComputers
         if (computers.isEmpty()) return stopIfNoConfiguredProvider()
-        codexDirect.reconcile(computers)
-        runningDirectIds = computers.map { it.computerId }.toSet()
+        alleycat.reconcile(computers)
+        runningAlleycatIds = computers.map { "${it.computerId}:${it.selectedAgent.orEmpty()}" }.toSet()
     }
 
     private fun stopIfNoConfiguredProvider() {
@@ -274,9 +340,11 @@ class AgentsMonitorService : Service() {
         linkServer.stop(clearSessions = true)
         openClawClient.stop(clearSessions = true)
         codexDirect.stop(clearSessions = true)
+        alleycat.stop(clearSessions = true)
         runningAgentd = null
         runningOpenClaw = null
         runningDirectIds = emptySet()
+        runningAlleycatIds = emptySet()
         releasePluginService()
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
@@ -301,6 +369,8 @@ class AgentsMonitorService : Service() {
             "com.anezium.rokidbus.plugin.agents.action.TEST_OPENCLAW"
         const val ACTION_TEST_DIRECT =
             "com.anezium.rokidbus.plugin.agents.action.TEST_DIRECT"
+        const val ACTION_TEST_ALLEYCAT =
+            "com.anezium.rokidbus.plugin.agents.action.TEST_ALLEYCAT"
         const val ACTION_OPEN_DETAIL =
             "com.anezium.rokidbus.plugin.agents.action.OPEN_DETAIL"
         const val ACTION_CLOSE_DETAIL =
@@ -421,6 +491,13 @@ class AgentsMonitorService : Service() {
             ContextCompat.startForegroundService(
                 context,
                 Intent(context, AgentsMonitorService::class.java).setAction(ACTION_TEST_DIRECT),
+            )
+        }
+
+        fun testAlleycat(context: Context) {
+            ContextCompat.startForegroundService(
+                context,
+                Intent(context, AgentsMonitorService::class.java).setAction(ACTION_TEST_ALLEYCAT),
             )
         }
 
