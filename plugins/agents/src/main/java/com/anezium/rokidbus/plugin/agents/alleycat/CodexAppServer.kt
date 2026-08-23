@@ -33,6 +33,23 @@ sealed class JsonRpcId {
                 else -> throw AlleycatException("unsupported JSON-RPC id")
             }
         }
+
+        /**
+         * Stable, log-safe encoding used as [com.anezium.rokidbus.plugin.agents.AgentApproval.requestId].
+         * Never contains transcript text.
+         */
+        fun fromWire(raw: String): JsonRpcId? = when {
+            raw.startsWith("n:") ->
+                raw.removePrefix("n:").toLongOrNull()?.let(::NumberId)
+            raw.startsWith("s:") && raw.length > 2 ->
+                StringId(raw.removePrefix("s:"))
+            else -> null
+        }
+    }
+
+    fun toWire(): String = when (this) {
+        is NumberId -> "n:$value"
+        is StringId -> "s:$value"
     }
 }
 
@@ -77,12 +94,22 @@ data class TurnSteerResult(
 /**
  * Minimal Codex app-server JSON-RPC client. Methods match the HUD table in
  * plan 022; the `"jsonrpc":"2.0"` envelope is omitted on the wire.
+ *
+ * Reads and writes [JsonPipe] messages. Alleycat QUIC still goes through
+ * [FramedJsonPipe]; a direct `ws(s)://` app-server uses one JSON object per
+ * websocket text frame.
  */
 class CodexAppServerClient(
-    private val transport: AlleycatTransport,
+    private val pipe: JsonPipe,
     private val onNotification: (CodexInbound.Notification) -> Unit = {},
     private val onApprovalRequest: (CodexInbound.ApprovalRequest) -> Unit = {},
 ) {
+    constructor(
+        transport: AlleycatTransport,
+        onNotification: (CodexInbound.Notification) -> Unit = {},
+        onApprovalRequest: (CodexInbound.ApprovalRequest) -> Unit = {},
+    ) : this(FramedJsonPipe(transport), onNotification, onApprovalRequest)
+
     private var nextId = 1L
 
     fun threadList(cursor: String? = null, limit: Int? = null): ThreadListPage {
@@ -146,11 +173,17 @@ class CodexAppServerClient(
     fun reloadState(cursor: String? = null): ThreadListPage = threadList(cursor)
 
     fun replyApproval(id: JsonRpcId, verdict: ApprovalVerdict) {
-        AlleycatFraming.write(transport, CodexJsonRpc.approvalReply(id, verdict))
+        pipe.sendJson(CodexJsonRpc.approvalReply(id, verdict))
     }
 
-    fun receive(): CodexInbound {
-        val inbound = CodexJsonRpc.parse(AlleycatFraming.read(transport))
+    fun receive(): CodexInbound = dispatch(CodexJsonRpc.parse(pipe.receiveJson()))
+
+    fun receiveOrNull(timeoutMs: Long): CodexInbound? {
+        val json = pipe.receiveJson(timeoutMs) ?: return null
+        return dispatch(CodexJsonRpc.parse(json))
+    }
+
+    private fun dispatch(inbound: CodexInbound): CodexInbound {
         when (inbound) {
             is CodexInbound.Notification -> onNotification(inbound)
             is CodexInbound.ApprovalRequest -> onApprovalRequest(inbound)
@@ -161,7 +194,7 @@ class CodexAppServerClient(
 
     private fun request(method: String, params: JSONObject?): JSONObject {
         val id = JsonRpcId.NumberId(nextId++)
-        AlleycatFraming.write(transport, CodexJsonRpc.request(id, method, params))
+        pipe.sendJson(CodexJsonRpc.request(id, method, params))
         while (true) {
             when (val inbound = receive()) {
                 is CodexInbound.Result -> {
