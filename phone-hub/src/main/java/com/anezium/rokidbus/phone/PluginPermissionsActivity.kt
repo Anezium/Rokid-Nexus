@@ -176,6 +176,14 @@ class PluginPermissionsActivity : Activity() {
             card.addView(BusTheme.gap(this, 8))
         }
 
+        if (live) {
+            val policy = grantStore.displayPolicyFor(principal)
+            PluginDisplayPolicySelection.Row.entries.forEach { row ->
+                card.addView(displayPolicyRow(row, policy, principal), NexusUi.block())
+                card.addView(BusTheme.gap(this, 8))
+            }
+        }
+
         if (developerDetails) {
             card.addView(BusTheme.gap(this, 6))
             card.addView(
@@ -185,7 +193,8 @@ class PluginPermissionsActivity : Activity() {
                         "Plugin ID: ${principal.descriptor.id}\n" +
                         "API: ${principal.descriptor.apiVersion}\n" +
                         "Signer SHA-256: ${principal.signingDigestSha256}\n" +
-                        "Receive: ${principal.descriptor.receivePrefixes.joinToString()}",
+                        "Receive: ${principal.descriptor.receivePrefixes.joinToString()}\n" +
+                        "Display policy: ${grantStore.displayPolicyFor(principal).wireValue}",
                 ),
             )
         }
@@ -234,6 +243,13 @@ class PluginPermissionsActivity : Activity() {
     private fun applyDecision(principal: PhonePluginPrincipal, decision: () -> Unit) {
         decision()
         BusHubService.onPluginAuthorizationChanged(applicationContext, principal.grantKey())
+        render()
+    }
+
+    private fun applyDisplayPolicy(principal: PhonePluginPrincipal, policy: PluginDisplayPolicy) {
+        // Display policy is not a grant. Persist and re-render only; the hub
+        // reads the store on the next message.
+        grantStore.setDisplayPolicy(principal, policy)
         render()
     }
 
@@ -298,6 +314,65 @@ class PluginPermissionsActivity : Activity() {
                     setOnCheckedChangeListener { _, checked ->
                         if (checked) selected += capability else selected -= capability
                         if (live) applyDecision(principal) { grantStore.approve(principal, selected.toSet()) }
+                    }
+                },
+            )
+        }
+    }
+
+    private fun displayPolicyRow(
+        row: PluginDisplayPolicySelection.Row,
+        policy: PluginDisplayPolicy,
+        principal: PhonePluginPrincipal,
+    ): LinearLayout {
+        val title = when (row) {
+            PluginDisplayPolicySelection.Row.MUTE -> "Mute this plugin"
+            PluginDisplayPolicySelection.Row.DEMOTE -> "Demote — glanceables only"
+            PluginDisplayPolicySelection.Row.NOTICES -> "Notices only"
+        }
+        val note = when (row) {
+            PluginDisplayPolicySelection.Row.MUTE ->
+                "Nothing from this plugin appears on the glasses"
+            PluginDisplayPolicySelection.Row.DEMOTE ->
+                "Glanceables only — never the full display, and it will never light the screen"
+            PluginDisplayPolicySelection.Row.NOTICES ->
+                "Only notices; no pins, no full display"
+        }
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(
+                LinearLayout(this@PluginPermissionsActivity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    addView(
+                        TextView(this@PluginPermissionsActivity).apply {
+                            text = title
+                            textSize = 13f
+                            setTextColor(NexusUi.INK)
+                        },
+                    )
+                    addView(
+                        TextView(this@PluginPermissionsActivity).apply {
+                            text = note
+                            textSize = 10f
+                            setTextColor(NexusUi.INK3)
+                        },
+                    )
+                },
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+            )
+            addView(
+                NexusUi.switch(this@PluginPermissionsActivity).apply {
+                    isChecked = PluginDisplayPolicySelection.isChecked(policy, row)
+                    setOnCheckedChangeListener { _, checked ->
+                        applyDisplayPolicy(
+                            principal,
+                            PluginDisplayPolicySelection.afterToggle(
+                                grantStore.displayPolicyFor(principal),
+                                row,
+                                checked,
+                            ),
+                        )
                     }
                 },
             )
