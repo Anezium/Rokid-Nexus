@@ -293,11 +293,13 @@ class ExternalPluginController(
         request.followUp?.let { followUp ->
             if (!deliver(principal, followUp.path, followUp.type, followUp.extra())) return false
         }
-        val timeoutKey = openAckTimeoutKey(principal)
-        scheduler.cancel(timeoutKey)
-        scheduler.schedule(timeoutKey, OPEN_ACK_TIMEOUT_MS) {
-            if (generation == openGeneration && active?.grantKey() == principal.grantKey()) {
-                onOpenAckTimedOut(principal, generation)
+        if (request.type != BusPaths.PLUGIN_OPEN_TYPE_MEDIA_TRIGGER) {
+            val timeoutKey = openAckTimeoutKey(principal)
+            scheduler.cancel(timeoutKey)
+            scheduler.schedule(timeoutKey, OPEN_ACK_TIMEOUT_MS) {
+                if (generation == openGeneration && active?.grantKey() == principal.grantKey()) {
+                    onOpenAckTimedOut(principal, generation)
+                }
             }
         }
         return true

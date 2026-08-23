@@ -151,6 +151,27 @@ class ExternalPluginControllerTest {
     }
 
     @Test
+    fun `media trigger open without plugin traffic stays active`() {
+        val runtime = FakeRuntime().apply { registered = true }
+        val scheduler = FakeScheduler()
+        val closed = mutableListOf<Pair<String, String>>()
+        val controller = ExternalPluginController(runtime, scheduler)
+        controller.setPluginClosedListener { pluginId, reason -> closed += pluginId to reason }
+
+        controller.open(
+            principal(),
+            ExternalPluginOpenRequest(type = BusPaths.PLUGIN_OPEN_TYPE_MEDIA_TRIGGER),
+        )
+        scheduler.runAll()
+
+        assertEquals("hello", controller.activeId())
+        assertEquals(listOf("hello"), runtime.bound)
+        assertTrue(runtime.unbound.isEmpty())
+        assertTrue(runtime.hidden.isEmpty())
+        assertTrue(closed.isEmpty())
+    }
+
+    @Test
     fun `open ack timeout rebinds once and redelivers`() {
         val runtime = FakeRuntime().apply { registered = true }
         val scheduler = FakeScheduler()
