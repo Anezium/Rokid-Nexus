@@ -36,6 +36,8 @@ class ExternalPluginController(
     private val onForegroundChanged: () -> Unit = {},
     private val journal: PluginBusJournal? = null,
 ) {
+    @Volatile
+    private var pluginClosedListener: (pluginId: String, reason: String) -> Unit = { _, _ -> }
     private var pending: PhonePluginPrincipal? = null
     private var active: PhonePluginPrincipal? = null
         set(value) {
@@ -53,8 +55,11 @@ class ExternalPluginController(
     ): Boolean {
         active?.takeIf { it.grantKey() != principal.grantKey() }?.let { closePrincipal(it, "switch") }
         pending?.takeIf { it.grantKey() != principal.grantKey() }?.let { previous ->
+            val endedOpenRecovery = automaticRebindAttempted
             cancelWatchdogs(previous)
             runtime.unbind(previous)
+            pending = null
+            if (endedOpenRecovery) notifyPluginClosed(previous, "switch")
         }
         cancelWatchdogs(principal)
         openGeneration += 1
@@ -143,12 +148,29 @@ class ExternalPluginController(
     }
 
     fun closeActive(reason: String = "close") {
-        active?.let { closePrincipal(it, reason) }
+        val activePrincipal = active
+        if (activePrincipal != null) {
+            pending
+                ?.takeIf { it.grantKey() != activePrincipal.grantKey() }
+                ?.let { principal ->
+                    cancelWatchdogs(principal)
+                    runtime.unbind(principal)
+                    pending = null
+                }
+            closePrincipal(activePrincipal, reason)
+            return
+        }
         pending?.let { principal ->
+            val endedOpenRecovery = automaticRebindAttempted
             cancelWatchdogs(principal)
             runtime.unbind(principal)
+            pending = null
+            if (endedOpenRecovery) notifyPluginClosed(principal, reason)
         }
-        pending = null
+    }
+
+    fun setPluginClosedListener(listener: (pluginId: String, reason: String) -> Unit) {
+        pluginClosedListener = listener
     }
 
     fun activeId(): String? = active?.descriptor?.id
@@ -205,39 +227,47 @@ class ExternalPluginController(
             "SELF_CLOSE",
         )
         logger("external plugin self-closed plugin=$pluginId")
+        notifyPluginClosed(principal, "self_hidden")
     }
 
     fun onRevoked(key: PluginGrantKey) {
         pending?.takeIf { it.grantKey() == key }?.let { principal ->
+            val endedOpenRecovery = automaticRebindAttempted
             cancelWatchdogs(principal)
             runtime.hideOwnedSurfaces(principal.descriptor.id)
             runtime.unbind(principal)
             pending = null
+            if (endedOpenRecovery) notifyPluginClosed(principal, "revoked")
         }
         active?.takeIf { it.grantKey() == key }?.let { closePrincipal(it, "revoked") }
     }
 
     fun onBinderDied(key: PluginGrantKey) {
         pending?.takeIf { it.grantKey() == key }?.let { principal ->
+            val endedOpenRecovery = automaticRebindAttempted
             cancelWatchdogs(principal)
             pending = null
             runtime.hideOwnedSurfaces(principal.descriptor.id)
             runtime.unbind(principal)
+            if (endedOpenRecovery) notifyPluginClosed(principal, "binder_died")
         }
         active?.takeIf { it.grantKey() == key }?.let { principal ->
             cancelWatchdogs(principal)
             active = null
             runtime.hideOwnedSurfaces(principal.descriptor.id)
             runtime.unbind(principal)
+            notifyPluginClosed(principal, "binder_died")
         }
     }
 
     fun onPackageUnavailable(packageName: String) {
         pending?.takeIf { it.packageName == packageName }?.let { principal ->
+            val endedOpenRecovery = automaticRebindAttempted
             cancelWatchdogs(principal)
             pending = null
             runtime.hideOwnedSurfaces(principal.descriptor.id)
             runtime.unbind(principal)
+            if (endedOpenRecovery) notifyPluginClosed(principal, "package_unavailable")
         }
         active?.takeIf { it.packageName == packageName }?.let { principal ->
             closePrincipal(principal, "package_unavailable")
@@ -251,6 +281,7 @@ class ExternalPluginController(
         runtime.unbind(principal)
         if (active?.grantKey() == principal.grantKey()) active = null
         if (pending?.grantKey() == principal.grantKey()) pending = null
+        notifyPluginClosed(principal, reason)
     }
 
     private fun deliverOpen(
@@ -316,6 +347,15 @@ class ExternalPluginController(
             "OPEN_FAILED",
         )
         logger("external plugin open failed plugin=${principal.descriptor.id}")
+        notifyPluginClosed(principal, "open_failed")
+    }
+
+    private fun notifyPluginClosed(principal: PhonePluginPrincipal, reason: String) {
+        runCatching {
+            pluginClosedListener(principal.descriptor.id, reason)
+        }.onFailure {
+            logger("external plugin close listener failed plugin=${principal.descriptor.id} reason=$reason")
+        }
     }
 
     private fun record(

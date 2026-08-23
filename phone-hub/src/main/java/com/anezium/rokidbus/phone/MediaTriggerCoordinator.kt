@@ -9,14 +9,15 @@ import com.anezium.rokidbus.shared.BusPaths
  *
  * Playback edges arrive from the media-trigger service via [onPlaybackChanged]; the trigger
  * decides open/close; this coordinator resolves which plugin to open (a registered media-trigger
- * plugin, currently the lyrics plugin) and routes to the controller.
+ * plugin, currently the lyrics plugin) and routes to the controller. Close observations can
+ * re-establish that background open while playback continues, subject to a cooldown.
  *
  * A close is issued only through the trigger's grace path, which already defers while the plugin
  * owns a visible surface. This layer never calls `externalPluginController.closeActive`
  * independently of a trigger decision.
  */
 class MediaTriggerCoordinator(
-    clock: () -> Long,
+    private val clock: () -> Long,
     private val externalPluginController: ExternalPluginController,
     private val resolveRegisteredPlugin: () -> PhonePluginPrincipal?,
     private val pluginOwnsVisibleSurface: () -> Boolean = { false },
@@ -35,9 +36,46 @@ class MediaTriggerCoordinator(
     var isHoldingOpen: Boolean = false
         private set
 
+    private var latestPlaybackIsPlaying = false
+    private var lastReopenAtMs: Long? = null
+
     /** Feed a play/pause/stop edge from the media-trigger service. */
     fun onPlaybackChanged(playing: Boolean) {
+        latestPlaybackIsPlaying = playing
         trigger.onPlaybackChanged(playing)
+    }
+
+    /** Re-establish the ambient owner after its foreground surface closes during playback. */
+    fun onPluginClosed(pluginId: String, reason: String) {
+        val principal = resolveRegisteredPlugin() ?: return
+        if (principal.descriptor.id != pluginId) return
+
+        isHoldingOpen = false
+        if (!latestPlaybackIsPlaying) return
+        if (
+            reason == PLUGIN_MEDIA_TRIGGER_CLOSE_REASON ||
+            reason == PLUGIN_SWITCH_CLOSE_REASON ||
+            reason == BUILT_IN_PLUGIN_SWITCH_CLOSE_REASON
+        ) {
+            return
+        }
+
+        val now = clock()
+        val previousReopenAt = lastReopenAtMs
+        if (previousReopenAt != null && now - previousReopenAt < REOPEN_COOLDOWN_MS) {
+            logger("media trigger: reopen suppressed by cooldown plugin=$pluginId")
+            return
+        }
+        lastReopenAtMs = now
+        isHoldingOpen = externalPluginController.open(
+            principal,
+            ExternalPluginOpenRequest(type = BusPaths.PLUGIN_OPEN_TYPE_MEDIA_TRIGGER),
+        )
+        if (isHoldingOpen) {
+            logger("media trigger: reopening plugin=$pluginId after close reason=$reason")
+        } else {
+            logger("media trigger: reopen failed plugin=$pluginId after close reason=$reason")
+        }
     }
 
     /** From the service's grace timer. */
@@ -75,5 +113,11 @@ class MediaTriggerCoordinator(
         /** Alias for the shared wire token, kept for callers that pair open/close type. */
         const val PLUGIN_MEDIA_TRIGGER_OPEN_TYPE = BusPaths.PLUGIN_OPEN_TYPE_MEDIA_TRIGGER
         const val PLUGIN_MEDIA_TRIGGER_CLOSE_REASON = "media_idle"
+        private const val PLUGIN_SWITCH_CLOSE_REASON = "switch"
+        // PhonePluginRegistry uses this wire reason for the same user-switch intent.
+        private const val BUILT_IN_PLUGIN_SWITCH_CLOSE_REASON = "built_in_opened"
+
+        /** Bounds recovery churn when a plugin crashes or immediately closes itself. */
+        const val REOPEN_COOLDOWN_MS = 10_000L
     }
 }

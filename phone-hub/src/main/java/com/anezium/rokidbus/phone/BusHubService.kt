@@ -851,6 +851,7 @@ class BusHubService : Service() {
             pluginOwnsVisibleSurface = ::mediaTriggerPluginOwnsVisibleSurface,
             logger = ::log,
         )
+        externalPluginController.setPluginClosedListener(mediaTriggerCoordinator::onPluginClosed)
         MediaTriggerSensorStore.coordinator =
             mediaTriggerCoordinator
         refreshMediaSyncConsent()
@@ -1015,6 +1016,15 @@ class BusHubService : Service() {
         developerModeJournalSubscription?.close()
         developerModeJournalSubscription = null
         if (::pluginGuardianCoordinator.isInitialized) pluginGuardianCoordinator.close()
+        if (
+            ::mediaTriggerCoordinator.isInitialized &&
+            MediaTriggerSensorStore.coordinator === mediaTriggerCoordinator
+        ) {
+            MediaTriggerSensorStore.coordinator = null
+        }
+        if (::externalPluginController.isInitialized) {
+            externalPluginController.setPluginClosedListener { _, _ -> }
+        }
         if (::pluginRegistry.isInitialized) pluginRegistry.close()
         inkSurfaceCoordinator.close()
         if (::cameraCompanionController.isInitialized) cameraCompanionController.close()

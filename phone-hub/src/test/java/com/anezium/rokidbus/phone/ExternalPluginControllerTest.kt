@@ -307,6 +307,31 @@ class ExternalPluginControllerTest {
     }
 
     @Test
+    fun `close listener reports controller self close and binder death reasons`() {
+        val runtime = FakeRuntime().apply { registered = true }
+        val controller = ExternalPluginController(runtime, FakeScheduler())
+        val closed = mutableListOf<Pair<String, String>>()
+        controller.setPluginClosedListener { pluginId, reason -> closed += pluginId to reason }
+        val principal = principal()
+
+        controller.open(principal)
+        controller.closeActive()
+        controller.open(principal)
+        controller.onPluginSelfHid("hello")
+        controller.open(principal)
+        controller.onBinderDied(principal.grantKey())
+
+        assertEquals(
+            listOf(
+                "hello" to "close",
+                "hello" to "self_hidden",
+                "hello" to "binder_died",
+            ),
+            closed,
+        )
+    }
+
+    @Test
     fun `bind failure lets registry fall back`() {
         val runtime = FakeRuntime().apply { bindResult = false }
         val controller = ExternalPluginController(runtime, FakeScheduler())

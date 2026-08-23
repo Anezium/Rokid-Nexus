@@ -6,6 +6,7 @@ import com.anezium.rokidbus.shared.plugin.PluginCapability
 import com.anezium.rokidbus.shared.plugin.PluginDescriptor
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -55,6 +56,23 @@ class MediaTriggerCoordinatorTest {
         ),
     )
 
+    private val otherPrincipal = PhonePluginPrincipal(
+        packageName = "com.anezium.rokidbus.plugin.relay",
+        serviceComponent = ComponentName("com.anezium.rokidbus.plugin.relay", "RelayPluginService"),
+        uid = 12,
+        signingDigestSha256 = "digest-relay",
+        descriptor = PluginDescriptor(
+            id = "relay",
+            displayName = "Relay",
+            apiVersion = 3,
+            requestedCapabilities = setOf(PluginCapability.SURFACES),
+            receivePrefixes = listOf("/plugin/relay", "/system/plugin"),
+            settingsActivity = null,
+            launchable = true,
+            mediaTrigger = false,
+        ),
+    )
+
     private class Harness {
         var now = 0L
         var visibleSurface = false
@@ -68,8 +86,15 @@ class MediaTriggerCoordinatorTest {
             pluginOwnsVisibleSurface = { visibleSurface },
             logger = {},
         )
+        init {
+            controller.setPluginClosedListener(coordinator::onPluginClosed)
+        }
         val opens: List<JSONObject>
             get() = runtime.deliveries.filter { it.first == BusPaths.PLUGIN_OPEN }.map { it.second }
+        val mediaTriggerOpens: List<JSONObject>
+            get() = opens.filter {
+                it.optString("type") == MediaTriggerCoordinator.PLUGIN_MEDIA_TRIGGER_OPEN_TYPE
+            }
         val closes: List<JSONObject>
             get() = runtime.deliveries.filter { it.first == BusPaths.PLUGIN_CLOSE }.map { it.second }
     }
@@ -84,6 +109,78 @@ class MediaTriggerCoordinatorTest {
         assertEquals(MediaTriggerCoordinator.PLUGIN_MEDIA_TRIGGER_OPEN_TYPE, h.opens.single().getString("type"))
         assertEquals("lyrics", h.opens.single().getString("pluginId"))
         assertTrue(h.coordinator.isHoldingOpen)
+    }
+
+    @Test
+    fun `user close while playing reopens the plugin in the background`() {
+        val h = Harness()
+        h.resolveTo = principal
+        h.coordinator.onPlaybackChanged(true)
+
+        h.controller.onPluginSelfHid("lyrics")
+
+        assertEquals(2, h.mediaTriggerOpens.size)
+        assertEquals(
+            MediaTriggerCoordinator.PLUGIN_MEDIA_TRIGGER_OPEN_TYPE,
+            h.mediaTriggerOpens.last().getString("type"),
+        )
+        assertEquals("lyrics", h.controller.activeId())
+        assertTrue(h.coordinator.isHoldingOpen)
+    }
+
+    @Test
+    fun `media idle close does not reopen the plugin`() {
+        val h = Harness()
+        h.resolveTo = principal
+        h.coordinator.onPlaybackChanged(true)
+
+        h.controller.closeActive(MediaTriggerCoordinator.PLUGIN_MEDIA_TRIGGER_CLOSE_REASON)
+
+        assertEquals(1, h.mediaTriggerOpens.size)
+        assertEquals(null, h.controller.activeId())
+        assertFalse(h.coordinator.isHoldingOpen)
+    }
+
+    @Test
+    fun `switch close does not reopen the media trigger plugin`() {
+        val h = Harness()
+        h.resolveTo = principal
+        h.coordinator.onPlaybackChanged(true)
+
+        h.controller.open(otherPrincipal)
+
+        assertEquals(1, h.mediaTriggerOpens.size)
+        assertEquals("relay", h.controller.activeId())
+        assertFalse(h.coordinator.isHoldingOpen)
+    }
+
+    @Test
+    fun `close while not playing does not reopen the plugin`() {
+        val h = Harness()
+        h.resolveTo = principal
+        h.coordinator.onPlaybackChanged(true)
+        h.coordinator.onPlaybackChanged(false)
+
+        h.controller.closeActive("close")
+
+        assertEquals(1, h.mediaTriggerOpens.size)
+        assertEquals(null, h.controller.activeId())
+        assertFalse(h.coordinator.isHoldingOpen)
+    }
+
+    @Test
+    fun `two quick closes produce exactly one background reopen`() {
+        val h = Harness()
+        h.resolveTo = principal
+        h.coordinator.onPlaybackChanged(true)
+
+        h.controller.closeActive("close")
+        h.now = MediaTriggerCoordinator.REOPEN_COOLDOWN_MS - 1
+        h.controller.closeActive("close")
+
+        assertEquals(2, h.mediaTriggerOpens.size)
+        assertEquals(null, h.controller.activeId())
+        assertFalse(h.coordinator.isHoldingOpen)
     }
 
     @Test
@@ -123,29 +220,13 @@ class MediaTriggerCoordinatorTest {
 
     @Test
     fun `grace close does not close a different active plugin`() {
-        val other = PhonePluginPrincipal(
-            packageName = "com.anezium.rokidbus.plugin.relay",
-            serviceComponent = ComponentName("com.anezium.rokidbus.plugin.relay", "RelayPluginService"),
-            uid = 12,
-            signingDigestSha256 = "digest-relay",
-            descriptor = PluginDescriptor(
-                id = "relay",
-                displayName = "Relay",
-                apiVersion = 3,
-                requestedCapabilities = setOf(PluginCapability.SURFACES),
-                receivePrefixes = listOf("/plugin/relay", "/system/plugin"),
-                settingsActivity = null,
-                launchable = true,
-                mediaTrigger = false,
-            ),
-        )
         val h = Harness()
         h.resolveTo = principal
         h.coordinator.onPlaybackChanged(true)
         assertEquals(1, h.opens.size)
         assertEquals("lyrics", h.controller.activeId())
 
-        h.controller.open(other)
+        h.controller.open(otherPrincipal)
         assertEquals("relay", h.controller.activeId())
         val closesAfterSwitch = h.closes.size
 
