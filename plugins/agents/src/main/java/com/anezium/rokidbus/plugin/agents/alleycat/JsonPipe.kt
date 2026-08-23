@@ -35,11 +35,10 @@ class FramedJsonPipe(
 
     override fun receiveJson(): JSONObject = AlleycatFraming.read(transport)
 
-    /**
-     * The byte transport has no timed read. Slice-1 tests supply every frame
-     * up front, so this just delegates to the blocking read.
-     */
-    override fun receiveJson(timeoutMs: Long): JSONObject? = receiveJson()
+    override fun receiveJson(timeoutMs: Long): JSONObject? {
+        val header = transport.receiveExactly(4, timeoutMs.coerceAtLeast(0L)) ?: return null
+        return AlleycatFraming.readBody(transport, header)
+    }
 
-    override fun close() = Unit
+    override fun close() = transport.close()
 }

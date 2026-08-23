@@ -1,6 +1,9 @@
 package com.anezium.rokidbus.plugin.agents
 
+import com.anezium.rokidbus.plugin.agents.alleycat.AlleycatAttachResult
+import com.anezium.rokidbus.plugin.agents.alleycat.AlleycatConnectSequence
 import com.anezium.rokidbus.plugin.agents.alleycat.AlleycatException
+import com.anezium.rokidbus.plugin.agents.alleycat.AlleycatHandshakeFlow
 import com.anezium.rokidbus.plugin.agents.alleycat.ApprovalVerdict
 import com.anezium.rokidbus.plugin.agents.alleycat.JsonPipe
 import kotlinx.coroutines.CancellationException
@@ -10,41 +13,33 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import okhttp3.OkHttpClient
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.atomic.AtomicReference
 
-internal sealed interface CodexCommand {
-    data class OpenDetail(val sessionId: String) : CodexCommand
-    data object CloseDetail : CodexCommand
-    data class Decide(val requestId: String, val verdict: ApprovalVerdict) : CodexCommand
-    data class StartThread(
-        val requestId: String,
-        val prompt: String,
-        val cwd: String?,
-    ) : CodexCommand
+fun interface AlleycatStreamOpener {
+    fun open(computer: AlleycatComputer): JsonPipe
 }
 
+data class AlleycatSessionHooks(
+    val onAdvertisedAgents: (computerId: String, agents: List<String>) -> Unit = { _, _ -> },
+    val onSelectedAgent: (computerId: String, agent: String) -> Unit = { _, _ -> },
+    val onLastSeq: (computerId: String, seq: Long) -> Unit = { _, _ -> },
+    val onNeedsRePair: (computerId: String, needsRePair: Boolean) -> Unit = { _, _ -> },
+)
+
 /**
- * One direct `ws(s)://` Codex app-server. Skips the Alleycat handshake and
- * speaks JSON-RPC on the socket from the first frame.
+ * One kittylitter-paired Alleycat node. Handshake (token, list_agents,
+ * connect, optional restart) happens on the framed pipe; after `connect` the
+ * same pipe is the Codex app-server session from [CodexJsonRpcLoop].
  */
-class CodexDirectClient(
+class AlleycatClient(
     private val store: AgentSessionStore,
     private val scope: CoroutineScope,
-    private val openPipe: (DirectComputer) -> JsonPipe,
+    private val secrets: AlleycatSecretStore,
+    private val openPipe: AlleycatStreamOpener,
+    private val hooks: AlleycatSessionHooks = AlleycatSessionHooks(),
     private val nowMs: () -> Long = System::currentTimeMillis,
 ) {
-    constructor(
-        httpClient: OkHttpClient,
-        store: AgentSessionStore,
-        scope: CoroutineScope,
-    ) : this(
-        store = store,
-        scope = scope,
-        openPipe = { computer -> WebSocketJsonPipe.connect(httpClient, computer.url) },
-    )
-
     private var loopJob: Job? = null
     private val generation = java.util.concurrent.atomic.AtomicLong(0L)
     private val commands = LinkedBlockingQueue<CodexCommand>()
@@ -55,7 +50,7 @@ class CodexDirectClient(
         private set
 
     @Synchronized
-    fun start(computer: DirectComputer) {
+    fun start(computer: AlleycatComputer) {
         loopJob?.cancel()
         commands.clear()
         livePipe.getAndSet(null)?.close()
@@ -78,8 +73,8 @@ class CodexDirectClient(
         if (clearSessions) {
             val id = computerId
             store.setConnection(AgentProvider.CODEX, ConnectionState.DISCONNECTED)
-            store.clearApprovals(setOf(AgentProvider.CODEX))
             if (id != null) {
+                store.clearApprovalsForMachine(id)
                 store.replaceMachineSessions(id, AgentProvider.CODEX, emptyList())
             }
         }
@@ -102,9 +97,9 @@ class CodexDirectClient(
         commands.offer(CodexCommand.StartThread(requestId, prompt, cwd))
     }
 
-    private suspend fun runConnectionLoop(computer: DirectComputer, gen: Long) {
+    private suspend fun runConnectionLoop(computer: AlleycatComputer, gen: Long) {
         val backoff = ReconnectBackoff()
-        val bridge = CodexSessionBridge(store, computer, nowMs)
+        val bridge = CodexSessionBridge(store, computer.asCodexRef(), nowMs)
         while (scope.isActive && generation.get() == gen) {
             connectionState = ConnectionState.CONNECTING
             bridge.onConnecting()
@@ -113,9 +108,12 @@ class CodexDirectClient(
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (e: AlleycatException) {
-                ConnectionOutcome.RetryWithDetail(e.message ?: "connection failed")
-            } catch (_: Throwable) {
-                ConnectionOutcome.Retry
+                classify(e, tokenOf(computer))
+            } catch (t: Throwable) {
+                classify(
+                    AlleycatException(t.message ?: "connection failed", t),
+                    tokenOf(computer),
+                )
             } finally {
                 livePipe.getAndSet(null)?.close()
             }
@@ -123,6 +121,7 @@ class CodexDirectClient(
             when (result) {
                 is ConnectionOutcome.AuthFailed -> {
                     connectionState = ConnectionState.AUTH_FAILED
+                    hooks.onNeedsRePair(computer.computerId, true)
                     bridge.onFailed(ConnectionState.AUTH_FAILED, result.detail)
                     return
                 }
@@ -145,76 +144,134 @@ class CodexDirectClient(
     }
 
     private suspend fun connectOnce(
-        computer: DirectComputer,
+        computer: AlleycatComputer,
         gen: Long,
         backoff: ReconnectBackoff,
         bridge: CodexSessionBridge,
     ): ConnectionOutcome {
+        val token = secrets.getToken(computer.computerId)
+            ?: return ConnectionOutcome.AuthFailed("Re-pair this computer — the token is missing")
         val pipe = try {
-            openPipe(computer)
+            openPipe.open(computer)
         } catch (e: AlleycatException) {
-            val auth = e.message?.contains("rejected") == true
-            return if (auth) {
-                ConnectionOutcome.AuthFailed(e.message ?: "app-server rejected the connection")
-            } else {
-                ConnectionOutcome.RetryWithDetail(e.message ?: "connection failed")
+            return classify(e, token)
+        }
+        val handshake = try {
+            AlleycatHandshakeFlow(pipe, token).attach(computer.selectedAgent, computer.lastSeq)
+        } catch (e: AlleycatException) {
+            pipe.close()
+            return classify(e, token)
+        }
+        return when (handshake) {
+            is AlleycatAttachResult.NeedsPicker -> {
+                hooks.onAdvertisedAgents(computer.computerId, handshake.agents)
+                pipe.close()
+                ConnectionOutcome.Failed("Pick an agent in Add a computer")
+            }
+            is AlleycatAttachResult.HandshakeFailed -> {
+                pipe.close()
+                val error = AlleycatConnectSequence.redactSecret(handshake.error, token)
+                when {
+                    AlleycatConnectSequence.isAuthFailure(error) ->
+                        ConnectionOutcome.AuthFailed("Re-pair this computer — $error")
+                    AlleycatConnectSequence.isVersionOrAlpnFailure(error) ->
+                        ConnectionOutcome.Failed(error)
+                    else -> ConnectionOutcome.RetryWithDetail(error)
+                }
+            }
+            is AlleycatAttachResult.Attached -> {
+                hooks.onAdvertisedAgents(computer.computerId, handshake.advertised)
+                hooks.onSelectedAgent(computer.computerId, handshake.agent)
+                hooks.onNeedsRePair(computer.computerId, false)
+                handshake.session?.let { session ->
+                    AlleycatConnectSequence.sessionSeq(session)?.let { seq ->
+                        hooks.onLastSeq(computer.computerId, seq)
+                    }
+                    // drift_reload is honored by CodexJsonRpcLoop: it always
+                    // reloads via thread/list instead of trusting the stream.
+                }
+                CodexJsonRpcLoop.run(
+                    pipe = pipe,
+                    bridge = bridge,
+                    store = store,
+                    commands = commands,
+                    generation = generation,
+                    gen = gen,
+                    scope = scope,
+                    livePipe = livePipe,
+                    onConnectionState = { state ->
+                        connectionState = state
+                        if (state == ConnectionState.CONNECTED) backoff.reset()
+                    },
+                )
             }
         }
-        val outcome = CodexJsonRpcLoop.run(
-            pipe = pipe,
-            bridge = bridge,
-            store = store,
-            commands = commands,
-            generation = generation,
-            gen = gen,
-            scope = scope,
-            livePipe = livePipe,
-            onConnectionState = { state ->
-                connectionState = state
-                if (state == ConnectionState.CONNECTED) backoff.reset()
-            },
+    }
+
+    private fun tokenOf(computer: AlleycatComputer): String =
+        secrets.getToken(computer.computerId).orEmpty()
+
+    private fun classify(error: AlleycatException, token: String): ConnectionOutcome {
+        val detail = AlleycatConnectSequence.redactSecret(
+            error.message ?: "connection failed",
+            token,
         )
-        return outcome
+        return when {
+            AlleycatConnectSequence.isAuthFailure(detail) ->
+                ConnectionOutcome.AuthFailed("Re-pair this computer — $detail")
+            AlleycatConnectSequence.isVersionOrAlpnFailure(detail) ->
+                ConnectionOutcome.Failed(detail)
+            else -> ConnectionOutcome.RetryWithDetail(detail)
+        }
     }
 }
 
-/**
- * Owns every saved direct-URL computer. [AgentProvider.CODEX] has one
- * connection slot: CONNECTED if any socket is up.
- */
-class CodexDirectBroker(
+class AlleycatBroker(
     private val store: AgentSessionStore,
     private val scope: CoroutineScope,
-    private val factory: (DirectComputer) -> CodexDirectClient,
+    private val secrets: AlleycatSecretStore,
+    private val factory: (AlleycatComputer) -> AlleycatClient,
 ) {
     constructor(
-        httpClient: OkHttpClient,
         store: AgentSessionStore,
         scope: CoroutineScope,
+        secrets: AlleycatSecretStore,
+        opener: AlleycatStreamOpener,
+        hooks: AlleycatSessionHooks,
     ) : this(
         store = store,
         scope = scope,
-        factory = { CodexDirectClient(httpClient, store, scope) },
+        secrets = secrets,
+        factory = { AlleycatClient(store, scope, secrets, opener, hooks) },
     )
 
-    private val clients = linkedMapOf<String, CodexDirectClient>()
+    private val clients = linkedMapOf<String, AlleycatClient>()
+    private val started = linkedMapOf<String, AlleycatComputer>()
 
     @Synchronized
-    fun reconcile(computers: List<DirectComputer>) {
+    fun reconcile(computers: List<AlleycatComputer>) {
         val wanted = computers.associateBy { it.computerId }
         val extra = clients.keys.filter { it !in wanted }
         extra.forEach { id ->
             clients.remove(id)?.stop(clearSessions = true)
+            started.remove(id)
         }
         wanted.values.forEach { computer ->
             val existing = clients[computer.computerId]
-            if (existing == null) {
+            val previous = started[computer.computerId]
+            val agentChanged = previous != null && previous.selectedAgent != computer.selectedAgent
+            if (existing == null || agentChanged) {
+                existing?.stop(clearSessions = true)
                 val client = factory(computer)
                 clients[computer.computerId] = client
+                started[computer.computerId] = computer
                 client.start(computer)
             }
         }
-        if (clients.isEmpty()) {
+        if (clients.isEmpty() && store.sessions.value.none { session ->
+                session.machineId?.let { isCodexRemoteComputer(it) } == true
+            }
+        ) {
             store.setConnection(AgentProvider.CODEX, ConnectionState.DISCONNECTED)
         }
     }
@@ -223,9 +280,7 @@ class CodexDirectBroker(
     fun stop(clearSessions: Boolean) {
         clients.values.forEach { it.stop(clearSessions) }
         clients.clear()
-        if (clearSessions) {
-            store.setConnection(AgentProvider.CODEX, ConnectionState.DISCONNECTED)
-        }
+        started.clear()
     }
 
     @Synchronized
@@ -252,9 +307,11 @@ class CodexDirectBroker(
     @Synchronized
     fun drop(machineId: String) {
         clients.remove(machineId)?.stop(clearSessions = true)
+        started.remove(machineId)
+        secrets.removeToken(machineId)
     }
 
-    private fun clientFor(machineId: String?): CodexDirectClient? {
+    private fun clientFor(machineId: String?): AlleycatClient? {
         if (machineId != null) clients[machineId]?.let { return it }
         return clients.values.singleOrNull()
     }

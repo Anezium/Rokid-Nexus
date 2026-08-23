@@ -11,6 +11,13 @@
   Tailscale from anywhere, a pasted pairing line — on one Add a computer
   screen, with a link window that shows its countdown and can be cancelled.
   The OpenClaw gateway is configured there too.
+- Pair a kittylitter node by scanning `kittylitter pair --qr` (or pasting the
+  same JSON). The bearer token lives in Keystore-backed encrypted storage,
+  is never shown again, never logged, and never sent to the glasses. Auth
+  failure from `kittylitter rotate` asks for a re-pair instead of retrying.
+- Talk to Alleycat over Iroh (`computer.iroh:iroh-android`, ALPN `alleycat/1`,
+  u32+JSON framing) and reuse the Codex app-server session layer after
+  `connect`. Direct `ws(s)://` remains a supported Add computer option.
 - Give each computer its own screen, and let the wearer walk its folders over
   the link to anchor project folders — the ground the glasses will start
   sessions from.

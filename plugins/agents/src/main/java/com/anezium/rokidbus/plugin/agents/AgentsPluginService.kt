@@ -492,6 +492,11 @@ class AgentsPluginService : NexusPluginService() {
             ) {
                 add(problemRow("Codex app-server rejected", "check the address in the phone app"))
             }
+            if (config.alleycatComputers.isNotEmpty() &&
+                connections[AgentProvider.CODEX]?.state == ConnectionState.AUTH_FAILED
+            ) {
+                add(problemRow("Alleycat auth failed", "re-pair in the phone app"))
+            }
         }
 
         // The HUD does not scroll: keep a window around the selection.
@@ -602,12 +607,16 @@ class AgentsPluginService : NexusPluginService() {
     }
 
     private fun emptyRow(config: AgentsConfig): NexusCardLine = NexusCardLine(
-        text = if (config.agentdEnabled || config.openClawEnabled || config.directComputers.isNotEmpty()) {
+        text = if (config.agentdEnabled || config.openClawEnabled ||
+            config.directComputers.isNotEmpty() || config.alleycatComputers.isNotEmpty()
+        ) {
             "Nothing running"
         } else {
             "Set up a provider in the phone app"
         },
-        sub = if (config.agentdEnabled || config.openClawEnabled || config.directComputers.isNotEmpty()) {
+        sub = if (config.agentdEnabled || config.openClawEnabled ||
+            config.directComputers.isNotEmpty() || config.alleycatComputers.isNotEmpty()
+        ) {
             "sessions appear here as soon as an agent starts"
         } else {
             null
@@ -653,7 +662,7 @@ class AgentsPluginService : NexusPluginService() {
                 val machine = machines.getOrNull(launchIndex) ?: return
                 val projects = configStore.projects(machine.machineId)
                 launch = if (
-                    machine.machineId.startsWith(DirectComputer.ID_PREFIX) &&
+                    isCodexRemoteComputer(machine.machineId) &&
                     projects.isEmpty()
                 ) {
                     Launch.Threads(
@@ -696,7 +705,7 @@ class AgentsPluginService : NexusPluginService() {
      */
     private fun startCodexThread(step: Launch.Threads) {
         if (launchRequestId != null) return
-        val direct = step.machineId.startsWith(DirectComputer.ID_PREFIX)
+        val direct = isCodexRemoteComputer(step.machineId)
         if (direct) {
             val state = AgentsRuntime.store.connections.value[AgentProvider.CODEX]?.state
             if (state != ConnectionState.CONNECTED) {
@@ -733,7 +742,7 @@ class AgentsPluginService : NexusPluginService() {
 
     private fun projectThreads(step: Launch.Threads): List<AgentSession> =
         AgentsRuntime.store.sessions.value.filter { session ->
-            if (step.machineId.startsWith(DirectComputer.ID_PREFIX)) {
+            if (isCodexRemoteComputer(step.machineId)) {
                 session.provider == AgentProvider.CODEX &&
                     session.machineId == step.machineId &&
                     (step.project.path == "/" || cwdInProject(session.cwd, step.project.path))
@@ -765,11 +774,13 @@ class AgentsPluginService : NexusPluginService() {
             )
         } else {
             windowedRows(machines, launchIndex) { machine, selected ->
-                val direct = machine.machineId.startsWith(DirectComputer.ID_PREFIX)
+                val direct = isCodexRemoteComputer(machine.machineId)
                 val connected = if (direct) codexConnected else link?.machineId == machine.machineId
                 NexusCardLine(
                     text = machine.name.singleLine(120),
                     sub = when {
+                        direct && connected && machine.machineId.startsWith(AlleycatComputer.ID_PREFIX) ->
+                            "connected · alleycat"
                         direct && connected -> "connected · app-server"
                         connected && link?.overTailnet == true -> "connected · over Tailscale"
                         connected -> "connected · same Wi-Fi"
@@ -1129,6 +1140,7 @@ class AgentsPluginService : NexusPluginService() {
 
 private fun AgentProvider.enabledIn(config: AgentsConfig): Boolean = when (this) {
     AgentProvider.CLAUDE -> config.agentdEnabled
-    AgentProvider.CODEX -> config.agentdEnabled || config.directComputers.isNotEmpty()
+    AgentProvider.CODEX ->
+        config.agentdEnabled || config.directComputers.isNotEmpty() || config.alleycatComputers.isNotEmpty()
     AgentProvider.OPENCLAW -> config.openClawEnabled
 }

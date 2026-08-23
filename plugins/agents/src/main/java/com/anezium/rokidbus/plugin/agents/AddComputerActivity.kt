@@ -1,6 +1,8 @@
 package com.anezium.rokidbus.plugin.agents
 
+import android.Manifest
 import android.app.Activity
+import android.content.pm.PackageManager
 import android.graphics.Typeface
 import android.os.Bundle
 import android.text.Editable
@@ -16,8 +18,13 @@ import android.widget.LinearLayout
 import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
+import androidx.core.content.ContextCompat
 import com.anezium.rokidbus.client.ui.BusTheme
 import com.anezium.rokidbus.client.ui.NexusUi
+import com.anezium.rokidbus.plugin.agents.alleycat.AlleycatException
+import com.anezium.rokidbus.plugin.agents.alleycat.PairingPayload
+import com.google.zxing.integration.android.IntentIntegrator
+import com.google.zxing.integration.android.IntentResult
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -55,6 +62,11 @@ class AddComputerActivity : Activity() {
     private lateinit var directSummary: TextView
     private lateinit var directConnection: TextView
     private lateinit var directDot: View
+    private lateinit var alleycatField: EditText
+    private lateinit var alleycatSummary: TextView
+    private lateinit var alleycatConnection: TextView
+    private lateinit var alleycatDot: View
+    private lateinit var alleycatAgents: LinearLayout
     private var countdown: Job? = null
     private var knownMachines = 0
 
@@ -86,6 +98,22 @@ class AddComputerActivity : Activity() {
                         ConnectionState.DISCONNECTED -> NexusUi.INK3
                     },
                 )
+                alleycatConnection.text = when {
+                    configStore.load().alleycatComputers.any { it.needsRePair } ||
+                        codex.state == ConnectionState.AUTH_FAILED ->
+                        codex.displayText("RE-PAIR")
+                    else -> codex.displayText("REJECTED")
+                }
+                NexusUi.setDotColor(
+                    alleycatDot,
+                    when (codex.state) {
+                        ConnectionState.CONNECTED -> NexusUi.GREEN
+                        ConnectionState.CONNECTING -> NexusUi.AMBER
+                        ConnectionState.AUTH_FAILED -> NexusUi.DANGER
+                        ConnectionState.DISCONNECTED -> NexusUi.INK3
+                    },
+                )
+                renderAlleycatAgents()
             }
         }
         uiScope.launch {
@@ -106,11 +134,39 @@ class AddComputerActivity : Activity() {
         super.onResume()
         renderDoorState()
         renderTailscaleState()
+        renderAlleycatPreview(alleycatField.text?.toString().orEmpty())
+        renderAlleycatAgents()
     }
 
     override fun onDestroy() {
         uiScope.cancel()
         super.onDestroy()
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray,
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQUEST_CAMERA && grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
+            launchQrScanner()
+        } else if (requestCode == REQUEST_CAMERA) {
+            toast("Camera denied — paste the pairing JSON instead.")
+        }
+    }
+
+    @Deprecated("zxing CaptureActivity still uses this result path")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: android.content.Intent?) {
+        val result: IntentResult? = IntentIntegrator.parseActivityResult(requestCode, resultCode, data)
+        if (result == null) {
+            super.onActivityResult(requestCode, resultCode, data)
+            return
+        }
+        val contents = result.contents ?: return
+        alleycatField.setText(contents)
+        renderAlleycatPreview(contents)
+        saveAlleycat(test = false)
     }
 
     private fun buildUi() {
@@ -197,6 +253,25 @@ class AddComputerActivity : Activity() {
             })
         }
         renderDirectPreview("")
+        alleycatDot = NexusUi.dot(this)
+        alleycatConnection = NexusUi.statusLine(this).apply { text = "DISCONNECTED" }
+        alleycatSummary = NexusUi.cardBody(this, "No kittylitter node paired.")
+        alleycatAgents = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        alleycatField = NexusUi.field(this, "Paste the JSON from kittylitter pair --qr").apply {
+            setSingleLine(false)
+            minLines = 3
+            maxLines = 6
+            gravity = Gravity.TOP
+            setPadding(paddingLeft, 14, paddingRight, 14)
+            addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                    renderAlleycatPreview(s?.toString().orEmpty())
+                }
+                override fun afterTextChanged(s: Editable?) = Unit
+            })
+        }
+        renderAlleycatPreview("")
 
         val content = NexusUi.contentColumn(this).apply {
             addView(daemonCard(), NexusUi.block())
@@ -204,6 +279,8 @@ class AddComputerActivity : Activity() {
             addView(wifiCard(), NexusUi.block())
             addView(BusTheme.gap(this@AddComputerActivity, 14))
             addView(tailscaleCard(), NexusUi.block())
+            addView(BusTheme.gap(this@AddComputerActivity, 14))
+            addView(kittylitterCard(), NexusUi.block())
             addView(BusTheme.gap(this@AddComputerActivity, 14))
             addView(pairingCard(), NexusUi.block())
             addView(BusTheme.gap(this@AddComputerActivity, 14))
@@ -298,6 +375,47 @@ class AddComputerActivity : Activity() {
                     "“curl -fsSL https://tailscale.com/install.sh | sh” and then " +
                     "“sudo tailscale up” — and sign in with the same account as " +
                     "this phone. The computer then reaches this phone from any network.",
+            ),
+            NexusUi.block(),
+        )
+    }
+
+    /** Kittylitter default path: QR from `kittylitter pair --qr`, or paste the same JSON. */
+    private fun kittylitterCard() = NexusUi.card(this).apply {
+        addView(NexusUi.rowTitle(this@AddComputerActivity, "Kittylitter — QR pairing"), NexusUi.block())
+        addView(BusTheme.gap(this@AddComputerActivity, 6))
+        addView(
+            NexusUi.cardBody(
+                this@AddComputerActivity,
+                "On the computer run “kittylitter pair --qr” and scan the QR, " +
+                    "or paste the same JSON. The token is stored encrypted on this " +
+                    "phone and never shown again, never logged, and never sent to " +
+                    "the glasses. kittylitter rotate invalidates it — re-pair.",
+            ),
+            NexusUi.block(),
+        )
+        addView(BusTheme.gap(this@AddComputerActivity, 8))
+        addView(connectionRow(this@AddComputerActivity, alleycatDot, alleycatConnection), NexusUi.block())
+        addView(NexusUi.divider(this@AddComputerActivity))
+        addView(
+            NexusUi.outlinePillButton(this@AddComputerActivity, "Scan QR").apply {
+                setOnClickListener { scanKittylitterQr() }
+            },
+            NexusUi.block(),
+        )
+        addView(BusTheme.gap(this@AddComputerActivity, 10))
+        addView(alleycatField, NexusUi.block())
+        addView(BusTheme.gap(this@AddComputerActivity, 10))
+        addView(alleycatSummary, NexusUi.block())
+        addView(alleycatAgents, NexusUi.block())
+        addView(BusTheme.gap(this@AddComputerActivity, 12))
+        addView(
+            actionRow(
+                this@AddComputerActivity,
+                primary = "Save",
+                onPrimary = { saveAlleycat(test = false) },
+                secondary = "Test connection",
+                onSecondary = { saveAlleycat(test = true) },
             ),
             NexusUi.block(),
         )
@@ -527,7 +645,127 @@ class AddComputerActivity : Activity() {
         }
     }
 
+    private fun renderAlleycatPreview(raw: String) {
+        val saved = configStore.load().alleycatComputers
+        if (raw.isBlank()) {
+            alleycatSummary.text = when {
+                saved.any { it.needsRePair } ->
+                    "Re-pair ${saved.first { it.needsRePair }.name} — kittylitter rotate invalidates the token."
+                saved.size == 1 ->
+                    "Paired: ${saved.single().name} · ${AlleycatComputer.shortNodeId(saved.single().nodeId)}"
+                saved.isNotEmpty() -> "${saved.size} kittylitter nodes paired."
+                else -> "No kittylitter node paired."
+            }
+            return
+        }
+        alleycatSummary.text = try {
+            val payload = PairingPayload.parseFlexible(raw)
+            val name = payload.displayName ?: AlleycatComputer.shortNodeId(payload.nodeId)
+            "Parsed: $name · ${AlleycatComputer.shortNodeId(payload.nodeId)}" +
+                (payload.relay?.let { " · relay pinned" } ?: "")
+        } catch (e: AlleycatException) {
+            e.message ?: "Invalid pairing JSON."
+        }
+    }
+
+    private fun renderAlleycatAgents() {
+        if (!::alleycatAgents.isInitialized) return
+        alleycatAgents.removeAllViews()
+        val computers = configStore.load().alleycatComputers
+        val needing = computers.firstOrNull { it.advertisedAgents.size > 1 && it.selectedAgent == null }
+            ?: computers.firstOrNull { it.advertisedAgents.size > 1 }
+            ?: return
+        alleycatAgents.addView(BusTheme.gap(this, 10))
+        alleycatAgents.addView(
+            NexusUi.cardBody(
+                this,
+                if (needing.selectedAgent == null) {
+                    "This node advertised several agents. Pick one:"
+                } else {
+                    "Agent: ${needing.selectedAgent}. Switch:"
+                },
+            ),
+            NexusUi.block(),
+        )
+        needing.advertisedAgents.forEach { agent ->
+            alleycatAgents.addView(BusTheme.gap(this, 8))
+            val label = if (agent == needing.selectedAgent) "Using $agent" else agent
+            alleycatAgents.addView(
+                NexusUi.outlinePillButton(this, label).apply {
+                    setOnClickListener {
+                        configStore.updateAlleycatComputer(needing.copy(selectedAgent = agent))
+                        AgentsMonitorService.reconcile(applicationContext)
+                        renderAlleycatAgents()
+                        toast("Using $agent.")
+                    }
+                },
+                NexusUi.block(),
+            )
+        }
+    }
+
+    private fun saveAlleycat(test: Boolean) {
+        val raw = alleycatField.text.toString()
+        if (raw.isBlank()) {
+            val existing = configStore.load().alleycatComputers
+            if (existing.isEmpty()) {
+                toast("Scan or paste pairing JSON first.")
+                return
+            }
+            if (test) {
+                AgentsMonitorService.testAlleycat(applicationContext)
+                toast("Testing the Alleycat link…")
+            } else {
+                AgentsMonitorService.reconcile(applicationContext)
+                toast("Kittylitter settings saved.")
+            }
+            return
+        }
+        val payload = try {
+            PairingPayload.parseFlexible(raw)
+        } catch (e: AlleycatException) {
+            alleycatSummary.text = e.message ?: "Invalid pairing JSON."
+            toast("Fix the pairing JSON first.")
+            return
+        }
+        val computer = AlleycatComputer.fromPayload(payload)
+        configStore.saveAlleycatComputer(computer, payload.token)
+        alleycatField.text.clear()
+        alleycatSummary.text =
+            "Paired: ${computer.name} · ${AlleycatComputer.shortNodeId(computer.nodeId)}"
+        if (test) {
+            AgentsMonitorService.testAlleycat(applicationContext)
+            toast("Testing the Alleycat link…")
+        } else {
+            AgentsMonitorService.reconcile(applicationContext)
+            toast("Kittylitter node saved.")
+        }
+        renderAlleycatAgents()
+    }
+
+    private fun scanKittylitterQr() {
+        when {
+            ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) ==
+                PackageManager.PERMISSION_GRANTED -> launchQrScanner()
+            else -> requestPermissions(arrayOf(Manifest.permission.CAMERA), REQUEST_CAMERA)
+        }
+    }
+
+    private fun launchQrScanner() {
+        IntentIntegrator(this)
+            .setDesiredBarcodeFormats(IntentIntegrator.QR_CODE)
+            .setPrompt("Scan kittylitter pair --qr")
+            .setBeepEnabled(false)
+            .setOrientationLocked(true)
+            .setBarcodeImageEnabled(false)
+            .initiateScan()
+    }
+
     private fun toast(message: String) {
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+    }
+
+    companion object {
+        private const val REQUEST_CAMERA = 61
     }
 }

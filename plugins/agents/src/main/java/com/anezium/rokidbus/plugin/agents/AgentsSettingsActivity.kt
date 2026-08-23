@@ -160,13 +160,19 @@ class AgentsSettingsActivity : Activity() {
         }
         machines.forEachIndexed { index, machine ->
             if (index > 0) computersList.addView(BusTheme.gap(this, 4))
-            val connected = if (machine.machineId.startsWith(DirectComputer.ID_PREFIX)) {
+            val connected = if (isCodexRemoteComputer(machine.machineId)) {
                 AgentsRuntime.store.connections.value[AgentProvider.CODEX]?.state ==
                     ConnectionState.CONNECTED
             } else {
                 liveLink?.machineId == machine.machineId
             }
+            val alleycat = machine.machineId.startsWith(AlleycatComputer.ID_PREFIX)
             val sub = when {
+                alleycat && configStore.alleycatComputers()
+                    .firstOrNull { it.computerId == machine.machineId }?.needsRePair == true ->
+                    "Re-pair — token invalid"
+                alleycat && connected -> "Connected · Alleycat"
+                alleycat -> lastSeenText(machine.lastSeenAtMs)
                 machine.machineId.startsWith(DirectComputer.ID_PREFIX) && connected ->
                     "Connected · Codex app-server"
                 machine.machineId.startsWith(DirectComputer.ID_PREFIX) ->

@@ -84,7 +84,7 @@ class NewThreadActivity : Activity() {
         startCodex = NexusUi.outlinePillButton(this, "Start with Codex").apply {
             setOnClickListener { start(AgentProvider.CODEX) }
         }
-        if (machineId.startsWith(DirectComputer.ID_PREFIX)) {
+        if (isCodexRemoteComputer(machineId)) {
             startClaude.visibility = View.GONE
         }
 
@@ -100,7 +100,7 @@ class NewThreadActivity : Activity() {
             addView(BusTheme.gap(this@NewThreadActivity, 12))
             addView(promptField, NexusUi.block())
             addView(BusTheme.gap(this@NewThreadActivity, 12))
-            if (!machineId.startsWith(DirectComputer.ID_PREFIX)) {
+            if (!isCodexRemoteComputer(machineId)) {
                 addView(startClaude, NexusUi.block())
                 addView(BusTheme.gap(this@NewThreadActivity, 8))
             }
@@ -165,7 +165,7 @@ class NewThreadActivity : Activity() {
             toast("Claude Code needs a prompt to start with.")
             return
         }
-        if (machineId.startsWith(DirectComputer.ID_PREFIX)) {
+        if (isCodexRemoteComputer(machineId)) {
             val state = AgentsRuntime.store.connections.value[AgentProvider.CODEX]?.state
             if (state != ConnectionState.CONNECTED) {
                 showHint("$machineName is not connected right now.")

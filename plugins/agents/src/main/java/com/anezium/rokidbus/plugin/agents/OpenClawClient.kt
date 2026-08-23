@@ -73,6 +73,14 @@ class OpenClawClient(
                     )
                     return
                 }
+                is ConnectionOutcome.Failed -> {
+                    store.setConnection(
+                        AgentProvider.OPENCLAW,
+                        ConnectionState.DISCONNECTED,
+                        result.detail,
+                    )
+                    return
+                }
                 is ConnectionOutcome.RetryWithDetail -> {
                     store.setConnection(
                         AgentProvider.OPENCLAW,

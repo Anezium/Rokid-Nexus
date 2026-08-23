@@ -43,6 +43,13 @@ object AlleycatFraming {
 
     fun read(transport: AlleycatTransport): JSONObject {
         val header = transport.receiveExactly(4)
+        return readBody(transport, header)
+    }
+
+    internal fun readBody(transport: AlleycatTransport, header: ByteArray): JSONObject {
+        if (header.size != 4) {
+            throw AlleycatException("frame shorter than length prefix")
+        }
         val length = ByteBuffer.wrap(header).order(ByteOrder.BIG_ENDIAN).int
         if (length <= 0 || length > MAX_PAYLOAD_BYTES) {
             throw AlleycatException("rejected frame length $length (cap $MAX_PAYLOAD_BYTES)")

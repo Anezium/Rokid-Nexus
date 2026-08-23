@@ -127,7 +127,7 @@ class AgentSessionStore {
     ) {
         providers.forEach { provider ->
             val preserved = providerSessions.getValue(provider).values.filter {
-                it.machineId?.startsWith(DirectComputer.ID_PREFIX) == true
+                it.machineId?.let(::isCodexRemoteComputer) == true
             }
             val replacement = linkedMapOf<String, AgentSession>()
             preserved.forEach { replacement[it.id] = it }

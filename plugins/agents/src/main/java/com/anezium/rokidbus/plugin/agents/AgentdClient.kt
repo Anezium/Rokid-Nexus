@@ -97,6 +97,14 @@ class AgentdClient(
                     )
                     return
                 }
+                is ConnectionOutcome.Failed -> {
+                    store.setConnection(
+                        AgentProvider.CLAUDE,
+                        ConnectionState.DISCONNECTED,
+                        result.detail,
+                    )
+                    return
+                }
                 is ConnectionOutcome.RetryWithDetail -> {
                     store.setConnection(
                         AgentProvider.CLAUDE,

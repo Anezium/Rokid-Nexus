@@ -119,7 +119,7 @@ class ComputerActivity : Activity() {
     private fun projectsCard() = NexusUi.card(this).apply {
         addView(projectsList, NexusUi.block())
         addView(NexusUi.divider(this@ComputerActivity))
-        if (!machineId.startsWith(DirectComputer.ID_PREFIX)) {
+        if (!isCodexRemoteComputer(machineId)) {
             addView(
                 NexusUi.rowTitle(this@ComputerActivity, "+ Add a project").apply {
                     setTextColor(NexusUi.GREEN)
@@ -138,11 +138,12 @@ class ComputerActivity : Activity() {
     }
 
     private fun renderStatus(link: LinkMachine?) {
-        if (machineId.startsWith(DirectComputer.ID_PREFIX)) {
+        if (isCodexRemoteComputer(machineId)) {
             val state = AgentsRuntime.store.connections.value[AgentProvider.CODEX]
+            val alleycat = machineId.startsWith(AlleycatComputer.ID_PREFIX)
             when (state?.state) {
                 ConnectionState.CONNECTED -> {
-                    statusLine.text = "CONNECTED · APP-SERVER"
+                    statusLine.text = if (alleycat) "CONNECTED · ALLEYCAT" else "CONNECTED · APP-SERVER"
                     NexusUi.setDotColor(statusDot, NexusUi.GREEN)
                 }
                 ConnectionState.CONNECTING -> {
@@ -150,13 +151,19 @@ class ComputerActivity : Activity() {
                     NexusUi.setDotColor(statusDot, NexusUi.AMBER)
                 }
                 ConnectionState.AUTH_FAILED -> {
-                    statusLine.text = state.displayText("REJECTED")
+                    statusLine.text = state.displayText(if (alleycat) "RE-PAIR" else "REJECTED")
                     NexusUi.setDotColor(statusDot, NexusUi.DANGER)
                 }
                 else -> {
                     val machine = configStore.listedComputers().firstOrNull { it.machineId == machineId }
-                    statusLine.text = lastSeenText(machine?.lastSeenAtMs).uppercase()
-                    NexusUi.setDotColor(statusDot, NexusUi.INK3)
+                    val rePair = alleycat &&
+                        configStore.alleycatComputers().firstOrNull { it.computerId == machineId }?.needsRePair == true
+                    statusLine.text = if (rePair) {
+                        "RE-PAIR — TOKEN INVALID"
+                    } else {
+                        lastSeenText(machine?.lastSeenAtMs).uppercase()
+                    }
+                    NexusUi.setDotColor(statusDot, if (rePair) NexusUi.DANGER else NexusUi.INK3)
                 }
             }
             return
@@ -180,8 +187,8 @@ class ComputerActivity : Activity() {
             projectsList.addView(
                 NexusUi.rowSub(
                     this,
-                    if (machineId.startsWith(DirectComputer.ID_PREFIX)) {
-                        "Threads come from the app-server. No project folder is required."
+                    if (isCodexRemoteComputer(machineId)) {
+                        "Threads come from the computer. No project folder is required."
                     } else {
                         "No project anchored on this computer yet."
                     },
