@@ -1,0 +1,8 @@
+{
+  "name": "Rokid Nexus",
+  "user": "ubuntu",
+  "install": "./.cursor/install.sh",
+  "repositoryDependencies": [
+    "github.com/Anezium/CxrGlobal"
+  ]
+}
