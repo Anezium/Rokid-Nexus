@@ -19,6 +19,7 @@ data class PluginGrant(
     val approvedCapabilities: Set<PluginCapability>,
     val decision: PluginGrantDecision,
     val enabled: Boolean,
+    val displayPolicy: PluginDisplayPolicy = PluginDisplayPolicy.NORMAL,
 )
 
 sealed interface PluginGrantState {
@@ -66,6 +67,7 @@ class PluginGrantStore(private val storage: PluginGrantStorage) {
         enabled: Boolean = true,
     ) {
         require(approvedCapabilities.all { it in principal.descriptor.requestedCapabilities })
+        val existing = readGrants()[principal.grantKey()]
         update(
             PluginGrant(
                 key = principal.grantKey(),
@@ -73,12 +75,14 @@ class PluginGrantStore(private val storage: PluginGrantStorage) {
                 approvedCapabilities = approvedCapabilities,
                 decision = PluginGrantDecision.APPROVED,
                 enabled = enabled,
+                displayPolicy = existing?.displayPolicy ?: PluginDisplayPolicy.NORMAL,
             ),
         )
     }
 
     @Synchronized
     fun deny(principal: PhonePluginPrincipal) {
+        val existing = readGrants()[principal.grantKey()]
         update(
             PluginGrant(
                 key = principal.grantKey(),
@@ -86,9 +90,22 @@ class PluginGrantStore(private val storage: PluginGrantStorage) {
                 approvedCapabilities = emptySet(),
                 decision = PluginGrantDecision.DENIED,
                 enabled = false,
+                displayPolicy = existing?.displayPolicy ?: PluginDisplayPolicy.NORMAL,
             ),
         )
     }
+
+    @Synchronized
+    fun setDisplayPolicy(principal: PhonePluginPrincipal, policy: PluginDisplayPolicy) {
+        val grants = readGrants().toMutableMap()
+        val existing = grants[principal.grantKey()] ?: return
+        grants[existing.key] = existing.copy(displayPolicy = policy)
+        writeGrants(grants.values)
+    }
+
+    @Synchronized
+    fun displayPolicyFor(principal: PhonePluginPrincipal): PluginDisplayPolicy =
+        readGrants()[principal.grantKey()]?.displayPolicy ?: PluginDisplayPolicy.NORMAL
 
     @Synchronized
     fun setEnabled(principal: PhonePluginPrincipal, enabled: Boolean) {
@@ -160,7 +177,8 @@ object PluginGrantCodec {
                     .put("requested", PluginCapability.serialize(grant.requestedCapabilities))
                     .put("approved", PluginCapability.serialize(grant.approvedCapabilities))
                     .put("decision", grant.decision.name)
-                    .put("enabled", grant.enabled),
+                    .put("enabled", grant.enabled)
+                    .put("displayPolicy", grant.displayPolicy.wireValue),
             )
         }
         return JSONObject().put("version", 1).put("grants", items).toString()
@@ -193,6 +211,9 @@ object PluginGrantCodec {
                             approvedCapabilities = approved,
                             decision = decision,
                             enabled = item.optBoolean("enabled"),
+                            displayPolicy = PluginDisplayPolicy.fromWire(
+                                item.optString("displayPolicy"),
+                            ),
                         ),
                     )
                 }

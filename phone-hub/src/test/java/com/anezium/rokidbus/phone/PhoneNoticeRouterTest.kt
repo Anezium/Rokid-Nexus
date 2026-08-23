@@ -6,6 +6,7 @@ import com.anezium.rokidbus.shared.BusPaths
 import com.anezium.rokidbus.shared.NoticeSurfaceContract
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -84,5 +85,43 @@ class PhoneNoticeRouterTest {
             .put("localSurfaceId", NoticeSurfaceContract.LOCAL_SURFACE_ID)
             .put("ownerPluginId", pluginId)
             .put("body", "Updated"),
+    )
+}
+
+class PhoneNoticeRouterDisplayPolicyTest {
+    private val sink = RecordingPhoneHudRouteSink(
+        capabilityBits = BusCapabilityBits.NOTICE_SURFACE,
+        linkUp = true,
+    )
+    private val router = PhoneNoticeRouter(
+        state = PhoneNoticeState(nowMs = { 0L }, initialSequence = 0L),
+        sink = sink,
+    )
+
+    @Test
+    fun `demote accepts a notice but strips the wake pulse`() {
+        router.handleLocal(
+            showEnvelope("relay").let { envelope ->
+                envelope.copy(payload = JSONObject(envelope.payload.toString()).put("wakeDisplay", true))
+            },
+            hudSender("relay", displayPolicy = PluginDisplayPolicy.DEMOTE),
+        )
+
+        val route = sink.localRoutes.single()
+        assertEquals(PluginBusJournal.Verdict.OK, route.verdict)
+        assertEquals(null, route.reason)
+        assertFalse(sink.remote.single().payload.optBoolean("wakeDisplay"))
+        assertFalse(sink.remote.single().payload.has("wakeDisplay"))
+    }
+
+    private fun showEnvelope(pluginId: String) = BusEnvelope(
+        path = BusPaths.NOTICE_SHOW,
+        payload = JSONObject()
+            .put("surfaceId", "$pluginId:${NoticeSurfaceContract.LOCAL_SURFACE_ID}")
+            .put("localSurfaceId", NoticeSurfaceContract.LOCAL_SURFACE_ID)
+            .put("ownerPluginId", pluginId)
+            .put("kind", NoticeSurfaceContract.KIND)
+            .put("title", "Marie")
+            .put("body", "On my way"),
     )
 }

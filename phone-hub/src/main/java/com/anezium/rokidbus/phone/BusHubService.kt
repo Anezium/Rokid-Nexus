@@ -1266,6 +1266,50 @@ class BusHubService : Service() {
                 return
             }
         }
+        if (sender.principal != null &&
+            (sender.caller is PluginRouteCaller.Plugin) &&
+            ::pluginGrantStore.isInitialized
+        ) {
+            val displayPolicy = pluginGrantStore.displayPolicyFor(sender.principal)
+            val displayTier = DisplayArbiter.tierFor(ownedEnvelope.path)
+            if (displayTier != null) {
+                val holdsForeground = ::pluginRegistry.isInitialized &&
+                    pluginRegistry.isForegroundOwner(sender.principal.descriptor.id)
+                when (val displayDecision = DisplayArbiter.decide(displayPolicy, displayTier, holdsForeground)) {
+                    is DisplayDecision.Deny -> {
+                        recordLocalRoute(
+                            ownedEnvelope,
+                            senderUid,
+                            sender,
+                            PluginBusJournal.Verdict.REJECTED,
+                            displayDecision.code,
+                        )
+                        if (PathRules.requiredCapability(ownedEnvelope.path) == PluginCapability.INK_SURFACE) {
+                            deliverInkError(
+                                ownerFrom(ownedEnvelope),
+                                ownedEnvelope.id,
+                                sender.replyBinder,
+                                listOf(
+                                    InkProblem(
+                                        displayDecision.code,
+                                        displayPolicyMessage(displayDecision.code),
+                                    ),
+                                ),
+                            )
+                        } else {
+                            deliverError(sender.replyBinder, ownedEnvelope.id, displayDecision.code)
+                        }
+                        log(
+                            "display policy rejected path=${ownedEnvelope.path} " +
+                                "plugin=${sender.principal.descriptor.id} " +
+                                "policy=${displayPolicy.wireValue} code=${displayDecision.code}",
+                        )
+                        return
+                    }
+                    DisplayDecision.Allow -> Unit
+                }
+            }
+        }
         if (ownedEnvelope.path == BusPaths.PIN_SHOW || ownedEnvelope.path == BusPaths.PIN_HIDE) {
             handleLocalPin(ownedEnvelope, senderUid, sender)
             return
@@ -1485,6 +1529,10 @@ class BusHubService : Service() {
         pluginId = sender.principal?.descriptor?.id,
         replyBinder = sender.replyBinder,
         uid = senderUid,
+        displayPolicy = sender.principal?.let { principal ->
+            if (::pluginGrantStore.isInitialized) pluginGrantStore.displayPolicyFor(principal)
+            else PluginDisplayPolicy.NORMAL
+        } ?: PluginDisplayPolicy.NORMAL,
     )
 
     private fun recordLocalRoute(
@@ -2314,6 +2362,13 @@ class BusHubService : Service() {
         runCatching { target.callback.onMessage(envelope.path, envelope.id, payload) }
             .onFailure { removeRegistration(target, "dead callback") }
     }
+
+    private fun displayPolicyMessage(code: String): String =
+        if (code == DisplayArbiter.ERROR_SURFACE_BUSY) {
+            "You may not take the display"
+        } else {
+            "Display policy does not allow this plugin to paint this slot"
+        }
 
     private fun notifyPluginRegistration(
         principal: PhonePluginPrincipal,

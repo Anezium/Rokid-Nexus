@@ -61,5 +61,13 @@ internal class RecordingPhoneHudRouteSink(
     }
 }
 
-internal fun hudSender(pluginId: String?, uid: Int = 42) =
-    PhoneHudRouteSender(pluginId = pluginId, replyBinder = null, uid = uid)
+internal fun hudSender(
+    pluginId: String?,
+    uid: Int = 42,
+    displayPolicy: PluginDisplayPolicy = PluginDisplayPolicy.NORMAL,
+) = PhoneHudRouteSender(
+    pluginId = pluginId,
+    replyBinder = null,
+    uid = uid,
+    displayPolicy = displayPolicy,
+)
