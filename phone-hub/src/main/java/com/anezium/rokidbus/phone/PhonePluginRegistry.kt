@@ -30,6 +30,7 @@ class PhonePluginRegistry(
     private val externalController: ExternalPluginController? = null,
     private val journal: PluginBusJournal? = null,
     glyphReader: ((PhonePluginPrincipal) -> List<GlyphContract.CustomGlyph>)? = null,
+    private val surfaceEpoch: ForegroundSurfaceEpoch = ForegroundSurfaceEpoch(),
 ) : NexusPluginHost {
     private data class Subscription(
         val pathPrefix: String,
@@ -45,7 +46,6 @@ class PhonePluginRegistry(
     }
     // Wall-clock seed so a hub process restart never replays seq values the glasses already saw.
     private val surfaceSeq = AtomicLong(System.currentTimeMillis())
-    private val surfaceEpoch = ForegroundSurfaceEpoch()
     @Volatile private var activePluginId: String? = null
 
     init {

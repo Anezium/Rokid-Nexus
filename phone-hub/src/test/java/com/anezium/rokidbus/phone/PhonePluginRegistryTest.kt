@@ -43,7 +43,8 @@ class PhonePluginRegistryTest {
         assertEquals("image-request", envelope.id)
         assertEquals("feeds", envelope.payload.getString("surfaceId"))
         assertTrue(envelope.payload.getLong("seq") > 0L)
-        assertEquals(1L, envelope.payload.getLong("epoch"))
+        assertTrue(envelope.payload.getLong("epoch") > 0L)
+        assertTrue(envelope.payload.getLong("epoch") != 99L)
         assertArrayEquals(bytes, envelope.binary)
         registry.close()
     }
@@ -219,6 +220,40 @@ class PhonePluginRegistryTest {
         registry.close()
     }
 
+    @Test
+    fun `built-in and external stamping paths share one epoch counter`() {
+        val shared = ForegroundSurfaceEpoch(seedMs = 1_000L)
+        val sent = mutableListOf<BusEnvelope>()
+        val registry = registry(
+            sendEnvelope = { envelope ->
+                sent += envelope
+                null
+            },
+            surfaceEpoch = shared,
+        )
+
+        registry.send(
+            BusPaths.SURFACE_SHOW,
+            JSONObject().put("surfaceId", "assistant").put("kind", "card"),
+        )
+        val builtInFirst = sent.last().payload.getLong("epoch")
+        val externalFirst = shared.assign("lyrics")
+        registry.send(
+            BusPaths.SURFACE_UPDATE,
+            JSONObject().put("surfaceId", "feeds").put("kind", "card"),
+        )
+        val builtInSecond = sent.last().payload.getLong("epoch")
+        val externalSecond = shared.assign("relay")
+
+        assertEquals(listOf(1_001L, 1_002L, 1_003L, 1_004L), listOf(
+            builtInFirst,
+            externalFirst,
+            builtInSecond,
+            externalSecond,
+        ))
+        registry.close()
+    }
+
     private fun registry(
         sendEnvelope: (BusEnvelope) -> String? = { null },
         capabilitiesProvider: () -> Int = { 0 },
@@ -226,6 +261,7 @@ class PhonePluginRegistryTest {
         catalogProvider: (() -> PluginCatalog)? = null,
         glyphReader: ((PhonePluginPrincipal) -> List<GlyphContract.CustomGlyph>)? = null,
         externalController: ExternalPluginController? = null,
+        surfaceEpoch: ForegroundSurfaceEpoch = ForegroundSurfaceEpoch(),
     ) = PhonePluginRegistry(
         context = RuntimeEnvironment.getApplication(),
         plugins = emptyList(),
@@ -236,6 +272,7 @@ class PhonePluginRegistryTest {
         externalController = externalController,
         journal = journal,
         glyphReader = glyphReader,
+        surfaceEpoch = surfaceEpoch,
     )
 
     private fun principal(

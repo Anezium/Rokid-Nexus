@@ -7,9 +7,12 @@ package com.anezium.rokidbus.phone
  * occupied after [release]) and otherwise returns the live epoch so updates
  * from the current owner keep the same value.
  */
-internal class ForegroundSurfaceEpoch {
+class ForegroundSurfaceEpoch(
+    seedMs: Long = System.currentTimeMillis(),
+) {
     private val lock = Any()
-    private var liveEpoch = 0L
+    // Wall-clock seed so a hub process restart never replays epoch values the glasses already saw.
+    private var liveEpoch = seedMs
     private var ownerPluginId: String? = null
 
     fun assign(ownerPluginId: String): Long = synchronized(lock) {

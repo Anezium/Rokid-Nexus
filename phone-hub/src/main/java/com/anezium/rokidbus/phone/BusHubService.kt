@@ -832,6 +832,7 @@ class BusHubService : Service() {
             },
             externalController = externalPluginController,
             journal = pluginBusJournal,
+            surfaceEpoch = foregroundSurfaceEpoch,
         )
         mediaSyncCoordinator = MediaSyncCoordinator(
             context = applicationContext,
