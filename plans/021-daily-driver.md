@@ -497,10 +497,12 @@ client for Codex and Local Studio (shared Rust core, Slingshot
 HTTP/stream transport). The glasses become one more client of that
 stack, not the maintainer of a private one.
 
-First step, immediately and read-only: an investigation. What the
-litter server / `npx litter` actually exposes (transport, auth,
-session model), what a third-party client must implement, and the
-license. No Agents code before that report exists.
+The investigation ran 2026-08-23. Key corrections: there is no
+`npx litter` — the daemon is **Alleycat**, installed and paired via
+the `kittylitter` CLI; pairing is a QR-carried bearer token, not
+key exchange; and the code is GPLv3, so nothing of theirs can be
+vendored — we implement the documented wire ourselves. The
+execution spec is [plan 022](022-agents-alleycat.md).
 
 The old gates still apply before any Store or root-catalogue
 mention:

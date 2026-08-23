@@ -37,6 +37,7 @@ individual plan headers are the detail of record.
 | [018](018-notice-lines.md) | Notice lines | DONE |
 | [020](020-ink-surface.md) | Ink Surface: native port of the AIUI page format as a Nexus surface tier | DONE — implemented on `main`; M5 hardware measurement may remain |
 | [021](021-daily-driver.md) | Daily-driver chapter: arbitration, continuous speech, navigation, skills | TODO |
+| [022](022-agents-alleycat.md) | Agents over Alleycat: replace the hand-rolled agentd protocol with a thin kittylitter/Alleycat client | TODO |
 
 Status values are `TODO`, `IN PROGRESS`, `BLOCKED`, and `DONE`. Update both this table and the individual plan when execution status changes. Plan 021 is the next chapter; it does not replace `ROADMAP.md`.
 
