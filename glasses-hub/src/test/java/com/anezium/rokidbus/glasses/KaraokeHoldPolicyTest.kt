@@ -12,6 +12,7 @@ class KaraokeHoldPolicyTest {
         var playing = false
         var holdDisplay = false
         var contentKey = "track-1"
+        var anchorAcceptedAt = 0L
         val actions = mutableListOf<KaraokeHoldPolicy.Action>()
         val policy = KaraokeHoldPolicy(
             now = { now },
@@ -19,8 +20,15 @@ class KaraokeHoldPolicyTest {
             ceilingMs = 600_000,
             releaseGraceMs = 5_000,
         )
-        fun drive() {
-            val action = policy.update(display, playing, holdDisplay, contentKey)
+        fun drive(anchorRefreshed: Boolean = true) {
+            if (anchorRefreshed) anchorAcceptedAt = now
+            val action = policy.update(
+                display,
+                playing,
+                holdDisplay,
+                contentKey,
+                anchorAcceptedAt,
+            )
             if (action !is KaraokeHoldPolicy.Action.Nothing) actions += action
         }
     }
@@ -141,6 +149,25 @@ class KaraokeHoldPolicyTest {
         h.drive()
         assertFalse(h.policy.isHeld)
         assertEquals(1, h.actions.count { it is KaraokeHoldPolicy.Action.Acquire })
+    }
+
+    @Test
+    fun `stale playing anchor stops renewal until a fresh anchor arrives`() {
+        val h = Harness()
+        h.playing = true
+        h.holdDisplay = true
+        h.drive()
+        assertTrue(h.policy.isHeld)
+
+        h.now = KaraokeHoldPolicy.DEFAULT_ANCHOR_STALE_MS + 1
+        h.drive(anchorRefreshed = false)
+        assertFalse(h.policy.isHeld)
+        assertTrue(h.actions.last() is KaraokeHoldPolicy.Action.Release)
+
+        h.anchorAcceptedAt = h.now
+        h.drive(anchorRefreshed = false)
+        assertTrue(h.policy.isHeld)
+        assertTrue(h.actions.last() is KaraokeHoldPolicy.Action.Acquire)
     }
 
     @Test

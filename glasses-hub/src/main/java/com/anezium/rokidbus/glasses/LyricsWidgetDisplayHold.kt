@@ -24,6 +24,9 @@ internal object LyricsWidgetDisplayHold {
     private var wakeLock: PowerManager.WakeLock? = null
     private var renewTask: Runnable? = null
     private var runningContext: Context? = null
+    private var lastAcceptedAnchor: WidgetAnchor? = null
+    private var lastAcceptedContentKey: String? = null
+    private var lastAnchorAcceptedAt = 0L
 
     fun isHeld(): Boolean = policy.isHeld
 
@@ -35,8 +38,14 @@ internal object LyricsWidgetDisplayHold {
         main.removeCallbacksAndMessages(null)
         renewTask = null
         if (anchor == null || contentKey == null) {
+            clearAnchorTracking()
             apply(policy.forceRelease())
             return
+        }
+        if (anchor != lastAcceptedAnchor || contentKey != lastAcceptedContentKey) {
+            lastAcceptedAnchor = anchor
+            lastAcceptedContentKey = contentKey
+            lastAnchorAcceptedAt = SystemClock.elapsedRealtime()
         }
         apply(
             policy.update(
@@ -44,6 +53,7 @@ internal object LyricsWidgetDisplayHold {
                 playing = anchor.playing,
                 holdDisplay = WidgetStateMachine.holdDisplay,
                 contentKey = contentKey,
+                anchorAcceptedAt = lastAnchorAcceptedAt,
             ),
         )
         if (policy.isHeld) {
@@ -54,10 +64,14 @@ internal object LyricsWidgetDisplayHold {
     }
 
     fun forceStop() {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            main.post(::forceStop)
+            return
+        }
         main.removeCallbacksAndMessages(null)
         renewTask = null
         apply(policy.forceRelease())
-        runningContext = null
+        clearAnchorTracking()
     }
 
     @Suppress("DEPRECATION")
@@ -73,6 +87,9 @@ internal object LyricsWidgetDisplayHold {
     private fun acquire(holdMs: Long) {
         val context = runningContext ?: return
         val power = context.getSystemService(PowerManager::class.java) ?: return
+        // Renewals replace the prior timed lock. Keeping the old instance alive while assigning
+        // a new one leaks an unreachable lock until its timeout and can stack multiple live holds.
+        release()
         val lock = power.newWakeLock(
             PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
             OWNER,
@@ -90,5 +107,11 @@ internal object LyricsWidgetDisplayHold {
     /** The renderer provides its context so this object stays Android-coupled only at the edge. */
     fun setContext(context: Context?) {
         runningContext = context
+    }
+
+    private fun clearAnchorTracking() {
+        lastAcceptedAnchor = null
+        lastAcceptedContentKey = null
+        lastAnchorAcceptedAt = 0L
     }
 }

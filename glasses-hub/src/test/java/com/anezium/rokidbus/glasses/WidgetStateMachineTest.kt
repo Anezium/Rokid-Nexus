@@ -61,6 +61,8 @@ class WidgetStateMachineTest {
         assertNotNull(WidgetStateMachine.clock)
         assertTrue(WidgetStateMachine.holdDisplay)
         WidgetStateMachine.clear()
+        assertNull(WidgetStateMachine.clock)
+        assertFalse(WidgetStateMachine.holdDisplay)
     }
 
     @Test
@@ -99,5 +101,12 @@ class WidgetStateMachineTest {
         assertFalse(WidgetStateMachine.handleWidgetEnvelope(BusEnvelope(path = "/pin/show", payload = JSONObject())))
         assertTrue(WidgetStateMachine.handleWidgetEnvelope(show(0)))
         WidgetStateMachine.clear()
+    }
+
+    @Test
+    fun `widget geometry anchors either measured height above the ROM status band`() {
+        assertEquals(348, lyricsWidgetTopY(measuredHeightPx = 18, hudTopInsetPx = 0) + 18)
+        assertEquals(348, lyricsWidgetTopY(measuredHeightPx = 40, hudTopInsetPx = 0) + 40)
+        assertEquals(336, lyricsWidgetTopY(measuredHeightPx = 40, hudTopInsetPx = 12) + 40)
     }
 }

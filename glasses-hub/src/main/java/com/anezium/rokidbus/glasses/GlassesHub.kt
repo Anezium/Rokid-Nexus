@@ -228,6 +228,8 @@ object GlassesHub {
             RemotePointerHubBridge.onLinkLost()
             SurfaceController.onPhoneLinkLost()
             NoticeController.onPhoneLinkLost()
+            WidgetStateMachine.clear()
+            LyricsWidgetDisplayHold.forceStop()
         }
         notifyLinkState()
         if (connected) {
@@ -246,6 +248,8 @@ object GlassesHub {
             RemotePointerHubBridge.onLinkLost()
             SurfaceController.onPhoneLinkLost()
             NoticeController.onPhoneLinkLost()
+            WidgetStateMachine.clear()
+            LyricsWidgetDisplayHold.forceStop()
         }
         notifyLinkState()
         if (connected) {

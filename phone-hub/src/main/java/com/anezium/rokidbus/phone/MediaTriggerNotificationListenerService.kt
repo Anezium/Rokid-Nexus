@@ -23,6 +23,7 @@ class MediaTriggerNotificationListenerService : NotificationListenerService() {
     private val handler = Handler(Looper.getMainLooper())
     private var mediaSessionManager: MediaSessionManager? = null
     private var watching = false
+    private var lastPublishedCoordinator: MediaTriggerCoordinator? = null
     private val watchedControllers =
         LinkedHashMap<MediaSession.Token, Pair<MediaController, MediaController.Callback>>()
 
@@ -40,6 +41,7 @@ class MediaTriggerNotificationListenerService : NotificationListenerService() {
         mediaSessionManager?.removeOnActiveSessionsChangedListener(sessionChangeListener)
         mediaSessionManager = null
         clearControllerCallbacks()
+        lastPublishedCoordinator = null
         handler.removeCallbacksAndMessages(null)
     }
 
@@ -67,15 +69,16 @@ class MediaTriggerNotificationListenerService : NotificationListenerService() {
 
     /** Resolve whether any active session is currently playing and forward the edge. */
     private fun pushPlayingState() {
-        val coordinator = MediaTriggerSensorStore.coordinator ?: return
         val controllers = runCatching {
             mediaSessionManager?.getActiveSessions(listenerComponent()).orEmpty()
         }.getOrDefault(emptyList())
         syncControllerCallbacks(controllers)
+        val coordinator = MediaTriggerSensorStore.coordinator ?: return
         val anyPlaying = controllers.any { controller ->
             runCatching { isMediaPlaybackPlaying(controller.playbackState) }.getOrDefault(false)
         }
         coordinator.onPlaybackChanged(anyPlaying)
+        lastPublishedCoordinator = coordinator
     }
 
     private fun syncControllerCallbacks(controllers: List<MediaController>) {
@@ -99,8 +102,12 @@ class MediaTriggerNotificationListenerService : NotificationListenerService() {
                     pushPlayingState()
                 }
             }
-            runCatching { controller.registerCallback(callback, handler) }
-            watchedControllers[token] = controller to callback
+            val registered = runCatching {
+                controller.registerCallback(callback, handler)
+            }.isSuccess
+            if (registered) {
+                watchedControllers[token] = controller to callback
+            }
         }
     }
 
@@ -113,7 +120,18 @@ class MediaTriggerNotificationListenerService : NotificationListenerService() {
 
     private fun scheduleGraceTick() {
         val tick = Runnable {
-            MediaTriggerSensorStore.coordinator?.tickGrace()
+            val coordinator = MediaTriggerSensorStore.coordinator
+            if (
+                shouldResyncMediaTriggerListener(
+                    listenerConnected = watching,
+                    coordinatorAvailable = coordinator != null,
+                    watchedControllersEmpty = watchedControllers.isEmpty(),
+                    coordinatorChanged = coordinator !== lastPublishedCoordinator,
+                )
+            ) {
+                pushPlayingState()
+            }
+            coordinator?.tickGrace()
             if (watching) scheduleGraceTick()
         }
         handler.postDelayed(tick, GRACE_TICK_PERIOD_MS)
@@ -123,6 +141,16 @@ class MediaTriggerNotificationListenerService : NotificationListenerService() {
         private const val GRACE_TICK_PERIOD_MS = 5_000L
     }
 }
+
+internal fun shouldResyncMediaTriggerListener(
+    listenerConnected: Boolean,
+    coordinatorAvailable: Boolean,
+    watchedControllersEmpty: Boolean,
+    coordinatorChanged: Boolean,
+): Boolean =
+    listenerConnected &&
+        coordinatorAvailable &&
+        (watchedControllersEmpty || coordinatorChanged)
 
 /**
  * API-30-safe stand-in for [PlaybackState.isActive] (API 31+), minus transient

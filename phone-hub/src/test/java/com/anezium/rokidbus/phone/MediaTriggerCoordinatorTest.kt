@@ -248,4 +248,36 @@ class MediaTriggerCoordinatorTest {
         assertTrue(h.opens.isEmpty())
         assertTrue(!h.coordinator.isHoldingOpen)
     }
+
+    @Test
+    fun `connected listener resyncs when the hub coordinator arrives later`() {
+        assertTrue(
+            shouldResyncMediaTriggerListener(
+                listenerConnected = true,
+                coordinatorAvailable = true,
+                watchedControllersEmpty = false,
+                coordinatorChanged = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `connected listener retries callback sync while no controller is watched`() {
+        assertTrue(
+            shouldResyncMediaTriggerListener(
+                listenerConnected = true,
+                coordinatorAvailable = true,
+                watchedControllersEmpty = true,
+                coordinatorChanged = false,
+            ),
+        )
+        assertFalse(
+            shouldResyncMediaTriggerListener(
+                listenerConnected = true,
+                coordinatorAvailable = false,
+                watchedControllersEmpty = true,
+                coordinatorChanged = true,
+            ),
+        )
+    }
 }

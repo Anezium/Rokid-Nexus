@@ -34,7 +34,6 @@ internal object LyricsWidgetOverlayRenderer {
     private const val MAX_WIDTH_FRACTION = 0.60f
     private const val CURRENT_LINE_SP = 15f
     private const val NEXT_LINE_SP = 11.5f
-    private const val VERTICAL_STACK_DP = 26
 
     private val main = Handler(Looper.getMainLooper())
 
@@ -80,6 +79,7 @@ internal object LyricsWidgetOverlayRenderer {
         insetUnsubscribe = null
         main.removeCallbacks(tick)
         LyricsWidgetDisplayHold.forceStop()
+        LyricsWidgetDisplayHold.setContext(null)
         hide()
         this.service = null
         windowManager = null
@@ -148,17 +148,22 @@ internal object LyricsWidgetOverlayRenderer {
         val nextIndex = clock.nextIndexFrom(currentIndex)
         val next = nextIndex?.let(clock::line)
 
-        val currentRoot = root ?: WidgetView(activeService).also { nextView ->
-            val nextParams = baseParams(activeService)
-            if (runCatching { manager.addView(nextView, nextParams) }.isFailure) return
-            root = nextView
-            params = nextParams
-        }
+        val isNewRoot = root == null
+        val currentRoot = root ?: WidgetView(activeService)
         val maxWidthPx = (metrics.widthPixels * MAX_WIDTH_FRACTION).roundToInt()
         currentRoot.applyMaxWidth(maxWidthPx)
         currentRoot.render(current, next, metrics.density)
-        params?.let { layout ->
-            applyGeometry(layout, activeService)
+        currentRoot.measure(
+            View.MeasureSpec.makeMeasureSpec(maxWidthPx, View.MeasureSpec.AT_MOST),
+            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
+        )
+        val layout = params ?: baseParams(activeService)
+        applyGeometry(layout, activeService, currentRoot.measuredHeight)
+        if (isNewRoot) {
+            if (runCatching { manager.addView(currentRoot, layout) }.isFailure) return
+            root = currentRoot
+            params = layout
+        } else {
             runCatching { manager.updateViewLayout(currentRoot, layout) }
         }
     }
@@ -180,7 +185,7 @@ internal object LyricsWidgetOverlayRenderer {
         val activeService = service ?: return
         val currentRoot = root ?: return
         val currentParams = params ?: return
-        applyGeometry(currentParams, activeService)
+        applyGeometry(currentParams, activeService, currentRoot.measuredHeight)
         runCatching { windowManager?.updateViewLayout(currentRoot, currentParams) }
     }
 
@@ -197,12 +202,18 @@ internal object LyricsWidgetOverlayRenderer {
         }
     }
 
-    private fun applyGeometry(layout: WindowManager.LayoutParams, activeService: AccessibilityService) {
+    private fun applyGeometry(
+        layout: WindowManager.LayoutParams,
+        activeService: AccessibilityService,
+        measuredHeightPx: Int,
+    ) {
         layout.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-        // Above the ROM home row (row centre 364 px), on top of the user's own vertical inset.
-        val density = activeService.resources.displayMetrics.density
-        val stackPx = (VERTICAL_STACK_DP * density).roundToInt().coerceAtLeast(0)
-        layout.y = HUD_ROW_CENTER_Y_PX.roundToInt() - stackPx + BusTheme.dp(activeService, hudTopInsetDp)
+        // The ROM status band begins at y=353. Keep the measured one- or two-line view's bottom
+        // five pixels above it; a configured HudTopInset raises the widget farther from the band.
+        layout.y = lyricsWidgetTopY(
+            measuredHeightPx = measuredHeightPx,
+            hudTopInsetPx = BusTheme.dp(activeService, hudTopInsetDp),
+        )
         layout.x = 0
     }
 
@@ -247,6 +258,10 @@ internal object LyricsWidgetOverlayRenderer {
         }
     }
 
-    private const val HUD_ROW_CENTER_Y_PX = 364f
     private const val TICK_MS = 200L
 }
+
+internal fun lyricsWidgetTopY(measuredHeightPx: Int, hudTopInsetPx: Int): Int =
+    LYRICS_WIDGET_SAFE_BOTTOM_Y_PX - measuredHeightPx.coerceAtLeast(0) - hudTopInsetPx
+
+private const val LYRICS_WIDGET_SAFE_BOTTOM_Y_PX = 348

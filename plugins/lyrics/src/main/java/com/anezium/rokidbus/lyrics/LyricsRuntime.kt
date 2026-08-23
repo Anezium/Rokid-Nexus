@@ -39,6 +39,13 @@ internal fun needsPlaybackAnchorUpdate(
 
 internal class LyricsRuntime(
     private val host: LyricsRuntimeHost,
+    private val now: () -> Long = { SystemClock.elapsedRealtime() },
+    private val currentState: () -> LyricsPhoneViewState = {
+        LyricsRuntimeGraph.stateStore.current()
+    },
+    private val subscribeState: ((LyricsPhoneViewState) -> Unit) -> (() -> Unit) = { listener ->
+        LyricsRuntimeGraph.stateStore.subscribe(listener)
+    },
 ) {
     private var unsubscribeState: (() -> Unit)? = null
     private var active = false
@@ -46,8 +53,8 @@ internal class LyricsRuntime(
     private var widgetMode: LyricsWidgetMode = LyricsWidgetMode.DEFAULT
     private var backgroundOpen = false
     private var fullScreenVisible = false
-    private var widgetLastContentKey: String? = null
-    private val widgetDriver = LyricsWidgetDriver(now = { SystemClock.elapsedRealtime() })
+    private var widgetLastSent: SentWidget? = null
+    private val widgetDriver = LyricsWidgetDriver(now = now)
 
     fun setWidgetMode(mode: LyricsWidgetMode) {
         widgetMode = mode
@@ -61,7 +68,7 @@ internal class LyricsRuntime(
         backgroundOpen = background
         if (!active) return
         if (wasBackground && !background) {
-            pushState(LyricsRuntimeGraph.stateStore.current(), force = true)
+            pushState(currentState(), force = true)
         }
         handleWidgetState()
     }
@@ -75,14 +82,14 @@ internal class LyricsRuntime(
 
     fun register() {
         unsubscribeState?.invoke()
-        unsubscribeState = LyricsRuntimeGraph.stateStore.subscribe { state ->
+        unsubscribeState = subscribeState { state ->
             handleState(state)
         }
     }
 
     fun open() {
         active = true
-        pushState(LyricsRuntimeGraph.stateStore.current(), force = true)
+        pushState(currentState(), force = true)
         handleWidgetState()
     }
 
@@ -90,7 +97,7 @@ internal class LyricsRuntime(
         if (!active && lastSent == null) return
         active = false
         lastSent = null
-        widgetLastContentKey = null
+        widgetLastSent = null
         fullScreenVisible = false
         backgroundOpen = false
         widgetDriver.reset()
@@ -120,7 +127,7 @@ internal class LyricsRuntime(
     }
 
     fun registrationApproved() {
-        if (active) pushState(LyricsRuntimeGraph.stateStore.current(), force = true)
+        if (active) pushState(currentState(), force = true)
     }
 
     fun unregister() {
@@ -140,46 +147,73 @@ internal class LyricsRuntime(
      * Drive the ambient widget from the current snapshot. The widget is plugin-side driven
      * on snapshot transitions; the full-screen surface is handled separately by [pushState].
      */
-    private fun handleWidgetState(snapshot: LyricsSnapshot? = LyricsRuntimeGraph.stateStore.current().lyrics) {
+    private fun handleWidgetState(snapshot: LyricsSnapshot? = currentState().lyrics) {
         if (!active) return
         val decision = widgetDriver.decide(
             mode = widgetMode,
             fullScreenVisible = fullScreenVisible,
             snapshot = snapshot,
         )
-        if (decision.show && snapshot != null) {
-            showWidget(snapshot)
-        } else if (decision.hide) {
-            host.hideWidget()
+        when {
+            decision.hide -> {
+                host.hideWidget()
+                widgetLastSent = null
+            }
+            decision.show && snapshot != null -> showWidget(snapshot)
+            widgetDriver.isShowing && snapshot != null -> syncWidget(snapshot)
         }
     }
 
     private fun showWidget(snapshot: LyricsSnapshot) {
         val lyrics = snapshot
         if (!lyrics.synced || lyrics.lines.isEmpty()) return
-        val now = SystemClock.elapsedRealtime()
-        val anchor = playbackAnchor(lyrics, isPlaying(lyrics), now)
+        val nowAt = now()
+        val anchor = playbackAnchor(lyrics, isPlaying(lyrics), nowAt)
         val key = widgetContentKey(lyrics)
-        if (key == widgetLastContentKey && widgetDriver.isShowing) {
-            // Same track still on screen: refresh only the anchor (seek/drift/pause).
-            host.updateWidgetAnchor(key, anchor)
-        } else {
-            host.showWidget(
-                NexusLyricsWidget(
-                    contentKey = key,
-                    lines = lyrics.lines.take(MAX_TIMED_LINES).map { line ->
-                        NexusTimedLine(line.startTimeMs.coerceAtLeast(0L), line.text.take(MAX_LINE_CHARS))
-                    },
-                    anchor = anchor,
-                    holdDisplay = widgetMode == LyricsWidgetMode.KARAOKE,
-                ),
-            )
+        host.showWidget(
+            NexusLyricsWidget(
+                contentKey = key,
+                lines = lyrics.lines.take(MAX_TIMED_LINES).map { line ->
+                    NexusTimedLine(line.startTimeMs.coerceAtLeast(0L), line.text.take(MAX_LINE_CHARS))
+                },
+                anchor = anchor,
+                holdDisplay = widgetMode == LyricsWidgetMode.KARAOKE,
+            ),
+        )
+        widgetLastSent = sentWidget(lyrics, key, nowAt)
+    }
+
+    private fun syncWidget(lyrics: LyricsSnapshot) {
+        if (!lyrics.synced || lyrics.lines.isEmpty()) return
+        val nowAt = now()
+        val key = widgetContentKey(lyrics)
+        val previous = widgetLastSent
+        val holdDisplay = widgetMode == LyricsWidgetMode.KARAOKE
+        if (
+            previous == null ||
+            previous.contentKey != key ||
+            previous.holdDisplay != holdDisplay
+        ) {
+            showWidget(lyrics)
+            return
         }
-        widgetLastContentKey = key
+        val playing = isPlaying(lyrics)
+        if (
+            needsPlaybackAnchorUpdate(
+                previousLineIndex = previous.currentLineIndex,
+                currentLineIndex = lyrics.currentLineIndex,
+                previousPlaying = previous.playing,
+                playing = playing,
+                positionDriftMs = lyrics.progressMs - previous.predictedPosition(nowAt),
+            )
+        ) {
+            host.updateWidgetAnchor(key, playbackAnchor(lyrics, playing, nowAt))
+            widgetLastSent = sentWidget(lyrics, key, nowAt)
+        }
     }
 
     private fun widgetContentKey(lyrics: LyricsSnapshot): String =
-        contentKey(lyrics, LyricsRuntimeGraph.stateStore.current().deviceStatus.statusLabel)
+        contentKey(lyrics, currentState().deviceStatus.statusLabel)
 
     private fun isPlaying(lyrics: LyricsSnapshot): Boolean =
         lyrics.sessionState == LyricsSessionState.PLAYING
@@ -187,7 +221,7 @@ internal class LyricsRuntime(
     private fun pushState(state: LyricsPhoneViewState, force: Boolean) {
         if (backgroundOpen) return
         val lyrics = state.lyrics
-        val now = SystemClock.elapsedRealtime()
+        val nowAt = now()
         val contentKey = contentKey(lyrics, state.deviceStatus.statusLabel)
         val playing = lyrics.sessionState == LyricsSessionState.PLAYING
         val previous = lastSent
@@ -198,7 +232,7 @@ internal class LyricsRuntime(
                 currentLineIndex = lyrics.currentLineIndex,
                 previousPlaying = it.playing,
                 playing = playing,
-                positionDriftMs = lyrics.progressMs - it.predictedPosition(now),
+                positionDriftMs = lyrics.progressMs - it.predictedPosition(nowAt),
             )
         } ?: true
         val shouldSend = force || contentChanged || anchorChanged
@@ -206,7 +240,7 @@ internal class LyricsRuntime(
 
         val show = previous == null || force
         if (lyrics.synced && lyrics.lines.isNotEmpty()) {
-            val anchor = playbackAnchor(lyrics, playing, now)
+            val anchor = playbackAnchor(lyrics, playing, nowAt)
             if (!force && !contentChanged) {
                 host.updateTimedLinesAnchor(contentKey, anchor)
             } else {
@@ -223,7 +257,7 @@ internal class LyricsRuntime(
             positionMs = lyrics.progressMs,
             playing = playing,
             currentLineIndex = lyrics.currentLineIndex,
-            sentAtElapsedRealtime = now,
+            sentAtElapsedRealtime = nowAt,
         )
     }
 
@@ -359,6 +393,30 @@ internal class LyricsRuntime(
             if (!playing) return positionMs
             val elapsed = (now - sentAtElapsedRealtime).coerceAtLeast(0L)
             return positionMs + elapsed
+        }
+    }
+
+    private fun sentWidget(lyrics: LyricsSnapshot, contentKey: String, sentAt: Long): SentWidget =
+        SentWidget(
+            contentKey = contentKey,
+            positionMs = lyrics.progressMs,
+            playing = isPlaying(lyrics),
+            currentLineIndex = lyrics.currentLineIndex,
+            sentAtElapsedRealtime = sentAt,
+            holdDisplay = widgetMode == LyricsWidgetMode.KARAOKE,
+        )
+
+    private data class SentWidget(
+        val contentKey: String,
+        val positionMs: Long,
+        val playing: Boolean,
+        val currentLineIndex: Int,
+        val sentAtElapsedRealtime: Long,
+        val holdDisplay: Boolean,
+    ) {
+        fun predictedPosition(now: Long): Long {
+            if (!playing) return positionMs
+            return positionMs + (now - sentAtElapsedRealtime).coerceAtLeast(0L)
         }
     }
 
