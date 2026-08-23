@@ -61,4 +61,13 @@ class PairingPayloadTest {
             assertTrue(e.message!!.contains("32-byte hex"))
         }
     }
+
+    @Test
+    fun parseFlexibleAcceptsWrappedQrText() {
+        val wrapped = "kittylitter pair\n{\"v\":1,\"node_id\":\"n1\",\"token\":\"$TEST_TOKEN\"}\n"
+        val payload = PairingPayload.parseFlexible(wrapped)
+        assertEquals("n1", payload.nodeId)
+        assertEquals(TEST_TOKEN, payload.token)
+        assertTrue(!payload.toString().contains(TEST_TOKEN))
+    }
 }

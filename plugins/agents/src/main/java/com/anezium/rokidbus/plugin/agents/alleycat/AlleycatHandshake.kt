@@ -132,9 +132,13 @@ data class HandshakeResponse(
     }
 }
 
-class AlleycatHandshakeClient(private val transport: AlleycatTransport) {
+class AlleycatHandshakeClient(private val pipe: JsonPipe) {
+    constructor(transport: AlleycatTransport) : this(FramedJsonPipe(transport))
+
     fun exchange(request: HandshakeRequest): HandshakeResponse {
-        AlleycatFraming.write(transport, request.toJson())
-        return HandshakeResponse.parse(AlleycatFraming.read(transport))
+        pipe.sendJson(request.toJson())
+        val json = pipe.receiveJson(AlleycatConnectSequence.HANDSHAKE_TIMEOUT_MS)
+            ?: throw AlleycatException("Alleycat handshake timed out")
+        return HandshakeResponse.parse(json)
     }
 }

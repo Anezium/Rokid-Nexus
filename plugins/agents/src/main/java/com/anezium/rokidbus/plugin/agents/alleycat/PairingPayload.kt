@@ -54,5 +54,19 @@ data class PairingPayload(
                 displayName = displayName,
             )
         }
+
+        /**
+         * QR contents are the pairing JSON, but scanners sometimes wrap it
+         * in extra text. Slice off the outermost object; [parse] still
+         * version-gates.
+         */
+        fun parseFlexible(raw: String): PairingPayload = parse(extractJsonObject(raw))
+
+        internal fun extractJsonObject(raw: String): String {
+            val trimmed = raw.trim()
+            val start = trimmed.indexOf('{')
+            val end = trimmed.lastIndexOf('}')
+            return if (start >= 0 && end > start) trimmed.substring(start, end + 1) else trimmed
+        }
     }
 }

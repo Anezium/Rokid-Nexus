@@ -59,4 +59,9 @@ internal class ScriptedTransport(
         readAt += length
         return slice
     }
+
+    override fun receiveExactly(length: Int, timeoutMs: Long): ByteArray? {
+        if (readAt + length > inbound.size) return null
+        return receiveExactly(length)
+    }
 }

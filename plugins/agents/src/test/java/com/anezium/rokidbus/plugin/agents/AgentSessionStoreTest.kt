@@ -111,6 +111,23 @@ class AgentSessionStoreTest {
     }
 
     @Test
+    fun replaceLinkSessionsKeepsAlleycatCodexThreads() {
+        val store = AgentSessionStore()
+        store.replaceMachineSessions(
+            "alleycat-abc",
+            AgentProvider.CODEX,
+            listOf(session("alley-thr", AgentProvider.CODEX, AgentStatus.IDLE, machineId = "alleycat-abc")),
+            nowMs = 10,
+        )
+        store.replaceLinkSessions(
+            AgentProvider.AGENTD_PROVIDERS,
+            listOf(session("link-thr", AgentProvider.CODEX, AgentStatus.WORKING, machineId = "pc-1")),
+            nowMs = 20,
+        )
+        assertEquals(setOf("alley-thr", "link-thr"), store.sessions.value.map { it.id }.toSet())
+    }
+
+    @Test
     fun replaceMachineSessionsDoesNotTouchOtherComputers() {
         val store = AgentSessionStore()
         store.replaceMachineSessions(

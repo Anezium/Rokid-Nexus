@@ -33,14 +33,16 @@ data class AgentsConfig(
     val openClawEnabled: Boolean,
     val openClaw: OpenClawConfig?,
     val directComputers: List<DirectComputer> = emptyList(),
+    val alleycatComputers: List<AlleycatComputer> = emptyList(),
 ) {
     // The agentd link (Claude Code and Codex) needs no configuration any more:
     // enabling it makes the phone listen, and the daemon on the LAN finds it
-    // by itself. A saved direct ws(s):// computer is itself the opt-in.
+    // by itself. A saved direct ws(s):// or Alleycat computer is itself the opt-in.
     val shouldMonitor: Boolean
         get() = agentdEnabled ||
             openClawEnabled && openClaw?.configured == true ||
-            directComputers.isNotEmpty()
+            directComputers.isNotEmpty() ||
+            alleycatComputers.isNotEmpty()
 }
 
 sealed interface AgentdPairingParseResult {
@@ -110,9 +112,17 @@ internal fun isLinkWindowDeadlineOpen(deadline: Long, now: Long): Boolean =
 
 class AgentsConfigStore(
     context: Context,
+    private val secrets: AlleycatSecretStore = EncryptedAlleycatSecretStore(context),
     private val elapsedRealtime: () -> Long = SystemClock::elapsedRealtime,
 ) {
+    constructor(
+        context: Context,
+        elapsedRealtime: () -> Long,
+    ) : this(context, EncryptedAlleycatSecretStore(context), elapsedRealtime)
+
     private val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+
+    fun secrets(): AlleycatSecretStore = secrets
 
     fun load(): AgentsConfig {
         val agentdHost = prefs.getString(KEY_AGENTD_HOST, null)
@@ -138,6 +148,7 @@ class AgentsConfigStore(
             openClawEnabled = prefs.getBoolean(KEY_OPENCLAW_ENABLED, false),
             openClaw = openClaw,
             directComputers = readDirectComputers(),
+            alleycatComputers = readAlleycatComputers(),
         )
     }
 
@@ -294,7 +305,9 @@ class AgentsConfigStore(
             .remove("$KEY_DIRECT_URL_PREFIX$machineId")
             .remove("$KEY_DIRECT_NAME_PREFIX$machineId")
             .remove("$KEY_DIRECT_SEEN_PREFIX$machineId")
+            .remove("$KEY_ALLEYCAT_PREFIX$machineId")
             .apply()
+        secrets.removeToken(machineId)
     }
 
     fun directComputers(): List<DirectComputer> = readDirectComputers()
@@ -313,8 +326,30 @@ class AgentsConfigStore(
     }
 
     fun listedComputers(): List<TrustedMachine> =
-        (trustedMachines() + directComputers().map { it.asListed() })
+        (trustedMachines() + directComputers().map { it.asListed() } + alleycatComputers().map { it.asListed() })
             .sortedBy { it.name.lowercase() }
+
+    fun alleycatComputers(): List<AlleycatComputer> = readAlleycatComputers()
+
+    fun saveAlleycatComputer(computer: AlleycatComputer, token: String? = null) {
+        if (token != null) {
+            secrets.putToken(computer.computerId, token)
+        }
+        prefs.edit()
+            .putString("$KEY_ALLEYCAT_PREFIX${computer.computerId}", computer.toPublicJson().toString())
+            .apply()
+    }
+
+    fun updateAlleycatComputer(computer: AlleycatComputer) {
+        saveAlleycatComputer(computer, token = null)
+    }
+
+    fun alleycatToken(computerId: String): String? = secrets.getToken(computerId)
+
+    fun touchAlleycatComputerSeen(computerId: String, now: Long = System.currentTimeMillis()) {
+        val current = readAlleycatComputers().firstOrNull { it.computerId == computerId } ?: return
+        updateAlleycatComputer(current.copy(lastSeenAtMs = now))
+    }
 
     private fun readDirectComputers(): List<DirectComputer> = prefs.all.keys
         .filter { it.startsWith(KEY_DIRECT_URL_PREFIX) }
@@ -329,6 +364,15 @@ class AgentsConfigStore(
                 url = url,
                 lastSeenAtMs = prefs.getLong("$KEY_DIRECT_SEEN_PREFIX$id", 0L).takeIf { it > 0L },
             )
+        }
+        .sortedBy { it.name.lowercase() }
+
+    private fun readAlleycatComputers(): List<AlleycatComputer> = prefs.all.keys
+        .filter { it.startsWith(KEY_ALLEYCAT_PREFIX) }
+        .mapNotNull { key ->
+            val raw = prefs.getString(key, null) ?: return@mapNotNull null
+            val json = runCatching { JSONObject(raw) }.getOrNull() ?: return@mapNotNull null
+            AlleycatComputer.fromPublicJson(json)
         }
         .sortedBy { it.name.lowercase() }
 
@@ -424,6 +468,7 @@ class AgentsConfigStore(
         const val KEY_DIRECT_URL_PREFIX = "direct.url."
         const val KEY_DIRECT_NAME_PREFIX = "direct.name."
         const val KEY_DIRECT_SEEN_PREFIX = "direct.seen."
+        const val KEY_ALLEYCAT_PREFIX = "alleycat.computer."
         const val MAX_PROJECTS_PER_MACHINE = 30
         const val KEY_LINK_WINDOW_DEADLINE = "machine.link_window_deadline"
     }
