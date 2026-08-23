@@ -7,6 +7,7 @@ import com.anezium.rokidbus.shared.BusEnvelope
 import com.anezium.rokidbus.shared.BusPaths
 import com.anezium.rokidbus.shared.GlyphContract
 import com.anezium.rokidbus.shared.ForegroundSurfacePathPolicy
+import com.anezium.rokidbus.shared.SurfaceEpochContract
 import com.anezium.rokidbus.shared.plugin.NexusInputEvent
 import com.anezium.rokidbus.shared.plugin.NexusPlugin
 import com.anezium.rokidbus.shared.plugin.NexusPluginHost
@@ -44,6 +45,7 @@ class PhonePluginRegistry(
     }
     // Wall-clock seed so a hub process restart never replays seq values the glasses already saw.
     private val surfaceSeq = AtomicLong(System.currentTimeMillis())
+    private val surfaceEpoch = ForegroundSurfaceEpoch()
     @Volatile private var activePluginId: String? = null
 
     init {
@@ -76,6 +78,7 @@ class PhonePluginRegistry(
         binary: ByteArray? = null,
     ) {
         if (path == BusPaths.SURFACE_HIDE && payload.optString("surfaceId") == activePluginId) {
+            activePluginId?.let(surfaceEpoch::release)
             activePluginId = null
         }
         val outgoing = payload.withSurfaceMetadata(path)
@@ -338,6 +341,12 @@ class PhonePluginRegistry(
         var outgoing = this
         if (path == BusPaths.SURFACE_SHOW || path == BusPaths.SURFACE_UPDATE || path == BusPaths.SURFACE_HIDE) {
             outgoing = JSONObject(toString()).put("seq", surfaceSeq.incrementAndGet())
+            if (path == BusPaths.SURFACE_SHOW || path == BusPaths.SURFACE_UPDATE) {
+                val owner = optString("ownerPluginId").ifBlank { optString("surfaceId") }
+                if (owner.isNotBlank()) {
+                    outgoing.put(SurfaceEpochContract.FIELD, surfaceEpoch.assign(owner))
+                }
+            }
         }
         if (path != BusPaths.SURFACE_SHOW && path != BusPaths.SURFACE_UPDATE) return outgoing
         val surfaceId = optString("surfaceId")

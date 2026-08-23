@@ -43,6 +43,7 @@ import com.anezium.rokidbus.shared.GlassesHubCapabilitiesContract
 import com.anezium.rokidbus.shared.GlassesRepairContract
 import com.anezium.rokidbus.shared.ImageSurfaceContract
 import com.anezium.rokidbus.shared.SetupNoteContract
+import com.anezium.rokidbus.shared.SurfaceEpochContract
 import com.anezium.rokidbus.shared.ImageSurfaceMetadata
 import com.anezium.rokidbus.shared.ImageSurfaceValidationResult
 import com.anezium.rokidbus.shared.InkSurfaceContract
@@ -250,6 +251,7 @@ class BusHubService : Service() {
     private val externalSurfaceSeq = ConcurrentHashMap<String, AtomicLong>()
     private val debugImageSeq = AtomicLong(System.currentTimeMillis())
     private val externalSurfaceIds = ConcurrentHashMap<String, MutableSet<String>>()
+    private val foregroundSurfaceEpoch = ForegroundSurfaceEpoch()
     private val inkSurfaceCoordinator = PhoneInkSurfaceCoordinator(
         postResult = { action -> inkResultHandler.post { action() } },
     )
@@ -3029,6 +3031,7 @@ class BusHubService : Service() {
     }
 
     private fun hideExternalSurfaces(pluginId: String) {
+        foregroundSurfaceEpoch.release(pluginId)
         val surfaceIds = externalSurfaceIds.remove(pluginId).orEmpty().toList()
         surfaceIds.forEach { surfaceId -> sendExternalSurfaceHide(pluginId, surfaceId) }
         inkSurfaceCoordinator.clearOwner(pluginId) { owners ->
@@ -3369,7 +3372,11 @@ class BusHubService : Service() {
         } else {
             pluginSurfaces += wireSurfaceId
         }
-        return envelope.copy(payload = payload.put("seq", sequence))
+        payload.put("seq", sequence)
+        if (envelope.path == BusPaths.SURFACE_SHOW || envelope.path == BusPaths.SURFACE_UPDATE) {
+            payload.put(SurfaceEpochContract.FIELD, foregroundSurfaceEpoch.assign(pluginId))
+        }
+        return envelope.copy(payload = payload)
     }
 
     private fun releaseExternalSurface(pluginId: String, wireSurfaceId: String) {
@@ -3377,6 +3384,7 @@ class BusHubService : Service() {
         pluginSurfaces.remove(wireSurfaceId)
         if (pluginSurfaces.isNotEmpty()) return
         externalSurfaceIds.remove(pluginId, pluginSurfaces)
+        foregroundSurfaceEpoch.release(pluginId)
         if (::externalPluginController.isInitialized) {
             externalPluginController.onPluginSelfHid(pluginId)
         }

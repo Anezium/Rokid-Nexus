@@ -1,5 +1,6 @@
 package com.anezium.rokidbus.phone
 
+import com.anezium.rokidbus.shared.SurfaceEpochContract
 import com.anezium.rokidbus.shared.plugin.PathRules
 import com.anezium.rokidbus.shared.plugin.PluginCapability
 import org.json.JSONObject
@@ -66,5 +67,6 @@ object PluginRoutePolicy {
             .put("surfaceId", "$pluginId:$localSurfaceId")
             .put("localSurfaceId", localSurfaceId)
             .put("ownerPluginId", pluginId)
+            .also { it.remove(SurfaceEpochContract.FIELD) }
     }
 }

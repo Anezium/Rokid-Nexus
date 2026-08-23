@@ -218,6 +218,7 @@ data class NexusSurface(
     val readerAnchor: ReaderAnchor = ReaderAnchor.BOTTOM,
     val ink: InkSurfacePayload? = null,
     val ownerPluginId: String = "",
+    val epoch: Long = 0L,
 ) {
     val isTimed: Boolean
         get() = kind == KIND_TIMED_LINES && timedLines.isNotEmpty()
@@ -410,6 +411,7 @@ data class NexusSurface(
                 },
                 ownerPluginId = payload.optString("ownerPluginId")
                     .ifBlank { previous?.takeIf { canMergePrevious }?.ownerPluginId.orEmpty() },
+                epoch = payload.optLong("epoch", 0L),
             )
         }
 

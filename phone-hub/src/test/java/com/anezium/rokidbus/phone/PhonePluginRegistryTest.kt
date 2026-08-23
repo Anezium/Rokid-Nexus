@@ -34,7 +34,7 @@ class PhonePluginRegistryTest {
         registry.sendBinary(
             BusPaths.SURFACE_UPDATE,
             "image-request",
-            JSONObject().put("surfaceId", "feeds").put("kind", "image"),
+            JSONObject().put("surfaceId", "feeds").put("kind", "image").put("epoch", 99),
             bytes,
         )
 
@@ -43,6 +43,7 @@ class PhonePluginRegistryTest {
         assertEquals("image-request", envelope.id)
         assertEquals("feeds", envelope.payload.getString("surfaceId"))
         assertTrue(envelope.payload.getLong("seq") > 0L)
+        assertEquals(1L, envelope.payload.getLong("epoch"))
         assertArrayEquals(bytes, envelope.binary)
         registry.close()
     }

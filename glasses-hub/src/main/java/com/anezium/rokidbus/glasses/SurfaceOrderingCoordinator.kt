@@ -1,10 +1,13 @@
 package com.anezium.rokidbus.glasses
 
+import com.anezium.rokidbus.shared.SurfaceEpochContract
+
 data class SurfaceOrder(
     val surfaceId: String,
     val seq: Long,
     val kind: String,
     val contentKey: String,
+    val epoch: Long = 0L,
 )
 
 data class PendingSurfaceAnchor<out T>(
@@ -13,6 +16,7 @@ data class PendingSurfaceAnchor<out T>(
 )
 
 enum class SurfaceOrderDropReason {
+    STALE_EPOCH,
     STALE_BASE,
     STALE_ANCHOR,
     STALE_HIDE,
@@ -32,6 +36,7 @@ sealed interface SurfaceOrderDecision<out T> {
         val reason: SurfaceOrderDropReason,
         val latestBaseSeq: Long,
         val latestSeq: Long,
+        val liveEpoch: Long = 0L,
     ) : SurfaceOrderDecision<Nothing>
 }
 
@@ -40,6 +45,9 @@ sealed interface SurfaceOrderDecision<out T> {
  *
  * Base updates are ordered only against other bases. Anchor-only updates additionally use the
  * all-message watermark, and one unmatched anchor is retained until its base arrives.
+ *
+ * Epoch is slot-level: a frame whose epoch is older than the live foreground occupancy is
+ * dropped even if its per-surface `seq` is newer.
  */
 class SurfaceOrderingCoordinator<T> {
     private data class SurfaceState<T>(
@@ -52,22 +60,27 @@ class SurfaceOrderingCoordinator<T> {
     )
 
     private val states = mutableMapOf<String, SurfaceState<T>>()
+    private var liveEpoch: Long = 0L
 
     @Synchronized
     fun onBase(order: SurfaceOrder): SurfaceOrderDecision<T> {
+        dropStaleEpoch(order)?.let { return it }
         val state = states.getOrPut(order.surfaceId) { SurfaceState() }
-        if (order.seq <= state.latestBaseSeq) {
+        val epochAdvanced = advanceLiveEpoch(order.epoch)
+
+        if (!epochAdvanced && order.seq <= state.latestBaseSeq) {
             return SurfaceOrderDecision.Drop(
                 reason = SurfaceOrderDropReason.STALE_BASE,
                 latestBaseSeq = state.latestBaseSeq,
                 latestSeq = state.latestSeq,
+                liveEpoch = liveEpoch,
             )
         }
 
         val sameActiveIdentity = state.activeKind == order.kind &&
             state.activeContentKey == order.contentKey
         val appliedAnchorSeqToPreserve = state.latestAppliedAnchorSeq
-            .takeIf { sameActiveIdentity && it > order.seq }
+            .takeIf { !epochAdvanced && sameActiveIdentity && it > order.seq }
 
         state.latestBaseSeq = order.seq
         state.latestSeq = maxOf(state.latestSeq, order.seq)
@@ -77,7 +90,7 @@ class SurfaceOrderingCoordinator<T> {
         val pending = state.pendingAnchor
         state.pendingAnchor = null
         val matchingPending = pending?.takeIf {
-            it.order.seq > order.seq && identitiesMatch(order, it.order)
+            !epochAdvanced && it.order.seq > order.seq && identitiesMatch(order, it.order)
         }
         state.latestAppliedAnchorSeq = matchingPending?.order?.seq
             ?: appliedAnchorSeqToPreserve
@@ -91,17 +104,22 @@ class SurfaceOrderingCoordinator<T> {
 
     @Synchronized
     fun onAnchor(order: SurfaceOrder, value: T): SurfaceOrderDecision<T> {
+        dropStaleEpoch(order)?.let { return it }
         val state = states.getOrPut(order.surfaceId) { SurfaceState() }
-        if (order.seq <= state.latestSeq) {
+        val epochAdvanced = advanceLiveEpoch(order.epoch)
+
+        if (!epochAdvanced && order.seq <= state.latestSeq) {
             return SurfaceOrderDecision.Drop(
                 reason = SurfaceOrderDropReason.STALE_ANCHOR,
                 latestBaseSeq = state.latestBaseSeq,
                 latestSeq = state.latestSeq,
+                liveEpoch = liveEpoch,
             )
         }
 
         state.latestSeq = order.seq
-        val matchesActiveBase = state.activeKind == order.kind &&
+        val matchesActiveBase = !epochAdvanced &&
+            state.activeKind == order.kind &&
             (order.contentKey.isBlank() || state.activeContentKey == order.contentKey)
         return if (matchesActiveBase) {
             state.latestAppliedAnchorSeq = order.seq
@@ -120,6 +138,7 @@ class SurfaceOrderingCoordinator<T> {
                 reason = SurfaceOrderDropReason.STALE_HIDE,
                 latestBaseSeq = state.latestBaseSeq,
                 latestSeq = state.latestSeq,
+                liveEpoch = liveEpoch,
             )
         }
 
@@ -145,9 +164,27 @@ class SurfaceOrderingCoordinator<T> {
     @Synchronized
     fun isCurrentBase(order: SurfaceOrder): Boolean {
         val state = states[order.surfaceId] ?: return false
-        return state.latestBaseSeq == order.seq &&
+        return order.epoch == liveEpoch &&
+            state.latestBaseSeq == order.seq &&
             state.activeKind == order.kind &&
             state.activeContentKey == order.contentKey
+    }
+
+    private fun dropStaleEpoch(order: SurfaceOrder): SurfaceOrderDecision.Drop? {
+        if (!SurfaceEpochContract.isStale(order.epoch, liveEpoch)) return null
+        val state = states[order.surfaceId]
+        return SurfaceOrderDecision.Drop(
+            reason = SurfaceOrderDropReason.STALE_EPOCH,
+            latestBaseSeq = state?.latestBaseSeq ?: Long.MIN_VALUE,
+            latestSeq = state?.latestSeq ?: Long.MIN_VALUE,
+            liveEpoch = liveEpoch,
+        )
+    }
+
+    private fun advanceLiveEpoch(incomingEpoch: Long): Boolean {
+        if (incomingEpoch <= liveEpoch) return false
+        liveEpoch = incomingEpoch
+        return true
     }
 
     private fun identitiesMatch(base: SurfaceOrder, anchor: SurfaceOrder): Boolean =

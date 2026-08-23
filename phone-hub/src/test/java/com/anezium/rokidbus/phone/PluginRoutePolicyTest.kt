@@ -1,5 +1,6 @@
 package com.anezium.rokidbus.phone
 
+import com.anezium.rokidbus.shared.SurfaceEpochContract
 import com.anezium.rokidbus.shared.plugin.PluginCapability
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -130,11 +131,15 @@ class PluginRoutePolicyTest {
     fun `surface owner and wire ID overwrite client identity`() {
         val result = PluginRoutePolicy.injectSurfaceOwner(
             "hello",
-            JSONObject().put("surfaceId", "main").put("ownerPluginId", "spoofed"),
+            JSONObject()
+                .put("surfaceId", "main")
+                .put("ownerPluginId", "spoofed")
+                .put(SurfaceEpochContract.FIELD, 99),
         )!!
         assertEquals("hello", result.getString("ownerPluginId"))
         assertEquals("main", result.getString("localSurfaceId"))
         assertEquals("hello:main", result.getString("surfaceId"))
+        assertTrue(!result.has(SurfaceEpochContract.FIELD))
     }
 
     @Test

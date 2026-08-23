@@ -173,6 +173,7 @@ object SurfaceController {
             showOrUpdateInk(
                 context = context,
                 surface = surface,
+                baseOrder = baseOrder,
                 launcherShow = launcherShow,
             )
         } else if (carriesImage && !(surface.isMedia && surface.imageBitmap != null)) {
@@ -447,12 +448,22 @@ object SurfaceController {
     private fun showOrUpdateInk(
         context: Context,
         surface: NexusSurface,
+        baseOrder: SurfaceOrder,
         launcherShow: Boolean,
     ) {
         pendingInk = surface
         inkRendererLayer.submit(
             surface = surface,
             onCommitted = {
+                if (!orderingCoordinator.isCurrentBase(baseOrder)) {
+                    if (
+                        pendingInk?.surfaceId == surface.surfaceId &&
+                        pendingInk?.seq == surface.seq
+                    ) {
+                        pendingInk = null
+                    }
+                    return@submit
+                }
                 if (
                     pendingInk?.surfaceId == surface.surfaceId &&
                     pendingInk?.seq == surface.seq
@@ -789,6 +800,7 @@ object SurfaceController {
         seq = optLong("seq", 0L),
         kind = optString("kind", NexusSurface.KIND_CARD).ifBlank { NexusSurface.KIND_CARD },
         contentKey = optString("contentKey"),
+        epoch = optLong("epoch", 0L),
     )
 
     private fun NexusSurface.toSurfaceOrder(): SurfaceOrder = SurfaceOrder(
@@ -796,6 +808,7 @@ object SurfaceController {
         seq = seq,
         kind = kind,
         contentKey = contentKey,
+        epoch = epoch,
     )
 
     private fun logOrderDrop(
@@ -804,13 +817,14 @@ object SurfaceController {
         decision: SurfaceOrderDecision.Drop,
     ) {
         val label = when (decision.reason) {
+            SurfaceOrderDropReason.STALE_EPOCH -> "Surface stale epoch drop"
             SurfaceOrderDropReason.STALE_BASE -> "Surface stale base drop"
             SurfaceOrderDropReason.STALE_ANCHOR -> "Surface stale anchor drop"
             SurfaceOrderDropReason.STALE_HIDE -> "Surface stale hide drop"
         }
         log(
-            "$label id=$surfaceId seq=$seq latestBase=${decision.latestBaseSeq} " +
-                "latest=${decision.latestSeq}",
+            "$label id=$surfaceId seq=$seq epochLive=${decision.liveEpoch} " +
+                "latestBase=${decision.latestBaseSeq} latest=${decision.latestSeq}",
         )
     }
 
