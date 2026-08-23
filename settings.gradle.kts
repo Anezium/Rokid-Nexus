@@ -39,7 +39,7 @@ include(":plugin-wireless-adb")
 include(":ink-engine")
 
 // Plugin modules live under plugins/ (one folder per plugin, each with its own
-// README and CHANGELOG); feeds moves there once the in-flight feeds branch lands.
+// README and CHANGELOG). Feeds remains at plugin-feeds/ at the repository root.
 project(":plugin-lyrics").projectDir = file("plugins/lyrics")
 project(":plugin-media").projectDir = file("plugins/media")
 project(":plugin-transit").projectDir = file("plugins/transit")
