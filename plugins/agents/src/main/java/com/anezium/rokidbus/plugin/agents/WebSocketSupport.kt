@@ -13,6 +13,8 @@ internal sealed interface ConnectionOutcome {
     data object Retry : ConnectionOutcome
     data class RetryWithDetail(val detail: String) : ConnectionOutcome
     data class AuthFailed(val detail: String) : ConnectionOutcome
+    /** Terminal, non-retrying failure that is not a re-pair (version/ALPN). */
+    data class Failed(val detail: String) : ConnectionOutcome
 }
 
 internal fun reconnectDelayMs(attempt: Int, random: Random = Random.Default): Long {

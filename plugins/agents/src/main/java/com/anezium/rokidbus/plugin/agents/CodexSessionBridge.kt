@@ -17,9 +17,14 @@ import org.json.JSONObject
  */
 class CodexSessionBridge(
     private val store: AgentSessionStore,
-    private val computer: DirectComputer,
+    private val computer: CodexComputerRef,
     private val nowMs: () -> Long = System::currentTimeMillis,
 ) {
+    constructor(
+        store: AgentSessionStore,
+        computer: DirectComputer,
+        nowMs: () -> Long = System::currentTimeMillis,
+    ) : this(store, computer.asCodexRef(), nowMs)
     private val sessions = linkedMapOf<String, AgentSession>()
     private val openThreadId = java.util.concurrent.atomic.AtomicReference<String?>(null)
 

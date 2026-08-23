@@ -2,22 +2,16 @@ package com.anezium.rokidbus.plugin.agents
 
 import com.anezium.rokidbus.plugin.agents.alleycat.AlleycatException
 import com.anezium.rokidbus.plugin.agents.alleycat.ApprovalVerdict
-import com.anezium.rokidbus.plugin.agents.alleycat.CodexAppServerClient
-import com.anezium.rokidbus.plugin.agents.alleycat.CodexInbound
 import com.anezium.rokidbus.plugin.agents.alleycat.JsonPipe
-import com.anezium.rokidbus.plugin.agents.alleycat.JsonRpcId
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import java.util.concurrent.LinkedBlockingQueue
-import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 
 internal sealed interface CodexCommand {
@@ -132,6 +126,11 @@ class CodexDirectClient(
                     bridge.onFailed(ConnectionState.AUTH_FAILED, result.detail)
                     return
                 }
+                is ConnectionOutcome.Failed -> {
+                    connectionState = ConnectionState.DISCONNECTED
+                    bridge.onFailed(ConnectionState.DISCONNECTED, result.detail)
+                    return
+                }
                 is ConnectionOutcome.RetryWithDetail -> {
                     connectionState = ConnectionState.DISCONNECTED
                     bridge.onDisconnected(result.detail)
@@ -150,129 +149,32 @@ class CodexDirectClient(
         gen: Long,
         backoff: ReconnectBackoff,
         bridge: CodexSessionBridge,
-    ): ConnectionOutcome = coroutineScope {
-        val ended = CompletableDeferred<ConnectionOutcome>()
-        fun fail(outcome: ConnectionOutcome) {
-            ended.complete(outcome)
-        }
+    ): ConnectionOutcome {
         val pipe = try {
             openPipe(computer)
         } catch (e: AlleycatException) {
             val auth = e.message?.contains("rejected") == true
-            return@coroutineScope if (auth) {
+            return if (auth) {
                 ConnectionOutcome.AuthFailed(e.message ?: "app-server rejected the connection")
             } else {
                 ConnectionOutcome.RetryWithDetail(e.message ?: "connection failed")
             }
         }
-        if (generation.get() != gen) {
-            pipe.close()
-            return@coroutineScope ConnectionOutcome.Retry
-        }
-        livePipe.set(pipe)
-        val client = CodexAppServerClient(
+        val outcome = CodexJsonRpcLoop.run(
             pipe = pipe,
-            onNotification = bridge::onNotification,
-            onApprovalRequest = bridge::onApproval,
+            bridge = bridge,
+            store = store,
+            commands = commands,
+            generation = generation,
+            gen = gen,
+            scope = scope,
+            livePipe = livePipe,
+            onConnectionState = { state ->
+                connectionState = state
+                if (state == ConnectionState.CONNECTED) backoff.reset()
+            },
         )
-        val deadlines = ConnectionDeadlines(this) { detail ->
-            // Unblock a hung receive: the pipe has no other timed close.
-            pipe.close()
-            fail(ConnectionOutcome.RetryWithDetail(detail))
-        }
-        try {
-            deadlines.arm("list", "thread/list timed out")
-            val page = client.threadList()
-            deadlines.clear("list")
-            if (generation.get() != gen) return@coroutineScope ConnectionOutcome.Retry
-            backoff.reset()
-            connectionState = ConnectionState.CONNECTED
-            bridge.onConnected()
-            bridge.publishThreads(page)
-            while (generation.get() == gen && !ended.isCompleted && scope.isActive) {
-                val command = commands.poll(50, TimeUnit.MILLISECONDS)
-                if (command != null) {
-                    handleCommand(client, bridge, command)
-                    continue
-                }
-                try {
-                    client.receiveOrNull(50L)
-                } catch (e: AlleycatException) {
-                    fail(
-                        if (e.message?.contains("rejected") == true) {
-                            ConnectionOutcome.AuthFailed(e.message ?: "app-server rejected the connection")
-                        } else {
-                            ConnectionOutcome.RetryWithDetail(e.message ?: "Connection lost")
-                        },
-                    )
-                }
-            }
-            if (ended.isCompleted) ended.await() else ConnectionOutcome.Retry
-        } catch (e: AlleycatException) {
-            if (e.message?.contains("rejected") == true) {
-                ConnectionOutcome.AuthFailed(e.message ?: "app-server rejected the connection")
-            } else {
-                ConnectionOutcome.RetryWithDetail(e.message ?: "connection failed")
-            }
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (_: Throwable) {
-            ConnectionOutcome.Retry
-        } finally {
-            deadlines.clearAll()
-            pipe.close()
-        }
-    }
-
-    private fun handleCommand(
-        client: CodexAppServerClient,
-        bridge: CodexSessionBridge,
-        command: CodexCommand,
-    ) {
-        try {
-            when (command) {
-                is CodexCommand.OpenDetail -> {
-                    val thread = client.threadResume(command.sessionId)
-                    bridge.onThreadStarted(thread)
-                    bridge.openThread(thread.id)
-                }
-                CodexCommand.CloseDetail -> bridge.closeThread()
-                is CodexCommand.Decide -> {
-                    val id = JsonRpcId.fromWire(command.requestId) ?: return
-                    client.replyApproval(id, command.verdict)
-                    store.resolveApproval(command.requestId)
-                }
-                is CodexCommand.StartThread -> {
-                    val thread = client.threadStart(cwd = command.cwd)
-                    bridge.onThreadStarted(thread)
-                    if (command.prompt.isNotBlank()) {
-                        val turn = client.turnStart(thread.id, command.prompt)
-                        bridge.onTurnStarted(thread.id, turn)
-                    }
-                    store.setThreadStart(
-                        ThreadStartResult(
-                            requestId = command.requestId,
-                            ok = true,
-                            provider = AgentProvider.CODEX,
-                            sessionId = thread.id,
-                            error = null,
-                        ),
-                    )
-                }
-            }
-        } catch (_: AlleycatException) {
-            if (command is CodexCommand.StartThread) {
-                store.setThreadStart(
-                    ThreadStartResult(
-                        requestId = command.requestId,
-                        ok = false,
-                        provider = AgentProvider.CODEX,
-                        sessionId = null,
-                        error = "the computer could not start it",
-                    ),
-                )
-            }
-        }
+        return outcome
     }
 }
 
