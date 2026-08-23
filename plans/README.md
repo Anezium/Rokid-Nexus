@@ -35,9 +35,10 @@ individual plan headers are the detail of record.
 | [016](016-assistant-camera-tool.md) | Assistant `take_photo` camera tool | DONE |
 | [017](017-relay-notifications.md) | Relay notifications | DONE |
 | [018](018-notice-lines.md) | Notice lines | DONE |
-| [020](020-ink-surface.md) | Ink Surface: native port of the AIUI page format as a Nexus surface tier | TODO — direction approved 2026-08-08 |
+| [020](020-ink-surface.md) | Ink Surface: native port of the AIUI page format as a Nexus surface tier | DONE — implemented on `main`; M5 hardware measurement may remain |
+| [021](021-daily-driver.md) | Daily-driver chapter: arbitration, continuous speech, navigation, skills | TODO |
 
-Status values are `TODO`, `IN PROGRESS`, `BLOCKED`, and `DONE`. Update both this table and the individual plan when execution status changes. What comes after these plans is tracked on the roadmap, not here: display arbitration, continuous speech, and the plugin roadmap's Navigation, T3code, and Terminal/Agent do not have plan documents yet.
+Status values are `TODO`, `IN PROGRESS`, `BLOCKED`, and `DONE`. Update both this table and the individual plan when execution status changes. Plan 021 is the next chapter; it does not replace `ROADMAP.md`.
 
 ## Why this order is strict
 
@@ -71,7 +72,7 @@ These findings are intentionally deferred until plans 001–004 establish the pl
 
 - Extract Lyrics into an independent plugin APK, including encrypted credential migration and a plugin-owned settings screen.
 - Stabilize the current Lens work, remove raw OCR data from release diagnostics, and extract it as an optional advanced plugin without making its transport a platform dependency.
-- Add display arbitration, surface ownership epochs, microphone-in-use indication, and actionable failure feedback on glasses.
+- Add display arbitration, surface ownership epochs, microphone-in-use indication, and actionable failure feedback on glasses. (Scoped as [Plan 021](021-daily-driver.md).)
 - Design no-ADB onboarding, pairing, and plugin deep links. (RokidBrew distribution metadata is now scoped as [Plan 005](005-nexus-store-registry.md).)
 - Add compatibility fixtures for multiple SDK generations once the v3 identity contract has shipped.
 
