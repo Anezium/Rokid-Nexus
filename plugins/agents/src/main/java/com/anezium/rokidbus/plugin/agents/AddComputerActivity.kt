@@ -51,6 +51,10 @@ class AddComputerActivity : Activity() {
     private lateinit var openClawToken: EditText
     private lateinit var openClawConnection: TextView
     private lateinit var openClawDot: View
+    private lateinit var directUrl: EditText
+    private lateinit var directSummary: TextView
+    private lateinit var directConnection: TextView
+    private lateinit var directDot: View
     private var countdown: Job? = null
     private var knownMachines = 0
 
@@ -60,11 +64,22 @@ class AddComputerActivity : Activity() {
         buildUi()
         uiScope.launch {
             AgentsRuntime.store.connections.collectLatest { states ->
-                val state = states.getValue(AgentProvider.OPENCLAW)
-                openClawConnection.text = state.displayText("AUTH FAILED")
+                val openClaw = states.getValue(AgentProvider.OPENCLAW)
+                openClawConnection.text = openClaw.displayText("AUTH FAILED")
                 NexusUi.setDotColor(
                     openClawDot,
-                    when (state.state) {
+                    when (openClaw.state) {
+                        ConnectionState.CONNECTED -> NexusUi.GREEN
+                        ConnectionState.CONNECTING -> NexusUi.AMBER
+                        ConnectionState.AUTH_FAILED -> NexusUi.DANGER
+                        ConnectionState.DISCONNECTED -> NexusUi.INK3
+                    },
+                )
+                val codex = states.getValue(AgentProvider.CODEX)
+                directConnection.text = codex.displayText("REJECTED")
+                NexusUi.setDotColor(
+                    directDot,
+                    when (codex.state) {
                         ConnectionState.CONNECTED -> NexusUi.GREEN
                         ConnectionState.CONNECTING -> NexusUi.AMBER
                         ConnectionState.AUTH_FAILED -> NexusUi.DANGER
@@ -168,6 +183,20 @@ class AddComputerActivity : Activity() {
             typeface = Typeface.DEFAULT
             setText(config.openClaw?.token.orEmpty())
         }
+        directDot = NexusUi.dot(this)
+        directConnection = NexusUi.statusLine(this).apply { text = "DISCONNECTED" }
+        directSummary = NexusUi.cardBody(this, "No app-server saved.")
+        directUrl = NexusUi.field(this, "ws://host:port").apply {
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
+            addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                    renderDirectPreview(s?.toString().orEmpty())
+                }
+                override fun afterTextChanged(s: Editable?) = Unit
+            })
+        }
+        renderDirectPreview("")
 
         val content = NexusUi.contentColumn(this).apply {
             addView(daemonCard(), NexusUi.block())
@@ -179,6 +208,8 @@ class AddComputerActivity : Activity() {
             addView(pairingCard(), NexusUi.block())
             addView(BusTheme.gap(this@AddComputerActivity, 14))
             addView(openClawCard(), NexusUi.block())
+            addView(BusTheme.gap(this@AddComputerActivity, 14))
+            addView(directCard(), NexusUi.block())
         }
         val root = NexusUi.fixedRoot(this).apply {
             addView(backHeader(), NexusUi.block())
@@ -334,6 +365,38 @@ class AddComputerActivity : Activity() {
         )
     }
 
+    /** A Codex app-server on the LAN or Tailnet: no Alleycat node, no token. */
+    private fun directCard() = NexusUi.card(this).apply {
+        addView(NexusUi.rowTitle(this@AddComputerActivity, "Direct — Codex app-server"), NexusUi.block())
+        addView(BusTheme.gap(this@AddComputerActivity, 6))
+        addView(
+            NexusUi.cardBody(
+                this@AddComputerActivity,
+                "If the computer already runs a Codex app-server you can reach " +
+                    "on this network (or Tailnet), paste its ws:// or wss:// " +
+                    "address. There is no pairing token and no Alleycat node.",
+            ),
+            NexusUi.block(),
+        )
+        addView(BusTheme.gap(this@AddComputerActivity, 8))
+        addView(connectionRow(this@AddComputerActivity, directDot, directConnection), NexusUi.block())
+        addView(NexusUi.divider(this@AddComputerActivity))
+        addView(directUrl, NexusUi.block())
+        addView(BusTheme.gap(this@AddComputerActivity, 10))
+        addView(directSummary, NexusUi.block())
+        addView(BusTheme.gap(this@AddComputerActivity, 12))
+        addView(
+            actionRow(
+                this@AddComputerActivity,
+                primary = "Save",
+                onPrimary = { saveDirect(test = false) },
+                secondary = "Test connection",
+                onSecondary = { saveDirect(test = true) },
+            ),
+            NexusUi.block(),
+        )
+    }
+
     private fun saveOpenClaw(test: Boolean) {
         val host = openClawHost.text.toString().trim()
         val port = openClawPort.text.toString().toIntOrNull()
@@ -421,6 +484,46 @@ class AddComputerActivity : Activity() {
         } else {
             AgentsMonitorService.reconcile(applicationContext)
             toast("Computer link settings saved.")
+        }
+    }
+
+    private fun renderDirectPreview(raw: String) {
+        val saved = configStore.load().directComputers
+        if (raw.isBlank()) {
+            directSummary.text = when (saved.size) {
+                0 -> "No app-server saved."
+                1 -> "Saved: ${DirectComputerUrl.redactUserinfo(saved.single().url)}"
+                else -> "${saved.size} app-servers saved."
+            }
+            return
+        }
+        directSummary.text = when (val parsed = DirectComputerUrl.parse(raw)) {
+            is DirectComputerParseResult.Valid ->
+                "Parsed: ${DirectComputerUrl.redactUserinfo(parsed.computer.url)}"
+            is DirectComputerParseResult.Invalid -> parsed.reason
+        }
+    }
+
+    private fun saveDirect(test: Boolean) {
+        val raw = directUrl.text.toString()
+        when (val parsed = DirectComputerUrl.parse(raw)) {
+            is DirectComputerParseResult.Invalid -> {
+                directSummary.text = parsed.reason
+                toast("Fix the address first.")
+            }
+            is DirectComputerParseResult.Valid -> {
+                configStore.saveDirectComputer(parsed.computer)
+                directUrl.text.clear()
+                directSummary.text =
+                    "Saved: ${DirectComputerUrl.redactUserinfo(parsed.computer.url)}"
+                if (test) {
+                    AgentsMonitorService.testDirect(applicationContext)
+                    toast("Testing the app-server…")
+                } else {
+                    AgentsMonitorService.reconcile(applicationContext)
+                    toast("App-server saved.")
+                }
+            }
         }
     }
 

@@ -41,6 +41,10 @@ class AgentsMonitorService : Service() {
     private val openClawClient by lazy {
         OpenClawClient(httpClient, AgentsRuntime.store, configStore, serviceScope, VERSION_NAME)
     }
+    private val codexDirect by lazy {
+        CodexDirectBroker(httpClient, AgentsRuntime.store, serviceScope)
+    }
+    private var runningDirectIds: Set<String> = emptySet()
     private val linkServer by lazy {
         AgentdLinkServer(AgentsRuntime.store, configStore, serviceScope) { machineName ->
             AgentsRuntime.announceLinkedMachine(machineName)
@@ -77,14 +81,23 @@ class AgentsMonitorService : Service() {
                 intent.getStringExtra(EXTRA_SESSION_ID)?.let { sessionId ->
                     agentdClient.openDetail(sessionId)
                     linkServer.openDetail(sessionId)
+                    codexDirect.openDetail(sessionId)
                 }
             }
             ACTION_CLOSE_DETAIL -> {
                 agentdClient.closeDetail()
                 linkServer.closeDetail()
+                codexDirect.closeDetail()
             }
             ACTION_DROP_MACHINE -> {
-                intent.getStringExtra(EXTRA_MACHINE_ID)?.let(linkServer::dropMachine)
+                intent.getStringExtra(EXTRA_MACHINE_ID)?.let { machineId ->
+                    linkServer.dropMachine(machineId)
+                    codexDirect.drop(machineId)
+                }
+            }
+            ACTION_TEST_DIRECT -> {
+                if (configStore.load().shouldMonitor) reconcile()
+                testDirect()
             }
             ACTION_FS_LIST -> {
                 val requestId = intent.getStringExtra(EXTRA_REQUEST_ID)
@@ -99,9 +112,14 @@ class AgentsMonitorService : Service() {
                 val provider = AgentProvider.fromWire(intent.getStringExtra(EXTRA_PROVIDER))
                 val path = intent.getStringExtra(EXTRA_PATH)
                 val prompt = intent.getStringExtra(EXTRA_PROMPT).orEmpty()
+                val machineId = intent.getStringExtra(EXTRA_MACHINE_ID)
                 if (requestId != null && provider != null && path != null) {
                     agentdClient.requestThreadStart(requestId, provider, path, prompt)
                     linkServer.requestThreadStart(requestId, provider, path, prompt)
+                    if (machineId != null && machineId.startsWith(DirectComputer.ID_PREFIX)) {
+                        val cwd = path.takeIf { it.isNotBlank() && it != "/" }
+                        codexDirect.requestThreadStart(requestId, machineId, prompt, cwd)
+                    }
                 }
             }
             ACTION_DECIDE_APPROVAL -> {
@@ -109,8 +127,11 @@ class AgentsMonitorService : Service() {
                 val decision = ApprovalDecision.values()
                     .firstOrNull { it.wireValue == intent.getStringExtra(EXTRA_DECISION) }
                 if (requestId != null && decision != null) {
-                    agentdClient.decideApproval(requestId, decision)
-                    linkServer.decideApproval(requestId, decision)
+                    if (decision == ApprovalDecision.ALLOW || decision == ApprovalDecision.DENY) {
+                        agentdClient.decideApproval(requestId, decision)
+                        linkServer.decideApproval(requestId, decision)
+                    }
+                    decision.toVerdict()?.let { codexDirect.decideApproval(requestId, it) }
                     // The wearer answered: the question is gone from the board
                     // whether or not the daemon's acknowledgement makes it back.
                     AgentsRuntime.store.resolveApproval(requestId)
@@ -129,6 +150,8 @@ class AgentsMonitorService : Service() {
         agentdClient.stop(clearSessions = true)
         linkServer.stop(clearSessions = true)
         openClawClient.stop(clearSessions = true)
+        codexDirect.stop(clearSessions = true)
+        runningDirectIds = emptySet()
         releasePluginService()
         httpClient.dispatcher.executorService.shutdown()
         serviceScope.cancel()
@@ -181,6 +204,16 @@ class AgentsMonitorService : Service() {
             }
             runningOpenClaw = wantedOpenClaw
         }
+        val wantedDirect = config.directComputers
+        val wantedIds = wantedDirect.map { it.computerId }.toSet()
+        if (wantedIds != runningDirectIds) {
+            if (wantedDirect.isEmpty()) {
+                codexDirect.stop(clearSessions = true)
+            } else {
+                codexDirect.reconcile(wantedDirect)
+            }
+            runningDirectIds = wantedIds
+        }
     }
 
     private fun testAgentd() {
@@ -220,6 +253,13 @@ class AgentsMonitorService : Service() {
         }
     }
 
+    private fun testDirect() {
+        val computers = configStore.load().directComputers
+        if (computers.isEmpty()) return stopIfNoConfiguredProvider()
+        codexDirect.reconcile(computers)
+        runningDirectIds = computers.map { it.computerId }.toSet()
+    }
+
     private fun stopIfNoConfiguredProvider() {
         if (!configStore.load().shouldMonitor &&
             temporaryAgentd?.isActive != true &&
@@ -233,8 +273,10 @@ class AgentsMonitorService : Service() {
         agentdClient.stop(clearSessions = true)
         linkServer.stop(clearSessions = true)
         openClawClient.stop(clearSessions = true)
+        codexDirect.stop(clearSessions = true)
         runningAgentd = null
         runningOpenClaw = null
+        runningDirectIds = emptySet()
         releasePluginService()
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
@@ -257,6 +299,8 @@ class AgentsMonitorService : Service() {
             "com.anezium.rokidbus.plugin.agents.action.TEST_AGENTD"
         const val ACTION_TEST_OPENCLAW =
             "com.anezium.rokidbus.plugin.agents.action.TEST_OPENCLAW"
+        const val ACTION_TEST_DIRECT =
+            "com.anezium.rokidbus.plugin.agents.action.TEST_DIRECT"
         const val ACTION_OPEN_DETAIL =
             "com.anezium.rokidbus.plugin.agents.action.OPEN_DETAIL"
         const val ACTION_CLOSE_DETAIL =
@@ -348,6 +392,7 @@ class AgentsMonitorService : Service() {
             provider: AgentProvider,
             path: String,
             prompt: String,
+            machineId: String? = null,
         ) {
             ContextCompat.startForegroundService(
                 context,
@@ -356,7 +401,8 @@ class AgentsMonitorService : Service() {
                     .putExtra(EXTRA_REQUEST_ID, requestId)
                     .putExtra(EXTRA_PROVIDER, provider.wireValue)
                     .putExtra(EXTRA_PATH, path)
-                    .putExtra(EXTRA_PROMPT, prompt),
+                    .putExtra(EXTRA_PROMPT, prompt)
+                    .putExtra(EXTRA_MACHINE_ID, machineId),
             )
         }
 
@@ -368,6 +414,13 @@ class AgentsMonitorService : Service() {
                     .setAction(ACTION_FS_LIST)
                     .putExtra(EXTRA_REQUEST_ID, requestId)
                     .putExtra(EXTRA_PATH, path),
+            )
+        }
+
+        fun testDirect(context: Context) {
+            ContextCompat.startForegroundService(
+                context,
+                Intent(context, AgentsMonitorService::class.java).setAction(ACTION_TEST_DIRECT),
             )
         }
 

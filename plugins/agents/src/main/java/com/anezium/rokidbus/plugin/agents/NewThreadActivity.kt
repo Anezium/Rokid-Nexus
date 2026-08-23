@@ -84,6 +84,9 @@ class NewThreadActivity : Activity() {
         startCodex = NexusUi.outlinePillButton(this, "Start with Codex").apply {
             setOnClickListener { start(AgentProvider.CODEX) }
         }
+        if (machineId.startsWith(DirectComputer.ID_PREFIX)) {
+            startClaude.visibility = View.GONE
+        }
 
         val content = NexusUi.contentColumn(this).apply {
             addView(
@@ -97,8 +100,10 @@ class NewThreadActivity : Activity() {
             addView(BusTheme.gap(this@NewThreadActivity, 12))
             addView(promptField, NexusUi.block())
             addView(BusTheme.gap(this@NewThreadActivity, 12))
-            addView(startClaude, NexusUi.block())
-            addView(BusTheme.gap(this@NewThreadActivity, 8))
+            if (!machineId.startsWith(DirectComputer.ID_PREFIX)) {
+                addView(startClaude, NexusUi.block())
+                addView(BusTheme.gap(this@NewThreadActivity, 8))
+            }
             addView(startCodex, NexusUi.block())
             addView(BusTheme.gap(this@NewThreadActivity, 8))
             addView(hint, NexusUi.block())
@@ -160,7 +165,13 @@ class NewThreadActivity : Activity() {
             toast("Claude Code needs a prompt to start with.")
             return
         }
-        if (AgentsRuntime.store.linkMachine.value?.machineId != machineId) {
+        if (machineId.startsWith(DirectComputer.ID_PREFIX)) {
+            val state = AgentsRuntime.store.connections.value[AgentProvider.CODEX]?.state
+            if (state != ConnectionState.CONNECTED) {
+                showHint("$machineName is not connected right now.")
+                return
+            }
+        } else if (AgentsRuntime.store.linkMachine.value?.machineId != machineId) {
             showHint("$machineName is not connected right now.")
             return
         }
@@ -174,6 +185,7 @@ class NewThreadActivity : Activity() {
             provider,
             projectPath,
             prompt,
+            machineId,
         )
         timeout?.cancel()
         timeout = uiScope.launch {

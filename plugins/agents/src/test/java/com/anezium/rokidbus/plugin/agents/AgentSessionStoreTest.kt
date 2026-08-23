@@ -93,15 +93,78 @@ class AgentSessionStoreTest {
         assertEquals(listOf("live"), store.sessions.value.map(AgentSession::id))
     }
 
+    @Test
+    fun replaceLinkSessionsKeepsDirectUrlCodexThreads() {
+        val store = AgentSessionStore()
+        store.replaceMachineSessions(
+            "direct-abc",
+            AgentProvider.CODEX,
+            listOf(session("direct-thr", AgentProvider.CODEX, AgentStatus.IDLE, machineId = "direct-abc")),
+            nowMs = 10,
+        )
+        store.replaceLinkSessions(
+            AgentProvider.AGENTD_PROVIDERS,
+            listOf(session("link-thr", AgentProvider.CODEX, AgentStatus.WORKING, machineId = "pc-1")),
+            nowMs = 20,
+        )
+        assertEquals(setOf("direct-thr", "link-thr"), store.sessions.value.map { it.id }.toSet())
+    }
+
+    @Test
+    fun replaceMachineSessionsDoesNotTouchOtherComputers() {
+        val store = AgentSessionStore()
+        store.replaceMachineSessions(
+            "direct-a",
+            AgentProvider.CODEX,
+            listOf(session("a", AgentProvider.CODEX, AgentStatus.IDLE, machineId = "direct-a")),
+            nowMs = 10,
+        )
+        store.replaceMachineSessions(
+            "direct-b",
+            AgentProvider.CODEX,
+            listOf(session("b", AgentProvider.CODEX, AgentStatus.WORKING, machineId = "direct-b")),
+            nowMs = 20,
+        )
+        store.replaceMachineSessions("direct-a", AgentProvider.CODEX, emptyList(), nowMs = 30)
+        assertEquals(listOf("b"), store.sessions.value.map(AgentSession::id))
+    }
+
+    @Test
+    fun clearApprovalsForMachineLeavesOtherComputers() {
+        val store = AgentSessionStore()
+        store.replaceMachineSessions(
+            "direct-a",
+            AgentProvider.CODEX,
+            listOf(session("thr-a", AgentProvider.CODEX, AgentStatus.NEEDS_YOU, machineId = "direct-a")),
+            nowMs = 10,
+        )
+        store.replaceMachineSessions(
+            "direct-b",
+            AgentProvider.CODEX,
+            listOf(session("thr-b", AgentProvider.CODEX, AgentStatus.NEEDS_YOU, machineId = "direct-b")),
+            nowMs = 10,
+        )
+        store.upsertApproval(
+            AgentApproval("n:1", "thr-a", AgentProvider.CODEX, "tool", "run", fourVerdicts = true),
+        )
+        store.upsertApproval(
+            AgentApproval("n:2", "thr-b", AgentProvider.CODEX, "tool", "run", fourVerdicts = true),
+        )
+        store.clearApprovalsForMachine("direct-a")
+        assertEquals(listOf("n:2"), store.approvals.value.map { it.requestId })
+    }
+
     private fun session(
         id: String,
         provider: AgentProvider,
         status: AgentStatus,
         activity: Long? = null,
         pendingAt: Long? = null,
+        machineId: String? = null,
     ) = AgentSession(
         id = id,
         provider = provider,
+        machineId = machineId,
         title = id,
         status = status,
         lastActivityAt = activity,
