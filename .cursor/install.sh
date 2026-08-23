@@ -35,7 +35,12 @@ if [ ! -d "$CXR_DIR/.git" ]; then
   git clone --depth 1 --branch "$CXR_REF" \
     https://github.com/Anezium/CxrGlobal.git "$CXR_DIR"
 else
-  git -C "$CXR_DIR" fetch --depth 1 origin "tag" "$CXR_REF" --force
+  # Already present from the base snapshot. Only reach out to the network when the
+  # pinned tag is missing, so a build with no fetch access still succeeds when the
+  # snapshot already carries the right revision.
+  if ! git -C "$CXR_DIR" rev-parse -q --verify "refs/tags/$CXR_REF^{commit}" >/dev/null; then
+    git -C "$CXR_DIR" fetch --depth 1 --force origin "refs/tags/$CXR_REF:refs/tags/$CXR_REF"
+  fi
   git -C "$CXR_DIR" checkout -q --force "$CXR_REF"
 fi
 
