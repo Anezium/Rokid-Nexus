@@ -1,5 +1,13 @@
 # Changelog — Lyrics
 
+## Unreleased
+
+- Ambient home widget on the glasses: two synced lines over the launcher,
+  shown when music with lyrics is playing. Off / Glance / Karaoke (default)
+  in settings. The phone hub opens the plugin on playback when Nexus has
+  notification access; Karaoke holds the glasses display while the track
+  plays.
+
 ## 1.0.3
 
 - Refresh the lightweight playback anchor at each timed-lyrics line boundary

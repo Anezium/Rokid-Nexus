@@ -27,16 +27,21 @@ import com.anezium.rokidbus.lyrics.LyricsRuntimeGraph
 import com.anezium.rokidbus.lyrics.lyrics.SpotifySpDcCookie
 import com.anezium.rokidbus.lyrics.media.MediaNotificationListenerService
 import com.anezium.rokidbus.lyrics.settings.LyricsProviderSettingsStore
+import com.anezium.rokidbus.lyrics.settings.LyricsWidgetMode
+import com.anezium.rokidbus.lyrics.settings.LyricsWidgetSettingsStore
 
 class LyricsSettingsActivity : Activity() {
     private lateinit var accessValue: TextView
     private lateinit var spotifyValue: TextView
     private lateinit var musixmatchValue: TextView
+    private lateinit var widgetValue: TextView
     private lateinit var providerStore: LyricsProviderSettingsStore
+    private lateinit var widgetStore: LyricsWidgetSettingsStore
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         providerStore = LyricsProviderSettingsStore(applicationContext)
+        widgetStore = LyricsWidgetSettingsStore(applicationContext)
         buildUi()
     }
 
@@ -44,6 +49,7 @@ class LyricsSettingsActivity : Activity() {
         super.onResume()
         refreshProviderValues()
         renderAccessState()
+        renderWidgetMode()
     }
 
     private fun renderAccessState() {
@@ -123,6 +129,16 @@ class LyricsSettingsActivity : Activity() {
                     value = valueText("0 ms"),
                     danger = false,
                 ) { Toast.makeText(this@LyricsSettingsActivity, "Coming soon", Toast.LENGTH_SHORT).show() },
+                NexusUi.block(),
+            )
+            widgetValue = valueText(widgetModeLabel(widgetStore.mode()))
+            addView(
+                settingRow(
+                    title = "Home widget",
+                    subtitle = "Off, Glance, or Karaoke. Needs Nexus notification access.",
+                    value = widgetValue,
+                    danger = false,
+                ) { showWidgetModeDialog() },
                 NexusUi.block(),
             )
             addView(BusTheme.gap(this@LyricsSettingsActivity, 22))
@@ -230,6 +246,90 @@ class LyricsSettingsActivity : Activity() {
                 },
             )
         }
+
+    private fun renderWidgetMode() {
+        if (!::widgetValue.isInitialized) return
+        widgetValue.text = "${widgetModeLabel(widgetStore.mode())} \u203A"
+    }
+
+    private fun widgetModeLabel(mode: LyricsWidgetMode): String = when (mode) {
+        LyricsWidgetMode.OFF -> "Off"
+        LyricsWidgetMode.GLANCE -> "Glance"
+        LyricsWidgetMode.KARAOKE -> "Karaoke"
+    }
+
+    private fun applyWidgetMode(mode: LyricsWidgetMode) {
+        widgetStore.setMode(mode)
+        LyricsRuntimeGraph.onWidgetModeChanged?.invoke(mode)
+        renderWidgetMode()
+    }
+
+    private fun showWidgetModeDialog() {
+        val dialog = Dialog(this)
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = NexusUi.bordered(this@LyricsSettingsActivity, NexusUi.PANEL, NexusUi.LINE2, 16)
+            setPadding(
+                NexusUi.dp(this@LyricsSettingsActivity, 18),
+                NexusUi.dp(this@LyricsSettingsActivity, 18),
+                NexusUi.dp(this@LyricsSettingsActivity, 18),
+                NexusUi.dp(this@LyricsSettingsActivity, 14),
+            )
+            addView(NexusUi.cardTitle(this@LyricsSettingsActivity, "Home widget"))
+            addView(BusTheme.gap(this@LyricsSettingsActivity, 6))
+            addView(
+                NexusUi.cardBody(
+                    this@LyricsSettingsActivity,
+                    "Glance never touches the display. Karaoke holds it on while a track plays. The hub trigger needs Nexus notification access.",
+                ),
+            )
+            addView(BusTheme.gap(this@LyricsSettingsActivity, 14))
+            listOf(
+                LyricsWidgetMode.OFF to "Off",
+                LyricsWidgetMode.GLANCE to "Glance",
+                LyricsWidgetMode.KARAOKE to "Karaoke",
+            ).forEach { (mode, label) ->
+                addView(
+                    NexusUi.pillButton(this@LyricsSettingsActivity, label).apply {
+                        setOnClickListener {
+                            applyWidgetMode(mode)
+                            dialog.dismiss()
+                        }
+                    },
+                    NexusUi.block(),
+                )
+                addView(BusTheme.gap(this@LyricsSettingsActivity, 8))
+            }
+            addView(
+                NexusUi.textButton(this@LyricsSettingsActivity, "Notification access").apply {
+                    setOnClickListener {
+                        startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                    }
+                },
+                NexusUi.block(),
+            )
+            addView(BusTheme.gap(this@LyricsSettingsActivity, 8))
+            addView(
+                LinearLayout(this@LyricsSettingsActivity).apply {
+                    gravity = Gravity.END
+                    addView(
+                        NexusUi.textButton(this@LyricsSettingsActivity, "Cancel").apply {
+                            setOnClickListener { dialog.dismiss() }
+                        },
+                    )
+                },
+                NexusUi.block(),
+            )
+        }
+        dialog.setContentView(panel)
+        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        dialog.show()
+        dialog.window?.setLayout(
+            (resources.displayMetrics.widthPixels * 0.9f).toInt(),
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+        )
+    }
 
     private fun valueText(label: String, color: Int = NexusUi.INK2): TextView =
         NexusUi.metaLabel(this, "$label \u203A", color).apply {

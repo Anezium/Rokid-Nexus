@@ -14,11 +14,13 @@ import com.anezium.rokidbus.lyrics.lyrics.SpotifyLyricsProvider
 import com.anezium.rokidbus.lyrics.media.MediaSessionMonitor
 import com.anezium.rokidbus.lyrics.media.MediaNotificationListenerService
 import com.anezium.rokidbus.lyrics.settings.LyricsProviderSettingsStore
+import com.anezium.rokidbus.lyrics.settings.LyricsWidgetMode
 
 object LyricsRuntimeGraph {
     val stateStore = LyricsPhoneStateStore()
 
     @Volatile private var initialized = false
+    @Volatile var onWidgetModeChanged: ((LyricsWidgetMode) -> Unit)? = null
     lateinit var lyricsRuntimeEngine: LyricsRuntimeEngine
         private set
     lateinit var mediaSessionMonitor: MediaSessionMonitor

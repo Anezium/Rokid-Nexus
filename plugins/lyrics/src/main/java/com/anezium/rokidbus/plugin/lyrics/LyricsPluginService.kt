@@ -2,6 +2,7 @@ package com.anezium.rokidbus.plugin.lyrics
 
 import com.anezium.rokidbus.client.PluginRegistrationResult
 import com.anezium.rokidbus.client.plugin.NexusCard
+import com.anezium.rokidbus.client.plugin.NexusLyricsWidget
 import com.anezium.rokidbus.client.plugin.NexusPlaybackAnchor
 import com.anezium.rokidbus.client.plugin.NexusPluginService
 import com.anezium.rokidbus.client.plugin.NexusSurfaceSession
@@ -9,11 +10,13 @@ import com.anezium.rokidbus.client.plugin.NexusTimedLines
 import com.anezium.rokidbus.lyrics.LyricsRuntime
 import com.anezium.rokidbus.lyrics.LyricsRuntimeGraph
 import com.anezium.rokidbus.lyrics.LyricsRuntimeHost
+import com.anezium.rokidbus.lyrics.settings.LyricsWidgetSettingsStore
+import com.anezium.rokidbus.shared.BusPaths
 import com.anezium.rokidbus.shared.plugin.NexusInputEvent
 
 class LyricsPluginService : NexusPluginService() {
     private var surface: NexusSurfaceSession? = null
-    private val runtime by lazy { LyricsRuntime(runtimeHost) }
+    private val runtime: LyricsRuntime by lazy { LyricsRuntime(runtimeHost) }
 
     private val runtimeHost = object : LyricsRuntimeHost {
         override fun sendCard(card: NexusCard, show: Boolean) {
@@ -33,20 +36,36 @@ class LyricsPluginService : NexusPluginService() {
         override fun hideSurface() {
             surface?.hide()
         }
+
+        override fun showWidget(widget: NexusLyricsWidget) {
+            nexusClient?.showWidget(widget)
+        }
+
+        override fun updateWidgetAnchor(contentKey: String, anchor: NexusPlaybackAnchor) {
+            nexusClient?.updateWidgetAnchor(contentKey, anchor)
+        }
+
+        override fun hideWidget() {
+            nexusClient?.hideWidget()
+        }
     }
 
     override fun onCreate() {
         super.onCreate()
         runtime.register()
+        LyricsRuntimeGraph.onWidgetModeChanged = { runtime.setWidgetMode(it) }
     }
 
     override fun onNexusOpen() {
         surfaceSession()
+        runtime.setWidgetMode(LyricsWidgetSettingsStore(this).mode())
+        runtime.setBackgroundOpen(currentOpenType == BusPaths.PLUGIN_OPEN_TYPE_MEDIA_TRIGGER)
         LyricsRuntimeGraph.start(applicationContext)
         runtime.open()
     }
 
     override fun onNexusClose() {
+        runtime.setBackgroundOpen(false)
         runtime.close()
         LyricsRuntimeGraph.stop()
         surface = null
@@ -67,6 +86,7 @@ class LyricsPluginService : NexusPluginService() {
     }
 
     override fun onDestroy() {
+        LyricsRuntimeGraph.onWidgetModeChanged = null
         runtime.unregister()
         LyricsRuntimeGraph.stop()
         surface = null

@@ -73,6 +73,9 @@
             <meta-data
                 android:name="com.anezium.rokidbus.plugin.LAUNCHABLE"
                 android:value="true" />
+            <meta-data
+                android:name="com.anezium.rokidbus.plugin.MEDIA_TRIGGER"
+                android:value="true" />
         </service>
     </application>
 </manifest>

@@ -453,6 +453,72 @@ Stable pin errors returned on `/error` are:
   returned merely because the link is down — a show sent while the glasses are
   asleep is accepted and delivered on the next announce.
 
+## Widget protocol v1
+
+The ambient lyrics widget is a separate overlay, not part of the active
+`/surface/*` lifecycle. A plugin sends `/widget/show` with the full timed-line
+script and a playback anchor, `/widget/update` with an anchor-only patch for
+seek, drift, or pause, and `/widget/hide` to clear it. Widget paths reuse the
+existing `surfaces` grant; there is no widget descriptor capability and the
+plugin API version remains 3.
+
+The widget never counts as the foreground surface: it does not trigger or block
+on `SURFACE_BUSY`, and hiding it is not a plugin self-close. The glasses advance
+the current and next line locally from the last accepted anchor; a plugin must
+not stream one message per lyric line.
+
+The plugin sends local `surfaceId` `widget`. The phone hub injects ownership and
+the monotonic wire `seq` the same way it does for a pin, without decoding the
+lyric content:
+
+```json
+{
+  "surfaceId": "lyrics:widget",
+  "ownerPluginId": "lyrics",
+  "seq": 4,
+  "kind": "widget",
+  "contentKey": "5d94a53f3a8e6d1b",
+  "lines": [
+    { "timeMs": 0, "text": "first line" },
+    { "timeMs": 1840, "text": "second line" }
+  ],
+  "anchor": {
+    "positionMs": 1840,
+    "playing": true,
+    "sentAtElapsedRealtime": 123456789
+  },
+  "holdDisplay": true
+}
+```
+
+`contentKey` is required, non-blank, and at most 128 characters. `lines` is
+required on show, 1 through 2 000 entries, each with a non-negative `timeMs` and
+`text` of at most 240 characters. `anchor.positionMs` and
+`anchor.sentAtElapsedRealtime` are non-negative; `playing` is a boolean.
+`holdDisplay` is optional and omitted when false: true means Karaoke mode, so
+the glasses may hold the display while the widget is visible and playing.
+Glance mode sends the same payload without `holdDisplay` and must never wake or
+hold the display. An update omits `lines` and carries only `kind`, `contentKey`,
+and `anchor`.
+
+An older glasses hub that never announced widget v1 must not crash on these
+paths; the phone hub gates sending on the glasses `WIDGET_SURFACE` capability
+bit, the same way newer surface features are gated. Unknown paths on a still
+older hub are ignored.
+
+Hub media trigger: a plugin that wants the phone hub to open it when media
+playback starts declares `com.anezium.rokidbus.plugin.MEDIA_TRIGGER` as `true`
+in its service meta-data. The hub reads that token from the installed APK; the
+plugin stays dormant until the hub delivers `PLUGIN_OPEN` with type
+`media_trigger`. After 60 s with no playing session the hub sends
+`PLUGIN_CLOSE`, unless the plugin currently owns a visible foreground surface.
+
+Stable widget errors returned on `/error` are:
+
+- `INVALID_WIDGET`: field shape, `contentKey`, line caps, or anchor validation
+  failed.
+- `CAPABILITY_NOT_AVAILABLE`: widget v1 was never announced by these glasses.
+
 Timed-line anchor:
 
 ```json

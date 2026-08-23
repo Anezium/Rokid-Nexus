@@ -11,7 +11,7 @@ enum class LyricsWidgetMode(val wireValue: String) {
     ;
 
     companion object {
-        const val DEFAULT = KARAOKE
+        val DEFAULT = KARAOKE
 
         fun fromWire(value: String?): LyricsWidgetMode =
             entries.firstOrNull { it.wireValue.equals(value, ignoreCase = true) } ?: DEFAULT

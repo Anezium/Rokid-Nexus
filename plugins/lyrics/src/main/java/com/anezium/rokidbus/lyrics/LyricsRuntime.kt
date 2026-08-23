@@ -57,7 +57,13 @@ internal class LyricsRuntime(
     }
 
     fun setBackgroundOpen(background: Boolean) {
+        val wasBackground = backgroundOpen
         backgroundOpen = background
+        if (!active) return
+        if (wasBackground && !background) {
+            pushState(LyricsRuntimeGraph.stateStore.current(), force = true)
+        }
+        handleWidgetState()
     }
 
     fun setFullScreenVisible(visible: Boolean) {
@@ -77,6 +83,7 @@ internal class LyricsRuntime(
     fun open() {
         active = true
         pushState(LyricsRuntimeGraph.stateStore.current(), force = true)
+        handleWidgetState()
     }
 
     fun close() {
@@ -84,7 +91,9 @@ internal class LyricsRuntime(
         active = false
         lastSent = null
         widgetLastContentKey = null
-        widgetDriver.hideForTest()
+        fullScreenVisible = false
+        backgroundOpen = false
+        widgetDriver.reset()
         host.hideSurface()
         host.hideWidget()
     }
@@ -122,8 +131,8 @@ internal class LyricsRuntime(
 
     private fun handleState(state: LyricsPhoneViewState) {
         if (active) {
-            handleWidgetState(state.lyrics)
             pushState(state, force = false)
+            handleWidgetState(state.lyrics)
         }
     }
 
@@ -133,18 +142,19 @@ internal class LyricsRuntime(
      */
     private fun handleWidgetState(snapshot: LyricsSnapshot? = LyricsRuntimeGraph.stateStore.current().lyrics) {
         if (!active) return
-        // The full-screen lyrics surface supersedes the widget; and in background mode the
-        // widget is the only surface a trigger-opened instance shows.
-        val visible = !backgroundOpen && fullScreenVisible
         val decision = widgetDriver.decide(
             mode = widgetMode,
-            fullScreenVisible = visible,
+            fullScreenVisible = fullScreenVisible,
             snapshot = snapshot,
         )
-        if (decision.show) showWidget(snapshot) else if (decision.hide) host.hideWidget()
+        if (decision.show && snapshot != null) {
+            showWidget(snapshot)
+        } else if (decision.hide) {
+            host.hideWidget()
+        }
     }
 
-private fun showWidget(snapshot: LyricsSnapshot) {
+    private fun showWidget(snapshot: LyricsSnapshot) {
         val lyrics = snapshot
         if (!lyrics.synced || lyrics.lines.isEmpty()) return
         val now = SystemClock.elapsedRealtime()
@@ -175,6 +185,7 @@ private fun showWidget(snapshot: LyricsSnapshot) {
         lyrics.sessionState == LyricsSessionState.PLAYING
 
     private fun pushState(state: LyricsPhoneViewState, force: Boolean) {
+        if (backgroundOpen) return
         val lyrics = state.lyrics
         val now = SystemClock.elapsedRealtime()
         val contentKey = contentKey(lyrics, state.deviceStatus.statusLabel)
@@ -203,6 +214,9 @@ private fun showWidget(snapshot: LyricsSnapshot) {
             }
         } else {
             host.sendCard(card(lyrics, state.deviceStatus.statusLabel, contentKey), show)
+        }
+        if (show) {
+            fullScreenVisible = true
         }
         lastSent = SentSurface(
             contentKey = contentKey,
