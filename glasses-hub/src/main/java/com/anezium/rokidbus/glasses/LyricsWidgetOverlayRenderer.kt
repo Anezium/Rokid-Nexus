@@ -4,6 +4,7 @@ import android.accessibilityservice.AccessibilityService
 import android.content.Context
 import android.graphics.PixelFormat
 import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -13,27 +14,33 @@ import android.view.WindowManager
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.anezium.rokidbus.client.ui.BusTheme
-import com.anezium.rokidbus.shared.WidgetAnchor
 import com.anezium.rokidbus.shared.WidgetTimedLine
 import kotlin.math.roundToInt
 
 /**
- * The ambient lyrics widget: two lines — current lyric prominent, next dimmed — drawn over the
- * ROM launcher's own home row. It is an overlay like a pin but ambient: it never takes the
- * foreground-surface slot, never wakes or holds the display by itself, and is hidden whenever a
- * full-screen surface or the launcher overlay is up (the same visibility gating
- * [StatusBadgeOverlayRenderer] uses for foreign fullscreen windows is applied here through the
- * hide gate).
+ * The ambient lyrics widget: a bordered card at the top of the HUD — current lyric
+ * prominent and allowed to wrap to two lines, next lyric dimmed under it. It is an
+ * overlay like a pin but ambient: it never takes the foreground-surface slot, never
+ * wakes or holds the display by itself, and is hidden whenever a full-screen surface
+ * or the launcher overlay is up (the same visibility gating [StatusBadgeOverlayRenderer]
+ * uses for foreign fullscreen windows is applied here through the hide gate).
  *
- * Geometry: the chip is at most 60% of the 480 px screen, horizontally centered, sitting above
- * the ROM home row (calibrated row centre 364 px via [HudTopInset]).
+ * Geometry: top-centered card anchored at the notice band's own top offset
+ * ([HudBandGeometry.topPx]) so a notice that fires simply passes in front of it; the
+ * card is at most 76 % of the 480 px frame wide and grows downward into empty screen,
+ * far away from the ROM home row and status band (y 353-375).
  */
 internal object LyricsWidgetOverlayRenderer {
 
-    /** Max width as a fraction of screen width (60% of the 480 px frame). */
-    private const val MAX_WIDTH_FRACTION = 0.60f
-    private const val CURRENT_LINE_SP = 15f
+    /** Max card width as a fraction of the 480 px frame. */
+    private const val MAX_WIDTH_FRACTION = 0.76f
+    private const val CURRENT_LINE_SP = 16f
     private const val NEXT_LINE_SP = 11.5f
+    private const val NEXT_LINE_ALPHA = 0.55f
+    private const val CARD_CORNER_DP = 7
+    private const val CARD_PADDING_H_DP = 14
+    private const val CARD_PADDING_V_DP = 9
+    private const val LINE_GAP_DP = 3
 
     private val main = Handler(Looper.getMainLooper())
 
@@ -152,13 +159,9 @@ internal object LyricsWidgetOverlayRenderer {
         val currentRoot = root ?: WidgetView(activeService)
         val maxWidthPx = (metrics.widthPixels * MAX_WIDTH_FRACTION).roundToInt()
         currentRoot.applyMaxWidth(maxWidthPx)
-        currentRoot.render(current, next, metrics.density)
-        currentRoot.measure(
-            View.MeasureSpec.makeMeasureSpec(maxWidthPx, View.MeasureSpec.AT_MOST),
-            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
-        )
+        currentRoot.render(current, next)
         val layout = params ?: baseParams(activeService)
-        applyGeometry(layout, activeService, currentRoot.measuredHeight)
+        applyGeometry(layout, activeService)
         if (isNewRoot) {
             if (runCatching { manager.addView(currentRoot, layout) }.isFailure) return
             root = currentRoot
@@ -174,7 +177,7 @@ internal object LyricsWidgetOverlayRenderer {
         val currentRoot = root
         if (currentRoot != null) {
             runCatching { windowManager?.removeView(currentRoot) }
-            currentRoot.render(null, null, 1f)
+            currentRoot.render(null, null)
         }
         root = null
         params = null
@@ -185,7 +188,7 @@ internal object LyricsWidgetOverlayRenderer {
         val activeService = service ?: return
         val currentRoot = root ?: return
         val currentParams = params ?: return
-        applyGeometry(currentParams, activeService, currentRoot.measuredHeight)
+        applyGeometry(currentParams, activeService)
         runCatching { windowManager?.updateViewLayout(currentRoot, currentParams) }
     }
 
@@ -205,25 +208,42 @@ internal object LyricsWidgetOverlayRenderer {
     private fun applyGeometry(
         layout: WindowManager.LayoutParams,
         activeService: AccessibilityService,
-        measuredHeightPx: Int,
     ) {
         layout.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-        // The ROM status band begins at y=353. Keep the measured one- or two-line view's bottom
-        // five pixels above it; a configured HudTopInset raises the widget farther from the band.
-        layout.y = lyricsWidgetTopY(
-            measuredHeightPx = measuredHeightPx,
-            hudTopInsetPx = BusTheme.dp(activeService, hudTopInsetDp),
-        )
+        // Same top anchor as the notice band: a notice that fires passes in front of
+        // the card instead of stacking somewhere else. The card grows DOWNWARD into
+        // empty screen, so a 1 -> 2 line wrap never moves the card's top edge.
+        layout.y = HudBandGeometry.topPx(activeService, hudTopInsetDp)
         layout.x = 0
     }
 
     private class WidgetView(context: Context) : LinearLayout(context) {
-        private val currentLine = line(CURRENT_LINE_SP, bold = true)
-        private val nextLine = line(NEXT_LINE_SP, bold = false)
+        private val currentLine = line(CURRENT_LINE_SP, bold = true).apply {
+            maxLines = 2
+        }
+        private val nextLine = line(NEXT_LINE_SP, bold = false).apply {
+            isSingleLine = true
+            maxLines = 1
+            alpha = NEXT_LINE_ALPHA
+        }
 
         init {
             orientation = VERTICAL
-            setBackgroundColor(BusTheme.glassesBg)
+            gravity = Gravity.CENTER_HORIZONTAL
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                // Pure black fill reads as transparent on the additive optic; the card
+                // is its dim phosphor outline, matching the ROM's own pill styling.
+                setColor(BusTheme.glassesBg)
+                setStroke(BusTheme.dp(context, 1), BusTheme.dim)
+                cornerRadius = BusTheme.dp(context, CARD_CORNER_DP).toFloat()
+            }
+            setPadding(
+                BusTheme.dp(context, CARD_PADDING_H_DP),
+                BusTheme.dp(context, CARD_PADDING_V_DP),
+                BusTheme.dp(context, CARD_PADDING_H_DP),
+                BusTheme.dp(context, CARD_PADDING_V_DP),
+            )
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
             addView(
                 currentLine,
@@ -231,16 +251,20 @@ internal object LyricsWidgetOverlayRenderer {
             )
             addView(
                 nextLine,
-                LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT),
+                LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply {
+                    topMargin = BusTheme.dp(context, LINE_GAP_DP)
+                },
             )
         }
 
-        fun applyMaxWidth(maxWidthPx: Int) {
-            currentLine.maxWidth = maxWidthPx
-            nextLine.maxWidth = maxWidthPx
+        fun applyMaxWidth(maxCardWidthPx: Int) {
+            val textMax = (maxCardWidthPx - 2 * BusTheme.dp(context, CARD_PADDING_H_DP))
+                .coerceAtLeast(1)
+            currentLine.maxWidth = textMax
+            nextLine.maxWidth = textMax
         }
 
-        fun render(current: WidgetTimedLine?, next: WidgetTimedLine?, density: Float) {
+        fun render(current: WidgetTimedLine?, next: WidgetTimedLine?) {
             currentLine.text = current?.text ?: ""
             nextLine.text = next?.text ?: ""
             nextLine.visibility = if (next == null) View.GONE else View.VISIBLE
@@ -251,8 +275,6 @@ internal object LyricsWidgetOverlayRenderer {
             textSize = sp
             typeface = if (bold) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
             includeFontPadding = false
-            isSingleLine = true
-            maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
             gravity = Gravity.CENTER_HORIZONTAL
         }
@@ -260,8 +282,3 @@ internal object LyricsWidgetOverlayRenderer {
 
     private const val TICK_MS = 200L
 }
-
-internal fun lyricsWidgetTopY(measuredHeightPx: Int, hudTopInsetPx: Int): Int =
-    LYRICS_WIDGET_SAFE_BOTTOM_Y_PX - measuredHeightPx.coerceAtLeast(0) - hudTopInsetPx
-
-private const val LYRICS_WIDGET_SAFE_BOTTOM_Y_PX = 348

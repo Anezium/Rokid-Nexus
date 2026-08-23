@@ -83,13 +83,16 @@ hub-initiated open reason.
   `StatusBadgeOverlayRenderer` (small persistent chip) and register in
   `HudOverlayStack` as ambient (before pins) so redraw re-assertion keeps it below
   pins/notices/activities.
-- Geometry: max width 60% of the 480 px screen, horizontally centered; vertical
-  position above the ROM home row using the `HudTopInset` mechanism (row center
-  calibrated 364 px — `glasses-hub/.../HudTopInset.kt`); current line ~15sp phosphor
-  bold, next line ~11.5sp dim, single-line each with ellipsis/shrink like existing
-  renderers. MUST hide (not overlap) when any full-screen surface or the launcher
-  overlay is up — same visibility gating StatusBadge uses for foreign fullscreen
-  windows.
+- Geometry (AMENDED by owner 2026-08-23 after seeing the first on-device render —
+  supersedes the original above-the-row placement): a bordered CARD at the TOP of
+  the HUD, horizontally centered, anchored at the notice band's top offset
+  (`HudBandGeometry.topPx`, 12 dp + HudTopInset) so a notice passes in front of it;
+  max width 76% of the 480 px screen; dim 1 dp phosphor outline, 7 dp corners,
+  black fill (transparent on the optic); current line 16sp phosphor bold and MAY
+  WRAP to two lines (ellipsis beyond), next line ~11.5sp dimmed (alpha on pure
+  phosphor, never a grey tint), single line. MUST hide (not overlap) when any
+  full-screen surface or the launcher overlay is up — same visibility gating
+  StatusBadge uses for foreign fullscreen windows.
 - HUB MEDIA TRIGGER (the always-on piece — replaces the earlier false premise that the
   plugin monitors in the background): phone-hub declares a NotificationListenerService
   component (the hub has NONE today — verified 2026-08-16) so
