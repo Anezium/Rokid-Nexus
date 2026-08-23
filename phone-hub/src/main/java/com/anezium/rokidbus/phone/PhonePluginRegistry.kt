@@ -158,6 +158,12 @@ class PhonePluginRegistry(
         return controller.adopt(principal)
     }
 
+    fun isForegroundOwner(pluginId: String): Boolean {
+        val controller = externalController
+        if (controller != null && controller.activeId() == pluginId) return true
+        return activePluginId == pluginId
+    }
+
     fun syncLauncherList() {
         val catalog = catalog()
         send(

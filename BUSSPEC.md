@@ -331,7 +331,9 @@ authored source and mutable compiler state off the glasses.
 
 Ink shares `ForegroundSurfacePathPolicy` with `/surface/show` and
 `/surface/update`. A show/update from a non-owner while another plugin owns the
-foreground returns a typed `SURFACE_BUSY` problem. A successful show replaces
+foreground returns a typed `SURFACE_BUSY` problem. A demoted or notices-only
+plugin that tries to take the foreground also receives `SURFACE_BUSY`.
+`DISPLAY_MUTED` is returned when display policy forbids painting a slot at all. A successful show replaces
 any other Ink session; the previous owner receives `closed` with reason
 `replaced`. Link loss clears compiler sessions and closes them with `link_lost`.
 
@@ -459,6 +461,7 @@ Stable pin errors returned on `/error` are:
 - `CAPABILITY_NOT_AVAILABLE`: pin v1 was never announced by these glasses. Not
   returned merely because the link is down — a show sent while the glasses are
   asleep is accepted and delivered on the next announce.
+- `DISPLAY_MUTED`: display policy forbids this plugin from painting the pin slot.
 
 Timed-line anchor:
 
@@ -820,8 +823,9 @@ refresh a body a few times a second without any plugin driving the renderer.
 - `NOTICE_RATE_LIMITED` — over the per-second budget.
 - `CAPABILITY_NOT_AVAILABLE` — notice v1 was not announced, or the glasses
   cannot be reached.
+- `DISPLAY_MUTED` — display policy forbids this plugin from painting the notice slot.
 
-That last one is a real difference from pins. **A notice is never held for a
+`CAPABILITY_NOT_AVAILABLE` is a real difference from pins. **A notice is never held for a
 link that is down.** A pin is a standing fact and is worth delivering late; a
 notice is a moment, and one delivered thirty seconds after the event is a lie
 about the present. The plugin is told and decides for itself.
@@ -1189,6 +1193,7 @@ Activity errors mirror pins and notices:
   plugin.
 - `CAPABILITY_NOT_AVAILABLE` — activity v1 was not announced or the glasses
   cannot accept the activity.
+- `DISPLAY_MUTED` — display policy forbids this plugin from painting the activity slot.
 
 ## Camera contract
 

@@ -19,6 +19,7 @@ data class NexusInkProblem(
     val sdkResult: NexusSdkResult
         get() = when (code) {
             "SURFACE_BUSY" -> NexusSdkResult.SURFACE_BUSY
+            "DISPLAY_MUTED" -> NexusSdkResult.DISPLAY_MUTED
             "CAPABILITY_NOT_GRANTED" -> NexusSdkResult.CAPABILITY_NOT_GRANTED
             "CAPABILITY_NOT_AVAILABLE" -> NexusSdkResult.CAPABILITY_NOT_AVAILABLE
             else -> NexusSdkResult.INVALID_PAYLOAD

@@ -162,6 +162,12 @@ class NexusInkSurfaceSessionTest {
         assertEquals(NexusSdkResult.SURFACE_BUSY, callbacks.errors.single().second.single().sdkResult)
     }
 
+    @Test
+    fun `DISPLAY_MUTED ink problem maps to the typed sdk result`() {
+        val problem = NexusInkProblem(code = "DISPLAY_MUTED", message = "Display policy forbids this slot")
+        assertEquals(NexusSdkResult.DISPLAY_MUTED, problem.sdkResult)
+    }
+
     private fun fixture(): Triple<NexusPluginClient, FakeTransport, RecordingCallbacks> {
         val transport = FakeTransport()
         val callbacks = RecordingCallbacks()

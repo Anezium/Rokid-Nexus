@@ -3,6 +3,7 @@ package com.anezium.rokidbus.phone
 import android.content.ComponentName
 import com.anezium.rokidbus.shared.plugin.PluginCapability
 import com.anezium.rokidbus.shared.plugin.PluginDescriptor
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -103,5 +104,42 @@ class PluginGrantStoreTest {
         assertEquals(PluginGrantCodec.encode(grants), PluginGrantCodec.encode(grants.reversed()))
         assertEquals(grants.sortedBy { it.key.packageName }, PluginGrantCodec.decode(PluginGrantCodec.encode(grants)))
         assertTrue(PluginGrantCodec.decode("not-json").isEmpty())
+    }
+
+    @Test
+    fun `missing displayPolicy field defaults to normal`() {
+        val principal = principal()
+        val grant = PluginGrant(
+            principal.grantKey(),
+            principal.descriptor.requestedCapabilities,
+            setOf(PluginCapability.SURFACES),
+            PluginGrantDecision.APPROVED,
+            true,
+        )
+        val encoded = JSONObject(PluginGrantCodec.encode(listOf(grant)))
+        encoded.getJSONArray("grants").getJSONObject(0).remove("displayPolicy")
+        val decoded = PluginGrantCodec.decode(encoded.toString()).single()
+        assertEquals(PluginDisplayPolicy.NORMAL, decoded.displayPolicy)
+    }
+
+    @Test
+    fun `display policy round-trips and survives re-approval`() {
+        val storage = MemoryStorage()
+        val store = PluginGrantStore(storage)
+        val principal = principal()
+        store.approve(principal, setOf(PluginCapability.SURFACES))
+        assertEquals(PluginDisplayPolicy.NORMAL, store.displayPolicyFor(principal))
+        store.setDisplayPolicy(principal, PluginDisplayPolicy.MUTE)
+        assertEquals(PluginDisplayPolicy.MUTE, store.displayPolicyFor(principal))
+        assertEquals(
+            PluginDisplayPolicy.MUTE,
+            PluginGrantCodec.decode(storage.value!!).single().displayPolicy,
+        )
+        store.approve(principal, setOf(PluginCapability.SURFACES, PluginCapability.HTTP_PROXY))
+        assertEquals(PluginDisplayPolicy.MUTE, store.displayPolicyFor(principal))
+        assertEquals(
+            PluginGrantState.Approved(setOf(PluginCapability.SURFACES, PluginCapability.HTTP_PROXY)),
+            store.stateFor(principal),
+        )
     }
 }

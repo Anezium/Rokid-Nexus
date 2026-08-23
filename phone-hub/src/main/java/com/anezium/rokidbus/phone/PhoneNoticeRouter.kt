@@ -45,7 +45,7 @@ internal class PhoneNoticeRouter(
                 when (
                     val result = state.show(
                         pluginId,
-                        envelope.payload,
+                        DisplayArbiter.applyNoticeWake(sender.displayPolicy, envelope.payload),
                         envelope.binary,
                     )
                 ) {

@@ -34,4 +34,5 @@ internal data class PhoneHudRouteSender(
     val pluginId: String?,
     val replyBinder: IBinder?,
     val uid: Int,
+    val displayPolicy: PluginDisplayPolicy = PluginDisplayPolicy.NORMAL,
 )
