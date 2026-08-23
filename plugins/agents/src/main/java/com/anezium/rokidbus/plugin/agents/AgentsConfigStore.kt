@@ -32,12 +32,15 @@ data class AgentsConfig(
     val agentd: AgentdConfig?,
     val openClawEnabled: Boolean,
     val openClaw: OpenClawConfig?,
+    val directComputers: List<DirectComputer> = emptyList(),
 ) {
     // The agentd link (Claude Code and Codex) needs no configuration any more:
     // enabling it makes the phone listen, and the daemon on the LAN finds it
-    // by itself.
+    // by itself. A saved direct ws(s):// computer is itself the opt-in.
     val shouldMonitor: Boolean
-        get() = agentdEnabled || openClawEnabled && openClaw?.configured == true
+        get() = agentdEnabled ||
+            openClawEnabled && openClaw?.configured == true ||
+            directComputers.isNotEmpty()
 }
 
 sealed interface AgentdPairingParseResult {
@@ -134,6 +137,7 @@ class AgentsConfigStore(
             agentd = agentd,
             openClawEnabled = prefs.getBoolean(KEY_OPENCLAW_ENABLED, false),
             openClaw = openClaw,
+            directComputers = readDirectComputers(),
         )
     }
 
@@ -287,8 +291,46 @@ class AgentsConfigStore(
             .remove("$KEY_MACHINE_NAME_PREFIX$machineId")
             .remove("$KEY_MACHINE_SEEN_PREFIX$machineId")
             .remove("$KEY_PROJECTS_PREFIX$machineId")
+            .remove("$KEY_DIRECT_URL_PREFIX$machineId")
+            .remove("$KEY_DIRECT_NAME_PREFIX$machineId")
+            .remove("$KEY_DIRECT_SEEN_PREFIX$machineId")
             .apply()
     }
+
+    fun directComputers(): List<DirectComputer> = readDirectComputers()
+
+    fun saveDirectComputer(computer: DirectComputer) {
+        prefs.edit()
+            .putString("$KEY_DIRECT_URL_PREFIX${computer.computerId}", computer.url)
+            .putString("$KEY_DIRECT_NAME_PREFIX${computer.computerId}", computer.name)
+            .putLong("$KEY_DIRECT_SEEN_PREFIX${computer.computerId}", System.currentTimeMillis())
+            .apply()
+    }
+
+    fun touchDirectComputerSeen(computerId: String, now: Long = System.currentTimeMillis()) {
+        if (prefs.getString("$KEY_DIRECT_URL_PREFIX$computerId", null) == null) return
+        prefs.edit().putLong("$KEY_DIRECT_SEEN_PREFIX$computerId", now).apply()
+    }
+
+    fun listedComputers(): List<TrustedMachine> =
+        (trustedMachines() + directComputers().map { it.asListed() })
+            .sortedBy { it.name.lowercase() }
+
+    private fun readDirectComputers(): List<DirectComputer> = prefs.all.keys
+        .filter { it.startsWith(KEY_DIRECT_URL_PREFIX) }
+        .map { it.removePrefix(KEY_DIRECT_URL_PREFIX) }
+        .mapNotNull { id ->
+            val url = prefs.getString("$KEY_DIRECT_URL_PREFIX$id", null)?.takeIf { it.isNotBlank() }
+                ?: return@mapNotNull null
+            DirectComputer(
+                computerId = id,
+                name = prefs.getString("$KEY_DIRECT_NAME_PREFIX$id", null)?.takeIf { it.isNotBlank() }
+                    ?: DirectComputerUrl.redactUserinfo(url),
+                url = url,
+                lastSeenAtMs = prefs.getLong("$KEY_DIRECT_SEEN_PREFIX$id", 0L).takeIf { it > 0L },
+            )
+        }
+        .sortedBy { it.name.lowercase() }
 
     fun projects(machineId: String): List<AgentProject> {
         val raw = prefs.getString("$KEY_PROJECTS_PREFIX$machineId", null) ?: return emptyList()
@@ -379,6 +421,9 @@ class AgentsConfigStore(
         const val KEY_MACHINE_NAME_PREFIX = "machine.name."
         const val KEY_MACHINE_SEEN_PREFIX = "machine.seen."
         const val KEY_PROJECTS_PREFIX = "machine.projects."
+        const val KEY_DIRECT_URL_PREFIX = "direct.url."
+        const val KEY_DIRECT_NAME_PREFIX = "direct.name."
+        const val KEY_DIRECT_SEEN_PREFIX = "direct.seen."
         const val MAX_PROJECTS_PER_MACHINE = 30
         const val KEY_LINK_WINDOW_DEADLINE = "machine.link_window_deadline"
     }

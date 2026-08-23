@@ -76,6 +76,10 @@ data class AgentSession(
 enum class ApprovalDecision(val wireValue: String) {
     ALLOW("allow"),
     DENY("deny"),
+    ACCEPT("Accept"),
+    ACCEPT_FOR_SESSION("AcceptForSession"),
+    DECLINE("Decline"),
+    CANCEL("Cancel"),
 }
 
 /** One folder on a linked computer, offered by the daemon's fs browser. */
@@ -125,6 +129,7 @@ data class AgentApproval(
     val summary: String,
     val detail: String? = null,
     val createdAt: Long? = null,
+    val fourVerdicts: Boolean = false,
 ) {
     val sessionKey: String
         get() = "${provider.wireValue}:$sessionId"

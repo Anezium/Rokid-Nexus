@@ -126,10 +126,34 @@ class AgentSessionStore {
         nowMs: Long = System.currentTimeMillis(),
     ) {
         providers.forEach { provider ->
+            val preserved = providerSessions.getValue(provider).values.filter {
+                it.machineId?.startsWith(DirectComputer.ID_PREFIX) == true
+            }
             val replacement = linkedMapOf<String, AgentSession>()
+            preserved.forEach { replacement[it.id] = it }
             sessions.filter { it.provider == provider }.forEach { replacement[it.id] = it }
             providerSessions[provider] = replacement
         }
+        publish(nowMs)
+    }
+
+    /**
+     * Replace one computer's sessions for [provider] without touching other
+     * machines. Direct-URL Codex threads share [AgentProvider.CODEX] with the
+     * daemon link and must not wipe each other.
+     */
+    @Synchronized
+    fun replaceMachineSessions(
+        machineId: String,
+        provider: AgentProvider,
+        sessions: List<AgentSession>,
+        nowMs: Long = System.currentTimeMillis(),
+    ) {
+        val current = providerSessions.getValue(provider)
+        val replacement = linkedMapOf<String, AgentSession>()
+        current.values.filter { it.machineId != machineId }.forEach { replacement[it.id] = it }
+        sessions.filter { it.provider == provider }.forEach { replacement[it.id] = it }
+        providerSessions[provider] = replacement
         publish(nowMs)
     }
 
@@ -195,6 +219,22 @@ class AgentSessionStore {
     @Synchronized
     fun clearApprovals(providers: Set<AgentProvider>) {
         _approvals.value = _approvals.value.filterNot { it.provider in providers }
+    }
+
+    /**
+     * Drop approvals that belong to one computer. Direct-URL Codex shares
+     * [AgentProvider.CODEX] with the daemon link; a socket dying on one
+     * machine must not cancel the other's questions.
+     */
+    @Synchronized
+    fun clearApprovalsForMachine(machineId: String) {
+        val sessionIds = providerSessions.values
+            .asSequence()
+            .flatMap { it.values.asSequence() }
+            .filter { it.machineId == machineId }
+            .map { it.id }
+            .toSet()
+        _approvals.value = _approvals.value.filterNot { it.sessionId in sessionIds }
     }
 
     fun approvalFor(sessionKey: String): AgentApproval? =
