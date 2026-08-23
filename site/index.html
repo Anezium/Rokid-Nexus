@@ -272,17 +272,18 @@
         <li>
           <h3>Display arbitration</h3>
           <p>
-            The protocol has carried an <code>actionable</code> class since v1
-            and v1 still renders it as a toast. Right now the entire policy is
-            "the newest replaces the oldest, no queue" — which holds exactly
-            until two chatty plugins are installed at once.
+            Right now the entire foreground policy is "one owner, newest notice
+            wins, no queue" — which holds exactly until two chatty plugins are
+            installed at once. The five tiers <em>are</em> the class: a notice
+            is the interruption, a pin or ambient widget is the silent fact, a
+            surface is the engaged case.
           </p>
           <p class="road__tech">
-            What it needs: an arbiter that ranks a request against what is
-            already on the display, plus surface ownership epochs so a late
-            frame from a superseded owner cannot repaint someone else's surface.
-            The per-plugin mute and demote switches in the phone hub are the
-            user-facing half, and they already exist.
+            What it needs: surface ownership epochs so a late frame cannot
+            repaint a superseded owner; mute, demote, and notices-only as
+            display policy on each grant — those switches do not exist yet;
+            and the lyrics widget under the same arbiter instead of bypassing
+            it.
           </p>
         </li>
         <li>
@@ -296,8 +297,8 @@
             The remaining slice is a held lease with partial results streaming
             to the HUD, and a caption presentation that survives the surface
             underneath it changing. Live captions, translation-in-your-ear, and
-            any voice assistant are all blocked behind this one — which is why
-            it is the only other thing being written.
+            any voice assistant that stays listening are all blocked behind
+            this one.
           </p>
         </li>
       </ul>
@@ -310,6 +311,28 @@
         <p>Committed, not started. In this order.</p>
       </div>
       <ul class="road__items">
+        <li>
+          <h3>A navigation plugin</h3>
+          <p>
+            Google Maps and Citymapper already emit turn-by-turn as
+            notifications. The plugin reads those and keeps the route as an
+            activity, with notices for the moments that matter.
+          </p>
+          <p class="road__tech">
+            A platform <code>nav</code> kind — maneuver glyph, distance,
+            street, ETA — comes after those payloads have proven which fields
+            are stable, not before.
+          </p>
+        </li>
+        <li>
+          <h3>Skills, and a keyboard for Assistant</h3>
+          <p>
+            A hub-mediated registry so Assistant can pause music or ask Transit
+            without binding another plugin or reimplementing it. Plus a
+            phone-typed ask, for the places where talking to your glasses is
+            not an option.
+          </p>
+        </li>
         <li>
           <h3>Native apps in the Nexus menu</h3>
           <p>
@@ -325,21 +348,20 @@
           </p>
         </li>
         <li>
-          <h3>A <code>nav</code> surface kind</h3>
-          <p>
-            Turn-by-turn deserves a real surface — a maneuver glyph, the
-            distance, the street, the ETA, all drawn by the platform — instead
-            of a navigation app degrading into a text card, which is what
-            happens today.
-          </p>
-        </li>
-        <li>
           <h3>Maven Central</h3>
           <p>
             JitPack builds the SDK from tags and is fine for early adopters, but
             it is not something a serious app should depend on. Central goes out
-            once the AIDL surface is stable enough that a published coordinate
-            is a promise rather than a snapshot.
+            once the AIDL surface is a promise rather than a snapshot.
+          </p>
+        </li>
+        <li>
+          <h3>A control-plane acknowledgement</h3>
+          <p>
+            MediaSync already acks photo chunks. Glasses→phone CXR still
+            reports success for frames the third-party client never sees, which
+            is why outbound traffic prefers SPP. Another flip of running order
+            is not the fix.
           </p>
         </li>
       </ul>
@@ -624,7 +646,7 @@
       </div>
       <ul class="road__items road__items--compact">
         <li><h3>Relay</h3><p>ordinary apps, not just messengers · an app picker for what may reach the eye</p></li>
-        <li><h3>Assistant</h3><p>more tools that act — music, Transit · a keyboard mode — the request typed, not spoken</p></li>
+        <li><h3>Assistant</h3><p>music and Transit through hub skills, not by becoming those plugins · a keyboard mode — the request typed, not spoken</p></li>
         <li><h3>Feeds</h3><p>posting and replying by voice · more sources · video in the timeline</p></li>
         <li><h3>Media Deck</h3><p>voice control — “next” and “pause” said instead of tapped</p></li>
         <li><h3>Photos Sync</h3><p>sync rules · freeing glasses storage once a shot is safely across</p></li>
@@ -640,27 +662,19 @@
         <li>
           <h3>Navigation</h3>
           <p>
-            Google Maps and Citymapper already emit turn-by-turn as
-            notifications. The plugin reads those, keeps maneuver, distance and
-            ETA pinned with notices for the moments that matter, and graduates
-            to the <code>nav</code> surface when the platform ships it.
+            Same row as the platform list: activity + notices first, a
+            <code>nav</code> kind later, once the notification payloads have
+            proven which fields are stable.
           </p>
         </li>
         <li>
-          <h3>T3code, as an alpha</h3>
+          <h3>Agents, as a private alpha</h3>
           <p>
-            Drive T3Code from the glasses: start a thread, follow its agents
-            while they work. An alpha on purpose — it exists to rehearse the
-            next one.
-          </p>
-        </li>
-        <li>
-          <h3>Terminal / Agent</h3>
-          <p>
-            The real product. A coding agent in the wearer's eye: its questions
-            and permission prompts arrive as notices and are answered by voice,
-            its progress rides a pin, and the next task is dictated instead of
-            typed.
+            Claude Code, Codex, and OpenClaw sessions on the HUD: permission
+            prompts as notices, progress on a pin, the next task dictated.
+            Already in the tree. Not Store-listed until the monitor service
+            has an honest background rule and the pairing crypto is not
+            hand-rolled.
           </p>
         </li>
       </ul>
@@ -674,6 +688,7 @@
       <ul class="road__items road__items--compact">
         <li><h3>A visual assistant, FoodFacts</h3><p>camera capability, shipped</p></li>
         <li><h3>Sport HUD</h3><p>activity tier + a small protocol addition · possibly fed by the R08 ring</p></li>
+        <li><h3>T3code</h3><p>a consumer of Agents, not a plugin of its own</p></li>
       </ul>
     </div>
 

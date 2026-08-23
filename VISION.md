@@ -1,6 +1,6 @@
 # Rokid Nexus — Product Vision
 
-Status: 2026-08-10 — sections 1–4 are the founding vision (consolidated
+Status: 2026-08-23 — sections 1–4 are the founding vision (consolidated
 2026-07-07 from the QUESTIONS.md working session) and still govern every design
 decision. Sections 5–6 track where the platform stands and what remains. Wire
 and protocol details live in BUSSPEC.md.
@@ -39,12 +39,14 @@ Everything the user sees on the HUD belongs to one of four layers:
 
 Interruption rules:
 
-- Plugins declare a class per message: `ambient`, `toast`, or `actionable`. The
-  vocabulary is in the protocol **now** so third-party plugins code against the final
-  shape; v1 renders `actionable` as `toast` until display arbitration ships.
-- The hub enforces per-plugin rate limits, and the phone hub offers a per-plugin user
-  override (mute, demote).
-- Two toasts colliding: the newest replaces the oldest. No queue in v1.
+- The five shipped tiers *are* the class. A notice is the interruption, a pin
+  or ambient widget is the silent fact, a surface is the engaged case. Do not
+  add a per-message `ambient | toast | actionable` field; that vocabulary
+  predates pin, activity, and notice.
+- The hub enforces per-plugin rate limits. Mute, demote, and notices-only are
+  display policy on the grant (plan 021); they are not capabilities and they
+  are not shipped yet.
+- Two notices colliding: the newest replaces the oldest. No queue in v1.
 - Back on any Nexus surface hides it and hands the display back to whatever is beneath
   — it never leaks to the native app below.
 
@@ -140,21 +142,23 @@ touch the glasses again.
 
 ## 6. What remains
 
-Ordered by the problem it solves, not by ambition:
+Ordered by the problem it solves, not by ambition. Execution: [plans/021-daily-driver.md](plans/021-daily-driver.md).
 
-1. **Display arbitration** — the toast layer and a real `actionable` class
-   (§2's vocabulary is in the protocol; v1 still renders `actionable` as
-   `toast`). This is the first problem two chatty plugins will create.
-2. **Native-apps section in the glasses menu** — phase 2 of §3. The trusted
+1. **Display arbitration** — ownership epochs, mute/demote/notices-only, the
+   lyrics widget under the same policy. This is the first problem two chatty
+   plugins will create.
+2. **Continuous speech** — short STT takes and real consumers ship; held leases,
+   long-running partials, and a caption presentation still do not.
+3. **Navigation plugin** — activity + notices from Maps/Citymapper
+   notifications. The `nav` surface kind comes after those payloads exist.
+4. **Skills and Assistant keyboard** — hub-mediated composition so Assistant
+   can act without becoming the other plugins; typed ask on the phone.
+5. **Relay breadth** — notification listener + direct reply ship for supported
+   messengers; ordinary-app selection and broader extraction remain.
+6. **Native-apps section in the glasses menu** — phase 2 of §3. The trusted
    phone screen already lists and launches installed apps; this remaining step
    puts the same catalogue under the triple-tap launcher.
-3. **Continuous speech** — short STT takes and real consumers ship; held leases,
-   long-running partials, and a caption presentation still do not.
-4. **Relay breadth** — notification listener + direct reply ship for supported
-   messengers; ordinary-app selection and broader extraction remain.
-5. **`nav` surface kind** — real navigation HUD (GMaps degrades to a text card
-   until then).
-6. **Maven Central** — once the AIDL surface is stable; JitPack carries the
+7. **Maven Central** — once the AIDL surface is stable; JitPack carries the
    SDK until then.
 
 Future app families, by capability tier: live captions/translation and voice
