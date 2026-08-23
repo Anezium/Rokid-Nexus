@@ -42,6 +42,9 @@ class ComputerActivity : Activity() {
         uiScope.launch {
             AgentsRuntime.store.linkMachine.collectLatest { renderStatus(it) }
         }
+        uiScope.launch {
+            AgentsRuntime.store.connections.collectLatest { renderStatus(AgentsRuntime.store.linkMachine.value) }
+        }
     }
 
     override fun onResume() {
@@ -116,23 +119,48 @@ class ComputerActivity : Activity() {
     private fun projectsCard() = NexusUi.card(this).apply {
         addView(projectsList, NexusUi.block())
         addView(NexusUi.divider(this@ComputerActivity))
-        addView(
-            NexusUi.rowTitle(this@ComputerActivity, "+ Add a project").apply {
-                setTextColor(NexusUi.GREEN)
-                setPadding(0, NexusUi.dp(this@ComputerActivity, 10), 0, NexusUi.dp(this@ComputerActivity, 4))
-                setOnClickListener {
-                    startActivity(
-                        Intent(this@ComputerActivity, ProjectPickerActivity::class.java)
-                            .putExtra(EXTRA_MACHINE_ID, machineId)
-                            .putExtra(EXTRA_MACHINE_NAME, machineName),
-                    )
-                }
-            },
-            NexusUi.block(),
-        )
+        if (!machineId.startsWith(DirectComputer.ID_PREFIX)) {
+            addView(
+                NexusUi.rowTitle(this@ComputerActivity, "+ Add a project").apply {
+                    setTextColor(NexusUi.GREEN)
+                    setPadding(0, NexusUi.dp(this@ComputerActivity, 10), 0, NexusUi.dp(this@ComputerActivity, 4))
+                    setOnClickListener {
+                        startActivity(
+                            Intent(this@ComputerActivity, ProjectPickerActivity::class.java)
+                                .putExtra(EXTRA_MACHINE_ID, machineId)
+                                .putExtra(EXTRA_MACHINE_NAME, machineName),
+                        )
+                    }
+                },
+                NexusUi.block(),
+            )
+        }
     }
 
     private fun renderStatus(link: LinkMachine?) {
+        if (machineId.startsWith(DirectComputer.ID_PREFIX)) {
+            val state = AgentsRuntime.store.connections.value[AgentProvider.CODEX]
+            when (state?.state) {
+                ConnectionState.CONNECTED -> {
+                    statusLine.text = "CONNECTED · APP-SERVER"
+                    NexusUi.setDotColor(statusDot, NexusUi.GREEN)
+                }
+                ConnectionState.CONNECTING -> {
+                    statusLine.text = "CONNECTING"
+                    NexusUi.setDotColor(statusDot, NexusUi.AMBER)
+                }
+                ConnectionState.AUTH_FAILED -> {
+                    statusLine.text = state.displayText("REJECTED")
+                    NexusUi.setDotColor(statusDot, NexusUi.DANGER)
+                }
+                else -> {
+                    val machine = configStore.listedComputers().firstOrNull { it.machineId == machineId }
+                    statusLine.text = lastSeenText(machine?.lastSeenAtMs).uppercase()
+                    NexusUi.setDotColor(statusDot, NexusUi.INK3)
+                }
+            }
+            return
+        }
         val connected = link?.machineId == machineId
         if (connected) {
             statusLine.text =
@@ -150,7 +178,14 @@ class ComputerActivity : Activity() {
         val projects = configStore.projects(machineId)
         if (projects.isEmpty()) {
             projectsList.addView(
-                NexusUi.rowSub(this, "No project anchored on this computer yet."),
+                NexusUi.rowSub(
+                    this,
+                    if (machineId.startsWith(DirectComputer.ID_PREFIX)) {
+                        "Threads come from the app-server. No project folder is required."
+                    } else {
+                        "No project anchored on this computer yet."
+                    },
+                ),
                 NexusUi.block(),
             )
             return

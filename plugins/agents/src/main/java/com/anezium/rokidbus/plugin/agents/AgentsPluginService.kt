@@ -5,6 +5,7 @@ import android.view.KeyEvent
 import com.anezium.rokidbus.client.plugin.NexusCard
 import com.anezium.rokidbus.client.plugin.NexusCardLine
 import com.anezium.rokidbus.client.plugin.NexusNotice
+import com.anezium.rokidbus.client.plugin.NexusPin
 import com.anezium.rokidbus.client.plugin.NexusPluginService
 import com.anezium.rokidbus.client.plugin.NexusReader
 import com.anezium.rokidbus.client.plugin.NexusReaderSegment
@@ -64,6 +65,7 @@ class AgentsPluginService : NexusPluginService() {
     private var launchIndex = 0
     private var launchNote: String? = null
     private var launchRequestId: String? = null
+    private var pinVisible = false
 
     private sealed interface Launch {
         data object Computers : Launch
@@ -86,6 +88,7 @@ class AgentsPluginService : NexusPluginService() {
                 .collectLatest {
                     if (surfaceShown) render(show = false)
                     raiseAttention()
+                    updateProgressPin()
                 }
         }
         serviceScope.launch {
@@ -143,6 +146,7 @@ class AgentsPluginService : NexusPluginService() {
         leaveConversation()
         launch = null
         launchNote = null
+        hideProgressPin()
         surface?.hide()
         surface = null
     }
@@ -179,11 +183,12 @@ class AgentsPluginService : NexusPluginService() {
 
     private fun onDecisionInput(event: NexusInputEvent) {
         when {
-            event.keyCode in BACKWARD_KEYS || event.keyCode in FORWARD_KEYS -> {
-                decisionChoice = when (decisionChoice) {
-                    ApprovalDecision.ALLOW -> ApprovalDecision.DENY
-                    ApprovalDecision.DENY -> ApprovalDecision.ALLOW
-                }
+            event.keyCode in BACKWARD_KEYS -> {
+                cycleDecision(-1)
+                render(show = false)
+            }
+            event.keyCode in FORWARD_KEYS -> {
+                cycleDecision(+1)
                 render(show = false)
             }
             event.keyCode == KeyEvent.KEYCODE_ENTER ||
@@ -194,6 +199,20 @@ class AgentsPluginService : NexusPluginService() {
                 render(show = false)
             }
         }
+    }
+
+    private fun cycleDecision(delta: Int) {
+        val options = currentVerdicts()
+        val index = options.indexOf(decisionChoice).let { if (it < 0) 0 else it }
+        val next = ((index + delta) % options.size + options.size) % options.size
+        decisionChoice = options[next]
+    }
+
+    private fun currentVerdicts(): List<ApprovalDecision> {
+        val approval = decidingRequestId?.let { id ->
+            AgentsRuntime.store.approvals.value.firstOrNull { it.requestId == id }
+        }
+        return if (approval?.fourVerdicts == true) FOUR_VERDICTS else TWO_VERDICTS
     }
 
     /** A tap on the band means "show me": open the board on the session that rang. */
@@ -209,6 +228,7 @@ class AgentsPluginService : NexusPluginService() {
     }
 
     override fun onDestroy() {
+        hideProgressPin()
         serviceScope.cancel()
         surfaceShown = false
         AgentsRuntime.hudOpen = false
@@ -316,7 +336,11 @@ class AgentsPluginService : NexusPluginService() {
 
     private fun openDecision(approval: AgentApproval) {
         decidingRequestId = approval.requestId
-        decisionChoice = ApprovalDecision.ALLOW
+        decisionChoice = if (approval.fourVerdicts) {
+            ApprovalDecision.ACCEPT
+        } else {
+            ApprovalDecision.ALLOW
+        }
         decisionOpenedAt = System.currentTimeMillis()
         render(show = false)
     }
@@ -375,9 +399,9 @@ class AgentsPluginService : NexusPluginService() {
 
     /**
      * The one screen in this product that does something rather than show
-     * something. It says what will run, in the agent's own words, and offers
-     * exactly two answers — no third path, no "always allow", nothing that turns
-     * a glance into a standing permission.
+     * something. It says what will run, in the agent's own words. Daemon
+     * approvals are Allow / Deny. Codex app-server approvals use the four
+     * wire verdicts; hosts with bypass_permissions never raise this screen.
      */
     private fun decisionCard(requestId: String): NexusCard {
         val approval = AgentsRuntime.store.approvals.value
@@ -396,8 +420,15 @@ class AgentsPluginService : NexusPluginService() {
             approval.detail
                 ?.takeIf { it.isNotBlank() && it != approval.summary }
                 ?.let { add(NexusCardLine(text = it.singleLine(238), tone = NexusRowTone.BODY)) }
-            add(choiceRow("Allow", "let it run", ApprovalDecision.ALLOW))
-            add(choiceRow("Deny", "tell the agent no", ApprovalDecision.DENY))
+            if (approval.fourVerdicts) {
+                add(choiceRow("Accept", "let it run", ApprovalDecision.ACCEPT))
+                add(choiceRow("Accept for session", "this tool, this session", ApprovalDecision.ACCEPT_FOR_SESSION))
+                add(choiceRow("Decline", "tell the agent no", ApprovalDecision.DECLINE))
+                add(choiceRow("Cancel", "drop this request", ApprovalDecision.CANCEL))
+            } else {
+                add(choiceRow("Allow", "let it run", ApprovalDecision.ALLOW))
+                add(choiceRow("Deny", "tell the agent no", ApprovalDecision.DENY))
+            }
         }
         return card(
             title = session?.displayTitle?.singleLine(110) ?: "Permission",
@@ -455,6 +486,11 @@ class AgentsPluginService : NexusPluginService() {
                 connections[AgentProvider.OPENCLAW]?.state == ConnectionState.AUTH_FAILED
             ) {
                 add(problemRow("OpenClaw auth failed", "check the token in the phone app"))
+            }
+            if (config.directComputers.isNotEmpty() &&
+                connections[AgentProvider.CODEX]?.state == ConnectionState.AUTH_FAILED
+            ) {
+                add(problemRow("Codex app-server rejected", "check the address in the phone app"))
             }
         }
 
@@ -566,12 +602,12 @@ class AgentsPluginService : NexusPluginService() {
     }
 
     private fun emptyRow(config: AgentsConfig): NexusCardLine = NexusCardLine(
-        text = if (config.agentdEnabled || config.openClawEnabled) {
+        text = if (config.agentdEnabled || config.openClawEnabled || config.directComputers.isNotEmpty()) {
             "Nothing running"
         } else {
             "Set up a provider in the phone app"
         },
-        sub = if (config.agentdEnabled || config.openClawEnabled) {
+        sub = if (config.agentdEnabled || config.openClawEnabled || config.directComputers.isNotEmpty()) {
             "sessions appear here as soon as an agent starts"
         } else {
             null
@@ -613,9 +649,21 @@ class AgentsPluginService : NexusPluginService() {
     private fun launchEnter() {
         when (val step = launch) {
             Launch.Computers -> {
-                val machines = configStore.trustedMachines()
+                val machines = configStore.listedComputers()
                 val machine = machines.getOrNull(launchIndex) ?: return
-                launch = Launch.Projects(machine.machineId, machine.name)
+                val projects = configStore.projects(machine.machineId)
+                launch = if (
+                    machine.machineId.startsWith(DirectComputer.ID_PREFIX) &&
+                    projects.isEmpty()
+                ) {
+                    Launch.Threads(
+                        machine.machineId,
+                        machine.name,
+                        AgentProject(name = machine.name, path = "/"),
+                    )
+                } else {
+                    Launch.Projects(machine.machineId, machine.name)
+                }
                 launchIndex = 0
                 launchNote = null
                 render(show = false)
@@ -631,7 +679,7 @@ class AgentsPluginService : NexusPluginService() {
                 if (launchIndex <= 0) {
                     startCodexThread(step)
                 } else {
-                    val session = projectThreads(step.project).getOrNull(launchIndex - 1) ?: return
+                    val session = projectThreads(step).getOrNull(launchIndex - 1) ?: return
                     launch = null
                     openConversation(session)
                 }
@@ -648,7 +696,15 @@ class AgentsPluginService : NexusPluginService() {
      */
     private fun startCodexThread(step: Launch.Threads) {
         if (launchRequestId != null) return
-        if (AgentsRuntime.store.linkMachine.value?.machineId != step.machineId) {
+        val direct = step.machineId.startsWith(DirectComputer.ID_PREFIX)
+        if (direct) {
+            val state = AgentsRuntime.store.connections.value[AgentProvider.CODEX]?.state
+            if (state != ConnectionState.CONNECTED) {
+                launchNote = "${step.machineName} is not connected"
+                render(show = false)
+                return
+            }
+        } else if (AgentsRuntime.store.linkMachine.value?.machineId != step.machineId) {
             launchNote = "${step.machineName} is not connected"
             render(show = false)
             return
@@ -662,6 +718,7 @@ class AgentsPluginService : NexusPluginService() {
             AgentProvider.CODEX,
             step.project.path,
             prompt = "",
+            machineId = step.machineId,
         )
         render(show = false)
         serviceScope.launch {
@@ -674,10 +731,16 @@ class AgentsPluginService : NexusPluginService() {
         }
     }
 
-    private fun projectThreads(project: AgentProject): List<AgentSession> =
+    private fun projectThreads(step: Launch.Threads): List<AgentSession> =
         AgentsRuntime.store.sessions.value.filter { session ->
-            session.provider in AgentProvider.AGENTD_PROVIDERS &&
-                cwdInProject(session.cwd, project.path)
+            if (step.machineId.startsWith(DirectComputer.ID_PREFIX)) {
+                session.provider == AgentProvider.CODEX &&
+                    session.machineId == step.machineId &&
+                    (step.project.path == "/" || cwdInProject(session.cwd, step.project.path))
+            } else {
+                session.provider in AgentProvider.AGENTD_PROVIDERS &&
+                    cwdInProject(session.cwd, step.project.path)
+            }
         }
 
     private fun launchCard(step: Launch): NexusCard = when (step) {
@@ -687,9 +750,11 @@ class AgentsPluginService : NexusPluginService() {
     }
 
     private fun computersCard(): NexusCard {
-        val machines = configStore.trustedMachines()
+        val machines = configStore.listedComputers()
         launchIndex = launchIndex.coerceIn(0, (machines.size - 1).coerceAtLeast(0))
         val link = AgentsRuntime.store.linkMachine.value
+        val codexConnected = AgentsRuntime.store.connections.value[AgentProvider.CODEX]?.state ==
+            ConnectionState.CONNECTED
         val rows = if (machines.isEmpty()) {
             listOf(
                 NexusCardLine(
@@ -700,10 +765,12 @@ class AgentsPluginService : NexusPluginService() {
             )
         } else {
             windowedRows(machines, launchIndex) { machine, selected ->
-                val connected = link?.machineId == machine.machineId
+                val direct = machine.machineId.startsWith(DirectComputer.ID_PREFIX)
+                val connected = if (direct) codexConnected else link?.machineId == machine.machineId
                 NexusCardLine(
                     text = machine.name.singleLine(120),
                     sub = when {
+                        direct && connected -> "connected · app-server"
                         connected && link?.overTailnet == true -> "connected · over Tailscale"
                         connected -> "connected · same Wi-Fi"
                         else -> lastSeenText(machine.lastSeenAtMs).lowercase()
@@ -752,7 +819,7 @@ class AgentsPluginService : NexusPluginService() {
 
     private fun threadsCard(step: Launch.Threads): NexusCard {
         val now = System.currentTimeMillis()
-        val threads = projectThreads(step.project)
+        val threads = projectThreads(step)
         launchIndex = launchIndex.coerceIn(0, threads.size)
         val rows = buildList {
             add(
@@ -941,6 +1008,34 @@ class AgentsPluginService : NexusPluginService() {
         AgentStatus.DONE -> "finished"
     }
 
+    /**
+     * A working session earns a pin so the wearer can glance without opening
+     * the board. The pin never carries transcript text.
+     */
+    private fun updateProgressPin() {
+        val client = nexusClient ?: return
+        if (!client.supportsPinSurface) return
+        val working = AgentsRuntime.store.sessions.value.filter { it.status == AgentStatus.WORKING }
+        if (working.isEmpty()) {
+            hideProgressPin()
+            return
+        }
+        val line = if (working.size == 1) {
+            "${working.single().provider.marker} working"
+        } else {
+            "${working.size} running"
+        }
+        if (client.showPin(NexusPin(title = "Agents", lines = listOf(line))) == NexusSdkResult.SENT) {
+            pinVisible = true
+        }
+    }
+
+    private fun hideProgressPin() {
+        if (!pinVisible) return
+        nexusClient?.hidePin()
+        pinVisible = false
+    }
+
     // ------------------------------------------------------------------ common
 
     private fun card(
@@ -1021,13 +1116,19 @@ class AgentsPluginService : NexusPluginService() {
         )
         private val PERMISSION_PATTERN =
             Regex("permission to use ([\\w.-]+)", RegexOption.IGNORE_CASE)
+
+        private val TWO_VERDICTS = listOf(ApprovalDecision.ALLOW, ApprovalDecision.DENY)
+        private val FOUR_VERDICTS = listOf(
+            ApprovalDecision.ACCEPT,
+            ApprovalDecision.ACCEPT_FOR_SESSION,
+            ApprovalDecision.DECLINE,
+            ApprovalDecision.CANCEL,
+        )
     }
 }
 
 private fun AgentProvider.enabledIn(config: AgentsConfig): Boolean = when (this) {
-    // Codex rides the daemon link rather than a connection of its own, so it is
-    // on exactly when the daemon is. It gets its own switch when the settings
-    // screen learns to offer a choice of harness.
-    AgentProvider.CLAUDE, AgentProvider.CODEX -> config.agentdEnabled
+    AgentProvider.CLAUDE -> config.agentdEnabled
+    AgentProvider.CODEX -> config.agentdEnabled || config.directComputers.isNotEmpty()
     AgentProvider.OPENCLAW -> config.openClawEnabled
 }

@@ -149,7 +149,7 @@ class AgentsSettingsActivity : Activity() {
     private fun renderComputers() {
         if (!::computersList.isInitialized) return
         computersList.removeAllViews()
-        val machines = configStore.trustedMachines()
+        val machines = configStore.listedComputers()
         val paired = configStore.load().agentd
         if (machines.isEmpty() && paired == null) {
             computersList.addView(
@@ -160,8 +160,17 @@ class AgentsSettingsActivity : Activity() {
         }
         machines.forEachIndexed { index, machine ->
             if (index > 0) computersList.addView(BusTheme.gap(this, 4))
-            val connected = liveLink?.machineId == machine.machineId
+            val connected = if (machine.machineId.startsWith(DirectComputer.ID_PREFIX)) {
+                AgentsRuntime.store.connections.value[AgentProvider.CODEX]?.state ==
+                    ConnectionState.CONNECTED
+            } else {
+                liveLink?.machineId == machine.machineId
+            }
             val sub = when {
+                machine.machineId.startsWith(DirectComputer.ID_PREFIX) && connected ->
+                    "Connected · Codex app-server"
+                machine.machineId.startsWith(DirectComputer.ID_PREFIX) ->
+                    lastSeenText(machine.lastSeenAtMs)
                 connected && liveLink?.overTailnet == true -> "Connected · over Tailscale"
                 connected -> "Connected · same Wi-Fi"
                 else -> lastSeenText(machine.lastSeenAtMs)
@@ -292,6 +301,7 @@ class AgentsSettingsActivity : Activity() {
         uiScope.launch {
             AgentsRuntime.store.connections.collectLatest { states ->
                 renderMonitoring(states.getValue(AgentProvider.CLAUDE))
+                renderComputers()
             }
         }
         uiScope.launch {
