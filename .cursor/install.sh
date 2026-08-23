@@ -35,7 +35,17 @@ if [ ! -d "$ANDROID_SDK_ROOT/platforms/android-36" ] || [ ! -d "$ANDROID_SDK_ROO
     rm -f "$tmp_zip"
   fi
   sdkmanager="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+  # `yes` keeps writing after sdkmanager closes its stdin and dies with SIGPIPE
+  # (exit 141); disable pipefail here and judge success by sdkmanager's own status
+  # so that harmless SIGPIPE does not abort the script.
+  set +o pipefail
   yes | "$sdkmanager" --sdk_root="$ANDROID_SDK_ROOT" --licenses >/dev/null
+  license_status=${PIPESTATUS[1]}
+  set -o pipefail
+  if [ "$license_status" -ne 0 ]; then
+    echo "error: failed to accept Android SDK licenses (sdkmanager exit $license_status)" >&2
+    exit 1
+  fi
   "$sdkmanager" --sdk_root="$ANDROID_SDK_ROOT" "${SDK_PACKAGES[@]}"
 fi
 
