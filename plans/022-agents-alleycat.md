@@ -1,6 +1,12 @@
 # Plan 022 — Agents over Alleycat
 
-Status: TODO. Direction decided 2026-08-23 (plan 021, parallel track):
+Status: IN PROGRESS. Slice 1 (Gradle + wire library, #25) and slice 2
+(direct ws:// backend, #27) are merged on this branch; slice 3 is in
+execution. The iroh-ffi license gate passed 2026-08-24: dual
+Apache-2.0/MIT, official Kotlin bindings `computer.iroh:iroh` on Maven
+Central — depending on it does not touch the GPL wall below.
+
+Direction decided 2026-08-23 (plan 021, parallel track):
 the Agents plugin drops its hand-rolled protocol (agentd + homemade
 Ed25519) and becomes a thin, original client of the Alleycat daemon —
 the thing `kittylitter` installs and that the litter mobile app already
