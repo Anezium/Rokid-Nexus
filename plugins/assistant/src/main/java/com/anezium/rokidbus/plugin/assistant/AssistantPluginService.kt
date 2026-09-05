@@ -259,7 +259,14 @@ class AssistantPluginService : NexusPluginService() {
         val trimmed = text.trim()
         if (trimmed.isEmpty()) return
         val result = runCatching { noteStore.save(text = trimmed) }.getOrNull()
-        Log.i(TAG, "typed note saved result=$result")
+        // Never log `result` itself: AssistantNoteSaveResult.Saved's generated toString()
+        // serializes the wearer's private note title and full text into logcat.
+        val status = when (result) {
+            is AssistantNoteSaveResult.Saved -> if (result.textTruncated) "saved_truncated" else "saved"
+            AssistantNoteSaveResult.Full -> "rejected_full"
+            null -> "failed"
+        }
+        Log.i(TAG, "typed note save status=$status")
     }
 
     override fun onNexusNoticeClosed(reason: NexusNoticeCloseReason) {
