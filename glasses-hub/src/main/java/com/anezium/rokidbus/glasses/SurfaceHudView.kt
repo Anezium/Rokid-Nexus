@@ -5,6 +5,7 @@ import android.graphics.Canvas
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.SystemClock
+import android.text.InputFilter
 import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.text.TextUtils
@@ -21,6 +22,7 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.anezium.rokidbus.client.ui.BusTheme
+import com.anezium.rokidbus.shared.EditableSurfaceContract
 import com.anezium.rokidbus.shared.EditableSurfaceField
 import kotlin.math.roundToInt
 
@@ -70,6 +72,11 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
         // Enter key submit directly instead of inserting a newline the way a
         // multi-line field would.
         setSingleLine(true)
+        // Without this, typing or pasting past the wire limit would let the
+        // wearer see and edit text that committedPayload() then silently cuts
+        // off on submit. Stopping input at the boundary makes the limit
+        // visible instead of losing the tail after the fact.
+        filters = arrayOf(InputFilter.LengthFilter(EditableSurfaceContract.MAX_TEXT_UTF16_LENGTH))
         setOnEditorActionListener { view, actionId, _ ->
             val isSend = actionId == EditorInfo.IME_ACTION_SEND || actionId == EditorInfo.IME_ACTION_DONE
             if (isSend) {
