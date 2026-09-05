@@ -596,6 +596,18 @@ object SurfaceController {
     }
 
     private fun displaySurface(context: Context, surface: NexusSurface, forcedPath: SurfaceDisplayPath?) {
+        // The launcher overlay dismisses itself on the keys it claims, but
+        // nothing makes it step aside for a surface arriving some other way
+        // (a plugin's own gesture, a phone-triggered show like typed notes) —
+        // seen on hardware sitting behind a closed editable card's activity,
+        // stuck open from whenever it was last shown.
+        LauncherOverlayRenderer.hide()
+        // A paused MainActivity is the one other task this app leaves lying
+        // around; Android resumes it on its own once this surface's own
+        // activity-backed task closes, with nothing asked for it (seen on
+        // hardware: the Nexus launcher screen reappearing right after a
+        // typed reply sent).
+        MainActivity.finishIfStale()
         val path = surfaceDisplayPath(surface, forcedPath ?: displayPath(context))
         if (surface.isInk) {
             if (!SurfaceOverlayRenderer.show(context, surface)) {
@@ -661,6 +673,11 @@ object SurfaceController {
     }
 
     private fun hideLocalOnMain(reason: DisplayHoldReleaseReason) {
+        // Same reasoning as the show-side call in displaySurface: once this
+        // surface's own activity-backed task is gone, Android falls back to
+        // whatever task is next in line, and a paused MainActivity is the
+        // only one this app ever leaves behind.
+        MainActivity.finishIfStale()
         active?.let { ending ->
             AssistantDisplayEpisode.accept(
                 null,

@@ -25,11 +25,16 @@ class SurfaceActivity : Activity() {
         unsubscribe = SurfaceController.observe { surface ->
             if (surface?.isInk == true) {
                 hudView.render(null)
-                if (!isFinishing) finish()
+                if (!isFinishing) finishAndRemoveTask()
                 return@observe
             }
             hudView.render(surface)
-            if (surface == null && !isFinishing) finish()
+            // finishAndRemoveTask, not finish: a plain finish reveals whatever
+            // this activity's own task happened to have underneath it (seen on
+            // hardware: the Nexus launcher, left behind from earlier
+            // navigation) instead of returning to what the wearer was actually
+            // looking at before this surface interrupted it.
+            if (surface == null && !isFinishing) finishAndRemoveTask()
         }
     }
 
