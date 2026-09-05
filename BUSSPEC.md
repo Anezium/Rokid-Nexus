@@ -145,6 +145,8 @@ Phone to glasses:
 Glasses to phone:
 
 - `/surface/input` reports key input while a surface is visible.
+- `/surface/text-committed` reports what the wearer typed or that they
+  cancelled, for a card's `editable` field. See "Editable field" below.
 - `/launcher/open` asks the phone hub to open a plugin.
 
 Every surface payload carries:
@@ -292,6 +294,57 @@ truncate all reader fields to these caps rather than rejecting or crashing the
 active HUD. Reader surfaces carry no card lines, timed lines, media, artwork, or
 image. `contentKey`, replacement, sequencing, and stale-message handling are the
 same as for `card`.
+
+### Editable field
+
+A `card` may carry an `editable` object in place of a read-only `lines` body,
+turning it into one bounded, focusable text field — the one way a plugin gets
+typed input back from the wearer, for a keyboard bonded directly to the
+glasses:
+
+```json
+{
+  "surfaceId": "relay:reply",
+  "seq": 5,
+  "kind": "card",
+  "title": "Reply",
+  "lines": [],
+  "editable": {
+    "label": "Optional label",
+    "placeholder": "Type your reply…",
+    "initialText": "Optional prefill",
+    "submitLabel": "Send"
+  }
+}
+```
+
+`label` and `placeholder` are at most 64 characters, `submitLabel` at most 24,
+and `initialText` at most 512 UTF-16 code units; all four are optional. The
+glasses hub renders this as a real focusable `EditText` — unlike a plain
+card's non-interactive body, and unlike a notice band, which is
+non-focusable and can never host one — so ordinary Android input from a
+bonded hardware keyboard reaches it directly. `show`/`update`, `seq`,
+replacement, `SURFACE_BUSY`, and BACK ownership are otherwise identical to an
+ordinary card; there is no separate capability, and this still authorizes
+under the existing `surfaces` grant.
+
+The wearer's answer comes back once, glasses to phone, on
+`/surface/text-committed`:
+
+```json
+{ "surfaceId": "relay:reply", "cancelled": false, "text": "On my way" }
+```
+
+`cancelled` is `true` when the wearer backed out (Back); `text` is present
+only when `cancelled` is `false`, and is silently clamped to 512 UTF-16 code
+units if the wearer's input ran longer. The phone injects the authenticated
+`ownerPluginId` before delivering this to the plugin, following the same
+owner-lookup-then-deliver pattern as `/notice/action` and `/ink/event`. A
+`show`/`update` that replaces the card — including one that arrives while the
+field is still open — replaces it before any pending commit for the old field
+is delivered; a plugin MUST bind a commit to the identity of whatever it
+opened the field for rather than assuming it still refers to the plugin's own
+idea of "current".
 
 ## Ink surface protocol v1
 

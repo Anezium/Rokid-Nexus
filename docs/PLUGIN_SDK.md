@@ -205,6 +205,71 @@ finds itself reaching for a colour is working around the tier.
 a list with sub lines and a rail, the four tones, body rows with their label
 column. Open it in a browser.
 
+### Editable fields
+
+A card can carry one bounded, focusable text field in place of its read-only
+body — the one way a plugin gets typed input back from the wearer, for a
+keyboard bonded directly to the glasses.
+
+```kotlin
+data class EditableSurfaceField(
+    val label: String? = null,
+    val placeholder: String? = null,
+    val initialText: String? = null,
+    val submitLabel: String? = null,
+)
+
+data class NexusCard(
+    // ...
+    val editable: EditableSurfaceField? = null,
+)
+
+interface NexusPluginCallbacks {
+    fun onSurfaceTextCommitted(surfaceId: String, text: String, cancelled: Boolean) = Unit
+}
+```
+
+Send it like any other card, with `editable` set instead of `lines`:
+
+```kotlin
+surface?.showCard(
+    NexusCard(
+        title = "Reply",
+        lines = emptyList(),
+        editable = EditableSurfaceField(placeholder = "Type your reply…", submitLabel = "Send"),
+    ),
+)
+```
+
+`label`, `placeholder`, and `submitLabel` are each capped at a small number of
+characters (64, 64, and 24) and `initialText` at 512 UTF-16 code units;
+oversized values are rejected locally the same way an oversized `NexusCard`
+title is. The card renders a real focusable `EditText` rather than the
+non-interactive body a plain card gets, so a bonded hardware keyboard's normal
+Android input reaches it directly — nothing plugin-side subscribes to
+keystrokes as they happen.
+
+The wearer's answer comes back exactly once, on `onSurfaceTextCommitted`, when
+they submit (Enter, or the on-screen submit affordance) or cancel (Back):
+`cancelled` is `true` for the latter, in which case `text` is always empty and
+should be ignored. A submitted `text` is silently clamped to 512 UTF-16 code
+units if it runs longer — the same limit `initialText` and `label` obey — so a
+field meant to collect more than that should say so in its `label` or
+`placeholder`; there is no in-band way to signal "your reply was cut short"
+after the fact. `NexusPluginService` forwards the callback to the overridable
+`onNexusSurfaceTextCommitted(surfaceId, text, cancelled)` hook, following the
+same pattern as `onNexusActivityAction`.
+
+There is no separate capability for this: it rides the existing `surfaces`
+grant and the existing foreground-slot ownership rules (`SURFACE_BUSY`,
+replacement, BACK, link-loss) a plain card already has. In particular, a new
+`showCard`/`updateCard` on the same session — including one that arrives while
+the field is still open, such as a different reply overtaking a card mid-type
+— replaces it before any commit for the old field lands; do not assume a
+commit callback necessarily still refers to whatever your own state currently
+considers "the current" card. Bind commits to whatever identity your plugin
+opened the field for, and reject or ignore ones that no longer match.
+
 ### Reader surfaces
 
 Use a reader for a long, continuous document such as an agent conversation.
