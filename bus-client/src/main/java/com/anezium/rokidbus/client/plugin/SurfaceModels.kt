@@ -5,6 +5,8 @@ import com.anezium.rokidbus.shared.ActivityProgress
 import com.anezium.rokidbus.shared.ActivitySurfaceContent
 import com.anezium.rokidbus.shared.ActivitySurfaceContract
 import com.anezium.rokidbus.shared.BusPaths
+import com.anezium.rokidbus.shared.EditableSurfaceContract
+import com.anezium.rokidbus.shared.EditableSurfaceField
 import com.anezium.rokidbus.shared.GlyphContract
 import com.anezium.rokidbus.shared.ImageSurfaceContract
 import com.anezium.rokidbus.shared.ImageSurfaceValidationResult
@@ -87,6 +89,13 @@ data class NexusCard(
     val handlesBack: Boolean = false,
     /** One dim line under the title: counts, state, context. */
     val subtitle: String? = null,
+    /**
+     * One bounded editable field on this card, in place of a read-only body.
+     * The foreground surface renders it as a focusable field and reports what
+     * was typed on [BusPaths.SURFACE_TEXT_COMMITTED] once, not as a stream —
+     * see [EditableSurfaceContract].
+     */
+    val editable: EditableSurfaceField? = null,
 ) {
     init {
         require(title.isNotBlank() && title.length <= MAX_TITLE_CHARS)
@@ -118,6 +127,7 @@ data class NexusCard(
             subtitle?.takeIf(String::isNotBlank)?.let { put("subtitle", it) }
             contentKey?.let { put("contentKey", it) }
             if (handlesBack) put("handlesBack", true)
+            editable?.let { put("editable", EditableSurfaceContract.toJson(it)) }
         }
 }
 

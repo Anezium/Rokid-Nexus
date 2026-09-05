@@ -571,6 +571,9 @@ object GlassesHub {
     fun sendSurfaceInput(payload: JSONObject): String? =
         sendRemote(BusEnvelope(path = BusPaths.SURFACE_INPUT, payload = payload))
 
+    fun sendSurfaceTextCommitted(payload: JSONObject): String? =
+        sendRemote(BusEnvelope(path = BusPaths.SURFACE_TEXT_COMMITTED, payload = payload))
+
     fun sendInkEvent(payload: JSONObject): String? =
         sendRemote(BusEnvelope(path = BusPaths.INK_EVENT, payload = payload))
 

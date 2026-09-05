@@ -63,7 +63,17 @@ internal fun surfaceHostChrome(mode: SurfaceHudMode, hudTopInsetDp: Int): Surfac
 internal fun surfaceDisplayPath(
     surface: NexusSurface,
     configured: SurfaceDisplayPath,
-): SurfaceDisplayPath = if (surface.isInk) SurfaceDisplayPath.OVERLAY else configured
+): SurfaceDisplayPath = when {
+    surface.isInk -> SurfaceDisplayPath.OVERLAY
+    // The overlay window is TYPE_ACCESSIBILITY_OVERLAY and deliberately
+    // non-focusable — the same reason a notice can never take a keystroke.
+    // An editable field needs real window focus to reach the system IME
+    // (and a keyboard bonded straight to the glasses), so it forces the
+    // one path that can actually give it that, regardless of the wearer's
+    // general Display setting.
+    surface.kind == NexusSurface.KIND_CARD && surface.editable != null -> SurfaceDisplayPath.ACTIVITY
+    else -> configured
+}
 
 internal fun shouldKeepInkPresentation(
     nextIsInk: Boolean,

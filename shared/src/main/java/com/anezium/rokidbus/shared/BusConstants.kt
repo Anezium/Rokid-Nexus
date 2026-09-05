@@ -44,6 +44,7 @@ object BusPaths {
     const val SURFACE_UPDATE = "/surface/update"
     const val SURFACE_HIDE = "/surface/hide"
     const val SURFACE_INPUT = "/surface/input"
+    const val SURFACE_TEXT_COMMITTED = "/surface/text-committed"
     const val INK_SHOW = "/ink/show"
     const val INK_UPDATE = "/ink/update"
     const val INK_HIDE = "/ink/hide"

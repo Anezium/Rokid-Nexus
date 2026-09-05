@@ -5,6 +5,7 @@ import android.view.KeyEvent
 import com.anezium.rokidbus.shared.BusCapabilityBits
 import com.anezium.rokidbus.shared.BusEnvelope
 import com.anezium.rokidbus.shared.BusPaths
+import com.anezium.rokidbus.shared.EditableSurfaceContract
 import com.anezium.rokidbus.shared.GlyphContract
 import com.anezium.rokidbus.shared.ForegroundSurfacePathPolicy
 import com.anezium.rokidbus.shared.plugin.NexusInputEvent
@@ -122,6 +123,10 @@ class PhonePluginRegistry(
             }
             BusPaths.SURFACE_INPUT -> {
                 handleSurfaceInput(envelope.payload)
+                return true
+            }
+            BusPaths.SURFACE_TEXT_COMMITTED -> {
+                handleSurfaceTextCommitted(envelope.payload)
                 return true
             }
         }
@@ -245,6 +250,43 @@ class PhonePluginRegistry(
             logger("plugin opened id=${plugin.id}")
         }
         return true
+    }
+
+    private fun handleSurfaceTextCommitted(payload: JSONObject) {
+        val committed = EditableSurfaceContract.parseCommitted(payload) ?: return
+        // Neither an explicit `ownerPluginId` nor a "plugin:local" surfaceId is
+        // actually threaded onto the wire for an ordinary (non-Ink) external
+        // card today (see withExternalSurfaceMetadata) — only Ink surfaces get
+        // that. An editable card can only ever be the one foreground external
+        // surface, so whoever currently holds that slot is unambiguously its
+        // owner.
+        val ownerPluginId = payload.optString("ownerPluginId")
+            .ifBlank {
+                committed.surfaceId.substringBefore(':')
+                    .takeIf { ':' in committed.surfaceId }
+                    .orEmpty()
+            }
+            .ifBlank { externalController?.activeId().orEmpty() }
+        logger(
+            "surface text-committed owner=$ownerPluginId surfaceId=${committed.surfaceId} " +
+                "cancelled=${committed.cancelled} textLen=${committed.text.length} " +
+                "activeId=${externalController?.activeId()}",
+        )
+        if (ownerPluginId.isBlank()) return
+        val delivered = externalController?.textCommitted(
+            ownerPluginId,
+            committed.surfaceId,
+            committed.text,
+            committed.cancelled,
+        ) == true
+        logger("surface text-committed delivered=$delivered")
+        recordRemote(
+            pluginId = ownerPluginId,
+            category = PluginBusJournal.Category.INPUT,
+            path = BusPaths.SURFACE_TEXT_COMMITTED,
+            verdict = if (delivered) PluginBusJournal.Verdict.OK else PluginBusJournal.Verdict.REJECTED,
+            reason = if (delivered) null else "NO_ACTIVE_PLUGIN",
+        )
     }
 
     private fun handleSurfaceInput(payload: JSONObject) {

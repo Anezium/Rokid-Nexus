@@ -8,6 +8,7 @@ import com.anezium.rokidbus.shared.ActivitySurfacePatchResult
 import com.anezium.rokidbus.shared.ActivitySurfaceValidationResult
 import com.anezium.rokidbus.shared.BusCapabilityBits
 import com.anezium.rokidbus.shared.BusPaths
+import com.anezium.rokidbus.shared.EditableSurfaceContract
 import com.anezium.rokidbus.shared.LinkStateBits
 import com.anezium.rokidbus.shared.InkSurfaceContract
 import com.anezium.rokidbus.shared.NoticeSurfaceContract
@@ -523,6 +524,18 @@ class NexusPluginClient internal constructor(
                 actionId.isNotBlank()
             ) {
                 callbacks.onNoticeAction(actionId)
+            }
+            return
+        }
+        if (path == BusPaths.SURFACE_TEXT_COMMITTED) {
+            if (isApproved) {
+                EditableSurfaceContract.parseCommitted(payload)?.let { committed ->
+                    callbacks.onSurfaceTextCommitted(
+                        committed.surfaceId,
+                        committed.text,
+                        committed.cancelled,
+                    )
+                }
             }
             return
         }

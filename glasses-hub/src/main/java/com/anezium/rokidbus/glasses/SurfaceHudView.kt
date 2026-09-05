@@ -10,13 +10,18 @@ import android.text.Spanned
 import android.text.TextUtils
 import android.text.style.ForegroundColorSpan
 import android.text.style.RelativeSizeSpan
+import android.text.InputType
 import android.util.TypedValue
 import android.view.Gravity
+import android.view.KeyEvent
 import android.view.View
+import android.view.inputmethod.EditorInfo
+import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.anezium.rokidbus.client.ui.BusTheme
+import com.anezium.rokidbus.shared.EditableSurfaceField
 import kotlin.math.roundToInt
 
 class SurfaceHudView(context: Context) : LinearLayout(context) {
@@ -50,6 +55,42 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
         gravity = Gravity.CENTER_VERTICAL
         visibility = GONE
     }
+    private val editView = EditText(context).apply {
+        visibility = GONE
+        isFocusable = true
+        isFocusableInTouchMode = true
+        inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+        imeOptions = EditorInfo.IME_ACTION_SEND
+        setTextColor(BusTheme.text)
+        setHintTextColor(BusTheme.dim)
+        setBackgroundColor(BusTheme.glassesBg)
+        textSize = 17f
+        typeface = android.graphics.Typeface.MONOSPACE
+        // One line: this is a reply, not a composer, and it lets a physical
+        // Enter key submit directly instead of inserting a newline the way a
+        // multi-line field would.
+        setSingleLine(true)
+        setOnEditorActionListener { view, actionId, _ ->
+            val isSend = actionId == EditorInfo.IME_ACTION_SEND || actionId == EditorInfo.IME_ACTION_DONE
+            if (isSend) {
+                SurfaceController.forwardSurfaceText(view.text?.toString().orEmpty(), cancelled = false)
+            }
+            isSend
+        }
+        // A hardware Enter key on a bonded keyboard never reaches
+        // onEditorActionListener above — that path is IME-synthesized. This is
+        // the raw key event a physical Enter actually dispatches through.
+        setOnKeyListener { view, keyCode, event ->
+            val isEnterDown = keyCode == KeyEvent.KEYCODE_ENTER && event.action == KeyEvent.ACTION_DOWN
+            if (isEnterDown) {
+                SurfaceController.forwardSurfaceText(
+                    (view as EditText).text?.toString().orEmpty(),
+                    cancelled = false,
+                )
+            }
+            isEnterDown
+        }
+    }
     private val readerView = ReaderSurfaceView(context).apply { visibility = GONE }
     private val mediaView = MediaHudView(context).apply { visibility = GONE }
     private val imageView = ImageHudView(context).apply {
@@ -73,6 +114,7 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
         maxLines = 1
     }
     private var surface: NexusSurface? = null
+    private var lastEditableSurfaceId: String? = null
     private var listRenderGeneration = 0L
     private var pendingListLayoutListener: View.OnLayoutChangeListener? = null
     private var insetUnsubscribe: (() -> Unit)? = null
@@ -136,6 +178,9 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
         addView(boardView, LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f).apply {
             topMargin = px(8)
         })
+        addView(editView, LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f).apply {
+            topMargin = px(8)
+        })
         addView(readerView, LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f).apply {
             topMargin = px(8)
         })
@@ -185,7 +230,14 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
         if (shouldTick(next)) {
             postDelayed(ticker, tickDelay(next))
         }
-        requestFocus()
+        // An editable card keeps the field's own focus: this container regaining
+        // it on every render (a re-render can arrive mid-keystroke) is exactly
+        // what silently ate the wearer's typing here before.
+        if (next.kind == NexusSurface.KIND_CARD && next.editable != null) {
+            editView.requestFocus()
+        } else {
+            requestFocus()
+        }
     }
 
     override fun dispatchDraw(canvas: Canvas) {
@@ -248,14 +300,46 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
         footerView.visibility = visibleIf(surface.footer.isNotBlank())
 
         if (!surface.isInk) hideInk()
+        if (surface.kind != NexusSurface.KIND_CARD || surface.editable == null) {
+            editView.visibility = GONE
+        }
         when {
             surface.isInk -> renderInk(surface)
             surface.isImage -> renderImage(surface)
             surface.isMedia -> renderMedia(surface)
             surface.isReader -> renderReader(surface)
             surface.isTimed -> renderTimed(surface)
+            surface.kind == NexusSurface.KIND_CARD && surface.editable != null ->
+                renderEditableCard(surface, surface.editable)
             else -> renderCard(surface)
         }
+    }
+
+    /**
+     * A card with one bounded editable field instead of a read-only body. The
+     * glasses' own system IME ([RemoteInputController]) activates the normal
+     * Android way once this field takes focus — nothing new to wire there.
+     * Submitting/cancelling reports back once via
+     * [SurfaceController.forwardSurfaceText]; see [EditableSurfaceContract].
+     */
+    private fun renderEditableCard(surface: NexusSurface, editable: EditableSurfaceField) {
+        hideReader()
+        mediaView.visibility = GONE
+        imageView.visibility = GONE
+        previousView.visibility = GONE
+        nextView.visibility = GONE
+        currentView.visibility = GONE
+        boardView.visibility = GONE
+        editView.visibility = VISIBLE
+        editView.hint = editable.placeholder.orEmpty()
+        if (editView.text?.toString() != editable.initialText.orEmpty() &&
+            surface.surfaceId != lastEditableSurfaceId
+        ) {
+            editView.setText(editable.initialText.orEmpty())
+            editView.setSelection(editView.text?.length ?: 0)
+        }
+        lastEditableSurfaceId = surface.surfaceId
+        editView.requestFocus()
     }
 
     private fun renderInk(surface: NexusSurface) {
@@ -972,6 +1056,9 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
         hideInk()
         boardView.removeAllViews()
         boardView.visibility = GONE
+        editView.setText("")
+        editView.visibility = GONE
+        lastEditableSurfaceId = null
         currentView.visibility = VISIBLE
     }
 

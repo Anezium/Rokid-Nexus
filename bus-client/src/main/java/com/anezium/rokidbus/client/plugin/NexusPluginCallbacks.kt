@@ -57,6 +57,14 @@ interface NexusPluginCallbacks {
      */
     fun onActivityClosed(reason: String) = Unit
 
+    /**
+     * The wearer submitted or cancelled this card's editable field (see
+     * [NexusCard.editable]). Fires at most once per field: ask again by
+     * showing a new card, or an update that carries a fresh `editable` block.
+     * [text] is empty when [cancelled] is true.
+     */
+    fun onSurfaceTextCommitted(surfaceId: String, text: String, cancelled: Boolean) = Unit
+
     fun onInkReady(surfaceId: String) = Unit
     fun onInkAction(surfaceId: String, actionId: String, dataset: JSONObject) = Unit
     fun onInkClosed(surfaceId: String, reason: NexusInkCloseReason) = Unit

@@ -13,6 +13,7 @@ import android.os.SystemClock
 import android.view.KeyEvent
 import com.anezium.rokidbus.shared.BusEnvelope
 import com.anezium.rokidbus.shared.BusPaths
+import com.anezium.rokidbus.shared.EditableSurfaceContract
 import com.anezium.rokidbus.shared.ImageSurfaceContract
 import com.anezium.rokidbus.shared.ImageSurfaceValidationResult
 import com.anezium.rokidbus.shared.InkSurfaceContract
@@ -68,6 +69,9 @@ object SurfaceController {
     }
 
     fun activeSurface(): NexusSurface? = active
+
+    fun hasFocusedEditableSurface(): Boolean =
+        active?.let { it.kind == NexusSurface.KIND_CARD && it.editable != null } == true
 
     // Overlay is the default: TYPE_ACCESSIBILITY_OVERLAY stays visible even when
     // another app (e.g. Rokid Relay's glasses activity) keeps relaunching itself
@@ -243,6 +247,21 @@ object SurfaceController {
     fun handleKeyEvent(event: KeyEvent): Boolean {
         val surface = active ?: return false
         if (surface.isReader) return handleReaderKeyEvent(surface, event)
+        if (surface.kind == NexusSurface.KIND_CARD && surface.editable != null) {
+            // FORWARDED_KEYS below exists for read-only cards' remote-control
+            // navigation (space/enter as media or select). An editable field
+            // needs those same keys typed, not intercepted, so only BACK is
+            // still claimed here; everything else reaches the focused EditText
+            // the normal Android way.
+            if (event.keyCode == KeyEvent.KEYCODE_BACK &&
+                event.action == KeyEvent.ACTION_DOWN &&
+                event.repeatCount == 0
+            ) {
+                handleBackDown(surface)
+                return true
+            }
+            return false
+        }
         if (shouldSuppressDpadEvent(event)) {
             return true
         }
@@ -328,6 +347,22 @@ object SurfaceController {
                 .put("surfaceId", surface.surfaceId)
                 .put("keyCode", keyCode)
                 .put("action", action),
+        )
+        return true
+    }
+
+    /**
+     * The wearer submitted or cancelled the active card's editable field.
+     * [text] is ignored (and not sent) when [cancelled] — the payload never
+     * carries a text field for a cancelled field, matching how
+     * [EditableSurfaceContract.committedPayload] encodes it.
+     */
+    fun forwardSurfaceText(text: String, cancelled: Boolean): Boolean {
+        val surface = active?.takeIf { it.kind == NexusSurface.KIND_CARD && it.editable != null }
+            ?: return false
+        GlassesHub.sendSurfaceTextCommitted(
+            EditableSurfaceContract.committedPayload(surface.surfaceId, text, cancelled)
+                .put("ownerPluginId", surface.ownerPluginId),
         )
         return true
     }
@@ -885,6 +920,9 @@ object SurfaceController {
             armBackFailsafe(surface.surfaceId)
         } else {
             if (surface.isInk) sendInkClosed(surface.surfaceId, InkSurfaceContract.CLOSE_USER)
+            if (surface.kind == NexusSurface.KIND_CARD && surface.editable != null) {
+                forwardSurfaceText("", cancelled = true)
+            }
             hideLocal(DisplayHoldReleaseReason.WEARER_DISMISSED)
         }
     }

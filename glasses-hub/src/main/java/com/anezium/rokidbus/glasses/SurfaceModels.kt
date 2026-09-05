@@ -3,6 +3,8 @@ package com.anezium.rokidbus.glasses
 import android.graphics.Bitmap
 import android.os.SystemClock
 import android.util.Base64
+import com.anezium.rokidbus.shared.EditableSurfaceContract
+import com.anezium.rokidbus.shared.EditableSurfaceField
 import com.anezium.rokidbus.shared.ImageSurfaceContract
 import com.anezium.rokidbus.shared.MediaArtworkContract
 import org.json.JSONObject
@@ -218,6 +220,7 @@ data class NexusSurface(
     val readerAnchor: ReaderAnchor = ReaderAnchor.BOTTOM,
     val ink: InkSurfacePayload? = null,
     val ownerPluginId: String = "",
+    val editable: EditableSurfaceField? = null,
 ) {
     val isTimed: Boolean
         get() = kind == KIND_TIMED_LINES && timedLines.isNotEmpty()
@@ -410,6 +413,15 @@ data class NexusSurface(
                 },
                 ownerPluginId = payload.optString("ownerPluginId")
                     .ifBlank { previous?.takeIf { canMergePrevious }?.ownerPluginId.orEmpty() },
+                editable = if (kind == KIND_CARD) {
+                    if (payload.has("editable")) {
+                        EditableSurfaceContract.parse(payload.optJSONObject("editable"))
+                    } else {
+                        previous?.takeIf { canMergePrevious }?.editable
+                    }
+                } else {
+                    null
+                },
             )
         }
 
