@@ -39,6 +39,16 @@ class RelayNoticeReplayPolicyTest {
     }
 
     @Test
+    fun `a typing field opened for a reply that show() has since replaced is stale`() {
+        // Reply A: typing opens while show()'s generation is 1.
+        assertFalse(isTypingCommitStale(openedAtGeneration = 1, currentGeneration = 1))
+
+        // A notification from a different conversation, B, arrives mid-type: show() bumps the
+        // generation to replace the band's content before the wearer ever submits A's field.
+        assertTrue(isTypingCommitStale(openedAtGeneration = 1, currentGeneration = 2))
+    }
+
+    @Test
     fun `only nonrecoverable registration results are terminal`() {
         listOf(
             PluginRegistrationResult.DENIED,

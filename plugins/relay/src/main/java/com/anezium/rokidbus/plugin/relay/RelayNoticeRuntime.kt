@@ -60,6 +60,7 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
     private var lastNoticeMessageAtMs = Long.MIN_VALUE
     private var sendDeadlineMs: Long? = null
     private var inputKeepaliveRunnable: Runnable? = null
+    private var typingOpenedAtShowGeneration: Int? = null
 
     fun show(reply: ReplyRepository.PendingReply) = onMain {
         // The inbox owns the bus while it is open, and it is already showing
@@ -72,6 +73,11 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
         val generation = showGeneration
         val nowMs = SystemClock.elapsedRealtime()
         invalidateSpeech()
+        // A typing field left open from the reply this is about to replace must not go on
+        // accepting keystrokes for a conversation that is no longer current — see
+        // isTypingCommitStale. Hiding it here, not just rejecting its eventual commit, keeps the
+        // wearer from typing into a field that has already been silently discarded.
+        hideTypingSurface()
         stopReadAloud()
         essentialUpdates.clear()
         pendingPartial = null
@@ -162,6 +168,14 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
         // device: "relay:reply"), not the bare local id this plugin shows the
         // card under — same "$pluginId:$local" shape notice/ink events use.
         if (surfaceId.substringAfter(':', surfaceId) != TYPING_SURFACE_ID || !activeNotice) return@onMain
+        val openedAtGeneration = typingOpenedAtShowGeneration
+        if (openedAtGeneration == null || isTypingCommitStale(openedAtGeneration, showGeneration)) {
+            // A new notification replaced the reply this field was opened for while the wearer
+            // was still typing (show() already hid the field for this). Applying this text to
+            // whatever notification is current now would send it to the wrong conversation.
+            Log.i(TAG, "typed reply commit ignored: stale generation")
+            return@onMain
+        }
         stopInputKeepalive()
         hideTypingSurface()
         if (cancelled) {
@@ -490,6 +504,8 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
                 ttlMs = DECISION_TTL_MS,
             )
         }
+        // Bound to the reply this field is being opened for: see isTypingCommitStale.
+        typingOpenedAtShowGeneration = showGeneration
         val session = typingSurface ?: currentClient.surfaceSession(TYPING_SURFACE_ID).also {
             typingSurface = it
         }
@@ -509,6 +525,7 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
 
     private fun hideTypingSurface() {
         typingSurface?.hide()
+        typingOpenedAtShowGeneration = null
     }
 
     private fun sendConfirmedReply() {
