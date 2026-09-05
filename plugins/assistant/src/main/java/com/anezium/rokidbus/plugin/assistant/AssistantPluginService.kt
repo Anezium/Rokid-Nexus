@@ -29,6 +29,7 @@ import com.anezium.rokidbus.client.plugin.NexusTtsCallbacks
 import com.anezium.rokidbus.client.plugin.NexusTtsDoneReason
 import com.anezium.rokidbus.client.plugin.NexusTtsSession
 import com.anezium.rokidbus.client.plugin.ttsSession
+import com.anezium.rokidbus.shared.EditableSurfaceField
 import com.anezium.rokidbus.shared.LinkStateBits
 import com.anezium.rokidbus.shared.plugin.NexusInputEvent
 import com.anezium.rokidbus.shared.plugin.PluginCapability
@@ -137,6 +138,7 @@ class AssistantPluginService : NexusPluginService() {
     private val transcriber by lazy { OpenAiTranscriber(authStore::apiKey) }
 
     private var surface: NexusSurfaceSession? = null
+    private var pendingNoteEntry = false
     private var inkSurface: NexusInkSurfaceSession? = null
     private var pendingInkShow: PendingInkShow? = null
     private var inkSurfaceActive = false
@@ -232,6 +234,7 @@ class AssistantPluginService : NexusPluginService() {
         if (event.action == KeyEvent.ACTION_DOWN && event.keyCode == KeyEvent.KEYCODE_BACK) {
             cancelPipeline()
             resetCapture()
+            pendingNoteEntry = false
             surface?.hide()
             uiController.onSurfaceHidden()
         }
@@ -239,6 +242,24 @@ class AssistantPluginService : NexusPluginService() {
 
     override fun onNexusLinkState(state: Int) {
         currentLinkState = state
+    }
+
+    /**
+     * The wearer typed a note directly — no model call, no STT, works even
+     * without an AI provider configured. Triggered from [requestNewNote];
+     * [pendingNoteEntry] disambiguates this from any other future use of the
+     * same [SURFACE_ID] card.
+     */
+    override fun onNexusSurfaceTextCommitted(surfaceId: String, text: String, cancelled: Boolean) {
+        if (!pendingNoteEntry) return
+        pendingNoteEntry = false
+        surface?.hide()
+        uiController.onSurfaceHidden()
+        if (cancelled) return
+        val trimmed = text.trim()
+        if (trimmed.isEmpty()) return
+        val result = runCatching { noteStore.save(text = trimmed) }.getOrNull()
+        Log.i(TAG, "typed note saved result=$result")
     }
 
     override fun onNexusNoticeClosed(reason: NexusNoticeCloseReason) {
@@ -1128,6 +1149,37 @@ class AssistantPluginService : NexusPluginService() {
                 service.stopAnswerSpeech()
                 service.clearInkSurface(hide = true)
                 service.launchAssistantPipeline(question)
+            }
+            return true
+        }
+
+        /**
+         * Opens a bare editable field on the wearer's foreground card for a
+         * typed note — the [AssistantProductivityActivity] "Add note" button's
+         * rendezvous with the live service, same shape as [debugAsk]. Only
+         * works while the wearer already has Assistant open on the glasses,
+         * same constraint [debugAsk] has: there is no surface session before
+         * `onNexusOpen` has run.
+         */
+        internal fun requestNewNote(): Boolean {
+            val service = debugInstance ?: return false
+            if (!service.isNexusSessionOpen) return false
+            val currentSurface = service.surface ?: return false
+            service.serviceScope.launch {
+                service.cancelPipeline()
+                service.resetCapture()
+                service.pendingNoteEntry = true
+                val result = currentSurface.showCard(
+                    NexusCard(
+                        title = "New note",
+                        lines = emptyList(),
+                        editable = EditableSurfaceField(
+                            placeholder = "Type a note…",
+                            submitLabel = "Save",
+                        ),
+                    ),
+                )
+                if (result != NexusSdkResult.SENT) service.pendingNoteEntry = false
             }
             return true
         }

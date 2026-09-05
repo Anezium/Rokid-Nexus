@@ -78,6 +78,22 @@ class AssistantProductivityActivity : Activity() {
             addView(BusTheme.gap(this@AssistantProductivityActivity, 28))
             addView(NexusUi.sectionRow(this@AssistantProductivityActivity, "Notes"), NexusUi.block())
             addView(BusTheme.gap(this@AssistantProductivityActivity, 12))
+            addView(
+                NexusUi.textButton(this@AssistantProductivityActivity, "Add note").apply {
+                    setOnClickListener {
+                        // No model call, no STT: this opens a bare typed field on the
+                        // wearer's glasses (the same editable-card capability Relay's
+                        // typed replies use), so it works even with no AI provider
+                        // configured. It only works while Assistant is already open on
+                        // the glasses -- there is no surface session before that.
+                        if (!AssistantPluginService.requestNewNote()) {
+                            toast("Open Assistant on the glasses first.")
+                        }
+                    }
+                },
+                NexusUi.block(),
+            )
+            addView(BusTheme.gap(this@AssistantProductivityActivity, 8))
             addView(notesColumn, NexusUi.block())
         }
 
