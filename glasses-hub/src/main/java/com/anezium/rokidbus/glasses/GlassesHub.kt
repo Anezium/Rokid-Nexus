@@ -1,5 +1,6 @@
 package com.anezium.rokidbus.glasses
 
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
@@ -22,6 +23,7 @@ import com.anezium.rokidbus.shared.BusConstants
 import com.anezium.rokidbus.shared.BusEnvelope
 import com.anezium.rokidbus.shared.BusPaths
 import com.anezium.rokidbus.shared.FrameProtocol
+import com.anezium.rokidbus.shared.GlassesAccessibilityCheckContract
 import com.anezium.rokidbus.shared.GlassesHubCapabilitiesContract
 import com.anezium.rokidbus.shared.GlassesRepairContract
 import com.anezium.rokidbus.shared.GlyphContract
@@ -341,6 +343,23 @@ object GlassesHub {
                 )
                 log("glassesRepair result=$result replyError=${error ?: "none"}")
             }
+            return
+        }
+        if (envelope.path == BusPaths.GLASSES_ACCESSIBILITY_CHECK_REQUEST) {
+            val context = appContext
+            if (context == null) {
+                sendRemote(errorEnvelope(envelope.id, "HUB_NOT_READY"))
+                return
+            }
+            val foreign = foreignAccessibilityServices(context)
+            val error = sendRemote(
+                BusEnvelope(
+                    path = BusPaths.GLASSES_ACCESSIBILITY_CHECK_REPLY,
+                    id = envelope.id,
+                    payload = GlassesAccessibilityCheckContract.replyToJson(foreign),
+                ),
+            )
+            log("accessibilityCheck foreign=${foreign.size} replyError=${error ?: "none"}")
             return
         }
         if (envelope.path == BusPaths.WIRELESS_ADB_REQUEST) {
@@ -830,6 +849,22 @@ object GlassesHub {
             }
         }
         return delivered
+    }
+
+    /** Anything enabled in this setting besides Nexus's own service is a foreign one. */
+    private fun foreignAccessibilityServices(context: Context): List<String> {
+        val own = ComponentName(context, RokidBusAccessibilityService::class.java)
+        val raw = Settings.Secure.getString(
+            context.contentResolver,
+            Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
+        ) ?: return emptyList()
+        return raw.split(':')
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            // unflattenFromString expands the "pkg/.ClassName" shorthand the setting can hold
+            // (besides the fully qualified "pkg/pkg.ClassName") into a real package + class pair,
+            // so both forms of Nexus's own entry compare equal instead of one reading as foreign.
+            .filter { ComponentName.unflattenFromString(it) != own }
     }
 
     private fun handleManualSelfArmRequest(envelope: BusEnvelope) {

@@ -129,6 +129,14 @@ object BusPaths {
     const val GLASSES_REPAIR_REPLY = "/glasses/repair/reply"
 
     /**
+     * Phone hub to glasses hub only: on-demand check for accessibility services other than
+     * Nexus's own that are currently enabled on the glasses. See
+     * [GlassesAccessibilityCheckContract].
+     */
+    const val GLASSES_ACCESSIBILITY_CHECK_REQUEST = "/glasses/accessibility-check/request"
+    const val GLASSES_ACCESSIBILITY_CHECK_REPLY = "/glasses/accessibility-check/reply"
+
+    /**
      * Phone hub to glasses hub only: arm the native-assistant dismiss so an approved plugin
      * holding the ASSISTANT capability can replace Rokid's assistant with its own surface.
      * The gesture is consumed inside the ROM and never reaches our accessibility service, so the
