@@ -13,6 +13,11 @@ import org.json.JSONObject
  * separate hub-owned keyboard bridge.
  */
 object EditableSurfaceContract {
+    /** Negotiated the same way as the sibling surface contracts: an older glasses
+     * hub that predates this field simply never reports it, so a plugin can tell
+     * "shows a plain card" apart from "can actually take typed text" instead of
+     * opening a field that will sit there uncommittable forever. */
+    const val VERSION = 1
     const val MAX_TEXT_UTF16_LENGTH = 512
     const val MAX_LABEL_CHARS = 64
     const val MAX_PLACEHOLDER_CHARS = 64

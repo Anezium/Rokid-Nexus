@@ -13,6 +13,7 @@ data class GlassesHubCapabilities(
     val noticeSurfaceVersion: Int = 0,
     val activitySurfaceVersion: Int = 0,
     val inkSurfaceVersion: Int = 0,
+    val editableSurfaceVersion: Int = 0,
     val maxImageBytes: Int,
     val versionName: String?,
     val setupComplete: Boolean = false,
@@ -45,6 +46,7 @@ object GlassesHubCapabilitiesContract {
         noticeSurfaceVersion: Int = 0,
         activitySurfaceVersion: Int = 0,
         inkSurfaceVersion: Int = 0,
+        editableSurfaceVersion: Int = 0,
         maxImageBytes: Int,
         versionName: String?,
         setupComplete: Boolean = false,
@@ -67,6 +69,7 @@ object GlassesHubCapabilitiesContract {
         noticeSurfaceVersion = noticeSurfaceVersion,
         activitySurfaceVersion = activitySurfaceVersion,
         inkSurfaceVersion = inkSurfaceVersion,
+        editableSurfaceVersion = editableSurfaceVersion,
         maxImageBytes = maxImageBytes,
         versionName = normalizeVersionName(versionName),
         setupComplete = setupComplete,
@@ -91,6 +94,7 @@ object GlassesHubCapabilitiesContract {
         .put("noticeSurfaceVersion", capabilities.noticeSurfaceVersion)
         .put("activitySurfaceVersion", capabilities.activitySurfaceVersion)
         .put("inkSurfaceVersion", capabilities.inkSurfaceVersion)
+        .put("editableSurfaceVersion", capabilities.editableSurfaceVersion)
         .put("maxImageBytes", capabilities.maxImageBytes)
         .put("setupComplete", capabilities.setupComplete)
         .put("setupFailureState", capabilities.setupFailureState)
@@ -119,6 +123,7 @@ object GlassesHubCapabilitiesContract {
         noticeSurfaceVersion = payload.optInt("noticeSurfaceVersion", 0),
         activitySurfaceVersion = payload.optInt("activitySurfaceVersion", 0),
         inkSurfaceVersion = payload.optInt("inkSurfaceVersion", 0),
+        editableSurfaceVersion = payload.optInt("editableSurfaceVersion", 0),
         maxImageBytes = payload.optInt("maxImageBytes", 0),
         versionName = normalizeVersionName(payload.optString("versionName", "")),
         setupComplete = payload.optBoolean("setupComplete", false),
@@ -143,6 +148,11 @@ object GlassesHubCapabilitiesContract {
         capabilities.protocolVersion == VERSION &&
             capabilities.features and BusCapabilityBits.INK_SURFACE != 0 &&
             capabilities.inkSurfaceVersion == InkWire.VERSION
+
+    fun supportsEditableSurface(capabilities: GlassesHubCapabilities): Boolean =
+        capabilities.protocolVersion == VERSION &&
+            capabilities.features and BusCapabilityBits.EDITABLE_SURFACE != 0 &&
+            capabilities.editableSurfaceVersion == EditableSurfaceContract.VERSION
 
     fun effectiveStage(capabilities: GlassesHubCapabilities): String =
         SetupStage.normalize(capabilities.setupStage).ifBlank {

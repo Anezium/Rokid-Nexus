@@ -196,6 +196,7 @@ object BusCapabilityBits {
     const val PHONE_ASSISTED_SETUP = 1 shl 8
     const val TTS = 1 shl 9
     const val INK_SURFACE = 1 shl 10
+    const val EDITABLE_SURFACE = 1 shl 11
 }
 
 object LinkStateBits {

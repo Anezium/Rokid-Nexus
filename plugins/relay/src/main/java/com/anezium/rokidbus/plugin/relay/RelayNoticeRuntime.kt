@@ -61,6 +61,12 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
     private var sendDeadlineMs: Long? = null
     private var inputKeepaliveRunnable: Runnable? = null
     private var typingOpenedAtShowGeneration: Int? = null
+    // Identifies one open attempt distinctly from the next even when both share
+    // a showGeneration (cancel, then Reply again on the same still-active
+    // notice) — see onTypingSurfaceRejected. currentTypingAttempt is null
+    // whenever no field is open, same lifecycle as typingOpenedAtShowGeneration.
+    private var typingAttemptCounter = 0
+    private var currentTypingAttempt: Int? = null
     private var deferredShow: ReplyRepository.PendingReply? = null
 
     fun show(reply: ReplyRepository.PendingReply) = onMain {
@@ -81,6 +87,11 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
             Log.i(TAG, "showDeferred: composing in progress")
             return@onMain
         }
+        // Any reply held back for an earlier compose is superseded by this one
+        // going up now through the ordinary path — applying it later (the Sent
+        // linger, or a future onNoticeClosed) would replace what's about to show
+        // with something older than it.
+        deferredShow = null
         showGeneration += 1
         val generation = showGeneration
         val nowMs = SystemClock.elapsedRealtime()
@@ -163,6 +174,17 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
     }
 
     override fun onNoticeClosed(reason: NexusNoticeCloseReason) = onMain {
+        // Back or the band's own TTL isn't the end of the story if a reply
+        // arrived while the wearer was composing and got held back for exactly
+        // this moment — that notification still deserves its own band, not to
+        // be discarded along with the one that just closed (closeClient() below
+        // would otherwise drop it on the floor with nothing left to show it).
+        val deferred = deferredShow
+        if (deferred != null) {
+            deferredShow = null
+            show(deferred)
+            return@onMain
+        }
         closeClient()
     }
 
@@ -496,6 +518,15 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
     private fun startTyping() {
         val currentClient = client ?: return
         if (!activeNotice || currentReply == null) return
+        if (!currentClient.supportsEditableSurface) {
+            // An older glasses hub shows the card fine but silently ignores the
+            // `editable` field on it — there would be nothing wrong-looking to
+            // recover from, just a field that can never be typed into or
+            // committed. Falling back here, before that card ever opens, is the
+            // only point this can still be caught.
+            startListening()
+            return
+        }
         invalidateSpeech()
         currentTranscript = null
         // The foreground editable card is about to own confirm/direction keys
@@ -520,9 +551,19 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
         }
         // Bound to the reply this field is being opened for: see isTypingCommitStale.
         typingOpenedAtShowGeneration = showGeneration
+        val attempt = ++typingAttemptCounter
+        currentTypingAttempt = attempt
         val session = typingSurface ?: currentClient.surfaceSession(TYPING_SURFACE_ID).also {
             typingSurface = it
         }
+        // showCard() returning SENT only means the hub accepted the Binder call —
+        // it can still reject the card itself (e.g. SURFACE_BUSY when another
+        // plugin owns the foreground surface) in a reply that arrives after this
+        // call already returned. Without this, the band was left stuck on
+        // non-interactive "Typing…" with every new notification deferred behind
+        // a field that never actually opened, with nothing left to resolve it
+        // short of the wearer pressing Back on a field they can't see.
+        session.onRejected = { code -> onTypingSurfaceRejected(attempt, code) }
         val result = session.showCard(
             NexusCard(
                 title = "Reply",
@@ -543,9 +584,21 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
         }
     }
 
+    /**
+     * A field this typing session opened was rejected after the fact. Ignored
+     * once that attempt is no longer the open one — cancelled, sent, or
+     * superseded by a fresh Reply on the same still-active notice.
+     */
+    private fun onTypingSurfaceRejected(attempt: Int, code: String) {
+        if (currentTypingAttempt != attempt) return
+        hideTypingSurface()
+        applyDeferredShowOrElse { queueSpeechFailure(code) }
+    }
+
     private fun hideTypingSurface() {
         typingSurface?.hide()
         typingOpenedAtShowGeneration = null
+        currentTypingAttempt = null
     }
 
     /** See [isComposingReplyState]; [show] holds off replacing the band while this is true. */
@@ -585,8 +638,19 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
                     NexusNoticeUpdate(footer = "", actions = SENT_ACTIONS),
                     dropPartial = true,
                 )
+                // Bound to this exchange's generation, not just activeNotice: a
+                // fresh notification arriving during the linger already went
+                // through show() above and is the current band by the time this
+                // fires — applying whatever deferredShow held then would replace
+                // it with something older, even though show() cleared any stale
+                // one already. Only fire this exchange's own dismiss-or-apply.
+                val sentGeneration = showGeneration
                 main.postDelayed(
-                    { if (activeNotice) applyDeferredShowOrElse { dismissNotice() } },
+                    {
+                        if (activeNotice && showGeneration == sentGeneration) {
+                            applyDeferredShowOrElse { dismissNotice() }
+                        }
+                    },
                     SENT_LINGER_MS,
                 )
             }

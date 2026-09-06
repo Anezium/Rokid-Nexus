@@ -127,7 +127,12 @@ data class NexusCard(
             subtitle?.takeIf(String::isNotBlank)?.let { put("subtitle", it) }
             contentKey?.let { put("contentKey", it) }
             if (handlesBack) put("handlesBack", true)
-            editable?.let { put("editable", EditableSurfaceContract.toJson(it)) }
+            // Always present, even absent (as JSONObject.NULL): the glasses hub
+            // inherits a previous card's `editable` whenever this one omits the
+            // key and the two surfaces are otherwise mergeable — a plain card
+            // shown after an editable one, reusing the same surfaceId/contentKey,
+            // would otherwise keep a field it never asked for.
+            put("editable", editable?.let(EditableSurfaceContract::toJson) ?: JSONObject.NULL)
         }
 }
 
@@ -507,6 +512,15 @@ class NexusSurfaceSession internal constructor(
         require(LOCAL_SURFACE_ID.matches(localSurfaceId))
     }
 
+    /**
+     * Fires once if a call that already returned [NexusSdkResult.SENT] is then
+     * rejected by the hub — e.g. SURFACE_BUSY when another plugin owns the
+     * foreground surface. SENT means the Binder call was accepted, not that the
+     * surface will actually show; without this, a caller that assumed SENT meant
+     * shown had no way to find out otherwise.
+     */
+    var onRejected: ((code: String) -> Unit)? = null
+
     fun showCard(card: NexusCard): NexusSdkResult = sendSurface(BusPaths.SURFACE_SHOW, card.toPayload(localSurfaceId))
     fun updateCard(card: NexusCard): NexusSdkResult = sendSurface(BusPaths.SURFACE_UPDATE, card.toPayload(localSurfaceId))
     fun showReader(reader: NexusReader): NexusSdkResult =
@@ -624,7 +638,9 @@ class NexusSurfaceSession internal constructor(
         if (payload.toString().toByteArray(Charsets.UTF_8).size > MAX_SURFACE_PAYLOAD_BYTES) {
             return NexusSdkResult.INVALID_PAYLOAD
         }
-        return if (client.send(path, UUID.randomUUID().toString(), payload)) {
+        val id = UUID.randomUUID().toString()
+        onRejected?.let { handler -> client.watchForSurfaceError(id, handler) }
+        return if (client.send(path, id, payload)) {
             NexusSdkResult.SENT
         } else {
             NexusSdkResult.NOT_REGISTERED
