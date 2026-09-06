@@ -50,6 +50,7 @@ class AgentsPluginService : NexusPluginService() {
 
     private var ageTicker: Job? = null
 
+
     /** The held tool call the wearer is answering, if they are answering one. */
     private var decidingRequestId: String? = null
     private var decisionChoice = ApprovalDecision.ALLOW
@@ -84,9 +85,22 @@ class AgentsPluginService : NexusPluginService() {
                 AgentsRuntime.store.conversation,
             ) { _, _, _ -> Unit }
                 .collectLatest {
+                    // A busy agent changes state on every tool call, and each
+                    // change used to redraw the glasses immediately: watching
+                    // one work made the board flicker continuously. Settling
+                    // coalesces a burst into one redraw.
+                    delay(RENDER_SETTLE_MS)
                     if (surfaceShown) render(show = false)
-                    raiseAttention()
                 }
+        }
+        serviceScope.launch {
+            // Attention follows sessions alone. It used to ride the combined
+            // flow above, so a computer that was simply unreachable — its
+            // client cycling connecting/disconnected — re-raised the band on
+            // every flip, which on the glasses reads as a screen that will not
+            // stop blinking. Whether a session needs the wearer has nothing to
+            // do with whether the daemon is currently answering.
+            AgentsRuntime.store.sessions.collectLatest { raiseAttention() }
         }
         serviceScope.launch {
             AgentsRuntime.store.threadStart.collectLatest { result ->
@@ -1003,6 +1017,14 @@ class AgentsPluginService : NexusPluginService() {
 
         /** Long enough to swallow a double tap, short enough to never be felt. */
         private const val DECISION_GUARD_MS = 600L
+
+        /**
+         * Long enough to swallow the burst of state a single tool call makes,
+         * short enough that the board still reads as live. collectLatest
+         * cancels this wait when another change lands, so a stream of them
+         * costs one redraw at the end rather than one apiece.
+         */
+        private const val RENDER_SETTLE_MS = 300L
         private const val LAUNCH_VERDICT_TIMEOUT_MS = 35_000L
 
         /** Virtual board row: the door into the start-an-agent walk. */
