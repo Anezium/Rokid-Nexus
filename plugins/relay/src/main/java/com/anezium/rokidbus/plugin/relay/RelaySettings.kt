@@ -105,6 +105,19 @@ internal class RelaySettings(context: Context) {
         prefs.edit().putBoolean(KEY_READ_ALOUD, enabled).apply()
     }
 
+    /**
+     * The one Reply chip opens an editable field instead of starting to
+     * listen. Off by default: dictation needs no accessory, and the field
+     * exists to answer a keyboard bonded to the glasses, not to replace
+     * voice for wearers who don't have one.
+     */
+    fun replyByTyping(): Boolean =
+        prefs.getBoolean(KEY_REPLY_BY_TYPING, DEFAULT_REPLY_BY_TYPING)
+
+    fun setReplyByTyping(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_REPLY_BY_TYPING, enabled).apply()
+    }
+
     fun admits(): Boolean = NotificationAdmission.appIsAdmitted(enabled())
 
     data class LegacyDisplayTime(val seconds: Int, val scalesWithLength: Boolean)
@@ -125,6 +138,7 @@ internal class RelaySettings(context: Context) {
         const val DEFAULT_READ_ALOUD = false
         const val DEFAULT_HIDE_NOTICE_TEXT = false
         const val DEFAULT_HIDE_INBOX_PREVIEWS = false
+        const val DEFAULT_REPLY_BY_TYPING = false
 
         fun coerceNoticeDisplaySeconds(value: Int): Int =
             value.coerceIn(MIN_NOTICE_DISPLAY_SECONDS, MAX_NOTICE_DISPLAY_SECONDS)
@@ -154,5 +168,6 @@ internal class RelaySettings(context: Context) {
         private const val KEY_HIDE_NOTICE_TEXT = "hide_notice_text"
         private const val KEY_HIDE_INBOX_PREVIEWS = "hide_inbox_previews"
         private const val KEY_READ_ALOUD = "read_aloud"
+        private const val KEY_REPLY_BY_TYPING = "reply_by_typing"
     }
 }

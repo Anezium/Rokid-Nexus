@@ -1,6 +1,7 @@
 package com.anezium.rokidbus.phone
 
 import com.anezium.rokidbus.shared.BusPaths
+import com.anezium.rokidbus.shared.EditableSurfaceContract
 import org.json.JSONObject
 import java.util.UUID
 
@@ -139,6 +140,28 @@ class ExternalPluginController(
                 .put("localSurfaceId", localSurfaceId)
                 .put("keyCode", keyCode)
                 .put("action", action),
+        )
+    }
+
+    /**
+     * The wearer submitted or cancelled the editable field on [ownerPluginId]'s
+     * foreground card. Stamps `pluginId` the same way notice/ink delivery does,
+     * so [NexusPluginClient]'s existing per-plugin gate on that field is enough
+     * on the receiving side — no separate decode path needed.
+     */
+    fun textCommitted(
+        ownerPluginId: String,
+        surfaceId: String,
+        text: String,
+        cancelled: Boolean,
+    ): Boolean {
+        val principal = active?.takeIf { it.descriptor.id == ownerPluginId } ?: return false
+        return deliver(
+            principal,
+            BusPaths.SURFACE_TEXT_COMMITTED,
+            "text-committed",
+            EditableSurfaceContract.committedPayload(surfaceId, text, cancelled)
+                .put("pluginId", ownerPluginId),
         )
     }
 

@@ -55,6 +55,7 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        liveInstance = this
         window.statusBarColor = BusTheme.glassesBg
         window.navigationBarColor = BusTheme.glassesBg
         buildUi()
@@ -116,6 +117,7 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
         if (resumedInstance === this) resumedInstance = null
+        if (liveInstance === this) liveInstance = null
         unsubscribeLauncher?.invoke()
         unsubscribeLauncher = null
         insetUnsubscribe?.invoke()
@@ -627,12 +629,30 @@ class MainActivity : Activity() {
 
     companion object {
         @Volatile private var resumedInstance: MainActivity? = null
+        // Alive (created, not yet destroyed) whether resumed, paused, or stopped —
+        // unlike resumedInstance, which clears the moment something else takes the
+        // foreground. That gap is exactly the window a plugin surface opens and
+        // closes in, and this app has no other idle screen for Android to fall back
+        // on when that surface's own task disappears: it re-resumes whatever task
+        // is next in line, which is this one if it is still sitting there paused.
+        @Volatile private var liveInstance: MainActivity? = null
         @Volatile private var interactiveFlowActive = true
 
         internal fun isResumed(): Boolean = resumedInstance != null
 
         internal fun isInteractiveFlowActive(): Boolean =
             resumedInstance != null && interactiveFlowActive
+
+        /**
+         * Called right before a plugin surface takes the display. A paused
+         * MainActivity sitting behind it is not worth keeping as a fallback
+         * task — mid onboarding it is the setup screen itself, so this leaves
+         * it alone there.
+         */
+        internal fun finishIfStale() {
+            if (interactiveFlowActive) return
+            liveInstance?.takeIf { it !== resumedInstance }?.finish()
+        }
 
         const val PLUGIN_ROW_HEIGHT_DP = 52
         const val PLUGIN_ROW_MARGIN_DP = 8

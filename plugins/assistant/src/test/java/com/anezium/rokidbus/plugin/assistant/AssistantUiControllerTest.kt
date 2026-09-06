@@ -313,12 +313,10 @@ class AssistantUiControllerTest {
             assertEquals(
                 listOf(
                     RenderCall.UpdateNotice(
-                        lines = listOf(
-                            "A".repeat(AssistantUiController.MAX_NOTICE_BODY_CHARS - 2) +
-                                AssistantUiController.ELLIPSIS,
-                        ),
+                        body = "A".repeat(AssistantUiController.MAX_NOTICE_BODY_CHARS - 1) +
+                            AssistantUiController.ELLIPSIS,
                     ),
-                    RenderCall.UpdateNotice(lines = listOf("Final answer")),
+                    RenderCall.UpdateNotice(body = "Final answer"),
                 ),
                 renderer.calls,
             )
@@ -332,7 +330,7 @@ class AssistantUiControllerTest {
         }
 
     @Test
-    fun `answer paragraphs become normalized notice lines`() =
+    fun `answer paragraphs become normalized notice body lines`() =
         runTest {
             val renderer = FakeRenderer(supportsNotice = true)
             val controller = controller(renderer)
@@ -348,7 +346,7 @@ class AssistantUiControllerTest {
                 listOf(
                     RenderCall.ShowNotice(
                         title = AssistantUiController.NOTICE_TITLE,
-                        lines = listOf("a", "b", "c"),
+                        body = "a\nb\nc",
                     ),
                 ),
                 renderer.calls,
@@ -371,37 +369,52 @@ class AssistantUiControllerTest {
             )
 
             assertEquals(
-                listOf(answer),
-                (renderer.calls.single() as RenderCall.ShowNotice).lines,
+                answer,
+                (renderer.calls.single() as RenderCall.ShowNotice).body,
             )
             controller.onClose()
         }
 
     @Test
-    fun `answer lines truncate validly at line and character budgets`() =
+    fun `answer body keeps every paragraph regardless of count as long as it fits the budget`() =
         runTest {
             val renderer = FakeRenderer(supportsNotice = true)
             val controller = controller(renderer)
             controller.onOpen()
             controller.cancelLauncherHint()
 
+            // More paragraphs than the notice-surface line cap: a Hermes-style answer
+            // written as many short lines/bullets must not lose its tail to that cap
+            // while the shared character budget still has room.
+            val manyParagraphs =
+                (1..NoticeSurfaceContract.MAX_LINES + 1).joinToString("\n") { "line $it" }
             controller.showAnswer(
-                body = (1..NoticeSurfaceContract.MAX_LINES + 1).joinToString("\n") { "line $it" },
+                body = manyParagraphs,
                 legacyCardLines = listOf("legacy answer"),
             )
-            val lineLimited = (renderer.calls.single() as RenderCall.ShowNotice).lines
-            assertEquals(NoticeSurfaceContract.MAX_LINES, lineLimited.size)
-            assertValidTruncatedLines(lineLimited)
 
-            renderer.calls.clear()
+            assertEquals(
+                manyParagraphs,
+                (renderer.calls.single() as RenderCall.ShowNotice).body,
+            )
+            controller.onClose()
+        }
+
+    @Test
+    fun `answer body truncates validly at the character budget`() =
+        runTest {
+            val renderer = FakeRenderer(supportsNotice = true)
+            val controller = controller(renderer)
+            controller.onOpen()
+            controller.cancelLauncherHint()
+
             val halfBudget = NoticeSurfaceContract.MAX_BODY_CHARS / 2
             controller.showAnswer(
                 body = "A".repeat(halfBudget) + "\n" + "B".repeat(halfBudget),
                 legacyCardLines = listOf("legacy answer"),
             )
-            val characterLimited = (renderer.calls.single() as RenderCall.UpdateNotice).lines
-            assertEquals(2, characterLimited.size)
-            assertValidTruncatedLines(characterLimited)
+            val body = (renderer.calls.single() as RenderCall.ShowNotice).body
+            assertValidTruncatedBody(body)
             controller.onClose()
         }
 
@@ -418,10 +431,9 @@ class AssistantUiControllerTest {
                 legacyCardLines = listOf("legacy answer"),
             )
 
-            val lines = (renderer.calls.single() as RenderCall.ShowNotice).lines
-            assertEquals(1, lines.size)
-            assertEquals(AssistantUiController.MAX_NOTICE_BODY_CHARS, lines.sumOf { it.length + 1 })
-            assertValidTruncatedLines(lines)
+            val body = (renderer.calls.single() as RenderCall.ShowNotice).body
+            assertEquals(AssistantUiController.MAX_NOTICE_BODY_CHARS, body?.length)
+            assertValidTruncatedBody(body)
             controller.onClose()
         }
 
@@ -446,7 +458,7 @@ class AssistantUiControllerTest {
                         title = AssistantUiController.NOTICE_TITLE,
                         body = "Thinkingâ€¦",
                     ),
-                    RenderCall.UpdateNotice(lines = listOf("First paragraph", "Second paragraph")),
+                    RenderCall.UpdateNotice(body = "First paragraph\nSecond paragraph"),
                     RenderCall.UpdateNotice(body = "Searchingâ€¦"),
                 ),
                 renderer.calls,
@@ -474,8 +486,8 @@ class AssistantUiControllerTest {
 
             assertEquals(
                 listOf(
-                    RenderCall.UpdateNotice(lines = listOf("First paragraph", "Second paragraph")),
-                    RenderCall.UpdateNotice(lines = listOf("First paragraph", "Second paragraph")),
+                    RenderCall.UpdateNotice(body = "First paragraph\nSecond paragraph"),
+                    RenderCall.UpdateNotice(body = "First paragraph\nSecond paragraph"),
                 ),
                 renderer.calls,
             )
@@ -563,7 +575,7 @@ class AssistantUiControllerTest {
             advanceTimeBy(AssistantUiController.NOTICE_KEEPALIVE_INTERVAL_MS * 3)
             runCurrent()
             assertEquals(
-                List(3) { RenderCall.UpdateNotice(lines = listOf("A long answer.")) },
+                List(3) { RenderCall.UpdateNotice(body = "A long answer.") },
                 renderer.calls,
             )
 
@@ -572,7 +584,7 @@ class AssistantUiControllerTest {
             renderer.updateTtls.clear()
             controller.onAnswerSpeechFinished()
             assertEquals(
-                listOf(RenderCall.UpdateNotice(lines = listOf("A long answer."))),
+                listOf(RenderCall.UpdateNotice(body = "A long answer.")),
                 renderer.calls,
             )
             assertEquals(
@@ -684,14 +696,12 @@ class AssistantUiControllerTest {
             resetCapture = {},
         )
 
-    private fun assertValidTruncatedLines(lines: List<String>) {
-        assertTrue(lines.size <= NoticeSurfaceContract.MAX_LINES)
-        assertTrue(
-            lines.sumOf { it.length.toLong() + 1L } <= NoticeSurfaceContract.MAX_BODY_CHARS,
-        )
-        assertTrue(lines.last().endsWith(AssistantUiController.ELLIPSIS))
-        NexusNotice(title = AssistantUiController.NOTICE_TITLE, lines = lines)
-        NexusNoticeUpdate(lines = lines)
+    private fun assertValidTruncatedBody(body: String?) {
+        requireNotNull(body)
+        assertTrue(body.length <= NoticeSurfaceContract.MAX_BODY_CHARS)
+        assertTrue(body.endsWith(AssistantUiController.ELLIPSIS))
+        NexusNotice(title = AssistantUiController.NOTICE_TITLE, body = body)
+        NexusNoticeUpdate(body = body)
     }
 
     private sealed interface RenderCall {

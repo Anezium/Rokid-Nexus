@@ -13,6 +13,7 @@ import android.os.SystemClock
 import android.view.KeyEvent
 import com.anezium.rokidbus.shared.BusEnvelope
 import com.anezium.rokidbus.shared.BusPaths
+import com.anezium.rokidbus.shared.EditableSurfaceContract
 import com.anezium.rokidbus.shared.ImageSurfaceContract
 import com.anezium.rokidbus.shared.ImageSurfaceValidationResult
 import com.anezium.rokidbus.shared.InkSurfaceContract
@@ -52,6 +53,11 @@ object SurfaceController {
     private var pendingInk: NexusSurface? = null
     @Volatile private var inkResyncListener: ((InkResyncRequest) -> Unit)? = null
     @Volatile private var active: NexusSurface? = null
+    // Which display path the active surface actually rendered through, not
+    // just which one displayPath(context) currently names — the overlay path
+    // can fall back to ACTIVITY, and ink always uses the overlay. Read on hide
+    // to decide whether there is a paused MainActivity task to finish at all.
+    @Volatile private var activeDisplayedViaActivity = false
 
     private val displayStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -68,6 +74,9 @@ object SurfaceController {
     }
 
     fun activeSurface(): NexusSurface? = active
+
+    fun hasFocusedEditableSurface(): Boolean =
+        active?.let { it.kind == NexusSurface.KIND_CARD && it.editable != null } == true
 
     // Overlay is the default: TYPE_ACCESSIBILITY_OVERLAY stays visible even when
     // another app (e.g. Rokid Relay's glasses activity) keeps relaunching itself
@@ -243,6 +252,21 @@ object SurfaceController {
     fun handleKeyEvent(event: KeyEvent): Boolean {
         val surface = active ?: return false
         if (surface.isReader) return handleReaderKeyEvent(surface, event)
+        if (surface.kind == NexusSurface.KIND_CARD && surface.editable != null) {
+            // FORWARDED_KEYS below exists for read-only cards' remote-control
+            // navigation (space/enter as media or select). An editable field
+            // needs those same keys typed, not intercepted, so only BACK is
+            // still claimed here; everything else reaches the focused EditText
+            // the normal Android way.
+            if (event.keyCode == KeyEvent.KEYCODE_BACK &&
+                event.action == KeyEvent.ACTION_DOWN &&
+                event.repeatCount == 0
+            ) {
+                handleBackDown(surface)
+                return true
+            }
+            return false
+        }
         if (shouldSuppressDpadEvent(event)) {
             return true
         }
@@ -328,6 +352,22 @@ object SurfaceController {
                 .put("surfaceId", surface.surfaceId)
                 .put("keyCode", keyCode)
                 .put("action", action),
+        )
+        return true
+    }
+
+    /**
+     * The wearer submitted or cancelled the active card's editable field.
+     * [text] is ignored (and not sent) when [cancelled] — the payload never
+     * carries a text field for a cancelled field, matching how
+     * [EditableSurfaceContract.committedPayload] encodes it.
+     */
+    fun forwardSurfaceText(text: String, cancelled: Boolean): Boolean {
+        val surface = active?.takeIf { it.kind == NexusSurface.KIND_CARD && it.editable != null }
+            ?: return false
+        GlassesHub.sendSurfaceTextCommitted(
+            EditableSurfaceContract.committedPayload(surface.surfaceId, text, cancelled)
+                .put("ownerPluginId", surface.ownerPluginId),
         )
         return true
     }
@@ -432,6 +472,10 @@ object SurfaceController {
                 context,
                 assistantEpisodeSurfacePresentedSignal(surface.ownerPluginId),
             )
+            // Lyrics and Media push updates to the same surfaceId continuously;
+            // only a genuinely new surface taking over the screen counts as a
+            // handoff worth stepping the launcher and any stale activity aside for.
+            val isHandoff = active?.surfaceId != surface.surfaceId
             active = surface
             syncInkFrameMeter(surface)
             RingFocusBroadcastCoordinator.setSurfaceActive(
@@ -440,7 +484,7 @@ object SurfaceController {
                 completesHandoff = completesRingHandoff,
             )
             notifyListeners(surface)
-            displaySurface(context, surface, forcedPath)
+            displaySurface(context, surface, forcedPath, isHandoff)
         }
     }
 
@@ -495,6 +539,7 @@ object SurfaceController {
                     context,
                     assistantEpisodeSurfacePresentedSignal(surface.ownerPluginId),
                 )
+                val isHandoff = active?.surfaceId != surface.surfaceId
                 active = surface
                 RingFocusBroadcastCoordinator.setSurfaceActive(
                     context,
@@ -502,7 +547,7 @@ object SurfaceController {
                     completesHandoff = completesRingHandoff,
                 )
                 notifyListeners(surface)
-                displaySurface(context, surface, null)
+                displaySurface(context, surface, null, isHandoff)
             }
             imageDecodeExecutor.execute {
                 val decoded = ImageHudView.decodeRgb565(bytes, metadata)
@@ -545,6 +590,7 @@ object SurfaceController {
                                 context,
                                 assistantEpisodeSurfacePresentedSignal(published.ownerPluginId),
                             )
+                            val isHandoff = current?.surfaceId != published.surfaceId
                             active = published
                             RingFocusBroadcastCoordinator.setSurfaceActive(
                                 context,
@@ -552,7 +598,7 @@ object SurfaceController {
                                 completesHandoff = completesRingHandoff,
                             )
                             notifyListeners(published)
-                            displaySurface(context, published, null)
+                            displaySurface(context, published, null, isHandoff)
                         }
                     }
                 }
@@ -560,20 +606,48 @@ object SurfaceController {
         }
     }
 
-    private fun displaySurface(context: Context, surface: NexusSurface, forcedPath: SurfaceDisplayPath?) {
+    private fun displaySurface(
+        context: Context,
+        surface: NexusSurface,
+        forcedPath: SurfaceDisplayPath?,
+        isHandoff: Boolean,
+    ) {
         val path = surfaceDisplayPath(surface, forcedPath ?: displayPath(context))
         if (surface.isInk) {
+            activeDisplayedViaActivity = false
             if (!SurfaceOverlayRenderer.show(context, surface)) {
                 log("Ink surface overlay unavailable")
                 onInkRendererError(surface, emptyList())
             }
             return
         }
+        // The launcher overlay dismisses itself on the keys it claims, but
+        // nothing makes it step aside for a surface arriving some other way
+        // (a plugin's own gesture, a phone-triggered show like typed notes) —
+        // seen on hardware sitting behind a closed editable card's activity,
+        // stuck open from whenever it was last shown. Only a real handoff onto
+        // the ACTIVITY path needs this: the overlay path never creates the task
+        // that triggers Android's fallback resume, and an update to the surface
+        // already on screen (Lyrics, Media) isn't a handoff at all — doing this
+        // on every such update made the launcher overlay vanish out from under
+        // whatever plugin was already showing it.
+        fun stepLauncherAside() {
+            if (!isHandoff) return
+            LauncherOverlayRenderer.hide()
+            MainActivity.finishIfStale()
+        }
         when (path) {
-            SurfaceDisplayPath.ACTIVITY -> showActivity(context, surface)
+            SurfaceDisplayPath.ACTIVITY -> {
+                activeDisplayedViaActivity = true
+                stepLauncherAside()
+                showActivity(context, surface)
+            }
             SurfaceDisplayPath.OVERLAY -> {
+                activeDisplayedViaActivity = false
                 if (!SurfaceOverlayRenderer.show(context, surface)) {
                     log("Surface overlay unavailable; falling back to activity")
+                    activeDisplayedViaActivity = true
+                    stepLauncherAside()
                     showActivity(context, surface)
                 }
             }
@@ -626,6 +700,14 @@ object SurfaceController {
     }
 
     private fun hideLocalOnMain(reason: DisplayHoldReleaseReason) {
+        // Same reasoning as the show-side call in displaySurface, and gated the
+        // same way: only a surface that actually rendered through the ACTIVITY
+        // path leaves a task behind for Android to fall back to. Calling this
+        // unconditionally meant any overlay surface ending — Lyrics at track
+        // end, Media stopping — finished a MainActivity it never created, and
+        // with these glasses' 5 s screen timeout that task is paused-but-alive
+        // most of the time it exists.
+        if (activeDisplayedViaActivity) MainActivity.finishIfStale()
         active?.let { ending ->
             AssistantDisplayEpisode.accept(
                 null,
@@ -885,6 +967,9 @@ object SurfaceController {
             armBackFailsafe(surface.surfaceId)
         } else {
             if (surface.isInk) sendInkClosed(surface.surfaceId, InkSurfaceContract.CLOSE_USER)
+            if (surface.kind == NexusSurface.KIND_CARD && surface.editable != null) {
+                forwardSurfaceText("", cancelled = true)
+            }
             hideLocal(DisplayHoldReleaseReason.WEARER_DISMISSED)
         }
     }

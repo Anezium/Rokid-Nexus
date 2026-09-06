@@ -11,6 +11,7 @@ import com.anezium.rokidbus.client.plugin.NexusNoticeAction
 import com.anezium.rokidbus.client.plugin.NexusNoticeCloseReason
 import com.anezium.rokidbus.client.plugin.NexusNoticeImage
 import com.anezium.rokidbus.client.plugin.NexusNoticeUpdate
+import com.anezium.rokidbus.client.plugin.NexusCard
 import com.anezium.rokidbus.client.plugin.NexusPluginCallbacks
 import com.anezium.rokidbus.client.plugin.NexusPluginClient
 import com.anezium.rokidbus.client.plugin.NexusSdkResult
@@ -19,11 +20,14 @@ import com.anezium.rokidbus.client.plugin.NexusSpeechError
 import com.anezium.rokidbus.client.plugin.NexusSpeechSession
 import com.anezium.rokidbus.client.plugin.NexusSpeechState
 import com.anezium.rokidbus.client.plugin.NexusSpeechStopReason
+import com.anezium.rokidbus.client.plugin.NexusSurfaceSession
 import com.anezium.rokidbus.client.plugin.NexusTtsCallbacks
 import com.anezium.rokidbus.client.plugin.NexusTtsDoneReason
 import com.anezium.rokidbus.client.plugin.NexusTtsSession
 import com.anezium.rokidbus.client.plugin.speechSession
+import com.anezium.rokidbus.client.plugin.surfaceSession
 import com.anezium.rokidbus.client.plugin.ttsSession
+import com.anezium.rokidbus.shared.EditableSurfaceField
 import com.anezium.rokidbus.shared.NoticeSurfaceContract
 import com.anezium.rokidbus.shared.plugin.NexusInputEvent
 import com.anezium.rokidbus.shared.plugin.PluginCapability
@@ -38,6 +42,7 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
     private val settings = RelaySettings(appContext)
 
     private var client: NexusPluginClient? = null
+    private var typingSurface: NexusSurfaceSession? = null
     private var pendingShow: ReplyRepository.PendingReply? = null
     private var pendingShowStartedAtMs = 0L
     private var pendingShowWasBlocked = false
@@ -54,6 +59,15 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
     private var updateDrainScheduled = false
     private var lastNoticeMessageAtMs = Long.MIN_VALUE
     private var sendDeadlineMs: Long? = null
+    private var inputKeepaliveRunnable: Runnable? = null
+    private var typingOpenedAtShowGeneration: Int? = null
+    // Identifies one open attempt distinctly from the next even when both share
+    // a showGeneration (cancel, then Reply again on the same still-active
+    // notice) — see onTypingSurfaceRejected. currentTypingAttempt is null
+    // whenever no field is open, same lifecycle as typingOpenedAtShowGeneration.
+    private var typingAttemptCounter = 0
+    private var currentTypingAttempt: Int? = null
+    private var deferredShow: ReplyRepository.PendingReply? = null
 
     fun show(reply: ReplyRepository.PendingReply) = onMain {
         // The inbox owns the bus while it is open, and it is already showing
@@ -62,10 +76,31 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
             Log.i(TAG, "band suppressed: inbox has the bus")
             return@onMain
         }
+        if (isComposingReply()) {
+            // Replacing the band now would discard a reply the wearer is still dictating,
+            // typing, or has already captured and is about to send — the same in-flight work
+            // isTypingCommitStale protects from being misdelivered, here protected from being
+            // silently thrown away instead. Hold the newest one and show it the moment the
+            // current exchange resolves (sent, cancelled, or dismissed); see
+            // applyDeferredShowOrElse.
+            deferredShow = reply
+            Log.i(TAG, "showDeferred: composing in progress")
+            return@onMain
+        }
+        // Any reply held back for an earlier compose is superseded by this one
+        // going up now through the ordinary path — applying it later (the Sent
+        // linger, or a future onNoticeClosed) would replace what's about to show
+        // with something older than it.
+        deferredShow = null
         showGeneration += 1
         val generation = showGeneration
         val nowMs = SystemClock.elapsedRealtime()
         invalidateSpeech()
+        // A typing field left open from the reply this is about to replace must not go on
+        // accepting keystrokes for a conversation that is no longer current — see
+        // isTypingCommitStale. Hiding it here, not just rejecting its eventual commit, keeps the
+        // wearer from typing into a field that has already been silently discarded.
+        hideTypingSurface()
         stopReadAloud()
         essentialUpdates.clear()
         pendingPartial = null
@@ -132,17 +167,88 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
         stopReadAloud()
         when (id) {
             ACTION_SHOW -> revealNotice()
-            ACTION_REPLY, ACTION_RETRY -> startListening()
+            ACTION_REPLY, ACTION_RETRY -> if (settings.replyByTyping()) startTyping() else startListening()
             ACTION_SEND -> sendConfirmedReply()
             ACTION_DISMISS, ACTION_CANCEL -> dismissNotice()
         }
     }
 
     override fun onNoticeClosed(reason: NexusNoticeCloseReason) = onMain {
+        // Back or the band's own TTL isn't the end of the story if a reply
+        // arrived while the wearer was composing and got held back for exactly
+        // this moment — that notification still deserves its own band, not to
+        // be discarded along with the one that just closed.
+        //
+        // closeClient() runs unconditionally first, not just when nothing is
+        // deferred: this notice is gone either way, and closing it is what
+        // resets the composing state (typing field, speech, transcript) that
+        // caused the deferral in the first place. Calling show(deferred)
+        // without that reset first hit isComposingReply() still true — Back
+        // pressed while typing closes the notice but leaves the field open —
+        // so show() just deferred it again and returned, skipping closeClient()
+        // entirely: notice gone, card still up, keepalive still posting to it.
+        val deferred = deferredShow
+        deferredShow = null
         closeClient()
+        if (deferred != null) show(deferred)
     }
 
     override fun onMessage(path: String, id: String, payload: JSONObject) = Unit
+
+    /**
+     * The wearer submitted or cancelled the typed-reply field opened by
+     * [startTyping]. Lands at exactly the point [onSpeechFinal] does once a
+     * transcript is ready — everything downstream (confirm chips, the send
+     * countdown, [sendConfirmedReply]) doesn't care which input method got
+     * [currentTranscript] there.
+     */
+    override fun onSurfaceTextCommitted(surfaceId: String, text: String, cancelled: Boolean) = onMain {
+        // The wire id round-trips as "pluginId:localSurfaceId" (confirmed on
+        // device: "relay:reply"), not the bare local id this plugin shows the
+        // card under — same "$pluginId:$local" shape notice/ink events use.
+        if (surfaceId.substringAfter(':', surfaceId) != TYPING_SURFACE_ID || !activeNotice) return@onMain
+        val openedAtGeneration = typingOpenedAtShowGeneration
+        if (openedAtGeneration == null || isTypingCommitStale(openedAtGeneration, showGeneration)) {
+            // A new notification replaced the reply this field was opened for while the wearer
+            // was still typing (show() already hid the field for this). Applying this text to
+            // whatever notification is current now would send it to the wrong conversation.
+            Log.i(TAG, "typed reply commit ignored: stale generation")
+            return@onMain
+        }
+        stopInputKeepalive()
+        hideTypingSurface()
+        if (cancelled) {
+            applyDeferredShowOrElse {
+                queueEssential(
+                    NexusNoticeUpdate(
+                        footer = "",
+                        interactive = true,
+                        actions = INITIAL_ACTIONS,
+                        ttlMs = DECISION_TTL_MS,
+                    ),
+                    dropPartial = true,
+                )
+            }
+            return@onMain
+        }
+        val reviewed = NotificationTextExtractor.trimFromTop(text, NoticeSurfaceContract.MAX_BODY_CHARS)
+        if (reviewed.isBlank()) {
+            applyDeferredShowOrElse { queueSpeechFailure("Empty reply") }
+            return@onMain
+        }
+        currentTranscript = reviewed
+        pendingPartial = null
+        queueEssential(
+            NexusNoticeUpdate(
+                body = reviewed,
+                footer = "",
+                interactive = true,
+                actions = confirmActions(startSendCountdown(reviewed)),
+                ttlMs = DECISION_TTL_MS,
+            ),
+            dropPartial = true,
+        )
+    }
 
     private fun tryShowPending() {
         val reply = pendingShow ?: return
@@ -306,6 +412,7 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
         val currentClient = client ?: return
         if (!activeNotice || currentReply == null) return
         invalidateSpeech()
+        hideTypingSurface()
         currentTranscript = null
         speechFinalReceived = false
         // Deliberately offers nothing while listening, and says so.
@@ -327,6 +434,9 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
             NexusNoticeUpdate(footer = "Listening… · Back to cancel", ttlMs = DECISION_TTL_MS),
             dropPartial = true,
         )
+        startInputKeepalive {
+            NexusNoticeUpdate(footer = "Listening… · Back to cancel", ttlMs = DECISION_TTL_MS)
+        }
 
         val generation = speechGeneration
         val newSpeech = currentClient.speechSession(object : NexusSpeechCallbacks {
@@ -348,6 +458,7 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
 
             override fun onSpeechFinal(text: String) = onMain {
                 if (generation != speechGeneration) return@onMain
+                stopInputKeepalive()
                 if (text.isBlank()) {
                     queueSpeechFailure("Didn't catch that")
                     return@onMain
@@ -389,15 +500,134 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
                 if (speechFinalReceived && reason == NexusSpeechStopReason.COMPLETED) return@onMain
                 // The label, never error.kind: the kind is an enum name meant
                 // for a bug report, and the band is not a bug report.
-                queueSpeechFailure(speechReasonLabel(reason))
+                applyDeferredShowOrElse { queueSpeechFailure(speechReasonLabel(reason)) }
             }
         })
         speech = newSpeech
         val result = newSpeech.start()
         if (result != NexusSdkResult.SENT) {
             speech = null
-            queueSpeechFailure(result.name)
+            applyDeferredShowOrElse { queueSpeechFailure(result.name) }
         }
+    }
+
+    /**
+     * The typed alternative to [startListening], gated behind
+     * [RelaySettings.replyByTyping]. Opens one bounded editable field on the
+     * foreground surface tier — the notice band itself can never host a
+     * focusable field (see plan notes) — and waits for
+     * [onSurfaceTextCommitted]. The band's footer changes the same way it
+     * would while listening; the underlying message keeps whatever paging it
+     * already had.
+     */
+    private fun startTyping() {
+        val currentClient = client ?: return
+        if (!activeNotice || currentReply == null) return
+        if (!currentClient.supportsEditableSurface) {
+            // An older glasses hub shows the card fine but silently ignores the
+            // `editable` field on it — there would be nothing wrong-looking to
+            // recover from, just a field that can never be typed into or
+            // committed. Falling back here, before that card ever opens, is the
+            // only point this can still be caught.
+            startListening()
+            return
+        }
+        invalidateSpeech()
+        currentTranscript = null
+        // The foreground editable card is about to own confirm/direction keys
+        // (Enter submits, arrows move the caret). An interactive notice claims
+        // those first, at the accessibility layer, ahead of the card ever
+        // seeing them — so this band steps back from that claim for as long
+        // as the field is open.
+        queueEssential(
+            NexusNoticeUpdate(
+                footer = "Typing… · Back to cancel",
+                interactive = false,
+                ttlMs = DECISION_TTL_MS,
+            ),
+            dropPartial = true,
+        )
+        startInputKeepalive {
+            NexusNoticeUpdate(
+                footer = "Typing… · Back to cancel",
+                interactive = false,
+                ttlMs = DECISION_TTL_MS,
+            )
+        }
+        // Bound to the reply this field is being opened for: see isTypingCommitStale.
+        typingOpenedAtShowGeneration = showGeneration
+        val attempt = ++typingAttemptCounter
+        currentTypingAttempt = attempt
+        val session = typingSurface ?: currentClient.surfaceSession(TYPING_SURFACE_ID).also {
+            typingSurface = it
+        }
+        // showCard() returning SENT only means the hub accepted the Binder call —
+        // it can still reject the card itself (e.g. SURFACE_BUSY when another
+        // plugin owns the foreground surface) in a reply that arrives after this
+        // call already returned. Without this, the band was left stuck on
+        // non-interactive "Typing…" with every new notification deferred behind
+        // a field that never actually opened, with nothing left to resolve it
+        // short of the wearer pressing Back on a field they can't see.
+        session.onRejected = { code -> onTypingSurfaceRejected(attempt, code) }
+        val result = session.showCard(
+            NexusCard(
+                title = "Reply",
+                lines = emptyList(),
+                editable = EditableSurfaceField(
+                    placeholder = "Type your reply…",
+                    submitLabel = "Send",
+                ),
+            ),
+        )
+        Log.i(TAG, "typing show result=$result")
+        if (result != NexusSdkResult.SENT) {
+            // The field never actually opened: undo the composing state claimed above so a
+            // reply held back by show() isn't stuck deferred forever with nothing left to
+            // resolve it.
+            hideTypingSurface()
+            applyDeferredShowOrElse { queueSpeechFailure(result.name) }
+        }
+    }
+
+    /**
+     * A field this typing session opened was rejected after the fact. Ignored
+     * once that attempt is no longer the open one — cancelled, sent, or
+     * superseded by a fresh Reply on the same still-active notice.
+     */
+    private fun onTypingSurfaceRejected(attempt: Int, code: String) {
+        if (currentTypingAttempt != attempt) return
+        hideTypingSurface()
+        applyDeferredShowOrElse { queueSpeechFailure(rejectionMessage(code)) }
+    }
+
+    /** The wire code is meant for logs, not the band — seen live as a bare "SURFACE_BUSY". */
+    private fun rejectionMessage(code: String): String = when (code) {
+        "SURFACE_BUSY" -> "Screen busy — try again"
+        else -> "Couldn't open reply"
+    }
+
+    private fun hideTypingSurface() {
+        typingSurface?.hide()
+        typingOpenedAtShowGeneration = null
+        currentTypingAttempt = null
+    }
+
+    /** See [isComposingReplyState]; [show] holds off replacing the band while this is true. */
+    private fun isComposingReply(): Boolean = isComposingReplyState(
+        speechActive = speech != null,
+        typingFieldOpen = typingOpenedAtShowGeneration != null,
+        hasUnsentTranscript = !currentTranscript.isNullOrBlank(),
+    )
+
+    /** Applies a reply that arrived while [isComposingReply] was true, or runs [fallback]. */
+    private fun applyDeferredShowOrElse(fallback: () -> Unit) {
+        val deferred = deferredShow
+        if (deferred == null) {
+            fallback()
+            return
+        }
+        deferredShow = null
+        show(deferred)
     }
 
     private fun sendConfirmedReply() {
@@ -419,7 +649,21 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
                     NexusNoticeUpdate(footer = "", actions = SENT_ACTIONS),
                     dropPartial = true,
                 )
-                main.postDelayed({ if (activeNotice) dismissNotice() }, SENT_LINGER_MS)
+                // Bound to this exchange's generation, not just activeNotice: a
+                // fresh notification arriving during the linger already went
+                // through show() above and is the current band by the time this
+                // fires — applying whatever deferredShow held then would replace
+                // it with something older, even though show() cleared any stale
+                // one already. Only fire this exchange's own dismiss-or-apply.
+                val sentGeneration = showGeneration
+                main.postDelayed(
+                    {
+                        if (activeNotice && showGeneration == sentGeneration) {
+                            applyDeferredShowOrElse { dismissNotice() }
+                        }
+                    },
+                    SENT_LINGER_MS,
+                )
             }
             ReplySendResult.Missing -> queueSendFailure("Notification gone")
             ReplySendResult.Blank -> queueSendFailure("Empty reply")
@@ -482,10 +726,15 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
     }
 
     private fun queueSpeechFailure(cause: String) {
+        stopInputKeepalive()
         pendingPartial = null
         queueEssential(
             NexusNoticeUpdate(
                 footer = fitFooter(cause),
+                // Reclaims confirm/direction keys from a card that may have just
+                // been showing them to the typed-reply field instead (see
+                // startTyping). A no-op when they were never released.
+                interactive = true,
                 actions = SPEECH_FAILURE_ACTIONS,
                 ttlMs = DECISION_TTL_MS,
             ),
@@ -515,20 +764,51 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
 
     private fun dismissNotice() {
         invalidateSpeech()
+        hideTypingSurface()
+        currentTranscript = null
         pendingPartial = null
         essentialUpdates.clear()
-        client?.hideNotice()
-        main.postDelayed({
-            if (activeNotice) closeClient()
-        }, HIDE_FALLBACK_MS)
+        applyDeferredShowOrElse {
+            client?.hideNotice()
+            main.postDelayed({
+                if (activeNotice) closeClient()
+            }, HIDE_FALLBACK_MS)
+        }
     }
 
     private fun invalidateSpeech() {
         cancelSendCountdown()
+        stopInputKeepalive()
         speechGeneration += 1
         speechFinalReceived = false
         speech?.stop()
         speech = null
+    }
+
+    /**
+     * Neither dictation nor typing is bounded by anything the band's own
+     * [DECISION_TTL_MS] knows about — a slow talker or a hunt-and-peck typist
+     * on a small keyboard can easily outrun 30 seconds. Resending the same
+     * in-flight update on a short clock keeps the band's TTL from ever
+     * reaching zero mid-input, the same way [onTtsStarted] holds it open for
+     * a single known duration, just repeated for an open-ended one.
+     */
+    private fun startInputKeepalive(update: () -> NexusNoticeUpdate) {
+        stopInputKeepalive()
+        val runnable = object : Runnable {
+            override fun run() {
+                if (!activeNotice) return
+                queueEssential(update(), dropPartial = false)
+                main.postDelayed(this, INPUT_KEEPALIVE_INTERVAL_MS)
+            }
+        }
+        inputKeepaliveRunnable = runnable
+        main.postDelayed(runnable, INPUT_KEEPALIVE_INTERVAL_MS)
+    }
+
+    private fun stopInputKeepalive() {
+        inputKeepaliveRunnable?.let(main::removeCallbacks)
+        inputKeepaliveRunnable = null
     }
 
     private fun queuePartial(update: NexusNoticeUpdate) {
@@ -570,6 +850,9 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
         cancelSendCountdown()
         showGeneration += 1
         invalidateSpeech()
+        hideTypingSurface()
+        typingSurface = null
+        deferredShow = null
         closeReadAloudSession()
         essentialUpdates.clear()
         pendingPartial = null
@@ -693,8 +976,14 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
          */
         const val DECISION_TTL_MS = 30_000L
 
+        /** Comfortably under [DECISION_TTL_MS], so a resend always lands before the old TTL could. */
+        const val INPUT_KEEPALIVE_INTERVAL_MS = 12_000L
+
         /** Long enough to read "Sent", short enough not to be in the way. */
         const val SENT_LINGER_MS = 1_500L
+
+        /** The one foreground-surface slot Relay ever opens, for the typed-reply field. */
+        const val TYPING_SURFACE_ID = "reply"
 
         const val ACTION_REPLY = "reply"
         const val ACTION_DISMISS = "dismiss"

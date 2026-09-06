@@ -295,7 +295,7 @@ internal class AssistantUiController(
         body: String,
         ttlMs: Long? = null,
     ): Boolean {
-        val lines = truncateAnswerLines(body)
+        val truncatedBody = truncateAnswerBody(body)
         val modeUpdate = AssistantNoticeMode.ENGAGED.takeIf {
             !noticeShown || noticeMode != AssistantNoticeMode.ENGAGED
         }
@@ -303,7 +303,7 @@ internal class AssistantUiController(
             renderer.updateNotice(
                 NexusNoticeUpdate(
                     interactive = modeUpdate?.let { true },
-                    lines = lines,
+                    body = truncatedBody,
                     ttlMs = ttlMs,
                 ),
             )
@@ -312,7 +312,7 @@ internal class AssistantUiController(
                 NexusNotice(
                     title = NOTICE_TITLE,
                     interactive = true,
-                    lines = lines,
+                    body = truncatedBody,
                     ttlMs = ttlMs,
                 ),
             )
@@ -418,40 +418,25 @@ internal class AssistantUiController(
         return "$ELLIPSIS ${normalized.takeLast(TRANSCRIPT_TAIL_CHARS).trimStart()}"
     }
 
-    private fun truncateAnswerLines(text: String): List<String> {
-        val sourceLines = text
+    /**
+     * Paragraph breaks are preserved as `\n` inside one `body` string rather than a
+     * `lines` array: `lines` caps out at [NoticeSurfaceContract.MAX_LINES] entries on
+     * top of the shared character budget, which a Hermes-style answer of many short
+     * paragraphs/bullets hits well before the budget is used. `body` only enforces
+     * the character budget, so the glasses' own notice pagination gets to page
+     * through everything the budget allows instead of the tail being dropped early.
+     */
+    private fun truncateAnswerBody(text: String): String {
+        val normalizedLines = text
             .split(Regex("\\n+"))
             .map(::normalizeNoticeText)
             .filter(String::isNotEmpty)
-            .ifEmpty { return listOf(ELLIPSIS) }
-        val keptLines = mutableListOf<String>()
-        var usedChars = 0
-        var consumedLines = 0
-
-        for (line in sourceLines) {
-            if (keptLines.size == NoticeSurfaceContract.MAX_LINES) break
-            val availableLineChars = MAX_NOTICE_BODY_CHARS - usedChars - 1
-            if (availableLineChars <= 0) break
-            if (line.length <= availableLineChars) {
-                keptLines += line
-                usedChars += line.length + 1
-                consumedLines += 1
-                continue
-            }
-
-            keptLines += line
-                .take(availableLineChars - ELLIPSIS.length)
-                .trimEnd() + ELLIPSIS
-            return keptLines
-        }
-
-        if (consumedLines < sourceLines.size) {
-            val lastLine = keptLines.last()
-            keptLines[keptLines.lastIndex] = lastLine
-                .take(lastLine.length - ELLIPSIS.length)
-                .trimEnd() + ELLIPSIS
-        }
-        return keptLines
+            .ifEmpty { return ELLIPSIS }
+        val joined = normalizedLines.joinToString("\n")
+        if (joined.length <= MAX_NOTICE_BODY_CHARS) return joined
+        return joined
+            .take(MAX_NOTICE_BODY_CHARS - ELLIPSIS.length)
+            .trimEnd() + ELLIPSIS
     }
 
     private fun truncateNoticeHead(text: String): String {

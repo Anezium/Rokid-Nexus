@@ -27,8 +27,11 @@ import com.anezium.rokidbus.phone.speech.HubSecretStore
 import com.anezium.rokidbus.phone.speech.SpeechReadiness
 import com.anezium.rokidbus.phone.speech.SpeechSettingsStore
 import com.anezium.rokidbus.shared.BusPaths
+import com.anezium.rokidbus.shared.AccessibilityCheckReply
+import com.anezium.rokidbus.shared.GlassesAccessibilityCheckContract
 import com.anezium.rokidbus.shared.GlassesRepairContract
 import com.anezium.rokidbus.shared.LinkStateBits
+import org.json.JSONObject
 
 private const val SETTINGS_TAG = "RokidNexusSettings"
 
@@ -55,6 +58,11 @@ class SettingsActivity : Activity() {
     private var repairStatus: TextView? = null
     private var repairInFlight = false
     private val repairStatusClear = Runnable { repairStatus?.visibility = View.GONE }
+    private var accessibilityCheckValue: TextView? = null
+    private var accessibilityCheckStatus: TextView? = null
+    private var accessibilityCheckInFlight = false
+    private val accessibilityCheckStatusClear =
+        Runnable { accessibilityCheckStatus?.visibility = View.GONE }
     private var hubUiClient: BusClient? = null
     private var lastLinkState = 0
     // State updates can land on a Binder thread, and touching the hierarchy from there leaves the
@@ -86,7 +94,10 @@ class SettingsActivity : Activity() {
             clientId = "settings-ui",
             // The repair reply is consumed by the request/reply correlation, but delivery still
             // requires the prefix to be registered.
-            pathPrefixes = listOf(BusPaths.GLASSES_REPAIR_REPLY),
+            pathPrefixes = listOf(
+                BusPaths.GLASSES_REPAIR_REPLY,
+                BusPaths.GLASSES_ACCESSIBILITY_CHECK_REPLY,
+            ),
         ) { event -> handleHubEvent(event) }.also { it.connect() }
     }
 
@@ -209,6 +220,8 @@ class SettingsActivity : Activity() {
             addView(glassesRepairToggleRow(), NexusUi.block())
             addView(BusTheme.gap(this@SettingsActivity, 10))
             addView(glassesRepairNowRow(), NexusUi.block())
+            addView(BusTheme.gap(this@SettingsActivity, 10))
+            addView(accessibilityCheckRow(), NexusUi.block())
             addView(BusTheme.gap(this@SettingsActivity, 10))
             addView(
                 actionRow(
@@ -719,6 +732,115 @@ class SettingsActivity : Activity() {
         status.text = message
         status.visibility = View.VISIBLE
         if (autoClear) status.postDelayed(repairStatusClear, REPAIR_STATUS_LINGER_MS)
+    }
+
+    private fun accessibilityCheckRow(): LinearLayout {
+        val value = NexusUi.metaLabel(this, "Check ›", NexusUi.GREEN)
+        accessibilityCheckValue = value
+        val status = NexusUi.rowSub(this, "").apply {
+            visibility = View.GONE
+            setPadding(0, NexusUi.dp(this@SettingsActivity, 6), 0, 0)
+        }
+        accessibilityCheckStatus = status
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = NexusUi.pressedBordered(this@SettingsActivity, NexusUi.PANEL, 15)
+            setPadding(
+                NexusUi.dp(this@SettingsActivity, 15),
+                NexusUi.dp(this@SettingsActivity, 14),
+                NexusUi.dp(this@SettingsActivity, 15),
+                NexusUi.dp(this@SettingsActivity, 14),
+            )
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { startAccessibilityCheck() }
+            addView(
+                LinearLayout(this@SettingsActivity).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    addView(
+                        NexusUi.rowTitle(this@SettingsActivity, "Check accessibility services"),
+                        LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+                    )
+                    addView(value)
+                },
+                NexusUi.block(),
+            )
+            addView(
+                NexusUi.rowSub(
+                    this@SettingsActivity,
+                    "Warn if another app's accessibility service is interfering with Nexus",
+                ),
+                NexusUi.block(),
+            )
+            addView(status, NexusUi.block())
+        }
+    }
+
+    private fun startAccessibilityCheck() {
+        if (accessibilityCheckInFlight) return
+        val client = hubUiClient ?: return
+        val transportBits = LinkStateBits.CXR_CONTROL_UP or LinkStateBits.SPP_DATA_UP
+        if (lastLinkState and transportBits == 0) {
+            showAccessibilityCheckStatus("The glasses are not connected.")
+            return
+        }
+        accessibilityCheckInFlight = true
+        accessibilityCheckValue?.text = "Working…"
+        showAccessibilityCheckStatus("Asking the glasses which services are enabled…", autoClear = false)
+        client.request(
+            BusPaths.GLASSES_ACCESSIBILITY_CHECK_REQUEST,
+            GlassesAccessibilityCheckContract.requestToJson(),
+            timeoutMs = REPAIR_REQUEST_TIMEOUT_MS,
+        ) { result ->
+            if (isDestroyed || isFinishing) return@request
+            accessibilityCheckInFlight = false
+            accessibilityCheckValue?.text = "Check ›"
+            val reply = result.fold(
+                onSuccess = { payload -> GlassesAccessibilityCheckContract.fromReply(payload) },
+                onFailure = { null },
+            )
+            showAccessibilityCheckStatus(accessibilityCheckMessage(result.isSuccess, reply))
+            if (!reply?.foreignServices.isNullOrEmpty() || reply?.nexusEnabled == false) {
+                offerOpenGlassesAccessibilitySettings()
+            }
+        }
+    }
+
+    private fun accessibilityCheckMessage(succeeded: Boolean, reply: AccessibilityCheckReply?): String = when {
+        !succeeded -> "The glasses did not answer. Check the connection and try again."
+        reply == null -> "The glasses sent an answer this version does not understand."
+        // Worse than "found N other services": nothing is enabled at all, Nexus's
+        // own service included, so none of its glasses-side input handling is
+        // running either. An empty foreign list alone can't tell these apart —
+        // that reads identically whether Nexus is the one service running or
+        // no service is running.
+        !reply.nexusEnabled -> "Nexus's own accessibility service isn't enabled — its glasses input " +
+            "handling isn't running."
+        reply.foreignServices.isEmpty() -> "Nothing else is enabled — only Nexus's own service."
+        else -> "Found ${reply.foreignServices.size} other accessibility service(s) enabled, which can " +
+            "interfere with Nexus's input handling:\n" +
+            reply.foreignServices.joinToString("\n") { "• $it" }
+    }
+
+    private fun offerOpenGlassesAccessibilitySettings() {
+        val status = accessibilityCheckStatus ?: return
+        status.setOnClickListener {
+            hubUiClient?.send(
+                BusPaths.GLASSES_SELFARM_MANUAL,
+                JSONObject().put("version", 1).put("action", "open_accessibility_settings"),
+            )
+        }
+        status.append("\n\nTap here to open Accessibility settings on the glasses.")
+    }
+
+    private fun showAccessibilityCheckStatus(message: String, autoClear: Boolean = true) {
+        val status = accessibilityCheckStatus ?: return
+        status.removeCallbacks(accessibilityCheckStatusClear)
+        status.setOnClickListener(null)
+        status.text = message
+        status.visibility = View.VISIBLE
+        if (autoClear) status.postDelayed(accessibilityCheckStatusClear, REPAIR_STATUS_LINGER_MS)
     }
 
     private fun speechRow(): LinearLayout =

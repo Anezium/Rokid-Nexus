@@ -33,6 +33,7 @@ import com.anezium.rokidbus.shared.ActivityCloseReason
 import com.anezium.rokidbus.shared.ActivitySurfaceContract
 import com.anezium.rokidbus.shared.ActivitySurfacePatchResult
 import com.anezium.rokidbus.shared.ActivitySurfaceValidationResult
+import com.anezium.rokidbus.shared.EditableSurfaceContract
 import com.anezium.rokidbus.shared.BusCapabilityBits
 import com.anezium.rokidbus.shared.BusConstants
 import com.anezium.rokidbus.shared.BusEnvelope
@@ -310,6 +311,7 @@ class BusHubService : Service() {
     @Volatile private var remoteNoticeSurfaceVersion = 0
     @Volatile private var remoteActivitySurfaceVersion = 0
     @Volatile private var remoteInkSurfaceVersion = 0
+    @Volatile private var remoteEditableSurfaceVersion = 0
     @Volatile private var remoteMaxImageBytes = 0
     @Volatile private var remoteGlassesVersionName: String? = null
     @Volatile private var remoteGlassesSetupComplete = false
@@ -2372,15 +2374,18 @@ class BusHubService : Service() {
             path == BusPaths.GLASSES_SETUP_PAIRING_OFFER ||
             path == BusPaths.GLASSES_SETUP_PAIRING_RESULT ||
             path == BusPaths.GLASSES_REPAIR_CONFIG ||
-            path == BusPaths.GLASSES_REPAIR_REQUEST
+            path == BusPaths.GLASSES_REPAIR_REQUEST ||
+            path == BusPaths.GLASSES_ACCESSIBILITY_CHECK_REQUEST
 
     private fun handleGlassesControlRequest(envelope: BusEnvelope, replyBinder: IBinder?) {
         if (envelope.path == BusPaths.GLASSES_REPAIR_CONFIG ||
-            envelope.path == BusPaths.GLASSES_REPAIR_REQUEST
+            envelope.path == BusPaths.GLASSES_REPAIR_REQUEST ||
+            envelope.path == BusPaths.GLASSES_ACCESSIBILITY_CHECK_REQUEST
         ) {
-            // Pure forwards: the glasses answer a repair request on GLASSES_REPAIR_REPLY with the
-            // request's id, which the settings screen correlates itself. Only a transport failure
-            // is answered here, so "not connected" fails fast instead of eating the full timeout.
+            // Pure forwards: the glasses answer on GLASSES_REPAIR_REPLY / GLASSES_ACCESSIBILITY_
+            // CHECK_REPLY with the request's id, which the settings screen correlates itself. Only
+            // a transport failure is answered here, so "not connected" fails fast instead of eating
+            // the full timeout.
             val error = sendRemote(envelope)
             if (error != null) {
                 deliverError(replyBinder, envelope.id, error)
@@ -2730,7 +2735,11 @@ class BusHubService : Service() {
     private fun deliverError(targetBinder: IBinder?, id: String, code: String) {
         val target = targetBinder?.let { binder -> registrations.firstOrNull { it.callbackBinder == binder } }
             ?: return
-        val envelope = errorEnvelope(id, code)
+        // pluginId matches NexusPluginClient's own filter on every inbound message
+        // (onMessage returns early when it doesn't); omitting it, as this used to,
+        // meant every error this function ever delivered was silently dropped
+        // before a plugin's code ever saw it — including SURFACE_BUSY.
+        val envelope = errorEnvelope(id, code, target.clientId)
         val payload = envelope.payload.toString().toByteArray(Charsets.UTF_8)
         runCatching { target.callback.onMessage(envelope.path, envelope.id, payload) }
             .onFailure { removeRegistration(target, "dead callback") }
@@ -5617,11 +5626,13 @@ class BusHubService : Service() {
         }
     }
 
-    private fun errorEnvelope(id: String, code: String): BusEnvelope =
+    private fun errorEnvelope(id: String, code: String, pluginId: String? = null): BusEnvelope =
         BusEnvelope(
             path = BusPaths.ERROR,
             id = id,
-            payload = JSONObject().put("code", code).put("forId", id),
+            payload = JSONObject().put("code", code).put("forId", id).apply {
+                if (pluginId != null) put("pluginId", pluginId)
+            },
         )
 
     private fun capabilities(): Int {
@@ -5658,6 +5669,15 @@ class BusHubService : Service() {
         // not make an otherwise valid start or update disappear.
         if (remoteActivitySurfaceVersion == ActivitySurfaceContract.VERSION) {
             capabilities = capabilities or BusCapabilityBits.ACTIVITY_SURFACE
+        }
+        // Same reasoning as the notice gate above: a card opened to type into is a
+        // live interactive moment, not state a plugin can just resend once the
+        // glasses come back — so the bit means "reachable right now", not merely
+        // "this hub build understands the field".
+        if (remoteEditableSurfaceVersion == EditableSurfaceContract.VERSION &&
+            linkState() and LinkStateBits.SPP_DATA_UP != 0
+        ) {
+            capabilities = capabilities or BusCapabilityBits.EDITABLE_SURFACE
         }
         capabilities = capabilities or BusCapabilityBits.TTS
         // Unconditional: this build can always take a pairing offer off the glasses. Gating it on
@@ -5704,10 +5724,12 @@ class BusHubService : Service() {
             advertised.features and BusCapabilityBits.ACTIVITY_SURFACE != 0 &&
             advertised.activitySurfaceVersion == ActivitySurfaceContract.VERSION
         val acceptedInkVersion = PhoneInkCapabilityPolicy.acceptedVersion(advertised)
+        val editableSupported = GlassesHubCapabilitiesContract.supportsEditableSurface(advertised)
         remotePinSurfaceVersion = if (pinSupported) PinSurfaceContract.VERSION else 0
         remoteNoticeSurfaceVersion = if (noticeSupported) NoticeSurfaceContract.VERSION else 0
         remoteActivitySurfaceVersion = if (activitySupported) ActivitySurfaceContract.VERSION else 0
         remoteInkSurfaceVersion = acceptedInkVersion
+        remoteEditableSurfaceVersion = if (editableSupported) EditableSurfaceContract.VERSION else 0
         remoteMaxImageBytes = if (imageSupported) advertised.maxImageBytes else 0
         updateRemoteGlassesAppState(
             advertised.versionName,

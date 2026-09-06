@@ -156,15 +156,34 @@ class RokidBusAccessibilityService : AccessibilityService() {
             return handleRingKeyEvent(event)
         }
         if (event.keyCode == KEYCODE_PROG_BLUE) return false
+        // An editable card owns confirm/direction the same keys would
+        // otherwise answer a notice with — Enter submits the field, arrows
+        // move the caret — so this notice claim steps aside while one is the
+        // active surface, the same way the notice itself already steps aside
+        // for it (see startTyping). It also means the touchpad's tap gesture
+        // must never reach the triple-tap launcher trigger here: a hand
+        // resting near the touchpad while typing on a keyboard bonded to the
+        // glasses reads as exactly the tap burst that opens it (seen on
+        // hardware — the launcher appearing mid-reply, unrelated to anything
+        // the wearer meant to do).
+        val editableSurfaceActive = SurfaceController.hasFocusedEditableSurface()
         // Raw gesture trace: the temple firmware's key bursts keep surprising us
         // (duplicated swipe pairs, tap contacts); keep the evidence cheap to grab.
-        log("key code=${event.keyCode} action=${event.action} repeat=${event.repeatCount} t=${event.eventTime}")
+        // Skipped while a field is focused — every keycode typed there is now a
+        // character of the wearer's reply or note, not a gesture to debug.
+        if (!editableSurfaceActive) {
+            log("key code=${event.keyCode} action=${event.action} repeat=${event.repeatCount} t=${event.eventTime}")
+        }
 
         if (event.action == KeyEvent.ACTION_UP && consumedDownKeys.remove(event.keyCode)) {
             return true
         }
 
-        val decision = tripleTapDetector.onKey(event.keyCode, event.action, event.repeatCount, event.eventTime)
+        val decision = if (editableSurfaceActive) {
+            TripleTapDetector.Decision.PASS
+        } else {
+            tripleTapDetector.onKey(event.keyCode, event.action, event.repeatCount, event.eventTime)
+        }
         if (event.action == KeyEvent.ACTION_DOWN && event.keyCode != TripleTapDetector.KEYCODE_NOTIFICATION) {
             main.removeCallbacks(tapExpiry)
         }
@@ -179,7 +198,8 @@ class RokidBusAccessibilityService : AccessibilityService() {
             }
             TripleTapDetector.Decision.CONSUME -> true
             TripleTapDetector.Decision.PASS -> {
-                if (event.keyCode == TripleTapDetector.KEYCODE_NOTIFICATION &&
+                if (!editableSurfaceActive &&
+                    event.keyCode == TripleTapDetector.KEYCODE_NOTIFICATION &&
                     event.action == KeyEvent.ACTION_DOWN &&
                     event.repeatCount == 0
                 ) {
@@ -188,9 +208,9 @@ class RokidBusAccessibilityService : AccessibilityService() {
                 }
                 when {
                     noticeConsumesBack(event) -> true
-                    noticeConsumesDirection(event) -> true
-                    noticeConsumesConfirm(event) -> true
-                    noticeConsumesBackdropClassification(event) -> true
+                    !editableSurfaceActive && noticeConsumesDirection(event) -> true
+                    !editableSurfaceActive && noticeConsumesConfirm(event) -> true
+                    !editableSurfaceActive && noticeConsumesBackdropClassification(event) -> true
                     LauncherOverlayRenderer.handleKeyEvent(event) -> true
                     SurfaceController.handleKeyEvent(event) -> true
                     ActivityController.handleKeyEvent(event) -> true

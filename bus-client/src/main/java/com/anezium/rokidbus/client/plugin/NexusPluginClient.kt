@@ -8,6 +8,7 @@ import com.anezium.rokidbus.shared.ActivitySurfacePatchResult
 import com.anezium.rokidbus.shared.ActivitySurfaceValidationResult
 import com.anezium.rokidbus.shared.BusCapabilityBits
 import com.anezium.rokidbus.shared.BusPaths
+import com.anezium.rokidbus.shared.EditableSurfaceContract
 import com.anezium.rokidbus.shared.LinkStateBits
 import com.anezium.rokidbus.shared.InkSurfaceContract
 import com.anezium.rokidbus.shared.NoticeSurfaceContract
@@ -28,6 +29,9 @@ class NexusPluginClient internal constructor(
 ) : NexusPluginTransport.Listener, AutoCloseable {
     private val seenEventIds = ArrayDeque<String>()
     private val seenEventIdSet = linkedSetOf<String>()
+    // Correlates a surface request's id to the callback that wants to know if
+    // the hub rejects it after accepting the Binder call — see watchForSurfaceError.
+    private val pendingSurfaceErrors = mutableMapOf<String, (String) -> Unit>()
     private val audioSessionLock = Any()
     private val speechSessionLock = Any()
     private val ttsSessionLock = Any()
@@ -60,6 +64,16 @@ class NexusPluginClient internal constructor(
     val supportsInkSurface: Boolean
         get() = currentLinkState and LinkStateBits.SPP_DATA_UP != 0 &&
             hubCapabilities and BusCapabilityBits.INK_SURFACE != 0
+
+    /**
+     * Whether the glasses hub understands the `editable` field on a card, and
+     * can be reached right now. An older hub build ignores the field silently —
+     * it shows the card but never commits it — so a plugin that wants to type
+     * needs a way to know that ahead of time, not just wait to find out.
+     */
+    val supportsEditableSurface: Boolean
+        get() = currentLinkState and LinkStateBits.SPP_DATA_UP != 0 &&
+            hubCapabilities and BusCapabilityBits.EDITABLE_SURFACE != 0
 
     /**
      * Whether these glasses can show a pin — not whether one would appear this instant.
@@ -485,8 +499,30 @@ class NexusPluginClient internal constructor(
         callbacks.onGlassesAiButton(active)
     }
 
+    /**
+     * A surface call that returned [NexusSdkResult.SENT] only means the hub
+     * accepted the Binder call — it can still reject the surface itself (e.g.
+     * SURFACE_BUSY) in a reply that arrives after the call already returned.
+     * [onError] fires once if that happens; capped so a caller that never sees
+     * an error can't leak an entry per call forever.
+     */
+    internal fun watchForSurfaceError(requestId: String, onError: (String) -> Unit) {
+        if (pendingSurfaceErrors.size > 32) pendingSurfaceErrors.clear()
+        pendingSurfaceErrors[requestId] = onError
+    }
+
     override fun onMessage(path: String, id: String, payload: JSONObject) {
         if (closed) return
+        if (path == BusPaths.ERROR) {
+            if (!rememberEvent(id)) return
+            val handler = pendingSurfaceErrors.remove(payload.optString("forId"))
+            if (handler != null) {
+                handler(payload.optString("code"))
+            } else if (isApproved) {
+                callbacks.onMessage(path, id, payload)
+            }
+            return
+        }
         if (path == BusPaths.TTS_STARTED || path == BusPaths.TTS_DONE) {
             if (!rememberEvent(id)) return
             if (!routeTtsMessage(path, payload) && isApproved) {
@@ -523,6 +559,18 @@ class NexusPluginClient internal constructor(
                 actionId.isNotBlank()
             ) {
                 callbacks.onNoticeAction(actionId)
+            }
+            return
+        }
+        if (path == BusPaths.SURFACE_TEXT_COMMITTED) {
+            if (isApproved) {
+                EditableSurfaceContract.parseCommitted(payload)?.let { committed ->
+                    callbacks.onSurfaceTextCommitted(
+                        committed.surfaceId,
+                        committed.text,
+                        committed.cancelled,
+                    )
+                }
             }
             return
         }

@@ -1,5 +1,6 @@
 package com.anezium.rokidbus.glasses
 
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
@@ -21,7 +22,9 @@ import com.anezium.rokidbus.shared.BusCapabilityBits
 import com.anezium.rokidbus.shared.BusConstants
 import com.anezium.rokidbus.shared.BusEnvelope
 import com.anezium.rokidbus.shared.BusPaths
+import com.anezium.rokidbus.shared.EditableSurfaceContract
 import com.anezium.rokidbus.shared.FrameProtocol
+import com.anezium.rokidbus.shared.GlassesAccessibilityCheckContract
 import com.anezium.rokidbus.shared.GlassesHubCapabilitiesContract
 import com.anezium.rokidbus.shared.GlassesRepairContract
 import com.anezium.rokidbus.shared.GlyphContract
@@ -343,6 +346,26 @@ object GlassesHub {
             }
             return
         }
+        if (envelope.path == BusPaths.GLASSES_ACCESSIBILITY_CHECK_REQUEST) {
+            val context = appContext
+            if (context == null) {
+                sendRemote(errorEnvelope(envelope.id, "HUB_NOT_READY"))
+                return
+            }
+            val scan = scanAccessibilityServices(context)
+            val error = sendRemote(
+                BusEnvelope(
+                    path = BusPaths.GLASSES_ACCESSIBILITY_CHECK_REPLY,
+                    id = envelope.id,
+                    payload = GlassesAccessibilityCheckContract.replyToJson(scan.foreign, scan.nexusEnabled),
+                ),
+            )
+            log(
+                "accessibilityCheck foreign=${scan.foreign.size} " +
+                    "nexusEnabled=${scan.nexusEnabled} replyError=${error ?: "none"}",
+            )
+            return
+        }
         if (envelope.path == BusPaths.WIRELESS_ADB_REQUEST) {
             handleWirelessAdbRequest(envelope)
             return
@@ -571,6 +594,9 @@ object GlassesHub {
     fun sendSurfaceInput(payload: JSONObject): String? =
         sendRemote(BusEnvelope(path = BusPaths.SURFACE_INPUT, payload = payload))
 
+    fun sendSurfaceTextCommitted(payload: JSONObject): String? =
+        sendRemote(BusEnvelope(path = BusPaths.SURFACE_TEXT_COMMITTED, payload = payload))
+
     fun sendInkEvent(payload: JSONObject): String? =
         sendRemote(BusEnvelope(path = BusPaths.INK_EVENT, payload = payload))
 
@@ -643,12 +669,14 @@ object GlassesHub {
                 BusCapabilityBits.NOTICE_SURFACE or
                 BusCapabilityBits.ACTIVITY_SURFACE or
                 BusCapabilityBits.INK_SURFACE or
+                BusCapabilityBits.EDITABLE_SURFACE or
                 (if (ttsAvailable) BusCapabilityBits.TTS else 0),
             imageSurfaceVersion = ImageSurfaceContract.VERSION,
             pinSurfaceVersion = PinSurfaceContract.VERSION,
             noticeSurfaceVersion = NoticeSurfaceContract.VERSION,
             activitySurfaceVersion = ActivitySurfaceContract.VERSION,
             inkSurfaceVersion = InkWire.VERSION,
+            editableSurfaceVersion = EditableSurfaceContract.VERSION,
             maxImageBytes = ImageSurfaceContract.MAX_IMAGE_BYTES,
             versionName = BuildConfig.VERSION_NAME,
             setupComplete = onboardingState.stage == SelfArmOnboardingState.Stage.COMPLETE,
@@ -827,6 +855,36 @@ object GlassesHub {
             }
         }
         return delivered
+    }
+
+    private data class AccessibilityScan(val foreign: List<String>, val nexusEnabled: Boolean)
+
+    /**
+     * Anything enabled in this setting besides Nexus's own service is a foreign
+     * one. [AccessibilityScan.nexusEnabled] is reported alongside the foreign
+     * list, not folded into it: an empty foreign list means "only Nexus's own
+     * service" only when Nexus's service is actually one of the enabled ones —
+     * otherwise it means nothing at all is enabled, the worst case this check
+     * exists to catch, and the two must not read the same to the owner.
+     */
+    private fun scanAccessibilityServices(context: Context): AccessibilityScan {
+        val own = ComponentName(context, RokidBusAccessibilityService::class.java)
+        val raw = Settings.Secure.getString(
+            context.contentResolver,
+            Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
+        )
+        val enabled = raw.orEmpty().split(':')
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+        return AccessibilityScan(
+            foreign = enabled
+                // unflattenFromString expands the "pkg/.ClassName" shorthand the setting can hold
+                // (besides the fully qualified "pkg/pkg.ClassName") into a real package + class
+                // pair, so both forms of Nexus's own entry compare equal instead of one reading
+                // as foreign.
+                .filter { ComponentName.unflattenFromString(it) != own },
+            nexusEnabled = enabled.any { ComponentName.unflattenFromString(it) == own },
+        )
     }
 
     private fun handleManualSelfArmRequest(envelope: BusEnvelope) {

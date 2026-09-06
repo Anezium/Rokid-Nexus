@@ -213,6 +213,15 @@ class RelaySettingsActivity : Activity() {
             ) { enabled -> settings.setReadAloud(enabled) },
             NexusUi.block(),
         )
+        content.addView(BusTheme.gap(this, 8))
+        content.addView(
+            switchCard(
+                "Reply by typing",
+                "Reply opens a field instead of listening — for a keyboard paired to the glasses",
+                settings.replyByTyping(),
+            ) { enabled -> settings.setReplyByTyping(enabled) },
+            NexusUi.block(),
+        )
 
         content.addView(BusTheme.gap(this, 24))
         // Folded by default, and folded again every time this screen opens. It
