@@ -156,14 +156,6 @@ class RokidBusAccessibilityService : AccessibilityService() {
             return handleRingKeyEvent(event)
         }
         if (event.keyCode == KEYCODE_PROG_BLUE) return false
-        // Raw gesture trace: the temple firmware's key bursts keep surprising us
-        // (duplicated swipe pairs, tap contacts); keep the evidence cheap to grab.
-        log("key code=${event.keyCode} action=${event.action} repeat=${event.repeatCount} t=${event.eventTime}")
-
-        if (event.action == KeyEvent.ACTION_UP && consumedDownKeys.remove(event.keyCode)) {
-            return true
-        }
-
         // An editable card owns confirm/direction the same keys would
         // otherwise answer a notice with — Enter submits the field, arrows
         // move the caret — so this notice claim steps aside while one is the
@@ -175,6 +167,18 @@ class RokidBusAccessibilityService : AccessibilityService() {
         // hardware — the launcher appearing mid-reply, unrelated to anything
         // the wearer meant to do).
         val editableSurfaceActive = SurfaceController.hasFocusedEditableSurface()
+        // Raw gesture trace: the temple firmware's key bursts keep surprising us
+        // (duplicated swipe pairs, tap contacts); keep the evidence cheap to grab.
+        // Skipped while a field is focused — every keycode typed there is now a
+        // character of the wearer's reply or note, not a gesture to debug.
+        if (!editableSurfaceActive) {
+            log("key code=${event.keyCode} action=${event.action} repeat=${event.repeatCount} t=${event.eventTime}")
+        }
+
+        if (event.action == KeyEvent.ACTION_UP && consumedDownKeys.remove(event.keyCode)) {
+            return true
+        }
+
         val decision = if (editableSurfaceActive) {
             TripleTapDetector.Decision.PASS
         } else {
@@ -206,7 +210,7 @@ class RokidBusAccessibilityService : AccessibilityService() {
                     noticeConsumesBack(event) -> true
                     !editableSurfaceActive && noticeConsumesDirection(event) -> true
                     !editableSurfaceActive && noticeConsumesConfirm(event) -> true
-                    noticeConsumesBackdropClassification(event) -> true
+                    !editableSurfaceActive && noticeConsumesBackdropClassification(event) -> true
                     LauncherOverlayRenderer.handleKeyEvent(event) -> true
                     SurfaceController.handleKeyEvent(event) -> true
                     ActivityController.handleKeyEvent(event) -> true
