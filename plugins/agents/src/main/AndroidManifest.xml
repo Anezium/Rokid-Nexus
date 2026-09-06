@@ -10,6 +10,17 @@
     -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!--
+        The other half of the bargain above. A foreground service whose
+        notification is never shown is not treated as a protected one on every
+        ROM: measured on a Vivo device, Android froze this process outright
+        (cgroup.freeze=1, no CPU time at all) while the service still reported
+        isForeground=true. The kernel kept completing TCP handshakes from its
+        backlog, so the daemon saw connections that never answered hello and
+        redialled forever. The exemption is what stops that, and the settings
+        screen asks for it rather than assuming it.
+    -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
 
     <queries>

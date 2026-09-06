@@ -259,11 +259,34 @@ JSON choice as Transit, plus the repository’s existing OkHttp `4.12.0`.
   explicit connection test, or a Nexus HUD open, as required for Phase 1.
 - No approve/deny, prompt answering, session spawning, voice, or command send
   path exists.
-- **Monitoring is not real-time while the phone is in Doze.** A foreground
-  service keeps the process alive but does not exempt it from Doze's network
-  restrictions, so a screen-off, stationary, unplugged phone may not see a
-  transition until a maintenance window. With no phone notification by design,
-  the alert arrives when the wearer next looks at the board.
+- **The phone may stop running Agents altogether, not merely throttle it.**
+  Measured on a Vivo device: Android froze the process outright
+  (`cgroup.freeze=1`, no CPU time accruing) while the service still reported
+  `isForeground=true`. A frozen process is worse than a slow one — the kernel
+  keeps completing TCP handshakes from its backlog, so `nexus-agentd` saw a
+  phone that connected and then never answered `hello`, timed out after 15
+  seconds, and redialled forever. Holding no notification permission is what
+  invites this: a foreground service whose notification never appears is not
+  treated as a protected one on every ROM.
+
+  Monitoring therefore asks for a battery exemption on its own screen, and
+  because that platform flag is not authoritative everywhere — this same device
+  keeps the real decision in its vendor power manager and leaves
+  `isIgnoringBatteryOptimizations` false regardless — the screen also watches
+  its own heartbeat and reports a freeze it actually observed rather than one
+  the flag predicts.
+
+  The setting that actually binds on such a phone lives behind App info rather
+  than the platform dialog: on the measured device it is *Battery usage > Allow
+  background power usage*, and choosing it stopped the freezing. The vendor's
+  own high-power screen cannot be deep-linked — it is guarded by a signature
+  permission — so the screen offers App info as the nearest door it is allowed
+  to open.
+
+- Doze remains a separate, milder limit on top of that: even unfrozen, a
+  screen-off, stationary, unplugged phone may not see a transition until a
+  maintenance window. With no phone notification by design, the alert arrives
+  when the wearer next looks at the board.
 - The device identity is signed by a hand-written Ed25519 implementation. Its
   signatures are RFC 8032 conformant but the arithmetic is not constant-time,
   which is acceptable on a private tailnet and must be replaced with a vetted
