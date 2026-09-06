@@ -12,7 +12,11 @@ import path from "node:path";
 export const HOOK_EVENTS = [
   "SessionStart",
   "UserPromptSubmit",
+  // PreToolUse tracks what a session is doing; PermissionRequest is the one the
+  // wearer is asked to answer, because it fires only when a decision is
+  // actually needed. See decisionResponse in approval-manager.
   "PreToolUse",
+  "PermissionRequest",
   "Stop",
   "SubagentStop",
   "Notification",

@@ -1,6 +1,11 @@
 import { homedir } from "node:os";
 import path from "node:path";
-import { ApprovalManager, approvalTimeoutFromEnv, type HookResponse } from "./approval-manager";
+import {
+  ApprovalManager,
+  approvalTimeoutFromEnv,
+  type ApprovalTransport,
+  type HookResponse,
+} from "./approval-manager";
 import { spawnClaudeThread } from "./claude-spawn";
 import { CodexMonitor } from "./codex/monitor";
 import { configPath, defaultStateDir, ensureConfig } from "./config";
@@ -82,13 +87,21 @@ export async function startDaemon(): Promise<RunningDaemon> {
     } else if (sessionId && transcriptPath && sessions.get(sessionId)?.stale === false) {
       tailManager.start(sessionId, transcriptPath);
     }
-    if (eventName === "PreToolUse") {
+    // PreToolUse still arrives, and is still what keeps the session's activity
+    // current, but it is no longer what the wearer is asked about: it fires for
+    // every tool call, so holding on it asked them to approve reads and greps
+    // as well as the one command that actually needed them.
+    if (eventName === "PermissionRequest") {
       return approvals?.request(payload) ?? {};
     }
     return {};
   };
 
-  const hub = new WsHub(config, sessions, logger, { detailProvider, onDetailOpen });
+  const hub = new WsHub(config, sessions, logger, {
+    detailProvider,
+    onDetailOpen,
+    onApprovalDecision: (requestId, decision) => approvals?.handleDecision(requestId, decision),
+  });
   wsHub = hub;
   const link = new PhoneLink({
     config,
@@ -111,8 +124,27 @@ export async function startDaemon(): Promise<RunningDaemon> {
     onDisconnected: () => approvals?.onLinkDisconnected(),
   });
   phoneLink = link;
+  // Either direction can carry an approval. The daemon dials the phone on the
+  // zero-setup path, but a phone given a pairing line dials the daemon instead
+  // and its link server is then deliberately stopped — so a transport that only
+  // knew the dialled link left "paste the pairing line" with a session board and
+  // no way to answer anything on it. Prefer the dialled link when both are up,
+  // since that is the one the phone's own reconnect logic keeps warm.
+  const approvalTransport: ApprovalTransport = {
+    get connected(): boolean {
+      return link.connected || hub.hasAuthenticatedClient;
+    },
+    sendApprovalRequest: (request) =>
+      link.connected
+        ? link.sendApprovalRequest(request)
+        : hub.sendApprovalRequest(request),
+    sendApprovalResolved: (requestId, outcome) =>
+      link.connected
+        ? link.sendApprovalResolved(requestId, outcome)
+        : hub.sendApprovalResolved(requestId, outcome),
+  };
   approvals = new ApprovalManager({
-    transport: link,
+    transport: approvalTransport,
     logger,
     timeoutMs: approvalTimeoutFromEnv(),
   });
