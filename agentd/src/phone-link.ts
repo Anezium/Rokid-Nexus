@@ -423,7 +423,13 @@ export class PhoneLink {
     });
     socket.on("data", (chunk) => this.onData(chunk));
     socket.on("error", (error) => {
-      this.options.logger.warn("phone_link_error", { reason: error.name });
+      // name alone is "Error" for every socket failure, which says nothing
+      // about whether the phone reset the link, went unreachable, or refused
+      // the dial. The errno code is the part worth having in a log.
+      this.options.logger.warn("phone_link_error", {
+        reason: error.name,
+        code: (error as NodeJS.ErrnoException).code ?? "none",
+      });
     });
     socket.on("close", () => this.onClose());
   }
