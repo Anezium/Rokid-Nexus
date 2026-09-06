@@ -177,15 +177,20 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
         // Back or the band's own TTL isn't the end of the story if a reply
         // arrived while the wearer was composing and got held back for exactly
         // this moment — that notification still deserves its own band, not to
-        // be discarded along with the one that just closed (closeClient() below
-        // would otherwise drop it on the floor with nothing left to show it).
+        // be discarded along with the one that just closed.
+        //
+        // closeClient() runs unconditionally first, not just when nothing is
+        // deferred: this notice is gone either way, and closing it is what
+        // resets the composing state (typing field, speech, transcript) that
+        // caused the deferral in the first place. Calling show(deferred)
+        // without that reset first hit isComposingReply() still true — Back
+        // pressed while typing closes the notice but leaves the field open —
+        // so show() just deferred it again and returned, skipping closeClient()
+        // entirely: notice gone, card still up, keepalive still posting to it.
         val deferred = deferredShow
-        if (deferred != null) {
-            deferredShow = null
-            show(deferred)
-            return@onMain
-        }
+        deferredShow = null
         closeClient()
+        if (deferred != null) show(deferred)
     }
 
     override fun onMessage(path: String, id: String, payload: JSONObject) = Unit
