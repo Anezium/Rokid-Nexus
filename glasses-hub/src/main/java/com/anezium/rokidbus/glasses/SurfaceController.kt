@@ -53,6 +53,11 @@ object SurfaceController {
     private var pendingInk: NexusSurface? = null
     @Volatile private var inkResyncListener: ((InkResyncRequest) -> Unit)? = null
     @Volatile private var active: NexusSurface? = null
+    // Which display path the active surface actually rendered through, not
+    // just which one displayPath(context) currently names — the overlay path
+    // can fall back to ACTIVITY, and ink always uses the overlay. Read on hide
+    // to decide whether there is a paused MainActivity task to finish at all.
+    @Volatile private var activeDisplayedViaActivity = false
 
     private val displayStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -609,6 +614,7 @@ object SurfaceController {
     ) {
         val path = surfaceDisplayPath(surface, forcedPath ?: displayPath(context))
         if (surface.isInk) {
+            activeDisplayedViaActivity = false
             if (!SurfaceOverlayRenderer.show(context, surface)) {
                 log("Ink surface overlay unavailable")
                 onInkRendererError(surface, emptyList())
@@ -632,12 +638,15 @@ object SurfaceController {
         }
         when (path) {
             SurfaceDisplayPath.ACTIVITY -> {
+                activeDisplayedViaActivity = true
                 stepLauncherAside()
                 showActivity(context, surface)
             }
             SurfaceDisplayPath.OVERLAY -> {
+                activeDisplayedViaActivity = false
                 if (!SurfaceOverlayRenderer.show(context, surface)) {
                     log("Surface overlay unavailable; falling back to activity")
+                    activeDisplayedViaActivity = true
                     stepLauncherAside()
                     showActivity(context, surface)
                 }
@@ -691,11 +700,14 @@ object SurfaceController {
     }
 
     private fun hideLocalOnMain(reason: DisplayHoldReleaseReason) {
-        // Same reasoning as the show-side call in displaySurface: once this
-        // surface's own activity-backed task is gone, Android falls back to
-        // whatever task is next in line, and a paused MainActivity is the
-        // only one this app ever leaves behind.
-        MainActivity.finishIfStale()
+        // Same reasoning as the show-side call in displaySurface, and gated the
+        // same way: only a surface that actually rendered through the ACTIVITY
+        // path leaves a task behind for Android to fall back to. Calling this
+        // unconditionally meant any overlay surface ending — Lyrics at track
+        // end, Media stopping — finished a MainActivity it never created, and
+        // with these glasses' 5 s screen timeout that task is paused-but-alive
+        // most of the time it exists.
+        if (activeDisplayedViaActivity) MainActivity.finishIfStale()
         active?.let { ending ->
             AssistantDisplayEpisode.accept(
                 null,
