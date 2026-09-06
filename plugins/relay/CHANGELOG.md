@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.2.2
+
+- **Reply by typing.** A new switch, off by default: Reply opens a text field
+  on the glasses instead of listening. Type on a keyboard paired to the glasses,
+  or from Nexus's Keyboard & remote screen on the phone, and Enter sends the
+  reply through the same confirm-and-send steps as a spoken one. A message
+  arriving while you are mid-reply now waits its turn instead of replacing what
+  you were answering, and the band no longer times out while you dictate or
+  type. Needs Rokid Nexus 1.4.6; on an older hub the switch falls back to
+  dictation. Thanks to ruruw.
+
 ## 1.2.1
 
 - **The glasses can name who messaged without showing what.** Two new switches:

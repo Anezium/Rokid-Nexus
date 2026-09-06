@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.4.6
+
+- **A plugin can now ask you to type.** A card on the glasses can carry one
+  text field. It works with a keyboard paired to the glasses, and with Nexus's
+  own Keyboard & remote screen on the phone: what you type lands in the field
+  as you type it, Enter submits. Relay uses it for typed replies and Assistant
+  for typed notes. Thanks to ruruw, who built it and tested it on hardware.
+- **The Nexus launcher no longer reappears behind a closed card.** After a
+  plugin's full-screen card closed, Android sometimes brought back the Nexus
+  launcher screen it had left paused underneath, instead of what you were
+  looking at before. It now closes itself once it is only a leftover.
+- **Settings can check the glasses' accessibility services.** A new *Check
+  accessibility services* action under Maintenance asks the glasses which
+  services besides Nexus's own are enabled: a foreign one sitting in front of
+  Nexus's key handling has turned out to be the cause behind several "input
+  stopped working" reports. It also says so when Nexus's own service is off.
+- **Hub errors now reach plugins.** An error the hub sent back for a plugin's
+  request never carried the plugin's id, so the plugin's SDK dropped it before
+  the plugin saw it. A plugin is now told, for instance, when another plugin
+  holds the foreground surface it asked for.
+
 ## 1.4.5
 
 - **The update button now says why it can't.** Pressing Install or Reinstall on

@@ -19,7 +19,7 @@ resolved transitively.
 repositories { maven("https://jitpack.io") }
 
 dependencies {
-    implementation("com.github.Anezium.Rokid-Nexus:bus-client:sdk-v0.15.0")
+    implementation("com.github.Anezium.Rokid-Nexus:bus-client:sdk-v0.16.0")
 }
 ```
 
