@@ -467,6 +467,10 @@ object SurfaceController {
                 context,
                 assistantEpisodeSurfacePresentedSignal(surface.ownerPluginId),
             )
+            // Lyrics and Media push updates to the same surfaceId continuously;
+            // only a genuinely new surface taking over the screen counts as a
+            // handoff worth stepping the launcher and any stale activity aside for.
+            val isHandoff = active?.surfaceId != surface.surfaceId
             active = surface
             syncInkFrameMeter(surface)
             RingFocusBroadcastCoordinator.setSurfaceActive(
@@ -475,7 +479,7 @@ object SurfaceController {
                 completesHandoff = completesRingHandoff,
             )
             notifyListeners(surface)
-            displaySurface(context, surface, forcedPath)
+            displaySurface(context, surface, forcedPath, isHandoff)
         }
     }
 
@@ -530,6 +534,7 @@ object SurfaceController {
                     context,
                     assistantEpisodeSurfacePresentedSignal(surface.ownerPluginId),
                 )
+                val isHandoff = active?.surfaceId != surface.surfaceId
                 active = surface
                 RingFocusBroadcastCoordinator.setSurfaceActive(
                     context,
@@ -537,7 +542,7 @@ object SurfaceController {
                     completesHandoff = completesRingHandoff,
                 )
                 notifyListeners(surface)
-                displaySurface(context, surface, null)
+                displaySurface(context, surface, null, isHandoff)
             }
             imageDecodeExecutor.execute {
                 val decoded = ImageHudView.decodeRgb565(bytes, metadata)
@@ -580,6 +585,7 @@ object SurfaceController {
                                 context,
                                 assistantEpisodeSurfacePresentedSignal(published.ownerPluginId),
                             )
+                            val isHandoff = current?.surfaceId != published.surfaceId
                             active = published
                             RingFocusBroadcastCoordinator.setSurfaceActive(
                                 context,
@@ -587,7 +593,7 @@ object SurfaceController {
                                 completesHandoff = completesRingHandoff,
                             )
                             notifyListeners(published)
-                            displaySurface(context, published, null)
+                            displaySurface(context, published, null, isHandoff)
                         }
                     }
                 }
@@ -595,19 +601,12 @@ object SurfaceController {
         }
     }
 
-    private fun displaySurface(context: Context, surface: NexusSurface, forcedPath: SurfaceDisplayPath?) {
-        // The launcher overlay dismisses itself on the keys it claims, but
-        // nothing makes it step aside for a surface arriving some other way
-        // (a plugin's own gesture, a phone-triggered show like typed notes) —
-        // seen on hardware sitting behind a closed editable card's activity,
-        // stuck open from whenever it was last shown.
-        LauncherOverlayRenderer.hide()
-        // A paused MainActivity is the one other task this app leaves lying
-        // around; Android resumes it on its own once this surface's own
-        // activity-backed task closes, with nothing asked for it (seen on
-        // hardware: the Nexus launcher screen reappearing right after a
-        // typed reply sent).
-        MainActivity.finishIfStale()
+    private fun displaySurface(
+        context: Context,
+        surface: NexusSurface,
+        forcedPath: SurfaceDisplayPath?,
+        isHandoff: Boolean,
+    ) {
         val path = surfaceDisplayPath(surface, forcedPath ?: displayPath(context))
         if (surface.isInk) {
             if (!SurfaceOverlayRenderer.show(context, surface)) {
@@ -616,11 +615,30 @@ object SurfaceController {
             }
             return
         }
+        // The launcher overlay dismisses itself on the keys it claims, but
+        // nothing makes it step aside for a surface arriving some other way
+        // (a plugin's own gesture, a phone-triggered show like typed notes) —
+        // seen on hardware sitting behind a closed editable card's activity,
+        // stuck open from whenever it was last shown. Only a real handoff onto
+        // the ACTIVITY path needs this: the overlay path never creates the task
+        // that triggers Android's fallback resume, and an update to the surface
+        // already on screen (Lyrics, Media) isn't a handoff at all — doing this
+        // on every such update made the launcher overlay vanish out from under
+        // whatever plugin was already showing it.
+        fun stepLauncherAside() {
+            if (!isHandoff) return
+            LauncherOverlayRenderer.hide()
+            MainActivity.finishIfStale()
+        }
         when (path) {
-            SurfaceDisplayPath.ACTIVITY -> showActivity(context, surface)
+            SurfaceDisplayPath.ACTIVITY -> {
+                stepLauncherAside()
+                showActivity(context, surface)
+            }
             SurfaceDisplayPath.OVERLAY -> {
                 if (!SurfaceOverlayRenderer.show(context, surface)) {
                     log("Surface overlay unavailable; falling back to activity")
+                    stepLauncherAside()
                     showActivity(context, surface)
                 }
             }
