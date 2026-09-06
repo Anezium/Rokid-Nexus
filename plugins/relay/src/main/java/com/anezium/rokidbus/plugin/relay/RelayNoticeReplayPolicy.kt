@@ -34,3 +34,15 @@ internal fun isTerminalRegistrationResult(result: Int): Boolean = when (result) 
  */
 internal fun isTypingCommitStale(openedAtGeneration: Int, currentGeneration: Int): Boolean =
     openedAtGeneration != currentGeneration
+
+/**
+ * True while the wearer has invested effort in a reply that has not been sent yet: actively
+ * dictating, actively typing, or reviewing a captured transcript against its send countdown.
+ * `show()` holds off replacing the band for as long as this is true, deferring the newest
+ * incoming reply instead of discarding whatever the wearer was in the middle of.
+ */
+internal fun isComposingReplyState(
+    speechActive: Boolean,
+    typingFieldOpen: Boolean,
+    hasUnsentTranscript: Boolean,
+): Boolean = speechActive || typingFieldOpen || hasUnsentTranscript

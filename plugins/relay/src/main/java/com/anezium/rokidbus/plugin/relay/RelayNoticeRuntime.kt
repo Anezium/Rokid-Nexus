@@ -61,12 +61,24 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
     private var sendDeadlineMs: Long? = null
     private var inputKeepaliveRunnable: Runnable? = null
     private var typingOpenedAtShowGeneration: Int? = null
+    private var deferredShow: ReplyRepository.PendingReply? = null
 
     fun show(reply: ReplyRepository.PendingReply) = onMain {
         // The inbox owns the bus while it is open, and it is already showing
         // this conversation — the capture reached the repository before us.
         if (NotificationControl.inboxOpen) {
             Log.i(TAG, "band suppressed: inbox has the bus")
+            return@onMain
+        }
+        if (isComposingReply()) {
+            // Replacing the band now would discard a reply the wearer is still dictating,
+            // typing, or has already captured and is about to send — the same in-flight work
+            // isTypingCommitStale protects from being misdelivered, here protected from being
+            // silently thrown away instead. Hold the newest one and show it the moment the
+            // current exchange resolves (sent, cancelled, or dismissed); see
+            // applyDeferredShowOrElse.
+            deferredShow = reply
+            Log.i(TAG, "showDeferred: composing in progress")
             return@onMain
         }
         showGeneration += 1
@@ -179,20 +191,22 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
         stopInputKeepalive()
         hideTypingSurface()
         if (cancelled) {
-            queueEssential(
-                NexusNoticeUpdate(
-                    footer = "",
-                    interactive = true,
-                    actions = INITIAL_ACTIONS,
-                    ttlMs = DECISION_TTL_MS,
-                ),
-                dropPartial = true,
-            )
+            applyDeferredShowOrElse {
+                queueEssential(
+                    NexusNoticeUpdate(
+                        footer = "",
+                        interactive = true,
+                        actions = INITIAL_ACTIONS,
+                        ttlMs = DECISION_TTL_MS,
+                    ),
+                    dropPartial = true,
+                )
+            }
             return@onMain
         }
         val reviewed = NotificationTextExtractor.trimFromTop(text, NoticeSurfaceContract.MAX_BODY_CHARS)
         if (reviewed.isBlank()) {
-            queueSpeechFailure("Empty reply")
+            applyDeferredShowOrElse { queueSpeechFailure("Empty reply") }
             return@onMain
         }
         currentTranscript = reviewed
@@ -459,14 +473,14 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
                 if (speechFinalReceived && reason == NexusSpeechStopReason.COMPLETED) return@onMain
                 // The label, never error.kind: the kind is an enum name meant
                 // for a bug report, and the band is not a bug report.
-                queueSpeechFailure(speechReasonLabel(reason))
+                applyDeferredShowOrElse { queueSpeechFailure(speechReasonLabel(reason)) }
             }
         })
         speech = newSpeech
         val result = newSpeech.start()
         if (result != NexusSdkResult.SENT) {
             speech = null
-            queueSpeechFailure(result.name)
+            applyDeferredShowOrElse { queueSpeechFailure(result.name) }
         }
     }
 
@@ -520,12 +534,36 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
             ),
         )
         Log.i(TAG, "typing show result=$result")
-        if (result != NexusSdkResult.SENT) queueSpeechFailure(result.name)
+        if (result != NexusSdkResult.SENT) {
+            // The field never actually opened: undo the composing state claimed above so a
+            // reply held back by show() isn't stuck deferred forever with nothing left to
+            // resolve it.
+            hideTypingSurface()
+            applyDeferredShowOrElse { queueSpeechFailure(result.name) }
+        }
     }
 
     private fun hideTypingSurface() {
         typingSurface?.hide()
         typingOpenedAtShowGeneration = null
+    }
+
+    /** See [isComposingReplyState]; [show] holds off replacing the band while this is true. */
+    private fun isComposingReply(): Boolean = isComposingReplyState(
+        speechActive = speech != null,
+        typingFieldOpen = typingOpenedAtShowGeneration != null,
+        hasUnsentTranscript = !currentTranscript.isNullOrBlank(),
+    )
+
+    /** Applies a reply that arrived while [isComposingReply] was true, or runs [fallback]. */
+    private fun applyDeferredShowOrElse(fallback: () -> Unit) {
+        val deferred = deferredShow
+        if (deferred == null) {
+            fallback()
+            return
+        }
+        deferredShow = null
+        show(deferred)
     }
 
     private fun sendConfirmedReply() {
@@ -547,7 +585,10 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
                     NexusNoticeUpdate(footer = "", actions = SENT_ACTIONS),
                     dropPartial = true,
                 )
-                main.postDelayed({ if (activeNotice) dismissNotice() }, SENT_LINGER_MS)
+                main.postDelayed(
+                    { if (activeNotice) applyDeferredShowOrElse { dismissNotice() } },
+                    SENT_LINGER_MS,
+                )
             }
             ReplySendResult.Missing -> queueSendFailure("Notification gone")
             ReplySendResult.Blank -> queueSendFailure("Empty reply")
@@ -649,12 +690,15 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
     private fun dismissNotice() {
         invalidateSpeech()
         hideTypingSurface()
+        currentTranscript = null
         pendingPartial = null
         essentialUpdates.clear()
-        client?.hideNotice()
-        main.postDelayed({
-            if (activeNotice) closeClient()
-        }, HIDE_FALLBACK_MS)
+        applyDeferredShowOrElse {
+            client?.hideNotice()
+            main.postDelayed({
+                if (activeNotice) closeClient()
+            }, HIDE_FALLBACK_MS)
+        }
     }
 
     private fun invalidateSpeech() {
@@ -733,6 +777,7 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
         invalidateSpeech()
         hideTypingSurface()
         typingSurface = null
+        deferredShow = null
         closeReadAloudSession()
         essentialUpdates.clear()
         pendingPartial = null

@@ -49,6 +49,22 @@ class RelayNoticeReplayPolicyTest {
     }
 
     @Test
+    fun `composing is true whenever any single input signal is active`() {
+        assertFalse(
+            isComposingReplyState(speechActive = false, typingFieldOpen = false, hasUnsentTranscript = false),
+        )
+        assertTrue(
+            isComposingReplyState(speechActive = true, typingFieldOpen = false, hasUnsentTranscript = false),
+        )
+        assertTrue(
+            isComposingReplyState(speechActive = false, typingFieldOpen = true, hasUnsentTranscript = false),
+        )
+        assertTrue(
+            isComposingReplyState(speechActive = false, typingFieldOpen = false, hasUnsentTranscript = true),
+        )
+    }
+
+    @Test
     fun `only nonrecoverable registration results are terminal`() {
         listOf(
             PluginRegistrationResult.DENIED,
