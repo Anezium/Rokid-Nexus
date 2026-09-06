@@ -16,6 +16,7 @@ import {
   type FsListing,
 } from "./fs-browse";
 import type { SessionStore } from "./session-store";
+import type { TerminalInputOutcome } from "./terminal-input";
 import { TailscalePeerDiscovery } from "./tailnet-discovery";
 import type {
   AgentConfig,
@@ -57,6 +58,8 @@ export interface PhoneLinkOptions {
   detailProvider: (sessionId: string, limit: number) => Promise<SessionMessage[]>;
   onDetailOpen?: (sessionId: string) => void;
   onApprovalDecision?: (requestId: string, decision: ApprovalDecision) => void;
+  /** Types the wearer's text into the session's terminal; see terminal-input. */
+  onTerminalInput?: (sessionId: string, text: string) => Promise<TerminalInputOutcome>;
   onThreadStart?: (
     provider: AgentProvider,
     path: string,
@@ -580,6 +583,18 @@ export class PhoneLink {
         );
         break;
       }
+      case "session_input": {
+        const id =
+          typeof message.id === "string" && message.id.length > 0 && message.id.length <= 64
+            ? message.id
+            : undefined;
+        const socket = this.socket;
+        if (!id || !socket) {
+          break;
+        }
+        void this.sendTerminalInputResult(socket, id, message.sessionId, message.text);
+        break;
+      }
       case "approval_decision": {
         const requestId =
           typeof message.requestId === "string" && message.requestId.length > 0
@@ -858,6 +873,33 @@ export class PhoneLink {
       provider: provider ?? (typeof rawProvider === "string" ? rawProvider : null),
       ...(result.ok && result.sessionId ? { sessionId: result.sessionId } : {}),
       error: result.ok ? null : result.error ?? "Unable to start thread",
+    });
+  }
+
+  private async sendTerminalInputResult(
+    socket: TcpSocket,
+    id: string,
+    rawSessionId: unknown,
+    rawText: unknown,
+  ): Promise<void> {
+    const sessionId = typeof rawSessionId === "string" ? rawSessionId : "";
+    const outcome = this.options.onTerminalInput
+      ? await this.options
+          .onTerminalInput(sessionId, typeof rawText === "string" ? rawText : "")
+          .catch(() => ({ ok: false, error: "Could not send that" }) as TerminalInputOutcome)
+      : { ok: false, error: "Typing from the glasses is not available" };
+    this.options.logger.info("phone_link_session_input", {
+      sessionId: sessionId.slice(0, 16),
+      ok: outcome.ok,
+    });
+    if (this.socket !== socket || socket.destroyed || !this.authenticated) {
+      return;
+    }
+    this.send({
+      type: "session_input_result",
+      id,
+      ok: outcome.ok,
+      error: outcome.ok ? null : outcome.error ?? "Could not send that",
     });
   }
 

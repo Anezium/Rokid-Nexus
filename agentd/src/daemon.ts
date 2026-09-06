@@ -13,6 +13,7 @@ import { discoverRecentSessions } from "./discovery";
 import { HookHttpServer } from "./http-server";
 import { FileLogger } from "./logger";
 import { SessionStore } from "./session-store";
+import { TerminalTargets, sendTerminalInput } from "./terminal-input";
 import { PhoneLink } from "./phone-link";
 import { TranscriptTailManager } from "./transcript";
 import { readRecentMessages } from "./transcript-messages";
@@ -97,10 +98,29 @@ export async function startDaemon(): Promise<RunningDaemon> {
     return {};
   };
 
+  // Typing into a live session is the one thing --resume cannot do: it forks a
+  // copy while the session's process exists, and two writers on one transcript
+  // is how that record stops being true. A multiplexer can, because it is the
+  // terminal. Off unless the owner turned it on.
+  const terminalTargets = new TerminalTargets();
+  const typeIntoSession = (sessionId: string, text: string) => {
+    void terminalTargets.refresh();
+    return sendTerminalInput(
+      {
+        enabled: config.allowTerminalInput,
+        store: sessions,
+        targetFor: (session) => terminalTargets.get(session.id),
+      },
+      sessionId,
+      text,
+    );
+  };
+
   const hub = new WsHub(config, sessions, logger, {
     detailProvider,
     onDetailOpen,
     onApprovalDecision: (requestId, decision) => approvals?.handleDecision(requestId, decision),
+    onTerminalInput: typeIntoSession,
   });
   wsHub = hub;
   const link = new PhoneLink({
@@ -120,6 +140,7 @@ export async function startDaemon(): Promise<RunningDaemon> {
       });
     },
     onApprovalDecision: (requestId, decision) => approvals?.handleDecision(requestId, decision),
+    onTerminalInput: typeIntoSession,
     onConnected: () => approvals?.onLinkConnected(),
     onDisconnected: () => approvals?.onLinkDisconnected(),
   });

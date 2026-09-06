@@ -9,6 +9,7 @@ import type {
   ApprovalOutcome,
   ApprovalRequest,
 } from "./approval-manager";
+import type { TerminalInputOutcome } from "./terminal-input";
 import type { AgentConfig, Logger, Session, SessionMessage } from "./types";
 
 const PROTOCOL_VERSION = 1;
@@ -42,6 +43,8 @@ export interface WsHubOptions {
   onDetailOpen?: (sessionId: string) => void;
   /** Called when a phone answers a held tool call over this transport. */
   onApprovalDecision?: (requestId: string, decision: ApprovalDecision) => void;
+  /** Types the wearer's text into the session's terminal; see terminal-input. */
+  onTerminalInput?: (sessionId: string, text: string) => Promise<TerminalInputOutcome>;
 }
 
 const DETAIL_MESSAGE_LIMIT = 40;
@@ -254,6 +257,10 @@ export class WsHub {
       case "detail_close":
         state.openSessionId = undefined;
         break;
+      case "session_input": {
+        void this.answerTerminalInput(socket, message);
+        break;
+      }
       case "approval_decision": {
         const requestId =
           typeof message.requestId === "string" && message.requestId.length > 0
@@ -305,6 +312,36 @@ export class WsHub {
       }
     }
     return false;
+  }
+
+  /** The WebSocket half of typed input; both transports share the judgement. */
+  private async answerTerminalInput(
+    socket: WebSocket,
+    message: Record<string, unknown>,
+  ): Promise<void> {
+    const id =
+      typeof message.id === "string" && message.id.length > 0 && message.id.length <= 64
+        ? message.id
+        : undefined;
+    if (!id) {
+      return;
+    }
+    const sessionId = typeof message.sessionId === "string" ? message.sessionId : "";
+    const outcome = this.options.onTerminalInput
+      ? await this.options
+          .onTerminalInput(sessionId, typeof message.text === "string" ? message.text : "")
+          .catch(() => ({ ok: false, error: "Could not send that" }) as TerminalInputOutcome)
+      : { ok: false, error: "Typing from the glasses is not available" };
+    this.logger.info("ws_session_input", { sessionId: sessionId.slice(0, 16), ok: outcome.ok });
+    if (!this.clients.get(socket)?.authenticated) {
+      return;
+    }
+    this.send(socket, {
+      type: "session_input_result",
+      id,
+      ok: outcome.ok,
+      error: outcome.ok ? null : outcome.error ?? "Could not send that",
+    });
   }
 
   sendApprovalRequest(request: ApprovalRequest): boolean {
