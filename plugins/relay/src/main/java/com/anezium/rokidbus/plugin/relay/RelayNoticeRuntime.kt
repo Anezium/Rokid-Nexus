@@ -592,7 +592,13 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
     private fun onTypingSurfaceRejected(attempt: Int, code: String) {
         if (currentTypingAttempt != attempt) return
         hideTypingSurface()
-        applyDeferredShowOrElse { queueSpeechFailure(code) }
+        applyDeferredShowOrElse { queueSpeechFailure(rejectionMessage(code)) }
+    }
+
+    /** The wire code is meant for logs, not the band — seen live as a bare "SURFACE_BUSY". */
+    private fun rejectionMessage(code: String): String = when (code) {
+        "SURFACE_BUSY" -> "Screen busy — try again"
+        else -> "Couldn't open reply"
     }
 
     private fun hideTypingSurface() {
