@@ -132,7 +132,8 @@ reference (1.4.1).
 
 The phone lists and opens launchable APKs already installed on the glasses,
 moves focus with previous/next/select/back, and supplies an ephemeral keyboard
-to the focused glasses editor (1.4.1). The phone is also a trackpad: a drag
+to the focused glasses editor (1.4.1) — a plugin's own text field included,
+since 1.4.6, below. The phone is also a trackpad: a drag
 moves the pointer the glasses system already has rather than one of ours, so it
 behaves the same in the Rokid launcher and in any third-party app, and Nexus
 draws its own cursor only when that path is unavailable (1.4.2). The four
@@ -140,6 +141,19 @@ versioned `/core/*` protocol families are hub-only and replay-safe; no plugin
 grant reaches them. Sensitive editors secure the phone window, and existing
 field contents never cross back to the phone. Installing native APKs is not
 part of this slice.
+
+### Typed input for plugins
+
+A card can carry one focusable text field, and what the wearer types comes
+back to the plugin once, on submit or cancel. The field is ordinary Android
+input, so a keyboard bonded to the glasses works and so does the phone's
+Keyboard & remote screen; the glasses hub announces support as a feature bit,
+and a plugin that offers typing falls back when it is absent. Relay's *Reply by
+typing* and Assistant's typed notes are the first two consumers (1.4.6, with
+Relay 1.2.2 and Assistant 1.4.4). Contributed by ruruw, along with a
+Maintenance check that asks the glasses which accessibility services besides
+Nexus's own are enabled — a foreign one in front of Nexus's key handling has
+been the cause behind more than one "input stopped working" report.
 
 ### Eleven plugins, none of them built in
 
@@ -204,8 +218,8 @@ assistant" was a table row on this page, and it shipped as Assistant.
 
 | Plugin | Still owed |
 |---|---|
-| Relay | Notifications from ordinary apps, not just messengers · an app picker, so the wearer chooses which apps may reach the eye |
-| Assistant | More tools that act — control the music, ask Transit · a keyboard mode — the request typed on the phone instead of spoken, for the places where talking to your glasses is not an option. Providers beyond ChatGPT shipped in 1.1.0 — MiniMax, DeepSeek, GLM, OpenRouter, or any OpenAI-compatible server; reminders, timers and notes shipped in 1.3.0, on every provider; phone-calendar creation, listing, and safe deletion in 1.4.0; Hermes, which runs its agent on its own side, in 1.4.1, with the phone tools bridged to it in plain text in 1.4.2 |
+| Relay | Notifications from ordinary apps, not just messengers · an app picker, so the wearer chooses which apps may reach the eye. Typed replies shipped in 1.2.2 |
+| Assistant | More tools that act — control the music, ask Transit · a keyboard mode — the request typed on the phone instead of spoken, for the places where talking to your glasses is not an option. Providers beyond ChatGPT shipped in 1.1.0 — MiniMax, DeepSeek, GLM, OpenRouter, or any OpenAI-compatible server; reminders, timers and notes shipped in 1.3.0, on every provider; phone-calendar creation, listing, and safe deletion in 1.4.0; Hermes, which runs its agent on its own side, in 1.4.1, with the phone tools bridged to it in plain text in 1.4.2; typed notes in 1.4.4 |
 | Feeds | Posting and replying by voice · sources beyond Bluesky and X · video in the timeline |
 | Media Deck | Voice control — "next" and "pause" said instead of tapped |
 | Photos Sync | Sync rules — Wi-Fi only, photos but not videos · freeing glasses storage once a shot is safely across · a video's location tag, which Android strips on the way out |
