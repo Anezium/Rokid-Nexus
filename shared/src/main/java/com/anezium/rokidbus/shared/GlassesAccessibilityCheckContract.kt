@@ -15,17 +15,33 @@ object GlassesAccessibilityCheckContract {
 
     fun requestToJson(): JSONObject = JSONObject().put("version", VERSION)
 
-    fun replyToJson(foreignServices: List<String>): JSONObject = JSONObject()
+    /**
+     * [nexusEnabled] is reported separately from [foreignServices] on purpose: an
+     * empty foreign-services list is ambiguous on its own — it reads the same
+     * whether Nexus's own service is the only one running (the good case this
+     * check exists to confirm) or nothing is running at all, Nexus included
+     * (the worst case, since none of its glasses-side input handling works
+     * either way). Collapsing the two into "only Nexus's own service" would
+     * tell the owner everything is fine in exactly the case it is not.
+     */
+    fun replyToJson(foreignServices: List<String>, nexusEnabled: Boolean): JSONObject = JSONObject()
         .put("version", VERSION)
         .put("foreignServices", JSONArray(foreignServices))
+        .put("nexusEnabled", nexusEnabled)
 
     /** Null for a reply this build cannot parse, so version skew reads as "no answer". */
-    fun foreignServicesFromReply(payload: JSONObject?): List<String>? {
+    fun fromReply(payload: JSONObject?): AccessibilityCheckReply? {
         val json = payload ?: return null
         if (json.optInt("version", 0) < 1) return null
         val array = json.optJSONArray("foreignServices") ?: return null
-        return (0 until array.length()).mapNotNull { index ->
+        val foreign = (0 until array.length()).mapNotNull { index ->
             array.optString(index).takeIf(String::isNotBlank)
         }
+        return AccessibilityCheckReply(
+            foreignServices = foreign,
+            nexusEnabled = json.optBoolean("nexusEnabled", true),
+        )
     }
 }
+
+data class AccessibilityCheckReply(val foreignServices: List<String>, val nexusEnabled: Boolean)

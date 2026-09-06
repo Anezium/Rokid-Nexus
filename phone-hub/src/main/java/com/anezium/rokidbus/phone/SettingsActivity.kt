@@ -27,6 +27,7 @@ import com.anezium.rokidbus.phone.speech.HubSecretStore
 import com.anezium.rokidbus.phone.speech.SpeechReadiness
 import com.anezium.rokidbus.phone.speech.SpeechSettingsStore
 import com.anezium.rokidbus.shared.BusPaths
+import com.anezium.rokidbus.shared.AccessibilityCheckReply
 import com.anezium.rokidbus.shared.GlassesAccessibilityCheckContract
 import com.anezium.rokidbus.shared.GlassesRepairContract
 import com.anezium.rokidbus.shared.LinkStateBits
@@ -795,21 +796,31 @@ class SettingsActivity : Activity() {
             if (isDestroyed || isFinishing) return@request
             accessibilityCheckInFlight = false
             accessibilityCheckValue?.text = "Check ›"
-            val foreign = result.fold(
-                onSuccess = { payload -> GlassesAccessibilityCheckContract.foreignServicesFromReply(payload) },
+            val reply = result.fold(
+                onSuccess = { payload -> GlassesAccessibilityCheckContract.fromReply(payload) },
                 onFailure = { null },
             )
-            showAccessibilityCheckStatus(accessibilityCheckMessage(result.isSuccess, foreign))
-            if (!foreign.isNullOrEmpty()) offerOpenGlassesAccessibilitySettings()
+            showAccessibilityCheckStatus(accessibilityCheckMessage(result.isSuccess, reply))
+            if (!reply?.foreignServices.isNullOrEmpty() || reply?.nexusEnabled == false) {
+                offerOpenGlassesAccessibilitySettings()
+            }
         }
     }
 
-    private fun accessibilityCheckMessage(succeeded: Boolean, foreign: List<String>?): String = when {
+    private fun accessibilityCheckMessage(succeeded: Boolean, reply: AccessibilityCheckReply?): String = when {
         !succeeded -> "The glasses did not answer. Check the connection and try again."
-        foreign == null -> "The glasses sent an answer this version does not understand."
-        foreign.isEmpty() -> "Nothing else is enabled — only Nexus's own service."
-        else -> "Found ${foreign.size} other accessibility service(s) enabled, which can interfere " +
-            "with Nexus's input handling:\n" + foreign.joinToString("\n") { "• $it" }
+        reply == null -> "The glasses sent an answer this version does not understand."
+        // Worse than "found N other services": nothing is enabled at all, Nexus's
+        // own service included, so none of its glasses-side input handling is
+        // running either. An empty foreign list alone can't tell these apart —
+        // that reads identically whether Nexus is the one service running or
+        // no service is running.
+        !reply.nexusEnabled -> "Nexus's own accessibility service isn't enabled — its glasses input " +
+            "handling isn't running."
+        reply.foreignServices.isEmpty() -> "Nothing else is enabled — only Nexus's own service."
+        else -> "Found ${reply.foreignServices.size} other accessibility service(s) enabled, which can " +
+            "interfere with Nexus's input handling:\n" +
+            reply.foreignServices.joinToString("\n") { "• $it" }
     }
 
     private fun offerOpenGlassesAccessibilitySettings() {
