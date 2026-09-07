@@ -2,6 +2,7 @@ package com.anezium.rokidbus.plugin.foodlog
 
 import android.Manifest
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -11,14 +12,14 @@ import android.provider.Settings
 import android.text.InputType
 import android.view.View
 import android.view.ViewGroup
-import android.view.inputmethod.EditorInfo
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.Switch
+import android.widget.FrameLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import com.anezium.rokidbus.client.ui.BusTheme
-import com.anezium.rokidbus.client.ui.NexusPluginIcons
 import com.anezium.rokidbus.client.ui.NexusUi
 import androidx.health.connect.client.PermissionController
 import kotlinx.coroutines.CoroutineScope
@@ -28,10 +29,10 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.Instant
+import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
-import java.util.UUID
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
@@ -49,9 +50,7 @@ class FoodLogActivity : Activity() {
         getSharedPreferences(FOOD_LOG_PREFERENCES, MODE_PRIVATE)
     }
 
-    private lateinit var summary: TextView
     private lateinit var status: TextView
-    private lateinit var entriesList: LinearLayout
     private lateinit var favoritesList: LinearLayout
     private lateinit var recipesList: LinearLayout
     private lateinit var weeklyList: LinearLayout
@@ -59,8 +58,6 @@ class FoodLogActivity : Activity() {
     private lateinit var productCatalog: LinearLayout
 
     private lateinit var barcodeField: EditText
-    private lateinit var quantityField: EditText
-    private lateinit var mealButton: Button
     private lateinit var addButton: View
     private lateinit var contributionButton: Button
 
@@ -69,6 +66,8 @@ class FoodLogActivity : Activity() {
     private lateinit var customProteinField: EditText
     private lateinit var customCarbsField: EditText
     private lateinit var customFatField: EditText
+    private lateinit var customServingField: EditText
+    private lateinit var customSaveButton: Button
     private lateinit var customSaturatedFatField: EditText
     private lateinit var customSodiumField: EditText
     private lateinit var customPotassiumField: EditText
@@ -77,9 +76,18 @@ class FoodLogActivity : Activity() {
     private lateinit var customCaffeineField: EditText
     private lateinit var customCholesterolField: EditText
 
-    private lateinit var recipeNameField: EditText
-    private lateinit var recipeServingsField: EditText
-    private lateinit var recipeIngredientsField: EditText
+    private lateinit var journal: FoodJournalView
+    private lateinit var body: FrameLayout
+    private lateinit var catalogQuery: EditText
+    private lateinit var foodDateLabel: TextView
+    private val pages = linkedMapOf<String, ScrollView>()
+    private val tabs = linkedMapOf<String, Button>()
+    private var currentTab = "Journal"
+    private var selectedDate = LocalDate.now()
+    private var entryEditor: FoodEntryEditor? = null
+    private var recipeEditor: FoodRecipeEditor? = null
+    private var refreshGeneration = 0
+    private var catalogGeneration = 0
 
     private lateinit var goalCaloriesField: EditText
     private lateinit var goalProteinField: EditText
@@ -104,16 +112,33 @@ class FoodLogActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         store = FoodLogStore(applicationContext)
+        selectedDate = savedInstanceState?.getString("journalDate")?.let { runCatching { LocalDate.parse(it) }.getOrNull() } ?: LocalDate.now()
+        currentTab = savedInstanceState?.getString("tab")?.takeIf { it in listOf("Journal", "Foods", "Settings") } ?: "Journal"
         buildUi()
         refreshAll()
         refreshHealthState()
+        savedInstanceState?.getBundle("entryDraft")?.let { state ->
+            runCatching {
+                val product = FoodLogBackup.readProductSnapshot(requireNotNull(state.getString("product")))
+                val original = state.getString("original")?.let(FoodLogBackup::readEntrySnapshot)
+                openEntryEditor(product, original)
+                entryEditor?.restoreState(state)
+            }.onFailure { closeEditor(); report("The unsaved entry could not be restored. Your saved journal is unchanged.") }
+        }
+        savedInstanceState?.getBundle("recipeDraft")?.let { state ->
+            runCatching {
+                openRecipeEditor(state.getString("original")?.let(FoodLogBackup::readRecipeSnapshot))
+                recipeEditor?.restoreState(state)
+            }.onFailure { closeEditor(); report("The unsaved recipe could not be restored. Saved recipes are unchanged.") }
+        }
     }
 
     override fun onDestroy() {
         destroyed = true
         scope.cancel()
-        worker.shutdownNow()
-        if (::store.isInitialized) store.close()
+        // Let an in-flight local transaction finish before closing its database.
+        if (::store.isInitialized) worker.execute { store.close() }
+        worker.shutdown()
         super.onDestroy()
     }
 
@@ -153,80 +178,186 @@ class FoodLogActivity : Activity() {
         }
     }
 
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putString("journalDate", selectedDate.toString())
+        outState.putString("tab", currentTab)
+        entryEditor?.let { outState.putBundle("entryDraft", it.saveState()) }
+        recipeEditor?.let { outState.putBundle("recipeDraft", it.saveState()) }
+        super.onSaveInstanceState(outState)
+    }
+
+    @Deprecated("Deprecated in Android; retained for this platform Activity.")
+    override fun onBackPressed() {
+        if (entryEditor != null || recipeEditor != null) {
+            AlertDialog.Builder(this).setTitle("Discard unsaved changes?")
+                .setNegativeButton("Keep editing", null)
+                .setPositiveButton("Discard") { _, _ -> closeEditor() }.show()
+        } else if (currentTab != "Journal") showTab("Journal") else super.onBackPressed()
+    }
+
     private fun buildUi() {
         window.statusBarColor = NexusUi.BG
         window.navigationBarColor = NexusUi.BG
-        summary = NexusUi.cardBody(this, "Loading today’s journal…")
         status = NexusUi.statusLine(this).apply { visibility = View.GONE }
-        entriesList = verticalList()
         favoritesList = verticalList()
         recipesList = verticalList()
         weeklyList = verticalList()
         remindersList = verticalList()
         productCatalog = verticalList()
+        catalogQuery = textField("Search saved foods or brands").apply {
+            watch { refreshCatalog() }
+        }
+        foodDateLabel = NexusUi.rowSub(this, "")
         buildQuickAddControls()
         buildCustomFoodControls()
-        buildRecipeControls()
         buildGoalControls()
         buildHealthControls()
         buildReminderControls()
-
-        val content = NexusUi.contentColumn(this).apply {
-            introAndToday()
-            section(this, "Quick add", quickAddCard())
+        journal = FoodJournalView(this, selectedDate,
+            onDate = { selectedDate = it; refreshAll() },
+            onAdd = { selectedMeal = it; showTab("Foods") },
+            onEdit = { openEntryEditor(it.product, it) },
+            onDelete = ::confirmDeleteEntry,
+        )
+        val foods = NexusUi.contentColumn(this).apply {
+            addView(foodDateLabel, NexusUi.block())
+            addView(BusTheme.gap(this@FoodLogActivity, 12))
+            addView(catalogQuery, NexusUi.block())
+            addView(productCatalog, NexusUi.block())
             section(this, "Favorites", favoritesList)
-            section(this, "Entries", entriesList)
-            section(this, "7-day statistics", weeklyList)
-            section(this, "Goals", goalsCard())
-            section(this, "Custom food", customFoodCard())
-            section(this, "Recipes", recipesCard(), recipesList)
-            section(this, "Product IDs for recipes", productCatalog)
-            section(this, "Health Connect", healthCard())
-            section(this, "Reminders", remindersCard(), remindersList)
-            section(this, "Backup", backupCard())
-            section(
-                this,
-                "Data",
-                NexusUi.cardBody(
-                    this@FoodLogActivity,
-                    "Food history and recipes stay on this phone. Open Food Facts is collaborative and can be incomplete; check the package label when nutrition data matters.",
-                ),
-            )
+            section(this, "Barcode", collapsed("Look up a barcode", quickAddCard()))
+            section(this, "Custom food", collapsed("Create custom food", customFoodCard()))
+            section(this, "Recipes",
+                NexusUi.outlinePillButton(this@FoodLogActivity, "Create recipe").apply { setOnClickListener { openRecipeEditor() } },
+                recipesList)
+        }
+        val settings = NexusUi.contentColumn(this).apply {
+            section(this, "Optional daily goals", goalsCard())
+            section(this, "7-day statistics", collapsed("View daily totals", weeklyList))
+            section(this, "Health Connect", collapsed("Manage Health Connect", healthCard()))
+            section(this, "Reminders", collapsed("Manage reminders", verticalList().apply {
+                addView(remindersCard(), NexusUi.block()); addView(remindersList, NexusUi.block())
+            }))
+            section(this, "Backup", collapsed("Export or import journal", backupCard()))
+            section(this, "Data", NexusUi.cardBody(this@FoodLogActivity,
+                "Your journal, foods and recipes stay on this phone. Open Food Facts data can be incomplete; check the package label. Unknown nutrition stays unknown."))
             section(this, "Plugin", uninstallRow())
         }
-        setContentView(
-            NexusUi.fixedRoot(this).apply {
-                addView(
-                    NexusUi.pluginHeader(
-                        this@FoodLogActivity,
-                        NexusPluginIcons.drawableFor("heart"),
-                        "Food Log",
-                        "Local nutrition journal · v0.3",
-                    ),
-                    NexusUi.block(),
-                )
-                addView(
-                    NexusUi.screen(this@FoodLogActivity, content),
-                    LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f),
-                )
-            },
-        )
+        pages["Journal"] = NexusUi.screen(this, journal.view)
+        pages["Foods"] = NexusUi.screen(this, foods)
+        pages["Settings"] = NexusUi.screen(this, settings)
+        body = FrameLayout(this)
+        setContentView(NexusUi.fixedRoot(this).apply {
+            addView(NexusUi.pluginHeader(this@FoodLogActivity, R.drawable.nexus_glyph_foodlog,
+                "Food Log", "Local nutrition journal · v3.1"), NexusUi.block())
+            addView(LinearLayout(this@FoodLogActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                pages.keys.forEach { label ->
+                    val button = NexusUi.textButton(this@FoodLogActivity, label).apply {
+                        setOnClickListener { showTab(label) }
+                    }
+                    tabs[label] = button
+                    addView(button, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                }
+            }, NexusUi.block())
+            addView(status, NexusUi.block())
+            addView(body, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        })
+        showTab(currentTab)
     }
 
-    private fun LinearLayout.introAndToday() {
-        addView(
-            NexusUi.cardBody(
-                this@FoodLogActivity,
-                "Scan from the glasses, add by voice, or manage a complete food journal here.",
-            ),
-            NexusUi.block(),
-        )
-        addView(BusTheme.gap(this@FoodLogActivity, 18))
-        addView(NexusUi.sectionRow(this@FoodLogActivity, "Today"), NexusUi.block())
-        addView(BusTheme.gap(this@FoodLogActivity, 10))
-        addView(NexusUi.card(this@FoodLogActivity).apply { addView(summary) }, NexusUi.block())
-        addView(BusTheme.gap(this@FoodLogActivity, 10))
-        addView(status, NexusUi.block())
+    private fun collapsed(label: String, content: View): LinearLayout = verticalList().apply {
+        val toggle = NexusUi.outlinePillButton(this@FoodLogActivity, label)
+        content.visibility = View.GONE
+        toggle.setOnClickListener {
+            val expanded = content.visibility != View.VISIBLE
+            content.visibility = if (expanded) View.VISIBLE else View.GONE
+            toggle.text = if (expanded) "Hide ${label.lowercase()}" else label
+        }
+        addView(toggle, NexusUi.block())
+        addView(content, NexusUi.block())
+    }
+
+    private fun showTab(label: String) {
+        if (entryEditor != null || recipeEditor != null) return
+        currentTab = label
+        foodDateLabel.text = "Adding to ${selectedDate.format(DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM))} · ${selectedMeal.displayName}"
+        body.removeAllViews()
+        body.addView(pages.getValue(label))
+        tabs.forEach { (name, button) ->
+            button.isSelected = name == label
+            button.setTextColor(if (name == label) NexusUi.ACCENT else NexusUi.MUTED)
+        }
+    }
+
+    private fun showEditor(view: LinearLayout) {
+        tabs.values.forEach { it.isEnabled = false }
+        body.removeAllViews()
+        body.addView(NexusUi.screen(this, view))
+    }
+
+    private fun closeEditor() {
+        entryEditor = null
+        recipeEditor = null
+        tabs.values.forEach { it.isEnabled = true }
+        showTab(currentTab)
+    }
+
+    private fun openEntryEditor(product: FoodProduct, original: FoodEntry? = null) {
+        val editor = FoodEntryEditor(this, product, selectedDate, selectedMeal, original,
+            onSave = { portion -> savePortion(product, original, portion) }, onCancel = ::closeEditor)
+        entryEditor = editor
+        showEditor(editor.view)
+    }
+
+    private fun savePortion(product: FoodProduct, original: FoodEntry?, portion: FoodEntryPortion) {
+        val editor = entryEditor
+        worker.execute {
+            val result = runCatching {
+                val id = if (original == null) store.addEntry(product, portion.grams, portion.consumedAtMillis,
+                    portion.meal, sourceFor(product), product.barcode.removePrefix("recipe-").takeIf { product.barcode.startsWith("recipe-") },
+                    uuid = requireNotNull(editor).entryUuid)
+                else {
+                    check(store.updateEntry(original, portion.grams, portion.consumedAtMillis, portion.meal)) {
+                        "This entry changed or was removed. Cancel and reopen it before editing."
+                    }
+                    original.id
+                }
+                store.entry(id) ?: error("The saved entry could not be read.")
+            }
+            post { result.fold(onSuccess = { entry ->
+                closeEditor()
+                currentTab = "Journal"
+                selectedDate = Instant.ofEpochMilli(entry.consumedAtMillis).atZone(ZoneId.systemDefault()).toLocalDate()
+                journal.choose(selectedDate)
+                showTab("Journal")
+                report(if (original == null) "Added ${product.name}." else "Saved changes to ${product.name}.")
+                syncEntryIfEnabled(entry)
+            }, onFailure = { editor?.showError(it.message ?: "Entry could not be saved.") }) }
+        }
+    }
+
+    private fun openRecipeEditor(original: FoodRecipe? = null) {
+        val editor = FoodRecipeEditor(this, original,
+            search = { query, callback -> worker.execute {
+                val products = runCatching { store.searchProducts(query, 500) }.getOrDefault(emptyList())
+                post { callback(products) }
+            } },
+            onSave = { recipe -> worker.execute {
+                val result = runCatching { store.saveRecipe(recipe) }
+                post { result.fold(onSuccess = {
+                    closeEditor(); report("Saved recipe ${recipe.name}."); refreshAll()
+                }, onFailure = { recipeEditor?.showError("Recipe could not be saved. Existing data was preserved.") }) }
+            } }, onCancel = ::closeEditor)
+        recipeEditor = editor
+        showEditor(editor.view)
+    }
+
+    private fun confirmDeleteEntry(entry: FoodEntry) {
+        AlertDialog.Builder(this).setTitle("Delete this entry?")
+            .setMessage("${entry.product.name} · ${formatNutritionNumber(entry.quantityGrams)} g\n${entry.mealType.displayName} · ${formatReminderTime(entry.consumedAtMillis)}\nOnly this entry will be deleted.")
+            .setNegativeButton("Keep entry", null)
+            .setPositiveButton("Delete entry") { _, _ -> deleteEntry(entry) }.show()
     }
 
     private fun section(
@@ -244,25 +375,8 @@ class FoodLogActivity : Activity() {
     }
 
     private fun buildQuickAddControls() {
-        barcodeField = textField("Barcode")
-        quantityField = numberField("Quantity in grams").apply {
-            setText(DEFAULT_QUANTITY_GRAMS)
-            imeOptions = EditorInfo.IME_ACTION_DONE
-            setOnEditorActionListener { _, actionId, _ ->
-                if (actionId == EditorInfo.IME_ACTION_DONE) {
-                    addFromBarcode()
-                    true
-                } else {
-                    false
-                }
-            }
-        }
-        mealButton = NexusUi.outlinePillButton(this, selectedMeal.displayName).apply {
-            setOnClickListener { cycleMeal() }
-        }
-        addButton = NexusUi.pillButton(this, "Look up and add").apply {
-            setOnClickListener { addFromBarcode() }
-        }
+        barcodeField = textField("Barcode, 4–14 digits").apply { inputType = InputType.TYPE_CLASS_NUMBER }
+        addButton = NexusUi.pillButton(this, "Look up product").apply { setOnClickListener { addFromBarcode() } }
         contributionButton = NexusUi.outlinePillButton(this, "Add product to Open Food Facts").apply {
             visibility = View.GONE
             setOnClickListener { missingBarcode?.let(::openFoodFactsContribution) }
@@ -270,14 +384,10 @@ class FoodLogActivity : Activity() {
     }
 
     private fun quickAddCard(): LinearLayout = NexusUi.card(this).apply {
+        addView(NexusUi.rowSub(this@FoodLogActivity, "Scan the barcode from the glasses, or enter it here. Review the product and portion before adding."))
         addView(barcodeField, NexusUi.block())
-        addView(BusTheme.gap(this@FoodLogActivity, 8))
-        addView(quantityField, NexusUi.block())
-        addView(BusTheme.gap(this@FoodLogActivity, 8))
-        addView(mealButton, NexusUi.block())
         addView(BusTheme.gap(this@FoodLogActivity, 10))
         addView(addButton, NexusUi.block())
-        addView(BusTheme.gap(this@FoodLogActivity, 8))
         addView(contributionButton, NexusUi.block())
     }
 
@@ -287,6 +397,7 @@ class FoodLogActivity : Activity() {
         customProteinField = numberField("Protein g / 100 g")
         customCarbsField = numberField("Carbohydrate g / 100 g")
         customFatField = numberField("Fat g / 100 g")
+        customServingField = numberField("One serving in grams (optional)")
         customSaturatedFatField = numberField("Saturated fat g / 100 g (optional)")
         customSodiumField = numberField("Sodium mg / 100 g (optional)")
         customPotassiumField = numberField("Potassium mg / 100 g (optional)")
@@ -297,58 +408,20 @@ class FoodLogActivity : Activity() {
     }
 
     private fun customFoodCard(): LinearLayout = NexusUi.card(this).apply {
-        listOf(
-            customNameField,
-            customCaloriesField,
-            customProteinField,
-            customCarbsField,
-            customFatField,
-            customSaturatedFatField,
-            customSodiumField,
-            customPotassiumField,
-            customCalciumField,
-            customIronField,
-            customCaffeineField,
-            customCholesterolField,
-        ).forEachIndexed { index, field ->
-            if (index > 0) addView(BusTheme.gap(this@FoodLogActivity, 8))
-            addView(field, NexusUi.block())
+        addView(NexusUi.rowSub(this@FoodLogActivity, "Copy the nutrition per 100 g from a label. Leave unknown values blank."))
+        listOf(customNameField, customCaloriesField, customProteinField, customCarbsField, customFatField, customServingField).forEach { field ->
+            addView(BusTheme.gap(this@FoodLogActivity, 8)); addView(field, NexusUi.block())
         }
         addView(BusTheme.gap(this@FoodLogActivity, 10))
-        addView(
-            NexusUi.pillButton(this@FoodLogActivity, "Save custom food").apply {
-                setOnClickListener { saveCustomFood() }
-            },
-            NexusUi.block(),
-        )
-    }
-
-    private fun buildRecipeControls() {
-        recipeNameField = textField("Recipe name")
-        recipeServingsField = numberField("Number of servings").apply { setText("2") }
-        recipeIngredientsField = textField("product-id:grams; product-id:grams")
-    }
-
-    private fun recipesCard(): LinearLayout = NexusUi.card(this).apply {
-        addView(
-            NexusUi.cardBody(
-                this@FoodLogActivity,
-                "Use product IDs listed below. Example: 3017620422003:40; custom-…:120",
-            ),
-        )
+        addView(collapsed("Additional nutrition (optional)", verticalList().apply {
+            listOf(customSaturatedFatField, customSodiumField, customPotassiumField, customCalciumField,
+                customIronField, customCaffeineField, customCholesterolField).forEach { field ->
+                addView(BusTheme.gap(this@FoodLogActivity, 8)); addView(field, NexusUi.block())
+            }
+        }), NexusUi.block())
         addView(BusTheme.gap(this@FoodLogActivity, 10))
-        addView(recipeNameField, NexusUi.block())
-        addView(BusTheme.gap(this@FoodLogActivity, 8))
-        addView(recipeServingsField, NexusUi.block())
-        addView(BusTheme.gap(this@FoodLogActivity, 8))
-        addView(recipeIngredientsField, NexusUi.block())
-        addView(BusTheme.gap(this@FoodLogActivity, 10))
-        addView(
-            NexusUi.pillButton(this@FoodLogActivity, "Save recipe").apply {
-                setOnClickListener { saveRecipe() }
-            },
-            NexusUi.block(),
-        )
+        customSaveButton = NexusUi.pillButton(this@FoodLogActivity, "Save food and choose portion").apply { setOnClickListener { saveCustomFood() } }
+        addView(customSaveButton, NexusUi.block())
     }
 
     private fun buildGoalControls() {
@@ -359,6 +432,7 @@ class FoodLogActivity : Activity() {
     }
 
     private fun goalsCard(): LinearLayout = NexusUi.card(this).apply {
+        addView(NexusUi.rowSub(this@FoodLogActivity, "Set only the goals you choose. Leave fields blank to remove goals."))
         listOf(goalCaloriesField, goalProteinField, goalCarbsField, goalFatField).forEachIndexed { index, field ->
             if (index > 0) addView(BusTheme.gap(this@FoodLogActivity, 8))
             addView(field, NexusUi.block())
@@ -464,11 +538,8 @@ class FoodLogActivity : Activity() {
 
     private fun addFromBarcode() {
         val barcode = normalizeBarcode(barcodeField.text.toString())
-        val quantity = quantityField.numberOrNull()
         when {
             barcode == null -> report("Enter a 4–14 digit barcode.")
-            quantity == null || quantity !in MIN_QUANTITY_GRAMS..MAX_QUANTITY_GRAMS ->
-                report("Quantity must be between 1 and 5,000 g.")
             else -> {
                 addButton.isEnabled = false
                 missingBarcode = null
@@ -487,11 +558,11 @@ class FoodLogActivity : Activity() {
                                     contributionButton.visibility = View.VISIBLE
                                     report("Product not found. You can add it to Open Food Facts.")
                                 } else {
-                                    addProduct(product, quantity, selectedMeal, FoodEntrySource.SEARCHED)
+                                    openEntryEditor(product)
                                     barcodeField.text?.clear()
                                 }
                             },
-                            onFailure = { report("Lookup failed. Check the phone network connection.") },
+                            onFailure = { report(if (it is FoodFactsLookupException) it.message.orEmpty() else "Lookup failed. Check the phone network connection.") },
                         )
                     }
                 }
@@ -499,121 +570,33 @@ class FoodLogActivity : Activity() {
         }
     }
 
-    private fun addProduct(
-        product: FoodProduct,
-        quantityGrams: Double,
-        mealType: MealType,
-        source: FoodEntrySource,
-        recipeId: String? = null,
-    ) {
-        worker.execute {
-            val id = store.addEntry(
-                product = product,
-                quantityGrams = quantityGrams,
-                consumedAtMillis = System.currentTimeMillis(),
-                mealType = mealType,
-                source = source,
-                recipeId = recipeId,
-            )
-            val entry = store.entry(id)
-            post {
-                report("Added ${product.name} to ${mealType.displayName.lowercase()}.")
-                refreshAll()
-                entry?.let(::syncEntryIfEnabled)
-            }
-        }
-    }
-
     private fun saveCustomFood() {
         val name = customNameField.text.toString().trim()
-        if (name.isBlank()) return report("Enter a custom food name.")
-        val core = listOf(customCaloriesField, customProteinField, customCarbsField, customFatField)
-            .map { it.numberOrNull() }
-        val saturatedFat = customSaturatedFatField.numberOrNull()
-        val sodium = customSodiumField.numberOrNull()
-        val potassium = customPotassiumField.numberOrNull()
-        val calcium = customCalciumField.numberOrNull()
-        val iron = customIronField.numberOrNull()
-        val caffeine = customCaffeineField.numberOrNull()
-        val cholesterol = customCholesterolField.numberOrNull()
-        if (core.all { it == null }) return report("Add at least one calorie or macro value.")
-        if ((core + listOf(saturatedFat, sodium, potassium, calcium, iron, caffeine, cholesterol))
-            .any { it != null && (it < 0.0 || it > 100_000.0) }
-        ) {
-            return report("Nutrition values must be between 0 and 100,000.")
-        }
-        worker.execute {
-            val product = store.createCustomFood(
-                name = name,
-                nutrients = NutrientsPer100g(
-                    caloriesKcal = core[0],
-                    proteinGrams = core[1],
-                    carbohydrateGrams = core[2],
-                    fatGrams = core[3],
-                    sugarsGrams = null,
-                    fiberGrams = null,
-                    saltGrams = null,
-                    saturatedFatGrams = saturatedFat,
-                    sodiumMilligrams = sodium,
-                    cholesterolMilligrams = cholesterol,
-                    potassiumMilligrams = potassium,
-                    calciumMilligrams = calcium,
-                    ironMilligrams = iron,
-                    caffeineMilligrams = caffeine,
-                ),
-            )
-            store.setFavorite(product.barcode, true)
-            post {
-                customNameField.text?.clear()
-                report("Saved ${product.name} and added it to favorites.")
-                refreshAll()
-            }
-        }
-    }
-
-    private fun saveRecipe() {
-        val name = recipeNameField.text.toString().trim()
-        val servings = recipeServingsField.numberOrNull()
-        val tokens = recipeIngredientsField.text.toString()
-            .split(';')
-            .map(String::trim)
-            .filter(String::isNotBlank)
-        if (name.isBlank()) return report("Enter a recipe name.")
-        if (servings == null || servings !in 0.25..100.0) return report("Servings must be between 0.25 and 100.")
-        if (tokens.isEmpty() || tokens.size > MAX_RECIPE_INGREDIENTS) return report("Add 1–64 recipe ingredients.")
+        if (name.isBlank() || name.length > 300) return report("Enter a food name of 1–300 characters.")
+        val fields = listOf(customCaloriesField, customProteinField, customCarbsField, customFatField,
+            customSaturatedFatField, customSodiumField, customPotassiumField, customCalciumField,
+            customIronField, customCaffeineField, customCholesterolField)
+        val values = runCatching { fields.map { it.optionalNumber() } }.getOrElse { return report("Enter valid nutrition values, or leave unknown values blank.") }
+        if (values.take(4).all { it == null }) return report("Add at least one calorie or macro value.")
+        if (values.any { it != null && it !in 0.0..100_000.0 }) return report("Nutrition values must be between 0 and 100,000.")
+        if (values.slice(1..4).any { it != null && it > 100.0 }) return report("Nutrients measured in grams cannot exceed 100 g per 100 g.")
+        val serving = runCatching { customServingField.optionalNumber() }.getOrElse { return report("Enter a serving weight in grams, or leave it blank.") }
+        if (serving != null && serving !in MIN_QUANTITY_GRAMS..MAX_QUANTITY_GRAMS) return report("One serving must weigh 1–5,000 g.")
+        customSaveButton.isEnabled = false
         worker.execute {
             val result = runCatching {
-                val ingredients = tokens.map { token ->
-                    val separator = token.lastIndexOf(':')
-                    require(separator > 0) { "Use product-id:grams for each ingredient." }
-                    val id = token.substring(0, separator).trim()
-                    val grams = token.substring(separator + 1).trim().replace(',', '.').toDoubleOrNull()
-                    require(grams != null && grams in MIN_QUANTITY_GRAMS..MAX_RECIPE_INGREDIENT_GRAMS) {
-                        "Each ingredient must be between 1 and 20,000 g."
-                    }
-                    val product = store.product(id) ?: error("Unknown product ID: $id")
-                    RecipeIngredient(product, grams)
-                }
-                val recipe = FoodRecipe(
-                    uuid = UUID.randomUUID().toString(),
-                    name = name,
-                    servings = servings,
-                    ingredients = ingredients,
-                    createdAtMillis = System.currentTimeMillis(),
-                )
-                store.saveRecipe(recipe)
-                recipe
+                store.createCustomFood(name, NutrientsPer100g(values[0], values[1], values[2], values[3], null, null, null,
+                    saturatedFatGrams = values[4], sodiumMilligrams = values[5], potassiumMilligrams = values[6],
+                    calciumMilligrams = values[7], ironMilligrams = values[8], caffeineMilligrams = values[9], cholesterolMilligrams = values[10]),
+                    servingGrams = serving).also { store.setFavorite(it.barcode, true) }
             }
             post {
-                result.fold(
-                    onSuccess = { recipe ->
-                        recipeNameField.text?.clear()
-                        recipeIngredientsField.text?.clear()
-                        report("Saved recipe ${recipe.name}.")
-                        refreshAll()
-                    },
-                    onFailure = { report(it.message ?: "Recipe could not be saved.") },
-                )
+                customSaveButton.isEnabled = true
+                result.fold(onSuccess = { product ->
+                    (fields + customNameField + customServingField).forEach { it.text?.clear() }
+                    report("Saved ${product.name} to your foods and favorites.")
+                    refreshAll(); openEntryEditor(product)
+                }, onFailure = { report("Custom food could not be saved. Check the values and try again.") })
             }
         }
     }
@@ -621,10 +604,10 @@ class FoodLogActivity : Activity() {
     private fun saveGoals() {
         val result = runCatching {
             NutritionGoals(
-                caloriesKcal = goalCaloriesField.numberOrNull(),
-                proteinGrams = goalProteinField.numberOrNull(),
-                carbohydrateGrams = goalCarbsField.numberOrNull(),
-                fatGrams = goalFatField.numberOrNull(),
+                caloriesKcal = goalCaloriesField.optionalNumber(),
+                proteinGrams = goalProteinField.optionalNumber(),
+                carbohydrateGrams = goalCarbsField.optionalNumber(),
+                fatGrams = goalFatField.optionalNumber(),
             )
         }
         result.fold(
@@ -641,30 +624,10 @@ class FoodLogActivity : Activity() {
         )
     }
 
-    private fun cycleMeal() {
-        val values = listOf(MealType.BREAKFAST, MealType.LUNCH, MealType.DINNER, MealType.SNACK)
-        selectedMeal = values[(values.indexOf(selectedMeal).coerceAtLeast(0) + 1) % values.size]
-        mealButton.text = selectedMeal.displayName.uppercase()
-    }
-
-    private fun cycleEntryMeal(entry: FoodEntry) {
-        val values = listOf(MealType.BREAKFAST, MealType.LUNCH, MealType.DINNER, MealType.SNACK)
-        val next = values[(values.indexOf(entry.mealType).coerceAtLeast(0) + 1) % values.size]
-        worker.execute {
-            val updated = store.updateEntryMeal(entry.uuid, next)
-            val updatedEntry = if (updated) store.entry(entry.id) else null
-            post {
-                report(if (updated) "Moved entry to ${next.displayName.lowercase()}." else "Entry no longer exists.")
-                updatedEntry?.let(::syncEntryIfEnabled)
-                refreshAll()
-            }
-        }
-    }
-
     private fun deleteEntry(entry: FoodEntry) {
         scope.launch {
             val deleted = withContext(Dispatchers.IO) {
-                if (entry.uuid.isNotBlank()) store.deleteEntry(entry.uuid) else store.deleteEntry(entry.id)
+                store.deleteEntry(entry)
             }
             val healthResult = if (deleted && preferences.getBoolean(FOOD_LOG_HEALTH_SYNC_KEY, false)) {
                 healthBridge.deleteEntry(entry, userOptedIn = true)
@@ -697,125 +660,59 @@ class FoodLogActivity : Activity() {
     }
 
     private fun refreshAll() {
+        val request = ++refreshGeneration
+        val date = selectedDate
+        val dayMillis = date.atTime(12, 0).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
         worker.execute {
-            val entries = store.entriesForDay()
-            val goals = store.goals()
-            val favorites = store.favoriteProducts()
-            val recipes = store.recipes()
-            val week = store.dailySummariesForWeek()
-            val products = store.allProducts()
-            val reminders = runCatching { FoodLogReminderStore(applicationContext).all() }
-            post {
-                renderSummary(entries, goals)
-                renderEntries(entries, favorites.map(FoodProduct::barcode).toSet())
-                renderFavorites(favorites)
-                renderRecipes(recipes)
-                renderWeek(week)
-                renderProductCatalog(products)
-                reminders.fold(
-                    onSuccess = ::renderReminders,
-                    onFailure = {
+            val result = runCatching {
+                val entries = store.entriesForDay(dayMillis)
+                val goals = store.goals()
+                val favorites = store.favoriteProducts()
+                val recipes = store.recipes()
+                val week = store.dailySummariesForWeek(dayMillis)
+                val reminders = runCatching { FoodLogReminderStore(applicationContext).all() }
+                post {
+                    if (request != refreshGeneration) return@post
+                    journal.render(entries, goals)
+                    renderFavorites(favorites)
+                    renderRecipes(recipes)
+                    renderWeek(week)
+                    reminders.fold(onSuccess = ::renderReminders, onFailure = {
                         remindersList.removeAllViews()
-                        remindersList.emptyCard("Reminder storage could not be read; existing data was preserved.")
-                        report("Reminder storage needs recovery or a valid archive import.")
-                    },
-                )
-                renderGoalFields(goals)
+                        remindersList.emptyCard("Reminders could not be read. Existing data was preserved.")
+                    })
+                    renderGoalFields(goals)
+                    refreshCatalog()
+                }
             }
-        }
-    }
-
-    private fun renderSummary(entries: List<FoodEntry>, goals: NutritionGoals?) {
-        val totals = aggregateNutrition(entries)
-        summary.text = buildString {
-            append("${totals.entryCount} ${if (totals.entryCount == 1) "entry" else "entries"} today\n")
-            append(progress("Energy", totals.caloriesKcal, goals?.caloriesKcal, "kcal"))
-            append("\n${progress("Protein", totals.proteinGrams, goals?.proteinGrams, "g")}")
-            append(" · ${progress("Carbs", totals.carbohydrateGrams, goals?.carbohydrateGrams, "g")}")
-            append(" · ${progress("Fat", totals.fatGrams, goals?.fatGrams, "g")}")
-            append("\nFiber ${aggregateOptional(entries) { it.fiberGrams }.display("g")}")
-            append(" · Sodium ${totals.sodiumMilligrams.display("mg")}")
-            append(" · Iron ${totals.ironMilligrams.display("mg")}")
-            append(" · Calcium ${totals.calciumMilligrams.display("mg")}")
-        }
-    }
-
-    private fun renderEntries(entries: List<FoodEntry>, favoriteCodes: Set<String>) {
-        entriesList.removeAllViews()
-        if (entries.isEmpty()) return entriesList.emptyCard("No food logged today.")
-        entries.forEachIndexed { index, entry ->
-            if (index > 0) entriesList.addView(BusTheme.gap(this, 8))
-            entriesList.addView(
-                NexusUi.card(this).apply {
-                    addView(NexusUi.rowTitle(this@FoodLogActivity, entry.product.name))
-                    addView(
-                        NexusUi.rowSub(
-                            this@FoodLogActivity,
-                            "${formatEntryTime(entry.consumedAtMillis)} · ${entry.mealType.displayName} · ${formatNutritionNumber(entry.quantityGrams)} g",
-                        ),
-                    )
-                    addView(BusTheme.gap(this@FoodLogActivity, 8))
-                    val calories = scaledValue(entry.product.nutrients.caloriesKcal, entry.quantityGrams)
-                    addView(NexusUi.metaLabel(this@FoodLogActivity, "${calories.value("kcal")} · ${entry.product.barcode}"))
-                    addView(BusTheme.gap(this@FoodLogActivity, 8))
-                    addView(
-                        horizontalActions(
-                            NexusUi.textButton(this@FoodLogActivity, entry.mealType.displayName).apply {
-                                setOnClickListener { cycleEntryMeal(entry) }
-                            },
-                            NexusUi.textButton(
-                                this@FoodLogActivity,
-                                if (entry.product.barcode in favoriteCodes) "Unfavorite" else "Favorite",
-                            ).apply {
-                                setOnClickListener {
-                                    toggleFavorite(entry.product, entry.product.barcode in favoriteCodes)
-                                }
-                            },
-                            NexusUi.textButton(this@FoodLogActivity, "Delete", danger = true).apply {
-                                setOnClickListener { deleteEntry(entry) }
-                            },
-                        ),
-                    )
-                },
-                NexusUi.block(),
-            )
+            if (result.isFailure) post {
+                if (request == refreshGeneration) { journal.showError(); report("Journal could not be loaded. Existing data was preserved.") }
+            }
         }
     }
 
     private fun renderFavorites(products: List<FoodProduct>) {
         favoritesList.removeAllViews()
-        if (products.isEmpty()) return favoritesList.emptyCard("Favorite an entry or create a custom food.")
-        products.forEachIndexed { index, product ->
-            if (index > 0) favoritesList.addView(BusTheme.gap(this, 8))
-            favoritesList.addView(actionRow(product.name, product.brand.ifBlank { product.barcode }, "Add") {
-                val amount = product.servingGrams?.takeIf { it in MIN_QUANTITY_GRAMS..MAX_QUANTITY_GRAMS } ?: 100.0
-                addProduct(product, amount, selectedMeal, sourceFor(product))
+        if (products.isEmpty()) return favoritesList.emptyCard("Save a favorite from the food catalog for faster logging.")
+        products.forEach { product ->
+            favoritesList.addView(actionRow(product.name, product.brand.ifBlank { "Saved food" }, "Log") {
+                openEntryEditor(product)
             }, NexusUi.block())
         }
     }
 
     private fun renderRecipes(recipes: List<FoodRecipe>) {
         recipesList.removeAllViews()
-        if (recipes.isEmpty()) return recipesList.emptyCard("No saved recipes.")
-        recipes.forEachIndexed { index, recipe ->
-            if (index > 0) recipesList.addView(BusTheme.gap(this, 8))
-            val product = recipe.asProduct()
-            recipesList.addView(
-                actionRow(
-                    recipe.name,
-                    "${recipe.ingredients.size} ingredients · ${formatNutritionNumber(recipe.servings)} servings",
-                    "Log serving",
-                ) {
-                    addProduct(
-                        product,
-                        product.servingGrams ?: 100.0,
-                        selectedMeal,
-                        FoodEntrySource.RECIPE,
-                        recipe.uuid,
-                    )
-                },
-                NexusUi.block(),
-            )
+        if (recipes.isEmpty()) return recipesList.emptyCard("Combine saved foods into a recipe, then log a portion whenever you eat it.")
+        recipes.forEach { recipe ->
+            recipesList.addView(NexusUi.card(this).apply {
+                addView(NexusUi.rowTitle(this@FoodLogActivity, recipe.name))
+                addView(NexusUi.rowSub(this@FoodLogActivity, "${recipe.ingredients.size} ingredients · ${formatNutritionNumber(recipe.servings)} servings"))
+                addView(horizontalActions(
+                    NexusUi.textButton(this@FoodLogActivity, "Log portion").apply { setOnClickListener { openEntryEditor(recipe.asProduct()) } },
+                    NexusUi.textButton(this@FoodLogActivity, "Edit recipe").apply { setOnClickListener { openRecipeEditor(recipe) } },
+                ), NexusUi.block())
+            }, NexusUi.block())
         }
     }
 
@@ -839,22 +736,36 @@ class FoodLogActivity : Activity() {
         }
     }
 
-    private fun renderProductCatalog(products: List<FoodProduct>) {
+    private fun refreshCatalog() {
+        val request = ++catalogGeneration
+        val query = catalogQuery.text.toString()
+        worker.execute {
+            val result = runCatching { store.searchProducts(query, 101) to store.favoriteProducts().mapTo(hashSetOf(), FoodProduct::barcode) }
+            post {
+                if (request != catalogGeneration) return@post
+                result.fold(onSuccess = { (products, favoriteIds) -> renderProductCatalog(products, favoriteIds) },
+                    onFailure = { productCatalog.removeAllViews(); productCatalog.emptyCard("Saved foods could not be read. Change the search to retry.") })
+            }
+        }
+    }
+
+    private fun renderProductCatalog(products: List<FoodProduct>, favoriteIds: Set<String>) {
         productCatalog.removeAllViews()
-        if (products.isEmpty()) return productCatalog.emptyCard("No products stored yet.")
-        products.take(MAX_CATALOG_PRODUCTS).forEachIndexed { index, product ->
-            if (index > 0) productCatalog.addView(BusTheme.gap(this, 6))
-            productCatalog.addView(
-                NexusUi.card(this).apply {
-                    addView(NexusUi.rowTitle(this@FoodLogActivity, product.name))
-                    addView(NexusUi.rowSub(this@FoodLogActivity, product.barcode))
-                },
-                NexusUi.block(),
-            )
+        if (products.isEmpty()) return productCatalog.emptyCard(
+            if (catalogQuery.text.isNullOrBlank()) "Your food catalog is empty. Look up a barcode below or create a custom food." else "No matching saved food. Try another name or add it below.")
+        products.take(100).forEach { product ->
+            productCatalog.addView(NexusUi.card(this).apply {
+                addView(NexusUi.rowTitle(this@FoodLogActivity, product.name))
+                addView(NexusUi.rowSub(this@FoodLogActivity, listOf(product.brand, "${product.nutrients.caloriesKcal.displayPer100g("kcal")} / 100 g").filter(String::isNotBlank).joinToString(" · ")))
+                addView(horizontalActions(
+                    NexusUi.textButton(this@FoodLogActivity, "Log portion").apply { setOnClickListener { openEntryEditor(product) } },
+                    NexusUi.textButton(this@FoodLogActivity, if (product.barcode in favoriteIds) "Unfavorite" else "Favorite").apply {
+                        setOnClickListener { toggleFavorite(product, product.barcode in favoriteIds) }
+                    },
+                ), NexusUi.block())
+            }, NexusUi.block())
         }
-        if (products.size > MAX_CATALOG_PRODUCTS) {
-            productCatalog.addView(NexusUi.cardBody(this, "${products.size - MAX_CATALOG_PRODUCTS} more products omitted."))
-        }
+        if (products.size > 100) productCatalog.addView(NexusUi.rowSub(this, "Showing the first 100 foods. Search by name to find more."))
     }
 
     private fun renderReminders(reminders: List<FoodLogReminder>) {
@@ -1157,7 +1068,7 @@ class FoodLogActivity : Activity() {
             .appendQueryParameter("type", "edit")
             .appendQueryParameter("code", barcode)
             .build()
-        startActivity(Intent(Intent.ACTION_VIEW, uri))
+        runCatching { startActivity(Intent(Intent.ACTION_VIEW, uri)) }.onFailure { report("No browser is available to open Open Food Facts.") }
     }
 
     private fun readBounded(reader: java.io.Reader): String {
@@ -1234,24 +1145,13 @@ class FoodLogActivity : Activity() {
 
     private fun EditText.numberOrNull(): Double? = text.toString().trim().replace(',', '.').toDoubleOrNull()
 
+    private fun EditText.optionalNumber(): Double? {
+        if (text.toString().isBlank()) return null
+        return requireNotNull(numberOrNull()?.takeIf(Double::isFinite)) { "Invalid number" }
+    }
+
     private fun EditText.setNumber(value: Double?) {
-        setText(value?.let(::formatNutritionNumber).orEmpty())
-    }
-
-    private fun progress(label: String, total: NutritionTotal, goal: Double?, unit: String): String {
-        val value = total.display(unit)
-        val percent = goal?.takeIf { it > 0.0 }?.let { total.knownValue / it * 100.0 }
-        return if (percent == null) "$label $value" else "$label $value / ${formatNutritionNumber(goal)} $unit (${formatNutritionNumber(percent)}%)"
-    }
-
-    private fun aggregateOptional(entries: List<FoodEntry>, selector: (NutrientsPer100g) -> Double?): NutritionTotal {
-        var total = 0.0
-        var complete = true
-        entries.forEach { entry ->
-            val value = selector(entry.product.nutrients)
-            if (value == null) complete = false else total += value * entry.quantityGrams / 100.0
-        }
-        return NutritionTotal(total, complete)
+        setText(value?.let(::editableNutritionNumber).orEmpty())
     }
 
     private fun sourceFor(product: FoodProduct): FoodEntrySource = when {
@@ -1259,11 +1159,6 @@ class FoodLogActivity : Activity() {
         product.barcode.startsWith("recipe-") -> FoodEntrySource.RECIPE
         else -> FoodEntrySource.SEARCHED
     }
-
-    private fun Double?.value(unit: String): String = this?.let { "${formatNutritionNumber(it)} $unit" } ?: "unknown"
-
-    private fun formatEntryTime(millis: Long): String =
-        ENTRY_TIME_FORMAT.format(Instant.ofEpochMilli(millis).atZone(ZoneId.systemDefault()))
 
     private fun formatReminderTime(millis: Long): String =
         REMINDER_TIME_FORMAT.format(Instant.ofEpochMilli(millis).atZone(ZoneId.systemDefault()))
@@ -1282,14 +1177,11 @@ class FoodLogActivity : Activity() {
     }
 
     private companion object {
-        const val DEFAULT_QUANTITY_GRAMS = "100"
         const val REQUEST_HEALTH_PERMISSION = 301
         const val REQUEST_EXPORT = 302
         const val REQUEST_IMPORT = 303
         const val REQUEST_NOTIFICATIONS = 304
-        const val MAX_CATALOG_PRODUCTS = 50
         const val MAX_BACKUP_CHARS = 12_000_000
-        val ENTRY_TIME_FORMAT: DateTimeFormatter = DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT)
         val REMINDER_TIME_FORMAT: DateTimeFormatter = DateTimeFormatter.ofLocalizedDateTime(FormatStyle.SHORT)
     }
 }
