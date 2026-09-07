@@ -86,9 +86,12 @@ class AssistantProductivityActivity : Activity() {
                         // typed replies use), so it works even with no AI provider
                         // configured. It only works while Assistant is already open on
                         // the glasses -- there is no surface session before that.
-                        if (!AssistantPluginService.requestNewNote()) {
-                            toast("Open Assistant on the glasses first.")
-                        }
+                        val status = AssistantPluginService.requestNewNote()
+                        toast(if (status == AssistantTextInputStatus.READY) {
+                            "Type on the glasses using a keyboard or Nexus Keyboard & remote."
+                        } else {
+                            status.message
+                        })
                     }
                 },
                 NexusUi.block(),

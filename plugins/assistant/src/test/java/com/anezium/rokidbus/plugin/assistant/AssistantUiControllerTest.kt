@@ -17,6 +17,48 @@ import org.junit.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class AssistantUiControllerTest {
     @Test
+    fun `editable question owns the card through thinking and answering without a delayed launcher hint`() = runTest {
+        val renderer = FakeRenderer(supportsNotice = true)
+        val controller = controller(renderer)
+        controller.onOpen()
+        controller.onCardSurfaceShown()
+        advanceTimeBy(AssistantUiController.LAUNCHER_HINT_DELAY_MS + 1)
+        runCurrent()
+        assertTrue(renderer.calls.isEmpty())
+        assertTrue(!controller.isLauncherHintShown)
+        assertTrue(!controller.isNoticeBandMode)
+
+        controller.showTransient("Thinking…")
+        controller.showAnswer("Answer", listOf("Answer"))
+        assertEquals(
+            listOf(
+                RenderCall.ShowCard(listOf("Thinking…"), forceShow = false),
+                RenderCall.ShowCard(listOf("Answer"), forceShow = true),
+            ),
+            renderer.calls,
+        )
+        controller.onClose()
+    }
+
+    @Test
+    fun `cancelled question restores a tappable launcher card without hiding the surface`() = runTest {
+        val renderer = FakeRenderer(supportsNotice = true)
+        val controller = controller(renderer)
+        controller.onOpen()
+        controller.onCardSurfaceShown()
+        controller.showLauncherHint()
+        assertTrue(controller.isLauncherHintShown)
+        assertTrue(!controller.isNoticeBandMode)
+        assertEquals(
+            listOf(RenderCall.ShowCard(listOf(AssistantUiController.LAUNCHER_HINT), forceShow = true)),
+            renderer.calls,
+        )
+        controller.beginGestureFlow()
+        assertTrue(!controller.isLauncherHintShown)
+        controller.onClose()
+    }
+
+    @Test
     fun `transient states use notices when supported and cards in legacy mode`() =
         runTest {
             val noticeRenderer = FakeRenderer(supportsNotice = true)

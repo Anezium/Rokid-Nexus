@@ -1,6 +1,6 @@
 # Assistant
 
-Phone-side Rokid Nexus voice assistant plugin.
+Phone-side Rokid Nexus voice and text assistant plugin.
 
 Hold the assist button, ask out loud: the words transcribe live on the HUD, then
 the answer streams into the band, is spoken aloud, or hands over in place to a
@@ -9,6 +9,24 @@ the question needs eyes, and it can set reminders and timers, take notes, and
 add, list, or delete events in the phone calendar. An *Add note* button on the
 phone's Productivity screen opens an editable card on the glasses for a typed
 note instead — no model call, no microphone — while Assistant is open there.
+
+To ask without speaking, open Assistant from the glasses launcher, then open
+its phone settings and choose **Write a question**. The phone composer sends
+through the same provider, tool and conversation pipeline as voice; the answer
+streams to the HUD and follows the existing **Speak answers** preference.
+The button explains when Assistant is closed, disconnected, busy, or missing
+a configured provider. It does not start a microphone or open another app.
+
+On a compatible glasses hub, tap the Assistant launcher hint to write directly
+in an editable card. Use a bonded keyboard or the phone hub's **Keyboard &
+remote** screen; Enter submits and Back cancels. This HUD entry and typed notes
+require the negotiated editable-surface capability (Nexus 1.4.6 or newer).
+The native phone question composer does not require that capability and keeps
+the ordinary response-card fallback on older hubs. Questions are limited to
+512 UTF-16 code units, matching the editable-card contract. Drafts are not saved;
+closing their dialog, starting voice input, closing Assistant or losing the
+link invalidates them. Completed questions follow normal conversation storage
+settings, and neither question nor note text is logged.
 
 Answers come from the provider the wearer picks in Settings: a ChatGPT plan
 (OAuth, no key to paste), or an API key for OpenAI, OpenRouter, MiniMax,

@@ -56,6 +56,8 @@ internal class AssistantUiController(
     private var noticeShown = false
     private var noticeMode = AssistantNoticeMode.NONE
     private var answerCardStarted = false
+    var isLauncherHintShown = false
+        private set
 
     /**
      * True while the band is the render target. A surface card the wearer already
@@ -76,15 +78,11 @@ internal class AssistantUiController(
         noticeShown = false
         noticeMode = AssistantNoticeMode.NONE
         answerCardStarted = false
+        isLauncherHintShown = false
         launcherHintJob = scope.launch {
             delay(launcherHintDelayMs)
             launcherHintJob = null
-            startNewState()
-            hideNoticeIfShown()
-            showCard(
-                lines = listOf(LAUNCHER_HINT),
-                forceShow = true,
-            )
+            showLauncherHint()
         }
     }
 
@@ -96,6 +94,7 @@ internal class AssistantUiController(
         noticeShown = false
         noticeMode = AssistantNoticeMode.NONE
         answerCardStarted = false
+        isLauncherHintShown = false
     }
 
     fun cancelLauncherHint() {
@@ -106,6 +105,24 @@ internal class AssistantUiController(
     fun beginGestureFlow() {
         cancelLauncherHint()
         discardPendingTranscript()
+        isLauncherHintShown = false
+    }
+
+    fun showLauncherHint() {
+        cancelLauncherHint()
+        startNewState(flushTranscript = false)
+        hideNoticeIfShown()
+        answerCardStarted = false
+        isLauncherHintShown = showCard(listOf(LAUNCHER_HINT), forceShow = true) == NexusSdkResult.SENT
+    }
+
+    fun onCardSurfaceShown() {
+        cancelLauncherHint()
+        startNewState(flushTranscript = false)
+        hideNoticeIfShown()
+        isLauncherHintShown = false
+        surfaceShown = true
+        answerCardStarted = false
     }
 
     fun showTransient(
@@ -227,6 +244,7 @@ internal class AssistantUiController(
     }
 
     fun onSurfaceHidden() {
+        isLauncherHintShown = false
         surfaceShown = false
         answerCardStarted = false
     }
@@ -397,6 +415,7 @@ internal class AssistantUiController(
     }
 
     private fun startNewState(flushTranscript: Boolean = true): Long {
+        isLauncherHintShown = false
         if (flushTranscript) {
             flushPendingTranscript()
         } else {

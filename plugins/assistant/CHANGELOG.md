@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.4.5
+
+- **Write a question from your phone.** Open Assistant from the glasses launcher,
+  then choose *Write a question* near the top of its phone settings. Send with
+  the phone keyboard or button: the answer uses your selected provider, tools,
+  conversation and voice preference, with no microphone request.
+- **Type from the glasses too.** Tap the Assistant launcher hint to open an
+  editable question card for a bonded keyboard or Nexus *Keyboard & remote*.
+  This entry requires an editable-surface compatible glasses hub; the native
+  phone composer also works with older hubs.
+- Questions and typed notes now have separate, one-use entry identities. Late
+  replies, duplicates, cancellation, busy sessions and link loss cannot turn a
+  note into a question or submit an abandoned draft. The phone shows why writing
+  is unavailable when Assistant is closed or a provider is not connected.
+
 ## 1.4.4
 
 - **Add note, typed.** A new *Add note* button on the Productivity screen opens
