@@ -26,6 +26,25 @@ class PluginDescriptorTest {
     }
 
     @Test
+    fun `media trigger opt-in is parsed permissively`() {
+        fun parse(value: String?): Boolean {
+            val metadata = if (value == null) {
+                validMetadata()
+            } else {
+                validMetadata() + (BusConstants.META_PLUGIN_MEDIA_TRIGGER to value)
+            }
+            val result = PluginDescriptorParser.parse(metadata)
+            assertTrue(result is PluginDescriptorParseResult.Valid)
+            return (result as PluginDescriptorParseResult.Valid).descriptor.mediaTrigger
+        }
+
+        assertTrue(parse(null).not()) // defaults false
+        assertTrue(parse("true"))
+        assertTrue(parse(" TRUE "))
+        assertTrue(!parse("false"))
+    }
+
+    @Test
     fun `icon key is optional normalized and unrestricted`() {
         fun iconKeyFor(value: String?): String? {
             val metadata = if (value == null) {

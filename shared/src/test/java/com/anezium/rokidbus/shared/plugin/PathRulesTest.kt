@@ -72,6 +72,17 @@ class PathRulesTest {
     }
 
     @Test
+    fun `widget paths require the surfaces capability`() {
+        val surfaces = setOf(PluginCapability.SURFACES)
+        assertEquals(PluginCapability.SURFACES, PathRules.requiredCapability(BusPaths.WIDGET_SHOW))
+        assertEquals(PluginCapability.SURFACES, PathRules.requiredCapability(BusPaths.WIDGET_UPDATE))
+        assertEquals(PluginCapability.SURFACES, PathRules.requiredCapability(BusPaths.WIDGET_HIDE))
+        // Ambient, like pins: not a reserved sender root, and no receive prefix is needed.
+        assertFalse(PathRules.isReserved(BusPaths.WIDGET_SHOW))
+        assertNull(PathRules.requiredCapabilityForReceivePrefix(BusPaths.WIDGET_SHOW))
+    }
+
+    @Test
     fun `media sync exposes status to receive and settings plus trigger to send`() {
         val mediaSync = setOf(PluginCapability.MEDIA_SYNC)
         assertTrue(PathRules.isAllowedReceivePrefix("/mediasync/status", "photosync", mediaSync))

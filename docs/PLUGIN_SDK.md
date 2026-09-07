@@ -50,8 +50,16 @@ does not approve it.
     <meta-data android:name="com.anezium.rokidbus.plugin.RECEIVE_PREFIXES" android:value="/plugin/hello,/system/plugin" />
     <meta-data android:name="com.anezium.rokidbus.plugin.SETTINGS_ACTIVITY" android:value=".HelloActivity" />
     <meta-data android:name="com.anezium.rokidbus.plugin.LAUNCHABLE" android:value="true" />
+    <meta-data android:name="com.anezium.rokidbus.plugin.MEDIA_TRIGGER" android:value="true" />
 </service>
 ```
+
+`com.anezium.rokidbus.plugin.MEDIA_TRIGGER` is optional. Set it to `true` to
+opt into the hub's media playback trigger: the phone hub watches media sessions
+itself and may deliver `PLUGIN_OPEN` with type `media_trigger` when playback
+starts. The plugin stays dormant until that open. Absent or `false` means the
+hub never opens you for that reason. It is not a capability grant and does not
+change the approval set.
 
 Plugin IDs use `[a-z][a-z0-9._-]{2,63}`. Requested capabilities are `surfaces`,
 `ink_surface`, `http_proxy`, `microphone`, `stt`, `tts`, `camera`, `mediasync`,
@@ -959,6 +967,62 @@ for the tier you passed. The hub rejects malformed raw traffic with
 (`PIN_RATE_LIMITED`). The glasses overlay is text-only and has no input. The
 sample plugin cycles small pin, medium pin, hidden from its existing tap action
 for on-device validation.
+
+### Ambient lyrics widget
+
+The contextual lyrics widget is an independent ambient overlay. It
+reuses the `surfaces` grant, lives on `NexusPluginClient` (`showWidget`,
+`updateWidgetAnchor`, `hideWidget`), and never participates in `SURFACE_BUSY`
+or plugin self-close. Send the full timed-line script once with a playback
+anchor; the glasses advance the current and next line locally. Later
+`updateWidgetAnchor` is for seek, drift, or pause — never one message per line.
+
+Check `supportsWidgetSurface` immediately before use. All three methods return
+`CAPABILITY_NOT_AVAILABLE` without sending unless the glasses announced widget
+v1 and the data link is available.
+
+```kotlin
+if (nexusClient?.supportsWidgetSurface == true) {
+    nexusClient?.showWidget(
+        NexusLyricsWidget(
+            contentKey = key,
+            lines = listOf(
+                NexusTimedLine(0L, "first line"),
+                NexusTimedLine(1840L, "second line"),
+            ),
+            anchor = NexusPlaybackAnchor(1840L, playing = true, sentAtElapsedRealtime = now),
+            holdDisplay = karaokeMode,
+        ),
+    )
+}
+
+// Seek / pause; line content stays what showWidget last sent.
+nexusClient?.updateWidgetAnchor(key, NexusPlaybackAnchor(2400L, playing = false, sentAtElapsedRealtime = now))
+nexusClient?.hideWidget()
+```
+
+`holdDisplay` is Karaoke mode: the glasses may hold the display while the
+widget is visible and playing. Glance mode leaves it false and must never wake
+or hold the display. A trigger-opened plugin (`currentOpenType ==
+"media_trigger"`) must not show any surface other than this widget until a
+normal open arrives.
+
+Opt into the hub opening you on playback by declaring
+`com.anezium.rokidbus.plugin.MEDIA_TRIGGER` as `true`. The hub, not the plugin,
+watches media sessions using its own notification-access grant and binds an approved
+plugin independently of the foreground owner. This metadata grants no capability.
+Lyrics also needs its own notification access to read track details.
+
+Lyrics defaults to Glance. Its phone settings offer Off, explicit Karaoke, and
+"Hide lyrics for this track"; a hidden track stays suppressed across foreground
+close and reconnect, until another track is observed. The two-line window yields
+to Nexus surfaces, launcher, notices, camera, Assistant, and foreign fullscreen
+apps. It returns after these interruptions without stealing focus or replacing
+ROM widgets. No home-only placement rule applies. Pause freezes then hides after
+five seconds; missing playback or lyrics hides immediately. Refresh anchors at
+least once a minute: the glasses discard presentation after two minutes without
+fresh state. Glasses local receive time anchors playback; phone elapsed time is
+never compared to glasses uptime.
 
 ### Ink surfaces
 

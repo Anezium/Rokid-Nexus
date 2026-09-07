@@ -1,5 +1,15 @@
 # Changelog — Lyrics
 
+## Unreleased
+
+- Show two contextual synced lyric lines during playback, with Glance as the
+  default. Yield to apps, launcher, notices, camera, and Assistant; resume after
+  interruptions. Keep ROM widgets and normal display sleep behavior.
+- Add explicit Karaoke and "Hide lyrics for this track" settings. Hide on stop
+  or missing lyrics, freeze briefly on pause, and recover safely after reconnect.
+- Let the approved Nexus media trigger start Lyrics independently of the foreground
+  plugin. Both Nexus and Lyrics need notification access for automatic playback.
+
 ## 1.0.3
 
 - Refresh the lightweight playback anchor at each timed-lyrics line boundary

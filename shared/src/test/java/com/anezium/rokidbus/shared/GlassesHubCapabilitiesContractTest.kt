@@ -23,6 +23,7 @@ class GlassesHubCapabilitiesContractTest {
             noticeSurfaceVersion = NoticeSurfaceContract.VERSION,
             activitySurfaceVersion = ActivitySurfaceContract.VERSION,
             inkSurfaceVersion = InkWire.VERSION,
+            widgetSurfaceVersion = WidgetSurfaceContract.VERSION,
             maxImageBytes = ImageSurfaceContract.MAX_IMAGE_BYTES,
             versionName = " 1.0.1 ",
             setupComplete = true,
@@ -50,10 +51,12 @@ class GlassesHubCapabilitiesContractTest {
         assertEquals(ActivitySurfaceContract.VERSION, parsed.activitySurfaceVersion)
         assertEquals(TtsContract.VERSION, parsed.ttsVersion)
         assertEquals(InkWire.VERSION, parsed.inkSurfaceVersion)
+        assertEquals(WidgetSurfaceContract.VERSION, parsed.widgetSurfaceVersion)
         assertTrue(GlassesHubCapabilitiesContract.supportsInkSurface(parsed))
         assertEquals(128, BusCapabilityBits.ACTIVITY_SURFACE)
         assertEquals(512, BusCapabilityBits.TTS)
         assertEquals(1024, BusCapabilityBits.INK_SURFACE)
+        assertEquals(2048, BusCapabilityBits.WIDGET_SURFACE)
     }
 
     @Test
@@ -88,6 +91,7 @@ class GlassesHubCapabilitiesContractTest {
         assertEquals(0, parsed.noticeSurfaceVersion)
         assertEquals(0, parsed.activitySurfaceVersion)
         assertEquals(0, parsed.inkSurfaceVersion)
+        assertEquals(0, parsed.widgetSurfaceVersion)
         assertEquals(0, parsed.ttsVersion)
         assertFalse(versionlessPayload.has("versionName"))
         assertFalse(versionlessPayload.getBoolean("setupComplete"))

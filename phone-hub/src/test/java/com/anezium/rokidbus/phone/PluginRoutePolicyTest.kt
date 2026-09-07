@@ -1,5 +1,6 @@
 package com.anezium.rokidbus.phone
 
+import com.anezium.rokidbus.shared.BusPaths
 import com.anezium.rokidbus.shared.plugin.PluginCapability
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -151,6 +152,26 @@ class PluginRoutePolicyTest {
             assertEquals("hello", result.getString("ownerPluginId"))
             assertEquals("ink-main", result.getString("localSurfaceId"))
             assertEquals("hello:ink-main", result.getString("surfaceId"))
+        }
+    }
+
+    @Test
+    fun `widget paths require the surfaces capability and reuse owner namespace injection`() {
+        listOf(BusPaths.WIDGET_SHOW, BusPaths.WIDGET_UPDATE, BusPaths.WIDGET_HIDE).forEach { path ->
+            assertEquals(
+                PluginRouteDecision.Allowed,
+                PluginRoutePolicy.authorize(plugin(PluginCapability.SURFACES), path),
+            )
+            assertTrue(
+                PluginRoutePolicy.authorize(plugin(), path) is PluginRouteDecision.Denied,
+            )
+            val result = PluginRoutePolicy.injectSurfaceOwner(
+                "lyrics",
+                JSONObject().put("surfaceId", "widget"),
+            )!!
+            assertEquals("lyrics", result.getString("ownerPluginId"))
+            assertEquals("widget", result.getString("localSurfaceId"))
+            assertEquals("lyrics:widget", result.getString("surfaceId"))
         }
     }
 }

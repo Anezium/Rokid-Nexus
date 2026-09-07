@@ -15,6 +15,9 @@ import com.anezium.rokidbus.shared.NoticeSurfaceContract
 import com.anezium.rokidbus.shared.NoticeSurfaceValidationResult
 import com.anezium.rokidbus.shared.PinSurfaceContract
 import com.anezium.rokidbus.shared.PinSurfaceValidationResult
+import com.anezium.rokidbus.shared.WidgetAnchor
+import com.anezium.rokidbus.shared.WidgetSurfaceContract
+import com.anezium.rokidbus.shared.WidgetSurfaceValidationResult
 import com.anezium.rokidbus.shared.plugin.NexusInputEvent
 import com.anezium.rokidbus.shared.plugin.CapabilityParseResult
 import com.anezium.rokidbus.shared.plugin.PluginCapability
@@ -50,6 +53,11 @@ class NexusPluginClient internal constructor(
     private var snapshotSessionApiUsed = false
     @Volatile private var currentLinkState = 0
     @Volatile private var hubCapabilities = 0
+    @Volatile private var currentOpenTypeInternal = ""
+
+    /** The type of the most recent PLUGIN_OPEN (empty = user/launcher open). */
+    internal val currentOpenType: String
+        get() = currentOpenTypeInternal
 
     val isApproved: Boolean
         get() = registrationState == PluginRegistrationResult.APPROVED
@@ -83,6 +91,14 @@ class NexusPluginClient internal constructor(
      */
     val supportsPinSurface: Boolean
         get() = hubCapabilities and BusCapabilityBits.PIN_SURFACE != 0
+
+    /**
+     * Whether these glasses can show an ambient lyrics widget. Like [supportsPinSurface]
+     * this ignores the current link: a widget is ambient and re-asserted by redraw, so a
+     * sleeping glasses is not a reason for the phone-side trigger to refuse.
+     */
+    val supportsWidgetSurface: Boolean
+        get() = hubCapabilities and BusCapabilityBits.WIDGET_SURFACE != 0
 
     fun showPin(pin: NexusPin): NexusSdkResult {
         pinPreflight()?.let { return it }
@@ -171,6 +187,68 @@ class NexusPluginClient internal constructor(
                 BusPaths.NOTICE_HIDE,
                 UUID.randomUUID().toString(),
                 JSONObject().put("surfaceId", NoticeSurfaceContract.LOCAL_SURFACE_ID),
+            )
+        ) {
+            NexusSdkResult.SENT
+        } else {
+            NexusSdkResult.NOT_REGISTERED
+        }
+    }
+
+    /**
+     * Show the ambient lyrics home widget. Full timed lines ride once with a playback
+     * anchor; the glasses advance the current/next line locally from that anchor, so a
+     * plugin never streams a message per line. Requires `surfaces` and a glasses hub
+     * that advertises [BusCapabilityBits.WIDGET_SURFACE].
+     */
+    fun showWidget(widget: NexusLyricsWidget): NexusSdkResult {
+        widgetPreflight()?.let { return it }
+        val payload = widget.toWidgetPayload(WidgetSurfaceContract.LOCAL_SURFACE_ID)
+        if (WidgetSurfaceContract.validateShow(payload) !is WidgetSurfaceValidationResult.Valid) {
+            return NexusSdkResult.INVALID_PAYLOAD
+        }
+        return if (send(BusPaths.WIDGET_SHOW, UUID.randomUUID().toString(), payload)) {
+            NexusSdkResult.SENT
+        } else {
+            NexusSdkResult.NOT_REGISTERED
+        }
+    }
+
+    /**
+     * Update only the playback anchor of a live widget (seek/drift/pause). Never streams
+     * a message per lyric line -- line content is fixed by the last `showWidget`.
+     */
+    fun updateWidgetAnchor(
+        contentKey: String,
+        anchor: NexusPlaybackAnchor,
+    ): NexusSdkResult {
+        widgetPreflight()?.let { return it }
+        if (contentKey.isBlank() || contentKey.length > WidgetSurfaceContract.MAX_CONTENT_KEY_CHARS) {
+            return NexusSdkResult.INVALID_PAYLOAD
+        }
+        val payload = WidgetSurfaceContract.toAnchorOnlyPayload(
+            WidgetSurfaceContract.LOCAL_SURFACE_ID,
+            contentKey,
+            WidgetAnchor(anchor.positionMs, anchor.playing, anchor.sentAtElapsedRealtime),
+        )
+        if (WidgetSurfaceContract.validateAnchorUpdate(payload) !is WidgetSurfaceValidationResult.Valid) {
+            return NexusSdkResult.INVALID_PAYLOAD
+        }
+        return if (send(BusPaths.WIDGET_UPDATE, UUID.randomUUID().toString(), payload)) {
+            NexusSdkResult.SENT
+        } else {
+            NexusSdkResult.NOT_REGISTERED
+        }
+    }
+
+    /** Hide the ambient lyrics home widget. */
+    fun hideWidget(): NexusSdkResult {
+        widgetPreflight()?.let { return it }
+        return if (
+            send(
+                BusPaths.WIDGET_HIDE,
+                UUID.randomUUID().toString(),
+                JSONObject().put("surfaceId", WidgetSurfaceContract.LOCAL_SURFACE_ID),
             )
         ) {
             NexusSdkResult.SENT
@@ -610,6 +688,7 @@ class NexusPluginClient internal constructor(
             // reset and re-show, which also acknowledges the hub's open watchdog.
             BusPaths.PLUGIN_OPEN -> if (isApproved) {
                 opened = true
+                currentOpenTypeInternal = payload.optString("type", "")
                 callbacks.onOpen()
             }
             BusPaths.PLUGIN_CLOSE -> if (opened) {
@@ -860,6 +939,13 @@ class NexusPluginClient internal constructor(
         !isApproved -> NexusSdkResult.NOT_REGISTERED
         !hasCapability(PluginCapability.SURFACES) -> NexusSdkResult.CAPABILITY_NOT_GRANTED
         !supportsPinSurface -> NexusSdkResult.CAPABILITY_NOT_AVAILABLE
+        else -> null
+    }
+
+    private fun widgetPreflight(): NexusSdkResult? = when {
+        !isApproved -> NexusSdkResult.NOT_REGISTERED
+        !hasCapability(PluginCapability.SURFACES) -> NexusSdkResult.CAPABILITY_NOT_GRANTED
+        !supportsWidgetSurface -> NexusSdkResult.CAPABILITY_NOT_AVAILABLE
         else -> null
     }
 

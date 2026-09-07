@@ -3,11 +3,13 @@ package com.anezium.rokidbus.lyrics
 import android.os.SystemClock
 import android.view.KeyEvent
 import com.anezium.rokidbus.client.plugin.NexusCard
+import com.anezium.rokidbus.client.plugin.NexusLyricsWidget
 import com.anezium.rokidbus.client.plugin.NexusPlaybackAnchor
 import com.anezium.rokidbus.client.plugin.NexusTimedLine
 import com.anezium.rokidbus.client.plugin.NexusTimedLines
 import com.anezium.rokidbus.lyrics.contracts.LyricsSessionState
 import com.anezium.rokidbus.lyrics.contracts.LyricsSnapshot
+import com.anezium.rokidbus.lyrics.settings.LyricsWidgetMode
 import com.anezium.rokidbus.shared.plugin.NexusInputEvent
 import java.security.MessageDigest
 import kotlin.math.abs
@@ -19,6 +21,9 @@ internal interface LyricsRuntimeHost {
     fun sendTimedLines(lines: NexusTimedLines, show: Boolean)
     fun updateTimedLinesAnchor(contentKey: String, anchor: NexusPlaybackAnchor)
     fun hideSurface()
+    fun showWidget(widget: NexusLyricsWidget): Boolean
+    fun updateWidgetAnchor(contentKey: String, anchor: NexusPlaybackAnchor): Boolean
+    fun hideWidget()
 }
 
 internal fun needsPlaybackAnchorUpdate(
@@ -34,28 +39,72 @@ internal fun needsPlaybackAnchorUpdate(
 
 internal class LyricsRuntime(
     private val host: LyricsRuntimeHost,
+    private val now: () -> Long = { SystemClock.elapsedRealtime() },
+    private val dismissedTrack: () -> String? = { null },
+    private val clearDismissedTrack: () -> Unit = {},
+    private val currentState: () -> LyricsPhoneViewState = {
+        LyricsRuntimeGraph.stateStore.current()
+    },
+    private val subscribeState: ((LyricsPhoneViewState) -> Unit) -> (() -> Unit) = { listener ->
+        LyricsRuntimeGraph.stateStore.subscribe(listener)
+    },
 ) {
     private var unsubscribeState: (() -> Unit)? = null
     private var active = false
     private var lastSent: SentSurface? = null
+    private var widgetMode: LyricsWidgetMode = LyricsWidgetMode.DEFAULT
+    private var backgroundOpen = false
+    private var fullScreenVisible = false
+    private var widgetLastSent: SentWidget? = null
+    private val widgetDriver = LyricsWidgetDriver(now = now)
+
+    fun setWidgetMode(mode: LyricsWidgetMode) {
+        widgetMode = mode
+        if (active) {
+            handleWidgetState()
+        }
+    }
+
+    fun setBackgroundOpen(background: Boolean) {
+        backgroundOpen = background
+        if (!active) return
+        handleWidgetState()
+    }
+
+    fun setFullScreenVisible(visible: Boolean) {
+        fullScreenVisible = visible
+        if (active) {
+            handleWidgetState()
+        }
+    }
 
     fun register() {
         unsubscribeState?.invoke()
-        unsubscribeState = LyricsRuntimeGraph.stateStore.subscribe { state ->
+        unsubscribeState = subscribeState { state ->
             handleState(state)
         }
     }
 
+    fun tick() {
+        if (active) handleWidgetState()
+    }
+
     fun open() {
         active = true
-        pushState(LyricsRuntimeGraph.stateStore.current(), force = true)
+        pushState(currentState(), force = true)
+        handleWidgetState()
     }
 
     fun close() {
         if (!active && lastSent == null) return
         active = false
         lastSent = null
+        widgetLastSent = null
+        fullScreenVisible = false
+        backgroundOpen = false
+        widgetDriver.reset()
         host.hideSurface()
+        host.hideWidget()
     }
 
     fun input(event: NexusInputEvent) {
@@ -80,7 +129,7 @@ internal class LyricsRuntime(
     }
 
     fun registrationApproved() {
-        if (active) pushState(LyricsRuntimeGraph.stateStore.current(), force = true)
+        if (active) pushState(currentState(), force = true)
     }
 
     fun unregister() {
@@ -92,12 +141,92 @@ internal class LyricsRuntime(
     private fun handleState(state: LyricsPhoneViewState) {
         if (active) {
             pushState(state, force = false)
+            handleWidgetState(state.lyrics)
         }
     }
 
+    /**
+     * Drive the ambient widget from the current snapshot. The widget is plugin-side driven
+     * on snapshot transitions; the full-screen surface is handled separately by [pushState].
+     */
+    private fun handleWidgetState(snapshot: LyricsSnapshot? = currentState().lyrics) {
+        if (!active) return
+        val track = snapshot?.let(::lyricsTrackIdentity)
+        val dismissed = dismissedTrack()
+        if (track != null && dismissed != null && track != dismissed) clearDismissedTrack()
+        val decision = widgetDriver.decide(
+            mode = widgetMode,
+            fullScreenVisible = fullScreenVisible,
+            snapshot = snapshot,
+            dismissed = track != null && track == dismissed,
+        )
+        when {
+            decision.hide -> {
+                host.hideWidget()
+                widgetLastSent = null
+            }
+            decision.show && snapshot != null -> showWidget(snapshot)
+            widgetDriver.isShowing && snapshot != null -> syncWidget(snapshot)
+        }
+    }
+
+    private fun showWidget(snapshot: LyricsSnapshot) {
+        val lyrics = snapshot
+        if (!lyrics.synced || lyrics.lines.isEmpty()) return
+        val nowAt = now()
+        val anchor = playbackAnchor(lyrics, isPlaying(lyrics), nowAt)
+        val key = widgetContentKey(lyrics)
+        val sent = host.showWidget(
+            NexusLyricsWidget(
+                contentKey = key,
+                lines = lyrics.lines.take(MAX_TIMED_LINES).map { line ->
+                    NexusTimedLine(line.startTimeMs.coerceAtLeast(0L), line.text.take(MAX_LINE_CHARS))
+                },
+                anchor = anchor,
+                holdDisplay = widgetMode == LyricsWidgetMode.KARAOKE,
+            ),
+        )
+        if (sent) widgetLastSent = sentWidget(lyrics, key, nowAt) else widgetDriver.reset()
+    }
+
+    private fun syncWidget(lyrics: LyricsSnapshot) {
+        if (!lyrics.synced || lyrics.lines.isEmpty()) return
+        val nowAt = now()
+        val key = widgetContentKey(lyrics)
+        val previous = widgetLastSent
+        val holdDisplay = widgetMode == LyricsWidgetMode.KARAOKE
+        if (
+            previous == null ||
+            previous.contentKey != key ||
+            previous.holdDisplay != holdDisplay
+        ) {
+            showWidget(lyrics)
+            return
+        }
+        val playing = isPlaying(lyrics)
+        if (previous.playing != playing ||
+            abs(lyrics.progressMs - previous.predictedPosition(nowAt)) >= SEEK_RESYNC_MS ||
+            nowAt - previous.sentAtElapsedRealtime >= 30_000L
+        ) {
+            if (host.updateWidgetAnchor(key, playbackAnchor(lyrics, playing, nowAt))) {
+                widgetLastSent = sentWidget(lyrics, key, nowAt)
+            } else {
+                widgetLastSent = null
+                widgetDriver.reset()
+            }
+        }
+    }
+
+    private fun widgetContentKey(lyrics: LyricsSnapshot): String =
+        contentKey(lyrics, currentState().deviceStatus.statusLabel)
+
+    private fun isPlaying(lyrics: LyricsSnapshot): Boolean =
+        lyrics.sessionState == LyricsSessionState.PLAYING
+
     private fun pushState(state: LyricsPhoneViewState, force: Boolean) {
+        if (backgroundOpen) return
         val lyrics = state.lyrics
-        val now = SystemClock.elapsedRealtime()
+        val nowAt = now()
         val contentKey = contentKey(lyrics, state.deviceStatus.statusLabel)
         val playing = lyrics.sessionState == LyricsSessionState.PLAYING
         val previous = lastSent
@@ -108,7 +237,7 @@ internal class LyricsRuntime(
                 currentLineIndex = lyrics.currentLineIndex,
                 previousPlaying = it.playing,
                 playing = playing,
-                positionDriftMs = lyrics.progressMs - it.predictedPosition(now),
+                positionDriftMs = lyrics.progressMs - it.predictedPosition(nowAt),
             )
         } ?: true
         val shouldSend = force || contentChanged || anchorChanged
@@ -116,7 +245,7 @@ internal class LyricsRuntime(
 
         val show = previous == null || force
         if (lyrics.synced && lyrics.lines.isNotEmpty()) {
-            val anchor = playbackAnchor(lyrics, playing, now)
+            val anchor = playbackAnchor(lyrics, playing, nowAt)
             if (!force && !contentChanged) {
                 host.updateTimedLinesAnchor(contentKey, anchor)
             } else {
@@ -125,12 +254,15 @@ internal class LyricsRuntime(
         } else {
             host.sendCard(card(lyrics, state.deviceStatus.statusLabel, contentKey), show)
         }
+        if (show) {
+            fullScreenVisible = true
+        }
         lastSent = SentSurface(
             contentKey = contentKey,
             positionMs = lyrics.progressMs,
             playing = playing,
             currentLineIndex = lyrics.currentLineIndex,
-            sentAtElapsedRealtime = now,
+            sentAtElapsedRealtime = nowAt,
         )
     }
 
@@ -266,6 +398,30 @@ internal class LyricsRuntime(
             if (!playing) return positionMs
             val elapsed = (now - sentAtElapsedRealtime).coerceAtLeast(0L)
             return positionMs + elapsed
+        }
+    }
+
+    private fun sentWidget(lyrics: LyricsSnapshot, contentKey: String, sentAt: Long): SentWidget =
+        SentWidget(
+            contentKey = contentKey,
+            positionMs = lyrics.progressMs,
+            playing = isPlaying(lyrics),
+            currentLineIndex = lyrics.currentLineIndex,
+            sentAtElapsedRealtime = sentAt,
+            holdDisplay = widgetMode == LyricsWidgetMode.KARAOKE,
+        )
+
+    private data class SentWidget(
+        val contentKey: String,
+        val positionMs: Long,
+        val playing: Boolean,
+        val currentLineIndex: Int,
+        val sentAtElapsedRealtime: Long,
+        val holdDisplay: Boolean,
+    ) {
+        fun predictedPosition(now: Long): Long {
+            if (!playing) return positionMs
+            return positionMs + (now - sentAtElapsedRealtime).coerceAtLeast(0L)
         }
     }
 

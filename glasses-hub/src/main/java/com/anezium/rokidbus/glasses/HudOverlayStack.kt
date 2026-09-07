@@ -26,6 +26,7 @@ internal object HudOverlayStack {
      * unconditionally is correct and cheap.
      */
     fun reassert() {
+        LyricsWidgetOverlayRenderer.ensureOnTop()
         PinOverlayRenderer.ensureOnTop()
         ActivityOverlayRenderer.ensureOnTop()
         NoticeOverlayRenderer.ensureOnTop()
