@@ -99,6 +99,7 @@ object LauncherOverlayRenderer {
         log("Launcher overlay opened")
         RingFocusBroadcastCoordinator.setLauncherShown(activeService.applicationContext, shown = true)
         ActivityController.onLauncherVisibilityChanged()
+        LyricsWidgetOverlayRenderer.onContextChanged()
         return true
     }
 
@@ -125,6 +126,7 @@ object LauncherOverlayRenderer {
         if (currentRoot == null) return
         log("Launcher overlay closed")
         ActivityController.onLauncherVisibilityChanged()
+        LyricsWidgetOverlayRenderer.onContextChanged()
     }
 
     fun handleRingKey(keyCode: Int, eventTimeMs: Long): Boolean {

@@ -27,6 +27,7 @@ object BusConstants {
     const val META_PLUGIN_SETTINGS_ACTIVITY = "com.anezium.rokidbus.plugin.SETTINGS_ACTIVITY"
     const val META_PLUGIN_LAUNCHABLE = "com.anezium.rokidbus.plugin.LAUNCHABLE"
     const val META_PLUGIN_GUARDIAN_SERVICE = "com.anezium.rokidbus.plugin.GUARDIAN_SERVICE"
+    const val META_PLUGIN_MEDIA_TRIGGER = "com.anezium.rokidbus.plugin.MEDIA_TRIGGER"
     const val API_VERSION = 3
     const val CXR_CONTROL_MAX_BYTES = 3 * 1024
     val SPP_UUID: UUID = UUID.fromString(SPP_UUID_STRING)
@@ -51,6 +52,9 @@ object BusPaths {
     const val INK_EVENT = "/ink/event"
     const val PIN_SHOW = "/pin/show"
     const val PIN_HIDE = "/pin/hide"
+    const val WIDGET_SHOW = "/widget/show"
+    const val WIDGET_UPDATE = "/widget/update"
+    const val WIDGET_HIDE = "/widget/hide"
     const val NOTICE_SHOW = "/notice/show"
     const val NOTICE_UPDATE = "/notice/update"
     const val NOTICE_HIDE = "/notice/hide"
@@ -148,6 +152,9 @@ object BusPaths {
     const val PHONE_BATTERY = "/phone/battery"
     const val PLUGIN_OPEN = "/system/plugin/open"
     const val PLUGIN_CLOSE = "/system/plugin/close"
+
+    /** The PLUGIN_OPEN `type` when the hub opens a plugin to drive an ambient widget on playback. */
+    const val PLUGIN_OPEN_TYPE_MEDIA_TRIGGER = "media_trigger"
     const val PLUGIN_INPUT = "/system/plugin/input"
     const val PLUGIN_REGISTRATION = "/system/plugin/registration"
     const val HUB_CAPABILITIES = "/system/hub/capabilities"
@@ -197,6 +204,7 @@ object BusCapabilityBits {
     const val TTS = 1 shl 9
     const val INK_SURFACE = 1 shl 10
     const val EDITABLE_SURFACE = 1 shl 11
+    const val WIDGET_SURFACE = 1 shl 12
 }
 
 object LinkStateBits {

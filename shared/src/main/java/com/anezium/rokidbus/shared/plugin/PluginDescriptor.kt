@@ -18,6 +18,13 @@ data class PluginDescriptor(
      * plugin that declares none simply has no custom glyphs.
      */
     val glyphsResId: Int? = null,
+    /**
+     * Whether this plugin opts into the hub's ambient widget channel being driven by
+     * hardware media playback (see BusConstants.META_PLUGIN_MEDIA_TRIGGER). Declaring
+     * it registers the plugin as a candidate for the hub-initiated media trigger open;
+     * the plugin itself stays dormant unless the hub opens it.
+     */
+    val mediaTrigger: Boolean = false,
 ) {
     companion object {
         private val idPattern = Regex("[a-z][a-z0-9._-]{2,63}")
@@ -43,6 +50,7 @@ object PluginDescriptorParser {
         BusConstants.META_PLUGIN_RECEIVE_PREFIXES,
         BusConstants.META_PLUGIN_SETTINGS_ACTIVITY,
         BusConstants.META_PLUGIN_LAUNCHABLE,
+        BusConstants.META_PLUGIN_MEDIA_TRIGGER,
     )
 
     fun parse(metadata: Map<String, String?>): PluginDescriptorParseResult =
@@ -114,6 +122,12 @@ object PluginDescriptorParser {
             ?.trim()
             ?.toIntOrNull()
             ?.takeIf { it != 0 }
+        val mediaTrigger = when (values[BusConstants.META_PLUGIN_MEDIA_TRIGGER]?.trim()?.lowercase()) {
+            null, "" -> false
+            "true" -> true
+            "false" -> false
+            else -> return PluginDescriptorParseResult.Invalid("INVALID_MEDIA_TRIGGER")
+        }
         val launchable = when (values[BusConstants.META_PLUGIN_LAUNCHABLE]?.trim()?.lowercase()) {
             null, "", "true" -> true
             "false" -> false
@@ -131,6 +145,7 @@ object PluginDescriptorParser {
                 iconKey = iconKey,
                 iconDrawableResId = iconDrawableResId,
                 glyphsResId = glyphsResId,
+                mediaTrigger = mediaTrigger,
             ),
         )
     }

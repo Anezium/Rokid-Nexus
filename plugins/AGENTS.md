@@ -39,6 +39,13 @@ sanctioned exceptions:
    reason; "the user would probably want it" does not qualify — only an item the
    user explicitly created with a delivery time does.
 
+The phone hub may also open a plugin that declared
+`com.anezium.rokidbus.plugin.MEDIA_TRIGGER` when media playback starts on the
+phone. That is a hub-initiated open reason, like scheduled delivery: your
+process still runs only between `PLUGIN_OPEN` and `PLUGIN_CLOSE`. The open
+carries type `media_trigger`. Do not watch media sessions yourself while
+dormant.
+
 A phone plugin may also call an Android platform API directly under permissions
 declared in its own manifest. Those runtime permissions are separate from Nexus
 descriptor capabilities: they do not authorize a bus path, receive prefix, SDK

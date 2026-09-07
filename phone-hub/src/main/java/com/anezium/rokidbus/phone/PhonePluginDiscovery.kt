@@ -115,6 +115,7 @@ class PhonePluginDiscovery(private val packageManager: PackageManager) {
             BusConstants.META_PLUGIN_SETTINGS_ACTIVITY,
             BusConstants.META_PLUGIN_LAUNCHABLE,
             BusConstants.META_PLUGIN_GUARDIAN_SERVICE,
+            BusConstants.META_PLUGIN_MEDIA_TRIGGER,
         )
 
         fun evaluate(records: List<PackageRecord>): List<PhonePluginCandidate> {

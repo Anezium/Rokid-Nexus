@@ -110,6 +110,7 @@ internal class CameraOverlayView @JvmOverloads constructor(
         super.onAttachedToWindow()
         PinController.setCameraOverlayActive(true)
         NoticeController.setCameraOverlayActive(true)
+        LyricsWidgetOverlayRenderer.setCameraActive(true)
         CameraOverlayVisibilityBridge.report(context, activityVisibilityToken, true)
     }
 
@@ -117,6 +118,7 @@ internal class CameraOverlayView @JvmOverloads constructor(
         CameraOverlayVisibilityBridge.report(context, activityVisibilityToken, false)
         PinController.setCameraOverlayActive(false)
         NoticeController.setCameraOverlayActive(false)
+        LyricsWidgetOverlayRenderer.setCameraActive(false)
         super.onDetachedFromWindow()
     }
 

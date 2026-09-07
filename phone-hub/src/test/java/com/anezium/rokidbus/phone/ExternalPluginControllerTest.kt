@@ -151,6 +151,27 @@ class ExternalPluginControllerTest {
     }
 
     @Test
+    fun `media trigger open without plugin traffic stays active`() {
+        val runtime = FakeRuntime().apply { registered = true }
+        val scheduler = FakeScheduler()
+        val closed = mutableListOf<Pair<String, String>>()
+        val controller = ExternalPluginController(runtime, scheduler)
+        controller.setPluginClosedListener { pluginId, reason -> closed += pluginId to reason }
+
+        controller.open(
+            principal(),
+            ExternalPluginOpenRequest(type = BusPaths.PLUGIN_OPEN_TYPE_MEDIA_TRIGGER),
+        )
+        scheduler.runAll()
+
+        assertEquals("hello", controller.activeId())
+        assertEquals(listOf("hello"), runtime.bound)
+        assertTrue(runtime.unbound.isEmpty())
+        assertTrue(runtime.hidden.isEmpty())
+        assertTrue(closed.isEmpty())
+    }
+
+    @Test
     fun `open ack timeout rebinds once and redelivers`() {
         val runtime = FakeRuntime().apply { registered = true }
         val scheduler = FakeScheduler()
@@ -304,6 +325,31 @@ class ExternalPluginControllerTest {
         assertEquals(listOf("hello", "hello"), runtime.bound)
         assertEquals(BusPaths.PLUGIN_OPEN, runtime.deliveries.last().first)
         assertTrue(controller.input("hello", "main", 22, 0))
+    }
+
+    @Test
+    fun `close listener reports controller self close and binder death reasons`() {
+        val runtime = FakeRuntime().apply { registered = true }
+        val controller = ExternalPluginController(runtime, FakeScheduler())
+        val closed = mutableListOf<Pair<String, String>>()
+        controller.setPluginClosedListener { pluginId, reason -> closed += pluginId to reason }
+        val principal = principal()
+
+        controller.open(principal)
+        controller.closeActive()
+        controller.open(principal)
+        controller.onPluginSelfHid("hello")
+        controller.open(principal)
+        controller.onBinderDied(principal.grantKey())
+
+        assertEquals(
+            listOf(
+                "hello" to "close",
+                "hello" to "self_hidden",
+                "hello" to "binder_died",
+            ),
+            closed,
+        )
     }
 
     @Test

@@ -57,6 +57,8 @@ import com.anezium.rokidbus.shared.NoticeSurfaceValidationResult
 import com.anezium.rokidbus.shared.PhoneHubCapabilitiesContract
 import com.anezium.rokidbus.shared.PinSurfaceContract
 import com.anezium.rokidbus.shared.PinSurfaceValidationResult
+import com.anezium.rokidbus.shared.WidgetSurfaceContract
+import com.anezium.rokidbus.shared.WidgetSurfaceValidationResult
 import com.anezium.rokidbus.shared.RemoteInputContract
 import com.anezium.rokidbus.shared.RemoteNavigationContract
 import com.anezium.rokidbus.shared.RemotePointerContract
@@ -282,6 +284,7 @@ class BusHubService : Service() {
     private lateinit var externalPluginController: ExternalPluginController
     private lateinit var cameraConsumerReadiness: CameraConsumerReadiness
     private lateinit var cameraCompanionController: CameraCompanionController
+    private lateinit var mediaTriggerCoordinator: MediaTriggerCoordinator
     private lateinit var pluginGuardianCoordinator: PluginGuardianCoordinator
     private lateinit var mediaSyncCoordinator: MediaSyncCoordinator
     private lateinit var coreRemoteBridge: PhoneCoreRemoteBridge
@@ -310,6 +313,7 @@ class BusHubService : Service() {
     @Volatile private var remotePinSurfaceVersion = 0
     @Volatile private var remoteNoticeSurfaceVersion = 0
     @Volatile private var remoteActivitySurfaceVersion = 0
+    @Volatile private var remoteWidgetSurfaceVersion = 0
     @Volatile private var remoteInkSurfaceVersion = 0
     @Volatile private var remoteEditableSurfaceVersion = 0
     @Volatile private var remoteMaxImageBytes = 0
@@ -487,6 +491,7 @@ class BusHubService : Service() {
                         notifyPluginRegistration(principal, state.capabilities, cb)
                         if (::externalPluginController.isInitialized) {
                             externalPluginController.onRegistered(principal)
+                            if (::mediaTriggerCoordinator.isInitialized) mediaTriggerCoordinator.onRegistered(principal)
                         }
                         if (::cameraCompanionController.isInitialized) {
                             cameraCompanionController.onRegistered(principal)
@@ -842,6 +847,27 @@ class BusHubService : Service() {
             publishStatus = ::publishMediaSyncStatus,
             logger = ::log,
         )
+        mediaTriggerCoordinator = MediaTriggerCoordinator(
+            clock = SystemClock::elapsedRealtime,
+            runtime = AndroidExternalPluginRuntime(
+                context = applicationContext,
+                isRegisteredCallback = ::isExternalPrincipalRegistered,
+                deliverCallback = ::deliverExternalLifecycle,
+                hideCallback = ::hideExternalWidget,
+                disconnectedCallback = { principal ->
+                    if (::mediaTriggerCoordinator.isInitialized) {
+                        mediaTriggerCoordinator.onPluginClosed(principal.descriptor.id, "binder_died")
+                    }
+                },
+            ),
+            scheduler = MainThreadExternalPluginScheduler(),
+            resolveRegisteredPlugin = { resolveMediaTriggerPlugin() },
+            foregroundPluginId = externalPluginController::activeId,
+            logger = ::log,
+        )
+        externalPluginController.setPluginClosedListener(mediaTriggerCoordinator::onPluginClosed)
+        MediaTriggerSensorStore.coordinator =
+            mediaTriggerCoordinator
         refreshMediaSyncConsent()
         registerPluginPackageReceiver()
         registerWifiStateReceiver()
@@ -1004,6 +1030,16 @@ class BusHubService : Service() {
         developerModeJournalSubscription?.close()
         developerModeJournalSubscription = null
         if (::pluginGuardianCoordinator.isInitialized) pluginGuardianCoordinator.close()
+        if (
+            ::mediaTriggerCoordinator.isInitialized &&
+            MediaTriggerSensorStore.coordinator === mediaTriggerCoordinator
+        ) {
+            mediaTriggerCoordinator.close()
+            MediaTriggerSensorStore.coordinator = null
+        }
+        if (::externalPluginController.isInitialized) {
+            externalPluginController.setPluginClosedListener { _, _ -> }
+        }
         if (::pluginRegistry.isInitialized) pluginRegistry.close()
         inkSurfaceCoordinator.close()
         if (::cameraCompanionController.isInitialized) cameraCompanionController.close()
@@ -1074,6 +1110,28 @@ class BusHubService : Service() {
                 return
             }
         }
+        if (isWidgetPath(envelope.path)) {
+            val invalidWidget = envelope.binary != null ||
+                envelope.payload.optString("surfaceId") != WidgetSurfaceContract.LOCAL_SURFACE_ID ||
+                when (envelope.path) {
+                    BusPaths.WIDGET_SHOW ->
+                        WidgetSurfaceContract.validateShow(envelope.payload) !is WidgetSurfaceValidationResult.Valid
+                    BusPaths.WIDGET_UPDATE ->
+                        WidgetSurfaceContract.validateAnchorUpdate(envelope.payload) !is WidgetSurfaceValidationResult.Valid
+                    else -> false
+                }
+            if (invalidWidget) {
+                recordLocalRoute(
+                    envelope,
+                    senderUid,
+                    sender,
+                    PluginBusJournal.Verdict.REJECTED,
+                    WidgetSurfaceContract.ERROR_INVALID_WIDGET,
+                )
+                deliverError(sender.replyBinder, envelope.id, WidgetSurfaceContract.ERROR_INVALID_WIDGET)
+                return
+            }
+        }
         if (isNoticePath(envelope.path)) {
             val invalidNotice = !isValidLocalNoticeEnvelope(envelope)
             if (invalidNotice) {
@@ -1141,6 +1199,8 @@ class BusHubService : Service() {
                     envelope.path == BusPaths.PIN_SHOW || envelope.path == BusPaths.PIN_HIDE
                 ) {
                     PinSurfaceContract.ERROR_INVALID_PIN
+                } else if (isWidgetPath(envelope.path)) {
+                    WidgetSurfaceContract.ERROR_INVALID_WIDGET
                 } else if (isNoticePath(envelope.path)) {
                     NoticeSurfaceContract.ERROR_INVALID_NOTICE
                 } else if (isActivityPath(envelope.path)) {
@@ -1174,6 +1234,7 @@ class BusHubService : Service() {
                 BusPaths.SURFACE_SHOW, BusPaths.SURFACE_UPDATE, BusPaths.SURFACE_HIDE,
                 BusPaths.NOTICE_SHOW, BusPaths.NOTICE_UPDATE, BusPaths.NOTICE_HIDE,
                 BusPaths.PIN_SHOW, BusPaths.PIN_HIDE,
+                BusPaths.WIDGET_SHOW, BusPaths.WIDGET_UPDATE, BusPaths.WIDGET_HIDE,
                 BusPaths.ACTIVITY_START, BusPaths.ACTIVITY_UPDATE, BusPaths.ACTIVITY_END,
                 BusPaths.INK_SHOW, BusPaths.INK_UPDATE, BusPaths.INK_HIDE,
             ) &&
@@ -1210,6 +1271,10 @@ class BusHubService : Service() {
         }
         if (ownedEnvelope.path == BusPaths.PIN_SHOW || ownedEnvelope.path == BusPaths.PIN_HIDE) {
             handleLocalPin(ownedEnvelope, senderUid, sender)
+            return
+        }
+        if (isWidgetPath(ownedEnvelope.path)) {
+            handleLocalWidget(ownedEnvelope, senderUid, sender)
             return
         }
         if (isNoticePath(ownedEnvelope.path)) {
@@ -1576,6 +1641,7 @@ class BusHubService : Service() {
     private fun journalCategory(path: String, hasBinary: Boolean): PluginBusJournal.Category = when (path) {
         BusPaths.SURFACE_SHOW, BusPaths.SURFACE_UPDATE, BusPaths.SURFACE_HIDE,
         BusPaths.PIN_SHOW, BusPaths.PIN_HIDE,
+        BusPaths.WIDGET_SHOW, BusPaths.WIDGET_UPDATE, BusPaths.WIDGET_HIDE,
         BusPaths.NOTICE_SHOW, BusPaths.NOTICE_UPDATE, BusPaths.NOTICE_HIDE,
         BusPaths.ACTIVITY_START, BusPaths.ACTIVITY_UPDATE, BusPaths.ACTIVITY_END,
         -> PluginBusJournal.Category.SURFACE
@@ -1593,6 +1659,11 @@ class BusHubService : Service() {
         path == BusPaths.NOTICE_SHOW ||
             path == BusPaths.NOTICE_UPDATE ||
             path == BusPaths.NOTICE_HIDE
+
+    private fun isWidgetPath(path: String): Boolean =
+        path == BusPaths.WIDGET_SHOW ||
+            path == BusPaths.WIDGET_UPDATE ||
+            path == BusPaths.WIDGET_HIDE
 
     private fun handleLocalNotice(
         envelope: BusEnvelope,
@@ -2138,6 +2209,51 @@ class BusHubService : Service() {
                 }
             }
         }
+    }
+
+    private fun handleLocalWidget(
+        envelope: BusEnvelope,
+        senderUid: Int,
+        sender: AuthorizedSender,
+    ) {
+        val principal = sender.principal
+        if (principal == null || envelope.binary != null) {
+            recordLocalRoute(
+                envelope,
+                senderUid,
+                sender,
+                PluginBusJournal.Verdict.REJECTED,
+                WidgetSurfaceContract.ERROR_INVALID_WIDGET,
+            )
+            deliverError(sender.replyBinder, envelope.id, WidgetSurfaceContract.ERROR_INVALID_WIDGET)
+            return
+        }
+        if (capabilities() and BusCapabilityBits.WIDGET_SURFACE == 0) {
+            recordLocalRoute(
+                envelope,
+                senderUid,
+                sender,
+                PluginBusJournal.Verdict.REJECTED,
+                WidgetSurfaceContract.ERROR_CAPABILITY_NOT_AVAILABLE,
+            )
+            deliverError(
+                sender.replyBinder,
+                envelope.id,
+                WidgetSurfaceContract.ERROR_CAPABILITY_NOT_AVAILABLE,
+            )
+            return
+        }
+        // Ambient passthrough: the widget never owns a foreground slot and never holds a
+        // rate-limited state machine. The plugin keeps its current line locally from the
+        // anchor, so show carries full lines and update carries an anchor-only patch.
+        recordLocalRoute(envelope, senderUid, sender, PluginBusJournal.Verdict.OK)
+        val forwarded = envelope.copy(
+            payload = envelope.payload
+                .put("seq", externalSurfaceSeq
+                    .computeIfAbsent(WidgetSurfaceContract.LOCAL_SURFACE_ID, { AtomicLong(System.currentTimeMillis()) })
+                    .incrementAndGet()),
+        )
+        sendRemote(forwarded)?.let { deliverError(sender.replyBinder, envelope.id, it) }
     }
 
     private fun handleHubPath(
@@ -2814,6 +2930,7 @@ class BusHubService : Service() {
     private fun revokePrincipal(key: PluginGrantKey) {
         if (::cameraCompanionController.isInitialized) cameraCompanionController.onRevoked(key)
         if (::externalPluginController.isInitialized) externalPluginController.onRevoked(key)
+        if (::mediaTriggerCoordinator.isInitialized) mediaTriggerCoordinator.onRevoked(key)
         clearPinForRevokedOwner(key.pluginId, "authorizationChanged")
         clearNoticeForRevokedOwner(key.pluginId, "authorizationChanged")
         clearActivityForRevokedOwner(key.pluginId, "authorizationChanged")
@@ -2885,7 +3002,10 @@ class BusHubService : Service() {
             principal.packageName == packageName &&
                 pluginGrantStore.stateFor(principal) is PluginGrantState.Approved
         }
-        if (!available) externalPluginController.onPackageUnavailable(packageName)
+        if (!available) {
+            externalPluginController.onPackageUnavailable(packageName)
+            mediaTriggerCoordinator.onPackageUnavailable(packageName)
+        }
         val cameraAvailable = validPrincipals.any { principal ->
             principal.packageName == packageName &&
                 cameraConsumerReadiness.isApprovedCameraConsumer(principal)
@@ -2952,6 +3072,21 @@ class BusHubService : Service() {
         pluginDiscovery.discover().mapNotNull { candidate ->
             (candidate as? PhonePluginCandidate.Valid)?.principal
         }
+
+    /**
+     * The plugin a media-trigger open should target: an installed, approved plugin whose
+     * declared descriptor opts into [BusConstants.META_PLUGIN_MEDIA_TRIGGER]. Currently the
+     * lyrics plugin. The trigger is inert while the plugin has not been granted.
+     */
+    private fun resolveMediaTriggerPlugin(): PhonePluginPrincipal? {
+        if (!::pluginGrantStore.isInitialized) return null
+        val candidates = runCatching(::installedPluginPrincipals).getOrDefault(emptyList())
+        return candidates.firstOrNull { principal ->
+            if (!principal.descriptor.mediaTrigger) return@firstOrNull false
+            val grant = pluginGrantStore.stateFor(principal) as? PluginGrantState.Approved ?: return@firstOrNull false
+            PluginCapability.SURFACES in grant.capabilities
+        }
+    }
 
     private fun approvedGuardianTargets(): List<PluginGuardianTarget> =
         selectApprovedGuardianTargets(installedPluginPrincipals(), pluginGrantStore::stateFor)
@@ -3038,6 +3173,7 @@ class BusHubService : Service() {
     }
 
     private fun hideExternalSurfaces(pluginId: String) {
+        hideExternalWidget(pluginId)
         val surfaceIds = externalSurfaceIds.remove(pluginId).orEmpty().toList()
         surfaceIds.forEach { surfaceId -> sendExternalSurfaceHide(pluginId, surfaceId) }
         inkSurfaceCoordinator.clearOwner(pluginId) { owners ->
@@ -3049,6 +3185,14 @@ class BusHubService : Service() {
                 sendExternalSurfaceHide(owner.pluginId, owner.wireSurfaceId)
             }
         }
+    }
+
+    private fun hideExternalWidget(pluginId: String) {
+        val sequence = externalSurfaceSeq.computeIfAbsent(WidgetSurfaceContract.LOCAL_SURFACE_ID) {
+            AtomicLong(System.currentTimeMillis())
+        }.incrementAndGet()
+        sendRemote(BusEnvelope(path = BusPaths.WIDGET_HIDE, payload = JSONObject()
+            .put("surfaceId", "$pluginId:widget").put("ownerPluginId", pluginId).put("seq", sequence)))
     }
 
     private fun sendExternalSurfaceHide(pluginId: String, surfaceId: String) {
@@ -5537,6 +5681,9 @@ class BusHubService : Service() {
                 nativePointerAvailable = state and LinkStateBits.CXR_CONTROL_UP != 0,
             )
         }
+        if (::mediaTriggerCoordinator.isInitialized) {
+            mediaTriggerCoordinator.onLinkChanged(state and LinkStateBits.SPP_DATA_UP != 0)
+        }
         if (::pluginGuardianCoordinator.isInitialized) {
             pluginGuardianCoordinator.onLinkStateChanged(state and transportBits != 0)
         }
@@ -5679,6 +5826,12 @@ class BusHubService : Service() {
         ) {
             capabilities = capabilities or BusCapabilityBits.EDITABLE_SURFACE
         }
+        // Widget state is live playback; the plugin reasserts it after reconnect.
+        if (remoteWidgetSurfaceVersion == WidgetSurfaceContract.VERSION &&
+            linkState() and LinkStateBits.SPP_DATA_UP != 0
+        ) {
+            capabilities = capabilities or BusCapabilityBits.WIDGET_SURFACE
+        }
         capabilities = capabilities or BusCapabilityBits.TTS
         // Unconditional: this build can always take a pairing offer off the glasses. Gating it on
         // link or session state would make the glasses read "no phone help available" during the
@@ -5723,11 +5876,15 @@ class BusHubService : Service() {
         val activitySupported = advertised.protocolVersion == GlassesHubCapabilitiesContract.VERSION &&
             advertised.features and BusCapabilityBits.ACTIVITY_SURFACE != 0 &&
             advertised.activitySurfaceVersion == ActivitySurfaceContract.VERSION
+        val widgetSupported = advertised.protocolVersion == GlassesHubCapabilitiesContract.VERSION &&
+            advertised.features and BusCapabilityBits.WIDGET_SURFACE != 0 &&
+            advertised.widgetSurfaceVersion == WidgetSurfaceContract.VERSION
         val acceptedInkVersion = PhoneInkCapabilityPolicy.acceptedVersion(advertised)
         val editableSupported = GlassesHubCapabilitiesContract.supportsEditableSurface(advertised)
         remotePinSurfaceVersion = if (pinSupported) PinSurfaceContract.VERSION else 0
         remoteNoticeSurfaceVersion = if (noticeSupported) NoticeSurfaceContract.VERSION else 0
         remoteActivitySurfaceVersion = if (activitySupported) ActivitySurfaceContract.VERSION else 0
+        remoteWidgetSurfaceVersion = if (widgetSupported) WidgetSurfaceContract.VERSION else 0
         remoteInkSurfaceVersion = acceptedInkVersion
         remoteEditableSurfaceVersion = if (editableSupported) EditableSurfaceContract.VERSION else 0
         remoteMaxImageBytes = if (imageSupported) advertised.maxImageBytes else 0
