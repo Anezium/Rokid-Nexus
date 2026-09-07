@@ -82,6 +82,12 @@ class MediaTriggerCoordinator(
     }
 
     @Synchronized
+    fun refreshDisplayPolicy(pluginId: String) {
+        if (target?.descriptor?.id == pluginId) close("display_policy_changed")
+        scheduler.schedule(REOPEN_KEY, 0L) { reconcile() }
+    }
+
+    @Synchronized
     fun tickGrace() = reconcile()
 
     @Synchronized

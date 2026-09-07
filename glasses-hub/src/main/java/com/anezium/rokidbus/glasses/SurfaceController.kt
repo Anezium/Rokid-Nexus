@@ -119,7 +119,8 @@ object SurfaceController {
             BusPaths.SURFACE_HIDE -> {
                 val surfaceId = envelope.payload.optString("surfaceId")
                 val seq = envelope.payload.optLong("seq", 0L)
-                runOnMain { hideRemote(surfaceId, seq) }
+                val epoch = envelope.payload.optLong("epoch", 0L)
+                runOnMain { hideRemote(surfaceId, seq, epoch) }
                 true
             }
             else -> false
@@ -182,6 +183,7 @@ object SurfaceController {
             showOrUpdateInk(
                 context = context,
                 surface = surface,
+                baseOrder = baseOrder,
                 launcherShow = launcherShow,
             )
         } else if (carriesImage && !(surface.isMedia && surface.imageBitmap != null)) {
@@ -465,12 +467,12 @@ object SurfaceController {
             coordinated?.recycleSafely()
             recycleActiveImageUnless(surface.imageBitmap ?: coordinated)
             cancelBackFailsafeOnMain(surface.surfaceId)
-            DisplayWakePolicy.requestWake(context, DisplayWakeKind.SURFACE, requested = true)
+            DisplayWakePolicy.requestWake(context, DisplayWakeKind.SURFACE, requested = surface.displayWakeAllowed)
             deactivateReplacedSurface(surface.surfaceId)
             prepareRingInputForSurface(surface.surfaceId)
             AssistantDisplayEpisode.accept(
                 context,
-                assistantEpisodeSurfacePresentedSignal(surface.ownerPluginId),
+                assistantEpisodeSurfacePresentedSignal(surface.ownerPluginId.takeIf { surface.displayWakeAllowed }.orEmpty()),
             )
             // Lyrics and Media push updates to the same surfaceId continuously;
             // only a genuinely new surface taking over the screen counts as a
@@ -491,12 +493,22 @@ object SurfaceController {
     private fun showOrUpdateInk(
         context: Context,
         surface: NexusSurface,
+        baseOrder: SurfaceOrder,
         launcherShow: Boolean,
     ) {
         pendingInk = surface
         inkRendererLayer.submit(
             surface = surface,
             onCommitted = {
+                if (!orderingCoordinator.isCurrentBase(baseOrder)) {
+                    if (
+                        pendingInk?.surfaceId == surface.surfaceId &&
+                        pendingInk?.seq == surface.seq
+                    ) {
+                        pendingInk = null
+                    }
+                    return@submit
+                }
                 if (
                     pendingInk?.surfaceId == surface.surfaceId &&
                     pendingInk?.seq == surface.seq
@@ -532,12 +544,12 @@ object SurfaceController {
                 clearInkRenderer()
                 recycleActiveImageUnless(surface.imageBitmap)
                 cancelBackFailsafeOnMain(surface.surfaceId)
-                DisplayWakePolicy.requestWake(context, DisplayWakeKind.SURFACE, requested = true)
+                DisplayWakePolicy.requestWake(context, DisplayWakeKind.SURFACE, requested = surface.displayWakeAllowed)
                 deactivateReplacedSurface(surface.surfaceId)
                 prepareRingInputForSurface(surface.surfaceId)
                 AssistantDisplayEpisode.accept(
                     context,
-                    assistantEpisodeSurfacePresentedSignal(surface.ownerPluginId),
+                    assistantEpisodeSurfacePresentedSignal(surface.ownerPluginId.takeIf { surface.displayWakeAllowed }.orEmpty()),
                 )
                 val isHandoff = active?.surfaceId != surface.surfaceId
                 active = surface
@@ -664,9 +676,9 @@ object SurfaceController {
         }
     }
 
-    private fun hideRemote(surfaceId: String, seq: Long) {
+    private fun hideRemote(surfaceId: String, seq: Long, epoch: Long) {
         if (surfaceId.isBlank()) return
-        when (val decision = orderingCoordinator.onHide(surfaceId, seq)) {
+        when (val decision = orderingCoordinator.onHide(surfaceId, seq, epoch)) {
             SurfaceOrderDecision.ApplyHide -> {
                 val endReason = if (backFailsafeSurfaceId == surfaceId) {
                     DisplayHoldReleaseReason.WEARER_DISMISSED
@@ -871,6 +883,7 @@ object SurfaceController {
         seq = optLong("seq", 0L),
         kind = optString("kind", NexusSurface.KIND_CARD).ifBlank { NexusSurface.KIND_CARD },
         contentKey = optString("contentKey"),
+        epoch = optLong("epoch", 0L),
     )
 
     private fun NexusSurface.toSurfaceOrder(): SurfaceOrder = SurfaceOrder(
@@ -878,6 +891,7 @@ object SurfaceController {
         seq = seq,
         kind = kind,
         contentKey = contentKey,
+        epoch = epoch,
     )
 
     private fun logOrderDrop(
@@ -886,13 +900,14 @@ object SurfaceController {
         decision: SurfaceOrderDecision.Drop,
     ) {
         val label = when (decision.reason) {
+            SurfaceOrderDropReason.STALE_EPOCH -> "Surface stale epoch drop"
             SurfaceOrderDropReason.STALE_BASE -> "Surface stale base drop"
             SurfaceOrderDropReason.STALE_ANCHOR -> "Surface stale anchor drop"
             SurfaceOrderDropReason.STALE_HIDE -> "Surface stale hide drop"
         }
         log(
-            "$label id=$surfaceId seq=$seq latestBase=${decision.latestBaseSeq} " +
-                "latest=${decision.latestSeq}",
+            "$label id=$surfaceId seq=$seq epochLive=${decision.liveEpoch} " +
+                "latestBase=${decision.latestBaseSeq} latest=${decision.latestSeq}",
         )
     }
 

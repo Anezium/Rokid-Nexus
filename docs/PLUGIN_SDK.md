@@ -145,6 +145,13 @@ Surface IDs are local to the plugin. The SDK validates fields and payload size;
 the hub injects verified ownership and global sequencing. High-level code cannot
 set a trusted owner, global sequence, or arbitrary system path.
 
+The wearer can also choose Quiet display, Notices only, or Mute in Plugin access.
+These preferences keep your capability grants but may reject presentation with
+`SURFACE_BUSY` or `DISPLAY_MUTED`. Quiet display permits ambient tiers and notices,
+and fullscreen pages only after a deliberate open, without screen wake. Hide/end
+cleanup still works under every policy. Never retry-loop a rejected foreground
+show or try another HUD kind to bypass the wearer's choice.
+
 ### Choosing a HUD kind
 
 Choose the object by what the wearer is doing, not by how large you want it to

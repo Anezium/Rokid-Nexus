@@ -88,6 +88,16 @@ class WidgetSurfaceContractTest {
         invalid.forEach { assertTrue(it.toString(), WidgetSurfaceContract.validateShow(it) is WidgetSurfaceValidationResult.Invalid) }
     }
 
+    @Test fun `rejects unsorted lines and oversized widget scripts`() {
+        val unsorted = JSONObject().put("kind", "widget").put("contentKey", "x").put("anchor", anchor())
+            .put("lines", JSONArray().put(line(1_000, "second")).put(line(0, "first")))
+        assertTrue(WidgetSurfaceContract.validateShow(unsorted) is WidgetSurfaceValidationResult.Invalid)
+        val huge = JSONObject(unsorted.toString()).put("lines", JSONArray().also { lines ->
+            repeat(500) { lines.put(line(it.toLong(), "x".repeat(240))) }
+        })
+        assertTrue(WidgetSurfaceContract.validateShow(huge) is WidgetSurfaceValidationResult.Invalid)
+    }
+
     private fun anchor(): JSONObject =
         JSONObject().put("positionMs", 0).put("playing", true).put("sentAtElapsedRealtime", 0)
 }

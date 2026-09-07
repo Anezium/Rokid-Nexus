@@ -221,6 +221,8 @@ data class NexusSurface(
     val ink: InkSurfacePayload? = null,
     val ownerPluginId: String = "",
     val editable: EditableSurfaceField? = null,
+    val epoch: Long = 0L,
+    val displayWakeAllowed: Boolean = true,
 ) {
     val isTimed: Boolean
         get() = kind == KIND_TIMED_LINES && timedLines.isNotEmpty()
@@ -422,6 +424,8 @@ data class NexusSurface(
                 } else {
                     null
                 },
+                epoch = payload.optLong("epoch", 0L),
+                displayWakeAllowed = payload.optBoolean("displayWakeAllowed", true),
             )
         }
 
