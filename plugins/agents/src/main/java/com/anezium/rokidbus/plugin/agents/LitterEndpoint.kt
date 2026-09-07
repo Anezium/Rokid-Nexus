@@ -1,6 +1,7 @@
 package com.anezium.rokidbus.plugin.agents
 
 import java.net.URI
+import java.net.InetAddress
 
 /** Credentials deliberately have no generated toString/copy/component methods. */
 class LitterEndpoint(
@@ -33,6 +34,12 @@ class LitterEndpoint(
 
     override fun toString(): String = "LitterEndpoint(redacted)"
 
-    private fun isLoopback(host: String): Boolean = host.lowercase() in
-        setOf("localhost", "127.0.0.1", "[::1]", "::1")
+    private fun isLoopback(host: String): Boolean {
+        val literal = host.lowercase().removePrefix("[").removeSuffix("]")
+        if (literal in setOf("localhost", "127.0.0.1", "::1")) return true
+        // Only a numeric IPv6 literal reaches InetAddress; never resolve a hostname
+        // here and then authorize an independent DNS lookup by the HTTP client.
+        if (':' !in literal || literal.any { it !in "0123456789abcdef:" }) return false
+        return runCatching { InetAddress.getByName(literal).isLoopbackAddress }.getOrDefault(false)
+    }
 }

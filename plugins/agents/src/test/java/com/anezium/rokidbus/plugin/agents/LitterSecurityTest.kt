@@ -9,6 +9,8 @@ class LitterSecurityTest {
         assertNull(LitterEndpoint("Computer", "wss://computer.example/ws", "secret").validate())
         assertNull(LitterEndpoint("Tunnel", "ws://127.0.0.1:8390", "secret").validate())
         assertNull(LitterEndpoint("Tunnel", "ws://[::1]:8390").validate())
+        assertNull(LitterEndpoint("Tunnel", "ws://[0:0:0:0:0:0:0:1]:8390").validate())
+        assertNotNull(LitterEndpoint("LAN", "ws://[fd00::1]:8390").validate())
         assertNotNull(LitterEndpoint("LAN", "ws://192.168.1.10:8390", "secret").validate())
         assertNull(LitterEndpoint("LAN", "ws://192.168.1.10:8390", "secret", true).validate())
         assertNotNull(LitterEndpoint("Bad", "wss://user:secret@server.test/").validate())

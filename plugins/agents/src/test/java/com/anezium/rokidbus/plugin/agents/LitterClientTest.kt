@@ -2,6 +2,7 @@ package com.anezium.rokidbus.plugin.agents
 
 import java.util.concurrent.Executors
 import java.util.concurrent.CopyOnWriteArrayList
+import java.net.InetAddress
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
@@ -93,14 +94,14 @@ class LitterClientTest {
         val peer = Peer()
         server.enqueue(MockResponse().withWebSocketUpgrade(peer))
         if (reconnect) server.enqueue(MockResponse().withWebSocketUpgrade(Peer()))
-        server.start()
+        server.start(InetAddress.getByName("127.0.0.1"), 0)
         try {
             runBlocking(dispatcher) {
                 val scope = CoroutineScope(SupervisorJob() + dispatcher)
                 val store = AgentSessionStore()
                 val client = LitterClient(http, scope, store, reconnectDelayMs = 20)
                 try {
-                    client.start(LitterEndpoint("Fixture", server.url("/").toString().replace("http://", "ws://")))
+                    client.start(LitterEndpoint("Fixture", "ws://127.0.0.1:${server.port}/"))
                     try { withTimeout(10_000) { body(client, store, peer) } }
                     catch (timeout: TimeoutCancellationException) {
                         throw AssertionError("Fixture timeout: ${client.message.value}; received methods: ${peer.methods}", timeout)
