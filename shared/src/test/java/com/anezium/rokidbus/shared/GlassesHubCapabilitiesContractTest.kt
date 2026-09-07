@@ -56,7 +56,8 @@ class GlassesHubCapabilitiesContractTest {
         assertEquals(128, BusCapabilityBits.ACTIVITY_SURFACE)
         assertEquals(512, BusCapabilityBits.TTS)
         assertEquals(1024, BusCapabilityBits.INK_SURFACE)
-        assertEquals(2048, BusCapabilityBits.WIDGET_SURFACE)
+        assertEquals(2048, BusCapabilityBits.EDITABLE_SURFACE)
+        assertEquals(4096, BusCapabilityBits.WIDGET_SURFACE)
     }
 
     @Test
