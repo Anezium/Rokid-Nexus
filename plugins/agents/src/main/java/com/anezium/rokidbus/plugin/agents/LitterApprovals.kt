@@ -38,14 +38,15 @@ internal class LitterApprovals(private val now: () -> Long) {
         val network = params.optJSONObject("networkApprovalContext")
         val detail = when {
             network != null -> "Network access: ${network.wireString("protocol", 32).orEmpty()} " +
-                network.wireString("host", 512).orEmpty()
+                network.wireString("host", 512).orEmpty() +
+                network.optInt("port", -1).takeIf { it in 1..65535 }?.let { ":$it" }.orEmpty()
             method == COMMAND -> command
             else -> itemDetail
         }
         val decisions = params.optJSONArray("availableDecisions")
         val canAllow = !detail.isNullOrBlank() && detail.length <= LitterProtocol.MAX_TEXT &&
             (decisions == null || "accept" in decisions.strings()) &&
-            (network == null || network.wireString("host", 512) != null) &&
+            (network == null || (network.wireString("host", 512) != null && network.wireString("protocol", 32) != null)) &&
             (!params.has("additionalPermissions") || params.isNull("additionalPermissions"))
         val reason = params.wireString("reason", 2_000)
         val cwd = params.wireString("cwd", 4_096) ?: params.wireString("grantRoot", 4_096)
