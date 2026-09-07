@@ -814,6 +814,9 @@ class BusHubService : Service() {
                 if (::cameraCompanionController.isInitialized) {
                     cameraCompanionController.onBinderDied(principal.grantKey())
                 }
+                if (::mediaTriggerCoordinator.isInitialized) {
+                    mediaTriggerCoordinator.onPluginClosed(principal.descriptor.id, "binder_died")
+                }
             },
         )
         cameraCompanionController = CameraCompanionController(
@@ -866,7 +869,6 @@ class BusHubService : Service() {
             scheduler = MainThreadExternalPluginScheduler(),
             resolveRegisteredPlugin = { resolveMediaTriggerPlugin() },
             foregroundPluginId = externalPluginController::activeId,
-            logger = ::log,
         )
         externalPluginController.setPluginClosedListener(mediaTriggerCoordinator::onPluginClosed)
         MediaTriggerSensorStore.coordinator =

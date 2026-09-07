@@ -24,11 +24,11 @@ class LyricsWidgetClock(
     /** The line index active at [now]. Never advances past the last line. */
     fun currentIndexAt(now: Long): Int {
         val position = effectivePositionMs(anchor, now)
-        var candidate = 0
+        var candidate = -1
         for (index in timedLines.indices) {
             if (timedLines[index].timeMs <= position) candidate = index else break
         }
-        return candidate.coerceIn(0, (timedLines.size - 1).coerceAtLeast(0))
+        return candidate
     }
 
     fun line(index: Int): WidgetTimedLine? = timedLines.getOrNull(index)

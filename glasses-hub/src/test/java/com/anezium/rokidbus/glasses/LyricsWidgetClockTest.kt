@@ -49,4 +49,10 @@ class LyricsWidgetClockTest {
         assertEquals(0, clock.currentIndexAt(0))
         assertNull(clock.nextIndexFrom(0))
     }
+    @Test fun `instrumental lead-in does not show a lyric before its timestamp`() {
+        val clock = LyricsWidgetClock(listOf(WidgetTimedLine(5_000L, "first")), WidgetAnchor(0, true, 10_000))
+        assertEquals(-1, clock.currentIndexAt(14_999))
+        assertEquals(0, clock.currentIndexAt(15_000))
+    }
+
 }

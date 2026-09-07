@@ -11,7 +11,6 @@ class MediaTriggerCoordinator(
     private val scheduler: ExternalPluginScheduler,
     private val resolveRegisteredPlugin: () -> PhonePluginPrincipal?,
     private val foregroundPluginId: () -> String? = { null },
-    private val logger: (String) -> Unit = {},
     private val graceMs: Long = 60_000L,
 ) {
     private var target: PhonePluginPrincipal? = null
@@ -67,7 +66,9 @@ class MediaTriggerCoordinator(
         // Wait until foreground teardown completes before opening the headless session again.
         isHoldingOpen = false
         scheduler.schedule(REOPEN_KEY, 0L) {
-            if (target?.grantKey() == principal.grantKey()) reconcile()
+            synchronized(this) {
+                if (target?.grantKey() == principal.grantKey()) reconcile()
+            }
         }
     }
 
@@ -107,6 +108,7 @@ class MediaTriggerCoordinator(
         }
     }
 
+    @Synchronized
     private fun reconcile() {
         val approved = resolveRegisteredPlugin()
         if (target != null && approved?.grantKey() != target?.grantKey()) close("revoked")
@@ -124,9 +126,11 @@ class MediaTriggerCoordinator(
             return
         }
         scheduler.schedule(REGISTRATION_KEY, ExternalPluginController.REGISTRATION_TIMEOUT_MS) {
-            if (pending && target?.grantKey() == approved.grantKey()) {
-                close("registration_timeout")
-                retryAfter = clock() + REOPEN_COOLDOWN_MS
+            synchronized(this) {
+                if (pending && target?.grantKey() == approved.grantKey()) {
+                    close("registration_timeout")
+                    retryAfter = clock() + REOPEN_COOLDOWN_MS
+                }
             }
         }
         if (runtime.isRegistered(approved)) onRegistered(approved)
