@@ -123,4 +123,30 @@ class WidgetStateMachineTest {
         assertNull(WidgetStateMachine.clock)
     }
 
+    @Test fun hideArrivingBeforeShowPreventsClosedWidgetFromAppearing() {
+        WidgetStateMachine.handleWidgetEnvelope(hide(3))
+        WidgetStateMachine.handleWidgetEnvelope(show(2, hold = true))
+        assertNull(WidgetStateMachine.clock)
+        assertFalse(WidgetStateMachine.holdDisplay)
+        WidgetStateMachine.handleWidgetEnvelope(show(4))
+        assertNotNull(WidgetStateMachine.clock)
+    }
+
+    @Test fun otherOwnersHidePreservesCurrentWidgetAndOnlyBlocksItsOwnOlderShow() {
+        WidgetStateMachine.handleWidgetEnvelope(show(1))
+        WidgetStateMachine.handleWidgetEnvelope(hide(5).also {
+            it.payload.put("surfaceId", "other:widget").put("ownerPluginId", "other")
+        })
+        WidgetStateMachine.handleWidgetEnvelope(anchorUpdate(2))
+        assertFalse(WidgetStateMachine.clock!!.currentAnchor.playing)
+        WidgetStateMachine.handleWidgetEnvelope(show(4, "other-track").also {
+            it.payload.put("surfaceId", "other:widget").put("ownerPluginId", "other")
+        })
+        assertEquals("track", WidgetStateMachine.currentContentKey())
+        WidgetStateMachine.handleWidgetEnvelope(show(6, "other-track").also {
+            it.payload.put("surfaceId", "other:widget").put("ownerPluginId", "other")
+        })
+        assertEquals("other-track", WidgetStateMachine.currentContentKey())
+    }
+
 }

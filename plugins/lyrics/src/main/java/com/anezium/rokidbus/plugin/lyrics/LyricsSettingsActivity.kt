@@ -33,6 +33,7 @@ import com.anezium.rokidbus.lyrics.settings.LyricsWidgetSettingsStore
 
 class LyricsSettingsActivity : Activity() {
     private lateinit var accessValue: TextView
+    private lateinit var automaticAccessValue: TextView
     private lateinit var spotifyValue: TextView
     private lateinit var musixmatchValue: TextView
     private lateinit var widgetValue: TextView
@@ -58,10 +59,21 @@ class LyricsSettingsActivity : Activity() {
         val enabled = isMusicListenerEnabled()
         accessValue.text = if (enabled) "ENABLED ›" else "ENABLE ›"
         accessValue.setTextColor(if (enabled) NexusUi.GREEN else NexusUi.INK2)
+        val automatic = isListenerEnabled(nexusMediaListener())
+        automaticAccessValue.text = if (automatic) "ENABLED ›" else "ENABLE ›"
+        automaticAccessValue.setTextColor(if (automatic) NexusUi.GREEN else NexusUi.INK2)
     }
 
     private fun isMusicListenerEnabled(): Boolean {
-        val target = ComponentName(this, MediaNotificationListenerService::class.java)
+        return isListenerEnabled(ComponentName(this, MediaNotificationListenerService::class.java))
+    }
+
+    private fun nexusMediaListener() = ComponentName(
+        "com.anezium.rokidbus.phone",
+        "com.anezium.rokidbus.phone.MediaTriggerNotificationListenerService",
+    )
+
+    private fun isListenerEnabled(target: ComponentName): Boolean {
         val enabled = Settings.Secure.getString(contentResolver, "enabled_notification_listeners").orEmpty()
         return enabled.split(':').any { flattened ->
             ComponentName.unflattenFromString(flattened) == target
@@ -92,6 +104,22 @@ class LyricsSettingsActivity : Activity() {
                     value = accessValue,
                     danger = false,
                 ) { startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) },
+                NexusUi.block(),
+            )
+            automaticAccessValue = valueText("Enable")
+            addView(
+                settingRow(
+                    title = "Start with music",
+                    subtitle = "Enable Rokid Nexus media trigger in notification access.",
+                    value = automaticAccessValue,
+                    danger = false,
+                ) {
+                    val detail = Intent(Settings.ACTION_NOTIFICATION_LISTENER_DETAIL_SETTINGS)
+                        .putExtra(Settings.EXTRA_NOTIFICATION_LISTENER_COMPONENT_NAME, nexusMediaListener().flattenToString())
+                    runCatching { startActivity(detail) }.onFailure {
+                        startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                    }
+                },
                 NexusUi.block(),
             )
             spotifyValue = valueText(if (providerStore.hasSpotifySpDc()) "Connected" else "Sign in")

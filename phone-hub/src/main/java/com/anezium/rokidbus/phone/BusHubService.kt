@@ -2990,6 +2990,8 @@ class BusHubService : Service() {
             hideExternalWidget(key.pluginId)
         }
         if (policy == PluginDisplayPolicy.DEMOTE) {
+            // Anchor updates preserve mode, so retire any existing display hold immediately.
+            hideExternalWidget(key.pluginId)
             resendCanonicalPinIfAvailable()
             resendCanonicalActivitiesIfAvailable()
         }

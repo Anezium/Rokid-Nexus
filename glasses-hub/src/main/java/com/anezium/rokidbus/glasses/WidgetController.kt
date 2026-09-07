@@ -16,6 +16,7 @@ import java.util.concurrent.CopyOnWriteArrayList
  */
 internal object WidgetStateMachine {
     private var latestSeq = Long.MIN_VALUE
+    private val hiddenThrough = mutableMapOf<String, Long>()
     @Volatile var clock: LyricsWidgetClock? = null
         private set
     @Volatile var holdDisplay: Boolean = false
@@ -65,6 +66,7 @@ internal object WidgetStateMachine {
     /** Test hook: wipe singleton sequence state so a new test starts clean. */
     internal fun resetSequencesForTest() {
         latestSeq = Long.MIN_VALUE
+        hiddenThrough.clear()
         clock = null
         holdDisplay = false
         contentKey = null
@@ -83,7 +85,7 @@ internal object WidgetStateMachine {
             return
         }
         val seq = envelope.payload.optLong("seq", Long.MIN_VALUE)
-        if (seq <= latestSeq) {
+        if (seq <= latestSeq || seq <= (hiddenThrough[surfaceId] ?: Long.MIN_VALUE)) {
             return
         }
         latestSeq = seq
@@ -122,8 +124,13 @@ internal object WidgetStateMachine {
     }
 
     private fun hide(envelope: BusEnvelope) {
-        if (envelope.payload.optString("surfaceId") != ownerSurfaceId) return
+        val surfaceId = envelope.payload.optString("surfaceId")
+        val owner = envelope.payload.optString("ownerPluginId")
+        if (owner.isBlank() || surfaceId != "$owner:widget") return
         val seq = envelope.payload.optLong("seq", Long.MIN_VALUE)
+        // A hide may overtake its show without owning the currently visible slot.
+        hiddenThrough[surfaceId] = maxOf(hiddenThrough[surfaceId] ?: Long.MIN_VALUE, seq)
+        if (surfaceId != ownerSurfaceId) return
         if (seq <= latestSeq) {
             return
         }
