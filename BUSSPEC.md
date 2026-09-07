@@ -98,6 +98,30 @@ reject unknown external legacy callers. Phone approval does not authorize an
 arbitrary glasses-side companion; release glasses hubs remain closed to those
 clients until companion provisioning has its own identity design.
 
+## Wearer display preferences
+
+Display preferences supplement ordinary signer-bound capability grants. Each
+approved plugin has one persisted policy, defaulting to `normal` for old records:
+
+| Policy | Pins / activities / widgets | Notices | Fullscreen surface / Ink | Wake |
+|---|---|---|---|---|
+| `normal` | allowed | allowed | ordinary foreground policy | allowed |
+| `demote` (Quiet display) | allowed | allowed | only an explicitly opened foreground owner | suppressed |
+| `notices` | denied | allowed | denied | notice requests allowed |
+| `mute` | denied | denied | denied | suppressed |
+
+Hides and activity ends always remain allowed. `SURFACE_BUSY` rejects automatic
+fullscreen takeover under Quiet display or Notices only; `DISPLAY_MUTED` rejects
+other suppressed presentation. This policy neither changes capabilities nor
+authorizes `/core/*` controls. A plugin cannot override it with JSON fields.
+The phone strips caller `epoch` and `displayWakeAllowed`, then stamps trusted
+values. `displayWakeAllowed` is hub-to-hub metadata for surface and notice wake
+and display episodes; absent means true for older phone hubs.
+
+Changing the preference clears prohibited visible content immediately; Quiet
+display closes the current foreground/notice episode and suppresses wake on later
+manual opens. Canonical pin and activity resends also consult the current policy.
+
 ## External plugin lifecycle v1
 
 The public SDK cold-starts through the exported plugin service; it does not use a
@@ -155,6 +179,7 @@ Every surface payload carries:
 {
   "surfaceId": "lyrics",
   "seq": 42,
+  "epoch": 1,
   "kind": "card"
 }
 ```
@@ -162,6 +187,18 @@ Every surface payload carries:
 `seq` is monotonic per `surfaceId`. Because there is no ordering guarantee across
 CXR-L and SPP, the glasses renderer MUST drop any show, update or
 hide whose `seq` is not newer than the last accepted sequence for that surface.
+The phone hub also stamps `epoch`, a monotonic `Long` for the one foreground
+slot. Plugins cannot set it: the hub overwrites `epoch` the way it overwrites
+`ownerPluginId`. Epoch increments when the occupying plugin changes. The glasses
+MUST drop any show, update, or hide whose `epoch` is older than the live epoch for that
+slot, even if its `seq` is newer, so a superseded owner's late SPP chunk cannot
+repaint the new owner. Reopening a released owner increments the epoch too.
+Hides carry the epoch of the occupancy they close. Async Ink compilation captures
+the epoch at admission and verifies it again before publication; image decoding
+and Ink rendering on glasses verify it again before attaching a result. Epoch
+changes reset that surface's sequence floor, so a new session can use lower
+per-surface sequences. Notice, pin, activity, and widget slots do not advance
+or release the foreground epoch.
 Messages are idempotent: the phone can resend the latest complete state at any time.
 Timed-line and media anchor-only updates may also include a `contentKey`; the glasses
 hub merges such updates only into an active surface with the same kind and key, so an
@@ -263,8 +300,8 @@ page it:
 and at most 128 characters. `segments` contains 1 through 240 objects. Every
 segment has a known `kind` and `text` of at most 4,096 characters, and the sum
 of all segment text is at most 40,000 characters. Null shell fields are omitted,
-as is `emphasis` when false. The phone adds verified ownership and the monotonic
-wire `seq` in the same way it does for a card.
+as is `emphasis` when false. The phone adds verified ownership, the occupancy
+`epoch`, and the monotonic wire `seq` in the same way it does for a card.
 
 `readerAnchor` is optional and says where reading begins. It is `bottom` or
 `top`, and the distinction it draws is stream-shaped versus document-shaped

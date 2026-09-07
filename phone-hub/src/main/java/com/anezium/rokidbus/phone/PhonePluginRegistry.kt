@@ -8,6 +8,7 @@ import com.anezium.rokidbus.shared.BusPaths
 import com.anezium.rokidbus.shared.EditableSurfaceContract
 import com.anezium.rokidbus.shared.GlyphContract
 import com.anezium.rokidbus.shared.ForegroundSurfacePathPolicy
+import com.anezium.rokidbus.shared.SurfaceEpochContract
 import com.anezium.rokidbus.shared.plugin.NexusInputEvent
 import com.anezium.rokidbus.shared.plugin.NexusPlugin
 import com.anezium.rokidbus.shared.plugin.NexusPluginHost
@@ -30,6 +31,7 @@ class PhonePluginRegistry(
     private val externalController: ExternalPluginController? = null,
     private val journal: PluginBusJournal? = null,
     glyphReader: ((PhonePluginPrincipal) -> List<GlyphContract.CustomGlyph>)? = null,
+    private val surfaceEpoch: ForegroundSurfaceEpoch = ForegroundSurfaceEpoch(),
 ) : NexusPluginHost {
     private data class Subscription(
         val pathPrefix: String,
@@ -77,6 +79,7 @@ class PhonePluginRegistry(
         binary: ByteArray? = null,
     ) {
         if (path == BusPaths.SURFACE_HIDE && payload.optString("surfaceId") == activePluginId) {
+            activePluginId?.let(surfaceEpoch::release)
             activePluginId = null
         }
         val outgoing = payload.withSurfaceMetadata(path)
@@ -151,6 +154,9 @@ class PhonePluginRegistry(
      * as the foreground plugin; anything pushed while another plugin holds the HUD is
      * rejected so a background auto-open (lyrics) cannot steal the display.
      */
+    fun isForegroundOwner(pluginId: String): Boolean =
+        externalController?.activeId() == pluginId || activePluginId == pluginId
+
     fun allowExternalSurface(principal: PhonePluginPrincipal, path: String): Boolean {
         val controller = externalController ?: return true
         val externalActive = controller.activeId()
@@ -380,6 +386,12 @@ class PhonePluginRegistry(
         var outgoing = this
         if (path == BusPaths.SURFACE_SHOW || path == BusPaths.SURFACE_UPDATE || path == BusPaths.SURFACE_HIDE) {
             outgoing = JSONObject(toString()).put("seq", surfaceSeq.incrementAndGet())
+            val owner = optString("ownerPluginId").ifBlank { optString("surfaceId") }
+            if (owner.isNotBlank()) {
+                val epoch = if (path == BusPaths.SURFACE_HIDE) surfaceEpoch.valueFor(owner) ?: 0L
+                    else surfaceEpoch.assign(owner)
+                outgoing.put(SurfaceEpochContract.FIELD, epoch)
+            }
         }
         if (path != BusPaths.SURFACE_SHOW && path != BusPaths.SURFACE_UPDATE) return outgoing
         val surfaceId = optString("surfaceId")

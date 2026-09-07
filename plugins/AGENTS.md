@@ -138,6 +138,9 @@ Facts you must build around:
   `show`/`update` returns `SURFACE_BUSY` — handle it by giving up quietly, never by
   retry-looping. A `show` on an *idle* HUD adopts you as foreground with a real
   `PLUGIN_OPEN`.
+- Wearer display preferences may further reject paint (`DISPLAY_MUTED`) or
+  automatic fullscreen takeover (`SURFACE_BUSY`) without revoking capabilities.
+  Cleanup hides and ends stay allowed; never switch tiers to bypass the preference.
 - The hub rewrites your local surface id to `pluginId:localSurfaceId` and assigns
   sequence numbers; never hardcode the namespaced form.
 - Revocation, binder death, package removal, or link loss close you and hide your

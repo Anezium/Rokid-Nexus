@@ -44,6 +44,7 @@ import com.anezium.rokidbus.shared.GlassesHubCapabilitiesContract
 import com.anezium.rokidbus.shared.GlassesRepairContract
 import com.anezium.rokidbus.shared.ImageSurfaceContract
 import com.anezium.rokidbus.shared.SetupNoteContract
+import com.anezium.rokidbus.shared.SurfaceEpochContract
 import com.anezium.rokidbus.shared.ImageSurfaceMetadata
 import com.anezium.rokidbus.shared.ImageSurfaceValidationResult
 import com.anezium.rokidbus.shared.InkSurfaceContract
@@ -253,6 +254,7 @@ class BusHubService : Service() {
     private val externalSurfaceSeq = ConcurrentHashMap<String, AtomicLong>()
     private val debugImageSeq = AtomicLong(System.currentTimeMillis())
     private val externalSurfaceIds = ConcurrentHashMap<String, MutableSet<String>>()
+    private val foregroundSurfaceEpoch = ForegroundSurfaceEpoch()
     private val inkSurfaceCoordinator = PhoneInkSurfaceCoordinator(
         postResult = { action -> inkResultHandler.post { action() } },
     )
@@ -837,6 +839,7 @@ class BusHubService : Service() {
             },
             externalController = externalPluginController,
             journal = pluginBusJournal,
+            surfaceEpoch = foregroundSurfaceEpoch,
         )
         mediaSyncCoordinator = MediaSyncCoordinator(
             context = applicationContext,
@@ -1186,7 +1189,7 @@ class BusHubService : Service() {
                 return
             }
         }
-        val ownedEnvelope = if (
+        var ownedEnvelope = if (
             sender.principal != null &&
             PathRules.requiredCapability(envelope.path) in setOf(
                 PluginCapability.SURFACES,
@@ -1215,6 +1218,27 @@ class BusHubService : Service() {
             envelope.copy(payload = payload)
         } else {
             envelope
+        }
+        sender.principal?.let { principal ->
+            val tier = DisplayArbiter.tierFor(ownedEnvelope.path)
+            if (tier != null) {
+                val policy = pluginGrantStore.displayPolicyFor(principal)
+                val decision = DisplayArbiter.decide(policy, tier,
+                    holdsForeground = ::pluginRegistry.isInitialized &&
+                        pluginRegistry.isForegroundOwner(principal.descriptor.id))
+                if (decision is DisplayDecision.Deny) {
+                    recordLocalRoute(ownedEnvelope, senderUid, sender, PluginBusJournal.Verdict.REJECTED, decision.code)
+                    if (PathRules.requiredCapability(ownedEnvelope.path) == PluginCapability.INK_SURFACE) {
+                        deliverInkError(ownerFrom(ownedEnvelope), ownedEnvelope.id, sender.replyBinder,
+                            listOf(InkProblem(decision.code, "Wearer display preference prevents this presentation")))
+                    } else {
+                        deliverError(sender.replyBinder, ownedEnvelope.id, decision.code)
+                    }
+                    return
+                }
+                ownedEnvelope = ownedEnvelope.copy(payload =
+                    DisplayArbiter.applyPresentationPolicy(policy, ownedEnvelope.path, ownedEnvelope.payload))
+            }
         }
         if (ownedEnvelope.path == BusPaths.SURFACE_SHOW || ownedEnvelope.path == BusPaths.SURFACE_UPDATE) {
             val imageError = validateSurfaceImageEnvelope(ownedEnvelope)
@@ -1746,7 +1770,7 @@ class BusHubService : Service() {
         senderUid: Int,
         sender: AuthorizedSender,
     ) {
-        val forwarded = envelope.copy(payload = payload)
+        val forwarded = envelope.copy(payload = displayPayload(envelope.path, payload))
         recordLocalRoute(forwarded, senderUid, sender, PluginBusJournal.Verdict.OK)
         sendRemote(forwarded)?.let { deliverError(sender.replyBinder, envelope.id, it) }
     }
@@ -1964,7 +1988,7 @@ class BusHubService : Service() {
         senderUid: Int,
         sender: AuthorizedSender,
     ) {
-        val forwarded = envelope.copy(payload = payload)
+        val forwarded = envelope.copy(payload = displayPayload(envelope.path, payload))
         recordLocalRoute(forwarded, senderUid, sender, PluginBusJournal.Verdict.OK)
         if (pinLinkUp()) {
             sendRemote(forwarded)?.let { deliverError(sender.replyBinder, envelope.id, it) }
@@ -2939,6 +2963,37 @@ class BusHubService : Service() {
         }
     }
 
+    private fun displayPolicyForOwner(pluginId: String): PluginDisplayPolicy {
+        val principal = registrations.firstOrNull { it.principal?.descriptor?.id == pluginId }?.principal
+            ?: installedPluginPrincipals().firstOrNull { it.descriptor.id == pluginId }
+            ?: return PluginDisplayPolicy.MUTE
+        return pluginGrantStore.displayPolicyFor(principal)
+    }
+
+    private fun displayPayload(path: String, payload: JSONObject): JSONObject =
+        DisplayArbiter.applyPresentationPolicy(displayPolicyForOwner(payload.optString("ownerPluginId")), path, payload)
+
+    private fun displayPolicyChanged(key: PluginGrantKey) {
+        val principal = installedPluginPrincipals().firstOrNull { it.grantKey() == key } ?: return
+        val policy = pluginGrantStore.displayPolicyFor(principal)
+        if (policy != PluginDisplayPolicy.NORMAL) {
+            if (externalPluginController.activeId() == key.pluginId) {
+                externalPluginController.closeActive("display_policy_changed")
+            }
+            clearNoticeForRevokedOwner(key.pluginId, "display_policy_changed")
+        }
+        if (DisplayArbiter.decide(policy, DisplayTier.PIN) is DisplayDecision.Deny) {
+            clearPinForRevokedOwner(key.pluginId, "display_policy_changed")
+            clearActivityForRevokedOwner(key.pluginId, "display_policy_changed")
+            hideExternalWidget(key.pluginId)
+        }
+        if (policy == PluginDisplayPolicy.DEMOTE) {
+            resendCanonicalPinIfAvailable()
+            resendCanonicalActivitiesIfAvailable()
+        }
+        mediaTriggerCoordinator.refreshDisplayPolicy(key.pluginId)
+    }
+
     private fun authorizationChanged(key: PluginGrantKey) {
         revokePrincipal(key)
         cameraConsumerReadiness.recompute()
@@ -3083,6 +3138,8 @@ class BusHubService : Service() {
         val candidates = runCatching(::installedPluginPrincipals).getOrDefault(emptyList())
         return candidates.firstOrNull { principal ->
             if (!principal.descriptor.mediaTrigger) return@firstOrNull false
+            if (DisplayArbiter.decide(pluginGrantStore.displayPolicyFor(principal), DisplayTier.AMBIENT)
+                is DisplayDecision.Deny) return@firstOrNull false
             val grant = pluginGrantStore.stateFor(principal) as? PluginGrantState.Approved ?: return@firstOrNull false
             PluginCapability.SURFACES in grant.capabilities
         }
@@ -3174,6 +3231,7 @@ class BusHubService : Service() {
 
     private fun hideExternalSurfaces(pluginId: String) {
         hideExternalWidget(pluginId)
+        foregroundSurfaceEpoch.release(pluginId)
         val surfaceIds = externalSurfaceIds.remove(pluginId).orEmpty().toList()
         surfaceIds.forEach { surfaceId -> sendExternalSurfaceHide(pluginId, surfaceId) }
         inkSurfaceCoordinator.clearOwner(pluginId) { owners ->
@@ -3205,6 +3263,7 @@ class BusHubService : Service() {
                 payload = JSONObject()
                     .put("surfaceId", surfaceId)
                     .put("ownerPluginId", pluginId)
+                    .put(SurfaceEpochContract.FIELD, foregroundSurfaceEpoch.valueFor(pluginId) ?: 0L)
                     .put("seq", sequence),
             ),
         )
@@ -3259,9 +3318,14 @@ class BusHubService : Service() {
             return
         }
 
+        val commandEpoch = if (envelope.path == BusPaths.INK_HIDE) {
+            foregroundSurfaceEpoch.valueFor(owner.pluginId) ?: 0L
+        } else {
+            foregroundSurfaceEpoch.assign(owner.pluginId)
+        }
         val callback: (PhoneInkCommandResult) -> Unit = { result ->
             when (result) {
-                is PhoneInkCommandResult.Outgoing -> publishPhoneInk(result, envelope.id, sender.replyBinder)
+                is PhoneInkCommandResult.Outgoing -> publishPhoneInk(result, envelope.id, sender.replyBinder, commandEpoch)
                 is PhoneInkCommandResult.Noop -> Unit
                 is PhoneInkCommandResult.Error ->
                     deliverInkError(result.owner, envelope.id, sender.replyBinder, result.problems)
@@ -3348,11 +3412,24 @@ class BusHubService : Service() {
         result: PhoneInkCommandResult.Outgoing,
         envelopeId: String,
         replyBinder: IBinder?,
+        expectedEpoch: Long? = null,
     ) {
+        val epoch = expectedEpoch ?: foregroundSurfaceEpoch.valueFor(result.owner.pluginId) ?: return
+        if (result.path != BusPaths.SURFACE_HIDE &&
+            (!foregroundSurfaceEpoch.isCurrent(result.owner.pluginId, epoch) ||
+                !pluginRegistry.isForegroundOwner(result.owner.pluginId) ||
+                DisplayArbiter.decide(displayPolicyForOwner(result.owner.pluginId), DisplayTier.SURFACE,
+                    holdsForeground = true) is DisplayDecision.Deny)
+        ) {
+            deliverInkError(result.owner, envelopeId, replyBinder,
+                listOf(InkProblem("SURFACE_BUSY", "The foreground session changed before Ink was ready")))
+            return
+        }
         val envelope = withExternalSurfaceMetadata(
             BusEnvelope(path = result.path, id = envelopeId, payload = result.payload),
             result.owner.pluginId,
             closeOnHide = false,
+            expectedEpoch = epoch,
         )
         val error = sendRemote(envelope)
         if (error != null) {
@@ -3508,6 +3585,7 @@ class BusHubService : Service() {
         envelope: BusEnvelope,
         pluginId: String,
         closeOnHide: Boolean,
+        expectedEpoch: Long? = null,
     ): BusEnvelope {
         val payload = JSONObject(envelope.payload.toString())
         val wireSurfaceId = payload.getString("surfaceId")
@@ -3522,7 +3600,14 @@ class BusHubService : Service() {
         } else {
             pluginSurfaces += wireSurfaceId
         }
-        return envelope.copy(payload = payload.put("seq", sequence))
+        payload.put("seq", sequence)
+        val epoch = expectedEpoch ?: if (envelope.path == BusPaths.SURFACE_HIDE) {
+            foregroundSurfaceEpoch.valueFor(pluginId) ?: 0L
+        } else {
+            foregroundSurfaceEpoch.assign(pluginId)
+        }
+        payload.put(SurfaceEpochContract.FIELD, epoch)
+        return envelope.copy(payload = displayPayload(envelope.path, payload))
     }
 
     private fun releaseExternalSurface(pluginId: String, wireSurfaceId: String) {
@@ -3530,6 +3615,7 @@ class BusHubService : Service() {
         pluginSurfaces.remove(wireSurfaceId)
         if (pluginSurfaces.isNotEmpty()) return
         externalSurfaceIds.remove(pluginId, pluginSurfaces)
+        foregroundSurfaceEpoch.release(pluginId)
         if (::externalPluginController.isInitialized) {
             externalPluginController.onPluginSelfHid(pluginId)
         }
@@ -3886,7 +3972,12 @@ class BusHubService : Service() {
             }
             return
         }
-        val error = sendRemote(BusEnvelope(path = BusPaths.PIN_SHOW, payload = payload))
+        val owner = payload.optString("ownerPluginId")
+        if (DisplayArbiter.decide(displayPolicyForOwner(owner), DisplayTier.PIN) is DisplayDecision.Deny) {
+            clearPinForRevokedOwner(owner, "display_policy")
+            return
+        }
+        val error = sendRemote(BusEnvelope(path = BusPaths.PIN_SHOW, payload = displayPayload(BusPaths.PIN_SHOW, payload)))
         if (error == null) {
             log("pin resent owner=${payload.optString("ownerPluginId")} seq=${payload.optLong("seq")}")
         } else {
@@ -3910,7 +4001,12 @@ class BusHubService : Service() {
         }
 
         phoneActivityState.payloadsForResend().forEach { payload ->
-            val error = sendRemote(BusEnvelope(path = BusPaths.ACTIVITY_START, payload = payload))
+            val owner = payload.optString("ownerPluginId")
+            if (DisplayArbiter.decide(displayPolicyForOwner(owner), DisplayTier.ACTIVITY) is DisplayDecision.Deny) {
+                clearActivityForRevokedOwner(owner, "display_policy")
+                return@forEach
+            }
+            val error = sendRemote(BusEnvelope(path = BusPaths.ACTIVITY_START, payload = displayPayload(BusPaths.ACTIVITY_START, payload)))
             if (error == null) {
                 log(
                     "activity resent owner=${payload.optString("ownerPluginId")} " +
@@ -6071,6 +6167,10 @@ class BusHubService : Service() {
         fun onPluginAuthorizationChanged(context: android.content.Context, key: PluginGrantKey) {
             PhoneClientSupervisor.onPrincipalRevoked(context.applicationContext, key)
             activeInstance?.authorizationChanged(key)
+        }
+
+        internal fun onPluginDisplayPolicyChanged(key: PluginGrantKey) {
+            activeInstance?.displayPolicyChanged(key)
         }
 
         internal fun onActivityPresentationPreferenceChanged() {

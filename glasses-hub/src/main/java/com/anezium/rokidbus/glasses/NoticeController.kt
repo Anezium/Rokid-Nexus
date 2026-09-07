@@ -41,6 +41,7 @@ internal data class NexusNoticeSurface(
      */
     val answered: Boolean = false,
     val ownerPluginId: String = "",
+    val displayWakeAllowed: Boolean = true,
 ) {
     /**
      * The actions still on offer. An answered band shows none: the question has
@@ -261,6 +262,7 @@ internal class NoticeStateMachine {
         nowMs: Long,
         imageBitmap: Bitmap? = null,
         ownerPluginId: String = "",
+        displayWakeAllowed: Boolean = true,
     ): NoticeStateDecision {
         if (seq <= latestSeq) return NoticeStateDecision.DroppedStale
         latestSeq = seq
@@ -275,6 +277,7 @@ internal class NoticeStateMachine {
             hardExpiresAtMs = nowMs + NoticeSurfaceContract.MAX_LIFETIME_MS,
             imageBitmap = imageBitmap,
             ownerPluginId = ownerPluginId,
+            displayWakeAllowed = displayWakeAllowed,
         )
         active = notice
         return NoticeStateDecision.Shown(notice)
@@ -785,6 +788,7 @@ internal object NoticeController {
         }
         val seq = envelope.payload.optLong("seq", Long.MIN_VALUE)
         val ownerPluginId = envelope.payload.optString("ownerPluginId")
+        val displayWakeAllowed = envelope.payload.optBoolean("displayWakeAllowed", true)
         val image = validation.content.image
         if (image != null) {
             val bytes = envelope.binary ?: return
@@ -818,6 +822,7 @@ internal object NoticeController {
                                 content = validation.content,
                                 imageBitmap = decoded,
                                 ownerPluginId = ownerPluginId,
+                                displayWakeAllowed = displayWakeAllowed,
                             )
                             imageDecodeCoordinator.invalidate(surfaceId)
                                 ?.takeUnless { it === decoded }
@@ -837,6 +842,7 @@ internal object NoticeController {
             seq,
             validation.content,
             ownerPluginId = ownerPluginId,
+            displayWakeAllowed = displayWakeAllowed,
         )
     }
 
@@ -847,6 +853,7 @@ internal object NoticeController {
         content: NoticeSurfaceContent,
         imageBitmap: Bitmap? = null,
         ownerPluginId: String = "",
+        displayWakeAllowed: Boolean = true,
     ) {
         val previous = state.activeNotice()
         val decision = state.show(
@@ -915,7 +922,7 @@ internal object NoticeController {
                     serviceContext,
                     assistantEpisodeNoticeShownSignal(
                         surfaceId = decision.notice.surfaceId,
-                        ownerPluginId = decision.notice.ownerPluginId,
+                        ownerPluginId = decision.notice.ownerPluginId.takeIf { decision.notice.displayWakeAllowed }.orEmpty(),
                         seq = decision.notice.seq,
                         engaged = decision.notice.content.interactive,
                     ),
@@ -931,7 +938,7 @@ internal object NoticeController {
                 val signal = if (genuineEngagement) {
                     assistantEpisodeNoticeShownSignal(
                         surfaceId = decision.notice.surfaceId,
-                        ownerPluginId = decision.notice.ownerPluginId,
+                        ownerPluginId = decision.notice.ownerPluginId.takeIf { decision.notice.displayWakeAllowed }.orEmpty(),
                         seq = decision.notice.seq,
                         engaged = decision.notice.content.interactive,
                     )
@@ -1028,7 +1035,7 @@ internal object NoticeController {
         val wakeDecision = DisplayWakePolicy.requestWake(
             context = context,
             kind = DisplayWakeKind.NOTICE,
-            requested = notice.content.wakeDisplay,
+            requested = notice.content.wakeDisplay && notice.displayWakeAllowed,
             seq = notice.seq,
             newNotice = true,
         )

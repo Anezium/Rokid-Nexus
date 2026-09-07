@@ -92,13 +92,10 @@ class NexusPluginClient internal constructor(
     val supportsPinSurface: Boolean
         get() = hubCapabilities and BusCapabilityBits.PIN_SURFACE != 0
 
-    /**
-     * Whether these glasses can show an ambient lyrics widget. Like [supportsPinSurface]
-     * this ignores the current link: a widget is ambient and re-asserted by redraw, so a
-     * sleeping glasses is not a reason for the phone-side trigger to refuse.
-     */
+    /** Widget presentation requires a compatible glasses hub and a live data link. */
     val supportsWidgetSurface: Boolean
-        get() = hubCapabilities and BusCapabilityBits.WIDGET_SURFACE != 0
+        get() = currentLinkState and LinkStateBits.SPP_DATA_UP != 0 &&
+            hubCapabilities and BusCapabilityBits.WIDGET_SURFACE != 0
 
     fun showPin(pin: NexusPin): NexusSdkResult {
         pinPreflight()?.let { return it }

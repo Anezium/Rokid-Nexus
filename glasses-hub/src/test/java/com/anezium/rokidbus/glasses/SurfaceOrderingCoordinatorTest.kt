@@ -136,11 +136,90 @@ class SurfaceOrderingCoordinatorTest {
         assertEquals("anchor-21", decision.pendingAnchor?.value)
     }
 
-    private fun media(seq: Long, key: String) = SurfaceOrder(
+    @Test
+    fun `older epoch is dropped even when seq is newer`() {
+        val coordinator = SurfaceOrderingCoordinator<String>()
+        assertApplyBase(coordinator.onBase(card(seq = 1, epoch = 1, surfaceId = "assistant:main")))
+
+        assertDrop(
+            coordinator.onBase(card(seq = 99, epoch = 0, surfaceId = "lyrics:main")),
+            SurfaceOrderDropReason.STALE_EPOCH,
+            latestBaseSeq = Long.MIN_VALUE,
+            latestSeq = Long.MIN_VALUE,
+            liveEpoch = 1,
+        )
+        assertDrop(
+            coordinator.onAnchor(card(seq = 100, epoch = 0, surfaceId = "lyrics:main"), "late"),
+            SurfaceOrderDropReason.STALE_EPOCH,
+            latestBaseSeq = Long.MIN_VALUE,
+            latestSeq = Long.MIN_VALUE,
+            liveEpoch = 1,
+        )
+        assertTrue(
+            coordinator.isCurrentBase(card(seq = 1, epoch = 1, surfaceId = "assistant:main")),
+        )
+    }
+
+    @Test
+    fun `newer epoch applies even when seq is older than the previous occupant`() {
+        val coordinator = SurfaceOrderingCoordinator<String>()
+        val previous = card(seq = 50, epoch = 1, surfaceId = "assistant:main")
+        assertApplyBase(coordinator.onBase(previous))
+
+        val next = card(seq = 2, epoch = 2, surfaceId = "lyrics:main")
+        assertApplyBase(coordinator.onBase(next))
+
+        assertTrue(coordinator.isCurrentBase(next))
+        assertTrue(!coordinator.isCurrentBase(previous))
+        assertDrop(
+            coordinator.onBase(card(seq = 80, epoch = 1, surfaceId = "assistant:main")),
+            SurfaceOrderDropReason.STALE_EPOCH,
+            latestBaseSeq = 50,
+            latestSeq = 50,
+            liveEpoch = 2,
+        )
+    }
+
+    @Test
+    fun `equal epoch still drops a stale sequence`() {
+        val coordinator = SurfaceOrderingCoordinator<String>()
+        assertApplyBase(coordinator.onBase(card(seq = 5, epoch = 3)))
+
+        assertDrop(
+            coordinator.onBase(card(seq = 2, epoch = 3)),
+            SurfaceOrderDropReason.STALE_BASE,
+            latestBaseSeq = 5,
+            latestSeq = 5,
+            liveEpoch = 3,
+        )
+    }
+
+    @Test fun `old hide cannot clear the same surface after a new occupancy`() {
+        val coordinator = SurfaceOrderingCoordinator<String>()
+        coordinator.onBase(card(10, 1))
+        coordinator.onBase(card(1, 2))
+        val stale = coordinator.onHide(SURFACE_ID, 99, 1)
+        assertTrue(stale is SurfaceOrderDecision.Drop)
+        assertTrue(coordinator.isCurrentBase(card(1, 2)))
+        assertEquals(SurfaceOrderDecision.ApplyHide, coordinator.onHide(SURFACE_ID, 2, 2))
+        assertTrue(!coordinator.isCurrentBase(card(1, 2)))
+    }
+
+    @Test fun `new epoch anchor arriving before base does not retain old sequence floors`() {
+        val coordinator = SurfaceOrderingCoordinator<String>()
+        coordinator.onBase(media(100, "track", 1))
+        assertEquals(SurfaceOrderDecision.StashAnchor, coordinator.onAnchor(media(2, "track", 2), "fresh"))
+        val base = assertApplyBase(coordinator.onBase(media(1, "track", 2)))
+        assertEquals("fresh", base.pendingAnchor?.value)
+        assertEquals(SurfaceOrderDecision.ApplyAnchor, coordinator.onAnchor(media(3, "track", 2), "latest"))
+    }
+
+    private fun media(seq: Long, key: String, epoch: Long = 0L) = SurfaceOrder(
         surfaceId = SURFACE_ID,
         seq = seq,
         kind = "media",
         contentKey = key,
+        epoch = epoch,
     )
 
     private fun timedLines(seq: Long, key: String) = SurfaceOrder(
@@ -148,6 +227,18 @@ class SurfaceOrderingCoordinatorTest {
         seq = seq,
         kind = "timed-lines",
         contentKey = key,
+    )
+
+    private fun card(
+        seq: Long,
+        epoch: Long,
+        surfaceId: String = SURFACE_ID,
+    ) = SurfaceOrder(
+        surfaceId = surfaceId,
+        seq = seq,
+        kind = "card",
+        contentKey = "card",
+        epoch = epoch,
     )
 
     @Suppress("UNCHECKED_CAST")
@@ -163,12 +254,14 @@ class SurfaceOrderingCoordinatorTest {
         reason: SurfaceOrderDropReason,
         latestBaseSeq: Long,
         latestSeq: Long,
+        liveEpoch: Long = 0L,
     ) {
         assertTrue(decision is SurfaceOrderDecision.Drop)
         decision as SurfaceOrderDecision.Drop
         assertEquals(reason, decision.reason)
         assertEquals(latestBaseSeq, decision.latestBaseSeq)
         assertEquals(latestSeq, decision.latestSeq)
+        assertEquals(liveEpoch, decision.liveEpoch)
     }
 
     private companion object {

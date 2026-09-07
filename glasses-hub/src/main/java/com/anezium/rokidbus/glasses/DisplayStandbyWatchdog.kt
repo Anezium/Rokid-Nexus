@@ -143,7 +143,9 @@ internal class DisplayStandbyWatchdog(
         return DisplayStandbyConditions(
             interactiveState = readInteractiveState(),
             chargingState = readChargingState(),
-            surfacePresenting = conservativeBoolean { SurfaceController.activeSurface() != null },
+            surfacePresenting = conservativeBoolean {
+                SurfaceController.activeSurface() != null || LyricsWidgetDisplayHold.isHeld()
+            },
             noticePresenting = conservativeBoolean { NoticeController.activeNotice() != null },
             activityPresenting = conservativeBoolean(ActivityController::isPresenting),
             cameraSessionActive = conservativeBoolean(GlassesHub::isCameraSessionActive),
