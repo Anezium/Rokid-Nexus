@@ -863,6 +863,7 @@ internal object NoticeController {
             SystemClock.elapsedRealtime(),
             imageBitmap,
             ownerPluginId,
+            displayWakeAllowed,
         )
         // A different plugin taking the slot is a close for the one that had it,
         // and its owner is owed the reason.
