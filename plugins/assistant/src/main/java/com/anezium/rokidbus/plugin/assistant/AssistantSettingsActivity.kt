@@ -26,8 +26,10 @@ import com.anezium.rokidbus.client.ui.BusTheme
 import com.anezium.rokidbus.client.ui.NexusUi
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -59,6 +61,10 @@ class AssistantSettingsActivity : Activity() {
     private lateinit var syncFooter: LinearLayout
     private lateinit var memorySyncStatus: TextView
     private lateinit var refreshButton: View
+    private lateinit var questionButton: View
+    private lateinit var questionStatus: TextView
+    private var questionDialog: Dialog? = null
+    private var questionAvailabilityJob: Job? = null
 
     private val providerDots = mutableMapOf<String, View>()
     private val providerNames = mutableMapOf<String, TextView>()
@@ -166,9 +172,26 @@ class AssistantSettingsActivity : Activity() {
         renderProductivityCard()
         renderCalendarAccess()
         maybeDetectHermes(ProviderCatalog.custom)
+        questionAvailabilityJob?.cancel()
+        questionAvailabilityJob = settingsScope.launch {
+            while (true) {
+                val status = AssistantPluginService.phoneQuestionAvailability()
+                questionButton.isEnabled = status == AssistantTextInputStatus.READY
+                questionButton.alpha = if (questionButton.isEnabled) 1f else 0.5f
+                questionStatus.text = status.message
+                delay(1_000L)
+            }
+        }
+    }
+
+    override fun onPause() {
+        questionAvailabilityJob?.cancel()
+        questionAvailabilityJob = null
+        super.onPause()
     }
 
     override fun onDestroy() {
+        questionDialog?.dismiss()
         settingsScope.cancel()
         super.onDestroy()
     }
@@ -181,12 +204,14 @@ class AssistantSettingsActivity : Activity() {
             addView(
                 NexusUi.cardBody(
                     this@AssistantSettingsActivity,
-                    "Hold the assist button on your glasses and ask out loud. The answer " +
+                    "Ask out loud with the glasses assist button, or write a question here. The answer " +
                         "streams onto the HUD, riding your ChatGPT plan or any AI " +
                         "provider you connect below.",
                 ),
                 NexusUi.block(),
             )
+            addView(BusTheme.gap(this@AssistantSettingsActivity, 18))
+            addView(questionCard(), NexusUi.block())
             addView(BusTheme.gap(this@AssistantSettingsActivity, 18))
             addView(NexusUi.sectionRow(this@AssistantSettingsActivity, "Provider"), NexusUi.block())
             addView(BusTheme.gap(this@AssistantSettingsActivity, 12))
@@ -1881,6 +1906,24 @@ class AssistantSettingsActivity : Activity() {
             (resources.displayMetrics.widthPixels * 0.9f).toInt(),
             ViewGroup.LayoutParams.WRAP_CONTENT,
         )
+    }
+
+    private fun questionCard(): LinearLayout = NexusUi.card(this).apply {
+        addView(NexusUi.cardTitle(this@AssistantSettingsActivity, "Ask from your phone"))
+        addView(BusTheme.gap(this@AssistantSettingsActivity, 6))
+        questionStatus = NexusUi.cardBody(
+            this@AssistantSettingsActivity,
+            AssistantPluginService.phoneQuestionAvailability().message,
+        )
+        addView(questionStatus, NexusUi.block())
+        addView(BusTheme.gap(this@AssistantSettingsActivity, 10))
+        questionButton = NexusUi.outlinePillButton(this@AssistantSettingsActivity, "Write a question").apply {
+            isEnabled = false
+            setOnClickListener {
+                questionDialog = showAssistantQuestionDialog(this@AssistantSettingsActivity)
+            }
+        }
+        addView(questionButton, NexusUi.block())
     }
 
     private fun uninstallCard(): LinearLayout =

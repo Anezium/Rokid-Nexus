@@ -1,5 +1,6 @@
 package com.anezium.rokidbus.plugin.assistant
 
+import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
 import android.view.KeyEvent
@@ -138,7 +139,11 @@ class AssistantPluginService : NexusPluginService() {
     private val transcriber by lazy { OpenAiTranscriber(authStore::apiKey) }
 
     private var surface: NexusSurfaceSession? = null
-    private var pendingNoteEntry = false
+    private val textInput = AssistantTextInput(
+        availability = ::textInputAvailability,
+        onQuestion = ::askTypedQuestion,
+        onNote = ::saveTypedNote,
+    )
     private var inkSurface: NexusInkSurfaceSession? = null
     private var pendingInkShow: PendingInkShow? = null
     private var inkSurfaceActive = false
@@ -213,6 +218,7 @@ class AssistantPluginService : NexusPluginService() {
     }
 
     override fun onNexusOpen() {
+        textInput.clear()
         surface = nexusSurfaceSession(SURFACE_ID)
         inkSurface = nexusInkSurfaceSession(INK_SURFACE_ID)
         uiController.onOpen()
@@ -220,6 +226,7 @@ class AssistantPluginService : NexusPluginService() {
     }
 
     override fun onNexusClose() {
+        textInput.clear()
         uiController.onClose()
         captureTriggerGate.resetSession()
         resetCapture()
@@ -231,34 +238,45 @@ class AssistantPluginService : NexusPluginService() {
     }
 
     override fun onNexusInput(event: NexusInputEvent) {
-        if (event.action == KeyEvent.ACTION_DOWN && event.keyCode == KeyEvent.KEYCODE_BACK) {
+        if (event.action != KeyEvent.ACTION_DOWN) return
+        if (event.keyCode == KeyEvent.KEYCODE_BACK) {
             cancelPipeline()
             resetCapture()
-            pendingNoteEntry = false
+            textInput.clear()
             surface?.hide()
             uiController.onSurfaceHidden()
+        } else if (
+            (event.keyCode == KeyEvent.KEYCODE_ENTER || event.keyCode == KeyEvent.KEYCODE_DPAD_CENTER) &&
+            uiController.isLauncherHintShown && textInput.active == null
+        ) {
+            val status = beginSurfaceTextEntry(AssistantTextEntryKind.HUD_QUESTION)
+            if (status != AssistantTextInputStatus.READY) uiController.showError(status.message)
         }
     }
 
     override fun onNexusLinkState(state: Int) {
         currentLinkState = state
+        if (!hasGlassesDataLink()) textInput.clear()
     }
 
-    /**
-     * The wearer typed a note directly — no model call, no STT, works even
-     * without an AI provider configured. Triggered from [requestNewNote];
-     * [pendingNoteEntry] disambiguates this from any other future use of the
-     * same [SURFACE_ID] card.
-     */
     override fun onNexusSurfaceTextCommitted(surfaceId: String, text: String, cancelled: Boolean) {
-        if (!pendingNoteEntry) return
-        pendingNoteEntry = false
-        surface?.hide()
-        uiController.onSurfaceHidden()
-        if (cancelled) return
-        val trimmed = text.trim()
-        if (trimmed.isEmpty()) return
-        val result = runCatching { noteStore.save(text = trimmed) }.getOrNull()
+        val entry = textInput.active ?: return
+        val status = textInput.commitSurface(surfaceId, text, cancelled)
+        if (status == AssistantTextInputStatus.EXPIRED) return
+        if (entry.kind == AssistantTextEntryKind.NOTE) {
+            surface?.hide()
+            uiController.onSurfaceHidden()
+        } else if (status != AssistantTextInputStatus.SENT && isNexusSessionOpen && hasGlassesDataLink()) {
+            if (status == AssistantTextInputStatus.CANCELLED || status == AssistantTextInputStatus.EMPTY) {
+                uiController.showLauncherHint()
+            } else {
+                uiController.showError(status.message)
+            }
+        }
+    }
+
+    private fun saveTypedNote(text: String) {
+        val result = runCatching { noteStore.save(text = text) }.getOrNull()
         // Never log `result` itself: AssistantNoteSaveResult.Saved's generated toString()
         // serializes the wearer's private note title and full text into logcat.
         val status = when (result) {
@@ -338,6 +356,7 @@ class AssistantPluginService : NexusPluginService() {
 
     override fun onDestroy() {
         if (debugInstance === this) debugInstance = null
+        textInput.clear()
         uiController.onClose()
         resetCapture()
         cancelPipeline()
@@ -354,6 +373,7 @@ class AssistantPluginService : NexusPluginService() {
     }
 
     private fun beginCapture() {
+        textInput.clear()
         uiController.beginGestureFlow()
         clearInkSurface(hide = true)
         if (captureActive) return
@@ -549,6 +569,79 @@ class AssistantPluginService : NexusPluginService() {
         launchPipeline {
             streamAssistantAnswer(normalized)
         }
+    }
+
+    private fun askTypedQuestion(question: String): AssistantTextInputStatus {
+        stopAnswerSpeech()
+        uiController.beginGestureFlow()
+        // Replace a previous Ink answer before hiding it: hiding the only surface self-closes.
+        val replacedInk = inkSurfaceActive
+        if (replacedInk && renderCard(listOf("Thinking…"), forceShow = true) != NexusSdkResult.SENT) {
+            return AssistantTextInputStatus.UNAVAILABLE
+        }
+        clearInkSurface(hide = true)
+        if (replacedInk) uiController.onCardSurfaceShown()
+        launchAssistantPipeline(question)
+        return AssistantTextInputStatus.SENT
+    }
+
+    private fun hasGlassesDataLink(): Boolean =
+        currentLinkState and (LinkStateBits.CXR_CONTROL_UP or LinkStateBits.SPP_DATA_UP) != 0
+
+    private fun textInputAvailability(kind: AssistantTextEntryKind): AssistantTextInputStatus = when {
+        !isNexusSessionOpen || surface == null || nexusClient?.isApproved != true ->
+            AssistantTextInputStatus.NOT_OPEN
+        !hasGlassesDataLink() -> AssistantTextInputStatus.DISCONNECTED
+        captureActive || fallbackTranscribePending || speechSession != null || audioSession != null ||
+            pipelineJob?.isActive == true || snapshotSession != null -> AssistantTextInputStatus.BUSY
+        kind != AssistantTextEntryKind.NOTE && !authStore.hasUsableAuth() ->
+            AssistantTextInputStatus.AUTH_REQUIRED
+        kind != AssistantTextEntryKind.PHONE_QUESTION && nexusClient?.supportsEditableSurface != true ->
+            AssistantTextInputStatus.UNSUPPORTED
+        else -> AssistantTextInputStatus.READY
+    }
+
+    private fun beginSurfaceTextEntry(kind: AssistantTextEntryKind): AssistantTextInputStatus {
+        val start = textInput.begin(kind)
+        val entry = start.entry ?: return start.status
+        val previousSurface = surface
+        val session = nexusSurfaceSession(entry.id)
+        if (session == null) {
+            textInput.cancel(entry.id)
+            return AssistantTextInputStatus.NOT_OPEN
+        }
+        session.onRejected = {
+            if (textInput.cancel(entry.id)) {
+                surface = previousSurface
+                uiController.onSurfaceHidden()
+            }
+        }
+        val isNote = kind == AssistantTextEntryKind.NOTE
+        val result = session.showCard(
+            NexusCard(
+                title = if (isNote) "New note" else "Write a question",
+                lines = emptyList(),
+                subtitle = "Use a keyboard or phone Keyboard & remote",
+                footer = "512 characters · Enter to ${if (isNote) "save" else "send"} · Back to cancel",
+                editable = EditableSurfaceField(
+                    placeholder = if (isNote) "Type a note…" else "Ask Assistant…",
+                    submitLabel = if (isNote) "Save" else "Send",
+                ),
+            ),
+        )
+        if (result != NexusSdkResult.SENT) {
+            textInput.cancel(entry.id)
+            return if (result == NexusSdkResult.SURFACE_BUSY) {
+                AssistantTextInputStatus.BUSY
+            } else {
+                AssistantTextInputStatus.UNAVAILABLE
+            }
+        }
+        surface = session
+        stopAnswerSpeech()
+        clearInkSurface(hide = true)
+        uiController.onCardSurfaceShown()
+        return AssistantTextInputStatus.READY
     }
 
     private fun launchPipeline(block: suspend () -> Unit) {
@@ -1006,6 +1099,15 @@ class AssistantPluginService : NexusPluginService() {
             title = "Assistant",
             lines = lines.take(MAX_HUD_LINES).map { it.take(MAX_CARD_LINE_CHARS) },
             handlesBack = true,
+            footer = if (lines == listOf(AssistantUiController.LAUNCHER_HINT)) {
+                if (nexusClient?.supportsEditableSurface == true) {
+                    "Tap to write a question · Back to close"
+                } else {
+                    "Write in phone settings · Back to close"
+                }
+            } else {
+                null
+            },
         )
         return if (forceShow) {
             session.showCard(card)
@@ -1154,41 +1256,42 @@ class AssistantPluginService : NexusPluginService() {
                     return@launch
                 }
                 service.stopAnswerSpeech()
+                service.textInput.clear()
                 service.clearInkSurface(hide = true)
                 service.launchAssistantPipeline(question)
             }
             return true
         }
 
-        /**
-         * Opens a bare editable field on the wearer's foreground card for a
-         * typed note — the [AssistantProductivityActivity] "Add note" button's
-         * rendezvous with the live service, same shape as [debugAsk]. Only
-         * works while the wearer already has Assistant open on the glasses,
-         * same constraint [debugAsk] has: there is no surface session before
-         * `onNexusOpen` has run.
-         */
-        internal fun requestNewNote(): Boolean {
-            val service = debugInstance ?: return false
-            if (!service.isNexusSessionOpen) return false
-            val currentSurface = service.surface ?: return false
-            service.serviceScope.launch {
-                service.cancelPipeline()
-                service.resetCapture()
-                service.pendingNoteEntry = true
-                val result = currentSurface.showCard(
-                    NexusCard(
-                        title = "New note",
-                        lines = emptyList(),
-                        editable = EditableSurfaceField(
-                            placeholder = "Type a note…",
-                            submitLabel = "Save",
-                        ),
-                    ),
-                )
-                if (result != NexusSdkResult.SENT) service.pendingNoteEntry = false
-            }
-            return true
+        // These rendezvous stay inside the plugin process; no Intent accepts a user prompt.
+        internal fun phoneQuestionAvailability(): AssistantTextInputStatus {
+            check(Looper.myLooper() == Looper.getMainLooper())
+            return debugInstance?.textInput?.availableFor(AssistantTextEntryKind.PHONE_QUESTION)
+                ?: AssistantTextInputStatus.NOT_OPEN
+        }
+
+        internal fun beginPhoneQuestion(): AssistantTextEntryStart {
+            check(Looper.myLooper() == Looper.getMainLooper())
+            return debugInstance?.textInput?.begin(AssistantTextEntryKind.PHONE_QUESTION)
+                ?: AssistantTextEntryStart(AssistantTextInputStatus.NOT_OPEN)
+        }
+
+        internal fun submitPhoneQuestion(entryId: String, question: String): AssistantTextInputStatus {
+            check(Looper.myLooper() == Looper.getMainLooper())
+            return debugInstance?.textInput?.submitPhone(entryId, question)
+                ?: AssistantTextInputStatus.NOT_OPEN
+        }
+
+        internal fun cancelPhoneQuestion(entryId: String) {
+            check(Looper.myLooper() == Looper.getMainLooper())
+            val input = debugInstance?.textInput ?: return
+            if (input.active?.kind == AssistantTextEntryKind.PHONE_QUESTION) input.cancel(entryId)
+        }
+
+        internal fun requestNewNote(): AssistantTextInputStatus {
+            check(Looper.myLooper() == Looper.getMainLooper())
+            return debugInstance?.beginSurfaceTextEntry(AssistantTextEntryKind.NOTE)
+                ?: AssistantTextInputStatus.NOT_OPEN
         }
     }
 }
