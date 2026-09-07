@@ -5,6 +5,33 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class FoodFactsClientTest {
+    @Test(expected = FoodFactsLookupException::class)
+    fun mismatchedResponseCannotLogAnotherBarcode() {
+        FoodFactsClient.parseProduct("""{"product":{"code":"12345679"}}""", "12345678", 1)
+    }
+
+    @Test(expected = FoodFactsLookupException::class)
+    fun milliliterNutritionCannotBeScaledAsGrams() {
+        FoodFactsClient.parseProduct("""{"product":{"code":"12345678","quantity":"330 ml","nutriments":{"energy-kcal_100g":45}}}""", "12345678", 1)
+    }
+
+    @Test(expected = FoodFactsLookupException::class)
+    fun aVolumeServingWithoutPackageQuantityIsRejected() {
+        FoodFactsClient.parseProduct("""{"product":{"code":"12345678","serving_quantity":250,"serving_quantity_unit":"ml"}}""", "12345678", 1)
+    }
+
+    @Test fun aServingWithoutUnitsIsNotAssumedToWeighGrams() {
+        val product = FoodFactsClient.parseProduct("""{"product":{"code":"12345678","serving_quantity":250}}""", "12345678", 1)!!
+        assertNull(product.servingGrams)
+    }
+
+    @Test fun standardGramMicronutrientsAreConvertedToMilligramsAndKjToKcal() {
+        val product = FoodFactsClient.parseProduct("""{"product":{"code":"12345678","nutriments":{"energy-kj_100g":418.4,"sodium_100g":0.25,"iron_100g":0.003,"calcium_100g":0.12}}}""", "12345678", 1)!!
+        assertEquals(100.0, product.nutrients.caloriesKcal!!, 0.00001)
+        assertEquals(250.0, product.nutrients.sodiumMilligrams!!, 0.0)
+        assertEquals(3.0, product.nutrients.ironMilligrams!!, 0.0)
+        assertEquals(120.0, product.nutrients.calciumMilligrams!!, 0.0)
+    }
     @Test
     fun parseProduct_keepsTheProductNutritionSnapshot() {
         val product = FoodFactsClient.parseProduct(
@@ -31,7 +58,7 @@ class FoodFactsClientTest {
                   }
                 }
             """.trimIndent(),
-            fallbackBarcode = "0000000000000",
+            fallbackBarcode = "3012345678901",
             fetchedAtMillis = 1_700_000_000_000L,
         )
 
@@ -51,7 +78,7 @@ class FoodFactsClientTest {
     fun parseProduct_preservesMissingNutrientsAsUnknown() {
         val product = FoodFactsClient.parseProduct(
             json = """{"product":{"code":"12345678","nutriments":{"fat_100g":0}}}""",
-            fallbackBarcode = "87654321",
+            fallbackBarcode = "12345678",
             fetchedAtMillis = 42L,
         )
 
@@ -87,14 +114,14 @@ class FoodFactsClientTest {
     }
 
     @Test
-    fun parseProduct_rejectsInvalidAndNonGramServingValues() {
+    fun parseProduct_preservesUnknownServingWeightAndInvalidNutrition() {
         val product = FoodFactsClient.parseProduct(
             json = """
                 {"product":{"code":"12345678","serving_quantity":250,
-                "serving_quantity_unit":"ml","nova_group":7,
+                "serving_quantity_unit":"oz","nova_group":7,
                 "nutriments":{"energy-kcal_100g":-3,"proteins_100g":"not a number"}}}
             """.trimIndent(),
-            fallbackBarcode = "00000000",
+            fallbackBarcode = "12345678",
             fetchedAtMillis = 12L,
         )
 
