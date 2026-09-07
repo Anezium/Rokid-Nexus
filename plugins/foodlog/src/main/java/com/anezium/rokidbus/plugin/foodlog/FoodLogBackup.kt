@@ -99,7 +99,9 @@ internal object FoodLogBackup {
             val ingredients = List(ingredientsArray.length()) { ingredientIndex ->
                 val ingredient = ingredientsArray.getJSONObject(ingredientIndex)
                 val productId = requiredText(ingredient, "productId", 70)
-                val product = products[productId] ?: throw IllegalArgumentException("Missing recipe product")
+                val catalogProduct = products[productId] ?: throw IllegalArgumentException("Missing recipe product")
+                val product = ingredient.optJSONObject("product")?.let(::productFromJson) ?: catalogProduct
+                require(product.barcode == productId) { "Recipe ingredient identity mismatch" }
                 RecipeIngredient(product, requiredNumber(ingredient, "grams", MIN_QUANTITY_GRAMS, MAX_RECIPE_INGREDIENT_GRAMS))
             }
             FoodRecipe(
@@ -167,7 +169,8 @@ internal object FoodLogBackup {
         put("createdAtMillis", createdAtMillis)
         put("ingredients", JSONArray().apply {
             ingredients.forEach { ingredient ->
-                put(JSONObject().put("productId", ingredient.product.barcode).put("grams", ingredient.grams))
+                put(JSONObject().put("productId", ingredient.product.barcode).put("grams", ingredient.grams)
+                    .put("product", ingredient.product.toJson()))
             }
         })
     }
@@ -235,6 +238,18 @@ internal object FoodLogBackup {
             fetchedAtMillis = fetchedAt,
         )
     }
+
+    internal fun productSnapshot(product: FoodProduct): String = product.toJson().toString()
+    internal fun readProductSnapshot(json: String): FoodProduct = productFromJson(JSONObject(json))
+    internal fun entrySnapshot(entry: FoodEntry): String = entry.toJson().put("localId", entry.id).toString()
+    internal fun readEntrySnapshot(json: String): FoodEntry = JSONObject(json).let {
+        entryFromJson(it).copy(id = it.getLong("localId"))
+    }
+    internal fun recipeSnapshot(recipe: FoodRecipe): String = encode(FoodLogArchive(
+        emptyList(), recipe.ingredients.map(RecipeIngredient::product) + recipe.asProduct(),
+        emptySet(), null, listOf(recipe), emptyList(),
+    ))
+    internal fun readRecipeSnapshot(json: String): FoodRecipe = decode(json).recipes.single()
 
     private fun goalsFromJson(value: JSONObject) = NutritionGoals(
         caloriesKcal = optionalNumber(value, "calories", 1.0, 20_000.0),

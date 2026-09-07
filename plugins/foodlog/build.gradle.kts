@@ -12,8 +12,8 @@ android {
         applicationId = "com.anezium.rokidbus.plugin.foodlog"
         minSdk = 30
         targetSdk = 36
-        versionCode = 3
-        versionName = "3.0.0"
+        versionCode = 4
+        versionName = "3.1.0"
     }
 
     compileOptions {
@@ -29,4 +29,5 @@ dependencies {
     implementation("com.google.mlkit:barcode-scanning:17.3.0")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
+    testImplementation("org.robolectric:robolectric:4.13")
 }

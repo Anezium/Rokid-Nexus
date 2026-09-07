@@ -3,6 +3,8 @@ package com.anezium.rokidbus.plugin.foodlog
 import java.text.DecimalFormat
 import java.text.DecimalFormatSymbols
 import java.time.Instant
+import java.time.LocalDate
+import java.time.LocalTime
 import java.time.ZoneId
 import java.util.Locale
 
@@ -193,8 +195,43 @@ internal fun formatNutritionNumber(value: Double): String {
 }
 
 internal fun normalizeBarcode(raw: String): String? {
-    val normalized = raw.filter(Char::isDigit)
+    if (raw.any { it !in '0'..'9' && !it.isWhitespace() && it != '-' }) return null
+    val normalized = raw.filter { it in '0'..'9' }
     return normalized.takeIf { it.length in 4..14 }
+}
+
+internal fun editableNutritionNumber(value: Double): String =
+    java.math.BigDecimal.valueOf(value).stripTrailingZeros().toPlainString()
+
+internal data class MealNutrition(val meal: MealType, val entries: List<FoodEntry>) {
+    val totals: DailyNutritionTotals get() = aggregateNutrition(entries)
+}
+
+internal fun journalMeals(entries: List<FoodEntry>): List<MealNutrition> =
+    MealType.entries.filter { it != MealType.UNKNOWN || entries.any { entry -> entry.mealType == it } }
+        .map { meal -> MealNutrition(meal, entries.filter { it.mealType == meal }.sortedBy(FoodEntry::consumedAtMillis)) }
+
+internal fun portionGrams(amount: Double, servingGrams: Double? = null): Double {
+    require(amount.isFinite() && amount > 0.0) { "Enter a positive portion." }
+    require(servingGrams == null || servingGrams.isFinite() && servingGrams > 0.0) { "Serving weight is unknown." }
+    return (amount * (servingGrams ?: 1.0)).also {
+        require(it in MIN_QUANTITY_GRAMS..MAX_QUANTITY_GRAMS) { "Portion must weigh between 1 and 5,000 g." }
+    }
+}
+
+/** Reject nonexistent wall times and retain an existing entry's offset during a DST overlap. */
+internal fun consumptionTime(
+    date: LocalDate,
+    time: LocalTime,
+    zoneId: ZoneId = ZoneId.systemDefault(),
+    originalMillis: Long? = null,
+): Long {
+    val local = date.atTime(time)
+    val offsets = zoneId.rules.getValidOffsets(local)
+    require(offsets.isNotEmpty()) { "This time does not exist because the clocks change. Choose another time." }
+    val originalOffset = originalMillis?.let { zoneId.rules.getOffset(Instant.ofEpochMilli(it)) }
+    val offset = originalOffset?.takeIf { it in offsets } ?: offsets.first()
+    return local.toInstant(offset).toEpochMilli().also { require(it > 0L) { "Choose a date after 1970." } }
 }
 
 internal fun dayBounds(

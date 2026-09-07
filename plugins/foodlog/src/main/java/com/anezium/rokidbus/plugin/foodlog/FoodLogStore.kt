@@ -10,6 +10,9 @@ import java.util.UUID
 
 internal const val MIN_QUANTITY_GRAMS = 1.0
 internal const val MAX_QUANTITY_GRAMS = 5_000.0
+private const val EXACT_ENTRY_SELECTION = "id=? AND entry_uuid=? AND consumed_at=? AND quantity_grams=? AND meal_type=?"
+
+private fun FoodEntry.selectionArgs() = arrayOf(id.toString(), uuid, consumedAtMillis.toString(), quantityGrams.toString(), mealType.name)
 
 internal data class FoodLogDatabaseImportResult(
     val insertedEntries: Int,
@@ -29,9 +32,11 @@ internal class FoodLogStore(context: Context) : AutoCloseable {
         name: String,
         nutrients: NutrientsPer100g,
         brand: String = "",
+        servingGrams: Double? = null,
     ): FoodProduct {
         require(name.isNotBlank() && name.length <= 300)
-        return FoodProduct("custom-" + UUID.randomUUID(), name.trim(), brand.trim(), null, null, null, null, nutrients, System.currentTimeMillis()).also(::upsertProduct)
+        require(servingGrams == null || servingGrams in MIN_QUANTITY_GRAMS..MAX_QUANTITY_GRAMS)
+        return FoodProduct("custom-" + UUID.randomUUID(), name.trim(), brand.trim(), if (servingGrams != null) "1 serving" else null, servingGrams, null, null, nutrients, System.currentTimeMillis()).also(::upsertProduct)
     }
     @Synchronized fun addEntry(product: FoodProduct, quantityGrams: Double, consumedAtMillis: Long = System.currentTimeMillis()): Long =
         addEntry(product, quantityGrams, consumedAtMillis, MealType.UNKNOWN, FoodEntrySource.UNKNOWN)
@@ -41,7 +46,7 @@ internal class FoodLogStore(context: Context) : AutoCloseable {
         require(FOOD_ENTRY_ID_PATTERN.matches(uuid))
         require(recipeId == null || FOOD_UUID_PATTERN.matches(recipeId))
         val db = helper.writableDatabase; db.beginTransaction()
-        return try { db.insertWithOnConflict("products", null, product.values(), SQLiteDatabase.CONFLICT_REPLACE)
+        return try { db.insertWithOnConflict("products", null, product.values(), SQLiteDatabase.CONFLICT_IGNORE)
             db.insertOrThrow("entries", null, product.values().apply { remove("fetched_at"); put("consumed_at", consumedAtMillis); put("quantity_grams", quantityGrams); put("entry_uuid", uuid); put("meal_type", mealType.name); put("source", source.name); putNullable("recipe_id", recipeId) }).also { db.setTransactionSuccessful() }
         } finally { db.endTransaction() }
     }
@@ -108,6 +113,37 @@ internal class FoodLogStore(context: Context) : AutoCloseable {
             arrayOf(uuid),
         ) == 1
     }
+    @Synchronized fun updateEntry(original: FoodEntry, quantityGrams: Double, consumedAtMillis: Long, mealType: MealType): Boolean {
+        require(quantityGrams in MIN_QUANTITY_GRAMS..MAX_QUANTITY_GRAMS)
+        require(consumedAtMillis > 0L)
+        if (!FOOD_ENTRY_ID_PATTERN.matches(original.uuid)) return false
+        return helper.writableDatabase.update(
+            "entries",
+            ContentValues().apply {
+                put("quantity_grams", quantityGrams)
+                put("consumed_at", consumedAtMillis)
+                put("meal_type", mealType.name)
+            },
+            EXACT_ENTRY_SELECTION,
+            original.selectionArgs(),
+        ) == 1
+    }
+
+    @Synchronized fun deleteEntry(original: FoodEntry): Boolean =
+        FOOD_ENTRY_ID_PATTERN.matches(original.uuid) && helper.writableDatabase.delete(
+            "entries", EXACT_ENTRY_SELECTION, original.selectionArgs(),
+        ) == 1
+
+    @Synchronized fun searchProducts(query: String, limit: Int = 100): List<FoodProduct> {
+        val escaped = query.trim().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        val pattern = "%$escaped%"
+        return helper.readableDatabase.query(
+            "products", PRODUCT_COLUMNS,
+            "product_name LIKE ? ESCAPE '\\' OR brand LIKE ? ESCAPE '\\' OR barcode=?",
+            arrayOf(pattern, pattern, query.trim()), null, null,
+            "product_name COLLATE NOCASE", limit.coerceIn(1, 500).toString(),
+        ).use { it.rows(Cursor::toProduct) }
+    }
     @Synchronized fun setFavorite(barcode: String, favorite: Boolean) { val code=productId(barcode)?:return; if(favorite) helper.writableDatabase.insertWithOnConflict("favorites",null,ContentValues().apply{put("barcode",code)},SQLiteDatabase.CONFLICT_IGNORE) else helper.writableDatabase.delete("favorites","barcode=?",arrayOf(code)) }
     @Synchronized fun favoriteProducts(): List<FoodProduct> = helper.readableDatabase.rawQuery("SELECT ${PRODUCT_COLUMNS.joinToString()} FROM products WHERE barcode IN (SELECT barcode FROM favorites) ORDER BY product_name",null).use { it.rows(Cursor::toProduct) }
     @Synchronized fun saveGoals(goals: NutritionGoals) { helper.writableDatabase.insertWithOnConflict("goals",null,ContentValues().apply { put("singleton",1); putNullable("calories",goals.caloriesKcal);putNullable("protein",goals.proteinGrams);putNullable("carbohydrate",goals.carbohydrateGrams);putNullable("fat",goals.fatGrams) },SQLiteDatabase.CONFLICT_REPLACE) }
@@ -121,7 +157,7 @@ internal class FoodLogStore(context: Context) : AutoCloseable {
                     "products",
                     null,
                     ingredient.product.values(),
-                    SQLiteDatabase.CONFLICT_REPLACE,
+                    SQLiteDatabase.CONFLICT_IGNORE,
                 )
             }
             db.insertWithOnConflict(
@@ -150,6 +186,7 @@ internal class FoodLogStore(context: Context) : AutoCloseable {
                         put("recipe_uuid", recipe.uuid)
                         put("barcode", ingredient.product.barcode)
                         put("grams", ingredient.grams)
+                        put("product_snapshot", FoodLogBackup.productSnapshot(ingredient.product))
                     },
                 )
             }
@@ -172,13 +209,14 @@ internal class FoodLogStore(context: Context) : AutoCloseable {
             recipesCursor.rows { recipeCursor ->
                 val uuid = recipeCursor.s("recipe_uuid")
                 val ingredients = db.rawQuery(
-                    "SELECT ${PRODUCT_COLUMNS.joinToString { "p.$it" }}, ri.grams AS ingredient_grams " +
+                    "SELECT ${PRODUCT_COLUMNS.joinToString { "p.$it" }}, ri.grams AS ingredient_grams, ri.product_snapshot " +
                         "FROM recipe_ingredients ri INNER JOIN products p ON p.barcode=ri.barcode " +
                         "WHERE ri.recipe_uuid=? ORDER BY p.product_name COLLATE NOCASE",
                     arrayOf(uuid),
                 ).use { ingredientCursor ->
                     ingredientCursor.rows {
-                        RecipeIngredient(it.toProduct(), it.getDouble(it.getColumnIndexOrThrow("ingredient_grams")))
+                        val snapshot = it.ns("product_snapshot")?.let(FoodLogBackup::readProductSnapshot) ?: it.toProduct()
+                        RecipeIngredient(snapshot, it.getDouble(it.getColumnIndexOrThrow("ingredient_grams")))
                     }
                 }
                 FoodRecipe(
@@ -269,6 +307,7 @@ internal class FoodLogStore(context: Context) : AutoCloseable {
                             put("recipe_uuid", recipe.uuid)
                             put("barcode", ingredient.product.barcode)
                             put("grams", ingredient.grams)
+                            put("product_snapshot", FoodLogBackup.productSnapshot(ingredient.product))
                         },
                     )
                 }
@@ -290,10 +329,23 @@ internal class FoodLogStore(context: Context) : AutoCloseable {
         null,
         "product_name COLLATE NOCASE",
     ).use { it.rows(Cursor::toProduct) }
-    override fun close() = helper.close()
-    private class FoodLogDatabase(context: Context): SQLiteOpenHelper(context,"food-log.db",null,2) {
-        override fun onCreate(db: SQLiteDatabase) { createV1(db); upgradeTo2(db) }
-        override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) { if(oldVersion < 2) upgradeTo2(db) }
+    @Synchronized override fun close() = helper.close()
+    private class FoodLogDatabase(context: Context): SQLiteOpenHelper(context,"food-log.db",null,3) {
+        override fun onCreate(db: SQLiteDatabase) { createV1(db); upgradeTo2(db); upgradeTo3(db) }
+        override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+            if (oldVersion < 2) upgradeTo2(db)
+            if (oldVersion < 3) upgradeTo3(db)
+        }
+        private fun upgradeTo3(db: SQLiteDatabase) {
+            db.execSQL("ALTER TABLE recipe_ingredients ADD COLUMN product_snapshot TEXT")
+            db.rawQuery("SELECT recipe_uuid, ri.barcode AS ingredient_barcode, ${PRODUCT_COLUMNS.joinToString { "p.$it" }} FROM recipe_ingredients ri INNER JOIN products p ON p.barcode=ri.barcode", null).use { cursor ->
+                while (cursor.moveToNext()) {
+                    db.update("recipe_ingredients", ContentValues().apply {
+                        put("product_snapshot", FoodLogBackup.productSnapshot(cursor.toProduct()))
+                    }, "recipe_uuid=? AND barcode=?", arrayOf(cursor.s("recipe_uuid"), cursor.s("ingredient_barcode")))
+                }
+            }
+        }
         private fun createV1(db: SQLiteDatabase) { db.execSQL("CREATE TABLE products (barcode TEXT PRIMARY KEY NOT NULL, product_name TEXT NOT NULL, brand TEXT NOT NULL, serving_label TEXT, serving_grams REAL, nutrition_grade TEXT, nova_group INTEGER, calories_100g REAL, protein_100g REAL, carbohydrate_100g REAL, fat_100g REAL, sugars_100g REAL, fiber_100g REAL, salt_100g REAL, fetched_at INTEGER NOT NULL)"); db.execSQL("CREATE TABLE entries (id INTEGER PRIMARY KEY AUTOINCREMENT, consumed_at INTEGER NOT NULL, quantity_grams REAL NOT NULL, barcode TEXT NOT NULL, product_name TEXT NOT NULL, brand TEXT NOT NULL, serving_label TEXT, serving_grams REAL, nutrition_grade TEXT, nova_group INTEGER, calories_100g REAL, protein_100g REAL, carbohydrate_100g REAL, fat_100g REAL, sugars_100g REAL, fiber_100g REAL, salt_100g REAL)"); db.execSQL("CREATE INDEX entries_consumed_at ON entries (consumed_at DESC)"); db.execSQL("CREATE INDEX entries_barcode ON entries (barcode)") }
         private fun upgradeTo2(db: SQLiteDatabase) { listOf("saturated_fat_100g REAL","sodium_100g REAL","cholesterol_100g REAL","potassium_100g REAL","calcium_100g REAL","iron_100g REAL","caffeine_100g REAL").forEach { c -> db.execSQL("ALTER TABLE products ADD COLUMN $c"); db.execSQL("ALTER TABLE entries ADD COLUMN $c") }; db.execSQL("ALTER TABLE entries ADD COLUMN entry_uuid TEXT"); db.execSQL("ALTER TABLE entries ADD COLUMN meal_type TEXT NOT NULL DEFAULT 'UNKNOWN'"); db.execSQL("ALTER TABLE entries ADD COLUMN source TEXT NOT NULL DEFAULT 'UNKNOWN'"); db.execSQL("ALTER TABLE entries ADD COLUMN recipe_id TEXT"); db.execSQL("UPDATE entries SET entry_uuid = lower(hex(randomblob(16))) WHERE entry_uuid IS NULL"); db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS entries_uuid ON entries(entry_uuid)"); db.execSQL("CREATE TABLE IF NOT EXISTS favorites (barcode TEXT PRIMARY KEY NOT NULL)"); db.execSQL("CREATE TABLE IF NOT EXISTS goals (singleton INTEGER PRIMARY KEY CHECK(singleton=1), calories REAL, protein REAL, carbohydrate REAL, fat REAL)"); db.execSQL("CREATE TABLE IF NOT EXISTS recipes (recipe_uuid TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL, servings REAL NOT NULL, created_at INTEGER NOT NULL)"); db.execSQL("CREATE TABLE IF NOT EXISTS recipe_ingredients (recipe_uuid TEXT NOT NULL, barcode TEXT NOT NULL, grams REAL NOT NULL, PRIMARY KEY(recipe_uuid, barcode))") }
     }
