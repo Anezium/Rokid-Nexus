@@ -1,0 +1,85 @@
+name: Tests
+
+# Every push and pull request runs the unit tests of every module. sdk.yml covers
+# the public SDK modules; this workflow covers what actually ships to users: the
+# two hubs (which need the vendor CXR library) and every plugin.
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  hubs:
+    name: Hub unit tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: RokidNexus
+    steps:
+      - name: Check out the revision
+        uses: actions/checkout@v6
+        with:
+          path: RokidNexus
+
+      - name: Check out CxrGlobal 0.2.3
+        uses: actions/checkout@v6
+        with:
+          repository: Anezium/CxrGlobal
+          ref: v0.2.3
+          path: CxrGlobal
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Run phone-hub and glasses-hub unit tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew :phone-hub:testDebugUnitTest :glasses-hub:testDebugUnitTest
+
+  plugins:
+    name: Plugin unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the revision
+        uses: actions/checkout@v6
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Run every plugin's unit tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew \
+            :plugin-assistant:testDebugUnitTest \
+            :plugin-relay:testDebugUnitTest \
+            :plugin-lens:testDebugUnitTest \
+            :plugin-lyrics:testDebugUnitTest \
+            :plugin-transit:testDebugUnitTest \
+            :plugin-feeds:testDebugUnitTest \
+            :plugin-media:testDebugUnitTest \
+            :plugin-tasker:testDebugUnitTest \
+            :plugin-photosync:testDebugUnitTest \
+            :plugin-wireless-adb:testDebugUnitTest \
+            :plugin-sample:testDebugUnitTest \
+            -PskipCxrGlobal=true

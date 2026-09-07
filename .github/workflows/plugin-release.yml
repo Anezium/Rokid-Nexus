@@ -151,6 +151,12 @@ jobs:
           printf '%s' "$NEXUS_RELEASE_KEYSTORE_B64" | base64 --decode > "$keystore_path"
           echo "NEXUS_RELEASE_KEYSTORE=$keystore_path" >> "$GITHUB_ENV"
 
+      - name: Run the plugin's unit tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew ":$PLUGIN_MODULE:testDebugUnitTest" -PskipCxrGlobal=true
+
       - name: Build signed release APK
         shell: bash
         env:
