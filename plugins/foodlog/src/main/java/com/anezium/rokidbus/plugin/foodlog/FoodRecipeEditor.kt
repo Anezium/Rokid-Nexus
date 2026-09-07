@@ -35,6 +35,7 @@ internal class FoodRecipeEditor(
     private val save = NexusUi.pillButton(context, "Save recipe")
     private var generation = 0
     private var saving = false
+    val isSaving: Boolean get() = saving
 
     val view = NexusUi.contentColumn(context).apply {
         addView(NexusUi.sectionRow(context, if (original == null) "Create recipe" else "Edit recipe"), NexusUi.block())

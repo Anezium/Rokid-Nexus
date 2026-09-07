@@ -1,7 +1,6 @@
 package com.anezium.rokidbus.plugin.foodlog
 
 import android.Manifest
-import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -22,6 +21,8 @@ import android.widget.TextView
 import com.anezium.rokidbus.client.ui.BusTheme
 import com.anezium.rokidbus.client.ui.NexusUi
 import androidx.health.connect.client.PermissionController
+import androidx.activity.ComponentActivity
+import androidx.activity.OnBackPressedCallback
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -37,7 +38,10 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
 /** Phone-side dashboard and management surface for the local Food Log journal. */
-class FoodLogActivity : Activity() {
+class FoodLogActivity : ComponentActivity() {
+    private val navigationBack = object : OnBackPressedCallback(false) {
+        override fun handleOnBackPressed() = navigateBack()
+    }
     private lateinit var store: FoodLogStore
     private val factsClient = FoodFactsClient()
     private val worker: ExecutorService = Executors.newSingleThreadExecutor()
@@ -88,6 +92,7 @@ class FoodLogActivity : Activity() {
     private var recipeEditor: FoodRecipeEditor? = null
     private var refreshGeneration = 0
     private var catalogGeneration = 0
+    private var barcodeLookupGeneration = 0
 
     private lateinit var goalCaloriesField: EditText
     private lateinit var goalProteinField: EditText
@@ -111,6 +116,7 @@ class FoodLogActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        onBackPressedDispatcher.addCallback(this, navigationBack)
         store = FoodLogStore(applicationContext)
         selectedDate = savedInstanceState?.getString("journalDate")?.let { runCatching { LocalDate.parse(it) }.getOrNull() } ?: LocalDate.now()
         currentTab = savedInstanceState?.getString("tab")?.takeIf { it in listOf("Journal", "Foods", "Settings") } ?: "Journal"
@@ -156,8 +162,8 @@ class FoodLogActivity : Activity() {
                 report(if (accepted) "Health Connect sync enabled." else "Health Connect permission was not granted or sync was turned off.")
                 refreshHealthState()
             }
-            REQUEST_EXPORT -> data?.data?.let(::writeBackup)
-            REQUEST_IMPORT -> data?.data?.let(::readBackup)
+            REQUEST_EXPORT -> if (resultCode == RESULT_OK) data?.data?.let(::writeBackup)
+            REQUEST_IMPORT -> if (resultCode == RESULT_OK) data?.data?.let(::readBackup)
         }
     }
 
@@ -186,13 +192,13 @@ class FoodLogActivity : Activity() {
         super.onSaveInstanceState(outState)
     }
 
-    @Deprecated("Deprecated in Android; retained for this platform Activity.")
-    override fun onBackPressed() {
+    private fun navigateBack() {
+        if (entryEditor?.isSaving == true || recipeEditor?.isSaving == true) return report("Finishing the local save…")
         if (entryEditor != null || recipeEditor != null) {
             AlertDialog.Builder(this).setTitle("Discard unsaved changes?")
                 .setNegativeButton("Keep editing", null)
                 .setPositiveButton("Discard") { _, _ -> closeEditor() }.show()
-        } else if (currentTab != "Journal") showTab("Journal") else super.onBackPressed()
+        } else if (currentTab != "Journal") showTab("Journal")
     }
 
     private fun buildUi() {
@@ -280,7 +286,12 @@ class FoodLogActivity : Activity() {
 
     private fun showTab(label: String) {
         if (entryEditor != null || recipeEditor != null) return
+        if (label != "Foods") {
+            barcodeLookupGeneration += 1
+            addButton.isEnabled = true
+        }
         currentTab = label
+        navigationBack.isEnabled = label != "Journal"
         foodDateLabel.text = "Adding to ${selectedDate.format(DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM))} · ${selectedMeal.displayName}"
         body.removeAllViews()
         body.addView(pages.getValue(label))
@@ -291,6 +302,7 @@ class FoodLogActivity : Activity() {
     }
 
     private fun showEditor(view: LinearLayout) {
+        navigationBack.isEnabled = true
         tabs.values.forEach { it.isEnabled = false }
         body.removeAllViews()
         body.addView(NexusUi.screen(this, view))
@@ -541,6 +553,7 @@ class FoodLogActivity : Activity() {
         when {
             barcode == null -> report("Enter a 4–14 digit barcode.")
             else -> {
+                val request = ++barcodeLookupGeneration
                 addButton.isEnabled = false
                 missingBarcode = null
                 contributionButton.visibility = View.GONE
@@ -550,6 +563,7 @@ class FoodLogActivity : Activity() {
                         store.product(barcode) ?: factsClient.product(barcode)?.also(store::upsertProduct)
                     }
                     post {
+                        if (request != barcodeLookupGeneration || currentTab != "Foods" || entryEditor != null || recipeEditor != null) return@post
                         addButton.isEnabled = true
                         result.fold(
                             onSuccess = { product ->
@@ -639,7 +653,7 @@ class FoodLogActivity : Activity() {
                 refreshHealthState()
             }
             val message = when {
-                !deleted -> "Entry was already removed."
+                !deleted -> "The entry changed or was removed. Reopen it before deleting."
                 healthResult is FoodLogHealthConnectSyncResult.Failed -> "Deleted locally; Health Connect removal failed."
                 healthResult == FoodLogHealthConnectSyncResult.PermissionRequired -> "Deleted locally; Health Connect permission was revoked."
                 else -> "Deleted exactly ${entry.product.name}."

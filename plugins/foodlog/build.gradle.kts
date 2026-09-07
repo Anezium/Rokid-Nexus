@@ -24,6 +24,7 @@ android {
 
 dependencies {
     implementation(project(":bus-client"))
+    implementation("androidx.activity:activity:1.10.1")
     implementation("androidx.health.connect:connect-client:1.1.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     implementation("com.google.mlkit:barcode-scanning:17.3.0")
