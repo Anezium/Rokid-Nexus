@@ -1,12 +1,30 @@
 # Food Log plugin
 
-Food Log 3 is a local-first nutrition and meal journal for Rokid Nexus.
+Food Log 3.1 is a local-first nutrition and meal journal for Rokid Nexus.
 
 On the glasses it can scan an EAN/UPC barcode, resolve the exact product through
 Open Food Facts, accept a portion, add recent or favorite foods and recipes, take
 a local voice entry, display today's totals, and undo the exact last entry.
 
-The phone dashboard adds:
+The phone opens on **Journal**. Choose any day with Previous, Today, Next, or the
+date picker. Breakfast, lunch, dinner, and snacks have individual calorie totals;
+the daily summary shows calories and macros against goals only when you set them.
+Entries with an older unassigned meal remain visible in their own group.
+
+Choose **Add food** to open **Foods**, search your saved catalog or favorites, or
+look up a barcode. Every food opens a portion preview before saving. Enter grams,
+or a number of servings when a verified gram weight is available. Use **Edit** on
+an entry to change its quantity, meal, date, or time. **Delete** asks for confirmation
+and affects only the displayed entry. A stale entry must be reopened before editing.
+
+Recipes use named ingredients from your foods, ingredient weights, and a number of
+servings. Save a custom food or barcode product first if an ingredient is missing.
+Ingredient weights are before cooking; servings divide those weights and nutrition
+equally, without estimating water gained or lost while cooking. Recipes can be
+edited; existing journal entries keep their original nutrition.
+
+**Settings** contains optional goals, seven-day summaries, Health Connect,
+reminders, backups, and uninstall. The phone also supports:
 
 - meal classification, daily goals, micronutrients, and seven-day summaries;
 - custom foods, favorites, recipes, and their reusable nutrition snapshots;
@@ -23,10 +41,25 @@ than becoming zero. Food history, favorites, goals, and recipes remain on the
 phone unless the wearer explicitly exports a backup or enables Health Connect.
 Voice matching is local against stored products and transcripts are never logged.
 
+All portions and recipe ingredients use grams. Open Food Facts fields named
+`_100g` can also describe nutrition per 100 ml. Products labelled with volume units
+are rejected with an explanation; Food Log never assumes that a milliliter weighs
+a gram. Use a custom food with verified nutrition per 100 g for those products.
+An unknown serving weight requires an explicit gram portion. The data contract is
+documented by [Open Food Facts](https://github.com/openfoodfacts/openfoodfacts-server/blob/main/html/data-fields.txt).
+
+Dates use the phone's local time zone. Editing a repeated autumn time preserves the
+original offset; a nonexistent spring time is rejected for correction. This follows
+Android's [zone rules](https://developer.android.com/reference/java/time/zone/ZoneRules).
+
+V3 exports now include optional recipe ingredient snapshots and remain readable by
+older V3 readers. Import accepts older V3 archives without those fields and V2
+journal backups. Reimporting an entry UUID never duplicates or replaces its history.
+
 Open Food Facts data is collaborative and can be incomplete. The package label
 remains the source to check when nutrition data matters; Food Log is a tracking
 tool, not a medical device.
 
 ```bash
-./gradlew :plugin-foodlog:testDebugUnitTest :plugin-foodlog:assembleDebug -PskipCxrGlobal=true
+./gradlew :plugin-foodlog:testDebugUnitTest :plugin-foodlog:assembleDebug :plugin-foodlog:lintDebug -PskipCxrGlobal=true
 ```

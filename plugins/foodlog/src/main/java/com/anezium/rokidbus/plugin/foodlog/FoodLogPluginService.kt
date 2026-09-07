@@ -2,6 +2,7 @@ package com.anezium.rokidbus.plugin.foodlog
 
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.view.KeyEvent
 import com.anezium.rokidbus.client.plugin.NexusCard
 import com.anezium.rokidbus.client.plugin.NexusCardLine
@@ -43,6 +44,7 @@ class FoodLogPluginService : NexusPluginService() {
     private var generation = 0L
     private var screen = Screen.HOME
     private var selectedIndex = 0
+    private var lastDirectionalAtMillis = Long.MIN_VALUE
     private var selectedProduct: FoodProduct? = null
     private var selectedSource = FoodEntrySource.UNKNOWN
     private var selectedRecipeId: String? = null
@@ -111,6 +113,7 @@ class FoodLogPluginService : NexusPluginService() {
         generation += 1
         screen = Screen.HOME
         selectedIndex = 0
+        lastDirectionalAtMillis = Long.MIN_VALUE
         selectedProduct = null
         selectedSource = FoodEntrySource.UNKNOWN
         selectedRecipeId = null
@@ -154,6 +157,11 @@ class FoodLogPluginService : NexusPluginService() {
 
     override fun onNexusInput(event: NexusInputEvent) {
         if (event.action != KeyEvent.ACTION_DOWN) return
+        if (event.keyCode in listOf(KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_UP)) {
+            val now = SystemClock.elapsedRealtime()
+            if (lastDirectionalAtMillis != Long.MIN_VALUE && now - lastDirectionalAtMillis < 250L) return
+            lastDirectionalAtMillis = now
+        }
         when (event.keyCode) {
             KeyEvent.KEYCODE_DPAD_RIGHT,
             KeyEvent.KEYCODE_DPAD_DOWN,
@@ -189,6 +197,11 @@ class FoodLogPluginService : NexusPluginService() {
             Screen.PORTION -> {
                 quantityGrams = (quantityGrams + delta * QUANTITY_STEP_GRAMS)
                     .coerceIn(MIN_QUANTITY_GRAMS, MAX_QUANTITY_GRAMS)
+                render(show = false)
+            }
+            Screen.TODAY -> {
+                val rows = 1 + todayEntries.take(MAX_HUD_ENTRIES).size + if (todayEntries.isEmpty() || todayEntries.size > MAX_HUD_ENTRIES) 1 else 0
+                selectedIndex = Math.floorMod(selectedIndex + delta, rows)
                 render(show = false)
             }
             else -> Unit
@@ -260,6 +273,7 @@ class FoodLogPluginService : NexusPluginService() {
 
     private fun showToday() {
         refreshLocalState()
+        selectedIndex = 0
         screen = Screen.TODAY
         render(show = false)
     }
@@ -310,7 +324,7 @@ class FoodLogPluginService : NexusPluginService() {
 
     private fun deleteUndoCandidate() {
         val candidate = undoCandidate ?: return showHome()
-        val removed = store.deleteEntry(candidate.id)
+        val removed = store.deleteEntry(candidate)
         if (removed) deleteHealthEntryIfEnabled(candidate)
         undoCandidate = null
         refreshLocalState()
@@ -492,7 +506,7 @@ class FoodLogPluginService : NexusPluginService() {
                     onFailure = {
                         showMessage(
                             "Lookup failed",
-                            "Check the phone network connection and try again.",
+                            if (it is FoodFactsLookupException) it.message.orEmpty().hud(240) else "Check the phone network connection and try again.",
                         )
                     },
                 )
@@ -685,22 +699,24 @@ class FoodLogPluginService : NexusPluginService() {
                     text = totals.caloriesKcal.display("kcal"),
                     sub = "P ${totals.proteinGrams.display("g")} · C ${totals.carbohydrateGrams.display("g")} · F ${totals.fatGrams.display("g")}",
                     tone = NexusRowTone.ALERT,
+                    selected = selectedIndex == 0,
                 ),
             )
-            todayEntries.take(MAX_HUD_ENTRIES).forEach { entry ->
+            todayEntries.take(MAX_HUD_ENTRIES).forEachIndexed { index, entry ->
                 val calories = scaledValue(entry.product.nutrients.caloriesKcal, entry.quantityGrams)
                 add(
                     NexusCardLine(
                         text = entry.product.name.hud(240),
                         badge = "${formatNutritionNumber(entry.quantityGrams)}g".hud(24),
                         sub = "${entry.consumedTime()} · ${calories?.let(::formatNutritionNumber) ?: "?"} kcal",
+                        selected = selectedIndex == index + 1,
                     ),
                 )
             }
             if (todayEntries.isEmpty()) {
-                add(NexusCardLine("Nothing logged today.", tone = NexusRowTone.DIM))
+                add(NexusCardLine("Nothing logged today.", tone = NexusRowTone.DIM, selected = selectedIndex == 1))
             } else if (todayEntries.size > MAX_HUD_ENTRIES) {
-                add(NexusCardLine("${todayEntries.size - MAX_HUD_ENTRIES} more on phone", tone = NexusRowTone.DIM))
+                add(NexusCardLine("${todayEntries.size - MAX_HUD_ENTRIES} more on phone", tone = NexusRowTone.DIM, selected = selectedIndex == MAX_HUD_ENTRIES + 1))
             }
         }
         return NexusCard(
@@ -708,7 +724,7 @@ class FoodLogPluginService : NexusPluginService() {
             subtitle = "${todayEntries.size} ${if (todayEntries.size == 1) "entry" else "entries"}",
             lines = emptyList(),
             richLines = rows,
-            footer = "back",
+            footer = "swipe to review · back",
             contentKey = "foodlog-today",
             handlesBack = true,
         )

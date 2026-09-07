@@ -1,5 +1,21 @@
 # Changelog
 
+## 3.1.0
+
+- Open on a date-selectable journal with breakfast, lunch, dinner, snacks,
+  meal totals, daily macros, and optional personal goals.
+- Add searchable saved foods and one portion editor for grams or a known serving,
+  meal, date, and time. Preserve drafts across rotation and confirm exact deletion.
+- Replace recipe identifiers with named ingredient selection, weight fields,
+  per-serving nutrition, and recipe editing. Preserve ingredient snapshots in
+  SQLite and backups independently of the food catalog.
+- Reject mismatched barcode responses and volume-based products instead of
+  treating milliliters as grams. Keep unknown serving weights unknown.
+- Separate Journal, Foods, and Settings, with optional details revealed on demand.
+  Make the glasses daily log navigable with the existing swipe axis and debounce
+  paired directional input.
+- Add persistence, import identity, snapshot, portion, meal, and DST regression tests.
+
 ## 3.0.0
 
 - Add the phone nutrition dashboard, meal classification, daily goals,
