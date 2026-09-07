@@ -87,6 +87,15 @@ class LitterClientTest {
         peer.received("turn/start")
     }
 
+    @Test fun `approval replay before resume response waits for confirmed active turn`() = fixture { client, store, peer ->
+        val session = store.sessions.first { it.isNotEmpty() }.single()
+        peer.approveDuringResume = true
+        client.openSession(session)
+        val approval = store.approvals.first { it.isNotEmpty() }.single()
+        assertTrue(client.decide(approval.requestId, "thread-a", false))
+        assertEquals("decline", peer.reply("resume-approval").getJSONObject("result").getString("decision"))
+    }
+
     private fun fixture(reconnect: Boolean = false, body: suspend (LitterClient, AgentSessionStore, Peer) -> Unit) {
         val dispatcher = Executors.newSingleThreadExecutor().asCoroutineDispatcher()
         val http = OkHttpClient.Builder().build()
@@ -120,6 +129,7 @@ class LitterClientTest {
         lateinit var socket: WebSocket
         private val frames = Channel<JSONObject>(Channel.UNLIMITED)
         val methods = CopyOnWriteArrayList<String>()
+        @Volatile var approveDuringResume = false
 
         override fun onOpen(webSocket: WebSocket, response: Response) { socket = webSocket }
         override fun onClosing(webSocket: WebSocket, code: Int, reason: String) { webSocket.close(code, null) }
@@ -131,7 +141,10 @@ class LitterClientTest {
                 "initialize" -> JSONObject().put("userAgent", "fixture")
                 "thread/list" -> JSONObject().put("data", JSONArray().put(thread())).put("nextCursor", JSONObject.NULL)
                 "thread/start" -> JSONObject().put("thread", thread().put("turns", JSONArray()).put("status", JSONObject().put("type", "idle")))
-                "thread/resume" -> JSONObject().put("thread", thread())
+                "thread/resume" -> {
+                    if (approveDuringResume) approval("resume-approval")
+                    JSONObject().put("thread", thread())
+                }
                 "turn/start" -> JSONObject().put("turn", JSONObject().put("id", "turn-b").put("status", "inProgress"))
                 "turn/steer" -> JSONObject().put("turnId", "turn-a")
                 else -> return

@@ -30,6 +30,8 @@ internal class LitterClient(
     private val approvals = LitterApprovals(elapsed)
     private val turnRevisions = mutableMapOf<String, Long>()
     private var conversationRevision = 0L
+    private val resuming = mutableMapOf<String, Long>()
+    private val deferredApprovals = mutableListOf<Pair<Long, JSONObject>>()
     private val itemDetails = linkedMapOf<Triple<String, String, String>, String>()
     private val timeline = linkedMapOf<String, AgentMessage>()
     private val liveItems = mutableSetOf<String>()
@@ -121,6 +123,8 @@ internal class LitterClient(
     private fun invalidateLiveState() {
         turns.clear()
         turnRevisions.clear()
+        resuming.clear()
+        deferredApprovals.clear()
         approvals.clear()
         itemDetails.clear()
         liveItems.clear()
@@ -166,11 +170,21 @@ internal class LitterClient(
         timeline.clear()
         liveItems.clear()
         store.openConversation(session)
-        val result = rpc.request("thread/resume", JSONObject().put("threadId", session.id))
-        if (selectedThread != session.id || conversationRevision != revision) return
-        val thread = result.optJSONObject("thread") ?: throw LitterFailure("The server did not return this session.")
-        if (thread.wireId("id") != session.id) throw LitterFailure("The server returned a different session.")
-        hydrate(thread, turnRevision)
+        resuming[session.id] = revision
+        try {
+            val result = rpc.request("thread/resume", JSONObject().put("threadId", session.id))
+            if (selectedThread != session.id || conversationRevision != revision) return
+            val thread = result.optJSONObject("thread") ?: throw LitterFailure("The server did not return this session.")
+            if (thread.wireId("id") != session.id) throw LitterFailure("The server returned a different session.")
+            hydrate(thread, turnRevision)
+        } finally {
+            if (resuming[session.id] == revision) {
+                resuming.remove(session.id)
+                val waiting = deferredApprovals.filter { it.second.optJSONObject("params")?.wireId("threadId") == session.id }
+                deferredApprovals.removeAll(waiting.toSet())
+                waiting.forEach { (generation, frame) -> if (generation == epoch) receiveRequest(frame, generation) }
+            }
+        }
     }
 
     fun closeConversation() {
@@ -343,6 +357,15 @@ internal class LitterClient(
         val params = frame.optJSONObject("params") ?: JSONObject()
         val threadId = params.wireId("threadId")
         val method = frame.optString("method")
+        // Some app-servers replay a pending request before the resume response.
+        // Hold it until that response proves the active turn, with a strict bound.
+        if (method in LitterApprovals.METHODS && threadId != null && threadId in resuming &&
+            turns[threadId] == null && deferredApprovals.size < AgentApproval.MAX_PENDING &&
+            frame.toString().length <= 32_000
+        ) {
+            deferredApprovals += generation to frame
+            return
+        }
         if (method in LitterApprovals.METHODS && threadId != null && session(threadId) != null) {
             val key = Triple(threadId, params.wireId("turnId").orEmpty(), params.wireId("itemId").orEmpty())
             val approval = approvals.offer(frame, generation, turns[threadId], itemDetails[key], createdAt = now())
