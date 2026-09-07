@@ -53,7 +53,7 @@ class LitterConversationActivity : Activity() {
                 }
         }
         uiScope.launch { AgentsRuntime.store.conversation.collect { conversation ->
-            if (conversation?.sessionId == sessionId) {
+            if (conversation != null && conversation.sessionId == sessionId) {
                 transcript.text = if (conversation.loading) "Loading conversation…" else conversation.messages.joinToString("\n\n") {
                     "${if (it.role == MessageRole.ASSISTANT) "AGENT" else it.role.label}\n${it.text}"
                 }.ifEmpty { "The session is ready for a prompt." }
