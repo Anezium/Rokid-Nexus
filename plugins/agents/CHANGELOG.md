@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased — Litter-compatible alpha
+
+- Replace the active custom-daemon setup with explicit Codex app-server endpoints.
+- Encrypt endpoint credentials in Android Keystore and connect only while an
+  Agents phone screen or Nexus session is open.
+- Add native session history, streamed progress, new prompts, follow-ups and
+  request-scoped approvals on the phone and existing glasses surfaces.
+- Preserve prototype project metadata without running its old monitor service.
+- Add deterministic WebSocket and endpoint/approval security tests.
+
 ## 1.0.0
 
 - Add Claude Code, Codex, and OpenClaw session monitoring.
