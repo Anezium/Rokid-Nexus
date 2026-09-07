@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.4.7
+
+- **Four ways the glasses could get stuck are gone.** A full review of the
+  glasses app found paths where one bad moment left it wedged until a restart:
+  a phone that dropped off Wi-Fi mid-session could block every later camera
+  reconnect; a *Repair now* sent while setup was still finishing could wait
+  forever, and every repair after it answered "busy"; the boot-time start could
+  overrun the window Android gives it; and one hiccup in the periodic capture
+  check silently switched that check off for good. Each is now bounded or
+  logged and carried on, and an expired pairing window that cannot be closed
+  gives up after a few tries instead of retrying every five seconds forever.
+  The camera, repair and boot paths were verified on hardware.
+- **Every release is tested before it is built.** The unit tests for both hubs
+  and every plugin now run on each push and pull request, and a release that
+  fails them is not published.
+
 ## 1.4.6
 
 - **A plugin can now ask you to type.** A card on the glasses can carry one
