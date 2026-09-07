@@ -2,12 +2,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
-    <!--
-        POST_NOTIFICATIONS is deliberately absent. Agents alerts belong on the
-        glasses, never in the phone's shade. Without the permission Android keeps
-        the monitoring foreground service running but never shows its notification,
-        which is exactly the behaviour we want.
-    -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
@@ -16,9 +10,6 @@
         <intent>
             <action android:name="com.anezium.rokidbus.action.HUB" />
         </intent>
-        <!-- Package visibility so the away-from-home setup can tell whether
-             Tailscale is already on this phone. -->
-        <package android:name="com.tailscale.ipn" />
     </queries>
 
     <application
@@ -35,33 +26,9 @@
             android:windowSoftInputMode="adjustResize" />
 
         <activity
-            android:name=".AddComputerActivity"
+            android:name=".LitterConversationActivity"
             android:exported="false"
             android:windowSoftInputMode="adjustResize" />
-
-        <activity
-            android:name=".ComputerActivity"
-            android:exported="false"
-            android:windowSoftInputMode="adjustResize" />
-
-        <activity
-            android:name=".ProjectPickerActivity"
-            android:exported="false"
-            android:windowSoftInputMode="adjustResize" />
-
-        <activity
-            android:name=".NewThreadActivity"
-            android:exported="false"
-            android:windowSoftInputMode="adjustResize" />
-
-        <service
-            android:name=".AgentsMonitorService"
-            android:exported="false"
-            android:foregroundServiceType="specialUse">
-            <property
-                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="agent-session-monitoring" />
-        </service>
 
         <service
             android:name=".AgentsPluginService"
@@ -90,7 +57,7 @@
                 android:value="surfaces" />
             <meta-data
                 android:name="com.anezium.rokidbus.plugin.RECEIVE_PREFIXES"
-                android:value="/plugin/agents,/system/plugin" />
+                android:value="/plugin/agents" />
             <meta-data
                 android:name="com.anezium.rokidbus.plugin.SETTINGS_ACTIVITY"
                 android:value=".AgentsSettingsActivity" />

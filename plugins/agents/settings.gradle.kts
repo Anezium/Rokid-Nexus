@@ -1,4 +1,5 @@
 pluginManagement {
+    plugins { id("com.android.application") version "9.2.0" }
     repositories {
         mavenLocal()
         google()
@@ -22,5 +23,7 @@ rootProject.name = "NexusAgentsPlugin"
 
 include(":shared")
 include(":bus-client")
+include(":ink-engine")
 project(":shared").projectDir = file("../../shared")
 project(":bus-client").projectDir = file("../../bus-client")
+project(":ink-engine").projectDir = file("../../ink-engine")
