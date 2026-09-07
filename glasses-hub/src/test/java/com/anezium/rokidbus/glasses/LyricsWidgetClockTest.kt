@@ -44,10 +44,10 @@ class LyricsWidgetClockTest {
     }
 
     @Test
-    fun `empty clock returns a clamped index and no next`() {
+    fun `empty clock has no active or next line`() {
         val clock = LyricsWidgetClock(emptyList(), WidgetAnchor(0, true, 0))
-        assertEquals(0, clock.currentIndexAt(0))
-        assertNull(clock.nextIndexFrom(0))
+        assertEquals(-1, clock.currentIndexAt(0))
+        assertNull(clock.nextIndexFrom(-1))
     }
     @Test fun `instrumental lead-in does not show a lyric before its timestamp`() {
         val clock = LyricsWidgetClock(listOf(WidgetTimedLine(5_000L, "first")), WidgetAnchor(0, true, 10_000))
