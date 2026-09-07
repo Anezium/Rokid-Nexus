@@ -1,8 +1,10 @@
 package com.anezium.rokidbus.plugin.agents
 
 import java.util.concurrent.Executors
+import java.util.concurrent.CopyOnWriteArrayList
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
@@ -81,7 +83,7 @@ class LitterClientTest {
         val start = peer.received("thread/start")
         assertEquals("/workspace/project", start.getJSONObject("params").getString("cwd"))
         client.submit(id, "Implement this task")
-        peer.received("turn/steer")
+        peer.received("turn/start")
     }
 
     private fun fixture(reconnect: Boolean = false, body: suspend (LitterClient, AgentSessionStore, Peer) -> Unit) {
@@ -99,7 +101,10 @@ class LitterClientTest {
                 val client = LitterClient(http, scope, store, reconnectDelayMs = 20)
                 try {
                     client.start(LitterEndpoint("Fixture", server.url("/").toString().replace("http://", "ws://")))
-                    withTimeout(10_000) { body(client, store, peer) }
+                    try { withTimeout(10_000) { body(client, store, peer) } }
+                    catch (timeout: TimeoutCancellationException) {
+                        throw AssertionError("Fixture timeout: ${client.message.value}; received methods: ${peer.methods}", timeout)
+                    }
                 } finally { client.stop(); scope.cancel() }
             }
         } finally {
@@ -113,16 +118,19 @@ class LitterClientTest {
     private class Peer : WebSocketListener() {
         lateinit var socket: WebSocket
         private val frames = Channel<JSONObject>(Channel.UNLIMITED)
+        val methods = CopyOnWriteArrayList<String>()
 
         override fun onOpen(webSocket: WebSocket, response: Response) { socket = webSocket }
         override fun onClosing(webSocket: WebSocket, code: Int, reason: String) { webSocket.close(code, null) }
         override fun onMessage(webSocket: WebSocket, text: String) {
             val frame = JSONObject(text)
+            methods.add(frame.optString("method", "response"))
             frames.trySend(frame)
             val result = when (frame.optString("method")) {
                 "initialize" -> JSONObject().put("userAgent", "fixture")
                 "thread/list" -> JSONObject().put("data", JSONArray().put(thread())).put("nextCursor", JSONObject.NULL)
-                "thread/start", "thread/resume" -> JSONObject().put("thread", thread())
+                "thread/start" -> JSONObject().put("thread", thread().put("turns", JSONArray()).put("status", JSONObject().put("type", "idle")))
+                "thread/resume" -> JSONObject().put("thread", thread())
                 "turn/start" -> JSONObject().put("turn", JSONObject().put("id", "turn-b").put("status", "inProgress"))
                 "turn/steer" -> JSONObject().put("turnId", "turn-a")
                 else -> return
@@ -146,7 +154,7 @@ class LitterClientTest {
         }
 
         suspend fun reply(id: Any): JSONObject {
-            while (true) { val frame = frames.receive(); if (!frame.has("method") && frame.opt("id").toString() == id.toString()) return frame }
+            while (true) { val frame = frames.receive(); if (!frame.has("method") && frame.opt("id")?.toString() == id.toString()) return frame }
         }
 
         private fun thread() = JSONObject().put("id", "thread-a").put("name", "Fixture session")

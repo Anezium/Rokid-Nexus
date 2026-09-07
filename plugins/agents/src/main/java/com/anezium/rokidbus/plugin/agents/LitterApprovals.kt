@@ -23,8 +23,9 @@ internal class LitterApprovals(private val now: () -> Long) {
         epoch: Long,
         activeTurn: String?,
         itemDetail: String?,
+        createdAt: Long = System.currentTimeMillis(),
     ): LitterApproval? {
-        val wireId = frame.opt("id")
+        val wireId = frame.opt("id") ?: return null
         val identity = rpcIdentity(wireId) ?: return null
         if (identity in seenWireIds || seenWireIds.size >= 256 || pending.size >= AgentApproval.MAX_PENDING) return null
         val method = frame.optString("method")
@@ -56,7 +57,7 @@ internal class LitterApprovals(private val now: () -> Long) {
                 detail = listOfNotNull(detail?.take(LitterProtocol.MAX_TEXT), cwd?.let { "Folder: $it" }, reason,
                     if (!canAllow) "Approval unavailable here; review the complete request on the computer." else null)
                     .joinToString("\n\n"),
-                createdAt = now(),
+                createdAt = createdAt,
             ),
             wireId = wireId, epoch = epoch, turnId = turn, itemId = item,
             expiresAt = now() + TTL_MS, canAllow = canAllow,
