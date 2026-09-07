@@ -176,6 +176,10 @@ internal class LitterClient(
             if (selectedThread != session.id || conversationRevision != revision) return
             val thread = result.optJSONObject("thread") ?: throw LitterFailure("The server did not return this session.")
             if (thread.wireId("id") != session.id) throw LitterFailure("The server returned a different session.")
+            val resumed = endpoint?.let { LitterProtocol.thread(thread, it) }
+                ?: throw LitterFailure("The server returned an invalid session.")
+            val newer = if ((turnRevisions[session.id] ?: 0L) != turnRevision) this.session(session.id) else null
+            store.upsert(resumed.copy(status = newer?.status ?: resumed.status, lastAssistantText = newer?.lastAssistantText))
             hydrate(thread, turnRevision)
         } finally {
             if (resuming[session.id] == revision) {

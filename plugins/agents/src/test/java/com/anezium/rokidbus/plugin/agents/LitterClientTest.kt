@@ -96,6 +96,14 @@ class LitterClientTest {
         assertEquals("decline", peer.reply("resume-approval").getJSONObject("result").getString("decision"))
     }
 
+    @Test fun `resuming a saved session restores it even outside the first list page`() = fixture { client, store, _ ->
+        val saved = store.sessions.first { it.isNotEmpty() }.single()
+        store.replaceProvider(AgentProvider.CODEX, emptyList())
+        client.openSession(saved)
+        assertEquals("thread-a", store.sessions.value.single().id)
+        assertEquals("Existing answer", store.conversation.value!!.messages.single().text)
+    }
+
     private fun fixture(reconnect: Boolean = false, body: suspend (LitterClient, AgentSessionStore, Peer) -> Unit) {
         val dispatcher = Executors.newSingleThreadExecutor().asCoroutineDispatcher()
         val http = OkHttpClient.Builder().build()

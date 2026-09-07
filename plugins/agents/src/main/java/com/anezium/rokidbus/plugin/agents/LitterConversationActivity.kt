@@ -43,7 +43,7 @@ class LitterConversationActivity : Activity() {
                     if (active && !opening && connections[AgentProvider.CODEX]?.state == ConnectionState.CONNECTED) {
                         val id = sessionId
                         if (id != null && AgentsRuntime.store.conversation.value?.sessionId != id) {
-                            sessions.firstOrNull { it.id == id }?.let { session ->
+                            (sessions.firstOrNull { it.id == id } ?: savedSession(id)).let { session ->
                                 opening = true
                                 LitterRuntime.run { try { openSession(session) } finally { opening = false } }
                             }
@@ -68,7 +68,7 @@ class LitterConversationActivity : Activity() {
         LitterRuntime.acquire(this, this)
         send.isEnabled = AgentsRuntime.store.connections.value[AgentProvider.CODEX]?.state == ConnectionState.CONNECTED
         sessionId?.let { id ->
-            AgentsRuntime.store.sessions.value.firstOrNull { it.id == id }?.let { session ->
+            (AgentsRuntime.store.sessions.value.firstOrNull { it.id == id } ?: savedSession(id)).let { session ->
                 if (AgentsRuntime.store.connections.value[AgentProvider.CODEX]?.state == ConnectionState.CONNECTED) {
                     LitterRuntime.run { openSession(session) }
                 }
@@ -160,6 +160,8 @@ class LitterConversationActivity : Activity() {
         if (!LitterRuntime.client.decide(approval.requestId, approval.sessionId, allow)) status.text = "This request expired or disconnected. Review it on the computer."
         renderApprovals()
     }
+
+    private fun savedSession(id: String) = AgentSession(id = id, provider = AgentProvider.CODEX, status = AgentStatus.IDLE)
 
     companion object { const val SESSION_ID = "litterSessionId" }
 }
