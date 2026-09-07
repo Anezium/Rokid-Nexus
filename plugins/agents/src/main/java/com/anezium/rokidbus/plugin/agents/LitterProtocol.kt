@@ -15,7 +15,7 @@ internal object LitterProtocol {
     fun input(text: String): JSONArray = JSONArray().put(JSONObject().put("type", "text").put("text", text))
 
     fun thread(json: JSONObject, endpoint: LitterEndpoint): AgentSession? {
-        val id = json.wireString("id", 256) ?: return null
+        val id = json.wireId("id") ?: return null
         val cwd = json.wireString("cwd", 4_096)
         return AgentSession(
             id = id, provider = AgentProvider.CODEX, machineName = endpoint.name,

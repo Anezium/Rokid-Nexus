@@ -20,13 +20,16 @@ internal class LitterClient(
     private val store: AgentSessionStore,
     private val now: () -> Long = System::currentTimeMillis,
     private val reconnectDelayMs: Long = 1_000L,
+    private val elapsed: () -> Long = { System.nanoTime() / 1_000_000L },
 ) {
     private var endpoint: LitterEndpoint? = null
     private var connection: LitterRpcConnection? = null
     private var loop: Job? = null
     private var epoch = 0L
     private val turns = mutableMapOf<String, String>()
-    private val approvals = LitterApprovals(now)
+    private val approvals = LitterApprovals(elapsed)
+    private val turnRevisions = mutableMapOf<String, Long>()
+    private var conversationRevision = 0L
     private val itemDetails = linkedMapOf<Triple<String, String, String>, String>()
     private val timeline = linkedMapOf<String, AgentMessage>()
     private val liveItems = mutableSetOf<String>()
@@ -56,13 +59,15 @@ internal class LitterClient(
                 var maintenance: Job? = null
                 try {
                     rpc.connect(config)
+                    _message.value = "Initializing the app-server connection…"
                     rpc.request("initialize", JSONObject().put("clientInfo", JSONObject()
                         .put("name", "nexus_agents").put("title", "Nexus Agents").put("version", "1.0.0")))
                     check(rpc.send(JSONObject().put("method", "initialized").put("params", JSONObject())))
                     store.setConnection(AgentProvider.CODEX, ConnectionState.CONNECTED)
-                    _message.value = "Connected · monitoring while Agents is open"
+                    _message.value = "Loading sessions…"
                     attempt = 0
                     refresh()
+                    _message.value = "Connected · monitoring while Agents is open"
                     selectedThread?.let { id -> session(id)?.let { openSession(it) } }
                     maintenance = scope.launch {
                         var ticks = 0
@@ -70,7 +75,7 @@ internal class LitterClient(
                             delay(1_000)
                             approvals.expired().forEach { pending ->
                                 rpc.send(JSONObject().put("id", pending.wireId).put("result", JSONObject().put("decision", "decline")))
-                                store.resolveApproval(pending.display.requestId)
+                                clearApprovals(listOf(pending))
                             }
                             if (++ticks % 20 == 0) runOperation { refresh() }
                         }
@@ -115,6 +120,7 @@ internal class LitterClient(
 
     private fun invalidateLiveState() {
         turns.clear()
+        turnRevisions.clear()
         approvals.clear()
         itemDetails.clear()
         liveItems.clear()
@@ -154,18 +160,21 @@ internal class LitterClient(
 
     suspend fun openSession(session: AgentSession) {
         val rpc = connected()
+        val revision = ++conversationRevision
+        val turnRevision = turnRevisions[session.id] ?: 0L
         selectedThread = session.id
         timeline.clear()
         liveItems.clear()
         store.openConversation(session)
         val result = rpc.request("thread/resume", JSONObject().put("threadId", session.id))
-        if (selectedThread != session.id) return
+        if (selectedThread != session.id || conversationRevision != revision) return
         val thread = result.optJSONObject("thread") ?: throw LitterFailure("The server did not return this session.")
         if (thread.wireId("id") != session.id) throw LitterFailure("The server returned a different session.")
-        hydrate(thread)
+        hydrate(thread, turnRevision)
     }
 
     fun closeConversation() {
+        ++conversationRevision
         selectedThread = null
         timeline.clear()
         liveItems.clear()
@@ -221,7 +230,7 @@ internal class LitterClient(
         val approval = approvals.answer(requestId, sessionId, epoch, turns[sessionId], allow) ?: return false
         val sent = rpc.send(JSONObject().put("id", approval.wireId)
             .put("result", JSONObject().put("decision", if (allow) "accept" else "decline")))
-        store.resolveApproval(requestId)
+        clearApprovals(listOf(approval))
         _message.value = if (sent) "Decision sent for this request only" else "Decision was not sent. Review it on the computer."
         return sent
     }
@@ -248,13 +257,13 @@ internal class LitterClient(
     private fun session(id: String): AgentSession? = store.sessions.value.firstOrNull { it.provider == AgentProvider.CODEX && it.id == id }
     private fun updateSession(id: String, update: (AgentSession) -> AgentSession) { session(id)?.let { store.upsert(update(it)) } }
 
-    private fun hydrate(thread: JSONObject) {
+    private fun hydrate(thread: JSONObject, turnRevision: Long = 0L) {
         val id = thread.wireId("id") ?: return
         val previousLive = timeline.toMap()
         timeline.clear()
         thread.optJSONArray("turns").objects().takeLast(20).forEach { turn ->
             val turnId = turn.wireId("id") ?: return@forEach
-            if (turn.optString("status") == "inProgress") turns[id] = turnId
+            if (turn.optString("status") == "inProgress" && (turnRevisions[id] ?: 0L) == turnRevision) turns[id] = turnId
             turn.optJSONArray("items").objects().takeLast(AgentConversation.MAX_MESSAGES).forEach { item ->
                 val itemId = item.wireId("id") ?: return@forEach
                 LitterProtocol.item(item)?.let { timeline[itemId] = if (itemId in liveItems) previousLive[itemId] ?: it else it }
@@ -286,11 +295,13 @@ internal class LitterClient(
                 if (method == "thread/archived") store.remove(AgentProvider.CODEX, id)
             }
             "turn/started" -> params.optJSONObject("turn")?.wireId("id")?.let { turnId ->
+                turnRevisions[id] = (turnRevisions[id] ?: 0L) + 1L
                 turns.put(id, turnId)?.takeIf { it != turnId }?.let { clearApprovals(approvals.finishTurn(id, it)) }
                 updateSession(id) { it.copy(status = AgentStatus.WORKING, stale = false, lastActivityAt = now(), pendingRequest = null) }
             }
             "turn/completed" -> params.optJSONObject("turn")?.let { turn ->
                 val turnId = turn.wireId("id") ?: return
+                turnRevisions[id] = (turnRevisions[id] ?: 0L) + 1L
                 clearApprovals(approvals.finishTurn(id, turnId))
                 if (turns[id] == turnId) {
                     turns.remove(id)
@@ -334,7 +345,7 @@ internal class LitterClient(
         val method = frame.optString("method")
         if (method in LitterApprovals.METHODS && threadId != null && session(threadId) != null) {
             val key = Triple(threadId, params.wireId("turnId").orEmpty(), params.wireId("itemId").orEmpty())
-            val approval = approvals.offer(frame, generation, turns[threadId], itemDetails[key])
+            val approval = approvals.offer(frame, generation, turns[threadId], itemDetails[key], createdAt = now())
             if (approval != null) {
                 store.upsertApproval(approval.display)
                 updateSession(threadId) { it.copy(status = AgentStatus.NEEDS_YOU, pendingRequest = AgentPendingRequest(PendingRequestKind.PERMISSION, approval.display.summary, now())) }
@@ -368,7 +379,14 @@ internal class LitterClient(
         }
     }
 
-    private fun clearApprovals(removed: List<LitterApproval>) { removed.forEach { store.resolveApproval(it.display.requestId) } }
+    private fun clearApprovals(removed: List<LitterApproval>) {
+        removed.forEach { store.resolveApproval(it.display.requestId) }
+        removed.map { it.display.sessionId }.distinct().forEach { id ->
+            if (store.approvalFor("codex:$id") == null) updateSession(id) {
+                it.copy(pendingRequest = null, status = if (id in turns) AgentStatus.WORKING else it.status)
+            }
+        }
+    }
 
     private fun publishTimeline(thread: String) {
         while (timeline.size > AgentConversation.MAX_MESSAGES) {

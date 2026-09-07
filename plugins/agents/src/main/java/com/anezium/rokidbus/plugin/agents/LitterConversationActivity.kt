@@ -66,6 +66,7 @@ class LitterConversationActivity : Activity() {
         super.onStart()
         active = true
         LitterRuntime.acquire(this, this)
+        send.isEnabled = AgentsRuntime.store.connections.value[AgentProvider.CODEX]?.state == ConnectionState.CONNECTED
         sessionId?.let { id ->
             AgentsRuntime.store.sessions.value.firstOrNull { it.id == id }?.let { session ->
                 if (AgentsRuntime.store.connections.value[AgentProvider.CODEX]?.state == ConnectionState.CONNECTED) {
