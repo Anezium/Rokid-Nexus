@@ -53,6 +53,7 @@ internal class FoodEntryEditor(
     private val error = NexusUi.statusLine(context).apply { visibility = View.GONE }
     private val saveButton = NexusUi.pillButton(context, if (original == null) "Add to journal" else "Save changes")
     private var saving = false
+    val isSaving: Boolean get() = saving
 
     val view: LinearLayout = NexusUi.contentColumn(context).apply {
         addView(NexusUi.sectionRow(context, if (original == null) "Log food" else "Edit entry"), NexusUi.block())
