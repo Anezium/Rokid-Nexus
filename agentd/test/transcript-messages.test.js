@@ -41,3 +41,55 @@ test("tool summaries stay single-line and within 90 characters", () => {
   assert.equal(long.includes("\n"), false);
   assert.equal(long.length, 90);
 });
+
+test("Edit and MultiEdit summaries carry a line-change count", () => {
+  assert.equal(
+    toolSummary("Edit", {
+      file_path: "/repo/src/App.tsx",
+      old_string: "const a = 1;\nconst b = 2;",
+      new_string: "const a = 1;\nconst b = 2;\nconst c = 3;\nconst d = 4;",
+    }),
+    "Edit · …/src/App.tsx (+2 -0)",
+  );
+
+  assert.equal(
+    toolSummary("Edit", {
+      file_path: "/repo/src/App.tsx",
+      old_string: "one\ntwo\nthree",
+      new_string: "one\nTWO\nthree",
+    }),
+    "Edit · …/src/App.tsx (+1 -1)",
+  );
+
+  // Identical old/new carries no stat at all: nothing to draw a wearer's eye to.
+  assert.equal(
+    toolSummary("Edit", {
+      file_path: "/repo/src/App.tsx",
+      old_string: "same",
+      new_string: "same",
+    }),
+    "Edit · …/src/App.tsx",
+  );
+
+  assert.equal(
+    toolSummary("MultiEdit", {
+      file_path: "/repo/src/App.tsx",
+      edits: [
+        { old_string: "a", new_string: "a\nb" },
+        { old_string: "x\ny", new_string: "x" },
+      ],
+    }),
+    "MultiEdit · …/src/App.tsx (+1 -1)",
+  );
+});
+
+test("Write summaries carry a line count instead of a diff", () => {
+  assert.equal(
+    toolSummary("Write", { file_path: "/repo/src/new.ts", content: "a\nb\nc" }),
+    "Write · …/src/new.ts (3 lines)",
+  );
+  assert.equal(
+    toolSummary("Write", { file_path: "/repo/src/one.ts", content: "only" }),
+    "Write · …/src/one.ts (1 line)",
+  );
+});

@@ -96,6 +96,22 @@ If no phone decision is available, agentd sends no approval response to Codex. T
 app-server request remains pending for another subscribed Codex UI to answer and is
 replayed when a client resumes the thread.
 
+## Typing a reply from the phone
+
+Off by default. A phone that can already watch a session should not also be able to
+type into it without the owner turning that on:
+
+```json
+"allowTerminalInput": true
+```
+
+With it on, the daemon only reaches a session that is running inside `screen` or
+`tmux` — it types into the multiplexer the way a person would (`screen -X stuff` /
+`tmux send-keys`) rather than owning the session's process, which is also why a
+session `claude --resume` would fork instead of continuing cannot be reached this
+way. A session mid-turn refuses the phone's text outright: typing into a turn in
+progress would land mid-thought rather than at a prompt.
+
 ## Away from home (Tailscale)
 
 Install Tailscale on the PC and phone. At startup and every 60 seconds, the daemon
