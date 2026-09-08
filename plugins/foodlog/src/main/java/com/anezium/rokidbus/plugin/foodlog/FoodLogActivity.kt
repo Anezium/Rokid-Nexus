@@ -29,7 +29,9 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -315,6 +317,8 @@ class FoodLogActivity : ComponentActivity() {
     }
 
     private fun showEditor(view: LinearLayout) {
+        barcodeLookupGeneration += 1
+        addButton.isEnabled = true
         navigationBack.isEnabled = true
         tabs.values.forEach { it.isEnabled = false }
         body.removeAllViews()
@@ -357,8 +361,20 @@ class FoodLogActivity : ComponentActivity() {
                 journal.choose(selectedDate)
                 showTab("Journal")
                 report(if (original == null) "Added ${product.name}." else "Saved changes to ${product.name}.")
-                syncEntryIfEnabled(entry)
             }, onFailure = { editor?.showError(it.message ?: "Entry could not be saved.") }) }
+            result.getOrNull()?.let { entry ->
+                val healthResult = syncCommittedChange(entry)
+                post {
+                    when (healthResult) {
+                        FoodLogHealthConnectSyncResult.PermissionRequired -> {
+                            report("Saved locally; Health Connect permission was revoked.")
+                            refreshHealthState()
+                        }
+                        is FoodLogHealthConnectSyncResult.Failed -> report("Saved locally; Health Connect sync failed.")
+                        else -> Unit
+                    }
+                }
+            }
         }
     }
 
@@ -632,6 +648,9 @@ class FoodLogActivity : ComponentActivity() {
         if (values.slice(1..4).any { it != null && it > 100.0 }) return report("Nutrients measured in grams cannot exceed 100 g per 100 g.")
         val serving = runCatching { customServingField.optionalNumber() }.getOrElse { return report("Enter a serving weight in grams, or leave it blank.") }
         if (serving != null && serving !in MIN_QUANTITY_GRAMS..MAX_QUANTITY_GRAMS) return report("One serving must weigh 1–5,000 g.")
+        val request = barcodeLookupGeneration
+        val savedFields = fields + customNameField + customServingField
+        savedFields.forEach { it.isEnabled = false }
         customSaveButton.isEnabled = false
         worker.execute {
             val result = runCatching {
@@ -642,10 +661,14 @@ class FoodLogActivity : ComponentActivity() {
             }
             post {
                 customSaveButton.isEnabled = true
+                savedFields.forEach { it.isEnabled = true }
                 result.fold(onSuccess = { product ->
-                    (fields + customNameField + customServingField).forEach { it.text?.clear() }
+                    savedFields.forEach { it.text?.clear() }
                     report("Saved ${product.name} to your foods and favorites.")
-                    refreshAll(); openEntryEditor(product)
+                    refreshAll()
+                    if (request == barcodeLookupGeneration && currentTab == "Foods" && entryEditor == null && recipeEditor == null) {
+                        openEntryEditor(product)
+                    }
                 }, onFailure = { report("Custom food could not be saved. Check the values and try again.") })
             }
         }
@@ -675,27 +698,20 @@ class FoodLogActivity : ComponentActivity() {
     }
 
     private fun deleteEntry(entry: FoodEntry) {
-        scope.launch {
-            val deleted = withContext(Dispatchers.IO) {
-                store.deleteEntry(entry)
+        worker.execute {
+            val deleted = runCatching { store.deleteEntry(entry) }
+            val healthResult = if (deleted.getOrDefault(false)) syncCommittedChange(entry, deleted = true) else null
+            post {
+                if (healthResult == FoodLogHealthConnectSyncResult.PermissionRequired) refreshHealthState()
+                report(when {
+                    deleted.isFailure -> "This entry could not be deleted. Your journal is unchanged."
+                    !deleted.getOrDefault(false) -> "The entry changed or was removed. Reopen it before deleting."
+                    healthResult is FoodLogHealthConnectSyncResult.Failed -> "Deleted locally; Health Connect removal failed."
+                    healthResult == FoodLogHealthConnectSyncResult.PermissionRequired -> "Deleted locally; Health Connect permission was revoked."
+                    else -> "Deleted exactly ${entry.product.name}."
+                })
+                refreshAll()
             }
-            val healthResult = if (deleted && preferences.getBoolean(FOOD_LOG_HEALTH_SYNC_KEY, false)) {
-                healthBridge.deleteEntry(entry, userOptedIn = true)
-            } else {
-                null
-            }
-            if (healthResult == FoodLogHealthConnectSyncResult.PermissionRequired) {
-                preferences.edit().putBoolean(FOOD_LOG_HEALTH_SYNC_KEY, false).apply()
-                refreshHealthState()
-            }
-            val message = when {
-                !deleted -> "The entry changed or was removed. Reopen it before deleting."
-                healthResult is FoodLogHealthConnectSyncResult.Failed -> "Deleted locally; Health Connect removal failed."
-                healthResult == FoodLogHealthConnectSyncResult.PermissionRequired -> "Deleted locally; Health Connect permission was revoked."
-                else -> "Deleted exactly ${entry.product.name}."
-            }
-            report(message)
-            refreshAll()
         }
     }
 
@@ -1017,20 +1033,23 @@ class FoodLogActivity : ComponentActivity() {
         updatingHealthSwitch = false
     }
 
-    private fun syncEntryIfEnabled(entry: FoodEntry) {
-        if (!preferences.getBoolean(FOOD_LOG_HEALTH_SYNC_KEY, false)) return
-        scope.launch {
-            when (val result = healthBridge.syncEntry(entry, userOptedIn = true)) {
-                FoodLogHealthConnectSyncResult.Synced -> Unit
-                FoodLogHealthConnectSyncResult.PermissionRequired -> {
-                    preferences.edit().putBoolean(FOOD_LOG_HEALTH_SYNC_KEY, false).apply()
-                    report("Saved locally; Health Connect permission was revoked.")
-                    refreshHealthState()
+    /** The local write worker finishes committed changes even when rotation discards UI callbacks. */
+    private fun syncCommittedChange(entry: FoodEntry, deleted: Boolean = false): FoodLogHealthConnectSyncResult {
+        if (!preferences.getBoolean(FOOD_LOG_HEALTH_SYNC_KEY, false)) return FoodLogHealthConnectSyncResult.NotOptedIn
+        val consent = preferences.getLong(FOOD_LOG_HEALTH_CONSENT_GENERATION_KEY, 0L)
+        val result = runCatching {
+            runBlocking {
+                withTimeout(15_000L) {
+                    if (deleted) healthBridge.deleteEntry(entry, userOptedIn = true)
+                    else healthBridge.syncEntry(entry, userOptedIn = true)
                 }
-                is FoodLogHealthConnectSyncResult.Failed -> report("Saved locally; Health Connect sync failed.")
-                else -> Unit
             }
+        }.getOrElse { FoodLogHealthConnectSyncResult.Failed("The Health Connect request did not complete.") }
+        if (result == FoodLogHealthConnectSyncResult.PermissionRequired &&
+            consent == preferences.getLong(FOOD_LOG_HEALTH_CONSENT_GENERATION_KEY, 0L)) {
+            preferences.edit().putBoolean(FOOD_LOG_HEALTH_SYNC_KEY, false).apply()
         }
+        return result
     }
 
     private fun syncTodayToHealthConnect() {

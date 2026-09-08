@@ -55,6 +55,8 @@ Queued synchronization reloads the current local entry, so an old batch cannot
 replace a newer edit or recreate a deleted entry. Turning sync off cancels pending
 batch work and prevents further dispatch; a provider request already sent may
 finish. Permission requests and editor drafts survive activity recreation.
+Committed saves and deletions finish their bounded provider dispatch independently
+of activity callbacks, so rotating the phone does not discard synchronization.
 
 All portions and recipe ingredients use grams. Open Food Facts fields named
 `_100g` can also describe nutrition per 100 ml. Products labelled with volume units
