@@ -29,12 +29,15 @@ import java.util.concurrent.Executors
 class FoodLogReminderReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action == FoodLogReminderContract.ACTION_FIRE) {
-            intent.getStringExtra(FoodLogReminderContract.EXTRA_ID)?.let {
-                FoodLogReminderDeliveryService.start(
-                    context,
-                    it,
-                    intent.getBooleanExtra(FoodLogReminderContract.EXTRA_LATE, false),
-                )
+            val id = intent.getStringExtra(FoodLogReminderContract.EXTRA_ID) ?: return
+            val late = intent.getBooleanExtra(FoodLogReminderContract.EXTRA_LATE, false)
+            if (intent.getBooleanExtra(FoodLogReminderContract.EXTRA_EXACT, false) &&
+                FoodLogReminderDeliveryService.start(context, id, late)) return
+            val pending = goAsync()
+            val executor = Executors.newSingleThreadExecutor()
+            executor.execute {
+                try { runCatching { deliverFoodLogPhoneReminder(context, id, late) } }
+                finally { pending.finish(); executor.shutdown() }
             }
             return
         }
@@ -63,14 +66,16 @@ class FoodLogReminderDeliveryService : Service() {
     override fun onCreate() { super.onCreate(); createChannels() }
     override fun onBind(intent: Intent?): IBinder? = null
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        beginForeground()
         val id = intent?.getStringExtra(FoodLogReminderContract.EXTRA_ID)
         if (id == null) { finish(startId); return START_NOT_STICKY }
         val late = intent.getBooleanExtra(FoodLogReminderContract.EXTRA_LATE, false)
+        try { beginForeground() }
+        catch (_: IllegalStateException) { sendFoodLogReminderFallback(this, id, late); finish(startId); return START_NOT_STICKY }
+        catch (_: SecurityException) { sendFoodLogReminderFallback(this, id, late); finish(startId); return START_NOT_STICKY }
         worker.execute {
             try {
                 val reminder = FoodLogReminderStore(applicationContext).takeForDelivery(id) ?: return@execute
-                postNotification(reminder, late)
+                postFoodLogReminderNotification(applicationContext, reminder, late)
                 main.post { OneShotFoodLogGlassesDelivery(applicationContext).deliver(reminder, late) }
             } finally {
                 // The glasses handshake is bounded independently and cannot keep this service alive.
@@ -86,30 +91,52 @@ class FoodLogReminderDeliveryService : Service() {
             .setContentTitle("Food Log reminder").setContentText("Delivering reminder").setOngoing(true).setCategory(Notification.CATEGORY_SERVICE).build()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) startForeground(DELIVERY_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE) else startForeground(DELIVERY_ID, notification)
     }
-    private fun postNotification(value: FoodLogReminder, late: Boolean) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
-        val title = when (value.kind) { FoodLogReminderKind.MEAL -> "Meal reminder"; FoodLogReminderKind.HYDRATION -> "Hydration reminder" } + if (late) " (late)" else ""
-        notifications.notify(value.id.hashCode(), Notification.Builder(this, REMINDER_CHANNEL).setSmallIcon(R.drawable.nexus_glyph_foodlog).setContentTitle(title).setContentText(value.label).setStyle(Notification.BigTextStyle().bigText(value.label)).setAutoCancel(true).setCategory(Notification.CATEGORY_REMINDER).build())
-    }
     private fun createChannels() {
-        notifications.createNotificationChannel(NotificationChannel(REMINDER_CHANNEL, "Food Log reminders", NotificationManager.IMPORTANCE_HIGH))
         notifications.createNotificationChannel(NotificationChannel(DELIVERY_CHANNEL, "Food Log reminder delivery", NotificationManager.IMPORTANCE_LOW).apply { setShowBadge(false) })
     }
     private fun finish(startId: Int) { if (stopSelfResult(startId)) stopForeground(STOP_FOREGROUND_REMOVE) }
     companion object {
-        private const val REMINDER_CHANNEL = "food_log_reminders"
         private const val DELIVERY_CHANNEL = "food_log_reminder_delivery"
         private const val DELIVERY_ID = 0x464c
         private const val DELIVERY_LIFETIME_MS = 8_000L
 
-        internal fun start(context: Context, id: String, late: Boolean) {
+        internal fun start(context: Context, id: String, late: Boolean): Boolean = try {
             context.startForegroundService(
                 Intent(context, FoodLogReminderDeliveryService::class.java)
                     .putExtra(FoodLogReminderContract.EXTRA_ID, id)
                     .putExtra(FoodLogReminderContract.EXTRA_LATE, late),
             )
-        }
+            true
+        } catch (_: IllegalStateException) { false }
+        catch (_: SecurityException) { false }
     }
+}
+
+/** Inexact alarms can post this notification without starting a foreground service. */
+internal fun deliverFoodLogPhoneReminder(context: Context, id: String, late: Boolean): Boolean {
+    val reminder = FoodLogReminderStore(context).takeForDelivery(id) ?: return false
+    postFoodLogReminderNotification(context, reminder, late)
+    return true
+}
+
+internal fun sendFoodLogReminderFallback(context: Context, id: String, late: Boolean) {
+    context.sendBroadcast(Intent(context, FoodLogReminderReceiver::class.java)
+        .setAction(FoodLogReminderContract.ACTION_FIRE)
+        .putExtra(FoodLogReminderContract.EXTRA_ID, id)
+        .putExtra(FoodLogReminderContract.EXTRA_LATE, late)
+        .putExtra(FoodLogReminderContract.EXTRA_EXACT, false))
+}
+
+private fun postFoodLogReminderNotification(context: Context, value: FoodLogReminder, late: Boolean) {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
+    val notifications = context.getSystemService(NotificationManager::class.java)
+    val channel = "food_log_reminders"
+    notifications.createNotificationChannel(NotificationChannel(channel, "Food Log reminders", NotificationManager.IMPORTANCE_HIGH))
+    val title = when (value.kind) { FoodLogReminderKind.MEAL -> "Meal reminder"; FoodLogReminderKind.HYDRATION -> "Hydration reminder" } + if (late) " (late)" else ""
+    notifications.notify(value.id.hashCode(), Notification.Builder(context, channel)
+        .setSmallIcon(R.drawable.nexus_glyph_foodlog).setContentTitle(title).setContentText(value.label)
+        .setStyle(Notification.BigTextStyle().bigText(value.label)).setAutoCancel(true)
+        .setCategory(Notification.CATEGORY_REMINDER).build())
 }
 
 /** A single short connection; it never retries and is released after one attempted notice or pin. */

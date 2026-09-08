@@ -513,7 +513,7 @@ class FoodLogActivity : ComponentActivity() {
         addView(
             NexusUi.cardBody(
                 this@FoodLogActivity,
-                "Only reminders you explicitly create here can wake Food Log.",
+                "Only reminders you create can wake Food Log. Without exact-alarm access, reminders use phone notifications; glasses delivery requires exact alarms. Allow phone notifications to receive reminders.",
             ),
         )
         addView(BusTheme.gap(this@FoodLogActivity, 10))
