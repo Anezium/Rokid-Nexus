@@ -16,48 +16,44 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 
 class LitterConversationActivity : Activity() {
     private val uiScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-    private var sessionId: String? = null
+    private lateinit var selection: LitterConversationSelection
+    private val sessionId: String? get() = selection.sessionId
     private var active = false
     private var opening = false
+    private var sending = false
     private lateinit var prompt: EditText
     private lateinit var folder: EditText
     private lateinit var send: Button
     private lateinit var status: TextView
     private lateinit var transcript: TextView
     private lateinit var approvals: LinearLayout
+    private lateinit var conversationTitle: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
-        sessionId = savedInstanceState?.getString(SESSION_ID) ?: intent.getStringExtra(SESSION_ID)
+        selection = LitterConversationSelection(savedInstanceState?.getString(SESSION_ID) ?: intent.getStringExtra(SESSION_ID))
         buildUi()
         uiScope.launch { LitterRuntime.client.message.collect { status.text = it } }
         uiScope.launch {
-            combine(AgentsRuntime.store.connections, AgentsRuntime.store.sessions) { connections, sessions -> connections to sessions }
-                .collect { (connections, sessions) ->
-                    if (active && !opening && connections[AgentProvider.CODEX]?.state == ConnectionState.CONNECTED) {
-                        val id = sessionId
-                        if (id != null && AgentsRuntime.store.conversation.value?.sessionId != id) {
-                            (sessions.firstOrNull { it.id == id } ?: savedSession(id)).let { session ->
-                                opening = true
-                                LitterRuntime.run { try { openSession(session) } finally { opening = false } }
-                            }
-                        }
-                    }
-                    send.isEnabled = active && connections[AgentProvider.CODEX]?.state == ConnectionState.CONNECTED
-                }
+            AgentsRuntime.store.connections.collect { resumeIfNeeded(); updateSendEnabled() }
         }
         uiScope.launch { AgentsRuntime.store.conversation.collect { conversation ->
+            if (conversation != null) {
+                selection.observe(conversation.sessionId, prompt.text.toString())?.let { prompt.setText(it) }
+            }
             if (conversation != null && conversation.sessionId == sessionId) {
+                conversationTitle.text = AgentsRuntime.store.sessions.value.firstOrNull { it.id == sessionId }?.displayTitle ?: "Session"
                 transcript.text = if (conversation.loading) "Loading conversation…" else conversation.messages.joinToString("\n\n") {
                     "${if (it.role == MessageRole.ASSISTANT) "AGENT" else it.role.label}\n${it.text}"
                 }.ifEmpty { "The session is ready for a prompt." }
+                renderApprovals()
             }
+            updateSendEnabled()
         } }
         uiScope.launch { AgentsRuntime.store.approvals.collect { renderApprovals() } }
     }
@@ -66,14 +62,8 @@ class LitterConversationActivity : Activity() {
         super.onStart()
         active = true
         LitterRuntime.acquire(this, this)
-        send.isEnabled = AgentsRuntime.store.connections.value[AgentProvider.CODEX]?.state == ConnectionState.CONNECTED
-        sessionId?.let { id ->
-            (AgentsRuntime.store.sessions.value.firstOrNull { it.id == id } ?: savedSession(id)).let { session ->
-                if (AgentsRuntime.store.connections.value[AgentProvider.CODEX]?.state == ConnectionState.CONNECTED) {
-                    LitterRuntime.run { openSession(session) }
-                }
-            }
-        }
+        resumeIfNeeded()
+        updateSendEnabled()
     }
 
     override fun onStop() { active = false; LitterRuntime.release(this); super.onStop() }
@@ -86,6 +76,7 @@ class LitterConversationActivity : Activity() {
         status = NexusUi.cardBody(this, "Connecting…")
         transcript = NexusUi.cardBody(this, if (sessionId == null) "Choose a server folder and describe the work." else "Loading conversation…").apply { setTextIsSelectable(true) }
         approvals = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        conversationTitle = NexusUi.cardTitle(this, if (sessionId == null) "New session" else "Session")
         folder = NexusUi.field(this, "Project folder on the server").apply {
             setText(runCatching { LitterEndpointStore(this@LitterConversationActivity).load()?.cwd }.getOrNull().orEmpty())
             filters = arrayOf(InputFilter.LengthFilter(4_096))
@@ -107,6 +98,7 @@ class LitterConversationActivity : Activity() {
         }
         setContentView(NexusUi.fixedRoot(this).apply {
             addView(NexusUi.textButton(this@LitterConversationActivity, "‹ Sessions").apply { setOnClickListener { finish() } }, NexusUi.block())
+            addView(conversationTitle, NexusUi.block())
             addView(NexusUi.screen(this@LitterConversationActivity, content), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
             addView(NexusUi.contentColumn(this@LitterConversationActivity).apply {
                 addView(folder, NexusUi.block())
@@ -122,20 +114,27 @@ class LitterConversationActivity : Activity() {
     private fun submit() {
         val text = prompt.text.toString().trim()
         if (text.isBlank()) { status.text = "Enter a prompt first."; return }
+        if (sending) return
+        sending = true
         send.isEnabled = false
         val id = sessionId
         val cwd = folder.text.toString().trim()
         LitterRuntime.run {
             try {
-                if (id == null) {
-                    sessionId = createSession(cwd)
+                val targetId = if (id == null) {
+                    val created = createSession(cwd)
+                    selection.created(created)
+                    conversationTitle.text = AgentsRuntime.store.sessions.value.firstOrNull { it.id == created }?.displayTitle ?: "Session"
+                    transcript.text = "The session is ready for a prompt."
                     folder.visibility = View.GONE
                     send.text = "Send follow-up"
-                }
-                submit(sessionId ?: id ?: return@run, text)
-                prompt.setText("")
+                    created
+                } else id
+                submit(targetId, text)
+                selection.sent(targetId, text)
+                if (sessionId == targetId && prompt.text.toString().trim() == text) prompt.setText("")
                 renderApprovals()
-            } finally { send.isEnabled = active && AgentsRuntime.store.connections.value[AgentProvider.CODEX]?.state == ConnectionState.CONNECTED }
+            } finally { sending = false; updateSendEnabled() }
         }
     }
 
@@ -162,6 +161,21 @@ class LitterConversationActivity : Activity() {
     }
 
     private fun savedSession(id: String) = AgentSession(id = id, provider = AgentProvider.CODEX, status = AgentStatus.IDLE)
+
+    private fun resumeIfNeeded() {
+        val connected = AgentsRuntime.store.connections.value[AgentProvider.CODEX]?.state == ConnectionState.CONNECTED
+        val id = selection.requestResume(active && !opening, connected, AgentsRuntime.store.conversation.value?.sessionId) ?: return
+        val session = AgentsRuntime.store.sessions.value.firstOrNull { it.id == id } ?: savedSession(id)
+        opening = true
+        LitterRuntime.run { try { openSession(session) } finally { opening = false; updateSendEnabled() } }
+    }
+
+    private fun updateSendEnabled() {
+        val conversation = AgentsRuntime.store.conversation.value
+        send.isEnabled = active && !opening && !sending &&
+            AgentsRuntime.store.connections.value[AgentProvider.CODEX]?.state == ConnectionState.CONNECTED &&
+            (sessionId == null || (conversation?.sessionId == sessionId && conversation?.loading == false))
+    }
 
     companion object { const val SESSION_ID = "litterSessionId" }
 }

@@ -39,6 +39,7 @@ class AgentsPluginService : NexusPluginService() {
     private var composeSession: String? = null
     private var activeSurfaceId = "agents"
     private var noticeTarget: String? = null
+    private var conversationKey: String? = null
     private var status = ""
     private val fingerprints = mutableMapOf<String, String>()
     private val attention = AttentionDecisionEngine(fingerprints::get) { key, value -> fingerprints[key] = value }
@@ -52,6 +53,17 @@ class AgentsPluginService : NexusPluginService() {
                 AgentsRuntime.store.approvals, LitterRuntime.client.message) { _, _, _, message -> message }
                 .collect { message ->
                     status = message
+                    val sharedKey = AgentsRuntime.store.conversation.value?.sessionKey
+                    if (sharedKey != null && sharedKey != conversationKey && page != Page.BOARD) {
+                        selectedKey = sharedKey
+                        actionIndex = 0
+                        if (page != Page.READER) {
+                            page = Page.ACTIONS
+                            composeSession = null
+                            pendingDecision = null
+                        }
+                    }
+                    conversationKey = sharedKey
                     if (opened) {
                         // Coalesce token bursts before crossing the glasses transport.
                         delay(120)
