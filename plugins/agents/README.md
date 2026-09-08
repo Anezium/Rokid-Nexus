@@ -6,6 +6,50 @@ Gateway sessions, keeps the connections in a low-priority foreground service,
 posts transition-only phone notifications, and renders a structured Nexus card
 on the glasses.
 
+## Quick start
+
+End to end, computer to phone to glasses:
+
+1. **Run the daemon on the computer**, from `agentd/`:
+
+   ```bash
+   npm install && npm run build
+   node dist/cli.js install-hooks   # merges Claude Code hooks into ~/.claude/settings.json, once
+   node dist/cli.js run             # loopback :8791 for hooks, WebSocket :8792 for the phone
+   ```
+
+2. **Install the plugin on the phone** (this APK) and approve it in the Nexus
+   app; **install a compatible `glasses-hub` build** on the glasses if the
+   wearer's own hasn't shipped this yet.
+
+3. **Pair the phone with the computer.** Whichever applies:
+   - Same Wi-Fi, first computer ever paired: turn on **Monitor sessions** in
+     Settings and the phone finds it on its own — this is the zero-setup path.
+   - Anything else (a second computer, different networks, automatic
+     discovery failing): run `node dist/cli.js pair` on the computer, then
+     **Add a computer → paste pairing line** on the phone. A computer after
+     the first needs the wearer to hold the door open for it on that screen.
+   - Away from home: install Tailscale on both ends and sign in with the same
+     account — no re-pairing needed afterward.
+
+4. **Settings the phone needs to actually keep running:**
+   - **Let Agents keep running** — the standard Android battery exemption
+     prompt, in Settings.
+   - If the phone still freezes the process with the screen off (seen on a
+     Vivo device): **Open App info → Battery usage → Allow background power
+     usage**. That's a ROM-level battery manager Android's own exemption API
+     cannot reach, not something the plugin can request directly.
+   - `allowTerminalInput: true` in the **computer's**
+     `~/.nexus-agentd/config.json` — off by default, needed only for typing a
+     reply into a session from the glasses (see below).
+
+5. **On the glasses:** the board shows every watched session. ENTER opens a
+   pending permission (Allow/Deny), or opens a session's conversation.
+   Pressing ENTER again inside a conversation offers to type a reply — this
+   only works for a session actually running inside `screen` or `tmux` on the
+   computer, per [Typing a reply into a session](#typing-a-reply-into-a-session)
+   below.
+
 ## Configuration
 
 The settings screen reads top to bottom: Monitoring (one switch for the
@@ -129,6 +173,18 @@ Unlike ordinary dormant Nexus plugins, this product explicitly requires a
 monitoring foreground service and phone alerts while its HUD is closed. The
 network owner is therefore a separate, non-exported `AgentsMonitorService`;
 the one exported `AgentsPluginService` remains the normal SDK adapter.
+
+### Typing a reply into a session
+
+ENTER inside an open conversation offers to type into that session, using the
+same editable field Relay and Assistant use for reply-by-typing. agentd cannot
+own an already-running session's process, so it types the way a person would:
+`screen -X stuff` or `tmux send-keys` puts the text in the session's own input
+buffer, one send for the text and a second for the carriage return. This only
+reaches a session actually running inside `screen` or `tmux` on the computer —
+a session started plainly in a terminal, or one the daemon spawned itself,
+does not offer the field, and neither does a session mid-turn, since typing
+into a turn in progress would land mid-thought rather than at a prompt.
 
 ## Implemented protocols
 
@@ -257,8 +313,11 @@ JSON choice as Transit, plus the repository’s existing OkHttp `4.12.0`.
   install a custom trust manager.
 - No boot receiver is present. Monitoring starts after configuration, an
   explicit connection test, or a Nexus HUD open, as required for Phase 1.
-- No approve/deny, prompt answering, session spawning, voice, or command send
-  path exists.
+- Approve/deny and session spawning exist; typed replies to a running session
+  exist too, but only when that session happens to be running inside `screen`
+  or `tmux` on the computer — agentd types into it the way a person would
+  rather than owning the process, and a session outside a multiplexer simply
+  does not offer the reply field. Voice input does not exist.
 - **The phone may stop running Agents altogether, not merely throttle it.**
   Measured on a Vivo device: Android froze the process outright
   (`cgroup.freeze=1`, no CPU time accruing) while the service still reported
