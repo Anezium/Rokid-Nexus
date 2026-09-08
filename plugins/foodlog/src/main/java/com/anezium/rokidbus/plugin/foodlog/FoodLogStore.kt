@@ -25,9 +25,14 @@ internal class FoodLogStore(context: Context) : AutoCloseable {
 
     @Synchronized fun product(barcode: String): FoodProduct? {
         val normalized = productId(barcode) ?: return null
-        return helper.readableDatabase.query("products", PRODUCT_COLUMNS, "barcode=?", arrayOf(normalized), null, null, null).use { if (it.moveToFirst()) it.toProduct() else null }
+        return helper.readableDatabase.query("products", PRODUCT_COLUMNS, "barcode=? AND archived=0", arrayOf(normalized), null, null, null).use { if (it.moveToFirst()) it.toProduct() else null }
     }
-    @Synchronized fun upsertProduct(product: FoodProduct) { helper.writableDatabase.insertWithOnConflict("products", null, product.values(), SQLiteDatabase.CONFLICT_REPLACE) }
+    @Synchronized fun upsertProduct(product: FoodProduct) {
+        val db = helper.writableDatabase
+        if (db.update("products", product.values(), "barcode=?", arrayOf(product.barcode)) == 0) {
+            db.insertWithOnConflict("products", null, product.values(), SQLiteDatabase.CONFLICT_IGNORE)
+        }
+    }
     @Synchronized fun createCustomFood(
         name: String,
         nutrients: NutrientsPer100g,
@@ -46,7 +51,9 @@ internal class FoodLogStore(context: Context) : AutoCloseable {
         require(FOOD_ENTRY_ID_PATTERN.matches(uuid))
         require(recipeId == null || FOOD_UUID_PATTERN.matches(recipeId))
         val db = helper.writableDatabase; db.beginTransaction()
-        return try { db.insertWithOnConflict("products", null, product.values(), SQLiteDatabase.CONFLICT_IGNORE)
+        return try {
+            check(!isArchived(db, "products", "barcode", product.barcode)) { "This food was removed. Choose another food." }
+            db.insertWithOnConflict("products", null, product.values(), SQLiteDatabase.CONFLICT_IGNORE)
             db.insertOrThrow("entries", null, product.values().apply { remove("fetched_at"); put("consumed_at", consumedAtMillis); put("quantity_grams", quantityGrams); put("entry_uuid", uuid); put("meal_type", mealType.name); put("source", source.name); putNullable("recipe_id", recipeId); put("revision", nextFoodEntryRevision()) }).also { db.setTransactionSuccessful() }
         } finally { db.endTransaction() }
     }
@@ -80,14 +87,14 @@ internal class FoodLogStore(context: Context) : AutoCloseable {
         helper.readableDatabase.query(
             "products",
             PRODUCT_COLUMNS,
-            null,
+            "archived=0",
             null,
             null,
             null,
             "product_name COLLATE NOCASE",
             limit.coerceIn(1, 2_000).toString(),
         ).use { it.rows(Cursor::toProduct) }
-    @Synchronized fun recentProducts(limit: Int = 8): List<FoodProduct> = helper.readableDatabase.rawQuery("SELECT ${PRODUCT_COLUMNS.joinToString { "p.$it" }} FROM products p INNER JOIN entries e ON e.barcode=p.barcode GROUP BY p.barcode ORDER BY MAX(e.consumed_at) DESC LIMIT ?", arrayOf(limit.coerceIn(1,32).toString())).use { it.rows(Cursor::toProduct) }
+    @Synchronized fun recentProducts(limit: Int = 8): List<FoodProduct> = helper.readableDatabase.rawQuery("SELECT ${PRODUCT_COLUMNS.joinToString { "p.$it" }} FROM products p INNER JOIN entries e ON e.barcode=p.barcode WHERE p.archived=0 GROUP BY p.barcode ORDER BY MAX(e.consumed_at) DESC LIMIT ?", arrayOf(limit.coerceIn(1,32).toString())).use { it.rows(Cursor::toProduct) }
     @Synchronized fun latestEntryForDay(atMillis: Long = System.currentTimeMillis()): FoodEntry? = entriesForDay(atMillis).firstOrNull()
     @Synchronized fun entry(id: Long): FoodEntry? = helper.readableDatabase.query(
         "entries",
@@ -139,19 +146,67 @@ internal class FoodLogStore(context: Context) : AutoCloseable {
         val pattern = "%$escaped%"
         return helper.readableDatabase.query(
             "products", PRODUCT_COLUMNS,
-            "product_name LIKE ? ESCAPE '\\' OR brand LIKE ? ESCAPE '\\' OR barcode=?",
+            "archived=0 AND (product_name LIKE ? ESCAPE '\\' OR brand LIKE ? ESCAPE '\\' OR barcode=?)",
             arrayOf(pattern, pattern, query.trim()), null, null,
             "product_name COLLATE NOCASE", limit.coerceIn(1, 500).toString(),
         ).use { it.rows(Cursor::toProduct) }
     }
-    @Synchronized fun setFavorite(barcode: String, favorite: Boolean) { val code=productId(barcode)?:return; if(favorite) helper.writableDatabase.insertWithOnConflict("favorites",null,ContentValues().apply{put("barcode",code)},SQLiteDatabase.CONFLICT_IGNORE) else helper.writableDatabase.delete("favorites","barcode=?",arrayOf(code)) }
-    @Synchronized fun favoriteProducts(): List<FoodProduct> = helper.readableDatabase.rawQuery("SELECT ${PRODUCT_COLUMNS.joinToString()} FROM products WHERE barcode IN (SELECT barcode FROM favorites) ORDER BY product_name",null).use { it.rows(Cursor::toProduct) }
+
+    /** Keep catalog rows needed by saved ingredient snapshots and historical recipe identities. */
+    @Synchronized fun removeCustomFood(id: String): Boolean {
+        if (!id.startsWith("custom-") || productId(id) != id) return false
+        return archiveCatalogItem(id, null)
+    }
+
+    @Synchronized fun removeRecipe(uuid: String): Boolean {
+        if (!FOOD_UUID_PATTERN.matches(uuid)) return false
+        return archiveCatalogItem("recipe-$uuid", uuid)
+    }
+
+    private fun archiveCatalogItem(productId: String, recipeId: String?): Boolean {
+        val db = helper.writableDatabase
+        db.beginTransaction()
+        return try {
+            val archived = ContentValues().apply { put("archived", 1) }
+            val changed = if (recipeId == null) {
+                db.update("products", archived, "barcode=? AND archived=0", arrayOf(productId)) == 1
+            } else {
+                val recipeChanged = db.update("recipes", archived, "recipe_uuid=? AND archived=0", arrayOf(recipeId)) == 1
+                if (recipeChanged) check(db.update("products", archived, "barcode=?", arrayOf(productId)) == 1) {
+                    "The recipe food could not be found. Existing data was preserved."
+                }
+                recipeChanged
+            }
+            if (changed) db.delete("favorites", "barcode=?", arrayOf(productId))
+            db.setTransactionSuccessful()
+            changed
+        } finally { db.endTransaction() }
+    }
+
+    private fun archivedIds(table: String, idColumn: String): Set<String> = helper.readableDatabase.query(
+        table, arrayOf(idColumn), "archived=1", null, null, null, null,
+    ).use { cursor -> cursor.rows { it.getString(0) }.toSet() }
+
+    private fun isArchived(db: SQLiteDatabase, table: String, idColumn: String, id: String): Boolean = db.query(
+        table, arrayOf("archived"), "$idColumn=?", arrayOf(id), null, null, null,
+    ).use { it.moveToFirst() && it.getInt(0) != 0 }
+    @Synchronized fun setFavorite(barcode: String, favorite: Boolean) {
+        val code = productId(barcode) ?: return
+        if (favorite) {
+            helper.writableDatabase.execSQL(
+                "INSERT OR IGNORE INTO favorites(barcode) SELECT barcode FROM products WHERE barcode=? AND archived=0",
+                arrayOf(code),
+            )
+        } else helper.writableDatabase.delete("favorites", "barcode=?", arrayOf(code))
+    }
+    @Synchronized fun favoriteProducts(): List<FoodProduct> = helper.readableDatabase.rawQuery("SELECT ${PRODUCT_COLUMNS.joinToString()} FROM products WHERE archived=0 AND barcode IN (SELECT barcode FROM favorites) ORDER BY product_name",null).use { it.rows(Cursor::toProduct) }
     @Synchronized fun saveGoals(goals: NutritionGoals) { helper.writableDatabase.insertWithOnConflict("goals",null,ContentValues().apply { put("singleton",1); putNullable("calories",goals.caloriesKcal);putNullable("protein",goals.proteinGrams);putNullable("carbohydrate",goals.carbohydrateGrams);putNullable("fat",goals.fatGrams) },SQLiteDatabase.CONFLICT_REPLACE) }
     @Synchronized fun goals(): NutritionGoals? = helper.readableDatabase.query("goals",arrayOf("calories","protein","carbohydrate","fat"),"singleton=1",null,null,null,null).use { if(it.moveToFirst()) NutritionGoals(it.d("calories"),it.d("protein"),it.d("carbohydrate"),it.d("fat")) else null }
     @Synchronized fun saveRecipe(recipe: FoodRecipe) {
         val db = helper.writableDatabase
         db.beginTransaction()
         try {
+            check(!isArchived(db, "recipes", "recipe_uuid", recipe.uuid)) { "This recipe was removed. Create a new recipe instead." }
             recipe.ingredients.forEach { ingredient ->
                 db.insertWithOnConflict(
                     "products",
@@ -195,12 +250,12 @@ internal class FoodLogStore(context: Context) : AutoCloseable {
             db.endTransaction()
         }
     }
-    @Synchronized fun recipes(): List<FoodRecipe> {
+    @Synchronized fun recipes(includeArchived: Boolean = false): List<FoodRecipe> {
         val db = helper.readableDatabase
         return db.query(
             "recipes",
             arrayOf("recipe_uuid", "name", "servings", "created_at"),
-            null,
+            if (includeArchived) null else "archived=0",
             null,
             null,
             null,
@@ -235,8 +290,10 @@ internal class FoodLogStore(context: Context) : AutoCloseable {
             products = allProductsForBackup(),
             favoriteProductIds = favoriteProducts().mapTo(linkedSetOf(), FoodProduct::barcode),
             goals = goals(),
-            recipes = recipes(),
+            recipes = recipes(includeArchived = true),
             reminders = reminders,
+            archivedProductIds = archivedIds("products", "barcode"),
+            archivedRecipeIds = archivedIds("recipes", "recipe_uuid"),
         ),
     )
     /** Validates the complete payload before opening the write transaction; UUIDs make merging idempotent. */
@@ -246,6 +303,8 @@ internal class FoodLogStore(context: Context) : AutoCloseable {
         var inserted = 0
         db.beginTransaction()
         try {
+            val removedProducts = archivedIds("products", "barcode") + archive.archivedProductIds
+            val removedRecipes = archivedIds("recipes", "recipe_uuid") + archive.archivedRecipeIds
             archive.products.forEach { product ->
                 db.insertWithOnConflict("products", null, product.values(), SQLiteDatabase.CONFLICT_REPLACE)
             }
@@ -314,6 +373,13 @@ internal class FoodLogStore(context: Context) : AutoCloseable {
                 }
                 db.insertWithOnConflict("products", null, recipe.asProduct().values(), SQLiteDatabase.CONFLICT_REPLACE)
             }
+            removedProducts.forEach { id ->
+                db.update("products", ContentValues().apply { put("archived", 1) }, "barcode=?", arrayOf(id))
+                db.delete("favorites", "barcode=?", arrayOf(id))
+            }
+            removedRecipes.forEach { id ->
+                db.update("recipes", ContentValues().apply { put("archived", 1) }, "recipe_uuid=?", arrayOf(id))
+            }
             db.setTransactionSuccessful()
         } finally {
             db.endTransaction()
@@ -331,12 +397,17 @@ internal class FoodLogStore(context: Context) : AutoCloseable {
         "product_name COLLATE NOCASE",
     ).use { it.rows(Cursor::toProduct) }
     @Synchronized override fun close() = helper.close()
-    private class FoodLogDatabase(context: Context): SQLiteOpenHelper(context,"food-log.db",null,4) {
-        override fun onCreate(db: SQLiteDatabase) { createV1(db); upgradeTo2(db); upgradeTo3(db); upgradeTo4(db) }
+    private class FoodLogDatabase(context: Context): SQLiteOpenHelper(context,"food-log.db",null,5) {
+        override fun onCreate(db: SQLiteDatabase) { createV1(db); upgradeTo2(db); upgradeTo3(db); upgradeTo4(db); upgradeTo5(db) }
         override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
             if (oldVersion < 2) upgradeTo2(db)
             if (oldVersion < 3) upgradeTo3(db)
             if (oldVersion < 4) upgradeTo4(db)
+            if (oldVersion < 5) upgradeTo5(db)
+        }
+        private fun upgradeTo5(db: SQLiteDatabase) {
+            db.execSQL("ALTER TABLE products ADD COLUMN archived INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("ALTER TABLE recipes ADD COLUMN archived INTEGER NOT NULL DEFAULT 0")
         }
         private fun upgradeTo4(db: SQLiteDatabase) {
             db.execSQL("ALTER TABLE entries ADD COLUMN revision INTEGER NOT NULL DEFAULT 1")

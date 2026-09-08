@@ -21,7 +21,10 @@ Recipes use named ingredients from your foods, ingredient weights, and a number 
 servings. Save a custom food or barcode product first if an ingredient is missing.
 Ingredient weights are before cooking; servings divide those weights and nutrition
 equally, without estimating water gained or lost while cooking. Recipes can be
-edited; existing journal entries keep their original nutrition.
+edited; existing journal entries keep their original nutrition. **Remove** asks for
+confirmation on custom foods and recipes, then hides them from the catalog and
+favorites. Saved meals and ingredient snapshots remain intact. Barcode foods have
+no removal action.
 
 **Settings** contains optional goals, seven-day summaries, Health Connect,
 reminders, backups, and uninstall. The phone also supports:
@@ -64,9 +67,11 @@ Dates use the phone's local time zone. Editing a repeated autumn time preserves 
 original offset; a nonexistent spring time is rejected for correction. This follows
 Android's [zone rules](https://developer.android.com/reference/java/time/zone/ZoneRules).
 
-V3 exports now include optional recipe ingredient snapshots and remain readable by
-older V3 readers. Import accepts older V3 archives without those fields and V2
-journal backups. Reimporting an entry UUID never duplicates or replaces its history.
+V3 exports include optional ingredient snapshots and removed catalog identities.
+Import accepts older V3 archives without those fields and V2 journal backups.
+Reimporting an entry UUID never duplicates or replaces its history, and merging an
+older archive does not restore foods already removed locally. Removed rows stay in
+the archive to preserve recipe references; older app versions may display them.
 
 Open Food Facts data is collaborative and can be incomplete. The package label
 remains the source to check when nutrition data matters; Food Log is a tracking

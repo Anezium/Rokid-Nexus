@@ -19,6 +19,8 @@
   through rotation, and serialize Health Connect writes using persisted revisions.
 - Deliver inexact alarms through bounded phone notifications when a background
   foreground-service start is not permitted.
+- Confirm removal of custom foods and recipes, clear their favorites, and preserve
+  saved meals and recipe ingredient snapshots through backup and restore.
 
 ## 3.0.0
 
