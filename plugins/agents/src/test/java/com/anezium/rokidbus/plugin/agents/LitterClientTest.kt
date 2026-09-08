@@ -7,8 +7,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -245,9 +247,29 @@ class LitterClientTest {
         assertEquals(failed.error, client.message.value)
         assertFalse(client.message.value.contains("PRIVATE_FIXTURE_DETAIL"))
         assertFalse(client.message.value.contains("sign-in"))
+        peer.event("item/agentMessage/delta", JSONObject().put("itemId", "message-a").put("delta", " after failure"))
+        val streamed = store.conversation.first { it?.messages?.singleOrNull()?.text == "Existing answer after failure" }!!
+        assertEquals(failed.error, streamed.error)
+        assertFalse(streamed.loading)
+        peer.event("item/completed", JSONObject().put("item", JSONObject().put("id", "message-a")
+            .put("type", "agentMessage").put("text", "Existing answer after failure final")))
+        val completed = store.conversation.first { it?.messages?.singleOrNull()?.text?.endsWith("final") == true }!!
+        assertEquals(failed.error, completed.error)
         assertTrue(runCatching { client.submit(session.id, "Must wait for retry") }.exceptionOrNull() is LitterFailure)
         peer.resumeError = null
-        client.openSession(session)
+        peer.holdResume = true
+        coroutineScope {
+            val retry = async { client.openSession(session) }
+            val request = peer.heldResumes.receive()
+            peer.event("item/agentMessage/delta", JSONObject().put("itemId", "message-a").put("delta", " during retry"))
+            val pending = store.conversation.first { it?.messages?.singleOrNull()?.text?.endsWith("during retry") == true }!!
+            assertTrue(pending.loading)
+            assertEquals(failed.error, pending.error)
+            assertTrue(runCatching { client.submit(session.id, "Must wait for response") }.exceptionOrNull() is LitterFailure)
+            assertFalse(peer.methods.any { it == "turn/start" || it == "turn/steer" })
+            peer.replyResume(request)
+            retry.await()
+        }
         assertNull(store.conversation.value!!.error)
         assertFalse(store.conversation.value!!.loading)
         assertFalse(client.message.value.contains("internal error"))
@@ -266,6 +288,35 @@ class LitterClientTest {
         assertTrue(failed.messages.isEmpty())
         assertNotNull(failed.error)
         assertTrue(failed.error!!.contains("reopen the session"))
+        peer.startThreadId = "thread-new"
+        val created = client.createSession("/workspace/project")
+        assertNull(store.conversation.value!!.error)
+        assertFalse(store.conversation.value!!.loading)
+        assertFalse(client.message.value.contains("internal error"))
+        client.submit(created, "A new session after the failed resume")
+        peer.received("turn/start")
+    }
+
+    @Test fun `late failed resume cannot replace a newer successful conversation`() = fixture { client, store, peer ->
+        val session = store.sessions.first { it.isNotEmpty() }.single()
+        peer.holdResume = true
+        coroutineScope {
+            val old = async { client.runOperation { client.openSession(session) } }
+            val request = peer.heldResumes.receive()
+            peer.holdResume = false
+            client.openSession(session.copy(id = "thread-b"))
+            peer.replyResume(request, -32603)
+            old.await()
+        }
+        val current = store.conversation.value!!
+        assertEquals("thread-b", current.sessionId)
+        assertEquals("Existing answer", current.messages.single().text)
+        assertFalse(current.loading)
+        assertNull(current.error)
+        assertFalse(client.message.value.contains("internal error"))
+        client.submit("thread-b", "Continue the selected session")
+        val prompt = peer.received("turn/steer")
+        assertEquals("thread-b", prompt.getJSONObject("params").getString("threadId"))
     }
 
     private fun fixture(reconnect: Boolean = false, body: suspend (LitterClient, AgentSessionStore, Peer) -> Unit) {
@@ -302,11 +353,14 @@ class LitterClientTest {
         private val frames = Channel<JSONObject>(Channel.UNLIMITED)
         val methods = CopyOnWriteArrayList<String>()
         val listCursors = CopyOnWriteArrayList<String>()
+        val heldResumes = Channel<JSONObject>(Channel.UNLIMITED)
         @Volatile var approveDuringResume = false
         @Volatile var beforeResume: (Peer.() -> Unit)? = null
         @Volatile var resumeItemId = "message-a"
         @Volatile var resumeText = "Existing answer"
         @Volatile var resumeError: Int? = null
+        @Volatile var holdResume = false
+        @Volatile var startThreadId = "thread-a"
         @Volatile var paginated = false
         @Volatile var pageCount = 3
         @Volatile var emptyPages = false
@@ -328,22 +382,25 @@ class LitterClientTest {
                     val data = if (emptyPages) JSONArray() else JSONArray().put(thread(id))
                     JSONObject().put("data", data).put("nextCursor", next ?: JSONObject.NULL)
                 }
-                "thread/start" -> JSONObject().put("thread", thread().put("turns", JSONArray()).put("status", JSONObject().put("type", "idle")))
+                "thread/start" -> JSONObject().put("thread", thread(startThreadId).put("turns", JSONArray()).put("status", JSONObject().put("type", "idle")))
                 "thread/resume" -> {
                     if (approveDuringResume) approval("resume-approval")
                     beforeResume?.invoke(this)
-                    resumeError?.let { code ->
-                        socket.send(JSONObject().put("id", frame.get("id")).put("error", JSONObject()
-                            .put("code", code).put("message", "PRIVATE_FIXTURE_DETAIL")).toString())
-                        return
-                    }
-                    JSONObject().put("thread", thread(frame.getJSONObject("params").getString("threadId")))
+                    if (holdResume) heldResumes.trySend(frame) else replyResume(frame)
+                    return
                 }
                 "turn/start" -> JSONObject().put("turn", JSONObject().put("id", "turn-b").put("status", "inProgress"))
                 "turn/steer" -> JSONObject().put("turnId", "turn-a")
                 else -> return
             }
             socket.send(JSONObject().put("id", frame.get("id")).put("result", result).toString())
+        }
+
+        fun replyResume(request: JSONObject, error: Int? = resumeError) {
+            val response = JSONObject().put("id", request.get("id"))
+            if (error == null) response.put("result", JSONObject().put("thread", thread(request.getJSONObject("params").getString("threadId"))))
+            else response.put("error", JSONObject().put("code", error).put("message", "PRIVATE_FIXTURE_DETAIL"))
+            socket.send(response.toString())
         }
 
         fun event(method: String, params: JSONObject, thread: String = "thread-a", turn: String = "turn-a") {
