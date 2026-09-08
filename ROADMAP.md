@@ -1,6 +1,6 @@
 # Rokid Nexus — Roadmap
 
-Status: 2026-08-12. This file is the public roadmap and the source the
+Status: 2026-09-08. This file is the public roadmap and the source the
 [project site](https://rokid-nexus.anezium.me) renders. The founding product
 argument lives in [VISION.md](VISION.md); what actually shipped in each release
 lives in [CHANGELOG.md](CHANGELOG.md).
@@ -166,14 +166,22 @@ Relay · Assistant · Lens · Feeds · Transit · Lyrics · Media Deck · Photos
 
 ### Display arbitration
 
-The protocol has carried an `actionable` class since v1 and v1 still renders it
-as a toast. Right now the entire policy is "the newest replaces the oldest, no
-queue" — which holds exactly until two chatty plugins are installed at once.
+Contextual Lyrics is implemented locally as a separate ambient overlay. It yields
+to an engaged plugin, the launcher, notices, camera and Assistant, then resumes.
+The default Glance mode does not replace a stock launcher widget or hold the
+display awake; dismissal suppresses the current track.
 
-What it needs: an arbiter that ranks a request against what is already on the
-display, plus surface ownership epochs so a late frame from a superseded owner
-cannot repaint someone else's surface. The per-plugin mute and demote switches
-in the phone hub are the user-facing half, and they already exist.
+Foreground ownership epochs reject late frames, and per-plugin display preferences
+control interruptions independently of capability grants. Playback, Assistant,
+launcher, Relay notice and dismissal scenarios passed on the phone and glasses.
+Release status and remaining validation are tracked in [plan 023](plans/023-contextual-parallel.md).
+
+### Assistant questions by keyboard
+
+Assistant 1.4.4 already supports typed notes. General questions from a phone
+dialog or the glasses editable field are implemented and tested on hardware, using the same
+provider, conversation and tools as voice. This extends the input shipped in
+Nexus 1.4.6; it does not introduce another remote-input protocol.
 
 ### Continuous speech
 
@@ -183,8 +191,7 @@ minutes.
 
 The remaining slice is a held lease with partial results streaming to the HUD,
 and a caption presentation that survives the surface underneath it changing.
-Live captions, translation, and any voice assistant are all blocked behind this
-one — which is why it is the only other thing being written.
+Live captions and sustained translation depend on this longer-lived session.
 
 ---
 
@@ -236,19 +243,24 @@ like the rows above.
 
 ### Next
 
-In order.
-
-1. **Navigation.** Google Maps and Citymapper already emit turn-by-turn as
-   notifications; the plugin reads those, keeps maneuver, distance and ETA
-   pinned with notices for the moments that matter, and graduates to the `nav`
-   surface the platform roadmap commits to above.
-2. **T3code, as an alpha.** Drive T3Code from the glasses: start a thread,
-   follow its agents while they work. An alpha on purpose — it exists to
-   rehearse the next one.
-3. **Terminal / Agent.** The real product. A coding agent in the wearer's eye:
-   its questions and permission prompts arrive as notices and are answered by
-   voice, its progress rides a pin, and the next task is dictated instead of
-   typed.
+1. **Agents, implemented locally.** A Nexus plugin compatible with the direct Codex
+   app-server connection used by [Litter](https://github.com/0xSero/litter):
+   sessions, streamed progress, follow-ups and request-bound approvals. This
+   replaces the earlier T3Code/Terminal exploration. SSH and Iroh transports
+   remain outside the first direct-server slice. Real connection, creation and
+   streaming passed; persisted-history validation is limited by a corrupt history
+   database in the local test server.
+2. **Food Log / FoodFacts, implemented locally.** Reuses
+   [PR #19](https://github.com/Anezium/Rokid-Nexus/pull/19): barcode lookup,
+   meals and dates, editable portions, daily calories and macros, local foods,
+   favorites and recipes. Optional goals, reminders, Health Connect and backups
+   build on that journal. Custom foods and recipes can be removed without changing
+   historical nutrition. Missing nutrition values stay distinct from zero. Meal,
+   portion, recipe and barcode flows passed on the phone; HUD portion logging and
+   exact undo update the resumed phone journal.
+3. **Navigation, deferred.** Google Maps and Citymapper already emit turn-by-turn
+   notifications; a future plugin can keep maneuver, distance and ETA pinned,
+   then adopt the `nav` surface when the platform provides it.
 
 ### Ideas
 
@@ -256,7 +268,6 @@ Not committed.
 
 | Idea | What it needs |
 |---|---|
-| A visual assistant, FoodFacts | camera capability, shipped |
 | Sport HUD | activity tier + a small protocol addition · possibly fed by the R08 ring |
 
 ---

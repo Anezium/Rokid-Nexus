@@ -72,6 +72,8 @@ jobs:
           set -euo pipefail
           ./gradlew \
             :plugin-assistant:testDebugUnitTest \
+            :plugin-foodlog:testDebugUnitTest \
+            :plugin-agents:testDebugUnitTest \
             :plugin-relay:testDebugUnitTest \
             :plugin-lens:testDebugUnitTest \
             :plugin-lyrics:testDebugUnitTest \

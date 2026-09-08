@@ -37,6 +37,7 @@ include(":glasses-client-probe")
 include(":plugin-sample")
 include(":plugin-wireless-adb")
 include(":plugin-foodlog")
+include(":plugin-agents")
 include(":ink-engine")
 
 // Plugin modules live under plugins/ (one folder per plugin, each with its own
@@ -52,6 +53,7 @@ project(":plugin-relay").projectDir = file("plugins/relay")
 project(":plugin-sample").projectDir = file("plugins/sample")
 project(":plugin-wireless-adb").projectDir = file("plugins/wireless-adb")
 project(":plugin-foodlog").projectDir = file("plugins/foodlog")
+project(":plugin-agents").projectDir = file("plugins/agents")
 
 val cxrGlobalDirectory = file("../CxrGlobal")
 val skipCxrGlobal = providers.gradleProperty("skipCxrGlobal")

@@ -43,7 +43,9 @@ grants one at a time and can take back.
 | **[Lens](plugins/lens/)** | Google-Lens-style live translation: the glasses camera streams to the phone, ML Kit OCR + translation run there (offline), translated overlays come back in real time — plus a freeze mode for full-resolution stills |
 | **[Feeds](plugin-feeds/)** | Bluesky and X timelines — browse posts, open threads, and view the actual photos full-screen |
 | **[Transit](plugins/transit/)** | Nearby stops and live departures (Transitous/MOTIS), with favourites |
-| **[Lyrics](plugins/lyrics/)** | Time-synced lyrics for whatever is playing on the phone, from Spotify/Musixmatch/Netease/LrcLib |
+| **[Lyrics](plugins/lyrics/)** | Time-synced lyrics from Spotify/Musixmatch/Netease/LrcLib, with two contextual lines that yield to apps and notices; fullscreen remains available |
+| **[Agents](plugins/agents/)** | Sessions, streamed answers, follow-ups and scoped approvals from the direct Codex app-server protocol supported by Litter |
+| **[Food Log](plugins/foodlog/)** | Open Food Facts barcode lookup, meal/date journal, portions, calories and macros, custom foods, favorites and recipes, with optional Health Connect |
 | **[Media Deck](plugins/media/)** | Universal now-playing surface with album art and transport controls |
 | **[Photos Sync](plugins/photosync/)** | Not a HUD plugin: copies the photos and videos you shoot on the glasses into the phone gallery by itself, and gives you the switches for it |
 | **[Wireless ADB](plugins/wireless-adb/)** | Enables Android's real wireless debugging service and creates a short-lived pairing command, so a trusted computer can connect to the glasses over the LAN without a cable or Settings automation |
@@ -61,10 +63,17 @@ And two that are not in this repository at all, written by
 They install and run exactly like the ones above, under the same grants and the
 same identity checks. Nothing in the platform is reserved for first-party code.
 
-All of them install from the in-app **Nexus Store**, backed by the public
+Published plugins install from the in-app **Nexus Store**, backed by the public
 [RokidBrew-Registry](https://github.com/Anezium/RokidBrew-Registry) feed with
 SHA-256 and signer pinning enforced before every install, and show update
 badges when a newer release is published.
+
+Agents and Food Log are implemented in this checkout; they have not yet been
+published to the Store. Assistant also accepts typed questions from its phone
+settings or a glasses editor, using the same conversation and tools as speech.
+Contextual Lyrics needs both music access and the Nexus media trigger enabled
+in its settings. Normal, Quiet, Notices only and Mute display policies control
+each plugin's interruptions; Quiet still permits manually opened fullscreen pages.
 
 The phone hub also controls software that is already installed on the glasses.
 **Glasses apps** lists and opens launchable native APKs; **Keyboard & remote**
