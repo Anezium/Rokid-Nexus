@@ -181,6 +181,7 @@ internal class LitterClient(
 
     suspend fun openSession(session: AgentSession) {
         val rpc = connected()
+        val generation = epoch
         val revision = ++conversationRevision
         val turnRevision = turnRevisions[session.id] ?: 0L
         if (selectedThread != session.id) { timeline.clear(); fragmentItems.clear() }
@@ -199,6 +200,15 @@ internal class LitterClient(
             val newer = if ((turnRevisions[session.id] ?: 0L) != turnRevision) this.session(session.id) else null
             store.upsert(resumed.copy(status = newer?.status ?: resumed.status, lastAssistantText = newer?.lastAssistantText))
             hydrate(thread, turnRevision)
+            _message.value = "Session opened"
+        } catch (failure: Exception) {
+            if (failure is CancellationException && failure !is TimeoutCancellationException) throw failure
+            if (generation == epoch && selectedThread == session.id && conversationRevision == revision) {
+                val error = if (failure is LitterFailure) failure.visibleMessage
+                    else "Could not load this conversation. Return to sessions and reopen it to retry."
+                publishTimeline(session.id, error)
+            }
+            throw failure
         } finally {
             if (resuming[session.id] == revision) {
                 resuming.remove(session.id)
@@ -244,7 +254,10 @@ internal class LitterClient(
         if (submitting) throw LitterFailure("A prompt is already being sent.")
         validatePrompt(prompt)
         val session = session(sessionId) ?: throw LitterFailure("Refresh and reopen this session first.")
-        if (session.stale || selectedThread != sessionId) throw LitterFailure("Reconnect and reopen this session first.")
+        val conversation = store.conversation.value
+        if (session.stale || selectedThread != sessionId || conversation == null ||
+            conversation.sessionId != sessionId || conversation.loading || conversation.error != null
+        ) throw LitterFailure("Reconnect and reopen this session first.")
         submitting = true
         try { startTurn(connected(), sessionId, prompt) } finally { submitting = false }
     }
@@ -474,11 +487,11 @@ internal class LitterClient(
         }
     }
 
-    private fun publishTimeline(thread: String) {
+    private fun publishTimeline(thread: String, error: String? = null) {
         while (timeline.size > AgentConversation.MAX_MESSAGES) {
             val key = timeline.keys.first()
             timeline.remove(key); liveItems.remove(key); fragmentItems.remove(key); completedItems.remove(key)
         }
-        store.setConversation(AgentProvider.CODEX, thread, timeline.values.toList())
+        store.setConversation(AgentProvider.CODEX, thread, timeline.values.toList(), error)
     }
 }

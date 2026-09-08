@@ -198,6 +198,42 @@ class LitterClientTest {
         assertTrue(client.hasMore.value)
     }
 
+    @Test fun `failed same-session resume preserves history and retry clears its error`() = fixture { client, store, peer ->
+        val session = store.sessions.first { it.isNotEmpty() }.single()
+        client.openSession(session)
+        peer.resumeError = -32603
+        client.runOperation { client.openSession(session) }
+        val failed = store.conversation.value!!
+        assertFalse(failed.loading)
+        assertEquals("Existing answer", failed.messages.single().text)
+        assertTrue(failed.error!!.contains("internal error"))
+        assertTrue(failed.error!!.contains("server logs"))
+        assertEquals(failed.error, client.message.value)
+        assertFalse(client.message.value.contains("PRIVATE_FIXTURE_DETAIL"))
+        assertFalse(client.message.value.contains("sign-in"))
+        assertTrue(runCatching { client.submit(session.id, "Must wait for retry") }.exceptionOrNull() is LitterFailure)
+        peer.resumeError = null
+        client.openSession(session)
+        assertNull(store.conversation.value!!.error)
+        assertFalse(store.conversation.value!!.loading)
+        assertFalse(client.message.value.contains("internal error"))
+        client.submit(session.id, "Follow up after retry")
+        peer.received("turn/steer")
+    }
+
+    @Test fun `failed newly selected resume stops loading without borrowing another transcript`() = fixture { client, store, peer ->
+        val session = store.sessions.first { it.isNotEmpty() }.single()
+        client.openSession(session)
+        peer.resumeError = -32603
+        client.runOperation { client.openSession(session.copy(id = "thread-b")) }
+        val failed = store.conversation.value!!
+        assertEquals("thread-b", failed.sessionId)
+        assertFalse(failed.loading)
+        assertTrue(failed.messages.isEmpty())
+        assertNotNull(failed.error)
+        assertTrue(failed.error!!.contains("reopen the session"))
+    }
+
     private fun fixture(reconnect: Boolean = false, body: suspend (LitterClient, AgentSessionStore, Peer) -> Unit) {
         val dispatcher = Executors.newSingleThreadExecutor().asCoroutineDispatcher()
         val http = OkHttpClient.Builder().build()
@@ -236,6 +272,7 @@ class LitterClientTest {
         @Volatile var beforeResume: (Peer.() -> Unit)? = null
         @Volatile var resumeItemId = "message-a"
         @Volatile var resumeText = "Existing answer"
+        @Volatile var resumeError: Int? = null
         @Volatile var paginated = false
 
         override fun onOpen(webSocket: WebSocket, response: Response) { socket = webSocket }
@@ -265,6 +302,11 @@ class LitterClientTest {
                 "thread/resume" -> {
                     if (approveDuringResume) approval("resume-approval")
                     beforeResume?.invoke(this)
+                    resumeError?.let { code ->
+                        socket.send(JSONObject().put("id", frame.get("id")).put("error", JSONObject()
+                            .put("code", code).put("message", "PRIVATE_FIXTURE_DETAIL")).toString())
+                        return
+                    }
                     JSONObject().put("thread", thread(frame.getJSONObject("params").getString("threadId")))
                 }
                 "turn/start" -> JSONObject().put("turn", JSONObject().put("id", "turn-b").put("status", "inProgress"))

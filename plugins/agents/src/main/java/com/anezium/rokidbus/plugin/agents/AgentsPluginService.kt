@@ -233,9 +233,11 @@ class AgentsPluginService : NexusPluginService() {
                 else "Review the full request on the phone or computer. You can deny it here.\n\n${approval?.summary.orEmpty()}"
             }
             else AgentsRuntime.store.conversation.value?.takeIf { it.sessionId == selected()?.id }?.let { conversation ->
-                if (conversation.loading) "Loading…" else conversation.messages.takeLast(30).joinToString("\n\n") {
+                val history = conversation.messages.takeLast(30).joinToString("\n\n") {
                     "${if (it.role == MessageRole.ASSISTANT) "AGENT" else it.role.label}\n${it.text}"
                 }
+                if (conversation.loading) "Loading…"
+                else listOf(history, conversation.error).filter { !it.isNullOrEmpty() }.joinToString("\n\n")
             }.orEmpty()
             val reader = NexusReader(title = selected()?.displayTitle?.take(120) ?: "Agents",
                 subtitle = if (page == Page.APPROVAL_DETAIL) "Review the complete request" else "Live conversation",
