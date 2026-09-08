@@ -10,7 +10,9 @@ import androidx.health.connect.client.units.Energy
 import androidx.health.connect.client.units.Mass
 import java.time.Instant
 import java.time.ZoneId
-import java.util.concurrent.atomic.AtomicLong
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * Writes a Food Log entry only after the caller has obtained an explicit user opt-in.
@@ -23,6 +25,12 @@ internal class FoodLogHealthConnectBridge(
     private val clientFactory: (Context) -> HealthConnectClient = HealthConnectClient::getOrCreate,
 ) {
     private val appContext = context.applicationContext
+    private val coordinator = FoodHealthSyncCoordinator(::isEnabled, currentEntry = { uuid ->
+        withContext(Dispatchers.IO) { FoodLogStore(appContext).use { it.entry(uuid) } }
+    })
+
+    private fun isEnabled(): Boolean = appContext.getSharedPreferences(FOOD_LOG_PREFERENCES, Context.MODE_PRIVATE)
+        .getBoolean(FOOD_LOG_HEALTH_SYNC_KEY, false)
 
     fun availability(): FoodLogHealthConnectAvailability = when (
         HealthConnectClient.getSdkStatus(appContext)
@@ -46,8 +54,10 @@ internal class FoodLogHealthConnectBridge(
         entry: FoodEntry,
         userOptedIn: Boolean,
         zoneId: ZoneId = ZoneId.systemDefault(),
-    ): FoodLogHealthConnectSyncResult {
-        if (!userOptedIn) return FoodLogHealthConnectSyncResult.NotOptedIn
+    ): FoodLogHealthConnectSyncResult = coordinator.sync(entry, userOptedIn) { current -> writeCurrentEntry(current, zoneId) }
+
+    private suspend fun writeCurrentEntry(entry: FoodEntry, zoneId: ZoneId): FoodLogHealthConnectSyncResult {
+        if (!isEnabled()) return FoodLogHealthConnectSyncResult.NotOptedIn
         when (val status = availability()) {
             FoodLogHealthConnectAvailability.Available -> Unit
             else -> return FoodLogHealthConnectSyncResult.Unavailable(status)
@@ -55,24 +65,31 @@ internal class FoodLogHealthConnectBridge(
 
         val client = try {
             clientFactory(appContext)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (exception: Exception) {
             return FoodLogHealthConnectSyncResult.Failed(exception.safeMessage())
         }
         val hasPermission = try {
             client.permissionController.getGrantedPermissions().contains(WRITE_NUTRITION_PERMISSION)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (exception: Exception) {
             return FoodLogHealthConnectSyncResult.Failed(exception.safeMessage())
         }
         if (!hasPermission) return FoodLogHealthConnectSyncResult.PermissionRequired
+        if (!isEnabled()) return FoodLogHealthConnectSyncResult.NotOptedIn
 
         return try {
             client.insertRecords(
-                listOf(entry.toNutritionRecord(zoneId, syncVersionMillis = nextHealthConnectVersion())),
+                listOf(entry.toNutritionRecord(zoneId)),
             )
             FoodLogHealthConnectSyncResult.Synced
         } catch (exception: SecurityException) {
             // Permissions can be revoked after the check above.
             FoodLogHealthConnectSyncResult.PermissionRequired
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (exception: Exception) {
             FoodLogHealthConnectSyncResult.Failed(exception.safeMessage())
         }
@@ -82,23 +99,30 @@ internal class FoodLogHealthConnectBridge(
     suspend fun deleteEntry(
         entry: FoodEntry,
         userOptedIn: Boolean,
-    ): FoodLogHealthConnectSyncResult {
-        if (!userOptedIn) return FoodLogHealthConnectSyncResult.NotOptedIn
+    ): FoodLogHealthConnectSyncResult = coordinator.delete(entry, userOptedIn, ::deleteCurrentEntry)
+
+    private suspend fun deleteCurrentEntry(entry: FoodEntry): FoodLogHealthConnectSyncResult {
+        if (!isEnabled()) return FoodLogHealthConnectSyncResult.NotOptedIn
         when (val status = availability()) {
             FoodLogHealthConnectAvailability.Available -> Unit
             else -> return FoodLogHealthConnectSyncResult.Unavailable(status)
         }
         val client = try {
             clientFactory(appContext)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (exception: Exception) {
             return FoodLogHealthConnectSyncResult.Failed(exception.safeMessage())
         }
         val hasPermission = try {
             client.permissionController.getGrantedPermissions().contains(WRITE_NUTRITION_PERMISSION)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (exception: Exception) {
             return FoodLogHealthConnectSyncResult.Failed(exception.safeMessage())
         }
         if (!hasPermission) return FoodLogHealthConnectSyncResult.PermissionRequired
+        if (!isEnabled()) return FoodLogHealthConnectSyncResult.NotOptedIn
         return try {
             client.deleteRecords(
                 NutritionRecord::class,
@@ -108,6 +132,8 @@ internal class FoodLogHealthConnectBridge(
             FoodLogHealthConnectSyncResult.Synced
         } catch (exception: SecurityException) {
             FoodLogHealthConnectSyncResult.PermissionRequired
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (exception: Exception) {
             FoodLogHealthConnectSyncResult.Failed(exception.safeMessage())
         }
@@ -127,6 +153,7 @@ internal sealed interface FoodLogHealthConnectAvailability {
 
 internal sealed interface FoodLogHealthConnectSyncResult {
     data object Synced : FoodLogHealthConnectSyncResult
+    data object Skipped : FoodLogHealthConnectSyncResult
     data object NotOptedIn : FoodLogHealthConnectSyncResult
     data object PermissionRequired : FoodLogHealthConnectSyncResult
     data class Unavailable(val availability: FoodLogHealthConnectAvailability) :
@@ -137,12 +164,10 @@ internal sealed interface FoodLogHealthConnectSyncResult {
 internal fun FoodEntry.healthConnectClientRecordId(): String =
     "foodlog-entry-${uuid.ifBlank { id.toString() }}"
 
-internal fun FoodEntry.healthConnectClientRecordVersion(syncVersionMillis: Long): Long =
-    maxOf(consumedAtMillis, syncVersionMillis).coerceAtLeast(1L)
+internal fun FoodEntry.healthConnectClientRecordVersion(): Long = revision.coerceAtLeast(1L)
 
 internal fun FoodEntry.toNutritionRecord(
     zoneId: ZoneId,
-    syncVersionMillis: Long = System.currentTimeMillis(),
 ): NutritionRecord {
     val consumedAt = Instant.ofEpochMilli(consumedAtMillis)
     val endTime = consumedAt.plusMillis(1)
@@ -155,7 +180,7 @@ internal fun FoodEntry.toNutritionRecord(
         endZoneOffset = zoneId.rules.getOffset(endTime),
         metadata = Metadata.manualEntry(
             clientRecordId = healthConnectClientRecordId(),
-            clientRecordVersion = healthConnectClientRecordVersion(syncVersionMillis),
+            clientRecordVersion = healthConnectClientRecordVersion(),
         ),
         energy = nutrients.caloriesKcal.scaledEnergy(entry = this),
         protein = nutrients.proteinGrams.scaledMass(entry = this),
@@ -203,10 +228,7 @@ private fun Double?.scaledEnergy(entry: FoodEntry): Energy? =
 private fun Exception.safeMessage(): String = message ?: javaClass.simpleName
 
 private const val SALT_GRAMS_PER_SODIUM_GRAM = 2.5
-private val healthConnectVersionClock = AtomicLong(System.currentTimeMillis() * 1_000L)
-private fun nextHealthConnectVersion(): Long = healthConnectVersionClock.updateAndGet { previous ->
-    maxOf(previous + 1L, System.currentTimeMillis() * 1_000L)
-}
-
 internal const val FOOD_LOG_PREFERENCES = "food_log_settings"
 internal const val FOOD_LOG_HEALTH_SYNC_KEY = "health_connect_write_enabled"
+
+internal const val FOOD_LOG_HEALTH_CONSENT_GENERATION_KEY = "health_connect_consent_generation"

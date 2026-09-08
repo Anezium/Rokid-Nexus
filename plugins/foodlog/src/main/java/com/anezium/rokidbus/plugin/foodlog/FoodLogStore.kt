@@ -10,9 +10,9 @@ import java.util.UUID
 
 internal const val MIN_QUANTITY_GRAMS = 1.0
 internal const val MAX_QUANTITY_GRAMS = 5_000.0
-private const val EXACT_ENTRY_SELECTION = "id=? AND entry_uuid=? AND consumed_at=? AND quantity_grams=? AND meal_type=?"
+private const val EXACT_ENTRY_SELECTION = "id=? AND entry_uuid=? AND consumed_at=? AND quantity_grams=? AND meal_type=? AND revision=?"
 
-private fun FoodEntry.selectionArgs() = arrayOf(id.toString(), uuid, consumedAtMillis.toString(), quantityGrams.toString(), mealType.name)
+private fun FoodEntry.selectionArgs() = arrayOf(id.toString(), uuid, consumedAtMillis.toString(), quantityGrams.toString(), mealType.name, revision.toString())
 
 internal data class FoodLogDatabaseImportResult(
     val insertedEntries: Int,
@@ -47,7 +47,7 @@ internal class FoodLogStore(context: Context) : AutoCloseable {
         require(recipeId == null || FOOD_UUID_PATTERN.matches(recipeId))
         val db = helper.writableDatabase; db.beginTransaction()
         return try { db.insertWithOnConflict("products", null, product.values(), SQLiteDatabase.CONFLICT_IGNORE)
-            db.insertOrThrow("entries", null, product.values().apply { remove("fetched_at"); put("consumed_at", consumedAtMillis); put("quantity_grams", quantityGrams); put("entry_uuid", uuid); put("meal_type", mealType.name); put("source", source.name); putNullable("recipe_id", recipeId) }).also { db.setTransactionSuccessful() }
+            db.insertOrThrow("entries", null, product.values().apply { remove("fetched_at"); put("consumed_at", consumedAtMillis); put("quantity_grams", quantityGrams); put("entry_uuid", uuid); put("meal_type", mealType.name); put("source", source.name); putNullable("recipe_id", recipeId); put("revision", nextFoodEntryRevision()) }).also { db.setTransactionSuccessful() }
         } finally { db.endTransaction() }
     }
     @Synchronized fun entriesForDay(atMillis: Long = System.currentTimeMillis(), zoneId: ZoneId = ZoneId.systemDefault()): List<FoodEntry> { val b=dayBounds(atMillis,zoneId); return entriesBetween(b.first,b.last) }
@@ -100,18 +100,17 @@ internal class FoodLogStore(context: Context) : AutoCloseable {
         "1",
     ).use { if (it.moveToFirst()) it.toEntry() else null }
     @Synchronized fun deleteEntry(id: Long): Boolean = helper.writableDatabase.delete("entries", "id=?", arrayOf(id.toString())) == 1
+    @Synchronized fun entry(uuid: String): FoodEntry? = helper.readableDatabase.query(
+        "entries", ENTRY_COLUMNS, "entry_uuid=?", arrayOf(uuid), null, null, null, "1",
+    ).use { if (it.moveToFirst()) it.toEntry() else null }
     @Synchronized fun deleteEntry(uuid: String): Boolean {
         if (!FOOD_ENTRY_ID_PATTERN.matches(uuid)) return false
         return helper.writableDatabase.delete("entries", "entry_uuid=?", arrayOf(uuid)) == 1
     }
     @Synchronized fun updateEntryMeal(uuid: String, mealType: MealType): Boolean {
         if (!FOOD_ENTRY_ID_PATTERN.matches(uuid)) return false
-        return helper.writableDatabase.update(
-            "entries",
-            ContentValues().apply { put("meal_type", mealType.name) },
-            "entry_uuid=?",
-            arrayOf(uuid),
-        ) == 1
+        val original = entry(uuid) ?: return false
+        return updateEntry(original, original.quantityGrams, original.consumedAtMillis, mealType)
     }
     @Synchronized fun updateEntry(original: FoodEntry, quantityGrams: Double, consumedAtMillis: Long, mealType: MealType): Boolean {
         require(quantityGrams in MIN_QUANTITY_GRAMS..MAX_QUANTITY_GRAMS)
@@ -123,6 +122,7 @@ internal class FoodLogStore(context: Context) : AutoCloseable {
                 put("quantity_grams", quantityGrams)
                 put("consumed_at", consumedAtMillis)
                 put("meal_type", mealType.name)
+                put("revision", nextFoodEntryRevision(original.revision))
             },
             EXACT_ENTRY_SELECTION,
             original.selectionArgs(),
@@ -260,6 +260,7 @@ internal class FoodLogStore(context: Context) : AutoCloseable {
                         put("meal_type", entry.mealType.name)
                         put("source", entry.source.name)
                         putNullable("recipe_id", entry.recipeId)
+                        put("revision", nextFoodEntryRevision(entry.revision))
                     })
                     inserted++
                 }
@@ -330,11 +331,16 @@ internal class FoodLogStore(context: Context) : AutoCloseable {
         "product_name COLLATE NOCASE",
     ).use { it.rows(Cursor::toProduct) }
     @Synchronized override fun close() = helper.close()
-    private class FoodLogDatabase(context: Context): SQLiteOpenHelper(context,"food-log.db",null,3) {
-        override fun onCreate(db: SQLiteDatabase) { createV1(db); upgradeTo2(db); upgradeTo3(db) }
+    private class FoodLogDatabase(context: Context): SQLiteOpenHelper(context,"food-log.db",null,4) {
+        override fun onCreate(db: SQLiteDatabase) { createV1(db); upgradeTo2(db); upgradeTo3(db); upgradeTo4(db) }
         override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
             if (oldVersion < 2) upgradeTo2(db)
             if (oldVersion < 3) upgradeTo3(db)
+            if (oldVersion < 4) upgradeTo4(db)
+        }
+        private fun upgradeTo4(db: SQLiteDatabase) {
+            db.execSQL("ALTER TABLE entries ADD COLUMN revision INTEGER NOT NULL DEFAULT 1")
+            db.execSQL("UPDATE entries SET revision=?", arrayOf(nextFoodEntryRevision()))
         }
         private fun upgradeTo3(db: SQLiteDatabase) {
             db.execSQL("ALTER TABLE recipe_ingredients ADD COLUMN product_snapshot TEXT")
@@ -349,7 +355,7 @@ internal class FoodLogStore(context: Context) : AutoCloseable {
         private fun createV1(db: SQLiteDatabase) { db.execSQL("CREATE TABLE products (barcode TEXT PRIMARY KEY NOT NULL, product_name TEXT NOT NULL, brand TEXT NOT NULL, serving_label TEXT, serving_grams REAL, nutrition_grade TEXT, nova_group INTEGER, calories_100g REAL, protein_100g REAL, carbohydrate_100g REAL, fat_100g REAL, sugars_100g REAL, fiber_100g REAL, salt_100g REAL, fetched_at INTEGER NOT NULL)"); db.execSQL("CREATE TABLE entries (id INTEGER PRIMARY KEY AUTOINCREMENT, consumed_at INTEGER NOT NULL, quantity_grams REAL NOT NULL, barcode TEXT NOT NULL, product_name TEXT NOT NULL, brand TEXT NOT NULL, serving_label TEXT, serving_grams REAL, nutrition_grade TEXT, nova_group INTEGER, calories_100g REAL, protein_100g REAL, carbohydrate_100g REAL, fat_100g REAL, sugars_100g REAL, fiber_100g REAL, salt_100g REAL)"); db.execSQL("CREATE INDEX entries_consumed_at ON entries (consumed_at DESC)"); db.execSQL("CREATE INDEX entries_barcode ON entries (barcode)") }
         private fun upgradeTo2(db: SQLiteDatabase) { listOf("saturated_fat_100g REAL","sodium_100g REAL","cholesterol_100g REAL","potassium_100g REAL","calcium_100g REAL","iron_100g REAL","caffeine_100g REAL").forEach { c -> db.execSQL("ALTER TABLE products ADD COLUMN $c"); db.execSQL("ALTER TABLE entries ADD COLUMN $c") }; db.execSQL("ALTER TABLE entries ADD COLUMN entry_uuid TEXT"); db.execSQL("ALTER TABLE entries ADD COLUMN meal_type TEXT NOT NULL DEFAULT 'UNKNOWN'"); db.execSQL("ALTER TABLE entries ADD COLUMN source TEXT NOT NULL DEFAULT 'UNKNOWN'"); db.execSQL("ALTER TABLE entries ADD COLUMN recipe_id TEXT"); db.execSQL("UPDATE entries SET entry_uuid = lower(hex(randomblob(16))) WHERE entry_uuid IS NULL"); db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS entries_uuid ON entries(entry_uuid)"); db.execSQL("CREATE TABLE IF NOT EXISTS favorites (barcode TEXT PRIMARY KEY NOT NULL)"); db.execSQL("CREATE TABLE IF NOT EXISTS goals (singleton INTEGER PRIMARY KEY CHECK(singleton=1), calories REAL, protein REAL, carbohydrate REAL, fat REAL)"); db.execSQL("CREATE TABLE IF NOT EXISTS recipes (recipe_uuid TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL, servings REAL NOT NULL, created_at INTEGER NOT NULL)"); db.execSQL("CREATE TABLE IF NOT EXISTS recipe_ingredients (recipe_uuid TEXT NOT NULL, barcode TEXT NOT NULL, grams REAL NOT NULL, PRIMARY KEY(recipe_uuid, barcode))") }
     }
-    private companion object { val PRODUCT_COLUMNS=arrayOf("barcode","product_name","brand","serving_label","serving_grams","nutrition_grade","nova_group","calories_100g","protein_100g","carbohydrate_100g","fat_100g","sugars_100g","fiber_100g","salt_100g","saturated_fat_100g","sodium_100g","cholesterol_100g","potassium_100g","calcium_100g","iron_100g","caffeine_100g","fetched_at"); val ENTRY_COLUMNS=arrayOf("id","consumed_at","quantity_grams","entry_uuid","meal_type","source","recipe_id",*PRODUCT_COLUMNS.filterNot { it=="fetched_at" }.toTypedArray()) }
+    private companion object { val PRODUCT_COLUMNS=arrayOf("barcode","product_name","brand","serving_label","serving_grams","nutrition_grade","nova_group","calories_100g","protein_100g","carbohydrate_100g","fat_100g","sugars_100g","fiber_100g","salt_100g","saturated_fat_100g","sodium_100g","cholesterol_100g","potassium_100g","calcium_100g","iron_100g","caffeine_100g","fetched_at"); val ENTRY_COLUMNS=arrayOf("id","consumed_at","quantity_grams","entry_uuid","meal_type","source","recipe_id","revision",*PRODUCT_COLUMNS.filterNot { it=="fetched_at" }.toTypedArray()) }
 }
 private fun FoodProduct.values()=ContentValues().apply { put("barcode",barcode);put("product_name",name);put("brand",brand);putNullable("serving_label",servingLabel);putNullable("serving_grams",servingGrams);putNullable("nutrition_grade",nutritionGrade);putNullable("nova_group",novaGroup); listOf("calories_100g" to nutrients.caloriesKcal,"protein_100g" to nutrients.proteinGrams,"carbohydrate_100g" to nutrients.carbohydrateGrams,"fat_100g" to nutrients.fatGrams,"sugars_100g" to nutrients.sugarsGrams,"fiber_100g" to nutrients.fiberGrams,"salt_100g" to nutrients.saltGrams,"saturated_fat_100g" to nutrients.saturatedFatGrams,"sodium_100g" to nutrients.sodiumMilligrams,"cholesterol_100g" to nutrients.cholesterolMilligrams,"potassium_100g" to nutrients.potassiumMilligrams,"calcium_100g" to nutrients.calciumMilligrams,"iron_100g" to nutrients.ironMilligrams,"caffeine_100g" to nutrients.caffeineMilligrams).forEach{putNullable(it.first,it.second)};put("fetched_at",fetchedAtMillis) }
 internal fun productId(value: String): String? = normalizeBarcode(value)
@@ -386,6 +392,6 @@ private fun Cursor.toProduct(): FoodProduct {
         if (fetchedAtIndex >= 0) getLong(fetchedAtIndex) else 0L,
     )
 }
-private fun Cursor.toEntry()=FoodEntry(getLong(getColumnIndexOrThrow("id")),getLong(getColumnIndexOrThrow("consumed_at")),getDouble(getColumnIndexOrThrow("quantity_grams")),toProduct(),ns("entry_uuid").orEmpty(),ns("meal_type")?.let { runCatching{MealType.valueOf(it)}.getOrDefault(MealType.UNKNOWN)}?:MealType.UNKNOWN,ns("source")?.let { runCatching{FoodEntrySource.valueOf(it)}.getOrDefault(FoodEntrySource.UNKNOWN)}?:FoodEntrySource.UNKNOWN,ns("recipe_id"))
+private fun Cursor.toEntry()=FoodEntry(getLong(getColumnIndexOrThrow("id")),getLong(getColumnIndexOrThrow("consumed_at")),getDouble(getColumnIndexOrThrow("quantity_grams")),toProduct(),ns("entry_uuid").orEmpty(),ns("meal_type")?.let { runCatching{MealType.valueOf(it)}.getOrDefault(MealType.UNKNOWN)}?:MealType.UNKNOWN,ns("source")?.let { runCatching{FoodEntrySource.valueOf(it)}.getOrDefault(FoodEntrySource.UNKNOWN)}?:FoodEntrySource.UNKNOWN,ns("recipe_id"),getLong(getColumnIndexOrThrow("revision")))
 private fun Cursor.s(n:String)=getString(getColumnIndexOrThrow(n)); private fun Cursor.ns(n:String)=getColumnIndex(n).takeIf{it>=0}?.let{if(isNull(it))null else getString(it)}; private fun Cursor.d(n:String)=getColumnIndex(n).takeIf{it>=0}?.let{if(isNull(it))null else getDouble(it)}; private fun Cursor.i(n:String)=getColumnIndex(n).takeIf{it>=0}?.let{if(isNull(it))null else getInt(it)}
 private inline fun <T> Cursor.rows(f:(Cursor)->T)=buildList { while(moveToNext()) add(f(this@rows)) }

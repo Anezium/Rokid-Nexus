@@ -42,8 +42,9 @@ internal class FoodRecipeEditor(
         addView(BusTheme.gap(context, 12))
         addView(name, NexusUi.block())
         addView(BusTheme.gap(context, 8))
+        addView(NexusUi.rowTitle(context, "Servings"))
         addView(servings, NexusUi.block())
-        addView(NexusUi.rowSub(context, "Use the ingredient weights before cooking. A serving divides those weights and nutrition equally."))
+        addView(NexusUi.cardBody(context, "Use the ingredient weights before cooking. A serving divides those weights and nutrition equally."))
         addView(BusTheme.gap(context, 16))
         addView(NexusUi.rowTitle(context, "Ingredients"))
         addView(ingredients, NexusUi.block())
@@ -127,6 +128,7 @@ internal class FoodRecipeEditor(
             orientation = LinearLayout.VERTICAL
             addView(BusTheme.gap(context, 12))
             addView(NexusUi.rowTitle(context, product.name))
+            addView(NexusUi.rowSub(context, "Grams"))
             addView(field, NexusUi.block())
             addView(NexusUi.textButton(context, "Remove ingredient").apply {
                 setOnClickListener { fields.remove(item); ingredients.removeView(this.parent as View); renderPreview(); searchIngredients() }
@@ -150,8 +152,8 @@ internal class FoodRecipeEditor(
                     setOnClickListener { addIngredient(product); searchIngredients() }
                 }, NexusUi.block())
             }
-            if (candidates.isEmpty()) results.addView(NexusUi.rowSub(context, "No matching ingredients. Save a barcode product or custom food in Foods first."))
-            else if (candidates.size > 8) results.addView(NexusUi.rowSub(context, "Type more of the food name to narrow these results."))
+            if (candidates.isEmpty()) results.addView(NexusUi.cardBody(context, "No matching ingredients. Save a barcode product or custom food in Foods first."))
+            else if (candidates.size > 8) results.addView(NexusUi.cardBody(context, "Type more of the food name to narrow these results."))
         }
     }
 

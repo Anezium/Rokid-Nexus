@@ -109,7 +109,11 @@ internal data class FoodEntry(
     val mealType: MealType = MealType.UNKNOWN,
     val source: FoodEntrySource = FoodEntrySource.UNKNOWN,
     val recipeId: String? = null,
+    val revision: Long = 1L,
 )
+
+internal fun nextFoodEntryRevision(previous: Long = 0L, nowMillis: Long = System.currentTimeMillis()): Long =
+    maxOf(previous + 1L, nowMillis * 1_000L).coerceAtLeast(1L)
 
 internal data class NutritionTotal(
     val knownValue: Double,

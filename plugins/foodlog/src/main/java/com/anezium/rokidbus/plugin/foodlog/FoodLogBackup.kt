@@ -138,6 +138,7 @@ internal object FoodLogBackup {
         put("mealType", mealType.name)
         put("source", source.name)
         put("recipeId", recipeId ?: JSONObject.NULL)
+        put("revision", revision)
         put("product", product.toJson())
     }
 
@@ -214,6 +215,7 @@ internal object FoodLogBackup {
             mealType = requiredEnum(value, "mealType"),
             source = requiredEnum(value, "source"),
             recipeId = recipeId,
+            revision = if (value.has("revision")) requiredPositiveLong(value, "revision") else 1L,
         )
     }
 

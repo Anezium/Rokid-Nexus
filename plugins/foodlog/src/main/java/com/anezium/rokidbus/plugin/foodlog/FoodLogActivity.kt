@@ -26,6 +26,7 @@ import androidx.activity.OnBackPressedCallback
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -104,6 +105,7 @@ class FoodLogActivity : ComponentActivity() {
     private var updatingHealthSwitch = false
     private var healthConsentGeneration = 0L
     private var pendingHealthPermissionGeneration: Long? = null
+    private var healthBatchJob: Job? = null
 
     private lateinit var reminderLabelField: EditText
     private lateinit var reminderMinutesField: EditText
@@ -118,6 +120,8 @@ class FoodLogActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         onBackPressedDispatcher.addCallback(this, navigationBack)
         store = FoodLogStore(applicationContext)
+        healthConsentGeneration = preferences.getLong(FOOD_LOG_HEALTH_CONSENT_GENERATION_KEY, 0L)
+        pendingHealthPermissionGeneration = savedInstanceState?.getLong("pendingHealthConsent")?.takeIf { it > 0L }
         selectedDate = savedInstanceState?.getString("journalDate")?.let { runCatching { LocalDate.parse(it) }.getOrNull() } ?: LocalDate.now()
         currentTab = savedInstanceState?.getString("tab")?.takeIf { it in listOf("Journal", "Foods", "Settings") } ?: "Journal"
         buildUi()
@@ -148,6 +152,14 @@ class FoodLogActivity : ComponentActivity() {
         super.onDestroy()
     }
 
+    override fun onResume() {
+        super.onResume()
+        if (::journal.isInitialized) {
+            refreshAll()
+            refreshHealthState()
+        }
+    }
+
     @Deprecated("Deprecated in Android; retained for document and Health Connect contracts.")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
@@ -157,7 +169,7 @@ class FoodLogActivity : ComponentActivity() {
                     .contains(FoodLogHealthConnectBridge.WRITE_NUTRITION_PERMISSION)
                 val requestGeneration = pendingHealthPermissionGeneration
                 pendingHealthPermissionGeneration = null
-                val accepted = granted && requestGeneration != null && requestGeneration == healthConsentGeneration
+                val accepted = granted && requestGeneration != null && requestGeneration == preferences.getLong(FOOD_LOG_HEALTH_CONSENT_GENERATION_KEY, 0L)
                 preferences.edit().putBoolean(FOOD_LOG_HEALTH_SYNC_KEY, accepted).apply()
                 report(if (accepted) "Health Connect sync enabled." else "Health Connect permission was not granted or sync was turned off.")
                 refreshHealthState()
@@ -187,6 +199,7 @@ class FoodLogActivity : ComponentActivity() {
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putString("journalDate", selectedDate.toString())
         outState.putString("tab", currentTab)
+        pendingHealthPermissionGeneration?.let { outState.putLong("pendingHealthConsent", it) }
         entryEditor?.let { outState.putBundle("entryDraft", it.saveState()) }
         recipeEditor?.let { outState.putBundle("recipeDraft", it.saveState()) }
         super.onSaveInstanceState(outState)
@@ -899,24 +912,27 @@ class FoodLogActivity : ComponentActivity() {
     }
 
     private fun setHealthSyncEnabled(enabled: Boolean) {
+        healthConsentGeneration = preferences.getLong(FOOD_LOG_HEALTH_CONSENT_GENERATION_KEY, 0L) + 1L
+        preferences.edit().putLong(FOOD_LOG_HEALTH_CONSENT_GENERATION_KEY, healthConsentGeneration).apply()
         if (!enabled) {
-            healthConsentGeneration += 1L
+            healthBatchJob?.cancel()
+            healthBatchJob = null
             pendingHealthPermissionGeneration = null
             preferences.edit().putBoolean(FOOD_LOG_HEALTH_SYNC_KEY, false).apply()
             healthStatus.text = "Sync is off. Existing Health Connect records are not deleted."
             return
         }
-        val requestGeneration = ++healthConsentGeneration
+        val requestGeneration = healthConsentGeneration
         scope.launch {
             when (healthBridge.availability()) {
                 FoodLogHealthConnectAvailability.Available -> {
                     if (healthBridge.hasWriteNutritionPermission()) {
-                        if (requestGeneration != healthConsentGeneration) return@launch
+                        if (requestGeneration != preferences.getLong(FOOD_LOG_HEALTH_CONSENT_GENERATION_KEY, 0L)) return@launch
                         preferences.edit().putBoolean(FOOD_LOG_HEALTH_SYNC_KEY, true).apply()
                         report("Health Connect sync enabled.")
                         refreshHealthState()
                     } else {
-                        if (requestGeneration != healthConsentGeneration) return@launch
+                        if (requestGeneration != preferences.getLong(FOOD_LOG_HEALTH_CONSENT_GENERATION_KEY, 0L)) return@launch
                         updatingHealthSwitch = true
                         healthSwitch.isChecked = false
                         updatingHealthSwitch = false
@@ -991,12 +1007,16 @@ class FoodLogActivity : ComponentActivity() {
 
     private fun syncTodayToHealthConnect() {
         if (!preferences.getBoolean(FOOD_LOG_HEALTH_SYNC_KEY, false)) return report("Enable Health Connect first.")
-        scope.launch {
+        if (healthBatchJob?.isActive == true) return report("Today's synchronization is already running.")
+        val consent = preferences.getLong(FOOD_LOG_HEALTH_CONSENT_GENERATION_KEY, 0L)
+        healthBatchJob = scope.launch {
             val entries = withContext(Dispatchers.IO) { store.entriesForDay() }
             var synced = 0
             var permissionRevoked = false
             var failed = 0
             for (entry in entries) {
+                if (!preferences.getBoolean(FOOD_LOG_HEALTH_SYNC_KEY, false) ||
+                    consent != preferences.getLong(FOOD_LOG_HEALTH_CONSENT_GENERATION_KEY, 0L)) break
                 when (healthBridge.syncEntry(entry, userOptedIn = true)) {
                     FoodLogHealthConnectSyncResult.Synced -> synced += 1
                     FoodLogHealthConnectSyncResult.PermissionRequired -> {

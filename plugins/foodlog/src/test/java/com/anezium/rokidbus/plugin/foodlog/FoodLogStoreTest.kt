@@ -45,6 +45,8 @@ class FoodLogStoreTest {
         assertEquals(150.5, edited.quantityGrams, 0.0)
         assertEquals(MealType.DINNER, edited.mealType)
         assertEquals(dinner, edited.consumedAtMillis)
+        assertTrue(edited.revision > original.revision)
+        assertEquals(edited.revision, store.entry(uuid)!!.revision)
         assertEquals(301.0, store.dailySummary(dinner).caloriesKcal.knownValue, 0.0)
         assertEquals(0, store.entriesForDay(breakfast).size)
         assertEquals(900.0, store.product(food.barcode)!!.nutrients.caloriesKcal!!, 0.0)
