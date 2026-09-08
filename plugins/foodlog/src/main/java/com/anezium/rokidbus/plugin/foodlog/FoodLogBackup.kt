@@ -10,6 +10,8 @@ internal data class FoodLogArchive(
     val goals: NutritionGoals?,
     val recipes: List<FoodRecipe>,
     val reminders: List<FoodLogReminder>,
+    val archivedProductIds: Set<String> = emptySet(),
+    val archivedRecipeIds: Set<String> = emptySet(),
 )
 
 /** Bounded, versioned local backup codec. Parsing validates the whole archive before import. */
@@ -31,6 +33,8 @@ internal object FoodLogBackup {
         put("goals", archive.goals?.toJson() ?: JSONObject.NULL)
         put("recipes", JSONArray().apply { archive.recipes.forEach { put(it.toJson()) } })
         put("reminders", JSONArray().apply { archive.reminders.forEach { put(it.toJson()) } })
+        put("archivedProducts", JSONArray().apply { archive.archivedProductIds.sorted().forEach(::put) })
+        put("archivedRecipes", JSONArray().apply { archive.archivedRecipeIds.sorted().forEach(::put) })
     }.toString()
 
     fun decode(text: String): FoodLogArchive {
@@ -63,7 +67,22 @@ internal object FoodLogBackup {
         val recipeIds = recipes.mapTo(hashSetOf(), FoodRecipe::uuid)
         require(entries.all { it.recipeId == null || it.recipeId in recipeIds }) { "Missing entry recipe" }
         val reminders = decodeReminders(requiredArray(root, "reminders"))
-        return FoodLogArchive(entries, products, favorites, goals, recipes, reminders)
+        val archivedProducts = optionalIds(root, "archivedProducts", MAX_PRODUCTS)
+        val archivedRecipes = optionalIds(root, "archivedRecipes", MAX_RECIPES)
+        require(archivedProducts.all { it in productById && (it.startsWith("custom-") || it.startsWith("recipe-")) }) { "Invalid removed food" }
+        require(archivedRecipes.all { it in recipeIds && "recipe-$it" in archivedProducts }) { "Invalid removed recipe" }
+        require(archivedProducts.filter { it.startsWith("recipe-") }.all { it.removePrefix("recipe-") in archivedRecipes }) { "Missing removed recipe identity" }
+        require(favorites.intersect(archivedProducts).isEmpty()) { "Removed foods cannot be favorites" }
+        return FoodLogArchive(entries, products, favorites, goals, recipes, reminders, archivedProducts, archivedRecipes)
+    }
+
+    private fun optionalIds(root: JSONObject, key: String, limit: Int): Set<String> {
+        if (!root.has(key)) return emptySet()
+        val values = requiredArray(root, key)
+        require(values.length() <= limit) { "Too many $key" }
+        return buildSet {
+            for (index in 0 until values.length()) require(add(values.getString(index))) { "Duplicate $key identity" }
+        }
     }
 
     private fun decodeV2(root: JSONObject): FoodLogArchive {

@@ -124,4 +124,77 @@ class FoodLogStoreTest {
         assertTrue(store.searchProducts("%").isEmpty())
         assertEquals(125.0, store.product(custom.barcode)!!.servingGrams!!, 0.0)
     }
+
+    @Test fun removingCustomFoodHidesCatalogAndFavoriteButPreservesMealsAndIngredients() {
+        val custom = store.createCustomFood("Homemade oats", food.nutrients)
+        val recipe = FoodRecipe(recipeUuid, "Porridge", 2.0, listOf(RecipeIngredient(custom, 80.0)), breakfast)
+        store.saveRecipe(recipe)
+        val entryId = store.addEntry(custom, 50.0, breakfast)
+        val original = requireNotNull(store.entry(entryId))
+        store.setFavorite(custom.barcode, true)
+
+        assertTrue(store.removeCustomFood(custom.barcode))
+        assertFalse(store.removeCustomFood(custom.barcode))
+        store.upsertProduct(custom.copy(name = "Refreshed label"))
+        store.setFavorite(custom.barcode, true)
+        store.close(); store = FoodLogStore(context)
+
+        assertNull(store.product(custom.barcode))
+        assertTrue(store.searchProducts("oats").isEmpty())
+        assertFalse(store.allProducts().any { it.barcode == custom.barcode })
+        assertTrue(store.recentProducts().isEmpty())
+        assertTrue(store.favoriteProducts().isEmpty())
+        assertEquals(original, store.entry(entryId))
+        assertEquals(recipe, store.recipes().single())
+        assertEquals(80.0, store.recipes().single().nutrientsPerServing().caloriesKcal!!, 0.0)
+        assertTrue(store.updateEntry(original, 75.0, breakfast, MealType.BREAKFAST))
+        assertEquals(150.0, store.dailySummary(breakfast).caloriesKcal.knownValue, 0.0)
+        assertTrue(runCatching { store.addEntry(custom, 50.0, breakfast) }.isFailure)
+
+        store.upsertProduct(food)
+        assertFalse(store.removeCustomFood(food.barcode))
+        assertEquals(food, store.product(food.barcode))
+    }
+
+    @Test fun removingRecipeRetainsItsIdentityAndSnapshotAcrossBackupMerge() {
+        val recipe = FoodRecipe(recipeUuid, "Porridge", 2.0, listOf(RecipeIngredient(food, 80.0)), breakfast)
+        store.saveRecipe(recipe)
+        val product = recipe.asProduct()
+        store.addEntry(product, 40.0, breakfast, MealType.BREAKFAST, FoodEntrySource.RECIPE, recipeUuid, uuid)
+        store.setFavorite(product.barcode, true)
+        val beforeRemoval = store.exportJson(emptyList())
+
+        assertTrue(store.removeRecipe(recipeUuid))
+        assertFalse(store.removeRecipe(recipeUuid))
+        assertFalse(store.removeCustomFood(product.barcode))
+        assertTrue(runCatching { store.saveRecipe(recipe.copy(name = "Stale edit")) }.isFailure)
+        assertTrue(runCatching { store.addEntry(product, 40.0, breakfast) }.isFailure)
+        val json = store.exportJson(emptyList())
+        val archive = FoodLogBackup.decode(json)
+        assertEquals(setOf(product.barcode), archive.archivedProductIds)
+        assertEquals(setOf(recipeUuid), archive.archivedRecipeIds)
+        assertEquals(recipe, archive.recipes.single())
+        assertEquals(product, archive.entries.single().product)
+
+        store.close(); context.deleteDatabase("food-log.db"); store = FoodLogStore(context)
+        assertEquals(1, store.importJson(json).insertedEntries)
+        assertEquals(0, store.importJson(beforeRemoval).insertedEntries)
+        assertTrue(store.recipes().isEmpty())
+        assertNull(store.product(product.barcode))
+        assertTrue(store.favoriteProducts().isEmpty())
+        assertTrue(store.searchProducts("Porridge").isEmpty())
+        assertEquals(recipe, store.recipes(includeArchived = true).single())
+        assertEquals(recipeUuid, store.entry(uuid)!!.recipeId)
+        assertEquals(product, store.entry(uuid)!!.product)
+        assertEquals(80.0, store.dailySummary(breakfast).caloriesKcal.knownValue, 0.0)
+        assertEquals(archive.archivedRecipeIds, FoodLogBackup.decode(store.exportJson(emptyList())).archivedRecipeIds)
+    }
+
+    @Test fun invalidRemovedRecipeIdentityRejectsWholeImport() {
+        store.saveRecipe(FoodRecipe(recipeUuid, "Porridge", 2.0, listOf(RecipeIngredient(food, 80.0)), breakfast))
+        val before = store.exportJson(emptyList())
+        val invalid = JSONObject(before).apply { getJSONArray("archivedRecipes").put(recipeUuid) }
+        assertTrue(runCatching { store.importJson(invalid.toString()) }.isFailure)
+        assertEquals(before, store.exportJson(emptyList()))
+    }
 }

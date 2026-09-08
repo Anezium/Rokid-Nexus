@@ -385,6 +385,29 @@ class FoodLogActivity : ComponentActivity() {
             .setPositiveButton("Delete entry") { _, _ -> deleteEntry(entry) }.show()
     }
 
+    private fun confirmRemoveFood(product: FoodProduct) {
+        val isRecipe = product.barcode.startsWith("recipe-")
+        if (!isRecipe && !product.barcode.startsWith("custom-")) return
+        val kind = if (isRecipe) "recipe" else "food"
+        AlertDialog.Builder(this).setTitle("Remove this $kind?")
+            .setMessage("${product.name}\nIt will be removed from your foods and favorites. Saved journal entries and ingredients in other recipes will keep their nutrition.")
+            .setNegativeButton("Keep $kind", null)
+            .setPositiveButton("Remove $kind") { _, _ ->
+                worker.execute {
+                    val result = runCatching {
+                        if (isRecipe) store.removeRecipe(product.barcode.removePrefix("recipe-"))
+                        else store.removeCustomFood(product.barcode)
+                    }
+                    post {
+                        result.fold(onSuccess = { removed ->
+                            report(if (removed) "Removed ${product.name} from your foods." else "This $kind was already removed.")
+                            refreshAll()
+                        }, onFailure = { report("This $kind could not be removed. Existing data was preserved.") })
+                    }
+                }
+            }.show()
+    }
+
     private fun section(
         parent: LinearLayout,
         title: String,
@@ -738,6 +761,7 @@ class FoodLogActivity : ComponentActivity() {
                 addView(horizontalActions(
                     NexusUi.textButton(this@FoodLogActivity, "Log portion").apply { setOnClickListener { openEntryEditor(recipe.asProduct()) } },
                     NexusUi.textButton(this@FoodLogActivity, "Edit recipe").apply { setOnClickListener { openRecipeEditor(recipe) } },
+                    NexusUi.textButton(this@FoodLogActivity, "Remove", true).apply { setOnClickListener { confirmRemoveFood(recipe.asProduct()) } },
                 ), NexusUi.block())
             }, NexusUi.block())
         }
@@ -784,12 +808,16 @@ class FoodLogActivity : ComponentActivity() {
             productCatalog.addView(NexusUi.card(this).apply {
                 addView(NexusUi.rowTitle(this@FoodLogActivity, product.name))
                 addView(NexusUi.rowSub(this@FoodLogActivity, listOf(product.brand, "${product.nutrients.caloriesKcal.displayPer100g("kcal")} / 100 g").filter(String::isNotBlank).joinToString(" · ")))
-                addView(horizontalActions(
+                val actions = mutableListOf(
                     NexusUi.textButton(this@FoodLogActivity, "Log portion").apply { setOnClickListener { openEntryEditor(product) } },
                     NexusUi.textButton(this@FoodLogActivity, if (product.barcode in favoriteIds) "Unfavorite" else "Favorite").apply {
                         setOnClickListener { toggleFavorite(product, product.barcode in favoriteIds) }
                     },
-                ), NexusUi.block())
+                )
+                if (product.barcode.startsWith("custom-") || product.barcode.startsWith("recipe-")) {
+                    actions += NexusUi.textButton(this@FoodLogActivity, "Remove", true).apply { setOnClickListener { confirmRemoveFood(product) } }
+                }
+                addView(horizontalActions(*actions.toTypedArray()), NexusUi.block())
             }, NexusUi.block())
         }
         if (products.size > 100) productCatalog.addView(NexusUi.rowSub(this, "Showing the first 100 foods. Search by name to find more."))
