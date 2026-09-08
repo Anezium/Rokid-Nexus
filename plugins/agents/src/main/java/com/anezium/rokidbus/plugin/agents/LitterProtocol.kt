@@ -8,6 +8,7 @@ internal object LitterProtocol {
     const val MAX_FRAME_BYTES = 2 * 1024 * 1024
     const val MAX_TEXT = 16_000
     const val MAX_SESSIONS = 200
+    const val MAX_SESSION_PAGES = 20
 
     fun request(id: String, method: String, params: JSONObject) =
         JSONObject().put("id", id).put("method", method).put("params", params)

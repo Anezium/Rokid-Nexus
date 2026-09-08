@@ -187,14 +187,48 @@ class LitterClientTest {
         assertEquals(setOf("thread-a", "thread-b"), store.sessions.value.map { it.id }.toSet())
         peer.listCursors.clear()
         client.refresh(preserveWindow = true)
-        assertEquals(listOf("first", "page-two"), peer.listCursors.toList())
+        assertEquals(listOf("first", "page-2"), peer.listCursors.toList())
         assertEquals(setOf("thread-a", "thread-b"), store.sessions.value.map { it.id }.toSet())
         client.refresh(more = true)
-        assertEquals("page-three", peer.listCursors.last())
+        assertEquals("page-3", peer.listCursors.last())
         assertEquals(setOf("thread-a", "thread-b", "thread-c"), store.sessions.value.map { it.id }.toSet())
         assertFalse(client.hasMore.value)
         client.refresh()
         assertEquals("thread-a", store.sessions.value.single().id)
+        assertTrue(client.hasMore.value)
+    }
+
+    @Test fun `five sparse session pages all survive periodic refresh`() = fixture { client, store, peer ->
+        store.sessions.first { it.isNotEmpty() }
+        peer.paginated = true
+        peer.pageCount = 5
+        client.refresh()
+        repeat(4) { client.refresh(more = true) }
+        val expected = setOf("thread-a", "thread-b", "thread-c", "thread-d", "thread-e")
+        assertEquals(expected, store.sessions.value.map { it.id }.toSet())
+        peer.listCursors.clear()
+        client.refresh(preserveWindow = true)
+        assertEquals(listOf("first", "page-2", "page-3", "page-4", "page-5"), peer.listCursors.toList())
+        assertEquals(expected, store.sessions.value.map { it.id }.toSet())
+        assertFalse(client.hasMore.value)
+    }
+
+    @Test fun `empty cursor pages have the same safety ceiling for load more and periodic refresh`() = fixture { client, store, peer ->
+        store.sessions.first { it.isNotEmpty() }
+        peer.paginated = true
+        peer.pageCount = 100
+        peer.emptyPages = true
+        peer.listCursors.clear()
+        client.refresh()
+        repeat(LitterProtocol.MAX_SESSION_PAGES + 3) { client.refresh(more = true) }
+        assertEquals(LitterProtocol.MAX_SESSION_PAGES, peer.listCursors.size)
+        assertTrue(store.sessions.value.isEmpty())
+        assertFalse(client.hasMore.value)
+        peer.listCursors.clear()
+        client.refresh(preserveWindow = true)
+        assertEquals(LitterProtocol.MAX_SESSION_PAGES, peer.listCursors.size)
+        assertFalse(client.hasMore.value)
+        client.refresh()
         assertTrue(client.hasMore.value)
     }
 
@@ -274,6 +308,8 @@ class LitterClientTest {
         @Volatile var resumeText = "Existing answer"
         @Volatile var resumeError: Int? = null
         @Volatile var paginated = false
+        @Volatile var pageCount = 3
+        @Volatile var emptyPages = false
 
         override fun onOpen(webSocket: WebSocket, response: Response) { socket = webSocket }
         override fun onClosing(webSocket: WebSocket, code: Int, reason: String) { webSocket.close(code, null) }
@@ -286,17 +322,11 @@ class LitterClientTest {
                 "thread/list" -> {
                     val cursor = frame.getJSONObject("params").optString("cursor", "first")
                     listCursors.add(cursor)
-                    val id = if (!paginated) "thread-a" else when (cursor) {
-                        "page-two" -> "thread-b"
-                        "page-three" -> "thread-c"
-                        else -> "thread-a"
-                    }
-                    val next = if (!paginated) null else when (cursor) {
-                        "first" -> "page-two"
-                        "page-two" -> "page-three"
-                        else -> null
-                    }
-                    JSONObject().put("data", JSONArray().put(thread(id))).put("nextCursor", next ?: JSONObject.NULL)
+                    val page = if (cursor == "first") 1 else cursor.removePrefix("page-").toInt()
+                    val id = if (paginated) "thread-${('a'.code + page - 1).toChar()}" else "thread-a"
+                    val next = if (paginated && page < pageCount) "page-${page + 1}" else null
+                    val data = if (emptyPages) JSONArray() else JSONArray().put(thread(id))
+                    JSONObject().put("data", data).put("nextCursor", next ?: JSONObject.NULL)
                 }
                 "thread/start" -> JSONObject().put("thread", thread().put("turns", JSONArray()).put("status", JSONObject().put("type", "idle")))
                 "thread/resume" -> {
