@@ -1,19 +1,20 @@
 package com.anezium.rokidbus.plugin.foodlog
 
 import android.graphics.BitmapFactory
-import com.google.mlkit.vision.barcode.BarcodeScanner
 import com.google.mlkit.vision.barcode.BarcodeScannerOptions
 import com.google.mlkit.vision.barcode.BarcodeScanning
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.common.InputImage
 import java.io.Closeable
 import java.util.concurrent.Executor
+import java.util.concurrent.RejectedExecutionException
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Decodes food barcodes from a JPEG snapshot.
  *
- * The supplied [callbackExecutor] owns all decoding work and callback delivery. Callers should
- * keep it alive until callbacks have completed, then shut it down if they own its lifecycle.
+ * The supplied [callbackExecutor] owns decoding and result delivery. ML Kit completion
+ * always releases its scanner and image, even after that executor has stopped.
  */
 internal class FoodBarcodeScanner(
     private val callbackExecutor: Executor,
@@ -53,42 +54,38 @@ internal class FoodBarcodeScanner(
                 return@execute
             }
 
-            val scanner = BarcodeScanning.getClient(options)
+            if (closed) {
+                bitmap.recycle()
+                return@execute
+            }
+            val scanner = runCatching { BarcodeScanning.getClient(options) }.getOrElse {
+                bitmap.recycle()
+                callback(Result.Failure(it))
+                return@execute
+            }
+            val released = AtomicBoolean(false)
+            val release = {
+                if (released.compareAndSet(false, true)) {
+                    try { scanner.close() } finally { if (!bitmap.isRecycled) bitmap.recycle() }
+                }
+                Unit
+            }
             try {
                 scanner.process(InputImage.fromBitmap(bitmap, 0))
-                    .addOnSuccessListener(callbackExecutor) { barcodes ->
-                        finish(scanner, bitmap) {
-                            callback(resultFor(barcodes))
-                        }
+                    .addOnCompleteListener(Executor { it.run() }) { task ->
+                        finishFoodScan(callbackExecutor, { closed }, release, {
+                            if (task.isSuccessful) resultFor(task.result)
+                            else Result.Failure(task.exception ?: IllegalStateException("Barcode scan cancelled"))
+                        }, callback)
                     }
-                    .addOnFailureListener(callbackExecutor) { error ->
-                        finish(scanner, bitmap) {
-                            callback(Result.Failure(error))
-                        }
-                    }
-            } catch (error: Throwable) {
-                finish(scanner, bitmap) {
-                    callback(Result.Failure(error))
-                }
+            } catch (error: Exception) {
+                finishFoodScan(callbackExecutor, { closed }, release, { Result.Failure(error) }, callback)
             }
         }
     }
 
     override fun close() {
         closed = true
-    }
-
-    private fun finish(
-        scanner: BarcodeScanner,
-        bitmap: android.graphics.Bitmap,
-        deliver: () -> Unit,
-    ) {
-        try {
-            deliver()
-        } finally {
-            scanner.close()
-            if (!bitmap.isRecycled) bitmap.recycle()
-        }
     }
 
     private fun resultFor(barcodes: List<Barcode>): Result {
@@ -114,4 +111,21 @@ internal class FoodBarcodeScanner(
             )
             .build()
     }
+}
+
+/** Cleanup must not be queued on an executor whose owner may already have closed. */
+internal fun finishFoodScan(
+    executor: Executor,
+    isClosed: () -> Boolean,
+    release: () -> Unit,
+    result: () -> FoodBarcodeScanner.Result,
+    callback: (FoodBarcodeScanner.Result) -> Unit,
+) {
+    try {
+        if (!isClosed()) {
+            val outcome = runCatching(result).getOrElse { FoodBarcodeScanner.Result.Failure(it) }
+            try { executor.execute { if (!isClosed()) callback(outcome) } }
+            catch (_: RejectedExecutionException) { /* The service has finished; only cleanup remains. */ }
+        }
+    } finally { release() }
 }
