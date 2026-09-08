@@ -280,6 +280,32 @@ class ExternalPluginControllerTest {
     }
 
     @Test
+    fun `display policy close tears down an adopted foreground owner`() {
+        val runtime = FakeRuntime().apply { registered = true }
+        val controller = ExternalPluginController(runtime, FakeScheduler())
+        val adopted = principal("automatic")
+
+        assertTrue(controller.adopt(adopted))
+        assertEquals("automatic", controller.activeId())
+        assertEquals("adopted", runtime.deliveries.last().second.getString("type"))
+
+        controller.closeActive("display_policy_changed")
+
+        assertEquals(null, controller.activeId())
+        assertEquals(listOf("automatic"), runtime.hidden)
+        assertEquals(listOf("automatic"), runtime.unbound)
+        val close = runtime.deliveries.last()
+        assertEquals(BusPaths.PLUGIN_CLOSE, close.first)
+        assertEquals("automatic", close.second.getString("pluginId"))
+        assertEquals("display_policy_changed", close.second.getString("type"))
+
+        assertTrue(controller.adopt(principal("next")))
+        controller.onPluginSelfHid("automatic")
+        assertEquals("next", controller.activeId())
+        assertEquals(listOf("automatic"), runtime.hidden)
+    }
+
+    @Test
     fun `adopted plugin uses the same open ack recovery`() {
         val runtime = FakeRuntime().apply { registered = true }
         val scheduler = FakeScheduler()
