@@ -50,7 +50,11 @@ internal fun showAssistantQuestionDialog(activity: Activity): Dialog? {
                 dialog.dismiss()
                 Toast.makeText(activity, result.message, Toast.LENGTH_SHORT).show()
             }
-            AssistantTextInputStatus.EMPTY, AssistantTextInputStatus.TOO_LONG -> {
+            AssistantTextInputStatus.EMPTY,
+            AssistantTextInputStatus.TOO_LONG,
+            AssistantTextInputStatus.AUTH_REQUIRED,
+            AssistantTextInputStatus.MODEL_REQUIRED,
+            -> {
                 status.text = result.message
             }
             else -> {

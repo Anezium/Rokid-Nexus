@@ -223,6 +223,39 @@ class CodexAuthStoreLogicTest {
     }
 
     @Test
+    fun customQuestionsRequireAModelEvenWhenCredentialsAreReady() {
+        val store = testStore(FakeSharedPreferences())
+        store.setSelectedProviderId(ProviderCatalog.custom.id)
+        store.saveProviderApiKey(ProviderCatalog.custom.id, "custom-key")
+        store.setProviderBaseUrl(ProviderCatalog.custom.id, "https://custom.test/v1")
+        assertTrue(store.hasUsableAuth())
+        assertFalse(store.hasUsableQuestionModel())
+
+        store.setProviderModel(ProviderCatalog.custom.id, "custom-model")
+        assertTrue(store.hasUsableQuestionModel())
+        store.setProviderModel(ProviderCatalog.custom.id, " ")
+        assertFalse(store.hasUsableQuestionModel())
+    }
+
+    @Test
+    fun questionModelReadinessKeepsPresetAndDetectedHermesServerDefaults() {
+        val store = testStore(FakeSharedPreferences())
+        store.setSelectedProviderId(ProviderCatalog.openAi.id)
+        assertTrue(store.hasUsableQuestionModel())
+        store.setSelectedProviderId(ProviderCatalog.hermes.id)
+        assertTrue(store.hasUsableQuestionModel())
+        assertEquals("hermes-agent", store.providerModel(ProviderCatalog.hermes.id))
+
+        store.setSelectedProviderId(ProviderCatalog.custom.id)
+        assertFalse(store.hasUsableQuestionModel())
+        store.setProviderDetectedBackend(ProviderCatalog.custom.id, ProviderBackend.HERMES)
+        assertTrue(store.hasUsableQuestionModel())
+        assertEquals("", store.providerModel(ProviderCatalog.custom.id))
+        store.setProviderBaseUrl(ProviderCatalog.custom.id, "https://another-server.test/v1")
+        assertFalse(store.hasUsableQuestionModel())
+    }
+
+    @Test
     fun conversationSettingsRoundTripAndClearWithTheStore() {
         val store = CodexAuthStore(FakeSharedPreferences())
         store.setKeepConversation(false)

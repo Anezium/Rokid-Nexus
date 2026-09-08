@@ -14,6 +14,12 @@
   replies, duplicates, cancellation, busy sessions and link loss cannot turn a
   note into a question or submit an abandoned draft. The phone shows why writing
   is unavailable when Assistant is closed or a provider is not connected.
+- Completed plain answers and errors offer a tap-to-write follow-up. Editor
+  instructions disappear when thinking starts, and Back releases every replaced
+  surface so Assistant returns foreground ownership to the launcher.
+- Pasted questions keep their whitespace through the provider and saved
+  conversation. Custom API connections require a model before accepting text;
+  detected Hermes servers retain their configured default-model behavior.
 
 ## 1.4.4
 

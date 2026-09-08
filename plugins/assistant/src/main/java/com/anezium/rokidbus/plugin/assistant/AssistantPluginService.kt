@@ -205,7 +205,8 @@ class AssistantPluginService : NexusPluginService() {
             override fun showCard(
                 lines: List<String>,
                 forceShow: Boolean,
-            ): NexusSdkResult = renderCard(lines, forceShow)
+                offerQuestionInput: Boolean,
+            ): NexusSdkResult = renderCard(lines, forceShow, offerQuestionInput)
         },
         cancelPipeline = ::cancelPipeline,
         resetCapture = ::resetCapture,
@@ -219,10 +220,13 @@ class AssistantPluginService : NexusPluginService() {
 
     override fun onNexusOpen() {
         textInput.clear()
-        surface = nexusSurfaceSession(SURFACE_ID)
+        surface = surface ?: nexusSurfaceSession(SURFACE_ID)
         inkSurface = nexusInkSurfaceSession(INK_SURFACE_ID)
         uiController.onOpen()
         scheduleAccountContextSyncIfStale()
+        if (authStore.hasUsableAuth() && !authStore.hasUsableQuestionModel()) {
+            serviceScope.launch { ensureProviderBackendDetected(selectedProviderId()) }
+        }
     }
 
     override fun onNexusClose() {
@@ -247,10 +251,13 @@ class AssistantPluginService : NexusPluginService() {
             uiController.onSurfaceHidden()
         } else if (
             (event.keyCode == KeyEvent.KEYCODE_ENTER || event.keyCode == KeyEvent.KEYCODE_DPAD_CENTER) &&
-            uiController.isLauncherHintShown && textInput.active == null
+            uiController.offersQuestionInput && textInput.active == null &&
+            !inkSurfaceActive && pendingInkShow == null && nexusClient?.supportsEditableSurface == true
         ) {
             val status = beginSurfaceTextEntry(AssistantTextEntryKind.HUD_QUESTION)
-            if (status != AssistantTextInputStatus.READY) uiController.showError(status.message)
+            if (status != AssistantTextInputStatus.READY && status != AssistantTextInputStatus.BUSY) {
+                uiController.showError(status.message)
+            }
         }
     }
 
@@ -560,14 +567,12 @@ class AssistantPluginService : NexusPluginService() {
         }
     }
 
-    private fun launchAssistantPipeline(transcript: String) {
-        val normalized = normalizeTranscript(transcript)
-        if (normalized.isEmpty()) {
-            uiController.showError("Didn't catch that")
-            return
+    private fun launchAssistantPipeline(question: String) {
+        val launched = dispatchAssistantQuestion(question) { userText ->
+            launchPipeline { streamAssistantAnswer(userText) }
         }
-        launchPipeline {
-            streamAssistantAnswer(normalized)
+        if (!launched) {
+            uiController.showError("Didn't catch that")
         }
     }
 
@@ -596,6 +601,8 @@ class AssistantPluginService : NexusPluginService() {
             pipelineJob?.isActive == true || snapshotSession != null -> AssistantTextInputStatus.BUSY
         kind != AssistantTextEntryKind.NOTE && !authStore.hasUsableAuth() ->
             AssistantTextInputStatus.AUTH_REQUIRED
+        kind != AssistantTextEntryKind.NOTE && !authStore.hasUsableQuestionModel() ->
+            AssistantTextInputStatus.MODEL_REQUIRED
         kind != AssistantTextEntryKind.PHONE_QUESTION && nexusClient?.supportsEditableSurface != true ->
             AssistantTextInputStatus.UNSUPPORTED
         else -> AssistantTextInputStatus.READY
@@ -617,17 +624,23 @@ class AssistantPluginService : NexusPluginService() {
             }
         }
         val isNote = kind == AssistantTextEntryKind.NOTE
-        val result = session.showCard(
-            NexusCard(
-                title = if (isNote) "New note" else "Write a question",
-                lines = emptyList(),
-                subtitle = "Use a keyboard or phone Keyboard & remote",
-                footer = "512 characters · Enter to ${if (isNote) "save" else "send"} · Back to cancel",
-                editable = EditableSurfaceField(
-                    placeholder = if (isNote) "Type a note…" else "Ask Assistant…",
-                    submitLabel = if (isNote) "Save" else "Send",
-                ),
-            ),
+        val result = replaceAssistantSurface(
+            showReplacement = {
+                session.showCard(
+                    NexusCard(
+                        title = if (isNote) "New note" else "Write a question",
+                        lines = emptyList(),
+                        contentKey = "assistant-editor",
+                        subtitle = "Use a keyboard or phone Keyboard & remote",
+                        footer = "512 characters · Enter to ${if (isNote) "save" else "send"} · Back to cancel",
+                        editable = EditableSurfaceField(
+                            placeholder = if (isNote) "Type a note…" else "Ask Assistant…",
+                            submitLabel = if (isNote) "Save" else "Send",
+                        ),
+                    ),
+                )
+            },
+            retirePrevious = { previousSurface?.hide() },
         )
         if (result != NexusSdkResult.SENT) {
             textInput.cancel(entry.id)
@@ -767,7 +780,7 @@ class AssistantPluginService : NexusPluginService() {
                             uiController.showError("No answer received. Try again.")
                         } else {
                             finalAnswer = finalText
-                            showAnswer(finalText)
+                            showAnswer(finalText, complete = true)
                         }
                     }
                     is AiProviderEvent.Failed -> {
@@ -782,7 +795,7 @@ class AssistantPluginService : NexusPluginService() {
                     uiController.showError("No answer received. Try again.")
                 } else {
                     finalAnswer = answer.toString()
-                    showAnswer(finalAnswer.orEmpty())
+                    showAnswer(finalAnswer.orEmpty(), complete = true)
                 }
             }
             if (!failed) {
@@ -1069,12 +1082,13 @@ class AssistantPluginService : NexusPluginService() {
         }
     }
 
-    private fun showAnswer(text: String) {
+    private fun showAnswer(text: String, complete: Boolean = false) {
         val plain = stripHudMarkdown(text)
         if (inkAnswerOwnsPresentation(inkShownRequestId, currentRequestId)) return
         uiController.showAnswer(
             body = plain,
             legacyCardLines = wrapHudText(plain),
+            complete = complete,
         )
     }
 
@@ -1093,21 +1107,13 @@ class AssistantPluginService : NexusPluginService() {
     private fun renderCard(
         lines: List<String>,
         forceShow: Boolean,
+        offerQuestionInput: Boolean = false,
     ): NexusSdkResult {
         val session = surface ?: return NexusSdkResult.NOT_REGISTERED
-        val card = NexusCard(
-            title = "Assistant",
+        val card = assistantPlainCard(
             lines = lines.take(MAX_HUD_LINES).map { it.take(MAX_CARD_LINE_CHARS) },
-            handlesBack = true,
-            footer = if (lines == listOf(AssistantUiController.LAUNCHER_HINT)) {
-                if (nexusClient?.supportsEditableSurface == true) {
-                    "Tap to write a question · Back to close"
-                } else {
-                    "Write in phone settings · Back to close"
-                }
-            } else {
-                null
-            },
+            offerQuestionInput = offerQuestionInput,
+            supportsEditableSurface = nexusClient?.supportsEditableSurface == true,
         )
         return if (forceShow) {
             session.showCard(card)

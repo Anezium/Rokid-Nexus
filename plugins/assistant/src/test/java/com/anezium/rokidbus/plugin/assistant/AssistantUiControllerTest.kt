@@ -25,7 +25,7 @@ class AssistantUiControllerTest {
         advanceTimeBy(AssistantUiController.LAUNCHER_HINT_DELAY_MS + 1)
         runCurrent()
         assertTrue(renderer.calls.isEmpty())
-        assertTrue(!controller.isLauncherHintShown)
+        assertTrue(!controller.offersQuestionInput)
         assertTrue(!controller.isNoticeBandMode)
 
         controller.showTransient("Thinking…")
@@ -47,14 +47,56 @@ class AssistantUiControllerTest {
         controller.onOpen()
         controller.onCardSurfaceShown()
         controller.showLauncherHint()
-        assertTrue(controller.isLauncherHintShown)
+        assertTrue(controller.offersQuestionInput)
         assertTrue(!controller.isNoticeBandMode)
         assertEquals(
             listOf(RenderCall.ShowCard(listOf(AssistantUiController.LAUNCHER_HINT), forceShow = true)),
             renderer.calls,
         )
         controller.beginGestureFlow()
-        assertTrue(!controller.isLauncherHintShown)
+        assertTrue(!controller.offersQuestionInput)
+        controller.onClose()
+    }
+
+    @Test
+    fun `completed plain answers and errors offer followups but thinking streaming and Ink do not`() = runTest {
+        val renderer = FakeRenderer(supportsNotice = true)
+        val controller = controller(renderer)
+        controller.onOpen()
+        controller.showLauncherHint()
+        assertTrue(controller.offersQuestionInput)
+
+        controller.onCardSurfaceShown()
+        assertTrue(!controller.offersQuestionInput)
+        controller.showTransient("Thinking…")
+        assertTrue(!controller.offersQuestionInput)
+        controller.showAnswer("Partial", listOf("Partial"), complete = false)
+        assertTrue(!controller.offersQuestionInput)
+        controller.showAnswer("Answer", listOf("Answer"), complete = true)
+        assertTrue(controller.offersQuestionInput)
+        assertEquals(listOf(true, false, false, true), renderer.cardInputOffers)
+
+        controller.beginGestureFlow()
+        assertTrue(!controller.offersQuestionInput)
+        controller.showError("Request failed")
+        assertTrue(controller.offersQuestionInput)
+        controller.onInkAnswerShown()
+        assertTrue(!controller.offersQuestionInput)
+        controller.onSurfaceHidden()
+        assertTrue(!controller.offersQuestionInput)
+        controller.onClose()
+    }
+
+    @Test
+    fun `notice completion does not remove the followup action from a completed card`() = runTest {
+        val renderer = FakeRenderer(supportsNotice = true)
+        val controller = controller(renderer)
+        controller.onOpen()
+        controller.showTransient("Thinking…")
+        controller.onCardSurfaceShown()
+        controller.showAnswer("Answer", listOf("Answer"))
+        controller.onNoticeClosed(NexusNoticeCloseReason.USER)
+        assertTrue(controller.offersQuestionInput)
         controller.onClose()
     }
 
@@ -775,6 +817,7 @@ class AssistantUiControllerTest {
         /** Kept beside [calls] so the existing call assertions stay about bodies alone. */
         val updateTtls = mutableListOf<Long?>()
         val noticeEngagement = mutableListOf<Boolean?>()
+        val cardInputOffers = mutableListOf<Boolean>()
 
         override val supportsNoticeSurface: Boolean
             get() = supportsNotice
@@ -800,8 +843,10 @@ class AssistantUiControllerTest {
         override fun showCard(
             lines: List<String>,
             forceShow: Boolean,
+            offerQuestionInput: Boolean,
         ): NexusSdkResult {
             calls += RenderCall.ShowCard(lines, forceShow)
+            cardInputOffers += offerQuestionInput
             return NexusSdkResult.SENT
         }
     }

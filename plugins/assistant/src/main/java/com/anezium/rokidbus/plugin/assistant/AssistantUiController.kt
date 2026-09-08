@@ -22,6 +22,7 @@ internal interface AssistantUiRenderer {
     fun showCard(
         lines: List<String>,
         forceShow: Boolean,
+        offerQuestionInput: Boolean,
     ): NexusSdkResult
 }
 
@@ -56,7 +57,7 @@ internal class AssistantUiController(
     private var noticeShown = false
     private var noticeMode = AssistantNoticeMode.NONE
     private var answerCardStarted = false
-    var isLauncherHintShown = false
+    var offersQuestionInput = false
         private set
 
     /**
@@ -78,7 +79,7 @@ internal class AssistantUiController(
         noticeShown = false
         noticeMode = AssistantNoticeMode.NONE
         answerCardStarted = false
-        isLauncherHintShown = false
+        offersQuestionInput = false
         launcherHintJob = scope.launch {
             delay(launcherHintDelayMs)
             launcherHintJob = null
@@ -94,7 +95,7 @@ internal class AssistantUiController(
         noticeShown = false
         noticeMode = AssistantNoticeMode.NONE
         answerCardStarted = false
-        isLauncherHintShown = false
+        offersQuestionInput = false
     }
 
     fun cancelLauncherHint() {
@@ -105,22 +106,27 @@ internal class AssistantUiController(
     fun beginGestureFlow() {
         cancelLauncherHint()
         discardPendingTranscript()
-        isLauncherHintShown = false
+        offersQuestionInput = false
     }
 
     fun showLauncherHint() {
+        offersQuestionInput = false
         cancelLauncherHint()
         startNewState(flushTranscript = false)
         hideNoticeIfShown()
         answerCardStarted = false
-        isLauncherHintShown = showCard(listOf(LAUNCHER_HINT), forceShow = true) == NexusSdkResult.SENT
+        showCard(
+            listOf(LAUNCHER_HINT),
+            forceShow = true,
+            offerQuestionInput = true,
+        )
     }
 
     fun onCardSurfaceShown() {
         cancelLauncherHint()
         startNewState(flushTranscript = false)
         hideNoticeIfShown()
-        isLauncherHintShown = false
+        offersQuestionInput = false
         surfaceShown = true
         answerCardStarted = false
     }
@@ -129,6 +135,7 @@ internal class AssistantUiController(
         body: String,
         legacyForceShow: Boolean = false,
     ) {
+        offersQuestionInput = false
         cancelLauncherHint()
         startNewState()
         answerCardStarted = false
@@ -170,6 +177,7 @@ internal class AssistantUiController(
         legacyCardLines: List<String> = listOf(body),
         legacyForceShow: Boolean = false,
     ) {
+        offersQuestionInput = false
         cancelLauncherHint()
         stopKeepalive()
         val stateVersion = startNewState()
@@ -188,6 +196,7 @@ internal class AssistantUiController(
             showCard(
                 lines = legacyCardLines,
                 forceShow = legacyForceShow || !surfaceShown,
+                offerQuestionInput = true,
             )
         }
     }
@@ -195,7 +204,9 @@ internal class AssistantUiController(
     fun showAnswer(
         body: String,
         legacyCardLines: List<String>,
+        complete: Boolean = true,
     ) {
+        offersQuestionInput = false
         cancelLauncherHint()
         stopKeepalive()
         startNewState()
@@ -209,6 +220,7 @@ internal class AssistantUiController(
         val result = showCard(
             lines = legacyCardLines,
             forceShow = !answerCardStarted,
+            offerQuestionInput = complete,
         )
         if (result == NexusSdkResult.SENT) {
             answerCardStarted = true
@@ -244,7 +256,7 @@ internal class AssistantUiController(
     }
 
     fun onSurfaceHidden() {
-        isLauncherHintShown = false
+        offersQuestionInput = false
         surfaceShown = false
         answerCardStarted = false
     }
@@ -255,6 +267,7 @@ internal class AssistantUiController(
      * errors are still discrete notices and must not replace the Ink surface.
      */
     fun onInkAnswerShown() {
+        offersQuestionInput = false
         cancelLauncherHint()
         stopKeepalive()
         startNewState(flushTranscript = false)
@@ -406,16 +419,17 @@ internal class AssistantUiController(
     private fun showCard(
         lines: List<String>,
         forceShow: Boolean,
+        offerQuestionInput: Boolean = false,
     ): NexusSdkResult {
-        val result = renderer.showCard(lines, forceShow)
+        val result = renderer.showCard(lines, forceShow, offerQuestionInput)
         if (result == NexusSdkResult.SENT) {
             surfaceShown = true
+            offersQuestionInput = offerQuestionInput
         }
         return result
     }
 
     private fun startNewState(flushTranscript: Boolean = true): Long {
-        isLauncherHintShown = false
         if (flushTranscript) {
             flushPendingTranscript()
         } else {
