@@ -204,11 +204,10 @@ internal class LitterClient(
             _message.value = "Session opened"
         } catch (failure: Exception) {
             if (failure is CancellationException && failure !is TimeoutCancellationException) throw failure
-            if (generation == epoch && selectedThread == session.id && conversationRevision == revision) {
-                val error = if (failure is LitterFailure) failure.visibleMessage
-                    else "Could not load this conversation. Return to sessions and reopen it to retry."
-                publishTimeline(session.id, error)
-            }
+            if (generation != epoch || selectedThread != session.id || conversationRevision != revision) return
+            val error = if (failure is LitterFailure) failure.visibleMessage
+                else "Could not load this conversation. Return to sessions and reopen it to retry."
+            publishTimeline(session.id, error, completeLoad = true)
             throw failure
         } finally {
             if (resuming[session.id] == revision) {
@@ -247,6 +246,7 @@ internal class LitterClient(
             completedItems.clear()
             store.openConversation(session)
             hydrate(thread)
+            _message.value = "Session created"
             return session.id
         } finally { submitting = false }
     }
@@ -334,7 +334,7 @@ internal class LitterClient(
             }
         }
         previousLive.filterKeys { it in liveItems && it !in timeline }.forEach { (key, value) -> timeline[key] = value }
-        publishTimeline(id)
+        publishTimeline(id, completeLoad = true)
     }
 
     private fun receive(frame: JSONObject, generation: Long) {
@@ -488,11 +488,11 @@ internal class LitterClient(
         }
     }
 
-    private fun publishTimeline(thread: String, error: String? = null) {
+    private fun publishTimeline(thread: String, error: String? = null, completeLoad: Boolean = false) {
         while (timeline.size > AgentConversation.MAX_MESSAGES) {
             val key = timeline.keys.first()
             timeline.remove(key); liveItems.remove(key); fragmentItems.remove(key); completedItems.remove(key)
         }
-        store.setConversation(AgentProvider.CODEX, thread, timeline.values.toList(), error)
+        store.setConversation(AgentProvider.CODEX, thread, timeline.values.toList(), error, completeLoad)
     }
 }

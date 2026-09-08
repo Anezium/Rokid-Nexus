@@ -60,7 +60,10 @@ class AgentSessionStore {
 
     @Synchronized
     fun openConversation(session: AgentSession) {
-        _conversation.value = AgentConversation(
+        val current = _conversation.value
+        _conversation.value = if (current != null && current.provider == session.provider && current.sessionId == session.id) {
+            current.copy(loading = true)
+        } else AgentConversation(
             sessionKey = session.key,
             sessionId = session.id,
             provider = session.provider,
@@ -78,14 +81,16 @@ class AgentSessionStore {
         sessionId: String,
         messages: List<AgentMessage>,
         error: String? = null,
+        completeLoad: Boolean = true,
     ) {
         val current = _conversation.value ?: return
         // A late reply for a conversation the wearer already left must not reopen it.
         if (current.provider != provider || current.sessionId != sessionId) return
         _conversation.value = current.copy(
-            loading = false,
+            // Streamed items do not prove a pending resume succeeded.
+            loading = if (completeLoad) false else current.loading,
             messages = messages.takeLast(AgentConversation.MAX_MESSAGES),
-            error = error,
+            error = if (completeLoad) error else current.error,
         )
     }
 
