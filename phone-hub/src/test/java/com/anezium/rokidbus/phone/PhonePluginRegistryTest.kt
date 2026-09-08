@@ -211,11 +211,17 @@ class PhonePluginRegistryTest {
         val cardOwner = principal("cardowner", launchable = true, iconKey = "star")
 
         assertTrue(registry.allowExternalSurface(inkOwner, BusPaths.INK_SHOW))
+        assertEquals("inkowner", controller.activeId())
+        assertTrue(registry.isForegroundOwner("inkowner"))
+        assertFalse(registry.isForegroundOwner("cardowner"))
         assertTrue(registry.allowExternalSurface(inkOwner, BusPaths.SURFACE_UPDATE))
         assertFalse(registry.allowExternalSurface(cardOwner, BusPaths.SURFACE_SHOW))
         assertFalse(registry.allowExternalSurface(cardOwner, BusPaths.INK_UPDATE))
         controller.onPluginSelfHid(inkOwner.descriptor.id)
+        assertFalse(registry.isForegroundOwner("inkowner"))
         assertTrue(registry.allowExternalSurface(cardOwner, BusPaths.SURFACE_SHOW))
+        assertEquals("cardowner", controller.activeId())
+        assertTrue(registry.isForegroundOwner("cardowner"))
         assertFalse(registry.allowExternalSurface(inkOwner, BusPaths.INK_SHOW))
         registry.close()
     }
