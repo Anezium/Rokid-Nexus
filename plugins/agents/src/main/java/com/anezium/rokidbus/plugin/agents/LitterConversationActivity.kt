@@ -48,9 +48,14 @@ class LitterConversationActivity : Activity() {
             }
             if (conversation != null && conversation.sessionId == sessionId) {
                 conversationTitle.text = AgentsRuntime.store.sessions.value.firstOrNull { it.id == sessionId }?.displayTitle ?: "Session"
-                transcript.text = if (conversation.loading) "Loading conversation…" else conversation.messages.joinToString("\n\n") {
+                val history = conversation.messages.joinToString("\n\n") {
                     "${if (it.role == MessageRole.ASSISTANT) "AGENT" else it.role.label}\n${it.text}"
-                }.ifEmpty { "The session is ready for a prompt." }
+                }
+                transcript.text = when {
+                    conversation.loading -> "Loading conversation…"
+                    conversation.error != null -> listOf(conversation.error, history).filter { !it.isNullOrEmpty() }.joinToString("\n\n")
+                    else -> history.ifEmpty { "The session is ready for a prompt." }
+                }
                 renderApprovals()
             }
             updateSendEnabled()
@@ -174,7 +179,7 @@ class LitterConversationActivity : Activity() {
         val conversation = AgentsRuntime.store.conversation.value
         send.isEnabled = active && !opening && !sending &&
             AgentsRuntime.store.connections.value[AgentProvider.CODEX]?.state == ConnectionState.CONNECTED &&
-            (sessionId == null || (conversation?.sessionId == sessionId && conversation?.loading == false))
+            (sessionId == null || (conversation != null && conversation.sessionId == sessionId && !conversation.loading && conversation.error == null))
     }
 
     companion object { const val SESSION_ID = "litterSessionId" }

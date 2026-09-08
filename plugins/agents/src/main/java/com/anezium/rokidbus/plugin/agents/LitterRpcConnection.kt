@@ -57,7 +57,9 @@ internal class LitterRpcConnection(
                         val waiter = pending.remove(id) ?: return@launch
                         if (frame.has("error")) {
                             val code = frame.optJSONObject("error")?.optInt("code", 0) ?: 0
-                            waiter.completeExceptionally(LitterFailure("The server rejected the request (code $code). Check the server's sign-in and permissions."))
+                            val message = if (code == -32603) "The server encountered an internal error (code -32603). Check the server logs, then reopen the session."
+                                else "The server rejected the request (code $code). Check the server's configuration and logs."
+                            waiter.completeExceptionally(LitterFailure(message))
                         } else {
                             val result = frame.optJSONObject("result")
                             if (result != null) waiter.complete(result)

@@ -77,6 +77,7 @@ class AgentSessionStore {
         provider: AgentProvider,
         sessionId: String,
         messages: List<AgentMessage>,
+        error: String? = null,
     ) {
         val current = _conversation.value ?: return
         // A late reply for a conversation the wearer already left must not reopen it.
@@ -84,6 +85,7 @@ class AgentSessionStore {
         _conversation.value = current.copy(
             loading = false,
             messages = messages.takeLast(AgentConversation.MAX_MESSAGES),
+            error = error,
         )
     }
 

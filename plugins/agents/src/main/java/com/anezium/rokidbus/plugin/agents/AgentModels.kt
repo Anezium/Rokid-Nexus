@@ -154,6 +154,7 @@ data class AgentConversation(
     val provider: AgentProvider,
     val loading: Boolean = true,
     val messages: List<AgentMessage> = emptyList(),
+    val error: String? = null,
 ) {
     companion object {
         const val MAX_MESSAGES = 60
