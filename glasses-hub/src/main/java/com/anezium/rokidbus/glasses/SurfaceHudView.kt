@@ -1,8 +1,11 @@
 package com.anezium.rokidbus.glasses
 
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.graphics.Canvas
 import android.graphics.drawable.GradientDrawable
+import android.os.BatteryManager
 import android.os.Build
 import android.os.SystemClock
 import android.text.InputFilter
@@ -24,6 +27,9 @@ import android.widget.TextView
 import com.anezium.rokidbus.client.ui.BusTheme
 import com.anezium.rokidbus.shared.EditableSurfaceContract
 import com.anezium.rokidbus.shared.EditableSurfaceField
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import kotlin.math.roundToInt
 
 class SurfaceHudView(context: Context) : LinearLayout(context) {
@@ -38,6 +44,43 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
         val surfaceId: String,
         var seq: Long,
     )
+
+    /**
+     * The one row every Nexus surface shares, regardless of plugin: phone
+     * charge on the left, the date in the middle, the glasses' own charge on
+     * the right. It lives here rather than as a launcher overlay because it is
+     * our own drawing, not a chip fighting the ROM's launcher for a place in
+     * someone else's status row — so it is exactly as available as the surface
+     * itself is, in every plugin, with nothing to lose sync with.
+     */
+    private val phoneBatteryStatusView = monoText(11f, BusTheme.muted).apply {
+        isSingleLine = true
+        gravity = Gravity.START
+    }
+    private val dateStatusView = monoText(11f, BusTheme.dim).apply {
+        isSingleLine = true
+        gravity = Gravity.CENTER
+        textAlignment = TEXT_ALIGNMENT_CENTER
+    }
+    private val glassesBatteryStatusView = monoText(11f, BusTheme.muted).apply {
+        isSingleLine = true
+        gravity = Gravity.END
+        textAlignment = TEXT_ALIGNMENT_VIEW_END
+    }
+    private val statusRowView = LinearLayout(context).apply {
+        orientation = HORIZONTAL
+        addView(phoneBatteryStatusView, LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
+        addView(dateStatusView, LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
+        addView(glassesBatteryStatusView, LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
+    }
+    private var stopObservingPhoneBattery: (() -> Unit)? = null
+    private val statusDateFormat = SimpleDateFormat("EEE d MMM", Locale.getDefault())
+    private val statusRowTicker = object : Runnable {
+        override fun run() {
+            updateStatusRow()
+            postDelayed(this, STATUS_ROW_TICK_MS)
+        }
+    }
 
     private val titleView = monoText(17f, BusTheme.text, bold = true)
     private val subtitleView = monoText(11f, BusTheme.muted)
@@ -163,6 +206,9 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
         previousView.maxLines = 2
         previousView.ellipsize = TextUtils.TruncateAt.END
 
+        addView(statusRowView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
+            bottomMargin = px(6)
+        })
         addView(titleView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
         addView(subtitleView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
             topMargin = px(3)
@@ -267,20 +313,60 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
         stopObservingReaderScroll = SurfaceController.observeReaderScroll { direction ->
             if (surface?.isReader == true) readerView.smoothScrollByViewport(direction)
         }
+        stopObservingPhoneBattery?.invoke()
+        stopObservingPhoneBattery = PhoneBatteryController.observe(::updateStatusRow)
+        removeCallbacks(statusRowTicker)
+        statusRowTicker.run()
     }
 
     override fun onDetachedFromWindow() {
         insetUnsubscribe?.invoke()
         insetUnsubscribe = null
         removeCallbacks(ticker)
+        removeCallbacks(statusRowTicker)
         invalidatePendingListLayout()
         cancelInkPresentation()
         inkPresentationSurfaceId = null
         inkPresentationGeneration = null
         stopObservingReaderScroll?.invoke()
         stopObservingReaderScroll = null
+        stopObservingPhoneBattery?.invoke()
+        stopObservingPhoneBattery = null
         SurfaceController.detachInkRenderer(inkView)
         super.onDetachedFromWindow()
+    }
+
+    /** Phone charge, the date, and the glasses' own charge — refreshed independently of the surface. */
+    private fun updateStatusRow() {
+        val phone = PhoneBatteryController.reading()
+        phoneBatteryStatusView.text = phone?.let { "HP ${batteryLabel(it.level, it.charging)}" }.orEmpty()
+        phoneBatteryStatusView.visibility = visibleIf(phone != null)
+        dateStatusView.text = statusDateFormat.format(Date())
+        val glasses = readGlassesBattery()
+        glassesBatteryStatusView.text = glasses?.let { (level, charging) -> batteryLabel(level, charging) }
+            .orEmpty()
+        glassesBatteryStatusView.visibility = visibleIf(glasses != null)
+    }
+
+    private fun batteryLabel(level: Int, charging: Boolean): String =
+        "$level%" + if (charging) "+" else ""
+
+    /**
+     * The sticky [Intent.ACTION_BATTERY_CHANGED] broadcast always has a last
+     * value queued, so a null receiver reads it once without registering a
+     * live one to unregister later — the same trick a status-bar clock uses.
+     */
+    private fun readGlassesBattery(): Pair<Int, Boolean>? {
+        val intent = runCatching {
+            context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+        }.getOrNull() ?: return null
+        val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
+        val scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
+        if (level < 0 || scale <= 0) return null
+        val status = intent.getIntExtra(BatteryManager.EXTRA_STATUS, -1)
+        val charging = status == BatteryManager.BATTERY_STATUS_CHARGING ||
+            status == BatteryManager.BATTERY_STATUS_FULL
+        return (level * 100 / scale) to charging
     }
 
     private fun applyHudTopInset(value: Int) {
@@ -1092,6 +1178,7 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
     private companion object {
         private const val TICK_MS = 100L
         private const val MEDIA_TICK_MS = 500L
+        private const val STATUS_ROW_TICK_MS = 30_000L
 
         // Plain card bodies (messages, chooser): smaller mono, more lines.
         // Auto-fit mirrors the lyrics pattern: short bodies keep the full
