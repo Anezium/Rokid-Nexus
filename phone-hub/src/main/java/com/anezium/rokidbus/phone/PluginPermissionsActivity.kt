@@ -326,14 +326,14 @@ class PluginPermissionsActivity : Activity() {
     ): LinearLayout {
         val title = when (row) {
             PluginDisplayPolicySelection.Row.MUTE -> "Mute this plugin"
-            PluginDisplayPolicySelection.Row.DEMOTE -> "Demote — glanceables only"
+            PluginDisplayPolicySelection.Row.DEMOTE -> getString(R.string.plugin_display_quiet_title)
             PluginDisplayPolicySelection.Row.NOTICES -> "Notices only"
         }
         val note = when (row) {
             PluginDisplayPolicySelection.Row.MUTE ->
                 "Nothing from this plugin appears on the glasses"
             PluginDisplayPolicySelection.Row.DEMOTE ->
-                "Glanceables only — never the full display, and it will never light the screen"
+                getString(R.string.plugin_display_quiet_note)
             PluginDisplayPolicySelection.Row.NOTICES ->
                 "Only notices; no pins, contextual lyrics, or fullscreen pages"
         }

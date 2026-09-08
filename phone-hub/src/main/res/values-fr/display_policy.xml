@@ -1,0 +1,4 @@
+<resources>
+    <string name="plugin_display_quiet_title">Affichage discret</string>
+    <string name="plugin_display_quiet_note">Pas de plein écran automatique ni de réveil de l’écran. Ouvrez le plugin vous-même pour utiliser le plein écran.</string>
+</resources>
