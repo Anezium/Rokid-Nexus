@@ -19,6 +19,7 @@ internal enum class AssistantTextInputStatus(val message: String) {
     DISCONNECTED("Connect your glasses to Nexus first."),
     BUSY("Assistant is busy. Finish the current request or text entry first."),
     AUTH_REQUIRED("Connect an AI provider in Assistant settings first."),
+    MODEL_REQUIRED("Choose a model in Assistant settings first."),
     UNSUPPORTED("Update the glasses hub, or write a question in phone settings."),
     EXPIRED("This text entry ended. Close it and choose Write a question again."),
     UNAVAILABLE("Text input is unavailable. Reopen Assistant and try again."),
@@ -88,7 +89,9 @@ internal class AssistantTextInput(
     ): AssistantTextInputStatus {
         val status = availability(entry.kind)
         if (status != AssistantTextInputStatus.READY) {
-            active = null
+            val configurationMissing = status == AssistantTextInputStatus.AUTH_REQUIRED ||
+                status == AssistantTextInputStatus.MODEL_REQUIRED
+            if (!keepInvalidDraft || !configurationMissing) active = null
             return status
         }
         val normalized = text.trim()
@@ -107,7 +110,7 @@ internal class AssistantTextInput(
             onNote(normalized)
             AssistantTextInputStatus.SENT
         } else {
-            onQuestion(normalized)
+            onQuestion(text)
         }
     }
 

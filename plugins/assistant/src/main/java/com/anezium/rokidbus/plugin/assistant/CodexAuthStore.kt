@@ -48,6 +48,16 @@ class CodexAuthStore internal constructor(
         }
     }
 
+    internal fun hasUsableQuestionModel(): Boolean {
+        val selected = selectedProviderId() ?: when (authMode()) {
+            AUTH_MODE_CHATGPT -> CHATGPT_PROVIDER_ID
+            else -> ProviderCatalog.openAi.id
+        }
+        if (selected == CHATGPT_PROVIDER_ID) return chatGptModel().isNotBlank()
+        // Detected Hermes servers may choose their configured model; ordinary Custom APIs may not.
+        return providerModel(selected).isNotBlank() || providerBackend(selected) == ProviderBackend.HERMES
+    }
+
     /** The OpenAI key used by Whisper and account-context exchange, never another provider's key. */
     fun apiKey(): String? = providerApiKey(ProviderCatalog.openAi.id)
 

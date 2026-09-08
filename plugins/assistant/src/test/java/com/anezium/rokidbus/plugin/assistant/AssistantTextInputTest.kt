@@ -20,7 +20,7 @@ class AssistantTextInputTest {
 
         assertEquals(AssistantTextInputStatus.SENT, fixture.input.submitPhone(entry.id, "  question  "))
         assertEquals(AssistantTextInputStatus.EXPIRED, fixture.input.submitPhone(entry.id, "duplicate"))
-        assertEquals(listOf("question"), fixture.questions)
+        assertEquals(listOf("  question  "), fixture.questions)
         assertTrue(fixture.notes.isEmpty())
     }
 
@@ -84,12 +84,11 @@ class AssistantTextInputTest {
     }
 
     @Test
-    fun `closed disconnected busy and unconfigured sessions reject begin and final submit`() {
+    fun `closed disconnected and busy sessions reject begin and final submit`() {
         listOf(
             AssistantTextInputStatus.NOT_OPEN,
             AssistantTextInputStatus.DISCONNECTED,
             AssistantTextInputStatus.BUSY,
-            AssistantTextInputStatus.AUTH_REQUIRED,
         ).forEach { unavailable ->
             val fixture = Fixture()
             fixture.availability = unavailable
@@ -102,6 +101,27 @@ class AssistantTextInputTest {
             assertEquals(unavailable, fixture.input.submitPhone(entry.id, "never send"))
             assertNull(fixture.input.active)
             assertTrue(fixture.questions.isEmpty())
+        }
+    }
+
+    @Test
+    fun `incomplete provider configuration rejects entry and keeps an existing phone draft retryable`() {
+        listOf(AssistantTextInputStatus.AUTH_REQUIRED, AssistantTextInputStatus.MODEL_REQUIRED).forEach { missing ->
+            val fixture = Fixture()
+            fixture.availability = missing
+            assertEquals(missing, fixture.input.begin(AssistantTextEntryKind.PHONE_QUESTION).status)
+            assertNull(fixture.input.active)
+
+            fixture.availability = AssistantTextInputStatus.READY
+            val entry = fixture.begin(AssistantTextEntryKind.PHONE_QUESTION)
+            fixture.availability = missing
+            assertEquals(missing, fixture.input.submitPhone(entry.id, "keep my draft"))
+            assertEquals(entry, fixture.input.active)
+            assertTrue(fixture.questions.isEmpty())
+
+            fixture.availability = AssistantTextInputStatus.READY
+            assertEquals(AssistantTextInputStatus.SENT, fixture.input.submitPhone(entry.id, "keep my draft"))
+            assertEquals(listOf("keep my draft"), fixture.questions)
         }
     }
 

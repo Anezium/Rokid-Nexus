@@ -11,6 +11,34 @@ class AssistantConversationThreadingTest {
     val temporaryFolder = TemporaryFolder()
 
     @Test
+    fun typedQuestionFormattingSurvivesTheSharedPipelineProviderRequestAndConversation() {
+        val store = AssistantThreadStore(temporaryFolder.root) { 1_000L }
+        val threading = AssistantConversationThreading(store)
+        val context = threading.prepare(keepConversation = true, idleWindowMinutes = 10)
+        val question = "  Explain this code:\n\n    if (ready) {\n\tstart()\n    }\n"
+        var providerRequest: ChatRequest? = null
+        val input = AssistantTextInput(
+            availability = { AssistantTextInputStatus.READY },
+            onQuestion = { text ->
+                assertTrue(dispatchAssistantQuestion(text) { userText ->
+                    providerRequest = ChatRequest(userText = userText, history = context.history)
+                    threading.recordCompletedTurn(context, userText, "It starts.", hadPhoto = false)
+                })
+                AssistantTextInputStatus.SENT
+            },
+            onNote = { throw AssertionError("Question was routed to note storage") },
+        )
+        val entry = checkNotNull(input.begin(AssistantTextEntryKind.PHONE_QUESTION).entry)
+        assertEquals(AssistantTextInputStatus.SENT, input.submitPhone(entry.id, question))
+        assertEquals(question, providerRequest?.userText)
+        assertEquals(question, store.threads().single().messages.first().text)
+        assertEquals(
+            question,
+            threading.prepare(keepConversation = true, idleWindowMinutes = 10).history.first().content,
+        )
+    }
+
+    @Test
     fun enabledSecondRequestCarriesFirstCompletedTurn() {
         val store = AssistantThreadStore(temporaryFolder.root) { 1_000L }
         val threading = AssistantConversationThreading(store)

@@ -27,6 +27,11 @@ the ordinary response-card fallback on older hubs. Questions are limited to
 closing their dialog, starting voice input, closing Assistant or losing the
 link invalidates them. Completed questions follow normal conversation storage
 settings, and neither question nor note text is logged.
+Completed plain answers and errors also offer **Tap to write a question**;
+streaming answers and Ink pages keep their current interaction. Typed questions
+preserve paragraph breaks and indentation in the provider request and saved
+conversation. Custom API providers require a model before writing is enabled;
+detected Hermes backends keep using their server's configured model behavior.
 
 Answers come from the provider the wearer picks in Settings: a ChatGPT plan
 (OAuth, no key to paste), or an API key for OpenAI, OpenRouter, MiniMax,
