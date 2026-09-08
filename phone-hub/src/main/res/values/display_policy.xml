@@ -1,0 +1,4 @@
+<resources>
+    <string name="plugin_display_quiet_title">Quiet display</string>
+    <string name="plugin_display_quiet_note">No automatic fullscreen or screen wake. Open the plugin yourself to use fullscreen.</string>
+</resources>
