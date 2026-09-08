@@ -21,6 +21,8 @@
   foreground-service start is not permitted.
 - Confirm removal of custom foods and recipes, clear their favorites, and preserve
   saved meals and recipe ingredient snapshots through backup and restore.
+- Keep committed meal synchronization alive through phone rotation, and release
+  barcode lookup controls when another editor takes over.
 
 ## 3.0.0
 
