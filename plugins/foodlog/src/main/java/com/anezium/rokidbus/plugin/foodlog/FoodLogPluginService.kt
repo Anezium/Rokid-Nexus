@@ -749,8 +749,9 @@ class FoodLogPluginService : NexusPluginService() {
 
     private fun productListCard(title: String, products: List<FoodProduct>, key: String): NexusCard = NexusCard(
         title = title,
+        subtitle = "${selectedIndex + 1} / ${products.size}",
         lines = emptyList(),
-        richLines = products.mapIndexed { index, product ->
+        richLines = foodHudWindow(products, selectedIndex).map { (index, product) ->
             NexusCardLine(
                 text = product.name.hud(240),
                 sub = product.brand.hud(240).ifBlank { product.barcode },
@@ -764,8 +765,9 @@ class FoodLogPluginService : NexusPluginService() {
 
     private fun recipeListCard(): NexusCard = NexusCard(
         title = "Recipes",
+        subtitle = "${selectedIndex + 1} / ${recipes.size}",
         lines = emptyList(),
-        richLines = recipes.mapIndexed { index, recipe ->
+        richLines = foodHudWindow(recipes, selectedIndex).map { (index, recipe) ->
             NexusCardLine(
                 text = recipe.name.hud(240),
                 sub = "${recipe.ingredients.size} ingredients · ${formatNutritionNumber(recipe.servings)} servings",
