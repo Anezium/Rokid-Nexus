@@ -337,11 +337,16 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
         nextView.visibility = GONE
         currentView.visibility = GONE
         boardView.visibility = GONE
+        // A plugin that reuses one surfaceId for every editable prompt it ever
+        // shows — Agents' single board surface doubles as its reply field —
+        // means surfaceId alone cannot tell "still the same compose" from "a
+        // new one that happens to reuse the id". Having stopped being the
+        // visible editable field in between is what actually marks a fresh
+        // prompt; same surfaceId while never leaving still means keep typing.
+        val reopened = editView.visibility != VISIBLE || surface.surfaceId != lastEditableSurfaceId
         editView.visibility = VISIBLE
         editView.hint = editable.placeholder.orEmpty()
-        if (editView.text?.toString() != editable.initialText.orEmpty() &&
-            surface.surfaceId != lastEditableSurfaceId
-        ) {
+        if (reopened && editView.text?.toString() != editable.initialText.orEmpty()) {
             editView.setText(editable.initialText.orEmpty())
             editView.setSelection(editView.text?.length ?: 0)
         }
