@@ -161,6 +161,7 @@ class FoodLogStoreTest {
         store.saveRecipe(recipe)
         val product = recipe.asProduct()
         store.addEntry(product, 40.0, breakfast, MealType.BREAKFAST, FoodEntrySource.RECIPE, recipeUuid, uuid)
+        val loggedProduct = requireNotNull(store.entry(uuid)).product
         store.setFavorite(product.barcode, true)
         val beforeRemoval = store.exportJson(emptyList())
 
@@ -174,7 +175,7 @@ class FoodLogStoreTest {
         assertEquals(setOf(product.barcode), archive.archivedProductIds)
         assertEquals(setOf(recipeUuid), archive.archivedRecipeIds)
         assertEquals(recipe, archive.recipes.single())
-        assertEquals(product, archive.entries.single().product)
+        assertEquals(loggedProduct, archive.entries.single().product)
 
         store.close(); context.deleteDatabase("food-log.db"); store = FoodLogStore(context)
         assertEquals(1, store.importJson(json).insertedEntries)
@@ -185,7 +186,7 @@ class FoodLogStoreTest {
         assertTrue(store.searchProducts("Porridge").isEmpty())
         assertEquals(recipe, store.recipes(includeArchived = true).single())
         assertEquals(recipeUuid, store.entry(uuid)!!.recipeId)
-        assertEquals(product, store.entry(uuid)!!.product)
+        assertEquals(loggedProduct, store.entry(uuid)!!.product)
         assertEquals(80.0, store.dailySummary(breakfast).caloriesKcal.knownValue, 0.0)
         assertEquals(archive.archivedRecipeIds, FoodLogBackup.decode(store.exportJson(emptyList())).archivedRecipeIds)
     }
