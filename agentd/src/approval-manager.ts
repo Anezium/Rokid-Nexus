@@ -166,11 +166,12 @@ function decisionResponse(decision: ApprovalDecision): HookResponse {
   return {
     hookSpecificOutput: {
       hookEventName: "PermissionRequest",
-      decision,
-      decisionReason:
-        decision === "allow"
-          ? "Approved by the wearer in Nexus Agents."
-          : "Denied by the wearer in Nexus Agents.",
+      decision: {
+        behavior: decision,
+        ...(decision === "deny"
+          ? { message: "Denied by the wearer in Nexus Agents." }
+          : {}),
+      },
     },
   };
 }

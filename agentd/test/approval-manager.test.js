@@ -73,8 +73,7 @@ test("phone allow and deny decisions return Claude's exact PermissionRequest con
   assert.deepEqual(await allowed, {
     hookSpecificOutput: {
       hookEventName: "PermissionRequest",
-      decision: "allow",
-      decisionReason: "Approved by the wearer in Nexus Agents.",
+      decision: { behavior: "allow" },
     },
   });
   assert.equal(manager.size, 0);
@@ -85,8 +84,10 @@ test("phone allow and deny decisions return Claude's exact PermissionRequest con
   assert.deepEqual(await denied, {
     hookSpecificOutput: {
       hookEventName: "PermissionRequest",
-      decision: "deny",
-      decisionReason: "Denied by the wearer in Nexus Agents.",
+      decision: {
+        behavior: "deny",
+        message: "Denied by the wearer in Nexus Agents.",
+      },
     },
   });
   assert.equal(transport.frames.length, 2);
