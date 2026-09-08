@@ -22,11 +22,16 @@ import type { Session } from "./types";
 /** Longer than any reply worth typing on glasses, short enough to paste safely. */
 export const MAX_TERMINAL_INPUT_CHARS = 2000;
 
-export interface TerminalTarget {
-  kind: "screen" | "tmux";
-  /** The handle to address: a screen session name, or a tmux pane. */
-  handle: string;
-}
+/**
+ * The exact place to type, not merely which multiplexer: a screen session has
+ * more than one window, and a tmux server can be reached over more than one
+ * socket, running more than one session, each with more than one pane. Naming
+ * only the session (or worse, guessing window 0) can land the reply on
+ * whatever else happens to share it.
+ */
+export type TerminalTarget =
+  | { kind: "screen"; session: string; window: string }
+  | { kind: "tmux"; socketPath: string; pane: string };
 
 export interface TerminalInputOutcome {
   ok: boolean;
@@ -55,9 +60,23 @@ const runProcess: Runner = (command, args) =>
 /**
  * Finds the multiplexer a session is running inside, if any.
  *
- * `ps eww` prints the environment as one space-separated run, so the values are
- * matched rather than split: a screen `STY` looks like `4242.work`, and a tmux
- * `TMUX` like `/tmp/tmux-501/default,4242,0` whose last field is the session.
+ * `ps eww` prints the environment as one space-separated run, so the values
+ * are matched rather than split.
+ *
+ * A screen `STY` looks like `4242.work`; the window actually holding the
+ * session is a separate `WINDOW` variable (a plain number), and a session
+ * outside window 0 is not "close enough" — `-p` addresses one window
+ * exactly, so an absent `WINDOW` falls back to `0` rather than being guessed.
+ *
+ * tmux identifies a pane globally as `TMUX_PANE` (`%12`), unique across every
+ * window and session on the server — worth reading directly instead of
+ * reconstructing from `TMUX`'s session field, which only says which session,
+ * not which window or pane inside it. `TMUX` itself still carries the one
+ * thing `TMUX_PANE` does not: `/tmp/tmux-501/default,4242,0`'s first field is
+ * the server's own socket path, required on `-S` so the command reaches the
+ * same server the pane lives on rather than whatever `tmux` would attach to
+ * by default for the account running agentd. Absent either half, there is no
+ * reliable target — guessing a socket is how a reply reaches a stranger's pane.
  */
 export function parseTerminalTarget(processEnv: string | undefined): TerminalTarget | undefined {
   if (!processEnv) {
@@ -65,13 +84,14 @@ export function parseTerminalTarget(processEnv: string | undefined): TerminalTar
   }
   const sty = /(?:^|\s)STY=(\S+)/.exec(processEnv);
   if (sty?.[1]) {
-    return { kind: "screen", handle: sty[1] };
+    const window = /(?:^|\s)WINDOW=(\S+)/.exec(processEnv)?.[1] ?? "0";
+    return { kind: "screen", session: sty[1], window };
   }
-  const tmux = /(?:^|\s)TMUX=(\S+)/.exec(processEnv);
-  if (tmux?.[1]) {
-    const parts = tmux[1].split(",");
-    const session = parts[parts.length - 1];
-    return session ? { kind: "tmux", handle: session } : undefined;
+  const pane = /(?:^|\s)TMUX_PANE=(\S+)/.exec(processEnv)?.[1];
+  const tmux = /(?:^|\s)TMUX=(\S+)/.exec(processEnv)?.[1];
+  const socketPath = tmux?.split(",")[0];
+  if (pane && socketPath) {
+    return { kind: "tmux", socketPath, pane };
   }
   return undefined;
 }
@@ -167,6 +187,36 @@ export class TerminalTargets {
   }
 }
 
+/**
+ * Binds a phone's `session_input` to one session store and target cache.
+ *
+ * Awaits the refresh before ever reading the cache: a fire-and-forget refresh
+ * left the very first send after a cold start reading an empty cache, so a
+ * session that was genuinely reachable was refused as if it were not — the
+ * cache having a `TARGET_CACHE_MS` window does not help the request that
+ * arrives before it has ever been filled once.
+ */
+export function createTerminalInputHandler(options: {
+  enabled: () => boolean;
+  store: SessionStore;
+  targets: TerminalTargets;
+  run?: Runner;
+}): (sessionId: string, text: string) => Promise<TerminalInputOutcome> {
+  return async (sessionId, text) => {
+    await options.targets.refresh();
+    return sendTerminalInput(
+      {
+        enabled: options.enabled(),
+        store: options.store,
+        targetFor: (session) => options.targets.get(session.id),
+        run: options.run,
+      },
+      sessionId,
+      text,
+    );
+  };
+}
+
 export interface TerminalInputOptions {
   enabled: boolean;
   store: SessionStore;
@@ -221,12 +271,12 @@ export async function sendTerminalInput(
   const sends: Array<[string, string[]]> =
     target.kind === "screen"
       ? [
-          ["screen", ["-S", target.handle, "-p", "0", "-X", "stuff", text]],
-          ["screen", ["-S", target.handle, "-p", "0", "-X", "stuff", "\r"]],
+          ["screen", ["-S", target.session, "-p", target.window, "-X", "stuff", text]],
+          ["screen", ["-S", target.session, "-p", target.window, "-X", "stuff", "\r"]],
         ]
       : [
-          ["tmux", ["send-keys", "-t", target.handle, "-l", text]],
-          ["tmux", ["send-keys", "-t", target.handle, "Enter"]],
+          ["tmux", ["-S", target.socketPath, "send-keys", "-t", target.pane, "-l", text]],
+          ["tmux", ["-S", target.socketPath, "send-keys", "-t", target.pane, "Enter"]],
         ];
   try {
     for (const [command, args] of sends) {

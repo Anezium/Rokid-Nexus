@@ -6,6 +6,7 @@ const {
   MAX_TERMINAL_INPUT_CHARS,
   TARGET_CACHE_MS,
   TerminalTargets,
+  createTerminalInputHandler,
   parseAgentPids,
   parseTerminalTarget,
   sendTerminalInput,
@@ -27,12 +28,24 @@ function storeWith(sessions) {
 
 test("a multiplexer is recognised from the process environment, and its absence is not guessed at", () => {
   // ps eww prints the environment as one space-separated run.
-  const screen = parseTerminalTarget("PID TTY TIME CMD TERM=xterm STY=4242.work SHELL=/bin/zsh");
-  assert.deepEqual(screen, { kind: "screen", handle: "4242.work" });
+  const screen = parseTerminalTarget(
+    "PID TTY TIME CMD TERM=xterm STY=4242.work WINDOW=2 SHELL=/bin/zsh",
+  );
+  assert.deepEqual(screen, { kind: "screen", session: "4242.work", window: "2" });
 
-  // tmux names the session in the last field of its socket triple.
-  const tmux = parseTerminalTarget("TERM=xterm TMUX=/tmp/tmux-501/default,4242,mywork");
-  assert.deepEqual(tmux, { kind: "tmux", handle: "mywork" });
+  // No WINDOW at all still resolves — to window 0, not to a guess.
+  const screenNoWindow = parseTerminalTarget("TERM=xterm STY=4242.work SHELL=/bin/zsh");
+  assert.deepEqual(screenNoWindow, { kind: "screen", session: "4242.work", window: "0" });
+
+  // tmux identifies the exact pane via TMUX_PANE, and the server via TMUX's socket field.
+  const tmux = parseTerminalTarget(
+    "TERM=xterm TMUX=/tmp/tmux-501/default,4242,0 TMUX_PANE=%12",
+  );
+  assert.deepEqual(tmux, { kind: "tmux", socketPath: "/tmp/tmux-501/default", pane: "%12" });
+
+  // Either half missing leaves no reliable target — never guess a socket or a pane.
+  assert.equal(parseTerminalTarget("TERM=xterm TMUX=/tmp/tmux-501/default,4242,0"), undefined);
+  assert.equal(parseTerminalTarget("TERM=xterm TMUX_PANE=%12"), undefined);
 
   // An ordinary terminal has neither, and must not be treated as answerable.
   assert.equal(parseTerminalTarget("TERM=xterm-256color SHELL=/bin/zsh"), undefined);
@@ -70,7 +83,7 @@ test("targets are cached so a redraw does not fork a CLI per session", async () 
   );
 
   await targets.refresh();
-  assert.deepEqual(targets.get("s1"), { kind: "screen", handle: "4242.work" });
+  assert.deepEqual(targets.get("s1"), { kind: "screen", session: "4242.work", window: "0" });
   assert.equal(listings, 1);
 
   await targets.refresh();
@@ -97,7 +110,7 @@ test("typed input reaches screen only when every guard is satisfied", async () =
     store,
     targetFor: (session) =>
       session.id === "idle" || session.id === "busy"
-        ? { kind: "screen", handle: "4242.work" }
+        ? { kind: "screen", session: "4242.work", window: "1" }
         : undefined,
     run: async (command, args) => {
       runs.push({ command, args });
@@ -135,9 +148,10 @@ test("typed input reaches screen only when every guard is satisfied", async () =
       {
         command: "screen",
         // Arguments, never a shell string: the text arrives from the network.
-        args: ["-S", "4242.work", "-p", "0", "-X", "stuff", "on my way"],
+        // The window comes from the target, never a hardcoded "0".
+        args: ["-S", "4242.work", "-p", "1", "-X", "stuff", "on my way"],
       },
-      { command: "screen", args: ["-S", "4242.work", "-p", "0", "-X", "stuff", "\r"] },
+      { command: "screen", args: ["-S", "4242.work", "-p", "1", "-X", "stuff", "\r"] },
     ]);
   } finally {
     store.dispose();
@@ -150,12 +164,42 @@ test("a send the multiplexer refuses is reported, not swallowed", async () => {
     const outcome = await sendTerminalInput({
       enabled: true,
       store,
-      targetFor: () => ({ kind: "tmux", handle: "mywork" }),
+      targetFor: () => ({ kind: "tmux", socketPath: "/tmp/tmux-501/default", pane: "%12" }),
       run: async () => {
         throw new Error("no such session");
       },
     }, "idle", "hello");
     assert.deepEqual(outcome, { ok: false, error: "Could not reach that tmux session" });
+  } finally {
+    store.dispose();
+  }
+});
+
+test("the handler awaits discovery before it ever reads the cache", async () => {
+  const store = storeWith([{ session_id: "idle", cwd: "/work/idle", hook_event_name: "Stop" }]);
+  try {
+    const targets = new TerminalTargets(
+      // A slow listing: if the handler read the cache before this resolved,
+      // it would see nothing and refuse a session that is actually reachable.
+      async () => {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        return new Map([["idle", 111]]);
+      },
+      async () => "STY=4242.work",
+    );
+    const runs = [];
+    const handler = createTerminalInputHandler({
+      enabled: () => true,
+      store,
+      targets,
+      run: async (command, args) => {
+        runs.push({ command, args });
+      },
+    });
+
+    const outcome = await handler("idle", "on my way");
+    assert.deepEqual(outcome, { ok: true });
+    assert.equal(runs.length, 2, "the first call already found a target, cold cache and all");
   } finally {
     store.dispose();
   }

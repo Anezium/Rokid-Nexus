@@ -13,7 +13,7 @@ import { discoverRecentSessions } from "./discovery";
 import { HookHttpServer } from "./http-server";
 import { FileLogger } from "./logger";
 import { SessionStore } from "./session-store";
-import { TerminalTargets, sendTerminalInput } from "./terminal-input";
+import { TerminalTargets, createTerminalInputHandler } from "./terminal-input";
 import { PhoneLink } from "./phone-link";
 import { TranscriptTailManager } from "./transcript";
 import { readRecentMessages } from "./transcript-messages";
@@ -103,18 +103,11 @@ export async function startDaemon(): Promise<RunningDaemon> {
   // is how that record stops being true. A multiplexer can, because it is the
   // terminal. Off unless the owner turned it on.
   const terminalTargets = new TerminalTargets();
-  const typeIntoSession = (sessionId: string, text: string) => {
-    void terminalTargets.refresh();
-    return sendTerminalInput(
-      {
-        enabled: config.allowTerminalInput,
-        store: sessions,
-        targetFor: (session) => terminalTargets.get(session.id),
-      },
-      sessionId,
-      text,
-    );
-  };
+  const typeIntoSession = createTerminalInputHandler({
+    enabled: () => config.allowTerminalInput,
+    store: sessions,
+    targets: terminalTargets,
+  });
 
   const hub = new WsHub(config, sessions, logger, {
     detailProvider,
