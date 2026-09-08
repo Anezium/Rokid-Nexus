@@ -35,22 +35,27 @@ internal class LitterClient(
     private val itemDetails = linkedMapOf<Triple<String, String, String>, String>()
     private val timeline = linkedMapOf<String, AgentMessage>()
     private val liveItems = mutableSetOf<String>()
+    private val fragmentItems = mutableSetOf<String>()
+    private val completedItems = mutableSetOf<String>()
     private var selectedThread: String? = null
     private val _message = MutableStateFlow("Add a Litter-compatible Codex server.")
     val message = _message.asStateFlow()
     private val _hasMore = MutableStateFlow(false)
     val hasMore = _hasMore.asStateFlow()
     private var cursor: String? = null
+    private var loadedPages = 1
     private var listing = false
     private var submitting = false
 
     fun start(config: LitterEndpoint) {
         stop()
+        if (endpoint?.url != config.url || endpoint?.cwd != config.cwd) loadedPages = 1
         endpoint = config
         loop = scope.launch {
             var attempt = 0
             while (isActive) {
                 val generation = ++epoch
+                val reconnectThread = selectedThread
                 store.setConnection(AgentProvider.CODEX, ConnectionState.CONNECTING)
                 _message.value = "Connecting to ${config.name}…"
                 val rpc = LitterRpcConnection(http, scope) { frame ->
@@ -68,9 +73,9 @@ internal class LitterClient(
                     store.setConnection(AgentProvider.CODEX, ConnectionState.CONNECTED)
                     _message.value = "Loading sessions…"
                     attempt = 0
-                    refresh()
+                    refresh(preserveWindow = true)
                     _message.value = "Connected · monitoring while Agents is open"
-                    selectedThread?.let { id -> session(id)?.let { openSession(it) } }
+                    reconnectThread?.takeIf { it == selectedThread }?.let { id -> session(id)?.let { openSession(it) } }
                     maintenance = scope.launch {
                         var ticks = 0
                         while (isActive) {
@@ -79,7 +84,7 @@ internal class LitterClient(
                                 rpc.send(JSONObject().put("id", pending.wireId).put("result", JSONObject().put("decision", "decline")))
                                 clearApprovals(listOf(pending))
                             }
-                            if (++ticks % 20 == 0) runOperation { refresh() }
+                            if (++ticks % 20 == 0) runOperation { refresh(preserveWindow = true) }
                         }
                     }
                     throw rpc.awaitClosed()
@@ -128,24 +133,35 @@ internal class LitterClient(
         approvals.clear()
         itemDetails.clear()
         liveItems.clear()
+        fragmentItems.clear()
+        completedItems.clear()
         store.clearApprovals(setOf(AgentProvider.CODEX))
         store.sessions.value.filter { it.provider == AgentProvider.CODEX }.forEach {
             store.upsert(it.copy(stale = true, pendingRequest = null))
         }
     }
 
-    suspend fun refresh(more: Boolean = false) {
+    suspend fun refresh(more: Boolean = false, preserveWindow: Boolean = false) {
         if (listing) return
         val config = endpoint ?: return
         val rpc = connected()
         listing = true
         try {
-            val params = JSONObject().put("limit", 50).put("sortKey", "updated_at")
-                .put("sourceKinds", JSONArray(listOf("cli", "vscode", "appServer", "exec", "unknown")))
-            if (config.cwd.isNotBlank()) params.put("cwd", config.cwd)
-            if (more) cursor?.let { params.put("cursor", it) } ?: return
-            val result = rpc.request("thread/list", params)
-            val incoming = result.optJSONArray("data").objects().take(50).mapNotNull { LitterProtocol.thread(it, config) }
+            if (more && cursor == null) return
+            val pageLimit = if (preserveWindow && !more) loadedPages else 1
+            var nextCursor = if (more) cursor else null
+            var fetchedPages = 0
+            val incoming = mutableListOf<AgentSession>()
+            do {
+                val params = JSONObject().put("limit", 50).put("sortKey", "updated_at")
+                    .put("sourceKinds", JSONArray(listOf("cli", "vscode", "appServer", "exec", "unknown")))
+                if (config.cwd.isNotBlank()) params.put("cwd", config.cwd)
+                nextCursor?.let { params.put("cursor", it) }
+                val result = rpc.request("thread/list", params)
+                incoming += result.optJSONArray("data").objects().take(50).mapNotNull { LitterProtocol.thread(it, config) }
+                nextCursor = result.wireString("nextCursor", 8_192)
+                fetchedPages++
+            } while (fetchedPages < pageLimit && nextCursor != null)
             val merged = if (more) store.sessions.value.associateBy { it.id }.toMutableMap() else linkedMapOf()
             incoming.forEach { fresh ->
                 val previous = session(fresh.id)
@@ -157,7 +173,8 @@ internal class LitterClient(
             }
             selectedThread?.let { id -> if (id !in merged) session(id)?.let { merged[id] = it } }
             store.replaceProvider(AgentProvider.CODEX, merged.values.take(LitterProtocol.MAX_SESSIONS))
-            cursor = result.wireString("nextCursor", 8_192)
+            loadedPages = if (more) (loadedPages + 1).coerceAtMost(4) else fetchedPages
+            cursor = nextCursor
             _hasMore.value = cursor != null && merged.size < LitterProtocol.MAX_SESSIONS
         } finally { listing = false }
     }
@@ -166,9 +183,10 @@ internal class LitterClient(
         val rpc = connected()
         val revision = ++conversationRevision
         val turnRevision = turnRevisions[session.id] ?: 0L
+        if (selectedThread != session.id) { timeline.clear(); fragmentItems.clear() }
         selectedThread = session.id
-        timeline.clear()
         liveItems.clear()
+        completedItems.clear()
         store.openConversation(session)
         resuming[session.id] = revision
         try {
@@ -196,6 +214,8 @@ internal class LitterClient(
         selectedThread = null
         timeline.clear()
         liveItems.clear()
+        fragmentItems.clear()
+        completedItems.clear()
         store.closeConversation()
     }
 
@@ -212,6 +232,8 @@ internal class LitterClient(
             selectedThread = session.id
             timeline.clear()
             liveItems.clear()
+            fragmentItems.clear()
+            completedItems.clear()
             store.openConversation(session)
             hydrate(thread)
             return session.id
@@ -284,11 +306,20 @@ internal class LitterClient(
             if (turn.optString("status") == "inProgress" && (turnRevisions[id] ?: 0L) == turnRevision) turns[id] = turnId
             turn.optJSONArray("items").objects().takeLast(AgentConversation.MAX_MESSAGES).forEach { item ->
                 val itemId = item.wireId("id") ?: return@forEach
-                LitterProtocol.item(item)?.let { timeline[itemId] = if (itemId in liveItems) previousLive[itemId] ?: it else it }
+                LitterProtocol.item(item)?.let { snapshot ->
+                    val live = previousLive[itemId]?.takeIf { itemId in liveItems }
+                    timeline[itemId] = when {
+                        live == null -> snapshot
+                        itemId in fragmentItems -> snapshot.copy(text = mergeLitterFragment(snapshot.text, live.text))
+                        itemId !in completedItems && snapshot.text.startsWith(live.text) -> snapshot
+                        else -> live
+                    }
+                    fragmentItems.remove(itemId)
+                }
                 rememberItem(id, turnId, item)
             }
         }
-        previousLive.filterKeys { it in liveItems }.forEach { (key, value) -> timeline[key] = value }
+        previousLive.filterKeys { it in liveItems && it !in timeline }.forEach { (key, value) -> timeline[key] = value }
         publishTimeline(id)
     }
 
@@ -305,7 +336,22 @@ internal class LitterClient(
                 ?.let(store::upsert)
             return
         }
-        if (id == null || session(id) == null) return
+        if (id == null) return
+        when (method) {
+            "serverRequest/resolved" -> removeDeferred(id) {
+                rpcIdentity(it.opt("id")) == rpcIdentity(params.opt("requestId"))
+            }
+            "item/completed" -> removeDeferred(id) {
+                val request = it.optJSONObject("params")
+                request?.wireId("turnId") == params.wireId("turnId") &&
+                    request?.wireId("itemId") == params.optJSONObject("item")?.wireId("id")
+            }
+            "turn/completed" -> removeDeferred(id) {
+                it.optJSONObject("params")?.wireId("turnId") == params.optJSONObject("turn")?.wireId("id")
+            }
+            "thread/archived", "thread/closed" -> removeDeferred(id) { true }
+        }
+        if (session(id) == null && id !in resuming) return
         when (method) {
             "thread/status/changed" -> updateSession(id) { it.copy(status = LitterProtocol.status(params.optJSONObject("status")), stale = false) }
             "thread/archived", "thread/closed" -> {
@@ -335,7 +381,13 @@ internal class LitterClient(
                 val itemId = item.wireId("id") ?: return
                 if (method == "item/completed") clearApprovals(approvals.finishItem(id, turnId, itemId))
                 LitterProtocol.item(item)?.let { message ->
-                    if (id == selectedThread) { timeline[itemId] = message; liveItems += itemId; publishTimeline(id) }
+                    if (id == selectedThread) {
+                        timeline[itemId] = message
+                        liveItems += itemId
+                        fragmentItems.remove(itemId)
+                        if (method == "item/completed") completedItems += itemId
+                        publishTimeline(id)
+                    }
                     if (message.role == MessageRole.ASSISTANT) updateSession(id) { it.copy(lastAssistantText = message.text.takeLast(1_000), lastActivityAt = now()) }
                     if (message.role == MessageRole.TOOL) updateSession(id) { it.copy(turn = AgentTurn(message.tool, now()), lastActivityAt = now()) }
                 }
@@ -345,6 +397,7 @@ internal class LitterClient(
                 val itemId = params.wireId("itemId") ?: return
                 val delta = (params.opt("delta") as? String)?.take(LitterProtocol.MAX_TEXT) ?: return
                 if (id == selectedThread) {
+                    if (itemId !in timeline) fragmentItems += itemId
                     val existing = timeline[itemId] ?: AgentMessage(if (method.contains("commandExecution")) MessageRole.TOOL else MessageRole.ASSISTANT, "")
                     timeline[itemId] = existing.copy(text = (existing.text + delta).takeLast(LitterProtocol.MAX_TEXT))
                     liveItems += itemId
@@ -415,9 +468,16 @@ internal class LitterClient(
         }
     }
 
+    private fun removeDeferred(threadId: String, matches: (JSONObject) -> Boolean) {
+        deferredApprovals.removeAll { (_, frame) ->
+            frame.optJSONObject("params")?.wireId("threadId") == threadId && matches(frame)
+        }
+    }
+
     private fun publishTimeline(thread: String) {
         while (timeline.size > AgentConversation.MAX_MESSAGES) {
-            val key = timeline.keys.first(); timeline.remove(key); liveItems.remove(key)
+            val key = timeline.keys.first()
+            timeline.remove(key); liveItems.remove(key); fragmentItems.remove(key); completedItems.remove(key)
         }
         store.setConversation(AgentProvider.CODEX, thread, timeline.values.toList())
     }

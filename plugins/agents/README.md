@@ -38,7 +38,11 @@ server's responsibility. No API key is bundled or required separately by Nexus.
   every approval. Existing work continues on the server. There is no boot
   receiver, hidden monitoring service, general network discovery or background
   polling. While open, session summaries refresh every 20 seconds; the selected
-  conversation streams through its resumed session.
+  conversation streams through its resumed session. Periodic refresh retains
+  the loaded page window; an explicit refresh starts again at the first page.
+- Phone and glasses share one selected conversation. Opening a different
+  session updates both surfaces; phone drafts stay attached to their original
+  session in memory and are never moved into another session's prompt.
 - The new endpoint record, including token, is encrypted with AES-GCM under an
   Android Keystore key. Backup is disabled. Token and conversation windows use
   `FLAG_SECURE`; credentials are not logged or copied to the clipboard.
@@ -88,6 +92,10 @@ From the configured Nexus root checkout:
 app-server peer to cover initialization, session hydration, whitespace deltas,
 prompt/steer requests, scoped approvals and disconnect/reconnect. It calls no
 model, requires no credentials, and touches no Android device.
+It also exercises approval resolution during resume, deltas arriving before
+history, completed items overriding older snapshots, and pagination refresh.
+`LitterConversationSelectionTest` checks phone/HUD selection and draft binding;
+`LitterStreamMergeTest` checks overlapping fragments and bounded message text.
 `LitterSecurityTest` covers endpoint policy, request identity, expiry, replay,
 missing previews and connection/thread/turn binding.
 
