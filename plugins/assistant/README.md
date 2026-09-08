@@ -6,7 +6,9 @@ Hold the assist button, ask out loud: the words transcribe live on the HUD, then
 the answer streams into the band, is spoken aloud, or hands over in place to a
 native Ink page. The model can take one photo through the glasses camera when
 the question needs eyes, and it can set reminders and timers, take notes, and
-add, list, or delete events in the phone calendar.
+add, list, or delete events in the phone calendar. An *Add note* button on the
+phone's Productivity screen opens an editable card on the glasses for a typed
+note instead — no model call, no microphone — while Assistant is open there.
 
 Answers come from the provider the wearer picks in Settings: a ChatGPT plan
 (OAuth, no key to paste), or an API key for OpenAI, OpenRouter, MiniMax,

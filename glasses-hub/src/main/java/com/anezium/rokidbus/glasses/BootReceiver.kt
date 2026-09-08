@@ -3,6 +3,9 @@ package com.anezium.rokidbus.glasses
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.os.Handler
+import android.os.Looper
+import java.util.concurrent.atomic.AtomicBoolean
 
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
@@ -20,9 +23,23 @@ class BootReceiver : BroadcastReceiver() {
         }
         if (reason != null) {
             val pendingResult = goAsync()
+            val finished = AtomicBoolean(false)
+            val finish = Runnable {
+                if (finished.compareAndSet(false, true)) pendingResult.finish()
+            }
+            // The arm keeps running on its own thread; the broadcast must not. A full
+            // bootstrap can outlast the async-receiver window, and the system kills the
+            // process for an unfinished goAsync() long before that.
+            val handler = Handler(Looper.getMainLooper())
+            handler.postDelayed(finish, ASYNC_RESULT_TIMEOUT_MS)
             AccessibilityRearmWatcher.ensureWatchdog(appContext, reason) {
-                pendingResult.finish()
+                handler.removeCallbacks(finish)
+                finish.run()
             }
         }
+    }
+
+    private companion object {
+        const val ASYNC_RESULT_TIMEOUT_MS = 8_000L
     }
 }

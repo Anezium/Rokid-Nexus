@@ -1,6 +1,15 @@
 # Changelog
 
-## Unreleased
+## 1.4.4
+
+- **Add note, typed.** A new *Add note* button on the Productivity screen opens
+  a text field on the glasses to type a note directly: no model call and no
+  microphone, so it works without any AI provider configured. Needs Assistant
+  open on the glasses, and Rokid Nexus 1.4.6. Thanks to ruruw.
+- **Long Hermes answers now show whole.** A long answer was cut line by line, so
+  anything past the eighth line was silently lost on the glasses. The answer is
+  now trimmed against the notice's overall budget instead, and the glasses page
+  through the rest.
 
 ## 1.4.3
 

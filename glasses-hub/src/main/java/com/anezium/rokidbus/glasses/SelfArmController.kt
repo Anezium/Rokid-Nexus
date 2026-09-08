@@ -195,7 +195,7 @@ internal object SelfArmController {
     internal fun stopCommandSucceeded(output: String): Boolean =
         sentinelValues(output, STOP_SENTINEL)?.get("watchdog") == "1"
 
-    private fun runAsync(
+    internal fun runAsync(
         context: Context,
         reason: String,
         onComplete: (() -> Unit)? = null,
@@ -226,10 +226,14 @@ internal object SelfArmController {
                     SelfArmOnboardingStore.isCurrentSession(appContext, sessionId)
                 ) {
                     onComplete?.invoke()
-                    callbacks.forEach { callback ->
-                        runCatching { callback() }
-                            .onFailure { logError("Self-arm idle callback failed", it) }
-                    }
+                }
+                // Idle callbacks belong to whoever queued them, not to this operation's
+                // session: each one carries its own session guard (see runWhenIdle). Dropping
+                // them here because *this* session ended left a later owner repair waiting
+                // forever, its single-flight latch never released.
+                callbacks.forEach { callback ->
+                    runCatching { callback() }
+                        .onFailure { logError("Self-arm idle callback failed", it) }
                 }
             }
         }.apply {

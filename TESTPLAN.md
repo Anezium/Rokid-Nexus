@@ -932,3 +932,42 @@ On the phone and glasses:
 6. Confirm Ink is absent from the Hermes bridge: no `render_ink_page` or
    `render_template` is offered, and answers land on the ordinary text/card
    path.
+
+## Relay typed reply validation
+
+Needs both hubs 1.4.6, Relay 1.2.2, and the Nexus keyboard selected as the
+glasses IME (it is, after onboarding).
+
+1. Relay settings → turn on **Reply by typing**. Expand **Test harness** and
+   press **Post thread**; the band arrives with Reply selected.
+2. Tap the touchpad within the band's display time. The band reads
+   "Typing… · Back to cancel" and an editable card opens below it with the
+   caret in the field; the phone's **Keyboard & remote** screen shows
+   "Text field active".
+3. Type on the phone's soft keyboard (not `adb shell input text`: that path
+   never reaches the live keyboard). Each key lands in the glasses field as
+   it is typed.
+4. Press **Enter** on the phone. The card closes, the band shows the typed
+   text with "Sending Ns / Retry" (3 to 6 s by length), then "Sent", then leaves; the harness card
+   reads "reply received (N chars)" with the exact text. No Nexus launcher
+   screen appears behind the closed card.
+5. Deferral: open the field again, then press **Second thread** before
+   submitting. The band does not change. Submit (or press Back on the band);
+   the second thread comes up as its own band right after.
+6. Foreground busy: open another plugin's card (Agents' board), post a thread,
+   tap Reply. The band recovers with "Screen busy — try again" instead of
+   staying on "Typing…".
+7. Turn **Reply by typing** back off.
+
+## Accessibility-service check validation
+
+1. Phone hub → Settings → Maintenance → **Check accessibility services**.
+   With only Nexus enabled on the glasses the status reads "Nothing else is
+   enabled — only Nexus's own service".
+2. Enable any other accessibility service on the glasses (Settings →
+   Accessibility) and check again: the status lists it and offers "Tap here to
+   open Accessibility settings on the glasses"; the tap opens that screen on
+   the glasses.
+3. Disable Nexus's own service on the glasses and check again: the status
+   says Nexus's service is not enabled, which is the case an empty list used
+   to hide.

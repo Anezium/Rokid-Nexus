@@ -142,7 +142,7 @@ Paths a plugin can **send to** (gated by capability):
 
 | Path | Capability | Purpose |
 |---|---|---|
-| `/surface/show`, `/surface/update`, `/surface/hide` | `surfaces` | HUD surface lifecycle (typed models: card, reader, timed lines, media, image) |
+| `/surface/show`, `/surface/update`, `/surface/hide` | `surfaces` | HUD surface lifecycle (typed models: card, reader, timed lines, media, image). A card may carry one `editable` text field; the wearer's answer comes back once on `/surface/text-committed`, delivered to the owner directly (no receive prefix). Gate it on `supportsEditableSurface`, and set `NexusSurfaceSession.onRejected` to hear a `SURFACE_BUSY` that lands after `SENT`. |
 | `/ink/show`, `/ink/update`, `/ink/hide` | `ink_surface` | Compiled interactive Ink lifecycle. Use `nexusInkSurfaceSession(id)`; `/ink/event` is the owner-only direct callback path for ready/action/closed/error and needs no receive prefix. |
 | `/http/request` → `/http/request/reply` | `http_proxy` | Phone-side HTTP proxy (strict policy, §9) |
 | `/audio/lease/acquire`, `/audio/lease/release` (+ `/reply` suffixes), `/audio/frames`, `/audio/lease/revoked` | `microphone` | Glasses mic lease + 16 kHz mono PCM frames. Use the SDK's `nexusAudioSession(callbacks)` rather than these paths directly. |
@@ -163,11 +163,12 @@ turning normal Wi-Fi off.
 
 Paths a plugin **receives** (reserved, hub-generated — you never send these):
 `/system/plugin/registration`, `/system/plugin/open`, `/system/plugin/close`,
-`/system/plugin/input`, `/glasses/device-info`, plus deliveries into your
-`/plugin/<id>/…` namespace.
+`/system/plugin/input`, `/glasses/device-info`, `/surface/text-committed`, plus
+deliveries into your `/plugin/<id>/…` namespace.
 Reserved sender roots you can never use: `/launcher`, `/surface/input`, `/ink/event`,
 `/core`, `/system`, `/security`, `/error`. Rejections and undeliverable traffic
-come back on `/error`. `/core/native-apps/*`, `/core/remote-input/*`,
+come back on `/error` as `{code, forId, pluginId}` (hubs before 1.4.6 omitted
+`pluginId`, and the SDK dropped those errors unseen). `/core/native-apps/*`, `/core/remote-input/*`,
 `/core/navigation/*`, and `/core/pointer/*` are trusted phone-hub/glasses-hub
 controls, never plugin APIs.
 

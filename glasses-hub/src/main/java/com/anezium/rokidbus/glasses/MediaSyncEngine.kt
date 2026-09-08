@@ -142,53 +142,61 @@ internal object MediaSyncEngine {
         runCatching {
             executor.scheduleWithFixedDelay(
                 {
-                    val context = appContext ?: return@scheduleWithFixedDelay
-                    if (cameraSessionActive &&
-                        CameraSessionLivenessPolicy.shouldResetTracker(
-                            MediaSyncSkipReason.CAMERA_ACTIVE,
-                            isCameraProcessAlive(context),
-                        )
-                    ) {
-                        // A crashed :camera process cannot send its closing edge. Repair the stale
-                        // tracker before the camera guard below, without consuming the directory
-                        // fingerprint while a real camera session is still alive.
-                        logSync("camera session stale during safety scan; releasing")
-                        GlassesHub.resetCameraSession()
-                    }
-                    // The camera lease is durable even when the in-memory session edge was lost.
-                    // Sweep it independently so a crashed camera or restarted hub cannot strand
-                    // a Nexus-owned radio merely because there is no tracker flag left to reset.
-                    GlassesHub.requestWifiOwnershipReconciliation(
-                        context,
-                        "media_sync_safety_scan",
-                    )
-                    if (!MediaSyncSafetyScanPolicy.shouldScan(
-                            mode = mode,
-                            charging = isCharging(context),
-                            consented = consented,
-                            dataLinkUp = linkUp,
-                            sessionActive = session != null,
-                            cameraSessionActive = cameraSessionActive,
-                        )
-                    ) {
-                        return@scheduleWithFixedDelay
-                    }
-                    // Only a directory that actually changed is worth a session. The glasses
-                    // cannot tell what the phone already holds — every stable capture looks
-                    // pending from here — so triggering on "there are files" would open a
-                    // session every minute forever, on the very link this feature is careful
-                    // not to crowd.
-                    val fingerprint = readCaptureFingerprint()
-                    if (fingerprint == captureFingerprint) return@scheduleWithFixedDelay
-                    captureFingerprint = fingerprint
-                    logSync("safety scan noticed a capture change")
-                    attempt(MediaSyncTrigger.NEW_CAPTURE, quiet = true)
+                    // A periodic task that throws is cancelled by the executor for good, and
+                    // silently: this scan is the backstop for missed inotify events, so one
+                    // bad tick must cost one log line, not the feature.
+                    runCatching { safetyScanTick() }
+                        .onFailure { logError("mediaSync safety scan tick failed", it) }
                 },
                 AUTO_SCAN_INTERVAL_MS,
                 AUTO_SCAN_INTERVAL_MS,
                 TimeUnit.MILLISECONDS,
             )
         }.onFailure { logError("mediaSync safety scan unavailable", it) }
+    }
+
+    private fun safetyScanTick() {
+        val context = appContext ?: return
+        if (cameraSessionActive &&
+            CameraSessionLivenessPolicy.shouldResetTracker(
+                MediaSyncSkipReason.CAMERA_ACTIVE,
+                isCameraProcessAlive(context),
+            )
+        ) {
+            // A crashed :camera process cannot send its closing edge. Repair the stale
+            // tracker before the camera guard below, without consuming the directory
+            // fingerprint while a real camera session is still alive.
+            logSync("camera session stale during safety scan; releasing")
+            GlassesHub.resetCameraSession()
+        }
+        // The camera lease is durable even when the in-memory session edge was lost.
+        // Sweep it independently so a crashed camera or restarted hub cannot strand
+        // a Nexus-owned radio merely because there is no tracker flag left to reset.
+        GlassesHub.requestWifiOwnershipReconciliation(
+            context,
+            "media_sync_safety_scan",
+        )
+        if (!MediaSyncSafetyScanPolicy.shouldScan(
+                mode = mode,
+                charging = isCharging(context),
+                consented = consented,
+                dataLinkUp = linkUp,
+                sessionActive = session != null,
+                cameraSessionActive = cameraSessionActive,
+            )
+        ) {
+            return
+        }
+        // Only a directory that actually changed is worth a session. The glasses
+        // cannot tell what the phone already holds — every stable capture looks
+        // pending from here — so triggering on "there are files" would open a
+        // session every minute forever, on the very link this feature is careful
+        // not to crowd.
+        val fingerprint = readCaptureFingerprint()
+        if (fingerprint == captureFingerprint) return
+        captureFingerprint = fingerprint
+        logSync("safety scan noticed a capture change")
+        attempt(MediaSyncTrigger.NEW_CAPTURE, quiet = true)
     }
 
     /** Cheap directory summary: what changed, not what is pending. */

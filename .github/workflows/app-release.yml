@@ -102,6 +102,12 @@ jobs:
             echo "NEXUS_RELEASE_KEY_ALIAS=$RELEASE_KEY_ALIAS"
           } >> "$GITHUB_ENV"
 
+      - name: Run hub unit tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew :phone-hub:testDebugUnitTest :glasses-hub:testDebugUnitTest
+
       - name: Build signed release APKs
         shell: bash
         run: |

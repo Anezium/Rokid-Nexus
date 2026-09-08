@@ -193,6 +193,7 @@ internal object WirelessAdbController {
         context: Context,
         session: PairingSession,
         delayMillis: Long,
+        attempt: Int = 0,
     ) {
         expiryExecutor.schedule(
             {
@@ -204,9 +205,20 @@ internal object WirelessAdbController {
                         } else if (SelfArmCommandBridgeClient.setWirelessAdbEnabled(context, false)) {
                             clearPairingState(context)
                             Log.w(TAG, "temporary ADB pairing stop failed; disabled wireless debugging")
+                        } else if (attempt + 1 < MAX_PAIRING_STOP_ATTEMPTS) {
+                            Log.w(TAG, "temporary ADB pairing stop failed; retrying attempt=${attempt + 1}")
+                            schedulePairingStop(context, session, PAIRING_STOP_RETRY_MS, attempt + 1)
                         } else {
-                            Log.w(TAG, "temporary ADB pairing stop failed; retrying")
-                            schedulePairingStop(context, session, PAIRING_STOP_RETRY_MS)
+                            // Both routes need the command bridge, and a bridge that is gone
+                            // (every reboot kills it) stays gone: each retry burned a full poll
+                            // timeout for nothing. Give the state up so the next request can
+                            // start clean, and say so once instead of every five seconds forever.
+                            clearPairingState(context)
+                            Log.w(
+                                TAG,
+                                "temporary ADB pairing stop failed after $MAX_PAIRING_STOP_ATTEMPTS attempts; " +
+                                    "giving up (command bridge unavailable)",
+                            )
                         }
                     }
                 }
@@ -452,6 +464,7 @@ internal object WirelessAdbController {
     private const val WIFI_NETWORK_TIMEOUT_MS = 12_000L
     private const val PAIRING_LIFETIME_MS = 2L * 60L * 1_000L
     private const val PAIRING_STOP_RETRY_MS = 5_000L
+    private const val MAX_PAIRING_STOP_ATTEMPTS = 6
     private const val PAIRING_PREFERENCES = "wireless_adb_pairing"
     private const val KEY_SERVICE_NAME = "service_name"
     private const val KEY_EXPIRES_AT = "expires_at"

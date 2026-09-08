@@ -72,6 +72,11 @@ internal class CameraLink(
     private val writerExecutor = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "camera-link-writer").apply { isDaemon = true }
     }
+    // One thread per accepted socket, so a peer that stalls before or after HELLO never
+    // blocks accept(): the phone's reconnect after a half-open drop must still get in.
+    private val clientExecutor = Executors.newCachedThreadPool { runnable ->
+        Thread(runnable, "camera-link-client").apply { isDaemon = true }
+    }
     private val packets = ArrayBlockingQueue<CameraLinkPacket>(NETWORK_QUEUE_CAPACITY)
     private val packetQueueLock = Any()
     private val transferPolicy = CameraLinkTransferPolicy()
@@ -896,7 +901,8 @@ internal class CameraLink(
                 if (running && !server.isClosed) Log.w(TAG, "cameraLinkAcceptFailure", failure)
                 continue
             }
-            handleClient(socket)
+            runCatching { clientExecutor.execute { handleClient(socket) } }
+                .onFailure { runCatching { socket.close() } }
         }
     }
 
@@ -905,19 +911,27 @@ internal class CameraLink(
             runCatching { socket.close() }
             return
         }
-        closeClient()
+        var installed = false
         try {
             socket.tcpNoDelay = true
             socket.keepAlive = true
+            // A peer that connects and then says nothing must not hold this thread: bound the
+            // HELLO wait, then hand the authenticated stream back to blocking reads.
+            socket.soTimeout = HELLO_TIMEOUT_MS
             val input = socket.getInputStream()
             val hello = CameraLinkProtocol.read(input) ?: error("Missing HELLO")
             val presentedToken = runCatching { JSONObject(hello.meta).optString("token") }.getOrDefault("")
             require(hello.type == CameraLinkPacketType.HELLO && presentedToken == token) { "Invalid HELLO" }
+            socket.soTimeout = 0
+            // Only a peer that proved the token displaces the live session; a stray connect
+            // on the group must not tear down the phone that is already linked.
+            closeClient()
             synchronized(socketLock) {
                 clientSocket = socket
                 clientOutput = socket.getOutputStream()
                 packets.clear()
                 authenticated = true
+                installed = true
             }
             Log.i(TAG, "cameraLinkStage stage=connected elapsedMs=${stageElapsedMs()}")
             mainHandler.post {
@@ -951,8 +965,14 @@ internal class CameraLink(
         } catch (failure: Throwable) {
             if (running) Log.w(TAG, "cameraLinkClientEnded type=${failure.javaClass.simpleName}")
         } finally {
-            closeClient(socket)
-            if (running) state("WAITING FOR PHONE")
+            if (!installed) {
+                // Never promoted: just drop the socket without touching the live session.
+                runCatching { socket.close() }
+            } else if (closeClient(socket) && running) {
+                // Only the session that actually ended reports it; a handler displaced by a
+                // newer authenticated peer must not overwrite that peer's state.
+                state("WAITING FOR PHONE")
+            }
         }
     }
 
@@ -982,10 +1002,11 @@ internal class CameraLink(
         }
     }
 
-    private fun closeClient(expected: Socket? = null) {
+    /** Returns false when [expected] is no longer the live socket, in which case nothing changes. */
+    private fun closeClient(expected: Socket? = null): Boolean {
         var notify = false
         synchronized(socketLock) {
-            if (expected != null && clientSocket !== expected) return
+            if (expected != null && clientSocket !== expected) return false
             notify = authenticated
             authenticated = false
             clientOutput = null
@@ -1011,6 +1032,7 @@ internal class CameraLink(
                 }
             }
         }
+        return true
     }
 
     private fun isWifiReady(): Boolean =
@@ -1092,6 +1114,7 @@ internal class CameraLink(
         reverseOffer = null
         reverseGatewayIp = null
         acceptExecutor.shutdownNow()
+        clientExecutor.shutdownNow()
         writerExecutor.shutdownNow()
     }
 
@@ -1138,6 +1161,8 @@ internal class CameraLink(
         const val PORT = 38_401
         private const val DEFAULT_GO_IP = "192.168.49.1"
         private const val NETWORK_QUEUE_CAPACITY = 12
+        /** Same bound as the lens image server: a HELLO that has not arrived by then never will. */
+        private const val HELLO_TIMEOUT_MS = 5_000
         // Wi-Fi enable now runs through the accessibility toggle (opening the system
         // Wi-Fi panel and tapping it), which is slower than the old silent shell path.
         // Give it enough runway to open the panel, click, and associate before failing.

@@ -39,7 +39,7 @@ grants one at a time and can take back.
 | Plugin | What it puts on the HUD |
 |---|---|
 | **[Assistant](plugins/assistant/)** | Hold the touchpad and ask out loud: your words appear as you speak them, then the answer arrives on the band, in your ear, or as a native Ink page with charts and interactive controls — and it can look through the glasses camera to tell you what you are seeing. Ask it to remind you, set a timer, or take a note, and it does: the phone rings at the hour and the glasses raise it. It can also add, read, and safely delete phone-calendar events. Runs on your own ChatGPT plan, or any AI provider you bring a key for — OpenAI, OpenRouter, MiniMax, DeepSeek, GLM, Hermes, or your own server |
-| **[Relay](plugins/relay/)** | Phone messages as a band over whatever you were looking at, answered out loud — plus an inbox for the ones you let go |
+| **[Relay](plugins/relay/)** | Phone messages as a band over whatever you were looking at, answered out loud or typed from the phone — plus an inbox for the ones you let go |
 | **[Lens](plugins/lens/)** | Google-Lens-style live translation: the glasses camera streams to the phone, ML Kit OCR + translation run there (offline), translated overlays come back in real time — plus a freeze mode for full-resolution stills |
 | **[Feeds](plugin-feeds/)** | Bluesky and X timelines — browse posts, open threads, and view the actual photos full-screen |
 | **[Transit](plugins/transit/)** | Nearby stops and live departures (Transitous/MOTIS), with favourites |
@@ -69,7 +69,7 @@ badges when a newer release is published.
 The phone hub also controls software that is already installed on the glasses.
 **Glasses apps** lists and opens launchable native APKs; **Keyboard & remote**
 provides previous/next/select/back navigation and sends transient keyboard
-deltas into the focused glasses editor. Password fields are marked sensitive,
+deltas into the focused glasses editor, a plugin's own text field included. Password fields are marked sensitive,
 the phone window becomes secure, and Nexus never mirrors the editor's existing
 text. These are trusted hub-to-hub controls, not plugin capabilities, and they
 do not install native APKs.
@@ -157,7 +157,7 @@ A plugin is a headless phone APK against the published SDK:
 repositories { maven("https://jitpack.io") }
 
 dependencies {
-    implementation("com.github.Anezium.Rokid-Nexus:bus-client:sdk-v0.15.0")
+    implementation("com.github.Anezium.Rokid-Nexus:bus-client:sdk-v0.16.0")
 }
 ```
 

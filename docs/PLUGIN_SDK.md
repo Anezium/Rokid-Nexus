@@ -19,7 +19,7 @@ resolved transitively.
 repositories { maven("https://jitpack.io") }
 
 dependencies {
-    implementation("com.github.Anezium.Rokid-Nexus:bus-client:sdk-v0.15.0")
+    implementation("com.github.Anezium.Rokid-Nexus:bus-client:sdk-v0.16.0")
 }
 ```
 
@@ -208,8 +208,9 @@ column. Open it in a browser.
 ### Editable fields
 
 A card can carry one bounded, focusable text field in place of its read-only
-body — the one way a plugin gets typed input back from the wearer, for a
-keyboard bonded directly to the glasses.
+body — the one way a plugin gets typed input back from the wearer. It takes
+ordinary Android text input: a keyboard bonded to the glasses, or the phone's
+own Keyboard & remote screen, which types into the glasses' Nexus IME.
 
 ```kotlin
 data class EditableSurfaceField(
@@ -245,12 +246,14 @@ surface?.showCard(
 characters (64, 64, and 24) and `initialText` at 512 UTF-16 code units;
 oversized values are rejected locally the same way an oversized `NexusCard`
 title is. The card renders a real focusable `EditText` rather than the
-non-interactive body a plain card gets, so a bonded hardware keyboard's normal
-Android input reaches it directly — nothing plugin-side subscribes to
-keystrokes as they happen.
+non-interactive body a plain card gets, so normal Android input — a bonded
+hardware keyboard, or the phone keyboard through the glasses IME — reaches it
+directly; nothing plugin-side subscribes to keystrokes as they happen.
 
 The wearer's answer comes back exactly once, on `onSurfaceTextCommitted`, when
-they submit (Enter, or the on-screen submit affordance) or cancel (Back):
+they submit (Enter, on a bonded keyboard or on the phone keyboard; `label` and
+`submitLabel` are accepted and reserved, the current renderer does not draw
+them) or cancel (Back):
 `cancelled` is `true` for the latter, in which case `text` is always empty and
 should be ignored. A submitted `text` is silently clamped to 512 UTF-16 code
 units if it runs longer — the same limit `initialText` and `label` obey — so a
@@ -260,9 +263,21 @@ after the fact. `NexusPluginService` forwards the callback to the overridable
 `onNexusSurfaceTextCommitted(surfaceId, text, cancelled)` hook, following the
 same pattern as `onNexusActivityAction`.
 
-There is no separate capability for this: it rides the existing `surfaces`
-grant and the existing foreground-slot ownership rules (`SURFACE_BUSY`,
-replacement, BACK, link-loss) a plain card already has. In particular, a new
+There is no separate grant for this: it rides `surfaces` and the foreground-slot
+ownership rules (`SURFACE_BUSY`, replacement, BACK, link-loss) a plain card
+already has. The glasses hub must be new enough, though: check
+`client.supportsEditableSurface` before showing a field — the `EDITABLE_SURFACE`
+bit, negotiated like `supportsInkSurface`, true only while the data link is up —
+and do something else when it is false, because an older hub shows the card and
+never commits it. Relay falls back to dictation.
+
+`showCard` returning `SENT` means the hub accepted the Binder call, not that the
+field is on screen: another plugin may hold the foreground slot, and the hub
+then answers `SURFACE_BUSY` a moment later. Set `session.onRejected = { code ->
+… }` before the call to hear about it, and undo whatever state you entered on
+`SENT`; hubs before 1.4.6 never delivered that rejection at all.
+
+In particular, a new
 `showCard`/`updateCard` on the same session — including one that arrives while
 the field is still open, such as a different reply overtaking a card mid-type
 — replaces it before any commit for the old field lands; do not assume a

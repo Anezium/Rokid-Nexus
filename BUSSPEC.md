@@ -299,8 +299,9 @@ same as for `card`.
 
 A `card` may carry an `editable` object in place of a read-only `lines` body,
 turning it into one bounded, focusable text field — the one way a plugin gets
-typed input back from the wearer, for a keyboard bonded directly to the
-glasses:
+typed input back from the wearer. It takes ordinary Android text input, so a
+keyboard bonded to the glasses works, and so does the phone's own Keyboard &
+remote screen, which types into the glasses' Nexus IME:
 
 ```json
 {
@@ -323,10 +324,16 @@ and `initialText` at most 512 UTF-16 code units; all four are optional. The
 glasses hub renders this as a real focusable `EditText` — unlike a plain
 card's non-interactive body, and unlike a notice band, which is
 non-focusable and can never host one — so ordinary Android input from a
-bonded hardware keyboard reaches it directly. `show`/`update`, `seq`,
-replacement, `SURFACE_BUSY`, and BACK ownership are otherwise identical to an
-ordinary card; there is no separate capability, and this still authorizes
-under the existing `surfaces` grant.
+bonded hardware keyboard or the phone keyboard reaches it directly.
+`show`/`update`, `seq`, replacement, `SURFACE_BUSY`, and BACK ownership are
+otherwise identical to an ordinary card, and there is no separate plugin
+grant: this authorizes under `surfaces`. The glasses hub does announce
+support, though — feature bit `2048` (`EDITABLE_SURFACE`) with
+`editableSurfaceVersion == 1` — and the phone exposes that bit to plugins only
+while `SPP_DATA_UP` holds, since an open field is a live moment, not state it
+can replay on reconnect. A hub that predates the bit shows the card and never
+commits it, so a plugin that offers typing checks the bit first and falls back
+(Relay falls back to dictation).
 
 The wearer's answer comes back once, glasses to phone, on
 `/surface/text-committed`:
@@ -337,9 +344,14 @@ The wearer's answer comes back once, glasses to phone, on
 
 `cancelled` is `true` when the wearer backed out (Back); `text` is present
 only when `cancelled` is `false`, and is silently clamped to 512 UTF-16 code
-units if the wearer's input ran longer. The phone injects the authenticated
-`ownerPluginId` before delivering this to the plugin, following the same
-owner-lookup-then-deliver pattern as `/notice/action` and `/ink/event`. A
+units if the wearer's input ran longer. The glasses hub stamps the owner as
+`ownerPluginId`; the phone checks it against the plugin that currently holds
+the foreground slot and delivers with the authenticated `pluginId`, following
+the same owner-lookup-then-deliver pattern as `/notice/action` and
+`/ink/event`. A `show` the phone rejects after the Binder call already
+returned — `SURFACE_BUSY`, another plugin holding the slot — is answered on
+`/error` with `{code, forId, pluginId}`, so the SDK can hand the rejection
+back to the session that sent it. A
 `show`/`update` that replaces the card — including one that arrives while the
 field is still open — replaces it before any pending commit for the old field
 is delivered; a plugin MUST bind a commit to the identity of whatever it
@@ -1554,6 +1566,10 @@ unknown fields are ignorable in both directions, so fields only ever get added.
    `{code:"NO_DATA_PLANE", forId:<id>}` to the sender.
 5. Nothing up → `/error` `{code:"NO_LINK", forId:<id>}`.
 
+An `/error` the phone hands to a plugin carries `pluginId` like every other
+plugin-bound envelope. Hubs before 1.4.6 omitted it, and the SDK's per-plugin
+filter dropped every such error before the plugin's code saw it.
+
 ## AIDL contract (in `:bus-client`, package `com.anezium.rokidbus.client`)
 
 ```aidl
@@ -1599,12 +1615,13 @@ Hub feature bits share one value space regardless of direction. Bit `2` is
 `CAMERA_FROZEN_SPP`, bit `16` is `CAMERA_LOHS_REVERSE_REQUIRED` (sent only in
 phone-to-glasses camera announcements), bit `32` is `PIN_SURFACE`, bit `64` is
 `NOTICE_SURFACE`, bit `128` is `ACTIVITY_SURFACE`, bit `256` is
-`PHONE_ASSISTED_SETUP`, bit `512` is `TTS`, and bit `1024` is `INK_SURFACE`.
+`PHONE_ASSISTED_SETUP`, bit `512` is `TTS`, bit `1024` is `INK_SURFACE`, and
+bit `2048` is `EDITABLE_SURFACE`.
 The phone does not
 include renderer bits in camera announcements. The glasses hub announces its
 renderer after either remote link connects by sending
 `/system/hub/capabilities` with
-`{"version":1,"features":1762,"imageSurfaceVersion":1,"pinSurfaceVersion":1,"noticeSurfaceVersion":3,"activitySurfaceVersion":1,"inkSurfaceVersion":1,"ttsVersion":1,"maxImageBytes":65536,"versionName":"1.0.0","setupComplete":true}`
+`{"version":1,"features":3810,"imageSurfaceVersion":1,"pinSurfaceVersion":1,"noticeSurfaceVersion":3,"activitySurfaceVersion":1,"inkSurfaceVersion":1,"editableSurfaceVersion":1,"ttsVersion":1,"maxImageBytes":65536,"versionName":"1.0.0","setupComplete":true}`
 when every current renderer feature, including runtime TTS, is available. The
 `features` value is the bitwise sum; TTS may be absent at runtime.
 `versionName` is the optional glasses app `BuildConfig.VERSION_NAME`; older glasses
