@@ -110,6 +110,18 @@ data class ThreadStartResult(
 )
 
 /**
+ * The daemon's verdict on one session_input request — typing a reply into a
+ * session's terminal. Failure reasons (still working, not running in screen
+ * or tmux, too long, etc.) come straight from the daemon so the wearer sees
+ * the real reason rather than a generic "couldn't send".
+ */
+data class SessionInputResult(
+    val requestId: String,
+    val ok: Boolean,
+    val error: String?,
+)
+
+/**
  * A tool call an agent is holding still for, waiting on the wearer.
  *
  * This is the only thing in the product that is *decidable* rather than

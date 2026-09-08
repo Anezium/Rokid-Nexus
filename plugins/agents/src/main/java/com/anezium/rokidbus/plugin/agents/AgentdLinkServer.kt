@@ -79,6 +79,10 @@ class AgentdLinkServer(
         send(AgentdProtocolCodec.approvalDecision(requestId, decision))
     }
 
+    fun sendSessionInput(requestId: String, sessionId: String, text: String) {
+        send(AgentdProtocolCodec.sessionInput(requestId, sessionId, text))
+    }
+
     fun requestFolders(requestId: String, path: String?) {
         send(AgentdProtocolCodec.fsList(requestId, path))
     }
@@ -232,6 +236,7 @@ class AgentdLinkServer(
             is AgentdAction.ApprovalResolved -> store.resolveApproval(action.requestId)
             is AgentdAction.FolderListing -> store.setFsListing(action.listing)
             is AgentdAction.ThreadStarted -> store.setThreadStart(action.result)
+            is AgentdAction.SessionInputAnswered -> store.setSessionInputResult(action.result)
             is AgentdAction.Send -> connection.send(action.text)
             is AgentdAction.Hello,
             is AgentdAction.HelloAcknowledged,

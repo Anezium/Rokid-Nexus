@@ -34,6 +34,7 @@ sealed interface AgentdAction {
     data class ApprovalResolved(val requestId: String) : AgentdAction
     data class FolderListing(val listing: FsListing) : AgentdAction
     data class ThreadStarted(val result: ThreadStartResult) : AgentdAction
+    data class SessionInputAnswered(val result: SessionInputResult) : AgentdAction
     data class Send(val text: String) : AgentdAction
     data object Ignore : AgentdAction
 }
@@ -204,6 +205,19 @@ class AgentdProtocolCodec {
                     ),
                 )
             }
+            // Typed-reply verdicts carry no seq either: each is the reply to one
+            // session_input the wearer just sent, matched back by its request id.
+            "session_input_result" -> {
+                val requestId = json.identifierOrNull("id", MAX_FS_REQUEST_ID_CHARS)
+                    ?: return AgentdAction.Ignore
+                AgentdAction.SessionInputAnswered(
+                    SessionInputResult(
+                        requestId = requestId,
+                        ok = json.booleanOrNull("ok") ?: false,
+                        error = json.nullableString("error", MAX_STATUS_DETAIL_CHARS),
+                    ),
+                )
+            }
             "fs_listing" -> {
                 val requestId = json.identifierOrNull("id", MAX_FS_REQUEST_ID_CHARS)
                     ?: return AgentdAction.Ignore
@@ -290,6 +304,15 @@ class AgentdProtocolCodec {
             .put("v", 1)
             .put("requestId", requestId)
             .put("decision", decision.wireValue)
+            .toString()
+
+        /** The wearer typed a reply into a session's terminal. */
+        fun sessionInput(requestId: String, sessionId: String, text: String): String = JSONObject()
+            .put("type", "session_input")
+            .put("v", 1)
+            .put("id", requestId)
+            .put("sessionId", sessionId)
+            .put("text", text)
             .toString()
 
         /**

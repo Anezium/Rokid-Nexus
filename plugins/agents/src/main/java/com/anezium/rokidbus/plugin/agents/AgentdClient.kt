@@ -42,6 +42,10 @@ class AgentdClient(
         sockets.current()?.send(AgentdProtocolCodec.approvalDecision(requestId, decision))
     }
 
+    fun sendSessionInput(requestId: String, sessionId: String, text: String) {
+        sockets.current()?.send(AgentdProtocolCodec.sessionInput(requestId, sessionId, text))
+    }
+
     fun requestFolders(requestId: String, path: String?) {
         sockets.current()?.send(AgentdProtocolCodec.fsList(requestId, path))
     }
@@ -210,6 +214,9 @@ class AgentdClient(
                     }
                     is AgentdAction.ThreadStarted -> {
                         if (connected.get()) store.setThreadStart(action.result)
+                    }
+                    is AgentdAction.SessionInputAnswered -> {
+                        if (connected.get()) store.setSessionInputResult(action.result)
                     }
                     is AgentdAction.Send -> {
                         if (action.text == AgentdProtocolCodec.REFRESH) {
