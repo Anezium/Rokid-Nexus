@@ -111,6 +111,8 @@ class FoodLogPluginService : NexusPluginService() {
 
     override fun onNexusOpen() {
         generation += 1
+        snapshotSession?.cancel()
+        snapshotSession = null
         screen = Screen.HOME
         selectedIndex = 0
         lastDirectionalAtMillis = Long.MIN_VALUE
@@ -343,8 +345,8 @@ class FoodLogPluginService : NexusPluginService() {
         render(show = false)
         val callbacks = object : NexusSnapshotCallbacks {
             override fun onSnapshotCaptured(jpeg: ByteArray) {
-                snapshotSession = null
                 if (!isCurrent(operationGeneration)) return
+                snapshotSession = null
                 messageLines = listOf("Reading barcode…")
                 render(show = false)
                 barcodeScanner.scan(jpeg) { result ->
@@ -370,8 +372,8 @@ class FoodLogPluginService : NexusPluginService() {
             }
 
             override fun onSnapshotError(error: NexusSnapshotError) {
-                snapshotSession = null
                 if (!isCurrent(operationGeneration)) return
+                snapshotSession = null
                 val message = when (error) {
                     NexusSnapshotError.BUSY -> "The glasses camera is busy."
                     NexusSnapshotError.LINK_DOWN -> "The glasses link is unavailable."
