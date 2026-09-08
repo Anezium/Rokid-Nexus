@@ -147,7 +147,7 @@ internal class LitterClient(
         val rpc = connected()
         listing = true
         try {
-            if (more && cursor == null) return
+            if (more && !_hasMore.value) return
             val pageLimit = if (preserveWindow && !more) loadedPages else 1
             var nextCursor = if (more) cursor else null
             var fetchedPages = 0
@@ -173,9 +173,10 @@ internal class LitterClient(
             }
             selectedThread?.let { id -> if (id !in merged) session(id)?.let { merged[id] = it } }
             store.replaceProvider(AgentProvider.CODEX, merged.values.take(LitterProtocol.MAX_SESSIONS))
-            loadedPages = if (more) (loadedPages + 1).coerceAtMost(4) else fetchedPages
+            loadedPages = if (more) loadedPages + fetchedPages else fetchedPages
             cursor = nextCursor
-            _hasMore.value = cursor != null && merged.size < LitterProtocol.MAX_SESSIONS
+            _hasMore.value = cursor != null && merged.size < LitterProtocol.MAX_SESSIONS &&
+                loadedPages < LitterProtocol.MAX_SESSION_PAGES
         } finally { listing = false }
     }
 

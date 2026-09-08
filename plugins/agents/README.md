@@ -77,7 +77,8 @@ is the existing OkHttp library.
 This alpha does not embed Litter's Alpine/proot runtime, terminal, SSH manager,
 Kittylitter pairing, Local Studio transports or non-Codex agent bridges. It does
 not claim compatibility with every Litter server option. Lists are bounded to
-200 sessions (50 per page); the current conversation retains 60 messages with
+200 sessions (up to 50 per page) and 20 server pages, including empty pages;
+the current conversation retains 60 messages with
 16,000 characters per item. Older history stays on the server.
 
 ## Verification
