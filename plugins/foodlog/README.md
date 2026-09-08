@@ -41,6 +41,18 @@ than becoming zero. Food history, favorites, goals, and recipes remain on the
 phone unless the wearer explicitly exports a backup or enables Health Connect.
 Voice matching is local against stored products and transcripts are never logged.
 
+Exact reminders can also notify the glasses through a short foreground delivery
+service. Without exact-alarm access, or if Android rejects a foreground start,
+Food Log delivers a phone notification directly from the bounded alarm receiver.
+Phone notification permission is required for that fallback. It does not start
+a background polling or synchronization process.
+
+Health Connect uses persisted entry revisions and one shared provider queue.
+Queued synchronization reloads the current local entry, so an old batch cannot
+replace a newer edit or recreate a deleted entry. Turning sync off cancels pending
+batch work and prevents further dispatch; a provider request already sent may
+finish. Permission requests and editor drafts survive activity recreation.
+
 All portions and recipe ingredients use grams. Open Food Facts fields named
 `_100g` can also describe nutrition per 100 ml. Products labelled with volume units
 are rejected with an explanation; Food Log never assumes that a milliliter weighs

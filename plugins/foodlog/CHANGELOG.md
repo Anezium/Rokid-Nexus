@@ -15,6 +15,10 @@
   Make the glasses daily log navigable with the existing swipe axis and debounce
   paired directional input.
 - Add persistence, import identity, snapshot, portion, meal, and DST regression tests.
+- Refresh the journal after returning from glasses logging, preserve consent requests
+  through rotation, and serialize Health Connect writes using persisted revisions.
+- Deliver inexact alarms through bounded phone notifications when a background
+  foreground-service start is not permitted.
 
 ## 3.0.0
 

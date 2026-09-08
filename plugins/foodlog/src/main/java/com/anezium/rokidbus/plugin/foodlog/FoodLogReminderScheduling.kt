@@ -40,14 +40,13 @@ internal fun foodLogReminderScheduler(context: Context) = FoodLogReminderSchedul
 private class AndroidFoodLogAlarmGateway(private val context: Context) : FoodLogAlarmGateway {
     private val manager = context.getSystemService(AlarmManager::class.java)
     override fun schedule(id: String, triggerAtMillis: Long, exact: Boolean, late: Boolean): Boolean {
-        val operation = pendingIntent(id, late)
-        if (exact) try { manager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMillis, operation); return true } catch (_: SecurityException) { }
-        manager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMillis, operation); return false
+        if (exact) try { manager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMillis, pendingIntent(id, late, true)); return true } catch (_: SecurityException) { }
+        manager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMillis, pendingIntent(id, late, false)); return false
     }
     override fun cancel(id: String) = manager.cancel(pendingIntent(id, false))
     override fun deliverNow(id: String, late: Boolean) {
-        FoodLogReminderDeliveryService.start(context, id, late)
+        if (!FoodLogReminderDeliveryService.start(context, id, late)) sendFoodLogReminderFallback(context, id, late)
     }
-    private fun pendingIntent(id: String, late: Boolean): PendingIntent = PendingIntent.getBroadcast(context, id.hashCode(), Intent(context, FoodLogReminderReceiver::class.java).setAction(FoodLogReminderContract.ACTION_FIRE).setData(Uri.parse("nexus-foodlog://reminder/$id")).putExtra(FoodLogReminderContract.EXTRA_ID, id).putExtra(FoodLogReminderContract.EXTRA_LATE, late), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+    private fun pendingIntent(id: String, late: Boolean, exact: Boolean = false): PendingIntent = PendingIntent.getBroadcast(context, id.hashCode(), Intent(context, FoodLogReminderReceiver::class.java).setAction(FoodLogReminderContract.ACTION_FIRE).setData(Uri.parse("nexus-foodlog://reminder/$id")).putExtra(FoodLogReminderContract.EXTRA_ID, id).putExtra(FoodLogReminderContract.EXTRA_LATE, late).putExtra(FoodLogReminderContract.EXTRA_EXACT, exact), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
 }
-internal object FoodLogReminderContract { const val ACTION_FIRE = "com.anezium.rokidbus.plugin.foodlog.action.REMINDER_FIRE"; const val EXTRA_ID = "reminder_id"; const val EXTRA_LATE = "late" }
+internal object FoodLogReminderContract { const val ACTION_FIRE = "com.anezium.rokidbus.plugin.foodlog.action.REMINDER_FIRE"; const val EXTRA_ID = "reminder_id"; const val EXTRA_LATE = "late"; const val EXTRA_EXACT = "exact" }
