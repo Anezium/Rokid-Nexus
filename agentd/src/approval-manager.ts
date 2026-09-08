@@ -153,12 +153,21 @@ export function describeTool(payload: HookPayload): {
   };
 }
 
+/**
+ * PermissionRequest's contract, not PreToolUse's: the field is `decision` and
+ * an exit code cannot deny, so the verdict has to travel in the JSON. The event
+ * matters as much as the shape — PreToolUse fires for every tool call a session
+ * makes, including the ones Claude would never have stopped to ask about, so
+ * holding on it turned an ordinary working session into hundreds of questions
+ * on the wearer's glasses. PermissionRequest fires only when a decision is
+ * genuinely needed.
+ */
 function decisionResponse(decision: ApprovalDecision): HookResponse {
   return {
     hookSpecificOutput: {
-      hookEventName: "PreToolUse",
-      permissionDecision: decision,
-      permissionDecisionReason:
+      hookEventName: "PermissionRequest",
+      decision,
+      decisionReason:
         decision === "allow"
           ? "Approved by the wearer in Nexus Agents."
           : "Denied by the wearer in Nexus Agents.",

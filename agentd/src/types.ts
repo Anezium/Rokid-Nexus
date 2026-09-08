@@ -34,6 +34,8 @@ export interface Session {
   stale: boolean;
   lastActivityAt: number;
   lastAssistantText?: string;
+  /** Set when the session runs inside screen or tmux, so it can be typed into. */
+  answerable?: boolean;
   turn?: SessionTurn;
   pendingRequest?: PendingRequest;
 }
@@ -51,6 +53,12 @@ export interface AgentConfig {
   machineName: string;
   phoneHosts: string[];
   tailnetDiscovery: boolean;
+  /**
+   * Whether a phone may type into a session's terminal. Off unless the owner
+   * says otherwise: unlike answering a held tool call, this originates input
+   * rather than responding to something Claude proposed.
+   */
+  allowTerminalInput: boolean;
   codex: CodexConfig;
 }
 

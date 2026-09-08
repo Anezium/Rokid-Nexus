@@ -4,6 +4,12 @@ import type { AddressInfo } from "node:net";
 import path from "node:path";
 import WebSocket, { WebSocketServer, type RawData } from "ws";
 import { SessionStore } from "./session-store";
+import type {
+  ApprovalDecision,
+  ApprovalOutcome,
+  ApprovalRequest,
+} from "./approval-manager";
+import type { TerminalInputOutcome } from "./terminal-input";
 import type { AgentConfig, Logger, Session, SessionMessage } from "./types";
 
 const PROTOCOL_VERSION = 1;
@@ -35,6 +41,10 @@ export interface WsHubOptions {
   detailProvider?: (sessionId: string, limit: number) => Promise<SessionMessage[]>;
   /** Called when a client starts reading a session, so tailing can begin. */
   onDetailOpen?: (sessionId: string) => void;
+  /** Called when a phone answers a held tool call over this transport. */
+  onApprovalDecision?: (requestId: string, decision: ApprovalDecision) => void;
+  /** Types the wearer's text into the session's terminal; see terminal-input. */
+  onTerminalInput?: (sessionId: string, text: string) => Promise<TerminalInputOutcome>;
 }
 
 const DETAIL_MESSAGE_LIMIT = 40;
@@ -194,6 +204,17 @@ export class WsHub {
         message.v !== PROTOCOL_VERSION ||
         !tokenMatches(message.token, this.config.token)
       ) {
+        // A phone treats 4401 as final and stops reconnecting, so this is the
+        // difference between a link that is retrying and one that has given up
+        // for good. Worth saying which of the three it was, without echoing the
+        // token itself.
+        this.logger.warn("ws_auth_rejected", {
+          reason: message.type !== "hello"
+            ? "not_hello"
+            : message.v !== PROTOCOL_VERSION
+              ? "version"
+              : "token",
+        });
         socket.close(4401, "authentication failed");
         return;
       }
@@ -236,6 +257,24 @@ export class WsHub {
       case "detail_close":
         state.openSessionId = undefined;
         break;
+      case "session_input": {
+        void this.answerTerminalInput(socket, message);
+        break;
+      }
+      case "approval_decision": {
+        const requestId =
+          typeof message.requestId === "string" && message.requestId.length > 0
+            ? message.requestId
+            : undefined;
+        const decision =
+          message.decision === "allow" || message.decision === "deny"
+            ? message.decision
+            : undefined;
+        if (requestId && decision) {
+          this.options.onApprovalDecision?.(requestId, decision);
+        }
+        break;
+      }
       default:
         this.logger.info("ws_unknown_message", {
           type: typeof message.type === "string" ? message.type.slice(0, 80) : "missing",
@@ -258,6 +297,76 @@ export class WsHub {
       session: this.store.get(sessionId) ?? null,
       messages,
     });
+  }
+
+  /**
+   * True while some phone has authenticated over this transport, which is what
+   * makes it usable for holding a tool call. A phone that dialled in here can
+   * answer approvals exactly like one the daemon dialled: the plugin speaks the
+   * same frames on both, so only the daemon needed teaching.
+   */
+  get hasAuthenticatedClient(): boolean {
+    for (const state of this.clients.values()) {
+      if (state.authenticated) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** The WebSocket half of typed input; both transports share the judgement. */
+  private async answerTerminalInput(
+    socket: WebSocket,
+    message: Record<string, unknown>,
+  ): Promise<void> {
+    const id =
+      typeof message.id === "string" && message.id.length > 0 && message.id.length <= 64
+        ? message.id
+        : undefined;
+    if (!id) {
+      return;
+    }
+    const sessionId = typeof message.sessionId === "string" ? message.sessionId : "";
+    const outcome = this.options.onTerminalInput
+      ? await this.options
+          .onTerminalInput(sessionId, typeof message.text === "string" ? message.text : "")
+          .catch(() => ({ ok: false, error: "Could not send that" }) as TerminalInputOutcome)
+      : { ok: false, error: "Typing from the glasses is not available" };
+    this.logger.info("ws_session_input", { sessionId: sessionId.slice(0, 16), ok: outcome.ok });
+    if (!this.clients.get(socket)?.authenticated) {
+      return;
+    }
+    this.send(socket, {
+      type: "session_input_result",
+      id,
+      ok: outcome.ok,
+      error: outcome.ok ? null : outcome.error ?? "Could not send that",
+    });
+  }
+
+  sendApprovalRequest(request: ApprovalRequest): boolean {
+    return this.broadcastToAuthenticated({ ...request });
+  }
+
+  sendApprovalResolved(requestId: string, outcome: ApprovalOutcome): boolean {
+    return this.broadcastToAuthenticated({
+      type: "approval_resolved",
+      v: 1,
+      requestId,
+      outcome,
+    });
+  }
+
+  /** Delivered is "at least one phone got it", matching the dialled link's contract. */
+  private broadcastToAuthenticated(message: Record<string, unknown>): boolean {
+    let delivered = false;
+    for (const [socket, state] of this.clients) {
+      if (state.authenticated) {
+        this.send(socket, message);
+        delivered = true;
+      }
+    }
+    return delivered;
   }
 
   /** Streams a newly appended message to whoever is reading that session. */

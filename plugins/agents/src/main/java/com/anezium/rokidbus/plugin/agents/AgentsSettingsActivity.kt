@@ -7,6 +7,7 @@ import android.os.Bundle
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.Switch
 import android.widget.TextView
@@ -27,6 +28,11 @@ class AgentsSettingsActivity : Activity() {
     private lateinit var agentdEnabled: Switch
     private lateinit var agentdConnection: TextView
     private lateinit var agentdDot: View
+    private lateinit var batteryStatus: TextView
+    private lateinit var batteryDot: View
+    private lateinit var batteryGrant: Button
+    private lateinit var batteryAppInfo: Button
+    private lateinit var batteryHint: TextView
     private lateinit var computersList: LinearLayout
 
     /** The machine whose row the wearer tapped open to reach its Forget. */
@@ -46,6 +52,7 @@ class AgentsSettingsActivity : Activity() {
     override fun onResume() {
         super.onResume()
         renderComputers()
+        renderBatteryState()
     }
 
     override fun onDestroy() {
@@ -64,6 +71,28 @@ class AgentsSettingsActivity : Activity() {
         }
         agentdDot = NexusUi.dot(this)
         agentdConnection = NexusUi.statusLine(this).apply { text = "DISCONNECTED" }
+        batteryDot = NexusUi.dot(this)
+        batteryStatus = NexusUi.statusLine(this)
+        batteryGrant = NexusUi.textButton(this, "Let Agents keep running").apply {
+            setOnClickListener {
+                // Re-arm before leaving: the wearer is about to change something,
+                // and the question worth answering next is whether it held, not
+                // that it was once broken.
+                configStore.clearMonitorSuspension()
+                openBatteryExemptionRequest(this@AgentsSettingsActivity)
+            }
+        }
+        // The phone's own battery screen is where some ROMs keep the decision
+        // that actually binds. Its high-power manager cannot be opened directly
+        // — it is guarded by a system permission — so App info is the nearest
+        // door a plugin is allowed to open.
+        batteryAppInfo = NexusUi.textButton(this, "Open App info").apply {
+            setOnClickListener {
+                configStore.clearMonitorSuspension()
+                openAppInfo(this@AgentsSettingsActivity)
+            }
+        }
+        batteryHint = NexusUi.cardBody(this, "")
         computersList = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
         val content = NexusUi.contentColumn(this).apply {
@@ -124,6 +153,12 @@ class AgentsSettingsActivity : Activity() {
         )
         addView(BusTheme.gap(this@AgentsSettingsActivity, 8))
         addView(connectionRow(this@AgentsSettingsActivity, agentdDot, agentdConnection), NexusUi.block())
+        addView(BusTheme.gap(this@AgentsSettingsActivity, 12))
+        addView(connectionRow(this@AgentsSettingsActivity, batteryDot, batteryStatus), NexusUi.block())
+        addView(BusTheme.gap(this@AgentsSettingsActivity, 8))
+        addView(batteryGrant, NexusUi.block())
+        addView(batteryAppInfo, NexusUi.block())
+        addView(batteryHint, NexusUi.block())
     }
 
     private fun computersCard() = NexusUi.card(this).apply {
@@ -286,6 +321,45 @@ class AgentsSettingsActivity : Activity() {
     private fun loadConfig() {
         agentdEnabled.isChecked = configStore.load().agentdEnabled
         renderComputers()
+        renderBatteryState()
+    }
+
+    /**
+     * Granted is the quiet case, so the ask disappears once it is answered —
+     * the same shape the Tailscale prerequisite uses on the Add a computer
+     * screen. There is no callback when the wearer returns from the system
+     * dialog, which is why onResume re-reads it.
+     */
+    private fun renderBatteryState() {
+        val granted = batteryExemptionGranted(this)
+        // Observation outranks the flag. Some phones keep the real decision in
+        // their own power manager and leave the platform's answer at false
+        // forever, so a green row on a phone that demonstrably froze this app
+        // would be the screen lying about the one thing it is here to report.
+        val suspended = configStore.monitorWasSuspended()
+        batteryStatus.text = when {
+            suspended -> "THIS PHONE HAS FROZEN AGENTS"
+            granted -> "ALLOWED TO KEEP RUNNING"
+            else -> "ANDROID MAY FREEZE THIS APP"
+        }
+        NexusUi.setDotColor(
+            batteryDot,
+            if (granted && !suspended) NexusUi.GREEN else NexusUi.AMBER,
+        )
+        batteryGrant.visibility = if (granted && !suspended) View.GONE else View.VISIBLE
+        batteryAppInfo.visibility = batteryGrant.visibility
+        batteryHint.text = if (suspended) {
+            "Agents was frozen while monitoring, so sessions went unwatched and a " +
+                "computer waiting on you was answered back at its own keyboard. " +
+                "Allowing it above may not be enough on this phone: open App info, " +
+                "then under battery let it use power in the background. The warning " +
+                "clears when you act on it and comes back only if this happens again."
+        } else {
+            "Agents shows nothing in the phone's shade, so Android may treat it as " +
+                "idle and freeze it. Frozen, it stops seeing your sessions and a " +
+                "computer waiting on you is answered back at the keyboard instead of " +
+                "on your glasses."
+        }
     }
 
     private fun observeState() {

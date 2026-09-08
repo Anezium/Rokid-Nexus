@@ -36,6 +36,10 @@ test("install creates a fresh settings file with one forwarder per event", async
     const settings = JSON.parse(await fsp.readFile(settingsPath, "utf8"));
     assert.deepEqual(Object.keys(settings.hooks).sort(), [...HOOK_EVENTS].sort());
     assert.ok(HOOK_EVENTS.includes("PreToolUse"));
+    // The wearer is asked on PermissionRequest, which fires only when a
+    // decision is needed. Holding on PreToolUse instead asks them about every
+    // read and grep a session makes, which is what this install must not do.
+    assert.ok(HOOK_EVENTS.includes("PermissionRequest"));
     assert.equal(forwarderCommands(settings).length, HOOK_EVENTS.length);
   } finally {
     await fsp.rm(tempDir, { recursive: true, force: true });

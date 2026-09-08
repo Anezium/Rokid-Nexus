@@ -27,6 +27,7 @@ function newConfig(): AgentConfig {
     machineName: os.hostname(),
     phoneHosts: [],
     tailnetDiscovery: true,
+    allowTerminalInput: false,
     codex: {
       enabled: false,
       port: DEFAULT_CODEX_PORT,
@@ -107,7 +108,12 @@ function parseConfig(raw: string, filePath: string): {
   if (hasTailnetDiscovery && typeof record.tailnetDiscovery !== "boolean") {
     throw new Error(`Invalid nexus-agentd config at ${filePath}`);
   }
-  const upgraded = missingMachineId || !hasPhoneHosts || !hasCodex || !hasTailnetDiscovery;
+  const hasTerminalInput = Object.prototype.hasOwnProperty.call(record, "allowTerminalInput");
+  if (hasTerminalInput && typeof record.allowTerminalInput !== "boolean") {
+    throw new Error(`Invalid nexus-agentd config at ${filePath}`);
+  }
+  const upgraded =
+    missingMachineId || !hasPhoneHosts || !hasCodex || !hasTailnetDiscovery || !hasTerminalInput;
   return {
     config: {
       token: record.token,
@@ -120,6 +126,9 @@ function parseConfig(raw: string, filePath: string): {
       phoneHosts: (phoneHosts as string[] | undefined) ?? [],
       tailnetDiscovery:
         typeof record.tailnetDiscovery === "boolean" ? record.tailnetDiscovery : true,
+      // Absent reads as off: an upgrade must never hand a phone the ability to
+      // type into a terminal that did not have it before.
+      allowTerminalInput: record.allowTerminalInput === true,
       codex: codexRecord
         ? {
             enabled: codexRecord.enabled as boolean,

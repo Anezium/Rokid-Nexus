@@ -14,6 +14,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 
 /**
@@ -59,6 +60,10 @@ class AgentsMonitorService : Service() {
             while (true) {
                 delay(PRUNE_INTERVAL_MS)
                 configStore.forgetNotificationFingerprints(AgentsRuntime.store.prune())
+                // This loop is the heartbeat: a tick that arrives far late is
+                // the only evidence from inside the process that the system
+                // stopped scheduling it. See AgentsFreezeWatch.
+                configStore.recordMonitorHeartbeat(PRUNE_INTERVAL_MS)
             }
         }
     }
