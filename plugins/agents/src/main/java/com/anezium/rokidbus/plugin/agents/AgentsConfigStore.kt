@@ -281,6 +281,34 @@ class AgentsConfigStore(
         prefs.edit().putLong("$KEY_MACHINE_SEEN_PREFIX$machineId", now).apply()
     }
 
+    /**
+     * Records that the monitor's heartbeat ran, and reports whether the gap
+     * since the previous one is too long to be ordinary lateness — see
+     * [AgentsFreezeWatch]. The verdict is sticky: the wearer needs to see that
+     * the phone froze the app at some point, not only that it is running in the
+     * instant they happen to open the screen.
+     */
+    @Synchronized
+    fun recordMonitorHeartbeat(intervalMs: Long, now: Long = elapsedRealtime()): Boolean {
+        val previous = prefs.getLong(KEY_HEARTBEAT_AT, 0L)
+        val suspended = previous > 0L &&
+            AgentsFreezeWatch.wasSuspended(intervalMs, now - previous)
+        prefs.edit().apply {
+            putLong(KEY_HEARTBEAT_AT, now)
+            if (suspended) putBoolean(KEY_WAS_SUSPENDED, true)
+        }.apply()
+        return suspended
+    }
+
+    /** Whether this install has ever caught the system freezing it. */
+    fun monitorWasSuspended(): Boolean = prefs.getBoolean(KEY_WAS_SUSPENDED, false)
+
+    /** Clears the verdict so a fix can be seen to work rather than only claimed. */
+    @Synchronized
+    fun clearMonitorSuspension() {
+        prefs.edit().remove(KEY_WAS_SUSPENDED).remove(KEY_HEARTBEAT_AT).apply()
+    }
+
     fun forgetMachine(machineId: String) {
         prefs.edit()
             .remove(machineKey(machineId))
@@ -378,6 +406,8 @@ class AgentsConfigStore(
         const val KEY_MACHINE_PREFIX = "machine.token."
         const val KEY_MACHINE_NAME_PREFIX = "machine.name."
         const val KEY_MACHINE_SEEN_PREFIX = "machine.seen."
+        const val KEY_HEARTBEAT_AT = "monitor.heartbeat_at"
+        const val KEY_WAS_SUSPENDED = "monitor.was_suspended"
         const val KEY_PROJECTS_PREFIX = "machine.projects."
         const val MAX_PROJECTS_PER_MACHINE = 30
         const val KEY_LINK_WINDOW_DEADLINE = "machine.link_window_deadline"

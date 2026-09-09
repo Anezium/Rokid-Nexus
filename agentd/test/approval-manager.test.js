@@ -53,7 +53,7 @@ function bashHook(overrides = {}) {
   };
 }
 
-test("phone allow and deny decisions return Claude's exact PreToolUse contract", async () => {
+test("phone allow and deny decisions return Claude's exact PermissionRequest contract", async () => {
   const { manager, transport } = harness();
 
   const allowed = manager.request(bashHook());
@@ -72,9 +72,8 @@ test("phone allow and deny decisions return Claude's exact PreToolUse contract",
   manager.handleDecision("request-1", "allow");
   assert.deepEqual(await allowed, {
     hookSpecificOutput: {
-      hookEventName: "PreToolUse",
-      permissionDecision: "allow",
-      permissionDecisionReason: "Approved by the wearer in Nexus Agents.",
+      hookEventName: "PermissionRequest",
+      decision: { behavior: "allow" },
     },
   });
   assert.equal(manager.size, 0);
@@ -84,9 +83,11 @@ test("phone allow and deny decisions return Claude's exact PreToolUse contract",
   manager.handleDecision("request-2", "deny");
   assert.deepEqual(await denied, {
     hookSpecificOutput: {
-      hookEventName: "PreToolUse",
-      permissionDecision: "deny",
-      permissionDecisionReason: "Denied by the wearer in Nexus Agents.",
+      hookEventName: "PermissionRequest",
+      decision: {
+        behavior: "deny",
+        message: "Denied by the wearer in Nexus Agents.",
+      },
     },
   });
   assert.equal(transport.frames.length, 2);

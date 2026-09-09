@@ -14,6 +14,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 
 /**
@@ -59,6 +60,10 @@ class AgentsMonitorService : Service() {
             while (true) {
                 delay(PRUNE_INTERVAL_MS)
                 configStore.forgetNotificationFingerprints(AgentsRuntime.store.prune())
+                // This loop is the heartbeat: a tick that arrives far late is
+                // the only evidence from inside the process that the system
+                // stopped scheduling it. See AgentsFreezeWatch.
+                configStore.recordMonitorHeartbeat(PRUNE_INTERVAL_MS)
             }
         }
     }
@@ -114,6 +119,15 @@ class AgentsMonitorService : Service() {
                     // The wearer answered: the question is gone from the board
                     // whether or not the daemon's acknowledgement makes it back.
                     AgentsRuntime.store.resolveApproval(requestId)
+                }
+            }
+            ACTION_SEND_SESSION_INPUT -> {
+                val requestId = intent.getStringExtra(EXTRA_REQUEST_ID)
+                val sessionId = intent.getStringExtra(EXTRA_SESSION_ID)
+                val text = intent.getStringExtra(EXTRA_TEXT)
+                if (requestId != null && sessionId != null && text != null) {
+                    agentdClient.sendSessionInput(requestId, sessionId, text)
+                    linkServer.sendSessionInput(requestId, sessionId, text)
                 }
             }
             else -> reconcile()
@@ -269,6 +283,8 @@ class AgentsMonitorService : Service() {
             "com.anezium.rokidbus.plugin.agents.action.FS_LIST"
         const val ACTION_THREAD_START =
             "com.anezium.rokidbus.plugin.agents.action.THREAD_START"
+        const val ACTION_SEND_SESSION_INPUT =
+            "com.anezium.rokidbus.plugin.agents.action.SEND_SESSION_INPUT"
         const val EXTRA_SESSION_ID = "sessionId"
         const val EXTRA_MACHINE_ID = "machineId"
         const val EXTRA_PATH = "path"
@@ -276,6 +292,7 @@ class AgentsMonitorService : Service() {
         const val EXTRA_PROMPT = "prompt"
         const val EXTRA_REQUEST_ID = "requestId"
         const val EXTRA_DECISION = "decision"
+        const val EXTRA_TEXT = "text"
         private const val MONITOR_NOTIFICATION_ID = 3101
         private const val TEST_WINDOW_MS = 15_000L
         private const val PRUNE_INTERVAL_MS = 60_000L
@@ -313,6 +330,18 @@ class AgentsMonitorService : Service() {
                     .setAction(ACTION_DECIDE_APPROVAL)
                     .putExtra(EXTRA_REQUEST_ID, requestId)
                     .putExtra(EXTRA_DECISION, decision.wireValue),
+            )
+        }
+
+        /** The wearer typed a reply into a session's terminal on the glasses. */
+        fun sendSessionInput(context: Context, requestId: String, sessionId: String, text: String) {
+            ContextCompat.startForegroundService(
+                context,
+                Intent(context, AgentsMonitorService::class.java)
+                    .setAction(ACTION_SEND_SESSION_INPUT)
+                    .putExtra(EXTRA_REQUEST_ID, requestId)
+                    .putExtra(EXTRA_SESSION_ID, sessionId)
+                    .putExtra(EXTRA_TEXT, text),
             )
         }
 

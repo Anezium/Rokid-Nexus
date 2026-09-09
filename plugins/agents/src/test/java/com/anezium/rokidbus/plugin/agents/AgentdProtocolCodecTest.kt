@@ -213,4 +213,39 @@ class AgentdProtocolCodecTest {
             ),
         )
     }
+
+    @Test
+    fun sessionInputRequestUsesFrozenProtocolShape() {
+        val request = JSONObject(
+            AgentdProtocolCodec.sessionInput("req-1", "s1", "keep going"),
+        )
+        assertEquals("session_input", request.getString("type"))
+        assertEquals(1, request.getInt("v"))
+        assertEquals("req-1", request.getString("id"))
+        assertEquals("s1", request.getString("sessionId"))
+        assertEquals("keep going", request.getString("text"))
+    }
+
+    @Test
+    fun sessionInputResultIsMatchedByRequestId() {
+        val codec = AgentdProtocolCodec()
+        val ok = codec.parse(
+            """{"type":"session_input_result","id":"req-1","ok":true}""",
+        ) as AgentdAction.SessionInputAnswered
+        assertEquals("req-1", ok.result.requestId)
+        assertTrue(ok.result.ok)
+        assertNull(ok.result.error)
+
+        val failed = codec.parse(
+            """{"type":"session_input_result","id":"req-2","ok":false,"error":"still working"}""",
+        ) as AgentdAction.SessionInputAnswered
+        assertEquals("req-2", failed.result.requestId)
+        assertEquals(false, failed.result.ok)
+        assertEquals("still working", failed.result.error)
+
+        assertEquals(
+            AgentdAction.Ignore,
+            codec.parse("""{"type":"session_input_result","ok":true}"""),
+        )
+    }
 }

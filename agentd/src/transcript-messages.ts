@@ -88,6 +88,71 @@ function shortenPath(value: string): string {
   return segments.length <= 2 ? value : `…/${segments.slice(-2).join("/")}`;
 }
 
+/**
+ * How many lines actually changed between two edit sides, without pulling in
+ * a real diff library for a HUD glance stat: trim the common prefix and
+ * suffix and count what's left on each side. Exact for the common case an
+ * editor's old/new-string edit produces — one contiguous replaced block —
+ * and never worse than an honest line count for anything stranger.
+ */
+function lineDiffStats(oldText: string, newText: string): { added: number; removed: number } {
+  const oldLines = oldText.split("\n");
+  const newLines = newText.split("\n");
+  let start = 0;
+  while (
+    start < oldLines.length &&
+    start < newLines.length &&
+    oldLines[start] === newLines[start]
+  ) {
+    start += 1;
+  }
+  let oldEnd = oldLines.length;
+  let newEnd = newLines.length;
+  while (
+    oldEnd > start &&
+    newEnd > start &&
+    oldLines[oldEnd - 1] === newLines[newEnd - 1]
+  ) {
+    oldEnd -= 1;
+    newEnd -= 1;
+  }
+  return { removed: oldEnd - start, added: newEnd - start };
+}
+
+function diffSuffix(added: number, removed: number): string {
+  return added === 0 && removed === 0 ? "" : ` (+${added} -${removed})`;
+}
+
+/** The wearer's one glance at what an edit tool actually did to a file. */
+function editStatsSuffix(name: string, values: Record<string, unknown>): string {
+  if (
+    name === "Edit" &&
+    typeof values.old_string === "string" &&
+    typeof values.new_string === "string"
+  ) {
+    const stats = lineDiffStats(values.old_string, values.new_string);
+    return diffSuffix(stats.added, stats.removed);
+  }
+  if (name === "MultiEdit" && Array.isArray(values.edits)) {
+    let added = 0;
+    let removed = 0;
+    for (const edit of values.edits) {
+      const record = recordValue(edit);
+      if (typeof record?.old_string === "string" && typeof record?.new_string === "string") {
+        const stats = lineDiffStats(record.old_string, record.new_string);
+        added += stats.added;
+        removed += stats.removed;
+      }
+    }
+    return diffSuffix(added, removed);
+  }
+  if (name === "Write" && typeof values.content === "string") {
+    const lines = values.content.length === 0 ? 0 : values.content.split("\n").length;
+    return ` (${lines} line${lines === 1 ? "" : "s"})`;
+  }
+  return "";
+}
+
 /** The one input field that says what a tool call is actually doing. */
 export function toolSummary(name: string, input: unknown): string {
   const label = condenseSingleLine(name, MAX_TOOL_SUMMARY_CHARS);
@@ -104,12 +169,15 @@ export function toolSummary(name: string, input: unknown): string {
         values.url,
         values.query,
       ].find((value): value is string => typeof value === "string" && value.trim().length > 0);
+  const suffix = editStatsSuffix(name, values);
   if (!candidate) {
-    return label;
+    return condenseSingleLine(`${label}${suffix}`, MAX_TOOL_SUMMARY_CHARS);
   }
   const prefix = `${label} · `;
-  const detail = condenseSingleLine(candidate, MAX_TOOL_SUMMARY_CHARS - prefix.length);
-  return detail ? `${prefix}${detail}` : label;
+  const detail = condenseSingleLine(candidate, MAX_TOOL_SUMMARY_CHARS - prefix.length - suffix.length);
+  return detail
+    ? `${prefix}${detail}${suffix}`
+    : condenseSingleLine(`${label}${suffix}`, MAX_TOOL_SUMMARY_CHARS);
 }
 
 /**

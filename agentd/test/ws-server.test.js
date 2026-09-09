@@ -39,6 +39,18 @@ function opened(socket) {
   });
 }
 
+function waitUntil(predicate, timeoutMs = 2000) {
+  const started = Date.now();
+  return new Promise((resolve, reject) => {
+    const tick = () => {
+      if (predicate()) return resolve();
+      if (Date.now() - started > timeoutMs) return reject(new Error("timed out waiting for condition"));
+      setTimeout(tick, 10);
+    };
+    tick();
+  });
+}
+
 const config = {
   token: "correct-test-token",
   wsPort: 0,
@@ -146,6 +158,92 @@ test("authenticated clients that do not answer app pings close with 4409", async
     const closed = new Promise((resolve) => socket.once("close", resolve));
     socket.send(JSON.stringify({ type: "hello", v: 1, token: config.token }));
     assert.equal(await closed, 4409);
+  } finally {
+    socket.terminate();
+    await hub.stop();
+    store.dispose();
+  }
+});
+
+test("a phone that dialled in can be held for approval and answer over the same socket", async () => {
+  const store = new SessionStore(config, silentLogger);
+  const decisions = [];
+  const hub = new WsHub(config, store, silentLogger, {
+    host: "127.0.0.1",
+    onApprovalDecision: (requestId, decision) => decisions.push({ requestId, decision }),
+  });
+  await hub.start();
+  const socket = new WebSocket(`ws://127.0.0.1:${hub.port()}`);
+  const messages = collect(socket);
+  try {
+    await opened(socket);
+    // Before anyone authenticates there is nothing to hold a tool call against.
+    assert.equal(hub.hasAuthenticatedClient, false);
+    assert.equal(hub.sendApprovalRequest({ type: "approval_request", requestId: "r0" }), false);
+
+    socket.send(JSON.stringify({
+      type: "hello",
+      v: 1,
+      token: config.token,
+      client: { name: "plugin-agents", version: "test" },
+    }));
+    await waitFor(messages, (message) => message.type === "hello_ack");
+    assert.equal(hub.hasAuthenticatedClient, true);
+
+    const request = {
+      type: "approval_request",
+      v: 1,
+      requestId: "req-1",
+      sessionId: "ws-session",
+      tool: "Bash",
+      summary: "rm -rf /tmp/x",
+    };
+    assert.equal(hub.sendApprovalRequest(request), true);
+    const delivered = await waitFor(messages, (message) => message.type === "approval_request");
+    assert.equal(delivered.requestId, "req-1");
+    assert.equal(delivered.tool, "Bash");
+
+    socket.send(JSON.stringify({ type: "approval_decision", requestId: "req-1", decision: "allow" }));
+    await waitUntil(() => decisions.length > 0);
+    assert.deepEqual(decisions, [{ requestId: "req-1", decision: "allow" }]);
+
+    assert.equal(hub.sendApprovalResolved("req-1", "allow"), true);
+    const resolved = await waitFor(messages, (message) => message.type === "approval_resolved");
+    assert.equal(resolved.outcome, "allow");
+  } finally {
+    socket.terminate();
+    await hub.stop();
+    store.dispose();
+  }
+});
+
+test("a malformed approval decision is ignored rather than forwarded", async () => {
+  const store = new SessionStore(config, silentLogger);
+  const decisions = [];
+  const hub = new WsHub(config, store, silentLogger, {
+    host: "127.0.0.1",
+    onApprovalDecision: (requestId, decision) => decisions.push({ requestId, decision }),
+  });
+  await hub.start();
+  const socket = new WebSocket(`ws://127.0.0.1:${hub.port()}`);
+  const messages = collect(socket);
+  try {
+    await opened(socket);
+    socket.send(JSON.stringify({
+      type: "hello",
+      v: 1,
+      token: config.token,
+      client: { name: "plugin-agents", version: "test" },
+    }));
+    await waitFor(messages, (message) => message.type === "hello_ack");
+
+    socket.send(JSON.stringify({ type: "approval_decision", decision: "allow" }));
+    socket.send(JSON.stringify({ type: "approval_decision", requestId: "req-2" }));
+    socket.send(JSON.stringify({ type: "approval_decision", requestId: "req-2", decision: "maybe" }));
+    // A well-formed one after them proves the earlier three were dropped, not queued.
+    socket.send(JSON.stringify({ type: "approval_decision", requestId: "req-3", decision: "deny" }));
+    await waitUntil(() => decisions.length > 0);
+    assert.deepEqual(decisions, [{ requestId: "req-3", decision: "deny" }]);
   } finally {
     socket.terminate();
     await hub.stop();

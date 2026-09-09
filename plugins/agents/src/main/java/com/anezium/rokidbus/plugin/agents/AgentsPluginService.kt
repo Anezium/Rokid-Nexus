@@ -12,6 +12,7 @@ import com.anezium.rokidbus.client.plugin.NexusReaderSegmentKind
 import com.anezium.rokidbus.client.plugin.NexusRowTone
 import com.anezium.rokidbus.client.plugin.NexusSdkResult
 import com.anezium.rokidbus.client.plugin.NexusSurfaceSession
+import com.anezium.rokidbus.shared.EditableSurfaceField
 import com.anezium.rokidbus.shared.plugin.NexusInputEvent
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -50,10 +51,32 @@ class AgentsPluginService : NexusPluginService() {
 
     private var ageTicker: Job? = null
 
+
     /** The held tool call the wearer is answering, if they are answering one. */
     private var decidingRequestId: String? = null
     private var decisionChoice = ApprovalDecision.ALLOW
     private var decisionOpenedAt = 0L
+
+    /**
+     * The session key the wearer is typing a reply for, if they opened the
+     * field. Bound to an attempt counter because the board can re-sort, or the
+     * session can finish, while the wearer is still composing — a rejection or
+     * a stale send must not land on whatever the field happens to mean by then.
+     */
+    private var replyTargetKey: String? = null
+    private var replySessionId: String? = null
+    private var replyAttempt = 0
+    private var pendingReplyRequestId: String? = null
+
+    /**
+     * Set the instant a reply is sent, cleared the instant something real says
+     * so — the daemon's own "working" status, a failure notice, or simply
+     * having waited long enough that lingering would be misleading. Without
+     * this the wearer stares at an unchanged reader for however long it takes
+     * agentd's hook to notice the prompt, which is exactly the gap that reads
+     * as "did this do anything at all?"
+     */
+    private var awaitingReplyForKey: String? = null
 
     /**
      * The start-an-agent walk: computer, then project, then the project's
@@ -64,6 +87,15 @@ class AgentsPluginService : NexusPluginService() {
     private var launchIndex = 0
     private var launchNote: String? = null
     private var launchRequestId: String? = null
+
+    /**
+     * Runs only while the open conversation's session is actually working, so
+     * the wearer sees something moving instead of wondering whether a reply
+     * they just sent landed at all. Off the rest of the time — cycling a verb
+     * on a session nobody is reading would just be bus traffic nobody sees.
+     */
+    private var thinkingTicker: Job? = null
+    private var thinkingVerbIndex = 0
 
     private sealed interface Launch {
         data object Computers : Launch
@@ -84,9 +116,23 @@ class AgentsPluginService : NexusPluginService() {
                 AgentsRuntime.store.conversation,
             ) { _, _, _ -> Unit }
                 .collectLatest {
+                    // A busy agent changes state on every tool call, and each
+                    // change used to redraw the glasses immediately: watching
+                    // one work made the board flicker continuously. Settling
+                    // coalesces a burst into one redraw.
+                    delay(RENDER_SETTLE_MS)
                     if (surfaceShown) render(show = false)
-                    raiseAttention()
+                    syncThinkingTicker()
                 }
+        }
+        serviceScope.launch {
+            // Attention follows sessions alone. It used to ride the combined
+            // flow above, so a computer that was simply unreachable — its
+            // client cycling connecting/disconnected — re-raised the band on
+            // every flip, which on the glasses reads as a screen that will not
+            // stop blinking. Whether a session needs the wearer has nothing to
+            // do with whether the daemon is currently answering.
+            AgentsRuntime.store.sessions.collectLatest { raiseAttention() }
         }
         serviceScope.launch {
             AgentsRuntime.store.threadStart.collectLatest { result ->
@@ -98,6 +144,17 @@ class AgentsPluginService : NexusPluginService() {
                         result.error ?: "the computer could not start it"
                     }
                     if (surfaceShown) render(show = false)
+                }
+            }
+        }
+        serviceScope.launch {
+            AgentsRuntime.store.sessionInputResult.collectLatest { result ->
+                if (result == null || result.requestId != pendingReplyRequestId) return@collectLatest
+                pendingReplyRequestId = null
+                if (!result.ok) {
+                    awaitingReplyForKey = null
+                    syncThinkingTicker()
+                    showBriefNotice("Reply not sent", result.error ?: "couldn't reach that session")
                 }
             }
         }
@@ -138,6 +195,9 @@ class AgentsPluginService : NexusPluginService() {
     override fun onNexusClose() {
         ageTicker?.cancel()
         ageTicker = null
+        thinkingTicker?.cancel()
+        thinkingTicker = null
+        awaitingReplyForKey = null
         surfaceShown = false
         AgentsRuntime.hudOpen = false
         leaveConversation()
@@ -158,6 +218,7 @@ class AgentsPluginService : NexusPluginService() {
             onLaunchInput(event)
             return
         }
+        if (replyTargetKey != null) return
         // A touchpad swipe arrives as LEFT/RIGHT, the ring as UP/DOWN: both
         // walk the same list, exactly as the other boards treat them. Inside a
         // conversation the hub owns the scroll and swipes never reach us.
@@ -166,7 +227,7 @@ class AgentsPluginService : NexusPluginService() {
             event.keyCode in FORWARD_KEYS -> if (conversation == null) moveSelection(+1)
             event.keyCode == KeyEvent.KEYCODE_ENTER ||
                 event.keyCode == KeyEvent.KEYCODE_DPAD_CENTER
-            -> if (conversation == null) enterSelected()
+            -> if (conversation == null) enterSelected() else onReplyRequested(conversation)
             event.keyCode == KeyEvent.KEYCODE_BACK ->
                 if (conversation != null) {
                     leaveConversation()
@@ -341,6 +402,116 @@ class AgentsPluginService : NexusPluginService() {
         AgentsMonitorService.closeDetail(applicationContext)
     }
 
+    // -------------------------------------------------------------------- reply
+
+    /**
+     * ENTER inside a conversation offers to type into that session's terminal
+     * — the same `screen`/`tmux` typing agentd already does for the computer's
+     * own keyboard, just triggered from the glasses. A turn in progress is not
+     * waiting for anything, so this mirrors agentd's own refusal rather than
+     * waiting for the round-trip to say so.
+     */
+    private fun onReplyRequested(conversation: AgentConversation) {
+        val session = AgentsRuntime.store.sessions.value
+            .firstOrNull { it.key == conversation.sessionKey }
+            ?: return
+        if (session.status == AgentStatus.WORKING) {
+            showBriefNotice("Still working", "wait for it to stop before typing")
+            return
+        }
+        val client = nexusClient
+        if (client?.supportsEditableSurface != true) {
+            showBriefNotice("Can't type here", "this glasses hub is too old")
+            return
+        }
+        val activeSurface = surface ?: return
+        replyTargetKey = conversation.sessionKey
+        replySessionId = session.id
+        val attempt = ++replyAttempt
+        activeSurface.onRejected = { code -> onReplyRejected(attempt, code) }
+        render(show = false)
+    }
+
+    private fun replyCard(session: AgentSession): NexusCard = NexusCard(
+        title = "Reply",
+        subtitle = session.displayTitle.singleLine(120),
+        lines = emptyList(),
+        editable = EditableSurfaceField(placeholder = "Type a reply…", submitLabel = "Send"),
+    )
+
+    private fun onReplyRejected(attempt: Int, code: String) {
+        if (attempt != replyAttempt) return
+        replyTargetKey = null
+        replySessionId = null
+        showBriefNotice(
+            "Can't type here",
+            if (code == "SURFACE_BUSY") "the screen is busy" else "couldn't open the reply field",
+        )
+        render(show = false)
+    }
+
+    override fun onNexusSurfaceTextCommitted(surfaceId: String, text: String, cancelled: Boolean) {
+        val sessionKey = replyTargetKey ?: return
+        val sessionId = replySessionId
+        replyTargetKey = null
+        replySessionId = null
+        render(show = false)
+        if (cancelled || sessionId == null) return
+        val trimmed = text.trim()
+        if (trimmed.isEmpty()) return
+        val requestId = UUID.randomUUID().toString()
+        pendingReplyRequestId = requestId
+        awaitingReplyForKey = sessionKey
+        syncThinkingTicker()
+        serviceScope.launch {
+            delay(AWAITING_REPLY_TIMEOUT_MS)
+            if (awaitingReplyForKey == sessionKey) {
+                awaitingReplyForKey = null
+                syncThinkingTicker()
+            }
+        }
+        AgentsMonitorService.sendSessionInput(applicationContext, requestId, sessionId, trimmed)
+    }
+
+    /** Starts or stops the reader's "thinking" line to match reality, no more. */
+    private fun syncThinkingTicker() {
+        val conversation = AgentsRuntime.store.conversation.value
+        val working = conversation != null && (
+            AgentsRuntime.store.sessions.value
+                .firstOrNull { it.key == conversation.sessionKey }
+                ?.status == AgentStatus.WORKING ||
+                conversation.sessionKey == awaitingReplyForKey
+            )
+        if (working == (thinkingTicker != null)) return
+        if (!working) {
+            thinkingTicker?.cancel()
+            thinkingTicker = null
+            return
+        }
+        thinkingVerbIndex = 0
+        thinkingTicker = serviceScope.launch {
+            while (isActive) {
+                delay(THINKING_TICK_MS)
+                thinkingVerbIndex += 1
+                if (surfaceShown) render(show = false)
+            }
+        }
+    }
+
+    private fun thinkingVerb(): String = THINKING_VERBS[thinkingVerbIndex % THINKING_VERBS.size]
+
+    private fun showBriefNotice(title: String, body: String) {
+        val client = nexusClient ?: return
+        if (!client.supportsNoticeSurface) return
+        client.showNotice(
+            NexusNotice(
+                title = title.singleLine(NOTICE_TITLE_CHARS),
+                body = body.singleLine(NOTICE_BODY_CHARS),
+                ttlMs = SHORT_TTL_MS,
+            ),
+        )
+    }
+
     private fun attemptAdoption() {
         surface = surface ?: nexusSurfaceSession(SURFACE_ID) ?: return
         render(show = true)
@@ -358,7 +529,7 @@ class AgentsPluginService : NexusPluginService() {
 
     /** An open conversation with something to read is the one reader screen. */
     private fun activeReader(): NexusReader? {
-        if (decidingRequestId != null) return null
+        if (decidingRequestId != null || replyTargetKey != null) return null
         val conversation = AgentsRuntime.store.conversation.value ?: return null
         if (conversation.loading || conversation.messages.isEmpty()) return null
         return conversationReader(conversation)
@@ -366,6 +537,13 @@ class AgentsPluginService : NexusPluginService() {
 
     private fun buildCard(): NexusCard {
         decidingRequestId?.let { return decisionCard(it) }
+        replyTargetKey?.let { key ->
+            val session = AgentsRuntime.store.sessions.value.firstOrNull { it.key == key }
+            if (session != null) return replyCard(session)
+            // The session vanished mid-type: nothing left to send this to.
+            replyTargetKey = null
+            replySessionId = null
+        }
         AgentsRuntime.store.conversation.value?.let { return conversationCard(it) }
         launch?.let { return launchCard(it) }
         return sessionsCard()
@@ -837,6 +1015,8 @@ class AgentsPluginService : NexusPluginService() {
         val session = AgentsRuntime.store.sessions.value
             .firstOrNull { it.key == conversation.sessionKey }
         val last = conversation.messages.last()
+        val working = session?.status == AgentStatus.WORKING ||
+            conversation.sessionKey == awaitingReplyForKey
         return NexusReader(
             title = session?.displayTitle?.singleLine(110) ?: "Conversation",
             subtitle = conversationSubtitle(session, conversation),
@@ -847,12 +1027,16 @@ class AgentsPluginService : NexusPluginService() {
                 conversation.messages.size,
                 last.at ?: 0L,
                 last.text.length,
+                if (working) thinkingVerbIndex else -1,
             ).joinToString(":").hashCode().toString(),
-            segments = readerSegments(conversation),
+            segments = readerSegments(conversation, working),
         )
     }
 
-    private fun readerSegments(conversation: AgentConversation): List<NexusReaderSegment> {
+    private fun readerSegments(
+        conversation: AgentConversation,
+        working: Boolean,
+    ): List<NexusReaderSegment> {
         val now = System.currentTimeMillis()
         val groups = mutableListOf<List<NexusReaderSegment>>()
         val toolRun = mutableListOf<AgentMessage>()
@@ -904,7 +1088,12 @@ class AgentsPluginService : NexusPluginService() {
             chars += groupChars
             count += group.size
         }
-        return kept.flatten()
+        val segments = kept.flatten()
+        return if (working) {
+            segments + NexusReaderSegment(kind = NexusReaderSegmentKind.ASIDE, text = "⋯ ${thinkingVerb()}…")
+        } else {
+            segments
+        }
     }
 
     private fun toolRunLabel(run: List<AgentMessage>): String {
@@ -985,6 +1174,19 @@ class AgentsPluginService : NexusPluginService() {
         const val ACTION_MONITOR_ACTIVE =
             "com.anezium.rokidbus.plugin.agents.action.MONITOR_ACTIVE"
         private const val SURFACE_ID = "agents"
+        private const val THINKING_TICK_MS = 2_500L
+        /** How long an optimistic "thinking" cue outlives a send with no daemon word yet. */
+        private const val AWAITING_REPLY_TIMEOUT_MS = 20_000L
+        private val THINKING_VERBS = listOf(
+            "Thinking",
+            "Pondering",
+            "Noodling",
+            "Percolating",
+            "Mulling",
+            "Ruminating",
+            "Cogitating",
+            "Working",
+        )
         private const val VISIBLE_SESSION_ROWS = 6
         private const val MIN_SESSION_ROWS = 4
         /**
@@ -1003,6 +1205,14 @@ class AgentsPluginService : NexusPluginService() {
 
         /** Long enough to swallow a double tap, short enough to never be felt. */
         private const val DECISION_GUARD_MS = 600L
+
+        /**
+         * Long enough to swallow the burst of state a single tool call makes,
+         * short enough that the board still reads as live. collectLatest
+         * cancels this wait when another change lands, so a stream of them
+         * costs one redraw at the end rather than one apiece.
+         */
+        private const val RENDER_SETTLE_MS = 300L
         private const val LAUNCH_VERDICT_TIMEOUT_MS = 35_000L
 
         /** Virtual board row: the door into the start-an-agent walk. */
