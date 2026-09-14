@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.4.8
 
 - **Rokid's assistant on the button, Nexus in the launcher.** Under *Replace
   the glasses assistant* on a plugin's permissions screen there is now a second
@@ -11,6 +11,10 @@
 - **Plugins learn why they were opened.** The SDK now passes the hub's reason
   to `onNexusOpen(openType)`: a launcher pick, the assist button, or a
   re-adoption after a restart. Existing plugins keep working unchanged.
+- **A status row on every Nexus surface.** Phone charge, the date and the
+  glasses' own charge now sit at the bottom of every plugin surface on the
+  glasses, and a typed field starts clean when its card is reopened. Thanks to
+  ruruw.
 
 ## 1.4.7
 

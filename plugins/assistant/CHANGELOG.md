@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.4.5
 
 - **Picked from the launcher, Assistant listens at once.** No more "press the
   assist button" card: choose Assistant in the glasses launcher and ask. Tap the
