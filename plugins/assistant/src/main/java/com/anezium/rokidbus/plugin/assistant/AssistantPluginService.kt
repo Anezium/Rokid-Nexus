@@ -205,14 +205,16 @@ class AssistantPluginService : NexusPluginService() {
                 lines: List<String>,
                 forceShow: Boolean,
                 footer: String?,
-            ): NexusSdkResult = renderCard(lines, forceShow, footer)
+                contentKey: String?,
+            ): NexusSdkResult = renderCard(lines, forceShow, footer, contentKey)
 
             override fun showRichCard(
                 subtitle: String?,
                 lines: List<NexusCardLine>,
                 footer: String?,
                 forceShow: Boolean,
-            ): NexusSdkResult = renderRichCard(subtitle, lines, footer, forceShow)
+                contentKey: String?,
+            ): NexusSdkResult = renderRichCard(subtitle, lines, footer, forceShow, contentKey)
         },
         cancelPipeline = ::cancelPipeline,
         resetCapture = ::resetCapture,
@@ -1096,12 +1098,14 @@ class AssistantPluginService : NexusPluginService() {
         lines: List<String>,
         forceShow: Boolean,
         footer: String? = null,
+        contentKey: String? = null,
     ): NexusSdkResult {
         val session = surface ?: return NexusSdkResult.NOT_REGISTERED
         val card = NexusCard(
             title = "Assistant",
             lines = lines.take(MAX_HUD_LINES).map { it.take(MAX_CARD_LINE_CHARS) },
             footer = footer,
+            contentKey = contentKey,
             handlesBack = true,
         )
         return if (forceShow) {
@@ -1116,12 +1120,14 @@ class AssistantPluginService : NexusPluginService() {
         lines: List<NexusCardLine>,
         footer: String?,
         forceShow: Boolean,
+        contentKey: String?,
     ): NexusSdkResult {
         val session = surface ?: return NexusSdkResult.NOT_REGISTERED
         val card = NexusCard(
             title = "Assistant",
             lines = emptyList(),
             subtitle = subtitle,
+            contentKey = contentKey,
             richLines = lines.take(MAX_HUD_LINES),
             footer = footer,
             handlesBack = true,

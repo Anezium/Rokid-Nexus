@@ -20,10 +20,16 @@ internal interface AssistantUiRenderer {
 
     fun hideNotice(): NexusSdkResult
 
+    /**
+     * [contentKey] decides what the glasses carry over: a card that omits a field inherits the
+     * previous card's when both share a key (or the new one has none). The anchor and the
+     * options menu use distinct keys so neither wears the other's subtitle or footer.
+     */
     fun showCard(
         lines: List<String>,
         forceShow: Boolean,
         footer: String? = null,
+        contentKey: String? = null,
     ): NexusSdkResult
 
     /** One card of list rows — the options menu — with its own subtitle and footer. */
@@ -32,6 +38,7 @@ internal interface AssistantUiRenderer {
         lines: List<NexusCardLine>,
         footer: String?,
         forceShow: Boolean,
+        contentKey: String?,
     ): NexusSdkResult
 }
 
@@ -110,7 +117,12 @@ internal class AssistantUiController(
      */
     fun onLauncherOpen(): Boolean {
         resetForOpen()
-        val shown = showCard(ANCHOR_LINES, forceShow = true, footer = ANCHOR_FOOTER) == NexusSdkResult.SENT
+        val shown = showCard(
+            ANCHOR_LINES,
+            forceShow = true,
+            footer = ANCHOR_FOOTER,
+            contentKey = ANCHOR_CONTENT_KEY,
+        ) == NexusSdkResult.SENT
         anchorShown = shown
         return shown
     }
@@ -127,13 +139,24 @@ internal class AssistantUiController(
             lines = listOf(NexusCardLine(text = view.text, sub = view.sub, selected = true)),
             footer = view.footer,
             forceShow = forceShow || !surfaceShown,
+            contentKey = OPTIONS_CONTENT_KEY,
         )
         if (result == NexusSdkResult.SENT) surfaceShown = true
     }
 
-    /** Back from the options menu: the anchor card returns and the band is the target again. */
+    /**
+     * Back from the options menu: the anchor card returns and the band is the target again.
+     * A fresh show under the anchor's own key: an update, or a show under the menu's key,
+     * would inherit the menu's subtitle on the glasses and leave "Options" over a card that
+     * has none.
+     */
     fun restoreAnchor() {
-        val result = showCard(ANCHOR_LINES, forceShow = !surfaceShown, footer = ANCHOR_FOOTER)
+        val result = showCard(
+            ANCHOR_LINES,
+            forceShow = true,
+            footer = ANCHOR_FOOTER,
+            contentKey = ANCHOR_CONTENT_KEY,
+        )
         anchorShown = result == NexusSdkResult.SENT
     }
 
@@ -451,8 +474,9 @@ internal class AssistantUiController(
         lines: List<String>,
         forceShow: Boolean,
         footer: String? = null,
+        contentKey: String? = null,
     ): NexusSdkResult {
-        val result = renderer.showCard(lines, forceShow, footer)
+        val result = renderer.showCard(lines, forceShow, footer, contentKey)
         if (result == NexusSdkResult.SENT) {
             surfaceShown = true
         }
@@ -538,6 +562,8 @@ internal class AssistantUiController(
         val ANCHOR_LINES = listOf("Ask out loud.")
         const val ANCHOR_FOOTER = "tap to ask again · swipe for options"
         const val OPTIONS_SUBTITLE = "Options"
+        const val ANCHOR_CONTENT_KEY = "anchor"
+        const val OPTIONS_CONTENT_KEY = "options"
         const val NOTICE_TITLE = "Assistant"
         const val ELLIPSIS = "…"
     }

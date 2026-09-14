@@ -80,21 +80,26 @@ internal class AssistantOptionsMenu {
         State.Closed -> null
         State.Loading -> View(TEXT_UNKNOWN, "Checking…", FOOTER_CLOSE)
         is State.Ready -> if (current.takeover) {
-            View(TEXT_NEXUS, "Tap to hand it back to Rokid's assistant.", FOOTER_SWITCH)
+            View(TEXT_NEXUS, "Tap to give it back to Rokid.", FOOTER_SWITCH)
         } else {
-            View(TEXT_ROKID, "Tap to make it open Nexus Assistant.", FOOTER_SWITCH)
+            View(TEXT_ROKID, "Tap to make it open Nexus.", FOOTER_SWITCH)
         }
-        is State.Unavailable -> View(TEXT_UNKNOWN, current.reason, FOOTER_CLOSE)
+        is State.Unavailable -> View(
+            if (current.reason == REASON_NOT_GRANTED) TEXT_NOT_ALLOWED else TEXT_UNKNOWN,
+            current.reason,
+            FOOTER_CLOSE,
+        )
     }
 
     companion object {
         const val TEXT_NEXUS = "Assist button: Nexus"
         const val TEXT_ROKID = "Assist button: Rokid"
         const val TEXT_UNKNOWN = "Assist button"
+        const val TEXT_NOT_ALLOWED = "Assist button: not allowed"
         const val FOOTER_SWITCH = "tap to switch · back to close"
         const val FOOTER_CLOSE = "back to close"
-        const val REASON_NOT_GRANTED =
-            "Allow \"Replace the glasses assistant\" for Assistant in Nexus on your phone."
-        const val REASON_HUB_TOO_OLD = "Update Rokid Nexus on your phone to switch this here."
+        // One HUD line each: the phone screen names the permission in full.
+        const val REASON_NOT_GRANTED = "Allow it in Nexus on your phone."
+        const val REASON_HUB_TOO_OLD = "Update Rokid Nexus on your phone."
     }
 }

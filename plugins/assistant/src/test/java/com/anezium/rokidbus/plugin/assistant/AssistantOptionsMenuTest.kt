@@ -46,7 +46,7 @@ class AssistantOptionsMenuTest {
             AssistantOptionsMenu.State.Unavailable(AssistantOptionsMenu.REASON_NOT_GRANTED),
             menu.state,
         )
-        assertEquals(AssistantOptionsMenu.TEXT_UNKNOWN, menu.view()?.text)
+        assertEquals(AssistantOptionsMenu.TEXT_NOT_ALLOWED, menu.view()?.text)
         assertEquals(AssistantOptionsMenu.FOOTER_CLOSE, menu.view()?.footer)
         assertEquals(AssistantOptionsMenu.Action.None, menu.onConfirm())
     }

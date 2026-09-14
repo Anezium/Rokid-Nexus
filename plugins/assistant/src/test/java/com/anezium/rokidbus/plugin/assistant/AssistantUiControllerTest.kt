@@ -741,7 +741,7 @@ class AssistantUiControllerTest {
 
             val view = AssistantOptionsMenu.View(
                 text = AssistantOptionsMenu.TEXT_NEXUS,
-                sub = "Tap to hand it back to Rokid's assistant.",
+                sub = "Tap to give it back to Rokid.",
                 footer = AssistantOptionsMenu.FOOTER_SWITCH,
             )
             controller.showOptions(view, forceShow = false)
@@ -755,9 +755,19 @@ class AssistantUiControllerTest {
             )
 
             controller.restoreAnchor()
+            // A fresh show under the anchor's own key: the glasses carry fields over between
+            // cards sharing a key, and the menu's subtitle must not survive on the anchor.
             assertEquals(
-                RenderCall.ShowCard(AssistantUiController.ANCHOR_LINES, forceShow = false),
+                RenderCall.ShowCard(AssistantUiController.ANCHOR_LINES, forceShow = true),
                 renderer.calls.last(),
+            )
+            assertEquals(
+                listOf(
+                    AssistantUiController.ANCHOR_CONTENT_KEY,
+                    AssistantUiController.OPTIONS_CONTENT_KEY,
+                    AssistantUiController.ANCHOR_CONTENT_KEY,
+                ),
+                renderer.contentKeys,
             )
             assertTrue(controller.isAnchored)
             assertTrue(controller.isNoticeBandMode)
@@ -838,16 +848,19 @@ class AssistantUiControllerTest {
             return NexusSdkResult.SENT
         }
 
-        /** Footers are recorded apart so the existing call assertions stay about bodies alone. */
+        /** Footers and keys are recorded apart so the existing call assertions stay about bodies alone. */
         val footers = mutableListOf<String?>()
+        val contentKeys = mutableListOf<String?>()
 
         override fun showCard(
             lines: List<String>,
             forceShow: Boolean,
             footer: String?,
+            contentKey: String?,
         ): NexusSdkResult {
             calls += RenderCall.ShowCard(lines, forceShow)
             footers += footer
+            contentKeys += contentKey
             return NexusSdkResult.SENT
         }
 
@@ -856,9 +869,11 @@ class AssistantUiControllerTest {
             lines: List<NexusCardLine>,
             footer: String?,
             forceShow: Boolean,
+            contentKey: String?,
         ): NexusSdkResult {
             val row = lines.single()
             calls += RenderCall.ShowRichCard(row.text, row.sub, footer, forceShow)
+            contentKeys += contentKey
             return NexusSdkResult.SENT
         }
     }
