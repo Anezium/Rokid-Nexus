@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- **Picked from the launcher, Assistant listens at once.** No more "press the
+  assist button" card: choose Assistant in the glasses launcher and ask. Tap the
+  card to ask again. This is the way in when the assist button is left to
+  Rokid's assistant.
+- **Swipe for options.** On that card, a swipe opens one row: *Assist button:
+  Nexus* or *Rokid*. Tap it to hand the button over or take it back, without
+  touching the permission on the phone. Needs Rokid Nexus 1.4.8 on the phone;
+  an older hub says so. Asked for in #35.
+
 ## 1.4.4
 
 - **Add note, typed.** A new *Add note* button on the Productivity screen opens
