@@ -108,7 +108,11 @@ class HelloPluginService : NexusPluginService() {
 The hub can cold-start this service after the app process was stopped. Do not use
 an Activity initializer or static factory. `onNexusOpen`, `onNexusClose`, input,
 link-state, and registration callbacks are serialized on the application main
-thread. Duplicate lifecycle IDs are ignored. The glasses path already deduplicates
+thread. Override `onNexusOpen(openType)` instead of `onNexusOpen()` when it
+matters *why* the plugin was opened: `PluginOpenTypes.OPEN` is a deliberate
+pick (the glasses launcher, or *Open* on the phone), `PluginOpenTypes.AI_ASSIST`
+is the assist button handing over; treat anything else like `OPEN`. The default
+forwards to the plain `onNexusOpen()`. Duplicate lifecycle IDs are ignored. The glasses path already deduplicates
 paired directional aliases; plugins should act once on each delivered input.
 
 Approved, registered plugins automatically receive informational glasses signals;
@@ -1410,6 +1414,29 @@ is confirmed stopped or the transport is disabled; failed expiry cleanup remains
 tracked and is retried. Branch on `errorCode`, not the display-oriented `message`;
 the stable code list is specified in
 [BUSSPEC.md](../BUSSPEC.md#wireless-adb-control-v1).
+
+### 3.5 Assist button takeover
+
+The `assistant` grant lets a plugin replace Rokid's assistant when the assist
+button is pressed: the hub dismisses the native scene and opens the plugin with
+`openType = PluginOpenTypes.AI_ASSIST`, then reports the button edges through
+`onNexusGlassesAiButton`. Whether that happens *right now* is a separate switch
+on the phone, on by default, that the wearer can pause from the phone or that
+the plugin can move for them — without touching its grant. A plugin can step
+back and step in again; only the wearer, on the phone, decides whether it may
+replace the assistant at all.
+
+Call `requestNexusAssistantTakeover()` to learn the position and
+`setNexusAssistantTakeover(enabled)` to move it; both return `SENT`,
+`NOT_REGISTERED`, or `CAPABILITY_NOT_GRANTED`. The hub answers on
+`onNexusAssistantTakeover(enabled)` with where the switch ended up, so a `set`
+doubles as a read, and rejections land on `onNexusAssistantTakeoverError(code)`
+— `PLUGIN_NAMESPACE_DENIED` means a phone hub older than 1.4.8, which does not
+know the route. This is an owner-scoped direct reply; do not declare it in
+`RECEIVE_PREFIXES`. Paused, the button stays with Rokid's assistant and the
+plugin remains one launcher pick away, so a plugin that offers this switch
+should also do something useful when opened with `PluginOpenTypes.OPEN` —
+Assistant listens at once.
 
 ## 4. Approve and debug
 

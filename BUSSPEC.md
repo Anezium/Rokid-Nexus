@@ -110,7 +110,14 @@ reserved, hub-to-plugin paths only to the verified principal:
 - `/system/plugin/input`
 - `/glasses/device-info`
 
-Lifecycle payloads include `version`, `type`, `id`, and `pluginId`. Input also
+Lifecycle payloads include `version`, `type`, `id`, and `pluginId`. On
+`/system/plugin/open`, `type` says why the hub is opening the plugin
+(`PluginOpenTypes`): `open` for a deliberate open — the glasses launcher or
+*Open* on the phone — `ai_assist` when the assist button handed over (a
+follow-up on `/system/plugin/ai-assist` carries the gesture id and whether the
+button is still held), `adopted` when a restarted hub found the plugin already
+on the glasses, and `camera_session_open` for a camera session. A receiver
+treats any value it does not know as `open`. Input also
 includes the plugin-local `localSurfaceId`, `keyCode`, and `action`. Version 1
 receivers ignore unknown fields and ignore duplicate event IDs. SDK lifecycle
 callbacks are serialized on the Android application main thread.
@@ -1536,6 +1543,42 @@ disable; if both operations fail, the hub retains the session and retries instea
 reporting it inactive. Logs must redact the pairing code, BSSID, device identity,
 and full reply payload.
 
+## Assistant takeover v1
+
+The `assistant` grant says a plugin *may* replace Rokid's assistant when the
+assist button is pressed. The takeover switch says whether it *does* right now.
+They are separate on purpose: the grant is the wearer's decision, made on the
+phone with the plugin's identity in front of them; the switch is the everyday
+choice, flipped from the glasses as often as from the phone, and a plugin must
+be able to step back and step in again without ever touching its own grant — a
+plugin can drop a capability, it must never be able to give itself one back.
+
+The switch lives on the phone hub, because the phone is what the ROM notifies
+on that button, and defaults to on. The hub reads it on every press: paused, it
+leaves the native scene the ROM just opened alone and wakes nobody; on, it
+behaves as before (native dismiss burst plus `ai_assist` open of the approved
+plugin). Pausing never revokes anything; the plugin stays in the launcher and,
+opened from there, listens at once (see the Assistant plugin).
+
+A plugin holding the `assistant` grant may read or move the switch by sending
+`/assistant/takeover/request` (phone hub 1.4.8 or newer; an older hub answers
+`PLUGIN_NAMESPACE_DENIED`). The hub derives the principal from Binder, and the
+reply returns on `/assistant/takeover/reply` with the same envelope id, only to
+that owner: a direct reply, so it needs no receive prefix.
+
+Request payload:
+
+```json
+{ "version": 1, "action": "set", "enabled": false }
+```
+
+`action` is `status` or `set`; `set` requires a boolean `enabled`. Anything
+else fails closed with `INVALID_REQUEST`. Plugins use
+`AssistantTakeoverContract` rather than hand-building payloads. Every reply
+carries `version`, the hub-stamped `pluginId`, and `enabled` — where the switch
+ended up, so a `set` doubles as a read. The switch is global: there is one
+button, and one approved assistant at a time.
+
 ## Hub capabilities announcements
 
 Both hubs announce an additive JSON payload on `/system/hub/capabilities`;
@@ -1754,6 +1797,11 @@ Hub manifests use `<queries><intent><action android:name="com.anezium.rokidbus.a
 - CXR link state changes broadcast to all registered clients via `onLinkState`;
   AI-assist start/stop edges broadcast via `onGlassesAiButton` with no capability
   gate and no assistant side effect.
+- The assistant takeover switch (`AssistantTakeoverStore`, on by default) is
+  read on every assist-button press ahead of the grant lookup; paused, the press
+  stays with Rokid's assistant. Plugins move it over the bus (see *Assistant
+  takeover v1*); the phone shows the same switch under the `assistant` grant on
+  the plugin's permissions screen.
 
 ## Glasses hub specifics
 

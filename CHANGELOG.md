@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- **Rokid's assistant on the button, Nexus in the launcher.** Under *Replace
+  the glasses assistant* on a plugin's permissions screen there is now a second
+  switch, *Assist button opens Nexus*. Turn it off and the assist button goes
+  back to Rokid's assistant while the plugin stays in the glasses launcher, one
+  pick away; it never touches the permission itself. Assistant can flip the same
+  switch from the glasses. Asked for in #35.
+- **Plugins learn why they were opened.** The SDK now passes the hub's reason
+  to `onNexusOpen(openType)`: a launcher pick, the assist button, or a
+  re-adoption after a restart. Existing plugins keep working unchanged.
+
 ## 1.4.7
 
 - **Four ways the glasses could get stuck are gone.** A full review of the

@@ -20,6 +20,7 @@ import com.anezium.rokidbus.shared.plugin.NexusInputEvent
 import com.anezium.rokidbus.shared.plugin.PluginDescriptor
 import com.anezium.rokidbus.shared.plugin.PluginDescriptorParseResult
 import com.anezium.rokidbus.shared.plugin.PluginDescriptorParser
+import com.anezium.rokidbus.shared.plugin.PluginOpenTypes
 import org.json.JSONObject
 
 abstract class NexusPluginService : Service(), NexusPluginCallbacks {
@@ -50,6 +51,14 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
 
     protected fun nexusTtsSession(callbacks: NexusTtsCallbacks): NexusTtsSession? =
         client?.ttsSession(callbacks)
+    /** Asks which way the assist button goes; answered on [onNexusAssistantTakeover]. */
+    protected fun requestNexusAssistantTakeover(): NexusSdkResult =
+        client?.requestAssistantTakeover() ?: NexusSdkResult.NOT_REGISTERED
+
+    /** Hands the assist button to this plugin (`true`) or back to Rokid (`false`). */
+    protected fun setNexusAssistantTakeover(enabled: Boolean): NexusSdkResult =
+        client?.setAssistantTakeover(enabled) ?: NexusSdkResult.NOT_REGISTERED
+
     protected fun nexusSnapshotSession(callbacks: NexusSnapshotCallbacks): NexusSnapshotSession? =
         client?.snapshotSession(callbacks)
 
@@ -84,10 +93,12 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
         super.onDestroy()
     }
 
-    final override fun onOpen() {
+    final override fun onOpen() = onOpen(PluginOpenTypes.OPEN)
+
+    final override fun onOpen(openType: String) {
         sessionOpen = true
         promoteNexusSessionForeground()
-        onNexusOpen()
+        onNexusOpen(openType)
     }
 
     final override fun onClose() {
@@ -136,12 +147,21 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
             stopNexusSessionForeground()
         }
     }
+    final override fun onAssistantTakeover(enabled: Boolean) = onNexusAssistantTakeover(enabled)
+    final override fun onAssistantTakeoverError(code: String) = onNexusAssistantTakeoverError(code)
     final override fun onMessage(path: String, id: String, payload: JSONObject) =
         onNexusMessage(path, id, payload)
     final override fun onBinary(path: String, id: String, payload: JSONObject, data: ByteArray) =
         onNexusBinaryMessage(path, id, payload, data)
 
     protected abstract fun onNexusOpen()
+
+    /**
+     * [onNexusOpen] with why the hub opened this plugin, one of [PluginOpenTypes]: a launcher
+     * pick is [PluginOpenTypes.OPEN], the assist button is [PluginOpenTypes.AI_ASSIST]. The
+     * default forwards to [onNexusOpen]; override this one instead to tell them apart.
+     */
+    protected open fun onNexusOpen(openType: String) = onNexusOpen()
     protected abstract fun onNexusClose()
     protected abstract fun onNexusInput(event: NexusInputEvent)
     protected open fun onNexusLinkState(state: Int) = Unit
@@ -182,6 +202,10 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
     protected open fun onNexusInkError(surfaceId: String, problems: List<NexusInkProblem>) = Unit
 
     protected open fun onNexusGlassesAiButton(active: Boolean) = Unit
+
+    /** See [NexusPluginClient.requestAssistantTakeover]; `assistant` grant only. */
+    protected open fun onNexusAssistantTakeover(enabled: Boolean) = Unit
+    protected open fun onNexusAssistantTakeoverError(code: String) = Unit
     protected open fun onNexusRegistrationState(result: Int) = Unit
     protected open fun onNexusMessage(path: String, id: String, payload: JSONObject) = Unit
     protected open fun onNexusBinaryMessage(

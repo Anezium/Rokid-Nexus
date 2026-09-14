@@ -1,6 +1,7 @@
 package com.anezium.rokidbus.phone
 
 import com.anezium.rokidbus.shared.BusPaths
+import com.anezium.rokidbus.shared.plugin.PluginOpenTypes
 import com.anezium.rokidbus.shared.EditableSurfaceContract
 import org.json.JSONObject
 import java.util.UUID
@@ -25,7 +26,7 @@ data class ExternalPluginOpenFollowUp(
 )
 
 data class ExternalPluginOpenRequest(
-    val type: String = "open",
+    val type: String = PluginOpenTypes.OPEN,
     val followUp: ExternalPluginOpenFollowUp? = null,
 )
 
@@ -191,7 +192,7 @@ class ExternalPluginController(
         cancelWatchdogs(principal)
         openGeneration += 1
         automaticRebindAttempted = false
-        openRequest = ExternalPluginOpenRequest(type = "adopted")
+        openRequest = ExternalPluginOpenRequest(type = PluginOpenTypes.ADOPTED)
         active = principal
         if (!deliverOpen(principal, openRequest, openGeneration)) {
             closePrincipal(principal, "adopt_failed")

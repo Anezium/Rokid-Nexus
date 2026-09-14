@@ -1,10 +1,17 @@
 package com.anezium.rokidbus.client.plugin
 
 import com.anezium.rokidbus.shared.plugin.NexusInputEvent
+import com.anezium.rokidbus.shared.plugin.PluginOpenTypes
 import org.json.JSONObject
 
 interface NexusPluginCallbacks {
     fun onOpen()
+
+    /**
+     * [onOpen] with the reason the hub gave, one of [PluginOpenTypes]. The default forwards
+     * to [onOpen], so a plugin that does not care which way it was opened keeps working.
+     */
+    fun onOpen(openType: String) = onOpen()
     fun onClose()
     fun onInput(event: NexusInputEvent)
     fun onLinkState(state: Int)
@@ -71,6 +78,16 @@ interface NexusPluginCallbacks {
     fun onInkError(surfaceId: String, problems: List<NexusInkProblem>) = Unit
 
     fun onRegistrationState(result: Int)
+
+    /**
+     * The hub answered this plugin's assist-button request: `true` when the button hands over
+     * to the approved assistant plugin, `false` when it stays with Rokid's own. Needs the
+     * `assistant` grant; see [NexusPluginClient.requestAssistantTakeover].
+     */
+    fun onAssistantTakeover(enabled: Boolean) = Unit
+
+    /** The hub rejected an assist-button request; [code] is the stable bus error code. */
+    fun onAssistantTakeoverError(code: String) = Unit
     fun onMessage(path: String, id: String, payload: JSONObject) = Unit
     fun onBinary(path: String, id: String, payload: JSONObject, data: ByteArray) = Unit
 }

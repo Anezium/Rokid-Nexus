@@ -4,7 +4,12 @@ Phone-side Rokid Nexus voice assistant plugin.
 
 Hold the assist button, ask out loud: the words transcribe live on the HUD, then
 the answer streams into the band, is spoken aloud, or hands over in place to a
-native Ink page. The model can take one photo through the glasses camera when
+native Ink page. Picking Assistant in the glasses launcher listens at once, no
+button needed — tap the card to ask again — and a swipe on that card opens the
+options: one row that hands the assist button to Nexus or back to Rokid's
+assistant. Pausing it there does not touch the plugin's grant; the wearer can
+also flip the same switch on the phone, under the *Replace the glasses
+assistant* permission. The model can take one photo through the glasses camera when
 the question needs eyes, and it can set reminders and timers, take notes, and
 add, list, or delete events in the phone calendar. An *Add note* button on the
 phone's Productivity screen opens an editable card on the glasses for a typed

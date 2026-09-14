@@ -37,6 +37,8 @@ import com.anezium.rokidbus.shared.EditableSurfaceContract
 import com.anezium.rokidbus.shared.BusCapabilityBits
 import com.anezium.rokidbus.shared.BusConstants
 import com.anezium.rokidbus.shared.BusEnvelope
+import com.anezium.rokidbus.shared.AssistantTakeoverAction
+import com.anezium.rokidbus.shared.AssistantTakeoverContract
 import com.anezium.rokidbus.shared.BusPaths
 import com.anezium.rokidbus.shared.FrameProtocol
 import com.anezium.rokidbus.shared.ForegroundSurfacePathPolicy
@@ -70,6 +72,7 @@ import com.anezium.rokidbus.shared.WirelessAdbContract
 import com.anezium.rokidbus.shared.WirelessAdbReply
 import com.anezium.rokidbus.shared.plugin.PathRules
 import com.anezium.rokidbus.shared.plugin.PluginCapability
+import com.anezium.rokidbus.shared.plugin.PluginOpenTypes
 import com.anezium.rokidbus.shared.plugin.PluginCapability.Companion.serialize
 import com.anezium.rokidbus.ink.InkProblem
 import com.anezium.rokidbus.ink.InkProblemCodes
@@ -160,7 +163,7 @@ private const val AUDIO_LEASE_RELEASE = "/audio/lease/release"
 private const val AUDIO_FRAMES = "/audio/frames"
 private const val AUDIO_LEASE_REVOKED = "/audio/lease/revoked"
 private const val PLUGIN_AI_ASSIST_PATH = "/system/plugin/ai-assist"
-private const val PLUGIN_AI_ASSIST_OPEN_TYPE = "ai_assist"
+private const val PLUGIN_AI_ASSIST_OPEN_TYPE = PluginOpenTypes.AI_ASSIST
 private val NATIVE_ASSISTANT_EXIT_BURST_DELAYS_MILLIS = longArrayOf(0L, 50L, 150L, 300L)
 private const val SNAPSHOT_JPEG_QUALITY = 80
 private const val SNAPSHOT_ERROR_BUSY = "BUSY"
@@ -275,6 +278,7 @@ class BusHubService : Service() {
     private lateinit var pluginRegistry: PhonePluginRegistry
     private lateinit var pluginDiscovery: PhonePluginDiscovery
     private lateinit var pluginGrantStore: PluginGrantStore
+    private lateinit var assistantTakeoverStore: AssistantTakeoverStore
     private lateinit var pluginGrantReconciler: PluginGrantReconciler
     private lateinit var registryClient: RegistryClient
     private lateinit var developerModeStore: DeveloperModeStore
@@ -541,6 +545,12 @@ class BusHubService : Service() {
 
         override fun onGlassAiAssistStart() {
             if (!glassAiAssistActive.compareAndSet(false, true)) return
+            // Paused from the glasses or the phone: the native scene the ROM just opened is
+            // exactly what the wearer asked for, so there is nothing to dismiss and nobody to wake.
+            if (::assistantTakeoverStore.isInitialized && !assistantTakeoverStore.isEnabled()) {
+                log("assistant gesture left to Rokid: takeover paused")
+                return
+            }
             val assistant = approvedAssistantPrincipal() ?: return
             val gestureId = UUID.randomUUID().toString()
             val alreadyActive = externalPluginController.activeId() == assistant.descriptor.id
@@ -743,6 +753,7 @@ class BusHubService : Service() {
         PhoneClientSupervisor.attach(this)
         pluginDiscovery = PhonePluginDiscovery(packageManager)
         pluginGrantStore = PluginGrantStore(applicationContext)
+        assistantTakeoverStore = AssistantTakeoverStore(applicationContext)
         registryClient = RegistryClient.create(applicationContext)
         pluginGrantReconciler = PluginGrantReconciler(
             discoverCandidates = pluginDiscovery::discover,
@@ -2169,6 +2180,10 @@ class BusHubService : Service() {
                 if (replyRemote || principal == null) return false
                 handleWirelessAdbRequest(envelope, principal, replyBinder)
             }
+            BusPaths.ASSISTANT_TAKEOVER_REQUEST -> {
+                if (replyRemote || principal == null) return false
+                handleAssistantTakeoverRequest(envelope, principal, replyBinder)
+            }
             SttWireProtocol.SESSION_START_PATH -> speechBusExecutor.execute {
                 handleSpeechSessionStart(envelope, replyRemote, replyBinder, principal)
             }
@@ -2234,6 +2249,39 @@ class BusHubService : Service() {
                         errorCode = code,
                         message = message,
                     ),
+                ),
+            ),
+            targetBinder = replyBinder,
+        )
+    }
+
+    /**
+     * A plugin holding the `assistant` grant reading or moving the assist-button switch. The
+     * grant was already checked by the route policy; the switch is global on purpose — there is
+     * one button — and the reply always reports where it ended up, so a `set` doubles as a read.
+     */
+    private fun handleAssistantTakeoverRequest(
+        envelope: BusEnvelope,
+        principal: PhonePluginPrincipal,
+        replyBinder: IBinder?,
+    ) {
+        val request = AssistantTakeoverContract.parseRequest(envelope.payload)
+        if (envelope.binary != null || request == null) {
+            deliverError(replyBinder, envelope.id, AssistantTakeoverContract.ERROR_INVALID_REQUEST)
+            return
+        }
+        if (request.action == AssistantTakeoverAction.SET) {
+            val enabled = request.enabled == true
+            assistantTakeoverStore.setEnabled(enabled)
+            log("assistant takeover set=$enabled by plugin=${principal.descriptor.id}")
+        }
+        deliverLocal(
+            BusEnvelope(
+                path = BusPaths.ASSISTANT_TAKEOVER_REPLY,
+                id = envelope.id,
+                payload = AssistantTakeoverContract.reply(
+                    principal.descriptor.id,
+                    assistantTakeoverStore.isEnabled(),
                 ),
             ),
             targetBinder = replyBinder,

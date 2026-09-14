@@ -2,6 +2,7 @@ package com.anezium.rokidbus.phone
 
 import com.anezium.rokidbus.shared.BusEnvelope
 import com.anezium.rokidbus.shared.BusPaths
+import com.anezium.rokidbus.shared.plugin.PluginOpenTypes
 import org.json.JSONObject
 import java.util.UUID
 
@@ -58,7 +59,7 @@ class CameraCompanionController(
         val session = active?.takeIf { it.principal.grantKey() == principal.grantKey() } ?: return
         if (session.openDelivered) return
         scheduler.cancel(timeoutKey(session.sessionId))
-        if (!deliverLifecycle(session, BusPaths.PLUGIN_OPEN, "camera_session_open")) {
+        if (!deliverLifecycle(session, BusPaths.PLUGIN_OPEN, PluginOpenTypes.CAMERA_SESSION)) {
             terminate(session, "open_failed")
             return
         }
