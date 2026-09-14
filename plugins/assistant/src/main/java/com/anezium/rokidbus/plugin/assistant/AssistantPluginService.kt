@@ -8,6 +8,7 @@ import com.anezium.rokidbus.client.plugin.NexusAudioFormat
 import com.anezium.rokidbus.client.plugin.NexusAudioSession
 import com.anezium.rokidbus.client.plugin.NexusAudioStopReason
 import com.anezium.rokidbus.client.plugin.NexusCard
+import com.anezium.rokidbus.client.plugin.NexusCardLine
 import com.anezium.rokidbus.client.plugin.NexusInkCloseReason
 import com.anezium.rokidbus.client.plugin.NexusInkProblem
 import com.anezium.rokidbus.client.plugin.NexusInkSurfaceSession
@@ -33,6 +34,7 @@ import com.anezium.rokidbus.shared.EditableSurfaceField
 import com.anezium.rokidbus.shared.LinkStateBits
 import com.anezium.rokidbus.shared.plugin.NexusInputEvent
 import com.anezium.rokidbus.shared.plugin.PluginCapability
+import com.anezium.rokidbus.shared.plugin.PluginOpenTypes
 import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -50,6 +52,7 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.time.ZonedDateTime
+import java.util.UUID
 import kotlin.coroutines.resume
 
 class AssistantPluginService : NexusPluginService() {
@@ -162,6 +165,7 @@ class AssistantPluginService : NexusPluginService() {
     private var photoJpegForCompletedTurn: ByteArray? = null
     private var currentLinkState = 0
     private val captureTriggerGate = AssistantCaptureTriggerGate()
+    private val optionsMenu = AssistantOptionsMenu()
     private val answerSpeaker = AssistantAnswerSpeaker(
         // A bound reference here would read authStore while the service is still
         // being constructed, before it has a base context to build one from.
@@ -200,7 +204,15 @@ class AssistantPluginService : NexusPluginService() {
             override fun showCard(
                 lines: List<String>,
                 forceShow: Boolean,
-            ): NexusSdkResult = renderCard(lines, forceShow)
+                footer: String?,
+            ): NexusSdkResult = renderCard(lines, forceShow, footer)
+
+            override fun showRichCard(
+                subtitle: String?,
+                lines: List<NexusCardLine>,
+                footer: String?,
+                forceShow: Boolean,
+            ): NexusSdkResult = renderRichCard(subtitle, lines, footer, forceShow)
         },
         cancelPipeline = ::cancelPipeline,
         resetCapture = ::resetCapture,
@@ -212,14 +224,25 @@ class AssistantPluginService : NexusPluginService() {
         scheduleAccountContextSyncIfStale()
     }
 
-    override fun onNexusOpen() {
+    override fun onNexusOpen() = onNexusOpen(PluginOpenTypes.OPEN)
+
+    /**
+     * A launcher pick listens at once: the wearer came here to ask, not to be told to press a
+     * button — which, with the takeover paused, would open Rokid's assistant anyway. The assist
+     * button path keeps its hint: its follow-up message carries the gesture and starts capture.
+     */
+    override fun onNexusOpen(openType: String) {
         surface = nexusSurfaceSession(SURFACE_ID)
         inkSurface = nexusInkSurfaceSession(INK_SURFACE_ID)
-        uiController.onOpen()
+        optionsMenu.close()
+        val anchored = openType == PluginOpenTypes.OPEN && uiController.onLauncherOpen()
+        if (!anchored) uiController.onOpen()
         scheduleAccountContextSyncIfStale()
+        if (anchored) startLauncherCapture()
     }
 
     override fun onNexusClose() {
+        optionsMenu.close()
         uiController.onClose()
         captureTriggerGate.resetSession()
         resetCapture()
@@ -231,13 +254,83 @@ class AssistantPluginService : NexusPluginService() {
     }
 
     override fun onNexusInput(event: NexusInputEvent) {
-        if (event.action == KeyEvent.ACTION_DOWN && event.keyCode == KeyEvent.KEYCODE_BACK) {
-            cancelPipeline()
-            resetCapture()
-            pendingNoteEntry = false
-            surface?.hide()
-            uiController.onSurfaceHidden()
+        if (event.action != KeyEvent.ACTION_DOWN) return
+        when (event.keyCode) {
+            KeyEvent.KEYCODE_BACK -> if (optionsMenu.isOpen) closeOptionsMenu() else closeSurface()
+            KeyEvent.KEYCODE_DPAD_UP,
+            KeyEvent.KEYCODE_DPAD_DOWN,
+            KeyEvent.KEYCODE_DPAD_LEFT,
+            KeyEvent.KEYCODE_DPAD_RIGHT,
+            -> if (!optionsMenu.isOpen && uiController.isAnchored) openOptionsMenu()
+            KeyEvent.KEYCODE_ENTER,
+            KeyEvent.KEYCODE_DPAD_CENTER,
+            -> when {
+                optionsMenu.isOpen -> confirmOptionsMenu()
+                uiController.isAnchored && !captureActive && pipelineJob?.isActive != true ->
+                    startLauncherCapture()
+            }
         }
+    }
+
+    private fun closeSurface() {
+        cancelPipeline()
+        resetCapture()
+        pendingNoteEntry = false
+        surface?.hide()
+        uiController.onSurfaceHidden()
+    }
+
+    /** A launcher pick, or a tap on the anchor card: one capture, ended by the voice detector. */
+    private fun startLauncherCapture() {
+        if (!captureTriggerGate.claimGestureOpen(UUID.randomUUID().toString())) return
+        startCaptureOnce()
+        captureTriggerGate.onButtonStop()
+    }
+
+    private fun openOptionsMenu() {
+        cancelPipeline()
+        resetCapture()
+        val granted = nexusClient?.hasCapability(PluginCapability.ASSISTANT) == true
+        val ask = optionsMenu.open(assistantGranted = granted)
+        renderOptionsMenu()
+        if (!ask) return
+        val result = requestNexusAssistantTakeover()
+        if (result != NexusSdkResult.SENT) {
+            optionsMenu.onError(result.name)
+            renderOptionsMenu()
+        }
+    }
+
+    private fun confirmOptionsMenu() {
+        val action = optionsMenu.onConfirm() as? AssistantOptionsMenu.Action.Set ?: return
+        renderOptionsMenu()
+        val result = setNexusAssistantTakeover(action.takeover)
+        if (result != NexusSdkResult.SENT) {
+            optionsMenu.onError(result.name)
+            renderOptionsMenu()
+        }
+    }
+
+    private fun closeOptionsMenu() {
+        optionsMenu.close()
+        uiController.restoreAnchor()
+    }
+
+    private fun renderOptionsMenu() {
+        val view = optionsMenu.view() ?: return
+        uiController.showOptions(view, forceShow = false)
+    }
+
+    override fun onNexusAssistantTakeover(enabled: Boolean) {
+        if (!optionsMenu.isOpen) return
+        optionsMenu.onStatus(enabled)
+        renderOptionsMenu()
+    }
+
+    override fun onNexusAssistantTakeoverError(code: String) {
+        if (!optionsMenu.isOpen) return
+        optionsMenu.onError(code)
+        renderOptionsMenu()
     }
 
     override fun onNexusLinkState(state: Int) {
@@ -354,6 +447,8 @@ class AssistantPluginService : NexusPluginService() {
     }
 
     private fun beginCapture() {
+        // The assist button can land while the options menu is up; the question wins.
+        if (optionsMenu.isOpen) closeOptionsMenu()
         uiController.beginGestureFlow()
         clearInkSurface(hide = true)
         if (captureActive) return
@@ -1000,11 +1095,35 @@ class AssistantPluginService : NexusPluginService() {
     private fun renderCard(
         lines: List<String>,
         forceShow: Boolean,
+        footer: String? = null,
     ): NexusSdkResult {
         val session = surface ?: return NexusSdkResult.NOT_REGISTERED
         val card = NexusCard(
             title = "Assistant",
             lines = lines.take(MAX_HUD_LINES).map { it.take(MAX_CARD_LINE_CHARS) },
+            footer = footer,
+            handlesBack = true,
+        )
+        return if (forceShow) {
+            session.showCard(card)
+        } else {
+            session.updateCard(card)
+        }
+    }
+
+    private fun renderRichCard(
+        subtitle: String?,
+        lines: List<NexusCardLine>,
+        footer: String?,
+        forceShow: Boolean,
+    ): NexusSdkResult {
+        val session = surface ?: return NexusSdkResult.NOT_REGISTERED
+        val card = NexusCard(
+            title = "Assistant",
+            lines = emptyList(),
+            subtitle = subtitle,
+            richLines = lines.take(MAX_HUD_LINES),
+            footer = footer,
             handlesBack = true,
         )
         return if (forceShow) {

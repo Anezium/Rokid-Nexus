@@ -1,5 +1,6 @@
 package com.anezium.rokidbus.plugin.assistant
 
+import com.anezium.rokidbus.client.plugin.NexusCardLine
 import com.anezium.rokidbus.client.plugin.NexusNotice
 import com.anezium.rokidbus.client.plugin.NexusNoticeCloseReason
 import com.anezium.rokidbus.client.plugin.NexusNoticeUpdate
@@ -11,6 +12,7 @@ import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -688,6 +690,80 @@ class AssistantUiControllerTest {
             assertEquals(listOf(RenderCall.HideNotice), renderer.calls)
         }
 
+    @Test
+    fun `a launcher open anchors a card and keeps the band as the render target`() =
+        runTest {
+            val renderer = FakeRenderer(supportsNotice = true)
+            val controller = controller(renderer)
+
+            assertTrue(controller.onLauncherOpen())
+            assertTrue(controller.isAnchored)
+            assertTrue(controller.isNoticeBandMode)
+            assertEquals(
+                listOf(RenderCall.ShowCard(AssistantUiController.ANCHOR_LINES, forceShow = true)),
+                renderer.calls,
+            )
+            assertEquals(listOf(AssistantUiController.ANCHOR_FOOTER), renderer.footers)
+            // No hint ever lands on an anchored session.
+            advanceTimeBy(AssistantUiController.LAUNCHER_HINT_DELAY_MS + 1)
+            runCurrent()
+            assertEquals(1, renderer.calls.size)
+
+            controller.beginGestureFlow()
+            controller.showTransient("Listening…", legacyForceShow = true)
+            assertEquals(RenderCall.ShowNotice("Assistant", "Listening…"), renderer.calls.last())
+
+            controller.onSurfaceHidden()
+            assertFalse(controller.isAnchored)
+            controller.onClose()
+        }
+
+    @Test
+    fun `without a band the anchored card takes the conversation like any open card`() =
+        runTest {
+            val renderer = FakeRenderer(supportsNotice = false)
+            val controller = controller(renderer)
+
+            assertTrue(controller.onLauncherOpen())
+            assertFalse(controller.isNoticeBandMode)
+            controller.showTransient("Listening…", legacyForceShow = true)
+            assertEquals(RenderCall.ShowCard(listOf("Listening…"), forceShow = true), renderer.calls.last())
+            controller.onClose()
+        }
+
+    @Test
+    fun `the options menu takes the card and back restores the anchor`() =
+        runTest {
+            val renderer = FakeRenderer(supportsNotice = true)
+            val controller = controller(renderer)
+            controller.onLauncherOpen()
+            controller.showTransient("Listening…", legacyForceShow = true)
+
+            val view = AssistantOptionsMenu.View(
+                text = AssistantOptionsMenu.TEXT_NEXUS,
+                sub = "Tap to hand it back to Rokid's assistant.",
+                footer = AssistantOptionsMenu.FOOTER_SWITCH,
+            )
+            controller.showOptions(view, forceShow = false)
+            // The band that was up goes away; the menu is an update of the anchored card.
+            assertEquals(
+                listOf(
+                    RenderCall.HideNotice,
+                    RenderCall.ShowRichCard(view.text, view.sub, view.footer, forceShow = false),
+                ),
+                renderer.calls.takeLast(2),
+            )
+
+            controller.restoreAnchor()
+            assertEquals(
+                RenderCall.ShowCard(AssistantUiController.ANCHOR_LINES, forceShow = false),
+                renderer.calls.last(),
+            )
+            assertTrue(controller.isAnchored)
+            assertTrue(controller.isNoticeBandMode)
+            controller.onClose()
+        }
+
     private fun TestScope.controller(renderer: FakeRenderer): AssistantUiController =
         AssistantUiController(
             scope = this,
@@ -723,6 +799,13 @@ class AssistantUiControllerTest {
             val lines: List<String>,
             val forceShow: Boolean,
         ) : RenderCall
+
+        data class ShowRichCard(
+            val text: String,
+            val sub: String?,
+            val footer: String?,
+            val forceShow: Boolean,
+        ) : RenderCall
     }
 
     private class FakeRenderer(
@@ -755,11 +838,27 @@ class AssistantUiControllerTest {
             return NexusSdkResult.SENT
         }
 
+        /** Footers are recorded apart so the existing call assertions stay about bodies alone. */
+        val footers = mutableListOf<String?>()
+
         override fun showCard(
             lines: List<String>,
             forceShow: Boolean,
+            footer: String?,
         ): NexusSdkResult {
             calls += RenderCall.ShowCard(lines, forceShow)
+            footers += footer
+            return NexusSdkResult.SENT
+        }
+
+        override fun showRichCard(
+            subtitle: String?,
+            lines: List<NexusCardLine>,
+            footer: String?,
+            forceShow: Boolean,
+        ): NexusSdkResult {
+            val row = lines.single()
+            calls += RenderCall.ShowRichCard(row.text, row.sub, footer, forceShow)
             return NexusSdkResult.SENT
         }
     }

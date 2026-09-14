@@ -1,5 +1,6 @@
 package com.anezium.rokidbus.plugin.assistant
 
+import com.anezium.rokidbus.client.plugin.NexusCardLine
 import com.anezium.rokidbus.client.plugin.NexusNotice
 import com.anezium.rokidbus.client.plugin.NexusNoticeCloseReason
 import com.anezium.rokidbus.client.plugin.NexusNoticeUpdate
@@ -21,6 +22,15 @@ internal interface AssistantUiRenderer {
 
     fun showCard(
         lines: List<String>,
+        forceShow: Boolean,
+        footer: String? = null,
+    ): NexusSdkResult
+
+    /** One card of list rows — the options menu — with its own subtitle and footer. */
+    fun showRichCard(
+        subtitle: String?,
+        lines: List<NexusCardLine>,
+        footer: String?,
         forceShow: Boolean,
     ): NexusSdkResult
 }
@@ -58,24 +68,29 @@ internal class AssistantUiController(
     private var answerCardStarted = false
 
     /**
+     * True while the launcher card anchors the session. Unlike a card the wearer opened
+     * into, it is not the conversation's render target: the band keeps drawing over it.
+     * It is there so the plugin owns the screen — which is what makes a swipe reach it.
+     */
+    private var anchorShown = false
+
+    val isAnchored: Boolean
+        get() = anchorShown
+
+    /**
      * True while the band is the render target. A surface card the wearer already
      * has open keeps that interaction on the card: hiding it from here would read
-     * as a self-close to the hub, which tears the whole plugin session down.
+     * as a self-close to the hub, which tears the whole plugin session down. The
+     * launcher anchor is the one card that does not claim the interaction.
      */
     val isNoticeBandMode: Boolean
-        get() = renderer.supportsNoticeSurface && !surfaceShown
+        get() = renderer.supportsNoticeSurface && (!surfaceShown || anchorShown)
 
     internal val isEngagedNoticeEpisode: Boolean
         get() = noticeShown && noticeMode == AssistantNoticeMode.ENGAGED
 
     fun onOpen() {
-        cancelLauncherHint()
-        stopKeepalive()
-        startNewState(flushTranscript = false)
-        surfaceShown = false
-        noticeShown = false
-        noticeMode = AssistantNoticeMode.NONE
-        answerCardStarted = false
+        resetForOpen()
         launcherHintJob = scope.launch {
             delay(launcherHintDelayMs)
             launcherHintJob = null
@@ -88,6 +103,39 @@ internal class AssistantUiController(
         }
     }
 
+    /**
+     * A launcher pick: no hint and no waiting. The anchor card goes up at once as the thing
+     * the wearer is holding, and the session listens right away. Returns false when the card
+     * could not be shown, in which case the caller falls back to the plain [onOpen].
+     */
+    fun onLauncherOpen(): Boolean {
+        resetForOpen()
+        val shown = showCard(ANCHOR_LINES, forceShow = true, footer = ANCHOR_FOOTER) == NexusSdkResult.SENT
+        anchorShown = shown
+        return shown
+    }
+
+    /** The options menu replaces whatever band was up; its card is the render target while open. */
+    fun showOptions(view: AssistantOptionsMenu.View, forceShow: Boolean) {
+        cancelLauncherHint()
+        stopKeepalive()
+        startNewState()
+        hideNoticeIfShown()
+        val result = renderer.showRichCard(
+            subtitle = OPTIONS_SUBTITLE,
+            lines = listOf(NexusCardLine(text = view.text, sub = view.sub, selected = true)),
+            footer = view.footer,
+            forceShow = forceShow || !surfaceShown,
+        )
+        if (result == NexusSdkResult.SENT) surfaceShown = true
+    }
+
+    /** Back from the options menu: the anchor card returns and the band is the target again. */
+    fun restoreAnchor() {
+        val result = showCard(ANCHOR_LINES, forceShow = !surfaceShown, footer = ANCHOR_FOOTER)
+        anchorShown = result == NexusSdkResult.SENT
+    }
+
     fun onClose() {
         cancelLauncherHint()
         startNewState(flushTranscript = false)
@@ -96,6 +144,18 @@ internal class AssistantUiController(
         noticeShown = false
         noticeMode = AssistantNoticeMode.NONE
         answerCardStarted = false
+        anchorShown = false
+    }
+
+    private fun resetForOpen() {
+        cancelLauncherHint()
+        stopKeepalive()
+        startNewState(flushTranscript = false)
+        surfaceShown = false
+        noticeShown = false
+        noticeMode = AssistantNoticeMode.NONE
+        answerCardStarted = false
+        anchorShown = false
     }
 
     fun cancelLauncherHint() {
@@ -229,6 +289,7 @@ internal class AssistantUiController(
     fun onSurfaceHidden() {
         surfaceShown = false
         answerCardStarted = false
+        anchorShown = false
     }
 
     /**
@@ -388,8 +449,9 @@ internal class AssistantUiController(
     private fun showCard(
         lines: List<String>,
         forceShow: Boolean,
+        footer: String? = null,
     ): NexusSdkResult {
-        val result = renderer.showCard(lines, forceShow)
+        val result = renderer.showCard(lines, forceShow, footer)
         if (result == NexusSdkResult.SENT) {
             surfaceShown = true
         }
@@ -472,6 +534,9 @@ internal class AssistantUiController(
         const val MAX_NOTICE_BODY_CHARS = NoticeSurfaceContract.MAX_BODY_CHARS
         const val TRANSCRIPT_TAIL_CHARS = 200
         const val LAUNCHER_HINT = "Press the assist button, then speak."
+        val ANCHOR_LINES = listOf("Ask out loud.")
+        const val ANCHOR_FOOTER = "tap to ask again · swipe for options"
+        const val OPTIONS_SUBTITLE = "Options"
         const val NOTICE_TITLE = "Assistant"
         const val ELLIPSIS = "…"
     }
