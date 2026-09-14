@@ -67,6 +67,18 @@ class PluginRoutePolicyTest {
                 "/debug/adb/reply",
             ),
         )
+        assertEquals(
+            PluginRouteDecision.Allowed,
+            PluginRoutePolicy.authorize(plugin(PluginCapability.ASSISTANT), "/assistant/takeover/request"),
+        )
+        assertEquals(
+            PluginRouteDecision.Denied("CAPABILITY_REQUIRED_ASSISTANT"),
+            PluginRoutePolicy.authorize(plugin(PluginCapability.SURFACES), "/assistant/takeover/request"),
+        )
+        assertEquals(
+            PluginRouteDecision.Denied("PLUGIN_NAMESPACE_DENIED"),
+            PluginRoutePolicy.authorize(plugin(PluginCapability.ASSISTANT), "/assistant/takeover/reply"),
+        )
     }
 
     @Test

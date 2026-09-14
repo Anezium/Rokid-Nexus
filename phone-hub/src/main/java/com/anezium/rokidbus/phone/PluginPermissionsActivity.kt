@@ -174,6 +174,10 @@ class PluginPermissionsActivity : Activity() {
         principal.descriptor.requestedCapabilities.sortedBy(PluginCapability::wireValue).forEach { capability ->
             card.addView(capabilityRow(capability, selected, live, principal), NexusUi.block())
             card.addView(BusTheme.gap(this, 8))
+            if (capability == PluginCapability.ASSISTANT && live && capability in selected) {
+                card.addView(assistantTakeoverRow(), NexusUi.block())
+                card.addView(BusTheme.gap(this, 8))
+            }
         }
 
         if (developerDetails) {
@@ -235,6 +239,55 @@ class PluginPermissionsActivity : Activity() {
         decision()
         BusHubService.onPluginAuthorizationChanged(applicationContext, principal.grantKey())
         render()
+    }
+
+    /**
+     * The everyday switch under the `assistant` grant. The grant above says the plugin may
+     * replace Rokid's assistant; this says whether the assist button does so right now. The
+     * plugin flips the same switch from the glasses, so this row reads the store each render
+     * rather than keeping a copy.
+     */
+    private fun assistantTakeoverRow(): LinearLayout {
+        val store = AssistantTakeoverStore(applicationContext)
+        val enabled = store.isEnabled()
+        val note = if (enabled) {
+            "Turn off to keep Rokid's assistant on the button. Nexus stays in the glasses launcher."
+        } else {
+            "Rokid's assistant has the button. Nexus is still in the glasses launcher, where a swipe brings this switch too."
+        }
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(
+                LinearLayout(this@PluginPermissionsActivity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    addView(
+                        TextView(this@PluginPermissionsActivity).apply {
+                            text = "Assist button opens Nexus"
+                            textSize = 13f
+                            setTextColor(NexusUi.INK)
+                        },
+                    )
+                    addView(
+                        TextView(this@PluginPermissionsActivity).apply {
+                            text = note
+                            textSize = 10f
+                            setTextColor(NexusUi.INK3)
+                        },
+                    )
+                },
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+            )
+            addView(
+                NexusUi.switch(this@PluginPermissionsActivity).apply {
+                    isChecked = enabled
+                    setOnCheckedChangeListener { _, checked ->
+                        store.setEnabled(checked)
+                        render()
+                    }
+                },
+            )
+        }
     }
 
     private fun capabilityRow(
