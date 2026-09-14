@@ -119,7 +119,8 @@ internal class AssistantUiController(
     fun showOptions(view: AssistantOptionsMenu.View, forceShow: Boolean) {
         cancelLauncherHint()
         stopKeepalive()
-        startNewState()
+        // Whatever was being transcribed belongs to the capture the menu just cancelled.
+        startNewState(flushTranscript = false)
         hideNoticeIfShown()
         val result = renderer.showRichCard(
             subtitle = OPTIONS_SUBTITLE,
