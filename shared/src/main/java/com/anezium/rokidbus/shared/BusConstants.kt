@@ -144,6 +144,16 @@ object BusPaths {
      */
     const val GLASSES_ASSISTANT_DISMISS = "/glasses/assistant/dismiss"
 
+    /**
+     * Plugin to phone hub, `assistant` capability: read or set whether the assist button hands
+     * over to the approved assistant plugin or stays with Rokid's own. The switch lives on the
+     * phone because the phone is what the ROM notifies on that button; see
+     * [AssistantTakeoverContract]. The reply is an owner-scoped direct reply, so it needs no
+     * receive prefix.
+     */
+    const val ASSISTANT_TAKEOVER_REQUEST = "/assistant/takeover/request"
+    const val ASSISTANT_TAKEOVER_REPLY = "/assistant/takeover/reply"
+
     /** Phone hub to glasses hub only; see [PhoneBatteryContract] for why it is not a plugin path. */
     const val PHONE_BATTERY = "/phone/battery"
     const val PLUGIN_OPEN = "/system/plugin/open"

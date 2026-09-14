@@ -78,6 +78,7 @@ object PathRules {
         BusPaths.TTS_STARTED, BusPaths.TTS_DONE,
         BusPaths.CAMERA_SNAPSHOT_RESULT, BusPaths.CAMERA_SNAPSHOT_ERROR,
         BusPaths.WIRELESS_ADB_REPLY,
+        BusPaths.ASSISTANT_TAKEOVER_REPLY,
         BusPaths.INK_EVENT,
         -> true
         else -> false
@@ -89,6 +90,7 @@ object PathRules {
         BusPaths.TTS_STARTED, BusPaths.TTS_DONE,
         BusPaths.CAMERA_SNAPSHOT_RESULT, BusPaths.CAMERA_SNAPSHOT_ERROR,
         BusPaths.WIRELESS_ADB_REPLY,
+        BusPaths.ASSISTANT_TAKEOVER_REPLY,
         BusPaths.INK_EVENT,
         -> true
         else -> matchesPrefix(path, "/system/plugin")
@@ -115,6 +117,7 @@ object PathRules {
         BusPaths.MEDIA_SYNC_NOW,
         -> PluginCapability.MEDIA_SYNC
         BusPaths.WIRELESS_ADB_REQUEST -> PluginCapability.WIRELESS_DEBUGGING
+        BusPaths.ASSISTANT_TAKEOVER_REQUEST -> PluginCapability.ASSISTANT
         else -> null
     }
 

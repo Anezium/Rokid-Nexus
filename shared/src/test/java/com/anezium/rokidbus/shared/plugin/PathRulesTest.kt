@@ -164,6 +164,21 @@ class PathRulesTest {
     }
 
     @Test
+    fun `assistant takeover request needs the assistant grant and replies stay owner scoped`() {
+        assertEquals(
+            PluginCapability.ASSISTANT,
+            PathRules.requiredCapability(BusPaths.ASSISTANT_TAKEOVER_REQUEST),
+        )
+        assertTrue(PathRules.isDirectReply(BusPaths.ASSISTANT_TAKEOVER_REPLY))
+        assertTrue(PathRules.isOwnerScoped(BusPaths.ASSISTANT_TAKEOVER_REPLY))
+        assertNull(PathRules.requiredCapability(BusPaths.ASSISTANT_TAKEOVER_REPLY))
+        // Nothing else under /assistant is a plugin route: it is neither reserved nor private.
+        assertNull(PathRules.requiredCapability("/assistant/other"))
+        assertFalse(PathRules.isReserved("/assistant/other"))
+        assertFalse(PathRules.isPluginPrivate("/assistant/other", "assistant"))
+    }
+
+    @Test
     fun `ink lifecycle requires its distinct grant and events stay owner scoped`() {
         assertEquals(PluginCapability.INK_SURFACE, PathRules.requiredCapability(BusPaths.INK_SHOW))
         assertEquals(PluginCapability.INK_SURFACE, PathRules.requiredCapability(BusPaths.INK_UPDATE))

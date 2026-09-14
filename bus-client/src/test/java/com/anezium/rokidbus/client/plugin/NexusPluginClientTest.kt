@@ -23,12 +23,14 @@ class NexusPluginClientTest {
         var featureBits = 0
         var sendAccepted = true
         val sends = mutableListOf<Pair<String, JSONObject>>()
+        val sendIds = mutableListOf<String>()
         override fun connect(listener: NexusPluginTransport.Listener) {
             this.listener = listener
             connected = true
         }
         override fun send(path: String, id: String, payload: JSONObject): Boolean {
             sends += path to JSONObject(payload.toString())
+            sendIds += id
             return sendAccepted
         }
         override fun sendBinary(path: String, id: String, payload: JSONObject, data: ByteArray) = true
@@ -46,7 +48,15 @@ class NexusPluginClientTest {
 
     private class RecordingCallbacks : NexusPluginCallbacks {
         val events = mutableListOf<String>()
+        var lastOpenType: String? = null
+        val takeovers = mutableListOf<String>()
         override fun onOpen() { events += "open" }
+        override fun onOpen(openType: String) {
+            lastOpenType = openType
+            onOpen()
+        }
+        override fun onAssistantTakeover(enabled: Boolean) { takeovers += "enabled:$enabled" }
+        override fun onAssistantTakeoverError(code: String) { takeovers += "error:$code" }
         override fun onClose() { events += "close" }
         override fun onInput(event: NexusInputEvent) { events += "input:${event.keyCode}" }
         override fun onLinkState(state: Int) { events += "link:$state" }
@@ -420,5 +430,93 @@ class NexusPluginClientTest {
         assertThrows(IllegalArgumentException::class.java) {
             NexusPin(richLines = listOf(NexusPinLine(" ", NexusPinEmphasis.BRIGHT)))
         }
+    }
+
+    @Test
+    fun `open carries the hub's reason and defaults to a plain open`() {
+        val (client, transport, callbacks) = fixture()
+        transport.listener.onRegistrationState(PluginRegistrationResult.APPROVED)
+        transport.listener.onMessage(BusPaths.PLUGIN_OPEN, "open-1", payload().put("type", "ai_assist"))
+        assertEquals("ai_assist", callbacks.lastOpenType)
+        transport.listener.onMessage(BusPaths.PLUGIN_OPEN, "open-2", payload())
+        assertEquals("open", callbacks.lastOpenType)
+        transport.listener.onMessage(BusPaths.PLUGIN_OPEN, "open-3", payload().put("type", ""))
+        assertEquals("open", callbacks.lastOpenType)
+        assertEquals(listOf("registration:0", "open", "open", "open"), callbacks.events)
+        client.close()
+    }
+
+    @Test
+    fun `assist button requests need the assistant grant and route their answer`() {
+        val (client, transport, callbacks) = fixture()
+        assertEquals(NexusSdkResult.NOT_REGISTERED, client.requestAssistantTakeover())
+        transport.listener.onMessage(
+            BusPaths.PLUGIN_REGISTRATION,
+            "reg-1",
+            payload().put("result", PluginRegistrationResult.APPROVED).put("capabilities", "surfaces"),
+        )
+        assertEquals(NexusSdkResult.CAPABILITY_NOT_GRANTED, client.setAssistantTakeover(false))
+        assertTrue(transport.sends.isEmpty())
+
+        transport.listener.onMessage(
+            BusPaths.PLUGIN_REGISTRATION,
+            "reg-2",
+            payload().put("result", PluginRegistrationResult.APPROVED).put("capabilities", "surfaces,assistant"),
+        )
+        assertEquals(NexusSdkResult.SENT, client.requestAssistantTakeover())
+        assertEquals(NexusSdkResult.SENT, client.setAssistantTakeover(false))
+        assertEquals(
+            listOf(BusPaths.ASSISTANT_TAKEOVER_REQUEST, BusPaths.ASSISTANT_TAKEOVER_REQUEST),
+            transport.sends.map { it.first },
+        )
+        assertEquals("status", transport.sends[0].second.getString("action"))
+        assertEquals("set", transport.sends[1].second.getString("action"))
+        assertEquals(false, transport.sends[1].second.getBoolean("enabled"))
+
+        transport.listener.onMessage(
+            BusPaths.ASSISTANT_TAKEOVER_REPLY,
+            "reply-1",
+            payload().put("version", 1).put("enabled", false),
+        )
+        // Another plugin's reply, and a reply from a hub speaking a version we do not know, are not ours.
+        transport.listener.onMessage(
+            BusPaths.ASSISTANT_TAKEOVER_REPLY,
+            "reply-2",
+            JSONObject().put("pluginId", "other").put("version", 1).put("enabled", true),
+        )
+        transport.listener.onMessage(
+            BusPaths.ASSISTANT_TAKEOVER_REPLY,
+            "reply-3",
+            payload().put("version", 2).put("enabled", true),
+        )
+        assertEquals(listOf("enabled:false"), callbacks.takeovers)
+        assertTrue(callbacks.events.none { it.startsWith("message:") })
+        client.close()
+    }
+
+    @Test
+    fun `a rejected assist button request reports its code once`() {
+        val (client, transport, callbacks) = fixture()
+        transport.listener.onMessage(
+            BusPaths.PLUGIN_REGISTRATION,
+            "reg-1",
+            payload().put("result", PluginRegistrationResult.APPROVED).put("capabilities", "assistant"),
+        )
+        assertEquals(NexusSdkResult.SENT, client.setAssistantTakeover(true))
+        val requestId = transport.sendIds.single()
+        transport.listener.onMessage(
+            BusPaths.ERROR,
+            "err-1",
+            payload().put("forId", requestId).put("code", "PLUGIN_NAMESPACE_DENIED"),
+        )
+        transport.listener.onMessage(
+            BusPaths.ERROR,
+            "err-2",
+            payload().put("forId", requestId).put("code", "PLUGIN_NAMESPACE_DENIED"),
+        )
+        assertEquals(listOf("error:PLUGIN_NAMESPACE_DENIED"), callbacks.takeovers)
+        // The second error had no watcher left, so it reached the raw hook instead.
+        assertEquals(1, callbacks.events.count { it == "message:${BusPaths.ERROR}" })
+        client.close()
     }
 }

@@ -6,6 +6,7 @@ import com.anezium.rokidbus.client.PluginRegistrationResult
 import com.anezium.rokidbus.shared.ActivitySurfaceContract
 import com.anezium.rokidbus.shared.ActivitySurfacePatchResult
 import com.anezium.rokidbus.shared.ActivitySurfaceValidationResult
+import com.anezium.rokidbus.shared.AssistantTakeoverContract
 import com.anezium.rokidbus.shared.BusCapabilityBits
 import com.anezium.rokidbus.shared.BusPaths
 import com.anezium.rokidbus.shared.EditableSurfaceContract
@@ -18,6 +19,7 @@ import com.anezium.rokidbus.shared.PinSurfaceValidationResult
 import com.anezium.rokidbus.shared.plugin.NexusInputEvent
 import com.anezium.rokidbus.shared.plugin.CapabilityParseResult
 import com.anezium.rokidbus.shared.plugin.PluginCapability
+import com.anezium.rokidbus.shared.plugin.PluginOpenTypes
 import org.json.JSONObject
 import java.util.ArrayDeque
 import java.util.UUID
@@ -610,7 +612,7 @@ class NexusPluginClient internal constructor(
             // reset and re-show, which also acknowledges the hub's open watchdog.
             BusPaths.PLUGIN_OPEN -> if (isApproved) {
                 opened = true
-                callbacks.onOpen()
+                callbacks.onOpen(payload.optString("type").ifBlank { PluginOpenTypes.OPEN })
             }
             BusPaths.PLUGIN_CLOSE -> if (opened) {
                 opened = false
@@ -646,7 +648,40 @@ class NexusPluginClient internal constructor(
                 }
                 onRegistrationState(result)
             }
+            BusPaths.ASSISTANT_TAKEOVER_REPLY -> if (isApproved) {
+                AssistantTakeoverContract.replyEnabled(payload)?.let(callbacks::onAssistantTakeover)
+            }
             else -> if (isApproved) callbacks.onMessage(path, id, payload)
+        }
+    }
+
+    /**
+     * Asks the phone hub which way the assist button goes right now; the answer arrives on
+     * [NexusPluginCallbacks.onAssistantTakeover], a rejection on
+     * [NexusPluginCallbacks.onAssistantTakeoverError]. Needs the `assistant` grant.
+     */
+    fun requestAssistantTakeover(): NexusSdkResult =
+        sendAssistantTakeover(AssistantTakeoverContract.statusRequest())
+
+    /**
+     * Hands the assist button to the approved assistant plugin (`true`) or back to Rokid's own
+     * (`false`). The hub confirms the new position on [NexusPluginCallbacks.onAssistantTakeover].
+     * This never touches the grant itself: a plugin can step back and step in again, but only
+     * the wearer, on the phone, decides whether it may replace the assistant at all.
+     */
+    fun setAssistantTakeover(enabled: Boolean): NexusSdkResult =
+        sendAssistantTakeover(AssistantTakeoverContract.setRequest(enabled))
+
+    private fun sendAssistantTakeover(payload: JSONObject): NexusSdkResult {
+        if (!isApproved) return NexusSdkResult.NOT_REGISTERED
+        if (!hasCapability(PluginCapability.ASSISTANT)) return NexusSdkResult.CAPABILITY_NOT_GRANTED
+        val id = UUID.randomUUID().toString()
+        watchForSurfaceError(id) { code -> callbacks.onAssistantTakeoverError(code) }
+        return if (send(BusPaths.ASSISTANT_TAKEOVER_REQUEST, id, payload)) {
+            NexusSdkResult.SENT
+        } else {
+            pendingSurfaceErrors.remove(id)
+            NexusSdkResult.NOT_REGISTERED
         }
     }
 
