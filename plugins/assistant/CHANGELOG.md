@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- **Ink answers keep the Thinking band off.** An answer drawn as a page is no
+  longer covered by "Thinking" after the page appears, and that band no longer
+  lingers after the reply.
+
 ## 1.4.5
 
 - **Picked from the launcher, Assistant listens at once.** No more "press the

@@ -285,6 +285,98 @@ class AssistantUiControllerTest {
         }
 
     @Test
+    fun `after an ink answer a later thinking transient renders nothing and starts no keepalive`() =
+        runTest {
+            val renderer = FakeRenderer(supportsNotice = true)
+            val controller = controller(renderer)
+            controller.onOpen()
+            controller.cancelLauncherHint()
+            controller.showTransient("Thinking…")
+            controller.onInkAnswerShown()
+            renderer.calls.clear()
+
+            controller.showTransient("Thinking…")
+            controller.showTranscript("ignored after ink")
+            controller.showAnswer("Spoken reply.", legacyCardLines = listOf("Spoken reply."))
+            advanceTimeBy(AssistantUiController.NOTICE_KEEPALIVE_INTERVAL_MS * 2)
+            runCurrent()
+
+            assertTrue(renderer.calls.isEmpty())
+            controller.onClose()
+        }
+
+    @Test
+    fun `errors after an ink answer still render as notices`() =
+        runTest {
+            val renderer = FakeRenderer(supportsNotice = true)
+            val controller = controller(renderer)
+            controller.onOpen()
+            controller.cancelLauncherHint()
+            controller.showTransient("Thinking…")
+            controller.onInkAnswerShown()
+            renderer.calls.clear()
+
+            controller.showError("Request failed.")
+
+            assertEquals(
+                listOf(RenderCall.ShowNotice("Assistant", "Request failed.")),
+                renderer.calls,
+            )
+            controller.onClose()
+        }
+
+    @Test
+    fun `beginGestureFlow clears ink ownership so a transient can render again`() =
+        runTest {
+            val renderer = FakeRenderer(supportsNotice = true)
+            val controller = controller(renderer)
+            controller.onOpen()
+            controller.cancelLauncherHint()
+            controller.showTransient("Thinking…")
+            controller.onInkAnswerShown()
+            controller.beginGestureFlow()
+            renderer.calls.clear()
+
+            controller.showTransient("Thinking…")
+
+            assertEquals(
+                listOf(RenderCall.ShowNotice("Assistant", "Thinking…")),
+                renderer.calls,
+            )
+            controller.onClose()
+        }
+
+    @Test
+    fun `opening or closing the session clears ink ownership`() =
+        runTest {
+            val renderer = FakeRenderer(supportsNotice = true)
+            val controller = controller(renderer)
+            controller.onOpen()
+            controller.cancelLauncherHint()
+            controller.showTransient("Thinking…")
+            controller.onInkAnswerShown()
+
+            controller.onOpen()
+            controller.cancelLauncherHint()
+            renderer.calls.clear()
+            controller.showTransient("Thinking…")
+            assertEquals(
+                listOf(RenderCall.ShowNotice("Assistant", "Thinking…")),
+                renderer.calls,
+            )
+
+            controller.onInkAnswerShown()
+            controller.onClose()
+            renderer.calls.clear()
+            controller.showTransient("Thinking…")
+            assertEquals(
+                listOf(RenderCall.ShowNotice("Assistant", "Thinking…")),
+                renderer.calls,
+            )
+            controller.onClose()
+        }
+
+    @Test
     fun `only the current request's ink page owns answer presentation`() {
         assertTrue(inkAnswerOwnsPresentation("request-1", "request-1"))
         assertTrue(!inkAnswerOwnsPresentation("request-1", "request-2"))
@@ -682,6 +774,7 @@ class AssistantUiControllerTest {
             controller.onInkAnswerShown()
             assertTrue(!controller.isEngagedNoticeEpisode)
 
+            controller.beginGestureFlow()
             controller.showTransient("Listeningâ€¦")
             assertTrue(controller.isEngagedNoticeEpisode)
             renderer.calls.clear()
