@@ -1,4 +1,4 @@
-﻿package com.anezium.rokidbus.phone.speech
+package com.anezium.rokidbus.phone.speech
 
 import android.Manifest
 import android.content.Context
@@ -31,6 +31,13 @@ class SpeechSettingsStore(context: Context) {
         set(value) {
             prefs.edit().putString(PREF_LANGUAGE, TranscriptionLanguage.fromId(value).id).apply()
         }
+
+    fun patience(): SpeechPatience =
+        SpeechPatience.fromWireValue(prefs.getString(PREF_PATIENCE, null))
+
+    fun setPatience(patience: SpeechPatience) {
+        prefs.edit().putString(PREF_PATIENCE, patience.wireValue).apply()
+    }
 
     fun selectedEngine(): SpeechEngine? {
         val savedId = selectedEngineId
@@ -77,5 +84,6 @@ class SpeechSettingsStore(context: Context) {
         internal const val PREFERENCES_FILE = "nexus_speech_settings"
         private const val PREF_ENGINE = "selectedEngineId"
         private const val PREF_LANGUAGE = "selectedLanguageId"
+        private const val PREF_PATIENCE = "speech_patience"
     }
 }

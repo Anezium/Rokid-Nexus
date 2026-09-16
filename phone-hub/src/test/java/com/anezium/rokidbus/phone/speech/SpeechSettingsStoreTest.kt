@@ -1,4 +1,4 @@
-﻿package com.anezium.rokidbus.phone.speech
+package com.anezium.rokidbus.phone.speech
 
 import android.Manifest
 import android.app.Application
@@ -95,5 +95,28 @@ class SpeechSettingsStoreTest {
 
         store.selectedEngineId = "removed-engine"
         assertEquals(SpeechReadiness.NO_ENGINE, store.readiness(secrets))
+    }
+
+    @Test
+    fun patienceDefaultsToNormal() {
+        val store = SpeechSettingsStore(context)
+        assertSame(SpeechPatience.NORMAL, store.patience())
+    }
+
+    @Test
+    fun patiencePersistsAndReturns() {
+        val store = SpeechSettingsStore(context)
+        store.setPatience(SpeechPatience.PATIENT)
+        assertSame(SpeechPatience.PATIENT, store.patience())
+    }
+
+    @Test
+    fun patienceReturnsNormalForUnknownValue() {
+        context.getSharedPreferences(SpeechSettingsStore.PREFERENCES_FILE, Context.MODE_PRIVATE)
+            .edit()
+            .putString("speech_patience", "invalid_value")
+            .commit()
+        val store = SpeechSettingsStore(context)
+        assertSame(SpeechPatience.NORMAL, store.patience())
     }
 }

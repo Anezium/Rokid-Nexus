@@ -171,6 +171,7 @@ class SpeechSessionManagerTest {
                     engine: SpeechEngine,
                     language: TranscriptionLanguage,
                     phoneLanguageTag: String,
+                    patience: SpeechPatience,
                     listener: SttSessionListener,
                 ): SttSession = recordingSession.apply {
                     languages?.add(language)

@@ -1,4 +1,4 @@
-﻿package com.anezium.rokidbus.phone.speech
+package com.anezium.rokidbus.phone.speech
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
@@ -16,12 +16,14 @@ class RoutingSttSessionFactoryTest {
             SpeechEngine.ANDROID_RECOGNIZER,
             TranscriptionLanguage.AUTO,
             "fr-FR",
+            SpeechPatience.NORMAL,
             listener,
         )
         val cloudSession = routing.create(
             SpeechEngine.OPENAI_GPT_4O_TRANSCRIBE,
             TranscriptionLanguage.FRENCH,
             "fr-FR",
+            SpeechPatience.NORMAL,
             listener,
         )
 
@@ -54,6 +56,7 @@ class RoutingSttSessionFactoryTest {
             engine: SpeechEngine,
             language: TranscriptionLanguage,
             phoneLanguageTag: String,
+            patience: SpeechPatience,
             listener: SttSessionListener,
         ): SttSession {
             engines += engine

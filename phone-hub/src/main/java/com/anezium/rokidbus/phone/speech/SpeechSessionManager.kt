@@ -146,11 +146,13 @@ class SpeechSessionManager internal constructor(
         }
         engine = settings.selectedEngine() ?: return SpeechStartResult.NOT_READY
         sessionLanguage = language ?: settings.selectedLanguageForEngine(engine)
+        val patience = settings.patience()
 
         val run = ActiveUtterance(
             tag = "speech-${UUID.randomUUID()}",
             engine = engine,
             language = sessionLanguage,
+            patience = patience,
             listener = listener,
         )
         run.vad.reset(elapsedRealtime())
@@ -159,6 +161,7 @@ class SpeechSessionManager internal constructor(
                 engine = engine,
                 language = sessionLanguage,
                 phoneLanguageTag = Locale.getDefault().toLanguageTag(),
+                patience = patience,
                 listener = EngineListener(run),
             )
         }.getOrNull() ?: return SpeechStartResult.START_FAILED
@@ -515,9 +518,10 @@ class SpeechSessionManager internal constructor(
         val tag: String,
         val engine: SpeechEngine,
         val language: TranscriptionLanguage,
+        val patience: SpeechPatience,
         val listener: SpeechUtteranceListener,
     ) {
-        val vad = VoiceActivityDetector()
+        val vad = VoiceActivityDetector(patience.voiceActivityConfig())
         val pendingAudio = ByteArrayOutputStream()
         val preSpeechAudio = ByteArrayOutputStream()
         val cancelRequested = AtomicBoolean(false)
