@@ -40,6 +40,7 @@ export interface TerminalInputOutcome {
 
 export type EnvReader = (pid: number) => Promise<string | undefined>;
 export type Runner = (command: string, args: string[]) => Promise<void>;
+export type QueryRunner = (command: string, args: string[]) => Promise<string>;
 
 /** `ps eww` is readable for this user's own processes; other users' are not. */
 export const readProcessEnv: EnvReader = (pid) =>
@@ -54,6 +55,14 @@ const runProcess: Runner = (command, args) =>
     execFile(command, args, { timeout: 5000 }, (error) => {
       if (error) reject(error);
       else resolve();
+    });
+  });
+
+const runQuery: QueryRunner = (command, args) =>
+  new Promise((resolve, reject) => {
+    execFile(command, args, { timeout: 5000 }, (error, stdout) => {
+      if (error) reject(error);
+      else resolve(stdout);
     });
   });
 
@@ -201,6 +210,7 @@ export function createTerminalInputHandler(options: {
   store: SessionStore;
   targets: TerminalTargets;
   run?: Runner;
+  query?: QueryRunner;
 }): (sessionId: string, text: string) => Promise<TerminalInputOutcome> {
   return async (sessionId, text) => {
     await options.targets.refresh();
@@ -210,6 +220,7 @@ export function createTerminalInputHandler(options: {
         store: options.store,
         targetFor: (session) => options.targets.get(session.id),
         run: options.run,
+        query: options.query,
       },
       sessionId,
       text,
@@ -222,6 +233,33 @@ export interface TerminalInputOptions {
   store: SessionStore;
   targetFor: (session: Session) => TerminalTarget | undefined;
   run?: Runner;
+  query?: QueryRunner;
+}
+
+/**
+ * True while the pane is in copy mode — scrolled back with the mouse or a
+ * keybinding, and no longer forwarding keys to the program running inside it.
+ * `send-keys` in this state does not fail; it succeeds at moving the copy-mode
+ * cursor around instead of ever reaching Claude Code, so a reply "sent" this
+ * way is silently lost. `#{pane_in_mode}` is tmux's own answer to whether a
+ * pane is in this or any other mode (view mode after a search behaves the same
+ * way); screen has no comparable query, so this check is tmux-only.
+ */
+async function isTmuxPaneInCopyMode(
+  target: Extract<TerminalTarget, { kind: "tmux" }>,
+  query: QueryRunner,
+): Promise<boolean> {
+  try {
+    const out = await query("tmux", [
+      "-S", target.socketPath,
+      "display-message", "-p", "-t", target.pane, "#{pane_in_mode}",
+    ]);
+    return out.trim() === "1";
+  } catch {
+    // Can't tell — proceed as before this check existed rather than refuse
+    // a session solely because the probe itself failed.
+    return false;
+  }
 }
 
 /**
@@ -279,6 +317,12 @@ export async function sendTerminalInput(
           ["tmux", ["-S", target.socketPath, "send-keys", "-t", target.pane, "Enter"]],
         ];
   try {
+    // A pane left scrolled back swallows send-keys into copy-mode navigation
+    // instead of the program running inside it — leave that mode first, or
+    // the reply below succeeds at nothing.
+    if (target.kind === "tmux" && (await isTmuxPaneInCopyMode(target, options.query ?? runQuery))) {
+      await run("tmux", ["-S", target.socketPath, "send-keys", "-X", "-t", target.pane, "cancel"]);
+    }
     for (const [command, args] of sends) {
       await run(command, args);
     }
