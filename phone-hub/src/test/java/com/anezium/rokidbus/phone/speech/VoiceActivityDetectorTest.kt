@@ -81,25 +81,25 @@ class VoiceActivityDetectorTest {
     fun patientConfigTolerates15sOfSilenceAnd4sOfPause() {
         val detector = VoiceActivityDetector(SpeechPatience.PATIENT.voiceActivityConfig())
         detector.reset(START_MS)
-        
+
         // Feed quiet bytes
         detector.acceptPcm16Le(pcm16Le(10, 12), 0, 4, START_MS + 10L)
-        
+
         // At 14.9s it shouldn't close for no-speech yet
         assertEquals(null, detector.closeReason(START_MS + 14_900L))
-        
+
         // At 15s it closes for no-vad-speech-timeout
         assertReason("no-vad-speech-timeout", detector.closeReason(START_MS + 15_000L))
 
         // Reset and test pause
         detector.reset(START_MS)
-        
+
         // Feed loud bytes at 5s to trigger speech detection
         detector.acceptPcm16Le(pcm16Le(1000, 1200), 0, 4, START_MS + 5_000L)
-        
+
         // At 3.9s after speech (8.9s total), it shouldn't close
         assertEquals(null, detector.closeReason(START_MS + 8_900L))
-        
+
         // At 4.0s after speech (9.0s total), it closes
         assertReason("silence-after-speech", detector.closeReason(START_MS + 9_000L))
     }

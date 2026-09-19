@@ -26,6 +26,7 @@ import com.anezium.rokidbus.phone.speech.HubSecretStore
 import com.anezium.rokidbus.phone.speech.SpeechCredentialKind
 import com.anezium.rokidbus.phone.speech.SpeechCredits
 import com.anezium.rokidbus.phone.speech.SpeechEngine
+import com.anezium.rokidbus.phone.speech.SpeechPatience
 import com.anezium.rokidbus.phone.speech.SpeechProvider
 import com.anezium.rokidbus.phone.speech.SpeechReadiness
 import com.anezium.rokidbus.phone.speech.SpeechSessionState
@@ -207,10 +208,10 @@ class SpeechSettingsActivity : Activity() {
 
     private fun renderPatienceSection() {
         val patience = settings.patience()
-        patienceHeaderMeta.text = patience.name.uppercase()
+        patienceHeaderMeta.text = patience.label.uppercase()
         patienceCardHost.removeAllViews()
         patienceCardHost.addView(patienceCard(), NexusUi.block())
-        
+
         patienceNoteHost.removeAllViews()
         patienceNoteHost.addView(BusTheme.gap(this, 8))
         patienceNoteHost.addView(
@@ -221,14 +222,14 @@ class SpeechSettingsActivity : Activity() {
 
     private fun patienceCard(): LinearLayout =
         NexusUi.card(this).apply {
-            val options = com.anezium.rokidbus.phone.speech.SpeechPatience.entries.toTypedArray()
+            val options = SpeechPatience.entries
             options.forEachIndexed { index, option ->
                 if (index > 0) addView(NexusUi.divider(this@SpeechSettingsActivity))
                 addView(patienceRow(option), NexusUi.block())
             }
         }
 
-    private fun patienceRow(option: com.anezium.rokidbus.phone.speech.SpeechPatience): LinearLayout {
+    private fun patienceRow(option: SpeechPatience): LinearLayout {
         val selected = settings.patience() == option
         val dot = NexusUi.dot(this).apply {
             layoutParams = LinearLayout.LayoutParams(
@@ -256,12 +257,9 @@ class SpeechSettingsActivity : Activity() {
                     onSpeechConfigChanged()
                 }
             }
-            val titleText = option.name.lowercase().replaceFirstChar { it.uppercase() }
             addView(
-                NexusUi.rowTitle(
-                    this@SpeechSettingsActivity,
-                    titleText,
-                ).apply { if (selected) setTextColor(NexusUi.INK) },
+                NexusUi.rowTitle(this@SpeechSettingsActivity, option.label)
+                    .apply { if (selected) setTextColor(NexusUi.INK) },
                 LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
             )
             addView(dot)

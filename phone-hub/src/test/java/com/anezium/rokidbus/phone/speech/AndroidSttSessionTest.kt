@@ -99,7 +99,7 @@ class AndroidSttSessionTest {
             assertTrue("$key must be an Int extra", intent.extras?.get(key) is Int)
             assertTrue("$key must survive getInt", intent.getIntExtra(key, -1) > 0)
         }
-        
+
         // Assert that the defaults are correctly mapped from SpeechPatience.NORMAL (8s wait -> 10s timeout)
         assertEquals(10_000, intent.getIntExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, -1))
         assertEquals(10_000, intent.getIntExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, -1))
