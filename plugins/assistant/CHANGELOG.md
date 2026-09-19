@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.4.6
 
 - **Ink answers keep the Thinking band off.** An answer drawn as a page is no
   longer covered by "Thinking" after the page appears, and that band no longer

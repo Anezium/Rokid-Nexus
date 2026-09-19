@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.4.9
 
 - **Speech patience is now your choice.** Settings > Speech gains a Patience row
   that controls how long the glasses wait for you to start speaking, and how long
