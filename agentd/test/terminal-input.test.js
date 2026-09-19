@@ -165,6 +165,7 @@ test("a send the multiplexer refuses is reported, not swallowed", async () => {
       enabled: true,
       store,
       targetFor: () => ({ kind: "tmux", socketPath: "/tmp/tmux-501/default", pane: "%12" }),
+      query: async () => "0",
       run: async () => {
         throw new Error("no such session");
       },
@@ -200,6 +201,95 @@ test("the handler awaits discovery before it ever reads the cache", async () => 
     const outcome = await handler("idle", "on my way");
     assert.deepEqual(outcome, { ok: true });
     assert.equal(runs.length, 2, "the first call already found a target, cold cache and all");
+  } finally {
+    store.dispose();
+  }
+});
+
+test("a tmux pane left in copy mode is cancelled out of it before the reply is typed", async () => {
+  const store = storeWith([{ session_id: "idle", cwd: "/work/idle", hook_event_name: "Stop" }]);
+  try {
+    const calls = [];
+    const outcome = await sendTerminalInput(
+      {
+        enabled: true,
+        store,
+        targetFor: () => ({ kind: "tmux", socketPath: "/tmp/tmux-501/default", pane: "%12" }),
+        query: async (command, args) => {
+          calls.push({ kind: "query", command, args });
+          return "1"; // scrolled back — send-keys would otherwise move a cursor, not type
+        },
+        run: async (command, args) => {
+          calls.push({ kind: "run", command, args });
+        },
+      },
+      "idle",
+      "on my way",
+    );
+    assert.deepEqual(outcome, { ok: true });
+    assert.deepEqual(calls, [
+      {
+        kind: "query",
+        command: "tmux",
+        args: ["-S", "/tmp/tmux-501/default", "display-message", "-p", "-t", "%12", "#{pane_in_mode}"],
+      },
+      {
+        kind: "run",
+        command: "tmux",
+        args: ["-S", "/tmp/tmux-501/default", "send-keys", "-X", "-t", "%12", "cancel"],
+      },
+      {
+        kind: "run",
+        command: "tmux",
+        args: ["-S", "/tmp/tmux-501/default", "send-keys", "-t", "%12", "-l", "on my way"],
+      },
+      { kind: "run", command: "tmux", args: ["-S", "/tmp/tmux-501/default", "send-keys", "-t", "%12", "Enter"] },
+    ]);
+  } finally {
+    store.dispose();
+  }
+});
+
+test("a tmux pane already forwarding keys is left alone — no cancel sent", async () => {
+  const store = storeWith([{ session_id: "idle", cwd: "/work/idle", hook_event_name: "Stop" }]);
+  try {
+    const runs = [];
+    await sendTerminalInput(
+      {
+        enabled: true,
+        store,
+        targetFor: () => ({ kind: "tmux", socketPath: "/tmp/tmux-501/default", pane: "%12" }),
+        query: async () => "0",
+        run: async (command, args) => runs.push({ command, args }),
+      },
+      "idle",
+      "hello",
+    );
+    assert.equal(runs.length, 2, "just the text and the Enter — no cancel in between");
+  } finally {
+    store.dispose();
+  }
+});
+
+test("a copy-mode probe that fails is treated as not in copy mode, not as a refusal", async () => {
+  const store = storeWith([{ session_id: "idle", cwd: "/work/idle", hook_event_name: "Stop" }]);
+  try {
+    const runs = [];
+    const outcome = await sendTerminalInput(
+      {
+        enabled: true,
+        store,
+        targetFor: () => ({ kind: "tmux", socketPath: "/tmp/tmux-501/default", pane: "%12" }),
+        query: async () => {
+          throw new Error("tmux: no server running on that socket");
+        },
+        run: async (command, args) => runs.push({ command, args }),
+      },
+      "idle",
+      "hello",
+    );
+    assert.deepEqual(outcome, { ok: true });
+    assert.equal(runs.length, 2, "the probe's own failure doesn't block the send");
   } finally {
     store.dispose();
   }
