@@ -131,6 +131,8 @@ Facts you must build around:
   `detach()` helper while your plugin already holds the ACTIVE microphone lease:
   the hub calls `onNexusBackground`, keeps only that audio session alive, and
   final-closes you as soon as the lease ends. No lease means no background.
+  This requires SDK 0.18.0 and hubs 1.4.10 or newer. Give a live microphone pin
+  a short TTL renewed by incoming audio, so it expires after a process crash.
 - **One plugin owns the HUD at a time.** While another plugin is foreground, your
   `show`/`update` returns `SURFACE_BUSY` — handle it by giving up quietly, never by
   retry-looping. A `show` on an *idle* HUD adopts you as foreground with a real

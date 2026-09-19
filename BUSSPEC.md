@@ -125,7 +125,8 @@ callbacks are serialized on the Android application main thread.
 
 An ordinary `/surface/hide` of the plugin's last surface is still a self-close:
 the hub sends `/system/plugin/close`, hides owned surfaces, and unbinds the
-service. A plugin may instead add the boolean field `detach:true` to that final
+service. Since phone hub 1.4.10, a plugin may instead add the boolean field
+`detach:true` to that final
 hide. The phone grants this opt-in only while the same verified plugin holds the
 ACTIVE local audio lease. A granted detach removes the plugin from the active
 slot, cancels its active-slot watchdogs, leaves it bound in the dedicated
