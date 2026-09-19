@@ -587,10 +587,19 @@ class NexusSurfaceSession internal constructor(
         )
     }
 
-    fun hide(): NexusSdkResult = sendSurface(
+    /**
+     * Hides this surface. [detach] requests lease-bounded background audio when this is the
+     * plugin's last surface; the hub ignores it unless this plugin holds the active audio lease.
+     */
+    fun hide(detach: Boolean = false): NexusSdkResult = sendSurface(
         BusPaths.SURFACE_HIDE,
-        JSONObject().put("surfaceId", localSurfaceId),
+        JSONObject()
+            .put("surfaceId", localSurfaceId)
+            .apply { if (detach) put("detach", true) },
     )
+
+    /** Hides the last surface while asking the hub to keep an active audio lease alive. */
+    fun detach(): NexusSdkResult = hide(detach = true)
 
     private fun sendImage(path: String, image: NexusImage, bytes: ByteArray): NexusSdkResult {
         if (!client.isApproved) return NexusSdkResult.NOT_REGISTERED

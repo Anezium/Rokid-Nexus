@@ -28,6 +28,7 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
     private var client: NexusPluginClient? = null
     private var descriptor: PluginDescriptor? = null
     private var sessionOpen = false
+    private var audioSessionActive = false
 
     protected val nexusClient: NexusPluginClient?
         get() = client
@@ -44,7 +45,28 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
         client?.inkSurfaceSession(localSurfaceId)
 
     protected fun nexusAudioSession(callbacks: NexusAudioCallbacks): NexusAudioSession? =
-        client?.audioSession(callbacks)
+        client?.audioSession(
+            object : NexusAudioCallbacks {
+                override fun onAudioStarted(format: NexusAudioFormat) {
+                    audioSessionActive = true
+                    promoteNexusSessionForeground()
+                    callbacks.onAudioStarted(format)
+                }
+
+                override fun onAudioFrame(pcm: ByteArray, seq: Long, elapsedRealtimeMs: Long) {
+                    callbacks.onAudioFrame(pcm, seq, elapsedRealtimeMs)
+                }
+
+                override fun onAudioStopped(reason: NexusAudioStopReason) {
+                    audioSessionActive = false
+                    try {
+                        callbacks.onAudioStopped(reason)
+                    } finally {
+                        if (!sessionOpen) stopNexusSessionForeground()
+                    }
+                }
+            },
+        )
 
     protected fun nexusSpeechSession(callbacks: NexusSpeechCallbacks): NexusSpeechSession? =
         client?.speechSession(callbacks)
@@ -89,6 +111,7 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
         client?.close()
         client = null
         sessionOpen = false
+        audioSessionActive = false
         stopNexusSessionForeground()
         super.onDestroy()
     }
@@ -111,6 +134,18 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
         } finally {
             sessionOpen = false
             stopNexusSessionForeground()
+        }
+    }
+
+    final override fun onBackground() {
+        client?.releaseSpeechSession()
+        client?.releaseTtsSession()
+        client?.releaseSnapshotSession()
+        sessionOpen = false
+        try {
+            onNexusBackground()
+        } finally {
+            if (!audioSessionActive) stopNexusSessionForeground()
         }
     }
 
@@ -162,6 +197,7 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
      * default forwards to [onNexusOpen]; override this one instead to tell them apart.
      */
     protected open fun onNexusOpen(openType: String) = onNexusOpen()
+    protected open fun onNexusBackground() = Unit
     protected abstract fun onNexusClose()
     protected abstract fun onNexusInput(event: NexusInputEvent)
     protected open fun onNexusLinkState(state: Int) = Unit
@@ -225,7 +261,7 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
         additionalTypes: Int = 0,
         onFailure: ((Throwable) -> Unit)? = null,
     ): Boolean {
-        if (!sessionOpen) return false
+        if (!sessionOpen && !audioSessionActive) return false
         createSessionNotificationChannel()
         return runCatching {
             val notification = buildSessionNotification()

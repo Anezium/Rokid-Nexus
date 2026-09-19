@@ -12,6 +12,7 @@ interface NexusPluginCallbacks {
      * to [onOpen], so a plugin that does not care which way it was opened keeps working.
      */
     fun onOpen(openType: String) = onOpen()
+    fun onBackground() = Unit
     fun onClose()
     fun onInput(event: NexusInputEvent)
     fun onLinkState(state: Int)

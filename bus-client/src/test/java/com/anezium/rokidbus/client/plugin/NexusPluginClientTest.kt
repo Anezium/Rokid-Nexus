@@ -7,7 +7,9 @@ import com.anezium.rokidbus.shared.LinkStateBits
 import com.anezium.rokidbus.shared.PinSurfaceContract
 import com.anezium.rokidbus.shared.PinSurfaceSize
 import com.anezium.rokidbus.shared.plugin.NexusInputEvent
+import com.anezium.rokidbus.shared.plugin.PluginCloseTypes
 import com.anezium.rokidbus.shared.plugin.PluginCapability
+import com.anezium.rokidbus.shared.plugin.PluginOpenTypes
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -55,6 +57,7 @@ class NexusPluginClientTest {
             lastOpenType = openType
             onOpen()
         }
+        override fun onBackground() { events += "background" }
         override fun onAssistantTakeover(enabled: Boolean) { takeovers += "enabled:$enabled" }
         override fun onAssistantTakeoverError(code: String) { takeovers += "error:$code" }
         override fun onClose() { events += "close" }
@@ -175,6 +178,84 @@ class NexusPluginClientTest {
         transport.listener.onMessage(BusPaths.PLUGIN_OPEN, "open-2", payload())
         transport.listener.onMessage(BusPaths.PLUGIN_INPUT, "input-1", payload().put("keyCode", 22).put("action", 0))
         assertEquals(listOf("registration:0", "open", "open", "input:22"), callbacks.events)
+        client.close()
+    }
+
+    @Test
+    fun `background close keeps audio and resume restores the open gate before final close`() {
+        val (client, transport, callbacks) = fixture()
+        transport.listener.onMessage(
+            BusPaths.PLUGIN_REGISTRATION,
+            "reg-background",
+            payload()
+                .put("result", PluginRegistrationResult.APPROVED)
+                .put("capabilities", "surfaces,microphone"),
+        )
+        transport.listener.onMessage(BusPaths.PLUGIN_OPEN, "open-background", payload())
+        val stopped = mutableListOf<NexusAudioStopReason>()
+        val audio = client.audioSession(
+            object : NexusAudioCallbacks {
+                override fun onAudioStarted(format: NexusAudioFormat) = Unit
+                override fun onAudioFrame(pcm: ByteArray, seq: Long, elapsedRealtimeMs: Long) = Unit
+                override fun onAudioStopped(reason: NexusAudioStopReason) { stopped += reason }
+            },
+        )
+        assertEquals(NexusSdkResult.SENT, audio.start())
+        transport.listener.onMessage(
+            NEXUS_AUDIO_LEASE_ACQUIRE_REPLY_PATH,
+            "audio-background",
+            payload()
+                .put("granted", true)
+                .put("leaseId", "lease-background")
+                .put("sampleRate", 16_000)
+                .put("channels", 1)
+                .put("encoding", "pcm16le"),
+        )
+
+        transport.listener.onMessage(
+            BusPaths.PLUGIN_CLOSE,
+            "close-background",
+            payload().put("type", PluginCloseTypes.BACKGROUND),
+        )
+        transport.listener.onMessage(
+            BusPaths.PLUGIN_INPUT,
+            "input-background",
+            payload().put("keyCode", 22).put("action", 0),
+        )
+
+        assertTrue(audio.isActive)
+        assertTrue(stopped.isEmpty())
+        assertFalse(transport.sends.any { it.first == NEXUS_AUDIO_LEASE_RELEASE_PATH })
+        assertEquals(listOf("registration:0", "open", "background"), callbacks.events)
+
+        transport.listener.onMessage(
+            BusPaths.PLUGIN_OPEN,
+            "open-resume",
+            payload().put("type", PluginOpenTypes.RESUME),
+        )
+        transport.listener.onMessage(
+            BusPaths.PLUGIN_INPUT,
+            "input-resume",
+            payload().put("keyCode", 23).put("action", 0),
+        )
+        assertEquals(PluginOpenTypes.RESUME, callbacks.lastOpenType)
+        assertEquals("input:23", callbacks.events.last())
+
+        transport.listener.onMessage(
+            BusPaths.PLUGIN_CLOSE,
+            "close-background-again",
+            payload().put("type", PluginCloseTypes.BACKGROUND),
+        )
+        transport.listener.onMessage(
+            BusPaths.PLUGIN_CLOSE,
+            "close-final",
+            payload().put("type", PluginCloseTypes.CLOSED),
+        )
+
+        assertFalse(audio.isActive)
+        assertEquals(listOf(NexusAudioStopReason.RELEASED), stopped)
+        assertEquals(NEXUS_AUDIO_LEASE_RELEASE_PATH, transport.sends.last().first)
+        assertEquals("close", callbacks.events.last())
         client.close()
     }
 

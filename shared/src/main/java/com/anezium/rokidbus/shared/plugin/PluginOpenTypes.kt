@@ -8,6 +8,9 @@ object PluginOpenTypes {
     /** A deliberate open: the launcher on the glasses, or *Open* on the phone. */
     const val OPEN = "open"
 
+    /** A deliberate open of a plugin that was kept alive by its microphone lease. */
+    const val RESUME = "resume"
+
     /**
      * The assist button handed over to this plugin. A follow-up on `/system/plugin/ai-assist`
      * carries the gesture id and whether the button is still held.
