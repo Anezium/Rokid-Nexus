@@ -5,8 +5,9 @@
 - **Speech patience is now your choice.** Settings > Speech gains a Patience row
   that controls how long the glasses wait for you to start speaking, and how long
   a pause can last before your sentence is considered finished. The built-in
-  Android recognizer also respects this setting, so it no longer gives up after
-  three seconds of silence.
+  Android recognizer no longer gives up after three seconds of silence either:
+  it is only started once you begin speaking, so your patience is the only
+  clock that counts.
 
 ## 1.4.8
 
