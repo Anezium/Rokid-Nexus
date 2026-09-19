@@ -65,6 +65,7 @@ class ExternalPluginController(
         pending?.takeIf { it.grantKey() != principal.grantKey() }?.let { previous ->
             cancelWatchdogs(previous)
             runtime.unbind(previous)
+            pending = null
         }
         cancelWatchdogs(principal)
         openGeneration += 1

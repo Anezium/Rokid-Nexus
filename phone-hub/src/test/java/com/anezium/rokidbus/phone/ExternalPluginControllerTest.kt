@@ -375,6 +375,27 @@ class ExternalPluginControllerTest {
     }
 
     @Test
+    fun `resuming background cancels a different pending open`() {
+        val runtime = FakeRuntime().apply { registered = true }
+        val controller = ExternalPluginController(runtime, FakeScheduler())
+        val listening = principal("listening")
+        val pending = principal("pending")
+        controller.open(listening)
+        controller.onPluginSelfHid("listening", detach = true, hasActiveAudioLease = true)
+
+        runtime.registered = false
+        assertTrue(controller.open(pending))
+        runtime.registered = true
+        assertTrue(controller.open(listening))
+
+        assertEquals("listening", controller.activeId())
+        assertEquals(null, controller.backgroundId())
+        controller.onRegistered(pending)
+        assertEquals("listening", controller.activeId())
+        assertTrue("pending" in runtime.unbound)
+    }
+
+    @Test
     fun `link down and user stop finalize a background plugin with a full close`() {
         listOf("LINK_DOWN", "USER_STOPPED").forEach { reason ->
             val runtime = FakeRuntime().apply { registered = true }
