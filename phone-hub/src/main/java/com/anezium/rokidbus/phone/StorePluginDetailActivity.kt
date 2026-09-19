@@ -305,6 +305,13 @@ class StorePluginDetailActivity : Activity() {
 
     private fun openInstalled(entry: StoreEntry) {
         val local = entry.localEntry ?: return
+        val pluginId = local.id
+        if (pluginId != null &&
+            pluginId == NexusPhoneState.backgroundAudioPluginId &&
+            BusHubService.openPlugin(pluginId)
+        ) {
+            return
+        }
         if (local.principal != null && local.state != PluginCatalogState.ENABLED) {
             startActivity(Intent(this, PluginPermissionsActivity::class.java))
             return

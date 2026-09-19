@@ -205,7 +205,7 @@ class PhonePluginRegistry(
     }
 
     fun close() {
-        externalController?.closeActive("hub_destroyed")
+        externalController?.closeAll("hub_destroyed")
         activePluginId?.let { pluginId ->
             pluginsById[pluginId]?.let { plugin ->
                 enqueue("plugin onClose id=${plugin.id}") { plugin.onClose() }
@@ -216,6 +216,8 @@ class PhonePluginRegistry(
         // Shutdown after the final onClose is enqueued; executor shutdown drains submitted work in order.
         pluginExecutor.shutdown()
     }
+
+    fun openFromPhone(pluginId: String): Boolean = open(pluginId)
 
     private fun register(plugin: NexusPlugin) {
         require(plugin.id.isNotBlank()) { "Plugin id must not be blank" }

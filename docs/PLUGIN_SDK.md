@@ -19,7 +19,7 @@ resolved transitively.
 repositories { maven("https://jitpack.io") }
 
 dependencies {
-    implementation("com.github.Anezium.Rokid-Nexus:bus-client:sdk-v0.17.0")
+    implementation("com.github.Anezium.Rokid-Nexus:bus-client:sdk-v0.18.0")
 }
 ```
 
@@ -111,8 +111,11 @@ link-state, and registration callbacks are serialized on the application main
 thread. Override `onNexusOpen(openType)` instead of `onNexusOpen()` when it
 matters *why* the plugin was opened: `PluginOpenTypes.OPEN` is a deliberate
 pick (the glasses launcher, or *Open* on the phone), `PluginOpenTypes.AI_ASSIST`
-is the assist button handing over; treat anything else like `OPEN`. The default
-forwards to the plain `onNexusOpen()`. Duplicate lifecycle IDs are ignored. The glasses path already deduplicates
+is the assist button handing over, and `PluginOpenTypes.RESUME` returns a plugin
+from lease-bounded background audio; treat anything else like `OPEN`. The
+default forwards to the plain `onNexusOpen()`. A granted background detach calls
+`onNexusBackground()` rather than `onNexusClose()`; the latter remains the final
+close callback. Duplicate lifecycle IDs are ignored. The glasses path already deduplicates
 paired directional aliases; plugins should act once on each delivered input.
 
 Approved, registered plugins automatically receive informational glasses signals;
@@ -1161,6 +1164,72 @@ denied acquire (`DENIED_BUSY` when another plugin holds the lease,
 `DENIED_NO_LINK`, `DENIED_START_FAILED`). The session also tears down (with
 `onAudioStopped`) if the plugin loses approval or the service is destroyed, so
 you do not need to release on `onNexusClose` yourself.
+
+#### Let the display sleep while listening
+
+Requires SDK **0.18.0** and Nexus hubs **1.4.10** or newer. Older hubs treat
+`detach` as an ordinary hide and may close the plugin; update both hubs before
+using this lifecycle. The plugin API version remains **3**.
+
+After `onAudioStarted`, a plugin that owns the active microphone lease may hide
+its last ordinary surface with `surface.detach()` (equivalent to
+`surface.hide(detach = true)`). This opt-in is per hide. The hub ignores it
+unless that exact plugin currently owns the ACTIVE lease; a pending acquire, a
+missing lease, or ordinary `hide()` keeps the existing full-close behavior.
+
+```kotlin
+private var lastMicPinAtMs = 0L
+
+private fun refreshMicPin() {
+    lastMicPinAtMs = android.os.SystemClock.elapsedRealtime()
+    nexusClient?.showPin(
+        NexusPin(title = "MIC ON", lines = listOf("Stop on phone"), ttlMs = 5_000L),
+    )
+}
+
+override fun onAudioStarted(format: NexusAudioFormat) {
+    refreshMicPin()
+    surface?.detach()
+}
+
+override fun onAudioFrame(pcm: ByteArray, seq: Long, elapsedRealtimeMs: Long) {
+    if (android.os.SystemClock.elapsedRealtime() - lastMicPinAtMs >= 2_000L) {
+        refreshMicPin()
+    }
+    // Process the PCM frame here.
+}
+
+override fun onNexusBackground() {
+    surface = null
+    // Keep the NexusAudioSession: the SDK deliberately retains only audio here.
+}
+
+override fun onNexusOpen(openType: String) {
+    if (openType == PluginOpenTypes.RESUME) showListeningControls() else showHome()
+}
+
+override fun onAudioStopped(reason: NexusAudioStopReason) {
+    audio = null
+    nexusClient?.hidePin()
+}
+```
+
+The background transition sets the client to closed-for-input, releases speech,
+TTS, and snapshot sessions, calls `onNexusBackground()`, and retains only the
+audio session. `NexusPluginService` keeps its foreground service while that
+audio session is active. Reopening delivers `onNexusOpen("resume")`; ending the
+lease while backgrounded causes a final `onNexusClose()` and service unbind.
+The phone hub also displays **Listening in the background** with a **Stop**
+action that revokes the lease.
+
+Use a pin as the glasses-side listening indicator because it survives the
+surface transition, but remember its display semantics: a pin **never wakes or
+keeps the display on** and has a TTL (30 minutes when omitted). The phone row is
+the persistent revocation control. For a live microphone indicator, use a short
+TTL and renew it only while audio arrives, as above. Pins otherwise survive a
+plugin disconnect, and a crashed process cannot execute its cleanup callbacks.
+Always hide the pin when audio stops normally. The sample plugin demonstrates the complete acquire → pin → detach →
+stream → resume/stop flow.
 
 Two hardware facts to design around:
 

@@ -55,10 +55,10 @@
                 android:value="3" />
             <meta-data
                 android:name="com.anezium.rokidbus.plugin.CAPABILITIES"
-                android:value="surfaces,stt,tts,ink_surface" />
+                android:value="surfaces,stt,tts,ink_surface,microphone" />
             <meta-data
                 android:name="com.anezium.rokidbus.plugin.RECEIVE_PREFIXES"
-                android:value="/plugin/hello,/system/plugin,/stt,/tts/started,/tts/done" />
+                android:value="/plugin/hello,/system/plugin,/stt,/tts/started,/tts/done,/audio" />
             <meta-data
                 android:name="com.anezium.rokidbus.plugin.SETTINGS_ACTIVITY"
                 android:value=".HelloActivity" />

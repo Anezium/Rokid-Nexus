@@ -116,11 +116,32 @@ Lifecycle payloads include `version`, `type`, `id`, and `pluginId`. On
 *Open* on the phone — `ai_assist` when the assist button handed over (a
 follow-up on `/system/plugin/ai-assist` carries the gesture id and whether the
 button is still held), `adopted` when a restarted hub found the plugin already
-on the glasses, and `camera_session_open` for a camera session. A receiver
-treats any value it does not know as `open`. Input also
+on the glasses, `resume` when an audio-backgrounded plugin returns to the active
+slot, and `camera_session_open` for a camera session. A receiver treats any
+value it does not know as `open`. Input also
 includes the plugin-local `localSurfaceId`, `keyCode`, and `action`. Version 1
 receivers ignore unknown fields and ignore duplicate event IDs. SDK lifecycle
 callbacks are serialized on the Android application main thread.
+
+An ordinary `/surface/hide` of the plugin's last surface is still a self-close:
+the hub sends `/system/plugin/close`, hides owned surfaces, and unbinds the
+service. Since phone hub 1.4.10, a plugin may instead add the boolean field
+`detach:true` to that final
+hide. The phone grants this opt-in only while the same verified plugin holds the
+ACTIVE local audio lease. A granted detach removes the plugin from the active
+slot, cancels its active-slot watchdogs, leaves it bound in the dedicated
+background slot, and sends `/system/plugin/close` with `type:"background"`.
+The launcher is then free for another plugin. A missing/false `detach`, or a
+detach without that active lease, follows the ordinary self-close path exactly.
+
+While backgrounded, opening the same plugin from the launcher or phone moves it
+back to the active slot without rebinding and sends `/system/plugin/open` with
+`type:"resume"`. When its audio lease ends for any reason — release, link-down
+revoke, user Stop, binder cleanup, or other hub teardown — the hub sends the
+final `/system/plugin/close` with `type:"closed"` and unbinds it. An absent or
+unknown close type always means a full close; old SDKs therefore fail closed.
+There is no background slot without an active audio lease, and this lifecycle
+adds no descriptor field, capability, grant, or approval step.
 
 `/glasses/device-info` is a zero-capability, phone-hub-to-plugin version-1 JSON
 message carrying `type=glasses_device_info`, `id`, `pluginId`, `deviceName`,
@@ -146,7 +167,8 @@ Phone to glasses:
 
 - `/surface/show` shows or replaces a surface.
 - `/surface/update` updates an existing surface idempotently.
-- `/surface/hide` hides a surface.
+- `/surface/hide` hides a surface. On the plugin's last surface it may carry
+  `detach:true` for the lease-bounded background transition defined above.
 - `/launcher/list` sends the available phone-side plugins to the glasses launcher.
 
 Glasses to phone:
@@ -1933,8 +1955,9 @@ Paths (single leaseholder at a time):
   `id`, so a constant `id` collapses the whole stream to a single frame. For a
   local plugin holder the payload also carries `pluginId` (the client drops
   events whose `pluginId` does not match).
-- `/audio/lease/revoked` `{leaseId, reason:"LINK_DOWN"}` — hub → holder when
-  CXR-L drops mid-lease (hub stops the stream).
+- `/audio/lease/revoked` `{leaseId, reason:"LINK_DOWN"|"USER_STOPPED"}` — hub →
+  holder when CXR-L drops mid-lease or the owner presses **Stop** for a
+  background listener on the phone (the hub stops the stream).
 
 Audio request replies use the request path with `/reply` appended:
 `/audio/lease/acquire/reply` and `/audio/lease/release/reply`.
@@ -1949,6 +1972,13 @@ unworn, so a lease acquired while unworn streams near-silence — this is a
 hardware property, not a bus fault. Plugins consume this through the SDK's
 `nexusAudioSession(callbacks)`; the raw `/audio/*` paths above are the wire
 contract behind it.
+
+An ACTIVE local plugin holder may use the lifecycle `detach:true` transition;
+pending or remote/internal leases never qualify. The lease remains owned by the
+same plugin while backgrounded and continues to occupy the single arbitrator,
+so every other raw-audio or STT acquire is refused as busy. Lease termination
+atomically bounds that background lifetime and triggers the finalising close
+described in “External plugin lifecycle v1”.
 
 ## STT v1
 

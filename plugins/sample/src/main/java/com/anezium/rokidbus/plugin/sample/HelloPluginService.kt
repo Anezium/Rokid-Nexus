@@ -7,7 +7,12 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.view.KeyEvent
+import com.anezium.rokidbus.client.plugin.NexusAudioCallbacks
+import com.anezium.rokidbus.client.plugin.NexusAudioFormat
+import com.anezium.rokidbus.client.plugin.NexusAudioSession
+import com.anezium.rokidbus.client.plugin.NexusAudioStopReason
 import com.anezium.rokidbus.client.plugin.NexusCard
 import com.anezium.rokidbus.client.plugin.NexusImage
 import com.anezium.rokidbus.client.plugin.NexusInkCloseReason
@@ -35,6 +40,8 @@ import com.anezium.rokidbus.client.plugin.NexusTtsSession
 import com.anezium.rokidbus.shared.ImageSurfaceContract
 import com.anezium.rokidbus.shared.NoticeSurfaceContract
 import com.anezium.rokidbus.shared.plugin.NexusInputEvent
+import com.anezium.rokidbus.shared.plugin.PluginCapability
+import com.anezium.rokidbus.shared.plugin.PluginOpenTypes
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -65,12 +72,16 @@ class HelloPluginService : NexusPluginService() {
     private val state = HelloPluginState()
     private var surface: NexusSurfaceSession? = null
     private var inkSurface: NexusInkSurfaceSession? = null
+    private var audio: NexusAudioSession? = null
     private var speech: NexusSpeechSession? = null
     private var tts: NexusTtsSession? = null
     private var stopSpeechWhenStarted = false
     private var showingImage = false
     private var pinStep = PIN_HIDDEN
     private var showingInk = false
+    private var showingBackgroundAudioControl = false
+    private var backgroundAudioFrames = 0L
+    private var backgroundAudioPinUpdatedAtMs = 0L
     private var inkRevision = 0
     private val speechCallbacks = object : NexusSpeechCallbacks {
         override fun onSpeechStarted(realtime: Boolean) {
@@ -112,8 +123,62 @@ class HelloPluginService : NexusPluginService() {
             log("TTS demo done reason=$reason")
         }
     }
+    private val audioCallbacks = object : NexusAudioCallbacks {
+        override fun onAudioStarted(format: NexusAudioFormat) {
+            backgroundAudioFrames = 0L
+            backgroundAudioPinUpdatedAtMs = SystemClock.elapsedRealtime()
+            val pinResult = nexusClient?.showPin(BACKGROUND_AUDIO_PIN)
+            if (pinResult != NexusSdkResult.SENT) log("Background audio pin refused: $pinResult")
+            log("Background audio started ${format.sampleRate}Hz ${format.channels}ch ${format.encoding}")
+            surface?.detach()
+        }
+
+        override fun onAudioFrame(pcm: ByteArray, seq: Long, elapsedRealtimeMs: Long) {
+            backgroundAudioFrames += 1
+            val now = SystemClock.elapsedRealtime()
+            if (now - backgroundAudioPinUpdatedAtMs >= 2_000L) {
+                backgroundAudioPinUpdatedAtMs = now
+                // Only live audio renews the pin, so a crashed or stalled session cannot leave it stuck.
+                nexusClient?.showPin(BACKGROUND_AUDIO_PIN)
+            }
+        }
+
+        override fun onAudioStopped(reason: NexusAudioStopReason) {
+            audio = null
+            nexusClient?.hidePin()
+            log("Background audio stopped reason=$reason frames=$backgroundAudioFrames")
+            Handler(Looper.getMainLooper()).post {
+                // A final PLUGIN_CLOSE releases audio immediately before onNexusClose. Posting
+                // avoids briefly re-showing the sample surface during that full-close boundary.
+                if (isNexusSessionOpen && audio == null) {
+                    showingBackgroundAudioControl = false
+                    state.resetToMenu()
+                    render(show = false)
+                }
+            }
+        }
+    }
 
     override fun onNexusOpen() {
+        openDemoSurface()
+    }
+
+    override fun onNexusOpen(openType: String) {
+        if (openType == PluginOpenTypes.RESUME && audio?.isActive == true) {
+            state.resetToMenu()
+            inkSurface = null
+            showingInk = false
+            surface = nexusSurfaceSession(SURFACE_ID)
+            showBackgroundAudioCard(
+                status = "Microphone active · $backgroundAudioFrames frames",
+                footer = "tap to stop · back to detach",
+            )
+            return
+        }
+        openDemoSurface()
+    }
+
+    private fun openDemoSurface() {
         state.resetToMenu()
         if (speech != null) {
             stopSpeechWhenStarted = true
@@ -130,6 +195,14 @@ class HelloPluginService : NexusPluginService() {
         if (!showingImage) render(show = true)
     }
 
+    override fun onNexusBackground() {
+        surface = null
+        inkSurface = null
+        showingImage = false
+        showingInk = false
+        showingBackgroundAudioControl = false
+    }
+
     override fun onNexusClose() {
         state.resetToMenu()
         stopSpeechWhenStarted = true
@@ -137,6 +210,9 @@ class HelloPluginService : NexusPluginService() {
         speech = null
         tts?.close()
         tts = null
+        audio?.stop()
+        audio = null
+        nexusClient?.hidePin()
         stopSpeechWhenStarted = false
         inkSurface?.hide()
         inkSurface = null
@@ -144,12 +220,23 @@ class HelloPluginService : NexusPluginService() {
         surface = null
         showingImage = false
         showingInk = false
+        showingBackgroundAudioControl = false
+        backgroundAudioFrames = 0L
         pinStep = PIN_HIDDEN
     }
 
     override fun onNexusInput(event: NexusInputEvent) {
         if (event.action != KeyEvent.ACTION_DOWN) return
         if (showingInk) return
+        if (showingBackgroundAudioControl) {
+            when (event.keyCode) {
+                KeyEvent.KEYCODE_DPAD_CENTER,
+                KeyEvent.KEYCODE_ENTER,
+                -> audio?.stop()
+                KeyEvent.KEYCODE_BACK -> surface?.detach()
+            }
+            return
+        }
         when (event.keyCode) {
             KeyEvent.KEYCODE_DPAD_RIGHT,
             KeyEvent.KEYCODE_DPAD_DOWN,
@@ -171,6 +258,10 @@ class HelloPluginService : NexusPluginService() {
                 when (state.activate()) {
                     HelloPluginAction.RENDER -> cycleDemoHud()
                     HelloPluginAction.START_SPEECH -> startSpeech()
+                    HelloPluginAction.START_BACKGROUND_AUDIO -> {
+                        startBackgroundAudioDemo()
+                        return
+                    }
                     HelloPluginAction.SPEAK_TTS -> speakDemoLine()
                     HelloPluginAction.STOP_SPEECH -> {
                         stopSpeechWhenStarted = true
@@ -225,6 +316,50 @@ class HelloPluginService : NexusPluginService() {
         if (result != NexusSdkResult.SENT) log("TTS demo refused: $result")
     }
 
+    private fun startBackgroundAudioDemo() {
+        val client = nexusClient ?: return
+        surface = surface ?: nexusSurfaceSession(SURFACE_ID)
+        showingImage = false
+        showBackgroundAudioCard(
+            status = "Requesting the glasses microphone…",
+            footer = "wait · back to cancel",
+        )
+        inkSurface?.hide()
+        inkSurface = null
+        showingInk = false
+
+        if (!client.hasCapability(PluginCapability.MICROPHONE)) {
+            showBackgroundAudioCard(
+                status = "Grant Microphone in Nexus plugin access.",
+                footer = "back",
+            )
+            return
+        }
+        if (audio != null) return
+        val session = nexusAudioSession(audioCallbacks)
+        audio = session
+        val result = session?.start() ?: NexusSdkResult.CAPABILITY_NOT_AVAILABLE
+        if (result != NexusSdkResult.SENT) {
+            audio = null
+            showBackgroundAudioCard(
+                status = "Microphone unavailable: $result",
+                footer = "back",
+            )
+        }
+    }
+
+    private fun showBackgroundAudioCard(status: String, footer: String) {
+        showingBackgroundAudioControl = true
+        val card = NexusCard(
+            title = "Background microphone",
+            lines = listOf(status, "A pin remains visible while the display may sleep."),
+            footer = footer,
+            contentKey = "hello-background-audio",
+            handlesBack = true,
+        )
+        surface?.showCard(card)
+    }
+
     private fun showBundledImage(): Boolean {
         if (nexusClient?.supportsImageSurface != true) return false
         val imageResource = resources.getIdentifier("image_surface_sample", "raw", packageName)
@@ -260,7 +395,12 @@ class HelloPluginService : NexusPluginService() {
     }
 
     override fun onNexusInkAction(surfaceId: String, actionId: String, dataset: JSONObject) {
-        if (surfaceId != INK_SURFACE_ID || actionId != INK_REFRESH_ACTION) return
+        if (surfaceId != INK_SURFACE_ID) return
+        if (actionId == INK_BACKGROUND_AUDIO_ACTION) {
+            startBackgroundAudioDemo()
+            return
+        }
+        if (actionId != INK_REFRESH_ACTION) return
         inkRevision += 1
         val next = 72 + inkRevision * 3
         val result = inkSurface?.update(
@@ -412,6 +552,7 @@ class HelloPluginService : NexusPluginService() {
         const val SURFACE_ID = "main"
         const val INK_SURFACE_ID = "ink-demo"
         const val INK_REFRESH_ACTION = "refreshMetrics"
+        const val INK_BACKGROUND_AUDIO_ACTION = "startBackgroundAudio"
         const val PIN_HIDDEN = 0
         const val PIN_SMALL = 1
         const val PIN_MEDIUM = 2
@@ -432,6 +573,9 @@ class HelloPluginService : NexusPluginService() {
                 </view>
                 <chart class="live-chart" type="line" series="value" data="{{ chartPoints }}"
                   animate="true" smooth="true" show-average="true" />
+                <view class="action" bindtap="startBackgroundAudio" data-source="sample">
+                  <text>Start background mic</text>
+                </view>
                 <view class="action" bindtap="refreshMetrics" data-source="sample">
                   <text>Tap to update</text>
                 </view>
@@ -542,6 +686,12 @@ class HelloPluginService : NexusPluginService() {
         val SMALL_PIN = NexusPin(
             title = "NEXUS PIN",
             lines = listOf("sample overlay"),
+        )
+
+        val BACKGROUND_AUDIO_PIN = NexusPin(
+            title = "MIC ON",
+            lines = listOf("Stop on phone"),
+            ttlMs = 5_000L,
         )
 
         /**

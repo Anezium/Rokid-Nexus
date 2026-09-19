@@ -202,6 +202,7 @@ class BusHubService : Service() {
         val holderPluginId: String?,
         val internalTag: String? = null,
         val internalConsumer: InternalAudioConsumer? = null,
+        @Volatile var streamStarted: Boolean = false,
         var seq: Long = 0L,
     )
 
@@ -806,6 +807,7 @@ class BusHubService : Service() {
             logger = ::log,
             onRegisteredPrincipal = ::offerTransitLegacyMigration,
             onForegroundChanged = { updateStatusNotification(linkState()) },
+            onBackgroundChanged = NexusPhoneState::setBackgroundAudioPluginId,
             journal = pluginBusJournal,
         )
         val cameraRuntime = AndroidExternalPluginRuntime(
@@ -3422,22 +3424,49 @@ class BusHubService : Service() {
             ConcurrentHashMap.newKeySet()
         }
         if (envelope.path == BusPaths.SURFACE_HIDE) {
-            if (closeOnHide) releaseExternalSurface(pluginId, wireSurfaceId)
+            if (closeOnHide) {
+                releaseExternalSurface(
+                    pluginId = pluginId,
+                    wireSurfaceId = wireSurfaceId,
+                    detach = payload.optBoolean("detach", false),
+                )
+            }
         } else {
             pluginSurfaces += wireSurfaceId
         }
         return envelope.copy(payload = payload.put("seq", sequence))
     }
 
-    private fun releaseExternalSurface(pluginId: String, wireSurfaceId: String) {
+    private fun releaseExternalSurface(
+        pluginId: String,
+        wireSurfaceId: String,
+        detach: Boolean = false,
+    ) {
         val pluginSurfaces = externalSurfaceIds[pluginId] ?: return
         pluginSurfaces.remove(wireSurfaceId)
         if (pluginSurfaces.isNotEmpty()) return
         externalSurfaceIds.remove(pluginId, pluginSurfaces)
         if (::externalPluginController.isInitialized) {
-            externalPluginController.onPluginSelfHid(pluginId)
+            val hasActiveAudioLease = pluginHoldsActiveAudioLease(pluginId)
+            externalPluginController.onPluginSelfHid(
+                pluginId = pluginId,
+                detach = detach,
+                hasActiveAudioLease = hasActiveAudioLease,
+            )
+            // Close the only race where the lease can end after the grant check but before the
+            // controller has installed its background slot. A later lease end sees the slot itself.
+            if (detach && hasActiveAudioLease && !pluginHoldsActiveAudioLease(pluginId)) {
+                externalPluginController.onAudioLeaseEnded(pluginId, "LEASE_ENDED")
+            }
         }
     }
+
+    private fun pluginHoldsActiveAudioLease(pluginId: String): Boolean =
+        audioLeaseArbitrator.snapshot()?.let { lease ->
+            lease.side == AudioLeaseSide.LOCAL &&
+                lease.streamStarted &&
+                lease.holderPluginId == pluginId
+        } == true
 
     private fun closeInkForLinkLoss(pluginId: String) {
         inkSurfaceCoordinator.clearOwner(pluginId) { owners ->
@@ -3881,7 +3910,15 @@ class BusHubService : Service() {
                 replyToAudioRequest(envelope, replyRemote, JSONObject().put("granted", false).put("reason", "START_FAILED"), replyBinder, holderPluginId)
                 return@post
             }
-            if (audioLeaseArbitrator.snapshot()?.leaseId != lease.leaseId) {
+            val activated = audioLeaseArbitrator.withActive { current ->
+                if (current.leaseId == lease.leaseId) {
+                    current.streamStarted = true
+                    true
+                } else {
+                    false
+                }
+            } == true
+            if (!activated) {
                 // A concurrent revoke may have run stopAudioStreamQuietly() before our
                 // startAudioStream() landed; stop again so no orphan stream survives.
                 stopAudioStreamQuietly()
@@ -3933,7 +3970,15 @@ class BusHubService : Service() {
                 audioLeaseArbitrator.clearIf { it.leaseId == lease.leaseId }
                 stopAudioStreamQuietly()
                 InternalAudioAcquireResult.START_FAILED
-            } else if (audioLeaseArbitrator.snapshot()?.leaseId != lease.leaseId) {
+            } else if (audioLeaseArbitrator.withActive { current ->
+                    if (current.leaseId == lease.leaseId) {
+                        current.streamStarted = true
+                        true
+                    } else {
+                        false
+                    }
+                } != true
+            ) {
                 // Match plugin acquisition's post-start double check so a concurrent link
                 // revoke cannot leave an orphan stream running.
                 stopAudioStreamQuietly()
@@ -3980,6 +4025,7 @@ class BusHubService : Service() {
         val leaseToStop = audioLeaseArbitrator.clearIf { it.leaseId == leaseId }
         if (leaseToStop != null) stopAudioStreamQuietly()
         replyToAudioRequest(envelope, replyRemote, JSONObject().put("released", true), replyBinder, leaseToStop?.holderPluginId)
+        leaseToStop?.let { finalizeBackgroundPluginForLease(it, "RELEASED") }
     }
 
     private fun releaseAudioLeaseForLocalBinder(callbackBinder: IBinder, reason: String) {
@@ -3989,11 +4035,31 @@ class BusHubService : Service() {
         if (leaseToStop != null) {
             log("Audio lease ${leaseToStop.leaseId} released after $reason")
             stopAudioStreamQuietly()
+            finalizeBackgroundPluginForLease(leaseToStop, reason)
         }
     }
 
     private fun revokeAudioLease(reason: String) {
         val leaseToRevoke = audioLeaseArbitrator.clear() ?: return
+        finishRevokedAudioLease(leaseToRevoke, reason)
+    }
+
+    private fun revokeBackgroundAudioLease(pluginId: String, reason: String): Boolean {
+        if (!::externalPluginController.isInitialized ||
+            externalPluginController.backgroundId() != pluginId
+        ) {
+            return false
+        }
+        val leaseToRevoke = audioLeaseArbitrator.clearIf { lease ->
+            lease.side == AudioLeaseSide.LOCAL &&
+                lease.streamStarted &&
+                lease.holderPluginId == pluginId
+        } ?: return false
+        finishRevokedAudioLease(leaseToRevoke, reason)
+        return true
+    }
+
+    private fun finishRevokedAudioLease(leaseToRevoke: AudioLease, reason: String) {
         stopAudioStreamQuietly()
         if (leaseToRevoke.side == AudioLeaseSide.INTERNAL) {
             leaseToRevoke.internalConsumer?.onStopped(InternalAudioStopReason.LINK_LOST)
@@ -4012,6 +4078,7 @@ class BusHubService : Service() {
                 },
         )
         deliverAudioToHolder(leaseToRevoke, revoked)
+        finalizeBackgroundPluginForLease(leaseToRevoke, reason)
     }
 
     private fun stopAudioLease(internalReason: InternalAudioStopReason) {
@@ -4021,6 +4088,14 @@ class BusHubService : Service() {
             if (leaseToStop.side == AudioLeaseSide.INTERNAL) {
                 leaseToStop.internalConsumer?.onStopped(internalReason)
             }
+            finalizeBackgroundPluginForLease(leaseToStop, internalReason.name)
+        }
+    }
+
+    private fun finalizeBackgroundPluginForLease(lease: AudioLease, reason: String) {
+        val pluginId = lease.holderPluginId ?: return
+        if (::externalPluginController.isInitialized) {
+            externalPluginController.onAudioLeaseEnded(pluginId, reason)
         }
     }
 
@@ -6004,6 +6079,12 @@ class BusHubService : Service() {
                 }
 
         fun pluginBusJournal(): PluginBusJournal? = activeInstance?.pluginBusJournal
+
+        internal fun openPlugin(pluginId: String): Boolean =
+            activeInstance?.pluginRegistry?.openFromPhone(pluginId) == true
+
+        internal fun stopBackgroundAudio(pluginId: String): Boolean =
+            activeInstance?.revokeBackgroundAudioLease(pluginId, "USER_STOPPED") == true
 
         internal fun manualPairingEngine(): GlassesManualPairingEngine? =
             activeInstance?.manualPairingEngine

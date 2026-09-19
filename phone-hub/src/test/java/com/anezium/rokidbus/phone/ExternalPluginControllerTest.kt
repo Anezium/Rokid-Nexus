@@ -3,7 +3,9 @@ package com.anezium.rokidbus.phone
 import android.content.ComponentName
 import com.anezium.rokidbus.shared.BusPaths
 import com.anezium.rokidbus.shared.plugin.PluginCapability
+import com.anezium.rokidbus.shared.plugin.PluginCloseTypes
 import com.anezium.rokidbus.shared.plugin.PluginDescriptor
+import com.anezium.rokidbus.shared.plugin.PluginOpenTypes
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -304,6 +306,110 @@ class ExternalPluginControllerTest {
         assertEquals(listOf("hello", "hello"), runtime.bound)
         assertEquals(BusPaths.PLUGIN_OPEN, runtime.deliveries.last().first)
         assertTrue(controller.input("hello", "main", 22, 0))
+    }
+
+    @Test
+    fun `detach with an active lease backgrounds without unbinding and resume is delivered`() {
+        val runtime = FakeRuntime().apply { registered = true }
+        val scheduler = FakeScheduler()
+        val controller = ExternalPluginController(runtime, scheduler)
+        val principal = principal()
+        controller.open(principal)
+
+        controller.onPluginSelfHid("hello", detach = true, hasActiveAudioLease = true)
+
+        assertEquals(null, controller.activeId())
+        assertEquals("hello", controller.backgroundId())
+        assertEquals(PluginCloseTypes.BACKGROUND, runtime.deliveries.last().second.getString("type"))
+        assertTrue(runtime.unbound.isEmpty())
+        assertTrue(scheduler.actions.isEmpty())
+
+        assertTrue(controller.open(principal))
+        assertEquals("hello", controller.activeId())
+        assertEquals(null, controller.backgroundId())
+        assertEquals(PluginOpenTypes.RESUME, runtime.deliveries.last().second.getString("type"))
+        assertEquals(listOf("hello"), runtime.bound)
+
+        controller.onPluginSelfHid("hello", detach = true, hasActiveAudioLease = true)
+        assertEquals("hello", controller.backgroundId())
+        assertEquals(2, runtime.deliveries.count {
+            it.first == BusPaths.PLUGIN_CLOSE &&
+                it.second.optString("type") == PluginCloseTypes.BACKGROUND
+        })
+    }
+
+    @Test
+    fun `detach without a lease and ordinary hide both use normal self close`() {
+        val runtime = FakeRuntime().apply { registered = true }
+        val controller = ExternalPluginController(runtime, FakeScheduler())
+        val principal = principal()
+
+        controller.open(principal)
+        controller.onPluginSelfHid("hello", detach = true, hasActiveAudioLease = false)
+        assertEquals(null, controller.backgroundId())
+        assertEquals(listOf("hello"), runtime.unbound)
+        assertEquals("self_hidden", runtime.deliveries.last().second.getString("type"))
+
+        controller.open(principal)
+        controller.onPluginSelfHid("hello", detach = false, hasActiveAudioLease = true)
+        assertEquals(null, controller.backgroundId())
+        assertEquals(listOf("hello", "hello"), runtime.unbound)
+        assertEquals("self_hidden", runtime.deliveries.last().second.getString("type"))
+    }
+
+    @Test
+    fun `another plugin can open while background audio holds the dedicated slot`() {
+        val runtime = FakeRuntime().apply { registered = true }
+        val controller = ExternalPluginController(runtime, FakeScheduler())
+        val listening = principal("listening")
+        val other = principal("other")
+
+        controller.open(listening)
+        controller.onPluginSelfHid("listening", detach = true, hasActiveAudioLease = true)
+        assertTrue(controller.open(other))
+
+        assertEquals("other", controller.activeId())
+        assertEquals("listening", controller.backgroundId())
+        assertEquals(listOf("listening", "other"), runtime.bound)
+        assertTrue(runtime.unbound.isEmpty())
+    }
+
+    @Test
+    fun `resuming background cancels a different pending open`() {
+        val runtime = FakeRuntime().apply { registered = true }
+        val controller = ExternalPluginController(runtime, FakeScheduler())
+        val listening = principal("listening")
+        val pending = principal("pending")
+        controller.open(listening)
+        controller.onPluginSelfHid("listening", detach = true, hasActiveAudioLease = true)
+
+        runtime.registered = false
+        assertTrue(controller.open(pending))
+        runtime.registered = true
+        assertTrue(controller.open(listening))
+
+        assertEquals("listening", controller.activeId())
+        assertEquals(null, controller.backgroundId())
+        controller.onRegistered(pending)
+        assertEquals("listening", controller.activeId())
+        assertTrue("pending" in runtime.unbound)
+    }
+
+    @Test
+    fun `link down and user stop finalize a background plugin with a full close`() {
+        listOf("LINK_DOWN", "USER_STOPPED").forEach { reason ->
+            val runtime = FakeRuntime().apply { registered = true }
+            val controller = ExternalPluginController(runtime, FakeScheduler())
+            val principal = principal()
+            controller.open(principal)
+            controller.onPluginSelfHid("hello", detach = true, hasActiveAudioLease = true)
+
+            controller.onAudioLeaseEnded("hello", reason)
+
+            assertEquals(null, controller.backgroundId())
+            assertEquals(PluginCloseTypes.CLOSED, runtime.deliveries.last().second.getString("type"))
+            assertEquals(listOf("hello"), runtime.unbound)
+        }
     }
 
     @Test

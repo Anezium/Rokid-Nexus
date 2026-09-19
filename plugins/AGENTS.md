@@ -111,7 +111,8 @@ install → discovery → user approval (Plugin access) → glasses launcher ope
   → hub binds service → registration (5 s timeout)
   → PLUGIN_OPEN (ack within 4 s or the hub cold-rebinds once, then gives up)
   → /surface/show or /ink/show → input/action events
-  → /surface/hide or /ink/hide (self-close) or PLUGIN_CLOSE
+  → /surface/hide or /ink/hide (self-close), leased /surface/hide detach,
+    or PLUGIN_CLOSE
   → unbind, FGS dropped, back to dormant
 ```
 
@@ -126,7 +127,12 @@ Facts you must build around:
   recent 128 lifecycle ids, and callbacks are serialized on the main thread.
 - **Hiding your last visible surface, including Ink, is a close.** The hub treats it as self-close,
   delivers `PLUGIN_CLOSE`, and unbinds you. That is the correct way to exit on BACK
-  from your root view.
+  from your root view. The only exception is an ordinary surface's typed
+  `detach()` helper while your plugin already holds the ACTIVE microphone lease:
+  the hub calls `onNexusBackground`, keeps only that audio session alive, and
+  final-closes you as soon as the lease ends. No lease means no background.
+  This requires SDK 0.18.0 and hubs 1.4.10 or newer. Give a live microphone pin
+  a short TTL renewed by incoming audio, so it expires after a process crash.
 - **One plugin owns the HUD at a time.** While another plugin is foreground, your
   `show`/`update` returns `SURFACE_BUSY` — handle it by giving up quietly, never by
   retry-looping. A `show` on an *idle* HUD adopts you as foreground with a real
@@ -142,7 +148,7 @@ Paths a plugin can **send to** (gated by capability):
 
 | Path | Capability | Purpose |
 |---|---|---|
-| `/surface/show`, `/surface/update`, `/surface/hide` | `surfaces` | HUD surface lifecycle (typed models: card, reader, timed lines, media, image). A card may carry one `editable` text field; the wearer's answer comes back once on `/surface/text-committed`, delivered to the owner directly (no receive prefix). Gate it on `supportsEditableSurface`, and set `NexusSurfaceSession.onRejected` to hear a `SURFACE_BUSY` that lands after `SENT`. |
+| `/surface/show`, `/surface/update`, `/surface/hide` | `surfaces` | HUD surface lifecycle (typed models: card, reader, timed lines, media, image). `NexusSurfaceSession.detach()` marks the last hide as a lease-bounded background-audio request; without the plugin's ACTIVE microphone lease it is an ordinary self-close. A card may carry one `editable` text field; the wearer's answer comes back once on `/surface/text-committed`, delivered to the owner directly (no receive prefix). Gate it on `supportsEditableSurface`, and set `NexusSurfaceSession.onRejected` to hear a `SURFACE_BUSY` that lands after `SENT`. |
 | `/ink/show`, `/ink/update`, `/ink/hide` | `ink_surface` | Compiled interactive Ink lifecycle. Use `nexusInkSurfaceSession(id)`; `/ink/event` is the owner-only direct callback path for ready/action/closed/error and needs no receive prefix. |
 | `/http/request` → `/http/request/reply` | `http_proxy` | Phone-side HTTP proxy (strict policy, §9) |
 | `/audio/lease/acquire`, `/audio/lease/release` (+ `/reply` suffixes), `/audio/frames`, `/audio/lease/revoked` | `microphone` | Glasses mic lease + 16 kHz mono PCM frames. Use the SDK's `nexusAudioSession(callbacks)` rather than these paths directly. |

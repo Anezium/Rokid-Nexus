@@ -97,6 +97,18 @@ class SurfaceModelsTest {
     }
 
     @Test
+    fun `surface detach sends an explicit opt in while ordinary hide stays unchanged`() {
+        val (client, transport) = client("surfaces")
+        val surface = client.surfaceSession("main")
+
+        assertEquals(NexusSdkResult.SENT, surface.hide())
+        assertEquals(NexusSdkResult.SENT, surface.detach())
+
+        assertFalse(transport.sends[0].second.has("detach"))
+        assertTrue(transport.sends[1].second.getBoolean("detach"))
+    }
+
+    @Test
     fun `rich card lines preserve badge and trail metadata`() {
         val (client, transport) = client("surfaces")
         val result = client.surfaceSession("main").showCard(

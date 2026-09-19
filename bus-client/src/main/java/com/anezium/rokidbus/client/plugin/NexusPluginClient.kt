@@ -18,6 +18,7 @@ import com.anezium.rokidbus.shared.PinSurfaceContract
 import com.anezium.rokidbus.shared.PinSurfaceValidationResult
 import com.anezium.rokidbus.shared.plugin.NexusInputEvent
 import com.anezium.rokidbus.shared.plugin.CapabilityParseResult
+import com.anezium.rokidbus.shared.plugin.PluginCloseTypes
 import com.anezium.rokidbus.shared.plugin.PluginCapability
 import com.anezium.rokidbus.shared.plugin.PluginOpenTypes
 import org.json.JSONObject
@@ -40,6 +41,7 @@ class NexusPluginClient internal constructor(
     private val snapshotSessionLock = Any()
     private var registrationState = PluginRegistrationResult.REGISTRATION_FAILED
     private var opened = false
+    private var backgrounded = false
     private var closed = false
     private var approvedCapabilities: Set<PluginCapability> = emptySet()
     private var registeredAudioSession: NexusAudioSession? = null
@@ -483,8 +485,9 @@ class NexusPluginClient internal constructor(
             terminateSnapshotSession(NexusSnapshotError.ERROR)
         }
         callbacks.onRegistrationState(result)
-        if (result != PluginRegistrationResult.APPROVED && opened) {
+        if (result != PluginRegistrationResult.APPROVED && (opened || backgrounded)) {
             opened = false
+            backgrounded = false
             callbacks.onClose()
         }
     }
@@ -612,15 +615,31 @@ class NexusPluginClient internal constructor(
             // reset and re-show, which also acknowledges the hub's open watchdog.
             BusPaths.PLUGIN_OPEN -> if (isApproved) {
                 opened = true
+                backgrounded = false
                 callbacks.onOpen(payload.optString("type").ifBlank { PluginOpenTypes.OPEN })
             }
-            BusPaths.PLUGIN_CLOSE -> if (opened) {
-                opened = false
-                releaseAudioSession()
-                releaseSpeechSession()
-                releaseTtsSession()
-                releaseSnapshotSession()
-                callbacks.onClose()
+            BusPaths.PLUGIN_CLOSE -> {
+                val closeType = payload.optString("type")
+                if (closeType == PluginCloseTypes.BACKGROUND) {
+                    if (opened) {
+                        opened = false
+                        backgrounded = true
+                        releaseSpeechSession()
+                        releaseTtsSession()
+                        releaseSnapshotSession()
+                        callbacks.onBackground()
+                    }
+                } else {
+                    if (opened || backgrounded) {
+                        opened = false
+                        backgrounded = false
+                        releaseAudioSession()
+                        releaseSpeechSession()
+                        releaseTtsSession()
+                        releaseSnapshotSession()
+                        callbacks.onClose()
+                    }
+                }
             }
             BusPaths.PLUGIN_INPUT -> if (opened && isApproved) {
                 callbacks.onInput(
@@ -635,8 +654,13 @@ class NexusPluginClient internal constructor(
                 // A fresh registration means the hub has no open session with us (it just
                 // (re)accepted this client), so a stale `opened` from a previous hub life
                 // must not swallow the next PLUGIN_OPEN.
-                if (opened) {
+                if (opened || backgrounded) {
                     opened = false
+                    backgrounded = false
+                    releaseAudioSession()
+                    releaseSpeechSession()
+                    releaseTtsSession()
+                    releaseSnapshotSession()
                     callbacks.onClose()
                 }
                 val result = payload.optInt("result", PluginRegistrationResult.REGISTRATION_FAILED)
@@ -711,8 +735,9 @@ class NexusPluginClient internal constructor(
             stopCurrent = false,
         )
         terminateSnapshotSession(NexusSnapshotError.ERROR)
-        if (opened) {
+        if (opened || backgrounded) {
             opened = false
+            backgrounded = false
             callbacks.onClose()
         }
         transport.close()
