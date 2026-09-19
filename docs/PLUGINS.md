@@ -176,7 +176,7 @@ in [plugins/AGENTS.md](../plugins/AGENTS.md) §1).
 
 ### Background policy
 
-A plugin is dormant unless its surface is open. Closed plugins must not keep
+A plugin is normally dormant unless its surface is open. Final-closed plugins must not keep
 engines, fetching, bindings, or pushes running. The hub normally opens the
 plugin from the glasses launcher, but arbitration also contains a proactive
 surface: a `show` while the HUD is idle adopts its sender as foreground and
@@ -195,7 +195,7 @@ The exception buys you one push, not a foothold: no surface is opened, nothing
 is adopted as foreground, and you must not keep the connection, an engine, or a
 polling loop alive between pushes. The pin outlives your process on its own,
 and `ttlMs` bounds it if you never come back. Anything that needs to keep
-running still needs an open surface.
+running still needs an open surface or the active audio lease described below.
 
 **Scheduled delivery is the second**, and it is narrower still: a plugin may
 wake at a moment the wearer explicitly scheduled through it — an alarm,
@@ -206,6 +206,16 @@ notification, optionally raises one notice or pin through a one-shot
 registration, and stops itself within seconds; a boot receiver may do nothing
 beyond rescheduling those same user-created alarms. "The user would probably
 want it" does not qualify — only an item they created with a delivery time.
+
+**Lease-bounded audio is the third** (SDK 0.18.0, hubs 1.4.10 or newer). After
+`onAudioStarted`, an approved microphone plugin can call `surface.detach()` to
+close its last ordinary surface while retaining its active audio session and
+SDK foreground service. `onNexusBackground()` releases the UI; reopening sends
+`onNexusOpen("resume")`. The phone row provides Stop, and lease release,
+revocation, link loss, or process death ends the background session. This is not
+a general background-work permission. A pin can indicate listening without
+keeping the display awake; use a short TTL renewed by audio frames so it expires
+after a crash. See [the SDK example](PLUGIN_SDK.md#let-the-display-sleep-while-listening).
 
 The SDK always constructs the notification object required for the session
 foreground service. Do **not** declare or request `POST_NOTIFICATIONS`: on

@@ -17,11 +17,11 @@ capabilities once, and from then on it is launched from the glasses launcher, re
 on the glasses HUD through the hub, and is configured from a settings screen the hub
 opens by explicit component.
 
-Plugins are **dormant unless open**: the hub initiates everything. Your process runs
-only between `PLUGIN_OPEN` and `PLUGIN_CLOSE`. Do not register yourself at boot, do
+Plugins are **normally dormant unless open**: the hub initiates everything. Your process runs
+only between `PLUGIN_OPEN` and a final `PLUGIN_CLOSE`. Do not register yourself at boot, do
 not poll in the background, do not post notifications. The SDK holds a
 foreground-service session while you are open and drops it on close; the
-user-facing notification that names the live plugin belongs to the hub. Two
+user-facing notification that names the live plugin belongs to the hub. Three
 sanctioned exceptions:
 
 1. A capability that Android forces into its own foreground service *while your
@@ -38,6 +38,12 @@ sanctioned exceptions:
    This is not a license to poll, sync, refresh, or run at boot for any other
    reason; "the user would probably want it" does not qualify — only an item the
    user explicitly created with a delivery time does.
+
+3. **Lease-bounded background audio** (SDK 0.18.0, hubs 1.4.10): after
+   `onAudioStarted`, `surface.detach()` may close the last ordinary surface while
+   retaining the active microphone session and its SDK foreground service.
+   `onNexusBackground()` is not a final close; the lease ending is. The phone hub
+   exposes Stop, and reopening resumes the plugin. See the lifecycle rules below.
 
 A phone plugin may also call an Android platform API directly under permissions
 declared in its own manifest. Those runtime permissions are separate from Nexus
