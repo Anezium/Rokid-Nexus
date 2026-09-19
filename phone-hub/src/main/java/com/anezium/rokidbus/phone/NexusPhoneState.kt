@@ -85,6 +85,14 @@ internal object NexusPhoneState {
         private set
     @Volatile var glassesMaintenanceReady: Boolean = false
         private set
+    @Volatile var backgroundAudioPluginId: String? = null
+        private set
+
+    fun setBackgroundAudioPluginId(pluginId: String?) {
+        if (backgroundAudioPluginId == pluginId) return
+        backgroundAudioPluginId = pluginId
+        notifyListeners()
+    }
 
     /**
      * Whether the "Start setup" hand-off actually reached the glasses. Deliberately transient and

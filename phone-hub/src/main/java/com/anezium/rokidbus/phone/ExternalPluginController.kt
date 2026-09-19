@@ -1,8 +1,9 @@
 package com.anezium.rokidbus.phone
 
 import com.anezium.rokidbus.shared.BusPaths
-import com.anezium.rokidbus.shared.plugin.PluginOpenTypes
 import com.anezium.rokidbus.shared.EditableSurfaceContract
+import com.anezium.rokidbus.shared.plugin.PluginCloseTypes
+import com.anezium.rokidbus.shared.plugin.PluginOpenTypes
 import org.json.JSONObject
 import java.util.UUID
 
@@ -36,6 +37,7 @@ class ExternalPluginController(
     private val logger: (String) -> Unit = {},
     private val onRegisteredPrincipal: (PhonePluginPrincipal) -> Unit = {},
     private val onForegroundChanged: () -> Unit = {},
+    private val onBackgroundChanged: (String?) -> Unit = {},
     private val journal: PluginBusJournal? = null,
 ) {
     private var pending: PhonePluginPrincipal? = null
@@ -44,6 +46,12 @@ class ExternalPluginController(
             val changed = field?.grantKey() != value?.grantKey()
             field = value
             if (changed) onForegroundChanged()
+        }
+    private var background: PhonePluginPrincipal? = null
+        set(value) {
+            val changed = field?.grantKey() != value?.grantKey()
+            field = value
+            if (changed) onBackgroundChanged(value?.descriptor?.id)
         }
     private var openGeneration = 0L
     private var automaticRebindAttempted = false
@@ -61,6 +69,27 @@ class ExternalPluginController(
         cancelWatchdogs(principal)
         openGeneration += 1
         automaticRebindAttempted = false
+        val backgroundPrincipal = background?.takeIf { it.grantKey() == principal.grantKey() }
+        if (backgroundPrincipal != null) {
+            background = null
+            if (!runtime.isRegistered(backgroundPrincipal)) {
+                runtime.unbind(backgroundPrincipal)
+                openRequest = request
+                return beginColdOpen(principal, openGeneration)
+            }
+            openRequest = if (request.type == PluginOpenTypes.OPEN) {
+                request.copy(type = PluginOpenTypes.RESUME)
+            } else {
+                request
+            }
+            active = backgroundPrincipal
+            if (!deliverOpen(backgroundPrincipal, openRequest, openGeneration)) {
+                closePrincipal(backgroundPrincipal, "resume_failed")
+                return false
+            }
+            logger("external plugin resumed plugin=${principal.descriptor.id}")
+            return true
+        }
         openRequest = request
         return beginColdOpen(principal, openGeneration)
     }
@@ -175,9 +204,18 @@ class ExternalPluginController(
         pending = null
     }
 
+    fun closeAll(reason: String = "close") {
+        closeActive(reason)
+        background?.let { closePrincipal(it, reason) }
+    }
+
     fun activeId(): String? = active?.descriptor?.id
 
     fun activeDisplayName(): String? = active?.descriptor?.displayName
+
+    fun backgroundId(): String? = background?.descriptor?.id
+
+    fun backgroundDisplayName(): String? = background?.descriptor?.displayName
 
     /**
      * A plugin that shows a surface while the HUD is idle becomes the foreground
@@ -187,6 +225,7 @@ class ExternalPluginController(
      */
     fun adopt(principal: PhonePluginPrincipal): Boolean {
         if (active?.grantKey() == principal.grantKey()) return true
+        if (background?.grantKey() == principal.grantKey()) return false
         if (active != null) return false
         if (!runtime.isRegistered(principal)) return false
         cancelWatchdogs(principal)
@@ -210,14 +249,39 @@ class ExternalPluginController(
     }
 
     /**
-     * A plugin that hides its own last surface (BACK on the HUD) is closed, not paused:
-     * without the PLUGIN_CLOSE the SDK-side `opened` flag stays true and every later
-     * launcher open is silently dropped as a duplicate.
+     * A plugin that hides its own last surface (BACK on the HUD) is normally closed. A detach
+     * request backed by its active audio lease gets a balanced background close instead, so the
+     * next launcher open is delivered as a resume rather than swallowed by SDK lifecycle state.
      */
-    fun onPluginSelfHid(pluginId: String) {
+    fun onPluginSelfHid(
+        pluginId: String,
+        detach: Boolean = false,
+        hasActiveAudioLease: Boolean = false,
+    ) {
         val principal = active?.takeIf { it.descriptor.id == pluginId } ?: return
         cancelWatchdogs(principal)
         active = null
+        if (detach && hasActiveAudioLease) {
+            background?.takeIf { it.grantKey() != principal.grantKey() }?.let { previous ->
+                closePrincipal(previous, PluginCloseTypes.CLOSED)
+            }
+            if (deliver(principal, BusPaths.PLUGIN_CLOSE, PluginCloseTypes.BACKGROUND)) {
+                background = principal
+                record(
+                    principal,
+                    PluginBusJournal.Category.LIFECYCLE,
+                    PluginBusJournal.Direction.PLUGIN_TO_HUB,
+                    BusPaths.PLUGIN_CLOSE,
+                    PluginBusJournal.Verdict.OK,
+                    "BACKGROUND",
+                )
+                logger("external plugin backgrounded plugin=$pluginId")
+                return
+            }
+            runtime.unbind(principal)
+            logger("external plugin background delivery failed plugin=$pluginId")
+            return
+        }
         deliver(principal, BusPaths.PLUGIN_CLOSE, "self_hidden")
         runtime.unbind(principal)
         record(
@@ -231,6 +295,12 @@ class ExternalPluginController(
         logger("external plugin self-closed plugin=$pluginId")
     }
 
+    fun onAudioLeaseEnded(pluginId: String, reason: String) {
+        val principal = background?.takeIf { it.descriptor.id == pluginId } ?: return
+        closePrincipal(principal, PluginCloseTypes.CLOSED)
+        logger("external plugin background finalized plugin=$pluginId reason=$reason")
+    }
+
     fun onRevoked(key: PluginGrantKey) {
         pending?.takeIf { it.grantKey() == key }?.let { principal ->
             cancelWatchdogs(principal)
@@ -239,6 +309,7 @@ class ExternalPluginController(
             pending = null
         }
         active?.takeIf { it.grantKey() == key }?.let { closePrincipal(it, "revoked") }
+        background?.takeIf { it.grantKey() == key }?.let { closePrincipal(it, "revoked") }
     }
 
     fun onBinderDied(key: PluginGrantKey) {
@@ -254,6 +325,11 @@ class ExternalPluginController(
             runtime.hideOwnedSurfaces(principal.descriptor.id)
             runtime.unbind(principal)
         }
+        background?.takeIf { it.grantKey() == key }?.let { principal ->
+            background = null
+            runtime.hideOwnedSurfaces(principal.descriptor.id)
+            runtime.unbind(principal)
+        }
     }
 
     fun onPackageUnavailable(packageName: String) {
@@ -266,15 +342,19 @@ class ExternalPluginController(
         active?.takeIf { it.packageName == packageName }?.let { principal ->
             closePrincipal(principal, "package_unavailable")
         }
+        background?.takeIf { it.packageName == packageName }?.let { principal ->
+            closePrincipal(principal, "package_unavailable")
+        }
     }
 
     private fun closePrincipal(principal: PhonePluginPrincipal, reason: String) {
         cancelWatchdogs(principal)
+        if (active?.grantKey() == principal.grantKey()) active = null
+        if (pending?.grantKey() == principal.grantKey()) pending = null
+        if (background?.grantKey() == principal.grantKey()) background = null
         deliver(principal, BusPaths.PLUGIN_CLOSE, reason)
         runtime.hideOwnedSurfaces(principal.descriptor.id)
         runtime.unbind(principal)
-        if (active?.grantKey() == principal.grantKey()) active = null
-        if (pending?.grantKey() == principal.grantKey()) pending = null
     }
 
     private fun deliverOpen(

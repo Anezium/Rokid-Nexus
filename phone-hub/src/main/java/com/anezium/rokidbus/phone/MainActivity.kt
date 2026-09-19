@@ -283,6 +283,7 @@ class MainActivity : Activity() {
         renderUpdateSection()
         renderSetupProgressSection()
         rebuildSetupSection()
+        rebuildPluginSection()
         renderLinkState()
     }
 
@@ -433,6 +434,7 @@ class MainActivity : Activity() {
         if (!::pluginSection.isInitialized) return
         pluginSection.removeAllViews()
         val pluginUpdates = PluginUpdateChecker.cachedUpdates(this).associateBy { it.pluginId }
+        val backgroundAudioPluginId = NexusPhoneState.backgroundAudioPluginId
         renderedPluginUpdateIds = pluginUpdates.keys
         val catalog = BusHubService.pluginCatalog(this)
         val activeCount = catalog.entries.count {
@@ -456,6 +458,7 @@ class MainActivity : Activity() {
         } else {
             catalog.entries.forEachIndexed { index, entry ->
                 if (index > 0) pluginSection.addView(BusTheme.gap(this, 9))
+                val backgroundIdForRow = entry.id?.takeIf { it == backgroundAudioPluginId }
                 pluginSection.addView(
                     pluginRow(
                         icon = NexusPluginIcons.resolve(
@@ -469,7 +472,11 @@ class MainActivity : Activity() {
                             pluginId = entry.id,
                         ),
                         title = entry.displayName,
-                        subtitle = catalogStateLabel(entry),
+                        subtitle = if (entry.id == backgroundAudioPluginId) {
+                            "Listening in the background"
+                        } else {
+                            catalogStateLabel(entry)
+                        },
                         badge = when {
                             entry.id in pluginUpdates -> "UPDATE"
                             developerModeStore.isEnabled() &&
@@ -478,6 +485,13 @@ class MainActivity : Activity() {
                             else -> null
                         },
                         badgeColor = if (entry.id in pluginUpdates) NexusUi.GREEN else NexusUi.AMBER,
+                        actionLabel = "Stop".takeIf { backgroundIdForRow != null },
+                        onAction = backgroundIdForRow?.let { pluginId ->
+                            {
+                                BusHubService.stopBackgroundAudio(pluginId)
+                                rebuildPluginSection()
+                            }
+                        },
                     ) { openCatalogEntry(entry) },
                     NexusUi.block(),
                 )
@@ -511,6 +525,13 @@ class MainActivity : Activity() {
     }
 
     private fun openCatalogEntry(entry: PluginCatalogEntry) {
+        val pluginId = entry.id
+        if (pluginId != null &&
+            pluginId == NexusPhoneState.backgroundAudioPluginId &&
+            BusHubService.openPlugin(pluginId)
+        ) {
+            return
+        }
         if (entry.principal != null && entry.state != PluginCatalogState.ENABLED) {
             startActivity(Intent(this, PluginPermissionsActivity::class.java))
             return
@@ -631,6 +652,8 @@ class MainActivity : Activity() {
         subtitle: String,
         badge: String? = null,
         badgeColor: Int = NexusUi.AMBER,
+        actionLabel: String? = null,
+        onAction: (() -> Unit)? = null,
         onClick: () -> Unit,
     ): LinearLayout =
         LinearLayout(this).apply {
@@ -675,7 +698,33 @@ class MainActivity : Activity() {
                     marginStart = NexusUi.dp(this@MainActivity, 13)
                 },
             )
-            addView(NexusUi.chevron(this@MainActivity))
+            if (actionLabel != null && onAction != null) {
+                addView(
+                    TextView(this@MainActivity).apply {
+                        text = actionLabel
+                        textSize = 11f
+                        typeface = Typeface.MONOSPACE
+                        setTextColor(NexusUi.AMBER)
+                        background = NexusUi.bordered(
+                            this@MainActivity,
+                            NexusUi.alpha(NexusUi.AMBER, 18),
+                            NexusUi.alpha(NexusUi.AMBER, 100),
+                            8,
+                        )
+                        setPadding(
+                            NexusUi.dp(this@MainActivity, 10),
+                            NexusUi.dp(this@MainActivity, 7),
+                            NexusUi.dp(this@MainActivity, 10),
+                            NexusUi.dp(this@MainActivity, 7),
+                        )
+                        isClickable = true
+                        isFocusable = true
+                        setOnClickListener { onAction() }
+                    },
+                )
+            } else {
+                addView(NexusUi.chevron(this@MainActivity))
+            }
         }
 
     private fun rowBadge(label: String, color: Int): TextView =
