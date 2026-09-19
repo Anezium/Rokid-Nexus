@@ -11,10 +11,23 @@ bundled JPEG image, cards, directional input, tap state, and back-to-close
 behavior. The settings activity uses the shared `NexusUi`/`BusTheme` kit and
 provides the system uninstall action.
 
-The manifest requests `ink_surface` separately from `surfaces`. After install,
-approve both grants to exercise Ink; old glasses or a down SPP data link take
-the fallback path. The implementation is in
+The manifest requests `ink_surface` and `microphone` separately from `surfaces`.
+After install, approve the grants to exercise Ink and background audio; old
+glasses or a down SPP data link take the fallback path. The implementation is in
 [`HelloPluginService.kt`](src/main/java/com/anezium/rokidbus/plugin/sample/HelloPluginService.kt).
+
+## Background microphone
+
+Choose **Start background mic** on the Ink page, or **Background mic** on the
+card fallback. The sample acquires a typed `NexusAudioSession`, pushes a pin as
+the non-waking listening indicator, and calls `NexusSurfaceSession.detach()`
+only after the lease becomes active. Frames continue to be counted while the
+surface is gone. Reopen the plugin to resume its control card and tap to release
+the lease, or use **Stop** on the phone hub.
+
+This flow requires the `microphone` capability and `/audio` receive prefix. The
+pin does not wake or keep the display on; it only becomes visible when the HUD
+is otherwise awake.
 
 ## Dictation
 

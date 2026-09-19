@@ -14,7 +14,7 @@ class HelloPluginStateTest {
     fun `selection wraps once in either direction`() {
         val state = HelloPluginState()
         state.move(-1)
-        assertEquals(4, state.selectedIndex)
+        assertEquals(5, state.selectedIndex)
         state.move(1)
         assertEquals(0, state.selectedIndex)
     }
@@ -49,6 +49,16 @@ class HelloPluginStateTest {
         assertEquals(HelloPluginAction.SPEAK_TTS, state.activate())
         assertEquals(HelloPluginMode.MENU, state.mode)
         assertTrue("✓" in state.presentation().lines[3])
+    }
+
+    @Test
+    fun `background mic row starts raw audio without leaving the menu`() {
+        val state = HelloPluginState()
+        state.move(-1)
+
+        assertEquals(HelloPluginAction.START_BACKGROUND_AUDIO, state.activate())
+        assertEquals(HelloPluginMode.MENU, state.mode)
+        assertTrue("✓" in state.presentation().lines[5])
     }
 
     @Test
@@ -202,7 +212,7 @@ class HelloPluginStateTest {
     }
 
     private fun liveDictationState(): HelloPluginState = HelloPluginState().apply {
-        move(-1)
+        repeat(4) { move(1) }
         assertEquals(HelloPluginAction.START_SPEECH, activate())
     }
 }
