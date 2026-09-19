@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+### Phone hub
+
+- **Microphone plugins can let the glasses sleep without stopping.** A plugin
+  that explicitly detaches its last surface while holding the active audio
+  lease now stays bound in a visible, revocable background state. The launcher
+  remains free, reopening resumes the plugin, and releasing, revoking, or
+  stopping the lease always final-closes it. The phone plugin row shows
+  *Listening in the background* with a **Stop** action.
+
+### Plugin SDK
+
+- Add `NexusSurfaceSession.detach()` / `hide(detach = true)`,
+  `PluginCloseTypes.BACKGROUND`, `PluginOpenTypes.RESUME`, and the default
+  `onBackground()` / `onNexusBackground()` callbacks. A background close keeps
+  only the active audio session and its foreground service; resume is delivered
+  as a fresh open, while every final or unknown close retains fail-closed
+  behavior.
+
 ## 1.4.9
 
 - **Speech patience is now your choice.** Settings > Speech gains a Patience row
