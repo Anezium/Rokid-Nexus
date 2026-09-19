@@ -7,6 +7,7 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.view.KeyEvent
 import com.anezium.rokidbus.client.plugin.NexusAudioCallbacks
 import com.anezium.rokidbus.client.plugin.NexusAudioFormat
@@ -80,6 +81,7 @@ class HelloPluginService : NexusPluginService() {
     private var showingInk = false
     private var showingBackgroundAudioControl = false
     private var backgroundAudioFrames = 0L
+    private var backgroundAudioPinUpdatedAtMs = 0L
     private var inkRevision = 0
     private val speechCallbacks = object : NexusSpeechCallbacks {
         override fun onSpeechStarted(realtime: Boolean) {
@@ -124,6 +126,7 @@ class HelloPluginService : NexusPluginService() {
     private val audioCallbacks = object : NexusAudioCallbacks {
         override fun onAudioStarted(format: NexusAudioFormat) {
             backgroundAudioFrames = 0L
+            backgroundAudioPinUpdatedAtMs = SystemClock.elapsedRealtime()
             val pinResult = nexusClient?.showPin(BACKGROUND_AUDIO_PIN)
             if (pinResult != NexusSdkResult.SENT) log("Background audio pin refused: $pinResult")
             log("Background audio started ${format.sampleRate}Hz ${format.channels}ch ${format.encoding}")
@@ -132,6 +135,12 @@ class HelloPluginService : NexusPluginService() {
 
         override fun onAudioFrame(pcm: ByteArray, seq: Long, elapsedRealtimeMs: Long) {
             backgroundAudioFrames += 1
+            val now = SystemClock.elapsedRealtime()
+            if (now - backgroundAudioPinUpdatedAtMs >= 2_000L) {
+                backgroundAudioPinUpdatedAtMs = now
+                // Only live audio renews the pin, so a crashed or stalled session cannot leave it stuck.
+                nexusClient?.showPin(BACKGROUND_AUDIO_PIN)
+            }
         }
 
         override fun onAudioStopped(reason: NexusAudioStopReason) {
@@ -680,8 +689,9 @@ class HelloPluginService : NexusPluginService() {
         )
 
         val BACKGROUND_AUDIO_PIN = NexusPin(
-            title = "BACKGROUND MIC",
-            lines = listOf("Hello Nexus is listening", "Stop it from the phone hub"),
+            title = "MIC ON",
+            lines = listOf("Stop on phone"),
+            ttlMs = 5_000L,
         )
 
         /**

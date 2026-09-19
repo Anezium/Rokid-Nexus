@@ -27,7 +27,9 @@ the lease, or use **Stop** on the phone hub.
 
 This flow requires the `microphone` capability and `/audio` receive prefix. The
 pin does not wake or keep the display on; it only becomes visible when the HUD
-is otherwise awake.
+is otherwise awake. Its five-second TTL is renewed every two seconds while audio
+frames arrive, so a crashed plugin or stalled stream cannot leave a stale listening
+indicator. Normal stops hide it immediately.
 
 ## Dictation
 
