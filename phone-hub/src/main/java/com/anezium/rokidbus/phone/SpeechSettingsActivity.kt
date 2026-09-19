@@ -26,6 +26,7 @@ import com.anezium.rokidbus.phone.speech.HubSecretStore
 import com.anezium.rokidbus.phone.speech.SpeechCredentialKind
 import com.anezium.rokidbus.phone.speech.SpeechCredits
 import com.anezium.rokidbus.phone.speech.SpeechEngine
+import com.anezium.rokidbus.phone.speech.SpeechPatience
 import com.anezium.rokidbus.phone.speech.SpeechProvider
 import com.anezium.rokidbus.phone.speech.SpeechReadiness
 import com.anezium.rokidbus.phone.speech.SpeechSessionState
@@ -61,6 +62,9 @@ class SpeechSettingsActivity : Activity() {
     private lateinit var modelCardHost: LinearLayout
     private lateinit var languageGridHost: LinearLayout
     private lateinit var languageNoteHost: LinearLayout
+    private lateinit var patienceHeaderMeta: TextView
+    private lateinit var patienceCardHost: LinearLayout
+    private lateinit var patienceNoteHost: LinearLayout
     private lateinit var keyCardHost: LinearLayout
     private lateinit var keySectionHost: LinearLayout
     private lateinit var testStatusView: TextView
@@ -93,12 +97,15 @@ class SpeechSettingsActivity : Activity() {
 
         engineHeaderMeta = NexusUi.metaLabel(this, "", NexusUi.GREEN_DIM)
         languageHeaderMeta = NexusUi.metaLabel(this, "", NexusUi.GREEN_DIM)
+        patienceHeaderMeta = NexusUi.metaLabel(this, "", NexusUi.GREEN_DIM)
         keyHeaderMeta = NexusUi.metaLabel(this, "", NexusUi.GREEN_DIM)
         readinessValue = NexusUi.metaLabel(this, "", NexusUi.GREEN_DIM)
         engineChipsHost = host()
         modelCardHost = host()
         languageGridHost = host()
         languageNoteHost = host()
+        patienceCardHost = host()
+        patienceNoteHost = host()
         keyCardHost = host()
         keySectionHost = host()
 
@@ -108,6 +115,12 @@ class SpeechSettingsActivity : Activity() {
             addView(engineChipsHost, NexusUi.block())
             addView(BusTheme.gap(this@SpeechSettingsActivity, 10))
             addView(modelCardHost, NexusUi.block())
+
+            addView(BusTheme.gap(this@SpeechSettingsActivity, 28))
+            addView(sectionHeaderRow("Patience", patienceHeaderMeta), NexusUi.block())
+            addView(BusTheme.gap(this@SpeechSettingsActivity, 12))
+            addView(patienceCardHost, NexusUi.block())
+            addView(patienceNoteHost, NexusUi.block())
 
             addView(BusTheme.gap(this@SpeechSettingsActivity, 28))
             addView(sectionHeaderRow("Language", languageHeaderMeta), NexusUi.block())
@@ -178,6 +191,7 @@ class SpeechSettingsActivity : Activity() {
 
     private fun renderAll() {
         renderEngineSection()
+        renderPatienceSection()
         renderLanguageSection()
         renderKeySection()
         renderReadiness()
@@ -190,6 +204,66 @@ class SpeechSettingsActivity : Activity() {
         engineChipsHost.addView(providerSegments(), NexusUi.block())
         modelCardHost.removeAllViews()
         modelCardHost.addView(modelCard(), NexusUi.block())
+    }
+
+    private fun renderPatienceSection() {
+        val patience = settings.patience()
+        patienceHeaderMeta.text = patience.label.uppercase()
+        patienceCardHost.removeAllViews()
+        patienceCardHost.addView(patienceCard(), NexusUi.block())
+
+        patienceNoteHost.removeAllViews()
+        patienceNoteHost.addView(BusTheme.gap(this, 8))
+        patienceNoteHost.addView(
+            NexusUi.rowSub(this, "How long the glasses wait for you to start, and how long a pause can last before your sentence is taken as finished.").apply { maxLines = 3 },
+            NexusUi.block(),
+        )
+    }
+
+    private fun patienceCard(): LinearLayout =
+        NexusUi.card(this).apply {
+            val options = SpeechPatience.entries
+            options.forEachIndexed { index, option ->
+                if (index > 0) addView(NexusUi.divider(this@SpeechSettingsActivity))
+                addView(patienceRow(option), NexusUi.block())
+            }
+        }
+
+    private fun patienceRow(option: SpeechPatience): LinearLayout {
+        val selected = settings.patience() == option
+        val dot = NexusUi.dot(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                NexusUi.dp(this@SpeechSettingsActivity, 8),
+                NexusUi.dp(this@SpeechSettingsActivity, 8),
+            ).apply { marginStart = NexusUi.dp(this@SpeechSettingsActivity, 12) }
+        }
+        NexusUi.setDotColor(dot, if (selected) NexusUi.GREEN else NexusUi.INK4)
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = NexusUi.pressed(this@SpeechSettingsActivity, Color.TRANSPARENT, 10)
+            isClickable = true
+            isFocusable = true
+            setPadding(
+                NexusUi.dp(this@SpeechSettingsActivity, 16),
+                NexusUi.dp(this@SpeechSettingsActivity, 12),
+                NexusUi.dp(this@SpeechSettingsActivity, 16),
+                NexusUi.dp(this@SpeechSettingsActivity, 12),
+            )
+            setOnClickListener {
+                if (settings.patience() != option) {
+                    settings.setPatience(option)
+                    renderPatienceSection()
+                    onSpeechConfigChanged()
+                }
+            }
+            addView(
+                NexusUi.rowTitle(this@SpeechSettingsActivity, option.label)
+                    .apply { if (selected) setTextColor(NexusUi.INK) },
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+            )
+            addView(dot)
+        }
     }
 
     private fun renderLanguageSection() {

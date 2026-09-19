@@ -146,11 +146,13 @@ class SpeechSessionManager internal constructor(
         }
         engine = settings.selectedEngine() ?: return SpeechStartResult.NOT_READY
         sessionLanguage = language ?: settings.selectedLanguageForEngine(engine)
+        val patience = settings.patience()
 
         val run = ActiveUtterance(
             tag = "speech-${UUID.randomUUID()}",
             engine = engine,
             language = sessionLanguage,
+            patience = patience,
             listener = listener,
         )
         run.vad.reset(elapsedRealtime())
@@ -159,6 +161,7 @@ class SpeechSessionManager internal constructor(
                 engine = engine,
                 language = sessionLanguage,
                 phoneLanguageTag = Locale.getDefault().toLanguageTag(),
+                patience = patience,
                 listener = EngineListener(run),
             )
         }.getOrNull() ?: return SpeechStartResult.START_FAILED
@@ -200,32 +203,18 @@ class SpeechSessionManager internal constructor(
             return SpeechStartResult.OK
         }
         postState(run, SpeechSessionState.LISTENING)
-        diagnostic("start engine=${engine.id} language=${sessionLanguage.id}")
+        diagnostic(
+            "start engine=${engine.id} language=${sessionLanguage.id}" +
+                if (engine.startsOnSpeech) " deferred=speech" else "",
+        )
         executeAudio(run) {
             if (run.cancelRequested.get()) {
                 end(run, SpeechEndReason.CANCELLED, null)
                 return@executeAudio
             }
-            val started = runCatching { stt.start() }.getOrDefault(false)
-            if (!started && !run.ended.get()) {
-                val startFailure = (stt as? SttStartFailureSource)?.startFailure
-                end(
-                    run,
-                    SpeechEndReason.ERROR,
-                    startFailure ?: SttError(
-                        SttErrorKind.INTERNAL,
-                        engine.provider.displayName,
-                        "Speech engine failed to start",
-                    ),
-                )
-                return@executeAudio
-            }
-            run.engineStarted = true
-            val pending = run.pendingAudio.toByteArray()
-            run.pendingAudio.reset()
-            if (pending.isNotEmpty()) {
-                run.sttSession?.acceptPcm(pending, 0, pending.size)
-            }
+            // An engine that gives up on silence is not started until there is speech to
+            // give it; until then the detector alone keeps time (see SpeechEngine.startsOnSpeech).
+            if (!engine.startsOnSpeech && !startEngine(run)) return@executeAudio
             run.vadTick = audioExecutor.scheduleAtFixedRate(
                 { checkVadEndpoint(run) },
                 VAD_CHECK_INTERVAL_MS,
@@ -369,6 +358,37 @@ class SpeechSessionManager internal constructor(
         }
     }
 
+    /**
+     * Starts the engine on the audio executor and hands it whatever audio queued up meanwhile.
+     * Returns false when the run is over because the engine would not start.
+     */
+    private fun startEngine(run: ActiveUtterance): Boolean {
+        val stt = run.sttSession ?: return false
+        val started = runCatching { stt.start() }.getOrDefault(false)
+        if (!started) {
+            if (!run.ended.get()) {
+                val startFailure = (stt as? SttStartFailureSource)?.startFailure
+                end(
+                    run,
+                    SpeechEndReason.ERROR,
+                    startFailure ?: SttError(
+                        SttErrorKind.INTERNAL,
+                        run.engine.provider.displayName,
+                        "Speech engine failed to start",
+                    ),
+                )
+            }
+            return false
+        }
+        run.engineStarted = true
+        val pending = run.pendingAudio.toByteArray()
+        run.pendingAudio.reset()
+        if (pending.isNotEmpty()) {
+            run.sttSession?.acceptPcm(pending, 0, pending.size)
+        }
+        return true
+    }
+
     private fun acceptAudio(
         run: ActiveUtterance,
         pcm: ByteArray,
@@ -393,6 +413,10 @@ class SpeechSessionManager internal constructor(
             val captured = run.preSpeechAudio.toByteArray()
             run.preSpeechAudio.reset()
             queueEngineAudio(run, captured)
+            if (run.engine.startsOnSpeech && !run.engineStarted) {
+                diagnostic("start engine=${run.engine.id} trigger=speech")
+                startEngine(run)
+            }
             return
         }
         queueEngineAudio(run, pcm)
@@ -515,9 +539,10 @@ class SpeechSessionManager internal constructor(
         val tag: String,
         val engine: SpeechEngine,
         val language: TranscriptionLanguage,
+        val patience: SpeechPatience,
         val listener: SpeechUtteranceListener,
     ) {
-        val vad = VoiceActivityDetector()
+        val vad = VoiceActivityDetector(patience.voiceActivityConfig())
         val pendingAudio = ByteArrayOutputStream()
         val preSpeechAudio = ByteArrayOutputStream()
         val cancelRequested = AtomicBoolean(false)

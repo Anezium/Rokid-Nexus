@@ -2,6 +2,7 @@ package com.anezium.rokidbus.phone.speech
 
 import android.content.Context
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -107,6 +108,54 @@ class SpeechSessionManagerTest {
     }
 
     @Test
+    fun androidEngineStartsOnlyWhenSpeechIsHeard() {
+        settings.selectedEngineId = SpeechEngine.ANDROID_RECOGNIZER.id
+        val audio = ImmediateAudioAccess()
+        val engine = RecordingSession()
+        val listener = RecordingUtteranceListener()
+        val clock = AtomicLong(1_000L)
+        val manager = manager(audio, engine, clock)
+
+        assertEquals(SpeechStartResult.OK, manager.startUtterance(listener))
+        // Silence: a recognizer that gives up on an empty stream is not asked to listen to one.
+        audio.consumer!!.onPcm(ByteArray(3_200), 0, 3_200, 0L, 1_010L)
+        assertFalse(engine.started.await(300, TimeUnit.MILLISECONDS))
+        assertEquals(0, engine.acceptCalls.get())
+
+        // Speech: the engine starts now and receives the buffered lead-in together with the words.
+        audio.consumer!!.onPcm(voicePcm(1_600), 0, 3_200, 0L, 1_020L)
+        assertTrue(engine.started.await(2, TimeUnit.SECONDS))
+        assertTrue(engine.accepted.await(2, TimeUnit.SECONDS))
+        clock.set(10_000L)
+        assertTrue(engine.finished.await(2, TimeUnit.SECONDS))
+        engine.listener.onFinal("bonjour")
+        assertTrue(listener.ended.await(2, TimeUnit.SECONDS))
+        assertEquals(SpeechEndReason.COMPLETED, listener.reason)
+        manager.close()
+    }
+
+    @Test
+    fun androidEngineNeverStartsWhenNobodySpeaks() {
+        settings.selectedEngineId = SpeechEngine.ANDROID_RECOGNIZER.id
+        val audio = ImmediateAudioAccess()
+        val engine = RecordingSession()
+        val listener = RecordingUtteranceListener()
+        val clock = AtomicLong(1_000L)
+        val manager = manager(audio, engine, clock)
+
+        assertEquals(SpeechStartResult.OK, manager.startUtterance(listener))
+        audio.consumer!!.onPcm(ByteArray(3_200), 0, 3_200, 0L, 1_010L)
+        // The wearer's patience budget, not the recognizer's own clock, ends the wait.
+        clock.set(10_000L)
+        assertTrue(listener.ended.await(2, TimeUnit.SECONDS))
+        assertEquals(SpeechEndReason.NO_SPEECH, listener.reason)
+        assertEquals(1L, engine.started.count)
+        assertEquals(0, engine.acceptCalls.get())
+        assertEquals(1, audio.releaseCalls.get())
+        manager.close()
+    }
+
+    @Test
     fun languageOverrideAppliesOnlyToRequestedSession() {
         val audio = ImmediateAudioAccess()
         val engine = RecordingSession()
@@ -171,6 +220,7 @@ class SpeechSessionManagerTest {
                     engine: SpeechEngine,
                     language: TranscriptionLanguage,
                     phoneLanguageTag: String,
+                    patience: SpeechPatience,
                     listener: SttSessionListener,
                 ): SttSession = recordingSession.apply {
                     languages?.add(language)

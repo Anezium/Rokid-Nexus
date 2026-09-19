@@ -75,6 +75,13 @@ internal class AssistantUiController(
     private var answerCardStarted = false
 
     /**
+     * True while an Ink page owns this answer's visual presentation. Later
+     * Progress ("Thinking…") and spoken-reply [showAnswer] calls must not
+     * resurrect the notice band over that page.
+     */
+    private var inkOwnsAnswer = false
+
+    /**
      * True while the launcher card anchors the session. Unlike a card the wearer opened
      * into, it is not the conversation's render target: the band keeps drawing over it.
      * It is there so the plugin owns the screen — which is what makes a swipe reach it.
@@ -169,6 +176,7 @@ internal class AssistantUiController(
         noticeMode = AssistantNoticeMode.NONE
         answerCardStarted = false
         anchorShown = false
+        inkOwnsAnswer = false
     }
 
     private fun resetForOpen() {
@@ -180,6 +188,7 @@ internal class AssistantUiController(
         noticeMode = AssistantNoticeMode.NONE
         answerCardStarted = false
         anchorShown = false
+        inkOwnsAnswer = false
     }
 
     fun cancelLauncherHint() {
@@ -190,12 +199,14 @@ internal class AssistantUiController(
     fun beginGestureFlow() {
         cancelLauncherHint()
         discardPendingTranscript()
+        inkOwnsAnswer = false
     }
 
     fun showTransient(
         body: String,
         legacyForceShow: Boolean = false,
     ) {
+        if (inkOwnsAnswer) return
         cancelLauncherHint()
         startNewState()
         answerCardStarted = false
@@ -215,6 +226,7 @@ internal class AssistantUiController(
     }
 
     fun showTranscript(text: String) {
+        if (inkOwnsAnswer) return
         if (!useNoticeBand()) return
         val body = truncateTranscriptTail(text)
         if (body.isBlank()) return
@@ -263,6 +275,7 @@ internal class AssistantUiController(
         body: String,
         legacyCardLines: List<String>,
     ) {
+        if (inkOwnsAnswer) return
         cancelLauncherHint()
         stopKeepalive()
         startNewState()
@@ -314,20 +327,29 @@ internal class AssistantUiController(
         surfaceShown = false
         answerCardStarted = false
         anchorShown = false
+        inkOwnsAnswer = false
     }
 
     /**
      * An Ink page produced for this answer now owns its visual presentation.
      * Retire the in-flight notice without marking the card tier active: later
      * errors are still discrete notices and must not replace the Ink surface.
+     * Idempotent: a second call keeps ownership and does not resurrect the band.
      */
     fun onInkAnswerShown() {
+        inkOwnsAnswer = true
         cancelLauncherHint()
         stopKeepalive()
         startNewState(flushTranscript = false)
         hideNoticeIfShown()
     }
 
+    /**
+     * Does not clear [inkOwnsAnswer]: a notice close is not a new interaction.
+     * OWNER is the hide already requested after the Ink page appeared; USER
+     * dismissing an error overlay still leaves that page as the answer until
+     * the next capture.
+     */
     fun onNoticeClosed(reason: NexusNoticeCloseReason) {
         stopKeepalive()
         startNewState(flushTranscript = false)

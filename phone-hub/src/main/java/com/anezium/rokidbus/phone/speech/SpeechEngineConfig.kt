@@ -28,6 +28,15 @@ enum class SpeechEngine(
     val credentialKind: SpeechCredentialKind,
     val completedAudioModelId: String? = null,
     val realtimeModelId: String? = null,
+    /**
+     * True for a recognizer that gives up on a stream carrying no audio. The hub feeds an
+     * engine nothing until its own detector hears speech, and Google's on-device recognizer
+     * answers that silence with NO_MATCH after about three seconds, whatever silence extras it
+     * was given — long before the wearer's patience budget. Such an engine is started at the
+     * first speech frame instead, with the buffered lead-in, so its own clocks begin with the
+     * words.
+     */
+    val startsOnSpeech: Boolean = false,
 ) {
     ANDROID_RECOGNIZER(
         id = "android_recognizer",
@@ -37,6 +46,7 @@ enum class SpeechEngine(
         choiceDescription = "Works straight away — no account, no API key, nothing to pay.",
         choiceBadges = listOf("Live text", "No key", "Phone engine"),
         credentialKind = SpeechCredentialKind.NONE,
+        startsOnSpeech = true,
     ),
     OPENAI_GPT_REALTIME_WHISPER(
         id = "openai_gpt_realtime_whisper",

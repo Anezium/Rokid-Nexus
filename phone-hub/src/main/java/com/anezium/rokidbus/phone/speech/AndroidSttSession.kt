@@ -74,6 +74,7 @@ internal interface AndroidSttForegroundController {
 internal class AndroidSttSession(
     context: Context,
     private val language: TranscriptionLanguage,
+    private val patience: SpeechPatience = SpeechPatience.NORMAL,
     private val listener: SttSessionListener,
     private val environment: AndroidRecognizerEnvironment =
         PlatformAndroidRecognizerEnvironment(context.applicationContext),
@@ -325,13 +326,14 @@ internal class AndroidSttSession(
                 RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS,
                 SPEECH_INPUT_MINIMUM_LENGTH_MS,
             )
+            val silenceMs = patience.androidSilenceMs.toInt()
             putExtra(
                 RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS,
-                SPEECH_POSSIBLY_COMPLETE_SILENCE_MS,
+                silenceMs,
             )
             putExtra(
                 RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS,
-                SPEECH_COMPLETE_SILENCE_MS,
+                silenceMs,
             )
             putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE, readEnd)
             if (target.segmentedSession) {
@@ -719,8 +721,6 @@ internal class AndroidSttSession(
         // Int, not Long: RecognizerIntent reads these extras with getInt, and a Long silently
         // falls back to 0 (Relay ships them as Long and has been losing them all along).
         private const val SPEECH_INPUT_MINIMUM_LENGTH_MS = 2_500
-        private const val SPEECH_POSSIBLY_COMPLETE_SILENCE_MS = 2_500
-        private const val SPEECH_COMPLETE_SILENCE_MS = 3_000
         private const val FINAL_RESULT_TIMEOUT_MS = 2_500L
         private const val TRANSIENT_RETRY_DELAY_MS = 250L
         private const val MAX_TRANSIENT_RETRIES = 1

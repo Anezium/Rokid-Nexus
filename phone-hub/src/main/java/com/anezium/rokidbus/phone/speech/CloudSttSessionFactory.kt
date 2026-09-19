@@ -10,6 +10,7 @@ internal interface SpeechSttSessionFactory : AutoCloseable {
         engine: SpeechEngine,
         language: TranscriptionLanguage,
         phoneLanguageTag: String,
+        patience: SpeechPatience,
         listener: SttSessionListener,
     ): SttSession
 
@@ -161,6 +162,7 @@ internal class CloudSttSessionFactory(
         engine: SpeechEngine,
         language: TranscriptionLanguage,
         phoneLanguageTag: String,
+        patience: SpeechPatience,
         listener: SttSessionListener,
     ): SttSession =
         PostCommitTimeoutSttSession(

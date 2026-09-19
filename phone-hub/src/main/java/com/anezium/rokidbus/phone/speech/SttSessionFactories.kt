@@ -11,6 +11,7 @@ internal class AndroidSttSessionFactory(
         engine: SpeechEngine,
         language: TranscriptionLanguage,
         phoneLanguageTag: String,
+        patience: SpeechPatience,
         listener: SttSessionListener,
     ): SttSession {
         require(engine.usesAndroidRecognizer) {
@@ -19,6 +20,7 @@ internal class AndroidSttSessionFactory(
         return AndroidSttSession(
             context = appContext,
             language = language,
+            patience = patience,
             listener = listener,
         )
     }
@@ -32,12 +34,13 @@ internal class RoutingSttSessionFactory(
         engine: SpeechEngine,
         language: TranscriptionLanguage,
         phoneLanguageTag: String,
+        patience: SpeechPatience,
         listener: SttSessionListener,
     ): SttSession =
         if (engine.usesAndroidRecognizer) {
-            android.create(engine, language, phoneLanguageTag, listener)
+            android.create(engine, language, phoneLanguageTag, patience, listener)
         } else {
-            cloud.create(engine, language, phoneLanguageTag, listener)
+            cloud.create(engine, language, phoneLanguageTag, patience, listener)
         }
 
     override fun close() {
