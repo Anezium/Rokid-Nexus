@@ -564,11 +564,11 @@ class HelloPluginService : NexusPluginService() {
                 </view>
                 <chart class="live-chart" type="line" series="value" data="{{ chartPoints }}"
                   animate="true" smooth="true" show-average="true" />
-                <view class="action" bindtap="refreshMetrics" data-source="sample">
-                  <text>Tap to update</text>
-                </view>
                 <view class="action" bindtap="startBackgroundAudio" data-source="sample">
                   <text>Start background mic</text>
+                </view>
+                <view class="action" bindtap="refreshMetrics" data-source="sample">
+                  <text>Tap to update</text>
                 </view>
                 <view class="rows">
                   <view class="row" wx:for="{{ rows }}" wx:key="name">
