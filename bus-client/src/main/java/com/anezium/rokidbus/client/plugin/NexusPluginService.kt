@@ -193,10 +193,13 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
 
     /**
      * [onNexusOpen] with why the hub opened this plugin, one of [PluginOpenTypes]: a launcher
-     * pick is [PluginOpenTypes.OPEN], the assist button is [PluginOpenTypes.AI_ASSIST]. The
-     * default forwards to [onNexusOpen]; override this one instead to tell them apart.
+     * pick is [PluginOpenTypes.OPEN], a background return is [PluginOpenTypes.RESUME], and the
+     * assist button is [PluginOpenTypes.AI_ASSIST]. The default forwards to [onNexusOpen];
+     * override this one instead to tell them apart.
      */
     protected open fun onNexusOpen(openType: String) = onNexusOpen()
+
+    /** The last surface detached while this service's active microphone lease remains alive. */
     protected open fun onNexusBackground() = Unit
     protected abstract fun onNexusClose()
     protected abstract fun onNexusInput(event: NexusInputEvent)

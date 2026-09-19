@@ -12,6 +12,11 @@ interface NexusPluginCallbacks {
      * to [onOpen], so a plugin that does not care which way it was opened keeps working.
      */
     fun onOpen(openType: String) = onOpen()
+
+    /**
+     * The hub accepted a lease-bounded surface detach. Input is closed and only the active audio
+     * session remains; a later open resumes the plugin, while lease end is followed by [onClose].
+     */
     fun onBackground() = Unit
     fun onClose()
     fun onInput(event: NexusInputEvent)
