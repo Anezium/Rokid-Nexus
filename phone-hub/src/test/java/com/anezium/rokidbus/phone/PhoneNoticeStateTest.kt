@@ -614,7 +614,10 @@ class PhoneNoticeStateTest {
             "relay",
             JSONObject().put("actions", actions()).put("noticeClientToken", "client-next"),
         ) as PhoneNoticeUpdateResult.Accepted
-        assertEquals("client-next", updated.notice.payload.getString("noticeClientToken"))
+        assertEquals("client-next", updated.notice.clientToken)
+        assertFalse(shown.notice.payload.has("noticeClientToken"))
+        assertFalse(refreshed.notice.payload.has("noticeClientToken"))
+        assertFalse(updated.notice.payload.has("noticeClientToken"))
         assertEquals(
             PhoneNoticeActionResult.Owner("relay", "client-next"),
             state.takeAnswer(noticeId, "reply", updated.notice.identity),
@@ -623,6 +626,7 @@ class PhoneNoticeStateTest {
             as PhoneNoticeClearResult.Cleared
         assertEquals(updated.notice.identity, cleared.identity)
         assertEquals("client-next", cleared.clientToken)
+        assertFalse(cleared.payload.has("noticeClientToken"))
         assertEquals(updated.notice.identity, NoticeSurfaceContract.interactionIdentity(cleared.payload))
         assertEquals("client-first", shown.notice.clientToken)
     }

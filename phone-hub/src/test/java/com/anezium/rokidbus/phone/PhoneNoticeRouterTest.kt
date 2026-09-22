@@ -7,6 +7,7 @@ import com.anezium.rokidbus.shared.NoticeSurfaceContract
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -41,6 +42,22 @@ class PhoneNoticeRouterTest {
         assertEquals(PluginBusJournal.Verdict.REJECTED, route.verdict)
         assertEquals(NoticeSurfaceContract.ERROR_CAPABILITY_NOT_AVAILABLE, route.reason)
         assertTrue(sink.remote.isEmpty())
+    }
+
+    @Test
+    fun `client tokens stay on the phone across show update hide and owner callbacks`() {
+        val shown = showQuestion("private-question")
+        router.handleLocal(updateEnvelope("relay"), hudSender("relay"))
+        router.handleGlassesAction(answer(shown))
+        router.handleLocal(
+            BusEnvelope(path = BusPaths.NOTICE_HIDE, payload = JSONObject()),
+            hudSender("relay"),
+        )
+
+        assertEquals(listOf(BusPaths.NOTICE_SHOW, BusPaths.NOTICE_UPDATE, BusPaths.NOTICE_HIDE), sink.remote.map { it.path })
+        sink.remote.forEach { assertFalse(it.payload.has(NoticeSurfaceContract.FIELD_CLIENT_TOKEN)) }
+        assertEquals(listOf(BusPaths.NOTICE_ACTION, BusPaths.NOTICE_CLOSED), sink.local.map { it.path })
+        sink.local.forEach { assertEquals("private-question", NoticeSurfaceContract.clientToken(it.payload)) }
     }
 
     @Test
@@ -116,6 +133,7 @@ class PhoneNoticeRouterTest {
         )
         assertTrue(sink.local.isEmpty())
 
+        assertTrue(sink.logs.any { it == "notice close ignored id=relay:notice reason=invalid" })
         router.handleGlassesAction(answer(current))
         assertEquals(BusPaths.NOTICE_ACTION, sink.local.single().path)
     }
@@ -164,6 +182,7 @@ class PhoneNoticeRouterTest {
         router.handleGlassesAction(answer(shown))
 
         assertEquals(BusPaths.NOTICE_HIDE, sink.remote.last().path)
+        assertFalse(sink.remote.last().payload.has(NoticeSurfaceContract.FIELD_CLIENT_TOKEN))
         assertTrue(sink.local.isEmpty())
     }
 

@@ -195,17 +195,77 @@ class NoticeInteractionStateTest {
         show(state, replacement, seq = 3)
         assertEquals(
             replacement,
-            (state.hide(4, NoticeCloseReason.OWNER, replacement) as NoticeStateDecision.Closed).interactionIdentity,
+            (state.hide(4, NoticeCloseReason.OWNER) as NoticeStateDecision.Closed).interactionIdentity,
         )
     }
 
     @Test
-    fun `an owner hide cannot close a different notice instance`() {
+    fun `an owner hide clears the older instance when its replacement show was lost`() {
         val state = NoticeStateMachine()
-        show(state, replacement, seq = 1)
+        val displayed = show(state, first, seq = 1)
 
-        assertEquals(NoticeStateDecision.Ignored, state.hide(2, NoticeCloseReason.OWNER, first))
+        // The phone accepted a replacement at seq 2, then hid its slot at seq 3.
+        val closed = state.hide(3, NoticeCloseReason.OWNER) as NoticeStateDecision.Closed
+
+        assertEquals(first, closed.interactionIdentity)
+        assertEquals(displayed.surfaceId, closed.surfaceId)
+        assertEquals(displayed.seq, closed.seq)
+        assertEquals(NoticeCloseReason.OWNER, closed.reason)
+        assertEquals(null, state.activeNotice())
+        assertEquals(NoticeStateDecision.Ignored, state.answer(66, displayed))
+        assertEquals(
+            NoticeStateDecision.DroppedStale,
+            state.show("relay:notice", 2, content, 100L, interactionIdentity = replacement),
+        )
+    }
+
+    @Test
+    fun `a late owner hide cannot clear a newer replacement`() {
+        val state = NoticeStateMachine()
+        show(state, first, seq = 1)
+        show(state, replacement, seq = 3)
+
+        assertEquals(NoticeStateDecision.DroppedStale, state.hide(2, NoticeCloseReason.OWNER))
+        assertEquals(NoticeStateDecision.DroppedStale, state.hide(3, NoticeCloseReason.OWNER))
         assertEquals(replacement, state.activeNotice()?.interactionIdentity)
+    }
+
+    @Test
+    fun `hiding an empty slot prevents a late decoded show from resurrecting it`() {
+        val state = NoticeStateMachine()
+
+        assertEquals(NoticeStateDecision.Ignored, state.hide(3, NoticeCloseReason.OWNER))
+        assertEquals(
+            NoticeStateDecision.DroppedStale,
+            state.show("relay:notice", 2, content, 100L, interactionIdentity = first),
+        )
+        assertEquals(null, state.activeNotice())
+        assertEquals(replacement, show(state, replacement, seq = 4).interactionIdentity)
+    }
+
+    @Test
+    fun `same owner re-show does not report replacement of another owner`() {
+        val state = NoticeStateMachine()
+        show(state, first, seq = 1)
+
+        val shown = state.show("relay:notice", 2, content, 100L, interactionIdentity = replacement)
+            as NoticeStateDecision.Shown
+
+        assertEquals(null, shown.replacedNotice)
+        assertEquals(replacement, shown.notice.interactionIdentity)
+    }
+
+    @Test
+    fun `another owner taking the slot retains the actual outgoing identity for replacement`() {
+        val state = NoticeStateMachine()
+        val previous = show(state, first, seq = 1)
+
+        val shown = state.show("assistant:notice", 2, content, 100L, interactionIdentity = replacement)
+            as NoticeStateDecision.Shown
+
+        assertEquals(previous, shown.replacedNotice)
+        assertEquals(first, shown.replacedNotice?.interactionIdentity)
+        assertEquals("assistant:notice", state.activeNotice()?.surfaceId)
     }
 
     @Test
@@ -213,7 +273,7 @@ class NoticeInteractionStateTest {
         val state = NoticeStateMachine()
         show(state, first, seq = 1)
 
-        val closed = state.hide(3, NoticeCloseReason.OWNER, nextQuestion) as NoticeStateDecision.Closed
+        val closed = state.hide(3, NoticeCloseReason.OWNER) as NoticeStateDecision.Closed
 
         assertEquals(first, closed.interactionIdentity)
         assertEquals(null, state.activeNotice())

@@ -518,12 +518,6 @@ class NexusPluginClient internal constructor(
 
     override fun onLinkState(state: Int) {
         if (closed) return
-        if (currentLinkState and LinkStateBits.SPP_DATA_UP != 0 &&
-            state and LinkStateBits.SPP_DATA_UP == 0
-        ) {
-            // The hub still owes the owner its disconnect close; only answers stop now.
-            noticeHidePending = true
-        }
         currentLinkState = state
         hubCapabilities = transport.capabilities()
         callbacks.onLinkState(state)

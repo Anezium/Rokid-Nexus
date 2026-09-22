@@ -433,13 +433,40 @@ class NexusNoticeActionTest {
     }
 
     @Test
-    fun `link loss stops answers and a fresh registration discards the previous callback context`() {
+    fun `SPP loss with CXR still up preserves current action and input callbacks`() {
+        for (path in listOf(BusPaths.NOTICE_ACTION, BusPaths.NOTICE_INPUT)) {
+            val fixture = approvedFixture(interactionVersion = 1)
+            fixture.transport.listener.onLinkState(LinkStateBits.SPP_DATA_UP or LinkStateBits.CXR_CONTROL_UP)
+            fixture.client.showNotice(NexusNotice(title = "Question", interactive = true))
+            val token = fixture.lastToken()
+            fixture.transport.listener.onLinkState(LinkStateBits.CXR_CONTROL_UP)
+
+            fixture.deliver(path, "cxr-answer", token)
+
+            assertEquals(listOf(if (path == BusPaths.NOTICE_ACTION) "action:reply" else "input:66"), fixture.callbacks.events)
+        }
+    }
+
+    @Test
+    fun `SPP reconnect without a new registration preserves the current question`() {
+        for (path in listOf(BusPaths.NOTICE_ACTION, BusPaths.NOTICE_INPUT)) {
+            val fixture = approvedFixture(interactionVersion = 1)
+            val bothLinks = LinkStateBits.SPP_DATA_UP or LinkStateBits.CXR_CONTROL_UP
+            fixture.transport.listener.onLinkState(bothLinks)
+            fixture.client.showNotice(NexusNotice(title = "Question", interactive = true))
+            val token = fixture.lastToken()
+            fixture.transport.listener.onLinkState(LinkStateBits.CXR_CONTROL_UP)
+            fixture.transport.listener.onLinkState(bothLinks)
+
+            fixture.deliver(path, "reconnected-answer", token)
+
+            assertEquals(listOf(if (path == BusPaths.NOTICE_ACTION) "action:reply" else "input:66"), fixture.callbacks.events)
+        }
+    }
+
+    @Test
+    fun `a fresh registration discards the previous callback context`() {
         val fixture = approvedFixture(interactionVersion = 1)
-        fixture.client.showNotice(NexusNotice(title = "Before disconnect", interactive = true))
-        val oldLink = fixture.lastToken()
-        fixture.transport.listener.onLinkState(0)
-        fixture.transport.listener.onLinkState(LinkStateBits.SPP_DATA_UP)
-        fixture.deliver(BusPaths.NOTICE_ACTION, "old-link-answer", oldLink)
         fixture.client.showNotice(NexusNotice(title = "Before registration", interactive = true))
         val oldRegistration = fixture.lastToken()
         fixture.transport.listener.onMessage(BusPaths.PLUGIN_REGISTRATION, "fresh-registration", registration(1))
@@ -448,14 +475,44 @@ class NexusNoticeActionTest {
     }
 
     @Test
-    fun `link loss retains the disconnect close needed for owner cleanup`() {
+    fun `a correlated close clears the current question after link loss`() {
         val fixture = approvedFixture(interactionVersion = 1)
         fixture.client.showNotice(NexusNotice(title = "Question", interactive = true))
         val token = fixture.lastToken()
         fixture.transport.listener.onLinkState(0)
-        fixture.deliver(BusPaths.NOTICE_INPUT, "disconnected-input", token)
         fixture.deliver(BusPaths.NOTICE_CLOSED, "disconnect-close", token, reason = "disconnect")
+        fixture.transport.listener.onLinkState(LinkStateBits.SPP_DATA_UP)
+        fixture.deliver(BusPaths.NOTICE_INPUT, "after-close", token)
         assertEquals(listOf("closed:DISCONNECT"), fixture.callbacks.events)
+    }
+
+    @Test
+    fun `SPP reconnect does not reopen a notice explicitly hidden by its owner`() {
+        val fixture = approvedFixture(interactionVersion = 1)
+        fixture.client.showNotice(NexusNotice(title = "Hidden", interactive = true))
+        val token = fixture.lastToken()
+        fixture.client.hideNotice()
+        fixture.transport.listener.onLinkState(LinkStateBits.CXR_CONTROL_UP)
+        fixture.transport.listener.onLinkState(LinkStateBits.SPP_DATA_UP or LinkStateBits.CXR_CONTROL_UP)
+        fixture.deliver(BusPaths.NOTICE_ACTION, "hidden-action", token)
+        fixture.deliver(BusPaths.NOTICE_INPUT, "hidden-input", token)
+        fixture.deliver(BusPaths.NOTICE_CLOSED, "hidden-close", token, reason = "owner")
+        assertEquals(listOf("closed:OWNER"), fixture.callbacks.events)
+    }
+
+    @Test
+    fun `hide followed by show suppresses the old owner close without closing the replacement`() {
+        val fixture = approvedFixture(interactionVersion = 1)
+        fixture.client.showNotice(NexusNotice(title = "First", interactive = true))
+        val first = fixture.lastToken()
+        fixture.client.hideNotice()
+        fixture.client.showNotice(NexusNotice(title = "Second", interactive = true))
+        val second = fixture.lastToken()
+
+        fixture.deliver(BusPaths.NOTICE_CLOSED, "old-owner-close", first, reason = "owner")
+        fixture.deliver(BusPaths.NOTICE_ACTION, "new-action", second)
+        fixture.deliver(BusPaths.NOTICE_CLOSED, "new-close", second)
+        assertEquals(listOf("action:reply", "closed:USER"), fixture.callbacks.events)
     }
 
     @Test

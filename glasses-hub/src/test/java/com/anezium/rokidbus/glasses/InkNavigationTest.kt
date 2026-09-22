@@ -289,6 +289,7 @@ class InkNavigationTest {
         val target = nodeView("b")
         val select = target.createAccessibilityNodeInfo().actionList.single { it.label == "Select" }
 
+        assertEquals(R.id.accessibility_action_ink_select, select.id)
         assertTrue(target.performAccessibilityAction(select.id, null))
 
         assertSelected("b")

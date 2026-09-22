@@ -439,11 +439,13 @@ internal class InkHudView(context: Context) : FrameLayout(context) {
             override fun onInitializeAccessibilityNodeInfo(host: View, info: AccessibilityNodeInfo) {
                 super.onInitializeAccessibilityNodeInfo(host, info)
                 info.isSelected = actionSelection.selectedId == record.node.id
-                info.addAction(AccessibilityNodeInfo.AccessibilityAction(SELECT_ACTION_ID, "Select"))
+                info.addAction(
+                    AccessibilityNodeInfo.AccessibilityAction(R.id.accessibility_action_ink_select, "Select"),
+                )
             }
 
             override fun performAccessibilityAction(host: View, action: Int, args: Bundle?): Boolean {
-                if (action == SELECT_ACTION_ID) return selectAction(record.node.id, reveal = true)
+                if (action == R.id.accessibility_action_ink_select) return selectAction(record.node.id, reveal = true)
                 if (!synchronizingActionFocus &&
                     (action == AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS ||
                         action == AccessibilityNodeInfo.ACTION_FOCUS)) {
@@ -1070,7 +1072,6 @@ internal class InkHudView(context: Context) : FrameLayout(context) {
     private companion object {
         const val DEFAULT_TEXT_SP = 15f
         const val SCROLL_PAGE_FRACTION = 0.75f
-        const val SELECT_ACTION_ID = 0x01020001
         val DIRECTION_KEYS = setOf(
             KeyEvent.KEYCODE_DPAD_LEFT,
             KeyEvent.KEYCODE_DPAD_RIGHT,

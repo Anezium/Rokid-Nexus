@@ -48,11 +48,19 @@ The implemented maintenance slice extracts HUD routing from `BusHubService` into
 focused handlers while preserving the current notice identity fix, ownership
 checks, error routing, and background-audio lifecycle. The earlier router
 extraction is a reference to adapt, not a patch to merge with its old epoch
-dependencies. Combined verification passed 2,052 unit tests with no failures,
+dependencies. Combined verification passed 2,063 unit tests with no failures,
 errors, or skips, including 49 new router tests, 10 notice-input tests, and
-24 new Ink navigation tests; Sample's 14 tests are included. The requested
+24 new Ink navigation tests and 11 review-follow-up regressions; Sample's 14
+tests are included. The requested
 debug builds completed. Shared lint was not rerun; its earlier `PropertyEscape`
 failure in the unchanged `local.properties` remains unresolved.
+
+The [review follow-up](../docs/reviews/hud-interaction-review-follow-up.md)
+corrects SDK callbacks across SPP interruption, authoritative hides after lost
+replacement shows, and the documented close-callback contract. This follow-up
+has automated verification only; the hardware evidence below covers the earlier
+review baseline. Relay's pre-existing hide-fallback race and transport recovery
+remain separate follow-ups.
 
 Data-preserving QA upgrades were installed on the phone and glasses. Hardware
 checks passed for Ink rendering/ready, pin replay across reconnect, notices over

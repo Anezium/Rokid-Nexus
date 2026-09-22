@@ -719,6 +719,19 @@ gain the plugin-side protection; an older bundled SDK cannot filter callbacks
 already queued in its process. With a phone hub that does not advertise
 `noticeInteractionVersion: 1` at registration, legacy callback behavior remains.
 
+**`onNoticeClosed` is scoped to the current local question, not guaranteed once
+for every show.** Calling `hideNotice()` and then `showNotice()` before the old
+close is delivered suppresses that old `onNoticeClosed(OWNER)`. A new show,
+rearming update, or fresh registration retires the previous callback context;
+this prevents an old close from shutting down a replacement. Release local
+resources belonging to the superseded context when replacing it, rather than
+waiting for its close callback. A hide with no intervening replacement still
+accepts its matching owner-close callback. A same-owner re-show does not emit a
+separate replacement close. These filtering rules apply when the hub advertises
+interaction support; older hubs retain the legacy behavior described above.
+An SPP link-state change by itself does not retire the question or block its
+callbacks, because the notice may still be live over CXR.
+
 If a glasses-side send fails, the band shows *Delivery not confirmed* and
 does not offer a second answer automatically: a partial write may already have
 delivered the first. This is transport failure feedback, not a delivery receipt.

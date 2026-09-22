@@ -229,7 +229,10 @@ internal sealed interface NoticeAnswer {
 }
 
 internal sealed interface NoticeStateDecision {
-    data class Shown(val notice: NexusNoticeSurface) : NoticeStateDecision
+    data class Shown(
+        val notice: NexusNoticeSurface,
+        val replacedNotice: NexusNoticeSurface? = null,
+    ) : NoticeStateDecision
     data class Updated(val notice: NexusNoticeSurface) : NoticeStateDecision
 
     /**
@@ -274,6 +277,7 @@ internal class NoticeStateMachine {
     ): NoticeStateDecision {
         if (seq <= latestSeq) return NoticeStateDecision.DroppedStale
         latestSeq = seq
+        val previous = active
         val notice = NexusNoticeSurface(
             surfaceId = surfaceId,
             seq = seq,
@@ -288,7 +292,10 @@ internal class NoticeStateMachine {
             interactionIdentity = interactionIdentity,
         )
         active = notice
-        return NoticeStateDecision.Shown(notice)
+        return NoticeStateDecision.Shown(
+            notice,
+            previous?.takeIf { it.surfaceId != surfaceId },
+        )
     }
 
     /**
@@ -484,14 +491,12 @@ internal class NoticeStateMachine {
     fun hide(
         seq: Long,
         reason: NoticeCloseReason,
-        interactionIdentity: NoticeInteractionIdentity? = active?.interactionIdentity,
     ): NoticeStateDecision {
         if (seq <= latestSeq) return NoticeStateDecision.DroppedStale
         latestSeq = seq
         val closing = active ?: return NoticeStateDecision.Ignored
-        if (closing.interactionIdentity?.instanceId != interactionIdentity?.instanceId) {
-            return NoticeStateDecision.Ignored
-        }
+        // The phone authorizes the owner and orders the whole slot. Its latest
+        // show may have been lost or failed to decode, leaving an older instance.
         active = null
         return NoticeStateDecision.Closed(
             surfaceId = closing.surfaceId,
@@ -961,13 +966,11 @@ internal object NoticeController {
             ownerPluginId,
             interactionIdentity,
         )
-        // Report the outgoing instance even when the same plugin owns the replacement.
-        if (decision is NoticeStateDecision.Shown &&
-            previous != null &&
-            (previous.surfaceId != surfaceId || previous.interactionIdentity != interactionIdentity)
-        ) {
-            logNoticeClosed(previous, NoticeCloseReason.REPLACED)
-            reportClosed(previous.surfaceId, NoticeCloseReason.REPLACED, previous.interactionIdentity)
+        if (decision is NoticeStateDecision.Shown) {
+            decision.replacedNotice?.let { replaced ->
+                logNoticeClosed(replaced, NoticeCloseReason.REPLACED)
+                reportClosed(replaced.surfaceId, NoticeCloseReason.REPLACED, replaced.interactionIdentity)
+            }
         }
         applyDecision(decision)
         if (decision is NoticeStateDecision.Shown) {
@@ -1009,15 +1012,14 @@ internal object NoticeController {
     }
 
     private fun hide(envelope: BusEnvelope) {
-        val interactionIdentity = NoticeSurfaceContract.interactionIdentity(envelope.payload)
-        if (interactionIdentity == null) {
+        if (NoticeSurfaceContract.interactionIdentity(envelope.payload) == null) {
             log("notice hide rejected code=${NoticeSurfaceContract.ERROR_INVALID_NOTICE}")
             return
         }
         val seq = envelope.payload.optLong("seq", Long.MIN_VALUE)
-        val decision = state.hide(seq, NoticeCloseReason.OWNER, interactionIdentity)
+        val decision = state.hide(seq, NoticeCloseReason.OWNER)
         if (decision !is NoticeStateDecision.DroppedStale) {
-            discardPendingImage(interactionIdentity)
+            discardPendingImage(throughSeq = seq)
         }
         applyDecision(decision)
     }
@@ -1237,8 +1239,9 @@ internal object NoticeController {
         pendingNoticeWake = null
     }
 
-    private fun discardPendingImage(identity: NoticeInteractionIdentity? = null) {
+    private fun discardPendingImage(identity: NoticeInteractionIdentity? = null, throughSeq: Long? = null) {
         if (identity != null && pendingNoticeImage?.identity != identity) return
+        if (throughSeq != null && pendingNoticeImage?.key?.seq?.let { it > throughSeq } == true) return
         pendingNoticeImage = null
         imageDecodeCoordinator.invalidate()?.let { pending ->
             if (pending !== state.activeNotice()?.imageBitmap) pending.recycleSafely()

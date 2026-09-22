@@ -123,7 +123,7 @@ internal class PhoneNoticeState(
             identity = identity,
             clientToken = clientToken,
             content = content,
-            payload = normalized(expectedSurfaceId, ownerPluginId, content, identity, clientToken),
+            payload = normalized(expectedSurfaceId, ownerPluginId, content, identity),
             ttlDeadlineMs = now + content.ttlMs,
             hardDeadlineMs = now + NoticeSurfaceContract.MAX_LIFETIME_MS,
         )
@@ -190,7 +190,6 @@ internal class PhoneNoticeState(
                 NoticeSurfaceContract.toUpdatePayload(surfaceId, patch.patch),
                 ownerPluginId,
                 identity,
-                clientToken,
             ),
             ttlDeadlineMs = now + patched.ttlMs,
             answered = if (rearm) false else current.answered,
@@ -299,12 +298,10 @@ internal class PhoneNoticeState(
         ownerPluginId: String,
         content: NoticeSurfaceContent,
         identity: NoticeInteractionIdentity,
-        clientToken: String?,
     ): JSONObject = stamped(
         NoticeSurfaceContract.toPayload(surfaceId, content),
         ownerPluginId,
         identity,
-        clientToken,
     )
 
     /**
@@ -315,14 +312,10 @@ internal class PhoneNoticeState(
         payload: JSONObject,
         ownerPluginId: String,
         identity: NoticeInteractionIdentity,
-        clientToken: String?,
     ): JSONObject = NoticeSurfaceContract.withInteractionIdentity(payload, identity)
         .put("localSurfaceId", NoticeSurfaceContract.LOCAL_SURFACE_ID)
         .put("ownerPluginId", ownerPluginId)
         .put("seq", sequence.incrementAndGet())
-        .also { stamped ->
-            clientToken?.let { stamped.put(NoticeSurfaceContract.FIELD_CLIENT_TOKEN, it) }
-        }
 
     /**
      * Sliding one-second window shared by show and update, so a plugin cannot
@@ -349,7 +342,6 @@ internal class PhoneNoticeState(
                 JSONObject().put("surfaceId", surfaceId),
                 notice.ownerPluginId,
                 notice.identity,
-                notice.clientToken,
             ),
             identity = notice.identity,
             clientToken = notice.clientToken,

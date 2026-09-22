@@ -211,7 +211,10 @@ internal class PhoneNoticeRouter(
     fun handleGlassesClosed(envelope: BusEnvelope) {
         val surfaceId = envelope.payload.optString("noticeId")
         val reason = NoticeCloseReason.fromWireValue(envelope.payload.optString("reason"))
-            ?: return
+        if (reason == null) {
+            sink.log("notice close ignored id=${surfaceId.take(80)} reason=invalid")
+            return
+        }
         val identity = NoticeSurfaceContract.interactionIdentity(envelope.payload)
         when (val result = state.closedByGlasses(surfaceId, reason, identity)) {
             PhoneNoticeClearResult.Ignored ->

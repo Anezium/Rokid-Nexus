@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- **Countdown labels preserve the current question.** Sending-countdown updates
+  use the SDK's `rearm = false` notice patch, so an answer already in transit
+  remains attached to the same question. This requires a phone hub advertising
+  `noticeInteractionVersion: 1` and matching notice-v5 phone/glasses hubs.
+  Rebuilding Relay against the new SDK does not upgrade the hubs: on an older
+  phone hub the patch returns `CAPABILITY_NOT_AVAILABLE`, the "Sending Ns"
+  label stops updating, and the existing send countdown still proceeds.
+
 ## 1.2.2
 
 - **Reply by typing.** A new switch, off by default: Reply opens a text field

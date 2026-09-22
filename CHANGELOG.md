@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **An SPP interruption no longer disables a live notice's SDK callbacks.**
+  Losing or restoring one glasses transport leaves the current question intact;
+  an explicit hide, replacement, or fresh registration still protects against
+  stale replies. A newer owner hide also clears an older visible band when a
+  replacement show was lost or failed image decoding.
 - **HUD routing has dedicated owners.** The phone hub delegates notices, pins,
   activities, ordinary surfaces, and Ink to separate routers, with regression
   tests for owner delivery, reconnect state, and closure. Surface detach still

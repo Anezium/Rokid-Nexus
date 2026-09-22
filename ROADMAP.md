@@ -192,6 +192,10 @@ the action and Sample update.
 
 Hardware validation remains partial: R08 ring use, a deliberately delayed reply
 reinjected across transports, and the HUD activity tier remain untested.
+The [review follow-up](docs/reviews/hud-interaction-review-follow-up.md) fixes
+SPP-related SDK callback loss and hides after a missing replacement show, with
+2,063 passing tests. Those follow-up changes have not been reinstalled on the
+devices; the hardware results above describe the earlier review baseline.
 Nothing has been published. The previously reported
 shared lint failure remains unresolved; local configuration is unchanged.
 

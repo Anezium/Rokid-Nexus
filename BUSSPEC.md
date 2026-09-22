@@ -722,9 +722,13 @@ Glasses to phone to plugin:
   carries actions, and **at most once per question**.
 
 - `/notice/closed` — `{noticeId, noticeInstanceId, noticeQuestionId, reason}` with `reason` in
-  `user | timeout | owner | replaced | disconnect`. Delivered exactly once per
-  notice, including when the owner hid it itself. Not delivered when the owner
-  is what disappeared.
+  `user | timeout | owner | replaced | disconnect`. The phone emits an
+  owner-scoped close for an owner hide, an accepted glasses close, or replacement
+  by another owner. A same-owner re-show supersedes the previous instance
+  without a separate replacement callback. Not delivered when the owner is
+  what disappeared. The SDK's current-question filter below can discard a close
+  already queued for an older question; this is not an exactly-once callback
+  guarantee for every `showNotice()` call.
 
 Both replies go through the same gate on the phone hub: the notice must be the
 one it currently holds, it must actually have asked for a gesture, and it only
@@ -740,19 +744,33 @@ replaces the question token; a presentation-only update keeps both. Tokens are
 bounded strings of 1–64 ASCII letters, digits, `_`, or `-`. They are independent
 of the per-frame `seq`, so a text refresh does not invalidate an in-flight reply.
 Plugins cannot choose the trusted hub identities. Missing, malformed, or stale
-identities are rejected before taking an answer or clearing a notice. A patch
+identities in glasses callbacks are rejected before taking an answer or
+clearing the phone's notice state. A patch
 for another instance cannot update the band when its preceding show was lost.
 Deferred image work and input retain the identity they were created for.
+An authoritative phone-to-glasses hide is ordered by the hub's global `seq`:
+a newer hide clears the visible band even if its instance is older because an
+intervening show failed to arrive or decode. A stale hide cannot clear a newer
+show or cancel its pending image decode.
 
 The SDK also supplies an optional opaque `noticeClientToken` on show/update.
 This is callback correlation, never authority: the phone stores it against the
 authenticated owner and uses the stored value, not a glasses-supplied token,
-in owner callbacks. Registration advertises `noticeInteractionVersion: 1`.
+in owner callbacks. This token stays on the phone and is not forwarded to the
+glasses. Registration advertises `noticeInteractionVersion: 1`.
 The updated SDK drops callbacks for an older local question before invoking the
 unchanged plugin hooks. Plugins built against an older SDK retain their callback
 API, but must be rebuilt to gain this last protection against queued callbacks.
 With an older phone hub, the new SDK retains legacy callback behavior; it does
 not claim interaction protection without the registration marker.
+
+For example, `hideNotice()` followed immediately by `showNotice()` establishes
+a new local question before the first owner's close may arrive. The SDK drops
+that old `onNoticeClosed(OWNER)` instead of letting it tear down the new notice.
+A rearming update or a fresh registration can likewise retire queued callbacks.
+Plugins must release superseded local resources when replacing that context,
+without waiting for one close callback per previous show. A link-state change
+alone does not retire the question: losing SPP can leave the band live over CXR.
 
 When the glasses transport reports a send failure after a tap, the band shows
 `Delivery not confirmed` and keeps that answer spent. A partial write may already
