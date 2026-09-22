@@ -707,7 +707,11 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
             }
             val seconds = ((remaining + 999L) / 1000L).toInt()
             queueEssential(
-                NexusNoticeUpdate(actions = confirmActions(seconds), ttlMs = DECISION_TTL_MS),
+                NexusNoticeUpdate(
+                    actions = confirmActions(seconds),
+                    ttlMs = DECISION_TTL_MS,
+                    rearm = false,
+                ),
                 dropPartial = false,
             )
             main.postDelayed(this, SEND_TICK_MS)

@@ -41,7 +41,8 @@ interface NexusPluginCallbacks {
      * takes exactly one answer, after which the band is an inert display and
      * confirm reaches whatever is underneath it. Ask again by sending an update
      * that carries `interactive` or a new action row, or by showing a new
-     * notice. This is a deliberate change from 1.0.46, where an interactive
+     * notice. A presentation-only update with `rearm = false` keeps the current
+     * question. This is a deliberate change from 1.0.46, where an interactive
      * band replied on every confirm.
      *
      * Back is never delivered here. It dismisses the band, always, and a plugin

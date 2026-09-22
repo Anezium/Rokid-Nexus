@@ -646,6 +646,7 @@ data class NexusNoticeUpdate(
     val actions: List<NexusNoticeAction> = emptyList(),
     val ttlMs: Long? = null,
     val lines: List<String> = emptyList(),
+    val rearm: Boolean? = null,
 )
 
 val supportsNoticeSurface: Boolean
@@ -699,6 +700,28 @@ for a messaging plugin meant two messages sent.
 That is also why the SDK gives you no way to clear the row: answering removes it
 for you. To ask again, send a new question — an `updateNotice` carrying
 `actions` or `interactive`, or a fresh `showNotice`.
+
+For a cosmetic action-label update, such as a countdown, use
+`NexusNoticeUpdate(actions = labels, rearm = false)`. The ordered action ids
+and the interactive flag must stay the same. This preserves both the question
+and its answered state, so a tap in flight remains valid across a countdown
+tick. Other updates retain their existing rearm behavior.
+This new option requires `noticeInteractionVersion: 1`; an older phone hub
+returns `CAPABILITY_NOT_AVAILABLE` from the typed SDK call instead of silently
+rearming the question.
+
+Notice protocol v5 binds each event to its notice instance and question.
+Phone and glasses hubs must speak the same notice version; mixed versions
+report `CAPABILITY_NOT_AVAILABLE`. The SDK tracks an internal question token
+and drops callbacks queued for an earlier question before calling your hooks.
+No callback signature changes are required. Rebuild plugins with this SDK to
+gain the plugin-side protection; an older bundled SDK cannot filter callbacks
+already queued in its process. With a phone hub that does not advertise
+`noticeInteractionVersion: 1` at registration, legacy callback behavior remains.
+
+If a glasses-side send fails, the band shows *Delivery not confirmed* and
+does not offer a second answer automatically: a partial write may already have
+delivered the first. This is transport failure feedback, not a delivery receipt.
 
 ```kotlin
 nexusClient?.showNotice(

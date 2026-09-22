@@ -58,7 +58,7 @@ object SurfaceOverlayRenderer {
         }
         return runCatching {
             currentRoot.render(surface)
-            currentRoot.requestFocus()
+            if (!currentRoot.hasFocus()) currentRoot.requestFocus()
             true
         }.onFailure {
             logError("Surface overlay render failed", it)
@@ -91,6 +91,7 @@ object SurfaceOverlayRenderer {
         }
 
         override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+            if (NoticeKeyDispatcher.handleKeyEvent(event)) return true
             if (SurfaceController.handleKeyEvent(event)) return true
             return super.dispatchKeyEvent(event)
         }

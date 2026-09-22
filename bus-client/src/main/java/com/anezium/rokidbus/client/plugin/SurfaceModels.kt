@@ -847,16 +847,21 @@ data class NexusNotice(
  *
  * @property interactive Ask again on a band that has already been answered, or
  * stop asking. Null leaves the current state alone, which is what an ordinary
- * text update does. Setting it either way reopens the band for a new answer:
- * see [NexusPluginCallbacks.onNoticeInput] for why a band only answers once.
+ * text update does. Unless [rearm] is false, setting it either way reopens the
+ * band for a new answer: see [NexusPluginCallbacks.onNoticeInput].
  * @property actions Replaces the whole action row, and reopens the band for a
- * new answer. An empty list leaves the current row alone rather than clearing
- * it, so this cannot take a question's answers away from a wearer halfway
+ * new answer unless [rearm] is false. An empty list leaves the current row alone
+ * rather than clearing it, so this cannot take a question's answers away halfway
  * through reading them; hide the notice instead. The wearer's selection follows
  * its action id across the swap, so reordering answers does not move their
  * finger onto a different one.
  * @property lines A non-empty structured body replacement. An empty list is
  * absent from the wire and leaves the current text alone.
+ * @property rearm False keeps the current question and its answered state when
+ * changing action labels, such as a countdown. Omit it for a new question when
+ * sending actions or interactive; true uses that same default behavior. False
+ * requires a hub advertising notice interaction version 1; older hubs return
+ * [NexusSdkResult.CAPABILITY_NOT_AVAILABLE] instead of silently asking again.
  */
 data class NexusNoticeUpdate(
     val title: String? = null,
@@ -866,6 +871,7 @@ data class NexusNoticeUpdate(
     val actions: List<NexusNoticeAction> = emptyList(),
     val ttlMs: Long? = null,
     val lines: List<String> = emptyList(),
+    val rearm: Boolean? = null,
 ) {
     init {
         require(body == null || lines.isEmpty())
@@ -890,6 +896,7 @@ data class NexusNoticeUpdate(
             interactive?.let { put("interactive", it) }
             if (actions.isNotEmpty()) putActions(actions)
             ttlMs?.let { put("ttlMs", it) }
+            rearm?.let { put("rearm", it) }
         }
 }
 

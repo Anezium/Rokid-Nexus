@@ -1,6 +1,6 @@
 # Rokid Nexus — Roadmap
 
-Status: 2026-08-12. This file is the public roadmap and the source the
+Status: 2026-09-22 (current work and delivered-status corrections). This file is the public roadmap and the source the
 [project site](https://rokid-nexus.anezium.me) renders. The founding product
 argument lives in [VISION.md](VISION.md); what actually shipped in each release
 lives in [CHANGELOG.md](CHANGELOG.md).
@@ -164,16 +164,48 @@ Relay · Assistant · Lens · Feeds · Transit · Lyrics · Media Deck · Photos
 
 ## Building
 
-### Display arbitration
+### HUD routing extraction
 
-The protocol has carried an `actionable` class since v1 and v1 still renders it
-as a toast. Right now the entire policy is "the newest replaces the oldest, no
-queue" — which holds exactly until two chatty plugins are installed at once.
+Implemented in development: the phone hub's pin, notice, activity, surface, and
+Ink routing now lives in focused handlers, adapted from the earlier extraction
+to the current lifecycle. The maintenance change preserves behavior; it does
+not add display policy or replace the transport.
 
-What it needs: an arbiter that ranks a request against what is already on the
-display, plus surface ownership epochs so a late frame from a superseded owner
-cannot repaint someone else's surface. The per-plugin mute and demote switches
-in the phone hub are the user-facing half, and they already exist.
+The notice interaction-identity fix and the routing extraction passed their
+combined unit-test and debug-build verification. Matching signed QA upgrades
+were installed on the phone and glasses with existing data preserved. Device
+checks exercised Ink rendering, pin reconnect/replay, notices over Ink and
+cards, and background microphone detach/resume/stop.
+
+Those checks exposed an existing local-window input path that bypassed notice
+priority. It is corrected and was retested with injected keys over Ink and
+cards. The wearer confirmed normal one-row launcher swipes and readable text,
+then physically selected and confirmed a notice action and dismissed the notice
+without closing Ink. The action, update, and user-close transport traces agree.
+Sample Ink's second-action navigation is now implemented and installed. With
+injected directional keys, the second control is selected once, confirm updates
+the page through the phone compile/patch path, and selection survives the
+update and an overlaid notice's dismissal. The wearer confirmed physical
+left/right navigation and activation of the second action. The captured screen
+shows REV 2, SYNC 78, and the retained selection outline; transport logs confirm
+the action and Sample update.
+
+Hardware validation remains partial: R08 ring use, a deliberately delayed reply
+reinjected across transports, and the HUD activity tier remain untested.
+Nothing has been published. The previously reported
+shared lint failure remains unresolved; local configuration is unchanged.
+
+### Display policies and ownership epochs — deferred
+
+Foreground ownership, per-surface ordering, sequenced hides, and image-decode
+invalidation already protect the normal handoff. Newest accepted notice
+replacement is an intentional single-slot policy, not a missing queue.
+
+Broader per-plugin display policies and ownership epochs have implementations
+on development branches, but are not the current integration priority. A
+narrow phone-side check/stamp race remains a hypothesis to reproduce; it is not
+evidence that an ordinary late image can repaint a new owner or a reason to
+require a global display rework. Revisit this work against a concrete scenario.
 
 ### Continuous speech
 
@@ -183,8 +215,9 @@ minutes.
 
 The remaining slice is a held lease with partial results streaming to the HUD,
 and a caption presentation that survives the surface underneath it changing.
-Live captions, translation, and any voice assistant are all blocked behind this
-one — which is why it is the only other thing being written.
+Live captions, translation, and an assistant that stays listening need that
+slice. It is deferred until a consumer needs it. The background microphone
+lifecycle shipped in 1.4.10 does not itself provide continuous transcription.
 
 ---
 
@@ -222,7 +255,7 @@ assistant" was a table row on this page, and it shipped as Assistant.
 | Assistant | More tools that act — control the music, ask Transit · a keyboard mode — the request typed on the phone instead of spoken, for the places where talking to your glasses is not an option. Providers beyond ChatGPT shipped in 1.1.0 — MiniMax, DeepSeek, GLM, OpenRouter, or any OpenAI-compatible server; reminders, timers and notes shipped in 1.3.0, on every provider; phone-calendar creation, listing, and safe deletion in 1.4.0; Hermes, which runs its agent on its own side, in 1.4.1, with the phone tools bridged to it in plain text in 1.4.2; typed notes in 1.4.4 |
 | Feeds | Posting and replying by voice · sources beyond Bluesky and X · video in the timeline |
 | Media Deck | Voice control — "next" and "pause" said instead of tapped |
-| Photos Sync | Sync rules — Wi-Fi only, photos but not videos · freeing glasses storage once a shot is safely across · a video's location tag, which Android strips on the way out |
+| Photos Sync | A Wi-Fi-only rule · a video's location tag, which Android strips on the way out. Capture-type filters shipped in 1.1.0; optional deletion after sync already shipped in 1.0.0 |
 | Lens · Transit · Lyrics | Complete as they stand |
 
 Navigation is deliberately absent from Transit's row: it deserves a plugin of

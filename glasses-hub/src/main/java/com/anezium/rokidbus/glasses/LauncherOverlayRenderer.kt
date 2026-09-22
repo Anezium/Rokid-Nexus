@@ -222,6 +222,7 @@ object LauncherOverlayRenderer {
         }
 
         override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+            if (NoticeKeyDispatcher.handleKeyEvent(event)) return true
             if (LauncherOverlayRenderer.handleKeyEvent(event)) return true
             return super.dispatchKeyEvent(event)
         }

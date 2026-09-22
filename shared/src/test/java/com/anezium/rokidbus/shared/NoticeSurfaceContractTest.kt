@@ -10,10 +10,65 @@ import org.junit.Test
 
 class NoticeSurfaceContractTest {
     @Test
-    fun `v4 carries the grown-band text budgets`() {
-        assertEquals(4, NoticeSurfaceContract.VERSION)
+    fun `v5 keeps the grown-band text budgets with qualified interactions`() {
+        assertEquals(5, NoticeSurfaceContract.VERSION)
         assertEquals(8192, NoticeSurfaceContract.MAX_BODY_CHARS)
         assertEquals(64, NoticeSurfaceContract.MAX_LINES)
+    }
+
+    @Test
+    fun `interaction identity must contain two bounded string tokens`() {
+        val identity = NoticeInteractionIdentity("instance-a", "question-a")
+        val payload = NoticeSurfaceContract.withInteractionIdentity(JSONObject(), identity)
+        assertEquals(identity, NoticeSurfaceContract.interactionIdentity(payload))
+        for (key in listOf(NoticeSurfaceContract.FIELD_INSTANCE_ID, NoticeSurfaceContract.FIELD_QUESTION_ID)) {
+            for (value in listOf(JSONObject.NULL, "", "a b", "a".repeat(65), 1, true)) {
+                val invalid = JSONObject(payload.toString()).put(key, value)
+                assertNull(NoticeSurfaceContract.interactionIdentity(invalid))
+            }
+            val missing = JSONObject(payload.toString()).apply { remove(key) }
+            assertNull(NoticeSurfaceContract.interactionIdentity(missing))
+        }
+    }
+
+    @Test
+    fun `replies retain the captured interaction identity`() {
+        val identity = NoticeInteractionIdentity("notice-a", "question-a")
+        val action = NoticeSurfaceContract.actionPayload("relay:notice", "reply", identity)
+        val closed = NoticeSurfaceContract.closedPayload("relay:notice", NoticeCloseReason.USER, identity)
+        assertEquals(identity, NoticeSurfaceContract.interactionIdentity(action))
+        assertEquals(identity, NoticeSurfaceContract.interactionIdentity(closed))
+        assertEquals("reply", action.getString("id"))
+        assertEquals("relay:notice", closed.getString("noticeId"))
+    }
+
+    @Test
+    fun `cosmetic action patches preserve meaning and round trip without rearming`() {
+        val content = NoticeSurfaceContent(
+            title = "Reply", body = null, footer = null,
+            actions = listOf(NoticeAction("send", "send", "Send in 3")),
+        )
+        val patch = NoticeSurfacePatch(
+            actions = NoticeField(listOf(NoticeAction("send", "send", "Send in 2"))),
+            rearm = false,
+        )
+        val encoded = NoticeSurfaceContract.toUpdatePayload("relay:notice", patch)
+        val decoded = (NoticeSurfaceContract.validateUpdate(encoded) as NoticeSurfacePatchResult.Valid).patch
+        assertEquals(false, decoded.rearm)
+        assertTrue(decoded.preservesInteraction(content))
+        assertFalse(patch.copy(actions = NoticeField(listOf(NoticeAction("delete", "trash", "Delete"))))
+            .preservesInteraction(content))
+        assertFalse(patch.copy(interactive = NoticeField(true)).preservesInteraction(content))
+    }
+
+    @Test
+    fun `rearm accepts only a boolean patch field`() {
+        for (value in listOf(JSONObject.NULL, "false", 0)) {
+            assertTrue(NoticeSurfaceContract.validateUpdate(JSONObject().put("rearm", value)) is
+                NoticeSurfacePatchResult.Invalid)
+        }
+        assertTrue(NoticeSurfaceContract.validateShow(showPayload().put("rearm", false)) is
+            NoticeSurfaceValidationResult.Invalid)
     }
 
     @Test

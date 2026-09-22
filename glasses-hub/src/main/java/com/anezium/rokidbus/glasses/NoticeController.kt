@@ -15,6 +15,7 @@ import com.anezium.rokidbus.shared.BusPaths
 import com.anezium.rokidbus.shared.ImageSurfaceContract
 import com.anezium.rokidbus.shared.NoticeAction
 import com.anezium.rokidbus.shared.NoticeCloseReason
+import com.anezium.rokidbus.shared.NoticeInteractionIdentity
 import com.anezium.rokidbus.shared.NoticeSurfaceContent
 import com.anezium.rokidbus.shared.NoticeSurfaceContract
 import com.anezium.rokidbus.shared.NoticeSurfacePatchResult
@@ -41,6 +42,8 @@ internal data class NexusNoticeSurface(
      */
     val answered: Boolean = false,
     val ownerPluginId: String = "",
+    val interactionIdentity: NoticeInteractionIdentity? = null,
+    val deliveryUnconfirmed: Boolean = false,
 ) {
     /**
      * The actions still on offer. An answered band shows none: the question has
@@ -209,6 +212,9 @@ private const val MIN_IMAGE_PAGE_BODY_LINES = 3
 internal fun noticeBodyText(content: NoticeSurfaceContent): String? =
     if (content.lines.isEmpty()) content.body else content.lines.joinToString("\n")
 
+internal fun noticeFooterText(notice: NexusNoticeSurface): String? =
+    if (notice.deliveryUnconfirmed) "Delivery not confirmed" else notice.content.footer
+
 /**
  * What a band's one answer turned out to be.
  *
@@ -242,6 +248,7 @@ internal sealed interface NoticeStateDecision {
         val ttlMs: Long,
         val reason: NoticeCloseReason,
         val imageBitmap: Bitmap? = null,
+        val interactionIdentity: NoticeInteractionIdentity? = null,
     ) : NoticeStateDecision
     data object DroppedStale : NoticeStateDecision
     data object Ignored : NoticeStateDecision
@@ -254,6 +261,8 @@ internal class NoticeStateMachine {
 
     fun activeNotice(): NexusNoticeSurface? = active
 
+    fun isStaleSequence(seq: Long): Boolean = seq <= latestSeq
+
     fun show(
         surfaceId: String,
         seq: Long,
@@ -261,6 +270,7 @@ internal class NoticeStateMachine {
         nowMs: Long,
         imageBitmap: Bitmap? = null,
         ownerPluginId: String = "",
+        interactionIdentity: NoticeInteractionIdentity? = null,
     ): NoticeStateDecision {
         if (seq <= latestSeq) return NoticeStateDecision.DroppedStale
         latestSeq = seq
@@ -275,6 +285,7 @@ internal class NoticeStateMachine {
             hardExpiresAtMs = nowMs + NoticeSurfaceContract.MAX_LIFETIME_MS,
             imageBitmap = imageBitmap,
             ownerPluginId = ownerPluginId,
+            interactionIdentity = interactionIdentity,
         )
         active = notice
         return NoticeStateDecision.Shown(notice)
@@ -290,10 +301,23 @@ internal class NoticeStateMachine {
         seq: Long,
         patch: com.anezium.rokidbus.shared.NoticeSurfacePatch,
         nowMs: Long,
+        interactionIdentity: NoticeInteractionIdentity? = null,
     ): NoticeStateDecision {
         val current = active ?: return NoticeStateDecision.Ignored
         if (current.surfaceId != surfaceId) return NoticeStateDecision.Ignored
         if (seq <= latestSeq) return NoticeStateDecision.DroppedStale
+        if (current.interactionIdentity?.instanceId != interactionIdentity?.instanceId) {
+            return NoticeStateDecision.Ignored
+        }
+        if (patch.rearm == false && !patch.preservesInteraction(current.content)) {
+            return NoticeStateDecision.Ignored
+        }
+        val rearms = patch.rearm != false && (patch.actions != null || patch.interactive != null)
+        if ((!rearms && interactionIdentity != current.interactionIdentity) ||
+            (rearms && interactionIdentity != null && interactionIdentity == current.interactionIdentity)
+        ) {
+            return NoticeStateDecision.Ignored
+        }
         val patched = patch.applyTo(current.content)
         // An update is allowed to clear any single field, but not to leave the
         // wearer looking at an empty box.
@@ -330,7 +354,7 @@ internal class NoticeStateMachine {
             // clearing the flag resets too: there is then nothing left to
             // answer, and a flag left set would only be inherited by whatever
             // the owner asks next.
-            answered = if (patch.actions != null || patch.interactive != null) {
+            answered = if (rearms) {
                 false
             } else {
                 current.answered
@@ -340,6 +364,8 @@ internal class NoticeStateMachine {
             pageCount = if (patched.actions.size <= 1) current.pageCount else 1,
             pageIndex = if (patched.actions.size <= 1) current.pageIndex else 0,
             engaged = remainsEngaged,
+            interactionIdentity = interactionIdentity,
+            deliveryUnconfirmed = current.deliveryUnconfirmed && !rearms,
         )
         active = notice
         return NoticeStateDecision.Updated(notice)
@@ -354,11 +380,13 @@ internal class NoticeStateMachine {
      * taps can both fit through. That is why the plain input case comes through
      * here too rather than being checked and then forwarded.
      */
-    fun answer(confirmKeyCode: Int): NoticeStateDecision {
+    fun answer(confirmKeyCode: Int, expected: NexusNoticeSurface? = active): NoticeStateDecision {
         val current = active ?: return NoticeStateDecision.Ignored
+        val captured = expected ?: return NoticeStateDecision.Ignored
+        if (!isCurrentInteraction(captured)) return NoticeStateDecision.Ignored
         if (!current.expectsInput) return NoticeStateDecision.Ignored
         val answer = when (
-            val action = current.content.actions.getOrNull(current.selectedActionIndex)
+            val action = captured.content.actions.getOrNull(captured.selectedActionIndex)
         ) {
             null -> NoticeAnswer.Input(confirmKeyCode)
             else -> NoticeAnswer.Action(action)
@@ -366,6 +394,25 @@ internal class NoticeStateMachine {
         val notice = current.copy(answered = true)
         active = notice
         return NoticeStateDecision.Answered(notice, answer)
+    }
+
+    fun isCurrentInteraction(expected: NexusNoticeSurface?): Boolean {
+        val current = active ?: return false
+        if (expected == null || current.surfaceId != expected.surfaceId) return false
+        return if (current.interactionIdentity == null) {
+            expected.interactionIdentity == null && current.seq == expected.seq
+        } else {
+            current.interactionIdentity == expected.interactionIdentity
+        }
+    }
+
+    fun deliveryFailed(expected: NexusNoticeSurface): NoticeStateDecision {
+        val current = active ?: return NoticeStateDecision.Ignored
+        if (!current.answered || !isCurrentInteraction(expected)) return NoticeStateDecision.Ignored
+        // A failing write can already have reached the phone. Keep the answer spent.
+        val notice = current.copy(deliveryUnconfirmed = true)
+        active = notice
+        return NoticeStateDecision.Updated(notice)
     }
 
     /**
@@ -434,10 +481,17 @@ internal class NoticeStateMachine {
     fun selectedAction(): NoticeAction? =
         active?.let { it.liveActions.getOrNull(it.selectedActionIndex) }
 
-    fun hide(seq: Long, reason: NoticeCloseReason): NoticeStateDecision {
+    fun hide(
+        seq: Long,
+        reason: NoticeCloseReason,
+        interactionIdentity: NoticeInteractionIdentity? = active?.interactionIdentity,
+    ): NoticeStateDecision {
         if (seq <= latestSeq) return NoticeStateDecision.DroppedStale
         latestSeq = seq
         val closing = active ?: return NoticeStateDecision.Ignored
+        if (closing.interactionIdentity?.instanceId != interactionIdentity?.instanceId) {
+            return NoticeStateDecision.Ignored
+        }
         active = null
         return NoticeStateDecision.Closed(
             surfaceId = closing.surfaceId,
@@ -445,12 +499,17 @@ internal class NoticeStateMachine {
             ttlMs = closing.content.ttlMs,
             reason = reason,
             imageBitmap = closing.imageBitmap,
+            interactionIdentity = closing.interactionIdentity,
         )
     }
 
     /** BACK and TTL are local: they carry no sequence from the phone. */
-    fun close(reason: NoticeCloseReason): NoticeStateDecision {
+    fun close(
+        reason: NoticeCloseReason,
+        expected: NexusNoticeSurface? = active,
+    ): NoticeStateDecision {
         val closing = active ?: return NoticeStateDecision.Ignored
+        if (!isCurrentInteraction(expected)) return NoticeStateDecision.Ignored
         active = null
         return NoticeStateDecision.Closed(
             surfaceId = closing.surfaceId,
@@ -458,6 +517,7 @@ internal class NoticeStateMachine {
             ttlMs = closing.content.ttlMs,
             reason = reason,
             imageBitmap = closing.imageBitmap,
+            interactionIdentity = closing.interactionIdentity,
         )
     }
 
@@ -471,6 +531,7 @@ internal class NoticeStateMachine {
             ttlMs = notice.content.ttlMs,
             reason = NoticeCloseReason.TIMEOUT,
             imageBitmap = notice.imageBitmap,
+            interactionIdentity = notice.interactionIdentity,
         )
     }
 
@@ -480,6 +541,11 @@ internal class NoticeStateMachine {
 }
 
 internal object NoticeController {
+    private data class PendingNoticeImage(
+        val key: ImageDecodeKey,
+        val identity: NoticeInteractionIdentity,
+    )
+
     private data class PendingNoticeWake(
         val surfaceId: String,
         val seq: Long,
@@ -491,6 +557,7 @@ internal object NoticeController {
     private val state = NoticeStateMachine()
     private val listeners = CopyOnWriteArrayList<(NexusNoticeSurface?) -> Unit>()
     private val imageDecodeCoordinator = ImageDecodeCoordinator<Bitmap>()
+    private var pendingNoticeImage: PendingNoticeImage? = null
     private val imageDecodeExecutor = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "RokidNexusNoticeImageDecode").apply { isDaemon = true }
     }
@@ -522,6 +589,7 @@ internal object NoticeController {
     }
     private val ringInputPolicy = RingSurfaceInputPolicy()
     private val ringTapExpiry = Runnable(::resolveRingTap)
+    private var pendingRingNotice: NexusNoticeSurface? = null
 
     fun activeNotice(): NexusNoticeSurface? = state.activeNotice()
 
@@ -625,10 +693,11 @@ internal object NoticeController {
      * whether it consumed the key.
      */
     fun dismissFromBack(): Boolean {
-        if (visibleNotice() == null) return false
+        val expected = visibleNotice() ?: return false
         runOnMain {
-            discardPendingImage()
-            applyDecision(state.close(NoticeCloseReason.USER))
+            if (!state.isCurrentInteraction(expected)) return@runOnMain
+            discardPendingImage(expected.interactionIdentity)
+            applyDecision(state.close(NoticeCloseReason.USER, expected))
         }
         return true
     }
@@ -675,15 +744,16 @@ internal object NoticeController {
      * swallows it without answering again.
      */
     fun handleConfirm(keyCode: Int): Boolean {
-        if (visibleNotice()?.expectsInput != true) return false
-        runOnMain { applyDecision(state.answer(keyCode)) }
+        val expected = visibleNotice()?.takeIf { it.expectsInput } ?: return false
+        runOnMain { applyDecision(state.answer(keyCode, expected)) }
         return true
     }
 
     /** Steps the selection. False when there is nothing to step through. */
     fun handleDirection(delta: Int): Boolean {
-        if (!claimsDirection()) return false
+        val expected = visibleNotice()?.takeIf { it.claimsDirection } ?: return false
         runOnMain {
+            if (!state.isCurrentInteraction(expected)) return@runOnMain
             // The same test that decided the band could page in the first place.
             // Asking "does it have any actions" instead sent a one-chip band's
             // swipes into a row with nowhere to go, so a paged conversation
@@ -718,56 +788,79 @@ internal object NoticeController {
 
     fun handleRingKey(keyCode: Int, eventTimeMs: Long): Boolean {
         if (!claimsRingKey(keyCode)) return false
+        val expected = visibleNotice() ?: return false
         return when (keyCode) {
             RingSurfaceInputPolicy.RING_KEYCODE_FORWARD -> handleDirection(1)
             RingSurfaceInputPolicy.RING_KEYCODE_BACKWARD -> handleDirection(-1)
             else -> {
-                ringInputPolicy.onKeyDown(keyCode, eventTimeMs)
-                main.removeCallbacks(ringTapExpiry)
-                main.postDelayed(ringTapExpiry, RingTapPolicy.DEFAULT_WINDOW_MS + 1L)
+                runOnMain {
+                    if (!state.isCurrentInteraction(expected)) return@runOnMain
+                    if (pendingRingNotice?.let { !state.isCurrentInteraction(it) } == true) {
+                        resetRingInput()
+                    }
+                    pendingRingNotice = expected
+                    ringInputPolicy.onKeyDown(keyCode, eventTimeMs)
+                    main.removeCallbacks(ringTapExpiry)
+                    main.postDelayed(ringTapExpiry, RingTapPolicy.DEFAULT_WINDOW_MS + 1L)
+                }
                 true
             }
         }
     }
 
     fun cancelRingInput() {
-        runOnMain {
-            main.removeCallbacks(ringTapExpiry)
-            ringInputPolicy.reset()
-        }
+        runOnMain(::resetRingInput)
+    }
+
+    private fun resetRingInput() {
+        main.removeCallbacks(ringTapExpiry)
+        ringInputPolicy.reset()
+        pendingRingNotice = null
     }
 
     private fun resolveRingTap() {
-        when (ringInputPolicy.resolveExpired(SystemClock.elapsedRealtime())) {
+        val expected = pendingRingNotice ?: return
+        if (!state.isCurrentInteraction(expected)) {
+            resetRingInput()
+            return
+        }
+        val resolution = ringInputPolicy.resolveExpired(SystemClock.elapsedRealtime()) ?: return
+        pendingRingNotice = null
+        when (resolution) {
             is RingSurfaceInputPolicy.Resolution.Forward ->
-                handleConfirm(RingSurfaceInputPolicy.KEYCODE_ENTER)
+                applyDecision(state.answer(RingSurfaceInputPolicy.KEYCODE_ENTER, expected))
             // A double tap on the ring is the wearer's dismiss, same as BACK.
-            RingSurfaceInputPolicy.Resolution.Back -> dismissFromBack()
-            RingSurfaceInputPolicy.Resolution.Ignore, null -> Unit
+            RingSurfaceInputPolicy.Resolution.Back -> {
+                discardPendingImage(expected.interactionIdentity)
+                applyDecision(state.close(NoticeCloseReason.USER, expected))
+            }
+            RingSurfaceInputPolicy.Resolution.Ignore -> Unit
         }
     }
 
-    private fun forwardAction(surfaceId: String, actionId: String) {
+    private fun forwardAction(notice: NexusNoticeSurface, actionId: String): Boolean =
         GlassesHub.sendToPhone(
             BusPaths.NOTICE_ACTION,
-            NoticeSurfaceContract.actionPayload(surfaceId, actionId),
+            NoticeSurfaceContract.actionPayload(notice.surfaceId, actionId, notice.interactionIdentity),
         )
-    }
 
-    private fun forwardInput(surfaceId: String, keyCode: Int) {
+    private fun forwardInput(notice: NexusNoticeSurface, keyCode: Int): Boolean =
         GlassesHub.sendToPhone(
             BusPaths.NOTICE_INPUT,
-            JSONObject()
-                .put("noticeId", surfaceId)
-                .put("keyCode", keyCode)
-                .put("action", KeyEvent.ACTION_DOWN),
+            NoticeSurfaceContract.withInteractionIdentity(
+                JSONObject()
+                    .put("noticeId", notice.surfaceId)
+                    .put("keyCode", keyCode)
+                    .put("action", KeyEvent.ACTION_DOWN),
+                checkNotNull(notice.interactionIdentity),
+            ),
         )
-    }
 
     fun setCameraOverlayActive(active: Boolean) {
         runOnMain {
             if (cameraOverlayActive == active) return@runOnMain
             cameraOverlayActive = active
+            if (active) resetRingInput()
             notifyChanged()
         }
     }
@@ -779,11 +872,16 @@ internal object NoticeController {
             return
         }
         val surfaceId = envelope.payload.optString("surfaceId")
-        if (surfaceId.isBlank()) {
+        val interactionIdentity = NoticeSurfaceContract.interactionIdentity(envelope.payload)
+        if (surfaceId.isBlank() || interactionIdentity == null) {
             log("notice rejected code=${NoticeSurfaceContract.ERROR_INVALID_NOTICE}")
             return
         }
         val seq = envelope.payload.optLong("seq", Long.MIN_VALUE)
+        if (state.isStaleSequence(seq) || pendingNoticeImage?.let { seq <= it.key.seq } == true) {
+            log("notice dropped stale seq=$seq")
+            return
+        }
         val ownerPluginId = envelope.payload.optString("ownerPluginId")
         val image = validation.content.image
         if (image != null) {
@@ -799,17 +897,21 @@ internal object NoticeController {
             )
             val key = ImageDecodeKey(surfaceId, seq, image.contentKey)
             imageDecodeCoordinator.begin(key)
+            pendingNoticeImage = PendingNoticeImage(key, interactionIdentity)
             imageDecodeExecutor.execute {
                 val decoded = ImageHudView.decodeRgb565(bytes, metadata)
                 if (decoded == null) {
                     log("Notice image decode failed id=$surfaceId seq=$seq")
-                    main.post { imageDecodeCoordinator.cancel(key) }
+                    main.post {
+                        if (imageDecodeCoordinator.cancel(key)) pendingNoticeImage = null
+                    }
                     return@execute
                 }
                 main.post {
                     when (val completion = imageDecodeCoordinator.complete(key, decoded)) {
                         is ImageDecodeCompletion.Rejected -> completion.stale.recycleSafely()
                         is ImageDecodeCompletion.Accepted -> {
+                            pendingNoticeImage = null
                             completion.replaced?.takeUnless { it === decoded }?.recycleSafely()
                             showValidated(
                                 context = context,
@@ -818,6 +920,7 @@ internal object NoticeController {
                                 content = validation.content,
                                 imageBitmap = decoded,
                                 ownerPluginId = ownerPluginId,
+                                interactionIdentity = interactionIdentity,
                             )
                             imageDecodeCoordinator.invalidate(surfaceId)
                                 ?.takeUnless { it === decoded }
@@ -828,15 +931,14 @@ internal object NoticeController {
             }
             return
         }
-        imageDecodeCoordinator.invalidate()?.let { pending ->
-            if (pending !== state.activeNotice()?.imageBitmap) pending.recycleSafely()
-        }
+        discardPendingImage()
         showValidated(
             context,
             surfaceId,
             seq,
             validation.content,
             ownerPluginId = ownerPluginId,
+            interactionIdentity = interactionIdentity,
         )
     }
 
@@ -847,6 +949,7 @@ internal object NoticeController {
         content: NoticeSurfaceContent,
         imageBitmap: Bitmap? = null,
         ownerPluginId: String = "",
+        interactionIdentity: NoticeInteractionIdentity,
     ) {
         val previous = state.activeNotice()
         val decision = state.show(
@@ -856,15 +959,15 @@ internal object NoticeController {
             SystemClock.elapsedRealtime(),
             imageBitmap,
             ownerPluginId,
+            interactionIdentity,
         )
-        // A different plugin taking the slot is a close for the one that had it,
-        // and its owner is owed the reason.
+        // Report the outgoing instance even when the same plugin owns the replacement.
         if (decision is NoticeStateDecision.Shown &&
             previous != null &&
-            previous.surfaceId != surfaceId
+            (previous.surfaceId != surfaceId || previous.interactionIdentity != interactionIdentity)
         ) {
             logNoticeClosed(previous, NoticeCloseReason.REPLACED)
-            reportClosed(previous.surfaceId, NoticeCloseReason.REPLACED)
+            reportClosed(previous.surfaceId, NoticeCloseReason.REPLACED, previous.interactionIdentity)
         }
         applyDecision(decision)
         if (decision is NoticeStateDecision.Shown) {
@@ -883,14 +986,21 @@ internal object NoticeController {
             return
         }
         val patch = NoticeSurfaceContract.validateUpdate(envelope.payload)
-        if (patch !is NoticeSurfacePatchResult.Valid) {
+        val interactionIdentity = NoticeSurfaceContract.interactionIdentity(envelope.payload)
+        if (patch !is NoticeSurfacePatchResult.Valid || interactionIdentity == null) {
             log("notice update rejected code=${NoticeSurfaceContract.ERROR_INVALID_NOTICE}")
             return
         }
         val surfaceId = envelope.payload.optString("surfaceId")
         val seq = envelope.payload.optLong("seq", Long.MIN_VALUE)
         val wasEngaged = state.activeNotice()?.content?.interactive == true
-        val decision = state.update(surfaceId, seq, patch.patch, SystemClock.elapsedRealtime())
+        val decision = state.update(
+            surfaceId,
+            seq,
+            patch.patch,
+            SystemClock.elapsedRealtime(),
+            interactionIdentity,
+        )
         applyDecision(
             decision,
             genuineEngagement = decision is NoticeStateDecision.Updated &&
@@ -899,9 +1009,17 @@ internal object NoticeController {
     }
 
     private fun hide(envelope: BusEnvelope) {
-        discardPendingImage()
+        val interactionIdentity = NoticeSurfaceContract.interactionIdentity(envelope.payload)
+        if (interactionIdentity == null) {
+            log("notice hide rejected code=${NoticeSurfaceContract.ERROR_INVALID_NOTICE}")
+            return
+        }
         val seq = envelope.payload.optLong("seq", Long.MIN_VALUE)
-        applyDecision(state.hide(seq, NoticeCloseReason.OWNER))
+        val decision = state.hide(seq, NoticeCloseReason.OWNER, interactionIdentity)
+        if (decision !is NoticeStateDecision.DroppedStale) {
+            discardPendingImage(interactionIdentity)
+        }
+        applyDecision(decision)
     }
 
     private fun applyDecision(
@@ -911,6 +1029,7 @@ internal object NoticeController {
     ) {
         when (decision) {
             is NoticeStateDecision.Shown -> {
+                resetRingInput()
                 AssistantDisplayEpisode.accept(
                     serviceContext,
                     assistantEpisodeNoticeShownSignal(
@@ -928,6 +1047,9 @@ internal object NoticeController {
                 notifyChanged()
             }
             is NoticeStateDecision.Updated -> {
+                if (pendingRingNotice?.let { !state.isCurrentInteraction(it) } == true) {
+                    resetRingInput()
+                }
                 val signal = if (genuineEngagement) {
                     assistantEpisodeNoticeShownSignal(
                         surfaceId = decision.notice.surfaceId,
@@ -960,11 +1082,15 @@ internal object NoticeController {
                 // No expiry rescheduling: answering neither shortens nor extends
                 // the band's life, and the deadline it was already given still
                 // stands. The re-render is what makes the row leave the band.
-                when (val answer = decision.answer) {
+                val sent = when (val answer = decision.answer) {
                     is NoticeAnswer.Action ->
-                        forwardAction(decision.notice.surfaceId, answer.action.id)
+                        forwardAction(decision.notice, answer.action.id)
                     is NoticeAnswer.Input ->
-                        forwardInput(decision.notice.surfaceId, answer.keyCode)
+                        forwardInput(decision.notice, answer.keyCode)
+                }
+                if (!sent) {
+                    log("notice answer transport failed seq=${decision.notice.seq}")
+                    applyDecision(state.deliveryFailed(decision.notice))
                 }
                 notifyChanged()
             }
@@ -979,13 +1105,12 @@ internal object NoticeController {
                 )
                 clearPendingNoticeWake()
                 cancelExpiry()
-                main.removeCallbacks(ringTapExpiry)
-                ringInputPolicy.reset()
+                resetRingInput()
                 log(
                     "notice state=closed seq=${decision.seq} ttlMs=${decision.ttlMs} " +
                         "reason=${decision.reason.wireValue}",
                 )
-                reportClosed(decision.surfaceId, decision.reason)
+                reportClosed(decision.surfaceId, decision.reason, decision.interactionIdentity)
                 notifyChanged()
                 maybeSleepDisplay(decision.reason)
                 decision.imageBitmap?.let { released ->
@@ -998,11 +1123,16 @@ internal object NoticeController {
     }
 
     /** Tells the phone the slot is free, and why, so it can tell the owner. */
-    private fun reportClosed(surfaceId: String, reason: NoticeCloseReason) {
-        GlassesHub.sendToPhone(
+    private fun reportClosed(
+        surfaceId: String,
+        reason: NoticeCloseReason,
+        interactionIdentity: NoticeInteractionIdentity?,
+    ) {
+        val sent = GlassesHub.sendToPhone(
             BusPaths.NOTICE_CLOSED,
-            NoticeSurfaceContract.closedPayload(surfaceId, reason),
+            NoticeSurfaceContract.closedPayload(surfaceId, reason, interactionIdentity),
         )
+        if (!sent) log("notice close transport failed reason=${reason.wireValue}")
     }
 
     private fun scheduleExpiry(notice: NexusNoticeSurface) {
@@ -1107,7 +1237,9 @@ internal object NoticeController {
         pendingNoticeWake = null
     }
 
-    private fun discardPendingImage() {
+    private fun discardPendingImage(identity: NoticeInteractionIdentity? = null) {
+        if (identity != null && pendingNoticeImage?.identity != identity) return
+        pendingNoticeImage = null
         imageDecodeCoordinator.invalidate()?.let { pending ->
             if (pending !== state.activeNotice()?.imageBitmap) pending.recycleSafely()
         }

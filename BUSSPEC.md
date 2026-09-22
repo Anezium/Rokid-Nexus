@@ -676,9 +676,10 @@ than repeatedly replacing a pin.
 
 Notices reuse the `surfaces` grant; there is no notice capability and the
 plugin API version remains 3. Glasses announce support with feature bit 64
-(`NOTICE_SURFACE`) and `noticeSurfaceVersion`, which is **3**: v1 was the
+(`NOTICE_SURFACE`) and `noticeSurfaceVersion`, which is **5**: v1 was the
 single-page band, v2 paged it and gave it an image, v3 added structured
-`lines`. Both hubs gate the tier on an exact match, so a pair speaking a
+`lines`, v4 increased the reading budgets, and v5 binds interactions to their
+notice and question. Both hubs gate the tier on an exact match, so a pair speaking a
 different version declines the capability outright and the plugin hears
 `CAPABILITY_NOT_AVAILABLE` — which it can act on — instead of having its band
 accepted and then silently dropped.
@@ -701,7 +702,7 @@ Phone to glasses:
 
   **The phone relays the owner's validated patch**, stamped with the hub's own
   fields — the wire `surfaceId` `<pluginId>:notice`, `localSurfaceId`,
-  `ownerPluginId`, and a fresh `seq` — rather than re-serialising its canonical
+  `ownerPluginId`, `noticeInstanceId`, `noticeQuestionId`, and a fresh `seq` — rather than re-serialising its canonical
   state. Absent-versus-present is therefore end-to-end: what the owner left out
   is what the glasses leave alone, and what the owner sent empty is what the
   glasses clear. Re-serialising could not express a clear at all, because full
@@ -713,14 +714,14 @@ Phone to glasses:
 
 Glasses to phone to plugin:
 
-- `/notice/input` — `{noticeId, keyCode, action}`. The single confirming
+- `/notice/input` — `{noticeId, noticeInstanceId, noticeQuestionId, keyCode, action}`. The single confirming
   gesture, sent only by a band that carries no actions, and **at most once per
   question**.
-- `/notice/action` — `{noticeId, id}`, where `id` is the selected action's
+- `/notice/action` — `{noticeId, noticeInstanceId, noticeQuestionId, id}`, where `id` is the selected action's
   plugin-supplied identifier. Sent instead of `/notice/input` whenever the band
   carries actions, and **at most once per question**.
 
-- `/notice/closed` — `{noticeId, reason}` with `reason` in
+- `/notice/closed` — `{noticeId, noticeInstanceId, noticeQuestionId, reason}` with `reason` in
   `user | timeout | owner | replaced | disconnect`. Delivered exactly once per
   notice, including when the owner hid it itself. Not delivered when the owner
   is what disappeared.
@@ -731,6 +732,33 @@ answers once — an action id it never offered, a pick that raced a replacement,
 and a second reply of either kind are all refused. The refusals log distinct
 reasons, `not_current` and `already_answered`, because they mean different
 things.
+
+`noticeId` identifies the owner's fixed slot, not a particular message. The
+phone generates fresh opaque `noticeInstanceId` and `noticeQuestionId` tokens
+for each accepted show. An accepted rearming update keeps the instance and
+replaces the question token; a presentation-only update keeps both. Tokens are
+bounded strings of 1–64 ASCII letters, digits, `_`, or `-`. They are independent
+of the per-frame `seq`, so a text refresh does not invalidate an in-flight reply.
+Plugins cannot choose the trusted hub identities. Missing, malformed, or stale
+identities are rejected before taking an answer or clearing a notice. A patch
+for another instance cannot update the band when its preceding show was lost.
+Deferred image work and input retain the identity they were created for.
+
+The SDK also supplies an optional opaque `noticeClientToken` on show/update.
+This is callback correlation, never authority: the phone stores it against the
+authenticated owner and uses the stored value, not a glasses-supplied token,
+in owner callbacks. Registration advertises `noticeInteractionVersion: 1`.
+The updated SDK drops callbacks for an older local question before invoking the
+unchanged plugin hooks. Plugins built against an older SDK retain their callback
+API, but must be rebuilt to gain this last protection against queued callbacks.
+With an older phone hub, the new SDK retains legacy callback behavior; it does
+not claim interaction protection without the registration marker.
+
+When the glasses transport reports a send failure after a tap, the band shows
+`Delivery not confirmed` and keeps that answer spent. A partial write may already
+have delivered it, so it is not automatically replayed or rearmed. A successful
+transport return is not an application acknowledgement. This contract adds no
+generic reliable-delivery layer or durable retry queue.
 
 Notice traffic coming back is **owner-scoped**: the hub delivers it only to the
 plugin named by `pluginId` in the payload, so nothing else subscribed to the
@@ -856,12 +884,19 @@ absent key keeps the current representation. The normalized patch, including an
 empty lines array, is relayed as sent so those replacement semantics survive the
 phone hop.
 
-**An update that carries the `actions` key or the `interactive` key is a new
+**By default, an update that carries the `actions` key or the `interactive` key is a new
 question** and reopens the band for another answer; one that carries neither is
 the owner driving an already-answered band as a display and does not. Clearing
 either — an empty array, or `interactive: false` — resets the flag as well:
 there is then nothing left to answer, and a flag left set would only be
 inherited by whatever the owner asks next.
+
+An update may explicitly set `rearm: false` for presentation changes such as a
+countdown action label. This preserves the question identity and answered state.
+It must preserve the ordered action ids and the interactive flag; changing
+either is `INVALID_NOTICE`. `rearm` is a strict boolean, update-only field.
+Omitting it or setting it to true retains the default rule above. `rearm: true`
+without an `actions` or `interactive` field does not itself ask a new question.
 
 Because the phone relays the owner's patch rather than re-serialising its state,
 this falls out rather than needing enforcement: a text-only update simply does
@@ -1686,7 +1721,7 @@ The phone does not
 include renderer bits in camera announcements. The glasses hub announces its
 renderer after either remote link connects by sending
 `/system/hub/capabilities` with
-`{"version":1,"features":3810,"imageSurfaceVersion":1,"pinSurfaceVersion":1,"noticeSurfaceVersion":3,"activitySurfaceVersion":1,"inkSurfaceVersion":1,"editableSurfaceVersion":1,"ttsVersion":1,"maxImageBytes":65536,"versionName":"1.0.0","setupComplete":true}`
+`{"version":1,"features":3810,"imageSurfaceVersion":1,"pinSurfaceVersion":1,"noticeSurfaceVersion":5,"activitySurfaceVersion":1,"inkSurfaceVersion":1,"editableSurfaceVersion":1,"ttsVersion":1,"maxImageBytes":65536,"versionName":"1.0.0","setupComplete":true}`
 when every current renderer feature, including runtime TTS, is available. The
 `features` value is the bitwise sum; TTS may be absent at runtime.
 `versionName` is the optional glasses app `BuildConfig.VERSION_NAME`; older glasses

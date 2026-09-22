@@ -126,6 +126,7 @@ class MainActivity : Activity() {
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (NoticeKeyDispatcher.handleKeyEvent(event)) return true
         if (event.action != KeyEvent.ACTION_DOWN || event.repeatCount != 0) {
             return super.dispatchKeyEvent(event)
         }

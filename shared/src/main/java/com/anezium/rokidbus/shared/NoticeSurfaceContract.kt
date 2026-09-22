@@ -43,6 +43,11 @@ data class NoticeAction(
     val label: String,
 )
 
+data class NoticeInteractionIdentity(
+    val instanceId: String,
+    val questionId: String,
+)
+
 data class NoticeSurfaceContent(
     val title: String?,
     val body: String?,
@@ -84,7 +89,13 @@ data class NoticeSurfacePatch(
     val actions: NoticeField<List<NoticeAction>>? = null,
     val ttlMs: NoticeField<Long>? = null,
     val lines: NoticeField<List<String>>? = null,
+    /** False changes presentation without offering a second answer. */
+    val rearm: Boolean? = null,
 ) {
+    fun preservesInteraction(content: NoticeSurfaceContent): Boolean =
+        (interactive == null || interactive.value == content.interactive) &&
+            (actions == null || actions.value.map { it.id } == content.actions.map { it.id })
+
     // Presence is the test, never the value: `?:` here would treat a field sent
     // empty as a field left out, and clearing a footer would silently keep it.
     fun applyTo(content: NoticeSurfaceContent): NoticeSurfaceContent = content.copy(
@@ -116,11 +127,12 @@ sealed interface NoticeSurfacePatchResult {
     data class Invalid(val reason: String) : NoticeSurfacePatchResult
 }
 
-/** Pure notice-surface v4 validation and normalization with no Android dependencies. */
+/** Pure notice-surface validation and normalization with no Android dependencies. */
 object NoticeSurfaceContract {
     const val KIND = "notice"
 
     /**
+     * v5 binds replies to an instance and question, independently of visual updates.
      * v4 is the band that grew into a reading surface — same fields, an
      * eight-fold text budget, sized for the grown band rather than the glance.
      * v3 is the band that knows where a message ends: structured `lines`
@@ -130,12 +142,39 @@ object NoticeSurfaceContract {
      *
      * The bump is what keeps an older pair honest, and the reasoning has not
      * changed since v2. Both sides gate the capability on an exact version
-     * match, so glasses still speaking v3 decline the capability outright and
-     * the plugin hears CAPABILITY_NOT_AVAILABLE. Left at 3 they would accept the
-     * handshake and reject an answer past the old text ceiling instead.
+     * match. A peer that cannot echo the interaction identity declines notices
+     * rather than accepting a response for a replacement question.
      */
-    const val VERSION = 4
+    const val VERSION = 5
     const val LOCAL_SURFACE_ID = "notice"
+    const val FIELD_INSTANCE_ID = "noticeInstanceId"
+    const val FIELD_QUESTION_ID = "noticeQuestionId"
+    const val FIELD_CLIENT_TOKEN = "noticeClientToken"
+    const val INTERACTION_VERSION = 1
+
+    private val tokenPattern = Regex("[A-Za-z0-9_-]{1,64}")
+
+    fun validToken(value: String): Boolean = tokenPattern.matches(value)
+
+    fun clientToken(payload: JSONObject): String? = readToken(payload, FIELD_CLIENT_TOKEN)
+
+    fun interactionIdentity(payload: JSONObject): NoticeInteractionIdentity? {
+        val instanceId = readToken(payload, FIELD_INSTANCE_ID) ?: return null
+        val questionId = readToken(payload, FIELD_QUESTION_ID) ?: return null
+        return NoticeInteractionIdentity(instanceId, questionId)
+    }
+
+    fun withInteractionIdentity(
+        payload: JSONObject,
+        identity: NoticeInteractionIdentity,
+    ): JSONObject {
+        require(validToken(identity.instanceId) && validToken(identity.questionId))
+        return payload.put(FIELD_INSTANCE_ID, identity.instanceId)
+            .put(FIELD_QUESTION_ID, identity.questionId)
+    }
+
+    private fun readToken(payload: JSONObject, key: String): String? =
+        (payload.opt(key) as? String)?.takeIf(::validToken)
 
     const val MAX_TITLE_CHARS = 32
     const val MAX_BODY_CHARS = 8192
@@ -190,6 +229,7 @@ object NoticeSurfaceContract {
         binary: ByteArray? = null,
     ): NoticeSurfaceValidationResult {
         if (payload.opt("kind") != KIND) return invalid("kind must be notice")
+        if (payload.has("rearm")) return invalid("rearm is update-only")
         if (payload.has("body") && payload.has("lines")) {
             return invalid("body and lines are mutually exclusive")
         }
@@ -304,6 +344,12 @@ object NoticeSurfaceContract {
             return patchInvalid("body and lines are mutually exclusive")
         }
 
+        val rearm = when (val value = payload.opt("rearm")) {
+            null -> null
+            is Boolean -> value
+            else -> return patchInvalid("rearm must be a boolean")
+        }
+
         val title = when (val result = readText(payload, "title", MAX_TITLE_CHARS)) {
             is TextResult.Invalid -> return patchInvalid(result.reason)
             is TextResult.Absent -> null
@@ -355,6 +401,7 @@ object NoticeSurfaceContract {
                 interactive = interactive,
                 actions = actions,
                 ttlMs = ttlMs,
+                rearm = rearm,
             ),
         )
     }
@@ -418,6 +465,7 @@ object NoticeSurfaceContract {
             patch.interactive?.let { put("interactive", it.value) }
             patch.actions?.let { put("actions", actionsJson(it.value)) }
             patch.ttlMs?.let { put("ttlMs", it.value.coerceIn(MIN_TTL_MS, MAX_TTL_MS)) }
+            patch.rearm?.let { put("rearm", it) }
         }
 
     /**
@@ -425,13 +473,23 @@ object NoticeSurfaceContract {
      * notice reply, so the owner reads `noticeId` here exactly as it does on
      * `/notice/input` and `/notice/closed`.
      */
-    fun actionPayload(surfaceId: String, actionId: String): JSONObject = JSONObject()
+    fun actionPayload(
+        surfaceId: String,
+        actionId: String,
+        identity: NoticeInteractionIdentity? = null,
+    ): JSONObject = JSONObject()
         .put("noticeId", surfaceId)
         .put("id", actionId)
+        .apply { identity?.let { withInteractionIdentity(this, it) } }
 
-    fun closedPayload(surfaceId: String, reason: NoticeCloseReason): JSONObject = JSONObject()
+    fun closedPayload(
+        surfaceId: String,
+        reason: NoticeCloseReason,
+        identity: NoticeInteractionIdentity? = null,
+    ): JSONObject = JSONObject()
         .put("noticeId", surfaceId)
         .put("reason", reason.wireValue)
+        .apply { identity?.let { withInteractionIdentity(this, it) } }
 
     private sealed interface TextResult {
         data object Absent : TextResult

@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased
+
+- **HUD routing has dedicated owners.** The phone hub delegates notices, pins,
+  activities, ordinary surfaces, and Ink to separate routers, with regression
+  tests for owner delivery, reconnect state, and closure. Surface detach still
+  preserves an active microphone lease through the existing audio lifecycle.
+- **Notice replies stay with the question the wearer saw.** Both hubs now bind
+  actions, gestures, and dismissals to the notice instance and question, so a
+  delayed event cannot act on a replacement from the same plugin. The SDK also
+  filters stale callbacks already queued for a plugin. Notice protocol v5
+  requires matching phone and glasses hubs; rebuild plugins with the updated
+  SDK to gain the callback protection.
+- **A failed notice reply is visible.** The glasses show *Delivery not confirmed*
+  when the transport rejects a send, retaining the one-answer guard instead of
+  risking a duplicate effect after a partial write.
+- **An interactive notice keeps key priority over focused Nexus windows.**
+  Direction, confirm, and Back now reach the notice before the launcher or
+  surface beneath it, including local activity and overlay windows. Confirming
+  a notice can no longer activate an underlying control through those paths.
+  The same dispatcher handles accessibility input and paired directional keys.
+- **Relay countdowns keep the same question.** The SDK's optional `rearm = false`
+  update refreshes action labels without invalidating a tap in flight.
+- **Directional input can select Ink actions.** Tappable controls now have an
+  outlined selection tracked by their node id. Confirm activates the selected
+  control, and updates retain that selection when the node still exists. Paired
+  directional key reports count as one move. A notice can take input above the
+  page and return to the same selected Ink control when dismissed.
+
 ## 1.4.10
 
 ### Phone hub

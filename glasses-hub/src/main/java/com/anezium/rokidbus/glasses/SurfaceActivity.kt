@@ -45,6 +45,7 @@ class SurfaceActivity : Activity() {
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (NoticeKeyDispatcher.handleKeyEvent(event)) return true
         if (SurfaceController.handleKeyEvent(event)) return true
         return super.dispatchKeyEvent(event)
     }

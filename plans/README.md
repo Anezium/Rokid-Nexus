@@ -12,8 +12,8 @@ The existing CXR-L/SPP transport and single glasses anchor are preserved. The pl
 
 ## Execution order
 
-Statuses refreshed 2026-08-03 against the shipped roadmap and the code; the
-individual plan headers are the detail of record.
+Historical plan order below; selected statuses and the current work note were
+refreshed on 2026-09-22. The individual plan headers remain the detail of record.
 
 | Plan | Outcome | Status |
 |---|---|---|
@@ -35,9 +35,50 @@ individual plan headers are the detail of record.
 | [016](016-assistant-camera-tool.md) | Assistant `take_photo` camera tool | DONE |
 | [017](017-relay-notifications.md) | Relay notifications | DONE |
 | [018](018-notice-lines.md) | Notice lines | DONE |
-| [020](020-ink-surface.md) | Ink Surface: native port of the AIUI page format as a Nexus surface tier | TODO — direction approved 2026-08-08 |
+| [020](020-ink-surface.md) | Ink Surface: native port of the AIUI page format as a Nexus surface tier | IN PROGRESS — public implementation shipped in 1.4.1; M1–M4 complete, M5 hardware conformance and measurement remain |
 
-Status values are `TODO`, `IN PROGRESS`, `BLOCKED`, and `DONE`. Update both this table and the individual plan when execution status changes. What comes after these plans is tracked on the roadmap, not here: display arbitration, continuous speech, and the plugin roadmap's Navigation, T3code, and Terminal/Agent do not have plan documents yet.
+Status values are `TODO`, `IN PROGRESS`, `BLOCKED`, and `DONE`. Update both this
+table and the individual plan when execution status changes. Current priorities
+are tracked on the [roadmap](../ROADMAP.md). Planning and implementation on a
+development branch do not establish integration, hardware validation, or release.
+
+## Current work — 2026-09-22
+
+The implemented maintenance slice extracts HUD routing from `BusHubService` into
+focused handlers while preserving the current notice identity fix, ownership
+checks, error routing, and background-audio lifecycle. The earlier router
+extraction is a reference to adapt, not a patch to merge with its old epoch
+dependencies. Combined verification passed 2,052 unit tests with no failures,
+errors, or skips, including 49 new router tests, 10 notice-input tests, and
+24 new Ink navigation tests; Sample's 14 tests are included. The requested
+debug builds completed. Shared lint was not rerun; its earlier `PropertyEscape`
+failure in the unchanged `local.properties` remains unresolved.
+
+Data-preserving QA upgrades were installed on the phone and glasses. Hardware
+checks passed for Ink rendering/ready, pin replay across reconnect, notices over
+Ink and cards, and background microphone detach/resume/stop. An existing
+focused-window path bypassing notice input priority was fixed and retested.
+The wearer confirmed physical launcher swipes and text readability, then notice
+selection, confirmation, and Back with Ink preserved. Transport traces confirm
+the notice action, update, and user close.
+
+Ink action navigation is implemented and installed on the glasses. Injected
+RIGHT/DOWN selects Sample's second action exactly once; confirm updates REV 0
+to 1 and SYNC 72 to 75 through the phone compile/patch path, retaining selection.
+LEFT/UP and RIGHT/DOWN return to the expected controls. A notice's Later action,
+confirmation, and Back preserve the selected second control and REV 1 below.
+The 24 navigation tests cover node identity, reorder/removal, resync, current
+callbacks, paging, oversized controls, accessibility, custom Select, and focus.
+The wearer confirmed physical left/right navigation and activation of the
+second action. The captured screen shows REV 2, SYNC 78, and the retained
+selection outline; transport logs confirm the action and Sample update.
+
+Validation remains partial: R08 ring behavior is not covered, no delayed callback
+was deliberately reinjected on-device, and the HUD activity tier has no current
+device producer.
+No publication is claimed. Broader display-policy
+and ownership-epoch work is deferred; the ordinary image-handoff example is not
+an established defect. New plugins and PoCs remain after this maintenance slice.
 
 ## Why this order is strict
 
@@ -50,6 +91,7 @@ Each plan has its own verification commands, manual scenarios, stop conditions, 
 
 ## Decisions already made
 
+- The public repository is licensed under [Apache-2.0](../LICENSE).
 - Keep the core hub empty and neutral; optional features are installed separately.
 - Serve both normal users and developer-mode users. Normal mode emphasizes understandable plugin names and permissions; developer mode exposes package, signer, protocol, and diagnostic details.
 - Do not require a hub-signature permission for third-party plugins. Trust is based on Android package/UID/signing identity, an explicit plugin descriptor, per-capability user grants, and server-side route enforcement.
@@ -61,13 +103,15 @@ Each plan has its own verification commands, manual scenarios, stop conditions, 
 
 ## Owner decisions still required
 
-- Public repository license: Apache-2.0 is the recommended default for SDK adoption, but no license should be added until the repository owner explicitly approves it.
 - Background-location fallback for Transit: if Android blocks a glasses-initiated location foreground service, the beta should require an explicit phone-side start unless the owner deliberately chooses a broader hub broker or background-location design.
 - Public companion apps on the glasses-side transport: phone-plugin approval does not automatically solve authentication of arbitrary glasses clients. Keep this outside the first SDK release until pairing and device identity have a dedicated threat model.
 
 ## Follow-up planning queue
 
-These findings are intentionally deferred until plans 001–004 establish the platform boundary:
+This is the historical audit queue, not the current execution order. Several
+items have since shipped; the current-work note above and the roadmap take
+precedence. These findings were deferred until plans 001–004 established the
+platform boundary:
 
 - Extract Lyrics into an independent plugin APK, including encrypted credential migration and a plugin-owned settings screen.
 - Stabilize the current Lens work, remove raw OCR data from release diagnostics, and extract it as an optional advanced plugin without making its transport a platform dependency.

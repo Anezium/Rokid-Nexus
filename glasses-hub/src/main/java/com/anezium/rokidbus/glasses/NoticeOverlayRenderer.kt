@@ -498,7 +498,7 @@ object NoticeOverlayRenderer {
          */
         fun render(notice: NexusNoticeSurface) {
             noticeIdentity = notice.surfaceId to notice.seq
-            pluginFooter = notice.content.footer
+            pluginFooter = noticeFooterText(notice)
             renderedPageIndex = notice.pageIndex
             measuredPageCount = notice.pageCount
             pageCountReportPending = true

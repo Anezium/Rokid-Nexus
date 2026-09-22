@@ -1,15 +1,19 @@
 package com.anezium.rokidbus.phone
 
 import com.anezium.rokidbus.shared.NoticeCloseReason
+import com.anezium.rokidbus.shared.NoticeInteractionIdentity
 import com.anezium.rokidbus.shared.NoticeSurfaceContent
 import com.anezium.rokidbus.shared.NoticeSurfaceContract
 import com.anezium.rokidbus.shared.NoticeSurfacePatchResult
 import com.anezium.rokidbus.shared.NoticeSurfaceValidationResult
 import org.json.JSONObject
+import java.util.UUID
 import java.util.concurrent.atomic.AtomicLong
 
 internal data class CanonicalPhoneNotice(
     val ownerPluginId: String,
+    val identity: NoticeInteractionIdentity,
+    val clientToken: String?,
     val content: NoticeSurfaceContent,
     /**
      * What the glasses are sent for the event that produced this notice: full
@@ -30,7 +34,7 @@ internal data class CanonicalPhoneNotice(
 
 /** What the phone owes a `/notice/action` arriving from the glasses. */
 internal sealed interface PhoneNoticeActionResult {
-    data class Owner(val ownerPluginId: String) : PhoneNoticeActionResult
+    data class Owner(val ownerPluginId: String, val clientToken: String? = null) : PhoneNoticeActionResult
 
     /** The one answer was already taken. Distinct from [NotCurrent] on purpose. */
     data object AlreadyAnswered : PhoneNoticeActionResult
@@ -43,6 +47,7 @@ internal sealed interface PhoneNoticeShowResult {
     data class Accepted(
         val notice: CanonicalPhoneNotice,
         val replacedOwnerPluginId: String?,
+        val replacedNotice: CanonicalPhoneNotice? = null,
     ) : PhoneNoticeShowResult
 
     data class Rejected(val code: String) : PhoneNoticeShowResult
@@ -61,6 +66,8 @@ internal sealed interface PhoneNoticeClearResult {
         val ownerPluginId: String,
         val reason: NoticeCloseReason,
         val payload: JSONObject,
+        val identity: NoticeInteractionIdentity,
+        val clientToken: String?,
     ) : PhoneNoticeClearResult
 
     data object Ignored : PhoneNoticeClearResult
@@ -97,7 +104,10 @@ internal class PhoneNoticeState(
             return PhoneNoticeShowResult.Rejected(NoticeSurfaceContract.ERROR_INVALID_NOTICE)
         }
         val validation = NoticeSurfaceContract.validateShow(payload, binary)
-        if (validation !is NoticeSurfaceValidationResult.Valid) {
+        val clientToken = NoticeSurfaceContract.clientToken(payload)
+        if (validation !is NoticeSurfaceValidationResult.Valid ||
+            (payload.has(NoticeSurfaceContract.FIELD_CLIENT_TOKEN) && clientToken == null)
+        ) {
             return PhoneNoticeShowResult.Rejected(NoticeSurfaceContract.ERROR_INVALID_NOTICE)
         }
         val now = nowMs()
@@ -105,19 +115,23 @@ internal class PhoneNoticeState(
             return PhoneNoticeShowResult.Rejected(NoticeSurfaceContract.ERROR_NOTICE_RATE_LIMITED)
         }
 
-        val previousOwner = active?.ownerPluginId
+        val previous = active
         val content = validation.content
+        val identity = NoticeInteractionIdentity(newToken(), newToken())
         val notice = CanonicalPhoneNotice(
             ownerPluginId = ownerPluginId,
+            identity = identity,
+            clientToken = clientToken,
             content = content,
-            payload = normalized(expectedSurfaceId, ownerPluginId, content),
+            payload = normalized(expectedSurfaceId, ownerPluginId, content, identity, clientToken),
             ttlDeadlineMs = now + content.ttlMs,
             hardDeadlineMs = now + NoticeSurfaceContract.MAX_LIFETIME_MS,
         )
         active = notice
         return PhoneNoticeShowResult.Accepted(
             notice,
-            previousOwner?.takeIf { it != ownerPluginId },
+            previous?.ownerPluginId?.takeIf { it != ownerPluginId },
+            previous,
         )
     }
 
@@ -127,7 +141,13 @@ internal class PhoneNoticeState(
         if (current.ownerPluginId != ownerPluginId) return PhoneNoticeUpdateResult.Ignored
 
         val patch = NoticeSurfaceContract.validateUpdate(payload)
-        if (patch !is NoticeSurfacePatchResult.Valid) {
+        val suppliedClientToken = NoticeSurfaceContract.clientToken(payload)
+        if (patch !is NoticeSurfacePatchResult.Valid ||
+            (payload.has(NoticeSurfaceContract.FIELD_CLIENT_TOKEN) && suppliedClientToken == null)
+        ) {
+            return PhoneNoticeUpdateResult.Rejected(NoticeSurfaceContract.ERROR_INVALID_NOTICE)
+        }
+        if (patch.patch.rearm == false && !patch.patch.preservesInteraction(current.content)) {
             return PhoneNoticeUpdateResult.Rejected(NoticeSurfaceContract.ERROR_INVALID_NOTICE)
         }
         val patched = patch.patch.applyTo(current.content)
@@ -146,15 +166,19 @@ internal class PhoneNoticeState(
         val surfaceId = "$ownerPluginId:${NoticeSurfaceContract.LOCAL_SURFACE_ID}"
         // An update carrying either field that grants the band its
         // interactivity -- the row, or the plain interactive flag -- is the
-        // owner asking again and is owed a new answer. One that carries neither
-        // is the owner driving an answered band as a display and must not
-        // reopen it.
-        val answered = if (patch.patch.actions != null || patch.patch.interactive != null) {
-            false
+        // owner asking again, unless it explicitly marks the row as cosmetic.
+        // Text-only changes keep the question so an in-flight answer stays valid.
+        val rearm = (patch.patch.actions != null || patch.patch.interactive != null) &&
+            patch.patch.rearm != false
+        val identity = if (rearm) current.identity.copy(questionId = newToken()) else current.identity
+        val clientToken = if (payload.has(NoticeSurfaceContract.FIELD_CLIENT_TOKEN)) {
+            suppliedClientToken
         } else {
-            current.answered
+            current.clientToken
         }
         val notice = current.copy(
+            identity = identity,
+            clientToken = clientToken,
             content = patched,
             // The owner's patch, stamped, rather than a re-serialisation of the
             // canonical state above. The phone still holds the authority -- the
@@ -165,9 +189,11 @@ internal class PhoneNoticeState(
             payload = stamped(
                 NoticeSurfaceContract.toUpdatePayload(surfaceId, patch.patch),
                 ownerPluginId,
+                identity,
+                clientToken,
             ),
             ttlDeadlineMs = now + patched.ttlMs,
-            answered = answered,
+            answered = if (rearm) false else current.answered,
         )
         active = notice
         return PhoneNoticeUpdateResult.Accepted(notice)
@@ -183,10 +209,14 @@ internal class PhoneNoticeState(
 
     /** The glasses reported the wearer dismissed it, or the band timed out there. */
     @Synchronized
-    fun closedByGlasses(surfaceId: String, reason: NoticeCloseReason): PhoneNoticeClearResult {
+    fun closedByGlasses(
+        surfaceId: String,
+        reason: NoticeCloseReason,
+        identity: NoticeInteractionIdentity? = null,
+    ): PhoneNoticeClearResult {
         val current = active ?: return PhoneNoticeClearResult.Ignored
         val expected = "${current.ownerPluginId}:${NoticeSurfaceContract.LOCAL_SURFACE_ID}"
-        if (surfaceId != expected) return PhoneNoticeClearResult.Ignored
+        if (surfaceId != expected || identity != current.identity) return PhoneNoticeClearResult.Ignored
         return clearActive(reason)
     }
 
@@ -211,17 +241,21 @@ internal class PhoneNoticeState(
      * race is exactly what survives one side losing its state.
      */
     @Synchronized
-    fun takeAnswer(surfaceId: String, actionId: String): PhoneNoticeActionResult {
+    fun takeAnswer(
+        surfaceId: String,
+        actionId: String,
+        identity: NoticeInteractionIdentity? = null,
+    ): PhoneNoticeActionResult {
         if (actionId.isBlank()) return PhoneNoticeActionResult.NotCurrent
         val current = active ?: return PhoneNoticeActionResult.NotCurrent
         val expected = "${current.ownerPluginId}:${NoticeSurfaceContract.LOCAL_SURFACE_ID}"
-        if (surfaceId != expected) return PhoneNoticeActionResult.NotCurrent
+        if (surfaceId != expected || identity != current.identity) return PhoneNoticeActionResult.NotCurrent
         if (current.content.actions.none { it.id == actionId }) {
             return PhoneNoticeActionResult.NotCurrent
         }
         if (current.answered) return PhoneNoticeActionResult.AlreadyAnswered
         active = current.copy(answered = true)
-        return PhoneNoticeActionResult.Owner(current.ownerPluginId)
+        return PhoneNoticeActionResult.Owner(current.ownerPluginId, current.clientToken)
     }
 
     /**
@@ -233,14 +267,17 @@ internal class PhoneNoticeState(
      * once.
      */
     @Synchronized
-    fun takeInputAnswer(surfaceId: String): PhoneNoticeActionResult {
+    fun takeInputAnswer(
+        surfaceId: String,
+        identity: NoticeInteractionIdentity? = null,
+    ): PhoneNoticeActionResult {
         val current = active ?: return PhoneNoticeActionResult.NotCurrent
         val expected = "${current.ownerPluginId}:${NoticeSurfaceContract.LOCAL_SURFACE_ID}"
-        if (surfaceId != expected) return PhoneNoticeActionResult.NotCurrent
+        if (surfaceId != expected || identity != current.identity) return PhoneNoticeActionResult.NotCurrent
         if (!current.content.expectsInput) return PhoneNoticeActionResult.NotCurrent
         if (current.answered) return PhoneNoticeActionResult.AlreadyAnswered
         active = current.copy(answered = true)
-        return PhoneNoticeActionResult.Owner(current.ownerPluginId)
+        return PhoneNoticeActionResult.Owner(current.ownerPluginId, current.clientToken)
     }
 
     @Synchronized
@@ -261,19 +298,31 @@ internal class PhoneNoticeState(
         surfaceId: String,
         ownerPluginId: String,
         content: NoticeSurfaceContent,
+        identity: NoticeInteractionIdentity,
+        clientToken: String?,
     ): JSONObject = stamped(
         NoticeSurfaceContract.toPayload(surfaceId, content),
         ownerPluginId,
+        identity,
+        clientToken,
     )
 
     /**
      * The hub's own fields, added to whatever is going out. A plugin can supply
      * neither a trusted owner nor a sequence.
      */
-    private fun stamped(payload: JSONObject, ownerPluginId: String): JSONObject = payload
+    private fun stamped(
+        payload: JSONObject,
+        ownerPluginId: String,
+        identity: NoticeInteractionIdentity,
+        clientToken: String?,
+    ): JSONObject = NoticeSurfaceContract.withInteractionIdentity(payload, identity)
         .put("localSurfaceId", NoticeSurfaceContract.LOCAL_SURFACE_ID)
         .put("ownerPluginId", ownerPluginId)
         .put("seq", sequence.incrementAndGet())
+        .also { stamped ->
+            clientToken?.let { stamped.put(NoticeSurfaceContract.FIELD_CLIENT_TOKEN, it) }
+        }
 
     /**
      * Sliding one-second window shared by show and update, so a plugin cannot
@@ -296,15 +345,19 @@ internal class PhoneNoticeState(
         return PhoneNoticeClearResult.Cleared(
             ownerPluginId = notice.ownerPluginId,
             reason = reason,
-            payload = JSONObject()
-                .put("surfaceId", surfaceId)
-                .put("localSurfaceId", NoticeSurfaceContract.LOCAL_SURFACE_ID)
-                .put("ownerPluginId", notice.ownerPluginId)
-                .put("seq", sequence.incrementAndGet()),
+            payload = stamped(
+                JSONObject().put("surfaceId", surfaceId),
+                notice.ownerPluginId,
+                notice.identity,
+                notice.clientToken,
+            ),
+            identity = notice.identity,
+            clientToken = notice.clientToken,
         )
     }
 
     private companion object {
         const val RATE_WINDOW_MS = 1_000L
+        fun newToken(): String = UUID.randomUUID().toString()
     }
 }

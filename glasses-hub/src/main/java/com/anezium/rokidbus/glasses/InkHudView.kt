@@ -3,15 +3,18 @@ package com.anezium.rokidbus.glasses
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Rect
 import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
+import android.os.Bundle
 import android.text.TextUtils
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
 import android.widget.ScrollView
@@ -57,6 +60,11 @@ internal class InkHudView(context: Context) : FrameLayout(context) {
     }
     private val rootAbsolute = FrameLayout(context)
     private val registry = linkedMapOf<String, Record>()
+    private val actionSelection = InkActionSelection()
+    private var pendingActionId: String? = null
+    private var pendingActionDirection = 0
+    private var projecting = false
+    private var synchronizingActionFocus = false
     private val motion = InkMotionAdapter()
     private val frameGate = InkFrameGate()
     private var store: InkNodeStore? = null
@@ -85,23 +93,25 @@ internal class InkHudView(context: Context) : FrameLayout(context) {
         addView(rootAbsolute, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
     }
 
-    fun show(next: InkNodeStore, debugActions: Boolean) {
+    fun show(next: InkNodeStore, debugActions: Boolean) = changeProjection {
         if (projectedDocumentId == next.documentId && projectedRevision == next.revision && registry.isNotEmpty()) {
             registry.keys.toList().forEach(::refreshAction)
-            return
+            reconcileActions()
+            return@changeProjection
         }
-        clearProjection()
+        clearProjection(keepSelection = projectedDocumentId == next.documentId)
         store = next
         projectedDocumentId = next.documentId
         projectedRevision = next.revision
         next.rootNodes().forEachIndexed { index, node -> addSubtree(node, null, index) }
+        reconcileActions()
         invalidateLayoutMetrics()
     }
 
-    fun applyPatch(next: InkNodeStore, changes: List<RenderChange>, debugActions: Boolean) {
+    fun applyPatch(next: InkNodeStore, changes: List<RenderChange>, debugActions: Boolean) = changeProjection {
         if (projectedDocumentId != next.documentId || projectedRevision != next.revision - 1) {
             show(next, debugActions)
-            return
+            return@changeProjection
         }
         store = next
         changes.forEach { change ->
@@ -122,9 +132,23 @@ internal class InkHudView(context: Context) : FrameLayout(context) {
             }
         }
         projectedRevision = next.revision
+        reconcileActions()
     }
 
-    fun clearProjection() {
+    private inline fun changeProjection(change: () -> Unit) {
+        val previous = projecting
+        projecting = true
+        try {
+            change()
+        } finally {
+            projecting = previous
+        }
+        focusSelectedAction()
+    }
+
+    fun clearProjection() = changeProjection { clearProjection(keepSelection = false) }
+
+    private fun clearProjection(keepSelection: Boolean) {
         pendingGeometryReapply?.let(::removeCallbacks)
         pendingGeometryReapply = null
         motion.cancelAll()
@@ -136,6 +160,9 @@ internal class InkHudView(context: Context) : FrameLayout(context) {
         rootFlex.removeAllViews()
         rootAbsolute.removeAllViews()
         registry.clear()
+        if (!keepSelection) actionSelection.clear()
+        pendingActionId = null
+        pendingActionDirection = 0
         store = null
         projectedDocumentId = null
         projectedRevision = -1
@@ -155,11 +182,15 @@ internal class InkHudView(context: Context) : FrameLayout(context) {
     fun handleInkKeyEvent(event: KeyEvent): Boolean {
         val directional = event.keyCode in DIRECTION_KEYS
         if (directional) {
-            val scroll = preferredScrollRecord() ?: return false
+            if (actionSelection.selectedId == null && preferredScrollRecord() == null) return false
             if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
                 val forward = event.keyCode == KeyEvent.KEYCODE_DPAD_RIGHT ||
                     event.keyCode == KeyEvent.KEYCODE_DPAD_DOWN
-                scrollByPage(scroll, forward)
+                if (actionSelection.selectedId != null) {
+                    moveAction(if (forward) 1 else -1)
+                } else {
+                    preferredScrollRecord()?.let { scrollByPage(it, forward) }
+                }
             }
             return event.action == KeyEvent.ACTION_DOWN || event.action == KeyEvent.ACTION_UP
         }
@@ -167,11 +198,11 @@ internal class InkHudView(context: Context) : FrameLayout(context) {
             event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0 &&
             event.keyCode in CONFIRM_KEYS
         ) {
-            val action = actionableRecord() ?: return false
-            emitAction(action)
+            val action = selectedAction() ?: return false
+            if (isActionInViewport(action)) emitAction(action)
             return true
         }
-        if (event.action == KeyEvent.ACTION_UP && event.keyCode in CONFIRM_KEYS && actionableRecord() != null) {
+        if (event.action == KeyEvent.ACTION_UP && event.keyCode in CONFIRM_KEYS && selectedAction() != null) {
             return true
         }
         return false
@@ -179,6 +210,7 @@ internal class InkHudView(context: Context) : FrameLayout(context) {
 
     override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
         super.onLayout(changed, left, top, right, bottom)
+        focusSelectedAction()
         if (
             layoutSettlePolicy.onPostLayout(width, height) ==
             InkLayoutSettleAction.REAPPLY_GEOMETRY
@@ -390,13 +422,42 @@ internal class InkHudView(context: Context) : FrameLayout(context) {
         val action = next.events["tap"]
         val actionEnabled = action != null
         record.view.isFocusable = actionEnabled
+        record.view.isFocusableInTouchMode = actionEnabled
         record.view.isClickable = actionEnabled
         record.view.contentDescription = next.attributes["id"]?.toString()
             ?: action?.actionId
             ?: next.type
         record.view.setOnClickListener(
-            if (actionEnabled) View.OnClickListener { emitAction(record) } else null,
+            if (actionEnabled) View.OnClickListener {
+                if (selectAction(record.node.id)) emitAction(record)
+            } else null,
         )
+        record.view.onFocusChangeListener = if (actionEnabled) OnFocusChangeListener { _, focused ->
+            if (focused && !projecting && !synchronizingActionFocus) selectAction(record.node.id)
+        } else null
+        record.view.accessibilityDelegate = if (actionEnabled) object : AccessibilityDelegate() {
+            override fun onInitializeAccessibilityNodeInfo(host: View, info: AccessibilityNodeInfo) {
+                super.onInitializeAccessibilityNodeInfo(host, info)
+                info.isSelected = actionSelection.selectedId == record.node.id
+                info.addAction(AccessibilityNodeInfo.AccessibilityAction(SELECT_ACTION_ID, "Select"))
+            }
+
+            override fun performAccessibilityAction(host: View, action: Int, args: Bundle?): Boolean {
+                if (action == SELECT_ACTION_ID) return selectAction(record.node.id, reveal = true)
+                if (!synchronizingActionFocus &&
+                    (action == AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS ||
+                        action == AccessibilityNodeInfo.ACTION_FOCUS)) {
+                    val handled = super.performAccessibilityAction(host, action, args)
+                    selectAction(record.node.id, reveal = true)
+                    return handled || if (action == AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS) {
+                        host.isAccessibilityFocused
+                    } else {
+                        host.hasFocus()
+                    }
+                }
+                return super.performAccessibilityAction(host, action, args)
+            }
+        } else null
     }
 
     private fun applyStyle(record: Record, skip: Set<String> = emptySet()) {
@@ -802,9 +863,9 @@ internal class InkHudView(context: Context) : FrameLayout(context) {
     private fun preferredScrollRecord(): Record? {
         val scrollRecords = registry.values.filter { !it.virtual && it.scrollTarget != null }
         if (scrollRecords.isEmpty()) return null
-        val focused = findFocus()
-        if (focused != null) {
-            scrollRecords.lastOrNull { it.view === focused || it.view.containsDescendant(focused) }?.let { return it }
+        val selectedView = selectedAction()?.view
+        if (selectedView != null) {
+            scrollRecords.lastOrNull { it.view === selectedView || it.view.containsDescendant(selectedView) }?.let { return it }
         }
         return scrollRecords.firstOrNull { candidate ->
             var parentId = candidate.parentId
@@ -818,23 +879,156 @@ internal class InkHudView(context: Context) : FrameLayout(context) {
         } ?: scrollRecords.first()
     }
 
-    private fun scrollByPage(record: Record, forward: Boolean) {
+    private fun scrollByPage(record: Record, forward: Boolean, toward: Record? = null) {
         val direction = if (forward) 1 else -1
         val target = record.scrollTarget
+        fun distance(horizontal: Boolean): Int {
+            target ?: return 0
+            val extent = if (horizontal) target.width else target.height
+            val page = (extent * SCROLL_PAGE_FRACTION).roundToInt().coerceAtLeast(px(48))
+            if (toward != null) {
+                val bounds = Rect(0, 0, toward.view.width, toward.view.height)
+                offsetDescendantRectToMyCoords(toward.view, bounds)
+                val clip = Rect().also(target::getDrawingRect)
+                offsetDescendantRectToMyCoords(target, clip)
+                val remaining = if (horizontal) {
+                    if (forward) bounds.right - clip.right else clip.left - bounds.left
+                } else {
+                    if (forward) bounds.bottom - clip.bottom else clip.top - bounds.top
+                }
+                if (remaining > 0) return direction * minOf(page, remaining)
+            }
+            return direction * page
+        }
         when (target) {
-            is ScrollView -> target.scrollBy(0, direction * (target.height * SCROLL_PAGE_FRACTION).roundToInt().coerceAtLeast(px(48)))
-            is HorizontalScrollView -> target.scrollBy(
-                direction * (target.width * SCROLL_PAGE_FRACTION).roundToInt().coerceAtLeast(px(48)),
-                0,
-            )
+            is ScrollView -> target.scrollBy(0, distance(horizontal = false))
+            is HorizontalScrollView -> target.scrollBy(distance(horizontal = true), 0)
         }
     }
 
-    private fun actionableRecord(): Record? {
-        val focused = findFocus()
-        if (focused != null) registry.values.firstOrNull { !it.virtual && it.view === focused && "tap" in it.node.events }
-            ?.let { return it }
-        return registry.values.firstOrNull { !it.virtual && "tap" in it.node.events }
+    private fun reconcileActions() {
+        val ids = mutableListOf<String>()
+        fun visit(parentId: String?) {
+            store?.childIds(parentId).orEmpty().forEach { id ->
+                val record = registry[id] ?: return@forEach
+                if (record.view.visibility != VISIBLE || record.node.style["opacity"]?.toFloatOrNull() == 0f) return@forEach
+                if (!record.virtual && "tap" in record.node.events) ids += id
+                visit(id)
+            }
+        }
+        visit(null)
+        actionSelection.reconcile(ids)
+        if (pendingActionId != null && pendingActionId !in ids) {
+            pendingActionId = null
+            pendingActionDirection = 0
+        }
+        renderActionSelection()
+    }
+
+    private fun selectedAction(): Record? = actionSelection.selectedId?.let(registry::get)
+
+    private fun selectAction(id: String, reveal: Boolean = false): Boolean {
+        if (!actionSelection.select(id)) return false
+        pendingActionId = null
+        pendingActionDirection = 0
+        renderActionSelection()
+        if (reveal) selectedAction()?.view?.let { view ->
+            view.requestRectangleOnScreen(Rect(0, 0, view.width, view.height), true)
+        }
+        focusSelectedAction()
+        return true
+    }
+
+    private fun focusSelectedAction() {
+        if (projecting || synchronizingActionFocus) return
+        val record = selectedAction()?.takeIf(::isActionInViewport) ?: return
+        synchronizingActionFocus = true
+        try {
+            record.view.requestFocus()
+            record.view.performAccessibilityAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS, null)
+        } finally {
+            synchronizingActionFocus = false
+        }
+    }
+
+    private fun renderActionSelection() {
+        registry.values.filterNot(Record::virtual).forEach { record ->
+            val selected = record.node.id == actionSelection.selectedId
+            if (record.view.isSelected != selected || (selected && record.view.foreground == null)) {
+                record.view.isSelected = selected
+                record.view.foreground = if (selected) GradientDrawable().apply {
+                    setColor(Color.TRANSPARENT)
+                    setStroke(px(2), BusTheme.phosphor)
+                    cornerRadius = px(4).toFloat()
+                } else null
+            }
+        }
+    }
+
+    private fun moveAction(delta: Int) {
+        val current = selectedAction() ?: return
+        val targetId = if (pendingActionDirection == delta) {
+            pendingActionId
+        } else if (!isActionInViewport(current)) {
+            current.node.id
+        } else {
+            actionSelection.adjacent(delta)
+        }
+        val target = targetId?.let(registry::get)
+        if (target != null && isActionInViewport(target)) {
+            selectAction(target.node.id)
+            return
+        }
+        val scroll = target?.let(::containingScrollRecord) ?: preferredScrollRecord()
+        if (scroll != null && canScroll(scroll, delta)) {
+            // Page through intervening text before selecting an offscreen button.
+            // The same rule leaves text after the final button reachable.
+            pendingActionId = targetId
+            pendingActionDirection = delta
+            scrollByPage(scroll, delta > 0, target)
+            if (target != null && isActionInViewport(target)) selectAction(target.node.id)
+            return
+        }
+        (targetId ?: actionSelection.boundary(delta))?.let { selectAction(it, reveal = true) }
+    }
+
+    private fun containingScrollRecord(record: Record): Record? {
+        var parentId = record.parentId
+        while (parentId != null) {
+            val parent = registry[parentId] ?: return null
+            if (parent.scrollTarget != null) return parent
+            parentId = parent.parentId
+        }
+        return null
+    }
+
+    private fun canScroll(record: Record, delta: Int): Boolean = when (val target = record.scrollTarget) {
+        is ScrollView -> target.canScrollVertically(delta)
+        is HorizontalScrollView -> target.canScrollHorizontally(delta)
+        else -> false
+    }
+
+    private fun isActionInViewport(record: Record): Boolean {
+        if (width == 0 || height == 0) return false
+        val bounds = Rect(0, 0, record.view.width, record.view.height)
+        offsetDescendantRectToMyCoords(record.view, bounds)
+        val viewport = Rect(0, 0, width, height)
+        var parentId = record.parentId
+        while (parentId != null) {
+            val parent = registry[parentId] ?: return false
+            parent.scrollTarget?.let { scroller ->
+                val clip = Rect().also(scroller::getDrawingRect)
+                offsetDescendantRectToMyCoords(scroller, clip)
+                if (!viewport.intersect(clip)) return false
+            }
+            parentId = parent.parentId
+        }
+        if (!Rect.intersects(bounds, viewport)) return false
+        val fitsWidth = bounds.width() > viewport.width() ||
+            (bounds.left >= viewport.left && bounds.right <= viewport.right)
+        val fitsHeight = bounds.height() > viewport.height() ||
+            (bounds.top >= viewport.top && bounds.bottom <= viewport.bottom)
+        return bounds.width() > 0 && bounds.height() > 0 && fitsWidth && fitsHeight
     }
 
     private fun emitAction(record: Record) {
@@ -876,6 +1070,7 @@ internal class InkHudView(context: Context) : FrameLayout(context) {
     private companion object {
         const val DEFAULT_TEXT_SP = 15f
         const val SCROLL_PAGE_FRACTION = 0.75f
+        const val SELECT_ACTION_ID = 0x01020001
         val DIRECTION_KEYS = setOf(
             KeyEvent.KEYCODE_DPAD_LEFT,
             KeyEvent.KEYCODE_DPAD_RIGHT,

@@ -175,8 +175,10 @@ class RokidBusAccessibilityService : AccessibilityService() {
             log("key code=${event.keyCode} action=${event.action} repeat=${event.repeatCount} t=${event.eventTime}")
         }
 
-        if (event.action == KeyEvent.ACTION_UP && consumedDownKeys.remove(event.keyCode)) {
-            return true
+        if (event.action == KeyEvent.ACTION_UP) {
+            val noticeConsumed = NoticeKeyDispatcher.handleKeyEvent(event)
+            val otherConsumed = consumedDownKeys.remove(event.keyCode)
+            if (noticeConsumed || otherConsumed) return true
         }
 
         val decision = if (editableSurfaceActive) {
@@ -207,10 +209,7 @@ class RokidBusAccessibilityService : AccessibilityService() {
                     main.postDelayed(tapExpiry, TripleTapDetector.DEFAULT_WINDOW_MS + 1L)
                 }
                 when {
-                    noticeConsumesBack(event) -> true
-                    !editableSurfaceActive && noticeConsumesDirection(event) -> true
-                    !editableSurfaceActive && noticeConsumesConfirm(event) -> true
-                    !editableSurfaceActive && noticeConsumesBackdropClassification(event) -> true
+                    event.action != KeyEvent.ACTION_UP && NoticeKeyDispatcher.handleKeyEvent(event) -> true
                     LauncherOverlayRenderer.handleKeyEvent(event) -> true
                     SurfaceController.handleKeyEvent(event) -> true
                     ActivityController.handleKeyEvent(event) -> true
@@ -223,110 +222,6 @@ class RokidBusAccessibilityService : AccessibilityService() {
         }
         return handled
     }
-
-    /**
-     * BACK dismisses a visible notice and stops there. It runs ahead of the
-     * surface on purpose: a plugin never sees this key, so it cannot hold the
-     * wearer inside a banner, and `SurfaceController`'s back failsafe is neither
-     * started nor cancelled by a dismissal it never hears about.
-     *
-     * Only the DOWN is claimed here. The matching UP is consumed by the
-     * `consumedDownKeys` bookkeeping above, which exists precisely because the
-     * consumer routinely disappears between the two.
-     */
-    private fun noticeConsumesBack(event: KeyEvent): Boolean =
-        event.keyCode == KeyEvent.KEYCODE_BACK &&
-            event.action == KeyEvent.ACTION_DOWN &&
-            NoticeController.dismissFromBack()
-
-    /**
-     * Confirm reaches the owner of an interactive notice even with no surface
-     * open, which is the whole point of the tier: until now every input route
-     * in this hub was gated on there being an active surface, so a dormant
-     * plugin could be shown but never answered.
-     *
-     * A band offering actions answers with the selected one; a plain
-     * interactive band still sends the single gesture it always did.
-     */
-    private fun noticeConsumesConfirm(event: KeyEvent): Boolean =
-        event.action == KeyEvent.ACTION_DOWN &&
-            event.keyCode in NOTICE_CONFIRM_KEYS &&
-            NoticeController.handleConfirm(event.keyCode)
-
-    /**
-     * Specific notice claims above keep their existing behavior. This final
-     * notice branch only swallows classifications that would otherwise reach a
-     * native UI hidden behind an opted-in backdrop.
-     */
-    private fun noticeConsumesBackdropClassification(event: KeyEvent): Boolean =
-        NoticeTouchpadInputPolicy.consumesUnclaimedKey(
-            claimsAllInput = NoticeController.claimsAllInput(),
-            keyCode = event.keyCode,
-            action = event.action,
-        )
-
-    /**
-     * Scroll moves the selection, and only while the band actually has a row to
-     * move along. A non-backdrop notice without actions claims nothing here, so
-     * every swipe keeps reaching the launcher, surface, or activity underneath.
-     * The separate backdrop fallback swallows unclaimed classifications.
-     *
-     * The swipe pair dedupe is shared with the rest of the hub: the hardware
-     * emits each direction twice, and a wearer stepping one glyph must not
-     * travel two.
-     */
-    private fun noticeConsumesDirection(event: KeyEvent): Boolean {
-        if (!NoticeController.claimsDirection()) return false
-        if (event.keyCode !in NOTICE_DIRECTION_KEYS) return false
-        // Only the DOWN acts; the matching UP is consumed by the same
-        // `consumedDownKeys` bookkeeping every other claim here relies on.
-        if (event.action != KeyEvent.ACTION_DOWN) return false
-        when (
-            noticeInputDedupe.onKey(
-                event.keyCode,
-                event.action,
-                event.repeatCount,
-                event.eventTime,
-            )
-        ) {
-            DpadPairDedupe.Direction.FORWARD -> NoticeController.handleDirection(1)
-            DpadPairDedupe.Direction.BACKWARD -> NoticeController.handleDirection(-1)
-            // The second half of the hardware's swipe pair, or a long-press
-            // repeat. Nothing moves, but it is still claimed below.
-            null -> Unit
-        }
-        // Claimed whether or not it moved the selection: letting the duplicate
-        // half through would scroll the surface behind the band by exactly the
-        // amount the dedupe just refused to move the row.
-        return true
-    }
-
-    private val noticeInputDedupe = DpadPairDedupe()
-
-    private val NOTICE_DIRECTION_KEYS = setOf(
-        DpadPairDedupe.KEYCODE_DPAD_UP,
-        DpadPairDedupe.KEYCODE_DPAD_DOWN,
-        DpadPairDedupe.KEYCODE_DPAD_LEFT,
-        DpadPairDedupe.KEYCODE_DPAD_RIGHT,
-    )
-
-    /**
-     * The firmware's verdict, never the raw contact.
-     *
-     * Every touch opens with a NOTIFICATION contact and is only classified
-     * 300-500 ms later — tap into ENTER, swipe into a DPAD pair, back gesture
-     * into BACK. Accepting the contact as a confirm makes the *beginning of a
-     * swipe* answer the band: measured on hardware, swiping toward Cancel fired
-     * Reply instead, because the triple-tap window (600 ms) can expire before a
-     * classification that is allowed to take 500.
-     *
-     * Waiting for the verdict costs a few hundred milliseconds the wearer was
-     * already spending, and buys certainty about which gesture they made.
-     */
-    private val NOTICE_CONFIRM_KEYS = setOf(
-        KeyEvent.KEYCODE_ENTER,
-        KeyEvent.KEYCODE_DPAD_CENTER,
-    )
 
     private fun handleRingKeyEvent(event: KeyEvent): Boolean {
         // Preserve the raw R08 DOWN/UP pair even if its translated action hides
@@ -406,6 +301,7 @@ class RokidBusAccessibilityService : AccessibilityService() {
         NoticeOverlayRenderer.onServiceDestroyed(this)
         SurfaceController.cancelRingInput()
         NoticeController.cancelRingInput()
+        NoticeKeyDispatcher.reset()
         ActivityController.cancelRingInput()
         RingFocusBroadcastCoordinator.onServiceDestroyed(this)
         consumedDownKeys.clear()

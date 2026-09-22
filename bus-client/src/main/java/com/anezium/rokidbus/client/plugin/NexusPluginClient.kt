@@ -17,6 +17,7 @@ import com.anezium.rokidbus.shared.NoticeSurfaceValidationResult
 import com.anezium.rokidbus.shared.PinSurfaceContract
 import com.anezium.rokidbus.shared.PinSurfaceValidationResult
 import com.anezium.rokidbus.shared.plugin.NexusInputEvent
+import com.anezium.rokidbus.shared.plugin.PathRules
 import com.anezium.rokidbus.shared.plugin.CapabilityParseResult
 import com.anezium.rokidbus.shared.plugin.PluginCloseTypes
 import com.anezium.rokidbus.shared.plugin.PluginCapability
@@ -44,6 +45,10 @@ class NexusPluginClient internal constructor(
     private var backgrounded = false
     private var closed = false
     private var approvedCapabilities: Set<PluginCapability> = emptySet()
+    private var noticeInteractionVersion = 0
+    private var noticeApprovalAwaitingMetadata = false
+    private var currentNoticeToken: String? = null
+    private var noticeHidePending = false
     private var registeredAudioSession: NexusAudioSession? = null
     private var audioSessionApiUsed = false
     private var registeredSpeechSession: NexusSpeechSession? = null
@@ -161,7 +166,11 @@ class NexusPluginClient internal constructor(
 
     fun updateNotice(update: NexusNoticeUpdate): NexusSdkResult {
         noticePreflight()?.let { return it }
-        return if (send(BusPaths.NOTICE_UPDATE, UUID.randomUUID().toString(), update.toPayload())) {
+        if (update.rearm == false && noticeInteractionVersion < 1) {
+            return NexusSdkResult.CAPABILITY_NOT_AVAILABLE
+        }
+        val payload = update.toPayload()
+        return if (send(BusPaths.NOTICE_UPDATE, UUID.randomUUID().toString(), payload)) {
             NexusSdkResult.SENT
         } else {
             NexusSdkResult.NOT_REGISTERED
@@ -170,11 +179,12 @@ class NexusPluginClient internal constructor(
 
     fun hideNotice(): NexusSdkResult {
         noticePreflight()?.let { return it }
+        val payload = JSONObject().put("surfaceId", NoticeSurfaceContract.LOCAL_SURFACE_ID)
         return if (
             send(
                 BusPaths.NOTICE_HIDE,
                 UUID.randomUUID().toString(),
-                JSONObject().put("surfaceId", NoticeSurfaceContract.LOCAL_SURFACE_ID),
+                payload,
             )
         ) {
             NexusSdkResult.SENT
@@ -257,12 +267,19 @@ class NexusPluginClient internal constructor(
 
     fun send(path: String, id: String, payload: JSONObject): Boolean {
         if (closed || !isApproved) return false
-        return transport.send(path, id, payload)
+        val outgoingPath = canonicalNoticePath(path)
+        if (!supportsNoticePatch(outgoingPath, payload)) return false
+        val sent = transport.send(outgoingPath, id, prepareNoticePayload(outgoingPath, payload))
+        if (sent && outgoingPath == BusPaths.NOTICE_HIDE) noticeHidePending = true
+        return sent
     }
 
     internal fun sendBinary(path: String, id: String, payload: JSONObject, data: ByteArray): Boolean {
         if (closed || !isApproved) return false
-        val sent = transport.sendBinary(path, id, payload, data)
+        val outgoingPath = canonicalNoticePath(path)
+        if (!supportsNoticePatch(outgoingPath, payload)) return false
+        val sent = transport.sendBinary(outgoingPath, id, prepareNoticePayload(outgoingPath, payload), data)
+        if (sent && outgoingPath == BusPaths.NOTICE_HIDE) noticeHidePending = true
         if (!sent) {
             currentLinkState = currentLinkState and LinkStateBits.SPP_DATA_UP.inv()
             hubCapabilities = transport.capabilities()
@@ -447,6 +464,12 @@ class NexusPluginClient internal constructor(
 
     override fun onRegistrationState(result: Int) {
         if (closed) return
+        clearNoticeContext()
+        noticeApprovalAwaitingMetadata = result == PluginRegistrationResult.APPROVED
+        applyRegistrationState(result)
+    }
+
+    private fun applyRegistrationState(result: Int) {
         registrationState = result
         // Approval is the moment a fire-and-forget plugin acts on — connect, push a pin,
         // disconnect — so capabilities must be true by then. Leaving this to the first
@@ -470,6 +493,7 @@ class NexusPluginClient internal constructor(
         }
         if (result != PluginRegistrationResult.APPROVED) {
             approvedCapabilities = emptySet()
+            clearNoticeContext()
             terminateAudioSession(
                 reason = NexusAudioStopReason.ERROR,
                 releaseActiveLease = false,
@@ -494,6 +518,12 @@ class NexusPluginClient internal constructor(
 
     override fun onLinkState(state: Int) {
         if (closed) return
+        if (currentLinkState and LinkStateBits.SPP_DATA_UP != 0 &&
+            state and LinkStateBits.SPP_DATA_UP == 0
+        ) {
+            // The hub still owes the owner its disconnect close; only answers stop now.
+            noticeHidePending = true
+        }
         currentLinkState = state
         hubCapabilities = transport.capabilities()
         callbacks.onLinkState(state)
@@ -544,7 +574,7 @@ class NexusPluginClient internal constructor(
             return
         }
         if (path == BusPaths.NOTICE_INPUT) {
-            if (isApproved) {
+            if (isApproved && !noticeHidePending && acceptsNoticeCallback(payload)) {
                 callbacks.onNoticeInput(
                     NexusInputEvent(
                         surfaceId = NoticeSurfaceContract.LOCAL_SURFACE_ID,
@@ -560,6 +590,8 @@ class NexusPluginClient internal constructor(
             val actionId = payload.optString("id")
             if (
                 isApproved &&
+                !noticeHidePending &&
+                acceptsNoticeCallback(payload) &&
                 noticeId == "$pluginId:${NoticeSurfaceContract.LOCAL_SURFACE_ID}" &&
                 actionId.isNotBlank()
             ) {
@@ -580,8 +612,12 @@ class NexusPluginClient internal constructor(
             return
         }
         if (path == BusPaths.NOTICE_CLOSED) {
-            NexusNoticeCloseReason.fromWire(payload.optString("reason"))
-                ?.let(callbacks::onNoticeClosed)
+            if (isApproved && acceptsNoticeCallback(payload)) {
+                NexusNoticeCloseReason.fromWire(payload.optString("reason"))?.let { reason ->
+                    clearNoticeContext()
+                    callbacks.onNoticeClosed(reason)
+                }
+            }
             return
         }
         if (path == BusPaths.ACTIVITY_ACTION) {
@@ -651,6 +687,11 @@ class NexusPluginClient internal constructor(
                 )
             }
             BusPaths.PLUGIN_REGISTRATION -> {
+                // Metadata follows synchronous approval, whose callback may already
+                // have shown a notice, including after a reconnect.
+                if (!noticeApprovalAwaitingMetadata) clearNoticeContext()
+                noticeApprovalAwaitingMetadata = false
+                noticeInteractionVersion = payload.optInt("noticeInteractionVersion", 0)
                 // A fresh registration means the hub has no open session with us (it just
                 // (re)accepted this client), so a stale `opened` from a previous hub life
                 // must not swallow the next PLUGIN_OPEN.
@@ -670,7 +711,7 @@ class NexusPluginClient internal constructor(
                 } else {
                     emptySet()
                 }
-                onRegistrationState(result)
+                applyRegistrationState(result)
             }
             BusPaths.ASSISTANT_TAKEOVER_REPLY -> if (isApproved) {
                 AssistantTakeoverContract.replyEnabled(payload)?.let(callbacks::onAssistantTakeover)
@@ -722,6 +763,7 @@ class NexusPluginClient internal constructor(
     override fun close() {
         if (closed) return
         closed = true
+        clearNoticeContext()
         terminateAudioSession(
             reason = NexusAudioStopReason.ERROR,
             releaseActiveLease = false,
@@ -907,6 +949,48 @@ class NexusPluginClient internal constructor(
             seenEventIdSet.remove(seenEventIds.removeFirst())
         }
         return true
+    }
+
+    private fun canonicalNoticePath(path: String): String = when (val normalized = PathRules.normalizeAbsolute(path)) {
+        BusPaths.NOTICE_SHOW, BusPaths.NOTICE_UPDATE, BusPaths.NOTICE_HIDE -> normalized
+        else -> path
+    }
+
+    private fun supportsNoticePatch(path: String, payload: JSONObject): Boolean =
+        path != BusPaths.NOTICE_UPDATE || payload.opt("rearm") != false || noticeInteractionVersion >= 1
+
+    private fun prepareNoticePayload(path: String, payload: JSONObject): JSONObject {
+        if (path != BusPaths.NOTICE_SHOW && path != BusPaths.NOTICE_UPDATE && path != BusPaths.NOTICE_HIDE) {
+            return payload
+        }
+        val outgoing = JSONObject(payload.toString())
+        if (path == BusPaths.NOTICE_HIDE) {
+            outgoing.remove(NoticeSurfaceContract.FIELD_CLIENT_TOKEN)
+            currentNoticeToken?.let { outgoing.put(NoticeSurfaceContract.FIELD_CLIENT_TOKEN, it) }
+            return outgoing
+        }
+        val freshQuestion = path == BusPaths.NOTICE_SHOW ||
+            ((outgoing.has("interactive") || outgoing.has("actions")) && outgoing.opt("rearm") != false)
+        if (freshQuestion || currentNoticeToken == null) {
+            currentNoticeToken = UUID.randomUUID().toString()
+            noticeHidePending = false
+        }
+        return outgoing.put(NoticeSurfaceContract.FIELD_CLIENT_TOKEN, currentNoticeToken)
+    }
+
+    private fun acceptsNoticeCallback(payload: JSONObject): Boolean {
+        val token = NoticeSurfaceContract.clientToken(payload)
+        if (payload.has(NoticeSurfaceContract.FIELD_CLIENT_TOKEN) || noticeInteractionVersion >= 1) {
+            return payload.optString("noticeId") == "$pluginId:${NoticeSurfaceContract.LOCAL_SURFACE_ID}" &&
+                token != null && token == currentNoticeToken
+        }
+        // Older hubs do not echo correlations; their callbacks retain the legacy contract.
+        return true
+    }
+
+    private fun clearNoticeContext() {
+        currentNoticeToken = null
+        noticeHidePending = false
     }
 
     private fun noticePreflight(): NexusSdkResult? = when {

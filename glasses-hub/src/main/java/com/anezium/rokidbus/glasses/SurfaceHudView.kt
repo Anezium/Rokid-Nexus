@@ -288,7 +288,7 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
         // what silently ate the wearer's typing here before.
         if (next.kind == NexusSurface.KIND_CARD && next.editable != null) {
             editView.requestFocus()
-        } else {
+        } else if (!next.isInk || !hasFocus()) {
             requestFocus()
         }
     }

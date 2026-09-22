@@ -8,6 +8,7 @@ import com.anezium.rokidbus.shared.LinkStateBits
 import com.anezium.rokidbus.shared.NoticeSurfaceContract
 import com.anezium.rokidbus.shared.plugin.NexusInputEvent
 import org.json.JSONObject
+import org.json.JSONArray
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
@@ -18,6 +19,8 @@ class NexusNoticeActionTest {
     private class FakeTransport : NexusPluginTransport {
         lateinit var listener: NexusPluginTransport.Listener
         var featureBits = 0
+        var directCapabilities: String? = null
+        var sendAccepted = true
         val sends = mutableListOf<Pair<String, JSONObject>>()
         val binarySends = mutableListOf<Triple<String, JSONObject, ByteArray>>()
 
@@ -27,7 +30,7 @@ class NexusNoticeActionTest {
 
         override fun send(path: String, id: String, payload: JSONObject): Boolean {
             sends += path to JSONObject(payload.toString())
-            return true
+            return sendAccepted
         }
 
         override fun sendBinary(
@@ -37,7 +40,7 @@ class NexusNoticeActionTest {
             data: ByteArray,
         ): Boolean {
             binarySends += Triple(path, JSONObject(payload.toString()), data.copyOf())
-            return true
+            return sendAccepted
         }
 
         override fun capabilities(): Int = featureBits
@@ -47,7 +50,7 @@ class NexusNoticeActionTest {
 
         // call is the fast path, not the only one.
 
-        override fun approvedCapabilities(): String? = null
+        override fun approvedCapabilities(): String? = directCapabilities
         override fun close() = Unit
     }
 
@@ -64,6 +67,9 @@ class NexusNoticeActionTest {
         override fun onNoticeAction(id: String) {
             events += "action:$id"
         }
+        override fun onNoticeClosed(reason: NexusNoticeCloseReason) {
+            events += "closed:$reason"
+        }
         override fun onRegistrationState(result: Int) = Unit
     }
 
@@ -79,7 +85,7 @@ class NexusNoticeActionTest {
      * so key order is not stable and the receiver reads by key anyway.
      */
     @Test
-    fun `a notice with no actions sends exactly what it always sent`() {
+    fun `a notice with no actions preserves its fields and adds callback correlation`() {
         val fixture = approvedFixture()
 
         assertEquals(
@@ -98,7 +104,10 @@ class NexusNoticeActionTest {
         val (path, payload) = fixture.transport.sends.single()
         assertEquals(BusPaths.NOTICE_SHOW, path)
         assertEquals(
-            setOf("surfaceId", "kind", "title", "body", "footer", "interactive", "ttlMs"),
+            setOf(
+                "surfaceId", "kind", "title", "body", "footer", "interactive", "ttlMs",
+                NoticeSurfaceContract.FIELD_CLIENT_TOKEN,
+            ),
             payload.keys().asSequence().toSet(),
         )
         assertFalse(payload.has("actions"))
@@ -111,6 +120,7 @@ class NexusNoticeActionTest {
         assertEquals("tap to reply", payload.getString("footer"))
         assertTrue(payload.getBoolean("interactive"))
         assertEquals(8_000L, payload.getLong("ttlMs"))
+        assertTrue(NoticeSurfaceContract.validToken(payload.getString(NoticeSurfaceContract.FIELD_CLIENT_TOKEN)))
     }
 
     @Test
@@ -136,14 +146,17 @@ class NexusNoticeActionTest {
     }
 
     @Test
-    fun `an update with no actions sends exactly what it always sent`() {
+    fun `an update with no actions preserves its fields and adds callback correlation`() {
         val fixture = approvedFixture()
 
         fixture.client.updateNotice(NexusNoticeUpdate(footer = "  Answered  "))
 
         val (path, payload) = fixture.transport.sends.single()
         assertEquals(BusPaths.NOTICE_UPDATE, path)
-        assertEquals(setOf("surfaceId", "footer"), payload.keys().asSequence().toSet())
+        assertEquals(
+            setOf("surfaceId", "footer", NoticeSurfaceContract.FIELD_CLIENT_TOKEN),
+            payload.keys().asSequence().toSet(),
+        )
         assertEquals("Answered", payload.getString("footer"))
     }
 
@@ -168,7 +181,7 @@ class NexusNoticeActionTest {
         val updated = fixture.transport.sends[1].second
         assertEquals("Updated message", updated.getJSONArray("lines").getString(0))
         assertEquals(
-            setOf("surfaceId"),
+            setOf("surfaceId", NoticeSurfaceContract.FIELD_CLIENT_TOKEN),
             fixture.transport.sends[2].second.keys().asSequence().toSet(),
         )
     }
@@ -321,15 +334,328 @@ class NexusNoticeActionTest {
         assertEquals(listOf("action:reply", "input:66"), fixture.callbacks.events)
     }
 
-    private fun approvedFixture(): Fixture = fixture().also { fixture ->
+    @Test
+    fun `callbacks already in transit cannot answer or close a replacement from the same plugin`() {
+        val fixture = approvedFixture(interactionVersion = 1)
+        fixture.client.showNotice(NexusNotice(title = "First", interactive = true))
+        val first = fixture.lastToken()
+        fixture.client.showNotice(NexusNotice(title = "Second", interactive = true))
+        val second = fixture.lastToken()
+        assertFalse(first == second)
+
+        fixture.deliver(BusPaths.NOTICE_ACTION, "old-action", first)
+        fixture.deliver(BusPaths.NOTICE_INPUT, "old-input", first)
+        fixture.deliver(BusPaths.NOTICE_CLOSED, "old-close", first)
+        assertTrue(fixture.callbacks.events.isEmpty())
+
+        fixture.deliver(BusPaths.NOTICE_ACTION, "new-action", second)
+        fixture.deliver(BusPaths.NOTICE_CLOSED, "new-close", second)
+        fixture.deliver(BusPaths.NOTICE_CLOSED, "duplicate-close", second)
+        assertEquals(listOf("action:reply", "closed:USER"), fixture.callbacks.events)
+    }
+
+    @Test
+    fun `cosmetic action countdown and text updates preserve a click in transit`() {
+        val fixture = approvedFixture(interactionVersion = 1)
+        fixture.client.showNotice(
+            NexusNotice(title = "Send reply", actions = listOf(NexusNoticeAction("send", "send", "Sending 3s"))),
+        )
+        val token = fixture.lastToken()
+        fixture.client.updateNotice(NexusNoticeUpdate(body = "Still this reply", ttlMs = 20_000L))
+        assertEquals(token, fixture.lastToken())
+        fixture.client.updateNotice(
+            NexusNoticeUpdate(
+                actions = listOf(NexusNoticeAction("send", "send", "Sending 2s")),
+                rearm = false,
+            ),
+        )
+        assertEquals(token, fixture.lastToken())
+        assertFalse(fixture.transport.sends.last().second.getBoolean("rearm"))
+        fixture.deliver(BusPaths.NOTICE_ACTION, "countdown-click", token, actionId = "send")
+        assertEquals(listOf("action:send"), fixture.callbacks.events)
+    }
+
+    @Test
+    fun `rearming with the same action ids invalidates the earlier question`() {
+        val fixture = approvedFixture(interactionVersion = 1)
+        val actions = listOf(NexusNoticeAction("reply", "reply", "Reply"))
+        fixture.client.showNotice(NexusNotice(title = "First question", actions = actions))
+        val first = fixture.lastToken()
+        fixture.client.updateNotice(NexusNoticeUpdate(body = "Second question", actions = actions))
+        val second = fixture.lastToken()
+        assertFalse(first == second)
+        fixture.deliver(BusPaths.NOTICE_ACTION, "old-answer", first)
+        fixture.deliver(BusPaths.NOTICE_ACTION, "new-answer", second)
+        assertEquals(listOf("action:reply"), fixture.callbacks.events)
+
+        fixture.client.updateNotice(NexusNoticeUpdate(rearm = true))
+        assertEquals(second, fixture.lastToken())
+        fixture.client.updateNotice(NexusNoticeUpdate(actions = actions, rearm = true))
+        assertFalse(second == fixture.lastToken())
+    }
+
+    @Test
+    fun `rearm without interaction fields remains a display update`() {
+        val fixture = approvedFixture(interactionVersion = 1)
+        fixture.client.showNotice(NexusNotice(title = "Current question", interactive = true))
+        val token = fixture.lastToken()
+        fixture.client.updateNotice(NexusNoticeUpdate(body = "Updated text", rearm = true))
+        assertEquals(token, fixture.lastToken())
+        fixture.deliver(BusPaths.NOTICE_INPUT, "unchanged-question", token)
+        assertEquals(listOf("input:66"), fixture.callbacks.events)
+    }
+
+    @Test
+    fun `a capable hub must echo a valid current token on every notice callback`() {
+        val fixture = approvedFixture(interactionVersion = 1)
+        fixture.client.showNotice(NexusNotice(title = "Question", interactive = true))
+        for ((index, path) in listOf(BusPaths.NOTICE_ACTION, BusPaths.NOTICE_INPUT, BusPaths.NOTICE_CLOSED).withIndex()) {
+            fixture.deliver(path, "missing-$index", null)
+            fixture.deliver(path, "malformed-$index", "not a valid token")
+            fixture.deliver(path, "wrong-$index", "a-different-token")
+        }
+        assertTrue(fixture.callbacks.events.isEmpty())
+        fixture.deliver(BusPaths.NOTICE_INPUT, "current-input", fixture.lastToken())
+        assertEquals(listOf("input:66"), fixture.callbacks.events)
+    }
+
+    @Test
+    fun `hide rejects further answers but retains one owner closed callback`() {
+        val fixture = approvedFixture(interactionVersion = 1)
+        fixture.client.showNotice(NexusNotice(title = "Question", interactive = true))
+        val token = fixture.lastToken()
+        fixture.client.hideNotice()
+        assertEquals(token, fixture.lastToken())
+        fixture.deliver(BusPaths.NOTICE_ACTION, "answer-after-hide", token)
+        fixture.deliver(BusPaths.NOTICE_CLOSED, "hidden", token, reason = "owner")
+        fixture.deliver(BusPaths.NOTICE_CLOSED, "hidden-again", token, reason = "owner")
+        assertEquals(listOf("closed:OWNER"), fixture.callbacks.events)
+    }
+
+    @Test
+    fun `link loss stops answers and a fresh registration discards the previous callback context`() {
+        val fixture = approvedFixture(interactionVersion = 1)
+        fixture.client.showNotice(NexusNotice(title = "Before disconnect", interactive = true))
+        val oldLink = fixture.lastToken()
+        fixture.transport.listener.onLinkState(0)
+        fixture.transport.listener.onLinkState(LinkStateBits.SPP_DATA_UP)
+        fixture.deliver(BusPaths.NOTICE_ACTION, "old-link-answer", oldLink)
+        fixture.client.showNotice(NexusNotice(title = "Before registration", interactive = true))
+        val oldRegistration = fixture.lastToken()
+        fixture.transport.listener.onMessage(BusPaths.PLUGIN_REGISTRATION, "fresh-registration", registration(1))
+        fixture.deliver(BusPaths.NOTICE_CLOSED, "old-registration-close", oldRegistration)
+        assertTrue(fixture.callbacks.events.isEmpty())
+    }
+
+    @Test
+    fun `link loss retains the disconnect close needed for owner cleanup`() {
+        val fixture = approvedFixture(interactionVersion = 1)
+        fixture.client.showNotice(NexusNotice(title = "Question", interactive = true))
+        val token = fixture.lastToken()
+        fixture.transport.listener.onLinkState(0)
+        fixture.deliver(BusPaths.NOTICE_INPUT, "disconnected-input", token)
+        fixture.deliver(BusPaths.NOTICE_CLOSED, "disconnect-close", token, reason = "disconnect")
+        assertEquals(listOf("closed:DISCONNECT"), fixture.callbacks.events)
+    }
+
+    @Test
+    fun `the first registration metadata preserves a notice sent from synchronous approval`() {
+        val fixture = fixture()
+        fixture.transport.featureBits = BusCapabilityBits.NOTICE_SURFACE
+        fixture.transport.directCapabilities = "surfaces"
+        fixture.transport.listener.onRegistrationState(PluginRegistrationResult.APPROVED)
+        fixture.transport.listener.onLinkState(LinkStateBits.SPP_DATA_UP)
+        fixture.client.showNotice(NexusNotice(title = "Already shown", interactive = true))
+        val token = fixture.lastToken()
+        fixture.transport.listener.onMessage(BusPaths.PLUGIN_REGISTRATION, "metadata", registration(1))
+        fixture.deliver(BusPaths.NOTICE_INPUT, "answer", token)
+        assertEquals(listOf("input:66"), fixture.callbacks.events)
+    }
+
+    @Test
+    fun `reconnect approval invalidates old context before callbacks can create the next notice`() {
+        val fixture = approvedFixture(interactionVersion = 1)
+        fixture.transport.directCapabilities = "surfaces"
+        fixture.client.showNotice(NexusNotice(title = "Previous connection", interactive = true))
+        val previous = fixture.lastToken()
+        fixture.transport.listener.onRegistrationState(PluginRegistrationResult.APPROVED)
+        fixture.deliver(BusPaths.NOTICE_INPUT, "old-connection", previous)
+        fixture.client.showNotice(NexusNotice(title = "New connection", interactive = true))
+        val current = fixture.lastToken()
+        fixture.transport.listener.onMessage(BusPaths.PLUGIN_REGISTRATION, "new-metadata", registration(1))
+        fixture.deliver(BusPaths.NOTICE_INPUT, "new-connection", current)
+        assertEquals(listOf("input:66"), fixture.callbacks.events)
+    }
+
+    @Test
+    fun `correlated callbacks are checked even before token support metadata arrives`() {
+        val fixture = approvedFixture()
+        fixture.client.showNotice(NexusNotice(title = "First", interactive = true))
+        val first = fixture.lastToken()
+        fixture.client.showNotice(NexusNotice(title = "Second", interactive = true))
+        fixture.deliver(BusPaths.NOTICE_INPUT, "stale-correlated", first)
+        assertTrue(fixture.callbacks.events.isEmpty())
+        fixture.deliver(BusPaths.NOTICE_INPUT, "legacy-no-token", null)
+        assertEquals(listOf("input:66"), fixture.callbacks.events)
+    }
+
+    @Test
+    fun `raw show update and hide share callback identity without changing caller payloads`() {
+        val fixture = approvedFixture(interactionVersion = 1)
+        val shown = JSONObject()
+            .put("surfaceId", "notice")
+            .put("kind", "notice")
+            .put("title", "Raw question")
+            .put("interactive", true)
+            .put(NoticeSurfaceContract.FIELD_CLIENT_TOKEN, "caller-supplied-token")
+        assertTrue(fixture.client.send("  /notice/show  ", "raw-show", shown))
+        val first = fixture.lastToken()
+        assertFalse(first == "caller-supplied-token")
+        assertEquals("caller-supplied-token", shown.getString(NoticeSurfaceContract.FIELD_CLIENT_TOKEN))
+        assertEquals(BusPaths.NOTICE_SHOW, fixture.transport.sends.last().first)
+        fixture.deliver(BusPaths.NOTICE_INPUT, "raw-answer", first)
+
+        val displayUpdate = JSONObject().put("surfaceId", "notice").put("body", "Still this question")
+        assertTrue(fixture.client.send(BusPaths.NOTICE_UPDATE, "raw-display-update", displayUpdate))
+        assertEquals(first, fixture.lastToken())
+        assertFalse(displayUpdate.has(NoticeSurfaceContract.FIELD_CLIENT_TOKEN))
+
+        val nextQuestion = JSONObject().put("surfaceId", "notice").put("interactive", true)
+        assertTrue(fixture.client.send(BusPaths.NOTICE_UPDATE, "raw-rearm", nextQuestion))
+        val second = fixture.lastToken()
+        assertFalse(first == second)
+        fixture.deliver(BusPaths.NOTICE_INPUT, "stale-raw-answer", first)
+        fixture.deliver(BusPaths.NOTICE_INPUT, "new-raw-answer", second)
+
+        val hidden = JSONObject().put("surfaceId", "notice")
+        assertTrue(fixture.client.send(BusPaths.NOTICE_HIDE, "raw-hide", hidden))
+        assertEquals(second, fixture.lastToken())
+        assertFalse(hidden.has(NoticeSurfaceContract.FIELD_CLIENT_TOKEN))
+        fixture.deliver(BusPaths.NOTICE_INPUT, "answer-after-raw-hide", second)
+        fixture.deliver(BusPaths.NOTICE_CLOSED, "raw-owner-close", second, reason = "owner")
+        assertEquals(listOf("input:66", "input:66", "closed:OWNER"), fixture.callbacks.events)
+    }
+
+    @Test
+    fun `raw empty action row still advances the question identity`() {
+        val fixture = approvedFixture(interactionVersion = 1)
+        fixture.client.showNotice(NexusNotice(title = "Question", interactive = true))
+        val first = fixture.lastToken()
+        val patch = JSONObject().put("surfaceId", "notice").put("actions", JSONArray())
+        assertTrue(fixture.client.send(BusPaths.NOTICE_UPDATE, "clear-actions", patch))
+        val second = fixture.lastToken()
+        assertFalse(first == second)
+        fixture.deliver(BusPaths.NOTICE_INPUT, "before-row-clear", first)
+        fixture.deliver(BusPaths.NOTICE_INPUT, "after-row-clear", second)
+        assertEquals(listOf("input:66"), fixture.callbacks.events)
+    }
+
+    @Test
+    fun `binary shows establish the same single context used by later raw updates`() {
+        val fixture = approvedFixture(interactionVersion = 1)
+        val bytes = jpeg(width = 480, height = 160)
+        val notice = NexusNotice(
+            title = "Photo",
+            interactive = true,
+            image = NexusNoticeImage("photo", ImageSurfaceContract.MIME_JPEG, 480, 160),
+        )
+        assertEquals(NexusSdkResult.SENT, fixture.client.showNotice(notice, bytes))
+        assertEquals(1, fixture.transport.binarySends.size)
+        val first = fixture.transport.binarySends.single().second.getString(NoticeSurfaceContract.FIELD_CLIENT_TOKEN)
+        fixture.client.updateNotice(NexusNoticeUpdate(footer = "Photo caption"))
+        assertEquals(first, fixture.lastToken())
+        fixture.deliver(BusPaths.NOTICE_INPUT, "typed-binary-answer", first)
+
+        val raw = notice.toPayload(bytes)
+        assertTrue(fixture.client.sendBinary(BusPaths.NOTICE_SHOW, "raw-binary", raw, bytes))
+        assertFalse(raw.has(NoticeSurfaceContract.FIELD_CLIENT_TOKEN))
+        assertEquals(2, fixture.transport.binarySends.size)
+        val second = fixture.transport.binarySends.last().second.getString(NoticeSurfaceContract.FIELD_CLIENT_TOKEN)
+        assertFalse(first == second)
+        fixture.deliver(BusPaths.NOTICE_INPUT, "stale-binary-answer", first)
+        fixture.deliver(BusPaths.NOTICE_INPUT, "raw-binary-answer", second)
+        assertEquals(listOf("input:66", "input:66"), fixture.callbacks.events)
+    }
+
+    @Test
+    fun `preflight rejection and a failed raw hide do not invalidate the visible question`() {
+        val fixture = approvedFixture(interactionVersion = 1)
+        fixture.client.showNotice(NexusNotice(title = "Question", interactive = true))
+        val token = fixture.lastToken()
+        assertEquals(
+            NexusSdkResult.INVALID_PAYLOAD,
+            fixture.client.showNotice(
+                NexusNotice(title = "Missing bytes", image = NexusNoticeImage("photo", ImageSurfaceContract.MIME_JPEG, 480, 160)),
+            ),
+        )
+        assertEquals(1, fixture.transport.sends.size)
+        fixture.transport.sendAccepted = false
+        assertFalse(fixture.client.send(BusPaths.NOTICE_HIDE, "failed-hide", JSONObject().put("surfaceId", "notice")))
+        fixture.deliver(BusPaths.NOTICE_INPUT, "still-visible", token)
+        assertEquals(listOf("input:66"), fixture.callbacks.events)
+    }
+
+    @Test
+    fun `unapproved raw notice sends remain unsent and leave the caller payload untouched`() {
+        val fixture = fixture()
+        val payload = JSONObject().put("surfaceId", "notice").put("kind", "notice").put("title", "Question")
+        assertFalse(fixture.client.send(BusPaths.NOTICE_SHOW, "unapproved-json", payload))
+        assertFalse(fixture.client.sendBinary(BusPaths.NOTICE_SHOW, "unapproved-binary", payload, byteArrayOf()))
+        assertTrue(fixture.transport.sends.isEmpty())
+        assertTrue(fixture.transport.binarySends.isEmpty())
+        assertFalse(payload.has(NoticeSurfaceContract.FIELD_CLIENT_TOKEN))
+    }
+
+    @Test
+    fun `old hubs decline cosmetic rearm suppression while preserving default notice updates`() {
+        val fixture = approvedFixture()
+        fixture.client.showNotice(NexusNotice(title = "Question", interactive = true))
+        val token = fixture.lastToken()
+        assertEquals(
+            NexusSdkResult.CAPABILITY_NOT_AVAILABLE,
+            fixture.client.updateNotice(NexusNoticeUpdate(interactive = true, rearm = false)),
+        )
+        val raw = JSONObject().put("surfaceId", "notice").put("interactive", true).put("rearm", false)
+        assertFalse(fixture.client.send(" /notice/update ", "unsupported-cosmetic", raw))
+        assertEquals(1, fixture.transport.sends.size)
+        assertFalse(raw.has(NoticeSurfaceContract.FIELD_CLIENT_TOKEN))
+        assertEquals(token, fixture.lastToken())
+        assertEquals(NexusSdkResult.SENT, fixture.client.updateNotice(NexusNoticeUpdate(body = "Updated")))
+        assertEquals(token, fixture.lastToken())
+    }
+
+    private fun Fixture.lastToken(): String =
+        transport.sends.last().second.getString(NoticeSurfaceContract.FIELD_CLIENT_TOKEN)
+
+    private fun Fixture.deliver(
+        path: String,
+        eventId: String,
+        token: String?,
+        actionId: String = "reply",
+        reason: String = "user",
+    ) {
+        val payload = pluginPayload()
+            .put("noticeId", "hello:notice")
+            .put("id", actionId)
+            .put("keyCode", 66)
+            .put("action", 0)
+            .put("reason", reason)
+        token?.let { payload.put(NoticeSurfaceContract.FIELD_CLIENT_TOKEN, it) }
+        transport.listener.onMessage(path, eventId, payload)
+    }
+
+    private fun registration(interactionVersion: Int): JSONObject = pluginPayload()
+        .put("result", PluginRegistrationResult.APPROVED)
+        .put("capabilities", "surfaces")
+        .put("noticeInteractionVersion", interactionVersion)
+
+    private fun approvedFixture(interactionVersion: Int = 0): Fixture = fixture().also { fixture ->
         fixture.transport.featureBits =
             BusCapabilityBits.NOTICE_SURFACE or BusCapabilityBits.IMAGE_SURFACE
         fixture.transport.listener.onMessage(
             BusPaths.PLUGIN_REGISTRATION,
             "registration-${System.identityHashCode(fixture)}",
-            pluginPayload()
-                .put("result", PluginRegistrationResult.APPROVED)
-                .put("capabilities", "surfaces"),
+            registration(interactionVersion),
         )
         fixture.transport.listener.onLinkState(LinkStateBits.SPP_DATA_UP)
         fixture.transport.sends.clear()
