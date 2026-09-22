@@ -1,14 +1,20 @@
 # Changelog
 
-## Unreleased
+## 1.2.3
+
+- **Reply stays available after a brief SPP interruption.** The rebuilt SDK
+  preserves the live notice's callbacks while CXR remains connected and SPP
+  reconnects. Reply can then open dictation or typing for the same question.
 
 - **Countdown labels preserve the current question.** Sending-countdown updates
-  use the SDK's `rearm = false` notice patch, so an answer already in transit
+  use SDK 0.19.0's `rearm = false` notice patch, so an answer already in transit
   remains attached to the same question. This requires a phone hub advertising
   `noticeInteractionVersion: 1` and matching notice-v5 phone/glasses hubs.
   Rebuilding Relay against the new SDK does not upgrade the hubs: on an older
   phone hub the patch returns `CAPABILITY_NOT_AVAILABLE`, the "Sending Ns"
   label stops updating, and the existing send countdown still proceeds.
+
+Update both Nexus hubs to **1.4.11** before installing this Relay update.
 
 ## 1.2.2
 

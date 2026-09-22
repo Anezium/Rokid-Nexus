@@ -1,6 +1,16 @@
 # Changelog
 
-## Unreleased
+## 1.4.11
+
+### Upgrade together
+
+Install **both Nexus hubs 1.4.11** before using notices, then update Relay to
+**1.2.3**. Notice protocol v5 requires matching phone and glasses hubs; mixed
+hub versions are not supported for notices. Plugins need to be rebuilt with
+SDK **0.19.0** to gain the new callback protection. Plugin API version 3 and
+existing grants are unchanged.
+
+### Phone and glasses hubs
 
 - **An SPP interruption no longer disables a live notice's SDK callbacks.**
   Losing or restoring one glasses transport leaves the current question intact;
@@ -32,6 +42,23 @@
   control, and updates retain that selection when the node still exists. Paired
   directional key reports count as one move. A notice can take input above the
   page and return to the same selected Ink control when dismissed.
+
+### Plugin SDK 0.19.0
+
+- Add optional `NexusNoticeUpdate.rearm`. With `rearm = false`, a label-only
+  action update preserves the current question, selection, and one-answer
+  guard. This requires `noticeInteractionVersion: 1`; an older phone hub returns
+  `CAPABILITY_NOT_AVAILABLE` rather than silently changing the question.
+- Filter queued notice callbacks by the current local question. An SPP-only
+  interruption does not retire that context, and reconnecting does not undo an
+  explicit hide.
+- **Callback contract change:** `onNoticeClosed` belongs to the current local
+  notice context, not to every `showNotice` call. An immediate hide followed by
+  show may suppress the previous `closed(owner)` callback. Plugins must not
+  depend on exactly one close callback per show to clean up replaced state.
+
+Validation and remaining transport-recovery follow-ups are recorded in the
+[review and device retest](docs/reviews/hud-interaction-review-follow-up.md).
 
 ## 1.4.10
 

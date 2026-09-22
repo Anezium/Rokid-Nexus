@@ -19,7 +19,7 @@ resolved transitively.
 repositories { maven("https://jitpack.io") }
 
 dependencies {
-    implementation("com.github.Anezium.Rokid-Nexus:bus-client:sdk-v0.18.0")
+    implementation("com.github.Anezium.Rokid-Nexus:bus-client:sdk-v0.19.0")
 }
 ```
 
@@ -706,7 +706,8 @@ For a cosmetic action-label update, such as a countdown, use
 and the interactive flag must stay the same. This preserves both the question
 and its answered state, so a tap in flight remains valid across a countdown
 tick. Other updates retain their existing rearm behavior.
-This new option requires `noticeInteractionVersion: 1`; an older phone hub
+This option is available in SDK 0.19.0 with both Nexus hubs 1.4.11 or newer.
+It requires `noticeInteractionVersion: 1`; an older phone hub
 returns `CAPABILITY_NOT_AVAILABLE` from the typed SDK call instead of silently
 rearming the question.
 
