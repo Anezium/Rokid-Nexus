@@ -50,13 +50,21 @@ grants one at a time and can take back.
 | **[Tasker](plugins/tasker/)** | Your named Tasker tasks on the HUD — swipe, tap, and the phone runs the automation. The glasses are the remote, Tasker does the work |
 | **[Sample](plugins/sample/)** | Minimal copyable reference plugin |
 
-And two that are not in this repository at all, written by
-[beyondlevi](https://github.com/beyondlevi) against the same SDK:
+And ten that are not in this repository at all, written by four other authors
+against the same SDK and listed in the same Store:
 
-| Plugin | What it puts on the HUD |
-|---|---|
-| **[Lume](https://github.com/beyondlevi/lume-nexus)** | A wearable speed reader: text arrives one word at a time at a fixed point, 150–700 wpm, with long words and sentence endings held a little longer. Import a PDF or a text file on the phone, read hands-free with the R08 ring |
-| **[Shopping List](https://github.com/beyondlevi/nexus-shoplist)** | Your list on the HUD, ticked off with the ring, while you add to it on the phone — or paste a whole list and have every line become an item |
+| Plugin | Author | What it puts on the HUD |
+|---|---|---|
+| **[Lume](https://github.com/beyondlevi/lume-nexus)** | beyondlevi | A wearable speed reader: text arrives one word at a time at a fixed point, 150–700 wpm, with long words and sentence endings held a little longer. Import a PDF or a text file on the phone, read hands-free with the R08 ring |
+| **[Agenda](https://github.com/beyondlevi/rokid-agenda-nexus)** | beyondlevi | The calendars your phone already syncs: what is next first, then the event's participants and description |
+| **[News](https://github.com/beyondlevi/news-nexus)** | beyondlevi | RSS and Atom feeds: sources with unread counts, headlines newest first, articles paged |
+| **[Tuya Smart Home](https://github.com/beyondlevi/rokid-tuya-nexus)** | beyondlevi | Your Tuya / Smart Life homes, rooms and devices — pick one and act on it |
+| **[Shopping List](https://github.com/beyondlevi/nexus-shoplist)** | Volund | Your list on the HUD, ticked off with the ring, while you add to it on the phone — or paste a whole list and have every line become an item |
+| **[Home Assistant](https://github.com/azhilin246/rokid-nexus-home-assistant)** | Zhilin | Configurable Home Assistant pages; the selected tile runs its action |
+| **[OTPs](https://github.com/azhilin246/rokid-nexus-otps)** | Zhilin | One-time codes extracted from notifications, after explicit Android approval, as timed alerts plus a short history |
+| **[Taxi Plate](https://github.com/azhilin246/rokid-nexus-taxi-plate)** | Zhilin | The active ride from supported taxi apps, with pickup or trip timing |
+| **[RokidHub · Codex](https://github.com/lavAzza2/rokidhub-codex)** | Azat Akhmetshin | Coding tasks by voice, routed through RokidHub to Codex on your own machine |
+| **[RokidHub · Yandex](https://github.com/lavAzza2/rokidhub-nexus-yandex)** | Azat Akhmetshin | Yandex Smart Home by voice, answered on the HUD and aloud |
 
 They install and run exactly like the ones above, under the same grants and the
 same identity checks. Nothing in the platform is reserved for first-party code.

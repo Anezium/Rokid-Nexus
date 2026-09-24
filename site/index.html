@@ -62,14 +62,14 @@
         on the glasses again.
       </p>
       <ul class="hero__facts hero__facts--lead reveal" style="--i:3">
-        <li><b>8</b> plugins</li>
+        <li><b>20</b> plugins in the Store</li>
         <li><b>1</b> gesture claimed</li>
         <li><b>0</b> cables, PCs, or ADB</li>
       </ul>
       <div class="hero__actions reveal" style="--i:4">
         <a class="btn btn--solid" href="https://github.com/Anezium/Rokid-Nexus/releases">
           Download for Android
-          <span class="btn__meta">v1.4.6 · APK</span>
+          <span class="btn__meta">v1.4.11 · APK</span>
         </a>
         <a class="btn btn--ghost" href="#roadmap">Read the roadmap</a>
       </div>
@@ -90,11 +90,11 @@
 <!-- ─────────────────────────  LATEST  ───────────────────────── -->
 <div class="latest">
   <div class="latest__in">
-    <span class="latest__tag">v1.4.6</span>
+    <span class="latest__tag">v1.4.11</span>
     <p>
-      Type a reply or a note from the phone into a field on the glasses ·
-      Settings can check the glasses' accessibility services · SDK
-      <code>sdk-v0.16.0</code> on JitPack · Apache-2.0
+      Notice replies stay with the question you saw · a failed reply says so ·
+      notices keep the keys over Ink and cards · update both hubs together ·
+      SDK <code>sdk-v0.19.0</code> on JitPack · Apache-2.0
     </p>
     <a href="https://github.com/Anezium/Rokid-Nexus/blob/main/CHANGELOG.md">What changed →</a>
   </div>
@@ -104,20 +104,20 @@
 <div class="boardwrap">
   <div class="board reveal">
     <a class="board__cell" href="#shipped" data-state="shipped">
-      <b>8</b><span>shipped</span>
+      <b>14</b><span>shipped</span>
       <i>on hardware, in a public release</i>
     </a>
-    <a class="board__cell" href="#building" data-state="building">
-      <b>2</b><span>building</span>
-      <i>display arbitration · continuous speech</i>
+    <a class="board__cell" href="#deferred" data-state="exploring">
+      <b>2</b><span>deferred</span>
+      <i>display policies · continuous speech</i>
     </a>
     <a class="board__cell" href="#next" data-state="next">
-      <b>3</b><span>next</span>
+      <b>5</b><span>next</span>
       <i>committed, not started</i>
     </a>
     <a class="board__cell" href="#coming" data-state="exploring">
-      <b>5</b><span>plugins coming</span>
-      <i>navigation · terminal/agent · t3code</i>
+      <b>2</b><span>plugins coming</span>
+      <i>navigation · agents</i>
     </a>
   </div>
 </div>
@@ -141,163 +141,272 @@
         <span class="chip chip--shipped">Shipped</span>
         <p>Running on hardware, in a public release.</p>
       </div>
-      <ul class="road__items">
-        <li>
+      <ul class="ship">
+        <li class="ship__card ship__card--new">
+          <span class="ship__v">1.4.11</span>
+          <h3>A notice answers the question you saw</h3>
+          <p>
+            Replies, gestures and dismissals are bound to the notice and the
+            question on screen, so a late tap can never act on its replacement.
+            A notice keeps the keys over whatever is underneath, and a reply
+            the link rejected says <em>Delivery not confirmed</em> instead of
+            risking a second send.
+          </p>
+          <details>
+            <summary>Under the hood</summary>
+            <p>
+              Notice protocol v5 needs both hubs on 1.4.11; plugins rebuilt on
+              SDK 0.19.0 also filter stale callbacks already queued. The phone
+              hub now hands notices, pins, activities, surfaces and Ink to
+              separate routers, and an SPP drop no longer silences a live
+              notice's callbacks.
+            </p>
+          </details>
+        </li>
+        <li class="ship__card">
+          <span class="ship__v">1.4.10</span>
+          <h3>Listening with the display asleep</h3>
+          <p>
+            A plugin holding the microphone can let its surface go and keep
+            listening. The display sleeps, the launcher is free, and the phone
+            says <em>Listening in the background</em> with a Stop beside it.
+          </p>
+          <details>
+            <summary>Under the hood</summary>
+            <p>
+              Not a background-work permission: without an open audio lease
+              there is nothing to keep alive. Releasing, revoking or losing the
+              lease always ends it; reopening the plugin resumes it.
+            </p>
+          </details>
+        </li>
+        <li class="ship__card">
+          <span class="ship__v">foundation</span>
           <h3>The bus, and the identity it enforces</h3>
           <p>
             Any APK may bind to the hub; installing one grants it nothing. A
-            plugin is identified by <b>package + plugin id + signing
-            certificate</b>, and each capability — <code>surfaces</code>,
-            <code>microphone</code>, <code>stt</code>, <code>tts</code>,
-            <code>camera</code>, <code>http_proxy</code>,
-            <code>mediasync</code> — is a separate user grant, checked at the
-            hub on every message rather than once at install.
+            plugin is <b>package + plugin id + signing certificate</b>, and
+            each capability is a separate grant, checked at the hub on every
+            message.
           </p>
-          <p class="road__tech">
-            Wake-on-message: a plugin does not have to be running. The hub binds
-            it awake when traffic arrives — measured at ~1.6 s including cold
-            start — and it goes back to nothing.
-          </p>
+          <details>
+            <summary>Under the hood</summary>
+            <p>
+              Ten capabilities today — <code>surfaces</code>,
+              <code>ink_surface</code>, <code>microphone</code>,
+              <code>stt</code>, <code>tts</code>, <code>camera</code>,
+              <code>http_proxy</code>, <code>mediasync</code>,
+              <code>assistant</code>, <code>wireless_debugging</code>. A plugin
+              does not have to be running: the hub binds it awake when traffic
+              arrives, measured at ~1.6 s including cold start.
+            </p>
+          </details>
         </li>
-        <li>
+        <li class="ship__card">
+          <span class="ship__v">foundation</span>
           <h3>One link, two paths, and the hub picks</h3>
           <p>
             Control messages ride CXR-L; anything binary — images, photo sync —
             goes over SPP. A plugin never chooses, and never learns which path
             its bytes took.
           </p>
-          <p class="road__tech">
-            1.1.1 flipped that order to route around a link that reported sends
-            it had not delivered, and 1.1.2 flipped it back: SPP is a single
-            RFCOMM channel with one write lock, so a control message queued
-            behind a photo chunk waits for the whole chunk. The real fix is an
-            acknowledgement, not a different running order.
-          </p>
+          <details>
+            <summary>Under the hood</summary>
+            <p>
+              1.1.1 flipped that order to route around a link that reported
+              sends it had not delivered, and 1.1.2 flipped it back: SPP is one
+              RFCOMM channel with one write lock, so a control message queued
+              behind a photo chunk waits for the whole chunk. The real fix is an
+              acknowledgement, not a different running order.
+            </p>
+          </details>
         </li>
-        <li>
+        <li class="ship__card">
+          <span class="ship__v">foundation</span>
           <h3>Setup without a computer</h3>
           <p>
-            Seven steps on the phone, the glasses app pushed over the Rokid link
-            straight from GitHub releases, then a two-card self-arm on the
-            glasses: accessibility on, then the hub bootstraps its own
-            privileged shell.
+            Seven steps on the phone, the glasses app pushed over the Rokid
+            link, then a two-card self-arm on the glasses. No cable, no PC, no
+            ADB at any point.
           </p>
-          <p class="road__tech">
-            Wireless Debugging self-pairing with an app-private KADB TLS
-            identity and a detached watchdog — it never touches the classic ADB
-            key, so nothing on a PC is ever enrolled. Navigation reads the
-            firmware's own localized labels, so it works in every language the
-            ROM ships.
-          </p>
+          <details>
+            <summary>Under the hood</summary>
+            <p>
+              Wireless Debugging self-pairing with an app-private KADB TLS
+              identity and a detached watchdog — the classic ADB key is never
+              touched, so nothing on a PC is ever enrolled. Navigation reads the
+              firmware's own localized labels, so it works in every language the
+              ROM ships.
+            </p>
+          </details>
         </li>
-        <li>
+        <li class="ship__card">
+          <span class="ship__v">foundation</span>
           <h3>The distribution loop, closed</h3>
           <p>
-            The SDK publishes to JitPack from <code>sdk-v*</code> tags. A plugin
-            releases under its own namespaced tag, a manifest PR lands it in the
-            public registry, and the in-app Store verifies SHA-256 and signer
-            <em>before</em> the install runs.
+            The SDK publishes to JitPack from <code>sdk-v*</code> tags, a
+            manifest PR lands a plugin in the public registry, and the in-app
+            Store verifies SHA-256 and signer <em>before</em> the install runs.
           </p>
-          <p class="road__tech">
-            Provenance is checked in a fixed order — commit, tag, build, publish
-            — because the registry refuses a manifest whose artifact it cannot
-            tie back to the tag. Everything self-updates afterwards: phone from
-            releases, glasses over CXR, plugins from the Store.
-          </p>
+          <details>
+            <summary>Under the hood</summary>
+            <p>
+              Provenance is checked in a fixed order — commit, tag, build,
+              publish. Everything self-updates afterwards: phone from releases,
+              glasses over CXR, plugins from the Store. Since 1.4.7 the tests of
+              both hubs and every plugin run on each push, and a release that
+              fails them is not published.
+            </p>
+          </details>
         </li>
-        <li>
+        <li class="ship__card">
+          <span class="ship__v">foundation</span>
           <h3>All five display tiers, and the motion under them</h3>
           <p>
-            Ambient, pin, activity, notice, surface — plus the shared glyph set,
-            plugin marks that travel to the glasses as bare geometry, and the
-            phone's own battery in the ROM status row.
+            Ambient, pin, activity, notice, surface — plus a shared glyph set,
+            plugin marks sent as bare geometry, and a status row along the
+            bottom of every plugin surface.
           </p>
-          <p class="road__tech">
-            One motion layer with three duration tokens and two interpolators,
-            and nothing a plugin can dial. Native Views, not a WebView: the
-            WebView spike rendered the same motion for ~1.2 cores, +88 MB PSS
-            and 2.2 s to first paint, against 7.7 % CPU — and its one real
-            advantage, plugin-authored layout, is something the activity tier
-            refuses by design.
-          </p>
+          <details>
+            <summary>Under the hood</summary>
+            <p>
+              Three duration tokens and two interpolators, nothing a plugin can
+              dial. Native Views, not a WebView: the WebView spike rendered the
+              same motion for ~1.2 cores, +88 MB PSS and 2.2 s to first paint,
+              against 7.7 % CPU. The status row — phone charge, date, glasses
+              charge — arrived in 1.4.8.
+            </p>
+          </details>
         </li>
-        <li>
+        <li class="ship__card">
+          <span class="ship__v">foundation</span>
           <h3>The camera capability</h3>
           <p>
-            The glasses stream live H.264 over a Wi-Fi Direct link and the
-            consumer plugin decodes on the phone, where ML Kit runs OCR and
-            translation offline. No glasses-side plugin code exists: the glasses
-            half is a platform capability.
+            The glasses stream live H.264 and the plugin decodes on the phone,
+            where ML Kit runs OCR and translation offline. No glasses-side
+            plugin code exists.
           </p>
-          <p class="road__tech">
-            A phone app cannot switch its own Wi-Fi on, which used to be a dead
-            end. Now the roles invert — the phone hosts a
-            <code>LocalOnlyHotspot</code> and the glasses join it — and the wire
-            protocol, the decode, the overlays and freeze are unchanged.
-          </p>
+          <details>
+            <summary>Under the hood</summary>
+            <p>
+              A phone app cannot switch its own Wi-Fi on, which used to be a dead
+              end. Now the roles invert — the phone hosts a
+              <code>LocalOnlyHotspot</code> and the glasses join it — and the
+              wire protocol, the decode, the overlays and freeze are unchanged.
+            </p>
+          </details>
         </li>
-        <li>
+        <li class="ship__card">
+          <span class="ship__v">1.4.9</span>
           <h3>Speech, in both directions</h3>
           <p>
-            A plugin could take words from your mouth and put words on your
-            display; it could not say anything. <code>tts</code> is the other
-            half — read aloud with your phone's voice, through the glasses or
-            your earbuds, never the phone's own speaker.
+            <code>stt</code> takes words from your mouth, <code>tts</code> says
+            them back with your phone's voice — through the glasses or your
+            earbuds, never the phone's own speaker. How long it waits for you
+            is now a setting.
           </p>
-          <p class="road__tech">
-            Voice and speed are picked once, in Settings: one choice for
-            everything that speaks. Opening the microphone silences speech, or
-            the glasses would record their own voice into your dictation.
-          </p>
+          <details>
+            <summary>Under the hood</summary>
+            <p>
+              Voice and speed are picked once, for everything that speaks.
+              Opening the microphone silences speech, or the glasses would
+              record their own voice into your dictation. Patience covers both
+              the wait for the first word and the pause that ends a sentence;
+              the Android recognizer only starts once you do.
+            </p>
+          </details>
         </li>
-        <li>
+        <li class="ship__card">
+          <span class="ship__v">foundation</span>
           <h3>Waking a dark display, without owning it</h3>
           <p>
-            A notice worth it can pulse the display awake. At most one wake
-            every five seconds <em>across every plugin</em>, always a short
-            pulse, never held on — and no other tier may do it at all, including
-            activities.
+            A notice worth it can pulse the display awake: at most once every
+            five seconds <em>across every plugin</em>, never held on. No other
+            tier may do it at all.
+          </p>
+        </li>
+        <li class="ship__card">
+          <span class="ship__v">1.4.1</span>
+          <h3>Ink Surface</h3>
+          <p>
+            A plugin sends a strict subset of Rokid's <code>.ink</code> format;
+            the phone compiles it and the glasses draw it as native Views.
+            Charts, progress, tap actions, inline Lottie — no WebView, no
+            JavaScript, no page-side network.
+          </p>
+        </li>
+        <li class="ship__card">
+          <span class="ship__v">1.4.2</span>
+          <h3>The phone as a remote for native glasses apps</h3>
+          <p>
+            List and open the apps already on the glasses, move focus, type
+            into their fields, and drag the system's own pointer like a
+            trackpad — in the Rokid launcher and in any third-party app.
+          </p>
+          <details>
+            <summary>Under the hood</summary>
+            <p>
+              The four <code>/core/*</code> protocol families are hub-only and
+              replay-safe; no plugin grant reaches them. Sensitive editors
+              secure the phone window, and existing field contents never cross
+              back to the phone.
+            </p>
+          </details>
+        </li>
+        <li class="ship__card">
+          <span class="ship__v">1.4.6</span>
+          <h3>Typed input for plugins</h3>
+          <p>
+            A card can carry one text field. A keyboard bonded to the glasses
+            works, and so does the phone's Keyboard &amp; remote screen. Relay
+            replies and Assistant notes came first. Built by ruruw.
+          </p>
+        </li>
+        <li class="ship__card">
+          <span class="ship__v">1.4.8</span>
+          <h3>The assist button, on your terms</h3>
+          <p>
+            A plugin can replace the glasses assistant without owning the
+            button: hand it back to Rokid's assistant and the plugin stays one
+            pick away in the launcher. Plugins are told why they were opened.
           </p>
         </li>
       </ul>
     </div>
 
 
-    <div class="road__group reveal" id="building" data-state="building">
+    <div class="road__group reveal" id="deferred" data-state="deferred">
       <div class="road__meta">
-        <span class="chip chip--building">Building</span>
-        <p>Specified, decided, and being written.</p>
+        <span class="chip chip--exploring">Deferred</span>
+        <p>Designed, and parked on purpose until a concrete case asks for them.</p>
       </div>
       <ul class="road__items">
         <li>
-          <h3>Display arbitration</h3>
+          <h3>Display policies and ownership epochs</h3>
           <p>
-            The protocol has carried an <code>actionable</code> class since v1
-            and v1 still renders it as a toast. Right now the entire policy is
-            "the newest replaces the oldest, no queue" — which holds exactly
-            until two chatty plugins are installed at once.
+            Foreground ownership, per-surface ordering, sequenced hides and
+            image-decode invalidation already protect the normal handoff, and
+            "newest notice wins" is a deliberate single-slot policy, not a
+            missing queue.
           </p>
           <p class="road__tech">
-            What it needs: an arbiter that ranks a request against what is
-            already on the display, plus surface ownership epochs so a late
-            frame from a superseded owner cannot repaint someone else's surface.
-            The per-plugin mute and demote switches in the phone hub are the
-            user-facing half, and they already exist.
+            Per-plugin mute, demote and notices-only, and hub-stamped ownership
+            epochs, exist on development branches. They come back against a
+            reproduced scenario, not as a global display rework on principle.
           </p>
         </li>
         <li>
           <h3>Continuous speech</h3>
           <p>
-            Speech-to-text ships, in short takes: the audio lease is specified,
-            hardware-validated, and has a real consumer. What it cannot do yet
-            is run for minutes.
+            Speech to text ships in short takes. Since 1.4.10 a microphone
+            lease can outlive its surface, but that is not transcription that
+            runs for minutes.
           </p>
           <p class="road__tech">
-            The remaining slice is a held lease with partial results streaming
-            to the HUD, and a caption presentation that survives the surface
-            underneath it changing. Live captions, translation-in-your-ear, and
-            any voice assistant are all blocked behind this one — which is why
-            it is the only other thing being written.
+            The missing slice is speech held open with partial results
+            streaming to the HUD, and captions that survive the surface
+            underneath changing. Live captions and translation need it; it
+            waits for the first consumer that does.
           </p>
         </li>
       </ul>
@@ -311,26 +420,34 @@
       </div>
       <ul class="road__items">
         <li>
-          <h3>Native apps in the Nexus menu</h3>
+          <h3>A navigation plugin</h3>
           <p>
-            Phase two of the menu: list and launch real glasses APKs — Scouter,
-            RokidPipe, whatever you installed — from the same triple-tap that
-            lists plugins. Nexus does not port them and does not wrap them; it
-            stops you having to leave to reach them.
+            Google Maps and Citymapper already emit turn-by-turn as
+            notifications. The plugin reads those and keeps the route as an
+            activity, with notices for the moments that matter.
           </p>
           <p class="road__tech">
-            The work is a launch path that does not fight the ROM launcher, and
-            a back that lands you where you started instead of on the Rokid
-            home.
+            A platform <code>nav</code> kind — maneuver glyph, distance,
+            street, ETA — comes after those payloads have proven which fields
+            are stable, not before.
           </p>
         </li>
         <li>
-          <h3>A <code>nav</code> surface kind</h3>
+          <h3>Skills, and a keyboard for Assistant</h3>
           <p>
-            Turn-by-turn deserves a real surface — a maneuver glyph, the
-            distance, the street, the ETA, all drawn by the platform — instead
-            of a navigation app degrading into a text card, which is what
-            happens today.
+            A hub-mediated registry so Assistant can pause music or ask Transit
+            without binding another plugin or reimplementing it. Plus a
+            phone-typed ask, for the places where talking to your glasses is
+            not an option.
+          </p>
+        </li>
+        <li>
+          <h3>Native apps in the Nexus menu</h3>
+          <p>
+            The phone already lists and opens the apps on the glasses. Phase
+            two puts them behind the same triple-tap that lists plugins, with a
+            back that lands where you started. Nexus does not port them and
+            does not wrap them.
           </p>
         </li>
         <li>
@@ -338,8 +455,16 @@
           <p>
             JitPack builds the SDK from tags and is fine for early adopters, but
             it is not something a serious app should depend on. Central goes out
-            once the AIDL surface is stable enough that a published coordinate
-            is a promise rather than a snapshot.
+            once the AIDL surface is a promise rather than a snapshot.
+          </p>
+        </li>
+        <li>
+          <h3>A control-plane acknowledgement</h3>
+          <p>
+            MediaSync already acks photo chunks. Glasses→phone CXR still
+            reports success for frames the third-party client never sees, which
+            is why outbound traffic prefers SPP. Another flip of running order
+            is not the fix.
           </p>
         </li>
       </ul>
@@ -505,19 +630,11 @@
   <div class="section__head section__head--rail">
     <div>
       <span class="tick" aria-hidden="true"></span>
-      <h2>Nine plugins, none of them built in</h2>
+      <h2>Eleven plugins, none of them built in</h2>
       <p class="section__sub">
         Every one is an ordinary phone APK installed from the in-app Store,
         pinned by hash and signer before it installs. The hub itself ships
         empty. These are real captures off the optic, uncropped.
-      </p>
-      <p class="section__sub">
-        Two more in the Store were written by someone else —
-        <a href="https://github.com/beyondlevi/lume-nexus">Lume</a>, a wearable
-        speed reader, and
-        <a href="https://github.com/beyondlevi/nexus-shoplist">Shopping List</a>,
-        ticked off with the R08 ring. They install, are granted, and run exactly
-        like the nine below. Nothing here is reserved for first-party code.
       </p>
     </div>
     <div class="rail__nav">
@@ -592,6 +709,35 @@
     <figure class="slide slide--card">
       <div class="slide__mark" aria-hidden="true">
         <svg viewBox="0 0 72 72" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="10" y="12" width="52" height="11" rx="3" />
+          <rect x="10" y="30" width="52" height="11" rx="3" />
+          <rect x="10" y="48" width="52" height="11" rx="3" opacity=".55" />
+          <path d="M44 35.5l4 0M52 32l4 3.5-4 3.5" />
+        </svg>
+      </div>
+      <figcaption>
+        <span class="slide__tag">your automations</span>
+        <b>Tasker</b>
+        <span>Your named Tasker tasks, listed on the glasses. Swipe to the one you want, tap, and it runs on the phone.</span>
+      </figcaption>
+    </figure>
+    <figure class="slide slide--card">
+      <div class="slide__mark" aria-hidden="true">
+        <svg viewBox="0 0 72 72" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M14 30a31 31 0 0 1 44 0M21 38a21 21 0 0 1 30 0M28 46a11 11 0 0 1 16 0" />
+          <circle cx="36" cy="54" r="2.6" />
+          <path d="M12 64h14M46 64h14" opacity=".55" />
+        </svg>
+      </div>
+      <figcaption>
+        <span class="slide__tag">for developers</span>
+        <b>Wireless ADB</b>
+        <span>Turns on Android's real wireless debugging on the glasses and hands you a short-lived pairing command, so a trusted computer connects without a cable.</span>
+      </figcaption>
+    </figure>
+    <figure class="slide slide--card">
+      <div class="slide__mark" aria-hidden="true">
+        <svg viewBox="0 0 72 72" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
           <rect x="8" y="8" width="56" height="56" rx="4" stroke-dasharray="7 6" />
           <circle cx="36" cy="26" r="5" />
           <path d="M36 31v10M36 41l-11 8M36 41l11 8" />
@@ -608,12 +754,36 @@
   </div>
 
   <p class="grid__foot reveal">
-    Installation alone grants nothing. <b>Surfaces</b>, <b>microphone</b>,
-    <b>speech to text</b>, <b>text to speech</b>, <b>camera</b>, <b>photos</b>
-    and <b>HTTP proxy</b> are approved one by one, per plugin, keyed to its
+    Installation alone grants nothing. <b>Surfaces</b>, <b>Ink</b>,
+    <b>microphone</b>, <b>speech to text</b>, <b>text to speech</b>,
+    <b>camera</b>, <b>photos</b>, <b>HTTP proxy</b>, the <b>assistant</b> slot
+    and <b>wireless debugging</b> are approved one by one, per plugin, keyed to its
     package, its plugin id, and its signing certificate — and checked at the hub
     on every message, not at install time.
   </p>
+
+  <div class="community reveal">
+    <div class="community__head">
+      <span class="chip chip--shipped">Community</span>
+      <p>
+        Ten more in the Store, by four other authors. They install, are
+        granted, and run exactly like the eleven above — nothing here is
+        reserved for first-party code.
+      </p>
+    </div>
+    <ul class="community__grid">
+      <li><a href="https://github.com/beyondlevi/lume-nexus"><b>Lume</b><i>beyondlevi</i><span>PDFs and text one word at a time, paced for reading on the move.</span></a></li>
+      <li><a href="https://github.com/beyondlevi/rokid-agenda-nexus"><b>Agenda</b><i>beyondlevi</i><span>The calendars your phone already syncs: what is next, first.</span></a></li>
+      <li><a href="https://github.com/beyondlevi/news-nexus"><b>News</b><i>beyondlevi</i><span>RSS and Atom feeds, headlines newest first, articles paged.</span></a></li>
+      <li><a href="https://github.com/beyondlevi/rokid-tuya-nexus"><b>Tuya Smart Home</b><i>beyondlevi</i><span>Home, room, device — and act on it from the glasses.</span></a></li>
+      <li><a href="https://github.com/beyondlevi/nexus-shoplist"><b>Shopping List</b><i>Volund</i><span>Your list on the HUD, ticked off with the R08 ring.</span></a></li>
+      <li><a href="https://github.com/azhilin246/rokid-nexus-home-assistant"><b>Home Assistant</b><i>Zhilin</i><span>Configurable Home Assistant pages, one action per tile.</span></a></li>
+      <li><a href="https://github.com/azhilin246/rokid-nexus-otps"><b>OTPs</b><i>Zhilin</i><span>One-time codes lifted from notifications, shown for a moment.</span></a></li>
+      <li><a href="https://github.com/azhilin246/rokid-nexus-taxi-plate"><b>Taxi Plate</b><i>Zhilin</i><span>The active ride and its pickup timing, on the HUD while you wait.</span></a></li>
+      <li><a href="https://github.com/lavAzza2/rokidhub-codex"><b>RokidHub · Codex</b><i>Azat Akhmetshin</i><span>Coding tasks by voice, routed through RokidHub to Codex.</span></a></li>
+      <li><a href="https://github.com/lavAzza2/rokidhub-nexus-yandex"><b>RokidHub · Yandex</b><i>Azat Akhmetshin</i><span>Yandex Smart Home by voice, answered on the HUD.</span></a></li>
+    </ul>
+  </div>
 
   <div class="road road--plugins">
 
@@ -624,10 +794,10 @@
       </div>
       <ul class="road__items road__items--compact">
         <li><h3>Relay</h3><p>ordinary apps, not just messengers · an app picker for what may reach the eye</p></li>
-        <li><h3>Assistant</h3><p>more tools that act — music, Transit · a keyboard mode — the request typed, not spoken</p></li>
+        <li><h3>Assistant</h3><p>music and Transit through hub skills, not by becoming those plugins · a keyboard mode — the request typed, not spoken</p></li>
         <li><h3>Feeds</h3><p>posting and replying by voice · more sources · video in the timeline</p></li>
         <li><h3>Media Deck</h3><p>voice control — “next” and “pause” said instead of tapped</p></li>
-        <li><h3>Photos Sync</h3><p>sync rules · freeing glasses storage once a shot is safely across</p></li>
+        <li><h3>Photos Sync</h3><p>a Wi-Fi-only rule · the location tag Android strips from videos</p></li>
       </ul>
     </div>
 
@@ -640,27 +810,19 @@
         <li>
           <h3>Navigation</h3>
           <p>
-            Google Maps and Citymapper already emit turn-by-turn as
-            notifications. The plugin reads those, keeps maneuver, distance and
-            ETA pinned with notices for the moments that matter, and graduates
-            to the <code>nav</code> surface when the platform ships it.
+            Same row as the platform list: activity + notices first, a
+            <code>nav</code> kind later, once the notification payloads have
+            proven which fields are stable.
           </p>
         </li>
         <li>
-          <h3>T3code, as an alpha</h3>
+          <h3>Agents, as a private alpha</h3>
           <p>
-            Drive T3Code from the glasses: start a thread, follow its agents
-            while they work. An alpha on purpose — it exists to rehearse the
-            next one.
-          </p>
-        </li>
-        <li>
-          <h3>Terminal / Agent</h3>
-          <p>
-            The real product. A coding agent in the wearer's eye: its questions
-            and permission prompts arrive as notices and are answered by voice,
-            its progress rides a pin, and the next task is dictated instead of
-            typed.
+            Claude Code, Codex and OpenClaw sessions on the HUD: permission prompts as
+            notices, progress on a pin, the next task dictated. Already in the
+            tree, being reworked to speak Alleycat's protocol — the daemon
+            behind litter — instead of a hand-rolled one. Not Store-listed
+            until that rework lands.
           </p>
         </li>
       </ul>
@@ -716,7 +878,7 @@
 
 <span class="k">dependencies</span> {
     <span class="f">implementation</span>(
-        <span class="s">"com.github.Anezium.Rokid-Nexus:bus-client:sdk-v0.16.0"</span>
+        <span class="s">"com.github.Anezium.Rokid-Nexus:bus-client:sdk-v0.19.0"</span>
     )
 }</code></pre>
       </div>
