@@ -18,7 +18,7 @@ data class BusEnvelope(
 
 object FrameProtocol {
     private const val HEADER_BYTES = 4
-    private const val MAX_FRAME_BYTES = 2 * 1024 * 1024
+    internal const val MAX_FRAME_BYTES = 2 * 1024 * 1024
     private const val FORMAT_BINARY: Byte = 0x01
     private const val FORMAT_JSON: Byte = 0x7B
 
@@ -67,6 +67,11 @@ object FrameProtocol {
         val body = ByteArray(length)
         val bodyBytes = readFullyOrEof(input, body)
         if (bodyBytes != length) throw EOFException("Short frame body")
+        return fromFrameBody(body)
+    }
+
+    internal fun fromFrameBody(body: ByteArray): BusEnvelope {
+        require(body.size in 1..MAX_FRAME_BYTES) { "Invalid frame body size" }
         return when (body.first()) {
             FORMAT_JSON -> fromJson(JSONObject(String(body, Charsets.UTF_8)))
             FORMAT_BINARY -> fromBinaryBody(body)
@@ -74,7 +79,7 @@ object FrameProtocol {
         }
     }
 
-    private fun toFrameBody(envelope: BusEnvelope): ByteArray {
+    internal fun toFrameBody(envelope: BusEnvelope): ByteArray {
         val data = envelope.binary ?: return toJsonBytes(envelope)
         val headerJson = JSONObject()
             .put("v", envelope.v)

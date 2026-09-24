@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Phone and glasses hubs
+
+- **SPP connections now require mutual authentication.** The phone enrolls a
+  pairing key through its authorized Hi Rokid CXR session; both hubs protect it
+  with Android Keystore. Every SPP connection proves possession of that key,
+  and every frame carries a directional MAC and replay counter. Unauthenticated
+  clients cannot send commands or replace an active connection's output.
+- **Upgrade both hubs for the SPP data plane.** Legacy SPP peers are rejected;
+  the existing CXR control path remains available. Enrollment retries after a
+  hub reset without relying on reverse CXR delivery. Plugin API and grants are
+  unchanged.
+
 ## 1.4.11
 
 ### Upgrade together

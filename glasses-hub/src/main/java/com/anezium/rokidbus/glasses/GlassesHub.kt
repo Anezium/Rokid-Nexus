@@ -24,6 +24,7 @@ import com.anezium.rokidbus.shared.BusEnvelope
 import com.anezium.rokidbus.shared.BusPaths
 import com.anezium.rokidbus.shared.EditableSurfaceContract
 import com.anezium.rokidbus.shared.FrameProtocol
+import com.anezium.rokidbus.shared.SppKeyProvisioning
 import com.anezium.rokidbus.shared.GlassesAccessibilityCheckContract
 import com.anezium.rokidbus.shared.GlassesHubCapabilitiesContract
 import com.anezium.rokidbus.shared.GlassesRepairContract
@@ -258,6 +259,7 @@ object GlassesHub {
     }
 
     fun onRemoteEnvelope(envelope: BusEnvelope) {
+        if (SppKeyProvisioning.isReserved(envelope.path)) return
         log("remote RX ${envelope.path} id=${envelope.id}")
         if (envelope.path == RemoteInputContract.COMMAND_PATH ||
             envelope.path == RemoteNavigationContract.REQUEST_PATH
@@ -714,6 +716,7 @@ object GlassesHub {
     }
 
     private fun routeLocal(envelope: BusEnvelope, senderUid: Int) {
+        if (SppKeyProvisioning.isReserved(envelope.path)) return
         val allowed = senderUid == Process.myUid() ||
             (isDebuggableBuild() && registrations.any { it.uid == senderUid })
         if (!allowed) {

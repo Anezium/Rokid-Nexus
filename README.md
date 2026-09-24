@@ -146,7 +146,11 @@ Trust model: any APK may request bus access, but capabilities (`surfaces`,
 `ink_surface`, `http_proxy`, `microphone`, `stt`, `tts`, `camera`, `mediasync`,
 `assistant`, `wireless_debugging`) are granted per
 plugin by the user, keyed to package + plugin id + signing certificate. Installation alone never grants
-anything. Developer mode adds package, signer, protocol, and route diagnostics
+anything. The phone and glasses hubs also authenticate their SPP connection with
+an installation pairing key enrolled through the authorized Hi Rokid CXR link;
+each SPP frame has integrity and replay protection. Both hubs must support this
+transport version; legacy peers retain only the existing CXR control path.
+Developer mode adds package, signer, protocol, and route diagnostics
 plus a live bus inspector.
 
 ## Build a plugin
