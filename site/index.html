@@ -104,7 +104,7 @@
 <div class="boardwrap">
   <div class="board reveal">
     <a class="board__cell" href="#shipped" data-state="shipped">
-      <b>14</b><span>shipped</span>
+      <b>13</b><span>shipped</span>
       <i>on hardware, in a public release</i>
     </a>
     <a class="board__cell" href="#deferred" data-state="exploring">
@@ -274,7 +274,9 @@
               dial. Native Views, not a WebView: the WebView spike rendered the
               same motion for ~1.2 cores, +88 MB PSS and 2.2 s to first paint,
               against 7.7 % CPU. The status row — phone charge, date, glasses
-              charge — arrived in 1.4.8.
+              charge — arrived in 1.4.8. Only a notice may pulse a dark display
+              awake, at most once every five seconds across every plugin, and
+              never held on.
             </p>
           </details>
         </li>
@@ -315,15 +317,6 @@
               the Android recognizer only starts once you do.
             </p>
           </details>
-        </li>
-        <li class="ship__card">
-          <span class="ship__v">foundation</span>
-          <h3>Waking a dark display, without owning it</h3>
-          <p>
-            A notice worth it can pulse the display awake: at most once every
-            five seconds <em>across every plugin</em>, never held on. No other
-            tier may do it at all.
-          </p>
         </li>
         <li class="ship__card">
           <span class="ship__v">1.4.1</span>
