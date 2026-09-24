@@ -159,10 +159,16 @@ class AuthenticatedSppServerTest {
         val same = SppKeyProvisioning.offer(key)
         SppKeyProvisioning.receive(same, fromCxr = true, server::installKey)
         assertTrue(server.isConnected())
+        assertArrayEquals(key, store.key)
         assertEquals(0, store.saves)
+        assertEquals(listOf(true), states)
+        assertEquals(1L, trusted.closed.count)
         timers.first().second() // A late deadline must not kill a published connection.
         assertTrue(server.send(BusEnvelope("/still-connected")))
         assertEquals("/still-connected", session.read(trusted.phoneInput)!!.path)
+        session.write(trusted.phoneOutput, BusEnvelope("/after-cxr-reconnect"))
+        assertTrue(received.await(2, TimeUnit.SECONDS))
+        assertEquals(listOf("/after-cxr-reconnect"), paths)
         val replacement = ByteArray(32) { 77 }
         SppKeyProvisioning.receive(SppKeyProvisioning.offer(replacement), fromCxr = false, server::installKey)
         assertTrue(server.isConnected())

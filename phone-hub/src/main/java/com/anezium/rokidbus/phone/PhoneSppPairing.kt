@@ -17,6 +17,7 @@ internal interface PhoneSppPairingStore {
 
 internal class PhoneSppPairing(
     private val store: PhoneSppPairingStore,
+    private val hasCxrConnection: () -> Boolean = { false },
     private val currentCxrIdentity: () -> String?,
 ) {
     class Prepared(val identity: String, val key: ByteArray)
@@ -35,7 +36,7 @@ internal class PhoneSppPairing(
 
     @Synchronized
     fun prepare(sppPeerAddress: String, sendCxr: (BusEnvelope) -> Boolean): Prepared? {
-        if (currentCxrIdentity() != null) return offerCurrent(sendCxr)
+        if (hasCxrConnection() || currentCxrIdentity() != null) return offerCurrent(sendCxr)
         val identity = store.boundIdentity(sppPeerAddress) ?: store.lastIdentity() ?: return null
         // An offline attempt must not create a key that the glasses could never have received.
         val key = runCatching { store.keys(identity).load() }.getOrNull() ?: return null

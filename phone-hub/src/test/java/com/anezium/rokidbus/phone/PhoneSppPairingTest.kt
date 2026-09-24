@@ -145,6 +145,155 @@ class PhoneSppPairingTest {
         assertArrayEquals(phone.offerCurrent(cxr)!!.key, glassesKey)
     }
 
+    @Test fun cxrReconnectWaitsForDeviceInfoAndOffersThePersistedKeyExactlyOnce() {
+        val connection = CxrConnection()
+        connection.connect()
+        connection.info("serial-a")
+        val enrolled = glassesKey!!.copyOf()
+        connection.disconnect()
+        connection.connect()
+        connection.identity.onConnectionChanged(true)
+        assertNull(connection.identity.current())
+        assertEquals(1, offers)
+        connection.info("serial-a")
+        connection.info("serial-a")
+        connection.advance(5_000)
+        assertEquals(2, offers)
+        assertArrayEquals(enrolled, glassesKey)
+        assertEquals(1, store.keys(firstIdentity).saves)
+        assertFalse(store.keyStores.containsKey("cxr:current"))
+    }
+
+    @Test fun missingDeviceInfoOffersFallbackOnceOnlyAfterFourSeconds() {
+        val connection = CxrConnection()
+        connection.connect()
+        connection.info(null)
+        connection.advance(3_999)
+        assertEquals(0, offers)
+        assertTrue(store.keyStores.isEmpty())
+        connection.identity.onConnectionChanged(true)
+        connection.advance(1)
+        assertEquals(1, offers)
+        assertEquals("cxr:current", connection.identity.current())
+        assertArrayEquals(store.keys("cxr:current").key, glassesKey)
+        connection.info(null)
+        connection.advance(5_000)
+        assertEquals(1, offers)
+    }
+
+    @Test fun pendingCxrIdentityDoesNotUseAnOfflineKeyOrOfferFallbackOnSppAttempt() {
+        val first = phone.offerCurrent(cxr)!!
+        handshake(first, first.key)
+        val connection = CxrConnection()
+        connection.connect()
+        assertNull(connection.pairing.prepare(address) { fail("Identity still pending"); false })
+        assertEquals(1, offers)
+        assertFalse(store.keyStores.containsKey("cxr:current"))
+    }
+
+    @Test fun cancelledTimeoutCannotProvisionAReconnectedOrIdentifiedPeer() {
+        val connection = CxrConnection()
+        connection.connect()
+        val staleTimeout = connection.timers.single().action
+        connection.disconnect()
+        connection.connect()
+        staleTimeout()
+        connection.flush()
+        assertEquals(0, offers)
+        connection.info("serial-b")
+        connection.timers.forEach { it.action() }
+        connection.flush()
+        assertEquals(1, offers)
+        assertEquals(secondIdentity, connection.identity.current())
+        assertFalse(store.keyStores.containsKey("cxr:current"))
+    }
+
+    @Test fun lateDeviceInfoReplacesFallbackOnceAndNextPairNeverReceivesOldIdentity() {
+        val connection = CxrConnection()
+        connection.connect()
+        connection.advance(4_000)
+        connection.info("serial-a")
+        assertEquals(2, offers)
+        connection.disconnect()
+        connection.connect()
+        assertEquals(2, offers)
+        connection.info("serial-b")
+        assertEquals(3, offers)
+        assertArrayEquals(store.keys(secondIdentity).key, glassesKey)
+        assertFalse(store.keys(firstIdentity).key!!.contentEquals(glassesKey!!))
+    }
+
+    @Test fun deviceInfoBeforeLinkUpIsUsedAndQueuedOldOffersAreDiscarded() {
+        val connection = CxrConnection()
+        connection.info("serial-a")
+        assertEquals(0, offers)
+        connection.connected = true
+        connection.identity.onConnectionChanged(true)
+        connection.disconnect()
+        connection.connect()
+        assertEquals(0, offers)
+        connection.info("serial-b")
+        connection.advance(5_000)
+        assertEquals(1, offers)
+        assertFalse(store.keyStores.containsKey(firstIdentity))
+    }
+
+    private inner class CxrConnection {
+        var connected = false
+        private var now = 0L
+        val timers = mutableListOf<Timer>()
+        private val pendingOffers = mutableListOf<Long>()
+        val identity = SppCxrIdentity(
+            schedule = { delay, action ->
+                val timer = Timer(now + delay, action)
+                timers += timer
+                ({ timer.cancelled = true })
+            },
+            onReady = { pendingOffers += it },
+        )
+        val pairing = PhoneSppPairing(store, hasCxrConnection = { connected }, currentCxrIdentity = identity::current)
+
+        fun connect() {
+            connected = true
+            identity.onConnectionChanged(true)
+            flush()
+        }
+
+        fun disconnect() {
+            connected = false
+            identity.onConnectionChanged(false)
+        }
+
+        fun info(serial: String?) {
+            identity.onDeviceInfo(serial, null)
+            flush()
+        }
+
+        fun advance(millis: Long) {
+            now += millis
+            timers.filter { !it.cancelled && !it.fired && it.at <= now }.forEach {
+                it.fired = true
+                it.action()
+            }
+            flush()
+        }
+
+        fun flush() {
+            pendingOffers.toList().forEach { revision ->
+                if (identity.isCurrentOffer(revision)) {
+                    currentIdentity = identity.current()
+                    pairing.offerCurrent(cxr)
+                }
+            }
+            pendingOffers.clear()
+        }
+    }
+
+    private class Timer(val at: Long, val action: () -> Unit) {
+        var cancelled = false
+        var fired = false
+    }
+
     private fun handshake(prepared: PhoneSppPairing.Prepared, serverKey: ByteArray) {
         val serverInput = PipedInputStream(1024)
         val clientOutput = PipedOutputStream(serverInput)

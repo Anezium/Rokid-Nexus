@@ -107,6 +107,12 @@ CXR identity changes, and before SPP attempts while CXR is up. This also restore
 enrollment after a glasses reset. Key storage and provisioning run off the main
 thread.
 
+On CXR reconnect, provisioning waits for device info from the new connection;
+only after four seconds without a serial number or device name may it offer the
+`current` fallback key. Duplicate connection/device-info callbacks do not reoffer
+the key, and stale timeouts are ignored. SPP attempts wait for this identity
+resolution too. Reoffering the same persisted key preserves a live SPP session.
+
 SPP attempts use the current CXR identity's key. Without CXR, the phone loads the
 key from the last successfully authenticated binding for the selected SPP address,
 falling back to the last used identity. Offline attempts never generate keys.
@@ -174,6 +180,9 @@ replace a pending unbonded candidate, but cannot replace a bonded pending peer
 or an authenticated session. Unbonded candidates cannot replace any candidate;
 their starts are rate-limited to one per second. Bonded candidates bypass that
 rate limit, but must still complete the same cryptographic authentication.
+Bonded-peer priority is based on the Bluetooth address and can be spoofed by
+address impersonation; it is only an availability defense against unbonded peers,
+not authentication.
 While an authenticated connection exists, additional sockets are closed without
 changing the active output or link state. Timeout, failure and cleanup apply
 only to the candidate that created them, never to another connection.

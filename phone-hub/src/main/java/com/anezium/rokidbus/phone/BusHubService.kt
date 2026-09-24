@@ -309,10 +309,16 @@ class BusHubService : Service() {
     private val sppDeadlines = Executors.newSingleThreadScheduledExecutor()
     private val sppNonces = SppAuthProtocol.RecentNonces()
     private val sppProvisioning = Executors.newSingleThreadExecutor()
-    @Volatile private var sppCxrIdentity = PhoneSppPairing.cxrIdentity(null, null)
+    private val sppCxrIdentity = SppCxrIdentity(
+        schedule = { delay, task ->
+            val future = sppDeadlines.schedule(task, delay, TimeUnit.MILLISECONDS)
+            ({ future.cancel(false); Unit })
+        },
+        onReady = ::offerSppKeyForCurrentCxr,
+    )
     private val sppPairing by lazy {
-        PhoneSppPairing(PhoneSppPairingStorage(applicationContext)) {
-            sppCxrIdentity.takeIf { hubEnabled && !sppLoopStop && isCxrUp() }
+        PhoneSppPairing(PhoneSppPairingStorage(applicationContext), hasCxrConnection = ::isCxrUp) {
+            sppCxrIdentity.current().takeIf { hubEnabled && !sppLoopStop && isCxrUp() }
         }
     }
     @Volatile private var socket: BluetoothSocket? = null
@@ -555,8 +561,7 @@ class BusHubService : Service() {
     private val linkCallback = object : ICXRLinkCbk {
         override fun onCXRLConnected(connected: Boolean) {
             cxrConnected = connected
-            if (!connected) sppCxrIdentity = PhoneSppPairing.cxrIdentity(null, null)
-            offerSppKeyForCurrentCxr()
+            sppCxrIdentity.onConnectionChanged(isCxrUp())
             if (!connected) glassesWorn = false
             log("CXR-L connected=$connected")
             notifyLinkState()
@@ -569,8 +574,7 @@ class BusHubService : Service() {
 
         override fun onGlassBtConnected(connected: Boolean) {
             glassBtConnected = connected
-            if (!connected) sppCxrIdentity = PhoneSppPairing.cxrIdentity(null, null)
-            offerSppKeyForCurrentCxr()
+            sppCxrIdentity.onConnectionChanged(isCxrUp())
             if (!connected) glassesWorn = false
             log("Hi Rokid glass BT connected=$connected")
             notifyLinkState()
@@ -582,11 +586,7 @@ class BusHubService : Service() {
         }
 
         override fun onGlassDeviceInfo(info: GlassInfo) {
-            val identity = PhoneSppPairing.cxrIdentity(info.sn, info.deviceName)
-            if (sppCxrIdentity != identity) {
-                sppCxrIdentity = identity
-                offerSppKeyForCurrentCxr()
-            }
+            sppCxrIdentity.onDeviceInfo(info.sn, info.deviceName)
             notifyGlassesDeviceInfo(info)
         }
 
@@ -1025,6 +1025,7 @@ class BusHubService : Service() {
         cxrLink = null
         cxrConnected = false
         glassBtConnected = false
+        sppCxrIdentity.onConnectionChanged(false)
         glassesWorn = false
         closeSocket()
         notifyLinkState()
@@ -1045,6 +1046,7 @@ class BusHubService : Service() {
         activityHandler.removeCallbacks(activityExpiryTick)
         activityRouter.clearAllForHubStop()
         sppLoopStop = true
+        sppCxrIdentity.onConnectionChanged(false)
         sppDeadlines.shutdownNow()
         sppProvisioning.shutdownNow()
         if (::speechSessionManager.isInitialized) speechSessionManager.close()
@@ -3282,10 +3284,11 @@ class BusHubService : Service() {
         }
     }
 
-    private fun offerSppKeyForCurrentCxr() {
+    private fun offerSppKeyForCurrentCxr(revision: Long) {
         if (!hubEnabled || sppLoopStop || !isCxrUp()) return
         runCatching {
             sppProvisioning.execute {
+                if (!sppCxrIdentity.isCurrentOffer(revision)) return@execute
                 runCatching { sppPairing.offerCurrent(::sendSppProvisioning) }
                     .onFailure { log("SPP provisioning unavailable; retrying on connection attempt") }
             }
@@ -3600,6 +3603,7 @@ class BusHubService : Service() {
         if (!bound) {
             cxrConnected = false
             glassBtConnected = false
+            sppCxrIdentity.onConnectionChanged(false)
             glassesWorn = false
             notifyLinkState()
         }
