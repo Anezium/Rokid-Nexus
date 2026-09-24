@@ -1,6 +1,6 @@
 # Rokid Nexus — Roadmap
 
-Status: 2026-09-22 (current work and delivered-status corrections). This file is the public roadmap and the source the
+Status: 2026-09-24. This file is the public roadmap and the source the
 [project site](https://rokid-nexus.anezium.me) renders. The founding product
 argument lives in [VISION.md](VISION.md); what actually shipped in each release
 lives in [CHANGELOG.md](CHANGELOG.md).
@@ -55,7 +55,8 @@ is checked in a fixed order — commit, tag, build, publish — because the regi
 refuses a manifest whose artifact it cannot tie back to the tag.
 
 Everything self-updates afterwards: phone from releases, glasses over CXR,
-plugins from the Store.
+plugins from the Store. Since 1.4.7 the unit tests of both hubs and every
+plugin run on each push, and a release that fails them is not published.
 
 ### All five display tiers, and the motion under them
 
@@ -68,7 +69,9 @@ plugins from the Store.
 | **Surface** | The engaged case: cards, readers, timed lines, media decks, list rows, real images |
 
 Plus the shared glyph set, plugin marks travelling to the glasses as bare
-geometry, and the phone's own battery in the ROM status row.
+geometry, the phone's own battery in the ROM status row, and — since 1.4.8 — a
+status row along the bottom of every plugin surface: phone charge, the date,
+the glasses' own charge.
 
 A reader says where reading begins, because the answer is not the same for a
 conversation and for an article: a stream opens on its last line, a document
@@ -111,6 +114,30 @@ speaks, so no plugin — and not the hub either — may change them per utteranc
 Reading and dictating share one pair of ears, so opening the microphone
 silences whatever is being spoken. Otherwise the glasses record their own voice
 into the transcript, and a plugin answering a message would be answering itself.
+
+How long the glasses wait for you is yours too (1.4.9): a Patience setting
+covers both the wait for the first word and the pause that ends a sentence.
+The built-in Android recognizer now starts only once you begin speaking, so it
+no longer gives up after three seconds of thinking.
+
+### Listening with the display asleep
+
+A microphone plugin that holds an active audio lease may detach its last
+surface and keep listening (1.4.10). The display goes back to sleep, the
+launcher is free, reopening the plugin resumes it, and the phone's plugin row
+says *Listening in the background* with a **Stop** next to it. Releasing,
+revoking or losing the lease always ends it. This is not a background-work
+permission: without an open microphone there is nothing to keep alive. Asked
+for in #37.
+
+### The assist button, on the wearer's terms
+
+A plugin that replaces the glasses assistant no longer has to own the button
+to be reachable. A second switch hands the assist button back to Rokid's
+assistant while the plugin stays one pick away in the Nexus launcher, and
+Assistant can flip it from the glasses (1.4.8, asked for in #35). Plugins are
+told why they were opened — a launcher pick, the assist button, a re-adoption
+after a restart — so each can answer the way that entry deserves.
 
 ### Waking a dark display, without owning it
 
@@ -155,6 +182,22 @@ Maintenance check that asks the glasses which accessibility services besides
 Nexus's own are enabled — a foreign one in front of Nexus's key handling has
 been the cause behind more than one "input stopped working" report.
 
+### A notice answers the question you saw
+
+Replies, gestures and dismissals are bound to the notice instance and the
+question on screen, in both hubs, so a delayed event cannot act on a
+replacement from the same plugin (1.4.11). An interactive notice takes
+direction, confirm and Back before the launcher or surface beneath it, and a
+reply the transport rejected shows *Delivery not confirmed* rather than risking
+a duplicate effect after a partial write. Notice protocol v5 needs both hubs on
+the same version; plugins rebuilt on SDK 0.19.0 also filter stale callbacks
+already queued, and an SPP interruption no longer disables a live notice's
+callbacks.
+
+Underneath, the phone hub now hands notices, pins, activities, ordinary
+surfaces and Ink to separate routers, each with its own regression tests. The
+split preserves behavior; it adds no display policy.
+
 ### Eleven plugins, none of them built in
 
 Relay · Assistant · Lens · Feeds · Transit · Lyrics · Media Deck · Photos Sync
@@ -162,66 +205,34 @@ Relay · Assistant · Lens · Feeds · Transit · Lyrics · Media Deck · Photos
 
 ---
 
-## Building
+## Deferred
 
-### HUD routing extraction
+Designed, and parked on purpose until a concrete case asks for them.
 
-Implemented in development: the phone hub's pin, notice, activity, surface, and
-Ink routing now lives in focused handlers, adapted from the earlier extraction
-to the current lifecycle. The maintenance change preserves behavior; it does
-not add display policy or replace the transport.
-
-The notice interaction-identity fix and the routing extraction passed their
-combined unit-test and debug-build verification. Matching signed QA upgrades
-were installed on the phone and glasses with existing data preserved. Device
-checks exercised Ink rendering, pin reconnect/replay, notices over Ink and
-cards, and background microphone detach/resume/stop.
-
-Those checks exposed an existing local-window input path that bypassed notice
-priority. It is corrected and was retested with injected keys over Ink and
-cards. The wearer confirmed normal one-row launcher swipes and readable text,
-then physically selected and confirmed a notice action and dismissed the notice
-without closing Ink. The action, update, and user-close transport traces agree.
-Sample Ink's second-action navigation is now implemented and installed. With
-injected directional keys, the second control is selected once, confirm updates
-the page through the phone compile/patch path, and selection survives the
-update and an overlaid notice's dismissal. The wearer confirmed physical
-left/right navigation and activation of the second action. The captured screen
-shows REV 2, SYNC 78, and the retained selection outline; transport logs confirm
-the action and Sample update.
-
-Hardware validation remains partial: R08 ring use, a deliberately delayed reply
-reinjected across transports, and the HUD activity tier remain untested.
-The [review follow-up](docs/reviews/hud-interaction-review-follow-up.md) fixes
-SPP-related SDK callback loss and hides after a missing replacement show, with
-2,063 passing tests. Those follow-up changes have not been reinstalled on the
-devices; the hardware results above describe the earlier review baseline.
-Nothing has been published. The previously reported
-shared lint failure remains unresolved; local configuration is unchanged.
-
-### Display policies and ownership epochs — deferred
+### Display policies and ownership epochs
 
 Foreground ownership, per-surface ordering, sequenced hides, and image-decode
 invalidation already protect the normal handoff. Newest accepted notice
 replacement is an intentional single-slot policy, not a missing queue.
 
-Broader per-plugin display policies and ownership epochs have implementations
-on development branches, but are not the current integration priority. A
-narrow phone-side check/stamp race remains a hypothesis to reproduce; it is not
-evidence that an ordinary late image can repaint a new owner or a reason to
-require a global display rework. Revisit this work against a concrete scenario.
+Per-plugin display policies — mute, demote, notices-only — and hub-stamped
+ownership epochs have implementations on development branches, but are not the
+current integration priority. A narrow phone-side check/stamp race remains a
+hypothesis to reproduce; it is not evidence that an ordinary late image can
+repaint a new owner, or a reason to require a global display rework. This work
+comes back against a concrete scenario.
 
 ### Continuous speech
 
 Speech-to-text ships, in short takes: the audio lease is specified,
-hardware-validated, and has a real consumer. What it cannot do yet is run for
-minutes.
+hardware-validated, and has a real consumer. Since 1.4.10 a raw microphone
+lease can also outlive its surface, but that lifecycle is not continuous
+transcription.
 
-The remaining slice is a held lease with partial results streaming to the HUD,
+The missing slice is a held lease with partial results streaming to the HUD,
 and a caption presentation that survives the surface underneath it changing.
 Live captions, translation, and an assistant that stays listening need that
-slice. It is deferred until a consumer needs it. The background microphone
-lifecycle shipped in 1.4.10 does not itself provide continuous transcription.
+slice. It is deferred until a consumer needs it.
 
 ---
 
@@ -229,17 +240,28 @@ lifecycle shipped in 1.4.10 does not itself provide continuous transcription.
 
 Committed, not started, in this order.
 
-1. **Native apps in the glasses menu.** The phone-side catalogue and launch
+1. **A navigation plugin.** Google Maps and Citymapper already emit
+   turn-by-turn as notifications. The plugin reads those and keeps the route as
+   an activity, with notices for the moments that matter. A platform `nav`
+   kind comes after those payloads have proven which fields are stable — not
+   before.
+2. **Skills, and a keyboard for Assistant.** A hub-mediated registry so
+   Assistant can pause music or ask Transit without binding another plugin or
+   reimplementing it. Plus a phone-typed ask, for the places where talking to
+   your glasses is not an option.
+3. **Native apps in the glasses menu.** The phone-side catalogue and launch
    path now exist. Phase two puts that catalogue behind the same triple-tap that
    lists plugins, with a back path that lands where the wearer started. Nexus
    still does not port, wrap, or install those apps.
-2. **A `nav` surface kind.** Turn-by-turn deserves a real surface — maneuver
-   glyph, distance, street, ETA, drawn by the platform — instead of a navigation
-   app degrading into a text card, which is what happens today.
-3. **Maven Central.** JitPack builds the SDK from tags and is fine for early
+4. **A `nav` surface kind.** Maneuver glyph, distance, street, ETA, drawn by
+   the platform — after the navigation plugin has something real to draw.
+5. **Maven Central.** JitPack builds the SDK from tags and is fine for early
    adopters, but it is not something a serious app should depend on. Central
-   goes out once the AIDL surface is stable enough that a published coordinate
-   is a promise rather than a snapshot.
+   goes out once the AIDL surface is a promise rather than a snapshot.
+6. **A control-plane acknowledgement.** MediaSync already acks photo chunks.
+   Glasses→phone CXR still reports success for frames the third-party client
+   never sees, which is why outbound traffic prefers SPP. Another flip of
+   running order is not the fix.
 
 ---
 
@@ -256,7 +278,7 @@ assistant" was a table row on this page, and it shipped as Assistant.
 | Plugin | Still owed |
 |---|---|
 | Relay | Notifications from ordinary apps, not just messengers · an app picker, so the wearer chooses which apps may reach the eye. Typed replies shipped in 1.2.2 |
-| Assistant | More tools that act — control the music, ask Transit · a keyboard mode — the request typed on the phone instead of spoken, for the places where talking to your glasses is not an option. Providers beyond ChatGPT shipped in 1.1.0 — MiniMax, DeepSeek, GLM, OpenRouter, or any OpenAI-compatible server; reminders, timers and notes shipped in 1.3.0, on every provider; phone-calendar creation, listing, and safe deletion in 1.4.0; Hermes, which runs its agent on its own side, in 1.4.1, with the phone tools bridged to it in plain text in 1.4.2; typed notes in 1.4.4 |
+| Assistant | More tools that act — control the music, ask Transit — through hub-mediated skills, not by becoming those plugins · a keyboard mode — the request typed on the phone instead of spoken, for the places where talking to your glasses is not an option. Providers beyond ChatGPT shipped in 1.1.0 — MiniMax, DeepSeek, GLM, OpenRouter, or any OpenAI-compatible server; reminders, timers and notes shipped in 1.3.0, on every provider; phone-calendar creation, listing, and safe deletion in 1.4.0; Hermes, which runs its agent on its own side, in 1.4.1, with the phone tools bridged to it in plain text in 1.4.2; typed notes in 1.4.4 |
 | Feeds | Posting and replying by voice · sources beyond Bluesky and X · video in the timeline |
 | Media Deck | Voice control — "next" and "pause" said instead of tapped |
 | Photos Sync | A Wi-Fi-only rule · a video's location tag, which Android strips on the way out. Capture-type filters shipped in 1.1.0; optional deletion after sync already shipped in 1.0.0 |
@@ -265,27 +287,28 @@ assistant" was a table row on this page, and it shipped as Assistant.
 Navigation is deliberately absent from Transit's row: it deserves a plugin of
 its own, below.
 
-Two plugins in the Store were written by someone else — [Lume](https://github.com/beyondlevi/lume-nexus),
-a wearable RSVP speed reader, and [Shopping List](https://github.com/beyondlevi/nexus-shoplist),
-a list ticked off with the R08 ring. They are not on this page because they are
-not mine to plan, which is the point: they install, are granted, and run exactly
-like the rows above.
+Ten plugins in the Store were written by someone else, by four different
+authors: [Lume](https://github.com/beyondlevi/lume-nexus), a wearable RSVP speed
+reader; Agenda, News and Tuya Smart Home, also by beyondlevi;
+[Shopping List](https://github.com/beyondlevi/nexus-shoplist) by Volund, ticked off with
+the R08 ring; Home Assistant, OTPs and Taxi Plate by Zhilin; and RokidHub's
+Codex and Yandex bridges. They are not on this page because they are not mine
+to plan, which is the point: they install, are granted, and run exactly like
+the rows above.
 
 ### Next
 
 In order.
 
-1. **Navigation.** Google Maps and Citymapper already emit turn-by-turn as
-   notifications; the plugin reads those, keeps maneuver, distance and ETA
-   pinned with notices for the moments that matter, and graduates to the `nav`
-   surface the platform roadmap commits to above.
-2. **T3code, as an alpha.** Drive T3Code from the glasses: start a thread,
-   follow its agents while they work. An alpha on purpose — it exists to
-   rehearse the next one.
-3. **Terminal / Agent.** The real product. A coding agent in the wearer's eye:
-   its questions and permission prompts arrive as notices and are answered by
-   voice, its progress rides a pin, and the next task is dictated instead of
-   typed.
+1. **Navigation.** Same row as the platform list above: activity + notices
+   first, `nav` kind later.
+2. **Agents, as a private alpha.** Already in the tree (`plugins/agents`):
+   Claude Code, Codex, and OpenClaw sessions on the HUD, notices for
+   permission prompts, a pin for progress, the next task dictated. It is the
+   Terminal/Agent product, and it is being reworked to speak the protocol of
+   Alleycat — the daemon behind [litter](https://github.com/0xSero/litter) —
+   instead of a hand-rolled one. It is not Store-listed until that rework
+   lands.
 
 ### Ideas
 
