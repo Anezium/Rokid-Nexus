@@ -5,9 +5,8 @@
 ### Phone and glasses hubs
 
 - **SPP connections now require mutual authentication.** The phone enrolls a
-  pairing key only through an authorized Hi Rokid CXR session matched to the
-  selected Bluetooth peer; both hubs protect it
-  with Android Keystore. Every SPP connection proves possession of that key,
+  pairing key only through the current authorized Hi Rokid CXR session; both hubs
+  protect it with Android Keystore. Every SPP connection proves possession of that key,
   and every frame carries a directional MAC and replay counter. Unauthenticated
   clients cannot send commands or replace an active connection's output.
 - **Upgrade both hubs for the SPP data plane.** Legacy SPP peers are rejected;
@@ -15,10 +14,13 @@
   including media sync and Wireless ADB data-plane traffic, require authenticated
   SPP and return `NO_DATA_PLANE` until the first key delivery and authentication.
   Plugin API and grants are unchanged.
-- **Enrollment fails closed when the CXR peer cannot be matched.** The current
-  CxrGlobal integration supplies no trusted Bluetooth-address mapping, so first
-  enrollment and reset recovery remain blocked; already enrolled pairs can
-  reconnect. A key read error retries later without replacing the stored key.
+- **Pairing follows the current Hi Rokid-authorized CXR session.** Keys are scoped
+  by CXR serial number, then device name, then a single current-session fallback.
+  Every CXR reconnect reoffers the key, including after a glasses reset. Successful
+  SPP authentication records the Bluetooth-address-to-CXR-identity binding for
+  offline reconnects; otherwise the last identity is used. With several glasses,
+  the key follows the currently CXR-connected pair. A mismatched or unreadable key
+  retries with normal backoff without deleting or regenerating the stored key.
 - **Pending SPP handshakes no longer exclude a bonded reconnecting phone.**
   A complete Hello is required within one second, and a bonded candidate can
   replace an unbonded pending candidate. Slow dispatch callbacks no longer hold

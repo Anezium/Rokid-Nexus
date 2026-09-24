@@ -96,21 +96,32 @@ no plaintext key is persisted. Missing or unreadable keys cannot authorize SPP;
 a failed save cannot activate a new enrollment. A missing phone key may be
 generated; a read/unwrap error must instead abort the attempt and retry later,
 without generating or overwriting a key. The glasses hold one current
-phone enrollment. The phone stores a separate random
-key for each selected bonded glasses address, using a hashed filename to avoid
-putting peer identity in the filename. It may reoffer that pair's persisted key
-before SPP connection attempts only when the current authorized CXR peer is
-unambiguously mapped to the same Bluetooth address. A name match, bonded-device
-selection or CXR-up flag is insufficient. The current CxrGlobal `GlassInfo`
-exposes a name and serial number, but no Bluetooth address or trusted mapping;
-this integration therefore does not provision over CXR until that mapping is
-available. Previously enrolled keys remain usable; first enrollment and reset
-recovery are blocked. An unknown or different CXR peer never receives the key.
+phone enrollment. The phone stores a separate random key for each current CXR
+identity: the serial number from `GlassInfo` / `onGlassDeviceInfo`, falling back
+to the CXR device name, then one `current` identity if neither is available.
+Identity namespaces are distinct and key filenames are hashed. The key is bound
+to the Hi Rokid-authorized CXR session; with several glasses the key follows the
+currently CXR-connected pair. Enrollment does not require a Bluetooth-address
+mapping. The phone reoffers the persisted key on every CXR connection, when the
+CXR identity changes, and before SPP attempts while CXR is up. This also restores
+enrollment after a glasses reset. Key storage and provisioning run off the main
+thread.
+
+SPP attempts use the current CXR identity's key. Without CXR, the phone loads the
+key from the last successfully authenticated binding for the selected SPP address,
+falling back to the last used identity. Offline attempts never generate keys.
+Only a successful mutual handshake records an SPP-address-to-CXR-identity binding;
+Bluetooth selection and CXR send success do not establish one. These bindings and
+the last identity are stored atomically in non-backup app storage. A key mismatch
+closes the attempt, logs no secrets and uses the normal reconnect backoff, without
+regenerating or deleting either key or replacing a confirmed binding. If CXR and
+SPP select different glasses, the handshake fails closed until the selected SPP
+peer has the current CXR session's key.
+
 An identical offer is a no-op. A different key received over trusted CXR replaces
 the enrollment only after successful persistence and closes every active or
 pending SPP socket. A valid offer arriving before server startup is persisted
 for the next start. Key installation and storage I/O run off the main thread.
-Reset recovery requires the same verified CXR peer mapping as first enrollment.
 
 CXR send success is not an acknowledgement of delivery. The SPP handshake proves
 that both hubs have the same key, so enrollment does not depend on the reverse

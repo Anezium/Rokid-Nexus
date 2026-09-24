@@ -148,10 +148,13 @@ Trust model: any APK may request bus access, but capabilities (`surfaces`,
 plugin by the user, keyed to package + plugin id + signing certificate. Installation alone never grants
 anything. The phone and glasses hubs also authenticate their SPP connection with
 an installation pairing key enrolled through the authorized Hi Rokid CXR link;
-each SPP frame has integrity and replay protection. Enrollment requires a trusted
-mapping from the current CXR peer to the selected Bluetooth address. CxrGlobal
-currently provides no such mapping, so first enrollment and reset recovery fail
-closed; already enrolled pairs can reconnect. Until enrollment and authentication,
+each SPP frame has integrity and replay protection. The key is bound to the
+Hi Rokid-authorized CXR session, using its serial number, device name, or a single
+current-session fallback, and is reoffered on each CXR connection. With several
+glasses, the key follows the currently CXR-connected pair. Successful SPP
+handshakes save an address-to-CXR-identity binding for offline reconnects; absent
+a binding, the last identity is used. A key mismatch fails closed without rotating
+the key. Until enrollment and authentication,
 binary and large messages (including media sync and Wireless ADB data-plane
 traffic) return `NO_DATA_PLANE`. Both hubs must support this transport version;
 legacy peers retain only the existing CXR control path.
