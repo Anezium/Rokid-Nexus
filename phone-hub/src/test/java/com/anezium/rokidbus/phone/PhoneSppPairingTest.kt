@@ -17,13 +17,13 @@ class PhoneSppPairingTest {
             val received = FrameProtocol.fromJsonBytes(FrameProtocol.toJsonBytes(envelope))
             SppKeyProvisioning.receive(received, fromCxr = true) { glassesKey = it }
         }
-        val key = phone.prepare(true, cxr)
+        val key = phone.prepare("AA:BB:CC:DD:EE:FF", "aa:bb:cc:dd:ee:ff", cxr)
         assertArrayEquals(key, glassesKey)
         glassesKey = null
-        assertArrayEquals(key, phone.prepare(true, cxr))
+        assertArrayEquals(key, phone.prepare("AA:BB:CC:DD:EE:FF", "aa:bb:cc:dd:ee:ff", cxr))
         assertArrayEquals(key, glassesKey)
         store.key = null // Phone reinstall/reset replaces the enrollment through CXR.
-        val replacement = phone.prepare(true, cxr)
+        val replacement = phone.prepare("AA:BB:CC:DD:EE:FF", "aa:bb:cc:dd:ee:ff", cxr)
         assertFalse(key!!.contentEquals(replacement!!))
         assertArrayEquals(replacement, glassesKey)
     }
@@ -31,18 +31,28 @@ class PhoneSppPairingTest {
     @Test fun cxrDownNeverSendsSecretAndPersistFailureNeverOffers() {
         val store = MemoryStore()
         val phone = PhoneSppPairing(store)
-        assertNotNull(phone.prepare(false) { fail("CXR down"); false })
+        assertNotNull(phone.prepare("AA:BB:CC:DD:EE:FF", null) { fail("CXR down"); false })
         store.key = null
         store.writable = false
-        assertNull(phone.prepare(true) { fail("Unpersisted key offered"); false })
+        assertNull(phone.prepare("AA:BB:CC:DD:EE:FF", "AA:BB:CC:DD:EE:FF") { fail("Unpersisted key offered"); false })
     }
 
     @Test fun droppedCxrOfferDoesNotRotateStoredKey() {
         val store = MemoryStore()
         val phone = PhoneSppPairing(store)
-        val key = phone.prepare(true) { false }
-        assertArrayEquals(key, phone.prepare(true) { true })
+        val key = phone.prepare("AA:BB:CC:DD:EE:FF", "AA:BB:CC:DD:EE:FF") { false }
+        assertArrayEquals(key, phone.prepare("AA:BB:CC:DD:EE:FF", "AA:BB:CC:DD:EE:FF") { true })
         assertArrayEquals(key, store.key)
+    }
+
+    @Test fun unknownOrDifferentCxrPeerNeverReceivesSelectedPeersKey() {
+        val store = MemoryStore()
+        val phone = PhoneSppPairing(store)
+        val key = phone.prepare("AA:BB:CC:DD:EE:FF", null) { fail("Unknown CXR peer"); false }
+        assertNotNull(key)
+        assertArrayEquals(key, phone.prepare("AA:BB:CC:DD:EE:FF", "11:22:33:44:55:66") {
+            fail("Wrong CXR peer"); false
+        })
     }
 
     private class MemoryStore : SppPairingKeyStore {

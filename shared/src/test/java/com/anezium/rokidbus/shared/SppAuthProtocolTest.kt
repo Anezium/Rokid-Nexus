@@ -47,7 +47,17 @@ class SppAuthProtocolTest {
         assertEquals(0L, ByteBuffer.wrap(wire, 5, 8).long)
         assertArrayEquals(mac(directionalKey, domain + wire.dropLast(32).toByteArray()), wire.takeLast(32).toByteArray())
         // Independent Python hashlib/hmac vector for the fixed handshake transcript.
-        assertEquals("f03f0ee56a3b30deed03958f43843a07815f739442fa91ad9096f17679801410", proof("glasses-proof").joinToString("") { "%02x".format(it) })
+        assertEquals("6d24a47f1a8a336567bfdcc7268951cccc3720250961223894786bec5c390b95", proof("glasses-proof").joinToString("") { "%02x".format(it) })
+    }
+
+    @Test fun rawPairKeyProofIsNotAcceptedAsHandshakeAuthenticationKey() {
+        val oldProof = mac(key, domain + "glasses-proof".toByteArray() + phoneNonce + glassesNonce)
+        assertThrows(IOException::class.java) {
+            SppAuthProtocol.connect(
+                ByteArrayInputStream(record(2, glassesNonce + oldProof)), ByteArrayOutputStream(),
+                key, SppAuthProtocol.RecentNonces(),
+            ) { phoneNonce }
+        }
     }
 
     @Test fun wrongKeyCannotAuthenticateEitherSide() {
@@ -175,7 +185,10 @@ class SppAuthProtocolTest {
         ByteArrayOutputStream().also { session.write(it, envelope) }.toByteArray()
 
     private fun record(type: Int, payload: ByteArray): ByteArray = byteArrayOf(0x4e, 0x58, 0x53, 0x50, 1, type.toByte()) + payload
-    private fun proof(label: String): ByteArray = mac(key, domain + label.toByteArray() + phoneNonce + glassesNonce)
+    private fun proof(label: String): ByteArray {
+        val authKey = mac(mac(domain, key), domain + "handshake-auth".toByteArray() + byteArrayOf(1))
+        return mac(authKey, domain + label.toByteArray() + phoneNonce + glassesNonce)
+    }
     private fun mac(key: ByteArray, data: ByteArray): ByteArray = Mac.getInstance("HmacSHA256").run {
         init(SecretKeySpec(key, "HmacSHA256"))
         doFinal(data)

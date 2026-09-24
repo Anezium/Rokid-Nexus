@@ -3,6 +3,7 @@ package com.anezium.rokidbus.glasses
 import android.Manifest
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothServerSocket
 import android.content.Context
 import android.content.pm.PackageManager
@@ -19,6 +20,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 object SppServerManager {
     private val started = AtomicBoolean(false)
     private val executor = Executors.newCachedThreadPool()
+    private val keyUpdates = Executors.newSingleThreadExecutor()
     private val deadlines = Executors.newSingleThreadScheduledExecutor()
     @Volatile private var sessions: AuthenticatedSppServer? = null
 
@@ -27,26 +29,33 @@ object SppServerManager {
             log("SPP server already running or starting")
             return
         }
-        sessions = AuthenticatedSppServer(
-            keys = SppKeyStore(context),
-            execute = { task -> executor.execute(task) },
-            schedule = { delay, task ->
-                val future = deadlines.schedule(task, delay, TimeUnit.MILLISECONDS)
-                ({ future.cancel(false); Unit })
-            },
-            nowMs = SystemClock::elapsedRealtime,
-            onConnected = GlassesHub::onSppConnected,
-            onEnvelope = GlassesHub::onRemoteEnvelope,
-        )
-        executor.execute { acceptLoop(context.applicationContext) }
+        keyUpdates.execute {
+            sessions = AuthenticatedSppServer(
+                keys = SppKeyStore(context),
+                execute = { task -> executor.execute(task) },
+                schedule = { delay, task ->
+                    val future = deadlines.schedule(task, delay, TimeUnit.MILLISECONDS)
+                    ({ future.cancel(false); Unit })
+                },
+                nowMs = SystemClock::elapsedRealtime,
+                onConnected = GlassesHub::onSppConnected,
+                onEnvelope = GlassesHub::onRemoteEnvelope,
+            )
+            executor.execute { acceptLoop(context.applicationContext) }
+        }
     }
 
     fun isConnected(): Boolean = sessions?.isConnected() == true
 
     fun send(envelope: BusEnvelope): Boolean = sessions?.send(envelope) == true
 
-    fun installPairingKey(key: ByteArray) {
-        sessions?.installKey(key)
+    fun installPairingKey(context: Context, key: ByteArray) {
+        val application = context.applicationContext
+        val copy = key.copyOf()
+        keyUpdates.execute {
+            val server = sessions
+            if (server != null) server.installKey(copy) else SppKeyStore(application).save(copy)
+        }
     }
 
     @SuppressLint("MissingPermission")
@@ -73,6 +82,9 @@ object SppServerManager {
                 while (started.get()) {
                     val accepted = serverSocket.accept()
                     sessions?.accept(object : SppPeer {
+                        override val bonded = runCatching {
+                            accepted.remoteDevice.bondState == BluetoothDevice.BOND_BONDED
+                        }.getOrDefault(false)
                         override val input get() = accepted.inputStream
                         override val output get() = accepted.outputStream
                         override fun close() = accepted.close()

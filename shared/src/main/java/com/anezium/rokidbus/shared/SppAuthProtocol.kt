@@ -13,6 +13,7 @@ import javax.crypto.spec.SecretKeySpec
 /** Hub transport authentication; independent of the plugin API and inner frame version. */
 object SppAuthProtocol {
     const val KEY_BYTES = 32
+    const val HELLO_TIMEOUT_MS = 1_000L
     const val HANDSHAKE_TIMEOUT_MS = 5_000L
     private val random = SecureRandom()
     private val magic = byteArrayOf(0x4e, 0x58, 0x53, 0x50, 1)
@@ -39,15 +40,16 @@ object SppAuthProtocol {
         nonce: () -> ByteArray = ::newSecret,
     ): Session {
         checkAuth(key.size == KEY_BYTES)
+        val authKey = authenticationKey(key)
         val phone = nonce().also { checkAuth(it.size == KEY_BYTES) }
         writeHandshake(output, 1, phone)
         val challenge = readHandshake(input, 2, 64)
         val glasses = challenge.copyOfRange(0, 32)
         checkAuth(!MessageDigest.isEqual(phone, glasses))
-        verify(proof(key, "glasses-proof", phone, glasses), challenge.copyOfRange(32, 64))
+        verify(proof(authKey, "glasses-proof", phone, glasses), challenge.copyOfRange(32, 64))
         recentNonces.accept(glasses)
-        writeHandshake(output, 3, proof(key, "phone-proof", phone, glasses))
-        verify(proof(key, "glasses-ready", phone, glasses), readHandshake(input, 4, 32))
+        writeHandshake(output, 3, proof(authKey, "phone-proof", phone, glasses))
+        verify(proof(authKey, "glasses-ready", phone, glasses), readHandshake(input, 4, 32))
         return session(key, phone, glasses, phoneSide = true)
     }
 
@@ -56,18 +58,24 @@ object SppAuthProtocol {
         output: OutputStream,
         key: ByteArray,
         recentNonces: RecentNonces,
+        onHello: () -> Unit = {},
         nonce: () -> ByteArray = ::newSecret,
     ): Session {
         checkAuth(key.size == KEY_BYTES)
+        val authKey = authenticationKey(key)
         val phone = readHandshake(input, 1, 32)
+        onHello()
         recentNonces.accept(phone)
         val glasses = nonce().also { checkAuth(it.size == KEY_BYTES) }
         checkAuth(!MessageDigest.isEqual(phone, glasses))
-        writeHandshake(output, 2, glasses + proof(key, "glasses-proof", phone, glasses))
-        verify(proof(key, "phone-proof", phone, glasses), readHandshake(input, 3, 32))
-        writeHandshake(output, 4, proof(key, "glasses-ready", phone, glasses))
+        writeHandshake(output, 2, glasses + proof(authKey, "glasses-proof", phone, glasses))
+        verify(proof(authKey, "phone-proof", phone, glasses), readHandshake(input, 3, 32))
+        writeHandshake(output, 4, proof(authKey, "glasses-ready", phone, glasses))
         return session(key, phone, glasses, phoneSide = false)
     }
+
+    private fun authenticationKey(key: ByteArray): ByteArray =
+        expand(hmac(domain, key), "handshake-auth")
 
     private fun session(key: ByteArray, phone: ByteArray, glasses: ByteArray, phoneSide: Boolean): Session {
         val extracted = hmac(phone + glasses, key)

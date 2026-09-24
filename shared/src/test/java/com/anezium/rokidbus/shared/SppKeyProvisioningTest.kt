@@ -2,6 +2,7 @@ package com.anezium.rokidbus.shared
 
 import org.junit.Assert.*
 import org.junit.Test
+import java.io.IOException
 
 class SppKeyProvisioningTest {
     @Test fun onlyCxrCanInstallAndRoundTripKeepsKey() {
@@ -43,11 +44,26 @@ class SppKeyProvisioningTest {
         assertNull(SppKeyProvisioning.phoneKey(store))
     }
 
+    @Test fun readFailureDoesNotGenerateOrPersistReplacementAndRetryReusesKey() {
+        val original = SppAuthProtocol.newSecret()
+        val store = MemoryStore().apply { key = original; readable = false }
+        assertNull(SppKeyProvisioning.phoneKey(store))
+        assertEquals(0, store.saves)
+        assertArrayEquals(original, store.key)
+        store.readable = true
+        assertArrayEquals(original, SppKeyProvisioning.phoneKey(store))
+        assertEquals(0, store.saves)
+    }
+
     private class MemoryStore : SppPairingKeyStore {
         var key: ByteArray? = null
         var saves = 0
         var writable = true
-        override fun load() = key
+        var readable = true
+        override fun load(): ByteArray? {
+            if (!readable) throw IOException("Unavailable")
+            return key
+        }
         override fun save(key: ByteArray): Boolean {
             saves++
             if (!writable) return false

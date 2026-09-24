@@ -5,14 +5,24 @@
 ### Phone and glasses hubs
 
 - **SPP connections now require mutual authentication.** The phone enrolls a
-  pairing key through its authorized Hi Rokid CXR session; both hubs protect it
+  pairing key only through an authorized Hi Rokid CXR session matched to the
+  selected Bluetooth peer; both hubs protect it
   with Android Keystore. Every SPP connection proves possession of that key,
   and every frame carries a directional MAC and replay counter. Unauthenticated
   clients cannot send commands or replace an active connection's output.
 - **Upgrade both hubs for the SPP data plane.** Legacy SPP peers are rejected;
-  the existing CXR control path remains available. Enrollment retries after a
-  hub reset without relying on reverse CXR delivery. Plugin API and grants are
-  unchanged.
+  the existing CXR control path remains available. Binary and large messages,
+  including media sync and Wireless ADB data-plane traffic, require authenticated
+  SPP and return `NO_DATA_PLANE` until the first key delivery and authentication.
+  Plugin API and grants are unchanged.
+- **Enrollment fails closed when the CXR peer cannot be matched.** The current
+  CxrGlobal integration supplies no trusted Bluetooth-address mapping, so first
+  enrollment and reset recovery remain blocked; already enrolled pairs can
+  reconnect. A key read error retries later without replacing the stored key.
+- **Pending SPP handshakes no longer exclude a bonded reconnecting phone.**
+  A complete Hello is required within one second, and a bonded candidate can
+  replace an unbonded pending candidate. Slow dispatch callbacks no longer hold
+  the connection-state lock; key installation runs off the main thread.
 
 ## 1.4.11
 

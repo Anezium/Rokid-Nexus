@@ -3475,7 +3475,9 @@ class BusHubService : Service() {
                 var current: BluetoothSocket? = null
                 try {
                     val pairing = PhoneSppPairing(SppKeyStore(applicationContext, device.address))
-                    val key = pairing.prepare(isCxrUp(), ::sendSppProvisioning)
+                    // CxrGlobal GlassInfo exposes a serial/name, not a Bluetooth address or
+                    // a trusted mapping to one. Do not enroll a selected peer into an unknown session.
+                    val key = pairing.prepare(device.address, cxrPeerAddress = null, ::sendSppProvisioning)
                         ?: throw IOException("SPP pairing unavailable")
                     log("SPP connecting to bonded glasses")
                     val candidate = device.createInsecureRfcommSocketToServiceRecord(BusConstants.SPP_UUID)

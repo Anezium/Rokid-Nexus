@@ -5,10 +5,14 @@ import com.anezium.rokidbus.shared.SppKeyProvisioning
 import com.anezium.rokidbus.shared.SppPairingKeyStore
 
 internal class PhoneSppPairing(private val keys: SppPairingKeyStore) {
-    fun prepare(cxrUp: Boolean, sendCxr: (BusEnvelope) -> Boolean): ByteArray? {
+    fun prepare(
+        sppPeerAddress: String,
+        cxrPeerAddress: String?,
+        sendCxr: (BusEnvelope) -> Boolean,
+    ): ByteArray? {
         val key = SppKeyProvisioning.phoneKey(keys) ?: return null
         // A send result is not proof of delivery. Only the SPP handshake can confirm enrollment.
-        if (cxrUp) sendCxr(SppKeyProvisioning.offer(key))
+        if (cxrPeerAddress != null && sppPeerAddress.equals(cxrPeerAddress, ignoreCase = true)) sendCxr(SppKeyProvisioning.offer(key))
         return key
     }
 }

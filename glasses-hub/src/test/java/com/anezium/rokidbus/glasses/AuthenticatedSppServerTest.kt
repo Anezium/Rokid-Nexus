@@ -19,29 +19,31 @@ import java.util.concurrent.TimeUnit
 class AuthenticatedSppServerTest {
     private val key = ByteArray(32) { it.toByte() }
     private val store = MemoryStore(key)
-    private val workers = Executors.newFixedThreadPool(2)
+    private val workers = Executors.newCachedThreadPool()
     private val peers = mutableListOf<Peer>()
-    private val timers = mutableListOf<() -> Unit>()
+    private val timers = CopyOnWriteArrayList<Pair<Long, () -> Unit>>()
     private val connected = CountDownLatch(1)
     private val disconnected = CountDownLatch(1)
     private val received = CountDownLatch(1)
     private val paths = CopyOnWriteArrayList<String>()
     private val states = CopyOnWriteArrayList<Boolean>()
+    private var envelopeAction: () -> Unit = {}
+    private var connectedAction: () -> Unit = {}
     private var now = 10_000L
     private val server = AuthenticatedSppServer(
         store,
         execute = { workers.execute(it) },
         schedule = { delay, task ->
-            assertEquals(5_000L, delay)
-            timers += task
+            timers += delay to task
             ({})
         },
         nowMs = { now },
         onConnected = {
+            connectedAction()
             states += it
             if (it) connected.countDown() else disconnected.countDown()
         },
-        onEnvelope = { paths += it.path; received.countDown() },
+        onEnvelope = { envelopeAction(); paths += it.path; received.countDown() },
     )
 
     @After fun close() {
@@ -53,7 +55,7 @@ class AuthenticatedSppServerTest {
     @Test fun secondUnauthenticatedClientCannotReplaceOutputOrLinkState() {
         val trusted = peer()
         val session = connect(trusted)
-        val intruder = peer()
+        val intruder = peer(bonded = true)
         server.accept(intruder)
         assertTrue(intruder.closed.await(1, TimeUnit.SECONDS))
         assertTrue(server.isConnected())
@@ -71,7 +73,7 @@ class AuthenticatedSppServerTest {
         server.accept(silent)
         assertFalse(server.isConnected())
         assertFalse(server.send(BusEnvelope("/private-reply")))
-        timers.single()()
+        timers.first { it.first == SppAuthProtocol.HELLO_TIMEOUT_MS }.second()
         assertTrue(silent.closed.await(1, TimeUnit.SECONDS))
         assertFalse(server.isConnected())
         assertTrue(states.isEmpty())
@@ -84,16 +86,16 @@ class AuthenticatedSppServerTest {
         val concurrent = peer()
         server.accept(concurrent)
         assertTrue(concurrent.closed.await(1, TimeUnit.SECONDS))
-        timers.single()()
+        timers.first { it.first == SppAuthProtocol.HELLO_TIMEOUT_MS }.second()
         val rapid = peer()
         server.accept(rapid)
         assertTrue(rapid.closed.await(1, TimeUnit.SECONDS))
-        assertEquals(1, timers.size)
+        assertEquals(2, timers.size)
         now += 1_000L
         val next = peer()
         server.accept(next)
-        assertEquals(2, timers.size)
-        timers.last()()
+        assertEquals(4, timers.size)
+        timers.last().second()
     }
 
     @Test fun noKeyRejectsEvenWellFormedClientWithoutWritingChallenge() {
@@ -113,7 +115,7 @@ class AuthenticatedSppServerTest {
             SppAuthProtocol.connect(wrong.phoneInput, wrong.phoneOutput, ByteArray(32) { 100 }, SppAuthProtocol.RecentNonces())
         }
         wrong.close()
-        timers.first()()
+        timers.first().second()
         now += 1_000L
         val legacy = peer()
         server.accept(legacy)
@@ -158,7 +160,7 @@ class AuthenticatedSppServerTest {
         SppKeyProvisioning.receive(same, fromCxr = true, server::installKey)
         assertTrue(server.isConnected())
         assertEquals(0, store.saves)
-        timers.first()() // A late deadline must not kill a published connection.
+        timers.first().second() // A late deadline must not kill a published connection.
         assertTrue(server.send(BusEnvelope("/still-connected")))
         assertEquals("/still-connected", session.read(trusted.phoneInput)!!.path)
         val replacement = ByteArray(32) { 77 }
@@ -185,6 +187,143 @@ class AuthenticatedSppServerTest {
         assertTrue(states.isEmpty())
     }
 
+    @Test fun bondedCandidatePreemptsUnbondedPendingDespiteRateLimitAndLateTimeout() {
+        val unbonded = peer()
+        server.accept(unbonded)
+        val oldTimers = timers.toList()
+        val bonded = peer(bonded = true)
+        connect(bonded)
+        assertTrue(unbonded.closed.await(1, TimeUnit.SECONDS))
+        oldTimers.forEach { it.second() }
+        assertTrue(server.isConnected())
+        assertEquals(1L, bonded.closed.count)
+        assertEquals(listOf(true), states)
+    }
+
+    @Test fun noCandidateCanPreemptBondedPendingAndUnbondedCannotPreemptAnyone() {
+        val unbonded = peer()
+        server.accept(unbonded)
+        now += 2_000
+        val otherUnbonded = peer()
+        server.accept(otherUnbonded)
+        assertTrue(otherUnbonded.closed.await(1, TimeUnit.SECONDS))
+        assertEquals(1L, unbonded.closed.count)
+        val bonded = peer(bonded = true)
+        server.accept(bonded)
+        for (candidate in listOf(peer(), peer(bonded = true))) {
+            server.accept(candidate)
+            assertTrue(candidate.closed.await(1, TimeUnit.SECONDS))
+        }
+        assertEquals(1L, bonded.closed.count)
+        assertFalse(server.isConnected())
+    }
+
+    @Test fun completeHelloSurvivesShortDeadlineButStillHasOverallDeadline() {
+        val pending = peer()
+        server.accept(pending)
+        pending.phoneOutput.write(byteArrayOf(0x4e, 0x58, 0x53, 0x50, 1, 1) + ByteArray(32) { 42 })
+        pending.phoneOutput.flush()
+        java.io.DataInputStream(pending.phoneInput).readFully(ByteArray(70))
+        timers.first { it.first == SppAuthProtocol.HELLO_TIMEOUT_MS }.second()
+        assertEquals(1L, pending.closed.count)
+        timers.first { it.first == SppAuthProtocol.HANDSHAKE_TIMEOUT_MS }.second()
+        assertTrue(pending.closed.await(1, TimeUnit.SECONDS))
+        assertFalse(server.isConnected())
+    }
+
+    @Test fun partialHelloDoesNotExtendShortDeadline() {
+        val pending = peer()
+        server.accept(pending)
+        pending.phoneOutput.write(byteArrayOf(0x4e, 0x58, 0x53, 0x50, 1, 1, 42))
+        pending.phoneOutput.flush()
+        timers.first { it.first == SppAuthProtocol.HELLO_TIMEOUT_MS }.second()
+        assertTrue(pending.closed.await(1, TimeUnit.SECONDS))
+        assertTrue(states.isEmpty())
+    }
+
+    @Test fun slowEnvelopeDoesNotBlockKeyReplacementOrAcceptAndOldCleanupCannotRetireNewPending() {
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        envelopeAction = { entered.countDown(); assertTrue(release.await(3, TimeUnit.SECONDS)) }
+        val trusted = peer(bonded = true)
+        val session = connect(trusted)
+        try {
+            session.write(trusted.phoneOutput, BusEnvelope("/slow"))
+            assertTrue(entered.await(1, TimeUnit.SECONDS))
+            workers.submit { server.installKey(ByteArray(32) { 77 }) }.get(1, TimeUnit.SECONDS)
+            assertFalse(server.isConnected())
+            val next = peer(bonded = true)
+            workers.submit { server.accept(next) }.get(1, TimeUnit.SECONDS)
+            assertEquals(1L, next.closed.count)
+            release.countDown()
+            assertTrue(disconnected.await(1, TimeUnit.SECONDS))
+            assertEquals(1L, next.closed.count)
+            assertEquals(listOf(true, false), states)
+            assertEquals(listOf("/slow"), paths)
+        } finally {
+            release.countDown()
+        }
+    }
+
+    @Test fun slowConnectedCallbackDoesNotBlockKeyReplacementOrAdmission() {
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        connectedAction = { entered.countDown(); assertTrue(release.await(3, TimeUnit.SECONDS)) }
+        val trusted = peer(bonded = true)
+        server.accept(trusted)
+        try {
+            SppAuthProtocol.connect(trusted.phoneInput, trusted.phoneOutput, key, SppAuthProtocol.RecentNonces())
+            assertTrue(entered.await(1, TimeUnit.SECONDS))
+            workers.submit { server.installKey(ByteArray(32) { 77 }) }.get(1, TimeUnit.SECONDS)
+            val next = peer(bonded = true)
+            workers.submit { server.accept(next) }.get(1, TimeUnit.SECONDS)
+            assertEquals(1L, next.closed.count)
+        } finally {
+            release.countDown()
+        }
+        assertTrue(disconnected.await(1, TimeUnit.SECONDS))
+        assertEquals(listOf(true, false), states)
+    }
+
+    @Test fun retiredConnectionCannotDeliverQueuedFrameOrDisconnectReplacement() {
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val replacementConnected = CountDownLatch(1)
+        envelopeAction = { entered.countDown(); assertTrue(release.await(3, TimeUnit.SECONDS)) }
+        connectedAction = { if (states.size >= 2) replacementConnected.countDown() }
+        val old = peer(bonded = true)
+        val session = connect(old)
+        val replacementKey = ByteArray(32) { 77 }
+        try {
+            session.write(old.phoneOutput, BusEnvelope("/admitted"))
+            assertTrue(entered.await(1, TimeUnit.SECONDS))
+            session.write(old.phoneOutput, BusEnvelope("/queued"))
+            server.installKey(replacementKey)
+            val replacement = peer(bonded = true)
+            server.accept(replacement)
+            val nextSession = SppAuthProtocol.connect(
+                replacement.phoneInput, replacement.phoneOutput, replacementKey, SppAuthProtocol.RecentNonces(),
+            )
+            release.countDown()
+            assertTrue(replacementConnected.await(1, TimeUnit.SECONDS))
+            assertTrue(server.isConnected())
+            assertEquals(listOf("/admitted"), paths)
+            assertTrue(server.send(BusEnvelope("/new-session")))
+            assertEquals("/new-session", nextSession.read(replacement.phoneInput)!!.path)
+        } finally {
+            release.countDown()
+        }
+    }
+
+    @Test fun unreadableKeyRejectsCandidateWithoutChallenge() {
+        store.readable = false
+        val candidate = peer(bonded = true)
+        server.accept(candidate)
+        assertTrue(candidate.closed.await(1, TimeUnit.SECONDS))
+        assertEquals(0, candidate.written.size())
+        assertFalse(server.isConnected())
+    }
+
     private fun connect(peer: Peer): SppAuthProtocol.Session {
         server.accept(peer)
         val session = SppAuthProtocol.connect(peer.phoneInput, peer.phoneOutput, key, SppAuthProtocol.RecentNonces())
@@ -193,9 +332,9 @@ class AuthenticatedSppServerTest {
         return session
     }
 
-    private fun peer(): Peer = Peer().also { peers += it }
+    private fun peer(bonded: Boolean = false): Peer = Peer(bonded).also { peers += it }
 
-    private class Peer : SppPeer {
+    private class Peer(override val bonded: Boolean) : SppPeer {
         override val input = PipedInputStream(4096)
         val phoneOutput = PipedOutputStream(input)
         val phoneInput = PipedInputStream(4096)
@@ -221,7 +360,11 @@ class AuthenticatedSppServerTest {
     private class MemoryStore(var key: ByteArray?) : SppPairingKeyStore {
         var saves = 0
         var writable = true
-        override fun load() = key
+        var readable = true
+        override fun load(): ByteArray? {
+            if (!readable) throw IOException("Unavailable")
+            return key
+        }
         override fun save(key: ByteArray): Boolean {
             if (!writable) return false
             this.key = key.copyOf()

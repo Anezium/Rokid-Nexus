@@ -4,6 +4,7 @@ import org.json.JSONObject
 import java.util.Base64
 
 interface SppPairingKeyStore {
+    /** Null means absent; read or unwrap failures throw and must not rotate the key. */
     fun load(): ByteArray?
     fun save(key: ByteArray): Boolean
 }
@@ -16,7 +17,9 @@ object SppKeyProvisioning {
     fun isReserved(path: String): Boolean = path == "/hub/spp" || path.startsWith(PREFIX)
 
     fun phoneKey(store: SppPairingKeyStore): ByteArray? = synchronized(store) {
-        store.load()?.let { return@synchronized it }
+        val loaded = runCatching { store.load() }
+        if (loaded.isFailure) return@synchronized null
+        loaded.getOrNull()?.let { return@synchronized it }
         val key = SppAuthProtocol.newSecret()
         key.takeIf { store.save(it) }
     }

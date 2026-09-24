@@ -93,14 +93,24 @@ offers are ignored. No provisioning payload enters the bus journal or logs.
 Each hub wraps its pairing key with AES-256-GCM under an app-private Android
 Keystore key. The versioned wrapper is stored atomically in `noBackupFilesDir`;
 no plaintext key is persisted. Missing or unreadable keys cannot authorize SPP;
-a failed save cannot activate a new enrollment. The glasses hold one current
+a failed save cannot activate a new enrollment. A missing phone key may be
+generated; a read/unwrap error must instead abort the attempt and retry later,
+without generating or overwriting a key. The glasses hold one current
 phone enrollment. The phone stores a separate random
 key for each selected bonded glasses address, using a hashed filename to avoid
-putting peer identity in the filename. It reoffers that pair's persisted key
-before SPP connection attempts while CXR is up.
+putting peer identity in the filename. It may reoffer that pair's persisted key
+before SPP connection attempts only when the current authorized CXR peer is
+unambiguously mapped to the same Bluetooth address. A name match, bonded-device
+selection or CXR-up flag is insufficient. The current CxrGlobal `GlassInfo`
+exposes a name and serial number, but no Bluetooth address or trusted mapping;
+this integration therefore does not provision over CXR until that mapping is
+available. Previously enrolled keys remain usable; first enrollment and reset
+recovery are blocked. An unknown or different CXR peer never receives the key.
 An identical offer is a no-op. A different key received over trusted CXR replaces
 the enrollment only after successful persistence and closes every active or
-pending SPP socket. This recovers after either hub is reinstalled or reset.
+pending SPP socket. A valid offer arriving before server startup is persisted
+for the next start. Key installation and storage I/O run off the main thread.
+Reset recovery requires the same verified CXR peer mapping as first enrollment.
 
 CXR send success is not an acknowledgement of delivery. The SPP handshake proves
 that both hubs have the same key, so enrollment does not depend on the reverse
@@ -109,7 +119,9 @@ retried with the same persisted key. Without a key the glasses close SPP sockets
 without reading commands. An old phone therefore retains only the existing CXR
 path; a new phone connecting to old glasses likewise never sends legacy SPP
 frames. Small JSON can still use CXR; binary and large JSON require authenticated
-SPP. Existing CXR delivery limitations still apply.
+SPP and return `NO_DATA_PLANE` until first key delivery and authentication. This
+includes media sync and Wireless ADB data-plane traffic. Existing CXR delivery
+limitations still apply.
 
 ### Mutual handshake
 
@@ -118,14 +130,21 @@ prefix: `ASCII("NXSP") || 0x01 || type:u8 || payload`. Integers in this section
 are big-endian. `D` is ASCII `RokidBus-SPP-v1` followed by one NUL byte; `K` is
 the pair key, and `P` and `G` are fresh, independently generated 32-byte nonces.
 All HMACs use SHA-256 and the full 32-byte output. Labels are ASCII, without a
-terminating NUL. Concatenation is written `||`.
+terminating NUL. Concatenation is written `||`. Derive a separate handshake
+key with HKDF-SHA256 before computing any proof:
+
+- `PRK_auth = HMAC(D, K)` (Extract with protocol-domain salt).
+- `K_auth = HMAC(PRK_auth, D || "handshake-auth" || 0x01)` (one Expand block).
+
+The pair key is never used directly as a proof MAC key. Frame keys are derived
+separately below.
 
 | Step | Direction | Type | Payload |
 |---|---|---|---|
 | Hello | Phone → glasses | 1 | `P` |
-| Challenge | Glasses → phone | 2 | `G || HMAC(K, D || "glasses-proof" || P || G)` |
-| Proof | Phone → glasses | 3 | `HMAC(K, D || "phone-proof" || P || G)` |
-| Ready | Glasses → phone | 4 | `HMAC(K, D || "glasses-ready" || P || G)` |
+| Challenge | Glasses → phone | 2 | `G || HMAC(K_auth, D || "glasses-proof" || P || G)` |
+| Proof | Phone → glasses | 3 | `HMAC(K_auth, D || "phone-proof" || P || G)` |
+| Ready | Glasses → phone | 4 | `HMAC(K_auth, D || "glasses-ready" || P || G)` |
 
 The phone verifies Challenge before sending Proof and verifies Ready before
 publishing SPP availability. Glasses verify Proof before sending Ready and
@@ -136,8 +155,14 @@ fresh local nonces also defeat old transcripts after cache eviction or restart.
 The glasses record a phone nonce when receiving Hello; the phone records a
 glasses nonce only after verifying Challenge.
 
-Each hub closes a stalled handshake after five seconds. The glasses permit at
-most one pending handshake, with starts at least one second apart globally.
+Each hub closes a stalled handshake after five seconds. The glasses also require
+a complete Hello within one second of admission; a partial Hello does not extend
+that deadline, and completing Hello does not extend the overall deadline.
+The glasses permit at most one pending handshake. A `BOND_BONDED` candidate may
+replace a pending unbonded candidate, but cannot replace a bonded pending peer
+or an authenticated session. Unbonded candidates cannot replace any candidate;
+their starts are rate-limited to one per second. Bonded candidates bypass that
+rate limit, but must still complete the same cryptographic authentication.
 While an authenticated connection exists, additional sockets are closed without
 changing the active output or link state. Timeout, failure and cleanup apply
 only to the candidate that created them, never to another connection.

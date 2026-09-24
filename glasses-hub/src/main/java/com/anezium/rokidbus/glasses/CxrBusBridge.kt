@@ -13,10 +13,12 @@ import org.json.JSONObject
 
 object CxrBusBridge {
     private val main = Handler(Looper.getMainLooper())
+    private var appContext: Context? = null
     private var bridge: CXRServiceBridge? = null
     @Volatile private var connected = false
 
     fun start(context: Context) {
+        appContext = context.applicationContext
         if (bridge != null) {
             requestStateProbe()
             return
@@ -93,7 +95,9 @@ object CxrBusBridge {
                 .onFailure { logError("CXR-S JSON parse failed") }
                 .getOrNull() ?: return
             main.post {
-                if (SppKeyProvisioning.receive(envelope, fromCxr = true, SppServerManager::installPairingKey)) {
+                if (SppKeyProvisioning.receive(envelope, fromCxr = true) { key ->
+                        appContext?.let { SppServerManager.installPairingKey(it, key) }
+                    }) {
                     return@post
                 }
                 markConnected()

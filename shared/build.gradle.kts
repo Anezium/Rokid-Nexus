@@ -29,6 +29,7 @@ android {
 dependencies {
     implementation(project(":ink-engine"))
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.robolectric:robolectric:4.13")
     testImplementation("org.json:json:20240303")
 }
 
