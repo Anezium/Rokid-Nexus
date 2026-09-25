@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+### Activities
+
+- **The expanded panel fits its value instead of cutting it.** A 12-character
+  primary such as "Depart 3 min" used to render as three letters next to an ETA.
+  The panel now shrinks it, and moves the ETA to the second row when it still
+  does not fit. Every plugin that already uses activities benefits without an
+  update.
+- **Activity extras, for plugins on the new SDK.** A `badge` draws a line number
+  such as "38" as a filled block in the glyph's place; a `track` draws stops or
+  stages as a row of dots instead of the progress bar; an `urgent` significant
+  update turns the flare into a filled band, at most once a minute per
+  activity, so "get off at the next stop" cannot be swallowed by the flare just
+  before it. Nothing is estimated on the glasses: every value is the plugin's
+  last report.
+- **Transit glyphs:** `bus`, `tram`, `train`, `metro`.
+- **Mixed versions keep working.** Extras are announced separately from the
+  activity protocol version, which stays 1. With an older hub on either side,
+  activities keep working and simply show without extras.
+
 ## 1.4.14
 
 ### Upgrade together

@@ -152,6 +152,13 @@ the only place the two spellings differ.
 
 **State** — `package` `walk` `timer` `phone`
 
+**Getting there** — `bus` `tram` `train` `metro`
+
+The vehicle of the current leg of a route. They are drawn as fronts, the way a
+stop sign shows them, and told apart by one feature each: the tram's pantograph,
+the train's split windscreen and rails, the metro's ringed M. A line number is
+not a glyph; it goes in the activity's `badge`.
+
 **Answering** — `reply` `send` `retry` `cancel` `mic` `keyboard`
 
 The first five arrived with the notification relay, and they are the set's first

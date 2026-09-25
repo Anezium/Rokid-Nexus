@@ -1,7 +1,7 @@
 # Plan 023 — Activity v2 (a panel that fits what it carries)
 
-Status: DRAFT — approach chosen by the owner on 2026-09-26, implementation
-awaits an explicit go.
+Status: IMPLEMENTED on branch `activity-v2` (owner go 2026-09-26); device
+validation and release pending.
 
 Visual reference: `E:\Tools\Rokid\design\nav-hud-proposals.html`, section
 "Activity v2" (before/after frames drawn at 1 CSS px ≈ 1 dp).
@@ -35,9 +35,10 @@ deliveries, and parcels use the same fields.
 
 The panel fits `primary` before it ever ellipsizes:
 
-1. Inline with the ETA, try 24 sp down to 16 sp.
+1. Inline with the ETA, try 24 sp down to 20 sp.
 2. If nothing fits, move the ETA to the right end of the secondary row and use
-   the largest size from 24 sp that fits alone.
+   the largest size from 24 sp down to 16 sp that fits alone. A full
+   12-character primary keeps about 22 sp this way instead of dropping to 16.
 3. Ellipsize only if 16 sp alone still overflows (not reachable within the
    12-character cap at the current panel width, kept as a guard).
 
@@ -63,10 +64,11 @@ glasses keep drawing as the bar.
 Update-only and transient, exactly like `significant`, and valid only together
 with `significant: true` (otherwise `INVALID_ACTIVITY`). The flare band draws
 as a filled phosphor block with black content. The glasses allow one urgent
-flare per activity per 60 s; a throttled one becomes an ordinary significant
-update under the existing flare budget. Urgent never changes wake rules: it
-wakes only when the activity started with `wakeDisplay`, under the global
-five-second wake cap.
+flare per activity per 60 s, on a budget separate from the 10-second flare
+interval so the maneuver flare just before it cannot swallow it; a throttled
+one becomes an ordinary significant update under the existing flare budget.
+Urgent never changes wake rules: it wakes only when the activity started with
+`wakeDisplay`, under the global five-second wake cap.
 
 ### 5. Transit glyphs
 
@@ -75,8 +77,12 @@ five-second wake cap.
 
 ## Wire and compatibility
 
-- Glasses announce `activitySurfaceVersion: 2`. Paths, ownership, caps of the
-  v1 fields, and rate limits are unchanged.
+- `activitySurfaceVersion` stays 1: both hubs match it exactly, so raising it
+  would switch activities off between a new and an old hub. Glasses announce
+  extras separately, with feature bit 4096 (`ACTIVITY_EXTRAS`) and
+  `activityExtrasVersion: 1`; the phone hub passes the bit to plugins only when
+  both are present. Paths, ownership, caps of the v1 fields, and rate limits
+  are unchanged.
 - Out-of-cap values are rejected, never truncated, as in v1.
 - `/activity/update` still carries the complete mutable state: `badge` and
   `track` are explicitly `null` when cleared; `tone` is sent only when urgent.
@@ -84,18 +90,19 @@ five-second wake cap.
   panel degrades to glyph + progress bar + ordinary flare.
 - An old phone hub re-serialises validated v1 content and therefore drops v2
   fields; same degradation.
-- The SDK never refuses a call because of v2 fields. It exposes the announced
-  `activitySurfaceVersion` so a plugin can decide whether to add a notice
+- The SDK never refuses a call because of v2 fields. It exposes
+  `supportsActivityExtras` so a plugin can decide whether to add a notice
   fallback for an urgent moment on old glasses.
 
 ## Touch points
 
-- `:shared` — `ActivitySurfaceContract` (`VERSION = 2`, validation,
-  serialisation, content model), contract tests.
+- `:shared` — `ActivitySurfaceContract` (`EXTRAS_VERSION`, validation,
+  serialisation, content model), `GlassesHubCapabilitiesContract`
+  (`activityExtrasVersion`), `BusCapabilityBits.ACTIVITY_EXTRAS`, tests.
 - `:bus-client` — `NexusActivity.badge`, `NexusActivityTrack`,
   `updateActivity(activity, significant, urgent)`, `NexusGlyphs`,
-  `activitySurfaceVersion`; SDK minor bump.
-- `:phone-hub` — `PhoneActivityRouter` pass-through and validation; tests.
+  `supportsActivityExtras`; SDK minor bump.
+- `:phone-hub` — extras capability bit and urgent-tone forwarding; tests.
 - `:glasses-hub` — `ActivityOverlayRenderer` (autosize, badge, track, urgent
   band), `ActivityPresentationPolicy` (urgent quota), glyph drawables,
   capability announcement.
