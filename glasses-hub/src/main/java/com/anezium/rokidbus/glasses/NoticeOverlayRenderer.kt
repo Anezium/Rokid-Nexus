@@ -26,6 +26,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.anezium.rokidbus.client.ui.BusTheme
+import com.anezium.rokidbus.shared.ActivityTrack
 /**
  * The ROM sleeps the display five seconds after the last input (vendor-set
  * `screen_off_timeout`), which is shorter than a notice's own life -- a dictated
@@ -410,6 +411,8 @@ object NoticeOverlayRenderer {
             visibility = View.GONE
         }
         private val actions = HudActionRowView(context)
+        private val track = ActivityTrackView(context).apply { visibility = View.GONE }
+        private var urgentTone = false
         private var noticeIdentity: Pair<String, Long>? = null
         private var noticeOwner = ""
         private var liveChips: List<HudActionChip> = emptyList()
@@ -456,6 +459,12 @@ object NoticeOverlayRenderer {
                 compose,
                 LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
                     topMargin = BusTheme.dp(context, 6)
+                },
+            )
+            addView(
+                track,
+                LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
+                    topMargin = BusTheme.dp(context, 5)
                 },
             )
             addView(
@@ -536,6 +545,8 @@ object NoticeOverlayRenderer {
          * with being rewritten.
          */
         fun render(notice: NexusNoticeSurface) {
+            applyTone(urgent = false)
+            track.render(null)
             noticeIdentity = notice.surfaceId to notice.seq
             pluginFooter = noticeFooterText(notice)
             renderedPageIndex = notice.pageIndex
@@ -635,7 +646,11 @@ object NoticeOverlayRenderer {
             leadingGlyph: Drawable?,
             actionChips: List<HudActionChip> = emptyList(),
             selectedActionIndex: Int = 0,
+            urgent: Boolean = false,
+            track: ActivityTrack? = null,
         ) {
+            applyTone(urgent)
+            this.track.render(track, inverted = urgent)
             noticeIdentity = null
             noticeOwner = ""
             compose.visibility = View.GONE
@@ -656,6 +671,29 @@ object NoticeOverlayRenderer {
             )
             updateFooter()
             actions.render(actionChips, selectedActionIndex)
+        }
+
+        /**
+         * The urgent activity flare is the one place a band is a filled
+         * phosphor block: on additive optics that is the brightest, most
+         * noticeable thing the HUD can draw, which is why only the platform may
+         * choose it and only under its own quota.
+         */
+        private fun applyTone(urgent: Boolean) {
+            if (urgentTone == urgent) return
+            urgentTone = urgent
+            (background as GradientDrawable).apply {
+                setColor(if (urgent) BusTheme.phosphor else 0xFF000000.toInt())
+                setStroke(
+                    BusTheme.dp(context, 1),
+                    if (urgent) BusTheme.phosphor else BusTheme.hairline,
+                )
+            }
+            val ink = 0xFF000000.toInt()
+            title.setTextColor(if (urgent) ink else BusTheme.phosphor)
+            body.setTextColor(if (urgent) ink else BusTheme.muted)
+            footer.setTextColor(if (urgent) ink else BusTheme.muted)
+            pageIndicator.setTextColor(if (urgent) ink else BusTheme.muted)
         }
 
         private fun renderTitle(titleText: String?, leadingGlyph: Drawable?) {
@@ -751,6 +789,12 @@ object NoticeOverlayRenderer {
         private var layout: StaticLayout? = null
         private var window = NoticePageWindow(0, 0)
         private var reportedPageCount = 1
+
+        fun setTextColor(color: Int) {
+            if (paint.color == color) return
+            paint.color = color
+            invalidate()
+        }
 
         val measuredLineCount: Int
             get() = if (visibility == View.VISIBLE) layout?.lineCount ?: 0 else 0

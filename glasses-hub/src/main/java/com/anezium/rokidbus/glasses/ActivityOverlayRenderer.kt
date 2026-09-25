@@ -9,7 +9,12 @@ import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.os.Handler
 import android.os.Looper
+import android.graphics.Color
+import android.graphics.PorterDuff
+import android.graphics.PorterDuffColorFilter
+import android.text.TextPaint
 import android.text.TextUtils
+import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -296,11 +301,9 @@ internal object ActivityOverlayRenderer {
                 addAll(content.detail)
             }.joinToString("  •  ").takeIf(String::isNotEmpty),
             footerText = content.eta,
-            leadingGlyph = GlassesHub.activityGlyphDrawable(
-                band.context,
-                item.activity.ownerPluginId,
-                content.glyph,
-            ),
+            leadingGlyph = flareLeadingDrawable(band.context, item),
+            urgent = item.urgent,
+            track = content.track,
         )
         band.bringToFront()
         band.visibility = View.VISIBLE
@@ -348,6 +351,22 @@ internal object ActivityOverlayRenderer {
                     main.postDelayed(collapse, HudMotion.HOLD_MS)
                 }
                 .start()
+        }
+    }
+
+    private fun flareLeadingDrawable(context: Context, item: ActivityRenderItem): Drawable {
+        val content = item.activity.content
+        content.badge?.let { return ActivityBadgeDrawable(context, it, inverted = item.urgent) }
+        val glyph = GlassesHub.activityGlyphDrawable(
+            context,
+            item.activity.ownerPluginId,
+            content.glyph,
+        )
+        if (!item.urgent) return glyph
+        // On the phosphor block the glyph is cut out in black. A fresh copy is
+        // tinted so a cached plugin glyph never turns black everywhere else.
+        return (glyph.constantState?.newDrawable(context.resources) ?: glyph).mutate().apply {
+            colorFilter = PorterDuffColorFilter(Color.BLACK, PorterDuff.Mode.SRC_IN)
         }
     }
 
@@ -542,6 +561,7 @@ internal object ActivityOverlayRenderer {
         private val primary = text(PRIMARY_SP, BusTheme.phosphor, bold = true)
         private val eta = text(ETA_SP, BusTheme.muted)
         private val secondary = text(SECONDARY_SP, BusTheme.muted)
+        private val etaBelow = text(ETA_SP, BusTheme.muted)
         private val progress = ProgressBar(
             context,
             null,
@@ -552,8 +572,19 @@ internal object ActivityOverlayRenderer {
             indeterminateTintList = ColorStateList.valueOf(BusTheme.phosphor)
             max = 100
         }
+        private val track = ActivityTrackView(context)
         private val details = List(2) { text(DETAIL_SP, BusTheme.muted) }
         private val actions = HudActionRowView(context)
+        private val secondaryRow = LinearLayout(context).apply {
+            orientation = HORIZONTAL
+            gravity = Gravity.END or Gravity.CENTER_VERTICAL
+            addView(secondary, LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
+            addView(
+                etaBelow,
+                LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT)
+                    .apply { marginStart = dp(context, 8) },
+            )
+        }
 
         init {
             orientation = HORIZONTAL
@@ -566,7 +597,7 @@ internal object ActivityOverlayRenderer {
             addView(
                 glyph,
                 LayoutParams(dp(context, GLYPH_DP), dp(context, GLYPH_DP)).apply {
-                    marginEnd = dp(context, 12)
+                    marginEnd = dp(context, GLYPH_GAP_DP)
                 },
             )
             addView(
@@ -580,13 +611,13 @@ internal object ActivityOverlayRenderer {
                             addView(
                                 eta,
                                 LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT)
-                                    .apply { marginStart = dp(context, 8) },
+                                    .apply { marginStart = dp(context, ETA_GAP_DP) },
                             )
                         },
                         LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT),
                     )
                     addView(
-                        secondary,
+                        secondaryRow,
                         LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
                             topMargin = dp(context, 2)
                         },
@@ -595,6 +626,12 @@ internal object ActivityOverlayRenderer {
                         progress,
                         LayoutParams(LayoutParams.MATCH_PARENT, dp(context, PROGRESS_HEIGHT_DP)).apply {
                             topMargin = dp(context, 7)
+                        },
+                    )
+                    addView(
+                        track,
+                        LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
+                            topMargin = dp(context, 6)
                         },
                     )
                     details.forEach { detail ->
@@ -621,13 +658,23 @@ internal object ActivityOverlayRenderer {
             mainGlyph: Drawable,
             selectedActionIndex: Int,
         ) {
-            glyph.setImageDrawable(mainGlyph)
+            glyph.setImageDrawable(
+                content.badge?.let { ActivityBadgeDrawable(context, it) } ?: mainGlyph,
+            )
             primary.text = content.primary
+            val fit = fitPrimary(content.primary, content.eta)
+            primary.setTextSize(TypedValue.COMPLEX_UNIT_SP, fit.sizeSp)
             eta.text = content.eta.orEmpty()
-            eta.visibility = visibleIf(content.eta != null)
+            eta.visibility = visibleIf(content.eta != null && !fit.etaBelow)
+            etaBelow.text = content.eta.orEmpty()
+            etaBelow.visibility = visibleIf(content.eta != null && fit.etaBelow)
             secondary.text = content.secondary.orEmpty()
             secondary.visibility = visibleIf(content.secondary != null)
-            when (val value = content.progress) {
+            secondaryRow.visibility = visibleIf(content.secondary != null || fit.etaBelow)
+            // Glasses that draw the track draw it instead of the bar; the bar
+            // stays in the payload for glasses that do not.
+            track.render(content.track)
+            when (val value = content.progress?.takeIf { content.track == null }) {
                 null -> progress.visibility = View.GONE
                 ActivityProgress.Indeterminate -> {
                     progress.visibility = View.VISIBLE
@@ -647,6 +694,30 @@ internal object ActivityOverlayRenderer {
             actions.render(
                 actions = content.actions.map { HudActionChip(it.glyph, it.label) },
                 selectedIndex = selectedActionIndex,
+            )
+        }
+
+        /**
+         * The text column's width is fixed by the panel geometry, so the fit is
+         * computed from it rather than from a layout pass that has not run yet.
+         */
+        private fun fitPrimary(text: String, etaText: String?): ActivityPrimaryFit {
+            val metrics = resources.displayMetrics
+            val panelWidth = metrics.widthPixels * PANEL_WIDTH_FRACTION
+            val available = panelWidth - paddingLeft - paddingRight -
+                dp(context, GLYPH_DP) - dp(context, GLYPH_GAP_DP) - dp(context, FIT_SLACK_DP)
+            val measure = TextPaint(primary.paint)
+            return fitActivityPrimary(
+                availablePx = available,
+                inlineEtaPx = etaText?.let { eta.paint.measureText(it) + dp(context, ETA_GAP_DP) },
+                widthAtSp = { sizeSp ->
+                    measure.textSize = TypedValue.applyDimension(
+                        TypedValue.COMPLEX_UNIT_SP,
+                        sizeSp,
+                        metrics,
+                    )
+                    measure.measureText(text)
+                },
             )
         }
 
@@ -682,7 +753,10 @@ internal object ActivityOverlayRenderer {
     private const val PANEL_WIDTH_FRACTION = 0.78f
     private const val GLYPH_DP = 48
     private const val PROGRESS_HEIGHT_DP = 4
-    private const val PRIMARY_SP = 24f
+    private const val PRIMARY_SP = ACTIVITY_PRIMARY_MAX_SP
+    private const val GLYPH_GAP_DP = 12
+    private const val ETA_GAP_DP = 8
+    private const val FIT_SLACK_DP = 2
     private const val SECONDARY_SP = 13f
     private const val ETA_SP = 13f
     private const val DETAIL_SP = 11f

@@ -26,6 +26,27 @@ internal enum class ActivityCollapseState {
     ALWAYS_EXPANDED,
 }
 
+/** The presentation chosen for one start or update, and whether its flare is urgent. */
+internal data class ActivityEventPresentation(
+    val presentation: ActivityPresentation,
+    val urgent: Boolean = false,
+)
+
+/** At most one urgent flare per activity per this interval; later ones are ordinary. */
+internal const val ACTIVITY_URGENT_INTERVAL_MS = 60_000L
+
+/**
+ * An urgent tone has its own, rarer budget, separate from the ten-second flare
+ * interval: "get off at the next stop" must not be swallowed because the
+ * previous maneuver flared a few seconds earlier.
+ */
+internal fun urgentFlareAdmitted(
+    urgent: Boolean,
+    lastUrgentAtMs: Long?,
+    nowMs: Long,
+): Boolean = urgent &&
+    (lastUrgentAtMs == null || nowMs - lastUrgentAtMs >= ACTIVITY_URGENT_INTERVAL_MS)
+
 /**
  * Pure activity presentation selection.
  *

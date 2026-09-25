@@ -4,6 +4,7 @@ import com.anezium.rokidbus.shared.ActivityAction
 import com.anezium.rokidbus.shared.ActivityProgress
 import com.anezium.rokidbus.shared.ActivitySurfaceContent
 import com.anezium.rokidbus.shared.ActivitySurfaceContract
+import com.anezium.rokidbus.shared.ActivityTrack
 import com.anezium.rokidbus.shared.BusPaths
 import com.anezium.rokidbus.shared.EditableSurfaceContract
 import com.anezium.rokidbus.shared.EditableSurfaceField
@@ -981,6 +982,43 @@ data class NexusActivityAction(
 }
 
 /**
+ * Ordered positions an activity moves along: the stops of a ride, the stages
+ * of a delivery. Drawn as a row of dots where [at] is the current position and
+ * [target] is where the wearer is headed.
+ *
+ * @property count Number of positions, from 2 through 12.
+ * @property at Current position, `0 until count`.
+ * @property target Destination position, from [at] through `count - 1`.
+ * @property label Optional name of the target, capped at 20 trimmed
+ * characters.
+ */
+data class NexusActivityTrack(
+    val count: Int,
+    val at: Int,
+    val target: Int,
+    val label: String? = null,
+) {
+    init {
+        require(
+            count in ActivitySurfaceContract.MIN_TRACK_COUNT..ActivitySurfaceContract.MAX_TRACK_COUNT,
+        )
+        require(at in 0 until count)
+        require(target in at until count)
+        require(
+            label == null ||
+                label.trim().length <= ActivitySurfaceContract.MAX_TRACK_LABEL_CHARS,
+        )
+    }
+
+    internal fun toContract(): ActivityTrack = ActivityTrack(
+        count = count,
+        at = at,
+        target = target,
+        label = label?.trim()?.takeIf { it.isNotEmpty() },
+    )
+}
+
+/**
  * One ongoing real-world process that the wearer follows over time.
  *
  * Use an activity for an ongoing process, a notice for a discrete event, a
@@ -1004,6 +1042,11 @@ data class NexusActivityAction(
  * @property wakeDisplay Allow significant updates in this activity to ask the
  * hub to wake a dark display. Quiet updates never wake it, and the platform
  * applies one global wake per five seconds.
+ * @property badge Optional extra: a line or route mark of at most 5 trimmed
+ * characters ("38", "RER B"), drawn in the glyph's place in the expanded
+ * panel. Glasses without activity extras show [glyph] instead.
+ * @property track Optional extra: stops or stages, drawn instead of the
+ * progress bar. Send [progress] as well for glasses without activity extras.
  */
 data class NexusActivity(
     val glyph: String,
@@ -1015,6 +1058,8 @@ data class NexusActivity(
     val actions: List<NexusActivityAction> = emptyList(),
     val maxDurationMs: Long? = null,
     val wakeDisplay: Boolean = false,
+    val badge: String? = null,
+    val track: NexusActivityTrack? = null,
 ) {
     init {
         require(GlyphContract.isWellFormedName(glyph))
@@ -1028,6 +1073,7 @@ data class NexusActivity(
         require(detail.size <= ActivitySurfaceContract.MAX_DETAIL_LINES)
         require(detail.all { it.trim().length <= ActivitySurfaceContract.MAX_DETAIL_CHARS })
         require(actions.size <= ActivitySurfaceContract.MAX_ACTIONS)
+        require(badge == null || badge.trim().length <= ActivitySurfaceContract.MAX_BADGE_CHARS)
     }
 
     internal fun toStartPayload(): JSONObject = ActivitySurfaceContract.toPayload(
@@ -1035,11 +1081,12 @@ data class NexusActivity(
         content = toContent(),
     )
 
-    internal fun toUpdatePayload(significant: Boolean): JSONObject =
+    internal fun toUpdatePayload(significant: Boolean, urgent: Boolean = false): JSONObject =
         ActivitySurfaceContract.toUpdatePayload(
             surfaceId = ActivitySurfaceContract.LOCAL_SURFACE_ID,
             content = toContent(),
             significant = significant,
+            urgent = urgent,
         )
 
     private fun toContent(): ActivitySurfaceContent = ActivitySurfaceContent(
@@ -1056,5 +1103,7 @@ data class NexusActivity(
         actions = actions.map(NexusActivityAction::toContract),
         maxDurationMs = maxDurationMs,
         wakeDisplay = wakeDisplay,
+        badge = badge?.trim()?.takeIf { it.isNotEmpty() },
+        track = track?.toContract(),
     )
 }

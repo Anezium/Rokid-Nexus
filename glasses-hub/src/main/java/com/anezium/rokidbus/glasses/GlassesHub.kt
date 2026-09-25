@@ -676,6 +676,7 @@ object GlassesHub {
                 BusCapabilityBits.PIN_SURFACE or
                 BusCapabilityBits.NOTICE_SURFACE or
                 BusCapabilityBits.ACTIVITY_SURFACE or
+                BusCapabilityBits.ACTIVITY_EXTRAS or
                 BusCapabilityBits.INK_SURFACE or
                 BusCapabilityBits.EDITABLE_SURFACE or
                 (if (ttsAvailable) BusCapabilityBits.TTS else 0),
@@ -685,6 +686,7 @@ object GlassesHub {
             activitySurfaceVersion = ActivitySurfaceContract.VERSION,
             inkSurfaceVersion = InkWire.VERSION,
             editableSurfaceVersion = EditableSurfaceContract.VERSION,
+            activityExtrasVersion = ActivitySurfaceContract.EXTRAS_VERSION,
             maxImageBytes = ImageSurfaceContract.MAX_IMAGE_BYTES,
             versionName = BuildConfig.VERSION_NAME,
             setupComplete = onboardingState.stage == SelfArmOnboardingState.Stage.COMPLETE,
