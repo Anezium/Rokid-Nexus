@@ -29,6 +29,7 @@ object EditableSurfaceContract {
             field.placeholder?.let { put("placeholder", it) }
             field.initialText?.let { put("initialText", it) }
             field.submitLabel?.let { put("submitLabel", it) }
+            if (field.inNotice) put("inNotice", true)
         }
 
     fun parse(payload: JSONObject?): EditableSurfaceField? {
@@ -44,6 +45,7 @@ object EditableSurfaceContract {
             submitLabel = payload.optString("submitLabel", "")
                 .take(MAX_SUBMIT_LABEL_CHARS)
                 .ifBlank { null },
+            inNotice = payload.optBoolean("inNotice", false),
         )
     }
 
@@ -67,6 +69,12 @@ data class EditableSurfaceField(
     val placeholder: String? = null,
     val initialText: String? = null,
     val submitLabel: String? = null,
+    /**
+     * Draw what is typed inside this plugin's own notice band, like an inline
+     * reply, instead of as a card. Honoured only while that band is up; any
+     * other time, and on a glasses hub that predates it, the card shows as usual.
+     */
+    val inNotice: Boolean = false,
 ) {
     init {
         require(label == null || label.length <= EditableSurfaceContract.MAX_LABEL_CHARS)

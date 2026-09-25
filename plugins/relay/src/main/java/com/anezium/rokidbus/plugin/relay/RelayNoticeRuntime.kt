@@ -546,7 +546,7 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
         // as the field is open.
         queueEssential(
             NexusNoticeUpdate(
-                footer = "Typing… · Back to cancel",
+                footer = TYPING_FOOTER,
                 interactive = false,
                 ttlMs = DECISION_TTL_MS,
             ),
@@ -554,7 +554,7 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
         )
         startInputKeepalive {
             NexusNoticeUpdate(
-                footer = "Typing… · Back to cancel",
+                footer = TYPING_FOOTER,
                 interactive = false,
                 ttlMs = DECISION_TTL_MS,
             )
@@ -581,6 +581,9 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
                 editable = EditableSurfaceField(
                     placeholder = "Type your reply…",
                     submitLabel = "Send",
+                    // Typed into the band itself, under the message it answers.
+                    // A hub that cannot still opens the card, so nothing is lost.
+                    inNotice = true,
                 ),
             ),
         )
@@ -1029,6 +1032,9 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
         const val ACTION_CANCEL = "cancel"
         const val ACTION_SHOW = "show"
         const val ACTION_TYPE = "type"
+
+        /** The field is on the band itself; the footer only says how to finish. */
+        const val TYPING_FOOTER = "Enter to send · Back to cancel"
 
         /** Deliberately handled by nothing: the chip says a thing, it is not one. */
         const val ACTION_SENT = "sent"

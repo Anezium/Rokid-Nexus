@@ -49,4 +49,15 @@ class EditableSurfaceContractTest {
 
         assertEquals(EditableSurfaceContract.MAX_TEXT_UTF16_LENGTH, result?.text?.length)
     }
+
+    @Test
+    fun `inNotice round trips and is absent from the wire unless asked for`() {
+        val card = EditableSurfaceField(placeholder = "Type your reply…")
+        val inline = card.copy(inNotice = true)
+
+        assertFalse(EditableSurfaceContract.toJson(card).has("inNotice"))
+        assertEquals(card, EditableSurfaceContract.parse(EditableSurfaceContract.toJson(card)))
+        assertEquals(inline, EditableSurfaceContract.parse(EditableSurfaceContract.toJson(inline)))
+        assertFalse(EditableSurfaceContract.parse(JSONObject())!!.inNotice)
+    }
 }

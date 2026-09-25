@@ -505,7 +505,8 @@ remote screen, which types into the glasses' Nexus IME:
     "label": "Optional label",
     "placeholder": "Type your reply…",
     "initialText": "Optional prefill",
-    "submitLabel": "Send"
+    "submitLabel": "Send",
+    "inNotice": true
   }
 }
 ```
@@ -525,6 +526,17 @@ while `SPP_DATA_UP` holds, since an open field is a live moment, not state it
 can replay on reconnect. A hub that predates the bit shows the card and never
 commits it, so a plugin that offers typing checks the bit first and falls back
 (Relay falls back to dictation).
+
+`inNotice` (optional, absent means `false`) asks for the field to be drawn
+inside the plugin's own notice band, the way an inline reply sits under a
+notification. The band cannot host a field, so the glasses keep the real
+`EditText` on the surface activity, drawn black, and draw a local copy of its
+text and caret in the band in place of the band's action row. That copy never
+crosses the bus: the plugin still receives exactly one commit. It applies only
+while a band owned by the same plugin is visible; otherwise, and on a hub that
+predates the field, the card renders as described above. If that band goes
+away while the field stays open, the field returns to view after about 1.5 s
+unless the plugin has hidden it by then.
 
 The wearer's answer comes back once, glasses to phone, on
 `/surface/text-committed`:

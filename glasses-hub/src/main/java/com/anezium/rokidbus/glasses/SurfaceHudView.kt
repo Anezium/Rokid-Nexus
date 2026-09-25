@@ -8,10 +8,12 @@ import android.graphics.drawable.GradientDrawable
 import android.os.BatteryManager
 import android.os.Build
 import android.os.SystemClock
+import android.text.Editable
 import android.text.InputFilter
 import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.text.TextUtils
+import android.text.TextWatcher
 import android.text.style.ForegroundColorSpan
 import android.text.style.RelativeSizeSpan
 import android.text.InputType
@@ -100,7 +102,7 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
         gravity = Gravity.CENTER_VERTICAL
         visibility = GONE
     }
-    private val editView = EditText(context).apply {
+    private val editView = CaretReportingEditText(context).apply {
         visibility = GONE
         isFocusable = true
         isFocusableInTouchMode = true
@@ -143,6 +145,12 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
             }
             isEnterDown
         }
+        addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
+            override fun afterTextChanged(s: Editable?) = mirrorCompose()
+        })
+        onCaretMoved = ::mirrorCompose
     }
     private val readerView = ReaderSurfaceView(context).apply { visibility = GONE }
     private val mediaView = MediaHudView(context).apply { visibility = GONE }
@@ -168,6 +176,11 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
     }
     private var surface: NexusSurface? = null
     private var lastEditableSurfaceId: String? = null
+    // The plugin whose band is drawing this field, while it is; see NoticeComposeMirror.
+    private var inlineOwner: String? = null
+    private var inlinePlaceholder = ""
+    private var stopWatchingNotice: (() -> Unit)? = null
+    private val inlineFallback = Runnable { surface?.let(::renderNow) }
     private var listRenderGeneration = 0L
     private var pendingListLayoutListener: View.OnLayoutChangeListener? = null
     private var insetUnsubscribe: (() -> Unit)? = null
@@ -323,6 +336,7 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
     }
 
     override fun onDetachedFromWindow() {
+        endInline()
         insetUnsubscribe?.invoke()
         insetUnsubscribe = null
         removeCallbacks(ticker)
@@ -398,6 +412,7 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
         if (!surface.isInk) hideInk()
         if (surface.kind != NexusSurface.KIND_CARD || surface.editable == null) {
             editView.visibility = GONE
+            endInline()
         }
         when {
             surface.isInk -> renderInk(surface)
@@ -440,7 +455,84 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
             editView.setSelection(editView.text?.length ?: 0)
         }
         lastEditableSurfaceId = surface.surfaceId
+        val inline = editableDrawsInNotice(
+            inNotice = editable.inNotice,
+            surfaceOwnerPluginId = surface.ownerPluginId,
+            visibleNoticeOwnerPluginId = NoticeController.visibleNotice()?.ownerPluginId,
+        )
+        applyInline(if (inline) surface.ownerPluginId else null, editable.placeholder.orEmpty())
+        if (editable.inNotice) watchNotice() else stopWatchingNotice()
         editView.requestFocus()
+    }
+
+    /**
+     * Hands the field's drawing to its owner's band, or takes it back. Drawn
+     * black rather than hidden: a GONE field loses its focus, and with it the
+     * IME the wearer is typing through.
+     */
+    private fun applyInline(owner: String?, placeholder: String) {
+        removeCallbacks(inlineFallback)
+        val previous = inlineOwner
+        inlineOwner = owner
+        inlinePlaceholder = placeholder
+        if (previous != null && previous != owner) NoticeComposeMirror.clear(previous)
+        val inline = owner != null
+        editView.alpha = if (inline) 0f else 1f
+        statusRowView.visibility = if (inline) GONE else VISIBLE
+        if (inline) {
+            titleView.visibility = GONE
+            subtitleView.visibility = GONE
+            footerView.visibility = GONE
+            mirrorCompose()
+        }
+    }
+
+    private fun endInline() {
+        stopWatchingNotice()
+        if (inlineOwner != null) applyInline(null, "")
+    }
+
+    private fun mirrorCompose() {
+        val owner = inlineOwner ?: return
+        NoticeComposeMirror.publish(
+            NoticeComposeMirror.Line(
+                ownerPluginId = owner,
+                text = editView.text?.toString().orEmpty(),
+                cursor = editView.selectionEnd.coerceAtLeast(0),
+                placeholder = inlinePlaceholder,
+            ),
+        )
+    }
+
+    /**
+     * Follows the owner's band for as long as an in-notice field is up. Moving
+     * into a band that arrives is immediate. Moving out waits: the band closing
+     * on Back or its own lifetime is normally followed by the plugin hiding this
+     * field, and showing the card for that instant would only flash it. A field
+     * nobody hides still comes back into view, rather than typing on unseen.
+     */
+    private fun watchNotice() {
+        if (stopWatchingNotice != null) return
+        stopWatchingNotice = NoticeController.observe { notice ->
+            val active = surface ?: return@observe
+            val editable = active.editable ?: return@observe
+            val wanted = editableDrawsInNotice(editable.inNotice, active.ownerPluginId, notice?.ownerPluginId)
+            val drawn = inlineOwner != null
+            when {
+                wanted == drawn -> removeCallbacks(inlineFallback)
+                wanted -> renderNow(active)
+                else -> {
+                    removeCallbacks(inlineFallback)
+                    postDelayed(inlineFallback, INLINE_FALLBACK_DELAY_MS)
+                }
+            }
+        }
+    }
+
+    private fun stopWatchingNotice() {
+        removeCallbacks(inlineFallback)
+        stopWatchingNotice?.invoke()
+        stopWatchingNotice = null
     }
 
     private fun renderInk(surface: NexusSurface) {
@@ -1159,6 +1251,7 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
         boardView.visibility = GONE
         editView.setText("")
         editView.visibility = GONE
+        endInline()
         lastEditableSurfaceId = null
         currentView.visibility = VISIBLE
     }
@@ -1182,6 +1275,8 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
         private const val TICK_MS = 100L
         private const val MEDIA_TICK_MS = 500L
         private const val STATUS_ROW_TICK_MS = 30_000L
+        /** Long enough for the plugin to hide its field after its band closes; see watchNotice. */
+        private const val INLINE_FALLBACK_DELAY_MS = 1_500L
 
         // Plain card bodies (messages, chooser): smaller mono, more lines.
         // Auto-fit mirrors the lyrics pattern: short bodies keep the full
@@ -1216,5 +1311,15 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
         private const val LIST_LABEL_WIDTH_DP = 38
         private const val LIST_BODY_MAX_LINES = 3
         private const val LIST_BODY_GAP_DP = 9
+    }
+}
+
+/** Reports caret moves as well as edits: a TextWatcher never sees an arrow key. */
+private class CaretReportingEditText(context: Context) : EditText(context) {
+    var onCaretMoved: (() -> Unit)? = null
+
+    override fun onSelectionChanged(selStart: Int, selEnd: Int) {
+        super.onSelectionChanged(selStart, selEnd)
+        onCaretMoved?.invoke()
     }
 }

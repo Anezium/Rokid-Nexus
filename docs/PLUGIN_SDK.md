@@ -229,6 +229,7 @@ data class EditableSurfaceField(
     val placeholder: String? = null,
     val initialText: String? = null,
     val submitLabel: String? = null,
+    val inNotice: Boolean = false,
 )
 
 data class NexusCard(
@@ -260,6 +261,14 @@ title is. The card renders a real focusable `EditText` rather than the
 non-interactive body a plain card gets, so normal Android input — a bonded
 hardware keyboard, or the phone keyboard through the glasses IME — reaches it
 directly; nothing plugin-side subscribes to keystrokes as they happen.
+
+Set `inNotice = true` to have the field typed into your own notice band
+instead, like an Android inline reply: the band draws the text and caret live
+under its message and drops its action row while the field is open. It only
+applies while your band is the one on screen, so open the field from a band
+action (Relay's Type chip does) and keep the band alive while it is open. On a
+hub that predates it, or with no band of yours up, the field shows as a card as
+usual, so the flag never costs a fallback path.
 
 The wearer's answer comes back exactly once, on `onSurfaceTextCommitted`, when
 they submit (Enter, on a bonded keyboard or on the phone keyboard; `label` and
