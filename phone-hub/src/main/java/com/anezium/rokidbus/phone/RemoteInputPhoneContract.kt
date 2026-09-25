@@ -70,6 +70,7 @@ object RemoteInputPhoneContract {
     private const val EXTRA_PASSWORD = "password"
     private const val EXTRA_FIELD_LABEL = "field_label"
     private const val EXTRA_IME_ACTION = "ime_action"
+    private const val EXTRA_KEYBOARD_REQUESTED = "keyboard_requested"
 
     fun requestState(context: Context): Intent = commandIntent(context, COMMAND_REQUEST_STATE)
 
@@ -191,6 +192,7 @@ object RemoteInputPhoneContract {
             .putExtra(EXTRA_SESSION_ID, state.sessionId)
             .putExtra(EXTRA_FIELD_LABEL, state.fieldLabel)
             .putExtra(EXTRA_IME_ACTION, state.imeAction)
+            .putExtra(EXTRA_KEYBOARD_REQUESTED, state.keyboardRequested)
 
     fun parseState(intent: Intent): RemoteInputTransportState? {
         if (intent.action != ACTION_STATE || intent.getIntExtra(EXTRA_VERSION, -1) != VERSION) {
@@ -212,6 +214,7 @@ object RemoteInputPhoneContract {
                 ?.take(MAX_FIELD_LABEL_LENGTH)
                 ?.takeIf(String::isNotEmpty),
             imeAction = intent.getStringExtra(EXTRA_IME_ACTION).normalizeImeAction(),
+            keyboardRequested = active && intent.getBooleanExtra(EXTRA_KEYBOARD_REQUESTED, false),
         )
     }
 
@@ -283,6 +286,7 @@ data class RemoteInputTransportState(
     val sessionId: String? = null,
     val fieldLabel: String? = null,
     val imeAction: String = RemoteInputPhoneContract.IME_ACTION_NONE,
+    val keyboardRequested: Boolean = false,
 )
 
 class RemoteInputSequence {
@@ -347,6 +351,7 @@ data class RemoteInputViewState(
     val fieldLabel: String? = null,
     val password: Boolean = false,
     val imeAction: String = RemoteInputPhoneContract.IME_ACTION_NONE,
+    val keyboardRequested: Boolean = false,
 ) {
     enum class Phase { CONNECTING, DISCONNECTED, WAITING_FOR_FIELD, READY }
 
@@ -372,6 +377,7 @@ data class RemoteInputViewState(
                 fieldLabel = state.fieldLabel,
                 password = state.password,
                 imeAction = state.imeAction,
+                keyboardRequested = state.keyboardRequested,
             )
         }
     }

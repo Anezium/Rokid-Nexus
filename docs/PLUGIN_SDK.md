@@ -217,7 +217,11 @@ column. Open it in a browser.
 A card can carry one bounded, focusable text field in place of its read-only
 body — the one way a plugin gets typed input back from the wearer. It takes
 ordinary Android text input: a keyboard bonded to the glasses, or the phone's
-own Keyboard & remote screen, which types into the glasses' Nexus IME.
+own Keyboard & remote screen, which types into the glasses' Nexus IME. On a
+phone hub from 1.4.13, opening the field brings that screen forward with its
+keyboard up — by itself when the user has let Nexus display over other apps,
+otherwise through a notification to tap. Fields the wearer merely lands on in
+other apps never do this.
 
 ```kotlin
 data class EditableSurfaceField(

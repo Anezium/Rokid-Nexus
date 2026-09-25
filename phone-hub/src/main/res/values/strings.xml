@@ -199,6 +199,11 @@
     <string name="remote_input_remote_section">Remote</string>
     <string name="remote_input_hint">Type here</string>
     <string name="remote_input_live_help">Every edit appears on the glasses immediately. There is no Send button.</string>
+    <string name="remote_input_auto_open_help">Let Nexus open this screen by itself when a glasses app asks for text. Without it, you get a notification to tap.</string>
+    <string name="remote_input_auto_open_allow">Allow</string>
+    <string name="remote_input_prompt_channel">Keyboard requests</string>
+    <string name="remote_input_prompt_title">The glasses are asking for text</string>
+    <string name="remote_input_prompt_body">Tap to type it on your phone.</string>
     <string name="remote_input_enter">Enter</string>
     <string name="remote_input_close">Close</string>
     <string name="remote_input_previous">Previous</string>

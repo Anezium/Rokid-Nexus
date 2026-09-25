@@ -144,6 +144,7 @@ internal class PhoneCoreRemoteBridge(
         receiverRegistered = false
         hideAndResetPointer()
         pendingNativeRequests.clear()
+        RemoteKeyboardPrompt.dismiss(appContext)
     }
 
     private fun handlePhoneInput(command: PhoneRemoteCommand) {
@@ -481,8 +482,10 @@ internal class PhoneCoreRemoteBridge(
                 sessionId = session.sessionId,
                 fieldLabel = null,
                 imeAction = localImeAction(session.imeOptions),
+                keyboardRequested = session.keyboardRequested,
             )
             publishInputState()
+            if (session.keyboardRequested) RemoteKeyboardPrompt.bringForward(appContext)
             return true
         }
         val closed = RemoteInputContract.decodeSessionClosed(envelope.payload) ?: return false
@@ -545,6 +548,9 @@ internal class PhoneCoreRemoteBridge(
 
     private fun publishInputState() {
         appContext.sendBroadcast(RemoteInputPhoneContract.stateIntent(appContext, inputState))
+        if (!inputState.fieldActive || !inputState.keyboardRequested) {
+            RemoteKeyboardPrompt.dismiss(appContext)
+        }
     }
 
     private fun publishNativeApps(state: NativeAppsUiState) {

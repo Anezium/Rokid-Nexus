@@ -7,12 +7,15 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.graphics.Color
 import android.graphics.Typeface
+import android.net.Uri
 import android.os.Bundle
+import android.provider.Settings
 import android.text.InputType
 import android.view.Gravity
 import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowInsets
 import android.view.WindowManager
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
@@ -41,11 +44,13 @@ class RemoteInputActivity : Activity() {
     private lateinit var closeAction: Button
     private lateinit var trackpad: TrackpadView
     private lateinit var trackpadPublisher: RemoteTrackpadPublisher
+    private lateinit var autoOpenSection: LinearLayout
     private val remoteButtons = mutableListOf<Button>()
 
     private var viewState = RemoteInputViewState.INITIAL
     private var receiverRegistered = false
     private var closeSent = false
+    private var keyboardPending = false
 
     private val stateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -65,6 +70,7 @@ class RemoteInputActivity : Activity() {
     override fun onStart() {
         super.onStart()
         BusHubService.start(applicationContext)
+        RemoteKeyboardPrompt.onScreenStarted(applicationContext)
         registerStateReceiver()
         publisher.requestState()
         trackpadPublisher.show()
@@ -76,7 +82,19 @@ class RemoteInputActivity : Activity() {
         // rather than stranding one on the glasses with nothing driving it.
         trackpadPublisher.hide()
         unregisterStateReceiver()
+        RemoteKeyboardPrompt.onScreenStopped()
         super.onStop()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Re-read on every return: the grant is given on a system settings page.
+        autoOpenSection.visibility = if (RemoteKeyboardPrompt.canOpenByItself(this)) View.GONE else View.VISIBLE
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus && keyboardPending) showKeyboard()
     }
 
     override fun onDestroy() {
@@ -242,6 +260,43 @@ class RemoteInputActivity : Activity() {
             },
             NexusUi.block(),
         )
+        autoOpenSection = autoOpenSection()
+        addView(autoOpenSection, NexusUi.block())
+    }
+
+    /** Offered until granted; see RemoteKeyboardPrompt for why the grant is needed at all. */
+    private fun autoOpenSection(): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        addView(BusTheme.gap(this@RemoteInputActivity, 14))
+        addView(
+            LinearLayout(this@RemoteInputActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                addView(
+                    NexusUi.rowSub(
+                        this@RemoteInputActivity,
+                        getString(R.string.remote_input_auto_open_help),
+                    ).apply { maxLines = 3 },
+                    LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+                )
+                addView(BusTheme.hgap(this@RemoteInputActivity, 8))
+                addView(
+                    NexusUi.textButton(
+                        this@RemoteInputActivity,
+                        getString(R.string.remote_input_auto_open_allow),
+                    ).apply { setOnClickListener { openOverlaySettings() } },
+                )
+            },
+            NexusUi.block(),
+        )
+    }
+
+    private fun openOverlaySettings() {
+        runCatching {
+            startActivity(
+                Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")),
+            )
+        }
     }
 
     /**
@@ -401,7 +456,14 @@ class RemoteInputActivity : Activity() {
         renderState()
         // The keyboard opens when the wearer asks for it, never because the
         // glasses focused a field: navigating through a screen full of inputs
-        // otherwise reopens the IME under your thumb on every step.
+        // otherwise reopens the IME under your thumb on every step. A field a
+        // plugin opened to be typed into is the asking, so that one raises it.
+        if (sessionChanged && next.editorEnabled && next.keyboardRequested) requestKeyboard()
+    }
+
+    private fun requestKeyboard() {
+        keyboardPending = true
+        if (hasWindowFocus()) showKeyboard()
     }
 
     private fun renderState() {
@@ -544,10 +606,10 @@ class RemoteInputActivity : Activity() {
     }
 
     private fun showKeyboard() {
+        keyboardPending = false
         if (!viewState.editorEnabled || isFinishing) return
         editor.requestFocus()
-        (getSystemService(INPUT_METHOD_SERVICE) as? InputMethodManager)
-            ?.showSoftInput(editor, InputMethodManager.SHOW_IMPLICIT)
+        window.insetsController?.show(WindowInsets.Type.ime())
     }
 
     private fun hideKeyboard() {
