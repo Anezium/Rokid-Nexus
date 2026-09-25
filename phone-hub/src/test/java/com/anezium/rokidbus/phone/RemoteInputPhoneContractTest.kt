@@ -81,4 +81,18 @@ class RemoteInputPhoneContractTest {
         assertEquals("Password", ready.fieldLabel)
         assertNull(RemoteInputTransportState(false, false).sessionId)
     }
+
+    @Test
+    fun `a self-opened screen closes once its requested field is gone`() {
+        assertFalse(keyboardRequestEnded(true, false, null, null))
+        assertFalse(keyboardRequestEnded(true, false, "relay-reply", "relay-reply"))
+        assertTrue(keyboardRequestEnded(true, false, "relay-reply", null))
+        assertTrue(keyboardRequestEnded(true, false, "relay-reply", "launcher-search"))
+    }
+
+    @Test
+    fun `a screen opened by hand or taken over by the pointer never closes itself`() {
+        assertFalse(keyboardRequestEnded(false, false, "relay-reply", null))
+        assertFalse(keyboardRequestEnded(true, true, "relay-reply", null))
+    }
 }

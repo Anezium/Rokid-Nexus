@@ -53,6 +53,7 @@ class RemoteInputActivity : Activity() {
     private var keyboardPending = false
     private var openedForKeyboard = false
     private var pointerShown = false
+    private var requestedSessionId: String? = null
 
     private val stateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -108,6 +109,7 @@ class RemoteInputActivity : Activity() {
         super.onNewIntent(intent)
         setIntent(intent)
         openedForKeyboard = intent.getBooleanExtra(EXTRA_KEYBOARD_REQUEST, false)
+        requestedSessionId = null
     }
 
     private fun showPointer() {
@@ -477,6 +479,14 @@ class RemoteInputActivity : Activity() {
     private fun applyState(next: RemoteInputViewState) {
         val sessionChanged = next.sessionId != viewState.sessionId || next.password != viewState.password
         viewState = next
+        if (openedForKeyboard && next.keyboardRequested) requestedSessionId = next.sessionId
+        if (keyboardRequestEnded(openedForKeyboard, pointerShown, requestedSessionId, next.sessionId)) {
+            // Opened for one field, so it leaves with it: the reply is sent or
+            // cancelled, and the user goes back to whatever they had open.
+            hideKeyboard()
+            finishAndRemoveTask()
+            return
+        }
         if (sessionChanged || !next.editorEnabled) {
             resetLocalEditor()
             sequence.reset(next.sessionId)

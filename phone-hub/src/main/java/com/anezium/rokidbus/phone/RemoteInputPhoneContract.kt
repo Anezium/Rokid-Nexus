@@ -382,3 +382,19 @@ data class RemoteInputViewState(
         }
     }
 }
+
+/**
+ * Whether a Keyboard & remote screen that opened itself for a plugin's field
+ * should now close: that field has gone (sent, cancelled, or the link dropped).
+ * A screen opened by hand never closes itself, and neither does one the user
+ * has started steering the pointer from — it has become theirs.
+ */
+fun keyboardRequestEnded(
+    openedForKeyboard: Boolean,
+    userTookOver: Boolean,
+    requestedSessionId: String?,
+    currentSessionId: String?,
+): Boolean = openedForKeyboard &&
+    !userTookOver &&
+    requestedSessionId != null &&
+    currentSessionId != requestedSessionId

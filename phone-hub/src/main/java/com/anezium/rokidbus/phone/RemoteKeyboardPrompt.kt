@@ -100,8 +100,16 @@ internal object RemoteKeyboardPrompt {
             .onFailure { Log.w(TAG, "Could not post the keyboard prompt", it) }
     }
 
+    /**
+     * In a task of its own, so that closing it once the field is done returns
+     * to whatever the user had open, not to Nexus's own screens underneath.
+     */
     private fun screenIntent(context: Context): Intent =
         Intent(context, RemoteInputActivity::class.java)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            .addFlags(
+                Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_NEW_DOCUMENT or
+                    Intent.FLAG_ACTIVITY_MULTIPLE_TASK,
+            )
             .putExtra(RemoteInputActivity.EXTRA_KEYBOARD_REQUEST, true)
 }
