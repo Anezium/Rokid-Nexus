@@ -1,6 +1,10 @@
 package com.anezium.rokidbus.plugin.sample
 
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
@@ -69,28 +73,71 @@ class HelloPluginService : NexusPluginService() {
                 log("demo notice push result=${nexusClient?.showNotice(DEMO_NOTICE_BAND)}")
             }, delayMs)
         }
-        if (intent?.action == ACTION_DEMO_ACTIVITY) demoActivityStep(intent.getStringExtra("step"))
+        if (intent?.action == ACTION_DEMO_ACTIVITY) {
+            val step = intent.getStringExtra("step")
+            // An activity ends when its owner disconnects, so the demo holds the
+            // process in the foreground for as long as its route runs. Promote
+            // before anything else: the OS allows a started foreground service
+            // only a few seconds.
+            if (step == "end") releaseDemoForeground() else holdDemoForeground()
+            demoActivityStep(step)
+        }
         return super.onStartCommand(intent, flags, startId)
+    }
+
+    private var demoForeground = false
+
+    private fun holdDemoForeground() {
+        if (demoForeground) return
+        val manager = getSystemService(NotificationManager::class.java)
+        manager.createNotificationChannel(
+            NotificationChannel(DEMO_CHANNEL_ID, "Demo route", NotificationManager.IMPORTANCE_LOW),
+        )
+        val notification = Notification.Builder(this, DEMO_CHANNEL_ID)
+            .setContentTitle("Sample demo route")
+            .setSmallIcon(applicationInfo.icon)
+            .setOngoing(true)
+            .build()
+        demoForeground = runCatching {
+            startForeground(
+                DEMO_NOTIFICATION_ID,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE,
+            )
+        }.onFailure { log("demo activity foreground refused: ${it.javaClass.simpleName}") }
+            .isSuccess
+    }
+
+    private fun releaseDemoForeground() {
+        if (!demoForeground) return
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        demoForeground = false
     }
 
     /**
      * Walks a scripted route through the activity tier, one step per intent, so
      * the fitted panel, badge, track and urgent band can be judged on hardware.
-     * Steps: start, long, ride, urgent, arrive, end.
+     * Steps: start, long, ride, stops, urgent, arrive, end.
      *
      *     adb shell am start-foreground-service \
      *       -n com.anezium.rokidbus.plugin.sample/.HelloPluginService \
      *       -a com.anezium.rokidbus.plugin.sample.DEMO_ACTIVITY --es step ride
      */
-    private fun demoActivityStep(step: String?) {
+    private fun demoActivityStep(step: String?, attempt: Int = 0) {
         val client = nexusClient ?: run {
             log("demo activity step=$step: no client")
+            return
+        }
+        // A service the intent just created has not finished registering yet.
+        if (!client.supportsActivitySurface && attempt < DEMO_REGISTRATION_ATTEMPTS) {
+            Handler(Looper.getMainLooper()).postDelayed({ demoActivityStep(step, attempt + 1) }, 250L)
             return
         }
         val result = when (step) {
             "start" -> client.startActivity(DEMO_ROUTE_WALK)
             "long" -> client.updateActivity(DEMO_ROUTE_LEAVE)
             "ride" -> client.updateActivity(DEMO_ROUTE_RIDE, significant = true)
+            "stops" -> client.updateActivity(DEMO_ROUTE_RIDE_ON)
             "urgent" -> client.updateActivity(DEMO_ROUTE_GET_OFF, significant = true, urgent = true)
             "arrive" -> client.updateActivity(DEMO_ROUTE_ARRIVED, significant = true)
             "end" -> client.endActivity()
@@ -580,6 +627,9 @@ class HelloPluginService : NexusPluginService() {
     private companion object {
         const val ACTION_DEMO_NOTICE = "com.anezium.rokidbus.plugin.sample.DEMO_NOTICE"
         const val ACTION_DEMO_ACTIVITY = "com.anezium.rokidbus.plugin.sample.DEMO_ACTIVITY"
+        const val DEMO_CHANNEL_ID = "demo_route"
+        const val DEMO_NOTIFICATION_ID = 7302
+        const val DEMO_REGISTRATION_ATTEMPTS = 20
 
         val DEMO_ROUTE_WALK = NexusActivity(
             glyph = "turn-right",
@@ -610,6 +660,13 @@ class HelloPluginService : NexusPluginService() {
             progress = NexusActivityProgress.Percent(55),
             track = NexusActivityTrack(count = 5, at = 2, target = 4, label = "Luxembourg"),
             detail = listOf("towards Porte d'Orleans"),
+        )
+
+        // A quiet update: the panel, not a flare, with the badge and the track.
+        val DEMO_ROUTE_RIDE_ON = DEMO_ROUTE_RIDE.copy(
+            primary = "2 stops",
+            progress = NexusActivityProgress.Percent(68),
+            track = NexusActivityTrack(count = 5, at = 3, target = 4, label = "Luxembourg"),
         )
 
         val DEMO_ROUTE_GET_OFF = DEMO_ROUTE_RIDE.copy(
