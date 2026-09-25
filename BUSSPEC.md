@@ -94,8 +94,11 @@ Each hub wraps its pairing key with AES-256-GCM under an app-private Android
 Keystore key. The versioned wrapper is stored atomically in `noBackupFilesDir`;
 no plaintext key is persisted. Missing or unreadable keys cannot authorize SPP;
 a failed save cannot activate a new enrollment. A missing phone key may be
-generated; a read/unwrap error must instead abort the attempt and retry later,
-without generating or overwriting a key. The glasses hold one current
+generated only with a ready authorized CXR identity. A phone read/unwrap error
+may recover through that same CXR enrollment path: persist and read back a new
+key before offering it, replacing the unreadable record atomically. Offline
+attempts remain read-only and fail closed. Repeated storage failures retry the
+same replacement rather than continually generating keys. The glasses hold one current
 phone enrollment. The phone stores a separate random key for each current CXR
 identity: the serial number from `GlassInfo` / `onGlassDeviceInfo`, falling back
 to the CXR device name, then one `current` identity if neither is available.
@@ -111,7 +114,9 @@ On CXR reconnect, provisioning waits for device info from the new connection;
 only after four seconds without a serial number or device name may it offer the
 `current` fallback key. Duplicate connection/device-info callbacks do not reoffer
 the key, and stale timeouts are ignored. SPP attempts wait for this identity
-resolution too. Reoffering the same persisted key preserves a live SPP session.
+resolution too. A ready identity resets and wakes the SPP reconnect backoff;
+it does not start a second connection loop. Reoffering the same persisted key
+preserves a live SPP session.
 
 SPP attempts use the current CXR identity's key. Without CXR, the phone loads the
 key from the last successfully authenticated binding for the selected SPP address,

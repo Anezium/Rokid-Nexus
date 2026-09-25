@@ -108,20 +108,96 @@ class PhoneSppPairingTest {
         assertEquals(0, store.keys(firstIdentity).saves)
     }
 
-    @Test fun failedPersistenceAndReadErrorsNeverOfferOrRotateKeys() {
+    @Test fun unreadableKeyIsReplacedAndReofferedOnlyWithReadyCxrIdentity() {
+        val first = phone.offerCurrent(cxr)!!
+        val keys = store.keys(firstIdentity)
+        keys.readable = false
+        val recovered = phone.offerCurrent(cxr)!!
+        assertFalse(first.key.contentEquals(recovered.key))
+        assertArrayEquals(recovered.key, glassesKey)
+        assertArrayEquals(recovered.key, keys.load())
+        assertEquals(2, keys.saves)
+        assertArrayEquals(recovered.key, phone.offerCurrent(cxr)!!.key)
+        assertEquals(2, keys.saves)
+    }
+
+    @Test fun unreadableOfflineKeyNeverGeneratesOrOffersAReplacement() {
+        val first = phone.offerCurrent(cxr)!!
+        val keys = store.keys(firstIdentity)
+        keys.readable = false
+        currentIdentity = null
+        repeat(5) { assertNull(phone.prepare(address) { fail("CXR down"); false }) }
+        assertEquals(1, keys.saveAttempts.size)
+        assertArrayEquals(first.key, keys.key)
+        keys.readable = true
+        assertArrayEquals(first.key, phone.prepare(address) { fail("CXR down"); false }!!.key)
+    }
+
+    @Test fun failedRecoverySavesRetryOneReplacementAndNeverOfferBeforeReadback() {
+        phone.offerCurrent(cxr)
+        val keys = store.keys(firstIdentity)
+        keys.readable = false
+        keys.writable = false
+        repeat(3) { assertNull(phone.offerCurrent { fail("Unpersisted key offered"); false }) }
+        val attempted = keys.saveAttempts[1]
+        keys.saveAttempts.drop(1).forEach { assertArrayEquals(attempted, it) }
+        keys.writable = true
+        keys.repairReadableOnSave = false
+        assertNull(phone.offerCurrent { fail("Unreadable replacement offered"); false })
+        repeat(3) { assertNull(phone.prepare(address) { fail("Unreadable replacement offered"); false }) }
+        assertEquals(5, keys.saveAttempts.size)
+        keys.readable = true
+        assertArrayEquals(attempted, phone.offerCurrent(cxr)!!.key)
+        assertEquals(5, keys.saveAttempts.size)
+    }
+
+    @Test fun persistentUnwrapFailureNeverRegeneratesOrRewritesAfterReplacement() {
+        phone.offerCurrent(cxr)
+        val keys = store.keys(firstIdentity)
+        keys.readable = false
+        keys.repairReadableOnSave = false
+        repeat(5) { assertNull(phone.offerCurrent { fail("Unreadable replacement offered"); false }) }
+        assertEquals(2, keys.saves)
+        assertEquals(2, keys.saveAttempts.size)
+        currentIdentity = null
+        assertNull(phone.prepare(address) { fail("CXR down"); false })
+        currentIdentity = firstIdentity
+        assertNull(phone.offerCurrent { fail("Unreadable replacement offered"); false })
+        assertEquals(2, keys.saveAttempts.size)
+    }
+
+    @Test fun lostRecoveredOfferReusesPersistedReplacement() {
+        phone.offerCurrent(cxr)
+        val keys = store.keys(firstIdentity)
+        keys.readable = false
+        val recovered = phone.offerCurrent { false }!!
+        assertArrayEquals(recovered.key, phone.prepare(address, cxr)!!.key)
+        assertEquals(2, keys.saves)
+    }
+
+    @Test fun cxrDisconnectDuringFailedLoadDoesNotReplaceOrOffer() {
+        phone.offerCurrent(cxr)
+        val keys = store.keys(firstIdentity)
+        keys.readable = false
+        keys.onLoad = { currentIdentity = null }
+        assertNull(phone.offerCurrent { fail("Disconnected CXR offered"); false })
+        assertEquals(1, keys.saves)
+    }
+
+    @Test fun cxrIdentityChangeDuringRecoveryWriteDoesNotOfferTheOldKey() {
+        phone.offerCurrent(cxr)
+        val keys = store.keys(firstIdentity)
+        keys.readable = false
+        keys.onSave = { currentIdentity = secondIdentity }
+        assertNull(phone.offerCurrent { fail("Stale identity offered"); false })
+        assertEquals(secondIdentity, phone.offerCurrent(cxr)!!.identity)
+    }
+
+    @Test fun failedInitialPersistenceDoesNotOfferAKey() {
         val keys = store.keys(firstIdentity)
         keys.writable = false
         assertNull(phone.offerCurrent { fail("Unpersisted key offered"); false })
-        keys.writable = true
-        val first = phone.offerCurrent(cxr)!!
-        keys.readable = false
-        assertNull(phone.offerCurrent { fail("Unreadable key offered"); false })
-        currentIdentity = null
-        assertNull(phone.prepare(address) { fail("CXR down"); false })
-        assertEquals(1, keys.saves)
-        keys.readable = true
-        currentIdentity = firstIdentity
-        assertArrayEquals(first.key, phone.offerCurrent(cxr)!!.key)
+        assertEquals(0, keys.saves)
     }
 
     @Test fun droppedCxrOfferDoesNotRotateStoredKey() {
@@ -335,15 +411,21 @@ class PhoneSppPairingTest {
         var writable = true
         var readable = true
         var saves = 0
+        val saveAttempts = mutableListOf<ByteArray>()
+        var repairReadableOnSave = true
         var onLoad: () -> Unit = {}
+        var onSave: () -> Unit = {}
         override fun load(): ByteArray? {
             onLoad()
             if (!readable) throw IOException("Key unavailable")
             return key
         }
         override fun save(key: ByteArray): Boolean {
+            onSave()
+            saveAttempts += key.copyOf()
             if (!writable) return false
             this.key = key.copyOf()
+            if (repairReadableOnSave) readable = true
             saves++
             return true
         }

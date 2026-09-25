@@ -69,6 +69,29 @@ class SppKeyStoreTest {
         assertArrayEquals(key, store.load())
     }
 
+    @Test fun trustedReplacementOverwritesUnreadableBlobAndSurvivesRecreation() {
+        val file = File(temporary.root, "pairing")
+        var activeWrappingKey = wrappingKey
+        val store = SppKeyStore(AtomicFile(file)) { activeWrappingKey }
+        assertTrue(store.save(SppAuthProtocol.newSecret()))
+        activeWrappingKey = KeyGenerator.getInstance("AES").apply { init(256) }.generateKey()
+        assertThrows(IOException::class.java) { store.load() }
+        val replacement = SppAuthProtocol.newSecret()
+        assertTrue(store.save(replacement))
+        assertArrayEquals(replacement, SppKeyStore(AtomicFile(file)) { activeWrappingKey }.load())
+        assertFalse(file.readBytes().toList().windowed(32).any { it.toByteArray().contentEquals(replacement) })
+
+        file.writeBytes(byteArrayOf(1, 2, 3))
+        assertThrows(IOException::class.java) { store.load() }
+        val atomic = AtomicFile(file)
+        val interrupted = atomic.startWrite()
+        interrupted.write(byteArrayOf(4, 5, 6))
+        atomic.failWrite(interrupted)
+        assertArrayEquals(byteArrayOf(1, 2, 3), file.readBytes())
+        assertTrue(store.save(replacement))
+        assertArrayEquals(replacement, SppKeyStore(AtomicFile(file)) { activeWrappingKey }.load())
+    }
+
     @Test fun failedAtomicWriteRestoresExistingKey() {
         val file = File(temporary.root, "pairing")
         val atomic = AtomicFile(file)

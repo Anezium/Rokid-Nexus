@@ -154,7 +154,10 @@ current-session fallback, and is reoffered on each CXR connection. With several
 glasses, the key follows the currently CXR-connected pair. Successful SPP
 handshakes save an address-to-CXR-identity binding for offline reconnects; absent
 a binding, the last identity is used. A key mismatch fails closed without rotating
-the key. Until enrollment and authentication,
+the key. An unreadable phone key can recover through a ready authorized CXR
+session; offline reconnects never generate or replace keys. The existing
+connection notification shows pairing recovery or an unavailable key, and a
+ready CXR identity wakes the SPP reconnect backoff immediately. Until enrollment and authentication,
 binary and large messages (including media sync and Wireless ADB data-plane
 traffic) return `NO_DATA_PLANE`. Both hubs must support this transport version;
 legacy peers retain only the existing CXR control path.

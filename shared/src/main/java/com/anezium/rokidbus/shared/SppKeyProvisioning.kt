@@ -4,7 +4,7 @@ import org.json.JSONObject
 import java.util.Base64
 
 interface SppPairingKeyStore {
-    /** Null means absent; read or unwrap failures throw and must not rotate the key. */
+    /** Null means absent; read or unwrap failures throw and require trusted CXR recovery. */
     fun load(): ByteArray?
     fun save(key: ByteArray): Boolean
 }

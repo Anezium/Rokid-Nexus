@@ -19,8 +19,18 @@
   Every CXR reconnect reoffers the key, including after a glasses reset. Successful
   SPP authentication records the Bluetooth-address-to-CXR-identity binding for
   offline reconnects; otherwise the last identity is used. With several glasses,
-  the key follows the currently CXR-connected pair. A mismatched or unreadable key
-  retries with normal backoff without deleting or regenerating the stored key.
+  the key follows the currently CXR-connected pair. A mismatched key retries with
+  normal backoff without deleting or regenerating the stored key. An unreadable
+  phone key can recover through a ready authorized CXR session: persist a
+  replacement before reoffering it. Offline attempts remain fail-closed, and
+  repeated storage failures reuse one replacement. The existing connection
+  notification shows recovery progress or unavailable pairing state.
+- **A ready CXR identity wakes SPP reconnect immediately.** Reset the reconnect
+  backoff without starting another connection loop or interrupting a live session.
+- **SPP pairing and traffic diagnostics retain no key material.** Log key offers
+  on the phone and successful installation or replacement on the glasses. Restore
+  the glasses' authenticated `SPP RX` metadata and the phone's `SPP TX failed`
+  exception class without logging exception messages or provisioning payloads.
 - **Pending SPP handshakes no longer exclude a bonded reconnecting phone.**
   A complete Hello is required within one second, and a bonded candidate can
   replace an unbonded pending candidate. Slow dispatch callbacks no longer hold
