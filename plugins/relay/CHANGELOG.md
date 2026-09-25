@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.2.4
+
+- **Switch to typing mid-dictation.** About a second after dictation starts, a
+  *Type* chip appears; tapping it stops the microphone and opens a text field.
+  The arriving band keeps its single Reply chip, so long threads still page.
+- **Your reply is typed inside the notice.** With Nexus 1.4.13 the text appears
+  live under the message, like an inline reply on an Android notification, and
+  the phone keyboard opens by itself (or from a notification) and closes when
+  you send. On an older hub, Type opens the separate field as before.
+
+Update both Nexus hubs to **1.4.13** for the inline reply and the phone
+keyboard.
+
 ## 1.2.3
 
 - **Reply stays available after a brief SPP interruption.** The rebuilt SDK

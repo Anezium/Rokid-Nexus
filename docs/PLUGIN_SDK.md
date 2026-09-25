@@ -19,7 +19,7 @@ resolved transitively.
 repositories { maven("https://jitpack.io") }
 
 dependencies {
-    implementation("com.github.Anezium.Rokid-Nexus:bus-client:sdk-v0.19.0")
+    implementation("com.github.Anezium.Rokid-Nexus:bus-client:sdk-v0.20.0")
 }
 ```
 
@@ -262,8 +262,8 @@ non-interactive body a plain card gets, so normal Android input — a bonded
 hardware keyboard, or the phone keyboard through the glasses IME — reaches it
 directly; nothing plugin-side subscribes to keystrokes as they happen.
 
-Set `inNotice = true` to have the field typed into your own notice band
-instead, like an Android inline reply: the band draws the text and caret live
+Set `inNotice = true` (SDK 0.20.0, glasses hub 1.4.13) to have the field
+typed into your own notice band instead, like an Android inline reply: the band draws the text and caret live
 under its message and drops its action row while the field is open. It only
 applies while your band is the one on screen, so open the field from a band
 action (Relay's Type chip does) and keep the band alive while it is open. On a

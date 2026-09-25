@@ -1,13 +1,45 @@
 # Changelog
 
-## Unreleased
+## 1.4.13
 
-### Glasses hub
+### Upgrade together
 
-- **Restore the glasses' `SPP TX` diagnostics.** Log the path and id of every
+Install **both Nexus hubs 1.4.13**, then update Relay to **1.2.4**. Typing a
+reply inside the notice needs the new glasses hub; the phone keyboard opening by
+itself needs both. On older hubs Relay keeps working: Type opens the separate
+field as before. SDK **0.20.0** adds one optional field; plugin API version 3
+and grants are unchanged.
+
+### Phone and glasses hubs
+
+- **Type a reply inside the notice.** An editable field can ask to be drawn in
+  its own plugin's notice band. The band shows the text and a caret live under
+  the message, like an inline reply on an Android notification, and drops its
+  action row while the field is open. The band still never takes focus: the
+  real field stays on the glasses' surface activity, drawn black, and the band
+  draws a local copy of it. Nothing typed crosses the bus before the single
+  commit, as with any editable field.
+- **The phone keyboard comes to you.** When a plugin opens a text field on the
+  glasses, the phone brings Keyboard & remote forward with its keyboard up: on
+  its own when Nexus may display over other apps (an *Allow* row on that screen
+  asks once), otherwise through a notification to tap. It closes once the field
+  is done and returns to the app you were in, and keeps the glasses pointer
+  hidden until you touch the pad. Fields you merely land on in other glasses
+  apps never trigger it. It needs the Nexus keyboard to be the glasses' input
+  method.
+- **A `keyboard` glyph** joins the shared answering set, for chips that switch
+  a reply to typing.
+- **The glasses' `SPP TX` diagnostics are back.** Log the path and id of every
   authenticated frame the glasses send, and the exception class when a send
   fails, without the exception message. This matches the phone side and the
   pre-1.4.12 format.
+
+### Plugin SDK 0.20.0
+
+- Add optional `EditableSurfaceField.inNotice`. It asks the glasses to draw the
+  field inside the plugin's own visible notice band instead of as a card. It
+  applies only while that band is up; otherwise, and on a glasses hub older
+  than 1.4.13, the card renders as before, so no fallback path is needed.
 
 ## 1.4.12
 

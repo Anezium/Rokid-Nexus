@@ -191,6 +191,13 @@ Maintenance check that asks the glasses which accessibility services besides
 Nexus's own are enabled — a foreign one in front of Nexus's key handling has
 been the cause behind more than one "input stopped working" report.
 
+Since 1.4.13 a field can be typed inside its own plugin's notice, the way an
+Android notification takes an inline reply: the band draws the text and a caret
+under the message while the real field stays out of sight, because an overlay
+that never takes focus cannot hold one. The phone's keyboard now comes forward
+by itself when a plugin opens a field, and leaves when it is done. Relay 1.2.4
+offers it from a *Type* chip that appears once dictation has started.
+
 ### A notice answers the question you saw
 
 Replies, gestures and dismissals are bound to the notice instance and the
@@ -286,7 +293,7 @@ assistant" was a table row on this page, and it shipped as Assistant.
 
 | Plugin | Still owed |
 |---|---|
-| Relay | Notifications from ordinary apps, not just messengers · an app picker, so the wearer chooses which apps may reach the eye. Typed replies shipped in 1.2.2 |
+| Relay | Notifications from ordinary apps, not just messengers · an app picker, so the wearer chooses which apps may reach the eye. Typed replies shipped in 1.2.2, typed inside the notice in 1.2.4 |
 | Assistant | More tools that act — control the music, ask Transit — through hub-mediated skills, not by becoming those plugins · a keyboard mode — the request typed on the phone instead of spoken, for the places where talking to your glasses is not an option. Providers beyond ChatGPT shipped in 1.1.0 — MiniMax, DeepSeek, GLM, OpenRouter, or any OpenAI-compatible server; reminders, timers and notes shipped in 1.3.0, on every provider; phone-calendar creation, listing, and safe deletion in 1.4.0; Hermes, which runs its agent on its own side, in 1.4.1, with the phone tools bridged to it in plain text in 1.4.2; typed notes in 1.4.4 |
 | Feeds | Posting and replying by voice · sources beyond Bluesky and X · video in the timeline |
 | Media Deck | Voice control — "next" and "pause" said instead of tapped |
