@@ -1,6 +1,5 @@
 package com.anezium.rokidbus.phone
 
-import com.anezium.rokidbus.shared.BusEnvelope
 import com.anezium.rokidbus.shared.FrameProtocol
 import com.anezium.rokidbus.shared.SppAuthProtocol
 import com.anezium.rokidbus.shared.SppKeyProvisioning
@@ -23,10 +22,10 @@ class PhoneSppPairingTest {
     private val phone = PhoneSppPairing(store) { currentIdentity }
     private var glassesKey: ByteArray? = null
     private var offers = 0
-    private val cxr = { envelope: BusEnvelope ->
+    private val cxr = { prepared: PhoneSppPairing.Prepared ->
         assertNotNull(store.keys(currentIdentity!!).key)
         offers++
-        val received = FrameProtocol.fromJsonBytes(FrameProtocol.toJsonBytes(envelope))
+        val received = FrameProtocol.fromJsonBytes(FrameProtocol.toJsonBytes(SppKeyProvisioning.offer(prepared.key)))
         SppKeyProvisioning.receive(received, fromCxr = true) { glassesKey = it }
     }
 
@@ -210,6 +209,56 @@ class PhoneSppPairingTest {
         store.keys(firstIdentity).onLoad = { currentIdentity = secondIdentity }
         assertNull(phone.offerCurrent { fail("Stale identity offered"); false })
         assertEquals(secondIdentity, phone.offerCurrent(cxr)!!.identity)
+    }
+
+    @Test fun identityChangedDuringOfferSerializationDoesNotSendTheOldKey() {
+        assertStaleProvisioningIsNotSent(secondIdentity, fromSppAttempt = false)
+    }
+
+    @Test fun identityChangedDuringSppPreparationSerializationDoesNotSendTheOldKey() {
+        assertStaleProvisioningIsNotSent(secondIdentity, fromSppAttempt = true)
+    }
+
+    @Test fun cxrDisconnectedDuringSerializationDoesNotSendTheKey() {
+        assertStaleProvisioningIsNotSent(null, fromSppAttempt = false)
+    }
+
+    private fun assertStaleProvisioningIsNotSent(nextIdentity: String?, fromSppAttempt: Boolean) {
+        var sendCustomCmdCalls = 0
+        var staleOffers = 0
+        var offered = true
+        val send = { prepared: PhoneSppPairing.Prepared ->
+            phone.sendProvisioning(
+                prepared,
+                serialize = { envelope ->
+                    FrameProtocol.toJsonBytes(envelope).also { currentIdentity = nextIdentity }
+                },
+                sendCustomCmd = { sendCustomCmdCalls++; true },
+                onStale = { staleOffers++ },
+            ).also { offered = it }
+        }
+        val prepared = if (fromSppAttempt) phone.prepare(address, send)!! else phone.offerCurrent(send)!!
+        assertEquals(firstIdentity, prepared.identity)
+        assertEquals(0, sendCustomCmdCalls)
+        assertFalse(offered)
+        assertEquals(1, staleOffers)
+
+        currentIdentity = firstIdentity
+        val retry = phone.offerCurrent { current ->
+            phone.sendProvisioning(
+                current,
+                serialize = FrameProtocol::toJsonBytes,
+                sendCustomCmd = { bytes ->
+                    sendCustomCmdCalls++
+                    SppKeyProvisioning.receive(FrameProtocol.fromJsonBytes(bytes), fromCxr = true) { glassesKey = it }
+                },
+                onStale = { fail("Current offer rejected") },
+            ).also { assertTrue(it) }
+        }!!
+        assertEquals(1, sendCustomCmdCalls)
+        assertArrayEquals(prepared.key, retry.key)
+        assertArrayEquals(prepared.key, glassesKey)
+        assertEquals(1, store.keys(firstIdentity).saves)
     }
 
     @Test fun identityUsesSerialThenNameThenCurrentFallbackWithSeparateNamespaces() {

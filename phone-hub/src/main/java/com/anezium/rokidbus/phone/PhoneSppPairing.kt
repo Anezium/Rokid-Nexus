@@ -28,15 +28,31 @@ internal class PhoneSppPairing(
     private val recoveries = mutableMapOf<String, Recovery>()
 
     @Synchronized
-    fun offerCurrent(sendCxr: (BusEnvelope) -> Boolean): Prepared? {
+    fun offerCurrent(sendCxr: (Prepared) -> Boolean): Prepared? {
         val identity = currentCxrIdentity() ?: return null
         val key = currentKey(identity) ?: return null
         if (currentCxrIdentity() != identity) return null
         store.remember(identity)
         if (currentCxrIdentity() != identity) return null
         // A send result is not proof of delivery. Only the SPP handshake can confirm enrollment.
-        sendCxr(SppKeyProvisioning.offer(key))
-        return Prepared(identity, key)
+        val prepared = Prepared(identity, key)
+        sendCxr(prepared)
+        return prepared
+    }
+
+    fun sendProvisioning(
+        prepared: Prepared,
+        serialize: (BusEnvelope) -> ByteArray,
+        sendCustomCmd: (ByteArray) -> Boolean,
+        onStale: () -> Unit = {},
+    ): Boolean {
+        val bytes = serialize(SppKeyProvisioning.offer(prepared.key))
+        // Serialization can outlive the CXR identity used to prepare this key.
+        if (currentCxrIdentity() != prepared.identity) {
+            onStale()
+            return false
+        }
+        return sendCustomCmd(bytes)
     }
 
     private fun currentKey(identity: String): ByteArray? {
@@ -78,7 +94,7 @@ internal class PhoneSppPairing(
     }
 
     @Synchronized
-    fun prepare(sppPeerAddress: String, sendCxr: (BusEnvelope) -> Boolean): Prepared? {
+    fun prepare(sppPeerAddress: String, sendCxr: (Prepared) -> Boolean): Prepared? {
         if (hasCxrConnection() || currentCxrIdentity() != null) return offerCurrent(sendCxr)
         val identity = store.boundIdentity(sppPeerAddress) ?: store.lastIdentity() ?: return null
         // An offline attempt must not create a key that the glasses could never have received.

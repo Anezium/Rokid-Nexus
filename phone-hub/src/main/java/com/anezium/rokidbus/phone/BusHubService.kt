@@ -3305,13 +3305,19 @@ class BusHubService : Service() {
         }
     }
 
-    private fun sendSppProvisioning(envelope: BusEnvelope): Boolean = runCatching {
+    private fun sendSppProvisioning(prepared: PhoneSppPairing.Prepared): Boolean = runCatching {
         if (!hubEnabled || sppLoopStop || !isCxrUp()) return false
-        val result = cxrLink?.sendCustomCmd(
-            BusConstants.CXR_KEY,
-            Caps().apply { write(FrameProtocol.toJson(envelope).toString()) }.serialize(),
-        )
-        (result != null && result >= 0).also { offered ->
+        sppPairing.sendProvisioning(
+            prepared,
+            serialize = { envelope ->
+                Caps().apply { write(FrameProtocol.toJson(envelope).toString()) }.serialize()
+            },
+            sendCustomCmd = { bytes ->
+                val result = cxrLink?.sendCustomCmd(BusConstants.CXR_KEY, bytes)
+                result != null && result >= 0
+            },
+            onStale = { log("SPP provisioning stale; retrying on connection attempt") },
+        ).also { offered ->
             if (offered) log("SPP pairing key offered over CXR")
         }
     }.getOrDefault(false)
