@@ -935,29 +935,36 @@ On the phone and glasses:
 
 ## Relay typed reply validation
 
-Needs both hubs 1.4.6, Relay 1.2.2, and the Nexus keyboard selected as the
-glasses IME (it is, after onboarding).
+Needs both hubs 1.4.13, Relay 1.2.4, and the Nexus keyboard selected as the
+glasses IME (it is after onboarding, but Hi Rokid can select its own again;
+check `settings get secure default_input_method` on the glasses).
 
-1. Relay settings → turn on **Reply by typing**. Expand **Test harness** and
-   press **Post thread**; the band arrives with Reply selected.
-2. Tap the touchpad within the band's display time. The band reads
-   "Typing… · Back to cancel" and an editable card opens below it with the
-   caret in the field; the phone's **Keyboard & remote** screen shows
-   "Text field active".
-3. Type on the phone's soft keyboard (not `adb shell input text`: that path
-   never reaches the live keyboard). Each key lands in the glasses field as
-   it is typed.
-4. Press **Enter** on the phone. The card closes, the band shows the typed
-   text with "Sending Ns / Retry" (3 to 6 s by length), then "Sent", then leaves; the harness card
-   reads "reply received (N chars)" with the exact text. No Nexus launcher
-   screen appears behind the closed card.
-5. Deferral: open the field again, then press **Second thread** before
+1. Relay settings → leave **Reply by typing** off. Expand **Test harness** and
+   press **Post thread**; the band arrives with a single Reply chip.
+2. Tap Reply. The band reads "Listening… · Back to cancel" with no chip, and
+   about a second later a **Type** chip appears. Tap it.
+3. The band itself becomes the field: a boxed line under the message with a
+   block caret and "Type your reply…", footer "Enter to send · Back to
+   cancel", no chips, no separate card and no pointer on the glasses. On the
+   phone, **Keyboard & remote** comes forward with its keyboard up when Nexus
+   may display over other apps; otherwise "The glasses are asking for text"
+   opens it with one tap.
+4. Type on the phone's soft keyboard (not `adb shell input text`: that path
+   never reaches the live keyboard). Each key appears in the band as it is
+   typed.
+5. Press **Enter** on the phone. The band shows the typed text with
+   "Sending Ns / Retry" (3 to 6 s by length), then "Sent", then leaves; the
+   harness card reads "reply received (N chars)" with the exact text. The
+   phone's keyboard screen closes by itself and returns to the app that was
+   open. No Nexus launcher screen appears on the glasses.
+6. Deferral: open the field again, then press **Second thread** before
    submitting. The band does not change. Submit (or press Back on the band);
    the second thread comes up as its own band right after.
-6. Foreground busy: open another plugin's card (Agents' board), post a thread,
-   tap Reply. The band recovers with "Screen busy — try again" instead of
-   staying on "Typing…".
-7. Turn **Reply by typing** back off.
+7. Foreground busy: open another plugin's card (Agents' board), post a thread,
+   tap Reply, then Type. The band recovers with "Screen busy — try again"
+   instead of staying on "Enter to send".
+8. Turn **Reply by typing** on: Reply opens the field straight away, without
+   dictation. Turn it back off.
 
 ## Accessibility-service check validation
 

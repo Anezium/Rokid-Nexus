@@ -77,7 +77,9 @@ badges when a newer release is published.
 The phone hub also controls software that is already installed on the glasses.
 **Glasses apps** lists and opens launchable native APKs; **Keyboard & remote**
 provides previous/next/select/back navigation and sends transient keyboard
-deltas into the focused glasses editor, a plugin's own text field included. Password fields are marked sensitive,
+deltas into the focused glasses editor, a plugin's own text field included; when
+a plugin opens a field, the screen comes forward by itself and leaves once the
+field is done. Password fields are marked sensitive,
 the phone window becomes secure, and Nexus never mirrors the editor's existing
 text. These are trusted hub-to-hub controls, not plugin capabilities, and they
 do not install native APKs.
