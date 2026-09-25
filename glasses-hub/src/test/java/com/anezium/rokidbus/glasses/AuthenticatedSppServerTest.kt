@@ -4,6 +4,7 @@ import com.anezium.rokidbus.shared.BusEnvelope
 import com.anezium.rokidbus.shared.SppAuthProtocol
 import com.anezium.rokidbus.shared.SppKeyProvisioning
 import com.anezium.rokidbus.shared.SppPairingKeyStore
+import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Test
@@ -27,6 +28,7 @@ class AuthenticatedSppServerTest {
     private val received = CountDownLatch(1)
     private val paths = CopyOnWriteArrayList<String>()
     private val states = CopyOnWriteArrayList<Boolean>()
+    private val logs = CopyOnWriteArrayList<String>()
     private var envelopeAction: () -> Unit = {}
     private var connectedAction: () -> Unit = {}
     private var now = 10_000L
@@ -44,6 +46,7 @@ class AuthenticatedSppServerTest {
             if (it) connected.countDown() else disconnected.countDown()
         },
         onEnvelope = { envelopeAction(); paths += it.path; received.countDown() },
+        log = logs::add,
     )
 
     @After fun close() {
@@ -125,6 +128,7 @@ class AuthenticatedSppServerTest {
         assertFalse(server.isConnected())
         assertTrue(states.isEmpty())
         assertTrue(paths.isEmpty())
+        assertTrue(logs.isEmpty())
     }
 
     @Test fun replayClosesAuthenticatedConnectionWithoutDispatchingTwice() {
@@ -150,7 +154,57 @@ class AuthenticatedSppServerTest {
         trusted.phoneOutput.flush()
         assertTrue(disconnected.await(2, TimeUnit.SECONDS))
         assertTrue(paths.isEmpty())
+        assertTrue(logs.isEmpty())
         assertFalse(server.send(BusEnvelope("/private-reply")))
+    }
+
+    @Test fun authenticatedRxLogsHistoricalMetadataWithoutPayloadOrReservedControls() {
+        val trusted = peer()
+        val session = connect(trusted)
+        for (path in listOf("/hub/spp", "/hub/spp/", SppKeyProvisioning.PATH, "/hub/spp/unknown")) {
+            session.write(trusted.phoneOutput, SppKeyProvisioning.offer(key).copy(path = path, id = "reserved-id"))
+        }
+        val envelope = BusEnvelope(
+            "/command", "allowed-id", JSONObject().put("sensitive", "do-not-log"), byteArrayOf(1, 2, 3),
+        )
+        session.write(trusted.phoneOutput, envelope)
+        assertTrue(received.await(2, TimeUnit.SECONDS))
+        assertEquals(listOf("/command"), paths)
+        assertEquals(
+            listOf("SPP RX /command id=allowed-id payloadBytes=${envelope.payload.toString().length} binaryBytes=3"),
+            logs,
+        )
+    }
+
+    @Test fun keyDiagnosticsOnlyDescribeSuccessfulInstallationOrReplacement() {
+        store.key = null
+        val first = SppKeyProvisioning.offer(key)
+        SppKeyProvisioning.receive(first, fromCxr = true, server::installKey)
+        assertEquals(listOf("SPP pairing key installed"), logs)
+        assertArrayEquals(key, store.key)
+        SppKeyProvisioning.receive(first, fromCxr = true, server::installKey)
+        val replacement = ByteArray(32) { 77 }
+        val next = SppKeyProvisioning.offer(replacement)
+        SppKeyProvisioning.receive(next, fromCxr = false, server::installKey)
+        store.writable = false
+        SppKeyProvisioning.receive(next, fromCxr = true, server::installKey)
+        assertEquals(listOf("SPP pairing key installed"), logs)
+        assertArrayEquals(key, store.key)
+        assertEquals(1, store.saves)
+        store.writable = true
+        SppKeyProvisioning.receive(next, fromCxr = true, server::installKey)
+        assertEquals(listOf("SPP pairing key installed", "SPP pairing key replaced"), logs)
+        assertArrayEquals(replacement, store.key)
+        assertEquals(2, store.saves)
+    }
+
+    @Test fun unreadableKeyRecoveryLogsReplacementWithoutStorageException() {
+        store.readable = false
+        val replacement = ByteArray(32) { 77 }
+        SppKeyProvisioning.receive(SppKeyProvisioning.offer(replacement), fromCxr = true, server::installKey)
+        assertEquals(listOf("SPP pairing key replaced"), logs)
+        assertArrayEquals(replacement, store.key)
+        assertEquals(1, store.saves)
     }
 
     @Test fun cxrReprovisioningIsIdempotentAndKeyReplacementRetiresSession() {

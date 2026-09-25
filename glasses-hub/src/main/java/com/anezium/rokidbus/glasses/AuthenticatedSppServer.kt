@@ -2,6 +2,7 @@ package com.anezium.rokidbus.glasses
 
 import com.anezium.rokidbus.shared.BusEnvelope
 import com.anezium.rokidbus.shared.SppAuthProtocol
+import com.anezium.rokidbus.shared.SppKeyProvisioning
 import com.anezium.rokidbus.shared.SppPairingKeyStore
 import java.io.Closeable
 import java.io.InputStream
@@ -22,6 +23,7 @@ internal class AuthenticatedSppServer(
     private val nowMs: () -> Long,
     private val onConnected: (Boolean) -> Unit,
     private val onEnvelope: (BusEnvelope) -> Unit,
+    private val log: (String) -> Unit = {},
 ) {
     private class Connection(val peer: SppPeer, val key: ByteArray) {
         var session: SppAuthProtocol.Session? = null
@@ -66,18 +68,21 @@ internal class AuthenticatedSppServer(
     }
 
     fun installKey(key: ByteArray) {
-        val retired = synchronized(keys) {
-            val previous = runCatching { keys.load() }.getOrNull()
+        val (retired, replaced) = synchronized(keys) {
+            val loaded = runCatching { keys.load() }
+            val previous = loaded.getOrNull()
             if (previous != null && MessageDigest.isEqual(previous, key)) return
             if (!keys.save(key)) return
-            synchronized(lock) {
+            val retired = synchronized(lock) {
                 listOfNotNull(pending, active).also {
                     pending = null
                     active = null
                 }
             }
+            retired to (loaded.isFailure || previous != null)
         }
         retired.forEach(::dispose)
+        log(if (replaced) "SPP pairing key replaced" else "SPP pairing key installed")
         execute { publishState() }
     }
 
@@ -128,9 +133,11 @@ internal class AuthenticatedSppServer(
             publishState()
             while (true) {
                 val envelope = session.read(peer.input) ?: break
+                if (SppKeyProvisioning.isReserved(envelope.path)) continue
                 synchronized(callbacks) {
                     // Invalidation prevents new dispatch; an already admitted callback may finish.
                     if (synchronized(lock) { active !== connection }) return
+                    log("SPP RX ${envelope.path} id=${envelope.id} payloadBytes=${envelope.payload.toString().length} binaryBytes=${envelope.binary?.size ?: 0}")
                     onEnvelope(envelope)
                 }
             }

@@ -13,6 +13,7 @@ import com.anezium.rokidbus.shared.BusConstants
 import com.anezium.rokidbus.shared.BusEnvelope
 import com.anezium.rokidbus.shared.SppKeyStore
 import java.io.IOException
+import java.security.MessageDigest
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -40,6 +41,7 @@ object SppServerManager {
                 nowMs = SystemClock::elapsedRealtime,
                 onConnected = GlassesHub::onSppConnected,
                 onEnvelope = GlassesHub::onRemoteEnvelope,
+                log = ::log,
             )
             executor.execute { acceptLoop(context.applicationContext) }
         }
@@ -54,7 +56,17 @@ object SppServerManager {
         val copy = key.copyOf()
         keyUpdates.execute {
             val server = sessions
-            if (server != null) server.installKey(copy) else SppKeyStore(application).save(copy)
+            if (server != null) {
+                server.installKey(copy)
+            } else {
+                val keys = SppKeyStore(application)
+                val loaded = runCatching { keys.load() }
+                val previous = loaded.getOrNull()
+                if (previous != null && MessageDigest.isEqual(previous, copy)) return@execute
+                if (keys.save(copy)) {
+                    log(if (loaded.isFailure || previous != null) "SPP pairing key replaced" else "SPP pairing key installed")
+                }
+            }
         }
     }
 
