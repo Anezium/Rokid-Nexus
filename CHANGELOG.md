@@ -1,6 +1,15 @@
 # Changelog
 
-## Unreleased
+## 1.4.12
+
+### Upgrade together
+
+Install **both Nexus hubs 1.4.12**. The SPP transport now authenticates both
+ends, so a 1.4.12 hub refuses an older peer: with mixed versions, media sync,
+Wireless ADB traffic, and every other binary or large message stay off until
+the second hub is updated. Update the phone app first, then the glasses app
+from the phone as usual; the glasses update does not depend on SPP. Plugin API
+version 3, grants, and SDK 0.19.0 are unchanged.
 
 ### Phone and glasses hubs
 

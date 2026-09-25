@@ -69,7 +69,7 @@
       <div class="hero__actions reveal" style="--i:4">
         <a class="btn btn--solid" href="https://github.com/Anezium/Rokid-Nexus/releases">
           Download for Android
-          <span class="btn__meta">v1.4.11 · APK</span>
+          <span class="btn__meta">v1.4.12 · APK</span>
         </a>
         <a class="btn btn--ghost" href="#roadmap">Read the roadmap</a>
       </div>
@@ -90,10 +90,11 @@
 <!-- ─────────────────────────  LATEST  ───────────────────────── -->
 <div class="latest">
   <div class="latest__in">
-    <span class="latest__tag">v1.4.11</span>
+    <span class="latest__tag">v1.4.12</span>
     <p>
-      Notice replies stay with the question you saw · a failed reply says so ·
-      notices keep the keys over Ink and cards · update both hubs together ·
+      The Bluetooth link between the hubs now authenticates both ends · every
+      frame is signed and replay-protected · the key is enrolled over the Rokid
+      link, never typed · update both hubs together ·
       SDK <code>sdk-v0.19.0</code> on JitPack · Apache-2.0
     </p>
     <a href="https://github.com/Anezium/Rokid-Nexus/blob/main/CHANGELOG.md">What changed →</a>
@@ -104,7 +105,7 @@
 <div class="boardwrap">
   <div class="board reveal">
     <a class="board__cell" href="#shipped" data-state="shipped">
-      <b>13</b><span>shipped</span>
+      <b>14</b><span>shipped</span>
       <i>on hardware, in a public release</i>
     </a>
     <a class="board__cell" href="#deferred" data-state="exploring">
@@ -143,6 +144,27 @@
       </div>
       <ul class="ship">
         <li class="ship__card ship__card--new">
+          <span class="ship__v">1.4.12</span>
+          <h3>The glasses only talk to your phone</h3>
+          <p>
+            The Bluetooth channel between the two hubs used to accept any
+            device in range. Now each end proves it holds a key the phone
+            enrolled over the authorized Rokid link, and every frame carries a
+            signature and a counter, so nothing can be injected, replayed, or
+            read by a stranger's phone.
+          </p>
+          <details>
+            <summary>Under the hood</summary>
+            <p>
+              Contributed by Mike Sviblov. A four-record HMAC-SHA256 handshake
+              derives one key per direction; the pairing key lives in the
+              Android Keystore on both sides and follows the glasses' CXR
+              identity. Both hubs must be on 1.4.12: an older peer is refused
+              and only the Rokid control link remains until it is updated.
+            </p>
+          </details>
+        </li>
+        <li class="ship__card">
           <span class="ship__v">1.4.11</span>
           <h3>A notice answers the question you saw</h3>
           <p>

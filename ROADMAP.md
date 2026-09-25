@@ -35,6 +35,15 @@ delivered, and 1.1.2 flipped it back: SPP is a single RFCOMM channel with one
 write lock, so a control message queued behind a photo chunk waits for the whole
 chunk. The real fix is an acknowledgement, not a different running order.
 
+Until 1.4.12 that SPP channel trusted whoever connected: any Bluetooth device
+in range could reach the hub's routing, or displace the phone. Now both ends
+prove possession of a pairing key the phone enrolled over the authorized Rokid
+link, and every frame carries a directional MAC and a replay counter. The key
+is wrapped by the Android Keystore on each side and follows the glasses' CXR
+identity, so a glasses reset re-enrols by itself. Both hubs must be on 1.4.12;
+an older peer is refused and only the CXR control path remains. Contributed by
+Mike Sviblov.
+
 ### Setup without a computer
 
 Seven steps on the phone, the glasses app pushed over the Rokid link straight
