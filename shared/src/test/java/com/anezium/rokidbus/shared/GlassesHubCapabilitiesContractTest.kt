@@ -10,6 +10,48 @@ import org.junit.Test
 
 class GlassesHubCapabilitiesContractTest {
     @Test
+    fun `activity extras need the v1 tier, their bit, and their version`() {
+        val base = BusCapabilityBits.ACTIVITY_SURFACE or BusCapabilityBits.ACTIVITY_EXTRAS
+        fun capabilities(features: Int, activity: Int, extras: Int) =
+            GlassesHubCapabilitiesContract.parse(
+                GlassesHubCapabilitiesContract.toJson(
+                    GlassesHubCapabilitiesContract.create(
+                        features = features,
+                        imageSurfaceVersion = 0,
+                        activitySurfaceVersion = activity,
+                        activityExtrasVersion = extras,
+                        maxImageBytes = 0,
+                        versionName = null,
+                    ),
+                ),
+            )
+
+        assertTrue(
+            GlassesHubCapabilitiesContract.supportsActivityExtras(
+                capabilities(base, ActivitySurfaceContract.VERSION, ActivitySurfaceContract.EXTRAS_VERSION),
+            ),
+        )
+        assertFalse(
+            GlassesHubCapabilitiesContract.supportsActivityExtras(
+                capabilities(BusCapabilityBits.ACTIVITY_SURFACE, ActivitySurfaceContract.VERSION, 1),
+            ),
+        )
+        assertFalse(
+            GlassesHubCapabilitiesContract.supportsActivityExtras(
+                capabilities(base, ActivitySurfaceContract.VERSION, 0),
+            ),
+        )
+        assertFalse(
+            GlassesHubCapabilitiesContract.supportsActivityExtras(capabilities(base, 0, 1)),
+        )
+        // An old glasses payload has no extras field at all.
+        assertEquals(
+            0,
+            GlassesHubCapabilitiesContract.parse(JSONObject().put("version", 1)).activityExtrasVersion,
+        )
+    }
+
+    @Test
     fun `capabilities carry the optional glasses version name`() {
         val capabilities = GlassesHubCapabilitiesContract.create(
             features = BusCapabilityBits.IMAGE_SURFACE or

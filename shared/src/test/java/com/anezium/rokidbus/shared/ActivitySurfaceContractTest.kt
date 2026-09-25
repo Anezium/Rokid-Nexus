@@ -417,6 +417,133 @@ class ActivitySurfaceContractTest {
         assertNull(ActivityCloseReason.fromWireValue("future"))
     }
 
+    @Test
+    fun `extras keep the v1 version and take their own feature bit`() {
+        assertEquals(1, ActivitySurfaceContract.VERSION)
+        assertEquals(1, ActivitySurfaceContract.EXTRAS_VERSION)
+        assertEquals(1 shl 12, BusCapabilityBits.ACTIVITY_EXTRAS)
+    }
+
+    @Test
+    fun `start carries a trimmed badge and a track`() {
+        val result = ActivitySurfaceContract.validateStart(
+            startPayload()
+                .put("badge", "  38  ")
+                .put(
+                    "track",
+                    JSONObject()
+                        .put("count", 5)
+                        .put("at", 2)
+                        .put("target", 4)
+                        .put("label", "  Luxembourg  "),
+                ),
+        )
+
+        val content = (result as ActivitySurfaceValidationResult.Valid).content
+        assertEquals("38", content.badge)
+        assertEquals(ActivityTrack(count = 5, at = 2, target = 4, label = "Luxembourg"), content.track)
+
+        val payload = ActivitySurfaceContract.toPayload("maps:activity", content)
+        assertEquals("38", payload.getString("badge"))
+        assertEquals(4, payload.getJSONObject("track").getInt("target"))
+        assertEquals(
+            content,
+            (ActivitySurfaceContract.validateStart(payload) as ActivitySurfaceValidationResult.Valid).content,
+        )
+    }
+
+    @Test
+    fun `a v1 start round trips without any extras field`() {
+        val content = (ActivitySurfaceContract.validateStart(startPayload()) as
+            ActivitySurfaceValidationResult.Valid).content
+        val payload = ActivitySurfaceContract.toPayload("maps:activity", content)
+
+        assertNull(content.badge)
+        assertNull(content.track)
+        assertFalse(payload.has("badge"))
+        assertFalse(payload.has("track"))
+        assertFalse(payload.has("tone"))
+    }
+
+    @Test
+    fun `out of cap extras are rejected, never truncated`() {
+        listOf(
+            startPayload().put("badge", "RER B1"),
+            startPayload().put("badge", 38),
+            startPayload().put("track", "5 stops"),
+            startPayload().put("track", track(count = 1, at = 0, target = 0)),
+            startPayload().put("track", track(count = 13, at = 0, target = 1)),
+            startPayload().put("track", track(count = 5, at = 5, target = 5)),
+            startPayload().put("track", track(count = 5, at = 3, target = 2)),
+            startPayload().put("track", track(count = 5, at = 0, target = 1).put("label", "x".repeat(21))),
+            startPayload().put("track", track(count = 5, at = 0.5, target = 1)),
+        ).forEach { payload ->
+            assertTrue(
+                payload.toString(),
+                ActivitySurfaceContract.validateStart(payload) is ActivitySurfaceValidationResult.Invalid,
+            )
+        }
+    }
+
+    @Test
+    fun `tone is update only and urgent needs significant`() {
+        assertTrue(
+            ActivitySurfaceContract.validateStart(startPayload().put("tone", "urgent")) is
+                ActivitySurfaceValidationResult.Invalid,
+        )
+        assertTrue(
+            ActivitySurfaceContract.validateUpdate(JSONObject().put("tone", "urgent")) is
+                ActivitySurfacePatchResult.Invalid,
+        )
+        assertTrue(
+            ActivitySurfaceContract.validateUpdate(
+                JSONObject().put("tone", "loud").put("significant", true),
+            ) is ActivitySurfacePatchResult.Invalid,
+        )
+
+        val urgent = ActivitySurfaceContract.validateUpdate(
+            JSONObject().put("tone", "urgent").put("significant", true),
+        ) as ActivitySurfacePatchResult.Valid
+        assertTrue(urgent.patch.urgent)
+        assertTrue(urgent.patch.significant)
+    }
+
+    @Test
+    fun `full update clears extras explicitly and marks urgent only when asked`() {
+        val content = (ActivitySurfaceContract.validateStart(
+            startPayload().put("badge", "38").put("track", track(count = 3, at = 0, target = 2)),
+        ) as ActivitySurfaceValidationResult.Valid).content
+
+        val cleared = ActivitySurfaceContract.toUpdatePayload(
+            surfaceId = "maps:activity",
+            content = content.copy(badge = null, track = null),
+            significant = false,
+        )
+        assertTrue(cleared.isNull("badge"))
+        assertTrue(cleared.isNull("track"))
+        assertFalse(cleared.has("tone"))
+        val patch = (ActivitySurfaceContract.validateUpdate(cleared) as ActivitySurfacePatchResult.Valid).patch
+        val applied = patch.applyTo(content)
+        assertNull(applied.badge)
+        assertNull(applied.track)
+
+        val urgent = ActivitySurfaceContract.toUpdatePayload(
+            surfaceId = "maps:activity",
+            content = content,
+            significant = true,
+            urgent = true,
+        )
+        assertEquals("urgent", urgent.getString("tone"))
+        val urgentPatch = (ActivitySurfaceContract.validateUpdate(urgent) as ActivitySurfacePatchResult.Valid).patch
+        assertTrue(urgentPatch.urgent)
+        assertEquals(content.track, urgentPatch.applyTo(content).track)
+    }
+
+    private fun track(count: Number, at: Number, target: Number): JSONObject = JSONObject()
+        .put("count", count)
+        .put("at", at)
+        .put("target", target)
+
     private fun startPayload(): JSONObject = JSONObject()
         .put("kind", ActivitySurfaceContract.KIND)
         .put("glyph", "timer")
