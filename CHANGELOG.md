@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Glasses hub
+
+- **Restore the glasses' `SPP TX` diagnostics.** Log the path and id of every
+  authenticated frame the glasses send, and the exception class when a send
+  fails, without the exception message. This matches the phone side and the
+  pre-1.4.12 format.
+
 ## 1.4.12
 
 ### Upgrade together

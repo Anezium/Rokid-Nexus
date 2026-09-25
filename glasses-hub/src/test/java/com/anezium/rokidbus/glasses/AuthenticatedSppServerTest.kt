@@ -176,6 +176,18 @@ class AuthenticatedSppServerTest {
         )
     }
 
+    @Test fun authenticatedTxLogsPathAndIdAndFailuresLogOnlyTheExceptionClass() {
+        val trusted = peer()
+        connect(trusted)
+        val envelope = BusEnvelope("/reply", "reply-id", JSONObject().put("sensitive", "do-not-log"))
+        assertTrue(server.send(envelope))
+        assertEquals(listOf("SPP TX /reply id=reply-id"), logs)
+        trusted.phoneInput.close()
+        assertFalse(server.send(envelope))
+        assertEquals("SPP TX failed IOException", logs.last())
+        assertTrue(disconnected.await(2, TimeUnit.SECONDS))
+    }
+
     @Test fun keyDiagnosticsOnlyDescribeSuccessfulInstallationOrReplacement() {
         store.key = null
         val first = SppKeyProvisioning.offer(key)

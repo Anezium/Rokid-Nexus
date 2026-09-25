@@ -90,8 +90,10 @@ internal class AuthenticatedSppServer(
         val connection = active ?: return false
         return try {
             connection.session!!.write(connection.peer.output, envelope)
+            log("SPP TX ${envelope.path} id=${envelope.id}")
             true
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            log("SPP TX failed ${e.javaClass.simpleName}")
             retire(connection)
             false
         }
