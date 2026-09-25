@@ -9,6 +9,9 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.view.KeyEvent
+import com.anezium.rokidbus.client.plugin.NexusActivity
+import com.anezium.rokidbus.client.plugin.NexusActivityProgress
+import com.anezium.rokidbus.client.plugin.NexusActivityTrack
 import com.anezium.rokidbus.client.plugin.NexusAudioCallbacks
 import com.anezium.rokidbus.client.plugin.NexusAudioFormat
 import com.anezium.rokidbus.client.plugin.NexusAudioSession
@@ -66,7 +69,34 @@ class HelloPluginService : NexusPluginService() {
                 log("demo notice push result=${nexusClient?.showNotice(DEMO_NOTICE_BAND)}")
             }, delayMs)
         }
+        if (intent?.action == ACTION_DEMO_ACTIVITY) demoActivityStep(intent.getStringExtra("step"))
         return super.onStartCommand(intent, flags, startId)
+    }
+
+    /**
+     * Walks a scripted route through the activity tier, one step per intent, so
+     * the fitted panel, badge, track and urgent band can be judged on hardware.
+     * Steps: start, long, ride, urgent, arrive, end.
+     *
+     *     adb shell am start-foreground-service \
+     *       -n com.anezium.rokidbus.plugin.sample/.HelloPluginService \
+     *       -a com.anezium.rokidbus.plugin.sample.DEMO_ACTIVITY --es step ride
+     */
+    private fun demoActivityStep(step: String?) {
+        val client = nexusClient ?: run {
+            log("demo activity step=$step: no client")
+            return
+        }
+        val result = when (step) {
+            "start" -> client.startActivity(DEMO_ROUTE_WALK)
+            "long" -> client.updateActivity(DEMO_ROUTE_LEAVE)
+            "ride" -> client.updateActivity(DEMO_ROUTE_RIDE, significant = true)
+            "urgent" -> client.updateActivity(DEMO_ROUTE_GET_OFF, significant = true, urgent = true)
+            "arrive" -> client.updateActivity(DEMO_ROUTE_ARRIVED, significant = true)
+            "end" -> client.endActivity()
+            else -> null
+        }
+        log("demo activity step=$step result=$result extras=${client.supportsActivityExtras}")
     }
 
     private val state = HelloPluginState()
@@ -549,6 +579,53 @@ class HelloPluginService : NexusPluginService() {
 
     private companion object {
         const val ACTION_DEMO_NOTICE = "com.anezium.rokidbus.plugin.sample.DEMO_NOTICE"
+        const val ACTION_DEMO_ACTIVITY = "com.anezium.rokidbus.plugin.sample.DEMO_ACTIVITY"
+
+        val DEMO_ROUTE_WALK = NexusActivity(
+            glyph = "turn-right",
+            primary = "120 m",
+            secondary = "Rue de Rivoli",
+            progress = NexusActivityProgress.Percent(8),
+            eta = "12:24",
+            detail = listOf("then the Chatelet stop"),
+            maxDurationMs = 30 * 60 * 1000L,
+            wakeDisplay = true,
+        )
+
+        // Twelve characters next to an ETA: fitted, never "Dep...".
+        val DEMO_ROUTE_LEAVE = DEMO_ROUTE_WALK.copy(
+            glyph = "walk",
+            primary = "Depart 3 min",
+            secondary = "Bus 38 at 12:09",
+            progress = null,
+            detail = listOf("4 min on foot to Chatelet"),
+        )
+
+        // Progress stays alongside the track for glasses without extras.
+        val DEMO_ROUTE_RIDE = DEMO_ROUTE_WALK.copy(
+            glyph = "bus",
+            badge = "38",
+            primary = "3 stops",
+            secondary = "Get off at Luxembourg",
+            progress = NexusActivityProgress.Percent(55),
+            track = NexusActivityTrack(count = 5, at = 2, target = 4, label = "Luxembourg"),
+            detail = listOf("towards Porte d'Orleans"),
+        )
+
+        val DEMO_ROUTE_GET_OFF = DEMO_ROUTE_RIDE.copy(
+            primary = "Get off",
+            secondary = "Next stop: Luxembourg",
+            progress = NexusActivityProgress.Percent(80),
+            track = NexusActivityTrack(count = 5, at = 3, target = 4, label = "Luxembourg"),
+        )
+
+        val DEMO_ROUTE_ARRIVED = DEMO_ROUTE_WALK.copy(
+            glyph = "arrive",
+            primary = "Arrived",
+            secondary = "Pantheon",
+            progress = NexusActivityProgress.Percent(100),
+            detail = emptyList(),
+        )
         const val SURFACE_ID = "main"
         const val INK_SURFACE_ID = "ink-demo"
         const val INK_REFRESH_ACTION = "refreshMetrics"
