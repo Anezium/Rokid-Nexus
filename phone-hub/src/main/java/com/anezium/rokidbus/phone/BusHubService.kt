@@ -56,6 +56,9 @@ import com.anezium.rokidbus.shared.PinSurfaceContract
 import com.anezium.rokidbus.shared.RemoteInputContract
 import com.anezium.rokidbus.shared.RemoteNavigationContract
 import com.anezium.rokidbus.shared.RemotePointerContract
+import com.anezium.rokidbus.shared.SppAuthProtocol
+import com.anezium.rokidbus.shared.SppHandshakeDeadline
+import com.anezium.rokidbus.shared.SppKeyProvisioning
 import com.anezium.rokidbus.shared.SetupPairingFailureReason
 import com.anezium.rokidbus.shared.SetupPairingOfferContract
 import com.anezium.rokidbus.shared.TtsContract
@@ -104,7 +107,6 @@ import org.json.JSONObject
 import java.io.Closeable
 import java.io.File
 import java.io.IOException
-import java.io.OutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.Locale
@@ -303,9 +305,33 @@ class BusHubService : Service() {
     @Volatile private var sppLoopStop = false
     @Volatile private var hubEnabled = true
     @Volatile private var startupBlockedByBluetoothPermission = false
-    private val writeLock = Any()
-    private var socket: BluetoothSocket? = null
-    private var output: OutputStream? = null
+    private val sppLock = Any()
+    private val sppDeadlines = Executors.newSingleThreadScheduledExecutor()
+    private val sppNonces = SppAuthProtocol.RecentNonces()
+    private val sppProvisioning = Executors.newSingleThreadExecutor()
+    private val sppBackoff = SppReconnectBackoff()
+    @Volatile private var sppKeyStatus: PhoneSppPairing.KeyStatus? = null
+    private val sppCxrIdentity = SppCxrIdentity(
+        schedule = { delay, task ->
+            val future = sppDeadlines.schedule(task, delay, TimeUnit.MILLISECONDS)
+            ({ future.cancel(false); Unit })
+        },
+        onReady = { revision ->
+            sppBackoff.reset()
+            offerSppKeyForCurrentCxr(revision)
+        },
+    )
+    private val sppPairing by lazy {
+        PhoneSppPairing(
+            PhoneSppPairingStorage(applicationContext),
+            hasCxrConnection = ::isCxrUp,
+            onKeyStatus = ::updateSppKeyStatus,
+        ) {
+            sppCxrIdentity.current().takeIf { hubEnabled && !sppLoopStop && isCxrUp() }
+        }
+    }
+    @Volatile private var socket: BluetoothSocket? = null
+    @Volatile private var sppSession: SppAuthProtocol.Session? = null
     private var cxrLink: CXRLink? = null
     private lateinit var pluginRegistry: PhonePluginRegistry
     private lateinit var pluginDiscovery: PhonePluginDiscovery
@@ -544,6 +570,7 @@ class BusHubService : Service() {
     private val linkCallback = object : ICXRLinkCbk {
         override fun onCXRLConnected(connected: Boolean) {
             cxrConnected = connected
+            sppCxrIdentity.onConnectionChanged(isCxrUp())
             if (!connected) glassesWorn = false
             log("CXR-L connected=$connected")
             notifyLinkState()
@@ -556,6 +583,7 @@ class BusHubService : Service() {
 
         override fun onGlassBtConnected(connected: Boolean) {
             glassBtConnected = connected
+            sppCxrIdentity.onConnectionChanged(isCxrUp())
             if (!connected) glassesWorn = false
             log("Hi Rokid glass BT connected=$connected")
             notifyLinkState()
@@ -567,6 +595,7 @@ class BusHubService : Service() {
         }
 
         override fun onGlassDeviceInfo(info: GlassInfo) {
+            sppCxrIdentity.onDeviceInfo(info.sn, info.deviceName)
             notifyGlassesDeviceInfo(info)
         }
 
@@ -686,6 +715,7 @@ class BusHubService : Service() {
                 log("CXR RX undecodable: ${payload.size} bytes")
                 return
             }
+            if (SppKeyProvisioning.isReserved(envelope.path)) return
             log("CXR RX ${envelope.path} id=${envelope.id}")
             routeRemote(envelope)
         }
@@ -1004,6 +1034,7 @@ class BusHubService : Service() {
         cxrLink = null
         cxrConnected = false
         glassBtConnected = false
+        sppCxrIdentity.onConnectionChanged(false)
         glassesWorn = false
         closeSocket()
         notifyLinkState()
@@ -1024,6 +1055,10 @@ class BusHubService : Service() {
         activityHandler.removeCallbacks(activityExpiryTick)
         activityRouter.clearAllForHubStop()
         sppLoopStop = true
+        sppBackoff.reset()
+        sppCxrIdentity.onConnectionChanged(false)
+        sppDeadlines.shutdownNow()
+        sppProvisioning.shutdownNow()
         if (::speechSessionManager.isInitialized) speechSessionManager.close()
         stopAudioLease(InternalAudioStopReason.HUB_STOPPED)
         snapshotCaptureJob?.cancel()
@@ -1065,6 +1100,7 @@ class BusHubService : Service() {
         deliverLocal(envelope)
 
     private fun routeLocal(envelope: BusEnvelope, senderUid: Int) {
+        if (SppKeyProvisioning.isReserved(envelope.path)) return
         val sender = resolveSender(senderUid)
         if (isGlassesControlRequest(envelope.path)) {
             val strictlyHubOwned = isStrictlyHubOwnedGlassesPath(envelope.path)
@@ -1280,6 +1316,7 @@ class BusHubService : Service() {
     }
 
     private fun routeRemote(envelope: BusEnvelope) {
+        if (SppKeyProvisioning.isReserved(envelope.path)) return
         if (envelope.path == "/hub/probe") {
             recordRemoteRoute(envelope, PluginBusJournal.Verdict.OK)
             log("hub probe received from glasses")
@@ -3183,8 +3220,9 @@ class BusHubService : Service() {
     }
 
     private fun sendRemote(envelope: BusEnvelope): String? {
+        if (SppKeyProvisioning.isReserved(envelope.path)) return "INVALID_PATH"
         if (envelope.binary != null) {
-            if (output == null) {
+            if (sppSession == null) {
                 recordRemoteTransport(envelope, PluginBusJournal.Verdict.REJECTED, "NO_DATA_PLANE")
                 return "NO_DATA_PLANE"
             }
@@ -3203,7 +3241,7 @@ class BusHubService : Service() {
                 return null
             }
         }
-        if (bytes.size > BusConstants.CXR_CONTROL_MAX_BYTES && output == null) {
+        if (bytes.size > BusConstants.CXR_CONTROL_MAX_BYTES && sppSession == null) {
             recordRemoteTransport(envelope, PluginBusJournal.Verdict.REJECTED, "NO_DATA_PLANE")
             return "NO_DATA_PLANE"
         }
@@ -3256,16 +3294,56 @@ class BusHubService : Service() {
         }
     }
 
+    private fun offerSppKeyForCurrentCxr(revision: Long) {
+        if (!hubEnabled || sppLoopStop || !isCxrUp()) return
+        runCatching {
+            sppProvisioning.execute {
+                if (!sppCxrIdentity.isCurrentOffer(revision)) return@execute
+                runCatching { sppPairing.offerCurrent(::sendSppProvisioning) }
+                    .onFailure { log("SPP provisioning unavailable; retrying on connection attempt") }
+            }
+        }
+    }
+
+    private fun sendSppProvisioning(prepared: PhoneSppPairing.Prepared): Boolean = runCatching {
+        if (!hubEnabled || sppLoopStop || !isCxrUp()) return false
+        sppPairing.sendProvisioning(
+            prepared,
+            serialize = { envelope ->
+                Caps().apply { write(FrameProtocol.toJson(envelope).toString()) }.serialize()
+            },
+            sendCustomCmd = { bytes ->
+                val result = cxrLink?.sendCustomCmd(BusConstants.CXR_KEY, bytes)
+                result != null && result >= 0
+            },
+            onStale = { log("SPP provisioning stale; retrying on connection attempt") },
+        ).also { offered ->
+            if (offered) log("SPP pairing key offered over CXR")
+        }
+    }.getOrDefault(false)
+
+    private fun updateSppKeyStatus(status: PhoneSppPairing.KeyStatus) {
+        if (sppKeyStatus == status) return
+        sppKeyStatus = status
+        log(when (status) {
+            PhoneSppPairing.KeyStatus.UNAVAILABLE -> "SPP pairing key unavailable"
+            PhoneSppPairing.KeyStatus.RECOVERING -> "SPP pairing key recovery over CXR"
+            PhoneSppPairing.KeyStatus.RECOVERED -> "SPP pairing key recovered; awaiting authentication"
+        })
+        updateStatusNotification(linkState())
+    }
+
     private fun writeSpp(envelope: BusEnvelope): Boolean {
-        val out = output ?: return false
+        val (activeSocket, session) = synchronized(sppLock) {
+            (socket ?: return false) to (sppSession ?: return false)
+        }
         return runCatching {
-            synchronized(writeLock) { FrameProtocol.write(out, envelope) }
+            session.write(activeSocket.outputStream, envelope)
             log("SPP TX ${envelope.path} id=${envelope.id}")
             true
         }.getOrElse {
-            log("SPP TX failed ${it.javaClass.simpleName}: ${it.message}")
-            // Close the broken socket; the permanent connect thread notices and retries.
-            closeSocket()
+            log("SPP TX failed ${it.javaClass.simpleName}")
+            closeSocket(activeSocket)
             false
         }
     }
@@ -3435,55 +3513,77 @@ class BusHubService : Service() {
     private fun connectSpp() {
         if (!sppLoopStarted.compareAndSet(false, true)) return
         Thread({
-            var backoffMs = 1_000L
             while (!sppLoopStop) {
+                val attempt = sppBackoff.beginAttempt()
                 if (!hubEnabled) {
-                    sleepQuietly(750L)
+                    sppBackoff.await(attempt, 750L)
                     continue
                 }
                 if (!canRunHub(this)) {
                     log("Missing BLUETOOTH_CONNECT; SPP loop waiting")
-                    sleepQuietly(5_000L)
+                    sppBackoff.await(attempt, 5_000L)
                     continue
                 }
                 val device = pickBondedDevice()
                 if (device == null) {
                     log("No bonded glasses device found; SPP loop waiting")
-                    sleepQuietly(10_000L)
+                    sppBackoff.await(attempt, 10_000L)
                     continue
                 }
                 var current: BluetoothSocket? = null
                 try {
+                    val pairing = sppPairing.prepare(device.address, ::sendSppProvisioning)
+                        ?: throw IOException("SPP pairing unavailable")
                     log("SPP connecting to bonded glasses")
-                    current = device.createInsecureRfcommSocketToServiceRecord(BusConstants.SPP_UUID)
-                    current.connect()
-                    socket = current
-                    output = current.outputStream
-                    backoffMs = 1_000L
-                    log("SPP connected")
+                    val candidate = device.createInsecureRfcommSocketToServiceRecord(BusConstants.SPP_UUID)
+                    current = candidate
+                    synchronized(sppLock) {
+                        if (!hubEnabled || sppLoopStop) throw IOException("Hub stopped")
+                        socket = candidate
+                    }
+                    candidate.connect()
+                    val deadline = SppHandshakeDeadline(
+                        schedule = { delay, task ->
+                            val future = sppDeadlines.schedule(task, delay, TimeUnit.MILLISECONDS)
+                            ({ future.cancel(false); Unit })
+                        },
+                        close = { runCatching { candidate.close() }; Unit },
+                    )
+                    val session = try {
+                        sppPairing.authenticate(device.address, pairing, candidate.inputStream, candidate.outputStream, sppNonces)
+                    } catch (failure: Exception) {
+                        deadline.complete()
+                        throw failure
+                    }
+                    if (!deadline.complete()) throw IOException("SPP handshake timed out")
+                    synchronized(sppLock) {
+                        if (socket !== candidate || !hubEnabled || sppLoopStop) {
+                            throw IOException("SPP connection retired")
+                        }
+                        sppSession = session
+                    }
+                    sppBackoff.connected()
+                    sppKeyStatus = null
+                    log("SPP authenticated")
                     notifyLinkState()
-                    readSppLoop(current)
+                    readSppLoop(candidate, session)
                     log("SPP link closed")
                 } catch (t: Throwable) {
-                    log("SPP connect failed: ${t.javaClass.simpleName}; retrying in ${backoffMs}ms")
+                    log("SPP connect failed: ${t.javaClass.simpleName}; retrying in ${sppBackoff.retryDelayMs()}ms")
                 } finally {
                     runCatching { current?.close() }
-                    if (socket === current) {
-                        socket = null
-                        output = null
-                    }
+                    current?.let { closeSocket(it) }
                     notifyLinkState()
                 }
-                sleepQuietly(backoffMs)
-                backoffMs = (backoffMs * 2).coerceAtMost(30_000L)
+                sppBackoff.awaitRetry(attempt)
             }
         }, "rokidbus-spp").apply { isDaemon = true }.start()
     }
 
-    private fun readSppLoop(activeSocket: BluetoothSocket) {
+    private fun readSppLoop(activeSocket: BluetoothSocket, session: SppAuthProtocol.Session) {
         val input = activeSocket.inputStream
         while (true) {
-            val envelope = FrameProtocol.read(input) ?: return
+            val envelope = session.read(input) ?: return
             log("SPP RX ${envelope.path} id=${envelope.id}")
             routeRemote(envelope)
         }
@@ -3532,6 +3632,7 @@ class BusHubService : Service() {
         if (!bound) {
             cxrConnected = false
             glassBtConnected = false
+            sppCxrIdentity.onConnectionChanged(false)
             glassesWorn = false
             notifyLinkState()
         }
@@ -4323,7 +4424,7 @@ class BusHubService : Service() {
             if (caps.size() == 0) return@runCatching null
             FrameProtocol.fromJson(JSONObject(caps.at(0).string))
         }.onFailure {
-            log("CXR decode failed: ${it.message}")
+            log("CXR decode failed")
         }.getOrNull()
 
     private fun startPeriodicUpdateChecks() {
@@ -4532,6 +4633,12 @@ class BusHubService : Service() {
     }
 
     private fun statusText(state: Int): String = when {
+        sppKeyStatus == PhoneSppPairing.KeyStatus.UNAVAILABLE ->
+            "Glasses pairing key unavailable; reconnect Hi Rokid to recover"
+        sppKeyStatus == PhoneSppPairing.KeyStatus.RECOVERING ->
+            "Recovering glasses pairing key"
+        sppKeyStatus == PhoneSppPairing.KeyStatus.RECOVERED ->
+            "Glasses pairing key recovered; reconnecting"
         state and (LinkStateBits.CXR_CONTROL_UP or LinkStateBits.SPP_DATA_UP) != 0 -> {
             val livePlugin = if (::externalPluginController.isInitialized) {
                 externalPluginController.activeDisplayName()
@@ -4559,7 +4666,7 @@ class BusHubService : Service() {
 
     private fun linkState(): Int = PhoneLinkState.compose(
         cxrControlUp = isCxrUp(),
-        sppDataUp = output != null && socket?.isConnected == true,
+        sppDataUp = sppSession != null && socket?.isConnected == true,
         glassesBondedOrPhoneConnected = isGlassesBonded(),
         glassesWorn = glassesWorn,
     )
@@ -4980,10 +5087,15 @@ class BusHubService : Service() {
         }
     }
 
-    private fun closeSocket() {
-        runCatching { socket?.close() }
-        socket = null
-        output = null
+    private fun closeSocket(expected: BluetoothSocket? = null) {
+        val retired = synchronized(sppLock) {
+            if (expected != null && socket !== expected) return
+            val current = socket
+            socket = null
+            sppSession = null
+            current
+        }
+        runCatching { retired?.close() }
     }
 
     private fun isDebuggableBuild(): Boolean =

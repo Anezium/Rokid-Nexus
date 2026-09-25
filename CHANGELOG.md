@@ -1,5 +1,41 @@
 # Changelog
 
+## Unreleased
+
+### Phone and glasses hubs
+
+- **SPP connections now require mutual authentication.** The phone enrolls a
+  pairing key only through the current authorized Hi Rokid CXR session; both hubs
+  protect it with Android Keystore. Every SPP connection proves possession of that key,
+  and every frame carries a directional MAC and replay counter. Unauthenticated
+  clients cannot send commands or replace an active connection's output.
+- **Upgrade both hubs for the SPP data plane.** Legacy SPP peers are rejected;
+  the existing CXR control path remains available. Binary and large messages,
+  including media sync and Wireless ADB data-plane traffic, require authenticated
+  SPP and return `NO_DATA_PLANE` until the first key delivery and authentication.
+  Plugin API and grants are unchanged.
+- **Pairing follows the current Hi Rokid-authorized CXR session.** Keys are scoped
+  by CXR serial number, then device name, then a single current-session fallback.
+  Every CXR reconnect reoffers the key, including after a glasses reset. Successful
+  SPP authentication records the Bluetooth-address-to-CXR-identity binding for
+  offline reconnects; otherwise the last identity is used. With several glasses,
+  the key follows the currently CXR-connected pair. A mismatched key retries with
+  normal backoff without deleting or regenerating the stored key. An unreadable
+  phone key can recover through a ready authorized CXR session: persist a
+  replacement before reoffering it. Offline attempts remain fail-closed, and
+  repeated storage failures reuse one replacement. The existing connection
+  notification shows recovery progress or unavailable pairing state.
+- **A ready CXR identity wakes SPP reconnect immediately.** Reset the reconnect
+  backoff without starting another connection loop or interrupting a live session.
+- **SPP pairing and traffic diagnostics retain no key material.** Log key offers
+  on the phone and successful installation or replacement on the glasses. Restore
+  the glasses' authenticated `SPP RX` metadata and the phone's `SPP TX failed`
+  exception class without logging exception messages or provisioning payloads.
+- **Pending SPP handshakes no longer exclude a bonded reconnecting phone.**
+  A complete Hello is required within one second, and a bonded candidate can
+  replace an unbonded pending candidate. Slow dispatch callbacks no longer hold
+  the connection-state lock; key installation runs off the main thread.
+
 ## 1.4.11
 
 ### Upgrade together

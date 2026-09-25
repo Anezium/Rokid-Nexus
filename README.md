@@ -154,7 +154,22 @@ Trust model: any APK may request bus access, but capabilities (`surfaces`,
 `ink_surface`, `http_proxy`, `microphone`, `stt`, `tts`, `camera`, `mediasync`,
 `assistant`, `wireless_debugging`) are granted per
 plugin by the user, keyed to package + plugin id + signing certificate. Installation alone never grants
-anything. Developer mode adds package, signer, protocol, and route diagnostics
+anything. The phone and glasses hubs also authenticate their SPP connection with
+an installation pairing key enrolled through the authorized Hi Rokid CXR link;
+each SPP frame has integrity and replay protection. The key is bound to the
+Hi Rokid-authorized CXR session, using its serial number, device name, or a single
+current-session fallback, and is reoffered on each CXR connection. With several
+glasses, the key follows the currently CXR-connected pair. Successful SPP
+handshakes save an address-to-CXR-identity binding for offline reconnects; absent
+a binding, the last identity is used. A key mismatch fails closed without rotating
+the key. An unreadable phone key can recover through a ready authorized CXR
+session; offline reconnects never generate or replace keys. The existing
+connection notification shows pairing recovery or an unavailable key, and a
+ready CXR identity wakes the SPP reconnect backoff immediately. Until enrollment and authentication,
+binary and large messages (including media sync and Wireless ADB data-plane
+traffic) return `NO_DATA_PLANE`. Both hubs must support this transport version;
+legacy peers retain only the existing CXR control path.
+Developer mode adds package, signer, protocol, and route diagnostics
 plus a live bus inspector.
 
 ## Build a plugin

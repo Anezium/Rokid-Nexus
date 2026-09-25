@@ -16,6 +16,7 @@ Round A/API v1 and API v2 details are retained only in the historical appendix.
   (`listenUsingInsecureRfcommWithServiceRecord`), phone = client. The current
   validated device-selection logic tries its configured bonded device address
   first and its configured bonded name second; public docs do not retain either value.
+  SPP is usable only after the authenticated transport handshake below.
   Never call `cancelDiscovery()` (needs BLUETOOTH_SCAN).
 - Glasses hub is anchored on an **AccessibilityService** (armed once via ADB, appended
   to Relay's service — never overwrite the secure setting). `startService` on an idle
@@ -46,8 +47,8 @@ Round A/API v1 and API v2 details are retained only in the historical appendix.
 ## Wire envelope and binary frames
 
 JSON uses `{ "v":1, "path":"/x/y", "id":"<uuid>", "payload":{...} }`.
-SPP keeps a 4-byte big-endian length prefix (length = body bytes, max 2 MiB).
-The first body byte selects the current frame format:
+The inner frame body remains bounded to 2 MiB. Its first byte selects the
+current frame format:
 
 - `0x7B` (`{`) → JSON envelope, with the whole body parsed as JSON.
 - `0x01` → binary frame: `[0x01][u16 BE headerLen][header JSON UTF-8][raw data]`.
@@ -64,6 +65,167 @@ Binary envelopes are SPP-only and never use the CXR control plane. Remote binary
 delivery fails with `NO_DATA_PLANE` while SPP is down, never wake-binds a sleeping
 client, and is not queued. Local Binder delivery is capped at 512 KiB; larger frames
 remain hub-internal. JSON keeps the 3 KiB CXR-else-SPP routing rule.
+
+## Authenticated SPP transport v1
+
+The UUID and insecure RFCOMM socket APIs remain unchanged. The phone continues
+selecting a bonded glasses device; bonding alone does not authorize a Nexus
+peer. Both hubs must support this transport version. SPP never falls back to
+legacy unauthenticated framing, and `SPP_DATA_UP` means an authenticated session,
+not merely an accepted or connected Bluetooth socket. Plugin API v3, the inner
+envelope version, capabilities and grants are unchanged.
+
+### Pair enrollment over CXR only
+
+The phone generates a 32-byte `SecureRandom` pairing key and persists it before
+sending a JSON control envelope over its authorized CXR-L session:
+
+```json
+{"v":1,"path":"/hub/spp/provision","id":"<uuid>","payload":{"version":1,"key":"<32 bytes, standard padded Base64>"}}
+```
+
+The glasses consume this envelope at the CXR-S receive boundary, before normal
+bus dispatch. `/hub/spp` and `/hub/spp/*` are reserved transport controls and are
+rejected on Binder and SPP ingress; they are not plugin routes, receive prefixes
+or capabilities. Unknown provisioning versions, malformed keys and binary
+offers are ignored. No provisioning payload enters the bus journal or logs.
+
+Each hub wraps its pairing key with AES-256-GCM under an app-private Android
+Keystore key. The versioned wrapper is stored atomically in `noBackupFilesDir`;
+no plaintext key is persisted. Missing or unreadable keys cannot authorize SPP;
+a failed save cannot activate a new enrollment. A missing phone key may be
+generated only with a ready authorized CXR identity. A phone read/unwrap error
+may recover through that same CXR enrollment path: persist and read back a new
+key before offering it, replacing the unreadable record atomically. Offline
+attempts remain read-only and fail closed. Repeated storage failures retry the
+same replacement rather than continually generating keys. The glasses hold one current
+phone enrollment. The phone stores a separate random key for each current CXR
+identity: the serial number from `GlassInfo` / `onGlassDeviceInfo`, falling back
+to the CXR device name, then one `current` identity if neither is available.
+Identity namespaces are distinct and key filenames are hashed. The key is bound
+to the Hi Rokid-authorized CXR session; with several glasses the key follows the
+currently CXR-connected pair. Enrollment does not require a Bluetooth-address
+mapping. The phone reoffers the persisted key on every CXR connection, when the
+CXR identity changes, and before SPP attempts while CXR is up. This also restores
+enrollment after a glasses reset. Key storage and provisioning run off the main
+thread.
+
+On CXR reconnect, provisioning waits for device info from the new connection;
+only after four seconds without a serial number or device name may it offer the
+`current` fallback key. Duplicate connection/device-info callbacks do not reoffer
+the key, and stale timeouts are ignored. SPP attempts wait for this identity
+resolution too. A ready identity resets and wakes the SPP reconnect backoff;
+it does not start a second connection loop. Reoffering the same persisted key
+preserves a live SPP session.
+
+SPP attempts use the current CXR identity's key. Without CXR, the phone loads the
+key from the last successfully authenticated binding for the selected SPP address,
+falling back to the last used identity. Offline attempts never generate keys.
+Only a successful mutual handshake records an SPP-address-to-CXR-identity binding;
+Bluetooth selection and CXR send success do not establish one. These bindings and
+the last identity are stored atomically in non-backup app storage. A key mismatch
+closes the attempt, logs no secrets and uses the normal reconnect backoff, without
+regenerating or deleting either key or replacing a confirmed binding. If CXR and
+SPP select different glasses, the handshake fails closed until the selected SPP
+peer has the current CXR session's key.
+
+An identical offer is a no-op. A different key received over trusted CXR replaces
+the enrollment only after successful persistence and closes every active or
+pending SPP socket. A valid offer arriving before server startup is persisted
+for the next start. Key installation and storage I/O run off the main thread.
+
+CXR send success is not an acknowledgement of delivery. The SPP handshake proves
+that both hubs have the same key, so enrollment does not depend on the reverse
+CXR callback (which some Hi Rokid releases fail to deliver). A lost offer is
+retried with the same persisted key. Without a key the glasses close SPP sockets
+without reading commands. An old phone therefore retains only the existing CXR
+path; a new phone connecting to old glasses likewise never sends legacy SPP
+frames. Small JSON can still use CXR; binary and large JSON require authenticated
+SPP and return `NO_DATA_PLANE` until first key delivery and authentication. This
+includes media sync and Wireless ADB data-plane traffic. Existing CXR delivery
+limitations still apply.
+
+### Mutual handshake
+
+Every socket starts with four fixed-size handshake records, without a length
+prefix: `ASCII("NXSP") || 0x01 || type:u8 || payload`. Integers in this section
+are big-endian. `D` is ASCII `RokidBus-SPP-v1` followed by one NUL byte; `K` is
+the pair key, and `P` and `G` are fresh, independently generated 32-byte nonces.
+All HMACs use SHA-256 and the full 32-byte output. Labels are ASCII, without a
+terminating NUL. Concatenation is written `||`. Derive a separate handshake
+key with HKDF-SHA256 before computing any proof:
+
+- `PRK_auth = HMAC(D, K)` (Extract with protocol-domain salt).
+- `K_auth = HMAC(PRK_auth, D || "handshake-auth" || 0x01)` (one Expand block).
+
+The pair key is never used directly as a proof MAC key. Frame keys are derived
+separately below.
+
+| Step | Direction | Type | Payload |
+|---|---|---|---|
+| Hello | Phone → glasses | 1 | `P` |
+| Challenge | Glasses → phone | 2 | `G || HMAC(K_auth, D || "glasses-proof" || P || G)` |
+| Proof | Phone → glasses | 3 | `HMAC(K_auth, D || "phone-proof" || P || G)` |
+| Ready | Glasses → phone | 4 | `HMAC(K_auth, D || "glasses-ready" || P || G)` |
+
+The phone verifies Challenge before sending Proof and verifies Ready before
+publishing SPP availability. Glasses verify Proof before sending Ready and
+publishing the socket. Comparisons use `MessageDigest.isEqual`. Unknown magic,
+version, type, truncated records, equal local/remote nonces or invalid proofs
+close the socket. Each process rejects its last 256 observed peer nonces;
+fresh local nonces also defeat old transcripts after cache eviction or restart.
+The glasses record a phone nonce when receiving Hello; the phone records a
+glasses nonce only after verifying Challenge.
+
+Each hub closes a stalled handshake after five seconds. The glasses also require
+a complete Hello within one second of admission; a partial Hello does not extend
+that deadline, and completing Hello does not extend the overall deadline.
+The glasses permit at most one pending handshake. A `BOND_BONDED` candidate may
+replace a pending unbonded candidate, but cannot replace a bonded pending peer
+or an authenticated session. Unbonded candidates cannot replace any candidate;
+their starts are rate-limited to one per second. Bonded candidates bypass that
+rate limit, but must still complete the same cryptographic authentication.
+Bonded-peer priority is based on the Bluetooth address and can be spoofed by
+address impersonation; it is only an availability defense against unbonded peers,
+not authentication.
+While an authenticated connection exists, additional sockets are closed without
+changing the active output or link state. Timeout, failure and cleanup apply
+only to the candidate that created them, never to another connection.
+
+### Authenticated frames
+
+Derive independent directional keys using HKDF-SHA256 (RFC 5869):
+
+- `PRK = HMAC(P || G, K)` (Extract: salt is `P || G`).
+- `Kpg = HMAC(PRK, D || "phone-to-glasses" || 0x01)` (one Expand block).
+- `Kgp = HMAC(PRK, D || "glasses-to-phone" || 0x01)` (one Expand block).
+
+After Ready, each SPP frame is:
+
+```text
+length:u32 || 0x02 || sequence:u64 || innerBody || tag:32 bytes
+```
+
+`innerBody` is the existing JSON (`0x7b`) or binary (`0x01`) frame body, without
+its old length prefix. `length = 1 + 8 + innerBody.size + 32`, between 42 and
+2 MiB + 41. `tag = HMAC(Kdirection, D || length || 0x02 || sequence || innerBody)`.
+The MAC authenticates the exact serialized bytes, including length and counter;
+receivers verify it before parsing the inner JSON or binary frame.
+
+Each direction has its own counter, starting at zero and increasing by exactly
+one per frame. Values must be less than `2^63 - 1`; reconnect before exhaustion.
+Writes, counter allocation and flush are serialized per session. A wrong MAC,
+repeated/skipped counter, legacy frame, unknown format, truncated or oversized
+frame invalidates the session and closes the socket. No rejected frame reaches
+a hub dispatcher, and a failed session cannot send further frames.
+
+This protocol authenticates peers and frame integrity; it does not encrypt
+payloads or provide forward secrecy. Confidentiality still depends on the
+Bluetooth/CXR transport. The trust root is Hi Rokid's authorized CXR channel;
+compromised hubs, Hi Rokid or firmware remain outside this protection. Radio
+connection flooding and transparent relaying of an intact authenticated stream
+are not prevented. Secure RFCOMM or a glasses-side bond restriction would need
+separate firmware/pairing validation; neither replaces the application proof.
 
 ## Binder plugin registration v3
 

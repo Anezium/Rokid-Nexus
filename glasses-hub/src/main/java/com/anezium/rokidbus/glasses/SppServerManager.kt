@@ -3,49 +3,70 @@ package com.anezium.rokidbus.glasses
 import android.Manifest
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothServerSocket
-import android.bluetooth.BluetoothSocket
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.SystemClock
 import com.anezium.rokidbus.shared.BusConstants
 import com.anezium.rokidbus.shared.BusEnvelope
-import com.anezium.rokidbus.shared.FrameProtocol
+import com.anezium.rokidbus.shared.SppKeyStore
 import java.io.IOException
-import java.io.OutputStream
+import java.security.MessageDigest
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 object SppServerManager {
     private val started = AtomicBoolean(false)
     private val executor = Executors.newCachedThreadPool()
-    private val writeLock = Any()
-    @Volatile private var socket: BluetoothSocket? = null
-    @Volatile private var output: OutputStream? = null
+    private val keyUpdates = Executors.newSingleThreadExecutor()
+    private val deadlines = Executors.newSingleThreadScheduledExecutor()
+    @Volatile private var sessions: AuthenticatedSppServer? = null
 
     fun ensureStarted(context: Context) {
         if (!started.compareAndSet(false, true)) {
             log("SPP server already running or starting")
             return
         }
-        executor.execute { acceptLoop(context.applicationContext) }
+        keyUpdates.execute {
+            sessions = AuthenticatedSppServer(
+                keys = SppKeyStore(context),
+                execute = { task -> executor.execute(task) },
+                schedule = { delay, task ->
+                    val future = deadlines.schedule(task, delay, TimeUnit.MILLISECONDS)
+                    ({ future.cancel(false); Unit })
+                },
+                nowMs = SystemClock::elapsedRealtime,
+                onConnected = GlassesHub::onSppConnected,
+                onEnvelope = GlassesHub::onRemoteEnvelope,
+                log = ::log,
+            )
+            executor.execute { acceptLoop(context.applicationContext) }
+        }
     }
 
-    fun isConnected(): Boolean =
-        socket?.isConnected == true && output != null
+    fun isConnected(): Boolean = sessions?.isConnected() == true
 
-    fun send(envelope: BusEnvelope): Boolean {
-        val out = output ?: return false
-        return runCatching {
-            synchronized(writeLock) {
-                FrameProtocol.write(out, envelope)
+    fun send(envelope: BusEnvelope): Boolean = sessions?.send(envelope) == true
+
+    fun installPairingKey(context: Context, key: ByteArray) {
+        val application = context.applicationContext
+        val copy = key.copyOf()
+        keyUpdates.execute {
+            val server = sessions
+            if (server != null) {
+                server.installKey(copy)
+            } else {
+                val keys = SppKeyStore(application)
+                val loaded = runCatching { keys.load() }
+                val previous = loaded.getOrNull()
+                if (previous != null && MessageDigest.isEqual(previous, copy)) return@execute
+                if (keys.save(copy)) {
+                    log(if (loaded.isFailure || previous != null) "SPP pairing key replaced" else "SPP pairing key installed")
+                }
             }
-            log("SPP TX ${envelope.path} id=${envelope.id}")
-            true
-        }.getOrElse {
-            logError("SPP TX failed", it)
-            closeCurrent()
-            false
         }
     }
 
@@ -72,8 +93,14 @@ object SppServerManager {
                 log("SPP server listening name=${BusConstants.SERVICE_NAME}")
                 while (started.get()) {
                     val accepted = serverSocket.accept()
-                    log("SPP client accepted")
-                    executor.execute { handleClient(accepted) }
+                    sessions?.accept(object : SppPeer {
+                        override val bonded = runCatching {
+                            accepted.remoteDevice.bondState == BluetoothDevice.BOND_BONDED
+                        }.getOrDefault(false)
+                        override val input get() = accepted.inputStream
+                        override val output get() = accepted.outputStream
+                        override fun close() = accepted.close()
+                    }) ?: accepted.close()
                 }
             } catch (t: Throwable) {
                 logError("SPP accept loop failed; restarting", t)
@@ -85,37 +112,6 @@ object SppServerManager {
                 }
             }
         }
-    }
-
-    private fun handleClient(activeSocket: BluetoothSocket) {
-        try {
-            activeSocket.use {
-                socket = it
-                output = it.outputStream
-                GlassesHub.onSppConnected(true)
-                val input = it.inputStream
-                while (true) {
-                    val envelope = FrameProtocol.read(input) ?: break
-                    log("SPP RX ${envelope.path} id=${envelope.id} payloadBytes=${envelope.payload.toString().length} binaryBytes=${envelope.binary?.size ?: 0}")
-                    GlassesHub.onRemoteEnvelope(envelope)
-                }
-            }
-        } catch (t: Throwable) {
-            logError("SPP client loop ended", t)
-        } finally {
-            if (socket === activeSocket) {
-                socket = null
-                output = null
-                GlassesHub.onSppConnected(false)
-            }
-        }
-    }
-
-    private fun closeCurrent() {
-        runCatching { socket?.close() }
-        socket = null
-        output = null
-        GlassesHub.onSppConnected(false)
     }
 
     private fun hasBluetoothConnect(context: Context): Boolean =

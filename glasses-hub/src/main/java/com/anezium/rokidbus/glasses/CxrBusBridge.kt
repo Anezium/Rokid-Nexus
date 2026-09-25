@@ -6,16 +6,19 @@ import android.os.Looper
 import com.anezium.rokidbus.shared.BusConstants
 import com.anezium.rokidbus.shared.BusEnvelope
 import com.anezium.rokidbus.shared.FrameProtocol
+import com.anezium.rokidbus.shared.SppKeyProvisioning
 import com.rokid.cxr.CXRServiceBridge
 import com.rokid.cxr.Caps
 import org.json.JSONObject
 
 object CxrBusBridge {
     private val main = Handler(Looper.getMainLooper())
+    private var appContext: Context? = null
     private var bridge: CXRServiceBridge? = null
     @Volatile private var connected = false
 
     fun start(context: Context) {
+        appContext = context.applicationContext
         if (bridge != null) {
             requestStateProbe()
             return
@@ -89,9 +92,14 @@ object CxrBusBridge {
             val payload = decodePayload(caps, data)
             if (payload.isBlank()) return
             val envelope = runCatching { FrameProtocol.fromJson(JSONObject(payload)) }
-                .onFailure { logError("CXR-S JSON parse failed", it) }
+                .onFailure { logError("CXR-S JSON parse failed") }
                 .getOrNull() ?: return
             main.post {
+                if (SppKeyProvisioning.receive(envelope, fromCxr = true) { key ->
+                        appContext?.let { SppServerManager.installPairingKey(it, key) }
+                    }) {
+                    return@post
+                }
                 markConnected()
                 GlassesHub.onRemoteEnvelope(envelope)
             }
