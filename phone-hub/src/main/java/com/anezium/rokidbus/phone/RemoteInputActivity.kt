@@ -51,6 +51,8 @@ class RemoteInputActivity : Activity() {
     private var receiverRegistered = false
     private var closeSent = false
     private var keyboardPending = false
+    private var openedForKeyboard = false
+    private var pointerShown = false
 
     private val stateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -61,6 +63,7 @@ class RemoteInputActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        openedForKeyboard = intent.getBooleanExtra(EXTRA_KEYBOARD_REQUEST, false)
         publisher = BroadcastRemoteInputPublisher(applicationContext)
         trackpadPublisher = RemoteTrackpadPublisher(applicationContext)
         buildUi()
@@ -73,7 +76,10 @@ class RemoteInputActivity : Activity() {
         RemoteKeyboardPrompt.onScreenStarted(applicationContext)
         registerStateReceiver()
         publisher.requestState()
-        trackpadPublisher.show()
+        // Opened for a field a plugin asked for, the wearer is typing, not
+        // pointing: a cursor dropped over the glasses' reply would only be in
+        // the way, so it waits for the pad to be touched.
+        if (!openedForKeyboard) showPointer()
     }
 
     override fun onStop() {
@@ -81,6 +87,7 @@ class RemoteInputActivity : Activity() {
         // The pointer belongs to this screen: leaving it takes the cursor away
         // rather than stranding one on the glasses with nothing driving it.
         trackpadPublisher.hide()
+        pointerShown = false
         unregisterStateReceiver()
         RemoteKeyboardPrompt.onScreenStopped()
         super.onStop()
@@ -95,6 +102,18 @@ class RemoteInputActivity : Activity() {
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
         if (hasFocus && keyboardPending) showKeyboard()
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        openedForKeyboard = intent.getBooleanExtra(EXTRA_KEYBOARD_REQUEST, false)
+    }
+
+    private fun showPointer() {
+        if (pointerShown) return
+        pointerShown = true
+        trackpadPublisher.show()
     }
 
     override fun onDestroy() {
@@ -161,9 +180,18 @@ class RemoteInputActivity : Activity() {
             onInputOperation = ::publishInputOperation
         }
         trackpad = TrackpadView(this).apply {
-            onMove = { dx, dy -> trackpadPublisher.moveBy(dx, dy) }
-            onTap = { trackpadPublisher.click() }
-            onLongPress = { trackpadPublisher.longPress() }
+            onMove = { dx, dy ->
+                showPointer()
+                trackpadPublisher.moveBy(dx, dy)
+            }
+            onTap = {
+                showPointer()
+                trackpadPublisher.click()
+            }
+            onLongPress = {
+                showPointer()
+                trackpadPublisher.longPress()
+            }
             onGestureEnd = { trackpadPublisher.endGesture() }
         }
         editorAction = NexusUi.outlinePillButton(this, getString(R.string.remote_input_enter)).apply {
@@ -615,6 +643,11 @@ class RemoteInputActivity : Activity() {
     private fun hideKeyboard() {
         (getSystemService(INPUT_METHOD_SERVICE) as? InputMethodManager)
             ?.hideSoftInputFromWindow(editor.windowToken, 0)
+    }
+
+    companion object {
+        /** Set when the screen is opened for a keyboard request; see RemoteKeyboardPrompt. */
+        const val EXTRA_KEYBOARD_REQUEST = "keyboard_request"
     }
 }
 

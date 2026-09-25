@@ -103,4 +103,5 @@ internal object RemoteKeyboardPrompt {
     private fun screenIntent(context: Context): Intent =
         Intent(context, RemoteInputActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            .putExtra(RemoteInputActivity.EXTRA_KEYBOARD_REQUEST, true)
 }
