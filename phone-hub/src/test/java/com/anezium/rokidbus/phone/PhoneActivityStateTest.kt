@@ -379,6 +379,44 @@ class PhoneActivityStateTest {
         assertTrue(state.disconnectAll().isEmpty())
     }
 
+    @Test
+    fun `extras survive canonical state while the urgent tone stays transient`() {
+        state.start(
+            "nav",
+            startPayload("nav")
+                .put("badge", "38")
+                .put(
+                    "track",
+                    JSONObject().put("count", 5).put("at", 2).put("target", 4).put("label", "Luxembourg"),
+                ),
+        )
+
+        val urgent = state.update(
+            "nav",
+            updatePayload("nav")
+                .put("primary", "Get off")
+                .put("significant", true)
+                .put("tone", ActivitySurfaceContract.TONE_URGENT),
+        ) as PhoneActivityUpdateResult.Accepted
+        assertEquals(ActivitySurfaceContract.TONE_URGENT, urgent.payload.getString("tone"))
+        assertEquals("38", urgent.payload.getString("badge"))
+        assertEquals(2, urgent.payload.getJSONObject("track").getInt("at"))
+
+        val resend = state.payloadsForResend().single()
+        assertEquals("38", resend.getString("badge"))
+        assertEquals("Luxembourg", resend.getJSONObject("track").getString("label"))
+        assertFalse(resend.has("tone"))
+
+        // An urgent tone without significance is refused before it spends budget.
+        assertUpdateRejected(
+            state.update(
+                "nav",
+                updatePayload("nav").put("tone", ActivitySurfaceContract.TONE_URGENT),
+            ),
+            ActivitySurfaceContract.ERROR_INVALID_ACTIVITY,
+        )
+    }
+
     private fun startPayload(ownerPluginId: String) = JSONObject()
         .put("surfaceId", "$ownerPluginId:${ActivitySurfaceContract.LOCAL_SURFACE_ID}")
         .put("localSurfaceId", ActivitySurfaceContract.LOCAL_SURFACE_ID)
