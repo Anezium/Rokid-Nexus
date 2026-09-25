@@ -60,6 +60,7 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
     private var lastNoticeMessageAtMs = Long.MIN_VALUE
     private var sendDeadlineMs: Long? = null
     private var inputKeepaliveRunnable: Runnable? = null
+    private var typeChipRunnable: Runnable? = null
     private var typingOpenedAtShowGeneration: Int? = null
     // Identifies one open attempt distinctly from the next even when both share
     // a showGeneration (cancel, then Reply again on the same still-active
@@ -168,6 +169,7 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
         when (id) {
             ACTION_SHOW -> revealNotice()
             ACTION_REPLY, ACTION_RETRY -> if (settings.replyByTyping()) startTyping() else startListening()
+            ACTION_TYPE -> startTyping()
             ACTION_SEND -> sendConfirmedReply()
             ACTION_DISMISS, ACTION_CANCEL -> dismissNotice()
         }
@@ -415,7 +417,8 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
         hideTypingSurface()
         currentTranscript = null
         speechFinalReceived = false
-        // Deliberately offers nothing while listening, and says so.
+        // Deliberately offers nothing as listening starts, and says so; the one
+        // chip dictation ever shows is armed later, by armTypeChip.
         //
         // Confirming spent the band's one answer, so the row is gone. Putting a
         // Cancel chip back re-arms the band — and a temple pad that does not
@@ -439,6 +442,7 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
         }
 
         val generation = speechGeneration
+        if (currentClient.supportsEditableSurface) armTypeChip(generation)
         val newSpeech = currentClient.speechSession(object : NexusSpeechCallbacks {
             override fun onSpeechStarted(realtime: Boolean) = Unit
 
@@ -459,6 +463,7 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
             override fun onSpeechFinal(text: String) = onMain {
                 if (generation != speechGeneration) return@onMain
                 stopInputKeepalive()
+                cancelTypeChip()
                 if (text.isBlank()) {
                     queueSpeechFailure("Didn't catch that")
                     return@onMain
@@ -780,9 +785,37 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
         }
     }
 
+    /**
+     * Offers typing instead, once the bounce window of the Reply tap is over.
+     *
+     * This is the one chip dictation shows, and it waits for the reason
+     * [startListening] shows none at first: the band's row was just spent, and
+     * re-arming it straight away hands the temple pad's bounce (measured at
+     * 433 ms after a real tap) a question to answer. Arriving well after that,
+     * a tap on it is the wearer's own. A single chip leaves the directions free,
+     * so the message still pages behind it.
+     */
+    private fun armTypeChip(generation: Int) {
+        cancelTypeChip()
+        val runnable = Runnable {
+            typeChipRunnable = null
+            if (!activeNotice || generation != speechGeneration || speech == null) return@Runnable
+            if (speechFinalReceived) return@Runnable
+            queueEssential(NexusNoticeUpdate(actions = LISTENING_ACTIONS), dropPartial = false)
+        }
+        typeChipRunnable = runnable
+        main.postDelayed(runnable, TYPE_CHIP_ARM_DELAY_MS)
+    }
+
+    private fun cancelTypeChip() {
+        typeChipRunnable?.let(main::removeCallbacks)
+        typeChipRunnable = null
+    }
+
     private fun invalidateSpeech() {
         cancelSendCountdown()
         stopInputKeepalive()
+        cancelTypeChip()
         speechGeneration += 1
         speechFinalReceived = false
         speech?.stop()
@@ -995,6 +1028,7 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
         const val ACTION_RETRY = "retry"
         const val ACTION_CANCEL = "cancel"
         const val ACTION_SHOW = "show"
+        const val ACTION_TYPE = "type"
 
         /** Deliberately handled by nothing: the chip says a thing, it is not one. */
         const val ACTION_SENT = "sent"
@@ -1052,6 +1086,14 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
             ),
             NexusNoticeAction(ACTION_RETRY, "retry", "Retry"),
         )
+
+        /** Switches a dictation already under way to the typed field; see armTypeChip. */
+        val LISTENING_ACTIONS = listOf(
+            NexusNoticeAction(ACTION_TYPE, "keyboard", "Type"),
+        )
+
+        /** Comfortably past the 433 ms temple-pad bounce measured after a Reply tap. */
+        const val TYPE_CHIP_ARM_DELAY_MS = 1_200L
 
         val SPEECH_FAILURE_ACTIONS = listOf(
             NexusNoticeAction(ACTION_RETRY, "mic", "Speak again"),

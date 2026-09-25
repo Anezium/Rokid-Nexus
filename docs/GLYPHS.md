@@ -152,15 +152,17 @@ the only place the two spellings differ.
 
 **State** — `package` `walk` `timer` `phone`
 
-**Answering** — `reply` `send` `retry` `cancel` `mic`
+**Answering** — `reply` `send` `retry` `cancel` `mic` `keyboard`
 
-These five arrived with the notification relay, and they are the set's first
+The first five arrived with the notification relay, and they are the set's first
 marks about *responding* rather than about a thing or a maneuver. They are
 shared rather than plugin-supplied on purpose: a reply is a reply in any plugin
 that asks a question, and five plugins each drawing their own would give the
 wearer five slightly different arrows for one idea. They are drawn to be told
 apart at a glance in one row — a hooked arrow, a paper plane, a broken ring, a
 bare X, a capsule — because that row is where all five appear at once.
+`keyboard` joined them for answering by typing instead of speaking: a wide body,
+one row of keys and a space bar, landscape where the `mic` capsule is upright.
 
 **Fallback** — `dot`
 

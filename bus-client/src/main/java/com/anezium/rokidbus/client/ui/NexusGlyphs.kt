@@ -81,6 +81,7 @@ object NexusGlyphs {
         "retry" to R.drawable.ic_glyph_retry,
         "cancel" to R.drawable.ic_glyph_cancel,
         "mic" to R.drawable.ic_glyph_mic,
+        "keyboard" to R.drawable.ic_glyph_keyboard,
         FALLBACK to R.drawable.ic_glyph_dot,
     )
 }
