@@ -2096,6 +2096,14 @@ ephemeral, redacts text-bearing model strings, sets `FLAG_SECURE` for sensitive
 sessions, and clears state on close or transport loss. Implementations must not
 persist or log command JSON.
 
+`session_open` may carry `"keyboardRequested": true`, and only when the focused
+field is the glasses hub's own editable-surface field: a plugin asked for text,
+rather than the wearer landing on a field while moving through a screen. The
+glasses trust the marker only from their own package. The phone may then bring
+its keyboard screen forward without being asked; for every other session it
+waits for the user to open it. Absent means `false`; a present non-boolean value
+makes the message invalid. Older phones ignore the field.
+
 ### Remote navigation
 
 - Phone → glasses `/core/navigation/request`: one of `previous`, `next`,

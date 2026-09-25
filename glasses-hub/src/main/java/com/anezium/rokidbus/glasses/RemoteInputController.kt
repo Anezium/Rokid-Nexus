@@ -46,6 +46,11 @@ internal object RemoteInputController {
                     inputType = editorInfo.inputType,
                     imeOptions = editorInfo.imeOptions,
                     nextSequence = gate.nextSequence,
+                    keyboardRequested = RemoteInputMetadataPolicy.keyboardRequested(
+                        editorPackage = editorInfo.packageName,
+                        privateImeOptions = editorInfo.privateImeOptions,
+                        ownPackage = owner.packageName,
+                    ),
                 ),
             )
         }

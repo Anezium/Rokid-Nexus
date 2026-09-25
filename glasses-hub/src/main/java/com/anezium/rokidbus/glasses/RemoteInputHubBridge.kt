@@ -147,6 +147,7 @@ internal object RemoteInputHubBridge {
                     imeOptions = state.imeOptions,
                     sensitive = isSensitiveInput(state.inputType),
                     nextSequence = state.nextSequence,
+                    keyboardRequested = state.keyboardRequested,
                 ),
             ),
         )

@@ -106,6 +106,9 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
         isFocusableInTouchMode = true
         inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
         imeOptions = EditorInfo.IME_ACTION_SEND
+        // A plugin opened this field to be typed into, so the phone may bring its
+        // keyboard up for it, unlike any field the wearer merely lands on.
+        privateImeOptions = RemoteInputMetadataPolicy.EDITABLE_SURFACE_IME_OPTION
         setTextColor(BusTheme.text)
         setHintTextColor(BusTheme.dim)
         setBackgroundColor(BusTheme.glassesBg)

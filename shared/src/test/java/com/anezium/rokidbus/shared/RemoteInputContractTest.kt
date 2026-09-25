@@ -49,6 +49,24 @@ class RemoteInputContractTest {
     }
 
     @Test
+    fun `keyboard request is optional and strict when present`() {
+        val plain = RemoteInputSessionOpen(sessionId, null, 1, 0, false)
+        val requested = plain.copy(keyboardRequested = true)
+
+        val plainPayload = RemoteInputContract.encodeSessionOpen(plain)
+        val requestedPayload = RemoteInputContract.encodeSessionOpen(requested)
+
+        assertFalse(plainPayload.has("keyboardRequested"))
+        assertEquals(plain, RemoteInputContract.decodeSessionOpen(plainPayload))
+        assertEquals(requested, RemoteInputContract.decodeSessionOpen(requestedPayload))
+        assertNull(
+            RemoteInputContract.decodeSessionOpen(
+                JSONObject(plainPayload.toString()).put("keyboardRequested", "true"),
+            ),
+        )
+    }
+
+    @Test
     fun `session closure round trips the final applied sequence`() {
         val closed = RemoteInputSessionClosed(
             sessionId,

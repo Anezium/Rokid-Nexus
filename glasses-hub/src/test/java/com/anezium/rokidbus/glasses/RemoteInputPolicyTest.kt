@@ -61,4 +61,15 @@ class RemoteInputPolicyTest {
         assertEquals("", RemoteInputMetadataPolicy.sanitizePackageName("field hint"))
         assertEquals("", RemoteInputMetadataPolicy.sanitizePackageName(null))
     }
+
+    @Test
+    fun keyboardRequestIsTrustedOnlyFromTheHubsOwnEditableField() {
+        val hub = "com.anezium.rokidbus.glasses"
+        val marker = RemoteInputMetadataPolicy.EDITABLE_SURFACE_IME_OPTION
+
+        assertTrue(RemoteInputMetadataPolicy.keyboardRequested(hub, marker, hub))
+        assertFalse(RemoteInputMetadataPolicy.keyboardRequested("com.example.other", marker, hub))
+        assertFalse(RemoteInputMetadataPolicy.keyboardRequested(hub, null, hub))
+        assertFalse(RemoteInputMetadataPolicy.keyboardRequested(null, marker, hub))
+    }
 }

@@ -9,6 +9,7 @@ internal data class RemoteInputSessionState(
     val inputType: Int = 0,
     val imeOptions: Int = 0,
     val nextSequence: Long = 0L,
+    val keyboardRequested: Boolean = false,
 )
 
 internal enum class RemoteInputResultCode {
@@ -102,4 +103,15 @@ internal object RemoteInputMetadataPolicy {
         val candidate = value.orEmpty().take(MAX_PACKAGE_NAME_LENGTH)
         return candidate.takeIf(PACKAGE_NAME::matches).orEmpty()
     }
+
+    /** Set by the editable surface on its own field; see [keyboardRequested]. */
+    const val EDITABLE_SURFACE_IME_OPTION = "com.anezium.rokidbus.glasses.editableSurface"
+
+    /**
+     * Believed only from this hub's own field. privateImeOptions is free text any
+     * app on the glasses can set, and honouring the marker from another package
+     * would let that app pull the phone's keyboard forward whenever it liked.
+     */
+    fun keyboardRequested(editorPackage: String?, privateImeOptions: String?, ownPackage: String): Boolean =
+        editorPackage == ownPackage && privateImeOptions == EDITABLE_SURFACE_IME_OPTION
 }

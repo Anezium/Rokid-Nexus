@@ -71,6 +71,12 @@ data class RemoteInputSessionOpen(
     val imeOptions: Int,
     val sensitive: Boolean,
     val nextSequence: Long = 1L,
+    /**
+     * The field was opened by a plugin asking for text (an editable surface),
+     * not merely focused while the wearer moved through a screen. Only then may
+     * the phone bring its keyboard forward on its own.
+     */
+    val keyboardRequested: Boolean = false,
 )
 
 data class RemoteInputSessionClosed(
@@ -191,6 +197,7 @@ object RemoteInputContract {
             .put("imeOptions", value.imeOptions)
             .put("sensitive", value.sensitive)
             .put("nextSequence", value.nextSequence)
+            .apply { if (value.keyboardRequested) put("keyboardRequested", true) }
     }
 
     fun decodeSessionOpen(payload: JSONObject): RemoteInputSessionOpen? {
@@ -205,6 +212,11 @@ object RemoteInputContract {
         val sensitive = payload.strictBoolean("sensitive") ?: return null
         val nextSequence = payload.strictLong("nextSequence")
             ?.takeIf(::isValidCommandSequence) ?: return null
+        val keyboardRequested = if (payload.has("keyboardRequested")) {
+            payload.strictBoolean("keyboardRequested") ?: return null
+        } else {
+            false
+        }
         return RemoteInputSessionOpen(
             sessionId = payload.getString("sessionId"),
             packageName = packageName,
@@ -212,6 +224,7 @@ object RemoteInputContract {
             imeOptions = imeOptions,
             sensitive = sensitive,
             nextSequence = nextSequence,
+            keyboardRequested = keyboardRequested,
         )
     }
 
