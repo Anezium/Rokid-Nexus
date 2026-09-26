@@ -280,6 +280,11 @@ class NexusActivityTest {
             activity().copy(badge = "RER B1")
         }
         assertThrows(IllegalArgumentException::class.java) {
+            activity().copy(measure = "1,25 km a")
+        }
+        assertEquals("250 m", activity().copy(measure = " 250 m ").toStartPayload().getString("measure"))
+        assertTrue(activity().toUpdatePayload(significant = false).isNull("measure"))
+        assertThrows(IllegalArgumentException::class.java) {
             NexusActivityTrack(count = 1, at = 0, target = 0)
         }
         assertThrows(IllegalArgumentException::class.java) {

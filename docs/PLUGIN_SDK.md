@@ -444,6 +444,7 @@ data class NexusActivity(
     val wakeDisplay: Boolean = false,
     val badge: String? = null,
     val track: NexusActivityTrack? = null,
+    val measure: String? = null,
 )
 
 val supportsActivitySurface: Boolean
@@ -574,7 +575,7 @@ countdown ticks.
 
 #### Activity extras
 
-`badge`, `track`, and `urgent` are extras: optional, drawn by the platform, and
+`badge`, `measure`, `track`, and `urgent` are extras: optional, drawn by the platform, and
 understood only when both hubs support them. `supportsActivityExtras` reports
 that. Without it the SDK still sends the activity, the older hub drops the
 extras, and the wearer sees the v1 form, so nothing needs a second code path.
@@ -582,6 +583,10 @@ extras, and the wearer sees the v1 form, so nothing needs a second code path.
 - `badge` — at most 5 characters, such as a line number ("38", "M4",
   "RER B"). The expanded panel and the flare draw it as an outlined plate where
   the glyph would be. The chip keeps `glyph`.
+- `measure` — at most 8 characters, a second quantity that belongs with
+  `primary`, such as a walk's distance next to its minutes ("250 m"). The
+  expanded panel reads "3 min - 250 m"; the chip keeps "3 min" and puts
+  "250 m" on the line under it instead of `secondary`.
 - `track` — `NexusActivityTrack(count, at, target, label)`: 2 to 12 ordered
   positions such as the stops of a ride or the stages of a delivery, where the
   process is now, and where the wearer is headed, with an optional label of at

@@ -1045,6 +1045,10 @@ data class NexusActivityTrack(
  * @property badge Optional extra: a line or route mark of at most 5 trimmed
  * characters ("38", "RER B"), drawn in the glyph's place in the expanded
  * panel. Glasses without activity extras show [glyph] instead.
+ * @property measure Optional extra: a second quantity of at most 8 trimmed
+ * characters that belongs with [primary], such as a walk's distance next to
+ * its minutes ("250 m"). The expanded panel draws it beside the primary and
+ * the chip under it. Glasses without activity extras show [primary] alone.
  * @property track Optional extra: stops or stages, drawn instead of the
  * progress bar. Send [progress] as well for glasses without activity extras.
  */
@@ -1060,6 +1064,7 @@ data class NexusActivity(
     val wakeDisplay: Boolean = false,
     val badge: String? = null,
     val track: NexusActivityTrack? = null,
+    val measure: String? = null,
 ) {
     init {
         require(GlyphContract.isWellFormedName(glyph))
@@ -1074,6 +1079,7 @@ data class NexusActivity(
         require(detail.all { it.trim().length <= ActivitySurfaceContract.MAX_DETAIL_CHARS })
         require(actions.size <= ActivitySurfaceContract.MAX_ACTIONS)
         require(badge == null || badge.trim().length <= ActivitySurfaceContract.MAX_BADGE_CHARS)
+        require(measure == null || measure.trim().length <= ActivitySurfaceContract.MAX_MEASURE_CHARS)
     }
 
     internal fun toStartPayload(): JSONObject = ActivitySurfaceContract.toPayload(
@@ -1104,6 +1110,7 @@ data class NexusActivity(
         maxDurationMs = maxDurationMs,
         wakeDisplay = wakeDisplay,
         badge = badge?.trim()?.takeIf { it.isNotEmpty() },
+        measure = measure?.trim()?.takeIf { it.isNotEmpty() },
         track = track?.toContract(),
     )
 }

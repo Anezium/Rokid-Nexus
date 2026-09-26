@@ -314,10 +314,13 @@ internal object ActivityOverlayRenderer {
         fun render(item: ActivityRenderItem) {
             val content = item.activity.content
             val owner = item.activity.ownerPluginId
-            update(chip, content.primary to content.secondary to content.glyph) {
+            update(chip, listOf(content.primary, content.measure, content.secondary, content.glyph)) {
                 chip.render(
                     titleText = content.primary,
-                    lineContent = content.secondary
+                    // Folded, the measure is the line under the primary: "3 min"
+                    // over "250 m" reads at a glance where "3 min - 250 m" would
+                    // stretch the chip.
+                    lineContent = (content.measure ?: content.secondary)
                         ?.let { listOf(PinSurfaceLine(it)) }
                         .orEmpty(),
                     size = PinSurfaceSize.MEDIUM,
@@ -333,7 +336,7 @@ internal object ActivityOverlayRenderer {
             }
             update(flare, content) {
                 flare.render(
-                    titleText = content.primary,
+                    titleText = content.primaryWithMeasure(),
                     bodyText = buildList {
                         content.secondary?.let(::add)
                         addAll(content.detail)
@@ -485,8 +488,9 @@ internal object ActivityOverlayRenderer {
             glyph.setImageDrawable(
                 content.badge?.let { ActivityBadgeDrawable(context, it) } ?: mainGlyph,
             )
-            primary.text = content.primary
-            val fit = fitPrimary(content.primary, content.eta)
+            val primaryText = content.primaryWithMeasure()
+            primary.text = primaryText
+            val fit = fitPrimary(primaryText, content.eta)
             primary.setTextSize(TypedValue.COMPLEX_UNIT_SP, fit.sizeSp)
             eta.text = content.eta.orEmpty()
             eta.visibility = visibleIf(content.eta != null && !fit.etaBelow)
@@ -562,6 +566,10 @@ internal object ActivityOverlayRenderer {
         private fun visibleIf(visible: Boolean): Int =
             if (visible) View.VISIBLE else View.GONE
     }
+
+    /** Expanded, the measure stands beside the primary: "3 min - 250 m". */
+    private fun ActivitySurfaceContent.primaryWithMeasure(): String =
+        measure?.let { "$primary - $it" } ?: primary
 
     /** Forms draw no border of their own; the island draws the only one. */
     private fun View.dropChrome() {

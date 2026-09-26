@@ -64,6 +64,12 @@ data class ActivitySurfaceContent(
     val wakeDisplay: Boolean = false,
     /** Extras: a short line or route mark drawn in the glyph's place. */
     val badge: String? = null,
+    /**
+     * Extras: a second quantity that belongs with [primary], such as the
+     * distance of a walk timed in minutes. Beside the primary when expanded,
+     * under it in the chip.
+     */
+    val measure: String? = null,
     /** Extras: drawn instead of [progress] by glasses that announce extras. */
     val track: ActivityTrack? = null,
 )
@@ -85,6 +91,7 @@ data class ActivitySurfacePatch(
     val detail: ActivityField<List<String>>? = null,
     val actions: ActivityField<List<ActivityAction>>? = null,
     val badge: ActivityField<String?>? = null,
+    val measure: ActivityField<String?>? = null,
     val track: ActivityField<ActivityTrack?>? = null,
     val significant: Boolean = false,
     /** Transient like [significant], and only valid together with it. */
@@ -99,6 +106,7 @@ data class ActivitySurfacePatch(
         detail = if (detail != null) detail.value else content.detail,
         actions = if (actions != null) actions.value else content.actions,
         badge = if (badge != null) badge.value else content.badge,
+        measure = if (measure != null) measure.value else content.measure,
         track = if (track != null) track.value else content.track,
     )
 }
@@ -119,7 +127,7 @@ object ActivitySurfaceContract {
     const val VERSION = 1
 
     /**
-     * Optional fields beyond v1: badge, track, and the urgent tone. Announced
+     * Optional fields beyond v1: badge, measure, track, and the urgent tone. Announced
      * separately because both hubs match [VERSION] exactly; raising it would
      * disable activities between a new and an old hub.
      */
@@ -136,6 +144,7 @@ object ActivitySurfaceContract {
     const val MAX_ACTIONS = 3
     const val MAX_ACTIVE_ACTIVITIES = 2
     const val MAX_BADGE_CHARS = 5
+    const val MAX_MEASURE_CHARS = 8
     const val MIN_TRACK_COUNT = 2
     const val MAX_TRACK_COUNT = 12
     const val MAX_TRACK_LABEL_CHARS = 20
@@ -220,6 +229,11 @@ object ActivitySurfaceContract {
             is ReadResult.Invalid -> return invalid(result.reason)
             ReadResult.Absent -> null
         }
+        val measure = when (val result = readText(payload, "measure", MAX_MEASURE_CHARS)) {
+            is ReadResult.Present -> result.value
+            is ReadResult.Invalid -> return invalid(result.reason)
+            ReadResult.Absent -> null
+        }
         val track = when (val result = readTrack(payload, "track")) {
             is ReadResult.Present -> result.value
             is ReadResult.Invalid -> return invalid(result.reason)
@@ -240,6 +254,7 @@ object ActivitySurfaceContract {
                 maxDurationMs = maxDurationMs,
                 wakeDisplay = wakeDisplay,
                 badge = badge,
+                measure = measure,
                 track = track,
             ),
         )
@@ -296,6 +311,11 @@ object ActivitySurfaceContract {
             is ReadResult.Invalid -> return patchInvalid(result.reason)
             ReadResult.Absent -> null
         }
+        val measure = when (val result = readText(payload, "measure", MAX_MEASURE_CHARS)) {
+            is ReadResult.Present -> ActivityField(result.value)
+            is ReadResult.Invalid -> return patchInvalid(result.reason)
+            ReadResult.Absent -> null
+        }
         val track = when (val result = readTrack(payload, "track")) {
             is ReadResult.Present -> ActivityField(result.value)
             is ReadResult.Invalid -> return patchInvalid(result.reason)
@@ -323,6 +343,7 @@ object ActivitySurfaceContract {
                 detail = detail,
                 actions = actions,
                 badge = badge,
+                measure = measure,
                 track = track,
                 significant = significant,
                 urgent = urgent,
@@ -347,6 +368,7 @@ object ActivitySurfaceContract {
             }
             if (content.wakeDisplay) put("wakeDisplay", true)
             content.badge?.let { put("badge", it) }
+            content.measure?.let { put("measure", it) }
             content.track?.let { put("track", trackJson(it)) }
         }
 
@@ -370,6 +392,7 @@ object ActivitySurfaceContract {
         .put("detail", detailJson(content.detail))
         .put("actions", actionsJson(content.actions))
         .put("badge", content.badge ?: JSONObject.NULL)
+        .put("measure", content.measure ?: JSONObject.NULL)
         .put("track", content.track?.let(::trackJson) ?: JSONObject.NULL)
         .apply {
             if (significant) put("significant", true)

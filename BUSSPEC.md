@@ -1443,6 +1443,11 @@ while the glasses announced both the v1 tier and extras version 1.
 - `badge` is optional and at most 5 characters: a line or route mark drawn as
   an outlined plate in the glyph's place in the panel and the flare. The chip
   keeps `glyph`, which stays required.
+- `measure` is optional and at most 8 characters: a second quantity that
+  belongs with `primary`, such as a walk's distance next to its minutes
+  ("250 m"). The panel and the flare draw `primary - measure` as one fitted
+  value; the chip draws `measure` as its line under `primary`, in place of
+  `secondary`.
 - `track` is optional: `count` from 2 through 12, `at` from 0 through
   `count - 1`, `target` from `at` through `count - 1`, and an optional `label`
   of at most 20 characters naming the target. It is drawn as a row of dots
@@ -1456,7 +1461,7 @@ while the glasses announced both the v1 tier and extras version 1.
   10-second flare budget, so a time-critical transition is not swallowed by an
   ordinary flare just before it. A throttled urgent update is handled as an
   ordinary significant one. Urgency never changes the wake rules.
-- On `/activity/update`, `badge` and `track` follow patch semantics; the typed
+- On `/activity/update`, `badge`, `measure`, and `track` follow patch semantics; the typed
   SDK sends explicit nulls when they are cleared. `tone` is never stored or
   replayed.
 - Every value is the plugin's last report. The glasses never advance a track,

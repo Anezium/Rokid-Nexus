@@ -453,14 +453,34 @@ class ActivitySurfaceContractTest {
     }
 
     @Test
+    fun `a measure travels with the primary and an update can clear it`() {
+        val content = (ActivitySurfaceContract.validateStart(
+            startPayload().put("measure", "  250 m  "),
+        ) as ActivitySurfaceValidationResult.Valid).content
+        assertEquals("250 m", content.measure)
+        assertEquals("250 m", ActivitySurfaceContract.toPayload("maps:activity", content).getString("measure"))
+
+        val cleared = ActivitySurfaceContract.toUpdatePayload("maps:activity", content.copy(measure = null), false)
+        assertTrue(cleared.isNull("measure"))
+        val patch = (ActivitySurfaceContract.validateUpdate(cleared) as ActivitySurfacePatchResult.Valid).patch
+        assertNull(patch.applyTo(content).measure)
+
+        val kept = (ActivitySurfaceContract.validateUpdate(JSONObject().put("primary", "2 min")) as
+            ActivitySurfacePatchResult.Valid).patch
+        assertEquals("250 m", kept.applyTo(content).measure)
+    }
+
+    @Test
     fun `a v1 start round trips without any extras field`() {
         val content = (ActivitySurfaceContract.validateStart(startPayload()) as
             ActivitySurfaceValidationResult.Valid).content
         val payload = ActivitySurfaceContract.toPayload("maps:activity", content)
 
         assertNull(content.badge)
+        assertNull(content.measure)
         assertNull(content.track)
         assertFalse(payload.has("badge"))
+        assertFalse(payload.has("measure"))
         assertFalse(payload.has("track"))
         assertFalse(payload.has("tone"))
     }
@@ -470,6 +490,8 @@ class ActivitySurfaceContractTest {
         listOf(
             startPayload().put("badge", "RER B1"),
             startPayload().put("badge", 38),
+            startPayload().put("measure", "1,25 km a"),
+            startPayload().put("measure", 250),
             startPayload().put("track", "5 stops"),
             startPayload().put("track", track(count = 1, at = 0, target = 0)),
             startPayload().put("track", track(count = 13, at = 0, target = 1)),

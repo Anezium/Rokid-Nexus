@@ -51,6 +51,15 @@ Optional string, at most 5 characters after trim, nonblank when present
 ("38", "M4", "RER B"). Drawn as an outlined plate in the panel's glyph slot and
 in the flare band's leading slot. The chip keeps `glyph`, which stays required.
 
+### 2b. `measure`
+
+Optional string, at most 8 characters after trim ("250 m", "1,2 km"): a second
+quantity that belongs with `primary`. Added on device review: a transit walk
+timed in minutes also has a distance, and the wearer wanted both at a glance
+without the panel's largest text turning into one long value. The panel and
+the flare draw `primary - measure` through the same fit as the primary; the
+chip draws `measure` as its line, under the primary, in place of `secondary`.
+
 ### 3. `track`
 
 Optional object: `{"count": 2..12, "at": 0..count-1, "target": at..count-1,
