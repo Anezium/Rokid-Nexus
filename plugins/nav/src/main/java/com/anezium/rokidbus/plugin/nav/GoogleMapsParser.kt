@@ -34,9 +34,14 @@ internal object GoogleMapsParser {
 
         val glyph = NavText.maneuverGlyph(instruction)
         val arrived = glyph == "arrive" && distance == null
+        // Before the first maneuver ("Aller vers <street>") Maps gives no
+        // distance. Its own verb leads then; keeping the previous step on
+        // screen would show a turn that is no longer the instruction.
+        val phrase = NavText.maneuverPhrase(instruction)
         val primary = when {
             distance != null -> distance
             arrived -> labels.arrived
+            glyph != NavText.ROUTE_GLYPH && phrase.length <= ActivitySurfaceContract.MAX_PRIMARY_CHARS -> phrase
             else -> return null
         }
         val street = notification.nowBarSecondary?.trim()?.takeIf { it.isNotEmpty() && it != distance }
@@ -44,8 +49,8 @@ internal object GoogleMapsParser {
         val secondary = NavText.fit(street ?: instruction, ActivitySurfaceContract.MAX_SECONDARY_CHARS)
         // The street is already the second line; the detail keeps the words of
         // the maneuver the arrow stands for.
-        val detail = if (street != null) {
-            listOf(NavText.fit(NavText.maneuverPhrase(instruction), ActivitySurfaceContract.MAX_DETAIL_CHARS))
+        val detail = if (street != null && phrase != primary) {
+            listOf(NavText.fit(phrase, ActivitySurfaceContract.MAX_DETAIL_CHARS))
         } else {
             emptyList()
         }

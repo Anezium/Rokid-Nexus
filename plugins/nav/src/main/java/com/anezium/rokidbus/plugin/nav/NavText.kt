@@ -34,7 +34,8 @@ internal object NavText {
         "turn-left" to listOf("a gauche", "turn left", "left onto", "left on ", "left at "),
         "arrive" to listOf("vous etes arrive", "votre destination", "destination", "arrive", "you have arrived"),
         "straight" to listOf(
-            "continuez", "continuer", "tout droit", "poursuivez", "dirigez-vous", "head ", "continue",
+            "continuez", "continuer", "tout droit", "poursuivez", "dirigez-vous", "aller vers", "allez vers",
+            "head ", "continue",
             "straight",
         ),
     )

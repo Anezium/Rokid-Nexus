@@ -100,6 +100,24 @@ class GoogleMapsParserTest {
     }
 
     @Test
+    fun `the opening head-toward step has no distance, so Maps' own verb leads`() {
+        val guidance = GoogleMapsParser.parse(
+            walking.copy(
+                title = "Aller vers Rue de Rivoli/Rue du Louvre",
+                shortCriticalText = "",
+                nowBarPrimary = null,
+                nowBarSecondary = null,
+            ),
+        )!!
+
+        assertEquals("straight", guidance.glyph)
+        assertEquals("Aller", guidance.primary)
+        assertEquals("Rue de Rivoli/Rue du Louvre", guidance.secondary)
+        assertEquals(emptyList<String>(), guidance.detail)
+        assertFalse(guidance.imminent)
+    }
+
+    @Test
     fun `long streets and instructions are cut to the activity limits`() {
         val guidance = GoogleMapsParser.parse(
             walking.copy(
