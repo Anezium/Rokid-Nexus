@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.4.7
+
+- **Type the question instead.** While Assistant listens, a *Type* chip joins
+  the band a moment in. Tap it and the microphone stops: the band itself
+  becomes the text field, with your text and the caret drawn live inside it,
+  like an inline reply to an Android notification. The phone's Keyboard &
+  remote comes up on its own and closes again when you are done. Enter asks
+  the question exactly as if you had said it; Back cancels. Needs Rokid Nexus
+  1.4.13; with a glasses hub from 1.4.6 to 1.4.12 the field opens as its own
+  card instead, and an older one keeps to voice.
+
 ## 1.4.6
 
 - **Ink answers keep the Thinking band off.** An answer drawn as a page is no
