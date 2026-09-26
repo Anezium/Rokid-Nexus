@@ -189,7 +189,7 @@ object GlassesHub {
     fun start(context: Context) {
         val applicationContext = context.applicationContext
         appContext = applicationContext
-        RemoteInputImeProvisioner.ensureConfigured(applicationContext)
+        GlassesKeyboardKeeper.start(applicationContext)
         RemoteInputHubBridge.initialize { path, payload ->
             sendRemote(BusEnvelope(path = path, payload = payload)) == null
         }
@@ -902,11 +902,13 @@ object GlassesHub {
             sendRemote(errorEnvelope(envelope.id, "HUB_NOT_READY"))
             return
         }
-        val action = GlassesKeyboardContract.actionFromRequest(envelope.payload)
-        if (action == null) {
+        val request = GlassesKeyboardContract.fromRequest(envelope.payload)
+        if (request == null) {
             sendRemote(errorEnvelope(envelope.id, "INVALID_ACTION"))
             return
         }
+        val action = request.action
+        request.keep?.let { GlassesKeyboardKeeper.setKeepEnabled(context, it) }
         val canSwitch = RemoteInputImeProvisioner.canConfigure(context)
         val error = when {
             action != GlassesKeyboardContract.ACTION_USE_NEXUS -> null
@@ -921,6 +923,7 @@ object GlassesHub {
                 RemoteInputImeProvisioner.nexusComponent(context),
             ),
             canSwitch = canSwitch,
+            keepNexus = GlassesKeyboardKeeper.isKeepEnabled(context),
             currentPackage = RemoteInputImeProvisioner.methodPackage(selected),
             error = error,
         )
@@ -932,7 +935,7 @@ object GlassesHub {
             ),
         )
         log(
-            "keyboard action=$action nexusSelected=${reply.nexusSelected} " +
+            "keyboard action=$action keep=${reply.keepNexus} nexusSelected=${reply.nexusSelected} " +
                 "current=${reply.currentPackage ?: "none"} error=${error ?: "none"} " +
                 "replyError=${replyError ?: "none"}",
         )

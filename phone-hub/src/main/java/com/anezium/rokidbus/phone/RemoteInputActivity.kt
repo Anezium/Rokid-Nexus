@@ -25,6 +25,7 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
 import androidx.core.content.ContextCompat
@@ -34,6 +35,7 @@ import com.anezium.rokidbus.client.ui.NexusUi
 import com.anezium.rokidbus.shared.BusPaths
 import com.anezium.rokidbus.shared.GlassesKeyboardContract
 import com.anezium.rokidbus.shared.GlassesKeyboardReply
+import com.anezium.rokidbus.shared.GlassesKeyboardRequest
 import java.util.UUID
 
 /** System-wide phone keyboard and remote for whichever editable field is active on the glasses. */
@@ -53,6 +55,8 @@ class RemoteInputActivity : Activity() {
     private lateinit var glassesKeyboardSection: LinearLayout
     private lateinit var glassesKeyboardBody: TextView
     private lateinit var glassesKeyboardAction: Button
+    private lateinit var glassesKeepRow: LinearLayout
+    private lateinit var glassesKeepSwitch: Switch
     private val remoteButtons = mutableListOf<Button>()
 
     private var viewState = RemoteInputViewState.INITIAL
@@ -66,6 +70,7 @@ class RemoteInputActivity : Activity() {
     private var glassesKeyboard: GlassesKeyboardReply? = null
     private var glassesKeyboardStale = true
     private var glassesKeyboardInFlight = false
+    private var renderingGlassesKeep = false
 
     private val stateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -316,6 +321,48 @@ class RemoteInputActivity : Activity() {
         )
         autoOpenSection = autoOpenSection()
         addView(autoOpenSection, NexusUi.block())
+        glassesKeepRow = glassesKeepRow()
+        addView(glassesKeepRow, NexusUi.block())
+    }
+
+    /** The owner's switch, held by the glasses; shown once they have said where it stands. */
+    private fun glassesKeepRow(): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        visibility = View.GONE
+        glassesKeepSwitch = NexusUi.switch(this@RemoteInputActivity).apply {
+            setOnCheckedChangeListener { _, checked ->
+                if (!renderingGlassesKeep) setGlassesKeep(checked)
+            }
+        }
+        addView(BusTheme.gap(this@RemoteInputActivity, 16))
+        addView(
+            LinearLayout(this@RemoteInputActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                addView(
+                    LinearLayout(this@RemoteInputActivity).apply {
+                        orientation = LinearLayout.VERTICAL
+                        addView(
+                            NexusUi.rowTitle(
+                                this@RemoteInputActivity,
+                                getString(R.string.remote_input_glasses_keyboard_keep),
+                            ),
+                        )
+                        addView(BusTheme.gap(this@RemoteInputActivity, 4))
+                        addView(
+                            NexusUi.rowSub(
+                                this@RemoteInputActivity,
+                                getString(R.string.remote_input_glasses_keyboard_keep_help),
+                            ).apply { maxLines = 4 },
+                        )
+                    },
+                    LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+                )
+                addView(BusTheme.hgap(this@RemoteInputActivity, 8))
+                addView(glassesKeepSwitch)
+            },
+            NexusUi.block(),
+        )
     }
 
     /**
@@ -537,7 +584,7 @@ class RemoteInputActivity : Activity() {
             sequence.reset(next.sessionId)
         }
         renderState()
-        if (next.phase != RemoteInputViewState.Phase.WAITING_FOR_FIELD) {
+        if (!next.controlsEnabled) {
             glassesKeyboardStale = true
         } else if (glassesKeyboardStale) {
             glassesKeyboardStale = false
@@ -624,7 +671,7 @@ class RemoteInputActivity : Activity() {
     }
 
     private fun checkGlassesKeyboard() {
-        requestGlassesKeyboard(GlassesKeyboardContract.ACTION_STATUS) { reply ->
+        requestGlassesKeyboard(GlassesKeyboardRequest(GlassesKeyboardContract.ACTION_STATUS)) { reply ->
             // No answer (older glasses hub, link hiccup) leaves the row hidden: it
             // only speaks up when the glasses say for sure another keyboard is on.
             glassesKeyboard = reply
@@ -635,7 +682,7 @@ class RemoteInputActivity : Activity() {
     private fun useNexusKeyboardOnGlasses() {
         if (glassesKeyboardInFlight) return
         glassesKeyboardAction.text = getString(R.string.remote_input_glasses_keyboard_switching).uppercase()
-        requestGlassesKeyboard(GlassesKeyboardContract.ACTION_USE_NEXUS) { reply ->
+        requestGlassesKeyboard(GlassesKeyboardRequest(GlassesKeyboardContract.ACTION_USE_NEXUS)) { reply ->
             glassesKeyboardAction.text = getString(R.string.remote_input_glasses_keyboard_use).uppercase()
             if (reply?.nexusSelected == true) {
                 Toast.makeText(this, R.string.remote_input_glasses_keyboard_done, Toast.LENGTH_SHORT).show()
@@ -646,13 +693,25 @@ class RemoteInputActivity : Activity() {
         renderGlassesKeyboard()
     }
 
-    private fun requestGlassesKeyboard(action: String, onReply: (GlassesKeyboardReply?) -> Unit) {
+    private fun setGlassesKeep(keep: Boolean) {
+        requestGlassesKeyboard(GlassesKeyboardRequest(GlassesKeyboardContract.ACTION_SET_KEEP, keep)) { reply ->
+            // No answer leaves the switch where the glasses last said it was.
+            if (reply != null) glassesKeyboard = reply
+            renderGlassesKeyboard()
+        }
+        renderGlassesKeyboard()
+    }
+
+    private fun requestGlassesKeyboard(
+        request: GlassesKeyboardRequest,
+        onReply: (GlassesKeyboardReply?) -> Unit,
+    ) {
         val client = glassesClient ?: return
         if (glassesKeyboardInFlight) return
         glassesKeyboardInFlight = true
         client.request(
             BusPaths.GLASSES_KEYBOARD_REQUEST,
-            GlassesKeyboardContract.requestToJson(action),
+            GlassesKeyboardContract.requestToJson(request),
             timeoutMs = GLASSES_KEYBOARD_TIMEOUT_MS,
         ) { result ->
             glassesKeyboardInFlight = false
@@ -664,6 +723,15 @@ class RemoteInputActivity : Activity() {
     private fun renderGlassesKeyboard() {
         if (!::glassesKeyboardSection.isInitialized) return
         val reply = glassesKeyboard
+        glassesKeepRow.visibility = if (reply != null && viewState.controlsEnabled) View.VISIBLE else View.GONE
+        // Left alone while a request is out, so a flip the owner just made does not jump back
+        // to the old answer before the glasses reply to it.
+        if (reply != null && !glassesKeyboardInFlight) {
+            renderingGlassesKeep = true
+            glassesKeepSwitch.isChecked = reply.keepNexus
+            renderingGlassesKeep = false
+        }
+        glassesKeepSwitch.isEnabled = !glassesKeyboardInFlight
         val show = viewState.phase == RemoteInputViewState.Phase.WAITING_FOR_FIELD &&
             reply != null && !reply.nexusSelected
         glassesKeyboardSection.visibility = if (show) View.VISIBLE else View.GONE

@@ -208,6 +208,8 @@
     <string name="remote_input_glasses_keyboard_switching">Switching…</string>
     <string name="remote_input_glasses_keyboard_done">The glasses now use the Nexus keyboard</string>
     <string name="remote_input_glasses_keyboard_failed">The glasses did not take the change. Try again.</string>
+    <string name="remote_input_glasses_keyboard_keep">Keep Nexus keyboard on glasses</string>
+    <string name="remote_input_glasses_keyboard_keep_help">Takes it back whenever Rokid’s keyboard replaces it. Turn off to type through Hi Rokid instead. A keyboard you installed yourself is never replaced.</string>
     <string name="remote_input_glasses_keyboard_permission">Nexus lost the permission to change it. Redo the glasses setup (Settings → Manual glasses setup), then try again.</string>
     <string name="remote_input_prompt_channel">Keyboard requests</string>
     <string name="remote_input_prompt_title">The glasses are asking for text</string>
