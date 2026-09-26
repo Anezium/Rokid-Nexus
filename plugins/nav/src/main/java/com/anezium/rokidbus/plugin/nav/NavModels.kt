@@ -17,6 +17,7 @@ internal enum class NavSource(val packageName: String, val label: String) {
  */
 internal data class NavNotification(
     val packageName: String,
+    val channelId: String? = null,
     val category: String? = null,
     val ongoing: Boolean = false,
     val title: String? = null,
@@ -32,6 +33,12 @@ internal data class NavNotification(
     /** Samsung's Now Bar copy of the guidance, when the app filled it in. */
     val nowBarPrimary: String? = null,
     val nowBarSecondary: String? = null,
+    /**
+     * Text drawn by the app's own notification layout, by the resource entry
+     * name of each TextView ("notification_title"). Citymapper puts its whole
+     * guidance there and nothing in the standard fields.
+     */
+    val viewTexts: Map<String, String> = emptyMap(),
 )
 
 /**
@@ -63,4 +70,5 @@ internal data class NavTrack(val count: Int, val at: Int, val target: Int, val l
 /** Words the plugin supplies itself rather than reading from a notification. */
 internal data class NavLabels(
     val arrived: String = "Arrived",
+    val now: String = "Now",
 )
