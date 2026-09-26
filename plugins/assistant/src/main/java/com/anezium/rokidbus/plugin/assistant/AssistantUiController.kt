@@ -137,6 +137,14 @@ internal class AssistantUiController(
      */
     private var holderShown = false
 
+    /**
+     * A session opened without the anchor — the assist button — that has not closed yet. Asked
+     * aloud, its whole life is the band, and the hub only reads a plugin as done when its last
+     * card goes: with no card ever shown, the hub kept it as the plugin on screen once the band
+     * had left, and turned every other plugin's card away as the screen being busy.
+     */
+    private var bandSession = false
+
     /** The field has actually replaced the card; it opens only once its quiet band has left. */
     private var fieldShown = false
     private var typingAttempt = 0
@@ -222,6 +230,7 @@ internal class AssistantUiController(
             return
         }
         resetForOpen()
+        bandSession = true
         launcherHintJob = scope.launch {
             delay(launcherHintDelayMs)
             launcherHintJob = null
@@ -300,6 +309,7 @@ internal class AssistantUiController(
         typingOpen = false
         fieldShown = false
         forgetHolder()
+        bandSession = false
     }
 
     private fun resetForOpen() {
@@ -317,6 +327,7 @@ internal class AssistantUiController(
         typingOpen = false
         fieldShown = false
         forgetHolder()
+        bandSession = false
     }
 
     fun cancelLauncherHint() {
@@ -416,6 +427,7 @@ internal class AssistantUiController(
             // The caller's card is about to take the tier, whatever was there.
             end == AssistantTypingEnd.REPLACED -> Unit
             end == AssistantTypingEnd.CANCELLED && !anchoredBeforeTyping -> {
+                bandSession = false
                 renderer.hideCard()
                 onSurfaceHidden()
             }
@@ -865,12 +877,35 @@ internal class AssistantUiController(
      * which the hub reads as the session closing — the same end as Back on the anchor.
      */
     private fun maybeReleaseHolder() {
-        if (!holderShown || typingOpen || noticeShown || sessionBusy()) return
+        if (!holderShown) {
+            maybeEndBandSession()
+            return
+        }
+        if (typingOpen || noticeShown || sessionBusy()) return
         if (answerSpeaking()) {
             armHolderRecheck()
             return
         }
         releaseHolder()
+    }
+
+    /**
+     * The band-only end of [bandSession]: once nothing of it is left — no band, card, field,
+     * page, capture, model call or voice — the card it never showed is hidden, which the hub
+     * reads as the session closing, the same end the holder's release gives a typed question.
+     */
+    private fun maybeEndBandSession() {
+        if (!bandSession || surfaceShown || typingOpen || noticeShown || inkOwnsAnswer ||
+            launcherHintJob != null || sessionBusy()
+        ) {
+            return
+        }
+        if (answerSpeaking()) {
+            armHolderRecheck()
+            return
+        }
+        bandSession = false
+        renderer.hideCard()
     }
 
     /**
@@ -889,6 +924,7 @@ internal class AssistantUiController(
 
     private fun releaseHolder() {
         forgetHolder()
+        bandSession = false
         renderer.hideCard()
         onSurfaceHidden()
     }

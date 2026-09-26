@@ -2123,6 +2123,95 @@ class AssistantUiControllerTest {
             controller.onClose()
         }
 
+    @Test
+    fun `a spoken assist-button question ends its session once the band and the voice are done`() =
+        runTest {
+            var busy = false
+            var speaking = false
+            val renderer = FakeRenderer(supportsNotice = true)
+            val controller = controller(renderer, busy = { busy }, speaking = { speaking })
+            assistButtonListening(controller)
+            busy = true
+            controller.showTransient("Thinking…")
+            controller.showAnswer("42", listOf("42"))
+            busy = false
+            controller.onPipelineFinished()
+            speaking = true
+            controller.onAnswerSpeechStarted()
+            renderer.clear()
+
+            // Another plugin took the band while the voice reads: the session still has work.
+            controller.onNoticeClosed(NexusNoticeCloseReason.REPLACED)
+            assertTrue(renderer.calls.none { it == RenderCall.HideCard })
+
+            // Nothing shown and nothing left: the card it never showed goes, closing the session.
+            speaking = false
+            controller.onAnswerSpeechFinished()
+            assertEquals(listOf(RenderCall.HideCard), renderer.calls)
+
+            // Once only, whatever still reports in before the hub's close arrives.
+            controller.onNoticeClosed(NexusNoticeCloseReason.TIMEOUT)
+            assertEquals(listOf(RenderCall.HideCard), renderer.calls)
+            controller.onClose()
+        }
+
+    @Test
+    fun `an assist-button capture that heard nothing ends with its error band`() =
+        runTest {
+            val renderer = FakeRenderer(supportsNotice = true)
+            val controller = controller(renderer)
+            assistButtonListening(controller)
+            controller.showError("Didn't catch that")
+            renderer.clear()
+
+            advanceTimeBy(AssistantUiController.ERROR_NOTICE_DURATION_MS)
+            runCurrent()
+            assertEquals(listOf(RenderCall.HideNotice, RenderCall.HideCard), renderer.calls)
+            controller.onClose()
+        }
+
+    @Test
+    fun `only a band-only session ends itself when its band goes`() =
+        runTest {
+            // The anchor holds a launcher session until Back.
+            val launcherRenderer = FakeRenderer(supportsNotice = true)
+            val launcher = controller(launcherRenderer)
+            launcher.onLauncherOpen()
+            launcher.showAnswer("42", listOf("42"))
+            launcher.onNoticeClosed(NexusNoticeCloseReason.TIMEOUT)
+            assertTrue(launcherRenderer.calls.none { it == RenderCall.HideCard })
+            launcher.onClose()
+
+            // An open still waiting for its assist-button follow-up has not started yet.
+            val pendingRenderer = FakeRenderer(supportsNotice = true)
+            val pending = controller(pendingRenderer)
+            pending.onOpen()
+            pending.onNoticeClosed(NexusNoticeCloseReason.REPLACED)
+            assertTrue(pendingRenderer.calls.none { it == RenderCall.HideCard })
+            pending.onClose()
+
+            // An Ink page holds the session itself; dismissing it is what ends the session.
+            val inkRenderer = FakeRenderer(supportsNotice = true)
+            val ink = controller(inkRenderer)
+            assistButtonListening(ink)
+            ink.showTransient("Thinking…")
+            ink.onInkAnswerShown()
+            ink.onPipelineFinished()
+            ink.onNoticeClosed(NexusNoticeCloseReason.OWNER)
+            assertTrue(inkRenderer.calls.none { it == RenderCall.HideCard })
+            ink.onClose()
+        }
+
+    /** An assist-button session (no anchor) listening in its band. */
+    private fun TestScope.assistButtonListening(controller: AssistantUiController) {
+        controller.onOpen()
+        controller.cancelLauncherHint()
+        controller.beginGestureFlow()
+        controller.showListening(legacyForceShow = true)
+        runCurrent()
+        assertFalse(controller.isAnchored)
+    }
+
     /** An assist-button session (no anchor) with its typed field open. */
     private fun TestScope.assistButtonTyping(controller: AssistantUiController) {
         controller.onOpen()

@@ -6,6 +6,11 @@
   opens behind it, while you type or after you send: only the band, with
   Thinking and then the answer, as when you ask out loud. Assistant closes on
   its own once the answer has been shown and read.
+- **A question asked out loud with the assist button no longer leaves
+  Assistant open.** Once its band and its voice were done, the hub still counted
+  Assistant as the plugin on screen, so another plugin's card — Relay's *Type*,
+  for one — was refused as "Screen busy" until Assistant was stopped. It now
+  closes as soon as nothing of the question is left, heard or not.
 
 ## 1.4.7
 
