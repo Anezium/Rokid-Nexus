@@ -215,6 +215,18 @@ class AssistantPluginService : NexusPluginService() {
                 forceShow: Boolean,
                 contentKey: String?,
             ): NexusSdkResult = renderRichCard(subtitle, lines, footer, forceShow, contentKey)
+
+            override val supportsQuestionField: Boolean
+                get() = nexusClient?.supportsEditableSurface == true
+
+            override fun showQuestionField(
+                field: EditableSurfaceField,
+                footer: String,
+                onRejected: (code: String) -> Unit,
+            ): NexusSdkResult = renderQuestionField(field, footer, onRejected)
+
+            override fun hideCard(): NexusSdkResult =
+                surface?.hide() ?: NexusSdkResult.NOT_REGISTERED
         },
         cancelPipeline = ::cancelPipeline,
         resetCapture = ::resetCapture,
@@ -258,7 +270,12 @@ class AssistantPluginService : NexusPluginService() {
     override fun onNexusInput(event: NexusInputEvent) {
         if (event.action != KeyEvent.ACTION_DOWN) return
         when (event.keyCode) {
-            KeyEvent.KEYCODE_BACK -> if (optionsMenu.isOpen) closeOptionsMenu() else closeSurface()
+            KeyEvent.KEYCODE_BACK -> when {
+                // Only reaches here when no band of ours is up to take Back first.
+                uiController.isTyping -> uiController.endTyping(AssistantTypingEnd.CANCELLED)
+                optionsMenu.isOpen -> closeOptionsMenu()
+                else -> closeSurface()
+            }
             KeyEvent.KEYCODE_DPAD_UP,
             KeyEvent.KEYCODE_DPAD_DOWN,
             KeyEvent.KEYCODE_DPAD_LEFT,
@@ -342,10 +359,16 @@ class AssistantPluginService : NexusPluginService() {
     /**
      * The wearer typed a note directly — no model call, no STT, works even
      * without an AI provider configured. Triggered from [requestNewNote];
-     * [pendingNoteEntry] disambiguates this from any other future use of the
-     * same [SURFACE_ID] card.
+     * [pendingNoteEntry] disambiguates this from the typed question, which
+     * uses the same [SURFACE_ID] card.
      */
     override fun onNexusSurfaceTextCommitted(surfaceId: String, text: String, cancelled: Boolean) {
+        if (uiController.isTyping) {
+            // The wire id round-trips as "pluginId:localSurfaceId".
+            if (surfaceId.substringAfter(':', surfaceId) != SURFACE_ID) return
+            onQuestionTyped(text, cancelled)
+            return
+        }
         if (!pendingNoteEntry) return
         pendingNoteEntry = false
         surface?.hide()
@@ -367,6 +390,33 @@ class AssistantPluginService : NexusPluginService() {
     override fun onNexusNoticeClosed(reason: NexusNoticeCloseReason) {
         if (reason == NexusNoticeCloseReason.USER) stopAnswerSpeech()
         uiController.onNoticeClosed(reason)
+    }
+
+    /**
+     * The Type chip the listening band offers once the wearer is past the tap that started it.
+     * Ignored unless the band is still listening: a spoken question that finished a moment
+     * before the tap landed has already gone to the model and wins.
+     */
+    override fun onNexusNoticeAction(id: String) {
+        if (id != AssistantUiController.ACTION_TYPE) return
+        if (!uiController.offersTyping || !captureActive) return
+        // The generation bump inside drops a final transcript still in flight.
+        resetCapture()
+        uiController.beginTyping()
+    }
+
+    /** Lands where a final transcript does: the typed question takes the same pipeline. */
+    private fun onQuestionTyped(text: String, cancelled: Boolean) {
+        if (cancelled) {
+            uiController.endTyping(AssistantTypingEnd.CANCELLED)
+            return
+        }
+        val question = normalizeTranscript(text)
+        // Enter on an empty field — the Type tap's own bounce landing in the field it just
+        // opened, or a stray temple tap — sends nothing, and the field stays open for typing.
+        if (question.isEmpty()) return
+        uiController.endTyping(AssistantTypingEnd.SUBMITTED)
+        launchAssistantPipeline(question)
     }
 
     override fun onNexusInkReady(surfaceId: String) {
@@ -449,8 +499,10 @@ class AssistantPluginService : NexusPluginService() {
     }
 
     private fun beginCapture() {
-        // The assist button can land while the options menu is up; the question wins.
+        // The assist button can land while the options menu or a typed question is up; the
+        // spoken question wins.
         if (optionsMenu.isOpen) closeOptionsMenu()
+        uiController.endTyping(AssistantTypingEnd.SUPERSEDED)
         uiController.beginGestureFlow()
         clearInkSurface(hide = true)
         if (captureActive) return
@@ -472,7 +524,7 @@ class AssistantPluginService : NexusPluginService() {
         fallbackStopJob = null
         audioFormat = null
         pcmBuffer = ByteArrayOutputStream()
-        uiController.showTransient("Listening…", legacyForceShow = true)
+        uiController.showListening(legacyForceShow = true)
         startSpeechCapture(generation)
     }
 
@@ -485,7 +537,7 @@ class AssistantPluginService : NexusPluginService() {
                     createdSpeech?.stop()
                     return
                 }
-                uiController.showTransient("Listening…")
+                uiController.showListening()
             }
 
             override fun onSpeechState(state: NexusSpeechState) = Unit
@@ -541,7 +593,7 @@ class AssistantPluginService : NexusPluginService() {
         fallbackTranscribePending = false
         audioFormat = null
         pcmBuffer = ByteArrayOutputStream()
-        uiController.showTransient("Listening…")
+        uiController.showListening()
 
         var createdAudio: NexusAudioSession? = null
         val callbacks = object : NexusAudioCallbacks {
@@ -1115,6 +1167,34 @@ class AssistantPluginService : NexusPluginService() {
         }
     }
 
+    /**
+     * The typed-question field, on the same session as the anchor so that swapping between them
+     * never leaves the plugin without a surface — which the hub would read as a close. Its own
+     * content key keeps the anchor's footer off it where the field renders as a card.
+     */
+    private fun renderQuestionField(
+        field: EditableSurfaceField,
+        footer: String,
+        onRejected: (code: String) -> Unit,
+    ): NexusSdkResult {
+        val session = surface ?: return NexusSdkResult.NOT_REGISTERED
+        session.onRejected = onRejected
+        return try {
+            session.showCard(
+                NexusCard(
+                    title = "Assistant",
+                    lines = emptyList(),
+                    footer = footer,
+                    contentKey = QUESTION_CONTENT_KEY,
+                    editable = field,
+                    handlesBack = true,
+                ),
+            )
+        } finally {
+            session.onRejected = null
+        }
+    }
+
     private fun renderRichCard(
         subtitle: String?,
         lines: List<NexusCardLine>,
@@ -1251,6 +1331,7 @@ class AssistantPluginService : NexusPluginService() {
     companion object {
         private const val TAG = "NexusAssistant"
         private const val SURFACE_ID = "assistant"
+        private const val QUESTION_CONTENT_KEY = "question"
         private const val INK_SURFACE_ID = "assistant-ink"
         private const val INK_TEMPLATE_ASSET_DIR = "ink_templates"
         private const val AI_ASSIST_OPEN_PATH = "/system/plugin/ai-assist"
@@ -1300,6 +1381,7 @@ class AssistantPluginService : NexusPluginService() {
             service.serviceScope.launch {
                 service.cancelPipeline()
                 service.resetCapture()
+                service.uiController.endTyping(AssistantTypingEnd.REPLACED)
                 service.pendingNoteEntry = true
                 val result = currentSurface.showCard(
                     NexusCard(
