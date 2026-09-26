@@ -12,7 +12,9 @@ import com.anezium.rokidbus.shared.ActivitySurfaceContract
  *     progress  metres travelled of progressMax
  *
  * The maneuver itself is only a bitmap, so the arrow comes from the
- * instruction's words. Anything that is not a navigation notification with an
+ * instruction's words. Progress is left out: it is the share of the whole
+ * route walked, which sits near zero for most of a walk and drew only the
+ * bar's empty rail, a faint line under the guidance on the glasses. Anything that is not a navigation notification with an
  * instruction yields null: Navigation shows nothing rather than a wrong street.
  */
 internal object GoogleMapsParser {
@@ -62,7 +64,6 @@ internal object GoogleMapsParser {
             secondary = secondary,
             eta = NavText.clock(notification.subText),
             detail = detail,
-            progressPercent = notification.progressPercent(),
             stepKey = "${NavSource.GOOGLE_MAPS.name}|$glyph|${NavText.fold(instruction)}",
             imminent = !arrived && metres != null && metres <= IMMINENT_METRES &&
                 glyph != "straight" && glyph != NavText.ROUTE_GLYPH,
@@ -70,9 +71,6 @@ internal object GoogleMapsParser {
             instruction = instruction,
         )
     }
-
-    private fun NavNotification.progressPercent(): Int? =
-        if (progressMax > 0 && progress in 0..progressMax) progress * 100 / progressMax else null
 
     private const val CATEGORY_NAVIGATION = "navigation"
 }

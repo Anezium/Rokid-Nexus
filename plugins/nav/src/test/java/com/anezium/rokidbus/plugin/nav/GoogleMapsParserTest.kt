@@ -31,7 +31,7 @@ class GoogleMapsParserTest {
         assertEquals("Rue de Rivoli", guidance.secondary)
         assertEquals("22:50", guidance.eta)
         assertEquals(listOf("Prendre à droite"), guidance.detail)
-        assertEquals(0, guidance.progressPercent)
+        assertNull(guidance.progressPercent)
         assertFalse(guidance.imminent)
         assertFalse(guidance.arrived)
     }
