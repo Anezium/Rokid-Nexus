@@ -25,7 +25,7 @@
 
 Rokid Nexus is a plugin platform for Rokid AR glasses: one permanent hub lives
 on the glasses and renders everything; all features ship as ordinary Android
-APKs on the phone. Nothing is ever installed on the glasses again.
+APKs on the phone. Plugins need no separate APK on the glasses.
 
 Plugins stay isolated in their own processes, appear only after explicit user
 approval, and draw on the HUD through declarative surfaces — cards, synced
@@ -82,8 +82,12 @@ deltas into the focused glasses editor, a plugin's own text field included; when
 a plugin opens a field, the screen comes forward by itself and leaves once the
 field is done. Password fields are marked sensitive,
 the phone window becomes secure, and Nexus never mirrors the editor's existing
-text. These are trusted hub-to-hub controls, not plugin capabilities, and they
-do not install native APKs.
+text. These are trusted hub-to-hub controls, not plugin capabilities.
+**Glasses apps → Set up YouTube** downloads official Morphe MicroG-RE, imports
+your patched YouTube APK, and installs or updates them over the Rokid link.
+Sign in on the glasses with the phone keyboard; account data stays in MicroG.
+The glasses launcher lists native apps alongside phone plugins. See
+[YouTube setup](docs/YOUTUBE_GLASSES.md) for APK requirements and validation.
 
 ## Screenshots
 

@@ -105,6 +105,9 @@ class NativeAppsActivity : Activity() {
             NexusUi.block(),
         )
         list.addView(BusTheme.gap(this, 22))
+        addStateCard("YouTube on glasses", "Install MicroG and patched YouTube, then connect your account using the phone keyboard.",
+            "Set up YouTube" to { startActivity(Intent(this, YoutubeSetupActivity::class.java)) })
+        list.addView(BusTheme.gap(this, 22))
         list.addView(NexusUi.sectionRow(this, getString(R.string.native_apps_section)), NexusUi.block())
         list.addView(BusTheme.gap(this, 10))
         when (val current = state) {

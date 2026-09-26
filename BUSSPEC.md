@@ -2154,6 +2154,22 @@ the current transport, the glasses send the largest valid prefix that does.
 This protocol lists and opens apps that are already installed. It has no APK
 download, transfer, install, uninstall, or privilege-elevation operation.
 
+YouTube setup also uses these same trusted routes for `youtube_setup_request`
+and `youtube_setup_result` (version 1, matching `requestId`). The request has no
+package selector. The result contains `sdk` and exactly three `apps`, in order:
+`app.revanced.android.gms`, `app.morphe.android.youtube`, and
+`app.morphe.android.youtube.rokidtest`. Each entry contains `packageName`, integer
+`versionCode` (zero means absent), `signer` (a lowercase SHA-256 certificate digest,
+or empty when absent/unverifiable), and boolean `launchable`. Missing or ambiguous
+signers never authorize an update. This bounded inventory includes installed apps
+without launcher icons and fits in 2,000 UTF-8 bytes. It contains no account state.
+Older hubs do not support this request; the phone times out with an update prompt.
+
+The phone's private YouTube setup screen downloads/imports and verifies APKs locally,
+then uses the existing CXR upload/install API. Installation adds no bus route or
+plugin capability. A fresh inventory is required before upload and after the SDK
+reports success; Nexus never uninstalls an app to resolve a signature conflict.
+
 ### Remote input
 
 - Glasses → phone `/core/remote-input/session`: `session_open` and

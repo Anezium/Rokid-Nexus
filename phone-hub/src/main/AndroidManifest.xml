@@ -54,6 +54,8 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.RokidBus.Phone">
 
+        <activity android:name=".YoutubeSetupActivity" android:exported="false" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true">
