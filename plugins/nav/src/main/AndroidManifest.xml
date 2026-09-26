@@ -55,6 +55,10 @@
             <meta-data
                 android:name="com.anezium.rokidbus.plugin.DISPLAY_NAME"
                 android:value="Navigation" />
+            <!-- The glasses launcher draws built-in icons by name only. -->
+            <meta-data
+                android:name="com.anezium.rokidbus.plugin.ICON"
+                android:value="map" />
             <meta-data
                 android:name="com.anezium.rokidbus.plugin.ICON_DRAWABLE"
                 android:resource="@drawable/nexus_glyph_nav" />

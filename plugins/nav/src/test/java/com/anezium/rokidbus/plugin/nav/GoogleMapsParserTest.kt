@@ -74,6 +74,32 @@ class GoogleMapsParserTest {
     }
 
     @Test
+    fun `continuing to the destination is a straight step, not the arrival`() {
+        val guidance = GoogleMapsParser.parse(
+            walking.copy(title = "200 m · Continue to your destination", nowBarSecondary = null),
+        )!!
+
+        assertEquals("straight", guidance.glyph)
+        assertFalse(guidance.arrived)
+    }
+
+    @Test
+    fun `no-break spaces in Maps' text read like ordinary ones`() {
+        val guidance = GoogleMapsParser.parse(
+            walking.copy(
+                title = "80\u00A0m · Prendre à droite sur Rue de Rivoli",
+                shortCriticalText = "80\u202Fm",
+                subText = "Arrivée à\u00A022:50",
+                nowBarSecondary = null,
+            ),
+        )!!
+
+        assertEquals("80 m", guidance.primary)
+        assertEquals("turn-right", guidance.glyph)
+        assertEquals("22:50", guidance.eta)
+    }
+
+    @Test
     fun `an instruction it cannot place gets the neutral route mark, not a guessed arrow`() {
         val guidance = GoogleMapsParser.parse(walking.copy(title = "300 m · Empruntez l'escalier"))!!
 

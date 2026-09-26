@@ -32,12 +32,14 @@ internal object NavText {
         "turn-sharp-left" to listOf("fortement a gauche", "franchement a gauche", "sharp left"),
         "turn-right" to listOf("a droite", "turn right", "right onto", "right on ", "right at "),
         "turn-left" to listOf("a gauche", "turn left", "left onto", "left on ", "left at "),
-        "arrive" to listOf("vous etes arrive", "votre destination", "destination", "arrive", "you have arrived"),
+        // Before the arrival phrases: "Continue to your destination" is a
+        // straight step, not the arrival.
         "straight" to listOf(
             "continuez", "continuer", "tout droit", "poursuivez", "dirigez-vous", "aller vers", "allez vers",
             "head ", "continue",
             "straight",
         ),
+        "arrive" to listOf("vous etes arrive", "votre destination", "destination", "arrive", "you have arrived"),
     )
 
     /** Street connectors, most specific first. */
@@ -104,6 +106,14 @@ internal object NavText {
         val cut = trimmed.lastIndexOf(' ', room).takeIf { it >= room * 2 / 3 } ?: room
         return trimmed.substring(0, cut).trimEnd() + "…"
     }
+
+    /**
+     * Apps print "80\u00A0m" with no-break spaces (U+00A0, U+202F, U+2007),
+     * which the patterns' \s does not match.
+     */
+    fun spaces(value: String?): String? = value?.replace(NO_BREAK_SPACES, " ")
+
+    private val NO_BREAK_SPACES = Regex("[\u00A0\u202F\u2007]")
 
     /** Lower case with accents removed, so "Légèrement à droite" matches "legerement a droite". */
     fun fold(value: String): String =

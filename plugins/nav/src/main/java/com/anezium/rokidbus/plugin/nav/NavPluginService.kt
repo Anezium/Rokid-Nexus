@@ -1,60 +1,37 @@
 package com.anezium.rokidbus.plugin.nav
 
-import com.anezium.rokidbus.client.plugin.NexusCard
 import com.anezium.rokidbus.client.plugin.NexusPluginService
-import com.anezium.rokidbus.client.plugin.NexusSurfaceSession
 import com.anezium.rokidbus.shared.plugin.NexusInputEvent
 
 /**
- * Opening Navigation from the glasses (or tapping its activity) shows the
- * whole current instruction, which the activity only has room to abbreviate,
- * or says how to start a route.
+ * The launcher entry when no route holds the bus.
+ *
+ * The hub delivers a plugin's lifecycle only while it has exactly one
+ * registration. During a route the listener's runtime is that registration and
+ * shows the card itself, so this service is bound only when no route is live.
+ * If a route starts while it is open, the runtime borrows this service's
+ * client rather than registering a second one, and takes the route back onto
+ * its own client when the service closes.
  */
 class NavPluginService : NexusPluginService() {
-    private var surface: NexusSurfaceSession? = null
-
     override fun onNexusOpen() {
-        surface = nexusSurfaceSession(SURFACE_ID)
-        surface?.showCard(card())
+        val client = nexusClient ?: return
+        NavControl.serviceOpened(client)
+        nexusSurfaceSession(NavCard.SURFACE_ID)?.showCard(NavCard.build(this))
     }
 
     override fun onNexusClose() {
-        surface = null
+        nexusClient?.let(NavControl::serviceClosed)
     }
 
     override fun onNexusInput(event: NexusInputEvent) = Unit
 
-    private fun card(): NexusCard {
-        val guidance = NavState.guidance
-        return when {
-            !NavSettings(this).switches().enabled -> NexusCard(
-                title = getString(R.string.app_name),
-                lines = listOf(getString(R.string.nav_card_off)),
-                contentKey = "nav-off",
-            )
-            guidance != null -> NexusCard(
-                title = guidance.instruction ?: guidance.primary,
-                subtitle = guidance.source.label,
-                lines = listOfNotNull(
-                    listOfNotNull(guidance.primary, guidance.secondary).joinToString(" · "),
-                    guidance.eta?.let { getString(R.string.nav_card_eta, it) },
-                ) + guidance.detail,
-                contentKey = "nav-route",
-            )
-            !NavState.listenerConnected -> NexusCard(
-                title = getString(R.string.app_name),
-                lines = listOf(getString(R.string.nav_card_no_access)),
-                contentKey = "nav-no-access",
-            )
-            else -> NexusCard(
-                title = getString(R.string.app_name),
-                lines = listOf(getString(R.string.nav_card_idle)),
-                contentKey = "nav-idle",
-            )
-        }
+    override fun onNexusActivityClosed(reason: String) {
+        NavControl.activityClosed(reason)
     }
 
-    private companion object {
-        const val SURFACE_ID = "nav"
+    override fun onDestroy() {
+        nexusClient?.let(NavControl::serviceClosed)
+        super.onDestroy()
     }
 }

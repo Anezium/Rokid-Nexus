@@ -8,16 +8,21 @@ import android.util.Log
  * Reads guidance from the navigation apps Navigation follows and nothing
  * else: every other package's notification, and any app the wearer switched
  * off, is dropped before it is read.
+ *
+ * One app drives the route at a time: the first to post guidance. Another
+ * app's guidance waits until that route ends, then takes over if it is still
+ * posted.
  */
 class NavNotificationListener : NotificationListenerService() {
     private val runtime by lazy { NavRuntime(applicationContext) }
     private val citymapper = CitymapperParser()
     private val guidanceKeys = mutableMapOf<NavSource, String>()
+    private var activeSource: NavSource? = null
 
     override fun onListenerConnected() {
         super.onListenerConnected()
         NavState.listenerConnected = true
-        NavControl.attach(this)
+        NavControl.attach(this, runtime)
         // A route already running when access was granted or the process restarted.
         scanActive()
     }
@@ -26,6 +31,7 @@ class NavNotificationListener : NotificationListenerService() {
         NavControl.detach(this)
         NavState.listenerConnected = false
         guidanceKeys.clear()
+        activeSource = null
         citymapper.reset()
         runtime.shutdown()
         super.onListenerDisconnected()
@@ -46,22 +52,30 @@ class NavNotificationListener : NotificationListenerService() {
         sbn ?: return
         val source = NavSource.of(sbn.packageName) ?: return
         if (guidanceKeys[source] != sbn.key) return
-        guidanceKeys.remove(source)
-        if (source == NavSource.CITYMAPPER) citymapper.reset()
         Log.i(TAG, "guidance removed source=$source")
-        runtime.onRouteEnded(source)
+        endRoute(source)
     }
 
     /** Ends the route of an app just switched off, and picks up one just switched on. */
     internal fun applySettings() {
         val switches = NavSettings(this).switches()
         guidanceKeys.keys.filterNot(switches::allows).forEach { source ->
-            guidanceKeys.remove(source)
-            if (source == NavSource.CITYMAPPER) citymapper.reset()
             Log.i(TAG, "guidance switched off source=$source")
-            runtime.onRouteEnded(source)
+            endRoute(source, rescan = false)
         }
         scanActive()
+    }
+
+    private fun endRoute(source: NavSource, rescan: Boolean = true) {
+        guidanceKeys.remove(source)
+        if (source == NavSource.CITYMAPPER) citymapper.reset()
+        runtime.onRouteEnded(source)
+        if (activeSource == source) {
+            activeSource = null
+            // The other app may still be guiding; it takes the route over now
+            // rather than whenever it next happens to post.
+            if (rescan) scanActive()
+        }
     }
 
     private fun scanActive() {
@@ -72,7 +86,13 @@ class NavNotificationListener : NotificationListenerService() {
     private fun ingest(sbn: StatusBarNotification) {
         val source = NavSource.of(sbn.packageName) ?: return
         if (!NavSettings(this).switches().allows(source)) return
+        val active = activeSource
+        if (active != null && active != source && guidanceKeys.containsKey(active)) return
         val notification = NavNotificationReader.read(this, sbn) ?: return
+        // A new Citymapper trip must not inherit the last trip's line.
+        if (source == NavSource.CITYMAPPER && guidanceKeys[source] != null && guidanceKeys[source] != sbn.key) {
+            citymapper.reset()
+        }
         val labels = NavLabels(
             arrived = getString(R.string.nav_arrived),
             now = getString(R.string.nav_now),
@@ -82,12 +102,18 @@ class NavNotificationListener : NotificationListenerService() {
             NavSource.CITYMAPPER -> citymapper.parse(notification, labels)
         }
         if (guidance == null) {
-            // Not guidance, or guidance this version cannot read: show nothing
-            // rather than something wrong. Only the key's owner can end a route.
-            Log.i(TAG, "ignored source=$source category=${notification.category} channel=${notification.channelId}")
+            Log.i(TAG, "unreadable source=$source category=${notification.category} channel=${notification.channelId}")
+            // The route's own notification turned into something this version
+            // cannot read: show nothing rather than keep a step that is gone.
+            if (guidanceKeys[source] == sbn.key) {
+                guidanceKeys.remove(source)
+                runtime.onRouteEnded(source)
+                if (activeSource == source) activeSource = null
+            }
             return
         }
         guidanceKeys[source] = sbn.key
+        activeSource = source
         runtime.onGuidance(guidance)
     }
 

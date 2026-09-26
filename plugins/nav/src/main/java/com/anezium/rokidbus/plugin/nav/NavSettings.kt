@@ -1,6 +1,7 @@
 package com.anezium.rokidbus.plugin.nav
 
 import android.content.Context
+import com.anezium.rokidbus.client.plugin.NexusPluginClient
 
 /** Which guidance the wearer lets through: everything, per app, or nothing. */
 internal data class NavSwitches(
@@ -43,23 +44,57 @@ internal class NavSettings(context: Context) {
 }
 
 /**
- * The settings screen and the listener share a process. A switch turned off
- * ends that app's live route at once; turned back on, a route already running
- * is picked up again without waiting for its next update.
+ * The process's one meeting point. The settings screen tells the listener
+ * when a switch changes: off ends that app's live route at once, on picks up a
+ * route already running without waiting for its next update. The plugin
+ * service lends its hub client to the route while it is open, because the
+ * hub serves one registration per plugin.
  */
 internal object NavControl {
     @Volatile
     private var listener: NavNotificationListener? = null
 
-    fun attach(service: NavNotificationListener) {
+    @Volatile
+    private var runtime: NavRuntime? = null
+
+    /** The open plugin service's client, which the route borrows. */
+    @Volatile
+    var serviceClient: NexusPluginClient? = null
+        private set
+
+    /** A Navigation card is on the glasses, shown by the service or the route. */
+    @Volatile
+    var cardOpen: Boolean = false
+
+    fun attach(service: NavNotificationListener, routeRuntime: NavRuntime) {
         listener = service
+        runtime = routeRuntime
     }
 
     fun detach(service: NavNotificationListener) {
-        if (listener === service) listener = null
+        if (listener === service) {
+            listener = null
+            runtime = null
+        }
     }
 
     fun settingsChanged() {
         listener?.applySettings()
+    }
+
+    fun serviceOpened(client: NexusPluginClient) {
+        serviceClient = client
+        cardOpen = true
+    }
+
+    fun serviceClosed(client: NexusPluginClient) {
+        if (serviceClient !== client) return
+        serviceClient = null
+        cardOpen = false
+        runtime?.onServiceClientGone(client)
+    }
+
+    fun activityClosed(reason: String) {
+        runtime?.onActivityClosed(reason)
     }
 }

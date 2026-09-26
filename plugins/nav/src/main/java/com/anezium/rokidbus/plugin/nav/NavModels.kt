@@ -41,6 +41,19 @@ internal data class NavNotification(
     val viewTexts: Map<String, String> = emptyMap(),
 )
 
+/** The same notification with every no-break space made an ordinary one. */
+internal fun NavNotification.withPlainSpaces(): NavNotification = copy(
+    title = NavText.spaces(title),
+    text = NavText.spaces(text),
+    subText = NavText.spaces(subText),
+    bigText = NavText.spaces(bigText),
+    textLines = textLines.map { NavText.spaces(it).orEmpty() },
+    shortCriticalText = NavText.spaces(shortCriticalText),
+    nowBarPrimary = NavText.spaces(nowBarPrimary),
+    nowBarSecondary = NavText.spaces(nowBarSecondary),
+    viewTexts = viewTexts.mapValues { (_, value) -> NavText.spaces(value).orEmpty() },
+)
+
 /**
  * What the wearer should see for one guidance notification. Every value comes
  * from the notification itself; nothing is estimated between two of them.

@@ -24,7 +24,8 @@ internal class CitymapperParser {
     private var rideDestination: String? = null
     private var rideStops = 0
 
-    fun parse(notification: NavNotification, labels: NavLabels = NavLabels()): NavGuidance? {
+    fun parse(raw: NavNotification, labels: NavLabels = NavLabels()): NavGuidance? {
+        val notification = raw.withPlainSpaces()
         if (notification.packageName != NavSource.CITYMAPPER.packageName || !notification.ongoing) return null
         if (notification.channelId != null && notification.channelId != CHANNEL_TRIP) return null
         val texts = notification.viewTexts

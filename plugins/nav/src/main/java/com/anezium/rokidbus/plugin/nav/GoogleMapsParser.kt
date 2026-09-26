@@ -36,7 +36,8 @@ internal object GoogleMapsParser {
     private const val SEPARATOR = " · "
     private const val IMMINENT_METRES = 40.0
 
-    fun parse(notification: NavNotification, labels: NavLabels = NavLabels()): NavGuidance? {
+    fun parse(raw: NavNotification, labels: NavLabels = NavLabels()): NavGuidance? {
+        val notification = raw.withPlainSpaces()
         if (notification.packageName != NavSource.GOOGLE_MAPS.packageName) return null
         if (notification.category != CATEGORY_NAVIGATION || !notification.ongoing) return null
         val title = notification.title?.trim()?.takeIf(String::isNotEmpty) ?: return null

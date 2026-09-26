@@ -12,6 +12,7 @@ import com.anezium.rokidbus.client.plugin.NexusActivityTrack
 import com.anezium.rokidbus.client.plugin.NexusPluginCallbacks
 import com.anezium.rokidbus.client.plugin.NexusPluginClient
 import com.anezium.rokidbus.client.plugin.NexusSdkResult
+import com.anezium.rokidbus.client.plugin.surfaceSession
 import com.anezium.rokidbus.shared.plugin.NexusInputEvent
 
 /**
@@ -20,18 +21,24 @@ import com.anezium.rokidbus.shared.plugin.NexusInputEvent
  * keeps bound while Notification Access is granted; an activity ends when its
  * owner disconnects, so the owner has to be something that stays.
  *
- * The client connects when guidance first arrives and closes once the route
- * has ended. Nothing polls: each posted notification is one chance to update.
+ * The hub serves one registration per plugin, and delivers opening, input and
+ * closing only while there is exactly one. So the route never registers next
+ * to the plugin service: while the service is open the route borrows its
+ * client, and while the route holds the only registration, opening Navigation
+ * reaches this runtime, which shows the card itself.
+ *
+ * Nothing polls: each posted notification is one chance to update.
  */
 internal class NavRuntime(context: Context) : NexusPluginCallbacks {
     private val appContext = context.applicationContext
     private val main = Handler(Looper.getMainLooper())
     private val planner = NavActivityPlanner()
     private var client: NexusPluginClient? = null
+    private var ownsClient = false
     private var pending: NavGuidance? = null
     private var deferred: NavGuidance? = null
     private var started = false
-    private var lastRegistration: Int? = null
+    private var startedGeneration = NO_GENERATION
     private var lastSentAtMs = 0L
     private val sendDeferred = Runnable { flushDeferred() }
     private val closeIdle = Runnable { closeClient() }
@@ -42,9 +49,10 @@ internal class NavRuntime(context: Context) : NexusPluginCallbacks {
         pending = guidance
         ensureClient()
         flush()
+        refreshCard()
     }
 
-    /** The app withdrew its guidance: the route is over, whatever the reason. */
+    /** The app withdrew its guidance, or it became unreadable: the route is over. */
     fun onRouteEnded(source: NavSource) = onMain {
         if (NavState.guidance?.source != source && pending?.source != source) return@onMain
         NavState.guidance = null
@@ -56,23 +64,47 @@ internal class NavRuntime(context: Context) : NexusPluginCallbacks {
             log("end result=${client?.endActivity()}")
             started = false
         }
+        refreshCard()
         // Give the end a moment on the bus before the connection that owns it goes.
         main.removeCallbacks(closeIdle)
         main.postDelayed(closeIdle, CLOSE_AFTER_END_MS)
     }
 
     fun shutdown() = onMain {
+        NavState.guidance = null
         pending = null
         deferred = null
         planner.reset()
         if (started) client?.endActivity()
         started = false
-        closeClient()
+        closeClient(force = true)
     }
 
-    override fun onOpen() = Unit
+    /** The open plugin service closed; a route on its client moves to our own. */
+    fun onServiceClientGone(gone: NexusPluginClient) = onMain {
+        if (client !== gone || ownsClient) return@onMain
+        client = null
+        started = false
+        planner.reset()
+        val live = NavState.guidance ?: return@onMain
+        pending = live
+        ensureClient()
+        flush()
+    }
 
-    override fun onClose() = Unit
+    /** Opening Navigation while the route holds the only registration. */
+    override fun onOpen() = onMain {
+        NavControl.cardOpen = true
+        client?.surfaceSession(NavCard.SURFACE_ID)?.showCard(NavCard.build(appContext))
+    }
+
+    override fun onClose() = onMain {
+        NavControl.cardOpen = false
+        if (NavState.guidance == null) {
+            main.removeCallbacks(closeIdle)
+            main.postDelayed(closeIdle, CLOSE_AFTER_END_MS)
+        }
+    }
 
     override fun onInput(event: NexusInputEvent) = Unit
 
@@ -80,15 +112,13 @@ internal class NavRuntime(context: Context) : NexusPluginCallbacks {
 
     override fun onRegistrationState(result: Int) = onMain {
         NavState.registration = result
-        val previous = lastRegistration
-        lastRegistration = result
         if (result != PluginRegistrationResult.APPROVED) {
             log("registration result=$result")
             return@onMain
         }
-        if (previous != PluginRegistrationResult.APPROVED) {
-            // A new registration owns no activity yet: the next send starts one.
-            // A repeated approval changes nothing and must not restart it.
+        // Approval comes twice per registration; only a new registration has
+        // lost the activity (the old one ended with its connection).
+        if (client?.registrationGeneration != startedGeneration) {
             started = false
             planner.reset()
             pending = pending ?: NavState.guidance
@@ -104,13 +134,20 @@ internal class NavRuntime(context: Context) : NexusPluginCallbacks {
 
     private fun ensureClient() {
         if (client != null) return
+        val borrowed = NavControl.serviceClient
+        if (borrowed != null) {
+            client = borrowed
+            ownsClient = false
+            return
+        }
         client = NexusPluginClient.create(appContext, PLUGIN_ID, this).also(NexusPluginClient::connect)
+        ownsClient = true
     }
 
     private fun flush() {
         val current = client ?: return
-        // Capabilities can arrive with the link before approval does; sending
-        // then would start an activity the approval right after starts again.
+        // Capabilities can arrive with the link before approval does; nothing
+        // is sent until the registration it would belong to exists.
         if (!current.isApproved || !current.supportsActivitySurface) return
         val next = pending ?: return
         pending = null
@@ -154,6 +191,7 @@ internal class NavRuntime(context: Context) : NexusPluginCallbacks {
         lastSentAtMs = SystemClock.elapsedRealtime()
         if (result == NexusSdkResult.SENT) {
             started = true
+            if (start) startedGeneration = current.registrationGeneration
         } else {
             // Whatever did not arrive is sent whole next time.
             started = false
@@ -163,12 +201,20 @@ internal class NavRuntime(context: Context) : NexusPluginCallbacks {
         if (start || significant) log("send start=$start significant=$significant urgent=$urgent glyph=${guidance.glyph} result=$result")
     }
 
-    private fun closeClient() {
+    private fun refreshCard() {
+        if (!NavControl.cardOpen) return
+        client?.surfaceSession(NavCard.SURFACE_ID)?.updateCard(NavCard.build(appContext))
+    }
+
+    private fun closeClient(force: Boolean = false) {
         main.removeCallbacks(closeIdle)
-        client?.close()
+        // An open card lives on this registration; it closes with the card.
+        if (!force && NavControl.cardOpen && ownsClient) return
+        if (ownsClient) client?.close()
         client = null
+        ownsClient = false
         started = false
-        lastRegistration = null
+        startedGeneration = NO_GENERATION
     }
 
     private fun onMain(block: () -> Unit) {
@@ -180,6 +226,7 @@ internal class NavRuntime(context: Context) : NexusPluginCallbacks {
     companion object {
         const val PLUGIN_ID = "nav"
         private const val TAG = "NexusNav"
+        private const val NO_GENERATION = -1
         private const val MIN_QUIET_INTERVAL_MS = 1_000L
         private const val CLOSE_AFTER_END_MS = 3_000L
         private const val MAX_ROUTE_MS = 12L * 60L * 60L * 1000L
