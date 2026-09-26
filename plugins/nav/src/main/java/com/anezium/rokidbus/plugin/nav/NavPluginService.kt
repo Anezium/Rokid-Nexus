@@ -27,6 +27,11 @@ class NavPluginService : NexusPluginService() {
     private fun card(): NexusCard {
         val guidance = NavState.guidance
         return when {
+            !NavSettings(this).switches().enabled -> NexusCard(
+                title = getString(R.string.app_name),
+                lines = listOf(getString(R.string.nav_card_off)),
+                contentKey = "nav-off",
+            )
             guidance != null -> NexusCard(
                 title = guidance.instruction ?: guidance.primary,
                 subtitle = guidance.source.label,

@@ -27,6 +27,15 @@ in process memory only; nothing is stored.
 Anything that does not read as guidance is dropped: no value is estimated or
 invented between two notifications.
 
+## Settings
+
+The plugin screen on the phone (Rokid Nexus, Navigation) has a main switch and
+one switch per app, Google Maps and Citymapper. Switching one off ends that
+app's live route on the glasses at once and ignores its guidance until it is
+switched back on, so nobody has to uninstall the plugin to keep one app off
+the HUD. Switched back on, a route already running is picked up straight away.
+The screen also asks for Notification Access and shows the route it sees.
+
 ## Requirements
 
 - Rokid Nexus phone and glasses hubs with the activity tier. Badge, track and

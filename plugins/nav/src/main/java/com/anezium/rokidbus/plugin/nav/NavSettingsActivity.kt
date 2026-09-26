@@ -9,24 +9,31 @@ import android.os.Bundle
 import android.provider.Settings
 import android.view.ViewGroup
 import android.widget.LinearLayout
+import android.widget.Switch
 import android.widget.TextView
 import com.anezium.rokidbus.client.PluginRegistrationResult
 import com.anezium.rokidbus.client.ui.BusTheme
 import com.anezium.rokidbus.client.ui.NexusUi
 
 /**
- * The one thing Navigation needs from the wearer: Notification Access, so it
- * can read the guidance Google Maps and Citymapper already post.
+ * Navigation's switches (all of it, or one app at a time) and the one thing it
+ * needs from the wearer: Notification Access, so it can read the guidance
+ * Google Maps and Citymapper already post.
  */
 class NavSettingsActivity : Activity() {
     private lateinit var accessStatus: TextView
     private lateinit var routeStatus: TextView
+    private val sourceSwitches = mutableMapOf<NavSource, Switch>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.statusBarColor = NexusUi.BG
         window.navigationBarColor = NexusUi.BG
         val content = NexusUi.contentColumn(this).apply {
+            addView(NexusUi.sectionRow(this@NavSettingsActivity, getString(R.string.nav_settings_glasses)), NexusUi.block())
+            addView(BusTheme.gap(this@NavSettingsActivity, 10))
+            addView(switchesCard(), NexusUi.block())
+            addView(BusTheme.gap(this@NavSettingsActivity, 24))
             addView(NexusUi.sectionRow(this@NavSettingsActivity, getString(R.string.nav_settings_access)), NexusUi.block())
             addView(BusTheme.gap(this@NavSettingsActivity, 10))
             addView(accessCard(), NexusUi.block())
@@ -74,8 +81,13 @@ class NavSettingsActivity : Activity() {
         accessStatus.text = getString(
             if (accessGranted()) R.string.nav_settings_access_on else R.string.nav_settings_access_off,
         )
+        refreshRoute()
+    }
+
+    private fun refreshRoute() {
         val guidance = NavState.guidance
         routeStatus.text = when {
+            !NavSettings(this).switches().enabled -> getString(R.string.nav_settings_route_off)
             guidance != null -> getString(
                 R.string.nav_settings_route_live,
                 guidance.source.label,
@@ -84,6 +96,50 @@ class NavSettingsActivity : Activity() {
             NavState.registration != null && NavState.registration != PluginRegistrationResult.APPROVED ->
                 getString(R.string.nav_settings_not_approved)
             else -> getString(R.string.nav_settings_route_idle)
+        }
+    }
+
+    /**
+     * Off, a switch ends that app's live route on the glasses at once; nothing
+     * has to be uninstalled to keep an app's guidance off the HUD.
+     */
+    private fun switchesCard(): LinearLayout = NexusUi.card(this).apply {
+        orientation = LinearLayout.VERTICAL
+        val settings = NavSettings(this@NavSettingsActivity)
+        val current = settings.switches()
+        val master = NexusUi.switch(this@NavSettingsActivity).apply { isChecked = current.enabled }
+        addView(
+            NexusUi.switchRow(
+                this@NavSettingsActivity,
+                getString(R.string.nav_settings_enabled),
+                getString(R.string.nav_settings_enabled_sub),
+                master,
+            ),
+        )
+        listOf(
+            Triple(NavSource.GOOGLE_MAPS, current.googleMaps, R.string.nav_settings_maps_sub),
+            Triple(NavSource.CITYMAPPER, current.citymapper, R.string.nav_settings_citymapper_sub),
+        ).forEach { (source, checked, sub) ->
+            val control = NexusUi.switch(this@NavSettingsActivity).apply {
+                isChecked = checked
+                isEnabled = current.enabled
+                setOnCheckedChangeListener { _, value ->
+                    settings.setSource(source, value)
+                    NavControl.settingsChanged()
+                    refreshRoute()
+                }
+            }
+            sourceSwitches[source] = control
+            addView(BusTheme.gap(this@NavSettingsActivity, 12))
+            addView(NexusUi.divider(this@NavSettingsActivity))
+            addView(BusTheme.gap(this@NavSettingsActivity, 12))
+            addView(NexusUi.switchRow(this@NavSettingsActivity, source.label, getString(sub), control))
+        }
+        master.setOnCheckedChangeListener { _, value ->
+            settings.setEnabled(value)
+            sourceSwitches.values.forEach { it.isEnabled = value }
+            NavControl.settingsChanged()
+            refreshRoute()
         }
     }
 
