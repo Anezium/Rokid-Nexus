@@ -219,6 +219,10 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
         setPadding(px(18), px(16), px(18), px(12))
         isFocusable = true
         isFocusableInTouchMode = true
+        // The glasses never enter touch mode, so the platform would wash this focused,
+        // full-screen view in its translucent white focus highlight: a grey veil over
+        // whatever a see-through card leaves in view.
+        defaultFocusHighlightEnabled = false
 
         applyMarquee(titleView)
         subtitleView.maxLines = 1
