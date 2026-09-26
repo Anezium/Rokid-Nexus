@@ -62,7 +62,7 @@ class NavSettingsActivity : Activity() {
             addView(
                 NexusUi.pluginHeader(
                     this@NavSettingsActivity,
-                    R.drawable.nexus_glyph_nav,
+                    R.drawable.nexus_glyph_route,
                     getString(R.string.app_name),
                     getString(R.string.nav_settings_subtitle),
                 ),

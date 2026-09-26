@@ -61,7 +61,7 @@
                 android:value="map" />
             <meta-data
                 android:name="com.anezium.rokidbus.plugin.ICON_DRAWABLE"
-                android:resource="@drawable/nexus_glyph_nav" />
+                android:resource="@drawable/nexus_glyph_route" />
             <meta-data
                 android:name="com.anezium.rokidbus.plugin.GLYPHS"
                 android:resource="@array/nexus_glyphs" />
