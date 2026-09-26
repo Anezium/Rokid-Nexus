@@ -31,6 +31,7 @@ internal class NavRuntime(context: Context) : NexusPluginCallbacks {
     private var pending: NavGuidance? = null
     private var deferred: NavGuidance? = null
     private var started = false
+    private var lastRegistration: Int? = null
     private var lastSentAtMs = 0L
     private val sendDeferred = Runnable { flushDeferred() }
     private val closeIdle = Runnable { closeClient() }
@@ -79,15 +80,20 @@ internal class NavRuntime(context: Context) : NexusPluginCallbacks {
 
     override fun onRegistrationState(result: Int) = onMain {
         NavState.registration = result
-        if (result == PluginRegistrationResult.APPROVED) {
-            // A fresh registration owns no activity yet: the next send starts one.
+        val previous = lastRegistration
+        lastRegistration = result
+        if (result != PluginRegistrationResult.APPROVED) {
+            log("registration result=$result")
+            return@onMain
+        }
+        if (previous != PluginRegistrationResult.APPROVED) {
+            // A new registration owns no activity yet: the next send starts one.
+            // A repeated approval changes nothing and must not restart it.
             started = false
             planner.reset()
             pending = pending ?: NavState.guidance
-            flush()
-        } else {
-            log("registration result=$result")
         }
+        flush()
     }
 
     override fun onActivityClosed(reason: String) = onMain {
@@ -103,7 +109,9 @@ internal class NavRuntime(context: Context) : NexusPluginCallbacks {
 
     private fun flush() {
         val current = client ?: return
-        if (!current.supportsActivitySurface) return
+        // Capabilities can arrive with the link before approval does; sending
+        // then would start an activity the approval right after starts again.
+        if (!current.isApproved || !current.supportsActivitySurface) return
         val next = pending ?: return
         pending = null
         if (!started) planner.reset()
@@ -148,12 +156,11 @@ internal class NavRuntime(context: Context) : NexusPluginCallbacks {
             started = true
         } else {
             // Whatever did not arrive is sent whole next time.
-            log("send start=$start result=$result")
             started = false
             planner.reset()
             pending = guidance
         }
-        if (start || significant) log("sent start=$start significant=$significant urgent=$urgent glyph=${guidance.glyph}")
+        if (start || significant) log("send start=$start significant=$significant urgent=$urgent glyph=${guidance.glyph} result=$result")
     }
 
     private fun closeClient() {
@@ -161,6 +168,7 @@ internal class NavRuntime(context: Context) : NexusPluginCallbacks {
         client?.close()
         client = null
         started = false
+        lastRegistration = null
     }
 
     private fun onMain(block: () -> Unit) {

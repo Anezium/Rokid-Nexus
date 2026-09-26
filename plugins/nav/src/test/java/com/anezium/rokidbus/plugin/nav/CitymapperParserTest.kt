@@ -41,6 +41,14 @@ class CitymapperParserTest {
     }
 
     @Test
+    fun `a walk without a time leads with Citymapper's verb, not the whole trip's minutes`() {
+        val guidance = CitymapperParser().parse(step("Marcher vers la station", "Gare de Lyon"))!!
+
+        assertEquals("Marcher", guidance.primary)
+        assertEquals("Gare de Lyon", guidance.secondary)
+    }
+
+    @Test
     fun `waiting shows the line as a badge and the next departure first`() {
         val guidance = CitymapperParser().parse(step("Attendre 38 ou 85", "4, 11, 11 min"))!!
 

@@ -47,7 +47,7 @@ internal class CitymapperParser {
                 return departure(match, subtitle, eta)
             }
         }
-        if (WALK.any(folded::startsWith)) return walk(title, subtitle, prediction, remaining, eta)
+        if (WALK.any(folded::startsWith)) return walk(title, subtitle, prediction, eta)
         // A step Citymapper words in a way this parser does not know: its own
         // words are still right, only the arrow is unknown.
         val primary = prediction ?: remaining?.let { "$it min" } ?: return null
@@ -68,15 +68,11 @@ internal class CitymapperParser {
         rideStops = 0
     }
 
-    private fun walk(
-        title: String,
-        subtitle: String?,
-        prediction: String?,
-        remaining: String?,
-        eta: String?,
-    ): NavGuidance? {
+    private fun walk(title: String, subtitle: String?, prediction: String?, eta: String?): NavGuidance? {
         rideDestination = null
-        val primary = prediction ?: remaining?.let { "$it min" } ?: return null
+        // Without a walk time, Citymapper's own verb leads: the trip's
+        // remaining minutes would read as the length of this walk.
+        val primary = prediction ?: title.substringBefore(' ').takeIf(String::isNotEmpty) ?: return null
         return guidance(
             glyph = "walk",
             primary = primary,
