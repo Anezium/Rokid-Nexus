@@ -57,23 +57,25 @@ internal const val ACTIVITY_PRIMARY_INLINE_MIN_SP = 20f
 internal const val ACTIVITY_PRIMARY_MIN_SP = 16f
 
 /**
- * A line or route mark ("38", "RER B") as a filled block with cut-out text.
+ * A line or route mark ("38", "RER B") as an outlined plate, drawn the way the
+ * pin and notice draw everything: a line and text, never a lit block, which on
+ * additive optics would outweigh the value next to it.
  *
  * It stands in for the activity glyph, so it draws into whatever bounds the
- * glyph slot gives it. On the urgent band, whose own fill is phosphor, the
- * colours swap so the block still reads as a block.
+ * glyph slot gives it.
  */
 internal class ActivityBadgeDrawable(
     context: Context,
     private val text: String,
-    inverted: Boolean = false,
 ) : Drawable() {
     private val density = context.resources.displayMetrics.density
     private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = if (inverted) BLACK else BusTheme.phosphor
+        style = Paint.Style.STROKE
+        strokeWidth = OUTLINE_DP * density
+        color = BusTheme.phosphor
     }
     private val label = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = if (inverted) BusTheme.phosphor else BLACK
+        color = BusTheme.phosphor
         typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
         textAlign = Paint.Align.CENTER
     }
@@ -83,6 +85,7 @@ internal class ActivityBadgeDrawable(
         val box = bounds
         if (box.isEmpty) return
         rect.set(box)
+        rect.inset(fill.strokeWidth / 2f, fill.strokeWidth / 2f)
         val radius = box.height() * CORNER_FRACTION
         canvas.drawRoundRect(rect, radius, radius, fill)
 
@@ -111,7 +114,7 @@ internal class ActivityBadgeDrawable(
     override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
 
     private companion object {
-        const val BLACK = 0xFF000000.toInt()
+        const val OUTLINE_DP = 1.6f
         const val CORNER_FRACTION = 0.17f
         const val TEXT_HEIGHT_FRACTION = 0.46f
     }
@@ -139,11 +142,9 @@ internal class ActivityTrackView(context: Context) : View(context) {
         )
     }
     private var track: ActivityTrack? = null
-    private var inverted = false
 
-    fun render(track: ActivityTrack?, inverted: Boolean = false) {
+    fun render(track: ActivityTrack?) {
         this.track = track
-        this.inverted = inverted
         visibility = if (track == null) GONE else VISIBLE
         invalidate()
     }
@@ -157,9 +158,9 @@ internal class ActivityTrackView(context: Context) : View(context) {
 
     override fun onDraw(canvas: Canvas) {
         val current = track ?: return
-        val bright = if (inverted) BLACK else BusTheme.phosphor
-        val quiet = if (inverted) BLACK else BusTheme.dim
-        val hollow = if (inverted) BusTheme.phosphor else BLACK
+        val bright = BusTheme.phosphor
+        val quiet = BusTheme.dim
+        val hollow = BLACK
         val targetRadius = TARGET_RADIUS_DP * density
         val dotRadius = DOT_RADIUS_DP * density
         val centerY = height / 2f

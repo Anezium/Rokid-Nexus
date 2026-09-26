@@ -1372,7 +1372,11 @@ checks.
 
 ### Platform presentations
 
-The same activity state can appear in five ways:
+The same activity state can appear in five ways. Chip, panel, and flare are
+forms of one island: a single outline, drawn only by the glasses, whose edges
+spring from one form's bounds to the next while the content of each form is
+revealed inside it. The outgoing content fades out first, so two forms never
+show at once. Every transition is glasses-local.
 
 - **chip** — the ambient corner form, delegated to the medium pin panel view:
   glyph plus `primary` on the title row and `secondary` below.
@@ -1383,11 +1387,11 @@ The same activity state can appear in five ways:
   the ETA, and if it still does not fit, the ETA moves to the end of the
   secondary row and `primary` takes the largest size from 24sp down to 16sp
   that fits alone.
-- **flare** — a significant update morphs the chip from its corner into the
-  shared notice-band geometry over about 280 ms, holds for about 3.5 s, and
-  reverse-collapses over about 240 ms.
-- **pulse** — a minor or throttled update scales the chip
-  `1.0 -> 1.12 -> 1.0` over about 180 ms.
+- **flare** — a significant update springs the island from its corner into
+  the shared notice-band geometry in about 0.4 s, holds for about 3.5 s, and
+  folds back into the activity's steady form.
+- **pulse** — a minor or throttled update swells the island's outline by a few
+  pixels and lets it spring back.
 - **hidden** — while the camera overlay is visible.
 
 Presentation selection is a pure hub policy. In priority order:
@@ -1437,8 +1441,8 @@ while the glasses announced both the v1 tier and extras version 1.
 ```
 
 - `badge` is optional and at most 5 characters: a line or route mark drawn as
-  a filled block in the glyph's place in the panel and the flare. The chip keeps
-  `glyph`, which stays required.
+  an outlined plate in the glyph's place in the panel and the flare. The chip
+  keeps `glyph`, which stays required.
 - `track` is optional: `count` from 2 through 12, `at` from 0 through
   `count - 1`, `target` from `at` through `count - 1`, and an optional `label`
   of at most 20 characters naming the target. It is drawn as a row of dots
@@ -1446,7 +1450,8 @@ while the glasses announced both the v1 tier and extras version 1.
   glasses without extras draw.
 - `tone` is update-only and transient like `significant`. Its only value is
   `"urgent"`, and it is valid only together with `significant: true`. An urgent
-  flare draws the band as a filled phosphor block with black content. It has
+  flare arrives with a bright phosphor outline and a visibly bouncier spring;
+  its content stays the ordinary band. It has
   its own budget of one per activity per 60 seconds, independent of the
   10-second flare budget, so a time-critical transition is not swallowed by an
   ordinary flare just before it. A throttled urgent update is handled as an

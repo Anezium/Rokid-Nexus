@@ -164,30 +164,6 @@ internal fun allocateActivityCorners(
     return result
 }
 
-/** Symmetric child-view translations for the two halves of a flare morph. */
-internal data class ActivityFlareTranslation(
-    val nodeToBandX: Float,
-    val nodeToBandY: Float,
-    val bandToNodeX: Float,
-    val bandToNodeY: Float,
-)
-
-internal fun activityFlareTranslation(
-    nodeCenterX: Float,
-    nodeCenterY: Float,
-    bandCenterX: Float,
-    bandCenterY: Float,
-): ActivityFlareTranslation {
-    val x = bandCenterX - nodeCenterX
-    val y = bandCenterY - nodeCenterY
-    return ActivityFlareTranslation(
-        nodeToBandX = x,
-        nodeToBandY = y,
-        bandToNodeX = -x,
-        bandToNodeY = -y,
-    )
-}
-
 private val CORNER_ORDER = listOf(
     PinSurfacePosition.TOP_LEFT,
     PinSurfacePosition.TOP_RIGHT,

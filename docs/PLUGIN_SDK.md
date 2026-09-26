@@ -580,8 +580,8 @@ that. Without it the SDK still sends the activity, the older hub drops the
 extras, and the wearer sees the v1 form, so nothing needs a second code path.
 
 - `badge` — at most 5 characters, such as a line number ("38", "M4",
-  "RER B"). The expanded panel and the flare draw it as a filled block where the
-  glyph would be. The chip keeps `glyph`.
+  "RER B"). The expanded panel and the flare draw it as an outlined plate where
+  the glyph would be. The chip keeps `glyph`.
 - `track` — `NexusActivityTrack(count, at, target, label)`: 2 to 12 ordered
   positions such as the stops of a ride or the stages of a delivery, where the
   process is now, and where the wearer is headed, with an optional label of at
@@ -589,7 +589,8 @@ extras, and the wearer sees the v1 form, so nothing needs a second code path.
   panel. Keep sending `progress` too; older glasses draw that.
 - `urgent` — pass `updateActivity(activity, significant = true, urgent = true)`
   for a time-critical transition such as "get off at the next stop". It is
-  refused without `significant`. The flare becomes a filled band, and it has its
+  refused without `significant`. The flare arrives with a bright outline and a
+  stronger bounce, and it has its
   own budget of one per activity per minute, so an ordinary flare a few seconds
   earlier cannot swallow it. Past that budget it is an ordinary significant
   update. It never wakes a display that `wakeDisplay` would not.

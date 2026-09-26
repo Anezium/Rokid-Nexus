@@ -48,7 +48,7 @@ device. Every published plugin benefits without an SDK update.
 ### 2. `badge`
 
 Optional string, at most 5 characters after trim, nonblank when present
-("38", "M4", "RER B"). Drawn as an inverted block in the panel's glyph slot and
+("38", "M4", "RER B"). Drawn as an outlined plate in the panel's glyph slot and
 in the flare band's leading slot. The chip keeps `glyph`, which stays required.
 
 ### 3. `track`
@@ -62,8 +62,8 @@ glasses keep drawing as the bar.
 ### 4. `tone: "urgent"`
 
 Update-only and transient, exactly like `significant`, and valid only together
-with `significant: true` (otherwise `INVALID_ACTIVITY`). The flare band draws
-as a filled phosphor block with black content. The glasses allow one urgent
+with `significant: true` (otherwise `INVALID_ACTIVITY`). The flare arrives
+with a bright phosphor outline and a bouncier spring. The glasses allow one urgent
 flare per activity per 60 s, on a budget separate from the 10-second flare
 interval so the maneuver flare just before it cannot swallow it; a throttled
 one becomes an ordinary significant update under the existing flare budget.
