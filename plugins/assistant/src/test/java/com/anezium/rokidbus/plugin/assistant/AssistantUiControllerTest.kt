@@ -1408,6 +1408,35 @@ class AssistantUiControllerTest {
             controller.onClose()
         }
 
+    @Test
+    fun `re-opening during a capture brings the listening band back fresh and re-arms the chip`() =
+        runTest {
+            val renderer = FakeRenderer(supportsNotice = true, supportsQuestionField = true)
+            val controller = controller(renderer)
+            armedChip(controller, renderer)
+
+            // What the service does when an open lands while its capture is still live.
+            controller.onLauncherOpen()
+            assertFalse(controller.offersTyping)
+            controller.showListening(legacyForceShow = true)
+
+            assertEquals(
+                listOf(
+                    RenderCall.ShowCard(AssistantUiController.ANCHOR_LINES, forceShow = true),
+                    RenderCall.ShowNotice("Assistant", AssistantUiController.LISTENING_BODY),
+                ),
+                renderer.calls,
+            )
+            // A fresh band: the chip left on the glasses from before the open is gone...
+            assertEquals(emptyList<NexusNoticeAction>(), renderer.noticeActions.single())
+            advanceTimeBy(AssistantUiController.TYPE_CHIP_ARM_DELAY_MS)
+            runCurrent()
+            // ...and comes back once the new wait is over, live this time.
+            assertEquals(AssistantUiController.TYPE_ACTIONS, renderer.noticeActions.last())
+            assertTrue(controller.offersTyping)
+            controller.onClose()
+        }
+
     private fun TestScope.armedChip(controller: AssistantUiController, renderer: FakeRenderer) {
         controller.onLauncherOpen()
         controller.beginGestureFlow()

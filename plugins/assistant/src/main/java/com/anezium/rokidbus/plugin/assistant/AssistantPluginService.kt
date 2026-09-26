@@ -253,6 +253,11 @@ class AssistantPluginService : NexusPluginService() {
         optionsMenu.close()
         val anchored = openType == PluginOpenTypes.OPEN && uiController.onLauncherOpen()
         if (!anchored) uiController.onOpen()
+        // A re-delivered open can land mid-question. The mic keeps what the wearer is saying —
+        // stopping it would drop the utterance for nothing — so the band it had comes back,
+        // Type chip and all, instead of the reset leaving a stale one up with the mic still open.
+        // Audio already being transcribed is past listening: it keeps its own band.
+        if (captureActive && !fallbackTranscribePending) uiController.showListening(legacyForceShow = true)
         scheduleAccountContextSyncIfStale()
         if (anchored) startLauncherCapture()
     }
