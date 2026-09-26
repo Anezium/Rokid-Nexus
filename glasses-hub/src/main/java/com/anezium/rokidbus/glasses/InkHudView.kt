@@ -491,7 +491,11 @@ internal class InkHudView(context: Context) : FrameLayout(context) {
         val replaced = view is InkChartView || view is InkLottieView || view is InkProgressView || view is InkNxCanvasView
         if ("width" !in skip) {
             params.width = style["width"]?.let { length(it, widthBase).roundToInt() }
-                ?: if (replaced) ViewGroup.LayoutParams.MATCH_PARENT else ViewGroup.LayoutParams.WRAP_CONTENT
+                ?: if (replaced || stretchesAcrossColumn(parent, style)) {
+                    ViewGroup.LayoutParams.MATCH_PARENT
+                } else {
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                }
         }
         if ("height" !in skip) {
             params.height = style["height"]?.let { length(it, heightBase).roundToInt() }
@@ -532,6 +536,22 @@ internal class InkHudView(context: Context) : FrameLayout(context) {
         if (view is TextView) {
             view.maxWidth = style["max-width"]?.let { length(it, widthBase).roundToInt() } ?: Int.MAX_VALUE
             view.maxHeight = style["max-height"]?.let { length(it, heightBase).roundToInt() } ?: Int.MAX_VALUE
+        }
+    }
+
+    /**
+     * Flexbox stretches an auto-width column child only after measuring it at its content width,
+     * then re-measures it at the column's width but keeps the height that content width gave.
+     * Text that wraps once stretched then overflows a box sized for fewer lines. Measuring the
+     * child at the column's width from the start is what the stretch resolves to anyway.
+     */
+    private fun stretchesAcrossColumn(parent: ViewGroup?, style: Map<String, String>): Boolean {
+        val column = parent as? FlexboxLayout ?: return false
+        if (!column.flexDirection.isColumn()) return false
+        return when (InkFlexStyle.from(style).alignSelf) {
+            InkAlign.STRETCH -> true
+            InkAlign.AUTO -> column.alignItems == AlignItems.STRETCH
+            else -> false
         }
     }
 
