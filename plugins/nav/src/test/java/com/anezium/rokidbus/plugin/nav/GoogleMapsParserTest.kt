@@ -147,13 +147,13 @@ class GoogleMapsParserTest {
     )
 
     @Test
-    fun `a transit walking leg shows the time over the distance and the stop, then the departure`() {
+    fun `a transit walking leg shows the time over the distance, then the stop and the departure`() {
         val guidance = GoogleMapsParser.parse(transitWalk)!!
 
         assertEquals("walk", guidance.glyph)
         assertEquals("3 min", guidance.primary)
-        assertEquals("250 m · Châtelet", guidance.secondary)
-        assertEquals(listOf("Départ à 17:36"), guidance.detail)
+        assertEquals("Châtelet", guidance.secondary)
+        assertEquals(listOf("Départ à 17:36", "250 m"), guidance.detail)
         assertEquals("18:51", guidance.eta)
         assertNull(guidance.badge)
         assertNull(guidance.progressPercent)
@@ -168,7 +168,38 @@ class GoogleMapsParserTest {
 
         assertEquals(first.stepKey, later.stepKey)
         assertEquals("2 min", later.primary)
-        assertEquals("150 m · Châtelet", later.secondary)
+        assertEquals("Châtelet", later.secondary)
+    }
+
+    @Test
+    fun `boarding shows the line, the departure time first and the direction`() {
+        // Shaped on a real capture; the direction is swapped.
+        val guidance = GoogleMapsParser.parse(
+            transitWalk.copy(
+                title = "Prenez la ligne 2345",
+                text = "Porte d'Orléans · Départ à 17:48",
+                shortCriticalText = "17:48",
+                progressMax = 0,
+            ),
+        )!!
+
+        assertEquals("bus", guidance.glyph)
+        assertEquals("2345", guidance.badge)
+        assertEquals("17:48", guidance.primary)
+        assertEquals("Porte d'Orléans", guidance.secondary)
+        assertEquals(listOf("Prenez la ligne 2345"), guidance.detail)
+    }
+
+    @Test
+    fun `a line without its mode gets a vehicle only when its name leaves no doubt`() {
+        fun glyphOf(line: String) = GoogleMapsParser.parse(
+            transitWalk.copy(title = "Prenez la ligne $line", text = "Centre · Départ à 17:48", shortCriticalText = "17:48"),
+        )!!.glyph
+
+        assertEquals("train", glyphOf("D"))
+        assertEquals("bus", glyphOf("2345"))
+        assertEquals("tram", glyphOf("T3a"))
+        assertEquals(NavText.ROUTE_GLYPH, glyphOf("4"))
     }
 
     @Test

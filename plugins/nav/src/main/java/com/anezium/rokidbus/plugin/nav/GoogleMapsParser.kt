@@ -22,10 +22,11 @@ import com.anezium.rokidbus.shared.ActivitySurfaceContract
  * notification differently, and only a few seconds after it first posts it
  * empty:
  *
- *     title     "Marchez 3 min (250 m)"
- *     text      "Châtelet · Départ à 17:36"
- *     subText   "Arrivée à 18:51"
- *     shortCriticalText "3 min"
+ *     walk   title "Marchez 3 min (250 m)"   text "Châtelet · Départ à 17:36"
+ *            shortCriticalText "3 min"
+ *     board  title "Prenez la ligne 2345"    text "Porte d'Orléans · Départ à 17:48"
+ *            shortCriticalText "17:48"
+ *     every step subText "Arrivée à 18:51"
  *
  * Its text line is what tells the two apart: turn-by-turn leaves it empty.
  * Anything that is not a navigation notification with guidance in it yields
@@ -88,10 +89,10 @@ internal object GoogleMapsParser {
     }
 
     /**
-     * One transit step. Only the walking leg has been seen on a device; the
-     * other legs are read from the same fields with the words transit apps use
-     * ("3 arrêts", "bus 38", "RER D"), and a step none of them matches still
-     * shows Maps' own words under the neutral route mark.
+     * One transit step. The walking and boarding legs have been seen on a
+     * device; the ride is read from the same fields with the words transit
+     * apps use ("3 arrêts", "bus 38", "RER D"), and a step none of them
+     * matches still shows Maps' own words under the neutral route mark.
      */
     private fun transit(notification: NavNotification, title: String, labels: NavLabels): NavGuidance? {
         val parts = notification.text.orEmpty().split(SEPARATOR).map(String::trim).filter(String::isNotEmpty)
@@ -101,10 +102,12 @@ internal object GoogleMapsParser {
         val stops = TRANSIT_STOPS.find(title)
         val nextStop = NEXT_STOP.any(folded::contains)
         val arrived = TRANSIT_ARRIVED.any(folded::contains)
+        val boarding = TRANSIT_BOARD.any(folded::startsWith)
+        val line = transitLine(context)
         val glyph = when {
             arrived -> "arrive"
             TRANSIT_WALK.any(folded::startsWith) -> "walk"
-            else -> transitVehicle(context) ?: NavText.ROUTE_GLYPH
+            else -> transitVehicle(context) ?: line?.let(::vehicleOfLine) ?: NavText.ROUTE_GLYPH
         }
         val short = notification.shortCriticalText?.trim()
             ?.takeIf { it.isNotEmpty() && it.length <= ActivitySurfaceContract.MAX_PRIMARY_CHARS }
@@ -115,15 +118,14 @@ internal object GoogleMapsParser {
             else -> MINUTES.find(title)?.value ?: return null
         }
         val walkDistance = PARENTHESISED_DISTANCE.find(title)?.groupValues?.get(1)?.takeIf(NavText::isDistance)
-        // The distance sits right under the time, ahead of the stop, so the
-        // folded chip still reads "3 min" over "250 m · <stop>". Joined to the
-        // time it made the first value, drawn largest, far too big.
-        val secondary = listOfNotNull(walkDistance, place ?: title).joinToString(SEPARATOR)
-        val detail = parts.drop(1)
+        val secondary = place ?: title
+        // "Départ à 17:48" says again what a departure time in first place says.
+        val rest = parts.drop(1).filterNot { primary in it }
+        val detail = (rest + listOfNotNull(walkDistance, title.takeIf { boarding }))
             .ifEmpty { listOf(title).takeIf { place != null }.orEmpty() }
             .take(ActivitySurfaceContract.MAX_DETAIL_LINES)
             .map { NavText.fit(it, ActivitySurfaceContract.MAX_DETAIL_CHARS) }
-        val badge = transitLine(context)?.takeIf { it.length <= ActivitySurfaceContract.MAX_BADGE_CHARS }
+        val badge = line?.takeIf { it.length <= ActivitySurfaceContract.MAX_BADGE_CHARS }
         val remaining = stops?.groupValues?.get(1)?.toIntOrNull()
         return NavGuidance(
             source = NavSource.GOOGLE_MAPS,
@@ -150,6 +152,22 @@ internal object GoogleMapsParser {
         else -> null
     }
 
+    /**
+     * Maps names a line without its mode ("Prenez la ligne 2345"). Only the
+     * unambiguous shapes get a vehicle: RER letters, T and M prefixes, and bus
+     * numbers too long for a metro or tram. "Ligne 4" keeps the route mark.
+     */
+    private fun vehicleOfLine(line: String): String? {
+        val plain = line.lowercase()
+        return when {
+            Regex("""^[a-e]$""").matches(plain) -> "train"
+            Regex("""^t\d{1,2}[a-z]?$""").matches(plain) -> "tram"
+            Regex("""^m\d{1,2}$""").matches(plain) -> "metro"
+            Regex("""^\d{3,4}[a-z]?$""").matches(plain) -> "bus"
+            else -> null
+        }
+    }
+
     /** "bus 38", "RER D", "ligne 4", "tram T3a" -> the line's own name. */
     private fun transitLine(context: String): String? =
         LINE.find(context)?.groupValues?.get(2)?.uppercase()
@@ -159,6 +177,7 @@ internal object GoogleMapsParser {
     private val NEXT_STOP = listOf("prochain arret", "next stop")
     private val TRANSIT_ARRIVED = listOf("vous etes arrive", "you have arrived", "you've arrived")
     private val TRANSIT_WALK = listOf("marchez", "marcher", "walk")
+    private val TRANSIT_BOARD = listOf("prenez", "montez", "take ", "board")
     private val MINUTES = Regex("""\d+\s?min""")
     private val PARENTHESISED_DISTANCE = Regex("""\(([^)]+)\)""")
     private val DIGITS = Regex("""\d+""")
