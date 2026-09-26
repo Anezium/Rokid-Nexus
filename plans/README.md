@@ -36,7 +36,7 @@ refreshed on 2026-09-22. The individual plan headers remain the detail of record
 | [017](017-relay-notifications.md) | Relay notifications | DONE |
 | [018](018-notice-lines.md) | Notice lines | DONE |
 | [020](020-ink-surface.md) | Ink Surface: native port of the AIUI page format as a Nexus surface tier | IN PROGRESS — public implementation shipped in 1.4.1; M1–M4 complete, M5 hardware conformance and measurement remain |
-| [023](023-activity-v2.md) | Activity v2: autosized panel, badge, track, urgent tone | IMPLEMENTED on `activity-v2` — device validation and release pending |
+| [023](023-activity-v2.md) | Activity v2: autosized panel, badge, measure, track, urgent tone, island motion | MERGED — release pending (hubs 1.4.15, SDK 0.21.0) |
 
 Status values are `TODO`, `IN PROGRESS`, `BLOCKED`, and `DONE`. Update both this
 table and the individual plan when execution status changes. Current priorities
