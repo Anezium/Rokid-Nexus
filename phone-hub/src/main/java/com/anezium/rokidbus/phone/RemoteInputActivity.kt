@@ -327,6 +327,7 @@ class RemoteInputActivity : Activity() {
         visibility = View.GONE
         glassesKeyboardBody = NexusUi.rowSub(this@RemoteInputActivity, "").apply {
             setTextColor(NexusUi.AMBER)
+            maxLines = 5
         }
         glassesKeyboardAction = NexusUi.outlinePillButton(
             this@RemoteInputActivity,
