@@ -1418,7 +1418,7 @@ class AssistantUiControllerTest {
             // What the service does when an open lands while its capture is still live.
             controller.onLauncherOpen()
             assertFalse(controller.offersTyping)
-            controller.showListening(legacyForceShow = true)
+            controller.resumeInFlight(capturing = true, transcribing = false)
 
             assertEquals(
                 listOf(
@@ -1434,6 +1434,93 @@ class AssistantUiControllerTest {
             // ...and comes back once the new wait is over, live this time.
             assertEquals(AssistantUiController.TYPE_ACTIONS, renderer.noticeActions.last())
             assertTrue(controller.offersTyping)
+            controller.onClose()
+        }
+
+    @Test
+    fun `a cancel that beats the field still closes a session that had no anchor`() =
+        runTest {
+            val renderer = FakeRenderer(supportsNotice = true, supportsQuestionField = true)
+            val controller = controller(renderer, AssistantNoticePacer.MIN_INTERVAL_MS)
+            controller.onOpen()
+            controller.cancelLauncherHint()
+            controller.beginGestureFlow()
+            controller.showListening(legacyForceShow = true)
+            advanceTimeBy(AssistantUiController.TYPE_CHIP_ARM_DELAY_MS + AssistantNoticePacer.MIN_INTERVAL_MS)
+            runCurrent()
+            renderer.clear()
+            controller.showTranscript("what is")
+            // The quiet band waits out the pacer, so the field is not up yet...
+            controller.beginTyping()
+
+            // ...when Back takes the band.
+            controller.onNoticeClosed(NexusNoticeCloseReason.USER)
+            advanceTimeBy(1_000)
+            runCurrent()
+
+            // Mic off and nothing on screen: the hub has to hear the close, as after the field.
+            assertEquals(
+                listOf(RenderCall.UpdateNotice("what is"), RenderCall.HideCard),
+                renderer.calls,
+            )
+            assertFalse(controller.isTyping)
+            controller.onClose()
+
+            // With the anchor up there is nothing to close: it simply stays.
+            val anchoredRenderer = FakeRenderer(supportsNotice = true, supportsQuestionField = true)
+            val anchored = controller(anchoredRenderer, AssistantNoticePacer.MIN_INTERVAL_MS)
+            anchored.onLauncherOpen()
+            anchored.beginGestureFlow()
+            anchored.showListening(legacyForceShow = true)
+            advanceTimeBy(AssistantUiController.TYPE_CHIP_ARM_DELAY_MS + AssistantNoticePacer.MIN_INTERVAL_MS)
+            runCurrent()
+            anchoredRenderer.clear()
+            anchored.showTranscript("what is")
+            anchored.beginTyping()
+            anchored.onNoticeClosed(NexusNoticeCloseReason.USER)
+            advanceTimeBy(1_000)
+            runCurrent()
+
+            assertEquals(listOf(RenderCall.UpdateNotice("what is")), anchoredRenderer.calls)
+            assertTrue(anchored.isAnchored)
+            anchored.onClose()
+        }
+
+    @Test
+    fun `re-opening while audio is transcribed keeps Transcribing up instead of the hint`() =
+        runTest {
+            val renderer = FakeRenderer(supportsNotice = true, supportsQuestionField = true)
+            val controller = controller(renderer)
+            // An assist-button open queues its hint; the transcription it lands on is not over.
+            controller.onOpen()
+            controller.resumeInFlight(capturing = true, transcribing = true)
+
+            assertEquals(
+                listOf(RenderCall.ShowNotice("Assistant", AssistantUiController.TRANSCRIBING_BODY)),
+                renderer.calls,
+            )
+            advanceTimeBy(AssistantUiController.LAUNCHER_HINT_DELAY_MS)
+            runCurrent()
+            // No hint card over it, and the keepalive holds it past the derived 4 s minimum.
+            advanceTimeBy(AssistantUiController.NOTICE_KEEPALIVE_INTERVAL_MS * 2)
+            runCurrent()
+            assertTrue(renderer.calls.none { it is RenderCall.ShowCard })
+            assertEquals(
+                listOf(
+                    RenderCall.UpdateNotice(AssistantUiController.TRANSCRIBING_BODY),
+                    RenderCall.UpdateNotice(AssistantUiController.TRANSCRIBING_BODY),
+                ),
+                renderer.calls.drop(1),
+            )
+            // Past listening, so no Type chip for recorded audio.
+            assertTrue(renderer.noticeActions.all { it.isEmpty() })
+            assertFalse(controller.offersTyping)
+
+            // Nothing under way: a re-open leaves the reset as it is.
+            renderer.clear()
+            controller.onOpen()
+            controller.resumeInFlight(capturing = false, transcribing = false)
+            assertTrue(renderer.calls.none { it is RenderCall.ShowNotice })
             controller.onClose()
         }
 

@@ -157,6 +157,9 @@ class AssistantPluginService : NexusPluginService() {
     private var customBackendProbeAttempted = false
     private var captureActive = false
     private var fallbackTranscribePending = false
+
+    /** The recorded fallback audio is at the transcription service, not yet a question. */
+    private var fallbackTranscriptionInFlight = false
     private var fallbackStopJob: Job? = null
     private var audioFormat: NexusAudioFormat? = null
     private var pcmBuffer = ByteArrayOutputStream()
@@ -255,9 +258,11 @@ class AssistantPluginService : NexusPluginService() {
         if (!anchored) uiController.onOpen()
         // A re-delivered open can land mid-question. The mic keeps what the wearer is saying —
         // stopping it would drop the utterance for nothing — so the band it had comes back,
-        // Type chip and all, instead of the reset leaving a stale one up with the mic still open.
-        // Audio already being transcribed is past listening: it keeps its own band.
-        if (captureActive && !fallbackTranscribePending) uiController.showListening(legacyForceShow = true)
+        // instead of the reset leaving a stale one to expire over work still under way.
+        uiController.resumeInFlight(
+            capturing = captureActive,
+            transcribing = fallbackTranscribePending || fallbackTranscriptionInFlight,
+        )
         scheduleAccountContextSyncIfStale()
         if (anchored) startLauncherCapture()
     }
@@ -628,7 +633,7 @@ class AssistantPluginService : NexusPluginService() {
                         return@launch
                     }
                     fallbackTranscribePending = true
-                    uiController.showTransient("Transcribing…")
+                    uiController.showTransient(AssistantUiController.TRANSCRIBING_BODY)
                     createdAudio?.stop()
                 }
             }
@@ -695,7 +700,12 @@ class AssistantPluginService : NexusPluginService() {
             return
         }
         launchPipeline {
-            val transcript = transcriber.transcribe(pcm, format).trim()
+            fallbackTranscriptionInFlight = true
+            val transcript = try {
+                transcriber.transcribe(pcm, format).trim()
+            } finally {
+                fallbackTranscriptionInFlight = false
+            }
             if (transcript.isEmpty()) {
                 uiController.showError("Didn't catch that")
                 return@launchPipeline

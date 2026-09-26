@@ -310,6 +310,19 @@ internal class AssistantUiController(
     }
 
     /**
+     * A re-delivered open reset the band while work it was showing is still under way. The
+     * reset stopped that band's keepalive, and a non-anchor open has its launcher hint queued
+     * on top, so the band comes back as it was: "Transcribing…" while recorded audio is being
+     * turned into text, otherwise "Listening…" with a fresh wait for its Type chip.
+     */
+    fun resumeInFlight(capturing: Boolean, transcribing: Boolean) {
+        when {
+            transcribing -> showTransient(TRANSCRIBING_BODY)
+            capturing -> showListening(legacyForceShow = true)
+        }
+    }
+
+    /**
      * Swaps the listening band for the typed-question field, drawn inside the band itself. The
      * caller has already stopped the microphone. The band stops asking for a gesture while the
      * field is open: an interactive band claims confirm ahead of the field, and Enter is the
@@ -332,7 +345,9 @@ internal class AssistantUiController(
     /**
      * Retires the field. Whatever the wearer had before takes the card tier back: the anchor,
      * or — for a session the assist button opened with nothing on screen — nothing, which the
-     * hub reads as the plugin closing, exactly like Back on the anchor. A submitted question
+     * hub reads as the plugin closing, exactly like Back on the anchor. That holds even when
+     * the cancel beats the field onto the glasses: the microphone is already off, so a session
+     * left open there would have nothing on screen and nothing left to do. A submitted question
      * always keeps a card up, because its answer still has to arrive in this session.
      */
     fun endTyping(end: AssistantTypingEnd): Boolean {
@@ -342,13 +357,14 @@ internal class AssistantUiController(
         fieldShown = false
         stopKeepalive()
         when {
-            // Nothing took the card's place yet, or the caller's card is about to: either way
-            // the card tier is already what it should be.
-            !replacedCard || end == AssistantTypingEnd.REPLACED -> Unit
+            // The caller's card is about to take the tier, whatever was there.
+            end == AssistantTypingEnd.REPLACED -> Unit
             end == AssistantTypingEnd.CANCELLED && !anchoredBeforeTyping -> {
                 renderer.hideCard()
                 onSurfaceHidden()
             }
+            // Nothing took the anchor's place yet, so it is still up.
+            !replacedCard -> Unit
             else -> restoreAnchor()
         }
         if (end != AssistantTypingEnd.SUBMITTED) {
@@ -948,6 +964,7 @@ internal class AssistantUiController(
         const val NOTICE_TITLE = "Assistant"
         const val ELLIPSIS = "…"
         const val LISTENING_BODY = "Listening…"
+        const val TRANSCRIBING_BODY = "Transcribing…"
 
         const val ACTION_TYPE = "type"
 
