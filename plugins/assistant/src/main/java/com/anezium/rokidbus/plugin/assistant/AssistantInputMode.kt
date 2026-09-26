@@ -29,3 +29,21 @@ internal enum class AssistantInputMode(val wireValue: String) {
  */
 internal fun effectiveInputMode(chosen: AssistantInputMode, canType: Boolean): AssistantInputMode =
     if (canType) chosen else AssistantInputMode.VOICE_ONLY
+
+/** What a new ask does, given a capture that may still be listening from before it. */
+internal enum class AssistantAskAction {
+    /** Nothing is listening: the question starts the way the Input setting says. */
+    START,
+
+    /** That capture began before Type first was chosen: stop it and open the field instead. */
+    STOP_AND_TYPE,
+
+    /** Already listening, and still meant to: the ask changes nothing. */
+    KEEP_LISTENING,
+}
+
+internal fun askAction(captureActive: Boolean, mode: AssistantInputMode): AssistantAskAction = when {
+    !captureActive -> AssistantAskAction.START
+    mode == AssistantInputMode.TYPE_FIRST -> AssistantAskAction.STOP_AND_TYPE
+    else -> AssistantAskAction.KEEP_LISTENING
+}

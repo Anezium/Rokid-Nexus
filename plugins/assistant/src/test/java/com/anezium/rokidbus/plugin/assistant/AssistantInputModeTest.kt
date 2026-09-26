@@ -15,6 +15,26 @@ class AssistantInputModeTest {
     }
 
     @Test
+    fun `an ask during a capture switches to typing only once Type first is chosen`() {
+        AssistantInputMode.entries.forEach { mode ->
+            assertEquals(AssistantAskAction.START, askAction(captureActive = false, mode = mode))
+        }
+        // The capture predates the switch: the next ask stops it and opens the field.
+        assertEquals(
+            AssistantAskAction.STOP_AND_TYPE,
+            askAction(captureActive = true, mode = AssistantInputMode.TYPE_FIRST),
+        )
+        assertEquals(
+            AssistantAskAction.KEEP_LISTENING,
+            askAction(captureActive = true, mode = AssistantInputMode.VOICE_ONLY),
+        )
+        assertEquals(
+            AssistantAskAction.KEEP_LISTENING,
+            askAction(captureActive = true, mode = AssistantInputMode.VOICE_AND_TYPE),
+        )
+    }
+
+    @Test
     fun `glasses that cannot take a typed field keep every choice on voice`() {
         AssistantInputMode.entries.forEach { mode ->
             assertEquals(AssistantInputMode.VOICE_ONLY, effectiveInputMode(mode, canType = false))

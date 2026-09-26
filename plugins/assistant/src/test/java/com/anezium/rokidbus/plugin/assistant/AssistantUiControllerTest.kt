@@ -1587,7 +1587,9 @@ class AssistantUiControllerTest {
             renderer.clear()
             controller.onNoticeClosed(NexusNoticeCloseReason.USER)
             assertEquals(
-                listOf(RenderCall.ShowCard(AssistantUiController.ANCHOR_LINES, forceShow = true)),
+                listOf(
+                    RenderCall.ShowCard(AssistantUiController.TYPE_FIRST_ANCHOR_LINES, forceShow = true),
+                ),
                 renderer.calls,
             )
             assertFalse(controller.isTyping)
@@ -1637,6 +1639,107 @@ class AssistantUiControllerTest {
             assertTrue(chipNoField.noticeActions.all { it.isEmpty() })
             assertFalse(chipController.offersTyping)
             chipController.onClose()
+        }
+
+    @Test
+    fun `leaving Voice + Type mid-question stops the chip arriving and takes its tap back`() =
+        runTest {
+            val renderer = FakeRenderer(supportsNotice = true, supportsQuestionField = true)
+            val controller = controller(renderer)
+            controller.onLauncherOpen()
+            controller.beginGestureFlow()
+            controller.showListening(legacyForceShow = true)
+
+            // Switched before the chip's wait is over: it never arrives.
+            renderer.chosenInputMode = AssistantInputMode.VOICE_ONLY
+            advanceTimeBy(AssistantUiController.TYPE_CHIP_ARM_DELAY_MS * 2)
+            runCurrent()
+            assertTrue(renderer.noticeActions.all { it.isEmpty() })
+            assertFalse(controller.offersTyping)
+            controller.onClose()
+
+            // Switched once it is up: still drawn, but a tap on it no longer opens anything.
+            val armedRenderer = FakeRenderer(supportsNotice = true, supportsQuestionField = true)
+            val armed = controller(armedRenderer)
+            armedChip(armed, armedRenderer)
+            armedRenderer.chosenInputMode = AssistantInputMode.VOICE_ONLY
+            assertFalse(armed.offersTyping)
+            armedRenderer.chosenInputMode = AssistantInputMode.TYPE_FIRST
+            assertFalse(armed.offersTyping)
+            armedRenderer.chosenInputMode = AssistantInputMode.VOICE_AND_TYPE
+            assertTrue(armed.offersTyping)
+            armed.onClose()
+        }
+
+    @Test
+    fun `type first anchors on typing words while the voice modes keep Ask out loud`() =
+        runTest {
+            val renderer = FakeRenderer(
+                supportsNotice = true,
+                supportsQuestionField = true,
+                chosenInputMode = AssistantInputMode.TYPE_FIRST,
+            )
+            val controller = controller(renderer)
+            controller.onLauncherOpen()
+            assertEquals(
+                RenderCall.ShowCard(AssistantUiController.TYPE_FIRST_ANCHOR_LINES, forceShow = true),
+                renderer.calls.last(),
+            )
+            // The anchor the field hands back after Back says the same.
+            controller.beginGestureFlow()
+            assertTrue(controller.startQuestion())
+            controller.onNoticeClosed(NexusNoticeCloseReason.USER)
+            assertEquals(
+                RenderCall.ShowCard(AssistantUiController.TYPE_FIRST_ANCHOR_LINES, forceShow = true),
+                renderer.calls.last(),
+            )
+            assertTrue(renderer.footers.all { it == AssistantUiController.ANCHOR_FOOTER })
+            // And the assist-button hint does not ask the wearer to speak.
+            renderer.clear()
+            controller.onOpen()
+            advanceTimeBy(AssistantUiController.LAUNCHER_HINT_DELAY_MS)
+            runCurrent()
+            assertEquals(
+                RenderCall.ShowCard(listOf(AssistantUiController.TYPE_FIRST_LAUNCHER_HINT), forceShow = true),
+                renderer.calls.last(),
+            )
+            controller.onClose()
+
+            AssistantInputMode.entries.filter { it != AssistantInputMode.TYPE_FIRST }.forEach { mode ->
+                val voiceRenderer = FakeRenderer(
+                    supportsNotice = true,
+                    supportsQuestionField = true,
+                    chosenInputMode = mode,
+                )
+                val voice = controller(voiceRenderer)
+                voice.onLauncherOpen()
+                assertEquals(
+                    RenderCall.ShowCard(AssistantUiController.ANCHOR_LINES, forceShow = true),
+                    voiceRenderer.calls.last(),
+                )
+                voice.onOpen()
+                advanceTimeBy(AssistantUiController.LAUNCHER_HINT_DELAY_MS)
+                runCurrent()
+                assertEquals(
+                    RenderCall.ShowCard(listOf(AssistantUiController.LAUNCHER_HINT), forceShow = true),
+                    voiceRenderer.calls.last(),
+                )
+                voice.onClose()
+            }
+
+            // Type first that the glasses cannot honour is voice, words included.
+            val fallbackRenderer = FakeRenderer(
+                supportsNotice = true,
+                supportsQuestionField = false,
+                chosenInputMode = AssistantInputMode.TYPE_FIRST,
+            )
+            val fallback = controller(fallbackRenderer)
+            fallback.onLauncherOpen()
+            assertEquals(
+                RenderCall.ShowCard(AssistantUiController.ANCHOR_LINES, forceShow = true),
+                fallbackRenderer.calls.last(),
+            )
+            fallback.onClose()
         }
 
     private fun TestScope.armedChip(controller: AssistantUiController, renderer: FakeRenderer) {
@@ -1710,7 +1813,7 @@ class AssistantUiControllerTest {
         override val supportsQuestionField: Boolean = false,
         private val questionFieldResult: NexusSdkResult = NexusSdkResult.SENT,
         // The chip's own mode, so the tests written before the Input setting keep their meaning.
-        override val chosenInputMode: AssistantInputMode = AssistantInputMode.VOICE_AND_TYPE,
+        override var chosenInputMode: AssistantInputMode = AssistantInputMode.VOICE_AND_TYPE,
         private val clock: () -> Long = { 0L },
     ) : AssistantUiRenderer {
         val calls = mutableListOf<RenderCall>()

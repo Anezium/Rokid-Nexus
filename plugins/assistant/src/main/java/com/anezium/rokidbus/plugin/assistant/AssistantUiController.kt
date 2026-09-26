@@ -178,9 +178,14 @@ internal class AssistantUiController(
     val isTyping: Boolean
         get() = typingOpen
 
-    /** The band is listening and its Type chip is up, so a Type action is still current. */
+    /**
+     * The band is listening and its Type chip is up, so a Type action is still current — and
+     * still wanted: a switch to another Input mode mid-question retires the chip's tap even
+     * though the chip itself stays drawn until the band moves on.
+     */
     val offersTyping: Boolean
-        get() = listening && typeChipLive && noticeShown && bandActions == TYPE_ACTIONS
+        get() = listening && typeChipLive && noticeShown && bandActions == TYPE_ACTIONS &&
+            inputMode == AssistantInputMode.VOICE_AND_TYPE
 
     /** The Input setting as these glasses can honour it right now; see [effectiveInputMode]. */
     val inputMode: AssistantInputMode
@@ -197,7 +202,7 @@ internal class AssistantUiController(
             startNewState()
             hideNoticeIfShown()
             showCard(
-                lines = listOf(LAUNCHER_HINT),
+                lines = listOf(launcherHint()),
                 forceShow = true,
             )
         }
@@ -211,7 +216,7 @@ internal class AssistantUiController(
     fun onLauncherOpen(): Boolean {
         resetForOpen()
         val shown = showCard(
-            ANCHOR_LINES,
+            anchorLines(),
             forceShow = true,
             footer = ANCHOR_FOOTER,
             contentKey = ANCHOR_CONTENT_KEY,
@@ -245,7 +250,7 @@ internal class AssistantUiController(
      */
     fun restoreAnchor() {
         val result = showCard(
-            ANCHOR_LINES,
+            anchorLines(),
             forceShow = true,
             footer = ANCHOR_FOOTER,
             contentKey = ANCHOR_CONTENT_KEY,
@@ -528,12 +533,21 @@ internal class AssistantUiController(
             delay(typeChipArmDelayMs)
             typeChipJob = null
             if (!listening || !noticeShown || !useNoticeBand()) return@launch
+            // The setting may have changed while this capture was listening.
+            if (inputMode != AssistantInputMode.VOICE_AND_TYPE) return@launch
             if (notices.update(NexusNoticeUpdate(actions = TYPE_ACTIONS)) == NexusSdkResult.SENT) {
                 typeChipLive = true
                 bandActions = TYPE_ACTIONS
             }
         }
     }
+
+    /** "Ask out loud." would be wrong where asking opens a keyboard and the mic stays off. */
+    private fun anchorLines(): List<String> =
+        if (inputMode == AssistantInputMode.TYPE_FIRST) TYPE_FIRST_ANCHOR_LINES else ANCHOR_LINES
+
+    private fun launcherHint(): String =
+        if (inputMode == AssistantInputMode.TYPE_FIRST) TYPE_FIRST_LAUNCHER_HINT else LAUNCHER_HINT
 
     private fun cancelTypeChip() {
         typeChipJob?.cancel()
@@ -980,6 +994,8 @@ internal class AssistantUiController(
         const val TRANSCRIPT_TAIL_CHARS = 200
         const val LAUNCHER_HINT = "Press the assist button, then speak."
         val ANCHOR_LINES = listOf("Ask out loud.")
+        val TYPE_FIRST_ANCHOR_LINES = listOf("Tap to type a question.")
+        const val TYPE_FIRST_LAUNCHER_HINT = "Press the assist button to type a question."
         const val ANCHOR_FOOTER = "tap to ask again · swipe for options"
         const val OPTIONS_SUBTITLE = "Options"
         const val ANCHOR_CONTENT_KEY = "anchor"

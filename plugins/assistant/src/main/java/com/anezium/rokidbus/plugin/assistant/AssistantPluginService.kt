@@ -517,7 +517,12 @@ class AssistantPluginService : NexusPluginService() {
 
     private fun startCaptureOnce() {
         stopAnswerSpeech()
-        if (captureActive) return
+        when (askAction(captureActive, uiController.inputMode)) {
+            AssistantAskAction.KEEP_LISTENING -> return
+            // Type first was chosen while this capture listened: this ask means type, now.
+            AssistantAskAction.STOP_AND_TYPE -> resetCapture()
+            AssistantAskAction.START -> Unit
+        }
         beginCapture()
     }
 
