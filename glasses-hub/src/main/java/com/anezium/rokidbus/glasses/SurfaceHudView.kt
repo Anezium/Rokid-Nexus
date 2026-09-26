@@ -423,7 +423,9 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
         if (!surface.isInk) hideInk()
         if (surface.kind != NexusSurface.KIND_CARD || surface.editable == null) {
             editView.visibility = GONE
-            endInline()
+            // A bare card follows its owner's band too: keep that subscription rather than
+            // dropping it only for renderCard to take a fresh one, which answers at once.
+            endInline(keepWatching = surface.isBareCard())
         }
         when {
             surface.isInk -> renderInk(surface)
@@ -512,8 +514,8 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
         }
     }
 
-    private fun endInline() {
-        stopWatchingNotice()
+    private fun endInline(keepWatching: Boolean = false) {
+        if (!keepWatching) stopWatchingNotice()
         if (inlineOwner != null) applyInline(null, "")
     }
 
@@ -868,9 +870,11 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
         previousView.visibility = GONE
         nextView.visibility = GONE
         if (surface.isBareCard()) {
+            // Settled before subscribing: the observer answers at once, and it must find this
+            // render already matching the band, not re-render into another subscription.
+            heldUnderBand = cardHoldsUnderBand(surface, NoticeController.visibleNotice()?.ownerPluginId)
             watchNotice()
-            if (cardHoldsUnderBand(surface, NoticeController.visibleNotice()?.ownerPluginId)) {
-                heldUnderBand = true
+            if (heldUnderBand) {
                 currentView.visibility = GONE
                 boardView.visibility = GONE
                 applySeeThrough(true)
