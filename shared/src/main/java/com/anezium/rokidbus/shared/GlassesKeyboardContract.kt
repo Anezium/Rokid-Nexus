@@ -14,7 +14,7 @@ object GlassesKeyboardContract {
     const val ACTION_STATUS = "status"
     const val ACTION_USE_NEXUS = "use_nexus"
 
-    /** The glasses hub lacks WRITE_SECURE_SETTINGS; the owner's Repair re-grants it. */
+    /** The glasses hub lacks WRITE_SECURE_SETTINGS, which only the glasses setup grants. */
     const val ERROR_PERMISSION_MISSING = "permission_missing"
     const val ERROR_FAILED = "failed"
 
