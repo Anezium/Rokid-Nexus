@@ -1,5 +1,7 @@
 package com.anezium.rokidbus.plugin.nav
 
+import com.anezium.rokidbus.client.plugin.NexusGuidancePlan
+import com.anezium.rokidbus.client.plugin.NexusGuidancePlanner
 import org.junit.Assert.assertEquals
 import org.junit.Test
 import java.io.File
@@ -94,15 +96,15 @@ class NavTrafficTranscriptTest {
     }
 
     private fun traffic(transcript: List<NavGuidance?>): List<String> {
-        val planner = NavActivityPlanner()
+        val planner = NexusGuidancePlanner()
         return transcript.map { guidance ->
             // An unreadable notification ends the route in NavRuntime; it never reaches the planner.
             if (guidance == null) return@map "UNREADABLE"
-            when (val plan = planner.plan(guidance)) {
-                is NavPlan.Start -> "START ${plan.guidance.toActivity()}"
-                is NavPlan.Update ->
-                    "UPDATE significant=${plan.significant} urgent=${plan.urgent} ${plan.guidance.toActivity()}"
-                NavPlan.Unchanged -> "UNCHANGED"
+            when (val plan = planner.plan(guidance.toGuidanceStep())) {
+                is NexusGuidancePlan.Start -> "START ${plan.step.toRouteActivity()}"
+                is NexusGuidancePlan.Update ->
+                    "UPDATE significant=${plan.significant} urgent=${plan.urgent} ${plan.step.toRouteActivity()}"
+                NexusGuidancePlan.Unchanged -> "UNCHANGED"
             }
         }
     }

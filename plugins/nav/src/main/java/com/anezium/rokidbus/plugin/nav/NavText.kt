@@ -1,5 +1,6 @@
 package com.anezium.rokidbus.plugin.nav
 
+import com.anezium.rokidbus.client.plugin.NexusGuidanceGlyphs
 import java.text.Normalizer
 import java.util.Locale
 
@@ -7,7 +8,8 @@ import java.util.Locale
  * Reading guidance text. Navigation apps localise their instructions, so the
  * maneuver comes from phrases in the languages Navigation knows (English and
  * French); an instruction it cannot place gets the neutral route mark rather
- * than a guessed arrow.
+ * than a guessed arrow. The glyphs themselves are the SDK's shared guidance
+ * vocabulary, so Navigation draws the same panel as every other guide.
  */
 internal object NavText {
     /** The plugin's own neutral mark (declared in its glyph array). */
@@ -18,28 +20,28 @@ internal object NavText {
 
     /** Ordered: the most specific phrase wins, so "slight right" never reads as "right". */
     private val MANEUVERS = listOf(
-        "u-turn" to listOf("demi-tour", "u-turn", "make a u turn"),
-        "roundabout" to listOf("rond-point", "giratoire", "roundabout", "traffic circle"),
-        "turn-slight-right" to listOf(
+        NexusGuidanceGlyphs.U_TURN to listOf("demi-tour", "u-turn", "make a u turn"),
+        NexusGuidanceGlyphs.ROUNDABOUT to listOf("rond-point", "giratoire", "roundabout", "traffic circle"),
+        NexusGuidanceGlyphs.TURN_SLIGHT_RIGHT to listOf(
             "legerement a droite", "legerement sur la droite", "restez a droite", "serrez a droite",
             "slight right", "keep right", "bear right",
         ),
-        "turn-slight-left" to listOf(
+        NexusGuidanceGlyphs.TURN_SLIGHT_LEFT to listOf(
             "legerement a gauche", "legerement sur la gauche", "restez a gauche", "serrez a gauche",
             "slight left", "keep left", "bear left",
         ),
-        "turn-sharp-right" to listOf("fortement a droite", "franchement a droite", "sharp right"),
-        "turn-sharp-left" to listOf("fortement a gauche", "franchement a gauche", "sharp left"),
-        "turn-right" to listOf("a droite", "turn right", "right onto", "right on ", "right at "),
-        "turn-left" to listOf("a gauche", "turn left", "left onto", "left on ", "left at "),
+        NexusGuidanceGlyphs.TURN_SHARP_RIGHT to listOf("fortement a droite", "franchement a droite", "sharp right"),
+        NexusGuidanceGlyphs.TURN_SHARP_LEFT to listOf("fortement a gauche", "franchement a gauche", "sharp left"),
+        NexusGuidanceGlyphs.TURN_RIGHT to listOf("a droite", "turn right", "right onto", "right on ", "right at "),
+        NexusGuidanceGlyphs.TURN_LEFT to listOf("a gauche", "turn left", "left onto", "left on ", "left at "),
         // Before the arrival phrases: "Continue to your destination" is a
         // straight step, not the arrival.
-        "straight" to listOf(
+        NexusGuidanceGlyphs.STRAIGHT to listOf(
             "continuez", "continuer", "tout droit", "poursuivez", "dirigez-vous", "aller vers", "allez vers",
             "head ", "continue",
             "straight",
         ),
-        "arrive" to listOf("vous etes arrive", "votre destination", "destination", "arrive", "you have arrived"),
+        NexusGuidanceGlyphs.ARRIVE to listOf("vous etes arrive", "votre destination", "destination", "arrive", "you have arrived"),
     )
 
     /** Street connectors, most specific first. */

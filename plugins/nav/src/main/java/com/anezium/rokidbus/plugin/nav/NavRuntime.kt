@@ -7,8 +7,10 @@ import android.os.SystemClock
 import android.util.Log
 import com.anezium.rokidbus.client.PluginRegistrationResult
 import com.anezium.rokidbus.client.plugin.NexusActivity
-import com.anezium.rokidbus.client.plugin.NexusActivityProgress
 import com.anezium.rokidbus.client.plugin.NexusActivityTrack
+import com.anezium.rokidbus.client.plugin.NexusGuidancePlan
+import com.anezium.rokidbus.client.plugin.NexusGuidancePlanner
+import com.anezium.rokidbus.client.plugin.NexusGuidanceStep
 import com.anezium.rokidbus.client.plugin.NexusSdkResult
 import com.anezium.rokidbus.client.plugin.surfaceSession
 
@@ -26,7 +28,7 @@ import com.anezium.rokidbus.client.plugin.surfaceSession
 internal class NavRuntime(context: Context) {
     private val appContext = context.applicationContext
     private val main = Handler(Looper.getMainLooper())
-    private val planner = NavActivityPlanner()
+    private val planner = NexusGuidancePlanner()
     private var pending: NavGuidance? = null
     private var deferred: NavGuidance? = null
     private var started = false
@@ -126,21 +128,21 @@ internal class NavRuntime(context: Context) {
         val next = pending ?: return
         pending = null
         if (!started) planner.reset()
-        when (val plan = planner.plan(next)) {
-            is NavPlan.Start -> send(start = true, guidance = plan.guidance)
-            is NavPlan.Update -> {
+        when (val plan = planner.plan(next.toGuidanceStep())) {
+            is NexusGuidancePlan.Start -> send(start = true, guidance = next)
+            is NexusGuidancePlan.Update -> {
                 val sinceLast = SystemClock.elapsedRealtime() - lastSentAtMs
                 if (!plan.significant && sinceLast < MIN_QUIET_INTERVAL_MS) {
                     // Maps rewrites its notification every few metres. A quiet
                     // change waits for the next slot; the newest one wins.
-                    deferred = plan.guidance
+                    deferred = next
                     main.removeCallbacks(sendDeferred)
                     main.postDelayed(sendDeferred, MIN_QUIET_INTERVAL_MS - sinceLast)
                 } else {
-                    send(guidance = plan.guidance, significant = plan.significant, urgent = plan.urgent)
+                    send(guidance = next, significant = plan.significant, urgent = plan.urgent)
                 }
             }
-            NavPlan.Unchanged -> Unit
+            NexusGuidancePlan.Unchanged -> Unit
         }
     }
 
@@ -196,18 +198,25 @@ internal class NavRuntime(context: Context) {
 
 private const val MAX_ROUTE_MS = 12L * 60L * 60L * 1000L
 
-internal fun NavGuidance.toActivity() = NexusActivity(
+/** This guidance in the SDK's shared guidance shape; everything the wearer sees carries over. */
+internal fun NavGuidance.toGuidanceStep() = NexusGuidanceStep(
     glyph = glyph,
     primary = primary,
     secondary = secondary,
-    progress = progressPercent?.let { NexusActivityProgress.Percent(it.coerceIn(0, 100)) },
     eta = eta,
     detail = detail,
-    maxDurationMs = MAX_ROUTE_MS,
-    // Guidance is worth lighting a sleeping display for; the platform
-    // still caps how often any wake happens.
-    wakeDisplay = true,
     badge = badge,
     track = track?.let { NexusActivityTrack(it.count, it.at, it.target, it.label) },
     measure = measure,
+    progressPercent = progressPercent,
+    stepKey = stepKey,
+    imminent = imminent,
+    arrived = arrived,
 )
+
+// Guidance is worth lighting a sleeping display for; the platform still caps
+// how often any wake happens.
+internal fun NexusGuidanceStep.toRouteActivity(): NexusActivity =
+    toActivity(maxDurationMs = MAX_ROUTE_MS, wakeDisplay = true)
+
+internal fun NavGuidance.toActivity(): NexusActivity = toGuidanceStep().toRouteActivity()
