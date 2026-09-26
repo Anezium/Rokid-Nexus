@@ -388,7 +388,12 @@ internal object ActivityOverlayRenderer {
         private val glyph = ImageView(context)
         private val primary = text(PRIMARY_SP, BusTheme.phosphor, bold = true)
         private val eta = text(ETA_SP, BusTheme.muted)
-        private val secondary = text(SECONDARY_SP, BusTheme.muted)
+        // The contract allows 28 characters, about 21 of which fit one line of
+        // the text column; a stop or street name wraps rather than losing its end.
+        private val secondary = text(SECONDARY_SP, BusTheme.muted).apply {
+            isSingleLine = false
+            maxLines = SECONDARY_MAX_LINES
+        }
         private val etaBelow = text(ETA_SP, BusTheme.muted)
         private val progress = ProgressBar(
             context,
@@ -598,6 +603,7 @@ internal object ActivityOverlayRenderer {
     private const val ETA_GAP_DP = 8
     private const val FIT_SLACK_DP = 2
     private const val SECONDARY_SP = 13f
+    private const val SECONDARY_MAX_LINES = 2
     private const val ETA_SP = 13f
     private const val DETAIL_SP = 11f
 }
