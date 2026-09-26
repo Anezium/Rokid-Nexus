@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased
+## 1.4.14
+
+### Upgrade together
+
+Install **both Nexus hubs 1.4.14**. Plugins, the SDK (0.20.0) and grants are
+unchanged.
 
 ### Phone and glasses hubs
 

@@ -198,6 +198,12 @@ that never takes focus cannot hold one. The phone's keyboard now comes forward
 by itself when a plugin opens a field, and leaves when it is done. Relay 1.2.4
 offers it from a *Type* chip that appears once dictation has started.
 
+Since 1.4.14 the glasses hold on to Nexus's keyboard, which is the only way
+Keyboard & remote reaches a glasses field: the Hi Rokid app can select Rokid's
+own again at any time, and the glasses now take it back at boot and whenever
+that happens, unless the owner turns *Keep Nexus keyboard on glasses* off. A
+keyboard the owner installed and chose is never replaced.
+
 ### A notice answers the question you saw
 
 Replies, gestures and dismissals are bound to the notice instance and the
