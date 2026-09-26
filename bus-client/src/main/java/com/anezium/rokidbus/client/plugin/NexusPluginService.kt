@@ -21,6 +21,13 @@ import com.anezium.rokidbus.shared.plugin.PluginDescriptor
 import com.anezium.rokidbus.shared.plugin.PluginDescriptorParseResult
 import com.anezium.rokidbus.shared.plugin.PluginDescriptorParser
 import com.anezium.rokidbus.shared.plugin.PluginOpenTypes
+import com.anezium.rokidbus.shared.skills.SkillCatalog
+import com.anezium.rokidbus.shared.skills.SkillCatalogEntry
+import com.anezium.rokidbus.shared.skills.SkillCatalogParseResult
+import com.anezium.rokidbus.shared.skills.SkillCatalogParser
+import com.anezium.rokidbus.shared.skills.SkillErrorCodes
+import com.anezium.rokidbus.shared.skills.SkillLimits
+import com.anezium.rokidbus.shared.skills.SkillResultEnvelope
 import org.json.JSONObject
 
 abstract class NexusPluginService : Service(), NexusPluginCallbacks {
@@ -29,6 +36,7 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
     private var descriptor: PluginDescriptor? = null
     private var sessionOpen = false
     private var audioSessionActive = false
+    private var ongoingWorkHeld = false
 
     protected val nexusClient: NexusPluginClient?
         get() = client
@@ -98,7 +106,10 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
             pluginId = descriptor.id,
             callbacks = this,
             hubTarget = hubTarget,
-        ).also(NexusPluginClient::connect)
+        ).also { created ->
+            created.ownSkillCatalog = loadOwnSkillCatalog(descriptor)
+            created.connect()
+        }
     }
 
     override fun onBind(intent: Intent?): IBinder = localBinder
@@ -112,6 +123,7 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
         client = null
         sessionOpen = false
         audioSessionActive = false
+        ongoingWorkHeld = false
         stopNexusSessionForeground()
         super.onDestroy()
     }
@@ -133,7 +145,7 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
             onNexusClose()
         } finally {
             sessionOpen = false
-            stopNexusSessionForeground()
+            if (!ongoingWorkHeld) stopNexusSessionForeground()
         }
     }
 
@@ -145,7 +157,7 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
         try {
             onNexusBackground()
         } finally {
-            if (!audioSessionActive) stopNexusSessionForeground()
+            if (!audioSessionActive && !ongoingWorkHeld) stopNexusSessionForeground()
         }
     }
 
@@ -179,11 +191,16 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
         try {
             onNexusRegistrationState(result)
         } finally {
-            stopNexusSessionForeground()
+            if (!ongoingWorkHeld) stopNexusSessionForeground()
         }
     }
     final override fun onAssistantTakeover(enabled: Boolean) = onNexusAssistantTakeover(enabled)
     final override fun onAssistantTakeoverError(code: String) = onNexusAssistantTakeoverError(code)
+    final override fun onSkillInvoked(invocation: NexusSkillInvocation) = onNexusSkillInvoked(invocation)
+    final override fun onSkillCancelled(invocation: NexusSkillInvocation) = onNexusSkillCancelled(invocation)
+    final override fun onSkillCatalog(entries: List<SkillCatalogEntry>, errorCode: String?) =
+        onNexusSkillCatalog(entries, errorCode)
+    final override fun onSkillResult(result: SkillResultEnvelope) = onNexusSkillResult(result)
     final override fun onMessage(path: String, id: String, payload: JSONObject) =
         onNexusMessage(path, id, payload)
     final override fun onBinary(path: String, id: String, payload: JSONObject, data: ByteArray) =
@@ -246,6 +263,25 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
     protected open fun onNexusAssistantTakeover(enabled: Boolean) = Unit
     protected open fun onNexusAssistantTakeoverError(code: String) = Unit
     protected open fun onNexusRegistrationState(result: Int) = Unit
+
+    /**
+     * One invocation of an operation this plugin declared in its skill catalog. Answer it once
+     * through [invocation], keeping network work inside [NexusSkillInvocation.remainingMs]. The
+     * plugin is not opened for it and must not use it as a reason to show anything. The default
+     * refuses the call as unsupported.
+     */
+    protected open fun onNexusSkillInvoked(invocation: NexusSkillInvocation) {
+        invocation.fail(SkillErrorCodes.UNSUPPORTED_OPERATION)
+    }
+
+    /** The hub cancelled [invocation]: stop what remains, then answer it with what is known. */
+    protected open fun onNexusSkillCancelled(invocation: NexusSkillInvocation) = Unit
+
+    /** See [NexusPluginClient.requestSkillCatalog]; `skills_client` grant only. */
+    protected open fun onNexusSkillCatalog(entries: List<SkillCatalogEntry>, errorCode: String?) = Unit
+
+    /** See [NexusPluginClient.invokeSkill]; `skills_client` grant only. */
+    protected open fun onNexusSkillResult(result: SkillResultEnvelope) = Unit
     protected open fun onNexusMessage(path: String, id: String, payload: JSONObject) = Unit
     protected open fun onNexusBinaryMessage(
         path: String,
@@ -264,7 +300,7 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
         additionalTypes: Int = 0,
         onFailure: ((Throwable) -> Unit)? = null,
     ): Boolean {
-        if (!sessionOpen && !audioSessionActive) return false
+        if (!sessionOpen && !audioSessionActive && !ongoingWorkHeld) return false
         createSessionNotificationChannel()
         return runCatching {
             val notification = buildSessionNotification()
@@ -293,6 +329,35 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
             },
         )
     }
+
+    /**
+     * Keeps this service running in the foreground, under its one session notification, for an
+     * ongoing process the wearer explicitly started through this plugin and follows on the
+     * glasses as an activity, such as journey guidance. The service is started as well as bound,
+     * so it outlives the hub's binding; the plugin's registration, and with it its activity,
+     * lives as long as the hold.
+     *
+     * This is the narrow exception to dormancy described in the plugin contract: hold it only
+     * while that process runs, never to poll or to wait, and call [releaseNexusOngoingWork] the
+     * moment it ends. Returns whether the foreground promotion succeeded.
+     */
+    protected fun holdNexusOngoingWork(additionalTypes: Int = 0): Boolean {
+        ongoingWorkHeld = true
+        runCatching { startService(Intent(this, javaClass)) }
+            .onFailure { Log.w(TAG, "Ongoing work start rejected: ${it.javaClass.simpleName}") }
+        return promoteNexusSessionForeground(additionalTypes)
+    }
+
+    /** Ends [holdNexusOngoingWork]. The service returns to ordinary hub-owned binding. */
+    protected fun releaseNexusOngoingWork() {
+        if (!ongoingWorkHeld) return
+        ongoingWorkHeld = false
+        if (sessionOpen || audioSessionActive) promoteNexusSessionForeground() else stopNexusSessionForeground()
+        stopSelf()
+    }
+
+    protected val isNexusOngoingWorkHeld: Boolean
+        get() = ongoingWorkHeld
 
     protected fun stopNexusSessionForeground() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
@@ -328,6 +393,29 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
             .setOnlyAlertOnce(true)
             .build()
 
+    private fun loadOwnSkillCatalog(descriptor: PluginDescriptor): SkillCatalog? {
+        val resourceId = descriptor.skillsCatalogResId ?: return null
+        val bytes = runCatching {
+            resources.openRawResource(resourceId).use { input ->
+                val buffer = java.io.ByteArrayOutputStream()
+                val chunk = ByteArray(4096)
+                while (buffer.size() <= SkillLimits.MAX_CATALOG_BYTES) {
+                    val read = input.read(chunk)
+                    if (read < 0) break
+                    buffer.write(chunk, 0, read)
+                }
+                buffer.toByteArray()
+            }
+        }.getOrNull() ?: return null
+        return when (val parsed = SkillCatalogParser.parse(bytes)) {
+            is SkillCatalogParseResult.Valid -> parsed.catalog
+            is SkillCatalogParseResult.Invalid -> {
+                Log.e(TAG, "Own skill catalog is invalid: ${parsed.reason}")
+                null
+            }
+        }
+    }
+
     private fun readOwnDescriptor(): PluginDescriptor? {
         val component = ComponentName(this, javaClass)
         val info = runCatching {
@@ -362,6 +450,8 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
             BusConstants.META_PLUGIN_RECEIVE_PREFIXES,
             BusConstants.META_PLUGIN_SETTINGS_ACTIVITY,
             BusConstants.META_PLUGIN_LAUNCHABLE,
+            BusConstants.META_PLUGIN_SKILLS,
+            BusConstants.META_PLUGIN_SKILLS_CLIENT,
         )
     }
 }
