@@ -121,7 +121,10 @@ internal object GoogleMapsParser {
         val secondary = place ?: title
         // "Départ à 17:48" says again what a departure time in first place says.
         val rest = parts.drop(1).filterNot { primary in it }
-        val detail = (rest + listOfNotNull(walkDistance, title.takeIf { boarding }))
+        // The walk's distance is its measure: "3 min - 250 m" expanded, "250 m"
+        // under "3 min" in the chip, and the stop keeps the second line.
+        val measure = walkDistance?.takeIf { glyph == "walk" && it.length <= ActivitySurfaceContract.MAX_MEASURE_CHARS }
+        val detail = (rest + listOfNotNull(walkDistance.takeIf { measure == null }, title.takeIf { boarding }))
             .ifEmpty { listOf(title).takeIf { place != null }.orEmpty() }
             .take(ActivitySurfaceContract.MAX_DETAIL_LINES)
             .map { NavText.fit(it, ActivitySurfaceContract.MAX_DETAIL_CHARS) }
@@ -135,6 +138,7 @@ internal object GoogleMapsParser {
             eta = NavText.clock(notification.subText),
             detail = detail,
             badge = badge.takeIf { glyph != "walk" },
+            measure = measure,
             // Minutes and metres tick down within one step; the step is the
             // kind of leg and where it leads.
             stepKey = "${NavSource.GOOGLE_MAPS.name}|transit|$glyph|${NavText.fold(place ?: title.replace(DIGITS, ""))}",

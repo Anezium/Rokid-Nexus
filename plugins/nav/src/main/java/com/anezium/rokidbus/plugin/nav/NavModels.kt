@@ -54,6 +54,8 @@ internal data class NavGuidance(
     val detail: List<String> = emptyList(),
     val badge: String? = null,
     val track: NavTrack? = null,
+    /** A second quantity for [primary]: the distance of a walk timed in minutes. */
+    val measure: String? = null,
     val progressPercent: Int? = null,
     /** Identifies the current step; a new key is a new maneuver or leg. */
     val stepKey: String,

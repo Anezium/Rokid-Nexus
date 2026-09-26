@@ -41,6 +41,6 @@ internal class NavActivityPlanner {
 
     private fun NavGuidance.visibleEquals(other: NavGuidance): Boolean =
         glyph == other.glyph && primary == other.primary && secondary == other.secondary &&
-            eta == other.eta && detail == other.detail && badge == other.badge &&
+            eta == other.eta && detail == other.detail && badge == other.badge && measure == other.measure &&
             track == other.track && progressPercent == other.progressPercent
 }

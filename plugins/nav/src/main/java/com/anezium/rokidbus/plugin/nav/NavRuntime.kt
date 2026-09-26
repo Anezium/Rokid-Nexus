@@ -198,5 +198,6 @@ internal class NavRuntime(context: Context) : NexusPluginCallbacks {
         wakeDisplay = true,
         badge = badge,
         track = track?.let { NexusActivityTrack(it.count, it.at, it.target, it.label) },
+        measure = measure,
     )
 }

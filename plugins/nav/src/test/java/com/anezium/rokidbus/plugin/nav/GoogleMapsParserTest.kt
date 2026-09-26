@@ -147,13 +147,14 @@ class GoogleMapsParserTest {
     )
 
     @Test
-    fun `a transit walking leg shows the time over the distance, then the stop and the departure`() {
+    fun `a transit walking leg pairs its minutes with its distance, then the stop and the departure`() {
         val guidance = GoogleMapsParser.parse(transitWalk)!!
 
         assertEquals("walk", guidance.glyph)
         assertEquals("3 min", guidance.primary)
+        assertEquals("250 m", guidance.measure)
         assertEquals("Châtelet", guidance.secondary)
-        assertEquals(listOf("Départ à 17:36", "250 m"), guidance.detail)
+        assertEquals(listOf("Départ à 17:36"), guidance.detail)
         assertEquals("18:51", guidance.eta)
         assertNull(guidance.badge)
         assertNull(guidance.progressPercent)
@@ -168,6 +169,7 @@ class GoogleMapsParserTest {
 
         assertEquals(first.stepKey, later.stepKey)
         assertEquals("2 min", later.primary)
+        assertEquals("150 m", later.measure)
         assertEquals("Châtelet", later.secondary)
     }
 
