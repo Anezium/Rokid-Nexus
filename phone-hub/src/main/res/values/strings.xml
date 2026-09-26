@@ -201,6 +201,14 @@
     <string name="remote_input_live_help">Every edit appears on the glasses immediately. There is no Send button.</string>
     <string name="remote_input_auto_open_help">Let Nexus open this screen by itself when a glasses app asks for text. Without it, you get a notification to tap.</string>
     <string name="remote_input_auto_open_allow">Allow</string>
+    <string name="remote_input_glasses_keyboard_help">The glasses are using %1$s, so what you type here can’t reach them.</string>
+    <string name="remote_input_glasses_keyboard_rokid">Rokid’s keyboard</string>
+    <string name="remote_input_glasses_keyboard_other">another keyboard</string>
+    <string name="remote_input_glasses_keyboard_use">Use Nexus keyboard on glasses</string>
+    <string name="remote_input_glasses_keyboard_switching">Switching…</string>
+    <string name="remote_input_glasses_keyboard_done">The glasses now use the Nexus keyboard</string>
+    <string name="remote_input_glasses_keyboard_failed">The glasses did not take the change. Try again.</string>
+    <string name="remote_input_glasses_keyboard_permission">Nexus lost the permission to change it. Run Repair now in Settings, then try again.</string>
     <string name="remote_input_prompt_channel">Keyboard requests</string>
     <string name="remote_input_prompt_title">The glasses are asking for text</string>
     <string name="remote_input_prompt_body">Tap to type it on your phone.</string>

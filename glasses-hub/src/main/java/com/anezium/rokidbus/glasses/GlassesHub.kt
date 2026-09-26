@@ -27,6 +27,8 @@ import com.anezium.rokidbus.shared.FrameProtocol
 import com.anezium.rokidbus.shared.SppKeyProvisioning
 import com.anezium.rokidbus.shared.GlassesAccessibilityCheckContract
 import com.anezium.rokidbus.shared.GlassesHubCapabilitiesContract
+import com.anezium.rokidbus.shared.GlassesKeyboardContract
+import com.anezium.rokidbus.shared.GlassesKeyboardReply
 import com.anezium.rokidbus.shared.GlassesRepairContract
 import com.anezium.rokidbus.shared.GlyphContract
 import com.anezium.rokidbus.shared.ImageSurfaceContract
@@ -366,6 +368,10 @@ object GlassesHub {
                 "accessibilityCheck foreign=${scan.foreign.size} " +
                     "nexusEnabled=${scan.nexusEnabled} replyError=${error ?: "none"}",
             )
+            return
+        }
+        if (envelope.path == BusPaths.GLASSES_KEYBOARD_REQUEST) {
+            handleKeyboardRequest(envelope)
             return
         }
         if (envelope.path == BusPaths.WIRELESS_ADB_REQUEST) {
@@ -887,6 +893,48 @@ object GlassesHub {
                 // as foreign.
                 .filter { ComponentName.unflattenFromString(it) != own },
             nexusEnabled = enabled.any { ComponentName.unflattenFromString(it) == own },
+        )
+    }
+
+    private fun handleKeyboardRequest(envelope: BusEnvelope) {
+        val context = appContext
+        if (context == null) {
+            sendRemote(errorEnvelope(envelope.id, "HUB_NOT_READY"))
+            return
+        }
+        val action = GlassesKeyboardContract.actionFromRequest(envelope.payload)
+        if (action == null) {
+            sendRemote(errorEnvelope(envelope.id, "INVALID_ACTION"))
+            return
+        }
+        val canSwitch = RemoteInputImeProvisioner.canConfigure(context)
+        val error = when {
+            action != GlassesKeyboardContract.ACTION_USE_NEXUS -> null
+            !canSwitch -> GlassesKeyboardContract.ERROR_PERMISSION_MISSING
+            !RemoteInputImeProvisioner.selectNexus(context) -> GlassesKeyboardContract.ERROR_FAILED
+            else -> null
+        }
+        val selected = RemoteInputImeProvisioner.selectedMethod(context)
+        val reply = GlassesKeyboardReply(
+            nexusSelected = RemoteInputImeProvisioner.isNexus(
+                selected,
+                RemoteInputImeProvisioner.nexusComponent(context),
+            ),
+            canSwitch = canSwitch,
+            currentPackage = RemoteInputImeProvisioner.methodPackage(selected),
+            error = error,
+        )
+        val replyError = sendRemote(
+            BusEnvelope(
+                path = BusPaths.GLASSES_KEYBOARD_REPLY,
+                id = envelope.id,
+                payload = GlassesKeyboardContract.replyToJson(reply),
+            ),
+        )
+        log(
+            "keyboard action=$action nexusSelected=${reply.nexusSelected} " +
+                "current=${reply.currentPackage ?: "none"} error=${error ?: "none"} " +
+                "replyError=${replyError ?: "none"}",
         )
     }
 

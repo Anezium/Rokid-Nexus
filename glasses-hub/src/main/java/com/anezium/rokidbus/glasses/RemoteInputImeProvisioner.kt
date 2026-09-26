@@ -7,15 +7,28 @@ import android.content.pm.PackageManager
 import android.provider.Settings
 
 internal object RemoteInputImeProvisioner {
-    fun ensureConfigured(context: Context): Boolean {
-        if (context.checkSelfPermission(Manifest.permission.WRITE_SECURE_SETTINGS) !=
-            PackageManager.PERMISSION_GRANTED
-        ) {
-            return false
-        }
+    fun ensureConfigured(context: Context): Boolean = configure(context, replaceSelected = false)
 
-        val component = ComponentName(context, NexusRemoteInputMethodService::class.java)
-            .flattenToShortString()
+    /**
+     * The owner's explicit choice from the phone: unlike [ensureConfigured], this replaces a
+     * keyboard another app selected, since that is the whole point of asking.
+     */
+    fun selectNexus(context: Context): Boolean = configure(context, replaceSelected = true)
+
+    fun canConfigure(context: Context): Boolean =
+        context.checkSelfPermission(Manifest.permission.WRITE_SECURE_SETTINGS) ==
+            PackageManager.PERMISSION_GRANTED
+
+    fun selectedMethod(context: Context): String? =
+        Settings.Secure.getString(context.contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD)
+
+    fun nexusComponent(context: Context): String =
+        ComponentName(context, NexusRemoteInputMethodService::class.java).flattenToShortString()
+
+    private fun configure(context: Context, replaceSelected: Boolean): Boolean {
+        if (!canConfigure(context)) return false
+
+        val component = nexusComponent(context)
         return runCatching {
             val resolver = context.contentResolver
             val enabled = Settings.Secure.getString(
@@ -34,7 +47,12 @@ internal object RemoteInputImeProvisioner {
             }
 
             val current = Settings.Secure.getString(resolver, Settings.Secure.DEFAULT_INPUT_METHOD)
-            if (shouldSelectNexus(current, component)) {
+            val select = if (replaceSelected) {
+                !isNexus(current, component)
+            } else {
+                shouldSelectNexus(current, component)
+            }
+            if (select) {
                 check(
                     Settings.Secure.putString(
                         resolver,
@@ -57,4 +75,17 @@ internal object RemoteInputImeProvisioner {
 
     internal fun shouldSelectNexus(current: String?, component: String): Boolean =
         current.isNullOrBlank() || current == component
+
+    /** The setting may hold the "pkg/.Class" shorthand or the fully qualified form. */
+    internal fun isNexus(method: String?, component: String): Boolean =
+        !method.isNullOrBlank() && expanded(method) == expanded(component)
+
+    internal fun methodPackage(method: String?): String? =
+        method?.takeIf { '/' in it }?.substringBefore('/')?.takeIf(String::isNotBlank)
+
+    private fun expanded(method: String): String {
+        val pkg = method.substringBefore('/')
+        val cls = method.substringAfter('/')
+        return if (cls.startsWith('.')) "$pkg/$pkg$cls" else method
+    }
 }

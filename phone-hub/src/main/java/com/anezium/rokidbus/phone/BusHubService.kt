@@ -1889,17 +1889,19 @@ class BusHubService : Service() {
             path == BusPaths.GLASSES_SETUP_PAIRING_RESULT ||
             path == BusPaths.GLASSES_REPAIR_CONFIG ||
             path == BusPaths.GLASSES_REPAIR_REQUEST ||
-            path == BusPaths.GLASSES_ACCESSIBILITY_CHECK_REQUEST
+            path == BusPaths.GLASSES_ACCESSIBILITY_CHECK_REQUEST ||
+            path == BusPaths.GLASSES_KEYBOARD_REQUEST
 
     private fun handleGlassesControlRequest(envelope: BusEnvelope, replyBinder: IBinder?) {
         if (envelope.path == BusPaths.GLASSES_REPAIR_CONFIG ||
             envelope.path == BusPaths.GLASSES_REPAIR_REQUEST ||
-            envelope.path == BusPaths.GLASSES_ACCESSIBILITY_CHECK_REQUEST
+            envelope.path == BusPaths.GLASSES_ACCESSIBILITY_CHECK_REQUEST ||
+            envelope.path == BusPaths.GLASSES_KEYBOARD_REQUEST
         ) {
             // Pure forwards: the glasses answer on GLASSES_REPAIR_REPLY / GLASSES_ACCESSIBILITY_
-            // CHECK_REPLY with the request's id, which the settings screen correlates itself. Only
-            // a transport failure is answered here, so "not connected" fails fast instead of eating
-            // the full timeout.
+            // CHECK_REPLY / GLASSES_KEYBOARD_REPLY with the request's id, which the calling screen
+            // correlates itself. Only a transport failure is answered here, so "not connected"
+            // fails fast instead of eating the full timeout.
             val error = sendRemote(envelope)
             if (error != null) {
                 deliverError(replyBinder, envelope.id, error)
