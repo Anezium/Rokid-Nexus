@@ -53,7 +53,7 @@ internal class InkHudView(context: Context) : FrameLayout(context) {
         danger = BusTheme.danger,
         black = BusTheme.glassesBg,
     )
-    private val rootFlex = FlexboxLayout(context).apply {
+    private val rootFlex = InkFlexboxLayout(context).apply {
         flexDirection = FlexDirection.COLUMN
         flexWrap = FlexWrap.NOWRAP
         alignItems = AlignItems.STRETCH
@@ -1113,8 +1113,23 @@ internal class InkHudView(context: Context) : FrameLayout(context) {
     }
 }
 
+/**
+ * An item of a row takes the height its content needs, as in CSS, rather than whatever the row
+ * has left. Flexbox otherwise bounds a wrapped line by the room left under the lines before it,
+ * counted at their pre-grow height: a line that grew wider and so grew shorter left the next
+ * one squeezed, its text cut to a few pixels.
+ */
+private class InkFlexboxLayout(context: Context) : FlexboxLayout(context) {
+    override fun getChildHeightMeasureSpec(heightSpec: Int, padding: Int, childDimension: Int): Int =
+        if (!flexDirection.isColumn() && childDimension == ViewGroup.LayoutParams.WRAP_CONTENT) {
+            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
+        } else {
+            super.getChildHeightMeasureSpec(heightSpec, padding, childDimension)
+        }
+}
+
 private class InkFlexContainer(context: Context) : FrameLayout(context) {
-    val flex = FlexboxLayout(context)
+    val flex = InkFlexboxLayout(context)
     val absolute = FrameLayout(context)
 
     init {
@@ -1125,7 +1140,7 @@ private class InkFlexContainer(context: Context) : FrameLayout(context) {
 }
 
 private class InkScrollContainer(context: Context, horizontal: Boolean) : FrameLayout(context) {
-    val flex = FlexboxLayout(context)
+    val flex = InkFlexboxLayout(context)
     val absolute = FrameLayout(context)
     val scroller: View = if (horizontal) {
         HorizontalScrollView(context).apply {
