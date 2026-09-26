@@ -138,7 +138,7 @@ class HelloPluginService : NexusPluginService() {
             "long" -> client.updateActivity(DEMO_ROUTE_LEAVE)
             "ride" -> client.updateActivity(DEMO_ROUTE_RIDE, significant = true)
             "stops" -> client.updateActivity(DEMO_ROUTE_RIDE_ON)
-            "tostop" -> client.updateActivity(DEMO_ROUTE_TO_STOP, significant = true)
+            "tostop" -> client.updateActivity(DEMO_ROUTE_TO_STOP)
             "urgent" -> client.updateActivity(DEMO_ROUTE_GET_OFF, significant = true, urgent = true)
             "arrive" -> client.updateActivity(DEMO_ROUTE_ARRIVED, significant = true)
             "end" -> client.endActivity()
@@ -669,7 +669,7 @@ class HelloPluginService : NexusPluginService() {
             glyph = "walk",
             primary = "3 min",
             measure = "250 m",
-            secondary = "Chatelet",
+            secondary = "Porte d'Orleans - Leclerc",
             progress = null,
             detail = listOf("Departs at 12:09"),
         )
