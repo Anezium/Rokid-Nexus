@@ -243,9 +243,10 @@ class AssistantSettingsActivity : Activity() {
             addView(
                 NexusUi.cardBody(
                     this@AssistantSettingsActivity,
-                    "Typing uses Keyboard & remote on your phone, which comes up on its own. " +
-                        "Needs Rokid Nexus 1.4.13 on both hubs; with older ones Assistant " +
-                        "stays on voice.",
+                    "Typing uses Keyboard & remote on your phone. With Rokid Nexus 1.4.13 " +
+                        "on both hubs you type inside the band and the keyboard comes up on " +
+                        "its own; from 1.4.6 the field opens as its own card, and older hubs " +
+                        "stay on voice.",
                 ),
                 NexusUi.block(),
             )
