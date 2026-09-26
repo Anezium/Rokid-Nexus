@@ -571,7 +571,7 @@ internal object ActivityOverlayRenderer {
     private const val EDGE_MARGIN_DP = 12
     private const val BAND_WIDTH_FRACTION = 0.92f
     private const val PANEL_WIDTH_FRACTION = 0.78f
-    private const val PULSE_DP = 4
+    private const val PULSE_DP = 8
     private const val URGENT_OUTLINE_DP = 2
     private const val GLYPH_DP = 48
     private const val PROGRESS_HEIGHT_DP = 4
