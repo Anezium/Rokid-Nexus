@@ -4,34 +4,40 @@ import com.anezium.rokidbus.client.plugin.NexusPluginService
 import com.anezium.rokidbus.shared.plugin.NexusInputEvent
 
 /**
- * The launcher entry when no route holds the bus.
+ * Navigation's one registration with the hub.
  *
- * The hub delivers a plugin's lifecycle only while it has exactly one
- * registration. During a route the listener's runtime is that registration and
- * shows the card itself, so this service is bound only when no route is live.
- * If a route starts while it is open, the runtime borrows this service's
- * client rather than registering a second one, and takes the route back onto
- * its own client when the service closes.
+ * The hub delivers a plugin's opening, input and closing only while it has
+ * exactly one registration, so the route does not register a client of its
+ * own: while a route is live the listener keeps this service bound and the
+ * route sends through this service's client. Opening Navigation, with or
+ * without a route, therefore always reaches this service, which shows the
+ * whole current instruction or how to start one.
  */
 class NavPluginService : NexusPluginService() {
+    override fun onCreate() {
+        super.onCreate()
+        nexusClient?.let(NavControl::serviceCreated)
+    }
+
     override fun onNexusOpen() {
-        val client = nexusClient ?: return
-        NavControl.serviceOpened(client)
+        NavControl.cardOpen = true
         nexusSurfaceSession(NavCard.SURFACE_ID)?.showCard(NavCard.build(this))
     }
 
     override fun onNexusClose() {
-        nexusClient?.let(NavControl::serviceClosed)
+        NavControl.cardOpen = false
     }
 
     override fun onNexusInput(event: NexusInputEvent) = Unit
 
-    override fun onNexusActivityClosed(reason: String) {
-        NavControl.activityClosed(reason)
-    }
+    override fun onNexusRegistrationState(result: Int) = NavControl.registrationState(result)
+
+    override fun onNexusLinkState(state: Int) = NavControl.linkState(state)
+
+    override fun onNexusActivityClosed(reason: String) = NavControl.activityClosed(reason)
 
     override fun onDestroy() {
-        nexusClient?.let(NavControl::serviceClosed)
+        nexusClient?.let(NavControl::serviceDestroyed)
         super.onDestroy()
     }
 }

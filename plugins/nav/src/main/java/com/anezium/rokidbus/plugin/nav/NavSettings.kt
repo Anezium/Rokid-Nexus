@@ -1,6 +1,10 @@
 package com.anezium.rokidbus.plugin.nav
 
+import android.content.ComponentName
 import android.content.Context
+import android.content.Intent
+import android.content.ServiceConnection
+import android.os.IBinder
 import com.anezium.rokidbus.client.plugin.NexusPluginClient
 
 /** Which guidance the wearer lets through: everything, per app, or nothing. */
@@ -44,11 +48,16 @@ internal class NavSettings(context: Context) {
 }
 
 /**
- * The process's one meeting point. The settings screen tells the listener
- * when a switch changes: off ends that app's live route at once, on picks up a
- * route already running without waiting for its next update. The plugin
- * service lends its hub client to the route while it is open, because the
- * hub serves one registration per plugin.
+ * The process's one meeting point.
+ *
+ * The settings screen tells the listener when a switch changes: off ends that
+ * app's live route at once, on picks up a route already running without
+ * waiting for its next update.
+ *
+ * The route sends through [NavPluginService]'s client, Navigation's only
+ * registration: while guidance is live the runtime keeps that service bound
+ * ([holdBus]), and the service hands its client and its hub callbacks over
+ * here.
  */
 internal object NavControl {
     @Volatile
@@ -57,14 +66,16 @@ internal object NavControl {
     @Volatile
     private var runtime: NavRuntime? = null
 
-    /** The open plugin service's client, which the route borrows. */
+    /** The plugin service's client while the service exists. */
     @Volatile
     var serviceClient: NexusPluginClient? = null
         private set
 
-    /** A Navigation card is on the glasses, shown by the service or the route. */
+    /** A Navigation card is on the glasses. */
     @Volatile
     var cardOpen: Boolean = false
+
+    private var busBinding: ServiceConnection? = null
 
     fun attach(service: NavNotificationListener, routeRuntime: NavRuntime) {
         listener = service
@@ -82,19 +93,46 @@ internal object NavControl {
         listener?.applySettings()
     }
 
-    fun serviceOpened(client: NexusPluginClient) {
+    fun serviceCreated(client: NexusPluginClient) {
         serviceClient = client
-        cardOpen = true
+        runtime?.onBusReady()
     }
 
-    fun serviceClosed(client: NexusPluginClient) {
+    fun serviceDestroyed(client: NexusPluginClient) {
         if (serviceClient !== client) return
         serviceClient = null
         cardOpen = false
-        runtime?.onServiceClientGone(client)
+        runtime?.onBusLost()
+    }
+
+    fun registrationState(result: Int) {
+        runtime?.onRegistrationState(result)
+    }
+
+    fun linkState(state: Int) {
+        runtime?.onLinkState(state)
     }
 
     fun activityClosed(reason: String) {
         runtime?.onActivityClosed(reason)
+    }
+
+    /** Keeps the plugin service, and so its registration, alive for the route. */
+    fun holdBus(context: Context) {
+        if (busBinding != null) return
+        val connection = object : ServiceConnection {
+            override fun onServiceConnected(name: ComponentName?, binder: IBinder?) = Unit
+            override fun onServiceDisconnected(name: ComponentName?) = Unit
+        }
+        val bound = runCatching {
+            context.bindService(Intent(context, NavPluginService::class.java), connection, Context.BIND_AUTO_CREATE)
+        }.getOrDefault(false)
+        if (bound) busBinding = connection
+    }
+
+    fun releaseBus(context: Context) {
+        val connection = busBinding ?: return
+        busBinding = null
+        runCatching { context.unbindService(connection) }
     }
 }
