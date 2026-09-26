@@ -132,6 +132,79 @@ class GoogleMapsParserTest {
         assertTrue(guidance.detail.single().length <= 32)
     }
 
+    /** Shaped on a real transit capture (walking leg); the stop is swapped. */
+    private val transitWalk = NavNotification(
+        packageName = NavSource.GOOGLE_MAPS.packageName,
+        category = "navigation",
+        ongoing = true,
+        title = "Marchez 3 min (250 m)",
+        text = "Châtelet · Départ à 17:36",
+        subText = "Arrivée à 18:51",
+        shortCriticalText = "3 min",
+        progress = 0,
+        progressMax = 100,
+        actions = listOf("Arrêter le trajet"),
+    )
+
+    @Test
+    fun `a transit walking leg shows the minutes, the stop, the departure and the distance`() {
+        val guidance = GoogleMapsParser.parse(transitWalk)!!
+
+        assertEquals("walk", guidance.glyph)
+        assertEquals("3 min", guidance.primary)
+        assertEquals("Châtelet", guidance.secondary)
+        assertEquals(listOf("Départ à 17:36", "250 m"), guidance.detail)
+        assertEquals("18:51", guidance.eta)
+        assertNull(guidance.badge)
+        assertNull(guidance.progressPercent)
+    }
+
+    @Test
+    fun `a transit leg stays one step while its minutes tick down`() {
+        val first = GoogleMapsParser.parse(transitWalk)!!
+        val later = GoogleMapsParser.parse(
+            transitWalk.copy(title = "Marchez 2 min (150 m)", shortCriticalText = "2 min"),
+        )!!
+
+        assertEquals(first.stepKey, later.stepKey)
+        assertEquals("2 min", later.primary)
+    }
+
+    @Test
+    fun `a ride counts its stops, names its vehicle and line, and warns on the last stop`() {
+        // The ride wording is assumed from the walking leg's shape, not captured.
+        val ride = GoogleMapsParser.parse(
+            transitWalk.copy(
+                title = "Descendez dans 3 arrêts",
+                text = "Luxembourg · Bus 38",
+                shortCriticalText = null,
+            ),
+        )!!
+
+        assertEquals("bus", ride.glyph)
+        assertEquals("38", ride.badge)
+        assertEquals("3 arrêts", ride.primary)
+        assertEquals("Luxembourg", ride.secondary)
+        assertFalse(ride.imminent)
+        assertTrue(
+            GoogleMapsParser.parse(
+                transitWalk.copy(title = "Descendez au prochain arrêt", text = "Luxembourg · RER B"),
+            )!!.imminent,
+        )
+    }
+
+    @Test
+    fun `a transit step it does not know keeps Maps' words under the route mark`() {
+        val guidance = GoogleMapsParser.parse(
+            transitWalk.copy(title = "Correspondance", text = "Gare du Nord", shortCriticalText = "6 min"),
+        )!!
+
+        assertEquals(NavText.ROUTE_GLYPH, guidance.glyph)
+        assertEquals("6 min", guidance.primary)
+        assertEquals("Gare du Nord", guidance.secondary)
+        assertEquals(listOf("Correspondance"), guidance.detail)
+    }
+
     @Test
     fun `anything that is not live Maps guidance is refused`() {
         assertNull(GoogleMapsParser.parse(walking.copy(category = "status")))
@@ -140,5 +213,7 @@ class GoogleMapsParserTest {
         assertNull(GoogleMapsParser.parse(walking.copy(packageName = "com.example.fake")))
         // No distance and not an arrival: nothing trustworthy to put first.
         assertNull(GoogleMapsParser.parse(walking.copy(title = "Recherche du GPS…", shortCriticalText = null)))
+        // Transit guidance posts empty before Maps fills it in.
+        assertNull(GoogleMapsParser.parse(transitWalk.copy(title = "", text = "")))
     }
 }
