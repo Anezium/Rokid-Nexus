@@ -14,15 +14,15 @@ import android.os.Looper
 import android.os.SystemClock
 import android.view.KeyEvent
 import com.anezium.rokidbus.client.plugin.NexusActivityTrack
-import com.anezium.rokidbus.client.plugin.NexusGuidanceGlyphs
-import com.anezium.rokidbus.client.plugin.NexusGuidancePlan
-import com.anezium.rokidbus.client.plugin.NexusGuidancePlanner
-import com.anezium.rokidbus.client.plugin.NexusGuidanceStep
 import com.anezium.rokidbus.client.plugin.NexusAudioCallbacks
 import com.anezium.rokidbus.client.plugin.NexusAudioFormat
 import com.anezium.rokidbus.client.plugin.NexusAudioSession
 import com.anezium.rokidbus.client.plugin.NexusAudioStopReason
 import com.anezium.rokidbus.client.plugin.NexusCard
+import com.anezium.rokidbus.client.plugin.NexusGuidanceGlyphs
+import com.anezium.rokidbus.client.plugin.NexusGuidancePlan
+import com.anezium.rokidbus.client.plugin.NexusGuidancePlanner
+import com.anezium.rokidbus.client.plugin.NexusGuidanceStep
 import com.anezium.rokidbus.client.plugin.NexusImage
 import com.anezium.rokidbus.client.plugin.NexusInkCloseReason
 import com.anezium.rokidbus.client.plugin.NexusInkProblem
@@ -37,6 +37,7 @@ import com.anezium.rokidbus.client.plugin.NexusPinLine
 import com.anezium.rokidbus.client.plugin.NexusPinSize
 import com.anezium.rokidbus.client.plugin.NexusPluginService
 import com.anezium.rokidbus.client.plugin.NexusSdkResult
+import com.anezium.rokidbus.client.plugin.NexusSkillInvocation
 import com.anezium.rokidbus.client.plugin.NexusSpeechCallbacks
 import com.anezium.rokidbus.client.plugin.NexusSpeechError
 import com.anezium.rokidbus.client.plugin.NexusSpeechSession
@@ -316,6 +317,18 @@ class HelloPluginService : NexusPluginService() {
         showingBackgroundAudioControl = false
         backgroundAudioFrames = 0L
         pinStep = PIN_HIDDEN
+    }
+
+    /**
+     * A skill invocation: answer it once, off the main thread when the work is slow. The plugin
+     * is not opened for it and shows nothing; Assistant presents the result in its own band.
+     */
+    override fun onNexusSkillInvoked(invocation: NexusSkillInvocation) {
+        val result = when (val answer = HelloSkills.answer(invocation.operationId, invocation.arguments)) {
+            is HelloSkills.Answer.Completed -> invocation.complete(answer.data)
+            is HelloSkills.Answer.Failed -> invocation.fail(answer.code)
+        }
+        log("skill ${invocation.operationId} answered result=$result")
     }
 
     // Whatever ended the demo activity, the next step has to start it again.

@@ -65,6 +65,11 @@
             <meta-data
                 android:name="com.anezium.rokidbus.plugin.LAUNCHABLE"
                 android:value="true" />
+            <!-- A skill catalog: operations an approved assistant may invoke. Its own key, not
+                 CAPABILITIES, so hubs that predate skills still load the plugin. -->
+            <meta-data
+                android:name="com.anezium.rokidbus.plugin.SKILLS"
+                android:resource="@raw/nexus_skills" />
         </service>
     </application>
 </manifest>
