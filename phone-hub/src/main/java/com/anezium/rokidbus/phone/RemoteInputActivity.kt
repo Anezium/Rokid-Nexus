@@ -69,6 +69,7 @@ class RemoteInputActivity : Activity() {
     private var glassesClient: BusClient? = null
     private var glassesKeyboard: GlassesKeyboardReply? = null
     private var glassesKeyboardStale = true
+    private var glassesKeyboardUnanswered = false
     private var glassesKeyboardInFlight = false
     private var renderingGlassesKeep = false
 
@@ -101,6 +102,7 @@ class RemoteInputActivity : Activity() {
         registerStateReceiver()
         // The companion app can take the glasses' keyboard back while this screen is away.
         glassesKeyboardStale = true
+        glassesKeyboardUnanswered = false
         publisher.requestState()
         // Opened for a field a plugin asked for, the wearer is typing, not
         // pointing: a cursor dropped over the glasses' reply would only be in
@@ -570,6 +572,8 @@ class RemoteInputActivity : Activity() {
 
     private fun applyState(next: RemoteInputViewState) {
         val sessionChanged = next.sessionId != viewState.sessionId || next.password != viewState.password
+        val backToWaiting = next.phase == RemoteInputViewState.Phase.WAITING_FOR_FIELD &&
+            viewState.phase != RemoteInputViewState.Phase.WAITING_FOR_FIELD
         viewState = next
         if (openedForKeyboard && next.keyboardRequested) requestedSessionId = next.sessionId
         if (keyboardRequestEnded(openedForKeyboard, pointerShown, requestedSessionId, next.sessionId)) {
@@ -586,11 +590,8 @@ class RemoteInputActivity : Activity() {
         renderState()
         // Re-asked each time the screen is back to waiting: a field that just ended may have
         // ended because another keyboard took over, and that is exactly when the row must show.
-        if (next.phase != RemoteInputViewState.Phase.WAITING_FOR_FIELD) {
-            glassesKeyboardStale = true
-        } else if (glassesKeyboardStale && checkGlassesKeyboard()) {
-            glassesKeyboardStale = false
-        }
+        if (backToWaiting) glassesKeyboardStale = true
+        maybeCheckGlassesKeyboard()
         // The keyboard opens when the wearer asks for it, never because the
         // glasses focused a field: navigating through a screen full of inputs
         // otherwise reopens the IME under your thumb on every step. A field a
@@ -671,11 +672,20 @@ class RemoteInputActivity : Activity() {
         renderGlassesKeyboard()
     }
 
+    private fun maybeCheckGlassesKeyboard() {
+        if (!glassesKeyboardStale || !viewState.controlsEnabled) return
+        // While a field is up the keyboard is plainly Nexus's: ask once only to learn where the
+        // keep switch stands, and never keep re-asking a glasses hub that does not answer.
+        val waiting = viewState.phase == RemoteInputViewState.Phase.WAITING_FOR_FIELD
+        if (!waiting && (glassesKeyboard != null || glassesKeyboardUnanswered)) return
+        if (checkGlassesKeyboard()) glassesKeyboardStale = false
+    }
+
     private fun checkGlassesKeyboard(): Boolean =
         requestGlassesKeyboard(GlassesKeyboardRequest(GlassesKeyboardContract.ACTION_STATUS)) { reply ->
             // No answer (older glasses hub, link hiccup) keeps the last one: the row only
             // speaks up when the glasses said for sure another keyboard is on.
-            if (reply != null) glassesKeyboard = reply
+            if (reply != null) glassesKeyboard = reply else glassesKeyboardUnanswered = true
             renderGlassesKeyboard()
         }
 
@@ -719,11 +729,7 @@ class RemoteInputActivity : Activity() {
             if (isDestroyed || isFinishing) return@request
             onReply(result.getOrNull()?.let(GlassesKeyboardContract::fromReply))
             // A check that lost the race to this request runs now instead of never.
-            if (glassesKeyboardStale && viewState.phase == RemoteInputViewState.Phase.WAITING_FOR_FIELD &&
-                checkGlassesKeyboard()
-            ) {
-                glassesKeyboardStale = false
-            }
+            maybeCheckGlassesKeyboard()
         }
         return true
     }
