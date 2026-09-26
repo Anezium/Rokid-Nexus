@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  "route" is the mark for guidance whose maneuver Navigation cannot place: the
+  plugin's own bent route, which says "keep following" without pretending to
+  know which way the next turn goes.
+-->
+<resources>
+    <string-array name="nexus_glyphs">
+        <item>route|M7,21 L7,15 A3,3 0 0 1 10,12 L14,12 A3,3 0 0 0 17,9 L17,4 M13.8,7.2 L17,4 L20.2,7.2</item>
+    </string-array>
+</resources>
