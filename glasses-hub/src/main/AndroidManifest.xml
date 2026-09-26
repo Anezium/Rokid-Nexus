@@ -74,11 +74,15 @@
             android:screenOrientation="portrait"
             android:theme="@android:style/Theme.Translucent.NoTitleBar" />
 
+        <!-- Its own task, translucent: a field typed inside its plugin's band must sit over the
+             app the wearer was in, not over the Nexus launcher's black window left in the hub's
+             task. -->
         <activity
             android:name=".SurfaceActivity"
             android:excludeFromRecents="true"
             android:exported="false"
             android:launchMode="singleTask"
+            android:taskAffinity="com.anezium.rokidbus.glasses.surface"
             android:screenOrientation="portrait"
             android:theme="@style/Theme.RokidBus.Surface" />
 

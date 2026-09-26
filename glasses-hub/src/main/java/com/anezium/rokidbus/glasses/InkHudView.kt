@@ -53,7 +53,7 @@ internal class InkHudView(context: Context) : FrameLayout(context) {
         danger = BusTheme.danger,
         black = BusTheme.glassesBg,
     )
-    private val rootFlex = FlexboxLayout(context).apply {
+    private val rootFlex = InkFlexboxLayout(context).apply {
         flexDirection = FlexDirection.COLUMN
         flexWrap = FlexWrap.NOWRAP
         alignItems = AlignItems.STRETCH
@@ -491,7 +491,11 @@ internal class InkHudView(context: Context) : FrameLayout(context) {
         val replaced = view is InkChartView || view is InkLottieView || view is InkProgressView || view is InkNxCanvasView
         if ("width" !in skip) {
             params.width = style["width"]?.let { length(it, widthBase).roundToInt() }
-                ?: if (replaced) ViewGroup.LayoutParams.MATCH_PARENT else ViewGroup.LayoutParams.WRAP_CONTENT
+                ?: if (replaced || stretchesAcrossColumn(parent, style)) {
+                    ViewGroup.LayoutParams.MATCH_PARENT
+                } else {
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                }
         }
         if ("height" !in skip) {
             params.height = style["height"]?.let { length(it, heightBase).roundToInt() }
@@ -532,6 +536,22 @@ internal class InkHudView(context: Context) : FrameLayout(context) {
         if (view is TextView) {
             view.maxWidth = style["max-width"]?.let { length(it, widthBase).roundToInt() } ?: Int.MAX_VALUE
             view.maxHeight = style["max-height"]?.let { length(it, heightBase).roundToInt() } ?: Int.MAX_VALUE
+        }
+    }
+
+    /**
+     * Flexbox stretches an auto-width column child only after measuring it at its content width,
+     * then re-measures it at the column's width but keeps the height that content width gave.
+     * Text that wraps once stretched then overflows a box sized for fewer lines. Measuring the
+     * child at the column's width from the start is what the stretch resolves to anyway.
+     */
+    private fun stretchesAcrossColumn(parent: ViewGroup?, style: Map<String, String>): Boolean {
+        val column = parent as? FlexboxLayout ?: return false
+        if (!column.flexDirection.isColumn()) return false
+        return when (InkFlexStyle.from(style).alignSelf) {
+            InkAlign.STRETCH -> true
+            InkAlign.AUTO -> column.alignItems == AlignItems.STRETCH
+            else -> false
         }
     }
 
@@ -1093,8 +1113,23 @@ internal class InkHudView(context: Context) : FrameLayout(context) {
     }
 }
 
+/**
+ * An item of a row takes the height its content needs, as in CSS, rather than whatever the row
+ * has left. Flexbox otherwise bounds a wrapped line by the room left under the lines before it,
+ * counted at their pre-grow height: a line that grew wider and so grew shorter left the next
+ * one squeezed, its text cut to a few pixels.
+ */
+private class InkFlexboxLayout(context: Context) : FlexboxLayout(context) {
+    override fun getChildHeightMeasureSpec(heightSpec: Int, padding: Int, childDimension: Int): Int =
+        if (!flexDirection.isColumn() && childDimension == ViewGroup.LayoutParams.WRAP_CONTENT) {
+            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
+        } else {
+            super.getChildHeightMeasureSpec(heightSpec, padding, childDimension)
+        }
+}
+
 private class InkFlexContainer(context: Context) : FrameLayout(context) {
-    val flex = FlexboxLayout(context)
+    val flex = InkFlexboxLayout(context)
     val absolute = FrameLayout(context)
 
     init {
@@ -1105,7 +1140,7 @@ private class InkFlexContainer(context: Context) : FrameLayout(context) {
 }
 
 private class InkScrollContainer(context: Context, horizontal: Boolean) : FrameLayout(context) {
-    val flex = FlexboxLayout(context)
+    val flex = InkFlexboxLayout(context)
     val absolute = FrameLayout(context)
     val scroller: View = if (horizontal) {
         HorizontalScrollView(context).apply {

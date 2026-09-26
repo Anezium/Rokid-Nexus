@@ -14,7 +14,11 @@
         <item name="android:windowNoTitle">true</item>
         <item name="android:windowActionBar">false</item>
         <item name="android:windowFullscreen">true</item>
-        <item name="android:windowBackground">#000000</item>
+        <!-- Translucent: a field typed inside its plugin's band leaves the screen behind it in
+             view. SurfaceHudView paints the black itself whenever it draws a card. -->
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:backgroundDimEnabled">false</item>
         <item name="android:navigationBarColor">#000000</item>
         <item name="android:statusBarColor">#000000</item>
         <item name="android:fontFamily">monospace</item>

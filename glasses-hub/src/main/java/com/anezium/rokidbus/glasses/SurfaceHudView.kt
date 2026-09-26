@@ -181,6 +181,12 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
     private var inlinePlaceholder = ""
     private var stopWatchingNotice: (() -> Unit)? = null
     private val inlineFallback = Runnable { surface?.let(::renderNow) }
+
+    /** A bare card is drawing nothing while its owner's band carries the session. */
+    private var heldUnderBand = false
+
+    /** The view draws nothing of its own, background included; see [applySeeThrough]. */
+    private var seeThrough = false
     private var listRenderGeneration = 0L
     private var pendingListLayoutListener: View.OnLayoutChangeListener? = null
     private var insetUnsubscribe: (() -> Unit)? = null
@@ -213,6 +219,10 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
         setPadding(px(18), px(16), px(18), px(12))
         isFocusable = true
         isFocusableInTouchMode = true
+        // The glasses never enter touch mode, so the platform would wash this focused,
+        // full-screen view in its translucent white focus highlight: a grey veil over
+        // whatever a see-through card leaves in view.
+        defaultFocusHighlightEnabled = false
 
         applyMarquee(titleView)
         subtitleView.maxLines = 1
@@ -398,6 +408,11 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
 
     private fun renderNow(surface: NexusSurface) {
         invalidatePendingListLayout()
+        heldUnderBand = false
+        if (seeThrough) {
+            seeThrough = false
+            statusRowView.visibility = VISIBLE
+        }
         when (surfaceHudMode(surface.kind)) {
             SurfaceHudMode.INK_CARD -> applyInkCardHost()
             SurfaceHudMode.FULL_BLEED -> applyFullBleedHost()
@@ -412,7 +427,9 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
         if (!surface.isInk) hideInk()
         if (surface.kind != NexusSurface.KIND_CARD || surface.editable == null) {
             editView.visibility = GONE
-            endInline()
+            // A bare card follows its owner's band too: keep that subscription rather than
+            // dropping it only for renderCard to take a fresh one, which answers at once.
+            endInline(keepWatching = surface.isBareCard())
         }
         when {
             surface.isInk -> renderInk(surface)
@@ -478,17 +495,31 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
         if (previous != null && previous != owner) NoticeComposeMirror.clear(previous)
         val inline = owner != null
         editView.alpha = if (inline) 0f else 1f
-        statusRowView.visibility = if (inline) GONE else VISIBLE
-        if (inline) {
+        applySeeThrough(inline)
+        if (inline) mirrorCompose()
+    }
+
+    /**
+     * Steps entirely out of the way — chrome and background — while the owner's band carries
+     * this surface, so the band sits over whatever the wearer was looking at rather than over a
+     * black screen. The window itself is translucent on both display paths; only this view's own
+     * fill ever made it opaque.
+     */
+    private fun applySeeThrough(on: Boolean) {
+        seeThrough = on
+        statusRowView.visibility = if (on) GONE else VISIBLE
+        if (on) {
+            background = null
             titleView.visibility = GONE
             subtitleView.visibility = GONE
             footerView.visibility = GONE
-            mirrorCompose()
+        } else if (surface?.isInk != true) {
+            applyFullBleedHost()
         }
     }
 
-    private fun endInline() {
-        stopWatchingNotice()
+    private fun endInline(keepWatching: Boolean = false) {
+        if (!keepWatching) stopWatchingNotice()
         if (inlineOwner != null) applyInline(null, "")
     }
 
@@ -505,19 +536,25 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
     }
 
     /**
-     * Follows the owner's band for as long as an in-notice field is up. Moving
-     * into a band that arrives is immediate. Moving out waits: the band closing
-     * on Back or its own lifetime is normally followed by the plugin hiding this
-     * field, and showing the card for that instant would only flash it. A field
-     * nobody hides still comes back into view, rather than typing on unseen.
+     * Follows the owner's band for as long as an in-notice field or a bare card
+     * is up. Moving into a band that arrives is immediate. Moving out waits: the
+     * band closing on Back or its own lifetime is normally followed by the plugin
+     * hiding this surface, and showing the card for that instant would only flash
+     * it. A surface nobody hides still comes back into view, rather than typing
+     * on unseen.
      */
     private fun watchNotice() {
         if (stopWatchingNotice != null) return
         stopWatchingNotice = NoticeController.observe { notice ->
             val active = surface ?: return@observe
-            val editable = active.editable ?: return@observe
-            val wanted = editableDrawsInNotice(editable.inNotice, active.ownerPluginId, notice?.ownerPluginId)
-            val drawn = inlineOwner != null
+            val owner = notice?.ownerPluginId
+            val editable = active.editable
+            val wanted = if (editable != null) {
+                editableDrawsInNotice(editable.inNotice, active.ownerPluginId, owner)
+            } else {
+                cardHoldsUnderBand(active, owner)
+            }
+            val drawn = if (editable != null) inlineOwner != null else heldUnderBand
             when {
                 wanted == drawn -> removeCallbacks(inlineFallback)
                 wanted -> renderNow(active)
@@ -565,7 +602,9 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
     private fun applyHostChrome(mode: SurfaceHudMode) {
         val chrome = surfaceHostChrome(mode, hudTopInsetDp)
         val fill = chrome.backgroundColor
-        if (fill == null) background = null else setBackgroundColor(fill)
+        // The top-inset observer re-applies this chrome whenever the view attaches, which for a
+        // freshly created surface activity is after the band already took the field.
+        if (fill == null || seeThrough) background = null else setBackgroundColor(fill)
         setPadding(
             px(chrome.paddingLeftDp),
             px(chrome.paddingTopDp),
@@ -834,6 +873,18 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
         imageView.visibility = GONE
         previousView.visibility = GONE
         nextView.visibility = GONE
+        if (surface.isBareCard()) {
+            // Settled before subscribing: the observer answers at once, and it must find this
+            // render already matching the band, not re-render into another subscription.
+            heldUnderBand = cardHoldsUnderBand(surface, NoticeController.visibleNotice()?.ownerPluginId)
+            watchNotice()
+            if (heldUnderBand) {
+                currentView.visibility = GONE
+                boardView.visibility = GONE
+                applySeeThrough(true)
+                return
+            }
+        }
         val rows = surface.rows.filter { it.text.isNotBlank() || it.isStructured }
         when {
             rows.any { it.isListRow } -> renderList(rows)
