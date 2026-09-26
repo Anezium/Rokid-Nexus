@@ -1754,7 +1754,8 @@ class AssistantUiControllerTest {
             renderer.clear()
 
             // The band has gone but the voice is still reading: the session has to stay.
-            controller.onNoticeClosed(NexusNoticeCloseReason.TIMEOUT)
+            // (Another plugin's band here; a timeout would simply bring ours back.)
+            controller.onNoticeClosed(NexusNoticeCloseReason.REPLACED)
             assertTrue(renderer.calls.none { it == RenderCall.HideCard })
 
             speaking = false
@@ -1835,22 +1836,109 @@ class AssistantUiControllerTest {
         }
 
     @Test
-    fun `a voice that never reports its end cannot hold the session open for good`() =
+    fun `the holder recheck never cuts a voice still reading but catches an unreported end`() =
         runTest {
+            var speaking = true
             val renderer = FakeRenderer(supportsNotice = true, supportsQuestionField = true)
-            val controller = controller(renderer, speaking = { true })
+            val controller = controller(renderer, speaking = { speaking })
             assistButtonTyping(controller)
             controller.endTyping(AssistantTypingEnd.SUBMITTED)
             controller.showAnswer("42", listOf("42"))
             renderer.clear()
 
-            controller.onNoticeClosed(NexusNoticeCloseReason.TIMEOUT)
-            advanceTimeBy(AssistantUiController.HOLDER_SPEECH_GRACE_MS - 1)
+            // Another plugin's band took ours while the answer is still being read.
+            controller.onNoticeClosed(NexusNoticeCloseReason.REPLACED)
+            advanceTimeBy(AssistantUiController.HOLDER_RECHECK_MS * 10)
             runCurrent()
             assertTrue(renderer.calls.none { it == RenderCall.HideCard })
-            advanceTimeBy(1)
+
+            // The voice stopped without a done callback reaching us: the next look lets go.
+            speaking = false
+            advanceTimeBy(AssistantUiController.HOLDER_RECHECK_MS)
             runCurrent()
             assertEquals(listOf(RenderCall.HideCard), renderer.calls)
+            controller.onClose()
+        }
+
+    @Test
+    fun `a band that reaches its 90 s cap mid-turn comes back fresh over the holder`() =
+        runTest {
+            var busy = true
+            var speaking = false
+            val renderer = FakeRenderer(supportsNotice = true, supportsQuestionField = true)
+            val controller = controller(renderer, busy = { busy }, speaking = { speaking })
+            assistButtonTyping(controller)
+            controller.endTyping(AssistantTypingEnd.SUBMITTED)
+            controller.showTransient("Thinking…")
+            renderer.clear()
+
+            // A long tool turn: the cap closes Thinking while the model is still working.
+            controller.onNoticeClosed(NexusNoticeCloseReason.TIMEOUT)
+            assertEquals(listOf(RenderCall.ShowNotice("Assistant", "Thinking…")), renderer.calls)
+            assertTrue(renderer.calls.none { it == RenderCall.HideCard })
+            // And it is kept alive again like any in-flight band.
+            advanceTimeBy(AssistantUiController.NOTICE_KEEPALIVE_INTERVAL_MS)
+            runCurrent()
+            assertEquals(RenderCall.UpdateNotice("Thinking…"), renderer.calls.last())
+
+            // A long readout: the cap closes the answer while the voice is still on it.
+            controller.showAnswer("The long answer.", listOf("The long answer."))
+            busy = false
+            controller.onPipelineFinished()
+            speaking = true
+            controller.onAnswerSpeechStarted()
+            renderer.clear()
+            controller.onNoticeClosed(NexusNoticeCloseReason.TIMEOUT)
+            assertEquals(listOf(RenderCall.ShowNotice("Assistant", "The long answer.")), renderer.calls)
+
+            // Once the voice is done, the grace band's close is the end of the session.
+            speaking = false
+            controller.onAnswerSpeechFinished()
+            controller.onNoticeClosed(NexusNoticeCloseReason.TIMEOUT)
+            assertEquals(RenderCall.HideCard, renderer.calls.last())
+            controller.onClose()
+        }
+
+    @Test
+    fun `a re-delivered open keeps the holder and its band through thinking and speech`() =
+        runTest {
+            var busy = true
+            var speaking = false
+            val renderer = FakeRenderer(supportsNotice = true, supportsQuestionField = true)
+            val controller = controller(renderer, busy = { busy }, speaking = { speaking })
+            assistButtonTyping(controller)
+            controller.endTyping(AssistantTypingEnd.SUBMITTED)
+            controller.showTransient("Thinking…")
+            renderer.clear()
+
+            // Re-entered through the assist-button open while the model is thinking.
+            controller.onOpen()
+            advanceTimeBy(AssistantUiController.LAUNCHER_HINT_DELAY_MS * 2)
+            runCurrent()
+            assertTrue(renderer.calls.none { it is RenderCall.ShowCard })
+            assertEquals(RenderCall.ShowNotice("Assistant", "Thinking…"), renderer.calls.first())
+            assertTrue(controller.isNoticeBandMode)
+
+            // The answer is still a band, not card lines.
+            controller.showAnswer("42", listOf("42"))
+            assertTrue(renderer.calls.none { it is RenderCall.ShowCard })
+            busy = false
+            controller.onPipelineFinished()
+            speaking = true
+            controller.onAnswerSpeechStarted()
+
+            // Re-entered again while the answer is read out.
+            renderer.clear()
+            controller.onOpen()
+            advanceTimeBy(AssistantUiController.LAUNCHER_HINT_DELAY_MS * 2)
+            runCurrent()
+            assertTrue(renderer.calls.none { it is RenderCall.ShowCard })
+            assertEquals(RenderCall.ShowNotice("Assistant", "42"), renderer.calls.first())
+
+            speaking = false
+            controller.onAnswerSpeechFinished()
+            controller.onNoticeClosed(NexusNoticeCloseReason.TIMEOUT)
+            assertEquals(RenderCall.HideCard, renderer.calls.last())
             controller.onClose()
         }
 

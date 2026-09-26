@@ -100,7 +100,7 @@ internal class AssistantUiController(
     private val sessionBusy: () -> Boolean = { false },
     /** The answer is still being read out, or is about to be. */
     private val answerSpeaking: () -> Boolean = { false },
-    private val holderSpeechGraceMs: Long = HOLDER_SPEECH_GRACE_MS,
+    private val holderRecheckMs: Long = HOLDER_RECHECK_MS,
 ) {
     private var launcherHintJob: Job? = null
     private var holderReleaseJob: Job? = null
@@ -209,6 +209,14 @@ internal class AssistantUiController(
         )
 
     fun onOpen() {
+        // A re-delivered open while an assist-button answer is still on its way: resetting would
+        // drop the holder, and the hint queued below would replace it and turn the rest of the
+        // answer into card lines. The session carries on as it was, band and all.
+        if (holderShown || sessionBusy() || answerSpeaking()) {
+            cancelLauncherHint()
+            reshowInFlight(lastInFlightBody, lastInFlightUsesLines, spokenAnswerBody)
+            return
+        }
         resetForOpen()
         launcherHintJob = scope.launch {
             delay(launcherHintDelayMs)
@@ -767,6 +775,10 @@ internal class AssistantUiController(
      * the next capture.
      */
     fun onNoticeClosed(reason: NexusNoticeCloseReason) {
+        // Read before the reset below clears them: see the holder case at the end.
+        val inFlight = lastInFlightBody
+        val inFlightUsesLines = lastInFlightUsesLines
+        val spoken = spokenAnswerBody
         // Whatever was still waiting to leave belonged to the band that is gone; a show among
         // it would bring back a band the wearer just dismissed.
         notices.dropWaiting()
@@ -800,7 +812,37 @@ internal class AssistantUiController(
             cancelPipeline()
             resetCapture()
         }
+        // A band's life is capped at 90 s from its show, and updates never move that cap, so a
+        // long tool turn or a long readout outlives it. Under the holder that would leave the
+        // bare card as the screen: a fresh show of what was up starts the clock again.
+        if (reason == NexusNoticeCloseReason.TIMEOUT && holderShown && !typingOpen &&
+            (sessionBusy() || answerSpeaking()) &&
+            reshowInFlight(inFlight, inFlightUsesLines, spoken)
+        ) {
+            return
+        }
         maybeReleaseHolder()
+    }
+
+    /**
+     * Puts the band that was up back as a fresh show — "Thinking…" or a progress label with its
+     * keepalive, the answer while it is read out, or an answer still waiting for its voice.
+     * False when nothing was in flight.
+     */
+    private fun reshowInFlight(inFlight: String?, inFlightUsesLines: Boolean, spoken: String?): Boolean {
+        val body = inFlight ?: spoken ?: return false
+        if (!useNoticeBand()) return false
+        bandUncertain = true
+        spokenAnswerBody = spoken
+        if (inFlight == null) {
+            showOrUpdateAnswerNotice(body, ttlMs = answerTtlMs(body))
+            return true
+        }
+        if (inFlightUsesLines) showOrUpdateAnswerNotice(body) else showOrUpdateNotice(body)
+        lastInFlightBody = inFlight
+        lastInFlightUsesLines = inFlightUsesLines
+        startKeepalive()
+        return true
     }
 
     private fun showHolder() {
@@ -822,22 +864,23 @@ internal class AssistantUiController(
     private fun maybeReleaseHolder() {
         if (!holderShown || typingOpen || noticeShown || sessionBusy()) return
         if (answerSpeaking()) {
-            armHolderSpeechGrace()
+            armHolderRecheck()
             return
         }
         releaseHolder()
     }
 
     /**
-     * Speech normally reports its end, and that is what releases the holder. This only makes
-     * sure a voice that never does cannot keep an invisible session open for good.
+     * Speech normally reports its end, and that is what releases the holder. This looks again
+     * now and then in case an end slipped by unreported, and never cuts a voice still reading:
+     * letting the holder go closes the session, and the readout with it.
      */
-    private fun armHolderSpeechGrace() {
+    private fun armHolderRecheck() {
         if (holderReleaseJob != null) return
         holderReleaseJob = scope.launch {
-            delay(holderSpeechGraceMs)
+            delay(holderRecheckMs)
             holderReleaseJob = null
-            if (holderShown && !typingOpen && !noticeShown && !sessionBusy()) releaseHolder()
+            maybeReleaseHolder()
         }
     }
 
@@ -1093,8 +1136,7 @@ internal class AssistantUiController(
         const val ANCHOR_CONTENT_KEY = "anchor"
         const val HOLDER_CONTENT_KEY = "holder"
 
-        /** Longer than the longest answer the voice may read (1,024 characters). */
-        const val HOLDER_SPEECH_GRACE_MS = 120_000L
+        const val HOLDER_RECHECK_MS = 10_000L
         const val OPTIONS_CONTENT_KEY = "options"
         const val NOTICE_TITLE = "Assistant"
         const val ELLIPSIS = "…"
