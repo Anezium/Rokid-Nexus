@@ -33,6 +33,13 @@ in process memory only; nothing is stored.
 Anything that does not read as guidance is dropped: no value is estimated or
 invented between two notifications.
 
+What each step does to the activity (start, flare, urgent beat, quiet update,
+or nothing) is decided by the SDK's shared `NexusGuidancePlanner`, the same
+planner Transit's journey guidance uses, so the panel behaves the same
+whichever plugin guides. The maneuver and vehicle glyphs come from the SDK's
+`NexusGuidanceGlyphs`; only the `route` mark is Navigation's own. A recorded
+transcript test pins Navigation's activity traffic across that move.
+
 ## Settings
 
 The plugin screen on the phone (Rokid Nexus, Navigation) has a main switch and

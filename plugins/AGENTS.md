@@ -21,7 +21,7 @@ Plugins are **normally dormant unless open**: the hub initiates everything. Your
 only between `PLUGIN_OPEN` and a final `PLUGIN_CLOSE`. Do not register yourself at boot, do
 not poll in the background, do not post notifications. The SDK holds a
 foreground-service session while you are open and drops it on close; the
-user-facing notification that names the live plugin belongs to the hub. Three
+user-facing notification that names the live plugin belongs to the hub. Five
 sanctioned exceptions:
 
 1. A capability that Android forces into its own foreground service *while your
@@ -44,6 +44,20 @@ sanctioned exceptions:
    retaining the active microphone session and its SDK foreground service.
    `onNexusBackground()` is not a final close; the lease ending is. The phone hub
    exposes Stop, and reopening resumes the plugin. See the lifecycle rules below.
+
+4. **Skill invocations** (hubs announcing skills v1): the hub may bind a
+   provider for one call to an operation the wearer approved, without
+   `PLUGIN_OPEN`, and releases the binding when the call ends. The call does
+   not open you: answer it and let go. While only the call keeps you running,
+   the hub refuses your surfaces, notices, pins, microphone, speech, TTS, and
+   camera traffic, and activities unless the operation declares `surfaces`
+   in `requires`. See §6 and `docs/PLUGIN_SDK.md` §3.6.
+
+5. **Ongoing work the wearer started** (SDK `holdNexusOngoingWork`): a process
+   the wearer explicitly asked for and follows as an activity, such as
+   Transit's journey guidance, may keep the plugin's single session foreground
+   service until it ends, then must release it at once. Not a license to poll,
+   wait, or resume anything the wearer did not start.
 
 A phone plugin may also call an Android platform API directly under permissions
 declared in its own manifest. Those runtime permissions are separate from Nexus
@@ -102,7 +116,7 @@ Copy `plugins/sample` as the canonical template. The hard rules:
 | Plugin id | 3–64 chars, `[a-z][a-z0-9._-]{2,63}` (lowercase start), unique on the device |
 | Display name | ≤ 80 chars |
 | API version | exactly **3** |
-| Capabilities | subset of `surfaces`, `ink_surface`, `http_proxy`, `microphone`, `stt`, `tts`, `camera`, `mediasync`, `assistant`, `wireless_debugging` (`ink_surface` is the separate grant for compiled interactive Ink pages; `stt` grants hub-produced text without raw PCM; microphone needs no Android `RECORD_AUDIO` because PCM arrives over the hub; `tts` speaks text out of the glasses; `mediasync` moves the wearer's captures to the phone gallery; `wireless_debugging` can expose ADB on the current LAN and mint temporary pairing codes) |
+| Capabilities | subset of `surfaces`, `ink_surface`, `http_proxy`, `microphone`, `stt`, `tts`, `camera`, `mediasync`, `assistant`, `wireless_debugging`; the skills grants are requested only through the `SKILLS` catalog key (`skills_provider`) and `SKILLS_CLIENT=true` (`skills_client`), never in this list, so older hubs keep loading the plugin (`ink_surface` is the separate grant for compiled interactive Ink pages; `stt` grants hub-produced text without raw PCM; microphone needs no Android `RECORD_AUDIO` because PCM arrives over the hub; `tts` speaks text out of the glasses; `mediasync` moves the wearer's captures to the phone gallery; `wireless_debugging` can expose ADB on the current LAN and mint temporary pairing codes) |
 | Receive prefixes | non-empty, normalized, within your authorized namespace `/plugin/<id>/…` |
 | Signer | exactly one current signing certificate |
 | UID | not shared with another discovered plugin |
@@ -163,6 +177,8 @@ Paths a plugin can **send to** (gated by capability):
 | `/camera/freeze/result`, `/camera/overlay`, `/camera/link/offer` | `camera` | Camera platform sends (signer/grant-bound). `/camera/link/offer` is bidirectional so an approved camera plugin can advertise a reverse transport role. `/camera/session/state` and `/camera/freeze/image/chunk` remain **receive-only** (declare them in RECEIVE_PREFIXES); sending them is rejected |
 | `/mediasync/settings`, `/mediasync/now` | `mediasync` | Photo sync control: partial settings updates (`autoSyncOnCharge`, `deleteAfterSync`; an empty request is a refresh) and a manual "sync now". `/mediasync/status` is **receive-only** (declare it in RECEIVE_PREFIXES); every other `/mediasync/…` path is hub-to-hub and rejected if you send it |
 | `/debug/adb/request` → `/debug/adb/reply` | `wireless_debugging` | High-risk wireless ADB control. Actions are `status`, `enable`, `start_pairing`, `cancel_pairing`, and `disable`. Replies are owner-scoped direct replies and need no receive prefix. The phone hub stamps the authenticated plugin id; plugins must not add or trust one themselves. Pairing codes expire after two minutes and must not be persisted or logged; code-bearing windows use `FLAG_SECURE`, and only an explicit user action may copy a sensitive-marked command to the Android clipboard. |
+| `/skills/catalog/request`, `/skills/invoke`, `/skills/cancel`, `/skills/session/close` | `skills_client` | Look up and invoke the operations approved for you. Use the SDK (`requestSkillCatalog`, `invokeSkill`, …); answers come back on the owner-scoped `/skills/catalog/reply` and `/skills/result`, which need no receive prefix. |
+| `/skills/provider/result` | `skills_provider` | Your one answer to a delivered invocation. Use `NexusSkillInvocation`; invocations and cancellations arrive on the hub-only `/skills/provider/invoke` and `/skills/provider/cancel`. |
 | `/plugin/<yourId>/…` | — | Your private namespace (must match your declared receive prefixes) |
 
 Wireless ADB requires both phone and glasses hubs 1.3.0 or newer and the
@@ -212,6 +228,8 @@ binary frame is dropped, not retried.
 | SPP frame | 2 MiB body; binary metadata header ≤ 64 KiB |
 | Offline JSON queue | 32 messages / 512 KiB / 30 s TTL — binary never queued |
 | Request timeout | 15 s default |
+| Skill catalog | 64 KiB, 32 operations, 2 KiB per description; bounded schema subset (every string, array, and number bounded) |
+| Skill call | 16 KiB arguments and result; 15 s including cold start; one per caller session, four across callers (excess is `busy`) |
 
 Typed-model violations throw `IllegalArgumentException` **in your process** at
 construction time (this has crashed real plugins — a `contentKey` built by
