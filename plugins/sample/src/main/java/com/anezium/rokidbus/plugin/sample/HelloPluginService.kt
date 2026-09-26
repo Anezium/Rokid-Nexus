@@ -138,6 +138,7 @@ class HelloPluginService : NexusPluginService() {
             "long" -> client.updateActivity(DEMO_ROUTE_LEAVE)
             "ride" -> client.updateActivity(DEMO_ROUTE_RIDE, significant = true)
             "stops" -> client.updateActivity(DEMO_ROUTE_RIDE_ON)
+            "tostop" -> client.updateActivity(DEMO_ROUTE_TO_STOP, significant = true)
             "urgent" -> client.updateActivity(DEMO_ROUTE_GET_OFF, significant = true, urgent = true)
             "arrive" -> client.updateActivity(DEMO_ROUTE_ARRIVED, significant = true)
             "end" -> client.endActivity()
@@ -663,6 +664,16 @@ class HelloPluginService : NexusPluginService() {
         )
 
         // A quiet update: the panel, not a flare, with the badge and the track.
+        /** A walk to the stop, timed and measured: "3 min - 250 m", folded "250 m" under "3 min". */
+        val DEMO_ROUTE_TO_STOP = DEMO_ROUTE_WALK.copy(
+            glyph = "walk",
+            primary = "3 min",
+            measure = "250 m",
+            secondary = "Chatelet",
+            progress = null,
+            detail = listOf("Departs at 12:09"),
+        )
+
         val DEMO_ROUTE_RIDE_ON = DEMO_ROUTE_RIDE.copy(
             primary = "2 stops",
             progress = NexusActivityProgress.Percent(68),
