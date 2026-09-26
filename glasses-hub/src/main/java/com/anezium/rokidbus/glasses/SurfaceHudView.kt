@@ -184,6 +184,9 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
 
     /** A bare card is drawing nothing while its owner's band carries the session. */
     private var heldUnderBand = false
+
+    /** The view draws nothing of its own, background included; see [applySeeThrough]. */
+    private var seeThrough = false
     private var listRenderGeneration = 0L
     private var pendingListLayoutListener: View.OnLayoutChangeListener? = null
     private var insetUnsubscribe: (() -> Unit)? = null
@@ -401,8 +404,9 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
 
     private fun renderNow(surface: NexusSurface) {
         invalidatePendingListLayout()
-        if (heldUnderBand) {
-            heldUnderBand = false
+        heldUnderBand = false
+        if (seeThrough) {
+            seeThrough = false
             statusRowView.visibility = VISIBLE
         }
         when (surfaceHudMode(surface.kind)) {
@@ -496,6 +500,7 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
      * fill ever made it opaque.
      */
     private fun applySeeThrough(on: Boolean) {
+        seeThrough = on
         statusRowView.visibility = if (on) GONE else VISIBLE
         if (on) {
             background = null
@@ -591,7 +596,9 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
     private fun applyHostChrome(mode: SurfaceHudMode) {
         val chrome = surfaceHostChrome(mode, hudTopInsetDp)
         val fill = chrome.backgroundColor
-        if (fill == null) background = null else setBackgroundColor(fill)
+        // The top-inset observer re-applies this chrome whenever the view attaches, which for a
+        // freshly created surface activity is after the band already took the field.
+        if (fill == null || seeThrough) background = null else setBackgroundColor(fill)
         setPadding(
             px(chrome.paddingLeftDp),
             px(chrome.paddingTopDp),
