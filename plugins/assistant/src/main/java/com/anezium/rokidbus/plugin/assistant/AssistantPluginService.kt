@@ -30,8 +30,10 @@ import com.anezium.rokidbus.client.plugin.NexusTtsCallbacks
 import com.anezium.rokidbus.client.plugin.NexusTtsDoneReason
 import com.anezium.rokidbus.client.plugin.NexusTtsSession
 import com.anezium.rokidbus.client.plugin.ttsSession
+import com.anezium.rokidbus.shared.BusPaths
 import com.anezium.rokidbus.shared.EditableSurfaceField
 import com.anezium.rokidbus.shared.LinkStateBits
+import com.anezium.rokidbus.shared.NoticeSurfaceContract
 import com.anezium.rokidbus.shared.plugin.NexusInputEvent
 import com.anezium.rokidbus.shared.plugin.PluginCapability
 import com.anezium.rokidbus.shared.plugin.PluginOpenTypes
@@ -466,6 +468,14 @@ class AssistantPluginService : NexusPluginService() {
     }
 
     override fun onNexusMessage(path: String, id: String, payload: JSONObject) {
+        if (path == BusPaths.ERROR) {
+            val code = payload.optString("code")
+            if (code == NoticeSurfaceContract.ERROR_NOTICE_RATE_LIMITED) {
+                Log.w(TAG, "notice message rejected code=$code")
+                uiController.onNoticeRejected()
+            }
+            return
+        }
         if (path != AI_ASSIST_OPEN_PATH ||
             payload.optString("type") != AI_ASSIST_OPEN_TYPE ||
             !isNexusSessionOpen

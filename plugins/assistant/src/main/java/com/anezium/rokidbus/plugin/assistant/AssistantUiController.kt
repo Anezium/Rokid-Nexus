@@ -92,6 +92,7 @@ internal class AssistantUiController(
     private val keepaliveIntervalMs: Long = NOTICE_KEEPALIVE_INTERVAL_MS,
     private val typeChipArmDelayMs: Long = TYPE_CHIP_ARM_DELAY_MS,
     private val typingKeepaliveIntervalMs: Long = TYPING_KEEPALIVE_INTERVAL_MS,
+    noticeIntervalMs: Long = AssistantNoticePacer.MIN_INTERVAL_MS,
 ) {
     private var launcherHintJob: Job? = null
     private var noticeHideJob: Job? = null
@@ -112,8 +113,25 @@ internal class AssistantUiController(
     private var bandActions: List<NexusNoticeAction> = emptyList()
     private var bandFooter: String? = null
 
+    /** A Type tap is being served: from the quiet band's show until the field is retired. */
     private var typingOpen = false
     private var anchoredBeforeTyping = false
+
+    /** The field has actually replaced the card; it opens only once its quiet band has left. */
+    private var fieldShown = false
+    private var typingAttempt = 0
+
+    /** The hub may have turned a message away, so the glasses' band is not what we think. */
+    private var bandUncertain = false
+
+    private val notices = AssistantNoticePacer(
+        scope = scope,
+        sendShow = renderer::showNotice,
+        sendUpdate = renderer::updateNotice,
+        sendHide = renderer::hideNotice,
+        intervalMs = noticeIntervalMs,
+        onDeferredFailure = { onNoticeSendFailed() },
+    )
 
     /** The answer the voice is about to read, kept so speech can hold its band open. */
     private var spokenAnswerBody: String? = null
@@ -233,10 +251,12 @@ internal class AssistantUiController(
         noticeShown = false
         noticeMode = AssistantNoticeMode.NONE
         clearBandDecorations()
+        notices.dropWaiting()
         answerCardStarted = false
         anchorShown = false
         inkOwnsAnswer = false
         typingOpen = false
+        fieldShown = false
     }
 
     private fun resetForOpen() {
@@ -247,10 +267,12 @@ internal class AssistantUiController(
         noticeShown = false
         noticeMode = AssistantNoticeMode.NONE
         clearBandDecorations()
+        notices.dropWaiting()
         answerCardStarted = false
         anchorShown = false
         inkOwnsAnswer = false
         typingOpen = false
+        fieldShown = false
     }
 
     fun cancelLauncherHint() {
@@ -291,29 +313,20 @@ internal class AssistantUiController(
      * Swaps the listening band for the typed-question field, drawn inside the band itself. The
      * caller has already stopped the microphone. The band stops asking for a gesture while the
      * field is open: an interactive band claims confirm ahead of the field, and Enter is the
-     * field's. On a glasses hub without in-band fields the same field opens as a card instead.
+     * field's. The field opens only once that quiet band has actually left — never over the
+     * listening band and its chip, which a ring tap would still answer. On a glasses hub
+     * without in-band fields the same field opens as a card instead.
      */
-    fun beginTyping(): NexusSdkResult {
+    fun beginTyping() {
         cancelLauncherHint()
         stopKeepalive()
         startNewState(flushTranscript = false)
-        val anchoredBefore = anchorShown
-        showTypingBand()
-        val result = renderer.showQuestionField(
-            field = QUESTION_FIELD,
-            footer = TYPING_FOOTER,
-            onRejected = ::onQuestionFieldRejected,
-        )
-        if (result != NexusSdkResult.SENT) {
-            showError(QUESTION_FIELD_FAILED)
-            return result
-        }
+        typingAttempt += 1
+        val attempt = typingAttempt
         typingOpen = true
-        anchoredBeforeTyping = anchoredBefore
-        surfaceShown = true
-        anchorShown = false
-        startTypingKeepalive()
-        return result
+        fieldShown = false
+        anchoredBeforeTyping = anchorShown
+        showTypingBand { result -> onTypingBandSent(attempt, result) }
     }
 
     /**
@@ -325,23 +338,89 @@ internal class AssistantUiController(
     fun endTyping(end: AssistantTypingEnd): Boolean {
         if (!typingOpen) return false
         typingOpen = false
+        val replacedCard = fieldShown
+        fieldShown = false
         stopKeepalive()
         when {
-            // The caller's card is one the wearer opens into, so it is the render target.
-            end == AssistantTypingEnd.REPLACED -> Unit
+            // Nothing took the card's place yet, or the caller's card is about to: either way
+            // the card tier is already what it should be.
+            !replacedCard || end == AssistantTypingEnd.REPLACED -> Unit
             end == AssistantTypingEnd.CANCELLED && !anchoredBeforeTyping -> {
                 renderer.hideCard()
                 onSurfaceHidden()
             }
             else -> restoreAnchor()
         }
-        if (end != AssistantTypingEnd.SUBMITTED) hideNoticeIfShown()
+        if (end != AssistantTypingEnd.SUBMITTED) {
+            // A quiet band still waiting to leave would come back after the wearer left it.
+            notices.dropWaiting()
+            hideNoticeIfShown()
+        }
         return true
     }
 
-    private fun onQuestionFieldRejected(code: String) {
-        if (!typingOpen) return
+    /**
+     * The hub turned one of this band's messages away — its five-a-second limit — after the SDK
+     * had already said `SENT`. Which one is unknown, so the band is put back whole: the quiet
+     * band while typing (a lost one leaves the listening band and its chip under the field),
+     * otherwise the state in flight, and in any case a fresh show next time.
+     */
+    fun onNoticeRejected() {
+        bandUncertain = true
+        if (typingOpen) {
+            val attempt = typingAttempt
+            showTypingBand { result -> onTypingBandSent(attempt, result) }
+            return
+        }
+        val body = lastInFlightBody ?: return
+        if (!noticeShown || !useNoticeBand()) return
+        if (lastInFlightUsesLines) showOrUpdateAnswerNotice(body) else showOrUpdateNotice(body)
+    }
+
+    private fun onTypingBandSent(attempt: Int, result: NexusSdkResult) {
+        if (!typingOpen || attempt != typingAttempt) return
+        if (result != NexusSdkResult.SENT) {
+            // A band re-shown under an open field changes nothing for the field: without it,
+            // the glasses bring the field back as a card.
+            if (fieldShown) onNoticeSendFailed() else abortTyping()
+            return
+        }
+        if (fieldShown) return
+        val fieldResult = renderer.showQuestionField(
+            field = QUESTION_FIELD,
+            footer = TYPING_FOOTER,
+            onRejected = ::onQuestionFieldRejected,
+        )
+        if (fieldResult != NexusSdkResult.SENT) {
+            abortTyping()
+            return
+        }
+        fieldShown = true
+        surfaceShown = true
+        anchorShown = false
+        startTypingKeepalive()
+    }
+
+    /**
+     * The quiet band or the field never made it. The band on the glasses may still be the
+     * listening one, Type chip and all, whatever our own flags say — so it is hidden outright
+     * rather than left offering a question nothing will answer.
+     */
+    private fun abortTyping() {
         typingOpen = false
+        fieldShown = false
+        stopKeepalive()
+        notices.hide()
+        noticeShown = false
+        noticeMode = AssistantNoticeMode.NONE
+        clearBandDecorations()
+        showError(QUESTION_FIELD_FAILED)
+    }
+
+    private fun onQuestionFieldRejected(code: String) {
+        if (!typingOpen || !fieldShown) return
+        typingOpen = false
+        fieldShown = false
         stopKeepalive()
         // The field never replaced the card, so whatever was there still is.
         surfaceShown = anchoredBeforeTyping
@@ -349,28 +428,35 @@ internal class AssistantUiController(
         showError(if (code == SURFACE_BUSY) SCREEN_BUSY else QUESTION_FIELD_FAILED)
     }
 
-    private fun showTypingBand(): Boolean {
+    /** A message that had waited for its turn failed when it left: the band is not up. */
+    private fun onNoticeSendFailed() {
+        noticeShown = false
+        noticeMode = AssistantNoticeMode.NONE
+        clearBandDecorations()
+    }
+
+    /**
+     * The flags are claimed before the show because [onSent] may run inside it — and may
+     * already have moved the band on (an error) by the time it returns. A failure is settled
+     * there too, in [onTypingBandSent].
+     */
+    private fun showTypingBand(onSent: (NexusSdkResult) -> Unit): Boolean {
+        noticeShown = true
+        noticeMode = AssistantNoticeMode.PASSIVE
+        bandActions = emptyList()
+        bandFooter = TYPING_FOOTER
+        bandUncertain = false
         // A fresh show, never an update: it drops the Type chip the wearer just used, and it
         // starts a new band lifetime for however long the typing takes.
-        val result = renderer.showNotice(
+        return notices.show(
             NexusNotice(
                 title = NOTICE_TITLE,
                 footer = TYPING_FOOTER,
                 interactive = false,
                 ttlMs = TYPING_TTL_MS,
             ),
-        )
-        if (result == NexusSdkResult.SENT) {
-            noticeShown = true
-            noticeMode = AssistantNoticeMode.PASSIVE
-            bandActions = emptyList()
-            bandFooter = TYPING_FOOTER
-            return true
-        }
-        noticeShown = false
-        noticeMode = AssistantNoticeMode.NONE
-        clearBandDecorations()
-        return false
+            onSent,
+        ) == NexusSdkResult.SENT
     }
 
     /**
@@ -384,7 +470,7 @@ internal class AssistantUiController(
             while (true) {
                 delay(typingKeepaliveIntervalMs)
                 if (!typingOpen || !noticeShown) break
-                renderer.updateNotice(NexusNoticeUpdate(footer = TYPING_FOOTER, ttlMs = TYPING_TTL_MS))
+                notices.update(NexusNoticeUpdate(footer = TYPING_FOOTER, ttlMs = TYPING_TTL_MS))
             }
             keepaliveJob = null
         }
@@ -403,7 +489,7 @@ internal class AssistantUiController(
             delay(typeChipArmDelayMs)
             typeChipJob = null
             if (!listening || !noticeShown || !useNoticeBand()) return@launch
-            if (renderer.updateNotice(NexusNoticeUpdate(actions = TYPE_ACTIONS)) == NexusSdkResult.SENT) {
+            if (notices.update(NexusNoticeUpdate(actions = TYPE_ACTIONS)) == NexusSdkResult.SENT) {
                 typeChipLive = true
                 bandActions = TYPE_ACTIONS
             }
@@ -424,6 +510,7 @@ internal class AssistantUiController(
     private fun clearBandDecorations() {
         bandActions = emptyList()
         bandFooter = null
+        bandUncertain = false
     }
 
     /** Whatever the band should carry now: the Type chip while it is live, nothing otherwise. */
@@ -432,7 +519,8 @@ internal class AssistantUiController(
 
     /** True when [wanted] would leave something behind that only a fresh show can remove. */
     private fun needsFreshShow(wanted: List<NexusNoticeAction>): Boolean =
-        noticeShown && ((bandActions.isNotEmpty() && wanted.isEmpty()) || bandFooter != null)
+        noticeShown &&
+            (bandUncertain || (bandActions.isNotEmpty() && wanted.isEmpty()) || bandFooter != null)
 
     fun showTransient(
         body: String,
@@ -585,6 +673,9 @@ internal class AssistantUiController(
      * the next capture.
      */
     fun onNoticeClosed(reason: NexusNoticeCloseReason) {
+        // Whatever was still waiting to leave belonged to the band that is gone; a show among
+        // it would bring back a band the wearer just dismissed.
+        notices.dropWaiting()
         stopKeepalive()
         startNewState(flushTranscript = false)
         noticeShown = false
@@ -596,7 +687,12 @@ internal class AssistantUiController(
                 NexusNoticeCloseReason.USER -> endTyping(AssistantTypingEnd.CANCELLED)
                 // Only the band's hard lifetime can get here while the keepalive runs: a
                 // fresh band carries on with the field rather than dropping it to a card.
-                NexusNoticeCloseReason.TIMEOUT -> if (showTypingBand()) startTypingKeepalive()
+                NexusNoticeCloseReason.TIMEOUT -> {
+                    val attempt = typingAttempt
+                    if (showTypingBand { result -> onTypingBandSent(attempt, result) } && fieldShown) {
+                        startTypingKeepalive()
+                    }
+                }
                 // Another plugin's band, or our own hide: the glasses bring the field back
                 // as a card on their own, and the commit still arrives as usual. A lost
                 // connection takes the field down with the session.
@@ -623,7 +719,7 @@ internal class AssistantUiController(
         val actions = wantedActions()
         val modeUpdate = mode.takeIf { !noticeShown || it != noticeMode }
         val result = if (noticeShown && !needsFreshShow(actions)) {
-            renderer.updateNotice(
+            notices.update(
                 NexusNoticeUpdate(
                     body = safeBody,
                     interactive = modeUpdate?.let { it == AssistantNoticeMode.ENGAGED },
@@ -632,7 +728,7 @@ internal class AssistantUiController(
                 ),
             )
         } else {
-            renderer.showNotice(
+            notices.show(
                 NexusNotice(
                     title = NOTICE_TITLE,
                     body = safeBody,
@@ -647,6 +743,7 @@ internal class AssistantUiController(
             noticeMode = mode
             bandActions = actions
             bandFooter = null
+            bandUncertain = false
             return true
         }
         noticeShown = false
@@ -664,7 +761,7 @@ internal class AssistantUiController(
             !noticeShown || noticeMode != AssistantNoticeMode.ENGAGED
         }
         val result = if (noticeShown && !needsFreshShow(emptyList())) {
-            renderer.updateNotice(
+            notices.update(
                 NexusNoticeUpdate(
                     interactive = modeUpdate?.let { true },
                     body = truncatedBody,
@@ -672,7 +769,7 @@ internal class AssistantUiController(
                 ),
             )
         } else {
-            renderer.showNotice(
+            notices.show(
                 NexusNotice(
                     title = NOTICE_TITLE,
                     interactive = true,
@@ -702,7 +799,7 @@ internal class AssistantUiController(
         noticeShown = false
         noticeMode = AssistantNoticeMode.NONE
         clearBandDecorations()
-        renderer.hideNotice()
+        notices.hide()
     }
 
     private fun startKeepalive() {
