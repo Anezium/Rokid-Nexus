@@ -196,7 +196,9 @@ Android notification takes an inline reply: the band draws the text and a caret
 under the message while the real field stays out of sight, because an overlay
 that never takes focus cannot hold one. The phone's keyboard now comes forward
 by itself when a plugin opens a field, and leaves when it is done. Relay 1.2.4
-offers it from a *Type* chip that appears once dictation has started.
+offers it from a *Type* chip that appears once dictation has started, and
+Assistant 1.4.7 from its *Input* setting, which can also skip the microphone
+altogether for the places where talking to your glasses is not an option.
 
 Since 1.4.14 the glasses hold on to Nexus's keyboard, which is the only way
 Keyboard & remote reaches a glasses field: the Hi Rokid app can select Rokid's
@@ -267,10 +269,9 @@ Committed, not started, in this order.
    an activity, with notices for the moments that matter. A platform `nav`
    kind comes after those payloads have proven which fields are stable — not
    before.
-2. **Skills, and a keyboard for Assistant.** A hub-mediated registry so
-   Assistant can pause music or ask Transit without binding another plugin or
-   reimplementing it. Plus a phone-typed ask, for the places where talking to
-   your glasses is not an option.
+2. **Skills for Assistant.** A hub-mediated registry so Assistant can pause
+   music or ask Transit without binding another plugin or reimplementing it.
+   The phone-typed ask that shared this item shipped in Assistant 1.4.7.
 3. **Native apps in the glasses menu.** The phone-side catalogue and launch
    path now exist. Phase two puts that catalogue behind the same triple-tap that
    lists plugins, with a back path that lands where the wearer started. Nexus
