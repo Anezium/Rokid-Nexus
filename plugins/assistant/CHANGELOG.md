@@ -17,6 +17,12 @@
   schedule, chart — so the model no longer lays out pages of its own that come
   out too big, cut off or half empty. *Free pages* brings those back alongside
   the templates, as before. *Off* keeps every answer as text in the band.
+- **Template pages keep to what fits.** Every text in a template now has a
+  length the glasses draw whole — a tile's value, a row's label, a schedule's
+  time — and the model is told those lengths up front. Anything longer is sent
+  back to be shortened, instead of arriving cut off, squeezed or spilling out of
+  its box. With Rokid Nexus 1.4.15, a grid of figures also keeps every row at
+  full height.
 
 ## 1.4.7
 

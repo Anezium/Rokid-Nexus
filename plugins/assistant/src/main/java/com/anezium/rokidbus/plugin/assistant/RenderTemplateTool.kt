@@ -48,6 +48,39 @@ internal object InkTemplateLimits {
     const val SCHEDULE_ENTRIES_MAX = 12
     const val STEPS_MIN = 1
     const val STEPS_MAX = 8
+
+    // Longest strings, in characters, each layout still draws whole at its largest counts on
+    // the glasses' card. The glasses hub's InkTemplateTortureTest renders every template at
+    // exactly these lengths; change them together.
+    const val TITLE_CHARS = 32
+    const val WEATHER_LOCATION_CHARS = 16
+    const val WEATHER_TEMPERATURE_CHARS = 8
+    const val WEATHER_CONDITION_CHARS = 24
+    const val WEATHER_DETAIL_CHARS = 12
+    const val WEATHER_PERIOD_LABEL_CHARS = 10
+    const val WEATHER_PERIOD_CONDITION_CHARS = 16
+    const val WEATHER_HOUR_LABEL_CHARS = 6
+    const val CHART_LABEL_CHARS = 12
+    const val CHART_SERIES_LABEL_CHARS = 16
+    const val CHART_CAPTION_CHARS = 40
+    const val METRICS_LABEL_CHARS = 20
+    const val METRICS_VALUE_CHARS = 16
+    const val METRICS_DETAIL_CHARS = 24
+    const val RANKING_LABEL_CHARS = 28
+    const val RANKING_VALUE_CHARS = 12
+    const val RANKING_DETAIL_CHARS = 32
+    const val COMPARISON_SIDE_LABEL_CHARS = 16
+    const val COMPARISON_ITEM_LABEL_CHARS = 12
+    const val COMPARISON_ITEM_VALUE_CHARS = 12
+    const val COMPARISON_VERDICT_CHARS = 80
+    const val SCHEDULE_TIME_CHARS = 11
+
+    /** The time sits in a fixed cell that fits "10:00–11:30" by breaking at the dash. */
+    const val SCHEDULE_TIME_WORD_CHARS = 6
+    const val SCHEDULE_TITLE_CHARS = 40
+    const val SCHEDULE_DETAIL_CHARS = 48
+    const val STEPS_LABEL_CHARS = 36
+    const val STEPS_DETAIL_CHARS = 48
 }
 
 internal data class InkTemplateProblem(
@@ -117,14 +150,14 @@ internal class InkTemplateValidator {
             required = setOf("temperature", "condition"),
             problems = problems,
         )
-        optionalString(data, "location", DATA_PATH, problems)
-        requiredString(data, "temperature", DATA_PATH, problems)
-        requiredString(data, "condition", DATA_PATH, problems)
-        optionalString(data, "high", DATA_PATH, problems)
-        optionalString(data, "low", DATA_PATH, problems)
-        optionalString(data, "precipitation", DATA_PATH, problems)
-        optionalString(data, "humidity", DATA_PATH, problems)
-        optionalString(data, "wind", DATA_PATH, problems)
+        optionalString(data, "location", DATA_PATH, problems, InkTemplateLimits.WEATHER_LOCATION_CHARS)
+        requiredString(data, "temperature", DATA_PATH, problems, InkTemplateLimits.WEATHER_TEMPERATURE_CHARS)
+        requiredString(data, "condition", DATA_PATH, problems, InkTemplateLimits.WEATHER_CONDITION_CHARS)
+        optionalString(data, "high", DATA_PATH, problems, InkTemplateLimits.WEATHER_TEMPERATURE_CHARS)
+        optionalString(data, "low", DATA_PATH, problems, InkTemplateLimits.WEATHER_TEMPERATURE_CHARS)
+        optionalString(data, "precipitation", DATA_PATH, problems, InkTemplateLimits.WEATHER_DETAIL_CHARS)
+        optionalString(data, "humidity", DATA_PATH, problems, InkTemplateLimits.WEATHER_DETAIL_CHARS)
+        optionalString(data, "wind", DATA_PATH, problems, InkTemplateLimits.WEATHER_DETAIL_CHARS)
 
         if (!data.has("forecast") && !data.has("hourly")) {
             problems += InkTemplateProblem(
@@ -150,9 +183,9 @@ internal class InkTemplateValidator {
                     required = setOf("label", "temperature"),
                     problems = problems,
                 )
-                requiredString(item, "label", itemPath, problems)
-                requiredString(item, "temperature", itemPath, problems)
-                optionalString(item, "condition", itemPath, problems)
+                requiredString(item, "label", itemPath, problems, InkTemplateLimits.WEATHER_PERIOD_LABEL_CHARS)
+                requiredString(item, "temperature", itemPath, problems, InkTemplateLimits.WEATHER_TEMPERATURE_CHARS)
+                optionalString(item, "condition", itemPath, problems, InkTemplateLimits.WEATHER_PERIOD_CONDITION_CHARS)
             }
         } ?: if (data.has("forecast")) {
             problems += InkTemplateProblem(
@@ -177,7 +210,7 @@ internal class InkTemplateValidator {
                     required = setOf("label", "temp"),
                     problems = problems,
                 )
-                requiredString(item, "label", itemPath, problems)
+                requiredString(item, "label", itemPath, problems, InkTemplateLimits.WEATHER_HOUR_LABEL_CHARS)
                 if (item.opt("temp") !is Number) {
                     problems += InkTemplateProblem(
                         code = TEMPLATE_PROBLEM_WRONG_TYPE,
@@ -214,7 +247,7 @@ internal class InkTemplateValidator {
                 message = "Expected one of ${CHART_TYPES.joinToString()}; received '$chartType'.",
             )
         }
-        optionalString(data, "caption", DATA_PATH, problems)
+        optionalString(data, "caption", DATA_PATH, problems, InkTemplateLimits.CHART_CAPTION_CHARS)
 
         val labels = requiredArray(data, "labels", DATA_PATH, problems)
         if (labels != null) {
@@ -226,7 +259,7 @@ internal class InkTemplateValidator {
                 problems = problems,
             )
             forEachValue(labels) { index, value ->
-                validateStringValue(value, "$DATA_PATH.labels[$index]", problems)
+                validateStringValue(value, "$DATA_PATH.labels[$index]", problems, InkTemplateLimits.CHART_LABEL_CHARS)
             }
         }
 
@@ -253,7 +286,7 @@ internal class InkTemplateValidator {
                 required = CHART_SERIES_KEYS,
                 problems = problems,
             )
-            requiredString(item, "label", itemPath, problems)
+            requiredString(item, "label", itemPath, problems, InkTemplateLimits.CHART_SERIES_LABEL_CHARS)
             val values = requiredArray(item, "values", itemPath, problems)
             if (values != null) {
                 if (labels != null && values.length() != labels.length()) {
@@ -318,7 +351,12 @@ internal class InkTemplateValidator {
                 maximum = InkTemplateLimits.METRICS_CELLS_MAX,
                 problems = problems,
             )
-            validateLabeledValueItems(cells, "$DATA_PATH.cells", hasDetail = true, problems)
+            validateLabeledValueItems(
+                cells, "$DATA_PATH.cells", problems,
+                labelChars = InkTemplateLimits.METRICS_LABEL_CHARS,
+                valueChars = InkTemplateLimits.METRICS_VALUE_CHARS,
+                detailChars = InkTemplateLimits.METRICS_DETAIL_CHARS,
+            )
         }
     }
 
@@ -334,7 +372,12 @@ internal class InkTemplateValidator {
                 maximum = InkTemplateLimits.RANKING_ROWS_MAX,
                 problems = problems,
             )
-            validateLabeledValueItems(rows, "$DATA_PATH.rows", hasDetail = true, problems)
+            validateLabeledValueItems(
+                rows, "$DATA_PATH.rows", problems,
+                labelChars = InkTemplateLimits.RANKING_LABEL_CHARS,
+                valueChars = InkTemplateLimits.RANKING_VALUE_CHARS,
+                detailChars = InkTemplateLimits.RANKING_DETAIL_CHARS,
+            )
         }
     }
 
@@ -349,7 +392,7 @@ internal class InkTemplateValidator {
             required = setOf("left", "right"),
             problems = problems,
         )
-        optionalString(data, "verdict", DATA_PATH, problems)
+        optionalString(data, "verdict", DATA_PATH, problems, InkTemplateLimits.COMPARISON_VERDICT_CHARS)
         validateComparisonSide(data, "left", problems)
         validateComparisonSide(data, "right", problems)
     }
@@ -368,7 +411,7 @@ internal class InkTemplateValidator {
             required = COMPARISON_SIDE_KEYS,
             problems = problems,
         )
-        requiredString(side, "label", sidePath, problems)
+        requiredString(side, "label", sidePath, problems, InkTemplateLimits.COMPARISON_SIDE_LABEL_CHARS)
         val items = requiredArray(side, "items", sidePath, problems) ?: return
         validateCount(
             array = items,
@@ -377,7 +420,11 @@ internal class InkTemplateValidator {
             maximum = InkTemplateLimits.COMPARISON_ITEMS_MAX,
             problems = problems,
         )
-        validateLabeledValueItems(items, "$sidePath.items", hasDetail = false, problems)
+        validateLabeledValueItems(
+            items, "$sidePath.items", problems,
+            labelChars = InkTemplateLimits.COMPARISON_ITEM_LABEL_CHARS,
+            valueChars = InkTemplateLimits.COMPARISON_ITEM_VALUE_CHARS,
+        )
     }
 
     private fun validateSchedule(
@@ -400,9 +447,10 @@ internal class InkTemplateValidator {
                     required = setOf("time", "title"),
                     problems = problems,
                 )
-                requiredString(item, "time", itemPath, problems)
-                requiredString(item, "title", itemPath, problems)
-                optionalString(item, "detail", itemPath, problems)
+                requiredString(item, "time", itemPath, problems, InkTemplateLimits.SCHEDULE_TIME_CHARS)
+                    ?.let { time -> validateScheduleTime(time, "$itemPath.time", problems) }
+                requiredString(item, "title", itemPath, problems, InkTemplateLimits.SCHEDULE_TITLE_CHARS)
+                optionalString(item, "detail", itemPath, problems, InkTemplateLimits.SCHEDULE_DETAIL_CHARS)
             }
         }
     }
@@ -436,8 +484,8 @@ internal class InkTemplateValidator {
                     required = setOf("label"),
                     problems = problems,
                 )
-                requiredString(item, "label", itemPath, problems)
-                optionalString(item, "detail", itemPath, problems)
+                requiredString(item, "label", itemPath, problems, InkTemplateLimits.STEPS_LABEL_CHARS)
+                optionalString(item, "detail", itemPath, problems, InkTemplateLimits.STEPS_DETAIL_CHARS)
             }
             if (current != null && current !in 0..steps.length()) {
                 problems += InkTemplateProblem(
@@ -446,6 +494,23 @@ internal class InkTemplateValidator {
                     message = "Expected an integer from 0 through ${steps.length()}; received $current.",
                 )
             }
+        }
+    }
+
+    /** Each run between spaces and dashes has to fit the time cell's width on its own. */
+    private fun validateScheduleTime(
+        time: String,
+        path: String,
+        problems: MutableList<InkTemplateProblem>,
+    ) {
+        val longest = time.split(TIME_BREAKS).maxOf { it.codePointCount(0, it.length) }
+        if (longest > InkTemplateLimits.SCHEDULE_TIME_WORD_CHARS) {
+            problems += InkTemplateProblem(
+                code = TEMPLATE_PROBLEM_TOO_LONG,
+                path = path,
+                message = "The time cell fits runs of at most ${InkTemplateLimits.SCHEDULE_TIME_WORD_CHARS} characters " +
+                    "between spaces or dashes, like 09:30 or 10:00–11:30; received '$time'.",
+            )
         }
     }
 
@@ -466,13 +531,16 @@ internal class InkTemplateValidator {
         requiredArray(data, key, path, problems)?.let(validateArray)
     }
 
+    /** A null [detailChars] means the layout has no detail line, so the key is not allowed. */
     private fun validateLabeledValueItems(
         array: JSONArray,
         path: String,
-        hasDetail: Boolean,
         problems: MutableList<InkTemplateProblem>,
+        labelChars: Int,
+        valueChars: Int,
+        detailChars: Int? = null,
     ) {
-        val allowed = if (hasDetail) LABELED_VALUE_DETAIL_KEYS else LABELED_VALUE_KEYS
+        val allowed = if (detailChars != null) LABELED_VALUE_DETAIL_KEYS else LABELED_VALUE_KEYS
         forEachObject(array, path, problems) { item, itemPath ->
             validateShape(
                 value = item,
@@ -481,9 +549,9 @@ internal class InkTemplateValidator {
                 required = LABELED_VALUE_KEYS,
                 problems = problems,
             )
-            requiredString(item, "label", itemPath, problems)
-            requiredString(item, "value", itemPath, problems)
-            if (hasDetail) optionalString(item, "detail", itemPath, problems)
+            requiredString(item, "label", itemPath, problems, labelChars)
+            requiredString(item, "value", itemPath, problems, valueChars)
+            if (detailChars != null) optionalString(item, "detail", itemPath, problems, detailChars)
         }
     }
 
@@ -542,6 +610,7 @@ internal class InkTemplateValidator {
 
     private companion object {
         const val DATA_PATH = "data"
+        val TIME_BREAKS = Regex("[\\s\\-–—]+")
 
         val WEATHER_KEYS = setOf(
             "location", "temperature", "condition", "high", "low",
@@ -612,7 +681,7 @@ internal class RenderTemplateTool(
             problems = problems,
         )
         val templateValue = requiredString(arguments, "template", ROOT_PATH, problems)
-        val title = optionalString(arguments, "title", ROOT_PATH, problems)
+        val title = optionalString(arguments, "title", ROOT_PATH, problems, InkTemplateLimits.TITLE_CHARS)
         val data = requiredObject(arguments, "data", ROOT_PATH, problems)
         val templateId = templateValue?.let { InkTemplateId.fromWireValue(it) }
         if (templateValue != null && templateId == null) {
@@ -678,6 +747,7 @@ internal const val TEMPLATE_PROBLEM_INVALID_VALUE = "invalid_value"
 internal const val TEMPLATE_PROBLEM_COUNT_OUT_OF_RANGE = "count_out_of_range"
 internal const val TEMPLATE_PROBLEM_VALUE_OUT_OF_RANGE = "value_out_of_range"
 internal const val TEMPLATE_PROBLEM_LENGTH_MISMATCH = "length_mismatch"
+internal const val TEMPLATE_PROBLEM_TOO_LONG = "too_long"
 internal const val TEMPLATE_PROBLEM_UNKNOWN_TEMPLATE = "unknown_template"
 
 internal val RENDER_TEMPLATE_PARAMETERS_SCHEMA = AssistantToolJsonSchema(
@@ -685,14 +755,15 @@ internal val RENDER_TEMPLATE_PARAMETERS_SCHEMA = AssistantToolJsonSchema(
 )
 
 internal val RENDER_TEMPLATE_TOOL_DESCRIPTION = """
-    Render a fast, prevalidated Ink layout on the glasses. Whenever your answer contains numbers, times, temperatures, forecasts, comparisons, rankings, schedules, or step progress, CALL this tool alongside a concise spoken answer instead of listing the values in prose. Prefer this over render_ink_page when one of these shapes fits. Arguments are {template, title?: nonblank string, data}; localize all supplied strings.
-    weather - current conditions with an hourly temperature curve and/or period cells; prefer hourly when you have it. data: {location?:string, temperature:string, condition:string, high?:string, low?:string, precipitation?:string, humidity?:string, wind?:string, hourly?:[{label:string, temp:number}] (2-24), forecast?:[{label:string, temperature:string, condition?:string}] (1-5)} - at least one of hourly/forecast.
-    chart - line, area, bar, or pie visualization. data: {type:"line"|"area"|"bar"|"pie", labels:string[1..64], series:[{label:string, values:number[labels.length]}], caption?:string} (1-4 series; pie requires 1 with non-negative values and at least one >0).
-    metrics - bordered value cells for a numeric/status snapshot. data: {cells:[{label:string, value:string, detail?:string}]} (2-6 cells).
-    ranking - ordered results with values. data: {rows:[{label:string, value:string, detail?:string}]} (1-10 rows).
-    comparison - two labeled columns and an optional conclusion. data: {left:{label:string, items:[{label:string, value:string}]}, right:{label:string, items:[{label:string, value:string}]}, verdict?:string} (1-6 items per side).
-    schedule - time-labeled agenda entries. data: {entries:[{time:string, title:string, detail?:string}]} (1-12 entries).
-    steps - progress through named steps. data: {current:integer, steps:[{label:string, detail?:string}]} (1-8 steps; current is the number completed and zero-based active index, or steps.length when complete).
+    Render a fast, prevalidated Ink layout on the glasses. Whenever your answer contains numbers, times, temperatures, forecasts, comparisons, rankings, schedules, or step progress, CALL this tool alongside a concise spoken answer instead of listing the values in prose. Prefer this over render_ink_page when one of these shapes fits. Arguments are {template, title?: nonblank string(${InkTemplateLimits.TITLE_CHARS}), data}; localize all supplied strings.
+    string(N) holds at most N characters: that is what fits on the glasses, and a longer string is rejected. Keep every string short; abbreviate, or answer in text when the content cannot be that short.
+    weather - current conditions with an hourly temperature curve and/or period cells; prefer hourly when you have it. data: {location?:string(${InkTemplateLimits.WEATHER_LOCATION_CHARS}), temperature:string(${InkTemplateLimits.WEATHER_TEMPERATURE_CHARS}), condition:string(${InkTemplateLimits.WEATHER_CONDITION_CHARS}), high?:string(${InkTemplateLimits.WEATHER_TEMPERATURE_CHARS}), low?:string(${InkTemplateLimits.WEATHER_TEMPERATURE_CHARS}), precipitation?:string(${InkTemplateLimits.WEATHER_DETAIL_CHARS}), humidity?:string(${InkTemplateLimits.WEATHER_DETAIL_CHARS}), wind?:string(${InkTemplateLimits.WEATHER_DETAIL_CHARS}), hourly?:[{label:string(${InkTemplateLimits.WEATHER_HOUR_LABEL_CHARS}), temp:number}] (2-24), forecast?:[{label:string(${InkTemplateLimits.WEATHER_PERIOD_LABEL_CHARS}), temperature:string(${InkTemplateLimits.WEATHER_TEMPERATURE_CHARS}), condition?:string(${InkTemplateLimits.WEATHER_PERIOD_CONDITION_CHARS})}] (1-5)} - at least one of hourly/forecast.
+    chart - line, area, bar, or pie visualization. data: {type:"line"|"area"|"bar"|"pie", labels:string(${InkTemplateLimits.CHART_LABEL_CHARS})[1..64], series:[{label:string(${InkTemplateLimits.CHART_SERIES_LABEL_CHARS}), values:number[labels.length]}], caption?:string(${InkTemplateLimits.CHART_CAPTION_CHARS})} (1-4 series; pie requires 1 with non-negative values and at least one >0).
+    metrics - bordered value cells for a numeric/status snapshot. data: {cells:[{label:string(${InkTemplateLimits.METRICS_LABEL_CHARS}), value:string(${InkTemplateLimits.METRICS_VALUE_CHARS}), detail?:string(${InkTemplateLimits.METRICS_DETAIL_CHARS})}]} (2-6 cells).
+    ranking - ordered results with values. data: {rows:[{label:string(${InkTemplateLimits.RANKING_LABEL_CHARS}), value:string(${InkTemplateLimits.RANKING_VALUE_CHARS}), detail?:string(${InkTemplateLimits.RANKING_DETAIL_CHARS})}]} (1-10 rows).
+    comparison - two labeled columns and an optional conclusion. data: {left:{label:string(${InkTemplateLimits.COMPARISON_SIDE_LABEL_CHARS}), items:[{label:string(${InkTemplateLimits.COMPARISON_ITEM_LABEL_CHARS}), value:string(${InkTemplateLimits.COMPARISON_ITEM_VALUE_CHARS})}]}, right:{same as left}, verdict?:string(${InkTemplateLimits.COMPARISON_VERDICT_CHARS})} (1-6 items per side).
+    schedule - time-labeled agenda entries. data: {entries:[{time:string(${InkTemplateLimits.SCHEDULE_TIME_CHARS}), title:string(${InkTemplateLimits.SCHEDULE_TITLE_CHARS}), detail?:string(${InkTemplateLimits.SCHEDULE_DETAIL_CHARS})}]} (1-12 entries; a time is short like 09:30 or 10:00–11:30, no run over ${InkTemplateLimits.SCHEDULE_TIME_WORD_CHARS} characters between spaces or dashes).
+    steps - progress through named steps. data: {current:integer, steps:[{label:string(${InkTemplateLimits.STEPS_LABEL_CHARS}), detail?:string(${InkTemplateLimits.STEPS_DETAIL_CHARS})}]} (1-8 steps; current is the number completed and zero-based active index, or steps.length when complete).
 """.trimIndent()
 
 private fun validateShape(
@@ -729,9 +800,10 @@ private fun requiredString(
     key: String,
     path: String,
     problems: MutableList<InkTemplateProblem>,
+    maxChars: Int = Int.MAX_VALUE,
 ): String? {
     if (!value.has(key)) return null
-    return validateStringValue(value.opt(key), childPath(path, key), problems)
+    return validateStringValue(value.opt(key), childPath(path, key), problems, maxChars)
 }
 
 private fun optionalString(
@@ -739,15 +811,17 @@ private fun optionalString(
     key: String,
     path: String,
     problems: MutableList<InkTemplateProblem>,
+    maxChars: Int = Int.MAX_VALUE,
 ): String? {
     if (!value.has(key)) return null
-    return validateStringValue(value.opt(key), childPath(path, key), problems)
+    return validateStringValue(value.opt(key), childPath(path, key), problems, maxChars)
 }
 
 private fun validateStringValue(
     value: Any?,
     path: String,
     problems: MutableList<InkTemplateProblem>,
+    maxChars: Int = Int.MAX_VALUE,
 ): String? {
     if (value !is String) {
         problems += InkTemplateProblem(
@@ -762,6 +836,16 @@ private fun validateStringValue(
             code = TEMPLATE_PROBLEM_INVALID_VALUE,
             path = path,
             message = "Expected a nonblank string.",
+        )
+        return null
+    }
+    val length = value.codePointCount(0, value.length)
+    if (length > maxChars) {
+        problems += InkTemplateProblem(
+            code = TEMPLATE_PROBLEM_TOO_LONG,
+            path = path,
+            message = "At most $maxChars characters fit here on the glasses; received $length. " +
+                "Shorten it, or answer in text instead.",
         )
         return null
     }
