@@ -115,12 +115,11 @@ internal object GoogleMapsParser {
             else -> MINUTES.find(title)?.value ?: return null
         }
         val walkDistance = PARENTHESISED_DISTANCE.find(title)?.groupValues?.get(1)?.takeIf(NavText::isDistance)
-        // A walk reads as time and distance together, "3 min - 250 m", even
-        // folded into the chip; the distance leaves the detail when it moves up.
-        val walkPair = walkDistance
-            ?.takeIf { glyph == "walk" && primary == short }
-            ?.let { NavText.pair(primary, it, ActivitySurfaceContract.MAX_PRIMARY_CHARS) }
-        val detail = (parts.drop(1) + listOfNotNull(walkDistance.takeIf { walkPair == null }))
+        // The distance sits right under the time, ahead of the stop, so the
+        // folded chip still reads "3 min" over "250 m · <stop>". Joined to the
+        // time it made the first value, drawn largest, far too big.
+        val secondary = listOfNotNull(walkDistance, place ?: title).joinToString(SEPARATOR)
+        val detail = parts.drop(1)
             .ifEmpty { listOf(title).takeIf { place != null }.orEmpty() }
             .take(ActivitySurfaceContract.MAX_DETAIL_LINES)
             .map { NavText.fit(it, ActivitySurfaceContract.MAX_DETAIL_CHARS) }
@@ -129,8 +128,8 @@ internal object GoogleMapsParser {
         return NavGuidance(
             source = NavSource.GOOGLE_MAPS,
             glyph = glyph,
-            primary = walkPair ?: NavText.fit(primary, ActivitySurfaceContract.MAX_PRIMARY_CHARS),
-            secondary = NavText.fit(place ?: title, ActivitySurfaceContract.MAX_SECONDARY_CHARS),
+            primary = NavText.fit(primary, ActivitySurfaceContract.MAX_PRIMARY_CHARS),
+            secondary = NavText.fit(secondary, ActivitySurfaceContract.MAX_SECONDARY_CHARS),
             eta = NavText.clock(notification.subText),
             detail = detail,
             badge = badge.takeIf { glyph != "walk" },

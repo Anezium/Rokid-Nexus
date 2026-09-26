@@ -147,12 +147,12 @@ class GoogleMapsParserTest {
     )
 
     @Test
-    fun `a transit walking leg leads with time and distance, then the stop and the departure`() {
+    fun `a transit walking leg shows the time over the distance and the stop, then the departure`() {
         val guidance = GoogleMapsParser.parse(transitWalk)!!
 
         assertEquals("walk", guidance.glyph)
-        assertEquals("3 min - 250m", guidance.primary)
-        assertEquals("Châtelet", guidance.secondary)
+        assertEquals("3 min", guidance.primary)
+        assertEquals("250 m · Châtelet", guidance.secondary)
         assertEquals(listOf("Départ à 17:36"), guidance.detail)
         assertEquals("18:51", guidance.eta)
         assertNull(guidance.badge)
@@ -167,21 +167,8 @@ class GoogleMapsParserTest {
         )!!
 
         assertEquals(first.stepKey, later.stepKey)
-        assertEquals("2 min - 150m", later.primary)
-    }
-
-    @Test
-    fun `a long walk tightens its spelling to fit, and keeps the distance as detail when nothing fits`() {
-        val long = GoogleMapsParser.parse(
-            transitWalk.copy(title = "Marchez 12 min (1,2 km)", shortCriticalText = "12 min"),
-        )!!
-        assertEquals("12min-1,2km", long.primary)
-
-        val tooLong = GoogleMapsParser.parse(
-            transitWalk.copy(title = "Marchez 125 min (10,5 km)", shortCriticalText = "125 min"),
-        )!!
-        assertEquals("125 min", tooLong.primary)
-        assertEquals(listOf("Départ à 17:36", "10,5 km"), tooLong.detail)
+        assertEquals("2 min", later.primary)
+        assertEquals("150 m · Châtelet", later.secondary)
     }
 
     @Test
@@ -199,6 +186,7 @@ class GoogleMapsParserTest {
         assertEquals("38", ride.badge)
         assertEquals("3 arrêts", ride.primary)
         assertEquals("Luxembourg", ride.secondary)
+        assertEquals(listOf("Bus 38"), ride.detail)
         assertFalse(ride.imminent)
         assertTrue(
             GoogleMapsParser.parse(
