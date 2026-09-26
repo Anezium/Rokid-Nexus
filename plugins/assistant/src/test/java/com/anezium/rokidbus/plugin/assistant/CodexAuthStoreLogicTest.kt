@@ -24,6 +24,18 @@ class CodexAuthStoreLogicTest {
     }
 
     @Test
+    fun inputModeDefaultsToVoiceOnlyAndRoundTrips() {
+        val store = CodexAuthStore(FakeSharedPreferences())
+
+        // An install that never saw the setting, new or updated, keeps asking out loud.
+        assertEquals(AssistantInputMode.VOICE_ONLY, store.inputMode())
+        AssistantInputMode.entries.forEach { mode ->
+            store.setInputMode(mode)
+            assertEquals(mode, store.inputMode())
+        }
+    }
+
+    @Test
     fun speakAnswersDefaultsTrueAndRoundTrips() {
         val store = CodexAuthStore(FakeSharedPreferences())
 

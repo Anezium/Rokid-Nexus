@@ -2,8 +2,11 @@
 
 ## 1.4.7
 
-- **Type the question instead.** While Assistant listens, a *Type* chip joins
-  the band a moment in. Tap it and the microphone stops: the band itself
+- **Type the question instead.** A new *Input* setting picks how you ask.
+  *Voice only* stays the default and changes nothing. *Voice + Type button*
+  adds a *Type* chip to the band a moment after it starts listening: tap it
+  and the microphone stops. *Type first* skips the microphone and opens the
+  field straight away, however the question starts. Either way the band itself
   becomes the text field, with your text and the caret drawn live inside it,
   like an inline reply to an Android notification. The phone's Keyboard &
   remote comes up on its own and closes again when you are done. Enter asks

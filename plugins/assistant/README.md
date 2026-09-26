@@ -4,10 +4,12 @@ Phone-side Rokid Nexus voice assistant plugin.
 
 Hold the assist button, ask out loud: the words transcribe live on the HUD, then
 the answer streams into the band, is spoken aloud, or hands over in place to a
-native Ink page. While it listens, a *Type* chip turns the band into a text
-field instead: the question is typed there from the phone's Keyboard & remote,
-which comes up on its own, and Enter sends it down the same path as speech
-(`EditableSurfaceField.inNotice`; a card on glasses hubs before 1.4.13). Picking Assistant in the glasses launcher listens at once, no
+native Ink page. The *Input* setting can also let the wearer type: a *Type*
+chip while it listens, or *Type first*, which opens the field without the
+microphone. The band then becomes the text field, typed from the phone's
+Keyboard & remote, which comes up on its own, and Enter sends the question down
+the same path as speech (`EditableSurfaceField.inNotice`; a card on glasses hubs
+before 1.4.13, voice on older ones). *Voice only* is the default. Picking Assistant in the glasses launcher listens at once, no
 button needed — tap the card to ask again — and a swipe on that card opens the
 options: one row that hands the assist button to Nexus or back to Rokid's
 assistant. Pausing it there does not touch the plugin's grant; the wearer can

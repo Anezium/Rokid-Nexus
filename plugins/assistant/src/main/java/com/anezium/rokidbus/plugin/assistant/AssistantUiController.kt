@@ -46,6 +46,9 @@ internal interface AssistantUiRenderer {
     /** Whether the glasses can take a typed answer at all (the `EDITABLE_SURFACE` bit). */
     val supportsQuestionField: Boolean
 
+    /** The Input setting, as the wearer left it. */
+    val chosenInputMode: AssistantInputMode
+
     /**
      * Replaces the card with the typed-question field. [onRejected] hears a rejection that
      * lands after `SENT`, for this show only.
@@ -179,6 +182,13 @@ internal class AssistantUiController(
     val offersTyping: Boolean
         get() = listening && typeChipLive && noticeShown && bandActions == TYPE_ACTIONS
 
+    /** The Input setting as these glasses can honour it right now; see [effectiveInputMode]. */
+    val inputMode: AssistantInputMode
+        get() = effectiveInputMode(
+            chosen = renderer.chosenInputMode,
+            canType = renderer.supportsQuestionField && renderer.supportsNoticeSurface,
+        )
+
     fun onOpen() {
         resetForOpen()
         launcherHintJob = scope.launch {
@@ -307,6 +317,17 @@ internal class AssistantUiController(
         lastInFlightUsesLines = false
         showOrUpdateNotice(LISTENING_BODY)
         startKeepalive()
+    }
+
+    /**
+     * A question is starting, by whatever way the wearer asked. With Type first in effect it
+     * opens here, straight into the typed field, and true tells the caller to leave the
+     * microphone off; otherwise false, and the caller listens as usual.
+     */
+    fun startQuestion(): Boolean {
+        if (inputMode != AssistantInputMode.TYPE_FIRST) return false
+        beginTyping()
+        return true
     }
 
     /**
@@ -500,7 +521,9 @@ internal class AssistantUiController(
      */
     private fun armTypeChip() {
         cancelTypeChip()
-        if (!renderer.supportsQuestionField) return
+        // Voice only keeps the band exactly as it was before the chip existed, so a temple tap
+        // while listening does what it always did instead of opening a keyboard.
+        if (inputMode != AssistantInputMode.VOICE_AND_TYPE) return
         typeChipJob = scope.launch {
             delay(typeChipArmDelayMs)
             typeChipJob = null

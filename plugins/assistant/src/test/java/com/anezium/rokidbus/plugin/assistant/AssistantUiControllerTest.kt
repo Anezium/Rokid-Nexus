@@ -1524,6 +1524,121 @@ class AssistantUiControllerTest {
             controller.onClose()
         }
 
+    @Test
+    fun `voice only never arms the chip even where a field could open`() =
+        runTest {
+            val renderer = FakeRenderer(
+                supportsNotice = true,
+                supportsQuestionField = true,
+                chosenInputMode = AssistantInputMode.VOICE_ONLY,
+            )
+            val controller = controller(renderer)
+            controller.onLauncherOpen()
+            controller.beginGestureFlow()
+
+            assertFalse(controller.startQuestion())
+            controller.showListening(legacyForceShow = true)
+            controller.showTranscript("what is")
+            advanceTimeBy(AssistantUiController.TYPE_CHIP_ARM_DELAY_MS * 4)
+            runCurrent()
+
+            // The band as it was before the chip: nothing a tap could turn into a keyboard.
+            assertTrue(renderer.noticeActions.all { it.isEmpty() })
+            assertFalse(controller.offersTyping)
+            assertTrue(renderer.calls.none { it is RenderCall.ShowQuestionField })
+            assertEquals(AssistantInputMode.VOICE_ONLY, controller.inputMode)
+            controller.onClose()
+        }
+
+    @Test
+    fun `type first opens the field at once and never shows a listening band`() =
+        runTest {
+            val renderer = FakeRenderer(
+                supportsNotice = true,
+                supportsQuestionField = true,
+                chosenInputMode = AssistantInputMode.TYPE_FIRST,
+            )
+            val controller = controller(renderer)
+            controller.onLauncherOpen()
+            controller.beginGestureFlow()
+            renderer.clear()
+
+            // True: the caller must not open the microphone.
+            assertTrue(controller.startQuestion())
+
+            assertEquals(
+                listOf(
+                    RenderCall.ShowNotice("Assistant", null),
+                    RenderCall.ShowQuestionField(
+                        AssistantUiController.QUESTION_FIELD,
+                        AssistantUiController.TYPING_FOOTER,
+                    ),
+                ),
+                renderer.calls,
+            )
+            assertEquals(false, renderer.noticeEngagement.first())
+            assertTrue(controller.isTyping)
+            advanceTimeBy(AssistantUiController.TYPE_CHIP_ARM_DELAY_MS * 4)
+            runCurrent()
+            assertTrue(renderer.calls.none { it == RenderCall.ShowNotice("Assistant", AssistantUiController.LISTENING_BODY) })
+            assertTrue(renderer.noticeActions.all { it.isEmpty() })
+
+            // Back cancels: the anchor comes back, and the next question opens typed again.
+            renderer.clear()
+            controller.onNoticeClosed(NexusNoticeCloseReason.USER)
+            assertEquals(
+                listOf(RenderCall.ShowCard(AssistantUiController.ANCHOR_LINES, forceShow = true)),
+                renderer.calls,
+            )
+            assertFalse(controller.isTyping)
+            controller.beginGestureFlow()
+            assertTrue(controller.startQuestion())
+            assertTrue(controller.isTyping)
+            controller.onClose()
+        }
+
+    @Test
+    fun `without the editable bit or a band every choice falls back to voice`() =
+        runTest {
+            val noField = FakeRenderer(
+                supportsNotice = true,
+                supportsQuestionField = false,
+                chosenInputMode = AssistantInputMode.TYPE_FIRST,
+            )
+            val noFieldController = controller(noField)
+            noFieldController.onLauncherOpen()
+            noFieldController.beginGestureFlow()
+            assertEquals(AssistantInputMode.VOICE_ONLY, noFieldController.inputMode)
+            // False: the caller listens, exactly as Voice only would.
+            assertFalse(noFieldController.startQuestion())
+            assertTrue(noField.calls.none { it is RenderCall.ShowQuestionField })
+            noFieldController.onClose()
+
+            val noBand = FakeRenderer(
+                supportsNotice = false,
+                supportsQuestionField = true,
+                chosenInputMode = AssistantInputMode.TYPE_FIRST,
+            )
+            val noBandController = controller(noBand)
+            assertEquals(AssistantInputMode.VOICE_ONLY, noBandController.inputMode)
+            assertFalse(noBandController.startQuestion())
+
+            val chipNoField = FakeRenderer(
+                supportsNotice = true,
+                supportsQuestionField = false,
+                chosenInputMode = AssistantInputMode.VOICE_AND_TYPE,
+            )
+            val chipController = controller(chipNoField)
+            chipController.onLauncherOpen()
+            chipController.beginGestureFlow()
+            chipController.showListening(legacyForceShow = true)
+            advanceTimeBy(AssistantUiController.TYPE_CHIP_ARM_DELAY_MS * 2)
+            runCurrent()
+            assertTrue(chipNoField.noticeActions.all { it.isEmpty() })
+            assertFalse(chipController.offersTyping)
+            chipController.onClose()
+        }
+
     private fun TestScope.armedChip(controller: AssistantUiController, renderer: FakeRenderer) {
         controller.onLauncherOpen()
         controller.beginGestureFlow()
@@ -1594,6 +1709,8 @@ class AssistantUiControllerTest {
         private val supportsNotice: Boolean,
         override val supportsQuestionField: Boolean = false,
         private val questionFieldResult: NexusSdkResult = NexusSdkResult.SENT,
+        // The chip's own mode, so the tests written before the Input setting keep their meaning.
+        override val chosenInputMode: AssistantInputMode = AssistantInputMode.VOICE_AND_TYPE,
         private val clock: () -> Long = { 0L },
     ) : AssistantUiRenderer {
         val calls = mutableListOf<RenderCall>()

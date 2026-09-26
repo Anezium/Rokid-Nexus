@@ -224,6 +224,9 @@ class AssistantPluginService : NexusPluginService() {
             override val supportsQuestionField: Boolean
                 get() = nexusClient?.supportsEditableSurface == true
 
+            override val chosenInputMode: AssistantInputMode
+                get() = authStore.inputMode()
+
             override fun showQuestionField(
                 field: EditableSurfaceField,
                 footer: String,
@@ -536,6 +539,8 @@ class AssistantPluginService : NexusPluginService() {
         }
 
         cancelPipeline()
+        // Type first: the question opens as a field and the microphone is never asked for.
+        if (uiController.startQuestion()) return
         captureGeneration += 1
         val generation = captureGeneration
         captureActive = true
