@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Phone and glasses hubs
+
+- **Use the Nexus keyboard on the glasses from the phone.** Keyboard & remote
+  only reaches a glasses field through Nexus's own glasses keyboard, and the
+  Hi Rokid app can select Rokid's again at any time. The screen now asks the
+  glasses which keyboard they use and, when it is another one, says so and
+  offers *Use Nexus keyboard on glasses*, which switches it in one tap. If the
+  glasses hub lost the permission to change it, the screen points to the
+  glasses setup instead. Needs both hubs.
+
 ## 1.4.13
 
 ### Upgrade together
