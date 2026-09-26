@@ -28,7 +28,7 @@ class HudSpringTest {
 
     @Test
     fun `every spring settles on its target within about a second`() {
-        listOf(HudSpring.STANDARD, HudSpring.URGENT, HudSpring.EXIT).forEach { spring ->
+        listOf(HudSpring.STANDARD, HudSpring.BEAT, HudSpring.EXIT).forEach { spring ->
             val value = HudSpringValue(0f).apply { target = 300f }
             val (_, elapsed) = settle(value, spring)
 
@@ -38,9 +38,9 @@ class HudSpringTest {
     }
 
     @Test
-    fun `the standard morph barely overshoots, the urgent one visibly bounces, exits never do`() {
+    fun `the standard morph barely overshoots, a beat visibly wobbles, exits never do`() {
         assertTrue(overshoot(HudSpring.STANDARD) in 0.005f..0.04f)
-        assertTrue(overshoot(HudSpring.URGENT) > 0.1f)
+        assertTrue(overshoot(HudSpring.BEAT) > 0.1f)
         assertEquals(0f, overshoot(HudSpring.EXIT), 0.001f)
     }
 
@@ -63,7 +63,7 @@ class HudSpringTest {
     @Test
     fun `a long dropped frame does not blow the spring up`() {
         val value = HudSpringValue(0f).apply { target = 100f }
-        value.step(0.25f, HudSpring.URGENT)
+        value.step(0.25f, HudSpring.BEAT)
 
         assertTrue(value.value.isFinite())
         assertTrue(value.value in 0f..140f)

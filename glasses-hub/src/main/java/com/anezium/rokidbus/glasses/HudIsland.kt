@@ -30,8 +30,8 @@ internal data class HudSpring(
         /** Everything that grows, shrinks, or changes form. */
         val STANDARD = HudSpring(responseSec = 0.42f, dampingRatio = 0.8f)
 
-        /** The urgent flare: the same move with a bounce that is hard to miss. */
-        val URGENT = HudSpring(responseSec = 0.46f, dampingRatio = 0.5f)
+        /** A beat on a settled island: a wobble that is hard to miss. */
+        val BEAT = HudSpring(responseSec = 0.46f, dampingRatio = 0.5f)
 
         /** Leaving never bounces. */
         val EXIT = HudSpring(responseSec = 0.3f, dampingRatio = 1f)
@@ -87,7 +87,13 @@ internal class HudSpringValue(initial: Float) {
  * outgoing is mostly gone, so two contents never read as one double image.
  */
 internal open class HudIslandView(context: Context) : FrameLayout(context) {
-    private class Ghost(val bitmap: Bitmap, val x: Float, val y: Float, var alpha: Float)
+    private class Ghost(
+        val form: View,
+        val bitmap: Bitmap,
+        val x: Float,
+        val y: Float,
+        var alpha: Float,
+    )
 
     private val forms = mutableListOf<View>()
     private val edges = List(4) { HudSpringValue(0f) }
@@ -97,6 +103,8 @@ internal open class HudIslandView(context: Context) : FrameLayout(context) {
     private val clip = Path()
     private val cornerRadius = BusTheme.dp(context, 7).toFloat()
     private var current: View? = null
+    val currentForm: View?
+        get() = current
     private var spring = HudSpring.STANDARD
     private var shapeAlpha = 0f
     private var shaped = false
@@ -145,7 +153,7 @@ internal open class HudIslandView(context: Context) : FrameLayout(context) {
             ghost?.bitmap?.recycle()
             val bitmap = Bitmap.createBitmap(form.width, form.height, Bitmap.Config.ARGB_8888)
             form.draw(Canvas(bitmap))
-            ghost = Ghost(bitmap, form.left.toFloat(), form.top.toFloat(), form.alpha)
+            ghost = Ghost(form, bitmap, form.left.toFloat(), form.top.toFloat(), form.alpha)
             form.alpha = 0f
         }
         change()
@@ -153,9 +161,10 @@ internal open class HudIslandView(context: Context) : FrameLayout(context) {
     }
 
     /** A value refreshed in place: the outline swells and springs back. */
-    fun bump(amountPx: Float) {
+    fun bump(amountPx: Float, spring: HudSpring? = null) {
         if (!shaped || !HudMotion.enabled) return
-        val kick = amountPx * spring.omega
+        spring?.let { this.spring = it }
+        val kick = amountPx * this.spring.omega
         edges[LEFT].velocity -= kick
         edges[TOP].velocity -= kick
         edges[RIGHT].velocity += kick
@@ -264,8 +273,12 @@ internal open class HudIslandView(context: Context) : FrameLayout(context) {
 
         val leaving = dismissal != null
         shapeAlpha = approach(shapeAlpha, if (leaving) 0f else 1f, dt / FORM_IN_SEC)
-        // The incoming form waits for the outgoing one to be mostly gone.
-        val outgoingVisible = forms.any { it !== current && it.alpha > INCOMING_THRESHOLD }
+        // The incoming form waits for the outgoing one to be mostly gone. A
+        // snapshot of a form that is no longer current is outgoing too; one of
+        // the current form is a content change and cross-fades with it.
+        val staleGhost = ghost?.takeIf { it.form !== current }
+        val outgoingVisible = forms.any { it !== current && it.alpha > INCOMING_THRESHOLD } ||
+            (staleGhost?.alpha ?: 0f) > INCOMING_THRESHOLD
         forms.forEach { form ->
             val incoming = form === current && !leaving
             form.alpha = when {
@@ -276,7 +289,7 @@ internal open class HudIslandView(context: Context) : FrameLayout(context) {
             form.visibility = if (form.alpha > 0f || incoming) View.VISIBLE else View.INVISIBLE
         }
         ghost?.let { old ->
-            old.alpha = approach(old.alpha, 0f, dt / GHOST_SEC)
+            old.alpha = approach(old.alpha, 0f, dt / if (old === staleGhost) FORM_OUT_SEC else GHOST_SEC)
             if (old.alpha <= 0f) {
                 old.bitmap.recycle()
                 ghost = null

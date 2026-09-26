@@ -589,8 +589,8 @@ extras, and the wearer sees the v1 form, so nothing needs a second code path.
   panel. Keep sending `progress` too; older glasses draw that.
 - `urgent` — pass `updateActivity(activity, significant = true, urgent = true)`
   for a time-critical transition such as "get off at the next stop". It is
-  refused without `significant`. The flare arrives with a bright outline and a
-  stronger bounce, and it has its
+  refused without `significant`. The flare gets a bright outline that beats
+  once it has arrived, and it has its
   own budget of one per activity per minute, so an ordinary flare a few seconds
   earlier cannot swallow it. Past that budget it is an ordinary significant
   update. It never wakes a display that `wakeDisplay` would not.

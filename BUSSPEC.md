@@ -1450,8 +1450,8 @@ while the glasses announced both the v1 tier and extras version 1.
   glasses without extras draw.
 - `tone` is update-only and transient like `significant`. Its only value is
   `"urgent"`, and it is valid only together with `significant: true`. An urgent
-  flare arrives with a bright phosphor outline and a visibly bouncier spring;
-  its content stays the ordinary band. It has
+  flare has a bright phosphor outline that beats once the band has arrived; its
+  content stays the ordinary band. It has
   its own budget of one per activity per 60 seconds, independent of the
   10-second flare budget, so a time-critical transition is not swallowed by an
   ordinary flare just before it. A throttled urgent update is handled as an

@@ -347,22 +347,30 @@ internal object ActivityOverlayRenderer {
         }
 
         fun showSteady(presentation: ActivityPresentation) {
+            removeCallbacks(urgentBeat)
             setOutline(BusTheme.hairline, dp(context, 1).toFloat())
             show(if (presentation == ActivityPresentation.PANEL) panel else chip)
         }
 
         /**
-         * The urgent flare is the same notice band with a bright outline and a
-         * bouncier arrival: noticeable on additive optics without lighting a
-         * whole block of the wearer's view.
+         * The urgent flare is the same notice band with a bright outline that
+         * beats once it has arrived: noticeable on additive optics without
+         * lighting a whole block of the wearer's view. The beat waits for the
+         * morph, so the band's own travel never overshoots the screen edge.
          */
         fun showFlare(urgent: Boolean) {
+            removeCallbacks(urgentBeat)
             if (urgent) {
                 setOutline(BusTheme.phosphor, dp(context, URGENT_OUTLINE_DP).toFloat())
+                postDelayed(urgentBeat, URGENT_BEAT_DELAY_MS)
             } else {
                 setOutline(BusTheme.hairline, dp(context, 1).toFloat())
             }
-            show(flare, if (urgent) HudSpring.URGENT else HudSpring.STANDARD)
+            show(flare)
+        }
+
+        private val urgentBeat = Runnable {
+            if (currentForm === flare) bump(dp(context, URGENT_BEAT_DP).toFloat(), HudSpring.BEAT)
         }
 
         private fun update(form: View, key: Any?, change: () -> Unit) {
@@ -573,6 +581,8 @@ internal object ActivityOverlayRenderer {
     private const val PANEL_WIDTH_FRACTION = 0.78f
     private const val PULSE_DP = 8
     private const val URGENT_OUTLINE_DP = 2
+    private const val URGENT_BEAT_DP = 10
+    private const val URGENT_BEAT_DELAY_MS = 380L
     private const val GLYPH_DP = 48
     private const val PROGRESS_HEIGHT_DP = 4
     private const val PRIMARY_SP = ACTIVITY_PRIMARY_MAX_SP

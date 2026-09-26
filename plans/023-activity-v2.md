@@ -62,8 +62,8 @@ glasses keep drawing as the bar.
 ### 4. `tone: "urgent"`
 
 Update-only and transient, exactly like `significant`, and valid only together
-with `significant: true` (otherwise `INVALID_ACTIVITY`). The flare arrives
-with a bright phosphor outline and a bouncier spring. The glasses allow one urgent
+with `significant: true` (otherwise `INVALID_ACTIVITY`). The flare gets a
+bright phosphor outline that beats once the band has arrived. The glasses allow one urgent
 flare per activity per 60 s, on a budget separate from the 10-second flare
 interval so the maneuver flare just before it cannot swallow it; a throttled
 one becomes an ordinary significant update under the existing flare budget.

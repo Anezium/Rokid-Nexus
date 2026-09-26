@@ -12,7 +12,7 @@
 - **Activity extras, for plugins on the new SDK.** A `badge` draws a line number
   such as "38" as an outlined plate in the glyph's place; a `track` draws stops or
   stages as a row of dots instead of the progress bar; an `urgent` significant
-  update gives the flare a bright outline and a stronger bounce, at most once a
+  update gives the flare a bright outline that beats once, at most once a
   minute per activity, so "get off at the next stop" cannot be swallowed by the
   flare just before it. Nothing is estimated on the glasses: every value is the
   plugin's last report.
