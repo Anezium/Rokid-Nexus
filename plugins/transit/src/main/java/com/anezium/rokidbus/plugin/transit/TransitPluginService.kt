@@ -132,7 +132,7 @@ class TransitPluginService : NexusPluginService() {
                 true
             }
 
-        override fun journey(): JourneyState? = if (journeyActive) journeyController.active() else null
+        override fun journey(): JourneyState? = journeyController.active()
 
         override fun stopJourney() {
             work.execute { journeyController.stop(null) }

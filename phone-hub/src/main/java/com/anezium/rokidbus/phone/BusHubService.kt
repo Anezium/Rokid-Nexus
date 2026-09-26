@@ -1348,6 +1348,11 @@ class BusHubService : Service() {
 
     private fun routeRemote(envelope: BusEnvelope) {
         if (SppKeyProvisioning.isReserved(envelope.path)) return
+        // Skills are phone-local: nothing arriving over CXR or SPP may enter that family.
+        if (PathRules.matchesPrefix(envelope.path, SKILLS_ROOT)) {
+            recordRemoteRoute(envelope, PluginBusJournal.Verdict.REJECTED)
+            return
+        }
         if (envelope.path == "/hub/probe") {
             recordRemoteRoute(envelope, PluginBusJournal.Verdict.OK)
             log("hub probe received from glasses")
@@ -5285,6 +5290,7 @@ class BusHubService : Service() {
             }
         }
 
+        private const val SKILLS_ROOT = "/skills"
         private const val SKILL_TOKEN_ALPHABET =
             "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
 
