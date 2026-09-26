@@ -69,7 +69,7 @@
       <div class="hero__actions reveal" style="--i:4">
         <a class="btn btn--solid" href="https://github.com/Anezium/Rokid-Nexus/releases">
           Download for Android
-          <span class="btn__meta">v1.4.14 · APK</span>
+          <span class="btn__meta">v1.4.15 · APK</span>
         </a>
         <a class="btn btn--ghost" href="#roadmap">Read the roadmap</a>
       </div>
@@ -90,12 +90,12 @@
 <!-- ─────────────────────────  LATEST  ───────────────────────── -->
 <div class="latest">
   <div class="latest__in">
-    <span class="latest__tag">v1.4.14</span>
+    <span class="latest__tag">v1.4.15</span>
     <p>
-      The glasses keep the Nexus keyboard, so the phone keyboard always reaches
-      them · one switch to hand it back to Hi Rokid · your own keyboard is never
-      replaced · update both hubs together ·
-      SDK <code>sdk-v0.20.0</code> on JitPack · Apache-2.0
+      Navigation keeps your Google Maps or Citymapper route on the glasses ·
+      activities move as one shape · typing in a band leaves the app behind in
+      view · update both hubs together ·
+      SDK <code>sdk-v0.21.0</code> on JitPack · Apache-2.0
     </p>
     <a href="https://github.com/Anezium/Rokid-Nexus/blob/main/CHANGELOG.md">What changed →</a>
   </div>
@@ -105,7 +105,7 @@
 <div class="boardwrap">
   <div class="board reveal">
     <a class="board__cell" href="#shipped" data-state="shipped">
-      <b>15</b><span>shipped</span>
+      <b>16</b><span>shipped</span>
       <i>on hardware, in a public release</i>
     </a>
     <a class="board__cell" href="#deferred" data-state="exploring">
@@ -117,8 +117,8 @@
       <i>committed, not started</i>
     </a>
     <a class="board__cell" href="#coming" data-state="exploring">
-      <b>2</b><span>plugins coming</span>
-      <i>navigation · agents</i>
+      <b>1</b><span>plugin coming</span>
+      <i>agents</i>
     </a>
   </div>
 </div>
@@ -144,6 +144,28 @@
       </div>
       <ul class="ship">
         <li class="ship__card ship__card--new">
+          <span class="ship__v">1.4.15</span>
+          <h3>Navigation, from the apps you already use</h3>
+          <p>
+            Start a route in Google Maps or Citymapper and it stays on the
+            glasses as one live activity: the next turn and its distance, or
+            the walk to the stop, the line to board and the stops left. The
+            moment that matters — a turn a few metres away, the stop to get off
+            at — beats once so it is not missed.
+          </p>
+          <details>
+            <summary>Under the hood</summary>
+            <p>
+              Nexus routes nothing and draws no map: the plugin reads the
+              guidance those apps already post as notifications, so it follows
+              whatever route you chose in them. The activity became one sprung
+              outline for it, with a line badge, a second quantity beside the
+              value, a row of dots for stops and an urgent beat, all in SDK
+              0.21.0 and open to any plugin.
+            </p>
+          </details>
+        </li>
+        <li class="ship__card">
           <span class="ship__v">1.4.13</span>
           <h3>Reply inside the notice</h3>
           <p>
@@ -156,9 +178,10 @@
             <summary>Under the hood</summary>
             <p>
               The band is an overlay that never takes focus, so it cannot hold
-              a text field. The real field stays on the glasses, drawn black,
+              a text field. The real field stays on the glasses, out of sight,
               and the band draws a local copy of its text and caret; nothing
-              crosses the bus before the single commit. Plugins opt in with
+              crosses the bus before the single commit. Since 1.4.15 the app
+              behind stays in view while you type. Plugins opt in with
               <code>EditableSurfaceField.inNotice</code> in SDK 0.20.0.
             </p>
           </details>
@@ -315,10 +338,11 @@
               Three duration tokens and two interpolators, nothing a plugin can
               dial. Native Views, not a WebView: the WebView spike rendered the
               same motion for ~1.2 cores, +88 MB PSS and 2.2 s to first paint,
-              against 7.7 % CPU. The status row — phone charge, date, glasses
-              charge — arrived in 1.4.8. Only a notice may pulse a dark display
-              awake, at most once every five seconds across every plugin, and
-              never held on.
+              against 7.7 % CPU. Activities moved to springs in 1.4.15. The
+              status row — phone charge, date, glasses charge — arrived in
+              1.4.8. Only a notice, or an activity's significant update that
+              asked for it at start, may pulse a dark display awake, at most
+              once every five seconds across every plugin, and never held on.
             </p>
           </details>
         </li>
@@ -455,25 +479,11 @@
       </div>
       <ul class="road__items">
         <li>
-          <h3>A navigation plugin</h3>
-          <p>
-            Google Maps and Citymapper already emit turn-by-turn as
-            notifications. The plugin reads those and keeps the route as an
-            activity, with notices for the moments that matter.
-          </p>
-          <p class="road__tech">
-            A platform <code>nav</code> kind — maneuver glyph, distance,
-            street, ETA — comes after those payloads have proven which fields
-            are stable, not before.
-          </p>
-        </li>
-        <li>
-          <h3>Skills, and a keyboard for Assistant</h3>
+          <h3>Skills for Assistant</h3>
           <p>
             A hub-mediated registry so Assistant can pause music or ask Transit
-            without binding another plugin or reimplementing it. Plus a
-            phone-typed ask, for the places where talking to your glasses is
-            not an option.
+            without binding another plugin or reimplementing it. The
+            phone-typed ask that shared this row shipped in Assistant 1.4.7.
           </p>
         </li>
         <li>
@@ -483,6 +493,14 @@
             two puts them behind the same triple-tap that lists plugins, with a
             back that lands where you started. Nexus does not port them and
             does not wrap them.
+          </p>
+        </li>
+        <li>
+          <h3>A <code>nav</code> surface kind</h3>
+          <p>
+            Maneuver glyph, distance, street, ETA, drawn by the platform — once
+            Navigation's routes on real trips have shown which of its fields
+            are stable. Activity extras carry it until then.
           </p>
         </li>
         <li>
@@ -632,7 +650,7 @@
       <li data-scene="activity">
         <button type="button">
           <b>Activity</b>
-          <span>An ongoing process you follow for minutes: a ride, a delivery, a workout. It idles as a chip and <em>morphs in place</em> into a panel when something significant happens — one progress value drives the bounds and the crossfade, so a retarget mid-flight stays coherent. Never wakes or holds the display.</span>
+          <span>An ongoing process you follow for minutes: a ride, a delivery, a workout. It idles as a chip and <em>springs in place</em> into a panel when something significant happens — one outline whose edges follow springs, so a retarget mid-flight keeps its momentum instead of restarting. It may pulse a dark display for a significant update it asked for at start, and never holds the display on.</span>
         </button>
       </li>
       <li data-scene="notice">
@@ -665,7 +683,7 @@
   <div class="section__head section__head--rail">
     <div>
       <span class="tick" aria-hidden="true"></span>
-      <h2>Eleven plugins, none of them built in</h2>
+      <h2>Twelve plugins, none of them built in</h2>
       <p class="section__sub">
         Every one is an ordinary phone APK installed from the in-app Store,
         pinned by hash and signer before it installs. The hub itself ships
@@ -723,6 +741,21 @@
         <span class="slide__tag">talks back</span>
         <b>Assistant</b>
         <span>Ask out loud, hear the answer through your phone's own voice — and the model can look through the camera when the question needs eyes. It remembers too: reminders, timers and notes, set by voice. Your ChatGPT plan, or any AI you bring a key for.</span>
+      </figcaption>
+    </figure>
+    <figure class="slide slide--card">
+      <div class="slide__mark" aria-hidden="true">
+        <svg viewBox="0 0 72 72" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M22 62V40a10 10 0 0 1 10-10h18" />
+          <path d="M42 22l8 8-8 8" />
+          <circle cx="22" cy="62" r="3" />
+          <path d="M50 52h14M50 58h9" opacity=".55" />
+        </svg>
+      </div>
+      <figcaption>
+        <span class="slide__tag">on the move</span>
+        <b>Navigation</b>
+        <span>The route Google Maps or Citymapper is guiding you on, kept on the glasses as one live activity: the next turn, or the walk to the stop, the line to board and the stops left.</span>
       </figcaption>
     </figure>
     <figure class="slide slide--card">
@@ -829,7 +862,8 @@
       </div>
       <ul class="road__items road__items--compact">
         <li><h3>Relay</h3><p>ordinary apps, not just messengers · an app picker for what may reach the eye</p></li>
-        <li><h3>Assistant</h3><p>music and Transit through hub skills, not by becoming those plugins · a keyboard mode — the request typed, not spoken</p></li>
+        <li><h3>Assistant</h3><p>music and Transit through hub skills, not by becoming those plugins</p></li>
+        <li><h3>Navigation</h3><p>bus, tram and RER rides checked on real trips · Google Maps and Citymapper in languages beyond English and French</p></li>
         <li><h3>Feeds</h3><p>posting and replying by voice · more sources · video in the timeline</p></li>
         <li><h3>Media Deck</h3><p>voice control — “next” and “pause” said instead of tapped</p></li>
         <li><h3>Photos Sync</h3><p>a Wi-Fi-only rule · the location tag Android strips from videos</p></li>
@@ -839,17 +873,9 @@
     <div class="road__group reveal" id="coming" data-state="next">
       <div class="road__meta">
         <span class="chip chip--next">Coming</span>
-        <p>Plugins that do not exist yet, in order. One row has already made this crossing: “a voice assistant” sat here, and shipped as Assistant.</p>
+        <p>Plugins that do not exist yet, in order. Two rows have already made this crossing: “a voice assistant” sat here and shipped as Assistant, and Navigation shipped in 0.1.0.</p>
       </div>
       <ul class="road__items">
-        <li>
-          <h3>Navigation</h3>
-          <p>
-            Same row as the platform list: activity + notices first, a
-            <code>nav</code> kind later, once the notification payloads have
-            proven which fields are stable.
-          </p>
-        </li>
         <li>
           <h3>Agents, as a private alpha</h3>
           <p>
@@ -913,7 +939,7 @@
 
 <span class="k">dependencies</span> {
     <span class="f">implementation</span>(
-        <span class="s">"com.github.Anezium.Rokid-Nexus:bus-client:sdk-v0.20.0"</span>
+        <span class="s">"com.github.Anezium.Rokid-Nexus:bus-client:sdk-v0.21.0"</span>
     )
 }</code></pre>
       </div>

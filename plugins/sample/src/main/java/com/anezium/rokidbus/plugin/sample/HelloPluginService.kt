@@ -116,8 +116,8 @@ class HelloPluginService : NexusPluginService() {
 
     /**
      * Walks a scripted route through the activity tier, one step per intent, so
-     * the fitted panel, badge, track and urgent band can be judged on hardware.
-     * Steps: start, long, ride, stops, urgent, arrive, end.
+     * the fitted panel, badge, measure, track and urgent beat can be judged on
+     * hardware. Steps: start, long, ride, stops, tostop, urgent, arrive, end.
      *
      *     adb shell am start-foreground-service \
      *       -n com.anezium.rokidbus.plugin.sample/.HelloPluginService \

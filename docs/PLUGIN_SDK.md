@@ -19,7 +19,7 @@ resolved transitively.
 repositories { maven("https://jitpack.io") }
 
 dependencies {
-    implementation("com.github.Anezium.Rokid-Nexus:bus-client:sdk-v0.20.0")
+    implementation("com.github.Anezium.Rokid-Nexus:bus-client:sdk-v0.21.0")
 }
 ```
 
@@ -268,7 +268,14 @@ under its message and drops its action row while the field is open. It only
 applies while your band is the one on screen, so open the field from a band
 action (Relay's Type chip does) and keep the band alive while it is open. On a
 hub that predates it, or with no band of yours up, the field shows as a card as
-usual, so the flag never costs a fallback path.
+usual, so the flag never costs a fallback path. From glasses hub 1.4.15 the
+screen behind stays in view while the band carries the field; earlier hubs
+draw it black.
+
+A card with a title and nothing else behaves the same way under your band on
+glasses hub 1.4.15: it draws nothing while a band of yours is up, so you can
+keep your session open under the band without covering the screen, and it
+comes back as a card about 1.5 s after the band goes unless you hide it first.
 
 The wearer's answer comes back exactly once, on `onSurfaceTextCommitted`, when
 they submit (Enter, on a bonded keyboard or on the phone keyboard; `label` and
@@ -485,9 +492,9 @@ Because an activity belongs to the registration that started it, a plugin
 that keeps one running across a hub reconnect must start it again on the new
 registration. `onRegistrationState(APPROVED)` alone cannot tell: it is
 reported twice for every registration (at once, then with the capability
-metadata). Compare `registrationGeneration` with the value current when the
-activity started; a different number is a new registration that holds nothing
-yet.
+metadata). Compare `registrationGeneration` (SDK 0.21.0) with the value
+current when the activity started; a different number is a new registration
+that holds nothing yet.
 
 Activity and action glyphs are strings, not enums, because the glyph vocabulary
 is additive. Use a platform glyph for each action; the main activity glyph may
@@ -584,8 +591,9 @@ countdown ticks.
 
 #### Activity extras
 
-`badge`, `measure`, `track`, and `urgent` are extras: optional, drawn by the platform, and
-understood only when both hubs support them. `supportsActivityExtras` reports
+`badge`, `measure`, `track`, and `urgent` are extras (SDK 0.21.0, both hubs
+1.4.15): optional, drawn by the platform, and understood only when both hubs
+support them. `supportsActivityExtras` reports
 that. Without it the SDK still sends the activity, the older hub drops the
 extras, and the wearer sees the v1 form, so nothing needs a second code path.
 

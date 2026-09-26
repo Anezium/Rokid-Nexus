@@ -530,13 +530,24 @@ commits it, so a plugin that offers typing checks the bit first and falls back
 `inNotice` (optional, absent means `false`) asks for the field to be drawn
 inside the plugin's own notice band, the way an inline reply sits under a
 notification. The band cannot host a field, so the glasses keep the real
-`EditText` on the surface activity, drawn black, and draw a local copy of its
-text and caret in the band in place of the band's action row. That copy never
-crosses the bus: the plugin still receives exactly one commit. It applies only
-while a band owned by the same plugin is visible; otherwise, and on a hub that
-predates the field, the card renders as described above. If that band goes
-away while the field stays open, the field returns to view after about 1.5 s
-unless the plugin has hidden it by then.
+`EditText` on the surface activity and draw a local copy of its text and caret
+in the band in place of the band's action row. That copy never crosses the bus:
+the plugin still receives exactly one commit. It applies only while a band
+owned by the same plugin is visible; otherwise, and on a hub that predates the
+field, the card renders as described above. While the band carries the field,
+the surface activity draws nothing of its own, background included, and runs
+in its own translucent task, so the band sits over whatever the wearer was
+looking at rather than over a black screen (glasses hub 1.4.15; 1.4.13 and
+1.4.14 drew the activity black). If that band goes away while the field stays
+open, the field returns to view after about 1.5 s unless the plugin has hidden
+it by then.
+
+A bare card — a title and nothing else: no subtitle, footer, rows or field —
+steps aside the same way from glasses hub 1.4.15 while a band owned by the same
+plugin is visible, which lets a plugin keep its session open under its band
+without covering the screen (Assistant does after the assist button). It comes
+back into view about 1.5 s after that band goes, unless the plugin has hidden
+it by then.
 
 The wearer's answer comes back once, glasses to phone, on
 `/surface/text-committed`:

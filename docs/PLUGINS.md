@@ -7,8 +7,8 @@ discovers it, the user approves its capabilities once, and from then on it
 lives entirely inside Nexus — launched from the glasses launcher, configured
 from the phone hub, removable from its own settings screen or the Store.
 
-Assistant, Relay, Feeds, Transit, Lyrics, Media Deck, Lens, Photos Sync,
-Wireless ADB, and Tasker all ship this way as external headless APKs, and so do
+Assistant, Relay, Navigation, Feeds, Transit, Lyrics, Media Deck, Lens,
+Photos Sync, Wireless ADB, and Tasker all ship this way as external headless APKs, and so do
 the plugins written outside this repository. The phone hub registry has no
 built-in plugins.
 

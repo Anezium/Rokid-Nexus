@@ -1,6 +1,34 @@
 # Changelog
 
-## Unreleased
+## 1.4.15
+
+### Upgrade together
+
+Install **both Nexus hubs 1.4.15**, then update Assistant to **1.4.8**.
+**Navigation 0.1.0** is new: it keeps the route Google Maps or Citymapper is
+guiding you on as one activity on the glasses, and needs both hubs 1.4.15.
+SDK **0.21.0** adds activity extras and `registrationGeneration`; plugin API
+version 3 and grants are unchanged, and a plugin on an older SDK keeps
+working as it did.
+
+### Glasses hub
+
+- **Type over what you were looking at.** A field typed inside its plugin's
+  band (Relay's and Assistant's *Type*) now leaves the app behind it in view
+  instead of a black screen. The surface holding the real field draws nothing
+  of its own and runs in its own translucent task, so neither it nor the Nexus
+  window behind it covers the display.
+- **A card can wait under its band.** A card with a title and nothing else
+  draws nothing while its own plugin's band is up, so a plugin can keep its
+  session open without covering the screen; Assistant 1.4.8 does this after
+  the assist button. It comes back as a card if the band goes and the plugin
+  does not hide it.
+- **No more grey veil.** A focused surface no longer gets Android's default
+  focus highlight, which washed a light grey over everything a see-through
+  surface left in view.
+- **Ink tiles that fit.** A figure tile stretched across a column is measured
+  at the column's width, so its label and value are no longer cut; a grid row
+  takes the height its content needs instead of squashing the row below it.
 
 ### Activities
 
@@ -13,12 +41,11 @@
   such as "38" as an outlined plate in the glyph's place; a `measure` puts a
   second quantity with the value ("3 min - 250 m" expanded, "250 m" under
   "3 min" beside the glyph in the chip, the street still below); a `track`
-  draws stops or
-  stages as a row of dots instead of the progress bar; an `urgent` significant
-  update gives the flare a bright outline that beats once, at most once a
-  minute per activity, so "get off at the next stop" cannot be swallowed by the
-  flare just before it. Nothing is estimated on the glasses: every value is the
-  plugin's last report.
+  draws stops or stages as a row of dots instead of the progress bar; an
+  `urgent` significant update gives the flare a bright outline that beats once,
+  at most once a minute per activity, so "get off at the next stop" cannot be
+  swallowed by the flare just before it. Nothing is estimated on the glasses:
+  every value is the plugin's last report.
 - **Activities move as one shape.** The chip, the expanded panel and the flare
   are now one outline that springs from form to form, with the content
   revealed inside it, instead of boxes that swap or fade across each other.
@@ -27,6 +54,18 @@
 - **Mixed versions keep working.** Extras are announced separately from the
   activity protocol version, which stays 1. With an older hub on either side,
   activities keep working and simply show without extras.
+
+### Plugin SDK 0.21.0
+
+- Add optional `NexusActivity.badge`, `measure` and `track`, and
+  `updateActivity(..., urgent = true)` for a significant update, with
+  `supportsActivityExtras` to tell whether both hubs draw them. Without it the
+  activity is still sent and shows without its extras, so no fallback path is
+  needed.
+- Add `registrationGeneration`. `onRegistrationState(APPROVED)` is reported
+  twice for every registration, so it cannot tell a reconnect on its own; a
+  plugin that keeps an activity running compares this number with the one
+  current when the activity started, and starts it again when it changed.
 
 ## 1.4.14
 

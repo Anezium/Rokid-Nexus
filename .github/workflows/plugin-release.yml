@@ -86,6 +86,11 @@ jobs:
               changelog_path="plugins/assistant/CHANGELOG.md"
               release_name="Assistant"
               ;;
+            nav)
+              module_dir="plugins/nav"
+              changelog_path="plugins/nav/CHANGELOG.md"
+              release_name="Navigation"
+              ;;
             sample)
               module_dir="plugins/sample"
               changelog_path="plugins/sample/CHANGELOG.md"

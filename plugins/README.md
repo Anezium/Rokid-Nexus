@@ -18,6 +18,7 @@ releases. The Gradle project names keep the historical `:plugin-<id>` form
 |---|---|---|
 | [Assistant](assistant/) | `assistant` | Voice questions answered on the band, aloud, or as generated native Ink pages, with camera vision, reminders, notes, and phone-calendar create/list/delete tools |
 | [Relay](relay/) | `relay` | Phone notifications on the HUD, answered by voice, with an inbox for the rest |
+| [Navigation](nav/) | `nav` | Google Maps and Citymapper guidance kept on the glasses as one live activity |
 | [Feeds](../plugin-feeds/) | `feeds` | Bluesky and X timelines on the HUD |
 | [Lens](lens/) | `lens` | Live and frozen camera OCR with phone-side translation |
 | [Transit](transit/) | `transit` | Nearby stops, departures, and favourites |

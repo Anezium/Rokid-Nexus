@@ -97,9 +97,9 @@ for the next release; their remaining device gates are explicit in TESTPLAN.md.
   and install from the in-app Store with SHA-256 and signer pinning. Installed
   plugins surface update badges; the apps themselves self-update (phone from
   GitHub releases, glasses over CXR).
-- **Eleven plugins ship**: Assistant, Relay, Lens, Feeds, Transit, Lyrics,
-  Media Deck, Photos Sync, Wireless ADB, Tasker, and the copyable Sample. All
-  are external headless APKs; the hubs contain no built-ins.
+- **Twelve plugins ship**: Assistant, Relay, Navigation, Lens, Feeds, Transit,
+  Lyrics, Media Deck, Photos Sync, Wireless ADB, Tasker, and the copyable
+  Sample. All are external headless APKs; the hubs contain no built-ins.
 - **Surfaces grew past text.** The image surface (v1) puts real photos on the
   HUD over the SPP binary path — Feeds renders tweet and Bluesky photos
   full-screen. The optics are green-mono; photos land as green luminance, and

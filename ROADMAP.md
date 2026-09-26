@@ -1,6 +1,6 @@
 # Rokid Nexus — Roadmap
 
-Status: 2026-09-24. This file is the public roadmap and the source the
+Status: 2026-09-26. This file is the public roadmap and the source the
 [project site](https://rokid-nexus.anezium.me) renders. The founding product
 argument lives in [VISION.md](VISION.md); what actually shipped in each release
 lives in [CHANGELOG.md](CHANGELOG.md).
@@ -73,7 +73,7 @@ plugin run on each push, and a release that fails them is not published.
 |---|---|
 | **Ambient** | Nothing is asked of you: a value changing in place, never moving the layout |
 | **Pin** | One global slot, text only — a plate, a gate, a door code — surviving across surfaces and native screens |
-| **Activity** | An ongoing process, idling as a chip and morphing in place into a panel when something significant happens |
+| **Activity** | An ongoing process, idling as a chip and springing in place into a panel when something significant happens — one outline that changes shape, never two boxes swapping |
 | **Notice** | A discrete event wanting an answer: up to sixteen structured lines paged on the glasses, up to three glyph answers, exactly one answer taken |
 | **Surface** | The engaged case: cards, readers, timed lines, media decks, list rows, real images |
 
@@ -94,6 +94,15 @@ of it dialable by a plugin. Native Views, not a WebView — the WebView spike
 rendered the same motion for ~1.2 cores, +88 MB PSS and 2.2 s to first paint
 against 7.7 % CPU, and its one real advantage (plugin-authored layout) is
 something the activity tier refuses by design.
+
+Since 1.4.15 an activity moves on springs instead: chip, panel and flare are
+one outline whose edges spring from form to form, with the content revealed
+inside it, the way a phone's notch grows into a live activity. The same
+release lets an activity carry what a route needs without a `nav` kind: a
+line badge, a second quantity beside the value ("3 min - 250 m"), a row of
+dots for stops, and an urgent update that beats once so "get off at the next
+stop" is not lost in a flare. Every value is still the plugin's last report;
+nothing is estimated on the glasses.
 
 ### The camera capability
 
@@ -150,9 +159,10 @@ after a restart — so each can answer the way that entry deserves.
 
 ### Waking a dark display, without owning it
 
-A notice worth it can pulse the display awake: at most one wake every five
-seconds *across every plugin*, always a short pulse, never held on. No other
-tier may do it at all, including activities.
+A notice worth it, or a significant update to an activity that asked for it
+at start, can pulse the display awake: at most one wake every five seconds
+*across every plugin*, always a short pulse, never held on. Pins, ambient
+values and quiet activity updates never wake it.
 
 ### Ink Surface
 
@@ -199,6 +209,8 @@ by itself when a plugin opens a field, and leaves when it is done. Relay 1.2.4
 offers it from a *Type* chip that appears once dictation has started, and
 Assistant 1.4.7 from its *Input* setting, which can also skip the microphone
 altogether for the places where talking to your glasses is not an option.
+Since 1.4.15 the app behind stays in view while the band carries the field,
+instead of a black screen.
 
 Since 1.4.14 the glasses hold on to Nexus's keyboard, which is the only way
 Keyboard & remote reaches a glasses field: the Hi Rokid app can select Rokid's
@@ -222,10 +234,20 @@ Underneath, the phone hub now hands notices, pins, activities, ordinary
 surfaces and Ink to separate routers, each with its own regression tests. The
 split preserves behavior; it adds no display policy.
 
-### Eleven plugins, none of them built in
+### Navigation, from the apps you already use
 
-Relay · Assistant · Lens · Feeds · Transit · Lyrics · Media Deck · Photos Sync
-· Wireless ADB · Tasker · Sample
+Navigation 0.1.0 reads Google Maps and Citymapper while they guide you and
+keeps the route as one activity on the glasses: the next turn and its
+distance, or the walk to the stop, the line to board, the stops left. Nothing
+is routed by Nexus and no map is drawn; the plugin reads the guidance those
+apps already post as notifications, so it follows whatever route you chose in
+them. Each app has its own switch, so either can be kept off the glasses
+without uninstalling anything. It needs both hubs 1.4.15.
+
+### Twelve plugins, none of them built in
+
+Relay · Assistant · Navigation · Lens · Feeds · Transit · Lyrics · Media Deck
+· Photos Sync · Wireless ADB · Tasker · Sample
 
 ---
 
@@ -264,24 +286,20 @@ slice. It is deferred until a consumer needs it.
 
 Committed, not started, in this order.
 
-1. **A navigation plugin.** Google Maps and Citymapper already emit
-   turn-by-turn as notifications. The plugin reads those and keeps the route as
-   an activity, with notices for the moments that matter. A platform `nav`
-   kind comes after those payloads have proven which fields are stable — not
-   before.
-2. **Skills for Assistant.** A hub-mediated registry so Assistant can pause
+1. **Skills for Assistant.** A hub-mediated registry so Assistant can pause
    music or ask Transit without binding another plugin or reimplementing it.
    The phone-typed ask that shared this item shipped in Assistant 1.4.7.
-3. **Native apps in the glasses menu.** The phone-side catalogue and launch
+2. **Native apps in the glasses menu.** The phone-side catalogue and launch
    path now exist. Phase two puts that catalogue behind the same triple-tap that
    lists plugins, with a back path that lands where the wearer started. Nexus
    still does not port, wrap, or install those apps.
-4. **A `nav` surface kind.** Maneuver glyph, distance, street, ETA, drawn by
-   the platform — after the navigation plugin has something real to draw.
-5. **Maven Central.** JitPack builds the SDK from tags and is fine for early
+3. **A `nav` surface kind.** Maneuver glyph, distance, street, ETA, drawn by
+   the platform — once Navigation's routes on real trips have shown which of
+   its fields are stable. Activity extras carry it until then.
+4. **Maven Central.** JitPack builds the SDK from tags and is fine for early
    adopters, but it is not something a serious app should depend on. Central
    goes out once the AIDL surface is a promise rather than a snapshot.
-6. **A control-plane acknowledgement.** MediaSync already acks photo chunks.
+5. **A control-plane acknowledgement.** MediaSync already acks photo chunks.
    Glasses→phone CXR still reports success for frames the third-party client
    never sees, which is why outbound traffic prefers SPP. Another flip of
    running order is not the fix.
@@ -293,22 +311,24 @@ Committed, not started, in this order.
 Everything above is the platform's roadmap; this is the ecosystem's. The rule
 does not change down here — each of these is an ordinary phone APK against a
 capability that already exists or is named above, and none of them puts code on
-the glasses. One of the old explorations already made the crossing: "a voice
-assistant" was a table row on this page, and it shipped as Assistant.
+the glasses. Two rows have already made the crossing: "a voice assistant" was
+a table row on this page and shipped as Assistant, and Navigation, first under
+Next below, shipped in 0.1.0.
 
 ### Shipped, and what each one still owes
 
 | Plugin | Still owed |
 |---|---|
 | Relay | Notifications from ordinary apps, not just messengers · an app picker, so the wearer chooses which apps may reach the eye. Typed replies shipped in 1.2.2, typed inside the notice in 1.2.4 |
-| Assistant | More tools that act — control the music, ask Transit — through hub-mediated skills, not by becoming those plugins · a keyboard mode — the request typed on the phone instead of spoken, for the places where talking to your glasses is not an option. Providers beyond ChatGPT shipped in 1.1.0 — MiniMax, DeepSeek, GLM, OpenRouter, or any OpenAI-compatible server; reminders, timers and notes shipped in 1.3.0, on every provider; phone-calendar creation, listing, and safe deletion in 1.4.0; Hermes, which runs its agent on its own side, in 1.4.1, with the phone tools bridged to it in plain text in 1.4.2; typed notes in 1.4.4 |
+| Assistant | More tools that act — control the music, ask Transit — through hub-mediated skills, not by becoming those plugins. Providers beyond ChatGPT shipped in 1.1.0 — MiniMax, DeepSeek, GLM, OpenRouter, or any OpenAI-compatible server; reminders, timers and notes shipped in 1.3.0, on every provider; phone-calendar creation, listing, and safe deletion in 1.4.0; Hermes, which runs its agent on its own side, in 1.4.1, with the phone tools bridged to it in plain text in 1.4.2; typed notes in 1.4.4; the question itself typed instead of spoken in 1.4.7; assist-button questions kept to the band, and a choice of how answers are drawn, in 1.4.8 |
+| Navigation | Bus, tram and RER rides checked on real trips, beyond the walks and boardings already seen · Google Maps and Citymapper set to a language other than English or French, whose wording it does not read yet |
 | Feeds | Posting and replying by voice · sources beyond Bluesky and X · video in the timeline |
 | Media Deck | Voice control — "next" and "pause" said instead of tapped |
 | Photos Sync | A Wi-Fi-only rule · a video's location tag, which Android strips on the way out. Capture-type filters shipped in 1.1.0; optional deletion after sync already shipped in 1.0.0 |
 | Lens · Transit · Lyrics | Complete as they stand |
 
-Navigation is deliberately absent from Transit's row: it deserves a plugin of
-its own, below.
+Navigation is deliberately not a Transit feature: it reads other apps' live
+guidance rather than timetables, so it got a plugin of its own.
 
 Ten plugins in the Store were written by someone else, by four different
 authors: [Lume](https://github.com/beyondlevi/lume-nexus), a wearable RSVP speed
@@ -323,9 +343,7 @@ the rows above.
 
 In order.
 
-1. **Navigation.** Same row as the platform list above: activity + notices
-   first, `nav` kind later.
-2. **Agents, as a private alpha.** Already in the tree (`plugins/agents`):
+1. **Agents, as a private alpha.** Already in the tree (`plugins/agents`):
    Claude Code, Codex, and OpenClaw sessions on the HUD, notices for
    permission prompts, a pin for progress, the next task dictated. It is the
    Terminal/Agent product, and it is being reworked to speak the protocol of

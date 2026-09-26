@@ -1,9 +1,8 @@
 # Plan 023 — Activity v2 (a panel that fits what it carries)
 
-Status: MERGED 2026-09-26 together with the Navigation plugin, its first
-producer. Validated on device: fitted panel, badge, measure, track, urgent
-tone, and the sprung island motion. Release pending: both hubs 1.4.15 and
-SDK 0.21.0.
+Status: SHIPPED 2026-09-26 in both hubs 1.4.15 and SDK 0.21.0, together with
+Navigation 0.1.0, its first producer. Validated on device: fitted panel,
+badge, measure, track, urgent tone, and the sprung island motion.
 
 Visual reference: `E:\Tools\Rokid\design\nav-hud-proposals.html`, section
 "Activity v2" (before/after frames drawn at 1 CSS px ≈ 1 dp).
