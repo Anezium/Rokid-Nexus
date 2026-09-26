@@ -449,6 +449,7 @@ data class NexusActivity(
 
 val supportsActivitySurface: Boolean
 val supportsActivityExtras: Boolean
+val registrationGeneration: Int
 fun startActivity(activity: NexusActivity): NexusSdkResult
 fun updateActivity(
     activity: NexusActivity,
@@ -479,6 +480,14 @@ percentage progress is `0..100`; and there are at most three actions.
 `maxDurationMs`, when present on start, is clamped by the hub to one minute
 through 12 hours. Without it the activity lasts until explicitly ended,
 replaced, or its owner disconnects. There is no TTL and no keep-alive loop.
+
+Because an activity belongs to the registration that started it, a plugin
+that keeps one running across a hub reconnect must start it again on the new
+registration. `onRegistrationState(APPROVED)` alone cannot tell: it is
+reported twice for every registration (at once, then with the capability
+metadata). Compare `registrationGeneration` with the value current when the
+activity started; a different number is a new registration that holds nothing
+yet.
 
 Activity and action glyphs are strings, not enums, because the glyph vocabulary
 is additive. Use a platform glyph for each action; the main activity glyph may

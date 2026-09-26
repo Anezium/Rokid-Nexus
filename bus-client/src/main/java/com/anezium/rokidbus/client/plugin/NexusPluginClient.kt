@@ -63,6 +63,18 @@ class NexusPluginClient internal constructor(
     val isApproved: Boolean
         get() = registrationState == PluginRegistrationResult.APPROVED
 
+    /**
+     * How many times this client has registered with the hub. Approval is
+     * reported twice for one registration (at once, then again with its
+     * capability metadata) and again after every reconnect, and a reconnect is
+     * not reported otherwise. A plugin that keeps state on the hub, such as a
+     * started activity, compares this number to tell a new registration, which
+     * holds nothing yet, from the repeated report of the current one.
+     */
+    @Volatile
+    var registrationGeneration: Int = 0
+        private set
+
     fun hasCapability(capability: PluginCapability): Boolean =
         isApproved && capability in approvedCapabilities
 
@@ -479,6 +491,7 @@ class NexusPluginClient internal constructor(
 
     override fun onRegistrationState(result: Int) {
         if (closed) return
+        registrationGeneration++
         clearNoticeContext()
         noticeApprovalAwaitingMetadata = result == PluginRegistrationResult.APPROVED
         applyRegistrationState(result)

@@ -299,6 +299,26 @@ class NexusActivityTest {
     }
 
     @Test
+    fun `registration generation counts registrations, not their repeated approval`() {
+        val fixture = fixture()
+        assertEquals(0, fixture.client.registrationGeneration)
+
+        fixture.transport.listener.onRegistrationState(PluginRegistrationResult.APPROVED)
+        fixture.transport.listener.onMessage(
+            BusPaths.PLUGIN_REGISTRATION,
+            "registration",
+            pluginPayload()
+                .put("result", PluginRegistrationResult.APPROVED)
+                .put("capabilities", "surfaces"),
+        )
+        assertEquals(1, fixture.client.registrationGeneration)
+
+        // A reconnect registers again.
+        fixture.transport.listener.onRegistrationState(PluginRegistrationResult.APPROVED)
+        assertEquals(2, fixture.client.registrationGeneration)
+    }
+
+    @Test
     fun `activity can start immediately on approval before a link callback`() {
         val fixture = fixture()
         fixture.transport.featureBits = BusCapabilityBits.ACTIVITY_SURFACE
