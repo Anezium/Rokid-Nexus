@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.4.8
+
+- **With the assist button, typing keeps to the band.** No full Assistant card
+  opens behind it, while you type or after you send: only the band, with
+  Thinking and then the answer, as when you ask out loud. Assistant closes on
+  its own once the answer has been shown and read.
+
 ## 1.4.7
 
 - **Type the question instead.** A new *Input* setting picks how you ask.

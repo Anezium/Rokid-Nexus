@@ -238,6 +238,8 @@ class AssistantPluginService : NexusPluginService() {
         },
         cancelPipeline = ::cancelPipeline,
         resetCapture = ::resetCapture,
+        sessionBusy = { captureActive || pipelineJob?.isActive == true || snapshotSession != null },
+        answerSpeaking = { activeTtsUtteranceId != null },
     )
 
     override fun onCreate() {
@@ -749,6 +751,7 @@ class AssistantPluginService : NexusPluginService() {
                 if (pipelineJob === currentCoroutineContext()[Job]) {
                     pipelineJob = null
                 }
+                uiController.onPipelineFinished()
             }
         }
         pipelineJob = launched
