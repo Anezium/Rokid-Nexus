@@ -1,10 +1,14 @@
 # Plan 024 — Nexus Skills: Media Deck, Transit, and native transit guidance
 
-Status: TODO — design proposal, 2026-09-26, revised the same day with the
-native transit guidance journey. No implementation. The only device work so far
-is the third-party launch probe and the routing probe recorded under "Verified
-on 2026-09-26". Names, limits, and API shapes below are proposed contracts, not
-currently available SDK features.
+Status: IN PROGRESS — ratified 2026-09-26. The shared foundation (sections 1
+to 5), the Transit operations and native journey guidance (section 7), the
+shared guidance planner with Navigation and Sample moved onto it, and a Sample
+skill provider are implemented and unit-tested on branch `synara/1f5e734c`,
+2026-09-27. Unreleased, no version assigned, and not validated on a device.
+The Media Deck operations (section 6) are not started. The routing-use
+agreement (checkpoint 5) is not obtained. The wire contract is pinned in
+[BUSSPEC.md, Skills v1](../BUSSPEC.md#skills-v1); deviations from this
+proposal are recorded under "Implementation notes" at the end.
 
 ## Product outcome
 
@@ -527,3 +531,74 @@ routing request, recorded so the scope above is not relitigated:
 
 The first releasable milestone is the three journeys on the shared path. Routines,
 Tasker, and additional providers extend that path after its behavior is proven.
+
+## Implementation notes
+
+Recorded 2026-09-27 with the first implementation. Where the plan and the code
+disagreed, the smaller change that keeps the plan's guarantees was taken.
+
+- **Grant declaration.** `skills_provider` and `skills_client` are real
+  descriptor grants, but a plugin requests them through dedicated metadata
+  keys (`SKILLS`, the catalog resource, and `SKILLS_CLIENT=true`) rather than
+  `.CAPABILITIES`. Hubs before this change reject unknown capability names and
+  would have refused Transit and Assistant outright. Requesting either grant
+  returns an installed plugin to Pending, the existing reapproval behavior.
+- **Feature gate.** The phone hub announces `skillsVersion: 1` in registration
+  metadata; every SDK skills call returns `CAPABILITY_NOT_AVAILABLE` without it.
+- **Aliases.** Model-facing names are `sk_` plus the provider and operation
+  ids (hashed when they collide or exceed 64 characters). Built-in Assistant
+  tools may not use the prefix.
+- **Lease and display.** The plan says a skill-only lease authorizes no
+  activity, and also that Transit's journey starts its activity from a skill
+  call. The code makes the exception explicit per operation: while only a
+  lease keeps a provider running, the hub refuses its surface, Ink, notice,
+  pin, microphone, speech, TTS, and camera traffic, and allows activity
+  traffic only while an operation that lists `surfaces` in `requires` is
+  running (`start_journey`, `stop_journey`). A provider already running or
+  holding a display session keeps its ordinary rights. The lease binds through
+  its own `ServiceConnection`, so it is independent of the foreground and audio
+  bindings in both directions.
+- **Ongoing journey.** An activity ends with its owner's registration, so the
+  journey cannot live on the lease. The SDK gains `holdNexusOngoingWork`,
+  which promotes the plugin's single session foreground service (with the
+  location type for Transit) and also starts the service so it survives the
+  hub unbinding; the plugin contract lists it as a fifth dormancy exception.
+  Transit returns `START_STICKY` while a journey runs, and resumes a persisted
+  journey whenever its service is created. Whether Android lets a sticky
+  restart promote a location foreground service from the background is a
+  device check; if it refuses, the journey resumes on the next open or skill
+  call. A resume started under a lease that does not declare `surfaces` has
+  its activity refused, which Transit notices and retries on its next tick.
+- **Sessions.** "One executing skill per Assistant turn" is enforced as one
+  per caller session. Two limits the plan did not name were needed and are
+  constants beside the others: at most four sessions per caller, and a session
+  closes after 30 idle minutes.
+- **Departure identity.** The routing service's stop times do carry `tripId`
+  and `realTime`; `TransitDeparture` now keeps both. A follow-up matches its
+  anchor by trip id when both sides have one, otherwise by a unique line,
+  direction, and scheduled time, and reports `board_changed` or
+  `anchor_departed` otherwise.
+- **References.** A stop reference's provider value holds the feed id, name,
+  and the stop's public position, so a stop can be a journey destination. It
+  never reaches the caller: the hub swaps it for a handle.
+- **Assistant loop.** Continuation requests keep the tools declared while
+  rounds remain (the old behavior dropped them after one phase); a tool-free
+  synthesis happens only once the budget is spent. The 60-second deadline is a
+  wall-clock watchdog and applies to every structured turn, plain questions
+  included. Codex declares plugin operations with `strict: false` because
+  their schemas have optional properties.
+- **Hermes.** The text bridge does not expose plugin operations: it keeps its
+  single exchange for built-in tools and cannot carry the shared validation and
+  limits, so it is gated off rather than given a weaker path.
+- **Choices.** A `needs_input` result reaches the model with its choices and
+  handles, so text and voice answers flow through the model. Up to three
+  choices also appear as chips on the answer band; a chip carries a token bound
+  to the choices it was offered for and starts a new turn with the chosen
+  handle in the plugin context, so no text can stand in for it.
+- **Routing requests.** The planner sends `fromPlace`, `toPlace`, and an
+  optional `time`; the service returned several itineraries without a count
+  parameter, and the summary counts at most five alternatives. Two manual
+  requests between public Paris stations were made during development, one of
+  which became the trimmed test fixture.
+- **Media Deck** (section 6) is out of scope for this implementation thread;
+  nothing in the contract is specific to Transit.
