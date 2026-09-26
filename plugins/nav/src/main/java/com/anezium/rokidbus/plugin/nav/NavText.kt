@@ -96,6 +96,21 @@ internal object NavText {
         return null
     }
 
+    /**
+     * "3 min - 250 m" in at most [max] characters: the roomiest spelling that
+     * fits, tightening the spaces before it gives up. Null when even the
+     * tightest one does not fit, so the caller keeps its single value.
+     */
+    fun pair(first: String, second: String, max: Int): String? {
+        val tight = { value: String -> value.replace(" ", "") }
+        return listOf(
+            "$first - $second",
+            "$first - ${tight(second)}",
+            "${tight(first)} - ${tight(second)}",
+            "${tight(first)}-${tight(second)}",
+        ).firstOrNull { it.length <= max }
+    }
+
     /** At most [max] characters, cut at a word where one is close, with an ellipsis. */
     fun fit(value: String, max: Int): String {
         val trimmed = value.trim().replace(Regex("\\s+"), " ")
