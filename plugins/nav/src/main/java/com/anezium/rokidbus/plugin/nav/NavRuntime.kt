@@ -191,22 +191,23 @@ internal class NavRuntime(context: Context) {
         private const val NO_GENERATION = -1
         private const val MIN_QUIET_INTERVAL_MS = 1_000L
         private const val RELEASE_AFTER_END_MS = 3_000L
-        private const val MAX_ROUTE_MS = 12L * 60L * 60L * 1000L
     }
-
-    private fun NavGuidance.toActivity() = NexusActivity(
-        glyph = glyph,
-        primary = primary,
-        secondary = secondary,
-        progress = progressPercent?.let { NexusActivityProgress.Percent(it.coerceIn(0, 100)) },
-        eta = eta,
-        detail = detail,
-        maxDurationMs = MAX_ROUTE_MS,
-        // Guidance is worth lighting a sleeping display for; the platform
-        // still caps how often any wake happens.
-        wakeDisplay = true,
-        badge = badge,
-        track = track?.let { NexusActivityTrack(it.count, it.at, it.target, it.label) },
-        measure = measure,
-    )
 }
+
+private const val MAX_ROUTE_MS = 12L * 60L * 60L * 1000L
+
+internal fun NavGuidance.toActivity() = NexusActivity(
+    glyph = glyph,
+    primary = primary,
+    secondary = secondary,
+    progress = progressPercent?.let { NexusActivityProgress.Percent(it.coerceIn(0, 100)) },
+    eta = eta,
+    detail = detail,
+    maxDurationMs = MAX_ROUTE_MS,
+    // Guidance is worth lighting a sleeping display for; the platform
+    // still caps how often any wake happens.
+    wakeDisplay = true,
+    badge = badge,
+    track = track?.let { NexusActivityTrack(it.count, it.at, it.target, it.label) },
+    measure = measure,
+)
