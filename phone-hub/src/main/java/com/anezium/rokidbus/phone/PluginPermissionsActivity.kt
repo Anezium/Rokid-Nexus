@@ -17,17 +17,22 @@ import android.widget.ScrollView
 import android.widget.TextView
 import com.anezium.rokidbus.client.ui.BusTheme
 import com.anezium.rokidbus.shared.plugin.PluginCapability
+import com.anezium.rokidbus.shared.skills.SkillEffect
+import com.anezium.rokidbus.shared.skills.SkillOperation
 
 class PluginPermissionsActivity : Activity() {
     private lateinit var content: LinearLayout
     private lateinit var grantStore: PluginGrantStore
     private lateinit var grantReconciler: PluginGrantReconciler
+    private lateinit var skillGrantStore: SkillGrantStore
+    private var installedPrincipals: List<PhonePluginPrincipal> = emptyList()
     private var developerDetails = false
     private var focusedTarget: PluginGrantTarget? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         grantStore = PluginGrantStore(applicationContext)
+        skillGrantStore = SkillGrantStore(applicationContext)
         grantReconciler = PluginGrantReconciler(
             discoverCandidates = PhonePluginDiscovery(packageManager)::discover,
             reconcileGrants = grantStore::reconcile,
@@ -75,6 +80,7 @@ class PluginPermissionsActivity : Activity() {
         content.addView(BusTheme.gap(this, 22))
 
         val allCandidates = grantReconciler.reconcile().candidates
+        installedPrincipals = allCandidates.mapNotNull { (it as? PhonePluginCandidate.Valid)?.principal }
         val candidates = focusedTarget?.let { target ->
             allCandidates.filter { candidate ->
                 when (candidate) {
@@ -180,6 +186,11 @@ class PluginPermissionsActivity : Activity() {
             }
         }
 
+        if (principal.skills != PluginSkillsState.Absent) {
+            card.addView(BusTheme.gap(this, 6))
+            skillsSection(card, principal, live)
+        }
+
         if (developerDetails) {
             card.addView(BusTheme.gap(this, 6))
             card.addView(
@@ -231,6 +242,122 @@ class PluginPermissionsActivity : Activity() {
                     )
                 },
                 NexusUi.block(),
+            )
+        }
+    }
+
+    /**
+     * The provider's operations, one switch per operation and approved skills client. Nothing
+     * here is on by default: the ordinary grants above never enable a skill, and the disclosure
+     * is the hub's own wording, not the provider's.
+     */
+    private fun skillsSection(card: LinearLayout, provider: PhonePluginPrincipal, live: Boolean) {
+        card.addView(NexusUi.metaLabel(this, "SKILLS", NexusUi.INK2), NexusUi.block())
+        card.addView(BusTheme.gap(this, 6))
+        val catalog = when (val skills = provider.skills) {
+            is PluginSkillsState.Valid -> skills.catalog
+            is PluginSkillsState.Invalid -> {
+                card.addView(
+                    NexusUi.cardBody(this, "This plugin's skills are turned off: Nexus cannot read their declaration."),
+                    NexusUi.block(),
+                )
+                if (developerDetails) card.addView(developerText("Skills catalog: ${skills.reason}"))
+                card.addView(BusTheme.gap(this, 8))
+                return
+            }
+            PluginSkillsState.Absent -> return
+        }
+        val providerGrants = (grantStore.stateFor(provider) as? PluginGrantState.Approved)?.capabilities.orEmpty()
+        if (!live || PluginCapability.SKILLS_PROVIDER !in providerGrants) {
+            card.addView(
+                NexusUi.cardBody(this, "Allow \"Offer skills\" above to choose which operations an assistant may use."),
+                NexusUi.block(),
+            )
+            card.addView(BusTheme.gap(this, 8))
+            return
+        }
+        val clients = installedPrincipals.filter { candidate ->
+            candidate.grantKey() != provider.grantKey() &&
+                (grantStore.stateFor(candidate) as? PluginGrantState.Approved)
+                    ?.capabilities
+                    ?.contains(PluginCapability.SKILLS_CLIENT) == true
+        }
+        card.addView(
+            NexusUi.cardBody(
+                this,
+                "An assistant you allow here can ask ${provider.descriptor.displayName} for these operations " +
+                    "while you talk to it. What they return may be sent to the AI provider chosen in that " +
+                    "assistant. Exact coordinates and other private records are not included unless an " +
+                    "operation lists them below.",
+            ),
+            NexusUi.block(),
+        )
+        card.addView(BusTheme.gap(this, 8))
+        if (clients.isEmpty()) {
+            card.addView(
+                NexusUi.cardBody(this, "No assistant may use skills yet. Allow \"Use skills from other plugins\" on it first."),
+                NexusUi.block(),
+            )
+            card.addView(BusTheme.gap(this, 8))
+            return
+        }
+        clients.forEach { client ->
+            card.addView(NexusUi.metaLabel(this, "Used by ${client.descriptor.displayName}", NexusUi.INK3), NexusUi.block())
+            card.addView(BusTheme.gap(this, 4))
+            catalog.operations.forEach { operation ->
+                card.addView(skillRow(client, provider, operation, providerGrants), NexusUi.block())
+                card.addView(BusTheme.gap(this, 8))
+            }
+        }
+    }
+
+    private fun skillRow(
+        client: PhonePluginPrincipal,
+        provider: PhonePluginPrincipal,
+        operation: SkillOperation,
+        providerGrants: Set<PluginCapability>,
+    ): LinearLayout {
+        val missing = operation.requires - providerGrants
+        val note = buildList {
+            add(if (operation.effect == SkillEffect.READ) "Reads" else "Acts")
+            add("returns " + operation.dataCategories.joinToString(", ") { it.label.lowercase() })
+            if (operation.prerequisites.isNotEmpty()) {
+                add("uses " + operation.prerequisites.joinToString(", ") { it.label.lowercase() })
+            }
+            if (operation.requires.isNotEmpty()) add("can show a live activity on your glasses")
+            if (missing.isNotEmpty()) add("needs \"Show on your glasses\" above")
+        }.joinToString(" · ")
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(
+                LinearLayout(this@PluginPermissionsActivity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    addView(
+                        TextView(this@PluginPermissionsActivity).apply {
+                            text = operation.label
+                            textSize = 13f
+                            setTextColor(NexusUi.INK)
+                        },
+                    )
+                    addView(
+                        TextView(this@PluginPermissionsActivity).apply {
+                            text = note
+                            textSize = 10f
+                            setTextColor(NexusUi.INK3)
+                        },
+                    )
+                },
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+            )
+            addView(
+                NexusUi.switch(this@PluginPermissionsActivity).apply {
+                    isChecked = skillGrantStore.isApproved(client, provider, operation)
+                    setOnCheckedChangeListener { _, checked ->
+                        skillGrantStore.setApproved(client, provider, operation, checked)
+                        BusHubService.onSkillGrantsChanged()
+                    }
+                },
             )
         }
     }
