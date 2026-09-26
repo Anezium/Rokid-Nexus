@@ -1,5 +1,6 @@
 package com.anezium.rokidbus.plugin.assistant
 
+import com.anezium.rokidbus.shared.skills.SkillLimits
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -161,7 +162,7 @@ class AssistantToolRegistryTest {
     }
 
     @Test
-    fun `phase executes at most three calls`() = runTest {
+    fun `phase executes at most the turn's call budget`() = runTest {
         var executions = 0
         val progress = mutableListOf<String>()
         val tool = TestAssistantTool(
@@ -177,18 +178,20 @@ class AssistantToolRegistryTest {
             progressReporter = progress::add,
         ).newExecutionPhase(TOOLS_WITHOUT_VISION)
 
-        val results = (1..4).map { index ->
+        val budget = SkillLimits.ASSISTANT_MAX_EXECUTED_CALLS
+        val results = (1..budget + 1).map { index ->
             phase.execute(AssistantToolCall("call-$index", tool.name, "{}"))
         }
 
-        assertEquals(3, executions)
+        assertEquals(budget, executions)
         assertEquals(
             AssistantToolResult.Error(TOOL_ERROR_ALREADY_USED),
             results.last(),
         )
+        assertTrue(phase.budgetExhausted)
         assertEquals("Thinking…", progress.last())
-        assertEquals(3, progress.count { it == "Reading your notes…" })
-        assertEquals(4, progress.count { it == "Thinking…" })
+        assertEquals(budget, progress.count { it == "Reading your notes…" })
+        assertEquals(budget + 1, progress.count { it == "Thinking…" })
     }
 
     @Test

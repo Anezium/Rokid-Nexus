@@ -13,7 +13,7 @@ import org.junit.Test
 
 class OpenAiCompatToolLoopTest {
     @Test
-    fun `photo tool call replays output and attached image without redeclaring tools`() = runTest {
+    fun `photo tool call replays output and attached image and keeps tools for the next round`() = runTest {
         val client = RecordingCompatClient(
             listOf(
                 StubResponse.Events(
@@ -75,7 +75,7 @@ class OpenAiCompatToolLoopTest {
         assertFalse(firstBody.has("tool_choice"))
 
         val secondBody = bodyFor(client.requests[1])
-        assertFalse(secondBody.has("tools"))
+        assertEquals(1, secondBody.getJSONArray("tools").length())
         assertFalse(secondBody.has("tool_choice"))
         val messages = secondBody.getJSONArray("messages")
         assertEquals(4, messages.length())
