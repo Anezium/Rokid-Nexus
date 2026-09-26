@@ -1446,8 +1446,8 @@ while the glasses announced both the v1 tier and extras version 1.
 - `measure` is optional and at most 8 characters: a second quantity that
   belongs with `primary`, such as a walk's distance next to its minutes
   ("250 m"). The panel and the flare draw `primary - measure` as one fitted
-  value; the chip draws `measure` as its line under `primary`, in place of
-  `secondary`.
+  value; the chip stacks `measure` under `primary`, beside the glyph, and keeps
+  `secondary` on its line below.
 - `track` is optional: `count` from 2 through 12, `at` from 0 through
   `count - 1`, `target` from `at` through `count - 1`, and an optional `label`
   of at most 20 characters naming the target. It is drawn as a row of dots

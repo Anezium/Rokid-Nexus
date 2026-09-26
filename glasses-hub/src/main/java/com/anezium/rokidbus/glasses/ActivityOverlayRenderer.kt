@@ -317,10 +317,10 @@ internal object ActivityOverlayRenderer {
             update(chip, listOf(content.primary, content.measure, content.secondary, content.glyph)) {
                 chip.render(
                     titleText = content.primary,
-                    // Folded, the measure is the line under the primary: "3 min"
-                    // over "250 m" reads at a glance where "3 min - 250 m" would
-                    // stretch the chip.
-                    lineContent = (content.measure ?: content.secondary)
+                    // Folded, the measure sits under the primary beside the glyph:
+                    // "3 min" over "250 m", with the street still on the line below.
+                    subtitleText = content.measure,
+                    lineContent = content.secondary
                         ?.let { listOf(PinSurfaceLine(it)) }
                         .orEmpty(),
                     size = PinSurfaceSize.MEDIUM,

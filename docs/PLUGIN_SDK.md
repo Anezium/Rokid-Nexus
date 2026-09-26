@@ -585,8 +585,8 @@ extras, and the wearer sees the v1 form, so nothing needs a second code path.
   the glyph would be. The chip keeps `glyph`.
 - `measure` — at most 8 characters, a second quantity that belongs with
   `primary`, such as a walk's distance next to its minutes ("250 m"). The
-  expanded panel reads "3 min - 250 m"; the chip keeps "3 min" and puts
-  "250 m" on the line under it instead of `secondary`.
+  expanded panel reads "3 min - 250 m"; the chip keeps "3 min" with "250 m"
+  stacked under it beside the glyph, and `secondary` on its line below.
 - `track` — `NexusActivityTrack(count, at, target, label)`: 2 to 12 ordered
   positions such as the stops of a ride or the stages of a delivery, where the
   process is now, and where the wearer is headed, with an optional label of at

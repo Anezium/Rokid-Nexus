@@ -12,7 +12,8 @@
 - **Activity extras, for plugins on the new SDK.** A `badge` draws a line number
   such as "38" as an outlined plate in the glyph's place; a `measure` puts a
   second quantity with the value ("3 min - 250 m" expanded, "250 m" under
-  "3 min" in the chip); a `track` draws stops or
+  "3 min" beside the glyph in the chip, the street still below); a `track`
+  draws stops or
   stages as a row of dots instead of the progress bar; an `urgent` significant
   update gives the flare a bright outline that beats once, at most once a
   minute per activity, so "get off at the next stop" cannot be swallowed by the

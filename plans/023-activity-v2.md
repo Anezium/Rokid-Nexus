@@ -58,7 +58,8 @@ quantity that belongs with `primary`. Added on device review: a transit walk
 timed in minutes also has a distance, and the wearer wanted both at a glance
 without the panel's largest text turning into one long value. The panel and
 the flare draw `primary - measure` through the same fit as the primary; the
-chip draws `measure` as its line, under the primary, in place of `secondary`.
+chip stacks `measure` under the primary beside the glyph and keeps `secondary`
+on its line below.
 
 ### 3. `track`
 
