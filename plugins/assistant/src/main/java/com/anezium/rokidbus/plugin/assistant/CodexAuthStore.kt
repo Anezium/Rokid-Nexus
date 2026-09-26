@@ -304,6 +304,9 @@ class CodexAuthStore internal constructor(
     internal fun inputMode(): AssistantInputMode =
         AssistantInputMode.fromWire(prefs.getString(KEY_INPUT_MODE, null))
 
+    internal fun visualAnswers(): AssistantVisualAnswers =
+        AssistantVisualAnswers.fromWire(prefs.getString(KEY_VISUAL_ANSWERS, null))
+
     fun conversationIdleWindowMinutes(): Int = supportedIdleWindowMinutes(
         prefs.getInt(KEY_CONVERSATION_IDLE_WINDOW_MINUTES, DEFAULT_IDLE_WINDOW_MINUTES),
     )
@@ -357,6 +360,10 @@ class CodexAuthStore internal constructor(
 
     internal fun setInputMode(mode: AssistantInputMode) {
         prefs.edit().putString(KEY_INPUT_MODE, mode.wireValue).apply()
+    }
+
+    internal fun setVisualAnswers(mode: AssistantVisualAnswers) {
+        prefs.edit().putString(KEY_VISUAL_ANSWERS, mode.wireValue).apply()
     }
 
     fun setSpeakAnswers(enabled: Boolean) {
@@ -552,6 +559,7 @@ class CodexAuthStore internal constructor(
             "keep_photos_in_conversations"
         private const val KEY_SPEAK_ANSWERS = "speak_answers"
         private const val KEY_INPUT_MODE = "input_mode"
+        private const val KEY_VISUAL_ANSWERS = "visual_answers"
         private const val KEY_CONVERSATION_IDLE_WINDOW_MINUTES =
             "conversation_idle_window_minutes"
         private const val KEY_ASSISTANT_MEMORY = "assistant_memory"

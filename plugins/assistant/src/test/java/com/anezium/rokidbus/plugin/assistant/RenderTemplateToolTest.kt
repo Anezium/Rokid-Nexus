@@ -67,7 +67,7 @@ class RenderTemplateToolTest {
         val capabilities = FakeInkPageCapabilities()
         var loadedTemplate: InkTemplateId? = null
         val tool = RenderTemplateTool(
-            runtime = InkPageToolRuntime(capabilities),
+            runtime = InkPageToolRuntime(capabilities) { AssistantVisualAnswers.FREE_PAGES },
             templateLoader = InkTemplateLoader { template ->
                 loadedTemplate = template
                 "<page><text>chart asset</text></page>"
@@ -102,7 +102,7 @@ class RenderTemplateToolTest {
     fun `strict providers pass data as a JSON string and optionals as null`() = runTest {
         val capabilities = FakeInkPageCapabilities()
         val tool = RenderTemplateTool(
-            runtime = InkPageToolRuntime(capabilities),
+            runtime = InkPageToolRuntime(capabilities) { AssistantVisualAnswers.FREE_PAGES },
             templateLoader = InkTemplateLoader { "<page><text>metrics asset</text></page>" },
         )
         val phase = AssistantToolRegistry(
@@ -332,7 +332,7 @@ class RenderTemplateToolTest {
 
     private fun tool(capabilities: FakeInkPageCapabilities): RenderTemplateTool =
         RenderTemplateTool(
-            runtime = InkPageToolRuntime(capabilities),
+            runtime = InkPageToolRuntime(capabilities) { AssistantVisualAnswers.FREE_PAGES },
             templateLoader = InkTemplateLoader { template ->
                 "<page><text>${template.wireValue}</text></page>"
             },

@@ -19,7 +19,7 @@ class RenderInkPageToolTest {
             grantedCapabilities = setOf(PluginCapability.INK_SURFACE.wireValue),
         )
         val registry = AssistantToolRegistry(
-            definitions = listOf(RenderInkPageTool(InkPageToolRuntime(capabilities))),
+            definitions = listOf(RenderInkPageTool(InkPageToolRuntime(capabilities) { AssistantVisualAnswers.FREE_PAGES })),
             sessionContext = { session },
         )
 
@@ -41,9 +41,40 @@ class RenderInkPageToolTest {
     }
 
     @Test
+    fun `the Visual answers setting decides which Ink tools the model is offered`() {
+        var mode = AssistantVisualAnswers.DEFAULT
+        val runtime = InkPageToolRuntime(FakeInkPageToolCapabilities()) { mode }
+        val registry = AssistantToolRegistry(
+            definitions = listOf(
+                RenderTemplateTool(runtime, InkTemplateLoader { "" }),
+                RenderInkPageTool(runtime),
+            ),
+            sessionContext = {
+                AssistantToolSessionContext(
+                    active = true,
+                    grantedCapabilities = setOf(PluginCapability.INK_SURFACE.wireValue),
+                )
+            },
+        )
+        fun offered() = registry.availableDefinitions(TOOLS_SUPPORTED).map { it.name }
+
+        // Templates only unless the wearer chose otherwise: the model lays out no page itself.
+        assertEquals(AssistantVisualAnswers.TEMPLATES, mode)
+        assertEquals(listOf(RENDER_TEMPLATE_TOOL_NAME), offered())
+        mode = AssistantVisualAnswers.FREE_PAGES
+        assertEquals(listOf(RENDER_TEMPLATE_TOOL_NAME, RENDER_INK_PAGE_TOOL_NAME), offered())
+        mode = AssistantVisualAnswers.OFF
+        assertTrue(offered().isEmpty())
+
+        // Nothing stored, or a value this version does not know, reads as the default.
+        assertEquals(AssistantVisualAnswers.TEMPLATES, AssistantVisualAnswers.fromWire(null))
+        assertEquals(AssistantVisualAnswers.TEMPLATES, AssistantVisualAnswers.fromWire("hologram"))
+    }
+
+    @Test
     fun `schema and validator enforce page title and data types`() = runTest {
         val capabilities = FakeInkPageToolCapabilities()
-        val tool = RenderInkPageTool(InkPageToolRuntime(capabilities))
+        val tool = RenderInkPageTool(InkPageToolRuntime(capabilities) { AssistantVisualAnswers.FREE_PAGES })
         val schema = tool.parametersSchema.toJsonObject()
         val properties = schema.getJSONObject("properties")
 
@@ -198,7 +229,7 @@ class RenderInkPageToolTest {
 
     private fun registry(capabilities: FakeInkPageToolCapabilities): AssistantToolRegistry =
         AssistantToolRegistry(
-            definitions = listOf(RenderInkPageTool(InkPageToolRuntime(capabilities))),
+            definitions = listOf(RenderInkPageTool(InkPageToolRuntime(capabilities) { AssistantVisualAnswers.FREE_PAGES })),
             sessionContext = {
                 AssistantToolSessionContext(
                     active = true,

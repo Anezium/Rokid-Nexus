@@ -11,6 +11,12 @@
   Assistant as the plugin on screen, so another plugin's card — Relay's *Type*,
   for one — was refused as "Screen busy" until Assistant was stopped. It now
   closes as soon as nothing of the question is left, heard or not.
+- **Choose how answers are drawn.** A new *Visual answers* setting.
+  *Templates only*, the new default, keeps drawn answers to the fixed layouts
+  made for the glasses — forecast, figures, steps, ranking, comparison,
+  schedule, chart — so the model no longer lays out pages of its own that come
+  out too big, cut off or half empty. *Free pages* brings those back alongside
+  the templates, as before. *Off* keeps every answer as text in the band.
 
 ## 1.4.7
 

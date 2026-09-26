@@ -69,7 +69,9 @@ class AssistantPluginService : NexusPluginService() {
     private val hermesCapabilitiesClient by lazy { HermesCapabilitiesClient() }
     private val conversationThreading by lazy { AssistantConversationThreading(threadStore) }
     private val inkPageToolCapabilities by lazy { createInkPageToolCapabilities() }
-    private val inkPageToolRuntime by lazy { InkPageToolRuntime(inkPageToolCapabilities) }
+    private val inkPageToolRuntime by lazy {
+        InkPageToolRuntime(inkPageToolCapabilities, visualAnswers = authStore::visualAnswers)
+    }
     private val inkTemplateLoader by lazy {
         InkTemplateLoader { template ->
             assets.open("$INK_TEMPLATE_ASSET_DIR/${template.wireValue}.ink")
