@@ -33,8 +33,15 @@ internal interface InkPageToolCapabilities {
 
 internal class InkPageToolRuntime(
     private val capabilities: InkPageToolCapabilities,
+    private val visualAnswers: () -> AssistantVisualAnswers,
 ) {
-    fun isAvailable(context: AssistantToolAvailabilityContext): Boolean =
+    fun offersTemplates(context: AssistantToolAvailabilityContext): Boolean =
+        visualAnswers().allowsTemplates && isAvailable(context)
+
+    fun offersFreePages(context: AssistantToolAvailabilityContext): Boolean =
+        visualAnswers().allowsFreePages && isAvailable(context)
+
+    private fun isAvailable(context: AssistantToolAvailabilityContext): Boolean =
         context.session.active &&
             PluginCapability.INK_SURFACE.wireValue in context.session.grantedCapabilities &&
             capabilities.supportsInkSurface()

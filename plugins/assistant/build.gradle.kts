@@ -12,8 +12,8 @@ android {
         applicationId = "com.anezium.rokidbus.plugin.assistant"
         minSdk = 30
         targetSdk = 36
-        versionCode = 16
-        versionName = "1.4.7"
+        versionCode = 17
+        versionName = "1.4.8"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

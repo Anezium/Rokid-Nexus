@@ -2,6 +2,7 @@ package com.anezium.rokidbus.plugin.assistant
 
 import com.anezium.rokidbus.shared.plugin.PluginCapability
 import kotlinx.coroutines.test.runTest
+import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -67,7 +68,7 @@ class RenderTemplateToolTest {
         val capabilities = FakeInkPageCapabilities()
         var loadedTemplate: InkTemplateId? = null
         val tool = RenderTemplateTool(
-            runtime = InkPageToolRuntime(capabilities),
+            runtime = InkPageToolRuntime(capabilities) { AssistantVisualAnswers.FREE_PAGES },
             templateLoader = InkTemplateLoader { template ->
                 loadedTemplate = template
                 "<page><text>chart asset</text></page>"
@@ -102,7 +103,7 @@ class RenderTemplateToolTest {
     fun `strict providers pass data as a JSON string and optionals as null`() = runTest {
         val capabilities = FakeInkPageCapabilities()
         val tool = RenderTemplateTool(
-            runtime = InkPageToolRuntime(capabilities),
+            runtime = InkPageToolRuntime(capabilities) { AssistantVisualAnswers.FREE_PAGES },
             templateLoader = InkTemplateLoader { "<page><text>metrics asset</text></page>" },
         )
         val phase = AssistantToolRegistry(
@@ -250,6 +251,66 @@ class RenderTemplateToolTest {
     }
 
     @Test
+    fun `every string is held to what the glasses draw whole`() {
+        val validator = InkTemplateValidator()
+        fun text(length: Int) = "x".repeat(length)
+        fun cell(value: String) = JSONObject()
+            .put("label", text(InkTemplateLimits.METRICS_LABEL_CHARS))
+            .put("value", value)
+            .put("detail", text(InkTemplateLimits.METRICS_DETAIL_CHARS))
+        val data = JSONObject().put(
+            "cells",
+            JSONArray()
+                .put(cell(text(InkTemplateLimits.METRICS_VALUE_CHARS)))
+                .put(cell(text(InkTemplateLimits.METRICS_VALUE_CHARS))),
+        )
+
+        // Every string at its limit fits.
+        assertTrue(validator.validate(InkTemplateId.METRICS, data) is InkTemplateValidationResult.Valid)
+
+        // One character more is turned back, naming the field and its limit, so the model can
+        // shorten exactly that.
+        data.getJSONArray("cells").put(1, cell(text(InkTemplateLimits.METRICS_VALUE_CHARS + 1)))
+        val over = validator.validate(InkTemplateId.METRICS, data) as InkTemplateValidationResult.Invalid
+        val problem = over.problems.single()
+        assertEquals(TEMPLATE_PROBLEM_TOO_LONG, problem.code)
+        assertEquals("data.cells[1].value", problem.path)
+        assertTrue(problem.message, "${InkTemplateLimits.METRICS_VALUE_CHARS}" in problem.message)
+
+        // Characters are what the glasses draw: an emoji is one, not two UTF-16 units.
+        data.getJSONArray("cells").put(1, cell("🌡" + text(InkTemplateLimits.METRICS_VALUE_CHARS - 1)))
+        assertTrue(validator.validate(InkTemplateId.METRICS, data) is InkTemplateValidationResult.Valid)
+
+        // The page title is held too.
+        val tool = tool(FakeInkPageCapabilities())
+        val titled = tool.validate(
+            """{"template":"steps","title":"${text(InkTemplateLimits.TITLE_CHARS + 1)}",""" +
+                """"data":{"current":0,"steps":[{"label":"Boil"}]}}""",
+        ) as AssistantToolValidation.Invalid
+        assertTrue(
+            JSONObject(titled.error.detailsJson.orEmpty()).getJSONArray("problems")
+                .hasProblem(TEMPLATE_PROBLEM_TOO_LONG, "title"),
+        )
+    }
+
+    @Test
+    fun `a schedule time has to fit its narrow cell run by run`() {
+        val validator = InkTemplateValidator()
+        fun schedule(time: String) = JSONObject().put(
+            "entries",
+            JSONArray().put(JSONObject().put("time", time).put("title", "Standup")),
+        )
+
+        listOf("09:30", "10:00–11:30", "All day", "9-10 am").forEach { time ->
+            assertTrue(time, validator.validate(InkTemplateId.SCHEDULE, schedule(time)) is InkTemplateValidationResult.Valid)
+        }
+        val tooWide = validator.validate(InkTemplateId.SCHEDULE, schedule("Tomorrow"))
+            as InkTemplateValidationResult.Invalid
+        assertEquals(TEMPLATE_PROBLEM_TOO_LONG, tooWide.problems.single().code)
+        assertEquals("data.entries[0].time", tooWide.problems.single().path)
+    }
+
+    @Test
     fun `steps progress measures completed work and reaches one hundred when complete`() {
         val validator = InkTemplateValidator()
         val active = validator.validate(
@@ -332,7 +393,7 @@ class RenderTemplateToolTest {
 
     private fun tool(capabilities: FakeInkPageCapabilities): RenderTemplateTool =
         RenderTemplateTool(
-            runtime = InkPageToolRuntime(capabilities),
+            runtime = InkPageToolRuntime(capabilities) { AssistantVisualAnswers.FREE_PAGES },
             templateLoader = InkTemplateLoader { template ->
                 "<page><text>${template.wireValue}</text></page>"
             },

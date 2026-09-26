@@ -14,7 +14,7 @@ internal class RenderInkPageTool(
     override val executionFailureCode: String = TOOL_ERROR_INK_RENDER_FAILED
 
     override fun isAvailable(context: AssistantToolAvailabilityContext): Boolean =
-        runtime.isAvailable(context)
+        runtime.offersFreePages(context)
 
     override fun validate(argumentsJson: String): AssistantToolValidation {
         val arguments = runCatching { JSONObject(argumentsJson) }.getOrNull()

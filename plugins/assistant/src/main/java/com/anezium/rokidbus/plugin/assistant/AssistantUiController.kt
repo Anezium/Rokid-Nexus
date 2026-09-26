@@ -96,8 +96,18 @@ internal class AssistantUiController(
     private val typeChipArmDelayMs: Long = TYPE_CHIP_ARM_DELAY_MS,
     private val typingKeepaliveIntervalMs: Long = TYPING_KEEPALIVE_INTERVAL_MS,
     noticeIntervalMs: Long = AssistantNoticePacer.MIN_INTERVAL_MS,
+    /** A capture, a model call or a camera snapshot is still under way. */
+    private val sessionBusy: () -> Boolean = { false },
+    /** The answer is still being read out, or is about to be. */
+    private val answerSpeaking: () -> Boolean = { false },
+    /** Stops a readout that never reported its end; see [armHolderBudget]. */
+    private val stopSpeech: () -> Unit = {},
+    private val holderRecheckMs: Long = HOLDER_RECHECK_MS,
+    private val holderSpeechBudgetMs: Long = HOLDER_SPEECH_BUDGET_MS,
 ) {
     private var launcherHintJob: Job? = null
+    private var holderReleaseJob: Job? = null
+    private var holderBudgetJob: Job? = null
     private var noticeHideJob: Job? = null
     private var transcriptUpdateJob: Job? = null
     private var keepaliveJob: Job? = null
@@ -119,6 +129,21 @@ internal class AssistantUiController(
     /** A Type tap is being served: from the quiet band's show until the field is retired. */
     private var typingOpen = false
     private var anchoredBeforeTyping = false
+
+    /**
+     * The bare card that keeps an assist-button session open while its answer arrives. That
+     * session never had an anchor, and must not grow one: all it shows is the band. The holder
+     * carries nothing a band does not cover, and goes as soon as nothing is left to wait for.
+     */
+    private var holderShown = false
+
+    /**
+     * A session opened without the anchor — the assist button — that has not closed yet. Asked
+     * aloud, its whole life is the band, and the hub only reads a plugin as done when its last
+     * card goes: with no card ever shown, the hub kept it as the plugin on screen once the band
+     * had left, and turned every other plugin's card away as the screen being busy.
+     */
+    private var bandSession = false
 
     /** The field has actually replaced the card; it opens only once its quiet band has left. */
     private var fieldShown = false
@@ -169,7 +194,8 @@ internal class AssistantUiController(
      * launcher anchor is the one card that does not claim the interaction.
      */
     val isNoticeBandMode: Boolean
-        get() = renderer.supportsNoticeSurface && (!surfaceShown || anchorShown || typingOpen)
+        get() = renderer.supportsNoticeSurface &&
+            (!surfaceShown || anchorShown || typingOpen || holderShown)
 
     internal val isEngagedNoticeEpisode: Boolean
         get() = noticeShown && noticeMode == AssistantNoticeMode.ENGAGED
@@ -195,7 +221,16 @@ internal class AssistantUiController(
         )
 
     fun onOpen() {
+        // A re-delivered open while an assist-button answer is still on its way: resetting would
+        // drop the holder, and the hint queued below would replace it and turn the rest of the
+        // answer into card lines. The session carries on as it was, band and all.
+        if (holderShown || sessionBusy() || answerSpeaking()) {
+            cancelLauncherHint()
+            reshowInFlight(lastInFlightBody, lastInFlightUsesLines, spokenAnswerBody)
+            return
+        }
         resetForOpen()
+        bandSession = true
         launcherHintJob = scope.launch {
             delay(launcherHintDelayMs)
             launcherHintJob = null
@@ -256,6 +291,7 @@ internal class AssistantUiController(
             contentKey = ANCHOR_CONTENT_KEY,
         )
         anchorShown = result == NexusSdkResult.SENT
+        if (anchorShown) forgetHolder()
     }
 
     fun onClose() {
@@ -272,6 +308,8 @@ internal class AssistantUiController(
         inkOwnsAnswer = false
         typingOpen = false
         fieldShown = false
+        forgetHolder()
+        bandSession = false
     }
 
     private fun resetForOpen() {
@@ -288,6 +326,8 @@ internal class AssistantUiController(
         inkOwnsAnswer = false
         typingOpen = false
         fieldShown = false
+        forgetHolder()
+        bandSession = false
     }
 
     fun cancelLauncherHint() {
@@ -373,8 +413,9 @@ internal class AssistantUiController(
      * or — for a session the assist button opened with nothing on screen — nothing, which the
      * hub reads as the plugin closing, exactly like Back on the anchor. That holds even when
      * the cancel beats the field onto the glasses: the microphone is already off, so a session
-     * left open there would have nothing on screen and nothing left to do. A submitted question
-     * always keeps a card up, because its answer still has to arrive in this session.
+     * left open there would have nothing on screen and nothing left to do. A submitted or
+     * superseded question keeps a card up, because its answer still has to arrive in this
+     * session; without an anchor that card is the bare holder, so the session stays a band.
      */
     fun endTyping(end: AssistantTypingEnd): Boolean {
         if (!typingOpen) return false
@@ -386,14 +427,18 @@ internal class AssistantUiController(
             // The caller's card is about to take the tier, whatever was there.
             end == AssistantTypingEnd.REPLACED -> Unit
             end == AssistantTypingEnd.CANCELLED && !anchoredBeforeTyping -> {
+                bandSession = false
                 renderer.hideCard()
                 onSurfaceHidden()
             }
             // Nothing took the anchor's place yet, so it is still up.
             !replacedCard -> Unit
+            !anchoredBeforeTyping -> showHolder()
             else -> restoreAnchor()
         }
-        if (end != AssistantTypingEnd.SUBMITTED) {
+        // A submitted question's Thinking, or a superseding capture's Listening, replaces the
+        // quiet band in place: hiding it first would leave the card below uncovered meanwhile.
+        if (end == AssistantTypingEnd.CANCELLED || end == AssistantTypingEnd.REPLACED) {
             // A quiet band still waiting to leave would come back after the wearer left it.
             notices.dropWaiting()
             hideNoticeIfShown()
@@ -440,6 +485,7 @@ internal class AssistantUiController(
         fieldShown = true
         surfaceShown = true
         anchorShown = false
+        forgetHolder()
         startTypingKeepalive()
     }
 
@@ -633,6 +679,7 @@ internal class AssistantUiController(
                     noticeHideJob = null
                     if (noticeStateVersion == stateVersion) {
                         hideNoticeIfShown()
+                        maybeReleaseHolder()
                     }
                 }
             }
@@ -685,15 +732,26 @@ internal class AssistantUiController(
     }
 
     fun onAnswerSpeechFinished() {
-        val body = spokenAnswerBody ?: return
+        val body = spokenAnswerBody
         spokenAnswerBody = null
-        stopKeepalive()
-        if (!useNoticeBand() || !noticeShown) return
-        // A glance, not a second reading: the wearer just heard the whole thing, so the band owes
-        // them only long enough to catch the tail. Handing back the length-based TTL here would
-        // pin a long answer on the display for another twenty seconds after the voice had moved
-        // on, which reads as the band being stuck.
-        showOrUpdateAnswerNotice(body, ttlMs = ANSWER_SPOKEN_GRACE_MS)
+        if (body != null) {
+            stopKeepalive()
+            if (useNoticeBand() && noticeShown) {
+                // A glance, not a second reading: the wearer just heard the whole thing, so the
+                // band owes them only long enough to catch the tail. Handing back the
+                // length-based TTL here would pin a long answer on the display for another
+                // twenty seconds after the voice had moved on, which reads as the band being
+                // stuck.
+                showOrUpdateAnswerNotice(body, ttlMs = ANSWER_SPOKEN_GRACE_MS)
+            }
+        }
+        maybeReleaseHolder()
+    }
+
+    /** The model call ended, answered, failed or cancelled. */
+    fun onPipelineFinished() {
+        if (holderShown && !sessionBusy()) armHolderBudget()
+        maybeReleaseHolder()
     }
 
     fun onSurfaceHidden() {
@@ -717,6 +775,14 @@ internal class AssistantUiController(
         stopKeepalive()
         startNewState(flushTranscript = false)
         hideNoticeIfShown()
+        if (holderShown) {
+            // The page now holds the session, so the holder can go without closing it: the
+            // hub only closes a plugin whose last surface is gone, and dismissing the page is
+            // then the end of this answer.
+            forgetHolder()
+            renderer.hideCard()
+            surfaceShown = false
+        }
     }
 
     /**
@@ -726,6 +792,10 @@ internal class AssistantUiController(
      * the next capture.
      */
     fun onNoticeClosed(reason: NexusNoticeCloseReason) {
+        // Read before the reset below clears them: see the holder case at the end.
+        val inFlight = lastInFlightBody
+        val inFlightUsesLines = lastInFlightUsesLines
+        val spoken = spokenAnswerBody
         // Whatever was still waiting to leave belonged to the band that is gone; a show among
         // it would bring back a band the wearer just dismissed.
         notices.dropWaiting()
@@ -759,6 +829,133 @@ internal class AssistantUiController(
             cancelPipeline()
             resetCapture()
         }
+        // A band's life is capped at 90 s from its show, and updates never move that cap, so a
+        // long tool turn or a long readout outlives it. Under the holder that would leave the
+        // bare card as the screen: a fresh show of what was up starts the clock again.
+        if (reason == NexusNoticeCloseReason.TIMEOUT && holderShown && !typingOpen &&
+            (sessionBusy() || answerSpeaking()) &&
+            reshowInFlight(inFlight, inFlightUsesLines, spoken)
+        ) {
+            return
+        }
+        maybeReleaseHolder()
+    }
+
+    /**
+     * Puts the band that was up back as a fresh show — "Thinking…" or a progress label with its
+     * keepalive, the answer while it is read out, or an answer still waiting for its voice.
+     * False when nothing was in flight.
+     */
+    private fun reshowInFlight(inFlight: String?, inFlightUsesLines: Boolean, spoken: String?): Boolean {
+        val body = inFlight ?: spoken ?: return false
+        if (!useNoticeBand()) return false
+        bandUncertain = true
+        spokenAnswerBody = spoken
+        if (inFlight == null) return showOrUpdateAnswerNotice(body, ttlMs = answerTtlMs(body))
+        val shown = if (inFlightUsesLines) showOrUpdateAnswerNotice(body) else showOrUpdateNotice(body)
+        if (!shown) return false
+        lastInFlightBody = inFlight
+        lastInFlightUsesLines = inFlightUsesLines
+        startKeepalive()
+        return true
+    }
+
+    private fun showHolder() {
+        val result = showCard(
+            lines = emptyList(),
+            forceShow = true,
+            contentKey = HOLDER_CONTENT_KEY,
+        )
+        if (result != NexusSdkResult.SENT) return
+        anchorShown = false
+        holderShown = true
+    }
+
+    /**
+     * Lets the holder go once nothing is left for it to wait on: no field, no band, no capture
+     * or model call, and no voice still reading. Hiding it is the plugin's last surface going,
+     * which the hub reads as the session closing — the same end as Back on the anchor.
+     */
+    private fun maybeReleaseHolder() {
+        if (!holderShown) {
+            maybeEndBandSession()
+            return
+        }
+        if (typingOpen || noticeShown || sessionBusy()) return
+        if (answerSpeaking()) {
+            armHolderRecheck()
+            return
+        }
+        releaseHolder()
+    }
+
+    /**
+     * The band-only end of [bandSession]: once nothing of it is left — no band, card, field,
+     * page, capture, model call or voice — the card it never showed is hidden, which the hub
+     * reads as the session closing, the same end the holder's release gives a typed question.
+     */
+    private fun maybeEndBandSession() {
+        if (!bandSession || surfaceShown || typingOpen || noticeShown || inkOwnsAnswer ||
+            launcherHintJob != null || sessionBusy()
+        ) {
+            return
+        }
+        if (answerSpeaking()) {
+            armHolderRecheck()
+            return
+        }
+        bandSession = false
+        renderer.hideCard()
+    }
+
+    /**
+     * Speech normally reports its end, and that is what releases the holder. This looks again
+     * now and then in case an end slipped by unreported, and never cuts a voice still reading:
+     * letting the holder go closes the session, and the readout with it.
+     */
+    private fun armHolderRecheck() {
+        if (holderReleaseJob != null) return
+        holderReleaseJob = scope.launch {
+            delay(holderRecheckMs)
+            holderReleaseJob = null
+            maybeReleaseHolder()
+        }
+    }
+
+    private fun releaseHolder() {
+        forgetHolder()
+        bandSession = false
+        renderer.hideCard()
+        onSurfaceHidden()
+    }
+
+    /**
+     * The answer is in, so all that can still hold the session is its readout — which the voice
+     * may never report as done. Past this budget, counted from the answer, the holder goes even
+     * so, the stuck readout stopped first: its band would otherwise be renewed at every 90 s cap,
+     * or the bare holder left as the screen, with the session open behind it for good.
+     */
+    private fun armHolderBudget() {
+        holderBudgetJob?.cancel()
+        holderBudgetJob = scope.launch {
+            delay(holderSpeechBudgetMs)
+            holderBudgetJob = null
+            if (!holderShown || typingOpen || sessionBusy()) return@launch
+            if (answerSpeaking()) stopSpeech()
+            spokenAnswerBody = null
+            stopKeepalive()
+            notices.dropWaiting()
+            hideNoticeIfShown()
+            releaseHolder()
+        }
+    }
+
+    private fun forgetHolder() {
+        holderShown = false
+        holderReleaseJob?.cancel()
+        holderReleaseJob = null
+        holderBudgetJob?.cancel()
+        holderBudgetJob = null
     }
 
     private fun useNoticeBand(): Boolean = isNoticeBandMode
@@ -999,6 +1196,12 @@ internal class AssistantUiController(
         const val ANCHOR_FOOTER = "tap to ask again · swipe for options"
         const val OPTIONS_SUBTITLE = "Options"
         const val ANCHOR_CONTENT_KEY = "anchor"
+        const val HOLDER_CONTENT_KEY = "holder"
+
+        const val HOLDER_RECHECK_MS = 10_000L
+
+        /** Longer than the longest answer the voice may read (1,024 characters). */
+        const val HOLDER_SPEECH_BUDGET_MS = 120_000L
         const val OPTIONS_CONTENT_KEY = "options"
         const val NOTICE_TITLE = "Assistant"
         const val ELLIPSIS = "…"

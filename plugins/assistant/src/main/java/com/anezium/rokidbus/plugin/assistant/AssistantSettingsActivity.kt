@@ -89,6 +89,8 @@ class AssistantSettingsActivity : Activity() {
     private val voiceNames = mutableMapOf<Boolean, TextView>()
     private val inputDots = mutableMapOf<AssistantInputMode, View>()
     private val inputNames = mutableMapOf<AssistantInputMode, TextView>()
+    private val visualDots = mutableMapOf<AssistantVisualAnswers, View>()
+    private val visualNames = mutableMapOf<AssistantVisualAnswers, TextView>()
     private val windowDots = mutableMapOf<Int, View>()
     private val windowNames = mutableMapOf<Int, TextView>()
     private val syncDots = mutableMapOf<Boolean, View>()
@@ -247,6 +249,24 @@ class AssistantSettingsActivity : Activity() {
                         "on both hubs you type inside the band and the keyboard comes up on " +
                         "its own; from 1.4.6 the field opens as its own card, and older hubs " +
                         "stay on voice.",
+                ),
+                NexusUi.block(),
+            )
+            addView(BusTheme.gap(this@AssistantSettingsActivity, 18))
+            addView(
+                NexusUi.sectionRow(this@AssistantSettingsActivity, "Visual answers"),
+                NexusUi.block(),
+            )
+            addView(BusTheme.gap(this@AssistantSettingsActivity, 12))
+            addView(visualCard(), NexusUi.block())
+            addView(BusTheme.gap(this@AssistantSettingsActivity, 10))
+            addView(
+                NexusUi.cardBody(
+                    this@AssistantSettingsActivity,
+                    "Some answers can be drawn as a page on the glasses: a forecast, figures, " +
+                        "steps. Templates are fixed layouts made for the display; free pages let " +
+                        "the model lay the page out itself, which can come out too big, cut off " +
+                        "or half empty. Off keeps every answer as text in the band.",
                 ),
                 NexusUi.block(),
             )
@@ -1398,6 +1418,34 @@ class AssistantSettingsActivity : Activity() {
         )
     }
 
+    private fun visualCard(): LinearLayout =
+        NexusUi.card(this).apply {
+            AssistantVisualAnswers.entries.forEachIndexed { index, mode ->
+                if (index > 0) addView(NexusUi.divider(this@AssistantSettingsActivity))
+                addView(visualRow(mode), NexusUi.block())
+            }
+        }
+
+    private fun visualRow(mode: AssistantVisualAnswers): LinearLayout {
+        val (title, caption) = when (mode) {
+            AssistantVisualAnswers.OFF -> "Off" to "Answers stay text in the band"
+            AssistantVisualAnswers.TEMPLATES -> "Templates only" to "Fixed layouts made for the glasses"
+            AssistantVisualAnswers.FREE_PAGES -> "Free pages" to "Templates, plus pages the model lays out"
+        }
+        return pickerRow(
+            title = title,
+            hint = if (mode == AssistantVisualAnswers.DEFAULT) "default" else null,
+            caption = caption,
+            description = "$title. $caption",
+            onClick = {
+                authStore.setVisualAnswers(mode)
+                renderConversationSettings()
+            },
+            nameSink = { visualNames[mode] = it },
+            dotSink = { visualDots[mode] = it },
+        )
+    }
+
     private fun windowCard(): LinearLayout =
         NexusUi.card(this).apply {
             CodexAuthStore.SUPPORTED_IDLE_WINDOW_MINUTES.forEachIndexed { index, minutes ->
@@ -1528,6 +1576,14 @@ class AssistantSettingsActivity : Activity() {
         }
         inputNames.forEach { (mode, nameView) ->
             nameView.setTextColor(if (mode == inputMode) NexusUi.INK else NexusUi.INK2)
+        }
+
+        val visualAnswers = authStore.visualAnswers()
+        visualDots.forEach { (mode, dotView) ->
+            NexusUi.setDotColor(dotView, if (mode == visualAnswers) NexusUi.GREEN else NexusUi.INK4)
+        }
+        visualNames.forEach { (mode, nameView) ->
+            nameView.setTextColor(if (mode == visualAnswers) NexusUi.INK else NexusUi.INK2)
         }
 
         renderConversationsCard()

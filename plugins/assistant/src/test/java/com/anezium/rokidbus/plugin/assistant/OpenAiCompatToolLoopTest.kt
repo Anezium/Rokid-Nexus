@@ -934,7 +934,7 @@ class OpenAiCompatToolLoopTest {
     private fun renderTemplateTool(
         capabilities: InkPageToolCapabilities,
     ): RenderTemplateTool = RenderTemplateTool(
-        runtime = InkPageToolRuntime(capabilities),
+        runtime = InkPageToolRuntime(capabilities) { AssistantVisualAnswers.FREE_PAGES },
         templateLoader = InkTemplateLoader { template -> "<page>${template.wireValue}</page>" },
     )
 

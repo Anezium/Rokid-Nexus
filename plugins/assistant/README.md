@@ -34,7 +34,10 @@ only `take_photo` additionally requires a model that can see, and photos are
 stripped gracefully for models that cannot. `render_ink_page` and
 `render_template` can turn suitable results into the same strict compiled Ink
 surface exposed by the public Nexus SDK; the template tool offers seven bounded
-layouts. A server that rejects tools outright is retried once without them.
+layouts. The *Visual answers* setting decides which of the two the model is
+offered: *Templates only* by default, *Free pages* for both, or *Off* for none,
+which keeps every answer as text in the band. A server that rejects tools
+outright is retried once without them.
 
 A Hermes backend runs its tools server-side and never returns a client tool
 call, so the same twelve phone tools are described in the system prompt and
