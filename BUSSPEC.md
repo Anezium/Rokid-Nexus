@@ -537,13 +537,13 @@ owned by the same plugin is visible; otherwise, and on a hub that predates the
 field, the card renders as described above. While the band carries the field,
 the surface activity draws nothing of its own, background included, and runs
 in its own translucent task, so the band sits over whatever the wearer was
-looking at rather than over a black screen (glasses hub 1.4.15; 1.4.13 and
+looking at rather than over a black screen (glasses hub 1.5.0; 1.4.13 and
 1.4.14 drew the activity black). If that band goes away while the field stays
 open, the field returns to view after about 1.5 s unless the plugin has hidden
 it by then.
 
 A bare card — a title and nothing else: no subtitle, footer, rows or field —
-steps aside the same way from glasses hub 1.4.15 while a band owned by the same
+steps aside the same way from glasses hub 1.5.0 while a band owned by the same
 plugin is visible, which lets a plugin keep its session open under its band
 without covering the screen (Assistant does after the assist button). It comes
 back into view about 1.5 s after that band goes, unless the plugin has hidden

@@ -2,7 +2,7 @@
 
 ## 1.0.4
 
-- Demonstrate activity extras with SDK 0.21.0 and Nexus hubs 1.4.15: a
+- Demonstrate activity extras with SDK 0.21.0 and Nexus hubs 1.5.0: a
   scripted route, one step per `DEMO_ACTIVITY` intent sent over adb, shows the
   fitted panel, a line badge, a measure beside the value, a track of stops and
   an urgent "get off" update. On older hubs the same steps show without the

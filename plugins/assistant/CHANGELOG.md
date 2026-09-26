@@ -21,7 +21,7 @@
   length the glasses draw whole — a tile's value, a row's label, a schedule's
   time — and the model is told those lengths up front. Anything longer is sent
   back to be shortened, instead of arriving cut off, squeezed or spilling out of
-  its box. With Rokid Nexus 1.4.15, a grid of figures also keeps every row at
+  its box. With Rokid Nexus 1.5.0, a grid of figures also keeps every row at
   full height.
 
 ## 1.4.7

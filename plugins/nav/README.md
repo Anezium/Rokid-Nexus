@@ -44,7 +44,7 @@ The screen also asks for Notification Access and shows the route it sees.
 
 ## Requirements
 
-- Both Rokid Nexus hubs 1.4.15 or newer. Badge, measure, track and the
+- Both Rokid Nexus hubs 1.5.0 or newer. Badge, measure, track and the
   urgent beat are activity extras; a hub that does not announce them shows the
   same route without them.
 - Google Maps or Citymapper set to English or French, the two wordings the

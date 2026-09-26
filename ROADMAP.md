@@ -95,7 +95,7 @@ rendered the same motion for ~1.2 cores, +88 MB PSS and 2.2 s to first paint
 against 7.7 % CPU, and its one real advantage (plugin-authored layout) is
 something the activity tier refuses by design.
 
-Since 1.4.15 an activity moves on springs instead: chip, panel and flare are
+Since 1.5.0 an activity moves on springs instead: chip, panel and flare are
 one outline whose edges spring from form to form, with the content revealed
 inside it, the way a phone's notch grows into a live activity. The same
 release lets an activity carry what a route needs without a `nav` kind: a
@@ -209,7 +209,7 @@ by itself when a plugin opens a field, and leaves when it is done. Relay 1.2.4
 offers it from a *Type* chip that appears once dictation has started, and
 Assistant 1.4.7 from its *Input* setting, which can also skip the microphone
 altogether for the places where talking to your glasses is not an option.
-Since 1.4.15 the app behind stays in view while the band carries the field,
+Since 1.5.0 the app behind stays in view while the band carries the field,
 instead of a black screen.
 
 Since 1.4.14 the glasses hold on to Nexus's keyboard, which is the only way
@@ -242,7 +242,7 @@ distance, or the walk to the stop, the line to board, the stops left. Nothing
 is routed by Nexus and no map is drawn; the plugin reads the guidance those
 apps already post as notifications, so it follows whatever route you chose in
 them. Each app has its own switch, so either can be kept off the glasses
-without uninstalling anything. It needs both hubs 1.4.15.
+without uninstalling anything. It needs both hubs 1.5.0.
 
 ### Twelve plugins, none of them built in
 

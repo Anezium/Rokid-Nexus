@@ -1,12 +1,12 @@
 # Changelog
 
-## 1.4.15
+## 1.5.0
 
 ### Upgrade together
 
-Install **both Nexus hubs 1.4.15**, then update Assistant to **1.4.8**.
+Install **both Nexus hubs 1.5.0**, then update Assistant to **1.4.8**.
 **Navigation 0.1.0** is new: it keeps the route Google Maps or Citymapper is
-guiding you on as one activity on the glasses, and needs both hubs 1.4.15.
+guiding you on as one activity on the glasses, and needs both hubs 1.5.0.
 SDK **0.21.0** adds activity extras and `registrationGeneration`; plugin API
 version 3 and grants are unchanged, and a plugin on an older SDK keeps
 working as it did.

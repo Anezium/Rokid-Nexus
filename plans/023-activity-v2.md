@@ -1,6 +1,6 @@
 # Plan 023 — Activity v2 (a panel that fits what it carries)
 
-Status: SHIPPED 2026-09-26 in both hubs 1.4.15 and SDK 0.21.0, together with
+Status: SHIPPED 2026-09-26 in both hubs 1.5.0 and SDK 0.21.0, together with
 Navigation 0.1.0, its first producer. Validated on device: fitted panel,
 badge, measure, track, urgent tone, and the sprung island motion.
 
