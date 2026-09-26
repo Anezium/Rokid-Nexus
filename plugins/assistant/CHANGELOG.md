@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- Uses plugin operations the wearer approves, such as Transit's departures and
+  journey guidance, with a phone hub that routes skills.
+- One shared tool loop for every structured provider: up to four rounds and
+  eight calls per turn within 60 seconds, so a lookup can lead to a dependent
+  call. Built-in once-per-turn guards, calendar deletion included, still hold
+  across rounds.
+- Follow-ups such as "and the one after that?" continue from the departure
+  just mentioned; choices a plugin asks for appear as chips on the answer band.
+
 ## 1.4.8
 
 - **With the assist button, typing keeps to the band.** No full Assistant card

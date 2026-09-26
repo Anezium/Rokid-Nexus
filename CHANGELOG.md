@@ -1,5 +1,43 @@
 # Changelog
 
+## Unreleased — Nexus Skills (plan 024)
+
+Not released. Versions are assigned when this ships. Plugins that publish no
+skill catalog keep working unchanged, and a plugin built with the new SDK
+keeps working on older hubs: every skills call reports the hub as not
+supporting skills instead of sending.
+
+### Phone hub
+
+- **Skills.** A plugin can publish typed operations in a catalog the hub reads
+  without starting it; an approved caller, Assistant first, invokes them
+  through the hub. The hub stamps both identities, validates arguments and
+  results against a bounded schema, hands out opaque expiring references
+  instead of the provider's identifiers, reuses the outcome of an exact
+  duplicate, refuses excess work as busy, and ends every call within 15
+  seconds. A provider is bound for the call only, never opened, and cannot
+  draw, notify, or listen on the strength of it. Revocation, package changes,
+  and a caller or provider going away end calls, and late answers are
+  dropped. The bus inspector shows each outcome without its content.
+- **Per-operation consent.** A provider's Plugin access screen lists its
+  operations with one switch per operation and assistant, all off, under a
+  note that results may reach the assistant's AI provider. A changed
+  operation needs approving again; an invalid catalog shows why instead of
+  failing the plugin.
+- New grants `skills_provider` and `skills_client`, requested through their
+  own metadata keys so older hubs keep loading those plugins. Requesting one
+  returns an installed plugin to Pending for approval.
+
+### Plugin SDK
+
+- Skills for providers (`onNexusSkillInvoked`, `NexusSkillInvocation`) and
+  callers (`requestSkillCatalog`, `invokeSkill`, `cancelSkill`,
+  `closeSkillSession`), gated on `supportsSkills`.
+- `NexusGuidancePlanner`, `NexusGuidanceStep`, and `NexusGuidanceGlyphs`: the
+  guidance-to-activity planner Navigation used, now shared.
+- `holdNexusOngoingWork` / `releaseNexusOngoingWork` for an ongoing process
+  the wearer started, such as journey guidance.
+
 ## 1.5.0
 
 ### Upgrade together

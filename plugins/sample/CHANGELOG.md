@@ -1,5 +1,10 @@
 # Changelog — Sample
 
+## Unreleased
+
+- A copyable skill operation, `count_words`, with its catalog and handler.
+- The demo route runs through the SDK's shared guidance planner.
+
 ## 1.0.4
 
 - Demonstrate activity extras with SDK 0.21.0 and Nexus hubs 1.5.0: a

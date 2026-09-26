@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Plans its activity traffic through the SDK's shared guidance planner and
+  glyphs. No change to what the glasses show; a recorded transcript test pins
+  the traffic.
+
 ## 0.1.0
 
 - First release: Google Maps turn-by-turn and public transport, and
