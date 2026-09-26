@@ -65,6 +65,12 @@
             <meta-data
                 android:name="com.anezium.rokidbus.plugin.LAUNCHABLE"
                 android:value="true" />
+            <!-- Skills: favorites, stop search, departures, and journey guidance for an
+                 approved assistant. Declared here, not in CAPABILITIES, so older hubs still
+                 load Transit. -->
+            <meta-data
+                android:name="com.anezium.rokidbus.plugin.SKILLS"
+                android:resource="@raw/nexus_skills" />
         </service>
     </application>
 </manifest>

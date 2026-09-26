@@ -9,7 +9,7 @@ import java.net.URLEncoder
 import java.time.Instant
 
 class TransitRepository(
-    private val baseUrl: String = "https://api.transitous.org/api/v1",
+    private val baseUrl: String = BASE_URL,
     private val http: (String) -> String = ::getWithRetry,
 ) : TransitRepositorySource {
     override fun nearbyStops(location: TransitCoordinate): List<TransitStop> {
@@ -28,13 +28,33 @@ class TransitRepository(
         return realtime ?: scheduled
     }
 
-    override fun searchStops(query: String): List<TransitStopMatch> {
+    override fun searchStops(query: String): List<TransitStopMatch> =
+        searchStopsUpTo(query, MAX_SEARCH_RESULTS)
+
+    /** Up to [limit] stop matches, so a caller can ask for one more and know a list was cut. */
+    fun searchStopsUpTo(query: String, limit: Int): List<TransitStopMatch> {
         val encodedQuery = URLEncoder.encode(query, Charsets.UTF_8.name())
-        return parseStopMatches(http("$baseUrl/geocode?text=$encodedQuery&type=STOP")).take(MAX_SEARCH_RESULTS)
+        return parseStopMatches(http("$baseUrl/geocode?text=$encodedQuery&type=STOP"), limit)
+    }
+
+    /** Addresses and places for choosing a home, not only stops. */
+    fun geocodePlaces(text: String): List<TransitPlaceMatch> {
+        val encodedText = URLEncoder.encode(text, Charsets.UTF_8.name())
+        return parsePlaceMatches(http("$baseUrl/geocode?text=$encodedText"))
     }
 
     companion object {
-        const val USER_AGENT = "RokidNexus/0.1 (+https://github.com/Anezium)"
+        const val BASE_URL = "https://api.transitous.org/api/v1"
+
+        /**
+         * The service asks every client to identify itself with a contact. Transit sets the
+         * versioned form once its service starts; this default only covers tests and early use.
+         */
+        @Volatile
+        var userAgent: String = userAgentFor("dev")
+
+        fun userAgentFor(versionName: String): String =
+            "RokidNexus-Transit/$versionName (+https://github.com/Anezium)"
 
         fun parseStops(json: String, origin: TransitCoordinate): List<TransitStop> {
             val array = JSONArray(json)
@@ -61,7 +81,7 @@ class TransitRepository(
                 .sortedBy { it.distanceMeters }
         }
 
-        fun parseStopMatches(json: String): List<TransitStopMatch> {
+        fun parseStopMatches(json: String, limit: Int = MAX_SEARCH_RESULTS): List<TransitStopMatch> {
             val array = itemArray(json)
             return (0 until array.length())
                 .mapNotNull { index ->
@@ -83,6 +103,24 @@ class TransitRepository(
                         ),
                         city = defaultCity(item.optJSONArray("areas")),
                     )
+                }
+                .take(limit)
+        }
+
+        fun parsePlaceMatches(json: String): List<TransitPlaceMatch> {
+            val array = itemArray(json)
+            return (0 until array.length())
+                .mapNotNull { index ->
+                    val item = array.optJSONObject(index) ?: return@mapNotNull null
+                    val name = item.optString("name").trim()
+                    val lat = item.optDouble("lat", Double.NaN)
+                    val lon = item.optDouble("lon", Double.NaN)
+                    if (name.isBlank() || lat.isNaN() || lon.isNaN()) return@mapNotNull null
+                    val street = listOf(item.optString("houseNumber"), item.optString("street"))
+                        .filter(String::isNotBlank)
+                        .joinToString(" ")
+                    val label = if (street.isNotBlank() && !name.contains(street)) "$name, $street" else name
+                    TransitPlaceMatch(label, defaultCity(item.optJSONArray("areas")), lat, lon)
                 }
                 .take(MAX_SEARCH_RESULTS)
         }
@@ -107,6 +145,8 @@ class TransitRepository(
                     cancelled = item.optBoolean("cancelled") ||
                         item.optBoolean("tripCancelled") ||
                         place.optBoolean("cancelled"),
+                    realTime = if (item.has("realTime")) item.optBoolean("realTime") else null,
+                    tripId = item.optString("tripId").takeIf { it.isNotBlank() },
                 )
             }
         }
@@ -161,6 +201,33 @@ class TransitRepository(
     }
 }
 
+/**
+ * A GET bounded by an outer deadline, for skill calls: one attempt, and a second only when the
+ * time left still covers it, never waiting past [deadlineAtMs] on the monotonic [clock].
+ */
+internal fun getWithinDeadline(
+    urlText: String,
+    deadlineAtMs: Long,
+    clock: () -> Long = { System.nanoTime() / 1_000_000L },
+): String {
+    var lastFailure: Throwable? = null
+    repeat(2) { attempt ->
+        val remaining = deadlineAtMs - clock()
+        if (remaining < MIN_ATTEMPT_MS) {
+            throw IOException("Transitous request out of time", lastFailure)
+        }
+        try {
+            return getOnce(urlText, timeoutMs = remaining.coerceAtMost(10_000L).toInt())
+        } catch (t: Throwable) {
+            lastFailure = t
+            if (attempt == 0) Thread.sleep(minOf(750L, (deadlineAtMs - clock()).coerceAtLeast(0L) / 4))
+        }
+    }
+    throw IOException(lastFailure?.message ?: "Transitous request failed", lastFailure)
+}
+
+private const val MIN_ATTEMPT_MS = 1_500L
+
 private fun getWithRetry(urlText: String): String {
     var lastFailure: Throwable? = null
     repeat(2) { attempt ->
@@ -174,12 +241,12 @@ private fun getWithRetry(urlText: String): String {
     throw IOException(lastFailure?.message ?: "Transitous request failed", lastFailure)
 }
 
-private fun getOnce(urlText: String): String {
+private fun getOnce(urlText: String, timeoutMs: Int = 10_000): String {
     val connection = (URL(urlText).openConnection() as HttpURLConnection).apply {
-        connectTimeout = 10_000
-        readTimeout = 10_000
+        connectTimeout = timeoutMs
+        readTimeout = timeoutMs
         requestMethod = "GET"
-        setRequestProperty("User-Agent", TransitRepository.USER_AGENT)
+        setRequestProperty("User-Agent", TransitRepository.userAgent)
     }
     return try {
         val status = connection.responseCode
