@@ -10,6 +10,7 @@ import android.text.TextUtils
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.anezium.rokidbus.client.ui.BusTheme
@@ -140,6 +141,15 @@ object PinOverlayRenderer {
      */
     internal class PinPanelView(context: Context) : LinearLayout(context) {
         private val title = row(bold = true)
+        /**
+         * An activity's measure, stacked under the title beside the glyph, in
+         * the room the glyph leaves there. Pins never use it.
+         */
+        private val subtitle = row().apply {
+            setTextColor(BusTheme.phosphor)
+            visibility = View.GONE
+        }
+        private val glyph = ImageView(context).apply { visibility = View.GONE }
         private val lines = List(MAX_LINE_SLOTS) { row() }
 
         init {
@@ -155,7 +165,28 @@ object PinOverlayRenderer {
                 setStroke(BusTheme.dp(context, 1), BusTheme.hairline)
                 cornerRadius = BusTheme.dp(context, 7).toFloat()
             }
-            addView(title, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT))
+            addView(
+                LinearLayout(context).apply {
+                    orientation = HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    addView(
+                        glyph,
+                        LayoutParams(
+                            BusTheme.dp(context, GLYPH_SIZE_DP),
+                            BusTheme.dp(context, GLYPH_SIZE_DP),
+                        ).apply { marginEnd = BusTheme.dp(context, 6) },
+                    )
+                    addView(
+                        LinearLayout(context).apply {
+                            orientation = VERTICAL
+                            addView(title, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT))
+                            addView(subtitle, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT))
+                        },
+                        LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT),
+                    )
+                },
+                LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT),
+            )
             lines.forEachIndexed { index, line ->
                 addView(
                     line,
@@ -181,6 +212,7 @@ object PinOverlayRenderer {
             lineContent: List<com.anezium.rokidbus.shared.PinSurfaceLine>,
             size: PinSurfaceSize,
             leadingGlyph: Drawable?,
+            subtitleText: String? = null,
         ) {
             val medium = size == PinSurfaceSize.MEDIUM
             val maxWidthPx = (
@@ -192,14 +224,30 @@ object PinOverlayRenderer {
             title.maxWidth = maxWidthPx
             title.text = titleText.orEmpty()
             title.visibility = visibleIf(!titleText.isNullOrEmpty())
-            leadingGlyph?.setBounds(
-                0,
-                0,
-                BusTheme.dp(context, GLYPH_SIZE_DP),
-                BusTheme.dp(context, GLYPH_SIZE_DP),
-            )
-            title.compoundDrawablePadding = if (leadingGlyph == null) 0 else BusTheme.dp(context, 6)
-            title.setCompoundDrawables(leadingGlyph, null, null, null)
+            // With a subtitle the glyph stands beside both rows; without one it
+            // stays the title's compound drawable, exactly as pins always drew.
+            val stacked = leadingGlyph != null && !subtitleText.isNullOrEmpty()
+            if (stacked) {
+                title.compoundDrawablePadding = 0
+                title.setCompoundDrawables(null, null, null, null)
+                glyph.setImageDrawable(leadingGlyph)
+                glyph.visibility = View.VISIBLE
+            } else {
+                glyph.setImageDrawable(null)
+                glyph.visibility = View.GONE
+                leadingGlyph?.setBounds(
+                    0,
+                    0,
+                    BusTheme.dp(context, GLYPH_SIZE_DP),
+                    BusTheme.dp(context, GLYPH_SIZE_DP),
+                )
+                title.compoundDrawablePadding = if (leadingGlyph == null) 0 else BusTheme.dp(context, 6)
+                title.setCompoundDrawables(leadingGlyph, null, null, null)
+            }
+            subtitle.textSize = if (medium) MEDIUM_LINE_SP else SMALL_LINE_SP
+            subtitle.maxWidth = maxWidthPx
+            subtitle.text = subtitleText.orEmpty()
+            subtitle.visibility = visibleIf(stacked)
 
             lines.forEachIndexed { index, view ->
                 val line = lineContent.getOrNull(index)?.takeIf { index < size.maxLines }

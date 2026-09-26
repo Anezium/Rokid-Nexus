@@ -14,6 +14,7 @@ data class GlassesHubCapabilities(
     val activitySurfaceVersion: Int = 0,
     val inkSurfaceVersion: Int = 0,
     val editableSurfaceVersion: Int = 0,
+    val activityExtrasVersion: Int = 0,
     val maxImageBytes: Int,
     val versionName: String?,
     val setupComplete: Boolean = false,
@@ -47,6 +48,7 @@ object GlassesHubCapabilitiesContract {
         activitySurfaceVersion: Int = 0,
         inkSurfaceVersion: Int = 0,
         editableSurfaceVersion: Int = 0,
+        activityExtrasVersion: Int = 0,
         maxImageBytes: Int,
         versionName: String?,
         setupComplete: Boolean = false,
@@ -70,6 +72,7 @@ object GlassesHubCapabilitiesContract {
         activitySurfaceVersion = activitySurfaceVersion,
         inkSurfaceVersion = inkSurfaceVersion,
         editableSurfaceVersion = editableSurfaceVersion,
+        activityExtrasVersion = activityExtrasVersion,
         maxImageBytes = maxImageBytes,
         versionName = normalizeVersionName(versionName),
         setupComplete = setupComplete,
@@ -95,6 +98,7 @@ object GlassesHubCapabilitiesContract {
         .put("activitySurfaceVersion", capabilities.activitySurfaceVersion)
         .put("inkSurfaceVersion", capabilities.inkSurfaceVersion)
         .put("editableSurfaceVersion", capabilities.editableSurfaceVersion)
+        .put("activityExtrasVersion", capabilities.activityExtrasVersion)
         .put("maxImageBytes", capabilities.maxImageBytes)
         .put("setupComplete", capabilities.setupComplete)
         .put("setupFailureState", capabilities.setupFailureState)
@@ -124,6 +128,7 @@ object GlassesHubCapabilitiesContract {
         activitySurfaceVersion = payload.optInt("activitySurfaceVersion", 0),
         inkSurfaceVersion = payload.optInt("inkSurfaceVersion", 0),
         editableSurfaceVersion = payload.optInt("editableSurfaceVersion", 0),
+        activityExtrasVersion = payload.optInt("activityExtrasVersion", 0),
         maxImageBytes = payload.optInt("maxImageBytes", 0),
         versionName = normalizeVersionName(payload.optString("versionName", "")),
         setupComplete = payload.optBoolean("setupComplete", false),
@@ -153,6 +158,17 @@ object GlassesHubCapabilitiesContract {
         capabilities.protocolVersion == VERSION &&
             capabilities.features and BusCapabilityBits.EDITABLE_SURFACE != 0 &&
             capabilities.editableSurfaceVersion == EditableSurfaceContract.VERSION
+
+    /**
+     * Activity extras ride on activity v1: glasses without the base tier, or
+     * announcing an extras version this build does not know, get plain v1.
+     */
+    fun supportsActivityExtras(capabilities: GlassesHubCapabilities): Boolean =
+        capabilities.protocolVersion == VERSION &&
+            capabilities.features and BusCapabilityBits.ACTIVITY_SURFACE != 0 &&
+            capabilities.activitySurfaceVersion == ActivitySurfaceContract.VERSION &&
+            capabilities.features and BusCapabilityBits.ACTIVITY_EXTRAS != 0 &&
+            capabilities.activityExtrasVersion == ActivitySurfaceContract.EXTRAS_VERSION
 
     fun effectiveStage(capabilities: GlassesHubCapabilities): String =
         SetupStage.normalize(capabilities.setupStage).ifBlank {

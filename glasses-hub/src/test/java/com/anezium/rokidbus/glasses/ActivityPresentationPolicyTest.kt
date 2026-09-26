@@ -230,19 +230,4 @@ class ActivityPresentationPolicyTest {
         assertFalse(allocated.containsKey("d"))
         assertFalse(allocated.values.contains(PinSurfacePosition.BOTTOM_RIGHT))
     }
-
-    @Test
-    fun `flare expansion and collapse translations are exact reverses`() {
-        val translation = activityFlareTranslation(
-            nodeCenterX = 36f,
-            nodeCenterY = 52f,
-            bandCenterX = 240f,
-            bandCenterY = 48f,
-        )
-
-        assertEquals(204f, translation.nodeToBandX)
-        assertEquals(-4f, translation.nodeToBandY)
-        assertEquals(-204f, translation.bandToNodeX)
-        assertEquals(4f, translation.bandToNodeY)
-    }
 }

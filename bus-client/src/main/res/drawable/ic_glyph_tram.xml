@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Tram front: the pantograph on the roof tells it from a bus. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
+    <path android:pathData="M8.5,2.5 L15.5,2.5 M12,2.5 L12,5 M6.5,5 L17.5,5 Q20,5 20,7.5 L20,17 L4,17 L4,7.5 Q4,5 6.5,5 Z M4,11 L20,11 M8,17 L6.5,20.5 M16,17 L17.5,20.5"
+        android:strokeColor="#FF4DFF8C" android:strokeWidth="1.7" android:strokeLineCap="round" android:strokeLineJoin="round" />
+</vector>

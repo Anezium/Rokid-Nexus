@@ -378,6 +378,91 @@ class ActivityStateMachineTest {
         assertEquals(ActivityPresentation.CHIP, snapshotPrimaryPresentation(alwaysExpanded = false))
     }
 
+    @Test
+    fun `urgent flares through a spent flare budget once a minute`() {
+        state.start("nav:activity", "nav", 1, content("3 stops"), now)
+        state.update("nav:activity", 2, ActivitySurfacePatch(significant = true), now)
+        assertEquals(ActivityPresentation.FLARE, urgentEvent(urgent = false).presentation)
+
+        // Five seconds later the ordinary budget is spent, but "get off at the
+        // next stop" is not swallowed by the maneuver flare before it.
+        now += 5_000L
+        state.update(
+            "nav:activity",
+            3,
+            ActivitySurfacePatch(significant = true, urgent = true),
+            now,
+        )
+        val urgent = urgentEvent(urgent = true)
+        assertEquals(ActivityPresentation.FLARE, urgent.presentation)
+        assertTrue(urgent.urgent)
+        val rendered = state.snapshot(
+            nowMs = now,
+            context = ActivityPresentationContext.IDLE_OR_NATIVE_HOME,
+            pinCorner = null,
+            alwaysExpanded = false,
+            eventSurfaceId = "nav:activity",
+            eventPresentation = urgent.presentation,
+            eventUrgent = urgent.urgent,
+        ).primary
+        assertTrue(rendered?.urgent == true)
+
+        // A second urgent inside the minute is an ordinary significant update.
+        now += 30_000L
+        val throttled = urgentEvent(urgent = true)
+        assertEquals(ActivityPresentation.FLARE, throttled.presentation)
+        assertTrue(!throttled.urgent)
+
+        now += 5_000L
+        val spent = urgentEvent(urgent = true)
+        assertEquals(ActivityPresentation.PULSE, spent.presentation)
+        assertTrue(!spent.urgent)
+
+        now += 25_000L
+        assertTrue(urgentEvent(urgent = true).urgent)
+    }
+
+    @Test
+    fun `urgent is never drawn under the camera or for a non-primary activity`() {
+        state.start("nav:activity", "nav", 1, content("3 stops"), now)
+        assertEquals(
+            ActivityEventPresentation(ActivityPresentation.HIDDEN),
+            state.presentEvent(
+                "nav:activity",
+                ActivityPresentationContext.CAMERA_OVERLAY,
+                significant = true,
+                urgent = true,
+                nowMs = now,
+                alwaysExpanded = false,
+            ),
+        )
+        // Hidden spent nothing, so the next real urgent event is honoured.
+        assertTrue(urgentEvent(urgent = true).urgent)
+
+        state.start("ride:activity", "ride", 2, content("4 min"), now)
+        state.update("ride:activity", 3, ActivitySurfacePatch(significant = true), now)
+        assertEquals(
+            ActivityEventPresentation(ActivityPresentation.PULSE),
+            state.presentEvent(
+                "nav:activity",
+                ActivityPresentationContext.IDLE_OR_NATIVE_HOME,
+                significant = true,
+                urgent = true,
+                nowMs = now + 60_000L,
+                alwaysExpanded = false,
+            ),
+        )
+    }
+
+    private fun urgentEvent(urgent: Boolean) = state.presentEvent(
+        "nav:activity",
+        ActivityPresentationContext.IDLE_OR_NATIVE_HOME,
+        significant = true,
+        urgent = urgent,
+        nowMs = now,
+        alwaysExpanded = false,
+    )
+
     private fun snapshotPrimaryPresentation(alwaysExpanded: Boolean) =
         state.snapshot(
             nowMs = now,

@@ -225,6 +225,100 @@ class NexusActivityTest {
     }
 
     @Test
+    fun `extras are reported only with both bits and never refused`() {
+        val v1 = approvedFixture()
+        assertFalse(v1.client.supportsActivityExtras)
+        // An extras-bearing activity still goes out; a v1 hub drops the fields.
+        assertEquals(
+            NexusSdkResult.SENT,
+            v1.client.startActivity(activity().copy(badge = "38")),
+        )
+
+        val extrasOnly = approvedFixture(featureBits = BusCapabilityBits.ACTIVITY_EXTRAS)
+        assertFalse(extrasOnly.client.supportsActivityExtras)
+
+        val capable = approvedFixture(
+            featureBits = BusCapabilityBits.ACTIVITY_SURFACE or BusCapabilityBits.ACTIVITY_EXTRAS,
+        )
+        assertTrue(capable.client.supportsActivityExtras)
+    }
+
+    @Test
+    fun `badge track and urgent reach the wire in the contract shape`() {
+        val fixture = approvedFixture(
+            featureBits = BusCapabilityBits.ACTIVITY_SURFACE or BusCapabilityBits.ACTIVITY_EXTRAS,
+        )
+        val ride = NexusActivity(
+            glyph = "bus",
+            primary = "3 stops",
+            progress = NexusActivityProgress.Percent(55),
+            badge = "  38 ",
+            track = NexusActivityTrack(count = 5, at = 2, target = 4, label = " Luxembourg "),
+        )
+
+        assertEquals(NexusSdkResult.SENT, fixture.client.startActivity(ride))
+        val start = fixture.transport.sends.last().second
+        assertEquals("38", start.getString("badge"))
+        assertEquals("Luxembourg", start.getJSONObject("track").getString("label"))
+        assertEquals(55, start.getInt("progress"))
+
+        assertEquals(
+            NexusSdkResult.SENT,
+            fixture.client.updateActivity(ride, significant = true, urgent = true),
+        )
+        assertEquals("urgent", fixture.transport.sends.last().second.getString("tone"))
+
+        assertEquals(
+            NexusSdkResult.INVALID_PAYLOAD,
+            fixture.client.updateActivity(ride, significant = false, urgent = true),
+        )
+    }
+
+    @Test
+    fun `extras models enforce their caps`() {
+        assertThrows(IllegalArgumentException::class.java) {
+            activity().copy(badge = "RER B1")
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            activity().copy(measure = "1,25 km a")
+        }
+        assertEquals("250 m", activity().copy(measure = " 250 m ").toStartPayload().getString("measure"))
+        assertTrue(activity().toUpdatePayload(significant = false).isNull("measure"))
+        assertThrows(IllegalArgumentException::class.java) {
+            NexusActivityTrack(count = 1, at = 0, target = 0)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            NexusActivityTrack(count = 13, at = 0, target = 1)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            NexusActivityTrack(count = 5, at = 3, target = 2)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            NexusActivityTrack(count = 5, at = 0, target = 1, label = "x".repeat(21))
+        }
+    }
+
+    @Test
+    fun `registration generation counts registrations, not their repeated approval`() {
+        val fixture = fixture()
+        assertEquals(0, fixture.client.registrationGeneration)
+
+        fixture.transport.listener.onRegistrationState(PluginRegistrationResult.APPROVED)
+        fixture.transport.listener.onMessage(
+            BusPaths.PLUGIN_REGISTRATION,
+            "registration",
+            pluginPayload()
+                .put("result", PluginRegistrationResult.APPROVED)
+                .put("capabilities", "surfaces"),
+        )
+        assertEquals(1, fixture.client.registrationGeneration)
+
+        // A reconnect registers again.
+        fixture.transport.listener.onRegistrationState(PluginRegistrationResult.APPROVED)
+        assertEquals(2, fixture.client.registrationGeneration)
+    }
+
+    @Test
     fun `activity can start immediately on approval before a link callback`() {
         val fixture = fixture()
         fixture.transport.featureBits = BusCapabilityBits.ACTIVITY_SURFACE

@@ -1,0 +1,31 @@
+<resources>
+    <string name="app_name">Navigation</string>
+    <!-- Shown on the glasses when a navigation app reports arrival; at most 12 characters. -->
+    <string name="nav_arrived">Arrived</string>
+    <!-- A departure due now; at most 12 characters. -->
+    <string name="nav_now">Now</string>
+
+    <string name="nav_card_eta">Arrival %1$s</string>
+    <string name="nav_card_no_access">Allow notification access: Rokid Nexus on your phone, Navigation settings.</string>
+    <string name="nav_card_idle">No route. Start navigating in Google Maps or Citymapper and it appears here.</string>
+    <string name="nav_card_off">Navigation is switched off in its settings on your phone.</string>
+
+    <string name="nav_settings_subtitle">Google Maps and Citymapper on your glasses</string>
+    <string name="nav_settings_glasses">On the glasses</string>
+    <string name="nav_settings_enabled">Navigation</string>
+    <string name="nav_settings_enabled_sub">Off, no route reaches the glasses and a live one ends now.</string>
+    <string name="nav_settings_maps_sub">Turn-by-turn from Google Maps navigation</string>
+    <string name="nav_settings_citymapper_sub">Steps, stops and departures from Citymapper GO</string>
+    <string name="nav_settings_access">Notification access</string>
+    <string name="nav_settings_access_title">Read navigation guidance</string>
+    <string name="nav_settings_access_sub">Navigation reads only Google Maps and Citymapper guidance. Every other notification is ignored before it is read.</string>
+    <string name="nav_settings_access_on">Allowed</string>
+    <string name="nav_settings_access_off">Not allowed yet: tap above</string>
+    <string name="nav_settings_route">Route</string>
+    <string name="nav_settings_how">Start a route in Google Maps (navigation) or Citymapper (GO). The glasses follow it as an activity: the next step, the distance, the stops left, and when you arrive.</string>
+    <string name="nav_settings_route_live">%1$s: %2$s</string>
+    <string name="nav_settings_route_idle">No route right now</string>
+    <string name="nav_settings_route_off">Switched off</string>
+    <string name="nav_settings_not_approved">Approve Navigation in Rokid Nexus, Plugin access</string>
+    <string name="nav_settings_plugin">Plugin</string>
+</resources>

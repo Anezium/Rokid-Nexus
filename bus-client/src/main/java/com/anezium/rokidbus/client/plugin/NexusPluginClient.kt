@@ -63,6 +63,18 @@ class NexusPluginClient internal constructor(
     val isApproved: Boolean
         get() = registrationState == PluginRegistrationResult.APPROVED
 
+    /**
+     * How many times this client has registered with the hub. Approval is
+     * reported twice for one registration (at once, then again with its
+     * capability metadata) and again after every reconnect, and a reconnect is
+     * not reported otherwise. A plugin that keeps state on the hub, such as a
+     * started activity, compares this number to tell a new registration, which
+     * holds nothing yet, from the repeated report of the current one.
+     */
+    @Volatile
+    var registrationGeneration: Int = 0
+        private set
+
     fun hasCapability(capability: PluginCapability): Boolean =
         isApproved && capability in approvedCapabilities
 
@@ -202,6 +214,15 @@ class NexusPluginClient internal constructor(
     val supportsActivitySurface: Boolean
         get() = hubCapabilities and BusCapabilityBits.ACTIVITY_SURFACE != 0
 
+    /**
+     * Whether both hubs understand activity extras: [NexusActivity.badge],
+     * [NexusActivity.track], and the urgent tone. Without it those fields are
+     * dropped and the activity renders as v1; nothing is refused.
+     */
+    val supportsActivityExtras: Boolean
+        get() = supportsActivitySurface &&
+            hubCapabilities and BusCapabilityBits.ACTIVITY_EXTRAS != 0
+
     /** Whether the current glasses/link announced TTS protocol v1. */
     val supportsTts: Boolean
         get() = currentLinkState and (LinkStateBits.CXR_CONTROL_UP or LinkStateBits.SPP_DATA_UP) != 0 &&
@@ -223,12 +244,18 @@ class NexusPluginClient internal constructor(
         }
     }
 
+    /**
+     * [urgent] marks a time-critical transition ("get off at the next stop")
+     * and is only valid together with [significant]. The platform decides how
+     * it looks and how often it is honoured.
+     */
     fun updateActivity(
         activity: NexusActivity,
         significant: Boolean = false,
+        urgent: Boolean = false,
     ): NexusSdkResult {
         activityPreflight()?.let { return it }
-        val payload = activity.toUpdatePayload(significant)
+        val payload = activity.toUpdatePayload(significant, urgent)
         if (
             ActivitySurfaceContract.validateUpdate(payload) !is
             ActivitySurfacePatchResult.Valid
@@ -464,6 +491,7 @@ class NexusPluginClient internal constructor(
 
     override fun onRegistrationState(result: Int) {
         if (closed) return
+        registrationGeneration++
         clearNoticeContext()
         noticeApprovalAwaitingMetadata = result == PluginRegistrationResult.APPROVED
         applyRegistrationState(result)

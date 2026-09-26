@@ -1,7 +1,6 @@
 package com.anezium.rokidbus.glasses
 
 import android.animation.ValueAnimator
-import android.view.View
 import android.view.animation.Interpolator
 import android.view.animation.PathInterpolator
 
@@ -25,7 +24,7 @@ import android.view.animation.PathInterpolator
  */
 object HudMotion {
 
-    /** A value refreshing in place: the pulse, a number ticking over. */
+    /** A value refreshing in place: a number ticking over. */
     const val MICRO_MS = 180L
 
     /** A panel arriving, leaving its anchor, or changing shape. */
@@ -43,9 +42,6 @@ object HudMotion {
     /** Fast-out-linear-in. Everything leaving. */
     val exit: Interpolator = PathInterpolator(0.4f, 0f, 1f, 1f)
 
-    /** Symmetric ease for a value that goes out and comes straight back. */
-    val pulse: Interpolator = PathInterpolator(0.4f, 0f, 0.2f, 1f)
-
     /**
      * Global kill switch. When false every [HudMotionValue] lands on its target
      * instantly and the HUD behaves exactly as it did before this layer existed.
@@ -54,24 +50,6 @@ object HudMotion {
      */
     @Volatile
     var enabled: Boolean = true
-
-    /** Scales the chip up and back down as its value refreshes. */
-    fun pulse(view: View, peak: Float = 1.12f) {
-        if (!enabled) return
-        view.animate().cancel()
-        view.scaleX = 1f
-        view.scaleY = 1f
-        ValueAnimator.ofFloat(1f, peak, 1f).apply {
-            duration = MICRO_MS
-            interpolator = pulse
-            addUpdateListener {
-                val scale = it.animatedValue as Float
-                view.scaleX = scale
-                view.scaleY = scale
-            }
-            start()
-        }
-    }
 }
 
 /**

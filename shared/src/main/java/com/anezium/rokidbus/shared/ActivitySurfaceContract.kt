@@ -37,6 +37,19 @@ data class ActivityAction(
     val label: String,
 )
 
+/**
+ * A row of ordered positions: stops on a line, stages of a delivery.
+ *
+ * [at] is where the process is now and [target] is where the wearer is headed;
+ * both index one of [count] positions, with `at <= target`.
+ */
+data class ActivityTrack(
+    val count: Int,
+    val at: Int,
+    val target: Int,
+    val label: String? = null,
+)
+
 /** Canonical, presentation-free state of one live activity. */
 data class ActivitySurfaceContent(
     val glyph: String,
@@ -49,6 +62,16 @@ data class ActivitySurfaceContent(
     val maxDurationMs: Long?,
     /** Start-time opt-in; only a later significant update may use it. */
     val wakeDisplay: Boolean = false,
+    /** Extras: a short line or route mark drawn in the glyph's place. */
+    val badge: String? = null,
+    /**
+     * Extras: a second quantity that belongs with [primary], such as the
+     * distance of a walk timed in minutes. Beside the primary when expanded,
+     * under it in the chip.
+     */
+    val measure: String? = null,
+    /** Extras: drawn instead of [progress] by glasses that announce extras. */
+    val track: ActivityTrack? = null,
 )
 
 /**
@@ -67,7 +90,12 @@ data class ActivitySurfacePatch(
     val eta: ActivityField<String?>? = null,
     val detail: ActivityField<List<String>>? = null,
     val actions: ActivityField<List<ActivityAction>>? = null,
+    val badge: ActivityField<String?>? = null,
+    val measure: ActivityField<String?>? = null,
+    val track: ActivityField<ActivityTrack?>? = null,
     val significant: Boolean = false,
+    /** Transient like [significant], and only valid together with it. */
+    val urgent: Boolean = false,
 ) {
     fun applyTo(content: ActivitySurfaceContent): ActivitySurfaceContent = content.copy(
         glyph = if (glyph != null) glyph.value else content.glyph,
@@ -77,6 +105,9 @@ data class ActivitySurfacePatch(
         eta = if (eta != null) eta.value else content.eta,
         detail = if (detail != null) detail.value else content.detail,
         actions = if (actions != null) actions.value else content.actions,
+        badge = if (badge != null) badge.value else content.badge,
+        measure = if (measure != null) measure.value else content.measure,
+        track = if (track != null) track.value else content.track,
     )
 }
 
@@ -90,10 +121,17 @@ sealed interface ActivitySurfacePatchResult {
     data class Invalid(val reason: String) : ActivitySurfacePatchResult
 }
 
-/** Pure activity-surface v1 validation and normalization with no Android dependencies. */
+/** Pure activity-surface validation and normalization with no Android dependencies. */
 object ActivitySurfaceContract {
     const val KIND = "activity"
     const val VERSION = 1
+
+    /**
+     * Optional fields beyond v1: badge, measure, track, and the urgent tone. Announced
+     * separately because both hubs match [VERSION] exactly; raising it would
+     * disable activities between a new and an old hub.
+     */
+    const val EXTRAS_VERSION = 1
     const val LOCAL_SURFACE_ID = "activity"
     /** Hub-only reconnect marker. The leading '@' is not legal in a plugin id. */
     const val EMPTY_ASSERT_OWNER_PLUGIN_ID = "@nexus-hub"
@@ -105,6 +143,12 @@ object ActivitySurfaceContract {
     const val MAX_DETAIL_CHARS = 32
     const val MAX_ACTIONS = 3
     const val MAX_ACTIVE_ACTIVITIES = 2
+    const val MAX_BADGE_CHARS = 5
+    const val MAX_MEASURE_CHARS = 8
+    const val MIN_TRACK_COUNT = 2
+    const val MAX_TRACK_COUNT = 12
+    const val MAX_TRACK_LABEL_CHARS = 20
+    const val TONE_URGENT = "urgent"
 
     const val MIN_MAX_DURATION_MS = 60_000L
     const val MAX_MAX_DURATION_MS = 43_200_000L
@@ -180,7 +224,23 @@ object ActivitySurfaceContract {
             is Boolean -> value
             else -> return invalid("wakeDisplay must be a boolean")
         }
+        val badge = when (val result = readText(payload, "badge", MAX_BADGE_CHARS)) {
+            is ReadResult.Present -> result.value
+            is ReadResult.Invalid -> return invalid(result.reason)
+            ReadResult.Absent -> null
+        }
+        val measure = when (val result = readText(payload, "measure", MAX_MEASURE_CHARS)) {
+            is ReadResult.Present -> result.value
+            is ReadResult.Invalid -> return invalid(result.reason)
+            ReadResult.Absent -> null
+        }
+        val track = when (val result = readTrack(payload, "track")) {
+            is ReadResult.Present -> result.value
+            is ReadResult.Invalid -> return invalid(result.reason)
+            ReadResult.Absent -> null
+        }
         if (payload.has("significant")) return invalid("significant is update-only")
+        if (payload.has("tone")) return invalid("tone is update-only")
 
         return ActivitySurfaceValidationResult.Valid(
             ActivitySurfaceContent(
@@ -193,6 +253,9 @@ object ActivitySurfaceContract {
                 actions = actions,
                 maxDurationMs = maxDurationMs,
                 wakeDisplay = wakeDisplay,
+                badge = badge,
+                measure = measure,
+                track = track,
             ),
         )
     }
@@ -243,11 +306,32 @@ object ActivitySurfaceContract {
             is ReadResult.Invalid -> return patchInvalid(result.reason)
             ReadResult.Absent -> null
         }
+        val badge = when (val result = readText(payload, "badge", MAX_BADGE_CHARS)) {
+            is ReadResult.Present -> ActivityField(result.value)
+            is ReadResult.Invalid -> return patchInvalid(result.reason)
+            ReadResult.Absent -> null
+        }
+        val measure = when (val result = readText(payload, "measure", MAX_MEASURE_CHARS)) {
+            is ReadResult.Present -> ActivityField(result.value)
+            is ReadResult.Invalid -> return patchInvalid(result.reason)
+            ReadResult.Absent -> null
+        }
+        val track = when (val result = readTrack(payload, "track")) {
+            is ReadResult.Present -> ActivityField(result.value)
+            is ReadResult.Invalid -> return patchInvalid(result.reason)
+            ReadResult.Absent -> null
+        }
         val significant = when (val value = payload.opt("significant")) {
             null -> false
             is Boolean -> value
             else -> return patchInvalid("significant must be a boolean")
         }
+        val urgent = when (val value = payload.opt("tone")) {
+            null -> false
+            TONE_URGENT -> true
+            else -> return patchInvalid("tone must be $TONE_URGENT")
+        }
+        if (urgent && !significant) return patchInvalid("urgent tone requires significant")
 
         return ActivitySurfacePatchResult.Valid(
             ActivitySurfacePatch(
@@ -258,7 +342,11 @@ object ActivitySurfaceContract {
                 eta = eta,
                 detail = detail,
                 actions = actions,
+                badge = badge,
+                measure = measure,
+                track = track,
                 significant = significant,
+                urgent = urgent,
             ),
         )
     }
@@ -279,6 +367,9 @@ object ActivitySurfaceContract {
                 put("maxDurationMs", it.coerceIn(MIN_MAX_DURATION_MS, MAX_MAX_DURATION_MS))
             }
             if (content.wakeDisplay) put("wakeDisplay", true)
+            content.badge?.let { put("badge", it) }
+            content.measure?.let { put("measure", it) }
+            content.track?.let { put("track", trackJson(it)) }
         }
 
     /**
@@ -289,6 +380,7 @@ object ActivitySurfaceContract {
         surfaceId: String,
         content: ActivitySurfaceContent,
         significant: Boolean,
+        urgent: Boolean = false,
     ): JSONObject = JSONObject()
         .put("surfaceId", surfaceId)
         .put("kind", KIND)
@@ -299,8 +391,12 @@ object ActivitySurfaceContract {
         .put("eta", content.eta ?: JSONObject.NULL)
         .put("detail", detailJson(content.detail))
         .put("actions", actionsJson(content.actions))
+        .put("badge", content.badge ?: JSONObject.NULL)
+        .put("measure", content.measure ?: JSONObject.NULL)
+        .put("track", content.track?.let(::trackJson) ?: JSONObject.NULL)
         .apply {
             if (significant) put("significant", true)
+            if (urgent) put("tone", TONE_URGENT)
         }
 
     fun actionPayload(surfaceId: String, actionId: String): JSONObject = JSONObject()
@@ -428,6 +524,37 @@ object ActivitySurfaceContract {
         return ReadResult.Present(actions)
     }
 
+    private fun readTrack(payload: JSONObject, key: String): ReadResult<ActivityTrack?> {
+        if (!payload.has(key)) return ReadResult.Absent
+        val raw = payload.opt(key)
+        if (raw == JSONObject.NULL) return ReadResult.Present(null)
+        val track = raw as? JSONObject ?: return ReadResult.Invalid("$key must be an object")
+        val count = (track.opt("count") as? Number)?.let(::integerLong)
+            ?.takeIf { it in MIN_TRACK_COUNT..MAX_TRACK_COUNT }
+            ?: return ReadResult.Invalid(
+                "$key count must be an integer from $MIN_TRACK_COUNT to $MAX_TRACK_COUNT",
+            )
+        val at = (track.opt("at") as? Number)?.let(::integerLong)
+            ?.takeIf { it in 0 until count }
+            ?: return ReadResult.Invalid("$key at must index one of its positions")
+        val target = (track.opt("target") as? Number)?.let(::integerLong)
+            ?.takeIf { it in at until count }
+            ?: return ReadResult.Invalid("$key target must be a position at or after at")
+        val label = when (val result = readText(track, "label", MAX_TRACK_LABEL_CHARS)) {
+            is ReadResult.Present -> result.value
+            is ReadResult.Invalid -> return ReadResult.Invalid("$key ${result.reason}")
+            ReadResult.Absent -> null
+        }
+        return ReadResult.Present(
+            ActivityTrack(
+                count = count.toInt(),
+                at = at.toInt(),
+                target = target.toInt(),
+                label = label,
+            ),
+        )
+    }
+
     private fun readMaxDuration(payload: JSONObject): ReadResult<Long?> {
         if (!payload.has("maxDurationMs")) return ReadResult.Absent
         return when (val raw = payload.opt("maxDurationMs")) {
@@ -445,6 +572,12 @@ object ActivitySurfaceContract {
         is ActivityProgress.Percent -> progress.value
         ActivityProgress.Indeterminate -> "indeterminate"
     }
+
+    private fun trackJson(track: ActivityTrack): JSONObject = JSONObject()
+        .put("count", track.count)
+        .put("at", track.at)
+        .put("target", track.target)
+        .apply { track.label?.let { put("label", it) } }
 
     private fun detailJson(detail: List<String>): JSONArray =
         JSONArray().apply { detail.forEach(::put) }

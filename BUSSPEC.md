@@ -1372,19 +1372,26 @@ checks.
 
 ### Platform presentations
 
-The same activity state can appear in five ways:
+The same activity state can appear in five ways. Chip, panel, and flare are
+forms of one island: a single outline, drawn only by the glasses, whose edges
+spring from one form's bounds to the next while the content of each form is
+revealed inside it. The outgoing content fades out first, so two forms never
+show at once. Every transition is glasses-local.
 
 - **chip** — the ambient corner form, delegated to the medium pin panel view:
   glyph plus `primary` on the title row and `secondary` below.
-- **panel** — the expanded form: large glyph, `primary` at 24sp,
+- **panel** — the expanded form: large glyph, `primary` at up to 24sp,
   `secondary` at 13sp, trailing `eta`, progress when present, detail at 11sp,
   and the action row. It uses a pure-black background and the shared hairline
-  border.
-- **flare** — a significant update morphs the chip from its corner into the
-  shared notice-band geometry over about 280 ms, holds for about 3.5 s, and
-  reverse-collapses over about 240 ms.
-- **pulse** — a minor or throttled update scales the chip
-  `1.0 -> 1.12 -> 1.0` over about 180 ms.
+  border. `primary` is fitted rather than ellipsized: it shrinks to 20sp beside
+  the ETA, and if it still does not fit, the ETA moves to the end of the
+  secondary row and `primary` takes the largest size from 24sp down to 16sp
+  that fits alone.
+- **flare** — a significant update springs the island from its corner into
+  the shared notice-band geometry in about 0.4 s, holds for about 3.5 s, and
+  folds back into the activity's steady form.
+- **pulse** — a minor or throttled update swells the island's outline by a few
+  pixels and lets it spring back.
 - **hidden** — while the camera overlay is visible.
 
 Presentation selection is a pure hub policy. In priority order:
@@ -1411,6 +1418,58 @@ scale, fade, clip, and crossfade inside it. It never animates window layout
 parameters, requests focus, claims touch, keeps the screen on, or wakes the
 display outside the global wake policy. Activity v1 has no plan-014 glance
 layer.
+
+### Activity extras
+
+Extras are optional fields on the same activity object. Glasses that draw them
+announce feature bit `4096` (`ACTIVITY_EXTRAS`) and `activityExtrasVersion: 1`
+next to the unchanged `activitySurfaceVersion: 1`. The v1 version is not raised
+because both hubs match it exactly: a new number would switch activities off
+between a new and an old hub. The phone hub exposes bit `4096` to plugins only
+while the glasses announced both the v1 tier and extras version 1.
+
+```json
+{
+  "kind": "activity",
+  "glyph": "bus",
+  "badge": "38",
+  "primary": "3 stops",
+  "secondary": "Get off at Luxembourg",
+  "progress": 55,
+  "track": {"count": 5, "at": 2, "target": 4, "label": "Luxembourg"}
+}
+```
+
+- `badge` is optional and at most 5 characters: a line or route mark drawn as
+  an outlined plate in the glyph's place in the panel and the flare. The chip
+  keeps `glyph`, which stays required.
+- `measure` is optional and at most 8 characters: a second quantity that
+  belongs with `primary`, such as a walk's distance next to its minutes
+  ("250 m"). The panel and the flare draw `primary - measure` as one fitted
+  value; the chip stacks `measure` under `primary`, beside the glyph, and keeps
+  `secondary` on its line below.
+- `track` is optional: `count` from 2 through 12, `at` from 0 through
+  `count - 1`, `target` from `at` through `count - 1`, and an optional `label`
+  of at most 20 characters naming the target. It is drawn as a row of dots
+  instead of the progress bar. Plugins should keep sending `progress`, which
+  glasses without extras draw.
+- `tone` is update-only and transient like `significant`. Its only value is
+  `"urgent"`, and it is valid only together with `significant: true`. An urgent
+  flare has a bright phosphor outline that beats once the band has arrived; its
+  content stays the ordinary band. It has
+  its own budget of one per activity per 60 seconds, independent of the
+  10-second flare budget, so a time-critical transition is not swallowed by an
+  ordinary flare just before it. A throttled urgent update is handled as an
+  ordinary significant one. Urgency never changes the wake rules.
+- On `/activity/update`, `badge`, `measure`, and `track` follow patch semantics; the typed
+  SDK sends explicit nulls when they are cleared. `tone` is never stored or
+  replayed.
+- Every value is the plugin's last report. The glasses never advance a track,
+  tick a countdown, or estimate a value between updates.
+
+Glasses without extras ignore these fields. A phone hub without extras
+re-serializes validated v1 content and drops them. Either way the activity
+renders as v1; nothing is refused because of an extras field.
 
 ### Display wake policy
 
@@ -1907,13 +1966,13 @@ Hub feature bits share one value space regardless of direction. Bit `2` is
 `CAMERA_FROZEN_SPP`, bit `16` is `CAMERA_LOHS_REVERSE_REQUIRED` (sent only in
 phone-to-glasses camera announcements), bit `32` is `PIN_SURFACE`, bit `64` is
 `NOTICE_SURFACE`, bit `128` is `ACTIVITY_SURFACE`, bit `256` is
-`PHONE_ASSISTED_SETUP`, bit `512` is `TTS`, bit `1024` is `INK_SURFACE`, and
-bit `2048` is `EDITABLE_SURFACE`.
+`PHONE_ASSISTED_SETUP`, bit `512` is `TTS`, bit `1024` is `INK_SURFACE`,
+bit `2048` is `EDITABLE_SURFACE`, and bit `4096` is `ACTIVITY_EXTRAS`.
 The phone does not
 include renderer bits in camera announcements. The glasses hub announces its
 renderer after either remote link connects by sending
 `/system/hub/capabilities` with
-`{"version":1,"features":3810,"imageSurfaceVersion":1,"pinSurfaceVersion":1,"noticeSurfaceVersion":5,"activitySurfaceVersion":1,"inkSurfaceVersion":1,"editableSurfaceVersion":1,"ttsVersion":1,"maxImageBytes":65536,"versionName":"1.0.0","setupComplete":true}`
+`{"version":1,"features":7906,"imageSurfaceVersion":1,"pinSurfaceVersion":1,"noticeSurfaceVersion":5,"activitySurfaceVersion":1,"inkSurfaceVersion":1,"editableSurfaceVersion":1,"activityExtrasVersion":1,"ttsVersion":1,"maxImageBytes":65536,"versionName":"1.0.0","setupComplete":true}`
 when every current renderer feature, including runtime TTS, is available. The
 `features` value is the bitwise sum; TTS may be absent at runtime.
 `versionName` is the optional glasses app `BuildConfig.VERSION_NAME`; older glasses

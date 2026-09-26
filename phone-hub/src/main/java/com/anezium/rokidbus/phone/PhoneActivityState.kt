@@ -141,6 +141,7 @@ internal class PhoneActivityState(
                 activityId(ownerPluginId),
                 patched,
                 validation.patch.significant,
+                validation.patch.urgent,
             ),
             order,
         )

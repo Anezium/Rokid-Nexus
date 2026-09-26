@@ -425,6 +425,13 @@ data class NexusActivityAction(
     val label: String,
 )
 
+data class NexusActivityTrack(
+    val count: Int,
+    val at: Int,
+    val target: Int,
+    val label: String? = null,
+)
+
 data class NexusActivity(
     val glyph: String,
     val primary: String,
@@ -435,13 +442,19 @@ data class NexusActivity(
     val actions: List<NexusActivityAction> = emptyList(),
     val maxDurationMs: Long? = null,
     val wakeDisplay: Boolean = false,
+    val badge: String? = null,
+    val track: NexusActivityTrack? = null,
+    val measure: String? = null,
 )
 
 val supportsActivitySurface: Boolean
+val supportsActivityExtras: Boolean
+val registrationGeneration: Int
 fun startActivity(activity: NexusActivity): NexusSdkResult
 fun updateActivity(
     activity: NexusActivity,
     significant: Boolean = false,
+    urgent: Boolean = false,
 ): NexusSdkResult
 fun endActivity(): NexusSdkResult
 
@@ -467,6 +480,14 @@ percentage progress is `0..100`; and there are at most three actions.
 `maxDurationMs`, when present on start, is clamped by the hub to one minute
 through 12 hours. Without it the activity lasts until explicitly ended,
 replaced, or its owner disconnects. There is no TTL and no keep-alive loop.
+
+Because an activity belongs to the registration that started it, a plugin
+that keeps one running across a hub reconnect must start it again on the new
+registration. `onRegistrationState(APPROVED)` alone cannot tell: it is
+reported twice for every registration (at once, then with the capability
+metadata). Compare `registrationGeneration` with the value current when the
+activity started; a different number is a new registration that holds nothing
+yet.
 
 Activity and action glyphs are strings, not enums, because the glyph vocabulary
 is additive. Use a platform glyph for each action; the main activity glyph may
@@ -560,6 +581,56 @@ such as a maneuver change or arrival. The hub decides whether that becomes a
 flare and permits at most one flare per activity every 10 seconds; a throttled
 flare becomes a pulse and is never queued. Do not use `significant` for distance
 countdown ticks.
+
+#### Activity extras
+
+`badge`, `measure`, `track`, and `urgent` are extras: optional, drawn by the platform, and
+understood only when both hubs support them. `supportsActivityExtras` reports
+that. Without it the SDK still sends the activity, the older hub drops the
+extras, and the wearer sees the v1 form, so nothing needs a second code path.
+
+- `badge` — at most 5 characters, such as a line number ("38", "M4",
+  "RER B"). The expanded panel and the flare draw it as an outlined plate where
+  the glyph would be. The chip keeps `glyph`.
+- `measure` — at most 8 characters, a second quantity that belongs with
+  `primary`, such as a walk's distance next to its minutes ("250 m"). The
+  expanded panel reads "3 min - 250 m"; the chip keeps "3 min" with "250 m"
+  stacked under it beside the glyph, and `secondary` on its line below.
+- `track` — `NexusActivityTrack(count, at, target, label)`: 2 to 12 ordered
+  positions such as the stops of a ride or the stages of a delivery, where the
+  process is now, and where the wearer is headed, with an optional label of at
+  most 20 characters naming the target. It replaces the progress bar in the
+  panel. Keep sending `progress` too; older glasses draw that.
+- `urgent` — pass `updateActivity(activity, significant = true, urgent = true)`
+  for a time-critical transition such as "get off at the next stop". It is
+  refused without `significant`. The flare gets a bright outline that beats
+  once it has arrived, and it has its
+  own budget of one per activity per minute, so an ordinary flare a few seconds
+  earlier cannot swallow it. Past that budget it is an ordinary significant
+  update. It never wakes a display that `wakeDisplay` would not.
+
+The platform never advances a track or counts anything down between your
+updates: what the wearer reads is what you last sent, so send the values the
+source you follow reports.
+
+```kotlin
+nexusClient?.updateActivity(
+    NexusActivity(
+        glyph = "bus",
+        badge = "38",
+        primary = "Get off",
+        secondary = "Next stop: Luxembourg",
+        progress = NexusActivityProgress.Percent(80),
+        track = NexusActivityTrack(count = 5, at = 3, target = 4, label = "Luxembourg"),
+    ),
+    significant = true,
+    urgent = true,
+)
+```
+
+The expanded panel fits `primary` rather than cutting it: it shrinks first, and
+if the value still does not fit beside the ETA, the ETA moves to the secondary
+row. The 12-character cap is unchanged.
 
 By default, an idle expanded panel collapses to its chip after about 10 seconds.
 The wearer can keep the primary activity expanded from Nexus phone Settings.

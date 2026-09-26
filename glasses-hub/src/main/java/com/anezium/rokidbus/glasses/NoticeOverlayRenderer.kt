@@ -26,6 +26,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.anezium.rokidbus.client.ui.BusTheme
+import com.anezium.rokidbus.shared.ActivityTrack
 /**
  * The ROM sleeps the display five seconds after the last input (vendor-set
  * `screen_off_timeout`), which is shorter than a notice's own life -- a dictated
@@ -362,6 +363,8 @@ object NoticeOverlayRenderer {
     internal class NoticeBandView(
         context: Context,
         private val pageCountChanged: ((String, Long, Int) -> Unit)? = null,
+        /** An activity island draws the band's outline itself. */
+        chromeless: Boolean = false,
     ) : LinearLayout(context) {
         private val title = row(bold = true, sizeSp = TITLE_SP, color = BusTheme.phosphor)
         private val image = NoticeImageView(context)
@@ -410,6 +413,7 @@ object NoticeOverlayRenderer {
             visibility = View.GONE
         }
         private val actions = HudActionRowView(context)
+        private val track = ActivityTrackView(context).apply { visibility = View.GONE }
         private var noticeIdentity: Pair<String, Long>? = null
         private var noticeOwner = ""
         private var liveChips: List<HudActionChip> = emptyList()
@@ -428,14 +432,16 @@ object NoticeOverlayRenderer {
             val horizontal = BusTheme.dp(context, 10)
             val vertical = BusTheme.dp(context, 8)
             setPadding(horizontal, vertical, horizontal, vertical)
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.RECTANGLE
-                // Pure black. The additive optics emit nothing for black, so the
-                // fill reads as transparent and only the border and text light up.
-                // A "nicer" translucent grey is a visible grey rectangle on-glasses.
-                setColor(0xFF000000.toInt())
-                setStroke(BusTheme.dp(context, 1), BusTheme.hairline)
-                cornerRadius = BusTheme.dp(context, 7).toFloat()
+            if (!chromeless) {
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.RECTANGLE
+                    // Pure black. The additive optics emit nothing for black, so the
+                    // fill reads as transparent and only the border and text light up.
+                    // A "nicer" translucent grey is a visible grey rectangle on-glasses.
+                    setColor(0xFF000000.toInt())
+                    setStroke(BusTheme.dp(context, 1), BusTheme.hairline)
+                    cornerRadius = BusTheme.dp(context, 7).toFloat()
+                }
             }
             addView(title, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
             addView(
@@ -456,6 +462,12 @@ object NoticeOverlayRenderer {
                 compose,
                 LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
                     topMargin = BusTheme.dp(context, 6)
+                },
+            )
+            addView(
+                track,
+                LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
+                    topMargin = BusTheme.dp(context, 5)
                 },
             )
             addView(
@@ -536,6 +548,7 @@ object NoticeOverlayRenderer {
          * with being rewritten.
          */
         fun render(notice: NexusNoticeSurface) {
+            track.render(null)
             noticeIdentity = notice.surfaceId to notice.seq
             pluginFooter = noticeFooterText(notice)
             renderedPageIndex = notice.pageIndex
@@ -635,7 +648,9 @@ object NoticeOverlayRenderer {
             leadingGlyph: Drawable?,
             actionChips: List<HudActionChip> = emptyList(),
             selectedActionIndex: Int = 0,
+            track: ActivityTrack? = null,
         ) {
+            this.track.render(track)
             noticeIdentity = null
             noticeOwner = ""
             compose.visibility = View.GONE

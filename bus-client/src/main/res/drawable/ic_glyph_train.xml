@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Train front: split windscreen and rails running away from it. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
+    <path android:pathData="M7,3 L17,3 Q20,3 20,6 L20,16 Q20,18 18,18 L6,18 Q4,18 4,16 L4,6 Q4,3 7,3 Z M4,10 L20,10 M12,3 L12,10 M8,14.5 L8.1,14.5 M15.9,14.5 L16,14.5 M8,18 L5.5,21.2 M16,18 L18.5,21.2"
+        android:strokeColor="#FF4DFF8C" android:strokeWidth="1.7" android:strokeLineCap="round" android:strokeLineJoin="round" />
+</vector>

@@ -35,6 +35,8 @@ internal data class ActivityRenderItem(
     val activity: NexusActivitySurface,
     val primary: Boolean,
     val presentation: ActivityPresentation,
+    /** True only on the event item whose flare was admitted as urgent. */
+    val urgent: Boolean = false,
 )
 
 internal data class ActivityRenderState(
@@ -49,6 +51,7 @@ internal sealed interface ActivityMutation {
         val surfaceId: String,
         val significant: Boolean,
         val replacedSurfaceId: String? = null,
+        val urgent: Boolean = false,
     ) : ActivityMutation
 
     data class Removed(val surfaceId: String) : ActivityMutation
@@ -74,6 +77,7 @@ internal class ActivityStateMachine {
         val lastUpdatedOrder: Long,
         val lastSignificantOrder: Long?,
         val lastFlareAtMs: Long?,
+        val lastUrgentAtMs: Long?,
         val collapseAtMs: Long,
         val maxDurationDeadlineMs: Long?,
         val selectedActionIndex: Int,
@@ -129,6 +133,7 @@ internal class ActivityStateMachine {
             lastUpdatedOrder = nextOrder,
             lastSignificantOrder = null,
             lastFlareAtMs = null,
+            lastUrgentAtMs = previous?.lastUrgentAtMs,
             collapseAtMs = nowMs + COLLAPSE_AFTER_MS,
             maxDurationDeadlineMs = content.maxDurationMs?.let { nowMs + it },
             selectedActionIndex = previous
@@ -179,6 +184,7 @@ internal class ActivityStateMachine {
         return ActivityMutation.Applied(
             surfaceId = surfaceId,
             significant = patch.significant,
+            urgent = patch.urgent,
         )
     }
 
@@ -230,25 +236,50 @@ internal class ActivityStateMachine {
         significant: Boolean,
         nowMs: Long,
         alwaysExpanded: Boolean,
-    ): ActivityPresentation {
-        val resident = residents[surfaceId] ?: return ActivityPresentation.HIDDEN
+    ): ActivityPresentation = presentEvent(
+        surfaceId = surfaceId,
+        context = context,
+        significant = significant,
+        urgent = false,
+        nowMs = nowMs,
+        alwaysExpanded = alwaysExpanded,
+    ).presentation
+
+    fun presentEvent(
+        surfaceId: String,
+        context: ActivityPresentationContext,
+        significant: Boolean,
+        urgent: Boolean,
+        nowMs: Long,
+        alwaysExpanded: Boolean,
+    ): ActivityEventPresentation {
+        val resident = residents[surfaceId]
+            ?: return ActivityEventPresentation(ActivityPresentation.HIDDEN)
         if (context == ActivityPresentationContext.CAMERA_OVERLAY) {
-            return ActivityPresentation.HIDDEN
+            return ActivityEventPresentation(ActivityPresentation.HIDDEN)
         }
-        if (surfaceId != primarySurfaceId()) return ActivityPresentation.PULSE
+        if (surfaceId != primarySurfaceId()) {
+            return ActivityEventPresentation(ActivityPresentation.PULSE)
+        }
         val flareAvailable = resident.lastFlareAtMs
             ?.let { nowMs - it >= FLARE_INTERVAL_MS }
             ?: true
+        val urgentAdmitted = significant &&
+            urgentFlareAdmitted(urgent, resident.lastUrgentAtMs, nowMs)
         val selected = selectActivityPresentation(
             context = context,
             significant = significant,
-            flareBudgetAvailable = flareAvailable,
+            flareBudgetAvailable = flareAvailable || urgentAdmitted,
             collapseState = collapseState(resident, nowMs, alwaysExpanded),
         )
+        val urgentFlare = urgentAdmitted && selected == ActivityPresentation.FLARE
         if (selected == ActivityPresentation.FLARE) {
-            residents[surfaceId] = resident.copy(lastFlareAtMs = nowMs)
+            residents[surfaceId] = resident.copy(
+                lastFlareAtMs = nowMs,
+                lastUrgentAtMs = if (urgentFlare) nowMs else resident.lastUrgentAtMs,
+            )
         }
-        return selected
+        return ActivityEventPresentation(selected, urgentFlare)
     }
 
     fun snapshot(
@@ -258,6 +289,7 @@ internal class ActivityStateMachine {
         alwaysExpanded: Boolean,
         eventSurfaceId: String? = null,
         eventPresentation: ActivityPresentation? = null,
+        eventUrgent: Boolean = false,
     ): ActivityRenderState {
         val ordered = residents.values.sortedBy(Resident::startedOrder)
         corners = allocateActivityCorners(
@@ -301,6 +333,9 @@ internal class ActivityStateMachine {
                     ),
                     primary = resident.surfaceId == primary,
                     presentation = presentation,
+                    urgent = eventUrgent &&
+                        resident.surfaceId == eventSurfaceId &&
+                        presentation == ActivityPresentation.FLARE,
                 )
             },
         )
@@ -622,19 +657,24 @@ internal object ActivityController {
     }
 
     private fun publishEvent(result: ActivityMutation.Applied, nowMs: Long) {
-        val presentation = state.presentationForEvent(
+        val event = state.presentEvent(
             surfaceId = result.surfaceId,
             context = presentationContext(),
             significant = result.significant,
+            urgent = result.urgent,
             nowMs = nowMs,
             alwaysExpanded = alwaysExpanded(),
         )
-        if (result.significant && presentation == ActivityPresentation.PULSE) {
+        if (result.significant && event.presentation == ActivityPresentation.PULSE) {
             log("activity flare throttled id=${result.surfaceId}")
+        }
+        if (result.urgent && !event.urgent) {
+            log("activity urgent tone throttled id=${result.surfaceId}")
         }
         publish(
             eventSurfaceId = result.surfaceId,
-            eventPresentation = presentation,
+            eventPresentation = event.presentation,
+            eventUrgent = event.urgent,
             nowMs = nowMs,
         )
     }
@@ -642,6 +682,7 @@ internal object ActivityController {
     private fun publish(
         eventSurfaceId: String? = null,
         eventPresentation: ActivityPresentation? = null,
+        eventUrgent: Boolean = false,
         nowMs: Long = SystemClock.elapsedRealtime(),
     ) {
         latestRender = state.snapshot(
@@ -651,6 +692,7 @@ internal object ActivityController {
             alwaysExpanded = alwaysExpanded(),
             eventSurfaceId = eventSurfaceId,
             eventPresentation = eventPresentation,
+            eventUrgent = eventUrgent,
         )
         listeners.forEach { listener -> runCatching { listener(latestRender) } }
         scheduleDeadline(nowMs)
