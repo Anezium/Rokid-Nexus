@@ -100,10 +100,14 @@ internal class AssistantUiController(
     private val sessionBusy: () -> Boolean = { false },
     /** The answer is still being read out, or is about to be. */
     private val answerSpeaking: () -> Boolean = { false },
+    /** Stops a readout that never reported its end; see [armHolderBudget]. */
+    private val stopSpeech: () -> Unit = {},
     private val holderRecheckMs: Long = HOLDER_RECHECK_MS,
+    private val holderSpeechBudgetMs: Long = HOLDER_SPEECH_BUDGET_MS,
 ) {
     private var launcherHintJob: Job? = null
     private var holderReleaseJob: Job? = null
+    private var holderBudgetJob: Job? = null
     private var noticeHideJob: Job? = null
     private var transcriptUpdateJob: Job? = null
     private var keepaliveJob: Job? = null
@@ -734,6 +738,7 @@ internal class AssistantUiController(
 
     /** The model call ended, answered, failed or cancelled. */
     fun onPipelineFinished() {
+        if (holderShown && !sessionBusy()) armHolderBudget()
         maybeReleaseHolder()
     }
 
@@ -834,11 +839,9 @@ internal class AssistantUiController(
         if (!useNoticeBand()) return false
         bandUncertain = true
         spokenAnswerBody = spoken
-        if (inFlight == null) {
-            showOrUpdateAnswerNotice(body, ttlMs = answerTtlMs(body))
-            return true
-        }
-        if (inFlightUsesLines) showOrUpdateAnswerNotice(body) else showOrUpdateNotice(body)
+        if (inFlight == null) return showOrUpdateAnswerNotice(body, ttlMs = answerTtlMs(body))
+        val shown = if (inFlightUsesLines) showOrUpdateAnswerNotice(body) else showOrUpdateNotice(body)
+        if (!shown) return false
         lastInFlightBody = inFlight
         lastInFlightUsesLines = inFlightUsesLines
         startKeepalive()
@@ -890,10 +893,33 @@ internal class AssistantUiController(
         onSurfaceHidden()
     }
 
+    /**
+     * The answer is in, so all that can still hold the session is its readout — which the voice
+     * may never report as done. Past this budget, counted from the answer, the holder goes even
+     * so, the stuck readout stopped first: its band would otherwise be renewed at every 90 s cap,
+     * or the bare holder left as the screen, with the session open behind it for good.
+     */
+    private fun armHolderBudget() {
+        holderBudgetJob?.cancel()
+        holderBudgetJob = scope.launch {
+            delay(holderSpeechBudgetMs)
+            holderBudgetJob = null
+            if (!holderShown || typingOpen || sessionBusy()) return@launch
+            if (answerSpeaking()) stopSpeech()
+            spokenAnswerBody = null
+            stopKeepalive()
+            notices.dropWaiting()
+            hideNoticeIfShown()
+            releaseHolder()
+        }
+    }
+
     private fun forgetHolder() {
         holderShown = false
         holderReleaseJob?.cancel()
         holderReleaseJob = null
+        holderBudgetJob?.cancel()
+        holderBudgetJob = null
     }
 
     private fun useNoticeBand(): Boolean = isNoticeBandMode
@@ -1137,6 +1163,9 @@ internal class AssistantUiController(
         const val HOLDER_CONTENT_KEY = "holder"
 
         const val HOLDER_RECHECK_MS = 10_000L
+
+        /** Longer than the longest answer the voice may read (1,024 characters). */
+        const val HOLDER_SPEECH_BUDGET_MS = 120_000L
         const val OPTIONS_CONTENT_KEY = "options"
         const val NOTICE_TITLE = "Assistant"
         const val ELLIPSIS = "…"

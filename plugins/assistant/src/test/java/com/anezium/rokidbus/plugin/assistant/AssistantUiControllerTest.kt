@@ -2035,6 +2035,94 @@ class AssistantUiControllerTest {
             controller.onClose()
         }
 
+    @Test
+    fun `a readout that never reports its end is stopped once the answer's budget is spent`() =
+        runTest {
+            var stops = 0
+            val renderer = FakeRenderer(supportsNotice = true, supportsQuestionField = true)
+            val controller = controller(renderer, speaking = { true }, stopSpeech = { stops += 1 })
+            assistButtonTyping(controller)
+            controller.endTyping(AssistantTypingEnd.SUBMITTED)
+            controller.showAnswer("42", listOf("42"))
+            controller.onPipelineFinished()
+            controller.onAnswerSpeechStarted()
+            renderer.clear()
+
+            // Another plugin's band took ours; the voice never says it is done.
+            controller.onNoticeClosed(NexusNoticeCloseReason.REPLACED)
+            advanceTimeBy(AssistantUiController.HOLDER_SPEECH_BUDGET_MS - 1)
+            runCurrent()
+            assertTrue(renderer.calls.none { it == RenderCall.HideCard })
+            assertEquals(0, stops)
+
+            advanceTimeBy(1)
+            runCurrent()
+            assertEquals(1, stops)
+            assertEquals(RenderCall.HideCard, renderer.calls.last())
+            controller.onClose()
+        }
+
+    @Test
+    fun `the 90 s re-shows for a readout stop with the answer's budget too`() =
+        runTest {
+            var stops = 0
+            val renderer = FakeRenderer(supportsNotice = true, supportsQuestionField = true)
+            val controller = controller(renderer, speaking = { true }, stopSpeech = { stops += 1 })
+            assistButtonTyping(controller)
+            controller.endTyping(AssistantTypingEnd.SUBMITTED)
+            controller.showAnswer("42", listOf("42"))
+            controller.onPipelineFinished()
+            controller.onAnswerSpeechStarted()
+            renderer.clear()
+
+            // Within the budget a cap brings the band back, as for a live readout...
+            controller.onNoticeClosed(NexusNoticeCloseReason.TIMEOUT)
+            advanceTimeBy(90_000)
+            runCurrent()
+            controller.onNoticeClosed(NexusNoticeCloseReason.TIMEOUT)
+            assertEquals(2, renderer.calls.count { it == RenderCall.ShowNotice("Assistant", "42") })
+
+            // ...and once it is spent the stuck readout is stopped, band and holder with it.
+            advanceTimeBy(AssistantUiController.HOLDER_SPEECH_BUDGET_MS - 90_000)
+            runCurrent()
+            assertEquals(1, stops)
+            assertEquals(
+                listOf(RenderCall.HideNotice, RenderCall.HideCard),
+                renderer.calls.takeLast(2),
+            )
+            renderer.clear()
+            controller.onNoticeClosed(NexusNoticeCloseReason.TIMEOUT)
+            assertTrue(renderer.calls.isEmpty())
+            controller.onClose()
+        }
+
+    @Test
+    fun `a re-show that fails still leaves the holder to its release checks`() =
+        runTest {
+            var speaking = true
+            val renderer = FakeRenderer(supportsNotice = true, supportsQuestionField = true)
+            val controller = controller(renderer, speaking = { speaking })
+            assistButtonTyping(controller)
+            controller.endTyping(AssistantTypingEnd.SUBMITTED)
+            controller.showAnswer("42", listOf("42"))
+            controller.onPipelineFinished()
+            controller.onAnswerSpeechStarted()
+            renderer.clear()
+
+            renderer.failNextShow = true
+            controller.onNoticeClosed(NexusNoticeCloseReason.TIMEOUT)
+            assertEquals(listOf(RenderCall.ShowNotice("Assistant", "42")), renderer.calls)
+
+            // No band came back, so no keepalive runs; the voice's unreported end is caught at
+            // the next look, well before the budget.
+            speaking = false
+            advanceTimeBy(AssistantUiController.HOLDER_RECHECK_MS)
+            runCurrent()
+            assertTrue(renderer.calls.none { it is RenderCall.UpdateNotice })
+            assertEquals(RenderCall.HideCard, renderer.calls.last())
+            controller.onClose()
+        }
+
     /** An assist-button session (no anchor) with its typed field open. */
     private fun TestScope.assistButtonTyping(controller: AssistantUiController) {
         controller.onOpen()
@@ -2064,6 +2152,7 @@ class AssistantUiControllerTest {
         noticeIntervalMs: Long = 0L,
         busy: () -> Boolean = { false },
         speaking: () -> Boolean = { false },
+        stopSpeech: () -> Unit = {},
     ): AssistantUiController =
         AssistantUiController(
             scope = this,
@@ -2073,6 +2162,7 @@ class AssistantUiControllerTest {
             noticeIntervalMs = noticeIntervalMs,
             sessionBusy = busy,
             answerSpeaking = speaking,
+            stopSpeech = stopSpeech,
         )
 
     private fun assertValidTruncatedBody(body: String?) {

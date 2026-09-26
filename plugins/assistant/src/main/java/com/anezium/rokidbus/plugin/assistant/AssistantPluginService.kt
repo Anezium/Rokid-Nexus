@@ -240,6 +240,7 @@ class AssistantPluginService : NexusPluginService() {
         resetCapture = ::resetCapture,
         sessionBusy = { captureActive || pipelineJob?.isActive == true || snapshotSession != null },
         answerSpeaking = { activeTtsUtteranceId != null },
+        stopSpeech = { stopAnswerSpeech() },
     )
 
     override fun onCreate() {
