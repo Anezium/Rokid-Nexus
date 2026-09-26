@@ -3,7 +3,6 @@ package com.anezium.rokidbus.shared
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class GlassesKeyboardContractTest {
@@ -59,21 +58,13 @@ class GlassesKeyboardContractTest {
     }
 
     @Test
-    fun `a reply without the keep switch reads it as on`() {
-        val payload = JSONObject()
-            .put("version", GlassesKeyboardContract.VERSION)
-            .put("nexusSelected", true)
+    fun `a reply missing any of its booleans is no answer`() {
+        val complete = GlassesKeyboardContract.replyToJson(GlassesKeyboardReply(nexusSelected = true, canSwitch = true))
 
-        assertTrue(GlassesKeyboardContract.fromReply(payload)?.keepNexus == true)
-    }
-
-    @Test
-    fun `a reply without a boolean selection is no answer`() {
-        val payload = JSONObject()
-            .put("version", GlassesKeyboardContract.VERSION)
-            .put("nexusSelected", "true")
-
-        assertNull(GlassesKeyboardContract.fromReply(payload))
-        assertNull(GlassesKeyboardContract.fromReply(JSONObject().put("nexusSelected", true)))
+        listOf("nexusSelected", "canSwitch", "keepNexus").forEach { key ->
+            assertNull(GlassesKeyboardContract.fromReply(JSONObject(complete.toString()).apply { remove(key) }))
+            assertNull(GlassesKeyboardContract.fromReply(JSONObject(complete.toString()).put(key, "true")))
+        }
+        assertNull(GlassesKeyboardContract.fromReply(JSONObject(complete.toString()).apply { remove("version") }))
     }
 }

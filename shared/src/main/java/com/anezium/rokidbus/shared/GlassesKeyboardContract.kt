@@ -57,10 +57,12 @@ object GlassesKeyboardContract {
         val json = payload ?: return null
         if (json.optInt("version", 0) < 1) return null
         val selected = json.opt("nexusSelected") as? Boolean ?: return null
+        val canSwitch = json.opt("canSwitch") as? Boolean ?: return null
+        val keepNexus = json.opt("keepNexus") as? Boolean ?: return null
         return GlassesKeyboardReply(
             nexusSelected = selected,
-            canSwitch = json.optBoolean("canSwitch", false),
-            keepNexus = json.optBoolean("keepNexus", DEFAULT_KEEP_NEXUS),
+            canSwitch = canSwitch,
+            keepNexus = keepNexus,
             currentPackage = json.optString("currentPackage").takeIf(String::isNotBlank),
             error = json.optString("error").takeIf(String::isNotBlank),
         )

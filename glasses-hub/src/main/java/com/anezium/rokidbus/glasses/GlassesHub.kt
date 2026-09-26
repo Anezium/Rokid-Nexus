@@ -371,7 +371,7 @@ object GlassesHub {
             return
         }
         if (envelope.path == BusPaths.GLASSES_KEYBOARD_REQUEST) {
-            handleKeyboardRequest(envelope)
+            GlassesKeyboardKeeper.post { handleKeyboardRequest(envelope) }
             return
         }
         if (envelope.path == BusPaths.WIRELESS_ADB_REQUEST) {

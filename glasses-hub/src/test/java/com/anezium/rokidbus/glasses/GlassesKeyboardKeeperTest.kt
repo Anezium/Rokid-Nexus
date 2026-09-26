@@ -36,10 +36,20 @@ class GlassesKeyboardKeeperTest {
     fun `stops taking it back once the window's limit is spent and resumes after`() {
         val budget = GlassesKeyboardReclaimBudget(limit = 3, windowMs = 1_000L)
 
-        assertTrue(budget.tryConsume(0L))
-        assertTrue(budget.tryConsume(100L))
-        assertTrue(budget.tryConsume(200L))
-        assertFalse(budget.tryConsume(300L))
-        assertTrue(budget.tryConsume(1_000L))
+        listOf(0L, 100L, 200L).forEach { now ->
+            assertTrue(budget.hasRoom(now))
+            budget.record(now)
+        }
+        assertFalse(budget.hasRoom(300L))
+        assertTrue(budget.hasRoom(1_000L))
+    }
+
+    @Test
+    fun `a takeback that never happened leaves the budget untouched`() {
+        val budget = GlassesKeyboardReclaimBudget(limit = 1, windowMs = 1_000L)
+
+        repeat(5) { assertTrue(budget.hasRoom(it * 10L)) }
+        budget.record(50L)
+        assertFalse(budget.hasRoom(60L))
     }
 }

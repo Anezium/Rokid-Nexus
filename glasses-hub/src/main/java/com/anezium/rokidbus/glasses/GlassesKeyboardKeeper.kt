@@ -30,8 +30,10 @@ internal object GlassesKeyboardKeeper {
 
     fun start(context: Context) {
         val appContext = context.applicationContext
-        RemoteInputImeProvisioner.ensureConfigured(appContext)
-        reclaim(appContext, "hub_start", budgeted = true)
+        post {
+            RemoteInputImeProvisioner.ensureConfigured(appContext)
+            reclaim(appContext, "hub_start", budgeted = true)
+        }
         if (!registered.compareAndSet(false, true)) return
         appContext.contentResolver.registerContentObserver(
             Settings.Secure.getUriFor(Settings.Secure.DEFAULT_INPUT_METHOD),
@@ -42,6 +44,14 @@ internal object GlassesKeyboardKeeper {
                 }
             },
         )
+    }
+
+    /**
+     * Every keyboard write goes through the main looper, where the observer already runs: the
+     * enabled list is a read-modify-write, and two of them racing would drop an entry.
+     */
+    fun post(block: () -> Unit) {
+        handler.post(block)
     }
 
     fun isKeepEnabled(context: Context): Boolean =
@@ -57,11 +67,16 @@ internal object GlassesKeyboardKeeper {
         val selected = RemoteInputImeProvisioner.selectedMethod(context)
         val nexus = RemoteInputImeProvisioner.nexusComponent(context)
         if (!GlassesKeyboardKeepPolicy.shouldReclaim(isKeepEnabled(context), selected, nexus)) return
-        if (budgeted && !budget.tryConsume(SystemClock.elapsedRealtime())) {
+        val now = SystemClock.elapsedRealtime()
+        if (budgeted && !budget.hasRoom(now)) {
             log("keyboard keep skipped trigger=$trigger reason=limit_reached")
             return
         }
         val ok = RemoteInputImeProvisioner.selectNexus(context)
+        // Only a takeback that happened counts: failed writes (no permission yet) change nothing,
+        // so they cannot flap anything, and spending the budget on them would leave none for
+        // when setup grants the permission.
+        if (ok && budgeted) budget.record(now)
         log(
             "keyboard keep reclaimed trigger=$trigger " +
                 "from=${RemoteInputImeProvisioner.methodPackage(selected) ?: "none"} ok=$ok",
@@ -87,10 +102,12 @@ internal object GlassesKeyboardKeepPolicy {
 internal class GlassesKeyboardReclaimBudget(private val limit: Int, private val windowMs: Long) {
     private val spent = ArrayDeque<Long>()
 
-    fun tryConsume(nowMs: Long): Boolean {
+    fun hasRoom(nowMs: Long): Boolean {
         while (spent.isNotEmpty() && nowMs - spent.first() >= windowMs) spent.removeFirst()
-        if (spent.size >= limit) return false
+        return spent.size < limit
+    }
+
+    fun record(nowMs: Long) {
         spent.addLast(nowMs)
-        return true
     }
 }
