@@ -1,5 +1,6 @@
 package com.anezium.rokidbus.plugin.nav
 
+import android.view.KeyEvent
 import com.anezium.rokidbus.client.plugin.NexusPluginService
 import com.anezium.rokidbus.shared.plugin.NexusInputEvent
 
@@ -28,7 +29,20 @@ class NavPluginService : NexusPluginService() {
         NavControl.cardOpen = false
     }
 
-    override fun onNexusInput(event: NexusInputEvent) = Unit
+    // Back from the card backgrounds Navigation rather than closing it. An
+    // update to a backgrounded card brings it back up, so the route stops
+    // refreshing it here too.
+    override fun onNexusBackground() {
+        NavControl.cardOpen = false
+    }
+
+    // The hub hands Back to an external plugin rather than closing it; the
+    // plugin closes its own card, which releases the glasses for other plugins.
+    override fun onNexusInput(event: NexusInputEvent) {
+        if (event.keyCode != KeyEvent.KEYCODE_BACK || event.action != KeyEvent.ACTION_DOWN) return
+        NavControl.cardOpen = false
+        nexusSurfaceSession(NavCard.SURFACE_ID)?.hide()
+    }
 
     override fun onNexusRegistrationState(result: Int) = NavControl.registrationState(result)
 
