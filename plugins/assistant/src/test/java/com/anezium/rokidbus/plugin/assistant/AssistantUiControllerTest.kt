@@ -2,17 +2,21 @@ package com.anezium.rokidbus.plugin.assistant
 
 import com.anezium.rokidbus.client.plugin.NexusCardLine
 import com.anezium.rokidbus.client.plugin.NexusNotice
+import com.anezium.rokidbus.client.plugin.NexusNoticeAction
 import com.anezium.rokidbus.client.plugin.NexusNoticeCloseReason
 import com.anezium.rokidbus.client.plugin.NexusNoticeUpdate
 import com.anezium.rokidbus.client.plugin.NexusSdkResult
+import com.anezium.rokidbus.shared.EditableSurfaceField
 import com.anezium.rokidbus.shared.NoticeSurfaceContract
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -243,6 +247,7 @@ class AssistantUiControllerTest {
                 renderer = renderer,
                 cancelPipeline = { pipelineCancels += 1 },
                 resetCapture = { captureResets += 1 },
+                noticeIntervalMs = 0L,
             )
             controller.onOpen()
             controller.cancelLauncherHint()
@@ -867,12 +872,897 @@ class AssistantUiControllerTest {
             controller.onClose()
         }
 
-    private fun TestScope.controller(renderer: FakeRenderer): AssistantUiController =
+    @Test
+    fun `the Type chip arms well after listening starts and only where a field can open`() =
+        runTest {
+            val renderer = FakeRenderer(supportsNotice = true, supportsQuestionField = true)
+            val controller = controller(renderer)
+            controller.onLauncherOpen()
+            controller.beginGestureFlow()
+            controller.showListening(legacyForceShow = true)
+            assertFalse(controller.offersTyping)
+
+            // The engine confirming it started redraws, and does not restart the wait.
+            advanceTimeBy(AssistantUiController.TYPE_CHIP_ARM_DELAY_MS / 2)
+            runCurrent()
+            controller.showListening()
+            advanceTimeBy(AssistantUiController.TYPE_CHIP_ARM_DELAY_MS / 2 - 1)
+            runCurrent()
+            assertFalse(controller.offersTyping)
+            assertTrue(renderer.noticeActions.all { it.isEmpty() })
+
+            advanceTimeBy(1)
+            runCurrent()
+            assertTrue(controller.offersTyping)
+            assertEquals(AssistantUiController.TYPE_ACTIONS, renderer.noticeActions.last())
+            assertEquals(RenderCall.UpdateNotice(null), renderer.calls.last())
+
+            val unsupported = FakeRenderer(supportsNotice = true, supportsQuestionField = false)
+            val plain = controller(unsupported)
+            plain.onLauncherOpen()
+            plain.beginGestureFlow()
+            plain.showListening(legacyForceShow = true)
+            advanceTimeBy(AssistantUiController.TYPE_CHIP_ARM_DELAY_MS * 2)
+            runCurrent()
+            assertFalse(plain.offersTyping)
+            assertTrue(unsupported.noticeActions.all { it.isEmpty() })
+
+            controller.onClose()
+            plain.onClose()
+        }
+
+    @Test
+    fun `the chip rides transcripts and keepalives and a fresh show takes it away`() =
+        runTest {
+            val renderer = FakeRenderer(supportsNotice = true, supportsQuestionField = true)
+            val controller = controller(renderer)
+            controller.onLauncherOpen()
+            controller.beginGestureFlow()
+            controller.showListening(legacyForceShow = true)
+            advanceTimeBy(AssistantUiController.TYPE_CHIP_ARM_DELAY_MS)
+            runCurrent()
+            renderer.clear()
+
+            // Re-sending the row would ask the question again and re-arm the band.
+            controller.showTranscript("what is the")
+            advanceTimeBy(AssistantUiController.NOTICE_KEEPALIVE_INTERVAL_MS)
+            runCurrent()
+            assertTrue(renderer.calls.all { it is RenderCall.UpdateNotice })
+            assertTrue(renderer.noticeActions.all { it.isEmpty() })
+            assertTrue(controller.offersTyping)
+
+            // An update cannot clear a row, so leaving listening is a fresh band without one.
+            controller.showTransient("Thinking…")
+            assertEquals(RenderCall.ShowNotice("Assistant", "Thinking…"), renderer.calls.last())
+            assertEquals(emptyList<NexusNoticeAction>(), renderer.noticeActions.last())
+            assertEquals(true, renderer.noticeEngagement.last())
+            assertFalse(controller.offersTyping)
+
+            // And from then on it is ordinary updates again.
+            controller.showAnswer("An answer.", listOf("An answer."))
+            assertEquals(RenderCall.UpdateNotice("An answer."), renderer.calls.last())
+            controller.onClose()
+        }
+
+    @Test
+    fun `a spoken question that ends before the chip never shows it`() =
+        runTest {
+            val renderer = FakeRenderer(supportsNotice = true, supportsQuestionField = true)
+            val controller = controller(renderer)
+            controller.onLauncherOpen()
+            controller.beginGestureFlow()
+            controller.showListening(legacyForceShow = true)
+            advanceTimeBy(AssistantUiController.TYPE_CHIP_ARM_DELAY_MS - 1)
+            runCurrent()
+            controller.showTransient("Thinking…")
+            advanceTimeBy(AssistantUiController.TYPE_CHIP_ARM_DELAY_MS * 2)
+            runCurrent()
+
+            assertEquals(RenderCall.UpdateNotice("Thinking…"), renderer.calls.last())
+            assertTrue(renderer.noticeActions.all { it.isEmpty() })
+            assertFalse(controller.offersTyping)
+            controller.onClose()
+        }
+
+    @Test
+    fun `typing opens the field inside a quiet band that stays alive without asking again`() =
+        runTest {
+            val renderer = FakeRenderer(supportsNotice = true, supportsQuestionField = true)
+            val controller = controller(renderer)
+            armedChip(controller, renderer)
+
+            controller.beginTyping()
+
+            assertEquals(
+                listOf(
+                    RenderCall.ShowNotice("Assistant", null),
+                    RenderCall.ShowQuestionField(
+                        AssistantUiController.QUESTION_FIELD,
+                        AssistantUiController.TYPING_FOOTER,
+                    ),
+                ),
+                renderer.calls,
+            )
+            assertTrue(AssistantUiController.QUESTION_FIELD.inNotice)
+            // Enter is the field's: an interactive band would claim it first.
+            assertEquals(false, renderer.noticeEngagement.single())
+            assertEquals(emptyList<NexusNoticeAction>(), renderer.noticeActions.single())
+            assertEquals(AssistantUiController.TYPING_FOOTER, renderer.noticeFooters.single())
+            assertEquals(AssistantUiController.TYPING_TTL_MS, renderer.showTtls.single())
+            assertTrue(controller.isTyping)
+            assertFalse(controller.isAnchored)
+            assertFalse(controller.offersTyping)
+            assertTrue(controller.isNoticeBandMode)
+
+            renderer.clear()
+            advanceTimeBy(AssistantUiController.TYPING_KEEPALIVE_INTERVAL_MS * 3)
+            runCurrent()
+            assertEquals(3, renderer.calls.size)
+            assertTrue(renderer.calls.all { it == RenderCall.UpdateNotice(null) })
+            assertTrue(renderer.noticeEngagement.all { it == null })
+            assertTrue(renderer.noticeActions.all { it.isEmpty() })
+            assertTrue(renderer.updateTtls.all { it == AssistantUiController.TYPING_TTL_MS })
+            controller.onClose()
+        }
+
+    @Test
+    fun `a submitted question puts the anchor back and the pipeline redraws the band fresh`() =
+        runTest {
+            val renderer = FakeRenderer(supportsNotice = true, supportsQuestionField = true)
+            val controller = controller(renderer)
+            armedChip(controller, renderer)
+            controller.beginTyping()
+            renderer.clear()
+
+            assertTrue(controller.endTyping(AssistantTypingEnd.SUBMITTED))
+
+            assertEquals(
+                listOf(RenderCall.ShowCard(AssistantUiController.ANCHOR_LINES, forceShow = true)),
+                renderer.calls,
+            )
+            assertEquals(AssistantUiController.ANCHOR_CONTENT_KEY, renderer.contentKeys.last())
+            assertTrue(controller.isAnchored)
+            assertFalse(controller.isTyping)
+
+            // The typing footer cannot be updated away, so Thinking is a fresh engaged band.
+            controller.showTransient("Thinking…")
+            assertEquals(RenderCall.ShowNotice("Assistant", "Thinking…"), renderer.calls.last())
+            assertNull(renderer.noticeFooters.last())
+            assertEquals(true, renderer.noticeEngagement.last())
+
+            // The keepalive ended with the field.
+            renderer.clear()
+            advanceTimeBy(AssistantUiController.TYPING_KEEPALIVE_INTERVAL_MS)
+            runCurrent()
+            assertTrue(renderer.calls.none { it == RenderCall.UpdateNotice(null) })
+            assertFalse(controller.endTyping(AssistantTypingEnd.SUBMITTED))
+            controller.onClose()
+        }
+
+    @Test
+    fun `cancelling restores what was there before the field`() =
+        runTest {
+            val anchoredRenderer = FakeRenderer(supportsNotice = true, supportsQuestionField = true)
+            val anchored = controller(anchoredRenderer)
+            armedChip(anchored, anchoredRenderer)
+            anchored.beginTyping()
+            anchoredRenderer.clear()
+
+            anchored.endTyping(AssistantTypingEnd.CANCELLED)
+
+            assertEquals(
+                listOf(
+                    RenderCall.ShowCard(AssistantUiController.ANCHOR_LINES, forceShow = true),
+                    RenderCall.HideNotice,
+                ),
+                anchoredRenderer.calls,
+            )
+            assertTrue(anchored.isAnchored)
+            anchored.onClose()
+
+            // Opened by the assist button, nothing was on screen: hiding the field is the
+            // hub's close, exactly what Back on that band would have been.
+            val bareRenderer = FakeRenderer(supportsNotice = true, supportsQuestionField = true)
+            val bare = controller(bareRenderer)
+            bare.onOpen()
+            bare.cancelLauncherHint()
+            bare.beginGestureFlow()
+            bare.showListening(legacyForceShow = true)
+            advanceTimeBy(AssistantUiController.TYPE_CHIP_ARM_DELAY_MS)
+            runCurrent()
+            bare.beginTyping()
+            bareRenderer.clear()
+
+            bare.endTyping(AssistantTypingEnd.CANCELLED)
+
+            assertEquals(listOf(RenderCall.HideCard, RenderCall.HideNotice), bareRenderer.calls)
+            assertFalse(bare.isTyping)
+            assertTrue(bare.isNoticeBandMode)
+            bare.onClose()
+        }
+
+    @Test
+    fun `a question typed without an anchor still keeps a card up for its answer`() =
+        runTest {
+            val renderer = FakeRenderer(supportsNotice = true, supportsQuestionField = true)
+            val controller = controller(renderer)
+            controller.onOpen()
+            controller.cancelLauncherHint()
+            controller.beginGestureFlow()
+            controller.showListening(legacyForceShow = true)
+            advanceTimeBy(AssistantUiController.TYPE_CHIP_ARM_DELAY_MS)
+            runCurrent()
+            controller.beginTyping()
+            renderer.clear()
+
+            controller.endTyping(AssistantTypingEnd.SUBMITTED)
+
+            assertEquals(
+                listOf(RenderCall.ShowCard(AssistantUiController.ANCHOR_LINES, forceShow = true)),
+                renderer.calls,
+            )
+            assertTrue(controller.isAnchored)
+            controller.onClose()
+        }
+
+    @Test
+    fun `Back on the typing band cancels and a lifetime timeout carries the field on`() =
+        runTest {
+            var pipelineCancels = 0
+            var captureResets = 0
+            val renderer = FakeRenderer(supportsNotice = true, supportsQuestionField = true)
+            val controller = AssistantUiController(
+                scope = this,
+                renderer = renderer,
+                cancelPipeline = { pipelineCancels += 1 },
+                resetCapture = { captureResets += 1 },
+                noticeIntervalMs = 0L,
+            )
+            armedChip(controller, renderer)
+            controller.beginTyping()
+            renderer.clear()
+
+            controller.onNoticeClosed(NexusNoticeCloseReason.TIMEOUT)
+            assertEquals(listOf(RenderCall.ShowNotice("Assistant", null)), renderer.calls)
+            assertEquals(false, renderer.noticeEngagement.single())
+            assertTrue(controller.isTyping)
+            assertEquals(0, pipelineCancels)
+
+            renderer.clear()
+            controller.onNoticeClosed(NexusNoticeCloseReason.REPLACED)
+            assertTrue(renderer.calls.isEmpty())
+            assertTrue(controller.isTyping)
+
+            controller.onNoticeClosed(NexusNoticeCloseReason.USER)
+            assertEquals(
+                listOf(RenderCall.ShowCard(AssistantUiController.ANCHOR_LINES, forceShow = true)),
+                renderer.calls,
+            )
+            assertFalse(controller.isTyping)
+            assertEquals(1, pipelineCancels)
+            assertEquals(1, captureResets)
+            controller.onClose()
+        }
+
+    @Test
+    fun `a field rejected after it was sent says so and leaves the anchor in charge`() =
+        runTest {
+            val renderer = FakeRenderer(supportsNotice = true, supportsQuestionField = true)
+            val controller = controller(renderer)
+            armedChip(controller, renderer)
+            controller.beginTyping()
+            renderer.clear()
+
+            renderer.rejectQuestionField(AssistantUiController.SURFACE_BUSY)
+
+            assertEquals(
+                RenderCall.ShowNotice("Assistant", AssistantUiController.SCREEN_BUSY),
+                renderer.calls.single(),
+            )
+            assertFalse(controller.isTyping)
+            assertTrue(controller.isAnchored)
+
+            // A stale rejection for a field that already ended changes nothing.
+            renderer.clear()
+            renderer.rejectQuestionField(AssistantUiController.SURFACE_BUSY)
+            assertTrue(renderer.calls.isEmpty())
+
+            val refused = FakeRenderer(
+                supportsNotice = true,
+                supportsQuestionField = true,
+                questionFieldResult = NexusSdkResult.NOT_REGISTERED,
+            )
+            val refusedController = controller(refused)
+            armedChip(refusedController, refused)
+            refusedController.beginTyping()
+            assertFalse(refusedController.isTyping)
+            assertTrue(refusedController.isAnchored)
+            // The listening band may still be the one up, so it goes before the error does.
+            assertEquals(
+                listOf(
+                    RenderCall.HideNotice,
+                    RenderCall.ShowNotice("Assistant", AssistantUiController.QUESTION_FIELD_FAILED),
+                ),
+                refused.calls.takeLast(2),
+            )
+            controller.onClose()
+            refusedController.onClose()
+        }
+
+    @Test
+    fun `a new spoken question supersedes the field without closing the session`() =
+        runTest {
+            val renderer = FakeRenderer(supportsNotice = true, supportsQuestionField = true)
+            val controller = controller(renderer)
+            controller.onOpen()
+            controller.cancelLauncherHint()
+            controller.beginGestureFlow()
+            controller.showListening(legacyForceShow = true)
+            advanceTimeBy(AssistantUiController.TYPE_CHIP_ARM_DELAY_MS)
+            runCurrent()
+            controller.beginTyping()
+            renderer.clear()
+
+            controller.endTyping(AssistantTypingEnd.SUPERSEDED)
+            controller.beginGestureFlow()
+            controller.showListening(legacyForceShow = true)
+
+            assertEquals(
+                listOf(
+                    RenderCall.ShowCard(AssistantUiController.ANCHOR_LINES, forceShow = true),
+                    RenderCall.HideNotice,
+                    RenderCall.ShowNotice("Assistant", AssistantUiController.LISTENING_BODY),
+                ),
+                renderer.calls,
+            )
+            assertEquals(true, renderer.noticeEngagement.last())
+            controller.onClose()
+        }
+
+    @Test
+    fun `the quiet band waits its turn behind a transcript and the field opens only after it`() =
+        runTest {
+            val renderer = FakeRenderer(supportsNotice = true, supportsQuestionField = true)
+            val controller = controller(renderer, AssistantNoticePacer.MIN_INTERVAL_MS)
+            controller.onLauncherOpen()
+            controller.beginGestureFlow()
+            controller.showListening(legacyForceShow = true)
+            advanceTimeBy(AssistantUiController.TYPE_CHIP_ARM_DELAY_MS)
+            runCurrent()
+            assertTrue(controller.offersTyping)
+            advanceTimeBy(AssistantNoticePacer.MIN_INTERVAL_MS)
+            runCurrent()
+            renderer.clear()
+
+            controller.showTranscript("what is")
+            controller.beginTyping()
+
+            // Sent now it would be the hub's sixth message this second, and dropped.
+            assertEquals(listOf(RenderCall.UpdateNotice("what is")), renderer.calls)
+            assertTrue(controller.isTyping)
+
+            advanceTimeBy(AssistantNoticePacer.MIN_INTERVAL_MS)
+            runCurrent()
+            assertEquals(
+                listOf(
+                    RenderCall.UpdateNotice("what is"),
+                    RenderCall.ShowNotice("Assistant", null),
+                    RenderCall.ShowQuestionField(
+                        AssistantUiController.QUESTION_FIELD,
+                        AssistantUiController.TYPING_FOOTER,
+                    ),
+                ),
+                renderer.calls,
+            )
+            controller.onClose()
+        }
+
+    @Test
+    fun `a stream of partials never puts more than four band messages in a second`() =
+        runTest {
+            val renderer = FakeRenderer(
+                supportsNotice = true,
+                supportsQuestionField = true,
+                clock = { currentTime },
+            )
+            val controller = controller(renderer, AssistantNoticePacer.MIN_INTERVAL_MS)
+            controller.onLauncherOpen()
+            controller.beginGestureFlow()
+            controller.showListening(legacyForceShow = true)
+            repeat(60) { index ->
+                controller.showTranscript("partial $index")
+                advanceTimeBy(100)
+                runCurrent()
+            }
+            advanceTimeBy(1_000)
+            runCurrent()
+
+            val times = renderer.noticeSendTimes
+            times.forEachIndexed { index, start ->
+                val inWindow = times.drop(index).count { it < start + 1_000 }
+                assertTrue("$inWindow messages from $start ms", inWindow <= 4)
+            }
+            // Pacing folds, it does not lose: the band ends on the latest words, chip and all.
+            assertEquals(RenderCall.UpdateNotice("partial 59"), renderer.calls.last())
+            assertTrue(controller.offersTyping)
+            controller.onClose()
+        }
+
+    @Test
+    fun `a quiet band that cannot be shown hides the listening band instead of opening the field`() =
+        runTest {
+            val renderer = FakeRenderer(supportsNotice = true, supportsQuestionField = true)
+            val controller = controller(renderer)
+            armedChip(controller, renderer)
+            renderer.failNextShow = true
+
+            controller.beginTyping()
+
+            assertEquals(
+                listOf(
+                    RenderCall.ShowNotice("Assistant", null),
+                    RenderCall.HideNotice,
+                    RenderCall.ShowNotice("Assistant", AssistantUiController.QUESTION_FIELD_FAILED),
+                ),
+                renderer.calls,
+            )
+            assertFalse(controller.isTyping)
+            assertFalse(controller.offersTyping)
+            assertTrue(controller.isAnchored)
+            controller.onClose()
+        }
+
+    @Test
+    fun `a quiet band that fails after waiting never opens the field either`() =
+        runTest {
+            val renderer = FakeRenderer(supportsNotice = true, supportsQuestionField = true)
+            val controller = controller(renderer, AssistantNoticePacer.MIN_INTERVAL_MS)
+            controller.onLauncherOpen()
+            controller.beginGestureFlow()
+            controller.showListening(legacyForceShow = true)
+            advanceTimeBy(AssistantUiController.TYPE_CHIP_ARM_DELAY_MS + AssistantNoticePacer.MIN_INTERVAL_MS)
+            runCurrent()
+            renderer.clear()
+            controller.showTranscript("what is")
+            controller.beginTyping()
+            renderer.failNextShow = true
+
+            advanceTimeBy(AssistantNoticePacer.MIN_INTERVAL_MS * 2)
+            runCurrent()
+
+            assertEquals(
+                listOf(
+                    RenderCall.UpdateNotice("what is"),
+                    RenderCall.ShowNotice("Assistant", null),
+                    RenderCall.HideNotice,
+                    RenderCall.ShowNotice("Assistant", AssistantUiController.QUESTION_FIELD_FAILED),
+                ),
+                renderer.calls,
+            )
+            assertFalse(controller.isTyping)
+            controller.onClose()
+        }
+
+    @Test
+    fun `a rate-limited message while typing brings the quiet band back without a second field`() =
+        runTest {
+            val renderer = FakeRenderer(supportsNotice = true, supportsQuestionField = true)
+            val controller = controller(renderer)
+            armedChip(controller, renderer)
+            controller.beginTyping()
+            renderer.clear()
+
+            controller.onNoticeRejected()
+
+            assertEquals(listOf(RenderCall.ShowNotice("Assistant", null)), renderer.calls)
+            assertEquals(false, renderer.noticeEngagement.single())
+            assertEquals(AssistantUiController.TYPING_FOOTER, renderer.noticeFooters.single())
+            assertTrue(controller.isTyping)
+            controller.onClose()
+        }
+
+    @Test
+    fun `a rate-limited message while listening redraws the whole band with its chip`() =
+        runTest {
+            val renderer = FakeRenderer(supportsNotice = true, supportsQuestionField = true)
+            val controller = controller(renderer)
+            armedChip(controller, renderer)
+
+            controller.onNoticeRejected()
+
+            assertEquals(
+                listOf(RenderCall.ShowNotice("Assistant", AssistantUiController.LISTENING_BODY)),
+                renderer.calls,
+            )
+            assertEquals(AssistantUiController.TYPE_ACTIONS, renderer.noticeActions.single())
+            assertEquals(true, renderer.noticeEngagement.single())
+            assertTrue(controller.offersTyping)
+
+            // Back to ordinary updates once the band is known again.
+            renderer.clear()
+            controller.showTranscript("what is")
+            assertEquals(listOf(RenderCall.UpdateNotice("what is")), renderer.calls)
+            controller.onClose()
+        }
+
+    @Test
+    fun `a dismissed band takes a show still waiting to leave with it`() =
+        runTest {
+            val renderer = FakeRenderer(supportsNotice = true, supportsQuestionField = true)
+            val controller = controller(renderer, AssistantNoticePacer.MIN_INTERVAL_MS)
+            controller.onLauncherOpen()
+            controller.beginGestureFlow()
+            controller.showListening(legacyForceShow = true)
+            advanceTimeBy(AssistantUiController.TYPE_CHIP_ARM_DELAY_MS + AssistantNoticePacer.MIN_INTERVAL_MS)
+            runCurrent()
+            renderer.clear()
+            controller.showTranscript("what is")
+            // Clearing the chip takes a fresh show, and it has to wait.
+            controller.showTransient("Thinking…")
+
+            controller.onNoticeClosed(NexusNoticeCloseReason.USER)
+            advanceTimeBy(1_000)
+            runCurrent()
+
+            assertEquals(listOf(RenderCall.UpdateNotice("what is")), renderer.calls)
+            controller.onClose()
+        }
+
+    @Test
+    fun `re-opening during a capture brings the listening band back fresh and re-arms the chip`() =
+        runTest {
+            val renderer = FakeRenderer(supportsNotice = true, supportsQuestionField = true)
+            val controller = controller(renderer)
+            armedChip(controller, renderer)
+
+            // What the service does when an open lands while its capture is still live.
+            controller.onLauncherOpen()
+            assertFalse(controller.offersTyping)
+            controller.resumeInFlight(capturing = true, transcribing = false)
+
+            assertEquals(
+                listOf(
+                    RenderCall.ShowCard(AssistantUiController.ANCHOR_LINES, forceShow = true),
+                    RenderCall.ShowNotice("Assistant", AssistantUiController.LISTENING_BODY),
+                ),
+                renderer.calls,
+            )
+            // A fresh band: the chip left on the glasses from before the open is gone...
+            assertEquals(emptyList<NexusNoticeAction>(), renderer.noticeActions.single())
+            advanceTimeBy(AssistantUiController.TYPE_CHIP_ARM_DELAY_MS)
+            runCurrent()
+            // ...and comes back once the new wait is over, live this time.
+            assertEquals(AssistantUiController.TYPE_ACTIONS, renderer.noticeActions.last())
+            assertTrue(controller.offersTyping)
+            controller.onClose()
+        }
+
+    @Test
+    fun `a cancel that beats the field still closes a session that had no anchor`() =
+        runTest {
+            val renderer = FakeRenderer(supportsNotice = true, supportsQuestionField = true)
+            val controller = controller(renderer, AssistantNoticePacer.MIN_INTERVAL_MS)
+            controller.onOpen()
+            controller.cancelLauncherHint()
+            controller.beginGestureFlow()
+            controller.showListening(legacyForceShow = true)
+            advanceTimeBy(AssistantUiController.TYPE_CHIP_ARM_DELAY_MS + AssistantNoticePacer.MIN_INTERVAL_MS)
+            runCurrent()
+            renderer.clear()
+            controller.showTranscript("what is")
+            // The quiet band waits out the pacer, so the field is not up yet...
+            controller.beginTyping()
+
+            // ...when Back takes the band.
+            controller.onNoticeClosed(NexusNoticeCloseReason.USER)
+            advanceTimeBy(1_000)
+            runCurrent()
+
+            // Mic off and nothing on screen: the hub has to hear the close, as after the field.
+            assertEquals(
+                listOf(RenderCall.UpdateNotice("what is"), RenderCall.HideCard),
+                renderer.calls,
+            )
+            assertFalse(controller.isTyping)
+            controller.onClose()
+
+            // With the anchor up there is nothing to close: it simply stays.
+            val anchoredRenderer = FakeRenderer(supportsNotice = true, supportsQuestionField = true)
+            val anchored = controller(anchoredRenderer, AssistantNoticePacer.MIN_INTERVAL_MS)
+            anchored.onLauncherOpen()
+            anchored.beginGestureFlow()
+            anchored.showListening(legacyForceShow = true)
+            advanceTimeBy(AssistantUiController.TYPE_CHIP_ARM_DELAY_MS + AssistantNoticePacer.MIN_INTERVAL_MS)
+            runCurrent()
+            anchoredRenderer.clear()
+            anchored.showTranscript("what is")
+            anchored.beginTyping()
+            anchored.onNoticeClosed(NexusNoticeCloseReason.USER)
+            advanceTimeBy(1_000)
+            runCurrent()
+
+            assertEquals(listOf(RenderCall.UpdateNotice("what is")), anchoredRenderer.calls)
+            assertTrue(anchored.isAnchored)
+            anchored.onClose()
+        }
+
+    @Test
+    fun `re-opening while audio is transcribed keeps Transcribing up instead of the hint`() =
+        runTest {
+            val renderer = FakeRenderer(supportsNotice = true, supportsQuestionField = true)
+            val controller = controller(renderer)
+            // An assist-button open queues its hint; the transcription it lands on is not over.
+            controller.onOpen()
+            controller.resumeInFlight(capturing = true, transcribing = true)
+
+            assertEquals(
+                listOf(RenderCall.ShowNotice("Assistant", AssistantUiController.TRANSCRIBING_BODY)),
+                renderer.calls,
+            )
+            advanceTimeBy(AssistantUiController.LAUNCHER_HINT_DELAY_MS)
+            runCurrent()
+            // No hint card over it, and the keepalive holds it past the derived 4 s minimum.
+            advanceTimeBy(AssistantUiController.NOTICE_KEEPALIVE_INTERVAL_MS * 2)
+            runCurrent()
+            assertTrue(renderer.calls.none { it is RenderCall.ShowCard })
+            assertEquals(
+                listOf(
+                    RenderCall.UpdateNotice(AssistantUiController.TRANSCRIBING_BODY),
+                    RenderCall.UpdateNotice(AssistantUiController.TRANSCRIBING_BODY),
+                ),
+                renderer.calls.drop(1),
+            )
+            // Past listening, so no Type chip for recorded audio.
+            assertTrue(renderer.noticeActions.all { it.isEmpty() })
+            assertFalse(controller.offersTyping)
+
+            // Nothing under way: a re-open leaves the reset as it is.
+            renderer.clear()
+            controller.onOpen()
+            controller.resumeInFlight(capturing = false, transcribing = false)
+            assertTrue(renderer.calls.none { it is RenderCall.ShowNotice })
+            controller.onClose()
+        }
+
+    @Test
+    fun `voice only never arms the chip even where a field could open`() =
+        runTest {
+            val renderer = FakeRenderer(
+                supportsNotice = true,
+                supportsQuestionField = true,
+                chosenInputMode = AssistantInputMode.VOICE_ONLY,
+            )
+            val controller = controller(renderer)
+            controller.onLauncherOpen()
+            controller.beginGestureFlow()
+
+            assertFalse(controller.startQuestion())
+            controller.showListening(legacyForceShow = true)
+            controller.showTranscript("what is")
+            advanceTimeBy(AssistantUiController.TYPE_CHIP_ARM_DELAY_MS * 4)
+            runCurrent()
+
+            // The band as it was before the chip: nothing a tap could turn into a keyboard.
+            assertTrue(renderer.noticeActions.all { it.isEmpty() })
+            assertFalse(controller.offersTyping)
+            assertTrue(renderer.calls.none { it is RenderCall.ShowQuestionField })
+            assertEquals(AssistantInputMode.VOICE_ONLY, controller.inputMode)
+            controller.onClose()
+        }
+
+    @Test
+    fun `type first opens the field at once and never shows a listening band`() =
+        runTest {
+            val renderer = FakeRenderer(
+                supportsNotice = true,
+                supportsQuestionField = true,
+                chosenInputMode = AssistantInputMode.TYPE_FIRST,
+            )
+            val controller = controller(renderer)
+            controller.onLauncherOpen()
+            controller.beginGestureFlow()
+            renderer.clear()
+
+            // True: the caller must not open the microphone.
+            assertTrue(controller.startQuestion())
+
+            assertEquals(
+                listOf(
+                    RenderCall.ShowNotice("Assistant", null),
+                    RenderCall.ShowQuestionField(
+                        AssistantUiController.QUESTION_FIELD,
+                        AssistantUiController.TYPING_FOOTER,
+                    ),
+                ),
+                renderer.calls,
+            )
+            assertEquals(false, renderer.noticeEngagement.first())
+            assertTrue(controller.isTyping)
+            advanceTimeBy(AssistantUiController.TYPE_CHIP_ARM_DELAY_MS * 4)
+            runCurrent()
+            assertTrue(renderer.calls.none { it == RenderCall.ShowNotice("Assistant", AssistantUiController.LISTENING_BODY) })
+            assertTrue(renderer.noticeActions.all { it.isEmpty() })
+
+            // Back cancels: the anchor comes back, and the next question opens typed again.
+            renderer.clear()
+            controller.onNoticeClosed(NexusNoticeCloseReason.USER)
+            assertEquals(
+                listOf(
+                    RenderCall.ShowCard(AssistantUiController.TYPE_FIRST_ANCHOR_LINES, forceShow = true),
+                ),
+                renderer.calls,
+            )
+            assertFalse(controller.isTyping)
+            controller.beginGestureFlow()
+            assertTrue(controller.startQuestion())
+            assertTrue(controller.isTyping)
+            controller.onClose()
+        }
+
+    @Test
+    fun `without the editable bit or a band every choice falls back to voice`() =
+        runTest {
+            val noField = FakeRenderer(
+                supportsNotice = true,
+                supportsQuestionField = false,
+                chosenInputMode = AssistantInputMode.TYPE_FIRST,
+            )
+            val noFieldController = controller(noField)
+            noFieldController.onLauncherOpen()
+            noFieldController.beginGestureFlow()
+            assertEquals(AssistantInputMode.VOICE_ONLY, noFieldController.inputMode)
+            // False: the caller listens, exactly as Voice only would.
+            assertFalse(noFieldController.startQuestion())
+            assertTrue(noField.calls.none { it is RenderCall.ShowQuestionField })
+            noFieldController.onClose()
+
+            val noBand = FakeRenderer(
+                supportsNotice = false,
+                supportsQuestionField = true,
+                chosenInputMode = AssistantInputMode.TYPE_FIRST,
+            )
+            val noBandController = controller(noBand)
+            assertEquals(AssistantInputMode.VOICE_ONLY, noBandController.inputMode)
+            assertFalse(noBandController.startQuestion())
+
+            val chipNoField = FakeRenderer(
+                supportsNotice = true,
+                supportsQuestionField = false,
+                chosenInputMode = AssistantInputMode.VOICE_AND_TYPE,
+            )
+            val chipController = controller(chipNoField)
+            chipController.onLauncherOpen()
+            chipController.beginGestureFlow()
+            chipController.showListening(legacyForceShow = true)
+            advanceTimeBy(AssistantUiController.TYPE_CHIP_ARM_DELAY_MS * 2)
+            runCurrent()
+            assertTrue(chipNoField.noticeActions.all { it.isEmpty() })
+            assertFalse(chipController.offersTyping)
+            chipController.onClose()
+        }
+
+    @Test
+    fun `leaving Voice + Type mid-question stops the chip arriving and takes its tap back`() =
+        runTest {
+            val renderer = FakeRenderer(supportsNotice = true, supportsQuestionField = true)
+            val controller = controller(renderer)
+            controller.onLauncherOpen()
+            controller.beginGestureFlow()
+            controller.showListening(legacyForceShow = true)
+
+            // Switched before the chip's wait is over: it never arrives.
+            renderer.chosenInputMode = AssistantInputMode.VOICE_ONLY
+            advanceTimeBy(AssistantUiController.TYPE_CHIP_ARM_DELAY_MS * 2)
+            runCurrent()
+            assertTrue(renderer.noticeActions.all { it.isEmpty() })
+            assertFalse(controller.offersTyping)
+            controller.onClose()
+
+            // Switched once it is up: still drawn, but a tap on it no longer opens anything.
+            val armedRenderer = FakeRenderer(supportsNotice = true, supportsQuestionField = true)
+            val armed = controller(armedRenderer)
+            armedChip(armed, armedRenderer)
+            armedRenderer.chosenInputMode = AssistantInputMode.VOICE_ONLY
+            assertFalse(armed.offersTyping)
+            armedRenderer.chosenInputMode = AssistantInputMode.TYPE_FIRST
+            assertFalse(armed.offersTyping)
+            armedRenderer.chosenInputMode = AssistantInputMode.VOICE_AND_TYPE
+            assertTrue(armed.offersTyping)
+            armed.onClose()
+        }
+
+    @Test
+    fun `type first anchors on typing words while the voice modes keep Ask out loud`() =
+        runTest {
+            val renderer = FakeRenderer(
+                supportsNotice = true,
+                supportsQuestionField = true,
+                chosenInputMode = AssistantInputMode.TYPE_FIRST,
+            )
+            val controller = controller(renderer)
+            controller.onLauncherOpen()
+            assertEquals(
+                RenderCall.ShowCard(AssistantUiController.TYPE_FIRST_ANCHOR_LINES, forceShow = true),
+                renderer.calls.last(),
+            )
+            // The anchor the field hands back after Back says the same.
+            controller.beginGestureFlow()
+            assertTrue(controller.startQuestion())
+            controller.onNoticeClosed(NexusNoticeCloseReason.USER)
+            assertEquals(
+                RenderCall.ShowCard(AssistantUiController.TYPE_FIRST_ANCHOR_LINES, forceShow = true),
+                renderer.calls.last(),
+            )
+            assertTrue(renderer.footers.all { it == AssistantUiController.ANCHOR_FOOTER })
+            // And the assist-button hint does not ask the wearer to speak.
+            renderer.clear()
+            controller.onOpen()
+            advanceTimeBy(AssistantUiController.LAUNCHER_HINT_DELAY_MS)
+            runCurrent()
+            assertEquals(
+                RenderCall.ShowCard(listOf(AssistantUiController.TYPE_FIRST_LAUNCHER_HINT), forceShow = true),
+                renderer.calls.last(),
+            )
+            controller.onClose()
+
+            AssistantInputMode.entries.filter { it != AssistantInputMode.TYPE_FIRST }.forEach { mode ->
+                val voiceRenderer = FakeRenderer(
+                    supportsNotice = true,
+                    supportsQuestionField = true,
+                    chosenInputMode = mode,
+                )
+                val voice = controller(voiceRenderer)
+                voice.onLauncherOpen()
+                assertEquals(
+                    RenderCall.ShowCard(AssistantUiController.ANCHOR_LINES, forceShow = true),
+                    voiceRenderer.calls.last(),
+                )
+                voice.onOpen()
+                advanceTimeBy(AssistantUiController.LAUNCHER_HINT_DELAY_MS)
+                runCurrent()
+                assertEquals(
+                    RenderCall.ShowCard(listOf(AssistantUiController.LAUNCHER_HINT), forceShow = true),
+                    voiceRenderer.calls.last(),
+                )
+                voice.onClose()
+            }
+
+            // Type first that the glasses cannot honour is voice, words included.
+            val fallbackRenderer = FakeRenderer(
+                supportsNotice = true,
+                supportsQuestionField = false,
+                chosenInputMode = AssistantInputMode.TYPE_FIRST,
+            )
+            val fallback = controller(fallbackRenderer)
+            fallback.onLauncherOpen()
+            assertEquals(
+                RenderCall.ShowCard(AssistantUiController.ANCHOR_LINES, forceShow = true),
+                fallbackRenderer.calls.last(),
+            )
+            fallback.onClose()
+        }
+
+    private fun TestScope.armedChip(controller: AssistantUiController, renderer: FakeRenderer) {
+        controller.onLauncherOpen()
+        controller.beginGestureFlow()
+        controller.showListening(legacyForceShow = true)
+        advanceTimeBy(AssistantUiController.TYPE_CHIP_ARM_DELAY_MS)
+        runCurrent()
+        assertTrue(controller.offersTyping)
+        renderer.clear()
+    }
+
+    /** Unpaced unless asked: most of these tests are about what is sent, not when. */
+    private fun TestScope.controller(
+        renderer: FakeRenderer,
+        noticeIntervalMs: Long = 0L,
+    ): AssistantUiController =
         AssistantUiController(
             scope = this,
             renderer = renderer,
             cancelPipeline = {},
             resetCapture = {},
+            noticeIntervalMs = noticeIntervalMs,
         )
 
     private fun assertValidTruncatedBody(body: String?) {
@@ -909,31 +1799,94 @@ class AssistantUiControllerTest {
             val footer: String?,
             val forceShow: Boolean,
         ) : RenderCall
+
+        data class ShowQuestionField(
+            val field: EditableSurfaceField,
+            val footer: String,
+        ) : RenderCall
+
+        data object HideCard : RenderCall
     }
 
     private class FakeRenderer(
         private val supportsNotice: Boolean,
+        override val supportsQuestionField: Boolean = false,
+        private val questionFieldResult: NexusSdkResult = NexusSdkResult.SENT,
+        // The chip's own mode, so the tests written before the Input setting keep their meaning.
+        override var chosenInputMode: AssistantInputMode = AssistantInputMode.VOICE_AND_TYPE,
+        private val clock: () -> Long = { 0L },
     ) : AssistantUiRenderer {
         val calls = mutableListOf<RenderCall>()
 
+        /** When each show or update left, for the rate the hub would count. */
+        val noticeSendTimes = mutableListOf<Long>()
+
+        /** The next show fails the way an unreachable hub makes it fail. */
+        var failNextShow = false
+
         /** Kept beside [calls] so the existing call assertions stay about bodies alone. */
         val updateTtls = mutableListOf<Long?>()
+        val showTtls = mutableListOf<Long?>()
         val noticeEngagement = mutableListOf<Boolean?>()
+
+        /** Per show or update; an update's empty row means the key was left out. */
+        val noticeActions = mutableListOf<List<NexusNoticeAction>>()
+        val noticeFooters = mutableListOf<String?>()
+        private var questionFieldRejected: ((String) -> Unit)? = null
 
         override val supportsNoticeSurface: Boolean
             get() = supportsNotice
 
         override fun showNotice(notice: NexusNotice): NexusSdkResult {
             calls += RenderCall.ShowNotice(notice.title, notice.body, notice.lines)
+            showTtls += notice.ttlMs
             noticeEngagement += notice.interactive
+            noticeActions += notice.actions
+            noticeFooters += notice.footer
+            if (failNextShow) {
+                failNextShow = false
+                return NexusSdkResult.NOT_REGISTERED
+            }
+            noticeSendTimes += clock()
             return NexusSdkResult.SENT
         }
 
         override fun updateNotice(update: NexusNoticeUpdate): NexusSdkResult {
+            noticeSendTimes += clock()
             calls += RenderCall.UpdateNotice(update.body, update.lines)
             updateTtls += update.ttlMs
             noticeEngagement += update.interactive
+            noticeActions += update.actions
+            noticeFooters += update.footer
             return NexusSdkResult.SENT
+        }
+
+        override fun showQuestionField(
+            field: EditableSurfaceField,
+            footer: String,
+            onRejected: (code: String) -> Unit,
+        ): NexusSdkResult {
+            calls += RenderCall.ShowQuestionField(field, footer)
+            questionFieldRejected = onRejected
+            return questionFieldResult
+        }
+
+        override fun hideCard(): NexusSdkResult {
+            calls += RenderCall.HideCard
+            return NexusSdkResult.SENT
+        }
+
+        fun rejectQuestionField(code: String) {
+            questionFieldRejected?.invoke(code)
+        }
+
+        fun clear() {
+            calls.clear()
+            updateTtls.clear()
+            showTtls.clear()
+            noticeEngagement.clear()
+            noticeActions.clear()
+            noticeFooters.clear()
         }
 
         override fun hideNotice(): NexusSdkResult {

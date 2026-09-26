@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.4.7
+
+- **Type the question instead.** A new *Input* setting picks how you ask.
+  *Voice only* stays the default and changes nothing. *Voice + Type button*
+  adds a *Type* chip to the band a moment after it starts listening: tap it
+  and the microphone stops. *Type first* skips the microphone and opens the
+  field straight away, however the question starts. Either way the band itself
+  becomes the text field, with your text and the caret drawn live inside it,
+  like an inline reply to an Android notification. The phone's Keyboard &
+  remote comes up on its own and closes again when you are done. Enter asks
+  the question exactly as if you had said it; Back cancels. Needs Rokid Nexus
+  1.4.13; with a glasses hub from 1.4.6 to 1.4.12 the field opens as its own
+  card instead, and an older one keeps to voice.
+
 ## 1.4.6
 
 - **Ink answers keep the Thinking band off.** An answer drawn as a page is no

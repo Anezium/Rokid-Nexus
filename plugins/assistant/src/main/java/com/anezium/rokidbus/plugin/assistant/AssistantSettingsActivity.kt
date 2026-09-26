@@ -87,6 +87,8 @@ class AssistantSettingsActivity : Activity() {
     private val photosNames = mutableMapOf<Boolean, TextView>()
     private val voiceDots = mutableMapOf<Boolean, View>()
     private val voiceNames = mutableMapOf<Boolean, TextView>()
+    private val inputDots = mutableMapOf<AssistantInputMode, View>()
+    private val inputNames = mutableMapOf<AssistantInputMode, TextView>()
     private val windowDots = mutableMapOf<Int, View>()
     private val windowNames = mutableMapOf<Int, TextView>()
     private val syncDots = mutableMapOf<Boolean, View>()
@@ -230,6 +232,24 @@ class AssistantSettingsActivity : Activity() {
             )
             addView(BusTheme.gap(this@AssistantSettingsActivity, 12))
             addView(photosCard(), NexusUi.block())
+            addView(BusTheme.gap(this@AssistantSettingsActivity, 18))
+            addView(
+                NexusUi.sectionRow(this@AssistantSettingsActivity, "Input"),
+                NexusUi.block(),
+            )
+            addView(BusTheme.gap(this@AssistantSettingsActivity, 12))
+            addView(inputCard(), NexusUi.block())
+            addView(BusTheme.gap(this@AssistantSettingsActivity, 10))
+            addView(
+                NexusUi.cardBody(
+                    this@AssistantSettingsActivity,
+                    "Typing uses Keyboard & remote on your phone. With Rokid Nexus 1.4.13 " +
+                        "on both hubs you type inside the band and the keyboard comes up on " +
+                        "its own; from 1.4.6 the field opens as its own card, and older hubs " +
+                        "stay on voice.",
+                ),
+                NexusUi.block(),
+            )
             addView(BusTheme.gap(this@AssistantSettingsActivity, 18))
             addView(
                 NexusUi.sectionRow(this@AssistantSettingsActivity, "Voice"),
@@ -1349,6 +1369,35 @@ class AssistantSettingsActivity : Activity() {
             dotSink = { voiceDots[enabled] = it },
         )
 
+    private fun inputCard(): LinearLayout =
+        NexusUi.card(this).apply {
+            AssistantInputMode.entries.forEachIndexed { index, mode ->
+                if (index > 0) addView(NexusUi.divider(this@AssistantSettingsActivity))
+                addView(inputRow(mode), NexusUi.block())
+            }
+        }
+
+    private fun inputRow(mode: AssistantInputMode): LinearLayout {
+        val (title, caption) = when (mode) {
+            AssistantInputMode.VOICE_ONLY -> "Voice only" to "Ask out loud, no keyboard"
+            AssistantInputMode.VOICE_AND_TYPE ->
+                "Voice + Type button" to "A Type button appears while it listens"
+            AssistantInputMode.TYPE_FIRST -> "Type first" to "Opens a text field; the mic stays off"
+        }
+        return pickerRow(
+            title = title,
+            hint = if (mode == AssistantInputMode.DEFAULT) "default" else null,
+            caption = caption,
+            description = "$title. $caption",
+            onClick = {
+                authStore.setInputMode(mode)
+                renderConversationSettings()
+            },
+            nameSink = { inputNames[mode] = it },
+            dotSink = { inputDots[mode] = it },
+        )
+    }
+
     private fun windowCard(): LinearLayout =
         NexusUi.card(this).apply {
             CodexAuthStore.SUPPORTED_IDLE_WINDOW_MINUTES.forEachIndexed { index, minutes ->
@@ -1471,6 +1520,14 @@ class AssistantSettingsActivity : Activity() {
         }
         voiceNames.forEach { (value, nameView) ->
             nameView.setTextColor(if (value == speakAnswers) NexusUi.INK else NexusUi.INK2)
+        }
+
+        val inputMode = authStore.inputMode()
+        inputDots.forEach { (mode, dotView) ->
+            NexusUi.setDotColor(dotView, if (mode == inputMode) NexusUi.GREEN else NexusUi.INK4)
+        }
+        inputNames.forEach { (mode, nameView) ->
+            nameView.setTextColor(if (mode == inputMode) NexusUi.INK else NexusUi.INK2)
         }
 
         renderConversationsCard()
