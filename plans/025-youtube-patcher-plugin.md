@@ -1,4 +1,4 @@
-# Plan 025 — Morphe Patcher plugin and a one-screen YouTube onboarding
+# Plan 025 — YouTube Patcher plugin and a one-screen YouTube onboarding
 
 Status: TODO — plan written 2026-09-28, nothing implemented yet.
 Branch: continue on `dev/youtube-glasses-setup` (or a child branch of it). It is not
@@ -11,7 +11,7 @@ Rokid Nexus, apart from downloading the stock YouTube APK in the browser:
 
 1. **Glasses apps → Set up YouTube** shows four steps, each with one primary button
    and a state that Nexus detects by itself (done, to do, needs attention).
-2. Nexus patches YouTube on the phone with the **Morphe Patcher** plugin, from the
+2. Nexus patches YouTube on the phone with the **YouTube Patcher** plugin, from the
    Rokid patch bundle, with the patch selection shown and editable.
 3. Nexus installs the patched YouTube on the glasses and confirms it.
 
@@ -59,16 +59,16 @@ The plugin patches. The hub keeps everything that touches the glasses.
   signer continuity with the installed app and `minSdk` are already checked by
   `YoutubeApkPolicy`.
 
-## Part A — the Morphe Patcher plugin
+## Part A — the YouTube Patcher plugin
 
 ### Identity
 
 | Item | Value |
 |---|---|
-| Module | `plugins/morphe-patcher` → Gradle `:plugin-morphe-patcher` |
-| applicationId | `com.anezium.rokidbus.plugin.morphepatcher` |
-| Plugin id | `morphe_patcher` |
-| Display name | Morphe Patcher (see the branding checkpoint below) |
+| Module | `plugins/youtube-patcher` → Gradle `:plugin-youtube-patcher` |
+| applicationId | `com.anezium.rokidbus.plugin.youtubepatcher` |
+| Plugin id | `youtube_patcher` |
+| Display name | YouTube Patcher (decided, see Decisions) |
 | Capabilities | none needed. Checkpoint: confirm the descriptor validator accepts an empty set, and how a plugin without a glasses surface appears in the glasses launcher |
 
 Follow `plugins/AGENTS.md` and copy `plugins/sample`: one exported
@@ -111,8 +111,11 @@ an intent filter that the settings activity also opens.
 
 1. **Stock YouTube APK.** A file picker (`ACTION_OPEN_DOCUMENT`). Validate before
    anything else: package `com.google.android.youtube`, versionName `21.04.223`, a
-   single APK rather than a bundle, Google's signer. Accept `.apkm`/split bundles only
-   if `SplitApkPreparer` is ported; otherwise explain that the APK variant is needed.
+   Google's signer. Accept both a single APK and an APKMirror bundle (`.apkm`, `.apks`,
+   `.xapk`): port Morphe Manager's `SplitApkPreparer` to merge the base and the splits
+   for this phone's ABI and density into one APK before patching (decided, see
+   Decisions). The wearer downloads whatever APKMirror offers and never has to pick a
+   variant.
    The hub may pass nothing: the plugin owns this picker.
 2. **Patches.** List every patch of the bundle compatible with that YouTube version,
    with the bundle's defaults ticked (Rokid controls, GmsCore support, Hide ads,
@@ -136,10 +139,11 @@ drive stock YouTube.
   in-process coroutine runtime; if phones below 8 GB RAM fail with
   `OutOfMemoryError`, port Morphe Manager's `ProcessRuntime`, which starts a separate
   `app_process` with a larger `-Xmx`.
-- Patching takes minutes. Keep the activity on screen with `FLAG_KEEP_SCREEN_ON`.
-  If it must survive the screen going off, a user-started foreground service limited
-  to the job is needed: that is a new exception to the dormancy rule in
-  `plugins/AGENTS.md` §1 and must be written there first (checkpoint).
+- Patching takes minutes. Keep the activity on screen with `FLAG_KEEP_SCREEN_ON` and
+  show "Keep this screen open". No foreground service: that would need a new
+  exception to the dormancy rule in `plugins/AGENTS.md` §1 (decided, see Decisions).
+  If the activity is destroyed mid-patch, discard the partial output and let the user
+  start again; never return a partial APK.
 - Output: `aapt`-free path as in Morphe Manager (the patcher rewrites resources in
   Java); verify on the phone that the resulting APK installs on the glasses.
 
@@ -174,8 +178,8 @@ inventory and one primary button; secondary actions go under a small "More" row.
 | Step | Done when | Primary button | Notes |
 |---|---|---|---|
 | 1. MicroG on the glasses | inventory shows `app.revanced.android.gms` installed | **Install MicroG** | Chain the existing `PREPARE_MICROG` and `INSTALL` into one action |
-| 2. YouTube APK | the plugin reports a valid stock APK, or YouTube is already installed | **Download YouTube 21.04.223** | Opens APKMirror as today, with the one-line "APK, not bundle" hint |
-| 3. Patch and install | inventory shows `app.morphe.android.youtube` with a signer | **Patch and install** | Plugin missing → **Get Morphe Patcher** opens the Store entry; plugin present → start the patch activity for result, then import and install without another tap |
+| 2. YouTube APK | the plugin reports a valid stock APK, or YouTube is already installed | **Download YouTube 21.04.223** | Opens APKMirror as today. APK or bundle are both fine; drop the "APK, not bundle" hint |
+| 3. Patch and install | inventory shows `app.morphe.android.youtube` with a signer | **Patch and install** | Plugin missing → **Get YouTube Patcher** opens the Store entry; plugin present → start the patch activity for result, then import and install without another tap |
 | 4. Sign in and open | the user taps Done (account state is never read) | **Open MicroG on glasses** | Then **Keyboard & remote**, then **Open YouTube**. Unchanged privacy rule: Nexus never reads accounts or tokens |
 
 - Detect the plugin with `PackageManager` by package name and check the Nexus
@@ -195,22 +199,22 @@ inventory and one primary button; secondary actions go under a small "More" row.
 - `docs/YOUTUBE_GLASSES.md`: rewrite around the four steps; move Morphe Manager to
   "Advanced".
 - `BUSSPEC.md`: add one sentence under YouTube setup: the phone hub may receive the
-  patched APK from the Morphe Patcher plugin as an activity result URI; still no bus
+  patched APK from the YouTube Patcher plugin as an activity result URI; still no bus
   route or capability.
-- `plugins/morphe-patcher/README.md` and `CHANGELOG.md` like other plugins.
+- `plugins/youtube-patcher/README.md` and `CHANGELOG.md` like other plugins.
 - `plugins/AGENTS.md`: the foreground-service exception, only if the patch job needs it.
 - Release: the plugin follows `plugins/README.md` § Releases (namespaced tag such as
-  `morphepatcher-v1.0.0`, `CHANGELOG.md` section as notes, registry entry updated after
+  `youtubepatcher-v1.0.0`, `CHANGELOG.md` section as notes, registry entry updated after
   the release assets exist). The hubs ship with a `v*` tag, which bumps both hubs.
   Build or release only on the owner's explicit go.
 
 ## Delivery slices
 
-1. **Proof of patching** (half a day): `:plugin-morphe-patcher` skeleton, dependency
+1. **Proof of patching** (half a day): `:plugin-youtube-patcher` skeleton, dependency
    wiring, JVM test that loads the real `.mpp`, then a debug button that patches the
    APK on the phone and saves the output. Measure time and memory on the owner's
    phone. Stop and report if memory fails before going further.
-2. **Plugin patch screen** (half a day): APK picker and validation, patch list with
+2. **Plugin patch screen** (about a day): APK and APKMirror bundle picker, split merge and validation, patch list with
    defaults, progress, signing with a persisted key, activity result with a URI.
 3. **Hub hand-off** (half a day): four-step setup screen, plugin detection and Store
    link, result URI into `prepare(uri)` and automatic `install()`.
@@ -226,19 +230,27 @@ inventory and one primary button; secondary actions go under a small "More" row.
 - A second patch (for example after a new bundle) installs over the first on the
   glasses without a signer error.
 - No new bus route, capability or AIDL change. `:phone-hub`, `:glasses-hub`,
-  `:shared` and `:plugin-morphe-patcher` test suites pass; the plugin passes the
+  `:shared` and `:plugin-youtube-patcher` test suites pass; the plugin passes the
   registry CI rules (no launcher activity, single signer).
 - Evidence (screenshots, timings) stays under `E:\Tools\Rokid\tmp`, never committed.
 
-## Design checkpoints before implementation
+## Decisions (owner, 2026-09-28)
 
-1. **Name.** GPLv3 §7 terms in Morphe Patches forbid "Morphe" in the branding of a
-   derivative work. The plugin embeds the patcher library rather than deriving from
-   the patches, but a name like "YouTube Patcher" or "Glasses Patcher" avoids the
-   question. The owner asked for "Morphe Patcher"; confirm with them.
-2. **Empty capability set** and how a phone-only plugin appears on the glasses
-   launcher.
-3. **Approval** required or not for the activity-result hand-off.
-4. **Foreground service** for patching with the screen off, or keep-screen-on only.
-5. **Split APKs**: port `SplitApkPreparer` so APKMirror bundles work, or keep "APK
-   variant only".
+1. **Name: YouTube Patcher.** It keeps "Morphe" out of the plugin's branding, which the
+   GPLv3 §7 terms of Morphe Patches forbid for derivative works. Credit Morphe and
+   link the fork in the plugin's settings and README.
+2. **No foreground service.** Keep the screen on during the patch; see Patching runtime.
+3. **Whatever is simplest for the user: accept both the APK and the APKMirror
+   bundle.** Port `SplitApkPreparer`; see Patch screen step 1.
+
+## Checkpoints for the implementer
+
+Verify these in the code before building on them, and record the answer in this plan:
+
+1. **Empty capability set.** Confirm the descriptor validator accepts a plugin with no
+   capabilities, and how a phone-only plugin appears in the glasses launcher. If it
+   shows up there, give it a one-line glasses surface ("Open YouTube Patcher on your
+   phone") or hide phone-only plugins from the launcher, whichever is smaller.
+2. **Approval for the hand-off.** No capability is used, so the activity result works
+   without Nexus approval. Prefer not requiring it; if the hub's plugin model makes
+   an unapproved plugin confusing, send the user to approval from step 3.
