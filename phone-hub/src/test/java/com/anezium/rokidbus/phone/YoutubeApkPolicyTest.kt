@@ -23,13 +23,24 @@ class YoutubeApkPolicyTest {
             if (it == archive.packageName) YoutubePackage(it, version, signer, true) else YoutubePackage(it)
         })
 
-    @Test fun `chooses only universal icon enabled MicroG from the official repository`() {
+    @Test fun `chooses only icon enabled MicroG from the official repository`() {
         assertTrue(YoutubeApkPolicy.microGRelease(release().toString()).url.endsWith("/microg-7.1.1.apk"))
-        for (name in listOf("microg-7.1.1-noicon.apk", "microg-7.1.1-arm64-v8a.apk")) {
+        for (name in listOf("microg-7.1.1-noicon.apk", "microg-7.1.1-noicon-arm64-v8a.apk")) {
             val json = release()
             json.getJSONArray("assets").getJSONObject(0).put("name", name)
             assertTrue(runCatching { YoutubeApkPolicy.microGRelease(json.toString()) }.isFailure)
         }
+    }
+
+    @Test fun `prefers the arm64 MicroG asset over the universal one`() {
+        val json = release()
+        val universal = json.getJSONArray("assets").getJSONObject(0)
+        json.getJSONArray("assets").put(JSONObject(universal.toString())
+            .put("name", "microg-7.1.1-arm64-v8a.apk").put("size", 44821575)
+            .put("browser_download_url", "https://github.com/MorpheApp/MicroG-RE/releases/download/7.1.1/microg-7.1.1-arm64-v8a.apk"))
+        val release = YoutubeApkPolicy.microGRelease(json.toString())
+        assertTrue(release.url.endsWith("/microg-7.1.1-arm64-v8a.apk"))
+        assertEquals(44821575L, release.size)
     }
 
     @Test fun `rejects substituted release URL missing digest and prereleases`() {

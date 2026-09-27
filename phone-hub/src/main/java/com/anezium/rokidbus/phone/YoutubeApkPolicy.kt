@@ -16,8 +16,13 @@ internal object YoutubeApkPolicy {
         require(json.opt("draft") == false && json.opt("prerelease") == false)
         val tag = json.getString("tag_name")
         require(tag.matches(Regex("[A-Za-z0-9._-]{1,80}")))
-        val name = "microg-${tag.removePrefix("v")}.apk"
+        val version = tag.removePrefix("v")
         val assets = json.getJSONArray("assets")
+        // The glasses are arm64 and the CXR transfer is slow: the arm64 asset is less than
+        // half the size of the universal one. Both carry the launcher icon; "noicon" never.
+        val name = listOf("microg-$version-arm64-v8a.apk", "microg-$version.apk").first { candidate ->
+            (0 until assets.length()).any { assets.getJSONObject(it).optString("name") == candidate }
+        }
         val matches = (0 until assets.length()).map(assets::getJSONObject)
             .filter { it.optString("name") == name }
         val asset = matches.single()

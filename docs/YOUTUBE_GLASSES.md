@@ -6,7 +6,8 @@ to a build containing this feature before starting.
 1. Connect the glasses through Hi Rokid, start Nexus on them, and enable phone Wi-Fi.
 2. Choose **Get latest MicroG-RE**, then **Install / update on glasses**. Nexus uses
    the latest stable release from <https://github.com/MorpheApp/MicroG-RE>, selecting
-   the universal APK with a launcher icon. The package remains `app.revanced.android.gms`.
+   the arm64 APK with a launcher icon, or the universal one when no arm64 asset exists.
+   The package remains `app.revanced.android.gms`.
 3. Choose your standalone Morphe-patched YouTube APK on the phone, then install it.
    Include **GmsCore support**, **Hide ads**, **SponsorBlock**, and **Rokid controls**
    when patching. Supported package names are `app.morphe.android.youtube` and the
