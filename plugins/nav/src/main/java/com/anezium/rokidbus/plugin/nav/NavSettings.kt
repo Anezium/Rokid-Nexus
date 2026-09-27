@@ -12,10 +12,12 @@ internal data class NavSwitches(
     val enabled: Boolean = true,
     val googleMaps: Boolean = true,
     val citymapper: Boolean = true,
+    val organicMaps: Boolean = true,
 ) {
     fun allows(source: NavSource): Boolean = enabled && when (source) {
         NavSource.GOOGLE_MAPS -> googleMaps
         NavSource.CITYMAPPER -> citymapper
+        NavSource.ORGANIC_MAPS -> organicMaps
     }
 }
 
@@ -27,6 +29,7 @@ internal class NavSettings(context: Context) {
         enabled = prefs.getBoolean(KEY_ENABLED, true),
         googleMaps = prefs.getBoolean(KEY_GOOGLE_MAPS, true),
         citymapper = prefs.getBoolean(KEY_CITYMAPPER, true),
+        organicMaps = prefs.getBoolean(KEY_ORGANIC_MAPS, true),
     )
 
     fun setEnabled(value: Boolean) = prefs.edit().putBoolean(KEY_ENABLED, value).apply()
@@ -35,6 +38,7 @@ internal class NavSettings(context: Context) {
         when (source) {
             NavSource.GOOGLE_MAPS -> KEY_GOOGLE_MAPS
             NavSource.CITYMAPPER -> KEY_CITYMAPPER
+            NavSource.ORGANIC_MAPS -> KEY_ORGANIC_MAPS
         },
         value,
     ).apply()
@@ -44,6 +48,7 @@ internal class NavSettings(context: Context) {
         const val KEY_ENABLED = "enabled"
         const val KEY_GOOGLE_MAPS = "source_google_maps"
         const val KEY_CITYMAPPER = "source_citymapper"
+        const val KEY_ORGANIC_MAPS = "source_organic_maps"
     }
 }
 

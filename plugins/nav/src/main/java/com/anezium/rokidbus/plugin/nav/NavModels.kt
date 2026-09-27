@@ -1,13 +1,16 @@
 package com.anezium.rokidbus.plugin.nav
 
 /** The navigation apps Navigation follows, by the package that posts their guidance. */
-internal enum class NavSource(val packageName: String, val label: String) {
+internal enum class NavSource(val packageName: String, val label: String, vararg val aliases: String) {
     GOOGLE_MAPS("com.google.android.apps.maps", "Google Maps"),
     CITYMAPPER("com.citymapper.app.release", "Citymapper"),
+    ORGANIC_MAPS("app.organicmaps", "Organic Maps", "app.organicmaps.web"),
     ;
 
     companion object {
-        fun of(packageName: String): NavSource? = values().firstOrNull { it.packageName == packageName }
+        fun of(packageName: String): NavSource? = values().firstOrNull {
+            it.packageName == packageName || packageName in it.aliases
+        }
     }
 }
 

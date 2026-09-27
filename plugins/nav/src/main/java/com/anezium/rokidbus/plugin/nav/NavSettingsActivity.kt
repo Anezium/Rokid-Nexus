@@ -119,6 +119,7 @@ class NavSettingsActivity : Activity() {
         listOf(
             Triple(NavSource.GOOGLE_MAPS, current.googleMaps, R.string.nav_settings_maps_sub),
             Triple(NavSource.CITYMAPPER, current.citymapper, R.string.nav_settings_citymapper_sub),
+            Triple(NavSource.ORGANIC_MAPS, current.organicMaps, R.string.nav_settings_organic_sub),
         ).forEach { (source, checked, sub) ->
             val control = NexusUi.switch(this@NavSettingsActivity).apply {
                 isChecked = checked

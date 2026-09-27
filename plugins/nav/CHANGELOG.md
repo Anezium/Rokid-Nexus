@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Read Organic Maps navigation distance and street, with one switch for the
+  Play/F-Droid and GitHub distributions. Its maneuver is bitmap-only, so it
+  keeps the neutral route glyph. No ETA or arrival message is invented.
+
 ## 0.1.1
 
 - Korean: Citymapper GO and Google Maps public transport are read in Korean

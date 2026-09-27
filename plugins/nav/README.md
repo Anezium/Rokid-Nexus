@@ -13,6 +13,14 @@ in process memory only; nothing is stored.
 
 ## What it reads
 
+- **Organic Maps** (`app.organicmaps`, GitHub `app.organicmaps.web`) posts
+  distance as title and street as text on the `NAVIGATION` channel. The
+  maneuver is bitmap-only: Navigation keeps the neutral route glyph and
+  does not infer a turn warning or arrival from a short/zero distance.
+  There is no ETA; at arrival the app removes its notification. English
+  and French metric fields are covered. Contract derived from upstream
+  [NavigationService](https://github.com/organicmaps/organicmaps/blob/master/android/libs/routing/src/main/java/app/organicmaps/routing/NavigationService.java).
+
 - **Google Maps** posts turn-by-turn as a `ProgressStyle` notification:
   `"80 m · Prendre à droite sur Av. X"` as the title and the arrival time as the
   sub-text. The maneuver itself is a bitmap, so the arrow comes from the
