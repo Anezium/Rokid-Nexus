@@ -38,6 +38,8 @@ internal data class JourneyState(
     val phase: JourneyPhase,
     val rideStopIndex: Int,
     val replanned: Boolean,
+    /** False once the wearer boarded a later vehicle: the itinerary's times no longer apply. */
+    val onPlannedTrip: Boolean = true,
     /** Bumped by every new plan, so its first step is a new step even at the same leg. */
     val planGeneration: Int,
     val startedAt: Instant,
@@ -50,16 +52,23 @@ internal data class JourneyState(
 
 /**
  * Journey guidance as a pure state machine: position and time in, the next state and the step
- * the activity shows out. It estimates nothing between fixes and never counts down a departure
- * that has left: a missed boarding becomes its own step, and asks for one replan.
+ * the activity shows out. A fix leads and never runs ahead of the wearer; the timetable moves
+ * the journey only without one, and only along the trip that was planned. It never counts down
+ * a departure that has left: a missed boarding becomes its own step, asks for one replan, and
+ * still turns into a ride when the wearer boards a later vehicle.
  */
 internal object TransitJourneyGuide {
     const val ARRIVE_RADIUS_M = 40
     const val STOP_RADIUS_M = 300
     const val BOARDED_DISTANCE_M = 150
     const val WALK_SPEED_MPS = 1.25
+    const val WALK_END_GRACE_MS = 90_000L
     const val MISSED_GRACE_MS = 90_000L
+    /** Without real-time data the timetable says nothing about a late vehicle: wait longer. */
+    const val SCHEDULED_MISSED_GRACE_MS = 4L * 60L * 1000L
     const val RIDE_END_GRACE_MS = 120_000L
+    /** With a fix aboard, the vehicle must be this late before the timetable ends the ride. */
+    const val RIDE_END_LATE_MS = 10L * 60L * 1000L
     const val ARRIVAL_GRACE_MS = 10L * 60L * 1000L
     const val EXPIRY_MARGIN_MS = 30L * 60L * 1000L
     const val MAX_TRACK_POSITIONS = 12
@@ -104,34 +113,52 @@ internal object TransitJourneyGuide {
     }
 
     private fun step(state: JourneyState, position: TransitCoordinate?, now: Instant): Advance {
-        if (state.phase == JourneyPhase.ARRIVED || state.phase == JourneyPhase.MISSED) return Advance(state, false)
-        if (!now.isBefore(state.itinerary.end.plusMillis(ARRIVAL_GRACE_MS))) return Advance(arrive(state, now), false)
+        if (state.phase == JourneyPhase.ARRIVED) return Advance(state, false)
         val leg = state.currentLeg ?: return Advance(arrive(state, now), false)
+        if (state.phase == JourneyPhase.MISSED) {
+            // Only boarding a later vehicle moves a missed leg on; the planned times are then void.
+            val aboardAt = position?.let { aboardIndex(leg, it) } ?: return Advance(state, false)
+            return Advance(
+                state.copy(
+                    phase = JourneyPhase.RIDE,
+                    rideStopIndex = aboardAt,
+                    onPlannedTrip = false,
+                    expiresAt = maxOf(state.expiresAt, now.plusMillis(EXPIRY_MARGIN_MS)),
+                ),
+                false,
+            )
+        }
+        val timed = state.onPlannedTrip
+        if (timed && !now.isBefore(state.itinerary.end.plusMillis(ARRIVAL_GRACE_MS))) return Advance(arrive(state, now), false)
         return when (state.phase) {
             JourneyPhase.WALK -> {
-                val reached = if (position != null) {
-                    haversineMeters(position, leg.to.coordinate) <= ARRIVE_RADIUS_M
-                } else {
-                    !now.isBefore(leg.end)
-                }
-                Advance(if (reached) nextLeg(state, now) else state, false)
+                // A fix that never comes within reach of the stop (a platform deep inside a
+                // station) must not hold the walk forever: past the leg's end, time completes it.
+                val byPosition = position?.let { haversineMeters(it, leg.to.coordinate) <= ARRIVE_RADIUS_M } == true
+                val byTime = timed && !now.isBefore(leg.end.plusMillis(if (position == null) 0L else WALK_END_GRACE_MS))
+                Advance(if (byPosition || byTime) nextLeg(state, now) else state, false)
             }
             JourneyPhase.BOARD -> {
                 val aboardAt = position?.let { aboardIndex(leg, it) }
+                val grace = if (leg.realTime) MISSED_GRACE_MS else SCHEDULED_MISSED_GRACE_MS
                 when {
                     aboardAt != null -> Advance(state.copy(phase = JourneyPhase.RIDE, rideStopIndex = aboardAt), false)
-                    position == null && !now.isBefore(leg.start) ->
+                    position == null && timed && !now.isBefore(leg.start) ->
                         Advance(state.copy(phase = JourneyPhase.RIDE, rideStopIndex = timeIndex(leg, now)), false)
-                    position != null && now.isAfter(leg.start.plusMillis(MISSED_GRACE_MS)) ->
+                    position != null && now.isAfter(leg.start.plusMillis(grace)) ->
                         Advance(state.copy(phase = JourneyPhase.MISSED), needsReplan = !state.replanned)
                     else -> Advance(state, false)
                 }
             }
             JourneyPhase.RIDE -> {
                 val last = leg.stops.lastIndex
-                val byPosition = position?.let { nearestStopIndex(leg, it, from = state.rideStopIndex) }
-                val index = maxOf(state.rideStopIndex, byPosition ?: timeIndex(leg, now))
-                val done = index >= last || now.isAfter(leg.end.plusMillis(RIDE_END_GRACE_MS))
+                val index = when {
+                    position != null -> nearestStopIndex(leg, position, from = state.rideStopIndex) ?: state.rideStopIndex
+                    timed -> maxOf(state.rideStopIndex, timeIndex(leg, now))
+                    else -> state.rideStopIndex
+                }
+                val lateBy = if (position == null) RIDE_END_GRACE_MS else RIDE_END_LATE_MS
+                val done = index >= last || (timed && now.isAfter(leg.end.plusMillis(lateBy)))
                 Advance(if (done) nextLeg(state, now) else state.copy(rideStopIndex = index), false)
             }
             else -> Advance(state, false)
@@ -153,7 +180,8 @@ internal object TransitJourneyGuide {
 
     /** What the activity shows for [state]. */
     fun guidance(state: JourneyState, position: TransitCoordinate?, now: Instant, zone: ZoneId): NexusGuidanceStep {
-        val eta = TransitSkillContract.localTime(state.itinerary.end, zone)
+        // Aboard a later vehicle than planned, the itinerary's arrival means nothing.
+        val eta = if (state.onPlannedTrip) TransitSkillContract.localTime(state.itinerary.end, zone) else null
         val generation = state.planGeneration
         val leg = state.currentLeg
         if (state.phase == JourneyPhase.ARRIVED || leg == null) {

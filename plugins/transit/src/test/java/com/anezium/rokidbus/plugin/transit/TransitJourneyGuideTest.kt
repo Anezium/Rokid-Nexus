@@ -135,6 +135,69 @@ class TransitJourneyGuideTest {
     }
 
     @Test
+    fun `a fix that never reaches the stop lets time complete the walk`() {
+        // The transfer walk ends at 10:13; a fix 100 m short of the stop stays short of it.
+        val transfer = journey().copy(legIndex = 2, phase = JourneyPhase.WALK)
+        val short = near(legs[2].to, northMeters = -100.0)
+
+        assertEquals(JourneyPhase.WALK, TransitJourneyGuide.advance(transfer, short, T0.plusSeconds(14 * 60)).state.phase)
+        val state = TransitJourneyGuide.advance(transfer, short, T0.plusSeconds(14 * 60 + 40)).state
+
+        assertEquals(JourneyPhase.BOARD, state.phase)
+        assertEquals(3, state.legIndex)
+    }
+
+    @Test
+    fun `a boarding without real-time data waits longer before counting as missed`() {
+        val waiting = journey().copy(legIndex = 3, phase = JourneyPhase.BOARD)
+        val atStop = near(legs[3].from)
+
+        assertEquals(JourneyPhase.BOARD, TransitJourneyGuide.advance(waiting, atStop, at(17)).state.phase)
+        val missed = TransitJourneyGuide.advance(waiting, atStop, at(19))
+
+        assertEquals(JourneyPhase.MISSED, missed.state.phase)
+        assertTrue(missed.needsReplan)
+    }
+
+    @Test
+    fun `boarding a later vehicle turns a missed leg into a ride the timetable no longer drives`() {
+        val missed = journey().copy(legIndex = 1, phase = JourneyPhase.MISSED, replanned = true)
+        assertEquals(JourneyPhase.MISSED, TransitJourneyGuide.advance(missed, near(legs[1].from), at(12)).state.phase)
+
+        val riding = TransitJourneyGuide.advance(missed, near(legs[1].stops[1]), at(12)).state
+        assertEquals(JourneyPhase.RIDE, riding.phase)
+        assertEquals(1, riding.rideStopIndex)
+        assertFalse(riding.onPlannedTrip)
+        assertFalse(TransitJourneyGuide.isExpired(riding, at(12 + 29)))
+
+        // Without a fix, the planned stop times, all in the past, must not end this ride.
+        val later = TransitJourneyGuide.advance(riding, null, at(15)).state
+        assertEquals(JourneyPhase.RIDE, later.phase)
+        assertEquals(1, later.rideStopIndex)
+        assertNull(TransitJourneyGuide.guidance(later, null, at(15), zone).eta)
+
+        // Reaching D ends the ride and, D' being next to it, the transfer walk.
+        val transferred = TransitJourneyGuide.advance(later, near(legs[1].to), at(17)).state
+        assertEquals(3, transferred.legIndex)
+        assertEquals(JourneyPhase.BOARD, transferred.phase)
+    }
+
+    @Test
+    fun `aboard, a fix leads and a late vehicle is not ended by its timetable`() {
+        val riding = journey().copy(legIndex = 1, phase = JourneyPhase.RIDE, rideStopIndex = 1)
+        val atB = near(legs[1].stops[1])
+
+        // Four minutes after the planned end, still at Stop B: the fix wins over the timetable.
+        val late = TransitJourneyGuide.advance(riding, atB, at(15)).state
+        assertEquals(JourneyPhase.RIDE, late.phase)
+        assertEquals(1, late.rideStopIndex)
+        assertEquals("2 stops", TransitJourneyGuide.guidance(late, atB, at(15), zone).primary)
+
+        // Past ten minutes late the timetable ends the leg even against a fix.
+        assertTrue(TransitJourneyGuide.advance(riding, atB, at(22)).state.legIndex > 1)
+    }
+
+    @Test
     fun `without a fix, time alone moves the journey forward`() {
         var state = journey()
         state = TransitJourneyGuide.advance(state, null, at(5)).state
@@ -153,7 +216,7 @@ class TransitJourneyGuideTest {
 
     @Test
     fun `persisted state round-trips`() {
-        val state = journey().copy(legIndex = 3, phase = JourneyPhase.RIDE, rideStopIndex = 1, replanned = true)
+        val state = journey().copy(legIndex = 3, phase = JourneyPhase.RIDE, rideStopIndex = 1, replanned = true, onPlannedTrip = false)
         assertEquals(state, TransitJourneyCodec.decode(TransitJourneyCodec.encode(state)))
         assertNull(TransitJourneyCodec.decode("{\"v\":9}"))
     }

@@ -58,10 +58,14 @@ The activity follows the itinerary and the position through the SDK's shared
 guidance planner, the same one Navigation uses: a walk shows the minutes and
 distance left, boarding counts down to the departure, a ride shows the stops
 left as a track and makes getting off urgent at the stop before, a transfer is
-a new step, and arrival ends the activity. When a departure passes without the
-wearer aboard, Transit replans once and announces the new plan; it never
-keeps counting down a vehicle that has left. The next boarding is refreshed at
-most once a minute.
+a new step, and arrival ends the activity. A fix leads and never runs ahead
+of the wearer; the timetable moves the journey only without a fix, so a fix
+older than two minutes (underground, say) no longer counts as one. When a
+departure passes without the wearer aboard, after a longer wait where the feed
+has no real-time data, Transit replans once and announces the new plan; it
+never keeps counting down a vehicle that has left, and still notices the
+wearer boarding a later vehicle. The next boarding is refreshed at most once a
+minute.
 
 The journey holds Transit's single foreground service, with the location
 type, and position updates only while it runs, and releases both at arrival or

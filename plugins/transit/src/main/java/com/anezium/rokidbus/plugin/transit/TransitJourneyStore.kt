@@ -50,6 +50,7 @@ internal object TransitJourneyCodec {
         .put("phase", state.phase.name)
         .put("rideStop", state.rideStopIndex)
         .put("replanned", state.replanned)
+        .put("planned", state.onPlannedTrip)
         .put("generation", state.planGeneration)
         .put("started", state.startedAt.toEpochMilli())
         .put("expires", state.expiresAt.toEpochMilli())
@@ -71,6 +72,7 @@ internal object TransitJourneyCodec {
             phase = JourneyPhase.valueOf(json.getString("phase")),
             rideStopIndex = json.getInt("rideStop"),
             replanned = json.getBoolean("replanned"),
+            onPlannedTrip = json.optBoolean("planned", true),
             planGeneration = json.getInt("generation"),
             startedAt = Instant.ofEpochMilli(json.getLong("started")),
             expiresAt = Instant.ofEpochMilli(json.getLong("expires")),

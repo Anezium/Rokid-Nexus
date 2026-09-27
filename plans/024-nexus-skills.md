@@ -596,6 +596,15 @@ disagreed, the smaller change that keeps the plan's guarantees was taken.
   choices also appear as chips on the answer band; a chip carries a token bound
   to the choices it was offered for and starts a new turn with the chosen
   handle in the plugin context, so no text can stand in for it.
+- **Fixes and time.** A fix leads the journey and never runs it ahead of the
+  wearer; the timetable moves it only without a fix, and only along the trip
+  that was planned. A fix older than two minutes no longer counts as one, so
+  the last outdoor fix cannot hold an underground wearer at a stop they have
+  left. A walk that a fix never completes ends by time past the leg's end.
+  Without real-time data a boarding waits four minutes, not ninety seconds,
+  before counting as missed. A missed leg still turns into a ride when the
+  wearer boards a later vehicle; that ride then follows the fix alone and
+  shows no arrival estimate.
 - **Routing requests.** The planner sends `fromPlace`, `toPlace`, and an
   optional `time`; the service returned several itineraries without a count
   parameter, and the summary counts at most five alternatives. Two manual

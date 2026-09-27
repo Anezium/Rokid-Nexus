@@ -8,8 +8,9 @@
 - **Journey guidance.** "Take me home" plans a public transport journey to a
   saved home and guides it step by step in Transit's own activity on the
   glasses: walk, board, ride with the stops left, get off at the next stop,
-  transfer, arrive. A missed departure replans once. The journey survives a
-  restart, and opening Transit during it shows every leg.
+  transfer, arrive. A missed departure replans once, and boarding a later
+  vehicle is still noticed. The journey survives a restart, and opening
+  Transit during it shows every leg.
 - Home setting, chosen from the geocoder. Only its name ever reaches an
   assistant; its location and yours stay in Transit.
 - Requests identify Transit with its version and a contact.

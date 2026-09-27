@@ -187,6 +187,20 @@ class TransitJourneyControllerTest {
     }
 
     @Test
+    fun `a fix older than two minutes no longer holds the journey in place`() {
+        start()
+        now = at(6)
+        monotonic = 60_000L
+        controller.onTick()
+        assertEquals(JourneyPhase.WALK, controller.active()!!.phase)
+
+        // The same fix, now stale: time alone moves the walk on and boards by timetable.
+        monotonic = TransitJourneyController.POSITION_MAX_AGE_MS
+        controller.onTick()
+        assertEquals(JourneyPhase.RIDE, controller.active()!!.phase)
+    }
+
+    @Test
     fun `a missed boarding replans once from the current position`() {
         start()
         now = at(4)

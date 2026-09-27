@@ -17,7 +17,9 @@ internal interface TransitJourneyActivitySink {
 /**
  * Owns the one active journey: its state, its persistence, and its activity. Positions and
  * ticks advance it through [TransitJourneyGuide]; the shared SDK planner turns each step into
- * start, significant, urgent, or quiet activity traffic, exactly as Navigation does.
+ * start, significant, urgent, or quiet activity traffic, exactly as Navigation does. A fix older
+ * than [POSITION_MAX_AGE_MS] no longer counts as a position: underground, the last outdoor fix
+ * must not hold the wearer at a stop they have long left, so time takes over instead.
  *
  * [listener] learns when a journey becomes active or ends, which is when the plugin holds and
  * releases its one location foreground service. Calls are serialized; the network work a tick
@@ -39,6 +41,7 @@ internal class TransitJourneyController(
     // Read without the lock by the HUD, which must not wait on a tick's network call.
     @Volatile private var state: JourneyState? = null
     private var position: TransitCoordinate? = null
+    private var positionAtMs: Long? = null
     private var activityStarted = false
     private var activityGeneration = NO_GENERATION
     private var lastRefreshMs: Long? = null
@@ -63,6 +66,7 @@ internal class TransitJourneyController(
     ): JourneyState? {
         if (state != null) finish()
         position = origin
+        positionAtMs = origin?.let { monotonicMs() }
         val journey = TransitJourneyGuide.initial(
             id = newId(),
             itinerary = itinerary,
@@ -108,6 +112,7 @@ internal class TransitJourneyController(
     @Synchronized
     fun onPosition(fix: TransitCoordinate) {
         position = fix
+        positionAtMs = monotonicMs()
         tick()
     }
 
@@ -141,7 +146,7 @@ internal class TransitJourneyController(
             return
         }
         val refreshed = refreshBoarding(current)
-        val advance = TransitJourneyGuide.advance(refreshed, position, now)
+        val advance = TransitJourneyGuide.advance(refreshed, currentPosition(), now)
         var next = advance.state
         if (advance.needsReplan) next = replan(next, now)
         if (next != current) {
@@ -181,8 +186,15 @@ internal class TransitJourneyController(
         return current.copy(itinerary = current.itinerary.copy(legs = legs))
     }
 
+    /** A fix recent enough to trust; without one, time alone moves the journey. */
+    private fun currentPosition(): TransitCoordinate? {
+        val at = positionAtMs ?: return null
+        return position?.takeIf { monotonicMs() - at < POSITION_MAX_AGE_MS }
+    }
+
     /** One replan from the current position after a missed boarding; a failure keeps the missed step. */
     private fun replan(missed: JourneyState, now: Instant): JourneyState {
+        // A miss needs a fresh fix, so the last one is where the wearer stands.
         val from = position ?: return missed.copy(replanned = true)
         val planned = planner.plan(from, missed.destination, null, monotonicMs() + networkBudgetMs)
             as? TransitPlanResult.Planned ?: return missed.copy(replanned = true)
@@ -194,7 +206,7 @@ internal class TransitJourneyController(
     private fun render(): Boolean {
         val current = state ?: return false
         if (!activityStarted || sink.registrationGeneration != activityGeneration) guidancePlanner.reset()
-        val step = TransitJourneyGuide.guidance(current, position, clock(), zone())
+        val step = TransitJourneyGuide.guidance(current, currentPosition(), clock(), zone())
         return when (val plan = guidancePlanner.plan(step)) {
             is NexusGuidancePlan.Start -> {
                 val sent = sink.start(
@@ -225,6 +237,8 @@ internal class TransitJourneyController(
         activityGeneration = NO_GENERATION
         guidancePlanner.reset()
         state = null
+        position = null
+        positionAtMs = null
         lastRefreshMs = null
         endAfterArrivalAtMs = null
         storage.clear()
@@ -235,6 +249,7 @@ internal class TransitJourneyController(
         const val ARRIVED_LINGER_MS = 30_000L
         const val BOARDING_REFRESH_MS = 60_000L
         const val NETWORK_BUDGET_MS = 8_000L
+        const val POSITION_MAX_AGE_MS = 2L * 60L * 1000L
         private const val NO_GENERATION = -1
     }
 }
