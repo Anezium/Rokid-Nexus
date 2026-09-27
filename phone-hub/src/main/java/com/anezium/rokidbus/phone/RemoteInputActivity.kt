@@ -585,6 +585,7 @@ class RemoteInputActivity : Activity() {
     }
 
     private fun applyState(next: RemoteInputViewState) {
+        if (isFinishing) return
         val sessionChanged = next.sessionId != viewState.sessionId || next.password != viewState.password
         val backToWaiting = next.phase == RemoteInputViewState.Phase.WAITING_FOR_FIELD &&
             viewState.phase != RemoteInputViewState.Phase.WAITING_FOR_FIELD
@@ -594,6 +595,7 @@ class RemoteInputActivity : Activity() {
             // Opened for one field, so it leaves with it: the reply is sent or
             // cancelled, and the user goes back to whatever they had open.
             hideKeyboard()
+            closeSent = true
             finishAndRemoveTask()
             return
         }
