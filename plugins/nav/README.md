@@ -16,7 +16,7 @@ in process memory only; nothing is stored.
 - **Google Maps** posts turn-by-turn as a `ProgressStyle` notification:
   `"80 m · Prendre à droite sur Av. X"` as the title and the arrival time as the
   sub-text. The maneuver itself is a bitmap, so the arrow comes from the
-  instruction's words (English and French); one it cannot place gets the
+  instruction's words (English, French and Korean); one it cannot place gets the
   plugin's neutral `route` mark instead of a guessed arrow. Its progress is a
   share of the whole trip, which barely moves, so it is not shown.
 - **Google Maps on public transport** posts an empty notification first and
@@ -47,8 +47,9 @@ The screen also asks for Notification Access and shows the route it sees.
 - Both Rokid Nexus hubs 1.5.0 or newer. Badge, measure, track and the
   urgent beat are activity extras; a hub that does not announce them shows the
   same route without them.
-- Google Maps or Citymapper set to English or French, the two wordings the
-  plugin reads.
+- Google Maps or Citymapper set to English, French or Korean, the wordings the
+  plugin reads. Korean is read from the apps' own Korean strings and has not
+  yet been checked on a real trip in Korea.
 - Notification Access for Navigation (Settings button in the plugin screen).
 
 ## Build

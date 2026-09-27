@@ -5,8 +5,8 @@ import java.util.Locale
 
 /**
  * Reading guidance text. Navigation apps localise their instructions, so the
- * maneuver comes from phrases in the languages Navigation knows (English and
- * French); an instruction it cannot place gets the neutral route mark rather
+ * maneuver comes from phrases in the languages Navigation knows (English,
+ * French and Korean); an instruction it cannot place gets the neutral route mark rather
  * than a guessed arrow.
  */
 internal object NavText {
@@ -14,32 +14,38 @@ internal object NavText {
     const val ROUTE_GLYPH = "route"
 
     private val DISTANCE = Regex("""^(\d+(?:[.,]\d+)?)\s?(m|km|mi|ft|yd)$""", RegexOption.IGNORE_CASE)
-    private val CLOCK = Regex("""\b(\d{1,2})[:h](\d{2})(?:\s?([ap])\.?\s?m\.?)?""", RegexOption.IGNORE_CASE)
+    private val CLOCK = Regex(
+        """(?:(오전|오후)\s?)?\b(\d{1,2})[:h](\d{2})(?:\s?([ap])\.?\s?m\.?)?""",
+        RegexOption.IGNORE_CASE,
+    )
 
     /** Ordered: the most specific phrase wins, so "slight right" never reads as "right". */
     private val MANEUVERS = listOf(
-        "u-turn" to listOf("demi-tour", "u-turn", "make a u turn"),
-        "roundabout" to listOf("rond-point", "giratoire", "roundabout", "traffic circle"),
+        "u-turn" to listOf("demi-tour", "u-turn", "make a u turn", "유턴"),
+        "roundabout" to listOf("rond-point", "giratoire", "roundabout", "traffic circle", "회전교차로", "로터리"),
         "turn-slight-right" to listOf(
             "legerement a droite", "legerement sur la droite", "restez a droite", "serrez a droite",
-            "slight right", "keep right", "bear right",
+            "slight right", "keep right", "bear right", "약간 오른쪽", "오른쪽 방향 유지", "오른쪽 차선 유지",
         ),
         "turn-slight-left" to listOf(
             "legerement a gauche", "legerement sur la gauche", "restez a gauche", "serrez a gauche",
-            "slight left", "keep left", "bear left",
+            "slight left", "keep left", "bear left", "약간 왼쪽", "왼쪽 방향 유지", "왼쪽 차선 유지",
         ),
-        "turn-sharp-right" to listOf("fortement a droite", "franchement a droite", "sharp right"),
-        "turn-sharp-left" to listOf("fortement a gauche", "franchement a gauche", "sharp left"),
-        "turn-right" to listOf("a droite", "turn right", "right onto", "right on ", "right at "),
-        "turn-left" to listOf("a gauche", "turn left", "left onto", "left on ", "left at "),
+        "turn-sharp-right" to listOf("fortement a droite", "franchement a droite", "sharp right", "급우회전"),
+        "turn-sharp-left" to listOf("fortement a gauche", "franchement a gauche", "sharp left", "급좌회전"),
+        "turn-right" to listOf("a droite", "turn right", "right onto", "right on ", "right at ", "우회전", "오른쪽으로"),
+        "turn-left" to listOf("a gauche", "turn left", "left onto", "left on ", "left at ", "좌회전", "왼쪽으로"),
         // Before the arrival phrases: "Continue to your destination" is a
         // straight step, not the arrival.
         "straight" to listOf(
             "continuez", "continuer", "tout droit", "poursuivez", "dirigez-vous", "aller vers", "allez vers",
             "head ", "continue",
-            "straight",
+            "straight", "직진", "계속 진행",
         ),
-        "arrive" to listOf("vous etes arrive", "votre destination", "destination", "arrive", "you have arrived"),
+        "arrive" to listOf(
+            "vous etes arrive", "votre destination", "destination", "arrive", "you have arrived",
+            "도착했습니다", "목적지",
+        ),
     )
 
     /** Street connectors, most specific first. */
@@ -63,12 +69,19 @@ internal object NavText {
         }
     }
 
-    /** The first clock time in [value] ("Arrivée à 22:50" -> "22:50", "10:05 pm" -> "10:05 PM"). */
+    /**
+     * The first clock time in [value] ("Arrivée à 22:50" -> "22:50", "10:05 pm" -> "10:05 PM").
+     * Korean twelve-hour times keep their leading half-day: "오후 6:51 도착" -> "오후 6:51".
+     */
     fun clock(value: String?): String? {
         val match = value?.let(CLOCK::find) ?: return null
-        val (hour, minute, meridiem) = match.destructured
+        val (halfDay, hour, minute, meridiem) = match.destructured
         val time = "${hour.toInt()}:$minute"
-        return if (meridiem.isEmpty()) time else "$time ${meridiem.uppercase(Locale.ROOT)}M"
+        return when {
+            halfDay.isNotEmpty() -> "$halfDay $time"
+            meridiem.isNotEmpty() -> "$time ${meridiem.uppercase(Locale.ROOT)}M"
+            else -> time
+        }
     }
 
     fun maneuverGlyph(instruction: String): String {
@@ -115,9 +128,14 @@ internal object NavText {
 
     private val NO_BREAK_SPACES = Regex("[\u00A0\u202F\u2007]")
 
-    /** Lower case with accents removed, so "Légèrement à droite" matches "legerement a droite". */
+    /**
+     * Lower case with accents removed, so "Légèrement à droite" matches
+     * "legerement a droite". Recomposed afterwards: NFD splits every Hangul
+     * syllable into jamo, which no Korean phrase would match.
+     */
     fun fold(value: String): String =
-        Normalizer.normalize(value.lowercase(Locale.ROOT), Normalizer.Form.NFD)
-            .replace(Regex("\\p{M}+"), "")
-            .replace('’', '\'')
+        Normalizer.normalize(
+            Normalizer.normalize(value.lowercase(Locale.ROOT), Normalizer.Form.NFD).replace(Regex("\\p{M}+"), ""),
+            Normalizer.Form.NFC,
+        ).replace('’', '\'')
 }
