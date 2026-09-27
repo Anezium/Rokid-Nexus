@@ -14,6 +14,8 @@
 - Read OsmAnd and OsmAnd+ turn-by-turn distance, textual maneuver, route
   description and ETA, with a shared source switch. English, French and
   inexpensive Korean phrase coverage comes from upstream resources.
+  Keep a cached maneuver in another language out of the street field, and
+  exclude the following leg's distance from the detailed card as well.
 
 - Read Organic Maps navigation distance and street, with one switch for the
   Play/F-Droid and GitHub distributions. Its maneuver is bitmap-only, so it

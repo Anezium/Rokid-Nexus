@@ -5,6 +5,8 @@ glasses were touched. Routes use public central Paris and Moscow landmarks.
 Raw notification dumps, screenshots, APKs and the temporary notification-listener
 helper live under the system temporary directory, outside Git. Fixtures below
 are text fields, not screenshots or personal route histories.
+The capture helper was uninstalled, app locales and maps.me picture-in-picture
+permission were restored, and the emulator was shut down after the checks.
 
 ## Evidence and limits
 
@@ -48,7 +50,7 @@ rendering remain outside this emulator check.
   A helper inflated the expanded RemoteViews, using the same approach as
   `NavNotificationReader`; no OCR or bitmap interpretation was used. A 41-minute
   metro route to VDNKh was started in Russian; its initial walk posted only
-  `????????? ???????` (parser correctly returned null). Ride/transfer steps
+  `Навигатор запущен` (parser correctly returned null). Ride/transfer steps
   and explicit arrival remain uncaptured.
 - Several early runs ended in native host QEMU `0xc0000005` crashes. Cold starts
   without snapshots eventually allowed the captures. No SDK, Gradle home,
@@ -70,3 +72,23 @@ rendering remain outside this emulator check.
    package/version, locale/mode, channel/category/ongoing, title/text/subText/
    bigText, and visible expanded RemoteViews IDs/text at far/close/arrival steps.
    A generic service title or screenshot of an arrow alone is insufficient.
+
+## Adversarial review and resolution
+
+One Synara worktree review thread (`agent-fc4cd4fa487452b4ddfe191680401551`)
+used provider `cursor`, model `grok-4.7`, `reasoningEffort=high`, pinned to
+`647e3bd7cf3d003cd43df8ddeb7c645cdd4d6316`. The reviewer checked
+`git diff main...HEAD` and the temporary source/capture evidence. A progress
+follow-up continued that same thread; no second review thread was created.
+
+| Finding | Independent verification and action |
+| --- | --- |
+| Medium: OsmAnd `0 m • ` would publish a false new step | Rejected as a false positive. The parser trims the title first; `0 m •` no longer contains the space-terminated separator and fails the distance check. Tests with both exact captured summaries confirm null. The listener intentionally clears unreadable guidance; retaining an old turn after route deviation would contradict the fail-closed contract. |
+| Medium: mixed-language OsmAnd description becomes the street | Confirmed in the probe's French title / English cached description pairs. Street extraction now requires the actual title maneuver prefix; otherwise only confirmed title/ETA fields are used. Both captured pairs are regression tests. Locale changes may still change step identity; no stale street or maneuver is retained to suppress that change. |
+| Low: the OsmAnd detailed card includes the following leg's distance | Confirmed. The instruction now uses the current title and extracted street, excluding the raw description's following-leg suffix. The captured 15 m / 100 m case asserts the complete card instruction. |
+
+The review also confirmed package/settings gates precede reading, Yandex view
+inflation is integrated, bitmap maneuvers remain neutral, and logs/preferences
+do not contain route text. Russian generic-service and street fixtures were
+added after the review pin from the installed-APK checks. All 69 unit tests
+pass after the fixes. Nautical distance units remain unsupported.

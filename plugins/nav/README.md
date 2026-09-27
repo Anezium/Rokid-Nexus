@@ -38,7 +38,9 @@ Guidance lives in process memory only; nothing is stored.
   including exit-only roundabout instructions, stay neutral. Zero metres
   does not mean arrival; route removal ends the activity. Driving captures
   from OsmAnd+ 5.4.4 confirm English/French straight and right-turn steps,
-  including a 300 m to 15 m countdown. Korean remains source-derived. Contract derived
+  including a 300 m to 15 m countdown. After a language change, an old-language
+  description is omitted until its maneuver prefix matches the title; confirmed
+  distance, maneuver and ETA remain visible. Korean remains source-derived. Contract derived
   from [NavigationNotification](https://github.com/osmandapp/OsmAnd/blob/7c4433506fe831e32ebb791522ac8ecd5262ca09/OsmAnd/src/net/osmand/plus/notifications/NavigationNotification.java).
 
 - **Organic Maps** (`app.organicmaps`, GitHub `app.organicmaps.web`) posts

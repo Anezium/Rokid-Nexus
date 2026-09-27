@@ -24,9 +24,10 @@ internal object OsmAndParser {
         val eta = NavText.clock(summary[2])
         val description = lines.firstOrNull()?.takeIf { lines.size > 1 && !it.contains(SEPARATOR) }
         val withoutDistance = description?.replace(TRAILING_DISTANCE, "")?.trim()
-        val street = withoutDistance?.let {
-            if (maneuver.isNotEmpty() && it.startsWith("$maneuver ")) it.removePrefix(maneuver).trim() else it
-        }?.takeIf { it.isNotEmpty() && it != maneuver }
+        // After a locale switch, the cached description can still use the old
+        // maneuver language. Only a matching prefix identifies where the street starts.
+        val street = withoutDistance?.takeIf { maneuver.isNotEmpty() && it.startsWith("$maneuver ") }
+            ?.removePrefix(maneuver)?.trim()?.takeIf(String::isNotEmpty)
         val glyph = NavText.maneuverGlyph(maneuver).takeUnless { it == "arrive" } ?: NavText.ROUTE_GLYPH
         return NavGuidance(
             source = NavSource.OSMAND,
@@ -41,7 +42,7 @@ internal object OsmAndParser {
             stepKey = "${NavSource.OSMAND.name}|$maneuver|${street.orEmpty()}",
             imminent = glyph !in listOf("straight", NavText.ROUTE_GLYPH) &&
                 NavText.metres(distance)?.let { it <= 40.0 } == true,
-            instruction = listOfNotNull(title, description).joinToString(" · "),
+            instruction = listOfNotNull(title, street).joinToString(" · "),
         )
     }
 

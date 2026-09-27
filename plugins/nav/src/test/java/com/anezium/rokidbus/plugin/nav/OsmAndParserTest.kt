@@ -33,6 +33,7 @@ class OsmAndParserTest {
         ))!!
         assertEquals("Quai de l'Hôtel de Ville", far.secondary)
         assertEquals("4:12 PM", far.eta)
+        assertEquals("15 m • Turn right and go · Quai de l'Hôtel de Ville", close.instruction)
         assertEquals(far.stepKey, close.stepKey)
         assertTrue(planner.plan(far) is NavPlan.Start)
         val update = planner.plan(close) as NavPlan.Update
@@ -52,6 +53,39 @@ class OsmAndParserTest {
         assertEquals("turn-right", french.glyph)
         assertEquals(far.secondary, french.secondary)
         assertEquals("16:14", french.eta)
+    }
+
+    @Test
+    fun `captured empty off-route maneuver is rejected rather than publishing a false step`() {
+        // Captured between real maneuvers; trailing whitespace is significant
+        // to this regression. Trimming leaves a title that is not a distance.
+        assertNull(OsmAndParser.parse(step.copy(
+            title = "0 m • ", bigText = "1.0 km • 8 min • 4:14 PM • 0 km/h",
+        )))
+        assertNull(OsmAndParser.parse(step.copy(
+            title = "0 m • ", bigText = "900 m • 7 min • 16:13 • 0 km/h",
+        )))
+    }
+
+    @Test
+    fun `mixed-language captures do not label an old maneuver sentence as a street`() {
+        val left = OsmAndParser.parse(step.copy(
+            title = "150 m • Tournez à gauche",
+            bigText = "Turn left and go Quai de Gesvres 300 m\n900 m • 8 min • 16:13 • 0 km/h",
+        ))!!
+        assertEquals("turn-left", left.glyph)
+        assertEquals("150 m", left.primary)
+        assertEquals("16:13", left.eta)
+        assertEquals("Tournez à gauche", left.secondary)
+        assertEquals("150 m • Tournez à gauche", left.instruction)
+        val slight = OsmAndParser.parse(step.copy(
+            title = "200 m • Tournez légèrement vers la gauche et continuez",
+            bigText = "Turn slightly left and go Rue de Lobau 20 m\n700 m • 6 min • 16:11 • 0 km/h",
+        ))!!
+        assertEquals("turn-slight-left", slight.glyph)
+        assertFalse(slight.imminent)
+        assertFalse(slight.instruction!!.contains("20 m"))
+        assertFalse(slight.instruction.contains("Turn slightly"))
     }
 
     @Test
