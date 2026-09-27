@@ -71,7 +71,10 @@ object SkillLimits {
     const val ASSISTANT_MAX_TOOL_ROUNDS = 4
     const val ASSISTANT_MAX_EXECUTED_CALLS = 8
 
-    /** Assistant's shared runner: one active turn, model latency included. */
+    /**
+     * Assistant's shared runner: wall-clock budget for chaining tool rounds, model latency
+     * included. Once spent, no further tool round starts; a pass in progress is never cut.
+     */
     const val ASSISTANT_TURN_DEADLINE_MS = 60_000L
 
     /** Assistant keeps at most this many remembered result contexts per conversation. */

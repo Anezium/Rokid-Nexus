@@ -256,9 +256,10 @@ authorization, retry, or loop policies. Existing local tools and new plugin
 operations can participate in the same request.
 
 Initial proposed budgets: four tool rounds, eight executed tool calls, and
-60 seconds per active turn including model latency. Calls run sequentially in
-v1. Tool-free final synthesis is permitted only within the same deadline;
-otherwise render the available results with a deterministic timeout message.
+60 seconds of wall clock for chaining them, model latency included. Calls run
+sequentially in v1. Once the clock is spent no further tool round starts and
+the next pass is the tool-free synthesis; a pass in progress is never cut, so
+a plain question or a long final answer takes as long as the model takes.
 Repeated invalid calls, budget exhaustion, or cancellation terminate the loop.
 
 Keep built-in tools' existing per-request mutation protections, especially
@@ -583,10 +584,10 @@ disagreed, the smaller change that keeps the plan's guarantees was taken.
   never reaches the caller: the hub swaps it for a handle.
 - **Assistant loop.** Continuation requests keep the tools declared while
   rounds remain (the old behavior dropped them after one phase); a tool-free
-  synthesis happens only once the budget is spent. The 60-second deadline is a
-  wall-clock watchdog and applies to every structured turn, plain questions
-  included. Codex declares plugin operations with `strict: false` because
-  their schemas have optional properties.
+  synthesis happens only once the budget is spent. The 60-second budget is
+  wall clock and gates the start of a tool round: a pass in progress, plain
+  answers included, is never cut. Codex declares plugin operations with
+  `strict: false` because their schemas have optional properties.
 - **Hermes.** The text bridge does not expose plugin operations: it keeps its
   single exchange for built-in tools and cannot carry the shared validation and
   limits, so it is gated off rather than given a weaker path.

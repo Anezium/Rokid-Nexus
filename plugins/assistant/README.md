@@ -29,8 +29,9 @@ Each provider keeps its own encrypted key, model, and endpoint.
 
 Tools go through `AssistantToolRegistry`, and every structured provider runs
 them through one shared loop (`AssistantToolLoop`): up to four tool rounds and
-eight executed calls per turn, one at a time, inside a 60-second turn deadline,
-with a tool-free final reply only once the budget is spent. One execution
+eight executed calls per turn, one at a time, with no new round once 60 seconds
+have passed, and a tool-free final reply only once the budget is spent. A pass
+in progress is never cut, so a long answer streams to its end. One execution
 phase spans the turn, so the once-per-turn guards on built-in actions,
 calendar deletion among them, hold across rounds. The
 text tools (notes, reminders, timers, calendar) are offered to every provider;

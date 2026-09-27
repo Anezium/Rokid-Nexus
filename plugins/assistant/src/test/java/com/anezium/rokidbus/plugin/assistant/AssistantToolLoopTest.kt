@@ -2,8 +2,6 @@ package com.anezium.rokidbus.plugin.assistant
 
 import com.anezium.rokidbus.shared.skills.SkillLimits
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.awaitCancellation
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -168,16 +166,35 @@ class AssistantToolLoopTest {
     }
 
     @Test
-    fun `the turn deadline ends the loop with a deterministic message`() = runBlocking {
-        val model = ScriptedModel({ _, _, _ -> error("unused") })
-        val hanging = object : AssistantLoopAdapter by model {
-            override suspend fun pass(tools: List<AssistantToolDefinition>, round: Int): AssistantLoopPass = awaitCancellation()
-        }
+    fun `a spent tool budget ends the rounds and the answer still follows`() = runTest {
+        var clock = 0L
+        val lookup = tool(name = "lookup_fake", executor = { _, _ ->
+            clock += 45_000L
+            AssistantToolResult.Json("{}")
+        })
+        val model = ScriptedModel({ r, offered, _ ->
+            if (offered.isEmpty()) AssistantLoopPass("Best effort after a slow lookup.") else AssistantLoopPass("", listOf(call("lookup_fake", "{\"r\":$r}")))
+        })
 
-        val answer = AssistantToolLoop(phase(), turnDeadlineMs = 50L).run(hanging)
+        val answer = AssistantToolLoop(phase(lookup), toolBudgetMs = 60_000L, monotonicMs = { clock }).run(model)
 
-        assertEquals(AssistantToolLoop.TURN_TIMEOUT_MESSAGE, answer)
-        assertEquals(1, model.resets)
+        assertEquals("Best effort after a slow lookup.", answer)
+        assertEquals(listOf(true, true, false), model.offered.map { it.isNotEmpty() })
+    }
+
+    @Test
+    fun `a slow answer that needs no tool is never cut`() = runTest {
+        var clock = 0L
+        val model = ScriptedModel({ _, _, _ ->
+            clock += 120_000L
+            AssistantLoopPass("A long answer, streamed past the tool budget.")
+        })
+
+        val answer = AssistantToolLoop(phase(tool(name = "lookup_fake")), toolBudgetMs = 60_000L, monotonicMs = { clock }).run(model)
+
+        assertEquals("A long answer, streamed past the tool budget.", answer)
+        assertEquals(listOf(true), model.offered.map { it.isNotEmpty() })
+        assertEquals(0, model.resets)
     }
 
     @Test

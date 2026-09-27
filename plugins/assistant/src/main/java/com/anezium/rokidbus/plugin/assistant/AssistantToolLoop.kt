@@ -1,16 +1,8 @@
 package com.anezium.rokidbus.plugin.assistant
 
 import com.anezium.rokidbus.shared.skills.SkillLimits
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
-import java.util.concurrent.atomic.AtomicBoolean
 
 /** One model pass as the runner sees it, whatever the provider's wire format. */
 internal data class AssistantLoopPass(
@@ -48,49 +40,32 @@ internal interface AssistantLoopAdapter {
  * The shared execute, result, and continue loop behind every Assistant provider.
  *
  * Budgets are the plan's provisional ones from [SkillLimits]: a bounded number of tool rounds
- * and executed calls, run one at a time, inside one deadline for the whole turn including model
- * latency. One [AssistantToolExecutionPhase] serves the entire turn, so repeated rounds never
- * recreate execution state or reset the built-in mutation guards (calendar deletion among them).
- * Repeated rounds of nothing but invalid calls, an exhausted budget, or cancellation end the
- * loop; the synthesis that follows offers no tools.
+ * and executed calls, run one at a time, and a wall-clock budget for chaining them. The clock
+ * bounds how long tool work may keep the answer waiting: once it is spent, no further tool round
+ * starts and the next pass is the tool-free synthesis. It never cuts a pass short, so a plain
+ * question or a long final answer takes exactly as long as the model takes, as it did before
+ * tools could chain. One [AssistantToolExecutionPhase] serves the entire turn, so repeated rounds
+ * never recreate execution state or reset the built-in mutation guards (calendar deletion among
+ * them). Repeated rounds of nothing but invalid calls, an exhausted budget, or cancellation end
+ * the loop; the synthesis that follows offers no tools.
  */
 internal class AssistantToolLoop(
     private val phase: AssistantToolExecutionPhase,
     private val maxRounds: Int = SkillLimits.ASSISTANT_MAX_TOOL_ROUNDS,
-    private val turnDeadlineMs: Long = SkillLimits.ASSISTANT_TURN_DEADLINE_MS,
+    private val toolBudgetMs: Long = SkillLimits.ASSISTANT_TURN_DEADLINE_MS,
+    private val monotonicMs: () -> Long = { System.nanoTime() / 1_000_000L },
 ) {
-    /** The final answer, or [TURN_TIMEOUT_MESSAGE] when the deadline ran out first. */
+    /** The final answer. */
     suspend fun run(adapter: AssistantLoopAdapter): String {
-        val timedOut = AtomicBoolean(false)
-        return try {
-            coroutineScope {
-                val turn = this
-                // Wall-clock, not the caller's dispatcher clock: the deadline is about the wearer
-                // waiting, and the loop itself must stay in the caller's coroutine to stream.
-                val watchdog = launch(Dispatchers.Default) {
-                    delay(turnDeadlineMs)
-                    timedOut.set(true)
-                    turn.cancel()
-                }
-                try {
-                    loop(adapter)
-                } finally {
-                    watchdog.cancel()
-                }
-            }
-        } catch (cancelled: CancellationException) {
-            if (!timedOut.get() || !currentCoroutineContext().isActive) throw cancelled
-            adapter.resetVisibleText()
-            TURN_TIMEOUT_MESSAGE
-        }
-    }
-
-    private suspend fun loop(adapter: AssistantLoopAdapter): String {
         val rounds = minOf(maxRounds, adapter.maxToolRounds)
+        val startedAtMs = monotonicMs()
         var round = 0
         var invalidRounds = 0
         while (true) {
-            val offerTools = round < rounds && !phase.budgetExhausted && invalidRounds < MAX_INVALID_ROUNDS
+            val offerTools = round < rounds &&
+                !phase.budgetExhausted &&
+                invalidRounds < MAX_INVALID_ROUNDS &&
+                monotonicMs() - startedAtMs < toolBudgetMs
             val tools = if (offerTools) phase.availableDefinitions else emptyList()
             val pass = adapter.pass(tools, round)
             currentCoroutineContext().ensureActive()
@@ -119,6 +94,5 @@ internal class AssistantToolLoop(
 
     companion object {
         const val MAX_INVALID_ROUNDS = 2
-        const val TURN_TIMEOUT_MESSAGE = "That took too long, so I stopped before finishing. Please ask again."
     }
 }
