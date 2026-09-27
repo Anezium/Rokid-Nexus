@@ -89,18 +89,29 @@ internal class YoutubeSetupController(
     fun onLinkChanged(controlConnected: Boolean, cxrConnected: Boolean) {
         main.post {
             if (closed) return@post
+            val uploadActive = activeUploadGeneration != null
+            // A download or import needs no glasses link: it keeps running and is only
+            // told about the link through the stale inventory it will refresh later.
+            val preparing = state.busy && inventoryId == null && launchId == null && !uploadActive
             if (!cxrConnected) {
                 activeUploadGeneration = null
                 uploadingFiles.filter { it != prepared?.file }.forEach { it.delete() }
                 uploadingFiles.clear()
             }
-            if (!controlConnected || !cxrConnected && state.busy && inventoryId == null && launchId == null) {
-                generation++
+            val uploadLost = !cxrConnected && uploadActive
+            val requestLost = !controlConnected && (inventoryId != null || launchId != null)
+            if (uploadLost) generation++
+            if (!controlConnected || uploadLost) {
                 inventoryId = null
                 inventoryCallback = null
                 launchId = null
-                publish(state.copy(busy = false, inventory = null,
-                    message = "The glasses disconnected. Reconnect and refresh before continuing."))
+            }
+            // Every link tick arrives here; report the loss once instead of overwriting a
+            // prepared-APK message on each of them.
+            if (uploadLost || requestLost || !controlConnected && state.inventory != null) {
+                publish(state.copy(busy = preparing, inventory = null,
+                    message = if (preparing) state.message
+                        else "The glasses disconnected. Reconnect and refresh before continuing."))
             }
         }
     }

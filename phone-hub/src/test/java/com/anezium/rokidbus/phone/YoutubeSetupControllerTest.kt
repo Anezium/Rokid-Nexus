@@ -171,6 +171,33 @@ class YoutubeSetupControllerTest {
         assertTrue(YoutubeSetupStateStore.state.message.contains("disconnected"))
     }
 
+    @Test fun `link loss neither cancels a download nor overwrites the prepared message`() {
+        controller.close()
+        var cancelledDuringDownload: Boolean? = null
+        lateinit var downloading: YoutubeSetupController
+        downloading = YoutubeSetupController(RuntimeEnvironment.getApplication(),
+            connected = { false }, installReady = { false },
+            send = { sent += it; null },
+            upload = { _, _ -> false },
+            worker = ImmediateExecutor(), source = { _, cancelled, _ ->
+                downloading.onLinkChanged(false, false)
+                idle()
+                cancelledDuringDownload = cancelled()
+                apk
+            })
+        downloading.start()
+        downloading.handle(Intent(YoutubeSetupController.PREPARE_MICROG))
+        idle()
+        assertEquals(false, cancelledDuringDownload)
+        assertTrue(YoutubeSetupStateStore.state.canInstall)
+        assertFalse(YoutubeSetupStateStore.state.busy)
+        assertTrue(YoutubeSetupStateStore.state.message.contains("ready"))
+        downloading.onLinkChanged(false, false)
+        idle()
+        assertTrue(YoutubeSetupStateStore.state.message.contains("ready"))
+        downloading.close()
+    }
+
     @Test fun `upload timeout retains staged file and stale success cannot mark it installed`() {
         prepare()
         controller.handle(Intent(YoutubeSetupController.INSTALL))
