@@ -19,7 +19,12 @@ Guidance lives in process memory only; nothing is stored.
   leave the app for the notification to appear. Its bitmap-only maneuver
   stays neutral; no ETA, close-turn warning or arrival is inferred. The APK
   notification code also enables cycling, but excludes walking and transit;
-  cycling has not been exercised on the emulator.
+  cycling has not been exercised on the emulator. On a Galaxy S23 (Android
+  16) maps.me never updates it: in picture-in-picture it posts no
+  notification, and without it Android refuses its navigation service the
+  location ("Foreground service started from background can not have
+  location access"), so the first distance stays frozen. Organic Maps does
+  not have this problem.
 
 - **Yandex Maps** (`ru.yandex.yandexmaps`): driving distance and street, plus
   ETA from its expanded notification view. Captured in English and Russian

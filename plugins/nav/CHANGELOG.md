@@ -1,25 +1,19 @@
 # Changelog
 
-## Unreleased
+## 0.2.0
 
-- Read maps.me background driving distance and street, with its own switch,
-  from English/French emulator captures. Requires leaving the app with
-  picture-in-picture disabled. Walking/transit do not publish this format;
-  cycling is code-derived and still needs a device check.
-
-- Read Yandex Maps driving distance, street and expanded-view ETA, with its
-  own source switch. English/Russian emulator captures confirm the format;
-  bitmap-only maneuvers stay neutral. Generic service notifications are ignored.
-
-- Read OsmAnd and OsmAnd+ turn-by-turn distance, textual maneuver, route
-  description and ETA, with a shared source switch. English, French and
-  inexpensive Korean phrase coverage comes from upstream resources.
-  Keep a cached maneuver in another language out of the street field, and
-  exclude the following leg's distance from the detailed card as well.
-
-- Read Organic Maps navigation distance and street, with one switch for the
-  Play/F-Droid and GitHub distributions. Its maneuver is bitmap-only, so it
-  keeps the neutral route glyph. No ETA or arrival message is invented.
+- OsmAnd and OsmAnd+: the turn in words, its distance, the street and the
+  arrival time, with the close-turn warning. Checked on a phone and glasses.
+- Yandex Maps: driving distance, street and arrival time, in English or
+  Russian. Checked on a phone and glasses, the distance counting down.
+- Organic Maps: distance and street, updated while the app is in the
+  background. Checked on a phone and glasses. Its arrows are pictures, so the
+  glyph stays neutral.
+- maps.me is read too, but maps.me itself does not keep guiding in the
+  background on Android 11 and later: in picture-in-picture it posts nothing,
+  and without it the distance freezes because Android denies its navigation
+  service the location. Organic Maps, built from the same code, works.
+- Each new app has its own switch.
 
 ## 0.1.1
 
