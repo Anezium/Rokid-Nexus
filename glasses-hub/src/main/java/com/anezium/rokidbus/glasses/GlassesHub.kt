@@ -1444,6 +1444,33 @@ object GlassesHub {
         log("glassesWifiRequest enabled=true hubOwned=${result.hubOwned} applied=${result.applied}")
     }
 
+    /**
+     * A native app that needs the network is being opened. Bring Wi-Fi up through the self-armed
+     * bridge (accessibility automation as the fallback) and hand the radio to the wearer: a camera
+     * lease still pending its grace period must not switch it off under the app.
+     */
+    internal fun ensureWifiForNativeApp(context: Context, packageName: String) {
+        if (!NativeAppWifiPolicy.needsWifi(packageName)) return
+        val appContext = context.applicationContext
+        wifiRequestExecutor.execute {
+            cancelPendingWifiDisable("native_app:$packageName")
+            val handedOver = wifiOwnership?.handOverToUser() == true
+            val wifiManager = appContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+            val alreadyEnabled = runCatching { wifiManager?.isWifiEnabled }
+                .onFailure { logError("nativeAppWifi state read failed", it) }
+                .getOrNull()
+            if (alreadyEnabled == true) {
+                log("nativeAppWifi package=$packageName applied=false reason=already_on handedOver=$handedOver")
+                return@execute
+            }
+            val viaBridge = runCatching { SelfArmCommandBridgeClient.setWifiEnabled(appContext, true) }
+                .onFailure { logError("nativeAppWifi bridge failed", it) }
+                .getOrDefault(false)
+            val applied = viaBridge || attemptWifiAccessibilityEnable(appContext)
+            log("nativeAppWifi package=$packageName applied=$applied viaBridge=$viaBridge handedOver=$handedOver")
+        }
+    }
+
     private fun attemptWifiAccessibilityEnable(context: Context): Boolean {
         val attempted = wifiEnableA11yInFlight.compareAndSet(false, true)
         val serviceConnected = attempted && RokidBusAccessibilityService.requestWifiEnable(context)

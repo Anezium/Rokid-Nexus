@@ -111,6 +111,8 @@ internal object NativeAppsController {
             ?: return NativeAppErrorCode.NOT_LAUNCHABLE
         val component = ComponentName(resolved.activityInfo.packageName, resolved.activityInfo.name)
         val intent = Intent.makeMainActivity(component).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        // Asynchronous on purpose: the app opens now and reconnects once the radio is up.
+        GlassesHub.ensureWifiForNativeApp(context, packageName)
         return runCatching { context.startActivity(intent) }
             .fold(onSuccess = { null }, onFailure = { NativeAppErrorCode.INTERNAL })
     }

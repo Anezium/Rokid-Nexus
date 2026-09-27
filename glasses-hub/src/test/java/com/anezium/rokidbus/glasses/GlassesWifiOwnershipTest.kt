@@ -278,4 +278,18 @@ class GlassesWifiOwnershipTest {
             lease = null
         }
     }
+
+    @Test
+    fun `handing wifi to the user clears the lease without touching the radio`() {
+        val persistence = FakePersistence()
+        val ownership = GlassesWifiOwnership(persistence, nowMillis = { 1_000L })
+        assertFalse(ownership.handOverToUser())
+        var enableRequests = 0
+        ownership.acquire("camera-1", wifiCurrentlyEnabled = false) { enableRequests++; true }
+        assertTrue(ownership.isHubOwned())
+        assertTrue(ownership.handOverToUser())
+        assertFalse(ownership.isHubOwned())
+        assertEquals(1, enableRequests)
+        assertNull(persistence.read())
+    }
 }

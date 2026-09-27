@@ -18,7 +18,10 @@ to a build containing this feature before starting.
    `app.morphe.android.youtube.rokidtest`. A patched APK built from another stock
    version is accepted but flagged, since the Rokid controls patch is written for
    one build.
-4. Open MicroG on the glasses, choose **Add account**, and open **Keyboard & remote**
+4. Opening MicroG or YouTube from Nexus (this screen or the glasses launcher) turns the
+   glasses Wi-Fi on when it is off: the ROM boots with the radio off. Wi-Fi enabled this
+   way stays on; Nexus does not switch it off afterwards.
+   Open MicroG on the glasses, choose **Add account**, and open **Keyboard & remote**
    on the phone. Complete Google's sign-in and verification on the glasses. Then
    open YouTube and check your account and Morphe/SponsorBlock settings.
 
