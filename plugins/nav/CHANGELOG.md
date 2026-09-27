@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Read maps.me background driving distance and street, with its own switch,
+  from English/French emulator captures. Requires leaving the app with
+  picture-in-picture disabled. Walking/transit do not publish this format;
+  cycling is code-derived and still needs a device check.
+
 - Read Yandex Maps driving distance, street and expanded-view ETA, with its
   own source switch. English/Russian emulator captures confirm the format;
   bitmap-only maneuvers stay neutral. Generic service notifications are ignored.

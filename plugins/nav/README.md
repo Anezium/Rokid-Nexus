@@ -1,6 +1,6 @@
 # Navigation
 
-Navigation follows the route Google Maps, Citymapper, OsmAnd, Organic Maps or Yandex Maps
+Navigation follows the route Google Maps, Citymapper, OsmAnd, Organic Maps, maps.me or Yandex Maps
 is already guiding on the phone and keeps it on the glasses as one activity: the next maneuver or leg,
 the distance or the stops left, the street or the stop, and the arrival time.
 A new step flares; the moment a turn is a few metres away, or the stop to get
@@ -12,6 +12,14 @@ Each parser also checks its navigation channel/category and ongoing state.
 Guidance lives in process memory only; nothing is stored.
 
 ## What it reads
+
+- **maps.me** (`com.mapswithme.maps.pro`): background driving distance and
+  next street on `ActiveNavigationChannel`, captured in English and French
+  with 17.12.72038-googleRelease. Disable its picture-in-picture mode and
+  leave the app for the notification to appear. Its bitmap-only maneuver
+  stays neutral; no ETA, close-turn warning or arrival is inferred. The APK
+  notification code also enables cycling, but excludes walking and transit;
+  cycling has not been exercised on the emulator.
 
 - **Yandex Maps** (`ru.yandex.yandexmaps`): driving distance and street, plus
   ETA from its expanded notification view. Captured in English and Russian

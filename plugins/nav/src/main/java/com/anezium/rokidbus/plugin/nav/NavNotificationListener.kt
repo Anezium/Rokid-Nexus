@@ -103,6 +103,7 @@ class NavNotificationListener : NotificationListenerService() {
             NavSource.ORGANIC_MAPS -> OrganicMapsParser.parse(notification)
             NavSource.OSMAND -> OsmAndParser.parse(notification)
             NavSource.YANDEX_MAPS -> YandexMapsParser.parse(notification)
+            NavSource.MAPS_ME -> MapsMeParser.parse(notification)
         }
         if (guidance == null) {
             Log.i(TAG, "unreadable source=$source category=${notification.category} channel=${notification.channelId}")
