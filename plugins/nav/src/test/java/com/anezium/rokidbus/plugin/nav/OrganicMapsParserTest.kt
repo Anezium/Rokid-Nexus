@@ -17,6 +17,27 @@ class OrganicMapsParserTest {
     )
 
     @Test
+    fun `captured English walk and French drive retain only the exposed fields`() {
+        val walking = OrganicMapsParser.parse(step.copy(
+            packageName = "app.organicmaps.web", title = "69\u00a0m", text = "",
+        ))!!
+        assertEquals("69 m", walking.primary)
+        assertNull(walking.secondary)
+        val driving = OrganicMapsParser.parse(step.copy(
+            packageName = "app.organicmaps.web", title = "380\u00a0m", text = "Quai de l'Hôtel de Ville",
+        ))!!
+        assertEquals("380 m", driving.primary)
+        assertEquals("Quai de l'Hôtel de Ville", driving.secondary)
+        assertEquals("route", driving.glyph)
+        assertNull(driving.eta)
+        // During GPS playback, zero metres on Rue de Rivoli was followed by
+        // another leg. It was not an arrival notification.
+        val zero = OrganicMapsParser.parse(step.copy(title = "0\u00a0m"))!!
+        assertFalse(zero.arrived)
+        assertFalse(zero.imminent)
+    }
+
+    @Test
     fun `English and French metric distances keep the street and neutral glyph`() {
         for (distance in listOf("250 m", "1.2 km", "1,2\u00a0km", "30\u202fm")) {
             val guidance = OrganicMapsParser.parse(step.copy(title = distance))!!

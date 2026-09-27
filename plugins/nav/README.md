@@ -27,7 +27,7 @@ Guidance lives in process memory only; nothing is stored.
   so the glyph stays neutral and a short distance does not trigger an urgent
   turn. The generic "Navigator is running" notification is ignored; that was
   all the walking trip exposed. Cycling/transit and arrival are not verified.
-  French is not an offered app language.
+  French is not among its [documented app languages](https://yandex.com/support/m-maps/en/configure-app).
 
 - **OsmAnd / OsmAnd+** (`net.osmand`, `net.osmand.plus`) posts a distance and
   maneuver title plus a BigTextStyle route description and trip summary.
@@ -45,8 +45,8 @@ Guidance lives in process memory only; nothing is stored.
   maneuver is bitmap-only: Navigation keeps the neutral route glyph and
   does not infer a turn warning or arrival from a short/zero distance.
   There is no ETA; at arrival the app removes its notification. English
-  and French metric fields are covered. The distance-only walking notification was also captured on the API 36.1
-  emulator with Organic Maps 2026.08.27-18-web. Contract derived from upstream
+  and French metric fields are covered. English walking (distance only) and French driving (distance and street)
+  were captured on the API 36.1 emulator with Organic Maps 2026.08.27-18-web. Contract derived from upstream
   [NavigationService](https://github.com/organicmaps/organicmaps/blob/98099c37a3c353a240a9d41959492e67990a2083/android/libs/routing/src/main/java/app/organicmaps/routing/NavigationService.java).
 
 - **Google Maps** posts turn-by-turn as a `ProgressStyle` notification:
@@ -87,6 +87,9 @@ The screen also asks for Notification Access and shows the route it sees.
   plugin reads. Korean is read from the apps' own Korean strings and has not
   yet been checked on a real trip in Korea.
 - Notification Access for Navigation (Settings button in the plugin screen).
+
+See [validation evidence and device checklist](VALIDATION.md) for observed
+formats, mode limits and the remaining phone/glasses checks.
 
 ## Build
 
