@@ -27,10 +27,7 @@ internal object OsmAndParser {
         val street = withoutDistance?.let {
             if (maneuver.isNotEmpty() && it.startsWith("$maneuver ")) it.removePrefix(maneuver).trim() else it
         }?.takeIf { it.isNotEmpty() && it != maneuver }
-        val glyph = when (NavText.fold(maneuver)) {
-            "head", "avancez", "전방" -> "straight"
-            else -> NavText.maneuverGlyph(maneuver).takeUnless { it == "arrive" } ?: NavText.ROUTE_GLYPH
-        }
+        val glyph = NavText.maneuverGlyph(maneuver).takeUnless { it == "arrive" } ?: NavText.ROUTE_GLYPH
         return NavGuidance(
             source = NavSource.OSMAND,
             glyph = glyph,

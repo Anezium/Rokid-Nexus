@@ -1,15 +1,15 @@
 # Navigation
 
-Navigation follows the route Google Maps or Citymapper is already guiding on
-the phone and keeps it on the glasses as one activity: the next maneuver or leg,
+Navigation follows the route Google Maps, Citymapper, OsmAnd or Organic Maps
+is already guiding on the phone and keeps it on the glasses as one activity: the next maneuver or leg,
 the distance or the stops left, the street or the stop, and the arrival time.
 A new step flares; the moment a turn is a few metres away, or the stop to get
 off at is next, is urgent. When the app stops guiding, the activity ends.
 
 Navigation reads notifications and nothing else. It needs Notification Access,
-and it ignores every notification that is not Google Maps' `navigation`
-guidance or Citymapper's GO `trip-progress`, before reading it. Guidance lives
-in process memory only; nothing is stored.
+and ignores unknown packages and disabled sources before reading their text.
+Each parser also checks its navigation channel/category and ongoing state.
+Guidance lives in process memory only; nothing is stored.
 
 ## What it reads
 
@@ -20,15 +20,16 @@ in process memory only; nothing is stored.
   maneuver words come from upstream `route_*` resources. Unworded arrows,
   including exit-only roundabout instructions, stay neutral. Zero metres
   does not mean arrival; route removal ends the activity. Contract derived
-  from [NavigationNotification](https://github.com/osmandapp/OsmAnd/blob/master/OsmAnd/src/net/osmand/plus/notifications/NavigationNotification.java).
+  from [NavigationNotification](https://github.com/osmandapp/OsmAnd/blob/7c4433506fe831e32ebb791522ac8ecd5262ca09/OsmAnd/src/net/osmand/plus/notifications/NavigationNotification.java).
 
 - **Organic Maps** (`app.organicmaps`, GitHub `app.organicmaps.web`) posts
   distance as title and street as text on the `NAVIGATION` channel. The
   maneuver is bitmap-only: Navigation keeps the neutral route glyph and
   does not infer a turn warning or arrival from a short/zero distance.
   There is no ETA; at arrival the app removes its notification. English
-  and French metric fields are covered. Contract derived from upstream
-  [NavigationService](https://github.com/organicmaps/organicmaps/blob/master/android/libs/routing/src/main/java/app/organicmaps/routing/NavigationService.java).
+  and French metric fields are covered. The distance-only walking notification was also captured on the API 36.1
+  emulator with Organic Maps 2026.08.27-18-web. Contract derived from upstream
+  [NavigationService](https://github.com/organicmaps/organicmaps/blob/98099c37a3c353a240a9d41959492e67990a2083/android/libs/routing/src/main/java/app/organicmaps/routing/NavigationService.java).
 
 - **Google Maps** posts turn-by-turn as a `ProgressStyle` notification:
   `"80 m · Prendre à droite sur Av. X"` as the title and the arrival time as the
@@ -53,7 +54,7 @@ invented between two notifications.
 ## Settings
 
 The plugin screen on the phone (Rokid Nexus, Navigation) has a main switch and
-one switch per app, Google Maps and Citymapper. Switching one off ends that
+one switch per app. OsmAnd editions share a switch, as do Organic Maps editions. Switching one off ends that
 app's live route on the glasses at once and ignores its guidance until it is
 switched back on, so nobody has to uninstall the plugin to keep one app off
 the HUD. Switched back on, a route already running is picked up straight away.

@@ -18,7 +18,7 @@ import com.anezium.rokidbus.client.ui.NexusUi
 /**
  * Navigation's switches (all of it, or one app at a time) and the one thing it
  * needs from the wearer: Notification Access, so it can read the guidance
- * Google Maps and Citymapper already post.
+ * the enabled apps already post.
  */
 class NavSettingsActivity : Activity() {
     private lateinit var accessStatus: TextView

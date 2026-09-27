@@ -42,7 +42,7 @@ internal object NavText {
         "straight" to listOf(
             "continuez", "continuer", "tout droit", "poursuivez", "dirigez-vous", "aller vers", "allez vers",
             "head ", "continue",
-            "straight", "직진", "계속 진행",
+            "straight", "직진", "계속 진행", "avancez", "전방",
         ),
         "arrive" to listOf(
             "vous etes arrive", "votre destination", "destination", "arrive", "you have arrived",
@@ -88,7 +88,9 @@ internal object NavText {
 
     fun maneuverGlyph(instruction: String): String {
         val plain = fold(instruction)
-        return MANEUVERS.firstOrNull { (_, phrases) -> phrases.any(plain::contains) }?.first ?: ROUTE_GLYPH
+        return MANEUVERS.firstOrNull { (_, phrases) ->
+            phrases.any { plain.contains(it) || plain == it.trimEnd() }
+        }?.first ?: ROUTE_GLYPH
     }
 
     /** The street an instruction names ("… sur Rue de Rivoli"), or null. */
