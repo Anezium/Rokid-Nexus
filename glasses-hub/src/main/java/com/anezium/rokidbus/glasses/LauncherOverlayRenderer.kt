@@ -38,6 +38,9 @@ object LauncherOverlayRenderer {
     private var insetUnsubscribe: (() -> Unit)? = null
     private var pluginEntries: List<GlassesHub.LauncherEntry> = emptyList()
     private var nativeAppEntries = emptyList<com.anezium.rokidbus.shared.NativeAppEntry>()
+    // Rows are rebuilt on every selection move; resolving icons through PackageManager each
+    // time is what the plugin glyph cache already avoids for plugin rows.
+    private var nativeAppIcons = emptyMap<String, android.graphics.drawable.Drawable>()
     private var launcherEntries: List<LauncherMenuEntry> = emptyList()
     private var selectedIndex = 0
     private val swipeDedupe = DpadPairDedupe()
@@ -79,6 +82,9 @@ object LauncherOverlayRenderer {
                 log("Native launcher discovery failed")
                 emptyList()
             }
+        nativeAppIcons = nativeAppEntries.associate { entry ->
+            entry.packageName to NativeAppsController.icon(activeService.applicationContext, entry.packageName)
+        }
         updateEntries()
         val manager = windowManager ?: activeService.getSystemService(WindowManager::class.java) ?: return false
         val currentRoot = root ?: LauncherOverlayRoot(activeService).also { next ->
@@ -352,7 +358,8 @@ object LauncherOverlayRenderer {
                 setImageDrawable(
                     when (entry) {
                         is LauncherMenuEntry.Plugin -> GlassesHub.launcherDrawable(context, entry.entry)
-                        is LauncherMenuEntry.NativeApp -> NativeAppsController.icon(context, entry.entry.packageName)
+                        is LauncherMenuEntry.NativeApp -> nativeAppIcons[entry.entry.packageName]
+                            ?: NativeAppsController.icon(context, entry.entry.packageName)
                     },
                 )
                 layoutParams = LinearLayout.LayoutParams(dp(24), dp(24)).apply { marginEnd = dp(14) }
