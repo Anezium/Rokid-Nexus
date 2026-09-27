@@ -26,13 +26,15 @@ internal object NavText {
         "turn-slight-right" to listOf(
             "legerement a droite", "legerement sur la droite", "restez a droite", "serrez a droite",
             "slight right", "keep right", "bear right", "약간 오른쪽", "오른쪽 방향 유지", "오른쪽 차선 유지",
+            "slightly right", "legerement vers la droite", "약한 우회전", "오른쪽으로 가십시오",
         ),
         "turn-slight-left" to listOf(
             "legerement a gauche", "legerement sur la gauche", "restez a gauche", "serrez a gauche",
             "slight left", "keep left", "bear left", "약간 왼쪽", "왼쪽 방향 유지", "왼쪽 차선 유지",
+            "slightly left", "legerement vers la gauche", "약한 좌회전", "왼쪽을 유지",
         ),
-        "turn-sharp-right" to listOf("fortement a droite", "franchement a droite", "sharp right", "급우회전"),
-        "turn-sharp-left" to listOf("fortement a gauche", "franchement a gauche", "sharp left", "급좌회전"),
+        "turn-sharp-right" to listOf("fortement a droite", "franchement a droite", "sharp right", "급우회전", "sharply right", "virage serre a droite", "급한 우회전"),
+        "turn-sharp-left" to listOf("fortement a gauche", "franchement a gauche", "sharp left", "급좌회전", "sharply left", "virage serre a gauche", "급한 좌회전"),
         "turn-right" to listOf("a droite", "turn right", "right onto", "right on ", "right at ", "우회전", "오른쪽으로"),
         "turn-left" to listOf("a gauche", "turn left", "left onto", "left on ", "left at ", "좌회전", "왼쪽으로"),
         // Before the arrival phrases: "Continue to your destination" is a

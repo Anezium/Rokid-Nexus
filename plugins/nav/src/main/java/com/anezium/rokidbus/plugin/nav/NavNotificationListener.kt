@@ -101,6 +101,7 @@ class NavNotificationListener : NotificationListenerService() {
             NavSource.GOOGLE_MAPS -> GoogleMapsParser.parse(notification, labels)
             NavSource.CITYMAPPER -> citymapper.parse(notification, labels)
             NavSource.ORGANIC_MAPS -> OrganicMapsParser.parse(notification)
+            NavSource.OSMAND -> OsmAndParser.parse(notification)
         }
         if (guidance == null) {
             Log.i(TAG, "unreadable source=$source category=${notification.category} channel=${notification.channelId}")

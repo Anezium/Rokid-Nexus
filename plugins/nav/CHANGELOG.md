@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Read OsmAnd and OsmAnd+ turn-by-turn distance, textual maneuver, route
+  description and ETA, with a shared source switch. English, French and
+  inexpensive Korean phrase coverage comes from upstream resources.
+
 - Read Organic Maps navigation distance and street, with one switch for the
   Play/F-Droid and GitHub distributions. Its maneuver is bitmap-only, so it
   keeps the neutral route glyph. No ETA or arrival message is invented.

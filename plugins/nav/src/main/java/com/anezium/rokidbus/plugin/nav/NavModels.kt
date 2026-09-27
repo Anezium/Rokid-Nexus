@@ -5,6 +5,7 @@ internal enum class NavSource(val packageName: String, val label: String, vararg
     GOOGLE_MAPS("com.google.android.apps.maps", "Google Maps"),
     CITYMAPPER("com.citymapper.app.release", "Citymapper"),
     ORGANIC_MAPS("app.organicmaps", "Organic Maps", "app.organicmaps.web"),
+    OSMAND("net.osmand", "OsmAnd", "net.osmand.plus"),
     ;
 
     companion object {

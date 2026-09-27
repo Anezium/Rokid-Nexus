@@ -17,6 +17,7 @@
     <string name="nav_settings_maps_sub">Turn-by-turn from Google Maps navigation</string>
     <string name="nav_settings_citymapper_sub">Steps, stops and departures from Citymapper GO</string>
     <string name="nav_settings_organic_sub">Distance and street from Organic Maps navigation</string>
+    <string name="nav_settings_osmand_sub">Turn-by-turn from OsmAnd and OsmAnd+ navigation</string>
     <string name="nav_settings_access">Notification access</string>
     <string name="nav_settings_access_title">Read navigation guidance</string>
     <string name="nav_settings_access_sub">Navigation reads only Google Maps and Citymapper guidance. Every other notification is ignored before it is read.</string>

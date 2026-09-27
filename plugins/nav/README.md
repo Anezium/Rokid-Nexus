@@ -13,6 +13,15 @@ in process memory only; nothing is stored.
 
 ## What it reads
 
+- **OsmAnd / OsmAnd+** (`net.osmand`, `net.osmand.plus`) posts a distance and
+  maneuver title plus a BigTextStyle route description and trip summary.
+  Navigation reads the next distance and the summary's ETA, not the trip's
+  distance or the following leg's distance. English, French and Korean
+  maneuver words come from upstream `route_*` resources. Unworded arrows,
+  including exit-only roundabout instructions, stay neutral. Zero metres
+  does not mean arrival; route removal ends the activity. Contract derived
+  from [NavigationNotification](https://github.com/osmandapp/OsmAnd/blob/master/OsmAnd/src/net/osmand/plus/notifications/NavigationNotification.java).
+
 - **Organic Maps** (`app.organicmaps`, GitHub `app.organicmaps.web`) posts
   distance as title and street as text on the `NAVIGATION` channel. The
   maneuver is bitmap-only: Navigation keeps the neutral route glyph and
