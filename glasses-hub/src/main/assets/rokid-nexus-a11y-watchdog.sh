@@ -10,7 +10,7 @@ LOGFILE="$BASE/$NAME.log"
 HEARTBEAT="$BASE/$NAME.heartbeat"
 VERSIONFILE="$BASE/$NAME.version"
 RECOVERYFILE="$BASE/$NAME.recovery"
-VERSION="2026-07-17.1"
+VERSION="2026-09-27.1"
 HEALTHY_INTERVAL="${INTERVAL:-180}"
 RECOVERY_INTERVAL="${RECOVERY_INTERVAL:-30}"
 RECOVERY_CYCLES="${RECOVERY_CYCLES:-3}"
@@ -185,8 +185,37 @@ repair_once() {
 
 cleanup_loop() {
   rm -f "$PIDFILE"
+  settings delete global rokid_nexus_r08_watchdog >/dev/null 2>&1
   log_line "watchdog loop stopped"
 }
+
+# R08 opts in only after setup. Use the existing shell-owned installers, never code
+# from shared storage or a caller-supplied path, and leave ADB/Wi-Fi policy to Nexus.
+recover_r08() (
+  boot_count="$(settings get global boot_count 2>/dev/null)"
+  read uptime_seconds ignored < /proc/uptime
+  settings put global rokid_nexus_r08_watchdog "1:$boot_count:${uptime_seconds%%.*}" >/dev/null 2>&1
+  [ "$(settings get global r08_access_bridge_armed 2>/dev/null)" = "1" ] || return 0
+  pm list packages -e com.anezium.r08accessbridge 2>/dev/null |
+    grep -qx 'package:com.anezium.r08accessbridge' || return 0
+  # Both scripts must be provisioned by R08's initial setup before either runs.
+  for helper in /data/local/tmp/r08-shortcut-bridge.sh /data/local/tmp/r08-a11y-watchdog.sh; do
+    [ -f "$helper" ] && [ ! -L "$helper" ] || return 0
+    metadata="$(stat -c '%u:%a' "$helper" 2>/dev/null)"
+    case "$metadata" in
+      2000:700|2000:744|2000:750|2000:755) ;;
+      *) return 0 ;;
+    esac
+  done
+  for helper in /data/local/tmp/r08-shortcut-bridge.sh /data/local/tmp/r08-a11y-watchdog.sh; do
+    [ "$(settings get global r08_access_bridge_armed 2>/dev/null)" = "1" ] || return 0
+    result="$(sh "$helper" start 2>&1)"
+    case "$result" in
+      "already running "*) ;;
+      *) log_line "R08 recovery: $result" ;;
+    esac
+  done
+)
 
 loop_forever() {
   echo "$$" > "$PIDFILE"
@@ -194,6 +223,7 @@ loop_forever() {
   log_line "watchdog loop started pid=$$ healthyInterval=$HEALTHY_INTERVAL recoveryInterval=$RECOVERY_INTERVAL"
   trap 'cleanup_loop; exit 0' INT TERM EXIT
   while true; do
+    recover_r08
     accessibility_enabled="$(settings get secure accessibility_enabled 2>/dev/null)"
     enabled_services="$(settings get secure enabled_accessibility_services 2>/dev/null)"
     if [ "$accessibility_enabled" != "1" ] || ! service_present "$enabled_services"; then
@@ -208,8 +238,11 @@ loop_forever() {
 
 start_watchdog() {
   if is_watchdog_running; then
-    echo "running pid=$(cat "$PIDFILE" 2>/dev/null) version=$VERSION"
-    exit 0
+    if [ "$(cat "$VERSIONFILE" 2>/dev/null)" = "$VERSION" ]; then
+      echo "running pid=$(cat "$PIDFILE" 2>/dev/null) version=$VERSION"
+      exit 0
+    fi
+    stop_watchdog >/dev/null
   fi
   nohup sh "$0" run >/dev/null 2>&1 &
   echo "$!" > "$PIDFILE"
@@ -272,6 +305,7 @@ case "$1" in
     ;;
   repair)
     repair_once
+    recover_r08
     ;;
   run)
     loop_forever
