@@ -98,8 +98,18 @@ class YoutubeSetupActivity : Activity() {
         }
         card("2. Patched YouTube", buildString {
             if (!youtubeApps.isNullOrEmpty()) append("YouTube is installed on the glasses. ")
-            append("Choose your standalone Morphe APK with GmsCore support, Hide ads, SponsorBlock and Rokid controls. To update, use an APK signed with the same key.")
+            append("Download stock YouTube ${YoutubeApkPolicy.STOCK_YOUTUBE_VERSION} from APKMirror: pick the APK variant, not a bundle. ")
+            append("Patch it in Morphe with your Rokid patches: GmsCore support, Hide ads, SponsorBlock and Rokid controls. ")
+            append("Then choose the patched APK here. To update, use an APK signed with the same key.")
         }) { box ->
+            button(box, "Get YouTube ${YoutubeApkPolicy.STOCK_YOUTUBE_VERSION}", !state.busy) {
+                browse(YoutubeApkPolicy.STOCK_YOUTUBE_URL)
+            }
+            button(box, "Patch with Morphe", !state.busy) {
+                val manager = packageManager.getLaunchIntentForPackage(YoutubeApkPolicy.MORPHE_MANAGER_PACKAGE)
+                if (manager != null) runCatching { startActivity(manager) }.onFailure { browse(YoutubeApkPolicy.MORPHE_MANAGER_URL) }
+                else browse(YoutubeApkPolicy.MORPHE_MANAGER_URL)
+            }
             button(box, "Choose patched YouTube APK", !state.busy) {
                 val picker = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
                     addCategory(Intent.CATEGORY_OPENABLE)

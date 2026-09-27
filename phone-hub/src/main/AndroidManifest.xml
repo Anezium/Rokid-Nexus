@@ -29,6 +29,7 @@
 
     <queries>
         <package android:name="com.rokid.sprite.global.aiapp" />
+        <package android:name="app.morphe.manager" />
         <intent>
             <action android:name="com.rokid.sprite.aiapp.externalapp.AUTHORIZATION" />
         </intent>

@@ -8,10 +8,16 @@ to a build containing this feature before starting.
    the latest stable release from <https://github.com/MorpheApp/MicroG-RE>, selecting
    the arm64 APK with a launcher icon, or the universal one when no arm64 asset exists.
    The package remains `app.revanced.android.gms`.
-3. Choose your standalone Morphe-patched YouTube APK on the phone, then install it.
-   Include **GmsCore support**, **Hide ads**, **SponsorBlock**, and **Rokid controls**
-   when patching. Supported package names are `app.morphe.android.youtube` and the
-   existing prototype's `app.morphe.android.youtube.rokidtest`.
+3. Choose **Get YouTube 21.04.223** to open the APKMirror page of the stock build
+   the Rokid controls patch targets, and download the APK variant (not a bundle).
+   Choose **Patch with Morphe** to open Morphe Manager, or its releases page when it
+   is not installed, and patch that APK with your Rokid patches: include **GmsCore
+   support**, **Hide ads**, **SponsorBlock**, and **Rokid controls**. Then choose the
+   patched APK on the phone and install it. Supported package names are
+   `app.morphe.android.youtube` and the existing prototype's
+   `app.morphe.android.youtube.rokidtest`. A patched APK built from another stock
+   version is accepted but flagged, since the Rokid controls patch is written for
+   one build.
 4. Open MicroG on the glasses, choose **Add account**, and open **Keyboard & remote**
    on the phone. Complete Google's sign-in and verification on the glasses. Then
    open YouTube and check your account and Morphe/SponsorBlock settings.

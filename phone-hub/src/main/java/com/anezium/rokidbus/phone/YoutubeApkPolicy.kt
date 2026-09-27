@@ -11,6 +11,13 @@ internal object YoutubeApkPolicy {
     const val MICROG_RELEASE_URL = "https://api.github.com/repos/MorpheApp/MicroG-RE/releases/latest"
     const val MAX_APK_BYTES = 350L * 1024 * 1024
 
+    // The Rokid controls patch targets exactly one stock YouTube build; bump this with the patch.
+    const val STOCK_YOUTUBE_VERSION = "21.04.223"
+    const val STOCK_YOUTUBE_URL =
+        "https://www.apkmirror.com/apk/google-inc/youtube/youtube-21-04-223-release/"
+    const val MORPHE_MANAGER_PACKAGE = "app.morphe.manager"
+    const val MORPHE_MANAGER_URL = "https://github.com/MorpheApp/morphe-manager/releases/latest"
+
     fun microGRelease(raw: String): MicroGRelease {
         val json = JSONObject(raw)
         require(json.opt("draft") == false && json.opt("prerelease") == false)
@@ -51,6 +58,13 @@ internal object YoutubeApkPolicy {
         }
         require(archive.versionCode > 0) { "The APK has no valid version." }
         signer(archive)
+    }
+
+    /** A patched APK built from another stock build lacks the Rokid controls the patch was written for. */
+    fun versionNotice(archive: ArtifactArchiveInfo): String? {
+        if (archive.packageName == YoutubeSetupContract.MICROG) return null
+        if (archive.versionName == STOCK_YOUTUBE_VERSION) return null
+        return "This APK is YouTube ${archive.versionName ?: archive.versionCode}, not $STOCK_YOUTUBE_VERSION which the Rokid controls patch targets."
     }
 
     fun updateError(archive: ArtifactArchiveInfo, minSdk: Int, inventory: YoutubeInventory): String? {

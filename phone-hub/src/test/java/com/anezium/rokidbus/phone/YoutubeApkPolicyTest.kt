@@ -62,6 +62,13 @@ class YoutubeApkPolicyTest {
         YoutubeApkPolicy.validatePackage(archive.copy(packageName = YoutubeSetupContract.YOUTUBE_TEST), false)
     }
 
+    @Test fun `warns when the patched YouTube is not the build the Rokid patch targets`() {
+        assertNull(YoutubeApkPolicy.versionNotice(archive.copy(versionName = YoutubeApkPolicy.STOCK_YOUTUBE_VERSION)))
+        assertNull(YoutubeApkPolicy.versionNotice(archive.copy(packageName = YoutubeSetupContract.MICROG, versionName = "7.1.1")))
+        assertTrue(YoutubeApkPolicy.versionNotice(archive.copy(versionName = "21.32.2"))!!.contains("21.32.2"))
+        assertNotNull(YoutubeApkPolicy.versionNotice(archive))
+    }
+
     @Test fun `updates preserve signer and reject downgrades and incompatible Android`() {
         assertNull(YoutubeApkPolicy.updateError(archive, 28, inventory()))
         assertNull(YoutubeApkPolicy.updateError(archive, 28, inventory(version = 200)))

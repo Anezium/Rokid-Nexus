@@ -158,7 +158,8 @@ internal class YoutubeSetupController(
                 result.fold(onSuccess = { apk ->
                     prepared = apk
                     publish(state.copy(busy = false, preparedLabel = apk.label, canInstall = true,
-                        message = "${apk.label} is ready. Install it on the glasses below."))
+                        message = listOfNotNull("${apk.label} is ready. Install it on the glasses below.",
+                            YoutubeApkPolicy.versionNotice(apk.archive)).joinToString(" ")))
                 }, onFailure = {
                     fail(if (it is IllegalArgumentException || it is IllegalStateException) it.message.orEmpty()
                         else "Could not prepare the APK. Check your connection or choose the file again.")
