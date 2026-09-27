@@ -6,7 +6,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** Composed from NavigationNotification and route_* resources, not a device capture. */
+/** Source-derived cases, plus explicitly marked OsmAnd 5.4.4 emulator captures. */
 class OsmAndParserTest {
     private val step = NavNotification(
         packageName = "net.osmand",
@@ -16,6 +16,43 @@ class OsmAndParserTest {
         title = "80 m • Turn right and go",
         bigText = "Turn right and go Rue de Rivoli 250 m\n1.2 km • 15 min • 18:23",
     )
+
+    @Test
+    fun `captured driving countdown keeps one step and warns once at fifteen metres`() {
+        // API 36.1 emulator, Notre-Dame to Hotel de Ville, F-Droid x86 build.
+        val planner = NavActivityPlanner()
+        val far = OsmAndParser.parse(step.copy(
+            packageName = "net.osmand.plus",
+            title = "300 m • Turn right and go",
+            bigText = "Turn right and go Quai de l'Hôtel de Ville 100 m\n900 m • 7 min • 4:12 PM • 0 km/h",
+        ))!!
+        val close = OsmAndParser.parse(step.copy(
+            packageName = "net.osmand.plus",
+            title = "15 m • Turn right and go",
+            bigText = "Turn right and go Quai de l'Hôtel de Ville 100 m\n600 m • 5 min • 4:10 PM • 0 km/h",
+        ))!!
+        assertEquals("Quai de l'Hôtel de Ville", far.secondary)
+        assertEquals("4:12 PM", far.eta)
+        assertEquals(far.stepKey, close.stepKey)
+        assertTrue(planner.plan(far) is NavPlan.Start)
+        val update = planner.plan(close) as NavPlan.Update
+        assertTrue(update.significant)
+        assertTrue(update.urgent)
+        assertEquals(NavPlan.Unchanged, planner.plan(close))
+        val straight = OsmAndParser.parse(step.copy(
+            title = "80 m • Head",
+            bigText = "Head Rue d'Arcole 250 m\n900 m • 7 min • 4:12 PM • 0 km/h",
+        ))!!
+        assertEquals("straight", straight.glyph)
+        assertEquals("Rue d'Arcole", straight.secondary)
+        val french = OsmAndParser.parse(step.copy(
+            title = "300 m • Tournez à droite",
+            bigText = "Tournez à droite Quai de l'Hôtel de Ville 100 m\n900 m • 7 min • 16:14 • 0 km/h",
+        ))!!
+        assertEquals("turn-right", french.glyph)
+        assertEquals(far.secondary, french.secondary)
+        assertEquals("16:14", french.eta)
+    }
 
     @Test
     fun `read the next turn distance street and ETA rather than following leg or total distance`() {
