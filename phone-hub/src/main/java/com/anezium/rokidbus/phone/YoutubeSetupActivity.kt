@@ -117,16 +117,27 @@ class YoutubeSetupActivity : Activity() {
         card("2. Patched YouTube", buildString {
             if (!youtubeApps.isNullOrEmpty()) append("YouTube is installed on the glasses. ")
             append("Download stock YouTube ${YoutubeApkPolicy.STOCK_YOUTUBE_VERSION} from APKMirror: pick the APK variant, not a bundle. ")
-            append("Patch it in Morphe with your Rokid patches: GmsCore support, Hide ads, SponsorBlock and Rokid controls. ")
+            append("Add the Rokid patches to Morphe once, then patch it from the Rokid glasses source: ")
+            append("Rokid controls, GmsCore support, Hide ads and SponsorBlock are selected by default, ")
+            append("and Morphe's Expert mode lets you change that selection. ")
             append("Then choose the patched APK here. To update, use an APK signed with the same key.")
         }) { box ->
             button(box, "Get YouTube ${YoutubeApkPolicy.STOCK_YOUTUBE_VERSION}", !state.busy) {
                 browse(YoutubeApkPolicy.STOCK_YOUTUBE_URL)
             }
+            button(box, "Add Rokid patches to Morphe", !state.busy) {
+                val source = Intent(Intent.ACTION_VIEW, Uri.parse(YoutubeApkPolicy.ROKID_PATCHES_SOURCE_URL))
+                    .setPackage(YoutubeApkPolicy.MORPHE_MANAGER_PACKAGE)
+                runCatching { startActivity(source) }.onFailure { browse(YoutubeApkPolicy.MORPHE_MANAGER_URL) }
+            }
             button(box, "Patch with Morphe", !state.busy) {
-                val manager = packageManager.getLaunchIntentForPackage(YoutubeApkPolicy.MORPHE_MANAGER_PACKAGE)
-                if (manager != null) runCatching { startActivity(manager) }.onFailure { browse(YoutubeApkPolicy.MORPHE_MANAGER_URL) }
-                else browse(YoutubeApkPolicy.MORPHE_MANAGER_URL)
+                val patch = Intent(YoutubeApkPolicy.MORPHE_ACTION_PATCH_APP)
+                    .setClassName(YoutubeApkPolicy.MORPHE_MANAGER_PACKAGE, YoutubeApkPolicy.MORPHE_MANAGER_ACTIVITY)
+                    .putExtra(YoutubeApkPolicy.MORPHE_EXTRA_PATCH_PACKAGE, YoutubeApkPolicy.STOCK_YOUTUBE_PACKAGE)
+                runCatching { startActivity(patch) }.onFailure { browse(YoutubeApkPolicy.MORPHE_MANAGER_URL) }
+            }
+            button(box, "How the Rokid patches work", !state.busy) {
+                browse(YoutubeApkPolicy.ROKID_PATCHES_README_URL)
             }
             button(box, "Choose patched YouTube APK", !state.busy) {
                 val picker = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {

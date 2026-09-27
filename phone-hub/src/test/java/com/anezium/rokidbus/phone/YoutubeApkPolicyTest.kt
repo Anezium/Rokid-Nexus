@@ -77,4 +77,13 @@ class YoutubeApkPolicyTest {
         assertNotNull(YoutubeApkPolicy.updateError(archive, 28, inventory(signer = "b".repeat(64))))
         assertNotNull(YoutubeApkPolicy.updateError(archive, 28, inventory(signer = "")))
     }
+
+    @Test fun `adds the Rokid fork through Morphe's own add-source link`() {
+        // Morphe only accepts https://morphe.software/add-source with a github= repository.
+        assertEquals(
+            "https://morphe.software/add-source?github=Anezium/morphe-patches&name=Rokid%20glasses",
+            YoutubeApkPolicy.ROKID_PATCHES_SOURCE_URL,
+        )
+        assertEquals("com.google.android.youtube", YoutubeApkPolicy.STOCK_YOUTUBE_PACKAGE)
+    }
 }

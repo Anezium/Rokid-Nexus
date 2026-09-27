@@ -17,6 +17,18 @@ internal object YoutubeApkPolicy {
         "https://www.apkmirror.com/apk/google-inc/youtube/youtube-21-04-223-release/"
     const val MORPHE_MANAGER_PACKAGE = "app.morphe.manager"
     const val MORPHE_MANAGER_URL = "https://github.com/MorpheApp/morphe-manager/releases/latest"
+    const val MORPHE_MANAGER_ACTIVITY = "app.morphe.manager.MainActivity"
+
+    // Morphe Manager asks before adding the source, then keeps it updated from the fork's releases.
+    const val ROKID_PATCHES_REPO = "Anezium/morphe-patches"
+    const val ROKID_PATCHES_SOURCE_URL =
+        "https://morphe.software/add-source?github=$ROKID_PATCHES_REPO&name=Rokid%20glasses"
+    const val ROKID_PATCHES_README_URL = "https://github.com/$ROKID_PATCHES_REPO/tree/rokid#readme"
+
+    // Opens Morphe's usual patch dialog for one app, as its launcher shortcuts do.
+    const val MORPHE_ACTION_PATCH_APP = "app.morphe.manager.action.PATCH_APP"
+    const val MORPHE_EXTRA_PATCH_PACKAGE = "patch_package"
+    const val STOCK_YOUTUBE_PACKAGE = "com.google.android.youtube"
 
     fun microGRelease(raw: String): MicroGRelease {
         val json = JSONObject(raw)

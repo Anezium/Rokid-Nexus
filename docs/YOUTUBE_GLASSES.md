@@ -10,10 +10,15 @@ to a build containing this feature before starting.
    The package remains `app.revanced.android.gms`.
 3. Choose **Get YouTube 21.04.223** to open the APKMirror page of the stock build
    the Rokid controls patch targets, and download the APK variant (not a bundle).
-   Choose **Patch with Morphe** to open Morphe Manager, or its releases page when it
-   is not installed, and patch that APK with your Rokid patches: include **GmsCore
-   support**, **Hide ads**, **SponsorBlock**, and **Rokid controls**. Then choose the
-   patched APK on the phone and install it. Supported package names are
+   Choose **Add Rokid patches to Morphe** once: Morphe Manager asks to add the
+   [Anezium/morphe-patches](https://github.com/Anezium/morphe-patches/tree/rokid#readme)
+   source and keeps it updated from its releases. Then choose **Patch with Morphe**,
+   which opens Morphe's patch dialog for YouTube, and patch that APK from the **Rokid
+   glasses** source. Its default selection is **Rokid controls**, **GmsCore support**,
+   **Hide ads**, and **SponsorBlock**; Morphe's Expert mode lets you change it. Both
+   buttons open Morphe Manager's releases page when it is not installed. **How the Rokid
+   patches work** opens the fork's README. Then choose the patched APK on the phone and
+   install it. Supported package names are
    `app.morphe.android.youtube` and the existing prototype's
    `app.morphe.android.youtube.rokidtest`. A patched APK built from another stock
    version is accepted but flagged, since the Rokid controls patch is written for
