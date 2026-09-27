@@ -38,6 +38,7 @@ internal class PhoneCoreRemoteBridge(
     private val isNativePointerAvailable: () -> Boolean,
 ) : AutoCloseable {
     private val appContext = context.applicationContext
+    private val youtubeKeyboard = YoutubeKeyboardSettings(appContext)
     private val main = Handler(Looper.getMainLooper())
     private var receiverRegistered = false
     private var inputState = RemoteInputTransportState(connected = false, fieldActive = false)
@@ -475,6 +476,7 @@ internal class PhoneCoreRemoteBridge(
         RemoteInputContract.decodeSessionOpen(envelope.payload)?.let { session ->
             remoteImeOptions = session.imeOptions
             nextInputSequence = session.nextSequence
+            val keyboardRequested = youtubeKeyboard.shouldRequestKeyboard(session.packageName, session.keyboardRequested)
             inputState = RemoteInputTransportState(
                 connected = true,
                 fieldActive = true,
@@ -482,10 +484,10 @@ internal class PhoneCoreRemoteBridge(
                 sessionId = session.sessionId,
                 fieldLabel = null,
                 imeAction = localImeAction(session.imeOptions),
-                keyboardRequested = session.keyboardRequested,
+                keyboardRequested = keyboardRequested,
             )
             publishInputState()
-            if (session.keyboardRequested) RemoteKeyboardPrompt.bringForward(appContext)
+            if (keyboardRequested) RemoteKeyboardPrompt.bringForward(appContext)
             return true
         }
         val closed = RemoteInputContract.decodeSessionClosed(envelope.payload) ?: return false

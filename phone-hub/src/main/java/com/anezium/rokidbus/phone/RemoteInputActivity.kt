@@ -606,10 +606,8 @@ class RemoteInputActivity : Activity() {
         // ended because another keyboard took over, and that is exactly when the row must show.
         if (backToWaiting) glassesKeyboardStale = true
         maybeCheckGlassesKeyboard()
-        // The keyboard opens when the wearer asks for it, never because the
-        // glasses focused a field: navigating through a screen full of inputs
-        // otherwise reopens the IME under your thumb on every step. A field a
-        // plugin opened to be typed into is the asking, so that one raises it.
+        // Only requested sessions raise the keyboard: editable surfaces or the
+        // owner's YouTube auto-keyboard opt-in. Other fields stay manual.
         if (sessionChanged && next.editorEnabled && next.keyboardRequested) requestKeyboard()
     }
 

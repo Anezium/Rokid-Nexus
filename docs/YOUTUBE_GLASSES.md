@@ -25,6 +25,13 @@ to a build containing this feature before starting.
    on the phone. Complete Google's sign-in and verification on the glasses. Then
    open YouTube and check your account and Morphe/SponsorBlock settings.
 
+The **Phone keyboard → Auto-open keyboard** switch on this screen is off by
+default and remembers your choice. Turn it on to open the phone keyboard when
+you next focus a field in Morphe YouTube or its Rokid test build. If Android
+blocks opening the screen, Nexus posts the existing keyboard notification.
+Turn it off to keep using **Keyboard & remote** manually. The setting does not
+affect MicroG, other apps, or keyboard requests from plugin editable surfaces.
+
 Nexus does not patch YouTube on the phone or redistribute a patched YouTube APK.
 Use the existing Morphe/Rokid patching workflow to produce that APK. Package and
 signature validation cannot establish that every requested patch was included;
@@ -55,6 +62,11 @@ existing remote IME sends transient editing operations, never the editor's exist
 text. Credentials are entered only by the user.
 
 ## Device acceptance checks
+
+- Confirm auto-open defaults off. Enable it, reopen a YouTube search field, and
+  verify the phone keyboard opens or its notification appears. Disable it and
+  reopen search: no automatic prompt; manual typing still works. Reopen the
+  setup screen to check persistence. Other app fields must stay manual.
 
 - With both packages absent, install MicroG followed by patched YouTube. Confirm
   both are reported on the phone and appear in the glasses launcher. Test a MicroG

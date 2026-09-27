@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.view.Gravity
 import android.view.ViewGroup
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -76,6 +77,23 @@ class YoutubeSetupActivity : Activity() {
         content.addView(BusTheme.gap(this, 16))
         content.addView(message, NexusUi.block())
         button(content, "Refresh glasses apps", !state.busy) { command(YoutubeSetupController.REFRESH) }
+
+        card("Phone keyboard",
+            "Automatically open the phone keyboard when a YouTube field takes focus on the glasses. " +
+                "If Android prevents opening it, tap the keyboard notification. " +
+                "When off, use Keyboard & remote manually. Changes apply to the next field you open.") { box ->
+            val settings = YoutubeKeyboardSettings(this)
+            box.addView(LinearLayout(this).apply {
+                gravity = Gravity.CENTER_VERTICAL
+                addView(NexusUi.rowTitle(this@YoutubeSetupActivity, "Auto-open keyboard"),
+                    LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                addView(NexusUi.switch(this@YoutubeSetupActivity).apply {
+                    contentDescription = "Auto-open YouTube keyboard"
+                    isChecked = settings.autoOpen
+                    setOnCheckedChangeListener { _, checked -> settings.autoOpen = checked }
+                })
+            }, NexusUi.block())
+        }
 
         state.preparedLabel?.let { label ->
             card("Ready to install", label) { box ->
