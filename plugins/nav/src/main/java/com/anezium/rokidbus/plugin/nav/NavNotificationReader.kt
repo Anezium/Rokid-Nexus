@@ -33,7 +33,9 @@ internal object NavNotificationReader {
             actions = notification.actions.orEmpty().mapNotNull { it.title?.toString() },
             nowBarPrimary = text(EXTRA_NOW_BAR_PRIMARY),
             nowBarSecondary = text(EXTRA_NOW_BAR_SECONDARY),
-            viewTexts = if (source == NavSource.CITYMAPPER) layoutTexts(context, notification) else emptyMap(),
+            viewTexts = if (source == NavSource.CITYMAPPER || source == NavSource.YANDEX_MAPS) {
+                layoutTexts(context, notification)
+            } else emptyMap(),
         )
     }
 
