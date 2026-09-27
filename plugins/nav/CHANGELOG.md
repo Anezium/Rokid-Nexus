@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.1
+
+- Korean: Citymapper GO and Google Maps public transport are read in Korean
+  (walk, wait, board, stops left, get off soon, arrival), so Navigation works
+  in South Korea, where Google Maps has no turn-by-turn. Korean times keep
+  their 오전/오후. Built from the apps' own Korean strings; not yet checked on a
+  real trip in Korea.
+
 ## 0.1.0
 
 - First release: Google Maps turn-by-turn and public transport, and
