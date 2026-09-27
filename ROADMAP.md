@@ -236,13 +236,15 @@ split preserves behavior; it adds no display policy.
 
 ### Navigation, from the apps you already use
 
-Navigation 0.1.0 reads Google Maps and Citymapper while they guide you and
+Navigation 0.1.1 reads Google Maps and Citymapper while they guide you and
 keeps the route as one activity on the glasses: the next turn and its
 distance, or the walk to the stop, the line to board, the stops left. Nothing
 is routed by Nexus and no map is drawn; the plugin reads the guidance those
 apps already post as notifications, so it follows whatever route you chose in
 them. Each app has its own switch, so either can be kept off the glasses
-without uninstalling anything. It needs both hubs 1.5.0.
+without uninstalling anything. It reads them in English, French and, since
+0.1.1, Korean, so it works in South Korea where Google Maps only guides on
+public transport. It needs both hubs 1.5.0.
 
 ### Twelve plugins, none of them built in
 

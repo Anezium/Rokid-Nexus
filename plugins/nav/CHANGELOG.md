@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.1
 
 - Korean: Citymapper GO and Google Maps public transport are read in Korean
   (walk, wait, board, stops left, get off soon, arrival), so Navigation works
