@@ -52,6 +52,13 @@ class YandexMapsParserTest {
         assertEquals("route", closer.glyph)
         assertFalse(closer.imminent)
         assertFalse(closer.arrived)
+        // A fresh Russian trip also localizes the street and trip summary.
+        val russian = YandexMapsParser.parse(driving.copy(
+            title = "40 м", text = "Театральный проезд",
+            viewTexts = mapOf("remainingDistanceView" to "4,7 км", "remainingTimeView" to "11 мин", "timeOfArrivalView" to "16:45"),
+        ))!!
+        assertEquals("Театральный проезд", russian.secondary)
+        assertEquals("16:45", russian.eta)
     }
 
     @Test
@@ -68,6 +75,8 @@ class YandexMapsParserTest {
     fun `generic walking service and unrelated or disabled sources cannot masquerade as guidance`() {
         // The walking trip posted only this title, with no text or RemoteViews.
         assertNull(YandexMapsParser.parse(driving.copy(title = "Navigator is running", text = null, viewTexts = emptyMap())))
+        // The first walking leg of the captured Moscow metro route was generic too.
+        assertNull(YandexMapsParser.parse(driving.copy(title = "Навигатор запущен", text = null, viewTexts = emptyMap())))
         assertNull(YandexMapsParser.parse(driving.copy(title = null)))
         assertNull(YandexMapsParser.parse(driving.copy(title = "11 min")))
         assertNull(YandexMapsParser.parse(driving.copy(ongoing = false)))

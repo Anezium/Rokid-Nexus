@@ -26,7 +26,8 @@ Guidance lives in process memory only; nothing is stored.
   on the API 36.1 emulator with version 30.9.1. Its maneuver is bitmap-only,
   so the glyph stays neutral and a short distance does not trigger an urgent
   turn. The generic "Navigator is running" notification is ignored; that was
-  all the walking trip exposed. Cycling/transit and arrival are not verified.
+  all the walking trip and the initial leg of a metro route exposed. Cycling,
+  transit ride/transfer steps and arrival are not verified.
   French is not among its [documented app languages](https://yandex.com/support/m-maps/en/configure-app).
 
 - **OsmAnd / OsmAnd+** (`net.osmand`, `net.osmand.plus`) posts a distance and
