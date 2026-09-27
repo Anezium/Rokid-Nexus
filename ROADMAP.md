@@ -246,8 +246,9 @@ without uninstalling anything. It reads them in English, French and, since
 0.1.1, Korean, so it works in South Korea where Google Maps only guides on
 public transport. It needs both hubs 1.5.0.
 
-The unreleased Navigation update also reads OsmAnd / OsmAnd+ turns and ETA, and Organic Maps distance and street;
-its bitmap-only maneuver keeps a neutral glyph.
+The unreleased Navigation update also reads OsmAnd / OsmAnd+ turns and ETA,
+Organic Maps distance and street, and Yandex Maps driving distance, street and ETA.
+Organic Maps and Yandex bitmap-only maneuvers keep a neutral glyph.
 
 ### Twelve plugins, none of them built in
 
@@ -326,7 +327,7 @@ Next below, shipped in 0.1.0.
 |---|---|
 | Relay | Notifications from ordinary apps, not just messengers · an app picker, so the wearer chooses which apps may reach the eye. Typed replies shipped in 1.2.2, typed inside the notice in 1.2.4 |
 | Assistant | More tools that act — control the music, ask Transit — through hub-mediated skills, not by becoming those plugins. Providers beyond ChatGPT shipped in 1.1.0 — MiniMax, DeepSeek, GLM, OpenRouter, or any OpenAI-compatible server; reminders, timers and notes shipped in 1.3.0, on every provider; phone-calendar creation, listing, and safe deletion in 1.4.0; Hermes, which runs its agent on its own side, in 1.4.1, with the phone tools bridged to it in plain text in 1.4.2; typed notes in 1.4.4; the question itself typed instead of spoken in 1.4.7; assist-button questions kept to the band, and a choice of how answers are drawn, in 1.4.8 |
-| Navigation | Bus, tram and RER rides checked on real trips, beyond the walks and boardings already seen · Google Maps and Citymapper set to a language other than English, French or Korean, whose wording it does not read yet · Korean checked on a real trip in Korea · more guidance apps, asked for by users: maps.me for hiking and offline maps, then Yandex Maps once its navigation notification has been captured |
+| Navigation | Bus, tram and RER rides checked on real trips, beyond the walks and boardings already seen · Google Maps and Citymapper set to a language other than English, French or Korean, whose wording it does not read yet · Korean checked on a real trip in Korea · more guidance apps, asked for by users: maps.me for hiking and offline maps ? Yandex Maps walking, cycling and transit once usable notifications have been captured |
 | Feeds | Posting and replying by voice · sources beyond Bluesky and X · video in the timeline |
 | Media Deck | Voice control — "next" and "pause" said instead of tapped |
 | Photos Sync | A Wi-Fi-only rule · a video's location tag, which Android strips on the way out. Capture-type filters shipped in 1.1.0; optional deletion after sync already shipped in 1.0.0 |

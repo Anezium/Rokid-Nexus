@@ -1,6 +1,6 @@
 # Navigation
 
-Navigation follows the route Google Maps, Citymapper, OsmAnd or Organic Maps
+Navigation follows the route Google Maps, Citymapper, OsmAnd, Organic Maps or Yandex Maps
 is already guiding on the phone and keeps it on the glasses as one activity: the next maneuver or leg,
 the distance or the stops left, the street or the stop, and the arrival time.
 A new step flares; the moment a turn is a few metres away, or the stop to get
@@ -13,13 +13,23 @@ Guidance lives in process memory only; nothing is stored.
 
 ## What it reads
 
+- **Yandex Maps** (`ru.yandex.yandexmaps`): driving distance and street, plus
+  ETA from its expanded notification view. Captured in English and Russian
+  on the API 36.1 emulator with version 30.9.1. Its maneuver is bitmap-only,
+  so the glyph stays neutral and a short distance does not trigger an urgent
+  turn. The generic "Navigator is running" notification is ignored; that was
+  all the walking trip exposed. Cycling/transit and arrival are not verified.
+  French is not an offered app language.
+
 - **OsmAnd / OsmAnd+** (`net.osmand`, `net.osmand.plus`) posts a distance and
   maneuver title plus a BigTextStyle route description and trip summary.
   Navigation reads the next distance and the summary's ETA, not the trip's
   distance or the following leg's distance. English, French and Korean
   maneuver words come from upstream `route_*` resources. Unworded arrows,
   including exit-only roundabout instructions, stay neutral. Zero metres
-  does not mean arrival; route removal ends the activity. Contract derived
+  does not mean arrival; route removal ends the activity. Driving captures
+  from OsmAnd+ 5.4.4 confirm English/French straight and right-turn steps,
+  including a 300 m to 15 m countdown. Korean remains source-derived. Contract derived
   from [NavigationNotification](https://github.com/osmandapp/OsmAnd/blob/7c4433506fe831e32ebb791522ac8ecd5262ca09/OsmAnd/src/net/osmand/plus/notifications/NavigationNotification.java).
 
 - **Organic Maps** (`app.organicmaps`, GitHub `app.organicmaps.web`) posts

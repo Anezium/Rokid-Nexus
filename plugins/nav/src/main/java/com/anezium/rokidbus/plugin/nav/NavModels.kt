@@ -6,6 +6,7 @@ internal enum class NavSource(val packageName: String, val label: String, vararg
     CITYMAPPER("com.citymapper.app.release", "Citymapper"),
     ORGANIC_MAPS("app.organicmaps", "Organic Maps", "app.organicmaps.web"),
     OSMAND("net.osmand", "OsmAnd", "net.osmand.plus"),
+    YANDEX_MAPS("ru.yandex.yandexmaps", "Yandex Maps"),
     ;
 
     companion object {

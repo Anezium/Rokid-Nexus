@@ -121,6 +121,7 @@ class NavSettingsActivity : Activity() {
             Triple(NavSource.CITYMAPPER, current.citymapper, R.string.nav_settings_citymapper_sub),
             Triple(NavSource.ORGANIC_MAPS, current.organicMaps, R.string.nav_settings_organic_sub),
             Triple(NavSource.OSMAND, current.osmand, R.string.nav_settings_osmand_sub),
+            Triple(NavSource.YANDEX_MAPS, current.yandexMaps, R.string.nav_settings_yandex_sub),
         ).forEach { (source, checked, sub) ->
             val control = NexusUi.switch(this@NavSettingsActivity).apply {
                 isChecked = checked

@@ -30,4 +30,5 @@
     <string name="nav_settings_route_off">Switched off</string>
     <string name="nav_settings_not_approved">Approve Navigation in Rokid Nexus, Plugin access</string>
     <string name="nav_settings_plugin">Plugin</string>
+    <string name="nav_settings_yandex_sub">Follow driving distance, street and arrival time.</string>
 </resources>

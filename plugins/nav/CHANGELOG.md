@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Read Yandex Maps driving distance, street and expanded-view ETA, with its
+  own source switch. English/Russian emulator captures confirm the format;
+  bitmap-only maneuvers stay neutral. Generic service notifications are ignored.
+
 - Read OsmAnd and OsmAnd+ turn-by-turn distance, textual maneuver, route
   description and ETA, with a shared source switch. English, French and
   inexpensive Korean phrase coverage comes from upstream resources.
