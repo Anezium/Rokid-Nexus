@@ -933,8 +933,7 @@ class BusHubService : Service() {
         if (hubEnabled) {
             if (!canRunHub(this)) {
                 startupBlockedByBluetoothPermission = true
-                log("BusHubService start deferred: BLUETOOTH_CONNECT permission not granted; stopping service")
-                stopSelf()
+                log("BusHubService start deferred: BLUETOOTH_CONNECT permission not granted")
                 return
             }
             startForegroundWithType()
@@ -949,13 +948,12 @@ class BusHubService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         // A sticky restart has no command and must not re-enable a stopped hub.
-        if (intent == null) return if (hubEnabled) START_STICKY else START_NOT_STICKY
+        if (intent == null) return finishUnacceptedStart(startId)
         val debugCommand = isDebuggableBuild() &&
             (intent.action == ACTION_DEBUG_IMAGE || intent.action == ACTION_DEBUG_MANUAL_PAIRING)
         if (!HubCommandIntents.isTrusted(intent) && !debugCommand) {
             log("Hub command rejected status=untrusted_start")
-            if (!hubEnabled) stopSelf(startId)
-            return if (hubEnabled) START_STICKY else START_NOT_STICKY
+            return finishUnacceptedStart(startId)
         }
         if (startupBlockedByBluetoothPermission && !canRunHub(this)) {
             if (intent.action == ACTION_STOP) {
@@ -963,8 +961,7 @@ class BusHubService : Service() {
                 hubEnabled = false
             }
             log("BusHubService command skipped: BLUETOOTH_CONNECT permission not granted")
-            stopSelf(startId)
-            return START_NOT_STICKY
+            return finishUnacceptedStart(startId)
         }
         startupBlockedByBluetoothPermission = false
         when (intent.action) {
@@ -1019,6 +1016,20 @@ class BusHubService : Service() {
         }
         connectSpp()
         return START_STICKY
+    }
+
+    private fun finishUnacceptedStart(startId: Int): Int {
+        if (hubEnabled && !startupBlockedByBluetoothPermission && canRunHub(this)) {
+            if (Build.VERSION.SDK_INT >= 29 && foregroundServiceType != 0) return START_STICKY
+            startForegroundWithType()
+            return START_STICKY
+        }
+        // onStartCommand cannot distinguish startService from startForegroundService.
+        // Satisfy any foreground deadline before stopping, including while plugins are bound.
+        startForegroundWithType(stopping = true)
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf(startId)
+        return START_NOT_STICKY
     }
 
     private fun enableHub() {
@@ -4553,14 +4564,14 @@ class BusHubService : Service() {
     private fun updateNotificationPreferences() =
         getSharedPreferences(UPDATE_NOTIFICATION_PREFERENCES, MODE_PRIVATE)
 
-    private fun startForegroundWithType(): SttError? {
+    private fun startForegroundWithType(stopping: Boolean = false): SttError? {
         val manager = getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(
             NotificationChannel(CHANNEL_ID, "Connection status", NotificationManager.IMPORTANCE_LOW),
         )
         val state = linkState()
         lastNotifiedStatus = statusText(state)
-        val requestMicrophone = speechMicrophoneForegroundRequested
+        val requestMicrophone = !stopping && speechMicrophoneForegroundRequested
         val result = runCatching {
             startForeground(
                 NOTIFICATION_ID,

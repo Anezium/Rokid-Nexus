@@ -182,6 +182,7 @@ Useful PASS log fragments:
 ## Phone hub command boundary
 
 From a separate APK, send starts without authority for `STOP`, `SET_TOKEN`, install/query/open/setup, unknown and empty actions; verify rejection and unchanged hub settings.
+Repeat with `startService` and `startForegroundService`, hub enabled/disabled, Bluetooth permission granted/denied, and a plugin bound; wait beyond the FGS deadline and check for crashes.
 Repeat in debug/release, then exercise the same actions through the phone UI and bind an approved plugin from another publisher.
 Only `DEBUG_IMAGE_SURFACE` and `DEBUG_MANUAL_PAIRING` retain external starts in debug builds (including other apps); release rejects both.
 ```sh
