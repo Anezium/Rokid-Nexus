@@ -175,6 +175,12 @@ legacy peers retain only the existing CXR control path.
 Developer mode adds package, signer, protocol, and route diagnostics
 plus a live bus inspector.
 
+The phone hub's exported service remains open for third-party plugin binding.
+Administrative starts require a private, process-local Binder capability supplied
+by the phone UI and startup helpers; external start intents cannot stop the hub,
+replace its authorization, or initiate glasses installation/setup. The two debug
+ADB probes remain available only in debuggable builds (see [TESTPLAN.md](TESTPLAN.md#phone-hub-command-boundary)).
+
 ## Build a plugin
 
 A plugin is a headless phone APK against the published SDK:
