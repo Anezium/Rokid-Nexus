@@ -153,6 +153,12 @@ Both apps keep themselves current afterwards: the phone updates from GitHub
 releases, the glasses update over the Rokid link, plugins update through the
 Store.
 
+Glasses installation requires a matching release digest, a readable APK, the
+expected package/version, and one signing certificate pinned in the phone build.
+Signature and manifest verification use apksig, including on Android 11 phones
+installing the API 31 glasses APK. See [glasses APK verification](docs/GLASSES_APK_VERIFICATION.md)
+for the upstream certificate, fork build configuration, and key rotation.
+
 Trust model: any APK may request bus access, but capabilities (`surfaces`,
 `ink_surface`, `http_proxy`, `microphone`, `stt`, `tts`, `camera`, `mediasync`,
 `assistant`, `wireless_debugging`) are granted per
