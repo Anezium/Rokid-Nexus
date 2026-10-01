@@ -4102,29 +4102,19 @@ class BusHubService : Service() {
                     }
                 },
             )
-            if (release.sha256 != null && !PluginInstaller.sha256Matches(apk, release.sha256)) {
-                throw IOException("GitHub release digest did not match")
-            }
-            val archive = AndroidArtifactPackageInspector(packageManager).inspect(apk)
-            val verdict = GlassesApkVerificationPolicy.verdict(
-                parsedPackageName = archive?.packageName,
+            GlassesApkVerificationPolicy.verifyDownloaded(
+                apk = apk,
+                release = release,
+                inspector = ApksigGlassesApkInspector(),
                 expectedPackageName = GLASSES_HUB_PACKAGE,
-                phoneSdkInt = Build.VERSION.SDK_INT,
-                digestVerified = release.sha256 != null,
+                expectedSignerSha256 = BuildConfig.GLASSES_APK_SIGNER_SHA256,
             )
-            if (verdict is GlassesApkVerdict.Reject) {
-                throw IOException(verdict.reason)
-            }
-            if (archive == null) {
-                log(
-                    "glasses apk accepted unparsed: phone API ${Build.VERSION.SDK_INT} < " +
-                        "${GlassesApkVerificationPolicy.GLASSES_APK_MIN_SDK}, release digest verified",
-                )
-            }
         }.onFailure { failure ->
             apk.delete()
             val message = if (!isCxrUp()) {
                 "Connection to the glasses was lost."
+            } else if (failure is GlassesApkVerificationException) {
+                failure.reason
             } else {
                 "Could not download or verify the glasses APK."
             }
