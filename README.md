@@ -157,6 +157,12 @@ Both apps keep themselves current afterwards: the phone updates from GitHub
 releases, the glasses update over the Rokid link, plugins update through the
 Store.
 
+Glasses installation requires a matching release digest, a readable APK, the
+expected package/version, and one signing certificate pinned in the phone build.
+Signature and manifest verification use apksig, including on Android 11 phones
+installing the API 31 glasses APK. See [glasses APK verification](docs/GLASSES_APK_VERIFICATION.md)
+for the upstream certificate, fork build configuration, and key rotation.
+
 Trust model: any APK may request bus access, but capabilities (`surfaces`,
 `ink_surface`, `http_proxy`, `microphone`, `stt`, `tts`, `camera`, `mediasync`,
 `assistant`, `wireless_debugging`) are granted per
@@ -178,6 +184,12 @@ traffic) return `NO_DATA_PLANE`. Both hubs must support this transport version;
 legacy peers retain only the existing CXR control path.
 Developer mode adds package, signer, protocol, and route diagnostics
 plus a live bus inspector.
+
+The phone hub's exported service remains open for third-party plugin binding.
+Administrative starts require a private, process-local Binder capability supplied
+by the phone UI and startup helpers; external start intents cannot stop the hub,
+replace its authorization, or initiate glasses installation/setup. The two debug
+ADB probes remain available only in debuggable builds (see [TESTPLAN.md](TESTPLAN.md#phone-hub-command-boundary)).
 
 ## Build a plugin
 

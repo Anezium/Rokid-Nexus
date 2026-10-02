@@ -942,8 +942,7 @@ class BusHubService : Service() {
         if (hubEnabled) {
             if (!canRunHub(this)) {
                 startupBlockedByBluetoothPermission = true
-                log("BusHubService start deferred: BLUETOOTH_CONNECT permission not granted; stopping service")
-                stopSelf()
+                log("BusHubService start deferred: BLUETOOTH_CONNECT permission not granted")
                 return
             }
             startForegroundWithType()
@@ -958,17 +957,24 @@ class BusHubService : Service() {
     override fun onBind(intent: Intent?): IBinder = binder
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // A sticky restart has no command and must not re-enable a stopped hub.
+        if (intent == null) return finishUnacceptedStart(startId)
+        val debugCommand = isDebuggableBuild() &&
+            (intent.action == ACTION_DEBUG_IMAGE || intent.action == ACTION_DEBUG_MANUAL_PAIRING)
+        if (!HubCommandIntents.isTrusted(intent) && !debugCommand) {
+            log("Hub command rejected status=untrusted_start")
+            return finishUnacceptedStart(startId)
+        }
         if (startupBlockedByBluetoothPermission && !canRunHub(this)) {
-            if (intent?.action == ACTION_STOP) {
+            if (intent.action == ACTION_STOP) {
                 prefs().edit().putBoolean(PREF_ENABLED, false).apply()
                 hubEnabled = false
             }
             log("BusHubService command skipped: BLUETOOTH_CONNECT permission not granted")
-            stopSelf(startId)
-            return START_NOT_STICKY
+            return finishUnacceptedStart(startId)
         }
         startupBlockedByBluetoothPermission = false
-        when (intent?.action) {
+        when (intent.action) {
             ACTION_STOP -> {
                 stopHub()
                 return START_NOT_STICKY
@@ -1020,6 +1026,20 @@ class BusHubService : Service() {
         }
         connectSpp()
         return START_STICKY
+    }
+
+    private fun finishUnacceptedStart(startId: Int): Int {
+        if (hubEnabled && !startupBlockedByBluetoothPermission && canRunHub(this)) {
+            if (Build.VERSION.SDK_INT >= 29 && foregroundServiceType != 0) return START_STICKY
+            startForegroundWithType()
+            return START_STICKY
+        }
+        // onStartCommand cannot distinguish startService from startForegroundService.
+        // Satisfy any foreground deadline before stopping, including while plugins are bound.
+        startForegroundWithType(stopping = true)
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf(startId)
+        return START_NOT_STICKY
     }
 
     private fun enableHub() {
@@ -4105,29 +4125,19 @@ class BusHubService : Service() {
                     }
                 },
             )
-            if (release.sha256 != null && !PluginInstaller.sha256Matches(apk, release.sha256)) {
-                throw IOException("GitHub release digest did not match")
-            }
-            val archive = AndroidArtifactPackageInspector(packageManager).inspect(apk)
-            val verdict = GlassesApkVerificationPolicy.verdict(
-                parsedPackageName = archive?.packageName,
+            GlassesApkVerificationPolicy.verifyDownloaded(
+                apk = apk,
+                release = release,
+                inspector = ApksigGlassesApkInspector(),
                 expectedPackageName = GLASSES_HUB_PACKAGE,
-                phoneSdkInt = Build.VERSION.SDK_INT,
-                digestVerified = release.sha256 != null,
+                expectedSignerSha256 = BuildConfig.GLASSES_APK_SIGNER_SHA256,
             )
-            if (verdict is GlassesApkVerdict.Reject) {
-                throw IOException(verdict.reason)
-            }
-            if (archive == null) {
-                log(
-                    "glasses apk accepted unparsed: phone API ${Build.VERSION.SDK_INT} < " +
-                        "${GlassesApkVerificationPolicy.GLASSES_APK_MIN_SDK}, release digest verified",
-                )
-            }
         }.onFailure { failure ->
             apk.delete()
             val message = if (!isCxrUp()) {
                 "Connection to the glasses was lost."
+            } else if (failure is GlassesApkVerificationException) {
+                failure.reason
             } else {
                 "Could not download or verify the glasses APK."
             }
@@ -4589,14 +4599,14 @@ class BusHubService : Service() {
     private fun updateNotificationPreferences() =
         getSharedPreferences(UPDATE_NOTIFICATION_PREFERENCES, MODE_PRIVATE)
 
-    private fun startForegroundWithType(): SttError? {
+    private fun startForegroundWithType(stopping: Boolean = false): SttError? {
         val manager = getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(
             NotificationChannel(CHANNEL_ID, "Connection status", NotificationManager.IMPORTANCE_LOW),
         )
         val state = linkState()
         lastNotifiedStatus = statusText(state)
-        val requestMicrophone = speechMicrophoneForegroundRequested
+        val requestMicrophone = !stopping && speechMicrophoneForegroundRequested
         val result = runCatching {
             startForeground(
                 NOTIFICATION_ID,
@@ -5296,7 +5306,7 @@ class BusHubService : Service() {
                 Log.i(TAG, "startWithToken skipped: BLUETOOTH_CONNECT permission not granted")
                 return
             }
-            val intent = Intent(context, BusHubService::class.java)
+            val intent = HubCommandIntents.create(context)
                 .setAction(ACTION_SET_TOKEN)
                 .putExtra(EXTRA_AUTH_TOKEN, token)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -5311,7 +5321,7 @@ class BusHubService : Service() {
                 Log.i(TAG, "start skipped: BLUETOOTH_CONNECT permission not granted")
                 return
             }
-            val intent = Intent(context, BusHubService::class.java)
+            val intent = HubCommandIntents.create(context)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
             } else {
@@ -5324,7 +5334,7 @@ class BusHubService : Service() {
                 Log.i(TAG, "startDebugImage skipped: BLUETOOTH_CONNECT permission not granted")
                 return
             }
-            val intent = Intent(context, BusHubService::class.java).setAction(ACTION_DEBUG_IMAGE)
+            val intent = HubCommandIntents.create(context).setAction(ACTION_DEBUG_IMAGE)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
             } else {
@@ -5334,33 +5344,33 @@ class BusHubService : Service() {
 
         fun installGlassesApp(context: android.content.Context) {
             context.startService(
-                Intent(context, BusHubService::class.java).setAction(ACTION_INSTALL_GLASSES_APP),
+                HubCommandIntents.create(context).setAction(ACTION_INSTALL_GLASSES_APP),
             )
         }
 
         fun queryGlassesApp(context: android.content.Context) {
             context.startService(
-                Intent(context, BusHubService::class.java).setAction(ACTION_QUERY_GLASSES_APP),
+                HubCommandIntents.create(context).setAction(ACTION_QUERY_GLASSES_APP),
             )
         }
 
         fun openGlassesApp(context: android.content.Context) {
             context.startService(
-                Intent(context, BusHubService::class.java).setAction(ACTION_OPEN_GLASSES_APP),
+                HubCommandIntents.create(context).setAction(ACTION_OPEN_GLASSES_APP),
             )
         }
 
         fun startGlassesSetup(context: android.content.Context) {
             noteGlassesSetupUserIntent()
             context.startService(
-                Intent(context, BusHubService::class.java).setAction(ACTION_START_GLASSES_SETUP),
+                HubCommandIntents.create(context).setAction(ACTION_START_GLASSES_SETUP),
             )
         }
 
         /** Plain startService: callers are foreground UI; the hub must not re-promote itself. */
         fun stop(context: android.content.Context) {
             context.startService(
-                Intent(context, BusHubService::class.java).setAction(ACTION_STOP),
+                HubCommandIntents.create(context).setAction(ACTION_STOP),
             )
         }
 

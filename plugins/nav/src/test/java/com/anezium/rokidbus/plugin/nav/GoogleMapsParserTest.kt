@@ -74,6 +74,16 @@ class GoogleMapsParserTest {
     }
 
     @Test
+    fun `Korean maneuvers get their arrows once Hangul survives accent folding`() {
+        assertEquals("turn-right", NavText.maneuverGlyph("세종대로에서 우회전"))
+        assertEquals("turn-left", NavText.maneuverGlyph("좌회전"))
+        assertEquals("turn-slight-right", NavText.maneuverGlyph("약간 오른쪽으로 가세요"))
+        assertEquals("u-turn", NavText.maneuverGlyph("유턴"))
+        assertEquals("straight", NavText.maneuverGlyph("직진"))
+        assertEquals("우회전", NavText.fold("우회전"))
+    }
+
+    @Test
     fun `continuing to the destination is a straight step, not the arrival`() {
         val guidance = GoogleMapsParser.parse(
             walking.copy(title = "200 m · Continue to your destination", nowBarSecondary = null),
@@ -264,6 +274,67 @@ class GoogleMapsParserTest {
         assertEquals("6 min", guidance.primary)
         assertEquals("Gare du Nord", guidance.secondary)
         assertEquals(listOf("Correspondance"), guidance.detail)
+    }
+
+    /**
+     * Korean transit, composed from Maps' own `ko` strings (LIVE_TRIPS_*), not
+     * captured on a device: Korea has transit guidance in Maps but no
+     * turn-by-turn.
+     */
+    private val koreanWalk = transitWalk.copy(
+        title = "도보 3분(250m)",
+        text = "시청 · 오후 5:36 출발",
+        subText = "오후 6:51 도착",
+        shortCriticalText = "3분",
+        actions = listOf("경로 안내 종료"),
+    )
+
+    @Test
+    fun `a Korean walking leg reads its minutes, distance, stop and half-day arrival`() {
+        val guidance = GoogleMapsParser.parse(koreanWalk)!!
+
+        assertEquals("walk", guidance.glyph)
+        assertEquals("3분", guidance.primary)
+        assertEquals("250m", guidance.measure)
+        assertEquals("시청", guidance.secondary)
+        assertEquals(listOf("오후 5:36 출발"), guidance.detail)
+        assertEquals("오후 6:51", guidance.eta)
+    }
+
+    @Test
+    fun `a Korean boarding step takes its line from before the verb`() {
+        val guidance = GoogleMapsParser.parse(
+            koreanWalk.copy(title = "470 탑승", text = "강남역 · 오후 5:48 출발", shortCriticalText = "오후 5:48"),
+        )!!
+
+        assertEquals("bus", guidance.glyph)
+        assertEquals("470", guidance.badge)
+        assertEquals("오후 5:48", guidance.primary)
+        assertEquals("강남역", guidance.secondary)
+        assertEquals(listOf("470 탑승"), guidance.detail)
+
+        val metro = GoogleMapsParser.parse(
+            koreanWalk.copy(title = "2호선 탑승", text = "시청 · 오후 5:48 출발", shortCriticalText = "오후 5:48"),
+        )!!
+        assertEquals("metro", metro.glyph)
+        assertEquals("2호선", metro.badge)
+    }
+
+    @Test
+    fun `a Korean ride counts its stops and warns when getting off is near`() {
+        val ride = GoogleMapsParser.parse(
+            koreanWalk.copy(title = "정류장 3개", text = "강남역 · 지하철 2호선", shortCriticalText = null),
+        )!!
+
+        assertEquals("metro", ride.glyph)
+        assertEquals("정류장 3개", ride.primary)
+        assertEquals("강남역", ride.secondary)
+        assertFalse(ride.imminent)
+        assertTrue(
+            GoogleMapsParser.parse(
+                koreanWalk.copy(title = "곧 강남역에서 하차", text = "강남역 · 지하철 2호선", shortCriticalText = "1분"),
+            )!!.imminent,
+        )
     }
 
     @Test
