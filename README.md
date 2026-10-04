@@ -244,3 +244,9 @@ SDK publication and the published-coordinate sample build do not require it.
 [verification matrix](TESTPLAN.md)
 
 This project is licensed under the [Apache License 2.0](LICENSE).
+
+## License
+
+Licensed under the [Apache License, Version 2.0](LICENSE). See [NOTICE](NOTICE) for attribution.
+
+Contributions are accepted under the same license (Apache-2.0, section 5) — no CLA required.
