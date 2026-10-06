@@ -72,13 +72,17 @@ class BundleLifecycleTest {
     @Test fun processDeathRecoveryRemovesPartialsAndUncommittedRenamesButRetainsActive() {
         val directory = Files.createTempDirectory("bundle-recovery").toFile()
         try {
-            val active = File(directory, "bundle-active.mpp").apply { writeBytes(byteArrayOf(1)) }
+            val posix = Files.getFileStore(directory.toPath()).supportsFileAttributeView("posix")
+            val active = if (posix) ReadOnlyBundleFile.install(directory,
+                write = { it.write(byteArrayOf(1)) }, validate = {})
+                else File(directory, "bundle-active.mpp").apply { writeBytes(byteArrayOf(1)) }
             File(directory, "bundle-uncommitted.mpp").writeBytes(byteArrayOf(2))
             File(directory, "bundle-abandoned.partial").writeText("interrupted")
             File(directory, "active.tmp").writeText("interrupted pointer")
             ReadOnlyBundleFile.cleanUnused(directory, active.name)
             assertEquals(listOf(active.name), directory.listFiles()!!.map { it.name })
             assertEquals(1, active.readBytes().single().toInt())
+            if (posix) ReadOnlyBundleFile.requireReadOnly(active)
         } finally { directory.deleteRecursively() }
     }
 
