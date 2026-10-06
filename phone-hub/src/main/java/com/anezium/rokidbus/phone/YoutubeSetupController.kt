@@ -163,12 +163,17 @@ internal class YoutubeSetupController(
             main.post {
                 if (generation != operation) { result.getOrNull()?.file?.delete(); return@post }
                 result.fold(onSuccess = { apk ->
-                    prepared = apk
-                    publish(state.copy(busy = false, preparedLabel = apk.label, canInstall = true,
+                    val microG = state.inventory?.apps?.singleOrNull { it.packageName == YoutubeSetupContract.MICROG }
+                    val microGCurrent = !autoInstall && apk.archive.packageName == YoutubeSetupContract.MICROG &&
+                        MicroGSetupAction.choose(microG, apk.archive.versionCode) == MicroGSetupAction.OPEN
+                    prepared = if (microGCurrent) null else apk
+                    if (microGCurrent) apk.file.delete()
+                    publish(state.copy(busy = false, preparedLabel = if (microGCurrent) null else apk.label,
+                        canInstall = !microGCurrent,
                         youtubeApkReady = state.youtubeApkReady || apk.archive.packageName != YoutubeSetupContract.MICROG,
                         latestMicroGVersionCode = if (apk.archive.packageName == YoutubeSetupContract.MICROG)
                             apk.archive.versionCode else state.latestMicroGVersionCode,
-                        message = listOfNotNull("${apk.label} is ready. Install it on the glasses below.",
+                        message = if (microGCurrent) "MicroG is up to date" else listOfNotNull("${apk.label} is ready. Install it on the glasses below.",
                             YoutubeApkPolicy.versionNotice(apk.archive)).joinToString(" ")))
                     if (autoInstall) install()
                 }, onFailure = {

@@ -259,6 +259,51 @@ class YoutubeSetupControllerTest {
         assertEquals(200L, YoutubeSetupStateStore.state.latestMicroGVersionCode)
     }
 
+    @Test fun `MicroG update check reports current installs without offering installation`() {
+        apk = apk.copy(archive = apk.archive.copy(packageName = YoutubeSetupContract.MICROG))
+        for (installedVersion in listOf(200L, 201L)) {
+            controller.handle(Intent(YoutubeSetupController.REFRESH))
+            controller.handleRemote(BusEnvelope(path = NativeAppContract.RESULT_PATH,
+                payload = YoutubeSetupContract.result(requestId(), 32, YoutubeSetupContract.PACKAGES.map {
+                    if (it == YoutubeSetupContract.MICROG)
+                        YoutubePackage(it, installedVersion, YoutubeApkPolicy.signer(apk.archive), true)
+                    else YoutubePackage(it)
+                })))
+            idle()
+            apk.file.writeText("test apk")
+            controller.handle(Intent(YoutubeSetupController.PREPARE_MICROG))
+            idle()
+            val state = YoutubeSetupStateStore.state
+            assertEquals("MicroG is up to date", state.message)
+            assertEquals(200L, state.latestMicroGVersionCode)
+            assertFalse(state.canInstall)
+            assertNull(state.preparedLabel)
+            assertFalse(apk.file.exists())
+            assertEquals(MicroGSetupAction.OPEN, MicroGSetupAction.choose(
+                state.inventory?.apps?.single { it.packageName == YoutubeSetupContract.MICROG },
+                state.latestMicroGVersionCode))
+            controller.handle(Intent(YoutubeSetupController.INSTALL))
+            assertEquals(0, uploads)
+        }
+    }
+
+    @Test fun `MicroG update check still offers launcher repair at the current version`() {
+        apk = apk.copy(archive = apk.archive.copy(packageName = YoutubeSetupContract.MICROG))
+        controller.handle(Intent(YoutubeSetupController.REFRESH))
+        controller.handleRemote(BusEnvelope(path = NativeAppContract.RESULT_PATH,
+            payload = YoutubeSetupContract.result(requestId(), 32, YoutubeSetupContract.PACKAGES.map {
+                if (it == YoutubeSetupContract.MICROG)
+                    YoutubePackage(it, 200, YoutubeApkPolicy.signer(apk.archive), false)
+                else YoutubePackage(it)
+            })))
+        idle()
+        controller.handle(Intent(YoutubeSetupController.PREPARE_MICROG))
+        idle()
+        assertTrue(YoutubeSetupStateStore.state.canInstall)
+        assertEquals(apk.label, YoutubeSetupStateStore.state.preparedLabel)
+        assertTrue(apk.file.exists())
+    }
+
     @Test fun `automatic result import retains signer and file integrity guards`() {
         controller.handle(Intent(YoutubeSetupController.PATCH_AND_INSTALL)
             .setData(Uri.parse("content://patcher/output.apk")))
