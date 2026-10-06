@@ -54,7 +54,7 @@ object PatchPolicy {
         }
         return digest.digest().joinToString("") { "%02x".format(it) }
     }
-    fun copyBounded(input: InputStream, output: OutputStream, limit: Long = MAX_BYTES) {
+    fun copyBounded(input: InputStream, output: OutputStream, limit: Long = MAX_BYTES, progress: (Long) -> Unit = {}) {
         val buffer = ByteArray(65536)
         var total = 0L
         while (true) {
@@ -63,6 +63,7 @@ object PatchPolicy {
             total += n
             require(total <= limit) { "File exceeds size limit." }
             output.write(buffer, 0, n)
+            progress(total)
         }
     }
     fun requireDex(file: File) = ZipFile(file).use { zip ->

@@ -12,36 +12,44 @@ import java.io.File
 
 class PatchRuntime {
     suspend fun patch(input: File, patches: Set<Patch<*>>, work: File, key: SigningKey,
-                      timings: PatchTimings = PatchTimings(), progress: (String) -> Unit): File {
+                      timings: PatchTimings = PatchTimings(), progress: (PatchProgress) -> Unit): File {
         require(patches.isNotEmpty()) { "Select at least one patch." }
         val unsigned = File(work, "unsigned.apk")
         val output = File(work, "signed.apk")
         try {
             currentCoroutineContext().ensureActive()
-            progress("Reading APK")
+            progress(PatchProgress(PatchPhase.READ_APK))
             timings.measure("patch_read") { Patcher(PatcherConfig(input, File(work, "patch-work"))) }.use { patcher ->
                 patcher += patches
                 var index = 0
+                val completed = mutableSetOf<Patch<*>>()
                 var patchStarted = timings.start()
+                progress(PatchProgress(PatchPhase.APPLY_PATCHES, 0.0, patchTotal = patches.size))
                 timings.measureSuspend("patch_apply_total") { patcher().collect { result ->
                     currentCoroutineContext().ensureActive()
                     timings.end("patch_apply", patchStarted, if (result.exception == null) "ok" else "failed", "patch_index=${++index}")
                     patchStarted = timings.start()
                     result.exception?.let { throw IllegalStateException("${result.patch.name}: ${it.message}", it) }
-                    progress("Applying patches: ${result.patch.name}")
+                    if (result.patch in patches) {
+                        completed += result.patch
+                        progress(PatchProgress(PatchPhase.APPLY_PATCHES, completed.size.toDouble() / patches.size,
+                            result.patch.name, completed.size, patches.size))
+                    }
                 } }
                 currentCoroutineContext().ensureActive()
-                progress("Writing APK")
+                progress(PatchProgress(PatchPhase.COMPILE))
                 val patched = timings.measureSuspend("patch_compile") { patcher.get() }
+                progress(PatchProgress(PatchPhase.WRITE))
                 timings.measure("write") {
                     input.inputStream().use { source -> unsigned.outputStream().use { PatchPolicy.copyBounded(source, it) } }
-                    timings.withAlignmentTiming { patched.applyTo(unsigned) }
+                    timings.withAlignmentTiming({ progress(PatchProgress(PatchPhase.ALIGN)) }) { patched.applyTo(unsigned) }
                 }
             }
             currentCoroutineContext().ensureActive()
-            progress("Signing APK")
+            progress(PatchProgress(PatchPhase.SIGN))
             timings.measure("sign") { key.sign(unsigned, output) }
             currentCoroutineContext().ensureActive()
+            progress(PatchProgress(PatchPhase.VERIFY))
             timings.measure("verify") {
             val verified = ApkVerifier.Builder(output).setMinCheckedPlatformVersion(30).build().verify()
             require(verified.isVerified && verified.signerCertificates.size == 1 &&

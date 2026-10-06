@@ -19,6 +19,7 @@ class PatchJobService : Service() {
     private var task: Future<*>? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private var runningId: String? = null
+    private var startedRealtime = 0L
 
     override fun onCreate() {
         super.onCreate()
@@ -39,11 +40,13 @@ class PatchJobService : Service() {
         if (runningId != null) return START_NOT_STICKY
         if (!state.active || intent?.getStringExtra(JOB_ID) != state.id) { stopSelf(); return START_NOT_STICKY }
         runningId = state.id
+        startedRealtime = SystemClock.elapsedRealtime()
         try {
             startForeground(NOTIFICATION, notification(state), ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
             wakeLock = getSystemService(PowerManager::class.java).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK,
                 "$packageName:patch-job").apply { acquire(MAX_JOB_MS) }
             handler.postDelayed(deadline, MAX_JOB_MS)
+            handler.postDelayed(heartbeat, 1000)
             task = executor.submit {
                 Process.setThreadPriority(Process.THREAD_PRIORITY_DEFAULT)
                 try {
@@ -73,11 +76,24 @@ class PatchJobService : Service() {
         File(filesDir, "jobs").listFiles()?.filter { it != work }?.forEach { it.deleteRecursively() }
         try {
             val input = File(work, "input.zip")
+            val size = runCatching { contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.SIZE), null, null, null)?.use {
+                if (it.moveToFirst() && !it.isNull(0)) it.getLong(0).takeIf { value -> value > 0 } else null
+            } }.getOrNull()
+            var lastUpdate = 0L
             timings.measure("read_copy_input") { contentResolver.openInputStream(uri).use { source ->
                 requireNotNull(source) { "Cannot read selected file. Choose it again." }
-                input.outputStream().use { PatchPolicy.copyBounded(source, it); it.fd.sync() }
+                input.outputStream().use { output ->
+                    PatchPolicy.copyBounded(source, output) { copied ->
+                        val now = SystemClock.elapsedRealtime()
+                        if (now - lastUpdate >= 500) {
+                            reportProgress(state.id, PatchProgress(PatchPhase.READ_INPUT, size?.takeIf { copied <= it }?.let { copied.toDouble() / it }))
+                            lastUpdate = now
+                        }
+                    }
+                    output.fd.sync()
+                }
             } }
-            val stock = ApkPreparer().prepare(input, File(work, "prepare"), timings)
+            val stock = ApkPreparer().prepare(input, File(work, "prepare"), timings) { reportProgress(state.id, it) }
             store.change(state.id) { it.copy(status = PatchJobStatus.READY, message = "Validated: stock YouTube ${PatchPolicy.VERSION}",
                 stock = stock.relativeTo(work).invariantSeparatorsPath) }
         } finally { runCatching { contentResolver.releasePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } }
@@ -86,19 +102,20 @@ class PatchJobService : Service() {
     private suspend fun patch(state: PatchJobState) {
         val timings = PatchTimings()
         val input = store.stock(state) ?: error("The stock APK is missing. Choose it again.")
+        reportProgress(state.id, PatchProgress(PatchPhase.BUNDLE_LOAD))
         val loaded = timings.measureSuspend("bundle_load") { BundleStore(this).current() }
         require(loaded.hash == state.bundleHash) { "The bundle changed. Review the patches before retrying." }
         val selected = loaded.patches.filter { it.name in state.selected }.toSet()
         require(selected.size == state.selected.size) { "Some selected patches are no longer available." }
-        val signed = PatchRuntime().patch(input, selected, store.work(state.id), SigningKey(File(filesDir, "signing/youtube.p12")), timings) { message ->
-            store.change(state.id) { it.copy(message = message) }
-            handler.post { if (runningId == state.id && store.state.value.active) notifyState(store.state.value) }
+        val signed = PatchRuntime().patch(input, selected, store.work(state.id), SigningKey(File(filesDir, "signing/youtube.p12")), timings) { progress ->
+            reportProgress(state.id, progress)
         }
         currentCoroutineContext().ensureActive()
         val directory = File(filesDir, "results").apply { mkdirs() }
         val result = File(directory, "youtube-${UUID.randomUUID()}.apk")
         val pending = File(directory, ".${result.name}.partial")
         try {
+            reportProgress(state.id, PatchProgress(PatchPhase.PUBLISH))
             timings.measure("publish_result") {
                 java.io.RandomAccessFile(signed, "rw").use { it.fd.sync() }
                 require(signed.renameTo(pending)) { "Cannot stage verified result." }
@@ -106,7 +123,8 @@ class PatchJobService : Service() {
             currentCoroutineContext().ensureActive()
             require(pending.renameTo(result)) { "Cannot save verified result." }
             signed.delete()
-            store.change(state.id) { it.copy(status = PatchJobStatus.SUCCESS, message = "Patched and signed. Ready to install.", result = result.name) }
+            store.change(state.id) { it.copy(status = PatchJobStatus.SUCCESS, message = "Patched and signed. Ready to install.", result = result.name,
+                progress = PatchProgress(PatchPhase.HAND_OFF, 1.0), elapsedMs = SystemClock.elapsedRealtime() - startedRealtime) }
         } finally { pending.delete() }
     }
 
@@ -120,7 +138,7 @@ class PatchJobService : Service() {
             .setOngoing(state.active).setAutoCancel(!state.active)
             .apply {
                 if (state.active) {
-                    setProgress(100, 0, true)
+                    setProgress(100, ((state.progress.fraction ?: 0.0) * 100).toInt(), state.progress.fraction == null)
                     val cancel = PendingIntent.getService(this@PatchJobService, 1,
                         Intent(this@PatchJobService, PatchJobService::class.java).setAction(CANCEL).putExtra(JOB_ID, state.id),
                         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
@@ -136,6 +154,7 @@ class PatchJobService : Service() {
     private fun finishJob(id: String) {
         if (runningId != id) return
         handler.removeCallbacks(deadline)
+        handler.removeCallbacks(heartbeat)
         if (wakeLock?.isHeld == true) wakeLock?.release()
         wakeLock = null; runningId = null; task = null
         stopForeground(STOP_FOREGROUND_REMOVE)
@@ -154,9 +173,23 @@ class PatchJobService : Service() {
     }
 
     private val deadline = Runnable { terminate(PatchJobStatus.FAILURE, "Patching exceeded the one-hour limit. Retry with a supported stock APK.") }
+    private fun reportProgress(id: String, progress: PatchProgress) {
+        store.progress(id, progress, SystemClock.elapsedRealtime() - startedRealtime)
+    }
+    private val heartbeat = object : Runnable {
+        override fun run() {
+            val current = store.state.value
+            if (current.active && current.id == runningId) {
+                store.tick(current.id, SystemClock.elapsedRealtime() - startedRealtime)
+                notifyState(store.state.value)
+                handler.postDelayed(this, 1000)
+            }
+        }
+    }
     override fun onTimeout(startId: Int, fgsType: Int) { terminate(PatchJobStatus.INTERRUPTED, "Android stopped the patch service after its time limit. Retry when you are ready.") }
     override fun onDestroy() {
         handler.removeCallbacks(deadline)
+        handler.removeCallbacks(heartbeat)
         if (wakeLock?.isHeld == true) wakeLock?.release()
         executor.shutdownNow()
         runningId?.let { id -> store.change(id) { it.copy(status = PatchJobStatus.INTERRUPTED,

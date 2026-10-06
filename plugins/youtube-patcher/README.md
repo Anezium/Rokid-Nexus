@@ -151,6 +151,16 @@ needs the GitHub Packages credentials above.
 
 ## Timing and repeated runs
 
+The service exposes `PatchJobStore.state`, a `StateFlow<PatchJobState>`. It includes
+the phase and its index/total, an optional phase fraction, the most recent completed
+selected patch with index/total, monotonic elapsed milliseconds, and durable terminal
+success/failure/cancelled/interrupted states. Fractions measure bytes or reported
+patch completions, not a time estimate. Unknown fractions use an indeterminate bar;
+remaining time is deliberately null. Phase boundaries and terminal states are synced
+to disk; callbacks and a one-second heartbeat update observers without disk writes.
+Activity recreation reconnects to this same store, and process restart recovers the
+last terminal result or marks unfinished work interrupted.
+
 Filter Android logs by tag `Patcher`. Each completed boundary emits
 `step=<step> duration_ms=<integer> outcome=ok|failed|skipped`, with
 `patch_index=<integer>` on patch-result intervals. No paths, exception text,

@@ -9,10 +9,11 @@ import java.io.File
 import java.util.zip.ZipFile
 
 class ApkPreparer(private val abis: List<String> = GLASSES_ABIS) {
-    fun prepare(input: File, work: File, timings: PatchTimings = PatchTimings()): File {
+    fun prepare(input: File, work: File, timings: PatchTimings = PatchTimings(), progress: (PatchProgress) -> Unit = {}): File {
         work.mkdirs()
         val isApk = ZipFile(input).use { it.getEntry("AndroidManifest.xml") != null }
         if (isApk) {
+            progress(PatchProgress(PatchPhase.SIGNATURE_CHECK))
             val stock = timings.measure("signature_check") { inspect(input) }
             PatchPolicy.validate(stock)
             ApkModule.loadApkFile(input).use { module ->
@@ -20,11 +21,15 @@ class ApkPreparer(private val abis: List<String> = GLASSES_ABIS) {
             }
             requireGlassesNative(input)
             timings.end("split_merge", timings.start(), "skipped")
+            progress(PatchProgress(PatchPhase.SPLIT_MERGE, 1.0))
             return input
         }
         val directory = File(work, "splits").apply { mkdirs() }
         val files = timings.measure("split_extract") { extract(input, directory) }
-        val inspected = timings.measure("signature_check") { files.associateWith(::inspect) }
+        progress(PatchProgress(PatchPhase.SIGNATURE_CHECK, 0.0))
+        val inspected = timings.measure("signature_check") { files.mapIndexed { index, file ->
+            (file to inspect(file)).also { progress(PatchProgress(PatchPhase.SIGNATURE_CHECK, (index + 1).toDouble() / files.size)) }
+        }.toMap() }
         val bases = inspected.filterValues { it.split.isNullOrBlank() }
         require(bases.size == 1) { "Only single-base archives are supported; alternative base/universal APKS sets are not supported." }
         val stock = bases.values.single()
@@ -43,6 +48,7 @@ class ApkPreparer(private val abis: List<String> = GLASSES_ABIS) {
         SplitRequirements.validate(requirements.filterKeys { it in chosen }.values)
         for (file in files) if (file !in chosen) require(file.delete())
         val output = File(work, "merged.apk")
+        progress(PatchProgress(PatchPhase.SPLIT_MERGE))
         timings.measure("split_merge") { merge(directory, output) }
         // A merge is necessarily unsigned: signatures were verified on every input above.
         ApkModule.loadApkFile(output).use { module ->

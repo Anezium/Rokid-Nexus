@@ -49,6 +49,7 @@ class PatchActivity : Activity() {
     private val noteViews = mutableMapOf<Slot, NoteView>()
     private var slot = Slot.PATCH
     private var elapsed: TextView? = null
+    private var patchProgressBar: ProgressBar? = null
     private var patchStartedAt = 0L
     private var allPatchesOpen = false
     private var keyMoreOpen = false
@@ -98,9 +99,11 @@ class PatchActivity : Activity() {
         }
         build()
         scope.launch {
+            var previousStatus: PatchJobStatus? = null
             jobs.state.collect { current ->
                 busy = current.active; patching = current.active; patchStartedAt = current.startedAt
                 stock = jobs.stock(current); result = jobs.result(current)
+                if (current.status == PatchJobStatus.PREPARING) slot = Slot.STOCK
                 val tone = when (current.status) {
                     PatchJobStatus.SUCCESS, PatchJobStatus.READY -> Tone.OK
                     PatchJobStatus.FAILURE, PatchJobStatus.INTERRUPTED -> Tone.ERROR
@@ -108,7 +111,13 @@ class PatchActivity : Activity() {
                     else -> Tone.INFO
                 }
                 report(current.message, tone, if (current.status == PatchJobStatus.READY) Slot.STOCK else Slot.PATCH)
-                updateScreenAwake(); renderAll()
+                updateScreenAwake()
+                if (previousStatus != current.status) renderAll()
+                patchProgressBar?.apply {
+                    isIndeterminate = current.progress.fraction == null
+                    progress = ((current.progress.fraction ?: 0.0) * 100).toInt()
+                }
+                previousStatus = current.status
                 deliverResult()
                 if (!current.active && bundle == null) loadBundle()
             }
@@ -280,6 +289,7 @@ class PatchActivity : Activity() {
 
     private fun renderAction() {
         actionHost.removeAllViews()
+        patchProgressBar = null
         handler.removeCallbacks(ticker); elapsed = null
         val ready = stock != null && bundle != null
         val done = result != null
@@ -290,7 +300,10 @@ class PatchActivity : Activity() {
             when {
                 patching -> {
                     addView(ProgressBar(this@PatchActivity, null, android.R.attr.progressBarStyleHorizontal).apply {
-                        isIndeterminate = true
+                        patchProgressBar = this
+                        isIndeterminate = jobs.state.value.progress.fraction == null
+                        progress = ((jobs.state.value.progress.fraction ?: 0.0) * 100).toInt()
+                        progressTintList = ColorStateList.valueOf(NexusUi.GREEN)
                         indeterminateTintList = ColorStateList.valueOf(NexusUi.GREEN)
                         progressBackgroundTintList = ColorStateList.valueOf(NexusUi.LINE)
                     }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(14)))
@@ -338,7 +351,7 @@ class PatchActivity : Activity() {
     private val ticker = object : Runnable { override fun run() { tick() } }
     private fun tick() {
         val view = elapsed ?: return
-        val seconds = ((System.currentTimeMillis() - patchStartedAt) / 1000).coerceAtLeast(0)
+        val seconds = (jobs.state.value.elapsedMs / 1000).coerceAtLeast(0)
         view.text = "Elapsed %d:%02d".format(seconds / 60, seconds % 60).uppercase()
         handler.postDelayed(ticker, 1000)
     }
