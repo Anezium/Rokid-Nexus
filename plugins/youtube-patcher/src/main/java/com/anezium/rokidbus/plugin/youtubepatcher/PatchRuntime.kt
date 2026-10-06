@@ -17,7 +17,7 @@ class PatchRuntime {
         val output = File(work, "signed.apk")
         try {
             currentCoroutineContext().ensureActive()
-            progress("Reading APK — keep this screen open")
+            progress("Reading APK")
             Patcher(PatcherConfig(input, File(work, "patch-work"))).use { patcher ->
                 patcher += patches
                 patcher().collect { result ->

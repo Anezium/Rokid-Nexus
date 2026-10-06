@@ -3,10 +3,14 @@
     <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <queries><intent><action android:name="com.anezium.rokidbus.action.HUB" /></intent></queries>
     <application android:allowBackup="false" android:largeHeap="true" android:label="YouTube Patcher" android:theme="@style/Theme.Patcher">
         <activity android:name=".PatchActivity" android:exported="true" android:process=":patcher" android:windowSoftInputMode="adjustResize"
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|orientation|screenLayout|uiMode|screenSize|smallestScreenSize|density|layoutDirection|colorMode|grammaticalGender|fontScale|fontWeightAdjustment|assetsPaths" />
+        <service android:name=".PatchJobService" android:exported="false" android:process=":patcher" android:foregroundServiceType="dataSync" />
         <service android:name=".PatcherPluginService" android:exported="true" android:foregroundServiceType="specialUse">
             <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="glasses-session" />
             <intent-filter><action android:name="com.anezium.rokidbus.action.PLUGIN" /></intent-filter>

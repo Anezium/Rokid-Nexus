@@ -124,12 +124,16 @@ needs the GitHub Packages credentials above.
   Cancellation/failure deletes uncommitted files; crash partials are cleared on opening.
   The active pointer changes atomically only after validation. The fork publishes no
   bundle signature; hashes are shown for inspection, not claimed as signatures.
-- Keep this screen open. Rotation and other configuration changes keep the job
-  running. Cancel/back/activity destruction terminates a busy dedicated process because upstream synchronous patches cannot always cooperate
-  with coroutine cancellation. Private partial jobs are discarded on next open.
-  A screen file lock prevents concurrent activities from deleting each other's job.
-  Only a completely patched, signed and reverified APK becomes a result. OOM and
-  patch errors are failures, never success.
+- File preparation and patching run in a non-exported foreground `dataSync`
+  service in `:patcher`, with an ongoing notification and a timed partial wake lock.
+  Switching apps, Back, screen-off and activity destruction do not cancel the job.
+  Only Cancel (screen or notification) stops it. No boot restart or automatic retry.
+  Android's service timeout and the one-hour job limit stop unfinished work safely.
+  Notification permission is requested with the file picker; denial never blocks
+  patching. A durable state reports interrupted work on the next open with a retry.
+  Ready results survive activity recreation; the activity returns the result to the
+  hub on reopening or offers share/save when opened from settings. Only a completely
+  patched, signed and verified APK becomes a result.
 - The signing key is generated once in private PKCS12 storage (Android backup is
   disabled). Backup/export is AES-256-GCM authenticated encryption with a salted
   PBKDF2-HMAC-SHA256 password key (210,000 iterations); import validates the

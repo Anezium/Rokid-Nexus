@@ -48,7 +48,7 @@ This adds no bus access or glasses installer capability. Manual patched APK
 import remains a separate, explicit user action.
 
 In YouTube Patcher, choose your download and review the patches. Patching adds
-the glasses controls to YouTube. Keep the patch screen open until it finishes.
+the glasses controls to YouTube. You can switch apps or turn the screen off while it patches. Return from the progress or ready-to-install notification to continue.
 Nexus receives a read-granted `content://` URI, copies and validates the APK,
 then installs it on the glasses without another tap. The card is done only when
 fresh glasses inventory reports `app.morphe.android.youtube` with the version code
@@ -155,7 +155,7 @@ timeout does not prove that installation failed.
   swipe/tap/back, pause, seeking and fullscreen.
 - Disconnect during preparation, inventory and transfer. Refresh after reconnect;
   check actual installed state. Rotating the phone during patching must keep the
-  job running; back, cancel or closing the patch screen must stop it. Reopen during
+  job running; switching apps, Back and closing the patch screen must keep it running. Explicit Cancel must stop it and prevent installation; a killed process or reboot must show an interrupted state on reopening. Reopen during
   patching and transfer and confirm there is one operation. Check competing hub
   updates cannot replace the active CXR callback, and late callbacks cannot turn
   a timeout into success.

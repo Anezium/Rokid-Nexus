@@ -9,6 +9,7 @@ import android.content.res.Configuration
 import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.provider.OpenableColumns
@@ -28,7 +29,6 @@ import com.anezium.rokidbus.client.ui.NexusUi
 import com.anezium.rokidbus.shared.YoutubePatcherContract as Contract
 import kotlinx.coroutines.*
 import java.io.File
-import java.util.UUID
 
 class PatchActivity : Activity() {
     /** Where a status message belongs on screen: each step card shows only its own. */
@@ -64,6 +64,9 @@ class PatchActivity : Activity() {
     private var busy = false
     private var patching = false
     private var result: File? = null
+    private lateinit var jobs: PatchJobStore
+    private var resumed = false
+    private var returningResult = false
     private var backupPassword: CharArray? = null
     private var screenLock: java.nio.channels.FileLock? = null
     private var lockFile: java.io.RandomAccessFile? = null
@@ -82,12 +85,36 @@ class PatchActivity : Activity() {
         bundleStore = BundleStore(this)
         selections = SelectionStore(File(filesDir, "selection.json"))
         key = SigningKey(File(filesDir, "signing/youtube.p12"))
-        // Nothing in these directories is an accepted result. Clear crash leftovers.
-        File(cacheDir, "jobs").deleteRecursively()
-        File(filesDir, "results").listFiles()?.filter { it.name.endsWith(".partial") }?.forEach { it.delete() }
-        purgeResults(null)
-        work = File(cacheDir, "jobs/${UUID.randomUUID()}").apply { mkdirs() }
+        jobs = PatchJobStore.get(this)
+        val state = jobs.state.value
+        work = if (state.id.isNotEmpty()) jobs.work(state.id) else File(filesDir, "jobs").apply { mkdirs() }
+        stock = jobs.stock(); result = jobs.result()
+        busy = state.active; patching = state.active; patchStartedAt = state.startedAt
+        if (state.message.isNotBlank()) notes[Slot.PATCH] = Note(state.message,
+            if (state.status == PatchJobStatus.SUCCESS) Tone.OK else if (state.active) Tone.INFO else Tone.WARN)
+        if (!state.active) {
+            File(filesDir, "results").listFiles()?.filter { it.name.endsWith(".partial") }?.forEach { it.delete() }
+            purgeResults(result)
+        }
         build()
+        scope.launch {
+            jobs.state.collect { current ->
+                busy = current.active; patching = current.active; patchStartedAt = current.startedAt
+                stock = jobs.stock(current); result = jobs.result(current)
+                val tone = when (current.status) {
+                    PatchJobStatus.SUCCESS, PatchJobStatus.READY -> Tone.OK
+                    PatchJobStatus.FAILURE, PatchJobStatus.INTERRUPTED -> Tone.ERROR
+                    PatchJobStatus.CANCELLED -> Tone.WARN
+                    else -> Tone.INFO
+                }
+                report(current.message, tone, if (current.status == PatchJobStatus.READY) Slot.STOCK else Slot.PATCH)
+                updateScreenAwake(); renderAll()
+                deliverResult()
+                if (!current.active && bundle == null) loadBundle()
+            }
+        }
+    }
+    private fun loadBundle() {
         perform(Slot.BUNDLE) {
             val loaded = withContext(Dispatchers.IO) { bundleStore.current() }
             adopt(loaded)
@@ -273,9 +300,9 @@ class PatchActivity : Activity() {
                     elapsed = NexusUi.metaLabel(this@PatchActivity, "", NexusUi.INK3).also { addView(it, NexusUi.block()) }
                     tick()
                     addView(BusTheme.gap(this@PatchActivity, 12))
-                    addView(NexusUi.cardBody(this@PatchActivity, "Keep this screen open. Closing it cancels the job."), NexusUi.block())
+                    addView(NexusUi.cardBody(this@PatchActivity, "You can switch apps or turn the screen off. Patching continues in the background."), NexusUi.block())
                     addView(BusTheme.gap(this@PatchActivity, 14))
-                    addView(NexusUi.pillButton(this@PatchActivity, "Cancel patching", danger = true).apply { setOnClickListener { cancelAndClose() } }, NexusUi.block())
+                    addView(NexusUi.pillButton(this@PatchActivity, "Cancel patching", danger = true).apply { setOnClickListener { cancelJob() } }, NexusUi.block())
                 }
                 done -> {
                     addView(noteView(Slot.PATCH), NexusUi.block())
@@ -297,7 +324,10 @@ class PatchActivity : Activity() {
                     addView(NexusUi.cardBody(this@PatchActivity, "Takes about three minutes on the phone. The result is signed with this plugin's key."), NexusUi.block())
                     addView(noteView(Slot.PATCH), NexusUi.block())
                     addView(BusTheme.gap(this@PatchActivity, 14))
-                    addView(primary("Patch YouTube", enabled = ready && !busy) { confirmPatch() }, NexusUi.block())
+                    val retry = jobs.state.value.status in setOf(PatchJobStatus.INTERRUPTED, PatchJobStatus.FAILURE, PatchJobStatus.CANCELLED)
+                    addView(primary(if (retry) "Retry patch" else "Patch YouTube", enabled = !busy && (ready || retry)) {
+                        if (stock == null) picker(REQUEST_STOCK, Intent.ACTION_OPEN_DOCUMENT, "*/*") else confirmPatch()
+                    }, NexusUi.block())
                     addView(BusTheme.gap(this@PatchActivity, 4))
                     addView(quiet("Close") { cancelAndClose() }, endAligned())
                 }
@@ -309,7 +339,7 @@ class PatchActivity : Activity() {
     private fun tick() {
         val view = elapsed ?: return
         val seconds = ((System.currentTimeMillis() - patchStartedAt) / 1000).coerceAtLeast(0)
-        view.text = "Elapsed %d:%02d · usually about three minutes".format(seconds / 60, seconds % 60).uppercase()
+        view.text = "Elapsed %d:%02d".format(seconds / 60, seconds % 60).uppercase()
         handler.postDelayed(ticker, 1000)
     }
 
@@ -485,50 +515,42 @@ class PatchActivity : Activity() {
             .setMessage(warnings.joinToString("\n")).setNegativeButton("Review", null).setPositiveButton("Continue") { _, _ -> startPatch() }.show()
     }
     private fun startPatch() {
-        val input = stock ?: return
         val loaded = bundle ?: return
-        if (busy) return
-        val selected = loaded.patches.filter { choices[it.name] == true }.toSet()
-        result = null
-        notes.remove(Slot.PATCH)
-        patching = true
-        patchStartedAt = System.currentTimeMillis()
-        perform(Slot.PATCH) {
-            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-            val signed = withContext(Dispatchers.IO) {
-                PatchRuntime().patch(input, selected, work, key) { message -> runOnUiThread { if (!isDestroyed) report(message, Tone.INFO, Slot.PATCH) } }
-            }
-            currentCoroutineContext().ensureActive()
-            val directory = File(filesDir, "results").apply { mkdirs() }
-            val target = File(directory, "youtube-${UUID.randomUUID()}.apk")
-            withContext(Dispatchers.IO) {
-                val pending = File(directory, ".${target.name}.partial")
-                try {
-                    signed.inputStream().use { input -> pending.outputStream().use { output ->
-                        PatchPolicy.copyBounded(input, output); output.fd.sync()
-                    } }
-                    currentCoroutineContext().ensureActive()
-                    require(pending.renameTo(target)) { "Cannot save verified result." }
-                    signed.delete()
-                } finally { pending.delete() }
-                purgeResults(target)
-            }
-            currentCoroutineContext().ensureActive()
-            result = target
-            if (intent.action == Contract.ACTION_PATCH && callingActivity != null) {
-                val uri = uri(target)
+        if (busy || stock == null) return
+        try {
+            val state = jobs.patch(loaded.hash, loaded.patches.filter { choices[it.name] == true }.map { it.name!! })
+            startJob(state)
+        } catch (e: Exception) { report(e.message ?: "Cannot start patching.", Tone.ERROR, Slot.PATCH) }
+    }
+    private fun startJob(state: PatchJobState, source: Uri? = null) {
+        try {
+            startForegroundService(Intent(this, PatchJobService::class.java)
+                .putExtra(PatchJobService.JOB_ID, state.id).setData(source)
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+        } catch (e: Exception) {
+            jobs.change(state.id) { it.copy(status = PatchJobStatus.FAILURE, message = "Cannot start background patching. Return to this screen and retry.") }
+        }
+    }
+    private fun deliverResult() {
+        val file = result ?: return
+        if (!resumed || returningResult || intent.action != Contract.ACTION_PATCH || callingActivity == null) return
+        returningResult = true
+        scope.launch {
+            try {
+                val contentUri = uri(file)
                 val outputPackage = withContext(Dispatchers.IO) {
-                    com.reandroid.apk.ApkModule.loadApkFile(target).use { it.packageName }
+                    com.reandroid.apk.ApkModule.loadApkFile(file).use { it.packageName }
                 }
-                val data = Intent().setDataAndType(uri, "application/vnd.android.package-archive")
+                val data = Intent().setDataAndType(contentUri, "application/vnd.android.package-archive")
                     .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                     .putExtra(Contract.EXTRA_PACKAGE_NAME, outputPackage)
                     .putExtra(Contract.EXTRA_VERSION_NAME, PatchPolicy.VERSION)
-                    .putExtra(Contract.EXTRA_SHA256, withContext(Dispatchers.IO) { PatchPolicy.sha256(target) })
-                data.clipData = ClipData.newRawUri("Patched YouTube", uri)
-                patching = false
-                setResult(RESULT_OK, data); finish()
-            } else report("Patched and signed. The APK signature is verified.", Tone.OK, Slot.PATCH)
+                    .putExtra(Contract.EXTRA_SHA256, withContext(Dispatchers.IO) { PatchPolicy.sha256(file) })
+                data.clipData = ClipData.newRawUri("Patched YouTube", contentUri)
+                if (resumed) { setResult(RESULT_OK, data); finish() }
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) { report("Cannot return the result: ${e.message}", Tone.ERROR, Slot.PATCH) }
+            finally { returningResult = false }
         }
     }
     private fun uri(file: File) = FileProvider.getUriForFile(this, "$packageName.results", file)
@@ -575,20 +597,15 @@ class PatchActivity : Activity() {
         }
         val uri = data.data!!
         when (requestCode) {
-            REQUEST_STOCK -> perform(Slot.STOCK) {
-                stock = null
-                stockName = displayName(uri)
-                notes.remove(Slot.STOCK); renderStock()
-                stock = withContext(Dispatchers.IO) {
-                    val input = File(work, "input.zip")
-                    contentResolver.openInputStream(uri).use { source ->
-                        requireNotNull(source) { "Cannot read selected file." }
-                        input.outputStream().use { PatchPolicy.copyBounded(source, it) }
-                    }
-                    val prepare = File(work, "prepare").apply { deleteRecursively(); mkdirs() }
-                    ApkPreparer().prepare(input, prepare)
-                }
-                report("Validated: stock YouTube ${PatchPolicy.VERSION}", Tone.OK, Slot.STOCK)
+            REQUEST_STOCK -> {
+                if (busy) return
+                try {
+                    contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    stockName = displayName(uri)
+                    notes.remove(Slot.STOCK)
+                    requestPatchNotifications()
+                    startJob(jobs.prepare(), uri)
+                } catch (e: Exception) { report("Cannot retain access to this file. Choose it with the document picker again.", Tone.ERROR, Slot.STOCK) }
             }
             REQUEST_EXPORT, REQUEST_IMPORT -> {
                 val password = backupPassword ?: return
@@ -613,25 +630,36 @@ class PatchActivity : Activity() {
             } }
         }
     }
-    private fun cancelAndClose() {
-        setResult(RESULT_CANCELED)
-        scope.cancel()
-        finish()
-        // Some upstream patch code is synchronous and not cooperatively cancellable.
-        // Only this screen lives in :patcher; process death stops it immediately.
-        if (busy) android.os.Process.killProcess(android.os.Process.myPid())
+    private fun requestPatchNotifications() {
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            val preferences = getSharedPreferences("patch-notifications", MODE_PRIVATE)
+            if (!preferences.getBoolean("asked", false)) {
+                preferences.edit().putBoolean("asked", true).apply()
+                requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), REQUEST_NOTIFICATIONS)
+            }
+        }
     }
+    private fun cancelJob() {
+        if (jobs.state.value.active) startService(Intent(this, PatchJobService::class.java)
+            .setAction(PatchJobService.CANCEL).putExtra(PatchJobService.JOB_ID, jobs.state.value.id))
+    }
+    private fun cancelAndClose() { setResult(RESULT_CANCELED); finish() }
+    private fun updateScreenAwake() {
+        if (resumed && ::jobs.isInitialized && jobs.state.value.active) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+    }
+    override fun onResume() { super.onResume(); resumed = true; updateScreenAwake(); if (::jobs.isInitialized) deliverResult() }
+    override fun onPause() { resumed = false; updateScreenAwake(); super.onPause() }
     @Deprecated("Platform callback") override fun onBackPressed() { cancelAndClose() }
     override fun onDestroy() {
         handler.removeCallbacks(ticker)
         scope.cancel()
         backupPassword?.fill('\u0000'); backupPassword = null
-        super.onDestroy()
-        if (busy) android.os.Process.killProcess(android.os.Process.myPid())
-        else if (::work.isInitialized) work.deleteRecursively()
         screenLock?.release(); lockFile?.close()
+        super.onDestroy()
     }
     companion object {
+        private const val REQUEST_NOTIFICATIONS = 5
         private const val REQUEST_STOCK = 1
         private const val REQUEST_EXPORT = 2
         private const val REQUEST_IMPORT = 3
