@@ -2,6 +2,7 @@ package com.anezium.rokidbus.phone
 
 import android.content.Intent
 import com.anezium.rokidbus.shared.YoutubeInventory
+import com.anezium.rokidbus.shared.YoutubePackage
 
 internal data class YoutubeSetupState(
     val busy: Boolean = false,
@@ -10,7 +11,20 @@ internal data class YoutubeSetupState(
     val preparedLabel: String? = null,
     val canInstall: Boolean = false,
     val youtubeApkReady: Boolean = false,
+    val latestMicroGVersionCode: Long? = null,
 )
+
+internal enum class MicroGSetupAction(val label: String) {
+    INSTALL("Install MicroG"), OPEN("Open MicroG"), UPDATE("Update MicroG");
+
+    companion object {
+        fun choose(installed: YoutubePackage?, latestVersionCode: Long?): MicroGSetupAction = when {
+            installed?.installed != true -> INSTALL
+            !installed.launchable || latestVersionCode != null && latestVersionCode > installed.versionCode -> UPDATE
+            else -> OPEN
+        }
+    }
+}
 
 /** Main-thread state shared by the service and its private setup screen, never persisted. */
 internal object YoutubeSetupStateStore {

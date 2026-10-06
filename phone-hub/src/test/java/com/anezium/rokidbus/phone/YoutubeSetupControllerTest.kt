@@ -247,6 +247,18 @@ class YoutubeSetupControllerTest {
         assertTrue(YoutubeSetupStateStore.state.message.contains("is installed"))
     }
 
+    @Test fun `MicroG update check caches the validated version and update uses the prepared APK`() {
+        apk = apk.copy(archive = apk.archive.copy(packageName = YoutubeSetupContract.MICROG))
+        controller.handle(Intent(YoutubeSetupController.PREPARE_MICROG))
+        idle()
+        assertEquals(200L, YoutubeSetupStateStore.state.latestMicroGVersionCode)
+        assertEquals(0, uploads)
+        controller.handle(Intent(YoutubeSetupController.INSTALL_MICROG))
+        reply()
+        assertEquals(1, uploads)
+        assertEquals(200L, YoutubeSetupStateStore.state.latestMicroGVersionCode)
+    }
+
     @Test fun `automatic result import retains signer and file integrity guards`() {
         controller.handle(Intent(YoutubeSetupController.PATCH_AND_INSTALL)
             .setData(Uri.parse("content://patcher/output.apk")))

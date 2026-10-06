@@ -46,7 +46,8 @@ internal class YoutubeSetupController(
         when (intent.action) {
             REFRESH -> refresh()
             PREPARE_MICROG -> prepare(null)
-            INSTALL_MICROG -> prepare(null, autoInstall = true)
+            INSTALL_MICROG -> if (prepared?.archive?.packageName == YoutubeSetupContract.MICROG) install()
+                else prepare(null, autoInstall = true)
             IMPORT_YOUTUBE -> intent.data?.takeIf { it.scheme == "content" }?.let { prepare(it) }
             PATCH_AND_INSTALL -> {
                 val uri = intent.data?.takeIf { it.scheme == "content" }
@@ -165,6 +166,8 @@ internal class YoutubeSetupController(
                     prepared = apk
                     publish(state.copy(busy = false, preparedLabel = apk.label, canInstall = true,
                         youtubeApkReady = state.youtubeApkReady || apk.archive.packageName != YoutubeSetupContract.MICROG,
+                        latestMicroGVersionCode = if (apk.archive.packageName == YoutubeSetupContract.MICROG)
+                            apk.archive.versionCode else state.latestMicroGVersionCode,
                         message = listOfNotNull("${apk.label} is ready. Install it on the glasses below.",
                             YoutubeApkPolicy.versionNotice(apk.archive)).joinToString(" ")))
                     if (autoInstall) install()

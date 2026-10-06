@@ -15,7 +15,10 @@ The package is `app.revanced.android.gms`.
 
 The card shows **Done** when the glasses report MicroG installed. A `noicon` build
 shows **Needs attention**: install the icon-enabled release offered by Nexus so
-that **Open MicroG on glasses** works. Use this same button to update MicroG later.
+that **Open MicroG on glasses** works. Once installed, the primary button says
+**Open MicroG**. Under **More**, **Check for MicroG updates** prepares the latest
+verified release using the existing download path; a newer version changes the
+primary button to **Update MicroG**, which installs that prepared APK.
 
 ### 2. YouTube APK
 

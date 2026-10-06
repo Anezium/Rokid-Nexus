@@ -108,8 +108,13 @@ class YoutubeSetupActivity : Activity() {
         card("1. MicroG on the glasses", status(checked, microG?.installed == true,
             microG?.installed == true && !microG.launchable) +
             " — Connect your Google account with MicroG.") { box ->
-            button(box, "Install MicroG", enabled) { command(YoutubeSetupController.INSTALL_MICROG) }
+            val action = MicroGSetupAction.choose(microG, state.latestMicroGVersionCode)
+            button(box, action.label, enabled) {
+                command(if (action == MicroGSetupAction.OPEN) YoutubeSetupController.OPEN_MICROG
+                    else YoutubeSetupController.INSTALL_MICROG)
+            }
             more(box, "microg") { extras ->
+                button(extras, "Check for MicroG updates", enabled) { command(YoutubeSetupController.PREPARE_MICROG) }
                 button(extras, "MicroG source", enabled) { browse("https://github.com/MorpheApp/MicroG-RE") }
             }
         }
