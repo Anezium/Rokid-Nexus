@@ -543,6 +543,10 @@ class PatchActivity : Activity() {
     private fun picker(request: Int, action: String, type: String, name: String? = null) {
         startActivityForResult(Intent(action).apply {
             addCategory(Intent.CATEGORY_OPENABLE); this.type = type
+            if (request == REQUEST_STOCK) putExtra(Intent.EXTRA_MIME_TYPES, arrayOf(
+                "application/vnd.android.package-archive", "application/octet-stream",
+                "application/zip", "application/x-zip-compressed",
+            ))
             name?.let { putExtra(Intent.EXTRA_TITLE, it) }
         }, request)
     }

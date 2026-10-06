@@ -202,6 +202,10 @@ class YoutubeSetupActivity : Activity() {
                 val picker = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
                     addCategory(Intent.CATEGORY_OPENABLE)
                     type = "*/*"
+                    putExtra(Intent.EXTRA_MIME_TYPES, arrayOf(
+                        "application/vnd.android.package-archive", "application/octet-stream",
+                        "application/zip", "application/x-zip-compressed",
+                    ))
                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 }
                 pickPending = true
