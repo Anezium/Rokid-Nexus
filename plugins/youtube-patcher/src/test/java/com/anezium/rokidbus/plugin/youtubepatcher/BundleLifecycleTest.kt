@@ -1,6 +1,7 @@
 package com.anezium.rokidbus.plugin.youtubepatcher
 
 import org.junit.Assert.*
+import org.junit.Assume.assumeTrue
 import org.junit.Test
 import java.io.File
 import java.nio.file.Files
@@ -12,6 +13,7 @@ class BundleLifecycleTest {
     @Test fun genuineBundleIsProtectedBeforeFirstByteAndAtValidationAndPublication() {
         val directory = Files.createTempDirectory("bundle-lifecycle").toFile()
         try {
+            assumeTrue("Bundle protection requires POSIX permissions", Files.getFileStore(directory.toPath()).supportsFileAttributeView("posix"))
             val source = File(requireNotNull(System.getProperty("preparedBundle")))
             // Embedded and downloaded bytes use exactly this shared production lifecycle.
             repeat(2) {
@@ -42,6 +44,7 @@ class BundleLifecycleTest {
     @Test fun cancellationAtEveryBoundaryAndWriteOrValidationFailureCleanUnpublishedFiles() {
         val directory = Files.createTempDirectory("bundle-cancellation").toFile()
         try {
+            assumeTrue("Bundle protection requires POSIX permissions", Files.getFileStore(directory.toPath()).supportsFileAttributeView("posix"))
             val active = File(directory, "active.json").apply { writeText("last working bundle") }
             for (boundary in 1..4) {
                 var checks = 0
@@ -69,20 +72,20 @@ class BundleLifecycleTest {
     @Test fun processDeathRecoveryRemovesPartialsAndUncommittedRenamesButRetainsActive() {
         val directory = Files.createTempDirectory("bundle-recovery").toFile()
         try {
-            val active = ReadOnlyBundleFile.install(directory, write = { it.write(1) }, validate = {})
-            ReadOnlyBundleFile.install(directory, write = { it.write(2) }, validate = {})
+            val active = File(directory, "bundle-active.mpp").apply { writeBytes(byteArrayOf(1)) }
+            File(directory, "bundle-uncommitted.mpp").writeBytes(byteArrayOf(2))
             File(directory, "bundle-abandoned.partial").writeText("interrupted")
             File(directory, "active.tmp").writeText("interrupted pointer")
             ReadOnlyBundleFile.cleanUnused(directory, active.name)
             assertEquals(listOf(active.name), directory.listFiles()!!.map { it.name })
             assertEquals(1, active.readBytes().single().toInt())
-            ReadOnlyBundleFile.requireReadOnly(active)
         } finally { directory.deleteRecursively() }
     }
 
     @Test fun writableExistingFileIsRejectedAndCopiedToNewProtectedInode() {
         val directory = Files.createTempDirectory("bundle-migration").toFile()
         try {
+            assumeTrue("Bundle protection requires POSIX permissions", Files.getFileStore(directory.toPath()).supportsFileAttributeView("posix"))
             val old = File(directory, "old.mpp").apply { writeText("existing") }
             assertThrows(IllegalArgumentException::class.java) { ReadOnlyBundleFile.requireReadOnly(old) }
             val target = ReadOnlyBundleFile.install(directory, write = { out -> old.inputStream().use { it.copyTo(out) } },

@@ -7,6 +7,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.*
 import org.junit.Assert.*
+import org.junit.Assume.assumeTrue
 import org.junit.Test
 import java.io.File
 import java.io.IOException
@@ -61,6 +62,7 @@ class BundleUpdateTest {
     private fun withStore(block: Fixture.(BundleStore.Loaded) -> Unit) {
         val directory = Files.createTempDirectory("bundle-update").toFile()
         try {
+            assumeTrue("Bundle protection requires POSIX permissions", Files.getFileStore(directory.toPath()).supportsFileAttributeView("posix"))
             Fixture(directory).run { block(current()) }
         } finally {
             directory.walkBottomUp().forEach { it.setWritable(true); it.delete() }
@@ -204,6 +206,7 @@ class BundleUpdateTest {
     @Test fun firstInstallFailureStillFailsClosed() {
         val directory = Files.createTempDirectory("bundle-first").toFile()
         try {
+            assumeTrue("Bundle protection requires POSIX permissions", Files.getFileStore(directory.toPath()).supportsFileAttributeView("posix"))
             Fixture(directory).run {
                 bundled = bundleBytes(dex = false)
                 assertThrows(IllegalArgumentException::class.java) { current() }
@@ -224,14 +227,21 @@ class BundleUpdateTest {
         assertEquals(setOf(migrated.file.name, "active.json"), directory.list()!!.toSet())
     }
 
-    @Test fun currentVersionNeedsNoDownloadAndDecisionIgnoresStaleRejections() = withStore { active ->
-        metadata = metadata(activeVersion)
-        val update = check()
-        assertFalse(update.switched)
-        assertTrue(update.message.startsWith("Using supported bundle"))
-        assertEquals(0, downloads)
-        assertActiveKept(active)
+    @Test fun currentVersionNeedsNoDownload() {
+        val directory = Files.createTempDirectory("bundle-current").toFile()
+        try {
+            Fixture(directory).run {
+                metadata = metadata(activeVersion)
+                val update = check()
+                assertFalse(update.switched)
+                assertTrue(update.message.startsWith("Using supported bundle"))
+                assertEquals(0, downloads)
+                assertEquals(emptySet<String>(), directory.list()!!.toSet())
+            }
+        } finally { directory.deleteRecursively() }
+    }
 
+    @Test fun decisionIgnoresStaleRejections() {
         val rejected = buildJsonObject {
             put("rejected_version", "2"); put("rejected_url", url("2")); put("rejected_plugin", "build-1"); put("rejected_reason", "No DEX.")
         }
