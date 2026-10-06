@@ -76,7 +76,8 @@ class BundleLifecycleTest {
             val active = if (posix) ReadOnlyBundleFile.install(directory,
                 write = { it.write(byteArrayOf(1)) }, validate = {})
                 else File(directory, "bundle-active.mpp").apply { writeBytes(byteArrayOf(1)) }
-            File(directory, "bundle-uncommitted.mpp").writeBytes(byteArrayOf(2))
+            if (posix) ReadOnlyBundleFile.install(directory, write = { it.write(byteArrayOf(2)) }, validate = {})
+                else File(directory, "bundle-uncommitted.mpp").writeBytes(byteArrayOf(2))
             File(directory, "bundle-abandoned.partial").writeText("interrupted")
             File(directory, "active.tmp").writeText("interrupted pointer")
             ReadOnlyBundleFile.cleanUnused(directory, active.name)
