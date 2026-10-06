@@ -144,10 +144,7 @@ class NativeAppsActivity : Activity() {
                         NexusUi.outlinePillButton(this@NativeAppsActivity, label).apply {
                             setOnClickListener { callback() }
                         },
-                        LinearLayout.LayoutParams(
-                            ViewGroup.LayoutParams.WRAP_CONTENT,
-                            ViewGroup.LayoutParams.WRAP_CONTENT,
-                        ),
+                        NexusUi.block(),
                     )
                 }
             },
