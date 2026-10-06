@@ -1,5 +1,10 @@
 package com.anezium.rokidbus.plugin.youtubepatcher
 
+import com.android.apksig.ApkSigner
+import com.android.apksig.ApkVerifier
+import com.android.apksig.SigningCertificateLineage
+import com.reandroid.apk.ApkModule
+import com.reandroid.arsc.chunk.xml.AndroidManifestBlock
 import org.junit.Assert.*
 import org.junit.Test
 import java.io.File
@@ -7,6 +12,46 @@ import java.io.ByteArrayOutputStream
 import java.nio.file.Files
 
 class SigningKeyTest {
+    @Test fun inspectionUsesOriginalSignerWhenV31RotatesAtApi33() {
+        val dir = Files.createTempDirectory("rotated-signer").toFile()
+        try {
+            val original = SigningKey(File(dir, "original.p12")).pair()
+            val rotated = SigningKey(File(dir, "rotated.p12")).pair()
+            val lineage = SigningCertificateLineage.Builder(
+                SigningCertificateLineage.SignerConfig.Builder(original.privateKey, original.certificate).build(),
+                SigningCertificateLineage.SignerConfig.Builder(rotated.privateKey, rotated.certificate).build(),
+            ).build()
+            val input = File(dir, "unsigned.apk")
+            ApkModule().use { module ->
+                module.setManifest(AndroidManifestBlock.empty().apply {
+                    packageName = "com.google.android.youtube"
+                    versionName = PatchPolicy.VERSION
+                    versionCode = 1
+                    minSdkVersion = 24
+                    targetSdkVersion = 36
+                    getOrCreateApplicationElement()
+                })
+                module.writeApk(input)
+            }
+            val signed = File(dir, "rotated.apk")
+            ApkSigner.Builder(listOf(
+                ApkSigner.SignerConfig.Builder("original", original.privateKey, listOf(original.certificate)).build(),
+                ApkSigner.SignerConfig.Builder("rotated", rotated.privateKey, listOf(rotated.certificate)).build(),
+            )).setInputApk(input).setOutputApk(signed).setSigningCertificateLineage(lineage)
+                .setMinSdkVersionForRotation(33).setV4SigningEnabled(false).build().sign()
+
+            val api33 = ApkVerifier.Builder(signed).setMinCheckedPlatformVersion(33)
+                .setMaxCheckedPlatformVersion(33).build().verify()
+            assertTrue(api33.errors.toString(), api33.isVerified)
+            assertTrue(api33.isVerifiedUsingV31Scheme)
+            assertEquals(listOf(rotated.certificate), api33.signerCertificates)
+            val inspected = ApkPreparer.inspect(signed)
+            assertEquals(setOf(PatchPolicy.sha256(original.certificate.encoded)), inspected.signers)
+            assertFalse(inspected.signers.contains(PatchPolicy.sha256(rotated.certificate.encoded)))
+            assertThrows(IllegalArgumentException::class.java) { PatchPolicy.validate(inspected) }
+        } finally { dir.deleteRecursively() }
+    }
+
     @Test fun keyPersistsAndPasswordBackupRestoresWithoutChangingSigner() {
         val dir = Files.createTempDirectory("key").toFile()
         try {
