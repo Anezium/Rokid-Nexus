@@ -27,8 +27,10 @@ class PatchJobService : Service() {
     override fun onCreate() {
         super.onCreate()
         store = PatchJobStore.get(this)
-        getSystemService(NotificationManager::class.java).createNotificationChannel(
-            NotificationChannel(CHANNEL, "APK patching", NotificationManager.IMPORTANCE_LOW))
+        getSystemService(NotificationManager::class.java).createNotificationChannels(listOf(
+            NotificationChannel(CHANNEL, "Patching progress", NotificationManager.IMPORTANCE_LOW),
+            // Outcomes may sound: the user left to wait for exactly this.
+            NotificationChannel(RESULTS_CHANNEL, "Patch results", NotificationManager.IMPORTANCE_DEFAULT)))
     }
 
     override fun onBind(intent: Intent?) = null
@@ -152,13 +154,16 @@ class PatchJobService : Service() {
         val open = PendingIntent.getActivity(this, 0, Intent(this, PatchActivity::class.java)
             .putExtra(com.anezium.rokidbus.shared.PatcherContract.EXTRA_TARGET_ID, state.targetId)
             .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        return NotificationCompat.Builder(this, CHANNEL)
+        val notice = PatchPresentation.notice(state, PatchTargets.find(state.targetId) ?: PatchTargets.default)
+        return NotificationCompat.Builder(this, if (state.active) CHANNEL else RESULTS_CHANNEL)
             .setSmallIcon(com.anezium.rokidbus.client.R.drawable.ic_plugin_bolt)
-            .setContentTitle(if (state.status == PatchJobStatus.SUCCESS) "Ready to install" else "Patcher")
-            .setContentText(state.message).setContentIntent(open).setOnlyAlertOnce(true)
+            .setContentTitle(notice.title).setContentText(notice.text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(notice.text))
+            .setContentIntent(open).setOnlyAlertOnce(true)
             .setOngoing(state.active).setAutoCancel(!state.active)
             .apply {
                 if (state.active) {
+                    setSubText(PatchPresentation.elapsed(state.elapsedMs))
                     setProgress(100, ((state.progress.fraction ?: 0.0) * 100).toInt(), state.progress.fraction == null)
                     val cancel = PendingIntent.getService(this@PatchJobService, 1,
                         Intent(this@PatchJobService, PatchJobService::class.java).setAction(CANCEL).putExtra(JOB_ID, state.id),
@@ -229,6 +234,7 @@ class PatchJobService : Service() {
         const val JOB_ID = "job_id"
         const val CANCEL = "cancel_patch"
         private const val CHANNEL = "patch-jobs"
+        private const val RESULTS_CHANNEL = "patch-results"
         private const val NOTIFICATION = 41
         private const val MAX_JOB_MS = 60L * 60 * 1000
     }

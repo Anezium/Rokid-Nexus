@@ -76,7 +76,7 @@ class PatchJobServiceTest {
         val service = controller.get()
         val method = PatchJobService::class.java.getDeclaredMethod("notification", PatchJobState::class.java).apply { isAccessible = true }
         val notice = method.invoke(service, store.state.value) as Notification
-        assertEquals("Ready to install", notice.extras.getString(Notification.EXTRA_TITLE))
+        assertEquals("${PatchTargets.default.displayName} is ready to install", notice.extras.getString(Notification.EXTRA_TITLE))
         assertEquals(0, notice.flags and Notification.FLAG_ONGOING_EVENT)
         assertNull(notice.actions)
         assertEquals(job.targetId, shadowOf(notice.contentIntent).savedIntent.getStringExtra(PatcherContract.EXTRA_TARGET_ID))

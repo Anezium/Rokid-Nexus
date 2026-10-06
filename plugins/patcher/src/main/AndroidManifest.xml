@@ -6,6 +6,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- The progress notification must land on the live patch screen even when it lives in the hub's task. -->
+    <uses-permission android:name="android.permission.REORDER_TASKS" />
     <queries><intent><action android:name="com.anezium.rokidbus.action.HUB" /></intent></queries>
     <application android:allowBackup="false" android:largeHeap="true" android:label="Patcher" android:theme="@style/Theme.Patcher">
         <activity android:name=".PatchActivity" android:exported="true" android:process=":patcher" android:windowSoftInputMode="adjustResize"

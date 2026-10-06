@@ -148,8 +148,9 @@ needs the GitHub Packages credentials above.
   Switching apps, Back, screen-off and activity destruction do not cancel the job.
   Only Cancel (screen or notification) stops it. No boot restart or automatic retry.
   Android's service timeout and the one-hour job limit stop unfinished work safely.
-  Notification permission is requested with the file picker; denial never blocks
-  patching. A durable state reports interrupted work on the next open with a retry.
+  Notification permission is asked once, at the first patch, with its reason shown on
+  the screen beforehand; denial never blocks patching. A durable state reports
+  interrupted work on the next open with a retry.
   Ready results survive activity recreation; the activity returns the result to the
   hub on reopening or offers share/save when opened from settings. Only a completely
   patched, signed and verified APK becomes a result.
@@ -179,6 +180,17 @@ remaining time is deliberately null. Phase boundaries and terminal states are sy
 to disk; callbacks and a one-second heartbeat update observers without disk writes.
 Activity recreation reconnects to this same store, and process restart recovers the
 last terminal result or marks unfinished work interrupted.
+
+`PatchPresentation` turns that state into words: the ten patch phases read as five
+stages (Load, Patch, Build, Sign, Save) with done/current/upcoming marks, a live line
+names the sub-phase with a number only when one was measured, and the last applied
+patch shows with its count. The screen adds a ticking elapsed clock and a
+`PhosphorBar` that fills for a known fraction, sweeps for an unknown one and draws a
+static dashed fill when the user has turned animations off. Notifications use the
+same words, name the target and carry the elapsed time; the result notification
+reopens the screen, and when the live screen already exists in the hub's task it is
+brought forward (`REORDER_TASKS`) instead of a second copy. Failure, cancelled and
+interrupted states are shown on the screen and as notifications, each with a retry.
 
 Filter Android logs by tag `Patcher`. Each completed boundary emits
 `step=<step> duration_ms=<integer> outcome=ok|failed|skipped`, with

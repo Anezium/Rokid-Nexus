@@ -12,6 +12,16 @@
   work is reported with retry and completed results remain available on return.
 - Add typed observable phases, byte/patch fractions, completed patch counts and
   monotonic elapsed time. Keep remaining time unknown until it can be estimated.
+- Show the patch as a live screen: a ticking elapsed clock, a phosphor bar that fills
+  when the amount is known and sweeps when it is not (static when animations are
+  off), the current sub-phase, the last applied patch with its count, and five stages
+  marked done, current or upcoming. Success, failure, cancelled and interrupted each
+  explain themselves and offer the next step; nothing resets silently.
+- Name the target and the phase in notifications, with elapsed time and Cancel while
+  running and a result channel for ready, failed, cancelled and interrupted. Tapping
+  one returns to the live screen even when it sits in the hub's task.
+- Ask for notification permission once, at the first patch, with the reason shown
+  beforehand; patching runs the same when it is denied.
 - Log each measured phase under `Patcher`; atomically move the verified result,
   avoid the activity's redundant result hash/manifest read and retain stock for retries.
 - Make stock signer/version/API-range checks, bundle pin/source, defaults and output
