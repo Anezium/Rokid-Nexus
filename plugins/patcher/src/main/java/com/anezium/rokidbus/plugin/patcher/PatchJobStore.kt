@@ -23,6 +23,7 @@ data class PatchJobState(
     val progress: PatchProgress = PatchProgress(),
     val elapsedMs: Long = 0,
     val targetId: String = PatchTargets.default.id,
+    val workId: String = id,
 ) {
     val active get() = status == PatchJobStatus.PREPARING || status == PatchJobStatus.RUNNING
 }
@@ -56,7 +57,7 @@ class PatchJobStore(private val directory: File) {
         val current = state.value
         check(!current.active && current.stock != null) { "Choose and validate a stock APK first." }
         require(selected.isNotEmpty()) { "Select at least one patch." }
-        return current.copy(status = PatchJobStatus.RUNNING, message = "Loading the patch bundle",
+        return current.copy(id = UUID.randomUUID().toString(), status = PatchJobStatus.RUNNING, message = "Loading the patch bundle",
             startedAt = System.currentTimeMillis(), result = null, bundleHash = hash, selected = selected,
             progress = PatchProgress(PatchPhase.BUNDLE_LOAD), elapsedMs = 0).also(::update)
     }
@@ -85,11 +86,22 @@ class PatchJobStore(private val directory: File) {
     }
 
     fun stock(state: PatchJobState = this.state.value): File? = state.stock?.let { name ->
-        File(work(state.id), name).takeIf { it.isFile && it.canonicalFile.toPath().startsWith(work(state.id).canonicalFile.toPath()) }
+        File(work(state.workId), name).takeIf { it.isFile && it.canonicalFile.toPath().startsWith(work(state.workId).canonicalFile.toPath()) }
     }
 
     fun result(state: PatchJobState = this.state.value): File? = state.result?.let { name ->
         File(directory, "results/$name").takeIf { PatchPolicy.isResult(name) && it.isFile && it.parentFile!!.canonicalFile == File(directory, "results").canonicalFile }
+    }
+
+    @Synchronized fun reconcileResult(now: Long = System.currentTimeMillis()) {
+        val current = state.value
+        if (current.status != PatchJobStatus.SUCCESS) return
+        val result = result(current)
+        if (result == null || kotlin.math.abs(now - result.lastModified()) >= PatchPolicy.RESULT_MAX_AGE_MS) {
+            result?.delete()
+            update(current.copy(status = PatchJobStatus.FAILURE, result = null,
+                message = "The saved result expired or is missing. Retry patching to create a new APK."))
+        }
     }
 
     private fun update(value: PatchJobState) {
@@ -122,6 +134,7 @@ class PatchJobStore(private val directory: File) {
             s.progress.patchName?.let { put("patch_name", it) }; put("patch_index", s.progress.patchIndex)
             put("patch_total", s.progress.patchTotal); put("elapsed", s.elapsedMs)
             put("target", s.targetId)
+            put("work", s.workId)
         }.toString()
 
         internal fun decode(text: String): PatchJobState {
@@ -135,7 +148,8 @@ class PatchJobStore(private val directory: File) {
                     json["fraction"]?.jsonPrimitive?.double, json["patch_name"]?.jsonPrimitive?.content,
                     json["patch_index"]?.jsonPrimitive?.int ?: 0, json["patch_total"]?.jsonPrimitive?.int ?: 0),
                 json["elapsed"]?.jsonPrimitive?.long ?: 0,
-                json["target"]?.jsonPrimitive?.content ?: PatchTargets.default.id)
+                json["target"]?.jsonPrimitive?.content ?: PatchTargets.default.id,
+                json["work"]?.jsonPrimitive?.content ?: json.getValue("id").jsonPrimitive.content)
         }
     }
 }

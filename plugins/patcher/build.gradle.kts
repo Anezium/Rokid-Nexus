@@ -23,6 +23,7 @@ android {
         it.systemProperty("preparedBundle", layout.buildDirectory.file("generated/patch-assets/bundled.mpp").get().asFile.path)
         it.systemProperty("patchBundleFixture", providers.gradleProperty("patchBundleInput").orElse(layout.buildDirectory.file("patch-source/source.mpp").get().asFile.path).get())
     }
+    testOptions.unitTests.isIncludeAndroidResources = true
 }
 val patcherRuntime by configurations.creating
 configurations["implementation"].extendsFrom(patcherRuntime)
@@ -41,6 +42,7 @@ dependencies {
     implementation("com.android.tools.build:apksig:9.1.1")
     implementation("com.github.REAndroid:arsclib:a28c6fb2a7")
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.robolectric:robolectric:4.13")
 }
 // Published rokid.2 is a JVM JAR, not an Android bundle. Convert at build time,
 // never pretend the JVM class files can be executed by Android.

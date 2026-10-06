@@ -1,3 +1,8 @@
 # Shell scripts run on Android (mksh), where a stray CR breaks parsing.
 # Force LF regardless of the checkout platform or core.autocrlf.
 *.sh text eol=lf
+
+# Retain upstream bundle license bytes when moving the plugin directory.
+plugins/patcher/src/main/assets/licenses/MORPHE_BRANDING.TXT -text whitespace=cr-at-eol
+plugins/patcher/src/main/assets/licenses/MORPHE_LICENSE.TXT -text whitespace=cr-at-eol
+plugins/patcher/src/main/assets/licenses/MORPHE_LICENSE_NOTICE.TXT -text whitespace=cr-at-eol

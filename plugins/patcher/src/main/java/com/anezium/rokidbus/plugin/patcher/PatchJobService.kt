@@ -20,6 +20,9 @@ class PatchJobService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
     private var runningId: String? = null
     private var startedRealtime = 0L
+    private var pendingStart: Intent? = null
+    private var pendingStartId = 0
+    private var latestStartId = 0
 
     override fun onCreate() {
         super.onCreate()
@@ -32,12 +35,23 @@ class PatchJobService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == CANCEL) {
-            if (intent.getStringExtra(JOB_ID) == runningId) terminate(PatchJobStatus.CANCELLED, "Patching cancelled. You can retry.")
+            val requested = intent.getStringExtra(JOB_ID)
+            if (requested != null && requested == store.state.value.id && store.state.value.active && requested != runningId) {
+                store.change(requested) { it.copy(status = PatchJobStatus.CANCELLED, message = "Patching cancelled. You can retry.", result = null) }
+                pendingStart = null
+                if (runningId != null) terminate(PatchJobStatus.CANCELLED, "Patching cancelled. You can retry.") else stopSelf()
+            } else if (requested == runningId) terminate(PatchJobStatus.CANCELLED, "Patching cancelled. You can retry.")
             else if (runningId == null) stopSelf()
             return START_NOT_STICKY
         }
         val state = store.state.value
-        if (runningId != null) return START_NOT_STICKY
+        latestStartId = startId
+        if (runningId != null) {
+            if (state.active && state.id != runningId && intent?.getStringExtra(JOB_ID) == state.id) {
+                pendingStart = intent; pendingStartId = startId
+            }
+            return START_NOT_STICKY
+        }
         if (!state.active || intent?.getStringExtra(JOB_ID) != state.id) { stopSelf(); return START_NOT_STICKY }
         runningId = state.id
         startedRealtime = SystemClock.elapsedRealtime()
@@ -48,8 +62,8 @@ class PatchJobService : Service() {
             handler.postDelayed(deadline, MAX_JOB_MS)
             handler.postDelayed(heartbeat, 1000)
             task = executor.submit {
-                Process.setThreadPriority(Process.THREAD_PRIORITY_DEFAULT)
                 try {
+                    Process.setThreadPriority(Process.THREAD_PRIORITY_DEFAULT)
                     runBlocking { if (state.status == PatchJobStatus.PREPARING) prepare(state, requireNotNull(intent.data)) else patch(state) }
                 } catch (_: CancellationException) {
                     store.change(state.id) { it.copy(status = PatchJobStatus.CANCELLED, message = "Patching cancelled. You can retry.") }
@@ -73,7 +87,7 @@ class PatchJobService : Service() {
     private suspend fun prepare(state: PatchJobState, uri: Uri) {
         val target = PatchTargets.require(state.targetId)
         val timings = PatchTimings()
-        val work = store.work(state.id)
+        val work = store.work(state.workId)
         File(filesDir, "jobs").listFiles()?.filter { it != work }?.forEach { it.deleteRecursively() }
         try {
             val input = File(work, "input.zip")
@@ -109,7 +123,9 @@ class PatchJobService : Service() {
         require(loaded.hash == state.bundleHash) { "The bundle changed. Review the patches before retrying." }
         val selected = loaded.patches.filter { it.name in state.selected }.toSet()
         require(selected.size == state.selected.size) { "Some selected patches are no longer available." }
-        val signed = PatchRuntime(target).patch(input, selected, store.work(state.id), SigningKey(File(filesDir, "signing/patcher.p12")), timings) { progress ->
+        val work = store.work(state.workId)
+        require(File(work, "patch-work").deleteRecursively()) { "Cannot clear previous patch files. Choose the stock APK again." }
+        val signed = PatchRuntime(target).patch(input, selected, work, SigningKey(File(filesDir, "signing/patcher.p12")), timings) { progress ->
             reportProgress(state.id, progress)
         }
         currentCoroutineContext().ensureActive()
@@ -127,6 +143,8 @@ class PatchJobService : Service() {
             signed.delete()
             store.change(state.id) { it.copy(status = PatchJobStatus.SUCCESS, message = "Patched and signed. Ready to install.", result = result.name,
                 progress = PatchProgress(PatchPhase.HAND_OFF, 1.0), elapsedMs = SystemClock.elapsedRealtime() - startedRealtime) }
+            val retained = directory.listFiles()?.filter { PatchPolicy.isResult(it.name) }.orEmpty()
+            PatchPolicy.expiredResults(retained.associateWith { it.lastModified() }, System.currentTimeMillis(), result).forEach { it.delete() }
         } finally { pending.delete() }
     }
 
@@ -161,8 +179,12 @@ class PatchJobService : Service() {
         if (wakeLock?.isHeld == true) wakeLock?.release()
         wakeLock = null; runningId = null; task = null
         stopForeground(STOP_FOREGROUND_REMOVE)
-        if (store.state.value.status != PatchJobStatus.READY) notifyState(store.state.value)
-        stopSelf()
+        if (store.state.value.id == id && store.state.value.status != PatchJobStatus.READY) notifyState(store.state.value)
+        val next = pendingStart
+        pendingStart = null
+        if (next != null && store.state.value.active && next.getStringExtra(JOB_ID) == store.state.value.id)
+            onStartCommand(next, 0, pendingStartId)
+        else stopSelfResult(latestStartId)
     }
 
     private fun terminate(status: PatchJobStatus, reason: String) {
@@ -195,8 +217,11 @@ class PatchJobService : Service() {
         handler.removeCallbacks(heartbeat)
         if (wakeLock?.isHeld == true) wakeLock?.release()
         executor.shutdownNow()
-        runningId?.let { id -> store.change(id) { it.copy(status = PatchJobStatus.INTERRUPTED,
-            message = "The last patch was interrupted. Retry when you are ready.", result = null) } }
+        runningId?.let { id ->
+            store.change(id) { it.copy(status = PatchJobStatus.INTERRUPTED,
+                message = "The last patch was interrupted. Retry when you are ready.", result = null) }
+            Process.killProcess(Process.myPid())
+        }
         super.onDestroy()
     }
 

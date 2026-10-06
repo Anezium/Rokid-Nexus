@@ -50,7 +50,6 @@ class PatchActivity : Activity() {
     private var slot = Slot.PATCH
     private var elapsed: TextView? = null
     private var patchProgressBar: ProgressBar? = null
-    private var patchStartedAt = 0L
     private var allPatchesOpen = false
     private var keyMoreOpen = false
     private var detailsOpen = false
@@ -62,7 +61,6 @@ class PatchActivity : Activity() {
     private var choices = mutableMapOf<String, Boolean>()
     private var stock: File? = null
     private var stockName: String? = null
-    private lateinit var work: File
     private var busy = false
     private var patching = false
     private var result: File? = null
@@ -96,13 +94,13 @@ class PatchActivity : Activity() {
         }
         target = selectedTarget
         jobs.selectTarget(target.id)
+        jobs.reconcileResult()
         bundleStore = BundleStore(this, target)
         selections = SelectionStore(File(filesDir, "selections/${target.id}.json"))
         key = SigningKey(File(filesDir, "signing/patcher.p12"))
         val state = jobs.state.value
-        work = if (state.id.isNotEmpty()) jobs.work(state.id) else File(filesDir, "jobs").apply { mkdirs() }
         stock = jobs.stock(); result = jobs.result()
-        busy = state.active; patching = state.active; patchStartedAt = state.startedAt
+        busy = state.active; patching = state.active
         if (state.message.isNotBlank()) notes[Slot.PATCH] = Note(state.message,
             if (state.status == PatchJobStatus.SUCCESS) Tone.OK else if (state.active) Tone.INFO else Tone.WARN)
         if (!state.active) {
@@ -113,7 +111,7 @@ class PatchActivity : Activity() {
         scope.launch {
             var previousStatus: PatchJobStatus? = null
             jobs.state.collect { current ->
-                busy = current.active; patching = current.active; patchStartedAt = current.startedAt
+                busy = current.active; patching = current.active
                 stock = jobs.stock(current); result = jobs.result(current)
                 if (current.status == PatchJobStatus.PREPARING) slot = Slot.STOCK
                 val tone = when (current.status) {
@@ -216,7 +214,7 @@ class PatchActivity : Activity() {
                     addView(noteView(Slot.STOCK), NexusUi.block())
                     stockName?.let { addView(BusTheme.gap(this@PatchActivity, 4)); addView(NexusUi.rowSub(this@PatchActivity, it), NexusUi.block()) }
                     addView(BusTheme.gap(this@PatchActivity, 4))
-                    addView(quiet("Change file") { picker(REQUEST_STOCK, Intent.ACTION_OPEN_DOCUMENT, "*/*") }, endAligned())
+                    addView(quiet("Change file", enabled = !busy) { picker(REQUEST_STOCK, Intent.ACTION_OPEN_DOCUMENT, "*/*") }, endAligned())
                 }
                 else -> {
                     addView(NexusUi.cardBody(this@PatchActivity, "Stock ${target.displayName} ${target.versionLabel}: the APK, or its complete split bundle."), NexusUi.block())
@@ -346,7 +344,7 @@ class PatchActivity : Activity() {
                     }, NexusUi.block())
                 }
                 else -> {
-                    addView(NexusUi.cardBody(this@PatchActivity, "Takes about three minutes on the phone. The result is signed with this plugin's key."), NexusUi.block())
+                    addView(NexusUi.cardBody(this@PatchActivity, "Patching can take several minutes. The result is signed with this plugin's key."), NexusUi.block())
                     addView(noteView(Slot.PATCH), NexusUi.block())
                     addView(BusTheme.gap(this@PatchActivity, 14))
                     val retry = jobs.state.value.status in setOf(PatchJobStatus.INTERRUPTED, PatchJobStatus.FAILURE, PatchJobStatus.CANCELLED)
@@ -562,11 +560,11 @@ class PatchActivity : Activity() {
             try {
                 val contentUri = uri(file)
                 PatchTimings().measure("hand_off") {
-                val data = Intent().setDataAndType(contentUri, "application/vnd.android.package-archive")
-                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                    .putExtra(Contract.EXTRA_TARGET_ID, target.id)
-                data.clipData = ClipData.newRawUri("Patched ${target.displayName}", contentUri)
-                if (resumed) { setResult(RESULT_OK, data); finish() }
+                    val data = Intent().setDataAndType(contentUri, "application/vnd.android.package-archive")
+                        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        .putExtra(Contract.EXTRA_TARGET_ID, target.id)
+                    data.clipData = ClipData.newRawUri("Patched ${target.displayName}", contentUri)
+                    if (resumed) { setResult(RESULT_OK, data); finish() }
                 }
             } catch (e: CancellationException) { throw e }
             catch (e: Exception) { report("Cannot return the result: ${e.message}", Tone.ERROR, Slot.PATCH) }
@@ -630,6 +628,7 @@ class PatchActivity : Activity() {
             REQUEST_EXPORT, REQUEST_IMPORT -> {
                 val password = backupPassword ?: return
                 backupPassword = null
+                if (busy) { password.fill('\u0000'); return }
                 perform(Slot.KEY) {
                     try {
                         withContext(Dispatchers.IO) {

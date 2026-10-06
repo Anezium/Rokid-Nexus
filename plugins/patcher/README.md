@@ -224,11 +224,18 @@ lifecycle tests observe actual POSIX permissions before writing, before validati
 after atomic rename; cancellation at each lifecycle boundary and invalid-artifact
 rejection preserve the working bundle. This is host-side lifecycle proof, not an
 Android 14 ART/DexClassLoader execution test. `assembleDebug` verifies packaging,
-including a prepared DEX bundle. These are not phone execution tests. No phone or
-glasses was available: full stock 21.04.223 patching, memory/time measurements,
+including a prepared DEX bundle. These are not phone execution tests. This engine
+phase used no phone or glasses: full stock 21.04.223 patching, memory/time measurements,
 Android DEX loading, URI hand-off, glasses installation and Rokid rail operation
 still require a device run. In particular the upstream patcher's Android runtime
 is not certified by a desktop JVM test.
+
+Robolectric also checks activity background/destruction/reopening without cancelling
+the job, explicit Cancel routing, foreground `dataSync` notification/wake-lock lifetime,
+task removal, failure cleanup and the ready notification. POSIX-only tests are skipped
+on Windows: read-only bundle lifecycle/update checks and the recreated activity's real
+FileProvider URI hand-off (Android path matching assumes `/`). Those are exclusions,
+not passes. Run the same suite on a POSIX host for their full coverage.
 
 ## Licensing and attribution
 
