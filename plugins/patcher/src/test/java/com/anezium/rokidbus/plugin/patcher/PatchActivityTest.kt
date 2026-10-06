@@ -5,6 +5,8 @@ import android.content.Intent
 import android.content.ComponentName
 import android.os.Looper
 import android.view.WindowManager
+import android.widget.Button
+import android.widget.TextView
 import com.anezium.rokidbus.shared.PatcherContract
 import org.junit.Assert.*
 import org.junit.Assume.assumeTrue
@@ -59,8 +61,9 @@ class PatchActivityTest {
         val store = activeStore()
         val screen = Robolectric.buildActivity(PatchActivity::class.java).setup()
         shadowOf(Looper.getMainLooper()).idle()
+        // Checking the file (step 1) offers a plain Cancel; the patch card's is "Cancel patching".
         fun cancelButton(view: android.view.View): android.view.View? {
-            if (view is android.widget.Button && view.text == "Cancel patching") return view
+            if (view is android.widget.Button && view.text == "Cancel") return view
             if (view is android.view.ViewGroup) for (i in 0 until view.childCount) cancelButton(view.getChildAt(i))?.let { return it }
             return null
         }
@@ -94,6 +97,79 @@ class PatchActivityTest {
         assertEquals(activity.resultIntent.data, activity.resultIntent.clipData!!.getItemAt(0).uri)
         assertEquals(job.targetId, activity.resultIntent.getStringExtra(PatcherContract.EXTRA_TARGET_ID))
         reopened.pause().stop().destroy()
+    }
+
+    private fun views(root: android.view.View): List<android.view.View> =
+        listOf(root) + ((root as? android.view.ViewGroup)?.let { group -> (0 until group.childCount).flatMap { views(group.getChildAt(it)) } } ?: emptyList())
+    private fun text(activity: Activity, label: String): TextView? =
+        views(activity.findViewById(android.R.id.content)).filterIsInstance<TextView>().singleOrNull { it !is Button && it.text.toString() == label }
+    private fun button(activity: Activity, label: String): Button? =
+        views(activity.findViewById(android.R.id.content)).filterIsInstance<Button>().singleOrNull { it.text.toString() == label }
+    /** A validated stock file and a started patch job, the way the service leaves them. */
+    private fun runningStore(): Pair<PatchJobStore, PatchJobState> {
+        val store = activeStore()
+        val job = store.state.value
+        File(store.work(job.workId), "prepare/stock.apk").apply { parentFile!!.mkdirs(); writeBytes(byteArrayOf(1)) }
+        store.change(job.id) { it.copy(status = PatchJobStatus.READY, stock = "prepare/stock.apk") }
+        return store to store.patch("hash", listOf("Rokid controls"))
+    }
+
+    @Test fun runningPatchShowsALiveBlockThatUpdatesInPlace() {
+        val (store, job) = runningStore()
+        store.progress(job.id, PatchProgress(PatchPhase.APPLY_PATCHES, 7.0 / 23, "Hide ads", 7, 23), 134_000)
+        val screen = Robolectric.buildActivity(PatchActivity::class.java).setup()
+        shadowOf(Looper.getMainLooper()).idle()
+        val activity = screen.get()
+        assertNotNull(text(activity, "Patching ${PatchTargets.default.displayName}"))
+        val clock = requireNotNull(text(activity, "2:14"))
+        val phase = requireNotNull(text(activity, "Applying patches · 7 of 23"))
+        assertNotNull(text(activity, "✓  Hide ads"))
+        assertEquals(listOf("Load", "Patch", "Build", "Sign", "Save"), PatchPresentation.patchStages.map { it.label }.onEach { assertNotNull(it, text(activity, it)) })
+        assertNotNull(button(activity, "Cancel patching"))
+        assertNull(button(activity, "Patch ${PatchTargets.default.displayName}"))
+        store.progress(job.id, PatchProgress(PatchPhase.COMPILE), 150_000)
+        shadowOf(Looper.getMainLooper()).idle()
+        assertEquals("2:30", clock.text.toString())
+        assertEquals("Compiling the patched code", phase.text.toString())
+        assertNull(text(activity, "✓  Hide ads"))
+        screen.pause().stop().destroy()
+    }
+
+    @Test fun interruptedPatchExplainsItselfAndOffersRetry() {
+        val (store, job) = runningStore()
+        store.change(job.id) { it.copy(status = PatchJobStatus.INTERRUPTED, message = "The last patch was interrupted. Retry when you are ready.", result = null) }
+        val screen = Robolectric.buildActivity(PatchActivity::class.java).setup()
+        shadowOf(Looper.getMainLooper()).idle()
+        val activity = screen.get()
+        assertNotNull(text(activity, "Patch interrupted"))
+        assertNotNull(text(activity, "The last patch was interrupted. Retry when you are ready."))
+        assertNotNull(button(activity, "Retry patch"))
+        assertNull(button(activity, "Cancel patching"))
+        screen.pause().stop().destroy()
+    }
+
+    @Test fun cancelledPatchOffersToPatchAgain() {
+        val (store, job) = runningStore()
+        store.change(job.id) { it.copy(status = PatchJobStatus.CANCELLED, message = "Patching cancelled. You can retry.", result = null) }
+        val screen = Robolectric.buildActivity(PatchActivity::class.java).setup()
+        shadowOf(Looper.getMainLooper()).idle()
+        assertNotNull(text(screen.get(), "Patch cancelled"))
+        assertNotNull(button(screen.get(), "Patch ${PatchTargets.default.displayName}"))
+        screen.pause().stop().destroy()
+    }
+
+    @Test fun fileCheckFailureStaysOnTheStockStep() {
+        val store = activeStore()
+        store.change(store.state.value.id) { it.copy(status = PatchJobStatus.FAILURE, message = "This is not a stock APK.") }
+        val screen = Robolectric.buildActivity(PatchActivity::class.java).setup()
+        shadowOf(Looper.getMainLooper()).idle()
+        val activity = screen.get()
+        assertNotNull(text(activity, "This is not a stock APK."))
+        assertNotNull(button(activity, "Choose APK or bundle"))
+        assertNotNull(text(activity, "Patch"))
+        assertNull(text(activity, "Patch failed"))
+        assertNull(button(activity, "Retry patch"))
+        screen.pause().stop().destroy()
     }
 
     @Test fun explicitRequestWithoutTargetFailsClosed() {

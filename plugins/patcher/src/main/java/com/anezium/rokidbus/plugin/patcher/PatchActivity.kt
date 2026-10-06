@@ -1,17 +1,16 @@
 package com.anezium.rokidbus.plugin.patcher
 
+import android.animation.ValueAnimator
 import android.app.Activity
+import android.app.ActivityManager
 import android.app.AlertDialog
 import android.content.ClipData
 import android.content.Intent
-import android.content.res.ColorStateList
 import android.content.res.Configuration
 import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
 import android.os.Build
-import android.os.Handler
-import android.os.Looper
 import android.provider.OpenableColumns
 import android.text.util.Linkify
 import android.view.Gravity
@@ -21,7 +20,6 @@ import android.view.WindowManager
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
-import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.core.content.FileProvider
 import com.anezium.rokidbus.client.ui.BusTheme
@@ -36,9 +34,11 @@ class PatchActivity : Activity() {
     private enum class Tone { INFO, OK, WARN, ERROR }
     private class Note(val text: String, val tone: Tone)
     private class NoteView(val row: View, val dot: View, val text: TextView)
+    private class StageRowView(val index: TextView, val label: TextView, val mark: TextView, val dot: View)
+    private class LiveViews(val hero: TextView, val bar: PhosphorBar, val phase: TextView, val patch: TextView, val rows: List<StageRowView>)
+    private class PrepareViews(val bar: PhosphorBar, val phase: TextView)
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
-    private val handler = Handler(Looper.getMainLooper())
     private lateinit var content: LinearLayout
     private lateinit var stockHost: LinearLayout
     private lateinit var patchesHost: LinearLayout
@@ -48,8 +48,11 @@ class PatchActivity : Activity() {
     private val notes = mutableMapOf<Slot, Note>()
     private val noteViews = mutableMapOf<Slot, NoteView>()
     private var slot = Slot.PATCH
-    private var elapsed: TextView? = null
-    private var patchProgressBar: ProgressBar? = null
+    private var live: LiveViews? = null
+    private var prepare: PrepareViews? = null
+    private var pulse: ValueAnimator? = null
+    private var pulsing: View? = null
+    private var patchAfterPermission = false
     private var allPatchesOpen = false
     private var keyMoreOpen = false
     private var detailsOpen = false
@@ -76,10 +79,19 @@ class PatchActivity : Activity() {
         lockFile = java.io.RandomAccessFile(File(filesDir, "screen.lock"), "rw")
         screenLock = try { lockFile!!.channel.tryLock() } catch (_: java.nio.channels.OverlappingFileLockException) { null }
         if (screenLock == null) {
-            AlertDialog.Builder(this).setMessage("Patcher is already open. Close the other screen first.")
+            // The notification opens a new task; the live screen may sit in the hub's task.
+            // Bring that one forward instead of a second copy that cannot share the job.
+            val liveTask = liveTaskId
+            if (liveTask != null && liveTask != taskId &&
+                runCatching { getSystemService(ActivityManager::class.java).moveTaskToFront(liveTask, 0) }.isSuccess) {
+                finish()
+                return
+            }
+            AlertDialog.Builder(this).setMessage("Patcher is already open in another window. Close it first.")
                 .setPositiveButton("Close") { _, _ -> finish() }.setOnCancelListener { finish() }.show()
             return
         }
+        liveTaskId = taskId
         window.statusBarColor = NexusUi.BG
         window.navigationBarColor = NexusUi.BG
         jobs = PatchJobStore.get(this)
@@ -88,7 +100,7 @@ class PatchActivity : Activity() {
         val selectedTarget = PatchTargets.find(requested)
         if (selectedTarget == null || jobs.state.value.active && jobs.state.value.targetId != requested) {
             setResult(RESULT_CANCELED)
-            AlertDialog.Builder(this).setMessage("Unknown target, or another target is already being patched.")
+            AlertDialog.Builder(this).setMessage("Patcher does not know this app, or another app is already being patched.")
                 .setPositiveButton("Close") { _, _ -> finish() }.setOnCancelListener { finish() }.show()
             return
         }
@@ -101,8 +113,7 @@ class PatchActivity : Activity() {
         val state = jobs.state.value
         stock = jobs.stock(); result = jobs.result()
         busy = state.active; patching = state.active
-        if (state.message.isNotBlank()) notes[Slot.PATCH] = Note(state.message,
-            if (state.status == PatchJobStatus.SUCCESS) Tone.OK else if (state.active) Tone.INFO else Tone.WARN)
+        noteFor(state)
         if (!state.active) {
             File(filesDir, "results").listFiles()?.filter { it.name.endsWith(".partial") }?.forEach { it.delete() }
             purgeResults(result)
@@ -114,24 +125,31 @@ class PatchActivity : Activity() {
                 busy = current.active; patching = current.active
                 stock = jobs.stock(current); result = jobs.result(current)
                 if (current.status == PatchJobStatus.PREPARING) slot = Slot.STOCK
-                val tone = when (current.status) {
-                    PatchJobStatus.SUCCESS, PatchJobStatus.READY -> Tone.OK
-                    PatchJobStatus.FAILURE, PatchJobStatus.INTERRUPTED -> Tone.ERROR
-                    PatchJobStatus.CANCELLED -> Tone.WARN
-                    else -> Tone.INFO
-                }
-                report(current.message, tone, if (current.status == PatchJobStatus.READY) Slot.STOCK else Slot.PATCH)
+                noteFor(current)
                 updateScreenAwake()
-                if (previousStatus != current.status) renderAll()
-                patchProgressBar?.apply {
-                    isIndeterminate = current.progress.fraction == null
-                    progress = ((current.progress.fraction ?: 0.0) * 100).toInt()
-                }
+                if (previousStatus != current.status) renderAll() else updateLive(current)
                 previousStatus = current.status
                 deliverResult()
                 if (!current.active && bundle == null) loadBundle()
             }
         }
+    }
+    /** A job's words sit next to the step they belong to: file problems under step 1, patch outcomes under step 3. */
+    private fun noteFor(state: PatchJobState) {
+        val where = if (PatchPresentation.isPreparePhase(state.progress.phase)) Slot.STOCK else Slot.PATCH
+        if (state.active) {
+            notes.remove(where); applyNote(where)
+        } else {
+            val tone = when (state.status) {
+                PatchJobStatus.SUCCESS, PatchJobStatus.READY -> Tone.OK
+                PatchJobStatus.FAILURE, PatchJobStatus.INTERRUPTED -> Tone.ERROR
+                PatchJobStatus.CANCELLED -> Tone.WARN
+                else -> Tone.INFO
+            }
+            report(state.message, tone, where)
+        }
+        if (where == Slot.PATCH && notes[Slot.STOCK] == null && jobs.stock(state) != null)
+            report("Validated stock ${target.displayName} ${target.versionLabel}", Tone.OK, Slot.STOCK)
     }
     private fun loadBundle() {
         perform(Slot.BUNDLE) {
@@ -197,18 +215,25 @@ class PatchActivity : Activity() {
 
     private fun renderStock() {
         stockHost.removeAllViews()
-        val validating = busy && slot == Slot.STOCK
+        val state = jobs.state.value
+        val validating = state.status == PatchJobStatus.PREPARING
+        prepare = null
         stockHost.addView(NexusUi.card(this).apply {
-            addView(stepHeader(1, "Stock ${target.displayName}", done = stock != null, active = stock == null), NexusUi.block())
+            addView(stepHeader(1, if (validating) "Checking your file" else "Stock ${target.displayName}", done = stock != null, active = stock == null), NexusUi.block())
             addView(BusTheme.gap(this@PatchActivity, 6))
             when {
                 validating -> {
-                    addView(LinearLayout(this@PatchActivity).apply {
-                        gravity = Gravity.CENTER_VERTICAL
-                        addView(spinner(18))
-                        addView(NexusUi.cardBody(this@PatchActivity, "Reading and validating ${stockName ?: "the file"}"),
-                            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(10) })
-                    }, NexusUi.block())
+                    val bar = PhosphorBar(this@PatchActivity)
+                    val phase = NexusUi.statusLine(this@PatchActivity).apply { setTextColor(NexusUi.INK) }
+                    prepare = PrepareViews(bar, phase)
+                    addView(BusTheme.gap(this@PatchActivity, 6))
+                    addView(bar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(4)))
+                    addView(BusTheme.gap(this@PatchActivity, 10))
+                    addView(phase, NexusUi.block())
+                    stockName?.let { addView(BusTheme.gap(this@PatchActivity, 4)); addView(NexusUi.rowSub(this@PatchActivity, it), NexusUi.block()) }
+                    addView(BusTheme.gap(this@PatchActivity, 2))
+                    addView(quiet("Cancel") { cancelJob() }, endAligned())
+                    updateLive(state)
                 }
                 stock != null -> {
                     addView(noteView(Slot.STOCK), NexusUi.block())
@@ -236,11 +261,9 @@ class PatchActivity : Activity() {
             addView(noteView(Slot.BUNDLE), NexusUi.block())
             if (loaded == null) {
                 addView(BusTheme.gap(this@PatchActivity, 6))
-                addView(LinearLayout(this@PatchActivity).apply {
-                    gravity = Gravity.CENTER_VERTICAL
-                    addView(spinner(18))
-                    addView(NexusUi.cardBody(this@PatchActivity, "Loading the patch bundle"), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(10) })
-                }, NexusUi.block())
+                addView(PhosphorBar(this@PatchActivity).apply { show(null) }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(4)))
+                addView(BusTheme.gap(this@PatchActivity, 10))
+                addView(NexusUi.cardBody(this@PatchActivity, "Loading the patch bundle"), NexusUi.block())
                 return@apply
             }
             val (featured, others) = loaded.patches.partition { target.priority(it.name!!) < target.featuredPatches.size }
@@ -299,72 +322,199 @@ class PatchActivity : Activity() {
 
     private fun renderAction() {
         actionHost.removeAllViews()
-        patchProgressBar = null
-        handler.removeCallbacks(ticker); elapsed = null
+        live = null
+        stopPulse()
+        val state = jobs.state.value
+        // A terminal state reached while checking the file belongs to step 1; step 3 stays idle.
+        val status = if (PatchPresentation.isPreparePhase(state.progress.phase)) PatchJobStatus.IDLE else state.status
         val ready = stock != null && bundle != null
-        val done = result != null
+        val done = result != null && status == PatchJobStatus.SUCCESS
+        val running = status == PatchJobStatus.RUNNING
+        val stopped = status in setOf(PatchJobStatus.FAILURE, PatchJobStatus.CANCELLED, PatchJobStatus.INTERRUPTED)
         actionHost.addView(NexusUi.card(this).apply {
-            if (!ready && !done) alpha = .55f
-            addView(stepHeader(3, "Patch", done = done, active = ready && !done), NexusUi.block())
+            if (!ready && !done && !running && !stopped) alpha = .55f
+            val ring = when (status) {
+                PatchJobStatus.FAILURE, PatchJobStatus.INTERRUPTED -> NexusUi.DANGER
+                PatchJobStatus.CANCELLED -> NexusUi.AMBER
+                else -> NexusUi.GREEN
+            }
+            addView(stepHeader(3, PatchPresentation.headline(status, target.displayName), done = done,
+                active = running || stopped || (ready && !done), ring = ring,
+                trailing = if (done && state.elapsedMs > 0) NexusUi.metaLabel(this@PatchActivity, PatchPresentation.elapsed(state.elapsedMs), NexusUi.GREEN_DIM) else null), NexusUi.block())
             addView(BusTheme.gap(this@PatchActivity, 6))
             when {
-                patching -> {
-                    addView(ProgressBar(this@PatchActivity, null, android.R.attr.progressBarStyleHorizontal).apply {
-                        patchProgressBar = this
-                        isIndeterminate = jobs.state.value.progress.fraction == null
-                        progress = ((jobs.state.value.progress.fraction ?: 0.0) * 100).toInt()
-                        progressTintList = ColorStateList.valueOf(NexusUi.GREEN)
-                        indeterminateTintList = ColorStateList.valueOf(NexusUi.GREEN)
-                        progressBackgroundTintList = ColorStateList.valueOf(NexusUi.LINE)
-                    }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(14)))
-                    addView(BusTheme.gap(this@PatchActivity, 6))
-                    addView(noteView(Slot.PATCH), NexusUi.block())
-                    addView(BusTheme.gap(this@PatchActivity, 6))
-                    elapsed = NexusUi.metaLabel(this@PatchActivity, "", NexusUi.INK3).also { addView(it, NexusUi.block()) }
-                    tick()
-                    addView(BusTheme.gap(this@PatchActivity, 12))
-                    addView(NexusUi.cardBody(this@PatchActivity, "You can switch apps or turn the screen off. Patching continues in the background."), NexusUi.block())
-                    addView(BusTheme.gap(this@PatchActivity, 14))
-                    addView(NexusUi.pillButton(this@PatchActivity, "Cancel patching", danger = true).apply { setOnClickListener { cancelJob() } }, NexusUi.block())
-                }
-                done -> {
-                    addView(noteView(Slot.PATCH), NexusUi.block())
-                    addView(BusTheme.gap(this@PatchActivity, 14))
-                    addView(primary("Share patched APK", enabled = !busy) { result?.let(::shareResult) }, NexusUi.block())
-                    addView(BusTheme.gap(this@PatchActivity, 8))
-                    addView(NexusUi.outlinePillButton(this@PatchActivity, "Save patched APK").apply {
-                        isEnabled = !busy; alpha = if (busy) .45f else 1f
-                        setOnClickListener { picker(REQUEST_SAVE, Intent.ACTION_CREATE_DOCUMENT, "application/vnd.android.package-archive", "${target.id}-patched.apk") }
-                    }, NexusUi.block())
-                    addView(BusTheme.gap(this@PatchActivity, 4))
-                    addView(LinearLayout(this@PatchActivity).apply {
-                        gravity = Gravity.END
-                        addView(quiet("Patch again", enabled = !busy) { confirmPatch() })
-                        addView(quiet("Close") { cancelAndClose() })
-                    }, NexusUi.block())
-                }
-                else -> {
-                    addView(NexusUi.cardBody(this@PatchActivity, "Patching can take several minutes. The result is signed with this plugin's key."), NexusUi.block())
-                    addView(noteView(Slot.PATCH), NexusUi.block())
-                    addView(BusTheme.gap(this@PatchActivity, 14))
-                    val retry = jobs.state.value.status in setOf(PatchJobStatus.INTERRUPTED, PatchJobStatus.FAILURE, PatchJobStatus.CANCELLED)
-                    addView(primary(if (retry) "Retry patch" else "Patch ${target.displayName}", enabled = !busy && (ready || retry)) {
-                        if (stock == null) picker(REQUEST_STOCK, Intent.ACTION_OPEN_DOCUMENT, "*/*") else confirmPatch()
-                    }, NexusUi.block())
-                    addView(BusTheme.gap(this@PatchActivity, 4))
-                    addView(quiet("Close") { cancelAndClose() }, endAligned())
-                }
+                running -> renderRunning(this, state)
+                done -> renderDone(this)
+                stopped -> renderStopped(this, status)
+                else -> renderIdle(this, ready)
             }
         }, NexusUi.block())
         applyNote(Slot.PATCH)
     }
-    private val ticker = object : Runnable { override fun run() { tick() } }
-    private fun tick() {
-        val view = elapsed ?: return
-        val seconds = (jobs.state.value.elapsedMs / 1000).coerceAtLeast(0)
-        view.text = "Elapsed %d:%02d".format(seconds / 60, seconds % 60).uppercase()
-        handler.postDelayed(ticker, 1000)
+
+    /** The live block: a clock that ticks, a bar that moves, the stage you are in. Nothing here may look frozen. */
+    private fun renderRunning(card: LinearLayout, state: PatchJobState) {
+        val hero = NexusUi.hero(this, 34f).apply { fontFeatureSettings = "tnum"; includeFontPadding = false }
+        val bar = PhosphorBar(this)
+        val phase = NexusUi.statusLine(this).apply { setTextColor(NexusUi.INK) }
+        val patch = NexusUi.rowSub(this, "").apply { setTextColor(NexusUi.INK3) }
+        val rows = PatchPresentation.patchStages.mapIndexed { index, stage -> stageRow(index + 1, stage.label) }
+        live = LiveViews(hero, bar, phase, patch, rows)
+        card.addView(LinearLayout(this).apply {
+            gravity = Gravity.BOTTOM
+            addView(hero, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            addView(NexusUi.metaLabel(this@PatchActivity, "Elapsed", NexusUi.INK3).apply { setPadding(0, 0, 0, dp(6)) })
+        }, NexusUi.block())
+        card.addView(BusTheme.gap(this, 10))
+        card.addView(bar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(4)))
+        card.addView(BusTheme.gap(this, 10))
+        card.addView(phase, NexusUi.block())
+        card.addView(patch, NexusUi.block().apply { topMargin = dp(4) })
+        card.addView(BusTheme.gap(this, 14))
+        rows.forEachIndexed { index, row ->
+            if (index > 0) card.addView(hairline())
+            card.addView(row.index.parent as View, NexusUi.block())
+        }
+        card.addView(BusTheme.gap(this, 14))
+        card.addView(NexusUi.cardBody(this, if (notificationsDenied())
+            "Usually a few minutes. You can leave this screen or turn the display off: patching continues. Notifications are off for Patcher, so come back here to check on it."
+        else "Usually a few minutes. You can leave this screen or turn the display off: patching continues, and the notification brings you back when it is ready."), NexusUi.block())
+        card.addView(BusTheme.gap(this, 14))
+        card.addView(NexusUi.pillButton(this, "Cancel patching", danger = true).apply { setOnClickListener { cancelJob() } }, NexusUi.block())
+        updateLive(state)
     }
+
+    private fun renderDone(card: LinearLayout) {
+        val hubWaiting = intent.action == Contract.ACTION_PATCH && callingActivity != null
+        card.addView(noteView(Slot.PATCH), NexusUi.block())
+        card.addView(BusTheme.gap(this, 8))
+        card.addView(NexusUi.cardBody(this, if (hubWaiting) "Handing it to Nexus, which installs it on your glasses."
+        else "Nexus installs it on the glasses: open ${target.displayName} on glasses in Nexus and choose Patch and install. It picks this result up without patching again."), NexusUi.block())
+        if (hubWaiting) return
+        card.addView(BusTheme.gap(this, 14))
+        val nexus = hubLaunchIntent()
+        if (nexus != null) card.addView(primary("Open Nexus", enabled = !busy) { startActivity(nexus) }, NexusUi.block())
+        else card.addView(primary("Share patched APK", enabled = !busy) { result?.let(::shareResult) }, NexusUi.block())
+        card.addView(BusTheme.gap(this, 4))
+        card.addView(LinearLayout(this).apply {
+            gravity = Gravity.END
+            if (nexus != null) addView(quiet("Share", enabled = !busy) { result?.let(::shareResult) })
+            addView(quiet("Save APK", enabled = !busy) { picker(REQUEST_SAVE, Intent.ACTION_CREATE_DOCUMENT, "application/vnd.android.package-archive", "${target.id}-patched.apk") })
+            addView(quiet("Patch again", enabled = !busy) { confirmPatch() })
+            addView(quiet("Close") { cancelAndClose() })
+        }, NexusUi.block())
+    }
+
+    private fun renderStopped(card: LinearLayout, status: PatchJobStatus) {
+        card.addView(noteView(Slot.PATCH), NexusUi.block())
+        card.addView(BusTheme.gap(this, 8))
+        card.addView(NexusUi.cardBody(this, when {
+            status == PatchJobStatus.INTERRUPTED -> "Android or a restart stopped it before it finished. Nothing was installed."
+            stock != null -> "Nothing was installed. Retrying starts again from your checked file."
+            else -> "Nothing was installed."
+        }), NexusUi.block())
+        card.addView(BusTheme.gap(this, 14))
+        val label = when {
+            stock == null -> "Choose the file again"
+            status == PatchJobStatus.CANCELLED -> "Patch ${target.displayName}"
+            else -> "Retry patch"
+        }
+        card.addView(primary(label, enabled = !busy && (stock == null || bundle != null)) {
+            if (stock == null) picker(REQUEST_STOCK, Intent.ACTION_OPEN_DOCUMENT, "*/*") else confirmPatch()
+        }, NexusUi.block())
+        card.addView(BusTheme.gap(this, 4))
+        card.addView(quiet("Close") { cancelAndClose() }, endAligned())
+    }
+
+    private fun renderIdle(card: LinearLayout, ready: Boolean) {
+        card.addView(NexusUi.cardBody(this, "Patching takes a few minutes and keeps running if you leave the app. The result is signed with this plugin's key."), NexusUi.block())
+        card.addView(noteView(Slot.PATCH), NexusUi.block())
+        if (shouldAskNotifications()) {
+            card.addView(BusTheme.gap(this, 8))
+            card.addView(NexusUi.cardBody(this, "Patcher will ask to show notifications, so you can leave this screen and be brought back when it is ready.")
+                .apply { textSize = 12f; setTextColor(NexusUi.INK3) }, NexusUi.block())
+        }
+        card.addView(BusTheme.gap(this, 14))
+        card.addView(primary("Patch ${target.displayName}", enabled = !busy && ready) { confirmPatch() }, NexusUi.block())
+        card.addView(BusTheme.gap(this, 4))
+        card.addView(quiet("Close") { cancelAndClose() }, endAligned())
+    }
+
+    /** Refresh the live views in place; the card itself is rebuilt only when the status changes. */
+    private fun updateLive(state: PatchJobState) {
+        prepare?.let { views ->
+            views.bar.show(state.progress.fraction)
+            views.phase.text = PatchPresentation.phaseLine(state.progress)
+        }
+        val views = live ?: return
+        views.hero.text = PatchPresentation.elapsed(state.elapsedMs)
+        views.bar.show(state.progress.fraction)
+        views.phase.text = PatchPresentation.phaseLine(state.progress)
+        val last = state.progress.patchName
+        views.patch.visibility = if (last == null) View.GONE else View.VISIBLE
+        views.patch.text = if (last == null) "" else "\u2713  $last"
+        PatchPresentation.stages(state.progress.phase).forEachIndexed { index, row -> style(views.rows[index], row.state) }
+    }
+
+    private fun stageRow(number: Int, label: String): StageRowView {
+        val index = NexusUi.metaLabel(this, "%02d".format(number), NexusUi.INK4).apply { minWidth = dp(26) }
+        val title = NexusUi.rowLabel(this, label)
+        val mark = NexusUi.metaLabel(this, "\u2713", NexusUi.GREEN_DIM).apply { textSize = 12f; visibility = View.GONE }
+        val dot = NexusUi.dot(this).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(7), dp(7))
+            visibility = View.GONE
+        }
+        NexusUi.setDotColor(dot, NexusUi.GREEN)
+        LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            minimumHeight = dp(34)
+            setPadding(dp(2), 0, dp(4), 0)
+            addView(index)
+            addView(title, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            addView(mark)
+            addView(dot)
+        }
+        return StageRowView(index, title, mark, dot)
+    }
+
+    private fun style(row: StageRowView, state: PatchPresentation.StageState) {
+        when (state) {
+            PatchPresentation.StageState.DONE -> {
+                row.index.setTextColor(NexusUi.GREEN_DIM); row.label.setTextColor(NexusUi.INK2)
+                row.mark.visibility = View.VISIBLE; row.dot.visibility = View.GONE
+            }
+            PatchPresentation.StageState.CURRENT -> {
+                row.index.setTextColor(NexusUi.GREEN); row.label.setTextColor(NexusUi.INK)
+                row.mark.visibility = View.GONE; row.dot.visibility = View.VISIBLE
+                if (pulsing !== row.dot) pulse(row.dot)
+            }
+            PatchPresentation.StageState.UPCOMING -> {
+                row.index.setTextColor(NexusUi.INK4); row.label.setTextColor(NexusUi.INK4)
+                row.mark.visibility = View.GONE; row.dot.visibility = View.GONE
+            }
+        }
+    }
+
+    private fun pulse(view: View) {
+        stopPulse()
+        pulsing = view
+        if (!ValueAnimator.areAnimatorsEnabled()) return
+        pulse = ValueAnimator.ofFloat(1f, .3f).apply {
+            duration = 900
+            repeatCount = ValueAnimator.INFINITE
+            repeatMode = ValueAnimator.REVERSE
+            addUpdateListener { view.alpha = it.animatedValue as Float }
+            start()
+        }
+    }
+    private fun stopPulse() {
+        pulse?.cancel(); pulse = null
+        pulsing?.alpha = 1f; pulsing = null
+    }
+
+    private fun hubLaunchIntent(): Intent? = runCatching {
+        packageManager.getLaunchIntentForPackage(com.anezium.rokidbus.client.HubTarget.PHONE.packageName)
+    }.getOrNull()
 
     private fun renderKey() {
         keyHost.removeAllViews()
@@ -441,35 +591,29 @@ class PatchActivity : Activity() {
 
     // ---- Small composites built from the NexusUi vocabulary ----
 
-    private fun stepHeader(number: Int, title: String, done: Boolean, active: Boolean, trailing: View? = null): LinearLayout =
+    private fun stepHeader(number: Int, title: String, done: Boolean, active: Boolean, ring: Int = NexusUi.GREEN, trailing: View? = null): LinearLayout =
         LinearLayout(this).apply {
             gravity = Gravity.CENTER_VERTICAL
-            addView(badge(number, done, active))
+            addView(badge(number, done, active, ring))
             addView(NexusUi.cardTitle(this@PatchActivity, title),
                 LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(12) })
             trailing?.let { addView(it) }
         }
-    private fun badge(number: Int, done: Boolean, active: Boolean): TextView =
+    private fun badge(number: Int, done: Boolean, active: Boolean, ring: Int = NexusUi.GREEN): TextView =
         TextView(this).apply {
             text = if (done) "✓" else number.toString()
             textSize = 13f
             gravity = Gravity.CENTER
             includeFontPadding = false
-            setTextColor(if (done) NexusUi.ON_ACCENT else if (active) NexusUi.GREEN else NexusUi.INK3)
+            setTextColor(if (done) NexusUi.ON_ACCENT else if (active) ring else NexusUi.INK3)
             background = if (done) NexusUi.rounded(this@PatchActivity, NexusUi.GREEN, 999)
-            else NexusUi.bordered(this@PatchActivity, if (active) NexusUi.alpha(NexusUi.GREEN, 30) else NexusUi.PANEL, if (active) NexusUi.GREEN else NexusUi.LINE, 999)
+            else NexusUi.bordered(this@PatchActivity, if (active) NexusUi.alpha(ring, 30) else NexusUi.PANEL, if (active) ring else NexusUi.LINE, 999)
             layoutParams = LinearLayout.LayoutParams(dp(26), dp(26))
         }
     private fun hairline(): View = View(this).apply {
         setBackgroundColor(NexusUi.LINE2)
         layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)).apply { topMargin = dp(2); bottomMargin = dp(2) }
     }
-    private fun spinner(sizeDp: Int): ProgressBar =
-        ProgressBar(this).apply {
-            isIndeterminate = true
-            indeterminateTintList = ColorStateList.valueOf(NexusUi.GREEN)
-            layoutParams = LinearLayout.LayoutParams(dp(sizeDp), dp(sizeDp))
-        }
     private fun primary(label: String, enabled: Boolean, action: () -> Unit): Button =
         NexusUi.pillButton(this, label).apply { isEnabled = enabled; alpha = if (enabled) 1f else .4f; setOnClickListener { action() } }
     private fun quiet(label: String, enabled: Boolean = true, action: () -> Unit): Button =
@@ -536,6 +680,22 @@ class PatchActivity : Activity() {
             .setMessage(warnings.joinToString("\n")).setNegativeButton("Review", null).setPositiveButton("Continue") { _, _ -> startPatch() }.show()
     }
     private fun startPatch() {
+        if (busy || stock == null || bundle == null) return
+        if (shouldAskNotifications()) {
+            patchAfterPermission = true
+            getSharedPreferences("patch-notifications", MODE_PRIVATE).edit().putBoolean("asked", true).apply()
+            requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), REQUEST_NOTIFICATIONS)
+            return
+        }
+        launchPatch()
+    }
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != REQUEST_NOTIFICATIONS || !patchAfterPermission) return
+        patchAfterPermission = false
+        launchPatch()
+    }
+    private fun launchPatch() {
         val loaded = bundle ?: return
         if (busy || stock == null) return
         try {
@@ -621,7 +781,6 @@ class PatchActivity : Activity() {
                     contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
                     stockName = displayName(uri)
                     notes.remove(Slot.STOCK)
-                    requestPatchNotifications()
                     startJob(jobs.prepare(target.id), uri)
                 } catch (e: Exception) { report("Cannot retain access to this file. Choose it with the document picker again.", Tone.ERROR, Slot.STOCK) }
             }
@@ -649,15 +808,10 @@ class PatchActivity : Activity() {
             } }
         }
     }
-    private fun requestPatchNotifications() {
-        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-            val preferences = getSharedPreferences("patch-notifications", MODE_PRIVATE)
-            if (!preferences.getBoolean("asked", false)) {
-                preferences.edit().putBoolean("asked", true).apply()
-                requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), REQUEST_NOTIFICATIONS)
-            }
-        }
-    }
+    private fun notificationsDenied(): Boolean = Build.VERSION.SDK_INT >= 33 &&
+        checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED
+    private fun shouldAskNotifications(): Boolean =
+        notificationsDenied() && !getSharedPreferences("patch-notifications", MODE_PRIVATE).getBoolean("asked", false)
     private fun cancelJob() {
         if (jobs.state.value.active) startService(Intent(this, PatchJobService::class.java)
             .setAction(PatchJobService.CANCEL).putExtra(PatchJobService.JOB_ID, jobs.state.value.id))
@@ -671,13 +825,16 @@ class PatchActivity : Activity() {
     override fun onPause() { resumed = false; updateScreenAwake(); super.onPause() }
     @Deprecated("Platform callback") override fun onBackPressed() { cancelAndClose() }
     override fun onDestroy() {
-        handler.removeCallbacks(ticker)
+        stopPulse()
         scope.cancel()
+        if (screenLock != null && liveTaskId == taskId) liveTaskId = null
         backupPassword?.fill('\u0000'); backupPassword = null
         screenLock?.release(); lockFile?.close()
         super.onDestroy()
     }
     companion object {
+        /** Task of the screen holding the lock; the service and both screens share the :patcher process. */
+        @Volatile private var liveTaskId: Int? = null
         private const val REQUEST_NOTIFICATIONS = 5
         private const val REQUEST_STOCK = 1
         private const val REQUEST_EXPORT = 2
