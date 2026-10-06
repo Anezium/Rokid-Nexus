@@ -51,7 +51,7 @@ internal class YoutubeSetupController(
             IMPORT_YOUTUBE -> intent.data?.takeIf { it.scheme == "content" }?.let { prepare(it) }
             PATCH_AND_INSTALL -> {
                 val uri = intent.data?.takeIf { it.scheme == "content" }
-                if (uri == null) fail("The patcher did not return a readable APK. Try patching again.")
+                if (uri == null) fail("Patcher did not return a readable APK. Try patching again.")
                 else prepare(uri, autoInstall = true)
             }
             INSTALL -> install()

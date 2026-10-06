@@ -6,6 +6,8 @@
   result-byte validation, same-signer CXR updates and confirmed-install records.
 - Patcher replaces the unpublished YouTube Patcher package and generates a new key;
   existing output needs an imported backup or an explicit manual reinstall on glasses.
+- YouTube setup says what to expect from Patcher: a few minutes, kept running when
+  you leave the app, then checked and installed by Nexus.
 
 ## 1.5.0
 

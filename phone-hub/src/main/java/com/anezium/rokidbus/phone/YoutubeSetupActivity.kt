@@ -119,7 +119,7 @@ class YoutubeSetupActivity : Activity() {
             }
         }
         card("2. YouTube APK", status(checked || state.youtubeApkReady, youtube.isNotEmpty() || state.youtubeApkReady) +
-            " — Download YouTube ${YoutubeApkPolicy.STOCK_YOUTUBE_VERSION}. APK or APKMirror bundle are both fine. The patcher checks your file; Nexus cannot inspect your browser downloads.") { box ->
+            " — Download YouTube ${YoutubeApkPolicy.STOCK_YOUTUBE_VERSION} from APKMirror: the APK or the bundle both work. Patcher checks the file once you choose it.") { box ->
             button(box, "Download YouTube ${YoutubeApkPolicy.STOCK_YOUTUBE_VERSION}", enabled) {
                 browse(YoutubeApkPolicy.STOCK_YOUTUBE_URL)
             }
@@ -129,7 +129,7 @@ class YoutubeSetupActivity : Activity() {
         val youtubeDone = installStatus == "Done"
         card("3. Patch and install", if (youtubeDone) "Done — YouTube ${confirmedYoutube?.versionName} is installed."
             else installStatus +
-                " — Approve Patcher first, then choose your file and review the patches. Nexus checks the result and installs it automatically. APK checks alone cannot authenticate the patcher on a first glasses install.") { box ->
+                " — Approve Patcher first, then choose your file and review the patches. Patching takes a few minutes and keeps running if you leave the app. Nexus checks the result and installs it on the glasses.") { box ->
             button(box, if (youtubeDone) "Reinstall / update"
                 else if (patcherApproved) "Patch and install" else "Get or approve Patcher",
                 enabled, secondary = youtubeDone) {
@@ -289,7 +289,7 @@ class YoutubeSetupActivity : Activity() {
                 toast("Patcher changed or is no longer approved. Review it and patch again.")
             } else if (resultCode == RESULT_OK) {
                 val uri = PatcherHandoff.resultUri(data)
-                if (uri == null) toast("The patcher did not return a readable APK. Try again.")
+                if (uri == null) toast("Patcher did not return a readable APK. Try again.")
                 else submitResult(YoutubeSetupController.PATCH_AND_INSTALL, uri, "patch it again")
             }
             rerender()
