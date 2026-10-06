@@ -538,16 +538,13 @@ class PatchActivity : Activity() {
         scope.launch {
             try {
                 val contentUri = uri(file)
-                val outputPackage = withContext(Dispatchers.IO) {
-                    com.reandroid.apk.ApkModule.loadApkFile(file).use { it.packageName }
-                }
+                PatchTimings().measure("hand_off") {
                 val data = Intent().setDataAndType(contentUri, "application/vnd.android.package-archive")
                     .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                    .putExtra(Contract.EXTRA_PACKAGE_NAME, outputPackage)
                     .putExtra(Contract.EXTRA_VERSION_NAME, PatchPolicy.VERSION)
-                    .putExtra(Contract.EXTRA_SHA256, withContext(Dispatchers.IO) { PatchPolicy.sha256(file) })
                 data.clipData = ClipData.newRawUri("Patched YouTube", contentUri)
                 if (resumed) { setResult(RESULT_OK, data); finish() }
+                }
             } catch (e: CancellationException) { throw e }
             catch (e: Exception) { report("Cannot return the result: ${e.message}", Tone.ERROR, Slot.PATCH) }
             finally { returningResult = false }

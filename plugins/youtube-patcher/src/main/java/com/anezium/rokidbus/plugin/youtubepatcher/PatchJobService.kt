@@ -68,27 +68,29 @@ class PatchJobService : Service() {
     }
 
     private suspend fun prepare(state: PatchJobState, uri: Uri) {
+        val timings = PatchTimings()
         val work = store.work(state.id)
         File(filesDir, "jobs").listFiles()?.filter { it != work }?.forEach { it.deleteRecursively() }
         try {
             val input = File(work, "input.zip")
-            contentResolver.openInputStream(uri).use { source ->
+            timings.measure("read_copy_input") { contentResolver.openInputStream(uri).use { source ->
                 requireNotNull(source) { "Cannot read selected file. Choose it again." }
                 input.outputStream().use { PatchPolicy.copyBounded(source, it); it.fd.sync() }
-            }
-            val stock = ApkPreparer().prepare(input, File(work, "prepare"))
+            } }
+            val stock = ApkPreparer().prepare(input, File(work, "prepare"), timings)
             store.change(state.id) { it.copy(status = PatchJobStatus.READY, message = "Validated: stock YouTube ${PatchPolicy.VERSION}",
                 stock = stock.relativeTo(work).invariantSeparatorsPath) }
         } finally { runCatching { contentResolver.releasePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } }
     }
 
     private suspend fun patch(state: PatchJobState) {
+        val timings = PatchTimings()
         val input = store.stock(state) ?: error("The stock APK is missing. Choose it again.")
-        val loaded = BundleStore(this).current()
+        val loaded = timings.measureSuspend("bundle_load") { BundleStore(this).current() }
         require(loaded.hash == state.bundleHash) { "The bundle changed. Review the patches before retrying." }
         val selected = loaded.patches.filter { it.name in state.selected }.toSet()
         require(selected.size == state.selected.size) { "Some selected patches are no longer available." }
-        val signed = PatchRuntime().patch(input, selected, store.work(state.id), SigningKey(File(filesDir, "signing/youtube.p12"))) { message ->
+        val signed = PatchRuntime().patch(input, selected, store.work(state.id), SigningKey(File(filesDir, "signing/youtube.p12")), timings) { message ->
             store.change(state.id) { it.copy(message = message) }
             handler.post { if (runningId == state.id && store.state.value.active) notifyState(store.state.value) }
         }
@@ -97,9 +99,10 @@ class PatchJobService : Service() {
         val result = File(directory, "youtube-${UUID.randomUUID()}.apk")
         val pending = File(directory, ".${result.name}.partial")
         try {
-            signed.inputStream().use { inputStream -> pending.outputStream().use {
-                PatchPolicy.copyBounded(inputStream, it); it.fd.sync()
-            } }
+            timings.measure("publish_result") {
+                java.io.RandomAccessFile(signed, "rw").use { it.fd.sync() }
+                require(signed.renameTo(pending)) { "Cannot stage verified result." }
+            }
             currentCoroutineContext().ensureActive()
             require(pending.renameTo(result)) { "Cannot save verified result." }
             signed.delete()

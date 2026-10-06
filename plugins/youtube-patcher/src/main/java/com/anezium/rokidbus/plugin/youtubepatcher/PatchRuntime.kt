@@ -11,29 +11,38 @@ import kotlinx.coroutines.ensureActive
 import java.io.File
 
 class PatchRuntime {
-    suspend fun patch(input: File, patches: Set<Patch<*>>, work: File, key: SigningKey, progress: (String) -> Unit): File {
+    suspend fun patch(input: File, patches: Set<Patch<*>>, work: File, key: SigningKey,
+                      timings: PatchTimings = PatchTimings(), progress: (String) -> Unit): File {
         require(patches.isNotEmpty()) { "Select at least one patch." }
         val unsigned = File(work, "unsigned.apk")
         val output = File(work, "signed.apk")
         try {
             currentCoroutineContext().ensureActive()
             progress("Reading APK")
-            Patcher(PatcherConfig(input, File(work, "patch-work"))).use { patcher ->
+            timings.measure("patch_read") { Patcher(PatcherConfig(input, File(work, "patch-work"))) }.use { patcher ->
                 patcher += patches
-                patcher().collect { result ->
+                var index = 0
+                var patchStarted = timings.start()
+                timings.measureSuspend("patch_apply_total") { patcher().collect { result ->
                     currentCoroutineContext().ensureActive()
+                    timings.end("patch_apply", patchStarted, if (result.exception == null) "ok" else "failed", "patch_index=${++index}")
+                    patchStarted = timings.start()
                     result.exception?.let { throw IllegalStateException("${result.patch.name}: ${it.message}", it) }
                     progress("Applying patches: ${result.patch.name}")
-                }
+                } }
                 currentCoroutineContext().ensureActive()
                 progress("Writing APK")
-                input.copyTo(unsigned, overwrite = true)
-                patcher.get().applyTo(unsigned)
+                val patched = timings.measureSuspend("patch_compile") { patcher.get() }
+                timings.measure("write") {
+                    input.inputStream().use { source -> unsigned.outputStream().use { PatchPolicy.copyBounded(source, it) } }
+                    timings.withAlignmentTiming { patched.applyTo(unsigned) }
+                }
             }
             currentCoroutineContext().ensureActive()
             progress("Signing APK")
-            key.sign(unsigned, output)
+            timings.measure("sign") { key.sign(unsigned, output) }
             currentCoroutineContext().ensureActive()
+            timings.measure("verify") {
             val verified = ApkVerifier.Builder(output).setMinCheckedPlatformVersion(30).build().verify()
             require(verified.isVerified && verified.signerCertificates.size == 1 &&
                 PatchPolicy.sha256(verified.signerCertificates.single().encoded) == key.fingerprint()) { "Output signature verification failed." }
@@ -43,6 +52,7 @@ class PatchRuntime {
                     "Output is not the expected patched YouTube. Select GmsCore support."
                 }
                 require(module.listDexFiles().isNotEmpty()) { "Output has no dex files." }
+            }
             }
             return output
         } catch (e: Throwable) { output.delete(); throw e }

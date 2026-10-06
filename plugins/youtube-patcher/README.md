@@ -149,6 +149,29 @@ needs the GitHub Packages credentials above.
   Existing Manager-patched YouTube has another signer: uninstall it manually on
   the glasses or continue using its original patcher/key. No silent uninstall.
 
+## Timing and repeated runs
+
+Filter Android logs by tag `Patcher`. Each completed boundary emits
+`step=<step> duration_ms=<integer> outcome=ok|failed|skipped`, with
+`patch_index=<integer>` on patch-result intervals. No paths, exception text,
+accounts or keys are included. Steps are `read_copy_input`, `split_extract`,
+`signature_check`, `split_merge`, `bundle_load`, `patch_read`, `patch_apply`,
+`patch_apply_total`, `patch_compile`, `write`, `align`, `sign`, `verify`,
+`publish_result` and `hand_off`. A standalone input records split merge as skipped.
+`patch_apply` measures between upstream result callbacks (including dependencies),
+not a profiler inside each patch. `align` is nested inside `write` at the real
+Patcher 1.7.0 alignment boundary; do not add nested durations to their parent.
+`hand_off` ends at the activity result; hub validation and CXR install follow it.
+
+Verified output moves atomically within private storage instead of copying another
+170–214 MB APK. The activity no longer rehashes or reparses output for informational
+extras; the runtime verification and independent hub byte validation stay intact.
+The required writer copy uses the existing bounded 64 KiB buffer. Prepared stock
+input survives retries, avoiding another document copy, signature check and split
+merge until a different file is chosen. D8 is already a Gradle input-cached build
+step, so no runtime D8 cache or mutable patch-instance cache is added. The job's
+dedicated thread uses Android's default CPU priority even with the screen off.
+
 ## Trust model
 
 - The phone hub installs this plugin's output automatically only while the plugin
