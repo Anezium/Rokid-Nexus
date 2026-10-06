@@ -79,7 +79,10 @@ class ApkPreparer(private val abis: List<String> = GLASSES_ABIS) {
             require(abis.isEmpty() || GLASSES_ABIS.any { it in abis }) { "This YouTube APK has no arm64-v8a native code for the glasses." }
         }
         fun inspect(file: File): PatchPolicy.Stock {
-            val verified = ApkVerifier.Builder(file).setMinCheckedPlatformVersion(30).build().verify()
+            // Google rotated YouTube's key for API 33+ (v3.1); the glasses run API 32, where
+            // the original certificate is the one Android checks.
+            val verified = ApkVerifier.Builder(file).setMinCheckedPlatformVersion(30)
+                .setMaxCheckedPlatformVersion(32).build().verify()
             require(verified.isVerified) { "APK signature verification failed." }
             val signers = verified.signerCertificates.map { PatchPolicy.sha256(it.encoded) }.toSet()
             return ApkModule.loadApkFile(file).use { module ->
