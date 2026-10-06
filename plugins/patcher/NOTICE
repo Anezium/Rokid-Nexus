@@ -1,0 +1,107 @@
+Patcher uses Morphe Patcher 1.7.0 under GPLv3.
+https://github.com/MorpheApp/morphe-patcher
+Original patcher source includes code from:
+https://github.com/LisoUseInAIKyrios/revanced-patcher
+https://github.com/revanced/revanced-library
+ApkMerger includes Apache-2.0 code by github.com/REAndroid (Copyright 2022).
+No Morphe Manager source is copied into this plugin.
+
+Android patch bundle preparation adds DEX to the original Rokid fork release;
+it is a modified executable packaging, not a new or official upstream release.
+The original source SHA-256 and prepared hash are retained in bundled.json.
+
+Morphe NOTICE
+
+https://github.com/MorpheApp/morphe-patches
+
+=============
+
+GPLv3 Section 7b: Preservation of User Notices
+
+All derivative works (source code and binaries) must include this
+NOTICE text and provide it to the software user.
+
+Portions of this software are provided "AS IS" by the Morphe software project.
+Any express or implied warranties, including the implied warranties of
+merchantability and fitness for a particular purpose, are disclaimed.
+
+
+GPLv3 Section 7c: Prohibiting Misrepresentation of Origin
+
+You are prohibited from misrepresenting the origin of the Program,
+and modified versions of the Program must be identified and marked in
+reasonable ways as different from the original version so as not to cause
+confusion regarding their origin.
+
+
+GPLv3 Section 7e: Declining Grant of Trademark Rights
+
+This License does not grant any rights or permission under trademark law
+to use the name "Morphe" or any of the Program's trade names, trademarks,
+service marks, or logos.
+
+
+Third-party runtime dependencies
+================================
+
+Resolved from `./gradlew :plugin-patcher:dependencies --configuration
+debugRuntimeClasspath` on 2026-10-03. Licences are taken from each artifact's
+published POM, or its bundled LICENSE where noted. Their LICENSE/NOTICE files
+are concatenated into the APK rather than dropped.
+
+Rokid Nexus bus-client, shared, ink-engine (this repository)
+    Apache-2.0  https://github.com/Anezium/Rokid-Nexus
+
+app.morphe:morphe-patcher 1.7.0
+    GPL-3.0  https://github.com/MorpheApp/morphe-patcher
+com.github.MorpheApp.smali:smali, smali-util, smali-dexlib2 d856bad65f
+    BSD-3-Clause (POM), plus GPL-3.0 for MorpheApp changes (bundled LICENSE)
+    https://github.com/MorpheApp/smali
+com.github.REAndroid:arsclib a28c6fb2a7
+    Apache-2.0 (no licence in the JitPack POM/JAR; upstream LICENSE at that
+    commit)  https://github.com/REAndroid/ARSCLib
+com.android.tools.build:apksig 9.1.1, apkzlib 9.1.1
+    Apache-2.0  http://tools.android.com/
+org.bouncycastle:bcprov-jdk18on, bcpkix-jdk18on, bcutil-jdk18on 1.79
+    Bouncy Castle Licence (MIT-style)  https://www.bouncycastle.org/licence.html
+com.google.guava:guava 33.5.0-jre, failureaccess 1.0.3,
+listenablefuture 9999.0-empty-to-avoid-conflict-with-guava
+    Apache-2.0  https://github.com/google/guava
+com.google.code.findbugs:jsr305 3.0.2
+    Apache-2.0  http://findbugs.sourceforge.net/
+com.google.errorprone:error_prone_annotations 2.41.0
+    Apache-2.0  https://github.com/google/error-prone
+com.google.j2objc:j2objc-annotations 3.1
+    Apache-2.0  https://github.com/google/j2objc/
+org.jspecify:jspecify 1.0.0
+    Apache-2.0  http://jspecify.org/
+com.beust:jcommander 1.48
+    Apache-2.0  http://beust.com/jcommander
+org.antlr:antlr 3.5.2, antlr-runtime 3.5.2, ST4 4.0.8, stringtemplate 3.2.1
+    BSD licence  http://antlr.org/license.html
+antlr:antlr 2.7.7
+    BSD License  http://www.antlr.org/license.html
+org.jetbrains.kotlin:kotlin-stdlib, kotlin-stdlib-common, kotlin-reflect 2.2.21
+    Apache-2.0  https://kotlinlang.org/
+org.jetbrains:annotations 23.0.0
+    Apache-2.0  https://github.com/JetBrains/java-annotations
+org.jetbrains.kotlinx:kotlinx-coroutines-android, -core, -core-jvm 1.10.2
+    Apache-2.0  https://github.com/Kotlin/kotlinx.coroutines
+org.jetbrains.kotlinx:kotlinx-serialization-json, -json-jvm, -core, -core-jvm 1.7.1
+    Apache-2.0  https://github.com/Kotlin/kotlinx.serialization
+androidx.core:core 1.17.0, core-viewtree 1.0.0
+androidx.annotation:annotation 1.8.1, annotation-jvm 1.8.1,
+annotation-experimental 1.4.1
+androidx.collection:collection 1.4.2, collection-jvm 1.4.2
+androidx.concurrent:concurrent-futures 1.1.0
+androidx.interpolator:interpolator 1.0.0
+androidx.lifecycle:lifecycle-common 2.6.2, lifecycle-runtime 2.6.2
+androidx.arch.core:core-common 2.2.0, core-runtime 2.2.0
+androidx.profileinstaller:profileinstaller 1.3.0
+androidx.startup:startup-runtime 1.1.1
+androidx.tracing:tracing 1.2.0
+androidx.versionedparcelable:versionedparcelable 1.1.1
+    Apache-2.0  https://developer.android.com/jetpack/androidx
+
+The kotlinx coroutines/serialization BOMs on the classpath are version
+constraints only and ship no code.

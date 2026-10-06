@@ -45,7 +45,7 @@ python3 kadb-compat/verify_upstream.py
   :glasses-hub:testDebugUnitTest :glasses-hub:assembleDebug
 ./gradlew :shared:testDebugUnitTest \
   :plugin-wireless-adb:testDebugUnitTest :plugin-wireless-adb:assembleDebug \
-  :plugin-youtube-patcher:testDebugUnitTest :plugin-youtube-patcher:assembleDebug
+  :plugin-patcher:testDebugUnitTest :plugin-patcher:assembleDebug
 ```
 
 The hubs require the existing sibling `../CxrGlobal`; do not use

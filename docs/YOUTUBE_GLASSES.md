@@ -23,7 +23,7 @@ primary button to **Update MicroG**, which installs that prepared APK.
 ### 2. YouTube APK
 
 Tap **Download YouTube 21.04.223** and download the stock build from APKMirror.
-An APK or APKMirror bundle is fine for **YouTube Patcher**; select that file in
+An APK or APKMirror bundle is fine for **Patcher**; select that file in
 the plugin in the next step. It must include `arm64-v8a`, the glasses' ABI:
 32-bit-only builds are refused. Nexus does not inspect browser downloads and does
 not mark this step done simply because a download link was opened. The card is
@@ -33,7 +33,7 @@ plugin; the hub only receives and validates its final APK.
 
 ### 3. Patch and install
 
-If the plugin is missing, **Get YouTube Patcher** opens its specific Nexus Store
+If the plugin is missing, **Get Patcher** opens its specific Nexus Store
 entry. Install it, return here, and approve the plugin in Nexus Plugin access
 when prompted. Automatic installation requires an enabled approval bound to the
 plugin's current signing certificate. The hub validates that identity and the
@@ -47,7 +47,7 @@ signature; its SHA-256 is shown for inspection only.
 This adds no bus access or glasses installer capability. Manual patched APK
 import remains a separate, explicit user action.
 
-In YouTube Patcher, choose your download and review the patches. Patching adds
+In Patcher, choose your download and review the patches. Patching adds
 the glasses controls to YouTube. You can switch apps or turn the screen off while it patches. Return from the progress or ready-to-install notification to continue.
 Nexus receives a read-granted `content://` URI, copies and validates the APK,
 then installs it on the glasses without another tap. The card is done only when
@@ -111,9 +111,9 @@ Manager or need a manual workflow:
 
 Patch updates with the same signing key. Export/back up the plugin's key before
 uninstalling it: losing that key prevents updates over its previous output.
-If YouTube Patcher produced the installed app, import the key backup you
+If Patcher produced the installed app, import the key backup you
 exported from it. YouTube patched with Morphe Manager uses Manager's key, which
-YouTube Patcher cannot import: keep updating it with Manager, or remove YouTube
+Patcher cannot import: keep updating it with Manager, or remove YouTube
 from the glasses yourself only if you accept losing its data. Nexus never
 uninstalls an app or clears data to bypass a signer conflict. Downgrades and
 signer changes are rejected; same-version reinstalls are allowed.

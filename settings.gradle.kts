@@ -57,8 +57,8 @@ include(":plugin-sample")
 include(":plugin-wireless-adb")
 include(":ink-engine")
 include(":kadb-compat")
-include(":plugin-youtube-patcher")
-project(":plugin-youtube-patcher").projectDir = file("plugins/youtube-patcher")
+include(":plugin-patcher")
+project(":plugin-patcher").projectDir = file("plugins/patcher")
 
 // Plugin modules live under plugins/ (one folder per plugin, each with its own
 // README and CHANGELOG); feeds moves there once the in-flight feeds branch lands.

@@ -110,7 +110,7 @@ class YoutubeSetupControllerTest {
         reply(installed = true, signer = "b".repeat(64))
         assertEquals(0, uploads)
         assertEquals("This APK has a different signing key. Use an update signed with the original key; " +
-            "Nexus will not remove the installed app. If YouTube Patcher produced the installed app, import the " +
+            "Nexus will not remove the installed app. If Patcher produced the installed app, import the " +
             "key backup you exported from it; otherwise remove YouTube from the glasses by hand only if you " +
             "accept losing its data.", YoutubeSetupStateStore.state.message)
     }

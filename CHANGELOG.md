@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Use the target-aware Patcher plugin for YouTube setup, keeping signer-bound approval,
+  result-byte validation, same-signer CXR updates and confirmed-install records.
+- Patcher replaces the unpublished YouTube Patcher package and generates a new key;
+  existing output needs an imported backup or an explicit manual reinstall on glasses.
+
 ## 1.5.0
 
 ### Upgrade together

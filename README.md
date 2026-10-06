@@ -47,6 +47,7 @@ grants one at a time and can take back.
 | **[Lyrics](plugins/lyrics/)** | Time-synced lyrics for whatever is playing on the phone, from Spotify/Musixmatch/Netease/LrcLib |
 | **[Media Deck](plugins/media/)** | Universal now-playing surface with album art and transport controls |
 | **[Photos Sync](plugins/photosync/)** | Not a HUD plugin: copies the photos and videos you shoot on the glasses into the phone gallery by itself, and gives you the switches for it |
+| **[Patcher](plugins/patcher/)** | Phone-only APK patching; YouTube is its first target. Runs in the background and returns verified output to the hub for installation |
 | **[Wireless ADB](plugins/wireless-adb/)** | Enables Android's real wireless debugging service and creates a short-lived pairing command, so a trusted computer can connect to the glasses over the LAN without a cable or Settings automation |
 | **[Tasker](plugins/tasker/)** | Your named Tasker tasks on the HUD — swipe, tap, and the phone runs the automation. The glasses are the remote, Tasker does the work |
 | **[Sample](plugins/sample/)** | Minimal copyable reference plugin |
@@ -84,7 +85,7 @@ field is done. Password fields are marked sensitive,
 the phone window becomes secure, and Nexus never mirrors the editor's existing
 text. These are trusted hub-to-hub controls, not plugin capabilities.
 **Glasses apps → Set up YouTube** downloads official Morphe MicroG-RE, imports
-your patched YouTube APK, and installs or updates them over the Rokid link.
+your patched YouTube APK or launches Patcher, and installs or updates them over the Rokid link.
 Sign in on the glasses with the phone keyboard; account data stays in MicroG.
 The glasses launcher lists native apps alongside phone plugins. See
 [YouTube setup](docs/YOUTUBE_GLASSES.md) for APK requirements and validation.
@@ -248,5 +249,5 @@ SDK publication and the published-coordinate sample build do not require it.
 [verification matrix](TESTPLAN.md)
 
 This project is licensed under the [Apache License 2.0](LICENSE), except
-[plugins/youtube-patcher](plugins/youtube-patcher/), which is GPL-3.0-only (see its
+[plugins/patcher](plugins/patcher/), which is GPL-3.0-only (see its
 `LICENSE`).

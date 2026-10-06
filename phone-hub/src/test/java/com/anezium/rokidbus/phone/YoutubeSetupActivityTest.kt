@@ -157,10 +157,10 @@ class YoutubeSetupActivityTest {
         val reinstall = text("Reinstall / update").single()
         assertTrue(reinstall.isEnabled)
         assertTrue(views().filterIsInstance<TextView>().none {
-            it.text.contains("Approve YouTube Patcher first") || it.text.toString() == "PATCH AND INSTALL"
+            it.text.contains("Approve Patcher first") || it.text.toString() == "PATCH AND INSTALL"
         })
         reinstall.performClick()
-        assertEquals(YoutubePatcherHandoff.reviewIntent(screen.get()).component,
+        assertEquals(PatcherHandoff.reviewIntent(screen.get()).component,
             shadowOf(screen.get()).nextStartedActivity.component)
     }
 

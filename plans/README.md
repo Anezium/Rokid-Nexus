@@ -38,7 +38,7 @@ refreshed on 2026-09-22. The individual plan headers remain the detail of record
 | [020](020-ink-surface.md) | Ink Surface: native port of the AIUI page format as a Nexus surface tier | IN PROGRESS — public implementation shipped in 1.4.1; M1–M4 complete, M5 hardware conformance and measurement remain |
 | [023](023-activity-v2.md) | Activity v2: autosized panel, badge, measure, track, urgent tone, island motion | SHIPPED 1.5.0 (SDK 0.21.0, Navigation 0.1.0) |
 | [024](024-nexus-skills.md) | Nexus Skills: shared invocation contract, Media Deck, Transit, native transit guidance, and multi-step Assistant conversations | TODO — specification proposal; no implementation |
-| [025](025-youtube-patcher-plugin.md) | YouTube Patcher plugin: patch YouTube on the phone and a four-step YouTube setup in the hub | TODO — plan only, on `dev/youtube-glasses-setup` |
+| [025](025-youtube-patcher-plugin.md) | Patcher: target-aware background patching and four-step YouTube setup | Implemented on `dev/youtube-patcher-fixes`; device acceptance pending |
 
 Status values are `TODO`, `IN PROGRESS`, `BLOCKED`, and `DONE`. Update both this
 table and the individual plan when execution status changes. Current priorities

@@ -54,7 +54,7 @@ class YoutubeSetupActivity : Activity() {
     override fun onStart() {
         super.onStart()
         BusHubService.start(applicationContext)
-        patcherApproved = YoutubePatcherHandoff.authenticatedIdentity(this) != null
+        patcherApproved = PatcherHandoff.authenticatedIdentity(this) != null
         rendered = null
         unsubscribe = YoutubeSetupStateStore.observe(::render)
         // Android delivers activity results after onStart; a refresh here would make the
@@ -129,30 +129,30 @@ class YoutubeSetupActivity : Activity() {
         val youtubeDone = installStatus == "Done"
         card("3. Patch and install", if (youtubeDone) "Done — YouTube ${confirmedYoutube?.versionName} is installed."
             else installStatus +
-                " — Approve YouTube Patcher first, then choose your file and review the patches. Nexus checks the result and installs it automatically. APK checks alone cannot authenticate the patcher on a first glasses install.") { box ->
+                " — Approve Patcher first, then choose your file and review the patches. Nexus checks the result and installs it automatically. APK checks alone cannot authenticate the patcher on a first glasses install.") { box ->
             button(box, if (youtubeDone) "Reinstall / update"
-                else if (patcherApproved) "Patch and install" else "Get or approve YouTube Patcher",
+                else if (patcherApproved) "Patch and install" else "Get or approve Patcher",
                 enabled, secondary = youtubeDone) {
-                val identity = YoutubePatcherHandoff.authenticatedIdentity(this)
+                val identity = PatcherHandoff.authenticatedIdentity(this)
                 patcherApproved = identity != null
                 if (identity == null) {
-                    startActivity(YoutubePatcherHandoff.reviewIntent(this))
+                    startActivity(PatcherHandoff.reviewIntent(this))
                 } else {
                     patcherIdentity = identity
                     patchPending = true
                     rerender()
-                    runCatching { startActivityForResult(YoutubePatcherHandoff.patchIntent(), PATCH_APK) }
+                    runCatching { startActivityForResult(PatcherHandoff.patchIntent(), PATCH_APK) }
                         .onFailure {
                             patchPending = false
                             patcherIdentity = null
                             rerender()
-                            toast("YouTube Patcher could not open. Update it from the Store.")
+                            toast("Patcher could not open. Update it from the Store.")
                         }
                 }
             }
             more(box, "patch") { extras ->
-                button(extras, "YouTube Patcher in Store", enabled) {
-                    startActivity(YoutubePatcherHandoff.storeIntent(this))
+                button(extras, "Patcher in Store", enabled) {
+                    startActivity(PatcherHandoff.storeIntent(this))
                 }
                 state.preparedLabel?.let {
                     extras.addView(NexusUi.cardBody(this, it), NexusUi.block())
@@ -284,11 +284,11 @@ class YoutubeSetupActivity : Activity() {
             patchPending = false
             val launchedIdentity = patcherIdentity
             patcherIdentity = null
-            if (resultCode == RESULT_OK && !YoutubePatcherHandoff.acceptsResult(
-                    launchedIdentity, YoutubePatcherHandoff.authenticatedIdentity(this))) {
-                toast("YouTube Patcher changed or is no longer approved. Review it and patch again.")
+            if (resultCode == RESULT_OK && !PatcherHandoff.acceptsResult(
+                    launchedIdentity, PatcherHandoff.authenticatedIdentity(this))) {
+                toast("Patcher changed or is no longer approved. Review it and patch again.")
             } else if (resultCode == RESULT_OK) {
-                val uri = YoutubePatcherHandoff.resultUri(data)
+                val uri = PatcherHandoff.resultUri(data)
                 if (uri == null) toast("The patcher did not return a readable APK. Try again.")
                 else submitResult(YoutubeSetupController.PATCH_AND_INSTALL, uri, "patch it again")
             }
