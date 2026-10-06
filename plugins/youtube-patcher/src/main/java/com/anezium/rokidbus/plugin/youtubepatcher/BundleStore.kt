@@ -29,7 +29,7 @@ class BundleStore internal constructor(
         context.packageManager.getPackageInfo(context.packageName, 0).let { "${it.longVersionCode}:${it.lastUpdateTime}" })
     data class Loaded(val file: File, val version: String, val hash: String, val sourceHash: String?, val patches: List<Patch<*>>,
                       val notice: String? = null)
-    data class Update(val message: String, val switched: Boolean)
+    data class Update(val message: String?, val switched: Boolean)
     private val pointer = File(directory.apply { mkdirs() }, "active.json")
     suspend fun current(): Loaded {
         val job = coroutineContext
@@ -91,7 +91,7 @@ class BundleStore internal constructor(
         val job = coroutineContext
         val checkCancelled = { job.ensureActive() }
         val metadata = PatchPolicy.metadata(fetchText(YoutubePatcherContract.BUNDLE_METADATA_URL))
-        if (metadata.version == activeVersion) return Update("Using supported bundle ${metadata.version}. Android updates require publisher-prepared DEX and Patcher 1.7.0.", false)
+        if (metadata.version == activeVersion) return Update(null, false)
         val active = Json.parseToJsonElement(pointer.readText()).jsonObject
         rejection(active, metadata, pluginBuild)?.let { reason ->
             return Update("Bundle ${metadata.version} was rejected: $reason Using saved bundle $activeVersion.", false)

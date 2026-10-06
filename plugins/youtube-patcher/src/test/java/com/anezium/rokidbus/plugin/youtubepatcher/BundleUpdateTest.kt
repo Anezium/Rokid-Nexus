@@ -88,7 +88,7 @@ class BundleUpdateTest {
         repeat(3) {
             val update = check()
             assertFalse(update.switched)
-            assertTrue(update.message, update.message.contains("1.40.0-rokid.1 was rejected") && update.message.contains("JVM"))
+            assertTrue(update.message, update.message!!.contains("1.40.0-rokid.1 was rejected") && update.message.contains("JVM"))
         }
         assertEquals(1, downloads)
         assertActiveKept(active)
@@ -128,7 +128,7 @@ class BundleUpdateTest {
         candidatePatches = { emptyList() }
         assertThrows(IllegalArgumentException::class.java) { check() }
         assertEquals(4, downloads)
-        assertTrue(check().message.contains("no compatible patches"))
+        assertTrue(check().message!!.contains("no compatible patches"))
         assertEquals(4, downloads)
         assertActiveKept(active)
     }
@@ -234,7 +234,7 @@ class BundleUpdateTest {
                 metadata = metadata(activeVersion)
                 val update = check()
                 assertFalse(update.switched)
-                assertTrue(update.message.startsWith("Using supported bundle"))
+                assertNull(update.message)
                 assertEquals(0, downloads)
                 assertEquals(emptySet<String>(), directory.list()!!.toSet())
             }

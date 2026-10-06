@@ -455,7 +455,7 @@ class PatchActivity : Activity() {
         NexusUi.setDotColor(view.dot, dot)
     }
     private fun report(message: String, tone: Tone = Tone.INFO, target: Slot = slot) {
-        notes[target] = Note(message, tone)
+        if (message.isBlank()) notes.remove(target) else notes[target] = Note(message, tone)
         applyNote(target)
     }
 
