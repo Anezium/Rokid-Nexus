@@ -85,7 +85,7 @@ internal object YoutubeApkPolicy {
             ?: return "The glasses did not report this package. Refresh and retry."
         if (!installed.installed) return null
         if (installed.signer.isEmpty() || installed.signer != signer(archive)) {
-            return "This APK has a different signing key. Use an update signed with the original key; Nexus will not remove the installed app."
+            return "This APK has a different signing key. Use an update signed with the original key; Nexus will not remove the installed app. If YouTube Patcher produced the installed app, import the key backup you exported from it; otherwise remove YouTube from the glasses by hand only if you accept losing its data."
         }
         if (archive.versionCode < installed.versionCode) return "A newer version is already installed on the glasses."
         return null

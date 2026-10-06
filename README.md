@@ -247,4 +247,6 @@ SDK publication and the published-coordinate sample build do not require it.
 [wire specification](BUSSPEC.md) · [protocol guide](docs/PROTOCOL.md) ·
 [verification matrix](TESTPLAN.md)
 
-This project is licensed under the [Apache License 2.0](LICENSE).
+This project is licensed under the [Apache License 2.0](LICENSE), except
+[plugins/youtube-patcher](plugins/youtube-patcher/), which is GPL-3.0-only (see its
+`LICENSE`).

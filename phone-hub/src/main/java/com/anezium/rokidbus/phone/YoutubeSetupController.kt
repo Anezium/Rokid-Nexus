@@ -46,7 +46,13 @@ internal class YoutubeSetupController(
         when (intent.action) {
             REFRESH -> refresh()
             PREPARE_MICROG -> prepare(null)
-            IMPORT_YOUTUBE -> intent.data?.let(::prepare)
+            INSTALL_MICROG -> prepare(null, autoInstall = true)
+            IMPORT_YOUTUBE -> intent.data?.takeIf { it.scheme == "content" }?.let { prepare(it) }
+            PATCH_AND_INSTALL -> {
+                val uri = intent.data?.takeIf { it.scheme == "content" }
+                if (uri == null) fail("The patcher did not return a readable APK. Try patching again.")
+                else prepare(uri, autoInstall = true)
+            }
             INSTALL -> install()
             OPEN_MICROG -> open(YoutubeSetupContract.MICROG)
             OPEN_YOUTUBE -> {
@@ -142,7 +148,7 @@ internal class YoutubeSetupController(
         }, 12_000)
     }
 
-    private fun prepare(uri: android.net.Uri?) {
+    private fun prepare(uri: android.net.Uri?, autoInstall: Boolean = false) {
         prepared?.file?.takeUnless(uploadingFiles::contains)?.delete()
         prepared = null
         val operation = ++generation
@@ -158,8 +164,10 @@ internal class YoutubeSetupController(
                 result.fold(onSuccess = { apk ->
                     prepared = apk
                     publish(state.copy(busy = false, preparedLabel = apk.label, canInstall = true,
+                        youtubeApkReady = state.youtubeApkReady || apk.archive.packageName != YoutubeSetupContract.MICROG,
                         message = listOfNotNull("${apk.label} is ready. Install it on the glasses below.",
                             YoutubeApkPolicy.versionNotice(apk.archive)).joinToString(" ")))
+                    if (autoInstall) install()
                 }, onFailure = {
                     fail(if (it is IllegalArgumentException || it is IllegalStateException) it.message.orEmpty()
                         else "Could not prepare the APK. Check your connection or choose the file again.")
@@ -262,6 +270,8 @@ internal class YoutubeSetupController(
         const val REFRESH = "com.anezium.rokidbus.phone.youtube.REFRESH"
         const val PREPARE_MICROG = "com.anezium.rokidbus.phone.youtube.PREPARE_MICROG"
         const val IMPORT_YOUTUBE = "com.anezium.rokidbus.phone.youtube.IMPORT_YOUTUBE"
+        const val INSTALL_MICROG = "com.anezium.rokidbus.phone.youtube.INSTALL_MICROG"
+        const val PATCH_AND_INSTALL = "com.anezium.rokidbus.phone.youtube.PATCH_AND_INSTALL"
         const val INSTALL = "com.anezium.rokidbus.phone.youtube.INSTALL"
         const val OPEN_MICROG = "com.anezium.rokidbus.phone.youtube.OPEN_MICROG"
         const val OPEN_YOUTUBE = "com.anezium.rokidbus.phone.youtube.OPEN_YOUTUBE"

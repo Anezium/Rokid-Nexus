@@ -107,7 +107,10 @@ class YoutubeSetupControllerTest {
         controller.handle(Intent(YoutubeSetupController.INSTALL))
         reply(installed = true, signer = "b".repeat(64))
         assertEquals(0, uploads)
-        assertTrue(YoutubeSetupStateStore.state.message.contains("different signing key"))
+        assertEquals("This APK has a different signing key. Use an update signed with the original key; " +
+            "Nexus will not remove the installed app. If YouTube Patcher produced the installed app, import the " +
+            "key backup you exported from it; otherwise remove YouTube from the glasses by hand only if you " +
+            "accept losing its data.", YoutubeSetupStateStore.state.message)
     }
 
     @Test fun `duplicate install requests cannot replace the active transfer`() {
@@ -208,6 +211,87 @@ class YoutubeSetupControllerTest {
         completion!!(true)
         idle()
         assertTrue(YoutubeSetupStateStore.state.message.contains("not confirmed"))
+    }
+
+    @Test fun `patcher result automatically prepares then installs with fresh confirmation`() {
+        controller.handle(Intent(YoutubeSetupController.PATCH_AND_INSTALL)
+            .setData(Uri.parse("content://patcher/output.apk"))
+            .putExtra("packageName", YoutubeSetupContract.MICROG)
+            .putExtra("sha256", "forged"))
+        idle()
+        assertTrue(YoutubeSetupStateStore.state.canInstall)
+        assertTrue(YoutubeSetupStateStore.state.busy)
+        assertEquals(0, uploads)
+        reply()
+        assertEquals(1, uploads)
+        completion!!(true)
+        idle()
+        reply(installed = true)
+        assertTrue(YoutubeSetupStateStore.state.message.contains("is installed"))
+    }
+
+    @Test fun `MicroG primary action automatically installs after prepare`() {
+        apk = apk.copy(archive = apk.archive.copy(packageName = YoutubeSetupContract.MICROG))
+        controller.handle(Intent(YoutubeSetupController.INSTALL_MICROG))
+        idle()
+        assertEquals(0, uploads)
+        assertTrue(YoutubeSetupStateStore.state.busy)
+        reply()
+        assertEquals(1, uploads)
+        completion!!(true)
+        idle()
+        reply(installed = true)
+        assertTrue(YoutubeSetupStateStore.state.message.contains("is installed"))
+    }
+
+    @Test fun `automatic result import retains signer and file integrity guards`() {
+        controller.handle(Intent(YoutubeSetupController.PATCH_AND_INSTALL)
+            .setData(Uri.parse("content://patcher/output.apk")))
+        idle()
+        reply(installed = true, signer = "b".repeat(64))
+        assertEquals(0, uploads)
+        assertTrue(YoutubeSetupStateStore.state.message.contains("different signing key"))
+    }
+
+    @Test fun `automatic install retains Wi-Fi requirement and prepared retry`() {
+        connected = false
+        controller.handle(Intent(YoutubeSetupController.PATCH_AND_INSTALL)
+            .setData(Uri.parse("content://patcher/output.apk")))
+        idle()
+        assertEquals(0, uploads)
+        assertTrue(YoutubeSetupStateStore.state.canInstall)
+        assertTrue(YoutubeSetupStateStore.state.message.contains("Wi-Fi"))
+        assertFalse(YoutubeSetupStateStore.state.busy)
+    }
+
+    @Test fun `non-content patcher result never prepares or uploads`() {
+        controller.handle(Intent(YoutubeSetupController.PATCH_AND_INSTALL)
+            .setData(Uri.parse("file:///untrusted.apk")))
+        idle()
+        assertFalse(YoutubeSetupStateStore.state.canInstall)
+        assertEquals(0, uploads)
+        assertTrue(sent.isEmpty())
+    }
+
+    @Test fun `failed APK validation stops the automatic chain`() {
+        controller.close()
+        controller = YoutubeSetupController(RuntimeEnvironment.getApplication(),
+            connected = { true }, installReady = { true },
+            send = { sent += it; null },
+            upload = { _, _ -> uploads++; true },
+            worker = ImmediateExecutor(), source = { _, _, _ ->
+                throw IllegalArgumentException("The APK package is not allowed.")
+            })
+        controller.start()
+        controller.handle(Intent(YoutubeSetupController.PATCH_AND_INSTALL)
+            .setData(Uri.parse("content://patcher/output.apk")))
+        idle()
+        assertFalse(YoutubeSetupStateStore.state.busy)
+        assertFalse(YoutubeSetupStateStore.state.canInstall)
+        assertFalse(YoutubeSetupStateStore.state.youtubeApkReady)
+        assertEquals(0, uploads)
+        assertTrue(sent.isEmpty())
+        assertTrue(YoutubeSetupStateStore.state.message.contains("not allowed"))
     }
 
     private class ImmediateExecutor : AbstractExecutorService() {

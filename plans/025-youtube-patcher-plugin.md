@@ -1,8 +1,10 @@
 # Plan 025 — YouTube Patcher plugin and a one-screen YouTube onboarding
 
-Status: TODO — plan written 2026-09-28, nothing implemented yet.
-Branch: continue on `dev/youtube-glasses-setup` (or a child branch of it). It is not
-merged into `main`; its base is behind `main`, so rebase or merge `main` first.
+Status: Implemented in working tree 2026-10-03 on dev/youtube-patcher-plugin; device
+acceptance pending. Plan written 2026-09-28. Not released; see "What was delivered /
+what remains" at the end.
+Branch: originally `dev/youtube-glasses-setup`; the implementation continues on
+`dev/youtube-patcher-plugin`, which has `main` merged in.
 
 ## Product outcome
 
@@ -254,3 +256,63 @@ Verify these in the code before building on them, and record the answer in this 
 2. **Approval for the hand-off.** No capability is used, so the activity result works
    without Nexus approval. Prefer not requiring it; if the hub's plugin model makes
    an unapproved plugin confusing, send the user to approval from step 3.
+
+Answers recorded by the implementer (2026-10-03, verified in code):
+
+1. **Empty capability set: accepted, and hidden from the glasses launcher.** The
+   plugin declares `CAPABILITIES=""` and `LAUNCHABLE=false`. `splitMetadataList`
+   drops empty items, so `PluginCapability.parseList("")` returns
+   `CapabilityParseResult.Valid` with an empty set and `PluginDescriptor.parse`
+   accepts it (its receive prefix `/plugin/youtube_patcher` is still required and
+   present). In `phone-hub` `PluginCatalog`, an approved non-launchable plugin is
+   `ENABLED` rather than `MISSING_CAPABILITY`, its entry has `launchable = false`, and
+   `launchableEntries` (what the glasses launcher receives) filters it out. No
+   glasses surface was added.
+2. **Approval: required.** The plan preferred not requiring it; the implementation
+   does. `YoutubePatcherHandoff` starts the patch activity, and accepts its result for
+   automatic install, only for a discovered, valid `youtube_patcher` principal whose
+   grant is `Approved` for its current signing certificate. The result is bound to the
+   install observed at launch and rechecked when it returns; a replaced or updated
+   package invalidates the hand-off. Reason: on a first install the hub has no
+   glasses-side signer to compare the returned APK with, so `YoutubeApkPolicy` alone
+   cannot tell a patcher's output from any app that exports an activity under that
+   package name. Package and activity presence is only UI routing; the user's
+   signer-bound approval in Plugin access is the only thing tying "the patcher I chose
+   to install" to the APK that Nexus installs on the glasses without another tap.
+   This is the user's decision about an installed APK, not independent verification
+   of its publisher. An unapproved plugin is sent to Plugin access from step 3, and
+   manual patched-APK import stays a separate explicit action.
+
+## What was delivered / what remains (device acceptance)
+
+Delivered in the working tree (2026-10-03, not committed or released):
+
+- `:plugin-youtube-patcher` (`plugins/youtube-patcher`, GPL-3.0-only): Morphe Patcher
+  1.7.0, proven against `patches-1.39.1-rokid.2.mpp` in a JVM test; build-time D8
+  preparation of that pinned bundle (`scripts/prepare_bundle.py`, reproducible output);
+  APK and APKM/APKS/XAPK input with split validation and merge; compatible patch list
+  with editable, persisted defaults; dedicated `:patcher` large-heap process; persistent
+  signing key with password-protected backup; `content://` activity result. No
+  `morphe-library` was added: the needed signing/split APIs live in this patcher.
+- Phone hub four-step setup screen, plugin detection, Store/approval routing,
+  signer-bound hand-off (`YoutubePatcherHandoff`) and automatic validated install;
+  `shared` `YoutubePatcherContract`; docs in `docs/YOUTUBE_GLASSES.md` and the
+  plugin README.
+- CI: `tests.yml` runs the plugin's unit tests and the bundle script's host tests;
+  `plugin-release.yml` knows the `youtubepatcher-v<semver>` tag. GitHub Packages
+  credentials are passed only to the YouTube Patcher Gradle steps.
+
+Remains:
+
+- Every check under "Device acceptance checks" in `docs/YOUTUBE_GLASSES.md`: patch the
+  real 21.04.223 APK and a bundle on the owner's phone, record time and peak memory,
+  install on the glasses through the hub, sign in, and check the Rokid rail. No phone
+  or glasses run has happened; host tests do not prove Android ART execution of the
+  patcher.
+- Merging feature modules and language splits is unverified against the real merger;
+  only density and ABI configuration splits were exercised. The merge targets the
+  fixed glasses ABI `arm64-v8a` and keeps every density split.
+- GitHub Packages access: the release workflow requires the `MORPHE_PACKAGES_TOKEN`
+  repository secret (a `read:packages` PAT); the Tests workflow falls back to its
+  read-only token and needs the secret too if it fails with 401 (see the plugin README).
+- Release and registry entry, only on the owner's explicit go.

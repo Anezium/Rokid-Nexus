@@ -9,6 +9,7 @@ internal data class YoutubeSetupState(
     val inventory: YoutubeInventory? = null,
     val preparedLabel: String? = null,
     val canInstall: Boolean = false,
+    val youtubeApkReady: Boolean = false,
 )
 
 /** Main-thread state shared by the service and its private setup screen, never persisted. */
