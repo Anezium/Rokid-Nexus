@@ -27,7 +27,13 @@ class YoutubeInstallStatusTest {
             assertEquals("Needs attention — signing key not confirmed by Nexus",
                 youtubeInstallStatus(inventory(signingKey = key), confirmed))
         }
-        assertEquals("Needs attention — signing key not confirmed by Nexus", youtubeInstallStatus(inventory(), null))
+    }
+
+    @Test fun missingInstallRecordAsksForConfirmationWithoutBlamingTheSigner() {
+        for (key in listOf("", signer, "b".repeat(64))) {
+            assertEquals("Needs attention — install not recorded on this phone; reinstall through Nexus to confirm",
+                youtubeInstallStatus(inventory(signingKey = key), null))
+        }
     }
 
     @Test fun differentOrUnknownVersionNeedsAttention() {

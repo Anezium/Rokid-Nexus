@@ -56,8 +56,9 @@ and signer Nexus confirmed after installation, from stock YouTube 21.04.223.
 Other versions and unconfirmed signing keys show **Needs attention**; the
 prototype package does not complete this step. Nexus remembers confirmed APK
 identities for this checklist; old installs without that record need a confirmed
-reinstall. Package and
-signature checks cannot prove which patches were included: check the plugin's
+reinstall. When done, the card shows the installed version and a secondary
+**Reinstall / update** action. Package and signature checks cannot prove which
+patches were included: check the plugin's
 patching report and the controls/playback on the glasses.
 
 Supported final packages are `app.morphe.android.youtube` and the existing

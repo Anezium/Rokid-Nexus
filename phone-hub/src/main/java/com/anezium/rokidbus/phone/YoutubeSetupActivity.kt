@@ -124,10 +124,15 @@ class YoutubeSetupActivity : Activity() {
                 browse(YoutubeApkPolicy.STOCK_YOUTUBE_URL)
             }
         }
-        card("3. Patch and install", youtubeInstallStatus(state.inventory,
-            installHistory.installed(YoutubeSetupContract.YOUTUBE)) +
-            " — Approve YouTube Patcher first, then choose your file and review the patches. Nexus checks the result and installs it automatically. APK checks alone cannot authenticate the patcher on a first glasses install.") { box ->
-            button(box, if (patcherApproved) "Patch and install" else "Get or approve YouTube Patcher", enabled) {
+        val confirmedYoutube = installHistory.installed(YoutubeSetupContract.YOUTUBE)
+        val installStatus = youtubeInstallStatus(state.inventory, confirmedYoutube)
+        val youtubeDone = installStatus == "Done"
+        card("3. Patch and install", if (youtubeDone) "Done — YouTube ${confirmedYoutube?.versionName} is installed."
+            else installStatus +
+                " — Approve YouTube Patcher first, then choose your file and review the patches. Nexus checks the result and installs it automatically. APK checks alone cannot authenticate the patcher on a first glasses install.") { box ->
+            button(box, if (youtubeDone) "Reinstall / update"
+                else if (patcherApproved) "Patch and install" else "Get or approve YouTube Patcher",
+                enabled, secondary = youtubeDone) {
                 val identity = YoutubePatcherHandoff.authenticatedIdentity(this)
                 patcherApproved = identity != null
                 if (identity == null) {
@@ -257,9 +262,10 @@ class YoutubeSetupActivity : Activity() {
         }, NexusUi.block())
     }
 
-    private fun button(parent: LinearLayout, label: String, enabled: Boolean, action: () -> Unit) {
+    private fun button(parent: LinearLayout, label: String, enabled: Boolean, secondary: Boolean = false, action: () -> Unit) {
         parent.addView(BusTheme.gap(this, 10))
-        parent.addView(NexusUi.outlinePillButton(this, label).apply {
+        val view = if (secondary) NexusUi.textButton(this, label) else NexusUi.outlinePillButton(this, label)
+        parent.addView(view.apply {
             isEnabled = enabled
             alpha = if (enabled) 1f else .45f
             setOnClickListener { action() }

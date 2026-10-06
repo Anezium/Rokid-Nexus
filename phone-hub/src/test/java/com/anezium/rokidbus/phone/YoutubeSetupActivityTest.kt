@@ -142,6 +142,28 @@ class YoutubeSetupActivityTest {
         assertEquals(View.GONE, (text("KEYBOARD & REMOTE").single().parent as View).visibility)
     }
 
+    @Test fun `confirmed YouTube shows its installed version and a secondary reinstall action`() {
+        val archive = apk.archive.copy(versionName = YoutubeApkPolicy.STOCK_YOUTUBE_VERSION)
+        YoutubeSetupInstallHistory(screen.get()).confirmed(archive)
+        val state = YoutubeSetupStateStore.state
+        val inventory = requireNotNull(state.inventory)
+        YoutubeSetupStateStore.update(state.copy(inventory = inventory.copy(apps = inventory.apps.map {
+            if (it.packageName == archive.packageName)
+                YoutubePackage(it.packageName, archive.versionCode, YoutubeApkPolicy.signer(archive), true)
+            else it
+        })))
+
+        assertEquals(1, text("Done — YouTube ${archive.versionName} is installed.").size)
+        val reinstall = text("Reinstall / update").single()
+        assertTrue(reinstall.isEnabled)
+        assertTrue(views().filterIsInstance<TextView>().none {
+            it.text.contains("Approve YouTube Patcher first") || it.text.toString() == "PATCH AND INSTALL"
+        })
+        reinstall.performClick()
+        assertEquals(YoutubePatcherHandoff.reviewIntent(screen.get()).component,
+            shadowOf(screen.get()).nextStartedActivity.component)
+    }
+
     private class ImmediateExecutor : AbstractExecutorService() {
         private var stopped = false
         override fun execute(command: Runnable) = command.run()

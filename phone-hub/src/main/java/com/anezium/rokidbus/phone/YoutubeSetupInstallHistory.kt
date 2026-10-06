@@ -28,7 +28,10 @@ internal fun youtubeInstallStatus(inventory: YoutubeInventory?, confirmed: Youtu
     if (inventory == null) return "Needs attention — refresh glasses apps"
     val youtube = inventory.apps.singleOrNull { it.packageName == YoutubeSetupContract.YOUTUBE && it.installed }
         ?: return "To do"
-    if (youtube.signer.isEmpty() || confirmed == null || youtube.signer != confirmed.signer) {
+    if (confirmed == null) {
+        return "Needs attention — install not recorded on this phone; reinstall through Nexus to confirm"
+    }
+    if (youtube.signer.isEmpty() || youtube.signer != confirmed.signer) {
         return "Needs attention — signing key not confirmed by Nexus"
     }
     if (youtube.versionCode != confirmed.versionCode || confirmed.versionName != YoutubeApkPolicy.STOCK_YOUTUBE_VERSION) {
