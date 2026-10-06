@@ -48,7 +48,12 @@ In YouTube Patcher, choose your download and review the patches. Patching adds
 the glasses controls to YouTube. Keep the patch screen open until it finishes.
 Nexus receives a read-granted `content://` URI, copies and validates the APK,
 then installs it on the glasses without another tap. The card is done only when
-fresh glasses inventory reports patched YouTube with a signer. Package and
+fresh glasses inventory reports `app.morphe.android.youtube` with the version code
+and signer Nexus confirmed after installation, from stock YouTube 21.04.223.
+Other versions and unconfirmed signing keys show **Needs attention**; the
+prototype package does not complete this step. Nexus remembers confirmed APK
+identities for this checklist; old installs without that record need a confirmed
+reinstall. Package and
 signature checks cannot prove which patches were included: check the plugin's
 patching report and the controls/playback on the glasses.
 

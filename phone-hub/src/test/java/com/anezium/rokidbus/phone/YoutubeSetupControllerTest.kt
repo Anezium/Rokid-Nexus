@@ -100,6 +100,8 @@ class YoutubeSetupControllerTest {
         assertFalse(YoutubeSetupStateStore.state.busy)
         assertTrue(YoutubeSetupStateStore.state.message.contains("is installed"))
         assertFalse(YoutubeSetupStateStore.state.canInstall)
+        assertEquals(YoutubeInstalledApk(200, apk.archive.versionName, YoutubeApkPolicy.signer(apk.archive)),
+            YoutubeSetupInstallHistory(RuntimeEnvironment.getApplication()).installed(apk.archive.packageName))
     }
 
     @Test fun `signer mismatch prevents any upload`() {
@@ -136,6 +138,7 @@ class YoutubeSetupControllerTest {
         reply(installed = false)
         assertTrue(YoutubeSetupStateStore.state.message.contains("could not be confirmed"))
         assertFalse(YoutubeSetupStateStore.state.busy)
+        assertNull(YoutubeSetupInstallHistory(RuntimeEnvironment.getApplication()).installed(apk.archive.packageName))
     }
 
     @Test fun `finished upload deadline cannot cancel a later launch`() {

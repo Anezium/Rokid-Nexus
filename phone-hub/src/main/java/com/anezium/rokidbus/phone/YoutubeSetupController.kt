@@ -209,7 +209,10 @@ internal class YoutubeSetupController(
                                 val installed = refreshed.apps.single { it.packageName == apk.archive.packageName }
                                 if (installed.versionCode != apk.archive.versionCode || installed.signer != YoutubeApkPolicy.signer(apk.archive)) {
                                     fail("The installed APK could not be confirmed. Refresh before continuing.")
-                                } else publish(state.copy(busy = false, message = "${apk.label} is installed on the glasses."))
+                                } else {
+                                    YoutubeSetupInstallHistory(context).confirmed(apk.archive)
+                                    publish(state.copy(busy = false, message = "${apk.label} is installed on the glasses."))
+                                }
                             }
                         }
                     }

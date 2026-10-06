@@ -29,6 +29,7 @@ class YoutubeSetupActivity : Activity() {
     private var started = false
     private var skipRefreshOnce = false
     private val checklist by lazy { YoutubeSetupChecklist(this) }
+    private val installHistory by lazy { YoutubeSetupInstallHistory(this) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -118,8 +119,8 @@ class YoutubeSetupActivity : Activity() {
                 browse(YoutubeApkPolicy.STOCK_YOUTUBE_URL)
             }
         }
-        card("3. Patch and install", status(checked, youtube.any { it.signer.isNotEmpty() },
-            youtube.any { it.signer.isEmpty() }) +
+        card("3. Patch and install", youtubeInstallStatus(state.inventory,
+            installHistory.installed(YoutubeSetupContract.YOUTUBE)) +
             " — Approve YouTube Patcher first, then choose your file and review the patches. Nexus checks the result and installs it automatically. APK checks alone cannot authenticate the patcher on a first glasses install.") { box ->
             button(box, if (patcherApproved) "Patch and install" else "Get or approve YouTube Patcher", enabled) {
                 val identity = YoutubePatcherHandoff.authenticatedIdentity(this)
