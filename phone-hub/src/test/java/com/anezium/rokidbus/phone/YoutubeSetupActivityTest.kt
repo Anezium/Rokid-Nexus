@@ -177,7 +177,9 @@ class YoutubeSetupActivityTest {
             "ADD ROKID PATCHES TO MORPHE", "CHOOSE PATCHED YOUTUBE APK").forEach { label ->
             assertTrue(label, text(label).single().isEnabled)
         }
-        assertTrue(text("PATCHER STOPPED? RETRY").single().isEnabled)
+        assertTrue(text("OPEN PATCHER").single().isEnabled)
+        assertEquals(1, text("Waiting for Patcher — open it to check progress or use the result.").size)
+        assertTrue(text("PATCHER STOPPED? RETRY").isEmpty())
         assertNotNull(launchPicker())
     }
 
@@ -191,20 +193,20 @@ class YoutubeSetupActivityTest {
         screen.resume()
         idle()
         assertTrue(text("PATCH AND INSTALL").single().isEnabled)
-        assertTrue(text("PATCHER STOPPED? RETRY").isEmpty())
+        assertTrue(text("OPEN PATCHER").isEmpty())
         assertEquals(before, sent.size)
         assertFalse(YoutubeSetupStateStore.state.busy)
         assertFalse(YoutubeSetupStateStore.state.canInstall)
     }
 
-    @Test fun `missing result offers retry and old results cannot unlock or install for the new request`() {
+    @Test fun `opening a pending patch preserves the job and rejects results from the old request`() {
         approvePatcher()
         val old = launchPatch()
         screen.pause().stop().restart().resume()
         idle()
         assertFalse(text("PATCH AND INSTALL").single().isEnabled)
-        assertTrue(text("PATCHER STOPPED? RETRY").single().isEnabled)
-        text("PATCHER STOPPED? RETRY").single().performClick()
+        assertTrue(text("OPEN PATCHER").single().isEnabled)
+        text("OPEN PATCHER").single().performClick()
         val retry = requireNotNull(shadowOf(screen.get()).nextStartedActivityForResult)
         assertEquals(PatcherHandoff.patchIntent().component, retry.intent.component)
         assertNotEquals(old.requestCode, retry.requestCode)
@@ -238,10 +240,10 @@ class YoutubeSetupActivityTest {
         screen = Robolectric.buildActivity(YoutubeSetupActivity::class.java).create(saved).start().resume()
         idle()
         assertFalse(text("PATCH AND INSTALL").single().isEnabled)
-        assertTrue(text("PATCHER STOPPED? RETRY").single().isEnabled)
+        assertTrue(text("OPEN PATCHER").single().isEnabled)
         patchResult(request.requestCode, Activity.RESULT_OK, resultApk())
         assertTrue(YoutubeSetupStateStore.state.canInstall)
-        assertTrue(text("PATCHER STOPPED? RETRY").isEmpty())
+        assertTrue(text("OPEN PATCHER").isEmpty())
     }
 
     @Test fun `picker result delivered after onStart is imported while glasses are connected`() {

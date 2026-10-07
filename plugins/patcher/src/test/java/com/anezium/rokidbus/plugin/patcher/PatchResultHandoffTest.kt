@@ -281,6 +281,50 @@ class PatchResultHandoffTest {
         attached.pause().stop().destroy()
     }
 
+    @Test fun readyNotificationRedirectsItsJobToTheHiddenHubWindowAndSurvivesRecreation() {
+        val store = runningStore()
+        succeed(store)
+        val attached = screen(request(store)).setup()
+        shadowOf(Looper.getMainLooper()).idle()
+        assertFalse(attached.get().isFinishing)
+        attached.pause().stop()
+        val notification = screen(Intent().putExtra(PatcherContract.EXTRA_TARGET_ID, store.state.value.targetId)
+            .putExtra(PatchActivity.EXTRA_READY_JOB_ID, store.state.value.id), null)
+        (shadowOf(notification.get()) as TaskActivity).currentTask = 20
+        notification.setup()
+        assertTrue(notification.get().isFinishing)
+        assertFalse(store.state.value.delivered)
+        val manager = shadowOf(notification.get().getSystemService(ActivityManager::class.java)) as TaskManager
+        assertEquals(listOf(10), manager.movedTasks)
+        notification.pause().stop().destroy()
+        val saved = Bundle()
+        attached.saveInstanceState(saved).destroy()
+        val restored = screen(request(store)).create(saved).start().resume()
+        shadowOf(Looper.getMainLooper()).idle()
+        assertDelivered(restored, store)
+        restored.pause().stop().destroy()
+    }
+
+    @Test fun readyNewIntentPreservesTheHubCallerAndIgnoresOtherTargets() {
+        val store = runningStore()
+        succeed(store)
+        val attached = screen(request(store)).setup()
+        shadowOf(Looper.getMainLooper()).idle()
+        attached.pause().stop()
+        attached.newIntent(Intent().putExtra(PatcherContract.EXTRA_TARGET_ID, "other")
+            .putExtra(PatchActivity.EXTRA_READY_JOB_ID, store.state.value.id))
+        attached.start().resume()
+        shadowOf(Looper.getMainLooper()).idle()
+        assertFalse(store.state.value.delivered)
+        assertFalse(attached.get().isFinishing)
+        attached.newIntent(Intent().putExtra(PatcherContract.EXTRA_TARGET_ID, store.state.value.targetId)
+            .putExtra(PatchActivity.EXTRA_READY_JOB_ID, store.state.value.id))
+        shadowOf(Looper.getMainLooper()).idle()
+        assertDelivered(attached, store)
+        assertEquals(PatcherContract.ACTION_PATCH, attached.get().intent.action)
+        attached.pause().stop().destroy()
+    }
+
     @Test fun anUntrustedCallerCannotTakeOwnershipOfTheLiveHubWindow() {
         val store = runningStore()
         val attached = screen(request(store)).setup()
@@ -357,7 +401,8 @@ class PatchResultHandoffTest {
         screen.pause().stop()
         (shadowOf(screen.get()) as TaskActivity).currentTask = 20
         succeed(store)
-        screen.newIntent(Intent().putExtra(PatchActivity.EXTRA_READY_JOB_ID, store.state.value.id))
+        screen.newIntent(Intent().putExtra(PatcherContract.EXTRA_TARGET_ID, store.state.value.targetId)
+            .putExtra(PatchActivity.EXTRA_READY_JOB_ID, store.state.value.id))
         shadowOf(Looper.getMainLooper()).idle()
         assertFalse(screen.get().isFinishing)
         assertNull(shadowOf(screen.get()).nextStartedActivity)
@@ -381,7 +426,8 @@ class PatchResultHandoffTest {
             val manager = service.getSystemService(android.app.NotificationManager::class.java)
             notify.invoke(service, store.state.value)
             assertEquals(1, shadowOf(manager).allNotifications.size)
-            if (fromNotification) screen.newIntent(Intent().putExtra(PatchActivity.EXTRA_READY_JOB_ID, store.state.value.id))
+            if (fromNotification) screen.newIntent(Intent().putExtra(PatcherContract.EXTRA_TARGET_ID, store.state.value.targetId)
+                .putExtra(PatchActivity.EXTRA_READY_JOB_ID, store.state.value.id))
             screen.start().resume()
             shadowOf(Looper.getMainLooper()).idle()
             assertDelivered(screen, store)
@@ -484,7 +530,8 @@ class PatchResultHandoffTest {
             (shadowOf(screen.get()) as TaskActivity).currentTask = 20
             shadowOf(screen.get()).setIsTaskRoot(true)
             store.change(store.state.value.id) { it.copy(status = status, message = "Review this outcome.") }
-            screen.newIntent(Intent().putExtra(PatchActivity.EXTRA_READY_JOB_ID, store.state.value.id))
+            screen.newIntent(Intent().putExtra(PatcherContract.EXTRA_TARGET_ID, store.state.value.targetId)
+                .putExtra(PatchActivity.EXTRA_READY_JOB_ID, store.state.value.id))
             shadowOf(Looper.getMainLooper()).idle()
             assertFalse(screen.get().isFinishing)
             assertFalse(store.state.value.delivered)

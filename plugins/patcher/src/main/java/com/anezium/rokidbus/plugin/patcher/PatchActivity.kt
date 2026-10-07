@@ -105,6 +105,7 @@ class PatchActivity : Activity() {
             // The notification opens a new task; the live screen may sit in the hub's task.
             // Bring that one forward instead of a second copy that cannot share the job.
             val liveTask = liveTaskId
+            liveScreen?.get()?.acceptReadyIntent(intent)
             if (!canReturnToHub() && liveTask != null && liveTask != taskId &&
                 runCatching { getSystemService(ActivityManager::class.java).moveTaskToFront(liveTask, 0) }.isSuccess) {
                 finish()
@@ -136,7 +137,7 @@ class PatchActivity : Activity() {
         key = SigningKey(File(filesDir, "signing/patcher.p12"))
         val state = jobs.state.value
         watchedJobId = savedInstanceState?.getString("watched_job")
-        readyJobId = intent.getStringExtra(EXTRA_READY_JOB_ID)
+        readyJobId = intent.getStringExtra(EXTRA_READY_JOB_ID) ?: savedInstanceState?.getString(EXTRA_READY_JOB_ID)
         stock = jobs.stock(); result = jobs.result()
         busy = state.active; patching = state.active
         noteFor(state)
@@ -922,12 +923,17 @@ class PatchActivity : Activity() {
     }
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putString("watched_job", watchedJobId)
+        outState.putString(EXTRA_READY_JOB_ID, readyJobId)
         hubTaskId?.let { outState.putInt("hub_task", it) }
         super.onSaveInstanceState(outState)
     }
+    private fun acceptReadyIntent(intent: Intent) {
+        if (!::target.isInitialized || intent.getStringExtra(Contract.EXTRA_TARGET_ID) != target.id) return
+        intent.getStringExtra(EXTRA_READY_JOB_ID)?.let { readyJobId = it }
+    }
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        readyJobId = intent.getStringExtra(EXTRA_READY_JOB_ID)
+        acceptReadyIntent(intent)
         if (::jobs.isInitialized) deliverResult()
     }
     override fun onResume() { super.onResume(); resumed = true; updateScreenAwake(); if (::jobs.isInitialized) deliverResult() }

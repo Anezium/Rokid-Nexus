@@ -165,6 +165,7 @@ class YoutubeSetupActivity : Activity() {
         }
         card("3. Patch and install", when {
             prepared != null -> patchStepLine(prepared, checked)
+            patchPending -> "Waiting for Patcher — open it to check progress or use the result."
             youtubeDone -> "Done — YouTube ${confirmedYoutube?.versionName} is installed."
             else -> installStatus +
                 " — Approve Patcher first, then choose your file and review the patches. Patching takes about 6–7 minutes and keeps going in a small window while you use other apps. Nexus then checks the result and installs it on the glasses."
@@ -173,7 +174,7 @@ class YoutubeSetupActivity : Activity() {
                 secondary = action == PatchStepAction.REINSTALL) {
                 if (action == PatchStepAction.INSTALL_PREPARED) command(YoutubeSetupController.INSTALL) else patch()
             }
-            if (patchPending) button(box, "Patcher stopped? Retry", enabled) {
+            if (patchPending) button(box, "Open Patcher", enabled) {
                 abandonPatchResult()
                 patch()
             }
