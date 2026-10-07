@@ -159,10 +159,14 @@ internal class WorkspaceController(
             } catch (cancelled: CancellationException) {
                 if (persisted && uri != store.snapshot().state.settings.treeUri) gateway.releaseReadGrant(uri)
                 throw cancelled
-            } catch (_: Exception) {
+            } catch (error: Exception) {
                 if (persisted && uri != previous.treeUri) gateway.releaseReadGrant(uri)
                 emit(checking = false)
-                WorkspaceFolderResult.STORE_FAILED
+                when (error) {
+                    is SecurityException -> WorkspaceFolderResult.NO_READ_GRANT
+                    is FileNotFoundException -> WorkspaceFolderResult.UNAVAILABLE
+                    else -> WorkspaceFolderResult.STORE_FAILED
+                }
             } finally {
                 synchronized(lock) { if (selectionJob === job) selectionJob = null }
             }

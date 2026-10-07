@@ -233,6 +233,8 @@ internal class FakeWorkspaceGateway : WorkspaceDocumentGateway {
     var changed: (() -> Unit)? = null
     var granted = true
     var rootExists = true
+    var rootFailure: Exception? = null
+    var persistFailure: Exception? = null
     var listFailure = false
     var onOpen: (() -> Unit)? = null
     val entries = linkedMapOf<String, WorkspaceEntry>()
@@ -250,11 +252,15 @@ internal class FakeWorkspaceGateway : WorkspaceDocumentGateway {
             providerRoots[treeUri].orEmpty()
         }, isChild = { it in localParents[treeUri].orEmpty() })
     override fun hasReadGrant(treeUri: String) = granted
-    override fun persistReadGrant(treeUri: String, returnedFlags: Int) { persistedFlags += treeUri to returnedFlags }
+    override fun persistReadGrant(treeUri: String, returnedFlags: Int) {
+        persistFailure?.let { throw it }
+        persistedFlags += treeUri to returnedFlags
+    }
     override fun releaseReadGrant(treeUri: String) { released += treeUri }
     override suspend fun root(treeUri: String): WorkspaceEntry {
         rootCalls++
         if (rootDelayMs > 0) kotlinx.coroutines.delay(rootDelayMs)
+        rootFailure?.let { throw it }
         if (!rootExists) throw FileNotFoundException()
         return WorkspaceEntry("root", "Documents", directory = true)
     }

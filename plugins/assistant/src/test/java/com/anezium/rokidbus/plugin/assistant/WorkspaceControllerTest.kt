@@ -13,6 +13,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
+import java.io.FileNotFoundException
 
 class WorkspaceControllerTest {
     @get:Rule val temporary = TemporaryFolder()
@@ -44,6 +45,42 @@ class WorkspaceControllerTest {
             assertEquals(1, fixture.gateway.localRootQueries)
             assertFalse(fixture.store.snapshot().state.settings.enabled)
         } finally { fixture.scope.cancel() }
+    }
+
+    @Test
+    fun `denied persisted access leaves the previous folder and index available`() = runBlocking {
+        val fixture = fixture(seed = true)
+        val before = fixture.store.snapshot()
+        try {
+            fixture.gateway.persistFailure = SecurityException("fixture denied grant")
+            assertEquals(WorkspaceFolderResult.NO_READ_GRANT,
+                fixture.controller.chooseFolder(WorkspaceStoreTest.TREE + "2", 1, enable = true))
+            assertEquals(before, fixture.store.snapshot())
+            assertTrue(fixture.gateway.persistedFlags.isEmpty())
+            assertTrue(fixture.gateway.released.isEmpty())
+            assertEquals(0, fixture.gateway.rootCalls)
+            assertTrue(fixture.gateway.opens.isEmpty())
+        } finally { fixture.scope.cancel() }
+    }
+
+    @Test
+    fun `failed replacement root reports access or missing folder and releases only its new grant`() = runBlocking {
+        for ((error, expected) in listOf(
+            SecurityException("fixture denied root") to WorkspaceFolderResult.NO_READ_GRANT,
+            FileNotFoundException("fixture missing root") to WorkspaceFolderResult.UNAVAILABLE,
+        )) {
+            val fixture = fixture(seed = true)
+            val before = fixture.store.snapshot()
+            val replacement = WorkspaceStoreTest.TREE + "2"
+            try {
+                fixture.gateway.rootFailure = error
+                assertEquals(expected, fixture.controller.chooseFolder(replacement, 1, enable = true))
+                assertEquals(before, fixture.store.snapshot())
+                assertEquals(listOf(replacement to 1), fixture.gateway.persistedFlags)
+                assertEquals(listOf(replacement), fixture.gateway.released)
+                assertTrue(fixture.gateway.opens.isEmpty())
+            } finally { fixture.scope.cancel() }
+        }
     }
 
     @Test

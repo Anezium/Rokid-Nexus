@@ -10,6 +10,7 @@ import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
 import android.net.Uri
 import android.os.Bundle
+import android.provider.DocumentsContract
 import android.text.InputType
 import android.text.method.PasswordTransformationMethod
 import android.view.Gravity
@@ -50,7 +51,9 @@ class AssistantSettingsActivity : Activity() {
     private var workspaceController: WorkspaceController? = null
     private var workspaceVisible = false
     private var workspacePickerEnables = false
+    private var workspaceFolderMessage: String? = null
     private lateinit var workspaceFolderStatus: TextView
+    private lateinit var workspaceSetupHint: View
     private lateinit var workspaceFooter: TextView
     private lateinit var workspaceChooseButton: View
     private lateinit var workspaceRefreshButton: View
@@ -167,6 +170,7 @@ class AssistantSettingsActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         workspacePickerEnables = savedInstanceState?.getBoolean("workspacePickerEnables") ?: false
+        workspaceFolderMessage = savedInstanceState?.getString("workspaceFolderMessage")
         buildUi()
         settingsScope.launch {
             val controller = WorkspaceRuntime.get(applicationContext)
@@ -190,6 +194,7 @@ class AssistantSettingsActivity : Activity() {
 
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putBoolean("workspacePickerEnables", workspacePickerEnables)
+        outState.putString("workspaceFolderMessage", workspaceFolderMessage)
         super.onSaveInstanceState(outState)
     }
 
@@ -1824,6 +1829,8 @@ class AssistantSettingsActivity : Activity() {
         }
         workspaceFolderStatus = NexusUi.rowSub(this@AssistantSettingsActivity, "No folder selected")
         addView(workspaceFolderStatus, NexusUi.block())
+        workspaceSetupHint = NexusUi.cardBody(this@AssistantSettingsActivity, WorkspaceFolderHelp.SETUP_HINT)
+        addView(workspaceSetupHint, NexusUi.block())
         addView(LinearLayout(this@AssistantSettingsActivity).apply {
             gravity = Gravity.CENTER_VERTICAL
             workspaceChooseButton = NexusUi.textButton(this@AssistantSettingsActivity, "Choose folder").apply {
@@ -1831,24 +1838,41 @@ class AssistantSettingsActivity : Activity() {
             }
             addView(workspaceChooseButton)
             workspaceRefreshButton = NexusUi.textButton(this@AssistantSettingsActivity, "Re-index now").apply {
-                setOnClickListener { workspaceController?.refresh() }
+                setOnClickListener {
+                    workspaceFolderMessage = null
+                    workspaceController?.refresh()
+                    renderWorkspace()
+                }
             }
             addView(workspaceRefreshButton)
         }, NexusUi.block())
-        workspaceFooter = NexusUi.rowSub(this@AssistantSettingsActivity, "Loading…")
+        workspaceFooter = NexusUi.cardBody(this@AssistantSettingsActivity, "Loading…")
         addView(workspaceFooter, NexusUi.block())
+        addView(NexusUi.textButton(this@AssistantSettingsActivity, "Folder help").apply {
+            setOnClickListener {
+                WorkspaceFolderHelp(this@AssistantSettingsActivity).show { chooseWorkspaceFolder(enable = false) }
+            }
+        })
     }
 
     private fun chooseWorkspaceFolder(enable: Boolean) {
         val controller = workspaceController ?: return
         workspacePickerEnables = enable || controller.state.value.workspace.settings.enabled
         try {
-            startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).putExtra(Intent.EXTRA_LOCAL_ONLY, true).addFlags(
+            val tree = controller.state.value.workspace.settings.treeUri
+            val initialUri = if (isPlatformWorkspaceTree(tree)) {
+                val uri = Uri.parse(tree)
+                DocumentsContract.buildDocumentUriUsingTree(uri, DocumentsContract.getTreeDocumentId(uri))
+            } else DocumentsContract.buildDocumentUri("com.android.externalstorage.documents", "primary:Download")
+            startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
+                .putExtra(Intent.EXTRA_LOCAL_ONLY, true)
+                .putExtra(DocumentsContract.EXTRA_INITIAL_URI, initialUri).addFlags(
                 Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION or
                     Intent.FLAG_GRANT_PREFIX_URI_PERMISSION), REQUEST_WORKSPACE_FOLDER)
         } catch (_: Exception) {
             workspacePickerEnables = false
-            toast("Document picker unavailable.")
+            workspaceFolderMessage = "Android's folder picker could not be opened. Try again or see Folder help."
+            renderWorkspace()
         }
     }
 
@@ -1862,14 +1886,7 @@ class AssistantSettingsActivity : Activity() {
         settingsScope.launch {
             val controller = workspaceController ?: WorkspaceRuntime.get(applicationContext)
             val result = controller.chooseFolder(uri.toString(), data.flags, enable)
-            when (result) {
-                WorkspaceFolderResult.SELECTED -> Unit
-                WorkspaceFolderResult.LOCAL_FOLDER_REQUIRED -> toast("Choose a folder stored on the phone or SD card.")
-                WorkspaceFolderResult.NO_READ_GRANT -> toast("The picker did not grant folder read access.")
-                WorkspaceFolderResult.UNAVAILABLE -> toast("Folder unavailable. Choose another folder.")
-                WorkspaceFolderResult.CHECK_FAILED -> toast(WorkspaceProblem.CHECK_FAILED.label)
-                WorkspaceFolderResult.STORE_FAILED -> toast("Could not save the folder choice.")
-            }
+            workspaceFolderMessage = WorkspaceFolderHelp.selectionMessage(result)
             renderWorkspace()
         }
     }
@@ -1887,10 +1904,15 @@ class AssistantSettingsActivity : Activity() {
                 (index?.let { " · indexed ${relativeTime(it.indexedAtMs)}" } ?: "")
         workspaceChooseButton.isEnabled = ui != null
         workspaceRefreshButton.isEnabled = enabled && !settings?.treeUri.isNullOrEmpty() && ui?.checking != true
+        workspaceSetupHint.visibility = if (settings?.treeUri.isNullOrEmpty() || state?.problem != null ||
+            workspaceFolderMessage != null) View.VISIBLE else View.GONE
         workspaceFooter.text = when {
             ui == null -> "Loading…"
+            workspaceFolderMessage != null -> workspaceFolderMessage
             !enabled -> "Off · cached documents cleared"
-            state?.problem != null -> state.problem.label
+            state?.problem == WorkspaceProblem.FOLDER_UNAVAILABLE ->
+                "Folder access is unavailable. Choose the folder again and tap Allow. See Folder help."
+            state?.problem != null -> "${state.problem.label} See Folder help."
             ui.checking -> "Indexing…"
             settings?.treeUri.isNullOrEmpty() -> "Choose a folder to get started."
             index == null -> "Not indexed yet"
