@@ -7,7 +7,9 @@ package com.anezium.rokidbus.shared
  * `startActivityForResult`; the plugin answers `RESULT_OK` with a `content://` URI of the
  * patched APK from its own FileProvider plus `FLAG_GRANT_READ_URI_PERMISSION`. The hub then
  * feeds that URI to its existing import path, which copies, hashes and validates the bytes as
- * it does for a hand-picked file. No bus route, capability, or AIDL change is involved, and
+ * it does for a hand-picked file. The optional [EXTRA_RETURN_TO_HUB] lets the hub bring its
+ * waiting setup screen forward after successful delivery from a separate task.
+ * No bus route, capability, or AIDL change is involved, and
  * the hub trusts nothing from the plugin beyond the bytes it reads back.
  */
 object PatcherContract {
@@ -25,6 +27,17 @@ object PatcherContract {
 
     /** Required on requests and results; unknown target ids must fail closed. */
     const val EXTRA_TARGET_ID = "targetId"
+
+    /**
+     * Optional request-only `android.app.PendingIntent`, created by the phone hub for its
+     * own non-exported setup activity with `FLAG_IMMUTABLE` and activity flags `NEW_TASK |
+     * REORDER_TO_FRONT`. Patcher checks `creatorPackage` against the authenticated hub caller
+     * and sends it only after returning a successful result from a separate task. It never
+     * sends it for standalone opens or visible failed/cancelled outcomes. The sender opts in
+     * to activity launch privileges on Android 14+, including the just-finished activity's
+     * grace period on Android 16. Only an absent extra permits the older-hub launcher fallback.
+     */
+    const val EXTRA_RETURN_TO_HUB = "returnToHub"
     const val TARGET_YOUTUBE = "youtube"
 
     fun isTargetId(id: String): Boolean = id.matches(Regex("[a-z][a-z0-9._-]{0,63}"))

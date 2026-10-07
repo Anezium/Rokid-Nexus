@@ -1,5 +1,7 @@
 package com.anezium.rokidbus.phone
 
+import android.app.Activity
+import android.app.PendingIntent
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -13,6 +15,16 @@ import com.anezium.rokidbus.shared.PatcherContract
  * signer-bound approval of a valid principal; package/activity presence is only UI routing.
  */
 internal object PatcherHandoff {
+    fun patchIntent(activity: Activity, targetId: String = PatcherContract.TARGET_YOUTUBE): Intent {
+        // Select the hub task by affinity, then reuse its waiting activity regardless of
+        // whether the task root came from the launcher, a notification, or an explicit open.
+        val returnToHub = PendingIntent.getActivity(activity, activity.taskId,
+            Intent(activity, activity.javaClass)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        return patchIntent(targetId).putExtra(PatcherContract.EXTRA_RETURN_TO_HUB, returnToHub)
+    }
+
     fun patchIntent(targetId: String = PatcherContract.TARGET_YOUTUBE): Intent {
         require(PatcherContract.isTargetId(targetId))
         return Intent(PatcherContract.ACTION_PATCH)

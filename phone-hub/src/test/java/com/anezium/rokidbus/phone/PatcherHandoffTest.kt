@@ -1,5 +1,7 @@
 package com.anezium.rokidbus.phone
 
+import android.app.PendingIntent
+import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.content.pm.ApplicationInfo
@@ -9,6 +11,7 @@ import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Robolectric
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
@@ -16,6 +19,25 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [32])
 class PatcherHandoffTest {
+    @Test fun `hub return token targets the non-exported waiting setup without clearing its task`() {
+        val screen = Robolectric.buildActivity(YoutubeSetupActivity::class.java).create()
+        val request = PatcherHandoff.patchIntent(screen.get())
+        val token = requireNotNull(request.getParcelableExtra<PendingIntent>(PatcherContract.EXTRA_RETURN_TO_HUB))
+        assertEquals(screen.get().packageName, token.creatorPackage)
+        assertTrue(token.isActivity)
+        assertTrue(token.isImmutable)
+        val returnIntent = shadowOf(token).savedIntent
+        assertEquals(ComponentName(screen.get(), YoutubeSetupActivity::class.java), returnIntent.component)
+        assertFalse(screen.get().packageManager.getActivityInfo(returnIntent.component!!, 0).exported)
+        assertEquals(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT, returnIntent.flags)
+        assertNull(returnIntent.action)
+        assertTrue(returnIntent.categories.isNullOrEmpty())
+        // An immutable token cannot be redirected by the receiving app.
+        token.send(screen.get(), 0, Intent(Intent.ACTION_MAIN).setClassName("untrusted.app", "Other"))
+        assertEquals(returnIntent.component, shadowOf(screen.get()).nextStartedActivity.component)
+        screen.destroy()
+    }
+
     @Test fun `handoff uses only the explicit patch component and targeted Store entry`() {
         val intent = PatcherHandoff.patchIntent()
         assertEquals(PatcherContract.ACTION_PATCH, intent.action)

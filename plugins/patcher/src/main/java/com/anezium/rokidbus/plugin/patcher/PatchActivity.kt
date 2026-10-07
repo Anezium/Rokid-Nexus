@@ -3,7 +3,9 @@ package com.anezium.rokidbus.plugin.patcher
 import android.animation.ValueAnimator
 import android.app.Activity
 import android.app.ActivityManager
+import android.app.ActivityOptions
 import android.app.AlertDialog
+import android.app.PendingIntent
 import android.content.ClipData
 import android.content.Intent
 import android.content.res.Configuration
@@ -766,6 +768,24 @@ class PatchActivity : Activity() {
     }
     private fun bringHubToFront() {
         try {
+            if (intent.hasExtra(Contract.EXTRA_RETURN_TO_HUB)) {
+                val returnToHub = if (Build.VERSION.SDK_INT >= 33)
+                    intent.getParcelableExtra(Contract.EXTRA_RETURN_TO_HUB, PendingIntent::class.java)
+                else {
+                    @Suppress("DEPRECATION")
+                    (intent.getParcelableExtra<android.os.Parcelable>(Contract.EXTRA_RETURN_TO_HUB) as? PendingIntent)
+                }
+                if (returnToHub?.creatorPackage != com.anezium.rokidbus.client.HubTarget.PHONE.packageName) return
+                // finish() can hide the sender before send(); allow Android's recent-activity
+                // grace period. Delivery still requires a resumed, authenticated success screen.
+                val options = if (Build.VERSION.SDK_INT >= 34) ActivityOptions.makeBasic().apply {
+                    setPendingIntentBackgroundActivityStartMode(if (Build.VERSION.SDK_INT >= 36)
+                        ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOW_ALWAYS
+                    else ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED)
+                }.toBundle() else null
+                returnToHub.send(this, 0, null, null, null, null, options)
+                return
+            }
             packageManager.getLaunchIntentForPackage(com.anezium.rokidbus.client.HubTarget.PHONE.packageName)
                 ?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)?.let { startActivity(it) }
         } catch (e: Exception) { PatchErrors.reason(e) }

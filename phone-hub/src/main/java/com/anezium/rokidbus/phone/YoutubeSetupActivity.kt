@@ -138,7 +138,7 @@ class YoutubeSetupActivity : Activity() {
                 patcherIdentity = identity
                 patchPending = true
                 rerender()
-                runCatching { startActivityForResult(PatcherHandoff.patchIntent(), PATCH_APK) }
+                runCatching { startActivityForResult(PatcherHandoff.patchIntent(this), PATCH_APK) }
                     .onFailure {
                         patchPending = false
                         patcherIdentity = null

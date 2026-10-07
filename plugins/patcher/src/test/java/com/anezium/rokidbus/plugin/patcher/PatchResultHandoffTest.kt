@@ -1,12 +1,15 @@
 package com.anezium.rokidbus.plugin.patcher
 
 import android.app.Activity
+import android.app.ActivityOptions
+import android.app.PendingIntent
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
 import android.os.Looper
 import androidx.core.content.FileProvider
 import com.anezium.rokidbus.client.HubTarget
@@ -24,11 +27,27 @@ import org.robolectric.annotation.Implementation
 import org.robolectric.annotation.Implements
 import org.robolectric.android.controller.ActivityController
 import org.robolectric.shadows.ShadowActivity
+import org.robolectric.shadows.ShadowPendingIntent
 import java.io.File
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [32], shadows = [PatchResultHandoffTest.TaskActivity::class, PatchResultHandoffTest.ResultProvider::class])
+@Config(sdk = [32], shadows = [PatchResultHandoffTest.TaskActivity::class,
+    PatchResultHandoffTest.ResultProvider::class, PatchResultHandoffTest.HubReturnToken::class])
 class PatchResultHandoffTest {
+    @Implements(PendingIntent::class)
+    class HubReturnToken : ShadowPendingIntent() {
+        var sendOptions: Bundle? = null
+        var sentAfterResult = false
+
+        @Implementation override fun send(context: Context, code: Int, intent: Intent?,
+            onFinished: PendingIntent.OnFinished?, handler: Handler?, permission: String?, options: Bundle?) {
+            sendOptions = options
+            val activity = context as Activity
+            sentAfterResult = activity.isFinishing && shadowOf(activity).resultCode == Activity.RESULT_OK
+            super.send(context, code, intent, onFinished, handler, permission, options)
+        }
+    }
+
     @Implements(Activity::class)
     class TaskActivity : ShadowActivity() {
         var currentTask = 10
@@ -48,6 +67,7 @@ class PatchResultHandoffTest {
 
     private val hub = HubTarget.PHONE.packageName
     private val launcher get() = ComponentName(hub, "$hub.MainActivity")
+    private val setup get() = ComponentName(hub, "$hub.YoutubeSetupActivity")
 
     @Before fun registerHubLauncher() {
         val manager = shadowOf(RuntimeEnvironment.getApplication().packageManager)
@@ -71,8 +91,15 @@ class PatchResultHandoffTest {
         PatchJobStore::class.java.getDeclaredField("instance").apply { isAccessible = true }.set(null, store)
     }
 
-    private fun request(store: PatchJobStore) = Intent(PatcherContract.ACTION_PATCH)
+    private fun returnToken(creator: String = hub): PendingIntent = PendingIntent.getActivity(
+        RuntimeEnvironment.getApplication(), 10, Intent().setComponent(setup)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT),
+        PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_CANCEL_CURRENT,
+    ).also { shadowOf(it).setCreatorPackage(creator) }
+
+    private fun request(store: PatchJobStore, withReturn: Boolean = true) = Intent(PatcherContract.ACTION_PATCH)
         .putExtra(PatcherContract.EXTRA_TARGET_ID, store.state.value.targetId)
+        .apply { if (withReturn) putExtra(PatcherContract.EXTRA_RETURN_TO_HUB, returnToken()) }
 
     private fun screen(intent: Intent, callingPackage: String? = hub): ActivityController<PatchActivity> =
         Robolectric.buildActivity(PatchActivity::class.java, intent).also {
@@ -104,6 +131,16 @@ class PatchResultHandoffTest {
     }
 
     private fun assertHubBroughtForward(activity: PatchActivity) {
+        val token = requireNotNull(activity.intent.getParcelableExtra<PendingIntent>(PatcherContract.EXTRA_RETURN_TO_HUB))
+        assertTrue((shadowOf(token) as HubReturnToken).sentAfterResult)
+        val launch = requireNotNull(shadowOf(activity).nextStartedActivity)
+        assertEquals(setup, launch.component)
+        assertNull(launch.action)
+        assertEquals(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT, launch.flags)
+        assertNull(shadowOf(activity).nextStartedActivity)
+    }
+
+    private fun assertLegacyHubBroughtForward(activity: PatchActivity) {
         val launch = requireNotNull(shadowOf(activity).nextStartedActivity)
         assertEquals(launcher, launch.component)
         assertEquals(Intent.ACTION_MAIN, launch.action)
@@ -111,6 +148,59 @@ class PatchResultHandoffTest {
         assertTrue(launch.flags and Intent.FLAG_ACTIVITY_NEW_TASK != 0)
         assertEquals(0, launch.flags and (Intent.FLAG_ACTIVITY_CLEAR_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_MULTIPLE_TASK))
         assertNull(shadowOf(activity).nextStartedActivity)
+    }
+
+    @Test fun anOlderHubWithoutTheReturnExtraUsesTheLauncherFallback() {
+        val store = runningStore()
+        val screen = screen(request(store, withReturn = false)).setup()
+        shadowOf(Looper.getMainLooper()).idle()
+        (shadowOf(screen.get()) as TaskActivity).currentTask = 20
+        succeed(store)
+        shadowOf(Looper.getMainLooper()).idle()
+        assertDelivered(screen, store)
+        assertLegacyHubBroughtForward(screen.get())
+        screen.pause().stop().destroy()
+    }
+
+    @Test fun anUntrustedMalformedOrCancelledReturnTokenNeverFallsBackToTheLauncher() {
+        listOf("untrusted", "cancelled", "malformed").forEach { kind ->
+            val token = when (kind) {
+                "untrusted" -> returnToken("untrusted.app")
+                "cancelled" -> returnToken().also { it.cancel() }
+                else -> "malformed"
+            }
+            val store = runningStore()
+            val request = request(store, withReturn = false).apply {
+                if (token is PendingIntent) putExtra(PatcherContract.EXTRA_RETURN_TO_HUB, token)
+                else putExtra(PatcherContract.EXTRA_RETURN_TO_HUB, token as String)
+            }
+            val screen = screen(request).setup()
+            shadowOf(Looper.getMainLooper()).idle()
+            (shadowOf(screen.get()) as TaskActivity).currentTask = 20
+            succeed(store)
+            shadowOf(Looper.getMainLooper()).idle()
+            assertDelivered(screen, store)
+            assertNull(shadowOf(screen.get()).nextStartedActivity)
+            screen.pause().stop().destroy()
+        }
+    }
+
+    @Test @Config(sdk = [34]) fun theSenderOptsInToForegroundLaunchPrivilegesOnAndroid14() {
+        val store = runningStore()
+        val screen = screen(request(store)).setup()
+        shadowOf(Looper.getMainLooper()).idle()
+        (shadowOf(screen.get()) as TaskActivity).currentTask = 20
+        succeed(store)
+        shadowOf(Looper.getMainLooper()).idle()
+        assertDelivered(screen, store)
+        val launch = requireNotNull(shadowOf(screen.get()).nextStartedActivityForResult)
+        assertEquals(setup, launch.intent.component)
+        val token = requireNotNull(screen.get().intent.getParcelableExtra<PendingIntent>(PatcherContract.EXTRA_RETURN_TO_HUB))
+        val options = ActivityOptions::class.java.getDeclaredMethod("fromBundle", Bundle::class.java)
+            .invoke(null, (shadowOf(token) as HubReturnToken).sendOptions) as ActivityOptions
+        assertEquals(ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED,
+            options.pendingIntentBackgroundActivityStartMode)
+        screen.pause().stop().destroy()
     }
 
     @Test fun notificationResumeAfterTaskReparentingReturnsTheResultAndBringsNexusForward() {
