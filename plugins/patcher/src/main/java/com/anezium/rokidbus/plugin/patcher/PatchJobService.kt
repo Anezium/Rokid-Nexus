@@ -21,8 +21,6 @@ class PatchJobService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
     private var runningId: String? = null
     private var startedRealtime = 0L
-    private var pendingStart: Intent? = null
-    private var pendingStartId = 0
     private var latestStartId = 0
     @Volatile private var workerTid = 0
     private val diagnostics by lazy { PatchExecutionDiagnostics(this) }
@@ -52,7 +50,6 @@ class PatchJobService : Service() {
             val requested = intent.getStringExtra(JOB_ID)
             if (requested != null && requested == store.state.value.id && store.state.value.active && requested != runningId) {
                 store.change(requested) { it.copy(status = PatchJobStatus.CANCELLED, message = "Patching cancelled. You can retry.", result = null) }
-                pendingStart = null
                 if (runningId != null) terminate(PatchJobStatus.CANCELLED, "Patching cancelled. You can retry.") else stopSelf()
             } else if (requested == runningId && requested == store.state.value.id && store.state.value.active)
                 terminate(PatchJobStatus.CANCELLED, "Patching cancelled. You can retry.")
@@ -65,11 +62,14 @@ class PatchJobService : Service() {
             if (state.active && state.id != runningId && intent?.getStringExtra(JOB_ID) == state.id) {
                 try {
                     promote(state)
-                    pendingStart = intent; pendingStartId = startId
+                    store.change(state.id) { it.copy(status = PatchJobStatus.FAILURE,
+                        message = "The previous patch is still stopping. Wait a moment, then retry.", result = null) }
                 } catch (e: Exception) {
                     store.change(state.id) { it.copy(status = PatchJobStatus.FAILURE,
                         message = PatchErrors.reason(e, "Patching could not start. Come back to this screen and try again.")) }
                 }
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                notifyState(store.state.value)
             }
             return START_NOT_STICKY
         }
@@ -242,11 +242,7 @@ class PatchJobService : Service() {
         wakeLock = null; runningId = null; task = null
         stopForeground(STOP_FOREGROUND_REMOVE)
         if (store.state.value.id == id && store.state.value.status != PatchJobStatus.READY) notifyState(store.state.value)
-        val next = pendingStart
-        pendingStart = null
-        if (next != null && store.state.value.active && next.getStringExtra(JOB_ID) == store.state.value.id)
-            onStartCommand(next, 0, pendingStartId)
-        else stopSelfResult(latestStartId)
+        stopSelfResult(latestStartId)
     }
 
     private fun terminate(status: PatchJobStatus, reason: String, allowProcessKill: Boolean = true) {
@@ -300,7 +296,7 @@ class PatchJobService : Service() {
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
         val current = store.state.value
-        if (current.active && (current.id == runningId || current.id == pendingStart?.getStringExtra(JOB_ID)))
+        if (current.active && current.id == runningId)
             store.change(current.id) { it.copy(status = PatchJobStatus.INTERRUPTED,
                 message = "The last patch was interrupted. Retry when you are ready.", result = null) }
         task?.cancel(true)

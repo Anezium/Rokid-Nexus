@@ -350,19 +350,67 @@ class PatchJobServiceTest {
             assertFalse(screen.get().isFinishing)
             val retry = store.patch("hash", listOf("patch"))
             service.onStartCommand(Intent(service, PatchJobService::class.java).putExtra(PatchJobService.JOB_ID, retry.id), 0, 3)
-            assertEquals(ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC, service.foregroundServiceType)
+            assertEquals(PatchJobStatus.FAILURE, store.state.value.status)
+            assertEquals("The previous patch is still stopping. Wait a moment, then retry.", store.state.value.message)
+            assertTrue(shadowOf(service).isForegroundStopped)
             service.onStartCommand(Intent(service, PatchJobService::class.java).setAction(PatchJobService.CANCEL).putExtra(PatchJobService.JOB_ID, job.id), 0, 4)
-            assertEquals(PatchJobStatus.RUNNING, store.state.value.status)
-            assertEquals(ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC, service.foregroundServiceType)
+            assertEquals(PatchJobStatus.FAILURE, store.state.value.status)
             service.onStartCommand(Intent(service, PatchJobService::class.java).setAction(PatchJobService.CANCEL).putExtra(PatchJobService.JOB_ID, retry.id), 0, 5)
-            assertEquals(PatchJobStatus.CANCELLED, store.state.value.status)
+            assertEquals(PatchJobStatus.FAILURE, store.state.value.status)
             screen.pause().stop()
             shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofSeconds(3))
             assertTrue(org.robolectric.shadows.ShadowProcess.wasKilled(android.os.Process.myPid()))
-            assertEquals(PatchJobStatus.CANCELLED, PatchJobStore.decode(File(service.filesDir, "patch-job.json").readText()).status)
+            assertEquals(PatchJobStatus.FAILURE, PatchJobStore.decode(File(service.filesDir, "patch-job.json").readText()).status)
         } finally {
             release.countDown(); assertTrue(exited.await(5, TimeUnit.SECONDS))
             screen.destroy(); controller.destroy()
+        }
+    }
+
+    @Test @Config(sdk = [34]) fun retryWhileThePreviousWorkerIsStoppingIsRefusedAndNeverQueued() {
+        val store = store()
+        val job = runningJob(store)
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val exited = CountDownLatch(1)
+        val controller = Robolectric.buildService(PatchJobService::class.java).create()
+        val service = controller.get()
+        service.runJob = { _, _ ->
+            entered.countDown()
+            try { while (release.count > 0) try { release.await() } catch (_: InterruptedException) {} }
+            finally { exited.countDown() }
+        }
+        val screen = Robolectric.buildActivity(PatchActivity::class.java).setup()
+        service.onStartCommand(Intent(service, PatchJobService::class.java).putExtra(PatchJobService.JOB_ID, job.id), 0, 1)
+        assertTrue(entered.await(5, TimeUnit.SECONDS))
+        org.robolectric.shadows.ShadowProcess.clearKilledProcesses()
+        try {
+            service.onStartCommand(Intent(service, PatchJobService::class.java).setAction(PatchJobService.CANCEL).putExtra(PatchJobService.JOB_ID, job.id), 0, 2)
+            val retry = store.patch("hash", listOf("patch"))
+            service.onStartCommand(Intent(service, PatchJobService::class.java).putExtra(PatchJobService.JOB_ID, retry.id), 0, 3)
+            assertEquals(PatchJobStatus.FAILURE, store.state.value.status)
+            assertEquals("The previous patch is still stopping. Wait a moment, then retry.", store.state.value.message)
+            assertEquals(store.state.value, PatchJobStore.decode(File(service.filesDir, "patch-job.json").readText()))
+            assertFalse(ShadowPowerManager.getLatestWakeLock().isHeld)
+            assertTrue(shadowOf(service).isForegroundStopped)
+            shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMinutes(2))
+            assertFalse(store.state.value.active)
+            assertFalse(org.robolectric.shadows.ShadowProcess.wasKilled(android.os.Process.myPid()))
+            release.countDown()
+            assertTrue(exited.await(5, TimeUnit.SECONDS))
+            (PatchJobService::class.java.getDeclaredField("executor").apply { isAccessible = true }.get(service)
+                as java.util.concurrent.ExecutorService).submit {}.get(5, TimeUnit.SECONDS)
+            shadowOf(Looper.getMainLooper()).idle()
+            assertEquals(retry.id, store.state.value.id)
+            assertEquals(PatchJobStatus.FAILURE, store.state.value.status)
+            val nextEntered = CountDownLatch(1)
+            service.runJob = { state, _ -> nextEntered.countDown(); store.change(state.id) { it.copy(status = PatchJobStatus.SUCCESS) } }
+            val next = store.patch("hash", listOf("patch"))
+            service.onStartCommand(Intent(service, PatchJobService::class.java).putExtra(PatchJobService.JOB_ID, next.id), 0, 4)
+            assertTrue(nextEntered.await(5, TimeUnit.SECONDS))
+        } finally {
+            release.countDown(); assertTrue(exited.await(5, TimeUnit.SECONDS))
+            screen.pause().stop().destroy(); controller.destroy()
         }
     }
 
