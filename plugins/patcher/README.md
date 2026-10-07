@@ -75,6 +75,31 @@ later release-creation step, in the same job. The Tests workflow uses the secret
 `github.token`, which may be unable to read packages owned by another organisation
 (`MorpheApp`); if it fails with 401 while resolving `app.morphe`, add the secret.
 
+## Re-pin a bundle release
+
+Update these literals together after validating a genuine upstream artifact:
+
+1. `src/main/java/com/anezium/rokidbus/plugin/patcher/PatchTarget.kt`:
+   `PatchTargets.youtube.bundle.pinnedSourceSha256`. Review accepted stock versions,
+   defaults, featured patch names and output package only if that release changes them.
+2. `scripts/prepare_bundle.py`: `EXPECTED` (the original artifact SHA-256), `URL`
+   (both the release tag and asset filename), and the filename in `OFFLINE_HINT`.
+   Metadata `version` uses `VERSION`, derived from the URL tag; there is no separate
+   hard-coded metadata version to update. Update the host version/asset consistency test.
+3. `src/test/java/com/anezium/rokidbus/plugin/patcher/RealBundleTest.kt`:
+   the fixture SHA-256, fixture filename hint, total/compatible/default patch counts
+   (currently 137/80/76), and any changed default/package assertions. Review
+   `PatchTargetTest.kt` against the genuine bundle as well.
+4. This README: the build example filename, source SHA-256, release/version references,
+   patch counts and compatibility description. Find remaining copies with
+   `rg "1\.39\.1-rokid\.2|d07e9aae|137|80|76" plugins/patcher`.
+
+Run the host script tests and the plugin test/build commands above against the new
+fixture. Changing the patcher API also requires reviewing `build.gradle.kts`,
+`PatchPolicy.requireDex` and the observed writer/milestone contracts. Keep stock
+signer checks, read-only bundle installation and hub revalidation intact.
+This fix round does not change any bundle pin or release the fork.
+
 ## Releases
 
 Follows [plugins/README.md § Releases](../README.md#releases): push the tag
@@ -151,8 +176,11 @@ needs the GitHub Packages credentials above.
   Notification permission is asked once, at the first patch, with its reason shown on
   the screen beforehand; denial never blocks patching. A durable state reports
   interrupted work on the next open with a retry.
-  Ready results survive activity recreation; the activity returns the result to the
-  hub on reopening or offers share/save when opened from settings. Only a completely
+  Ready results survive activity recreation. Automatic return is restricted to a
+  screen that watched the running job, or a matching undelivered ready notification.
+  A new hub request shows the saved result's age and explicit Use result / Patch again
+  actions. Hand-off durably marks the result delivered. Only the Nexus calling
+  package can receive it; settings offers share/save. Only a completely
   patched, signed and verified APK becomes a result.
 - The signing key is generated once in private PKCS12 storage (Android backup is
   disabled). Backup/export is AES-256-GCM authenticated encryption with a salted
@@ -161,7 +189,7 @@ needs the GitHub Packages credentials above.
   and tampering preserve the previous key. Backups need at least eight characters.
   This portable backup format does **not** import Morphe Manager keystores.
 - Success returns a FileProvider `content://` URI with read grant and ClipData,
-  plus informational package/version/hash extras. The hub copies the APK and
+  plus the target id. The hub copies the APK and
   re-validates its bytes itself; the extras are not trusted. From settings, share/save is offered instead. Unselecting
   GmsCore is explicitly confirmed; the stock-package result cannot satisfy the
   hub's patched-package policy. Unselecting Rokid controls is also warned.
@@ -175,7 +203,8 @@ The service exposes `PatchJobStore.state`, a `StateFlow<PatchJobState>`. It incl
 the phase and its index/total, an optional phase fraction, the most recent completed
 selected patch with index/total, monotonic elapsed milliseconds, and durable terminal
 success/failure/cancelled/interrupted states. Fractions measure bytes or reported
-patch completions, not a time estimate. Unknown fractions use an indeterminate bar;
+patch completions, not a time estimate. Unknown fractions use an indeterminate in-app bar; notifications omit numeric
+progress for those phases.
 remaining time is deliberately null. Phase boundaries and terminal states are synced
 to disk; callbacks and a one-second heartbeat update observers without disk writes.
 Activity recreation reconnects to this same store, and process restart recovers the
@@ -190,7 +219,8 @@ static dashed fill when the user has turned animations off. Notifications use th
 same words, name the target and carry the elapsed time; the result notification
 reopens the screen, and when the live screen already exists in the hub's task it is
 brought forward (`REORDER_TASKS`) instead of a second copy. Failure, cancelled and
-interrupted states are shown on the screen and as notifications, each with a retry.
+interrupted states are shown on the screen. Terminal notifications are posted only
+when no activity in the process is resumed and notification permission is granted.
 
 Filter Android logs by tag `Patcher`. Each completed boundary emits
 `step=<step> duration_ms=<integer> outcome=ok|failed|skipped`, with
@@ -200,7 +230,10 @@ accounts or keys are included. Steps are `read_copy_input`, `split_extract`,
 `patch_apply_total`, `patch_compile`, `write`, `align`, `sign`, `verify`,
 `publish_result` and `hand_off`. A standalone input records split merge as skipped.
 `patch_apply` measures between upstream result callbacks (including dependencies),
-not a profiler inside each patch. `align` is nested inside `write` at the real
+not a profiler inside each patch. Fixed upstream decode/DEX/resource milestones and
+physical ZIP write-byte callbacks provide changing substeps; bytes written have no
+invented total. The observed ZIP writer retains upstream merge filters, compression
+policy and 4 KiB native-library alignment. `align` is nested inside `write` at the real
 Patcher 1.7.0 alignment boundary; do not add nested durations to their parent.
 `hand_off` ends at the activity result; hub validation and CXR install follow it.
 
@@ -208,10 +241,22 @@ Verified output moves atomically within private storage instead of copying anoth
 170–214 MB APK. The activity no longer rehashes or reparses output for informational
 extras; the runtime verification and independent hub byte validation stay intact.
 The required writer copy uses the existing bounded 64 KiB buffer. Prepared stock
-input survives retries, avoiding another document copy, signature check and split
-merge until a different file is chosen. D8 is already a Gradle input-cached build
+input survives retries as one validated `retry/stock.apk`, for at most 24 hours.
+Terminal `jobs/<id>` directories and bundle-loader extraction caches are removed;
+startup sweeps killed-job leftovers. Retry needs a new pick after input expiry. D8 is already a Gradle input-cached build
 step, so no runtime D8 cache or mutable patch-instance cache is added. The job's
 dedicated thread uses Android's default CPU priority even with the screen off.
+
+## Picture-in-picture experiment
+
+This round enables PiP only during RUNNING, with a compact live phase/elapsed view.
+Android 12+ receives auto-enter parameters; leaving the activity also requests PiP.
+Finished floating tasks move behind the user while retaining the activity-result
+relationship. No job is cancelled by leaving or expanding PiP. The owner must measure
+whether Samsung keeps this visible window out of its moderate scheduling group.
+
+Disable it at build time with `-PpatcherPipExperiment=false`; omit that flag or set it
+true to enable it. The separate PiP commit can be reverted to remove the experiment.
 
 ## Trust model
 
@@ -236,7 +281,8 @@ lifecycle tests observe actual POSIX permissions before writing, before validati
 after atomic rename; cancellation at each lifecycle boundary and invalid-artifact
 rejection preserve the working bundle. This is host-side lifecycle proof, not an
 Android 14 ART/DexClassLoader execution test. `assembleDebug` verifies packaging,
-including a prepared DEX bundle. These are not phone execution tests. This engine
+including a prepared DEX bundle. The writer adapter is also compared with upstream
+ZIP contents and checked for native-library compression/alignment. These are not phone execution tests. This engine
 phase used no phone or glasses: full stock 21.04.223 patching, memory/time measurements,
 Android DEX loading, URI hand-off, glasses installation and Rokid rail operation
 still require a device run. In particular the upstream patcher's Android runtime

@@ -3,6 +3,7 @@ import argparse, hashlib, json, os, pathlib, subprocess, sys, tempfile, urllib.e
 
 URL = 'https://github.com/Anezium/morphe-patches/releases/download/v1.39.1-rokid.2/patches-1.39.1-rokid.2.mpp'
 EXPECTED = 'd07e9aae4a5b9fffdd8e2eb81dfcdf8f0305805a9b777ac094a5065d96df6601'
+VERSION = URL.rsplit("/", 2)[1].removeprefix("v")
 OFFLINE_HINT = 'Pass -PpatchBundleInput=/absolute/path/to/patches-1.39.1-rokid.2.mpp to build offline.'
 
 
@@ -75,7 +76,7 @@ def main(argv=None):
         with zipfile.ZipFile(target) as prepared:
             if 'classes.dex' not in prepared.namelist():
                 raise SystemExit('D8 did not produce executable Android patches')
-        (out / 'bundled.json').write_text(json.dumps({'version': '1.39.1-rokid.2', 'source_sha256': digest,
+        (out / 'bundled.json').write_text(json.dumps({'version': VERSION, 'source_sha256': digest,
             'sha256': hashlib.sha256(target.read_bytes()).hexdigest(), 'download_url': URL}))
         print('Prepared genuine rokid.2 for Android; source SHA-256:', digest)
 
