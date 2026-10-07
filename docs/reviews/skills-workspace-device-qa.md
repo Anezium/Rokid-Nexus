@@ -2,6 +2,7 @@
 
 Dates: 2026-10-07 and 2026-10-08. Integration branch: `qa/skills-workspace`.
 Implementation tested: `20a9c4a1`.
+Workspace setup follow-ups tested: `8d13ba4c` and `8c5b0aa7`.
 
 This branch combines the current main checkout, Plan 024's Skills implementation,
 and Plan 026's Assistant Workspace implementation for testing. It is not a release
@@ -261,12 +262,12 @@ an ADB setup requirement, or broad storage access as the Workspace solution.
 
 Before presenting native folder setup as generally release-ready:
 
-1. Add setup guidance to create or choose a dedicated local subfolder, for
+1. Verify the setup guidance to create or choose a dedicated local subfolder, for
    example `Download/NexusWorkspace`, then select `Use this folder`. Android 11+
    intentionally blocks selection of the storage root and `Download` itself;
    [the SAF documentation](https://developer.android.com/training/data-storage/shared/documents-files#access-restrictions-1)
    describes these restrictions.
-2. Provide persistent setup help and actionable retry/reselect guidance for
+2. Verify persistent setup help and actionable retry/reselect guidance for
    failed access checks. Assistant cannot directly observe a disabled button
    inside the system picker, and canceling it must remain a normal cancellation,
    not a diagnosis of this OS failure. A phone restart can be suggested as a
@@ -281,6 +282,80 @@ open and investigate a user-selected import/share-to-Assistant path into plugin
 private storage as a separate product change. Such a fallback is not implemented
 or validated here and cannot be assumed to survive the same provider failure.
 The exact cause and prevalence of this incident remain unconfirmed.
+
+### Workspace setup hardening and recovery checks on 2026-10-08
+
+`8d13ba4c` adds first-setup guidance, a permanent `Folder help` action with a
+scrollable help dialog, and persistent selection-error messages. The picker starts
+inside the previous native folder, or inside `Download` when none is selected.
+Canceling the picker still changes nothing. The UI explains creating a subfolder
+and granting access; failed checks offer retry or reselection without disappearing
+as a toast. A rejected grant and a missing folder are classified separately, and
+a failed replacement retains the previous folder and index.
+
+Device testing exposed a race when returning from the picker: the automatic check
+started by `onStart` could change the index revision while the same folder was
+being selected, producing `CHECK_FAILED` after consent. A deterministic regression
+test first failed with `expected:<SELECTED> but was:<CHECK_FAILED>`.
+`8c5b0aa7` cancels the previous check when a valid folder selection begins; the
+regression and the full Assistant suite now pass.
+
+Final automated command:
+
+```powershell
+.\gradlew.bat :plugin-assistant:testDebugUnitTest :plugin-assistant:assembleDebug -PskipCxrGlobal=true
+```
+
+Observed output tail:
+
+```text
+BUILD SUCCESSFUL in 24s
+82 actionable tasks: 7 executed, 75 up-to-date
+Consider enabling configuration cache to speed up this build: https://docs.gradle.org/9.5.1/userguide/configuration_cache_enabling.html
+```
+
+The XML reports contain 444 tests with zero failures, errors, or skips, including
+the new selection-failure and concurrency cases. The final release build passed:
+
+```text
+BUILD SUCCESSFUL in 31s
+120 actionable tasks: 8 executed, 112 up-to-date
+Consider enabling configuration cache to speed up this build: https://docs.gradle.org/9.5.1/userguide/configuration_cache_enabling.html
+```
+
+The APK was signed with the existing certificate and installed with
+`adb install -r --user 0` on the owner's phone; installation returned `Success`.
+Existing application data and grants were retained. The installed QA update is
+from `8c5b0aa7`; no public release, tag, or registry update was created.
+
+The existing `Medium_Phone_API_36.1` AVD was also used. It reported Android 16 and
+SDK 36; Assistant was not installed before this test. No AVD was created or wiped,
+and no storage access-mode refresh or broad storage permission was used in these
+setup checks. ADB supplied UI input and the fixed test document.
+
+| Case | Observation |
+| --- | --- |
+| Existing phone setup after update | The native folder remained enabled and indexed with one file/excerpt. `Folder help` opened with readable instructions and accessible Close/Choose actions. |
+| Picker initial location and cancellation | The phone picker reopened inside `NexusWorkspace-20261008`; backing out retained that folder, its enabled state, and the index without an invented error. |
+| Missing phone folder and recovery | Only the isolated QA folder was temporarily renamed and restored. A check failure displayed persistent help; re-indexing after restoration recovered one file/excerpt. No user documents were moved. |
+| First setup on the AVD | The inline guide was visible with no folder selected. Enabling Workspace opened `Download`, where selection of that directory was correctly blocked. Creating a subfolder through Android enabled `Use this folder`; consent indexed one fixture with no skips/truncations. |
+| Lost grant after an immediate reboot | The first reboot was issued within seconds of granting access. The tree grant was absent afterward; Workspace cleared the cached excerpts and displayed reselection guidance. The initial reselection exposed the race fixed above. |
+| Reselection with the final APK | Native consent for the current folder returned to an indexed Workspace on both the phone and AVD, without the spurious check error. |
+| Full AVD reboot with the final APK | After the grant had existed for more than ten seconds, a full reboot retained `mode=0x1`, `owned=0x0`, and `persisted=0x1`; reopening Assistant indexed one file/excerpt without errors. The help dialog was inspected afterward. |
+
+The immediate-reboot loss must not be hidden by the later successful result.
+[AOSP schedules URI-grant persistence after ten seconds](https://android.googlesource.com/platform/frameworks/base/+/master/services/core/java/com/android/server/uri/UriGrantsManagerService.java);
+that is a possible explanation, not proof of the exact cause on this AVD. The
+ordinary persisted-grant path passed, while abrupt reboot immediately after
+consent remains an observed platform edge case. Assistant's supported recovery
+remains user consent through the picker, with no privileged automatic repair.
+
+The source changes add no manifest permission, hub/SDK change, bus route, or file
+import/share feature. The underlying Samsung provider failure's cause remains
+unconfirmed. Another physical manufacturer, a full reboot of the owner's phone,
+and the earlier prompt-injection/multi-topic retrieval acceptance remain open.
+The final HUD answer path was not rerun while another native app was foreground
+on the glasses; the earlier native-folder answer observations remain above.
 
 ## Handoff state and remaining acceptance
 
