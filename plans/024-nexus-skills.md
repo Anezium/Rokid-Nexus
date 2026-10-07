@@ -612,3 +612,7 @@ disagreed, the smaller change that keeps the plan's guarantees was taken.
   which became the trimmed test fixture.
 - **Media Deck** (section 6) is out of scope for this implementation thread;
   nothing in the contract is specific to Transit.
+- **Routing service agreement** (checkpoint 5). Transitous confirmed on
+  2026-09-28 that the open-source, non-commercial use of `/api/v1/plan` is
+  fine (public-transport/transitous#2520) and invited the app onto the
+  transitous.org front page.
