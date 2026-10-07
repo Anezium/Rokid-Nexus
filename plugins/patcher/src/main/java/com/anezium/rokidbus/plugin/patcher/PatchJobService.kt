@@ -24,6 +24,11 @@ class PatchJobService : Service() {
     private var pendingStart: Intent? = null
     private var pendingStartId = 0
     private var latestStartId = 0
+    private var workerTid = 0
+    private var lastDiagnostic = 0L
+    private var measuredStep: String? = null
+    private var measuredStarted = 0L
+    private val phaseTimings = PatchTimings()
     private var workerExited = AtomicBoolean(true)
 
     override fun onCreate() {
@@ -73,6 +78,8 @@ class PatchJobService : Service() {
                 exited.set(false)
                 try {
                     Process.setThreadPriority(Process.THREAD_PRIORITY_DEFAULT)
+                    workerTid = Process.myTid()
+                    PatchExecutionDiagnostics(this).sample(state.progress.phase, workerTid)
                     runBlocking { if (state.status == PatchJobStatus.PREPARING) prepare(state, requireNotNull(intent.data)) else patch(state) }
                 } catch (_: CancellationException) {
                     store.change(state.id) { it.copy(status = PatchJobStatus.CANCELLED, message = "Patching cancelled. You can retry.") }
@@ -189,6 +196,9 @@ class PatchJobService : Service() {
 
     private fun finishJob(id: String) {
         if (runningId != id) return
+        measuredStep?.let { phaseTimings.end(it, measuredStarted,
+            if (store.state.value.status in setOf(PatchJobStatus.SUCCESS, PatchJobStatus.READY)) "ok" else "failed") }
+        measuredStep = null
         handler.removeCallbacks(deadline)
         handler.removeCallbacks(heartbeat)
         if (wakeLock?.isHeld == true) wakeLock?.release()
@@ -223,6 +233,13 @@ class PatchJobService : Service() {
 
     private val deadline = Runnable { terminate(PatchJobStatus.INTERRUPTED, "Patching exceeded the one-hour limit. Retry with a supported stock APK.") }
     private fun reportProgress(id: String, progress: PatchProgress) {
+        val step = "substep_" + (progress.substep?.name ?: progress.phase.name).lowercase()
+        if (store.state.value.id != id || !store.state.value.active) return
+        if (step != measuredStep) {
+            measuredStep?.let { phaseTimings.end(it, measuredStarted) }
+            measuredStep = step; measuredStarted = phaseTimings.start()
+            PatchExecutionDiagnostics(this).sample(progress.phase, workerTid)
+        }
         store.progress(id, progress, SystemClock.elapsedRealtime() - startedRealtime)
     }
     private val heartbeat = object : Runnable {
@@ -231,6 +248,11 @@ class PatchJobService : Service() {
             if (current.active && current.id == runningId) {
                 store.tick(current.id, SystemClock.elapsedRealtime() - startedRealtime)
                 notifyState(store.state.value)
+                val now = SystemClock.elapsedRealtime()
+                if (now - lastDiagnostic >= 15_000) {
+                    PatchExecutionDiagnostics(this@PatchJobService).sample(current.progress.phase, workerTid)
+                    lastDiagnostic = now
+                }
                 handler.postDelayed(this, 1000)
             }
         }
