@@ -22,6 +22,7 @@ class YoutubeSetupActivity : Activity() {
     private var rendered: YoutubeSetupState? = null
     private val expanded = mutableSetOf<String>()
     private var patchPending = false
+    private var patchRequestCode = PATCH_APK - 1
     private var pickPending = false
     private var patcherIdentity: String? = null
     // Only a UI label; the patch button and the result boundary re-authenticate the patcher.
@@ -34,6 +35,8 @@ class YoutubeSetupActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         patchPending = savedInstanceState?.getBoolean("patchPending") ?: false
+        patchRequestCode = savedInstanceState?.getInt("patchRequestCode",
+            if (patchPending) PATCH_APK else PATCH_APK - 1) ?: PATCH_APK - 1
         pickPending = savedInstanceState?.getBoolean("pickPending") ?: false
         patcherIdentity = savedInstanceState?.getString("patcherIdentity")
         window.statusBarColor = NexusUi.BG
@@ -68,9 +71,21 @@ class YoutubeSetupActivity : Activity() {
 
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putBoolean("patchPending", patchPending)
+        outState.putInt("patchRequestCode", patchRequestCode)
         outState.putBoolean("pickPending", pickPending)
         outState.putString("patcherIdentity", patcherIdentity)
         super.onSaveInstanceState(outState)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (!patchPending) return
+        val identity = PatcherHandoff.authenticatedIdentity(this)
+        patcherApproved = identity != null
+        if (!PatcherHandoff.acceptsResult(patcherIdentity, identity)) {
+            abandonPatchResult()
+            toast("Patcher stopped — retry.")
+        }
     }
 
     override fun onStop() {
@@ -102,7 +117,7 @@ class YoutubeSetupActivity : Activity() {
         content.addView(message, NexusUi.block())
         val microG = state.inventory?.apps?.firstOrNull { it.packageName == YoutubeSetupContract.MICROG }
         val youtube = state.inventory?.apps?.filter { it.packageName != YoutubeSetupContract.MICROG && it.installed }.orEmpty()
-        val enabled = !state.busy && !patchPending
+        val enabled = !state.busy
         val checked = state.inventory != null
 
         card("1. MicroG on the glasses", status(checked, microG?.installed == true,
@@ -136,9 +151,10 @@ class YoutubeSetupActivity : Activity() {
                 startActivity(PatcherHandoff.reviewIntent(this))
             } else {
                 patcherIdentity = identity
+                patchRequestCode++
                 patchPending = true
                 rerender()
-                runCatching { startActivityForResult(PatcherHandoff.patchIntent(this), PATCH_APK) }
+                runCatching { startActivityForResult(PatcherHandoff.patchIntent(this), patchRequestCode) }
                     .onFailure {
                         patchPending = false
                         patcherIdentity = null
@@ -153,11 +169,16 @@ class YoutubeSetupActivity : Activity() {
             else -> installStatus +
                 " — Approve Patcher first, then choose your file and review the patches. Patching takes about 6–7 minutes and keeps going in a small window while you use other apps. Nexus then checks the result and installs it on the glasses."
         }) { box ->
-            button(box, action.label, enabled, secondary = action == PatchStepAction.REINSTALL) {
+            button(box, action.label, enabled && (action == PatchStepAction.INSTALL_PREPARED || !patchPending),
+                secondary = action == PatchStepAction.REINSTALL) {
                 if (action == PatchStepAction.INSTALL_PREPARED) command(YoutubeSetupController.INSTALL) else patch()
             }
+            if (patchPending) button(box, "Patcher stopped? Retry", enabled) {
+                abandonPatchResult()
+                patch()
+            }
             more(box, "patch") { extras ->
-                if (prepared != null) button(extras, if (youtubeDone) "Reinstall / update" else "Patch again", enabled) { patch() }
+                if (prepared != null) button(extras, if (youtubeDone) "Reinstall / update" else "Patch again", enabled && !patchPending) { patch() }
                 button(extras, "Patcher in Store", enabled) {
                     startActivity(PatcherHandoff.storeIntent(this))
                 }
@@ -280,7 +301,7 @@ class YoutubeSetupActivity : Activity() {
     @Deprecated("Uses the Activity result callback")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == PATCH_APK) {
+        if (requestCode >= PATCH_APK && requestCode == patchRequestCode) {
             if (!patchPending) return
             patchPending = false
             val launchedIdentity = patcherIdentity
@@ -300,6 +321,15 @@ class YoutubeSetupActivity : Activity() {
                 submitResult(YoutubeSetupController.IMPORT_YOUTUBE, it, "choose the APK again")
             }
         }
+    }
+
+    private fun abandonPatchResult() {
+        patchPending = false
+        patcherIdentity = null
+        // Finish the old result relationship before retrying. Each launch uses a new
+        // request code so a late result cannot be accepted by the replacement session.
+        finishActivity(patchRequestCode)
+        rerender()
     }
 
     private fun submitResult(action: String, uri: Uri, retry: String) {

@@ -3,13 +3,23 @@ package com.anezium.rokidbus.phone
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ActivityInfo
+import android.content.pm.ApplicationInfo
+import android.content.pm.PackageInfo
+import android.content.pm.ResolveInfo
+import android.content.pm.ServiceInfo
+import android.content.pm.Signature
+import android.content.pm.SigningInfo
 import android.net.Uri
+import android.os.Bundle
 import android.os.Looper
 import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
 import com.anezium.rokidbus.shared.BusEnvelope
+import com.anezium.rokidbus.shared.BusConstants
 import com.anezium.rokidbus.shared.NativeAppContract
+import com.anezium.rokidbus.shared.PatcherContract
 import com.anezium.rokidbus.shared.YoutubePackage
 import com.anezium.rokidbus.shared.YoutubeSetupContract
 import org.junit.After
@@ -89,6 +99,150 @@ class YoutubeSetupActivityTest {
 
     private fun pickerResult(picker: Intent) = shadowOf(screen.get()).receiveResult(picker, Activity.RESULT_OK,
         Intent().setData(Uri.parse("content://picker/youtube.apk")))
+
+    private fun approvePatcher(): PhonePluginPrincipal {
+        val context = RuntimeEnvironment.getApplication()
+        val manager = shadowOf(context.packageManager)
+        val app = ApplicationInfo().apply {
+            packageName = PatcherContract.PACKAGE
+            uid = 10001
+            enabled = true
+        }
+        val signing = SigningInfo().also { shadowOf(it).setSignatures(arrayOf(Signature(byteArrayOf(1, 2, 3)))) }
+        manager.installPackage(PackageInfo().apply {
+            packageName = app.packageName
+            applicationInfo = app
+            signingInfo = signing
+            lastUpdateTime = 1
+        })
+        manager.addOrUpdateActivity(ActivityInfo().apply {
+            packageName = app.packageName
+            name = PatcherContract.PATCH_ACTIVITY
+            applicationInfo = app
+            enabled = true
+            exported = true
+        })
+        manager.addResolveInfoForIntent(Intent(BusConstants.ACTION_PLUGIN), ResolveInfo().apply {
+            serviceInfo = ServiceInfo().apply {
+                packageName = app.packageName
+                name = "${app.packageName}.PatcherPluginService"
+                applicationInfo = app
+                exported = true
+                metaData = Bundle().apply {
+                    putString(BusConstants.META_PLUGIN_ID, PatcherContract.PLUGIN_ID)
+                    putString(BusConstants.META_PLUGIN_DISPLAY_NAME, "Patcher")
+                    putString(BusConstants.META_PLUGIN_API_VERSION, "3")
+                    putString(BusConstants.META_PLUGIN_CAPABILITIES, "")
+                    putString(BusConstants.META_PLUGIN_RECEIVE_PREFIXES, "/plugin/${PatcherContract.PLUGIN_ID}")
+                }
+            }
+        })
+        val candidate = PhonePluginDiscovery(context.packageManager).discover().single()
+        assertTrue(candidate.toString(), candidate is PhonePluginCandidate.Valid)
+        val principal = (candidate as PhonePluginCandidate.Valid).principal
+        PluginGrantStore(context).approve(principal, emptySet())
+        assertNotNull(PatcherHandoff.authenticatedIdentity(context))
+        screen.pause().stop().restart().resume()
+        idle()
+        reply()
+        return principal
+    }
+
+    private fun launchPatch(): org.robolectric.shadows.ShadowActivity.IntentForResult {
+        text("PATCH AND INSTALL").single().performClick()
+        return requireNotNull(shadowOf(screen.get()).nextStartedActivityForResult).also {
+            assertEquals(PatcherHandoff.patchIntent().component, it.intent.component)
+            assertEquals(PatcherContract.ACTION_PATCH, it.intent.action)
+        }
+    }
+
+    private fun patchResult(code: Int, result: Int, data: Intent? = null) {
+        YoutubeSetupActivity::class.java.getDeclaredMethod("onActivityResult",
+            Int::class.javaPrimitiveType, Int::class.javaPrimitiveType, Intent::class.java)
+            .apply { isAccessible = true }.invoke(screen.get(), code, result, data)
+        idle()
+    }
+
+    private fun resultApk() = Intent().setData(Uri.parse("content://patcher/youtube.apk"))
+        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        .putExtra(PatcherContract.EXTRA_TARGET_ID, PatcherContract.TARGET_YOUTUBE)
+
+    @Test fun `pending patch disables patching but leaves the other setup steps usable`() {
+        approvePatcher()
+        launchPatch()
+        assertFalse(text("PATCH AND INSTALL").single().isEnabled)
+        listOf("INSTALL MICROG", "CHECK FOR MICROG UPDATES", "MICROG SOURCE",
+            "Download YouTube ${YoutubeApkPolicy.STOCK_YOUTUBE_VERSION}".uppercase(),
+            "PATCHER IN STORE", "REFRESH GLASSES APPS", "KEYBOARD & REMOTE", "DONE",
+            "ADD ROKID PATCHES TO MORPHE", "CHOOSE PATCHED YOUTUBE APK").forEach { label ->
+            assertTrue(label, text(label).single().isEnabled)
+        }
+        assertTrue(text("PATCHER STOPPED? RETRY").single().isEnabled)
+        assertNotNull(launchPicker())
+    }
+
+    @Test fun `cancelled patch result after onStart enables patching without starting an install`() {
+        approvePatcher()
+        val request = launchPatch()
+        screen.pause().stop().restart()
+        idle()
+        val before = sent.size
+        patchResult(request.requestCode, Activity.RESULT_CANCELED)
+        screen.resume()
+        idle()
+        assertTrue(text("PATCH AND INSTALL").single().isEnabled)
+        assertTrue(text("PATCHER STOPPED? RETRY").isEmpty())
+        assertEquals(before, sent.size)
+        assertFalse(YoutubeSetupStateStore.state.busy)
+        assertFalse(YoutubeSetupStateStore.state.canInstall)
+    }
+
+    @Test fun `missing result offers retry and old results cannot unlock or install for the new request`() {
+        approvePatcher()
+        val old = launchPatch()
+        screen.pause().stop().restart().resume()
+        idle()
+        assertFalse(text("PATCH AND INSTALL").single().isEnabled)
+        assertTrue(text("PATCHER STOPPED? RETRY").single().isEnabled)
+        text("PATCHER STOPPED? RETRY").single().performClick()
+        val retry = requireNotNull(shadowOf(screen.get()).nextStartedActivityForResult)
+        assertEquals(PatcherHandoff.patchIntent().component, retry.intent.component)
+        assertNotEquals(old.requestCode, retry.requestCode)
+        patchResult(old.requestCode, Activity.RESULT_OK, resultApk())
+        patchResult(old.requestCode, Activity.RESULT_CANCELED)
+        assertFalse(YoutubeSetupStateStore.state.canInstall)
+        assertFalse(text("PATCH AND INSTALL").single().isEnabled)
+        patchResult(retry.requestCode, Activity.RESULT_CANCELED)
+        assertTrue(text("PATCH AND INSTALL").single().isEnabled)
+    }
+
+    @Test fun `onResume recovers a pending patch when approval disappears and rejects the late APK`() {
+        val principal = approvePatcher()
+        val request = launchPatch()
+        screen.pause().stop()
+        PluginGrantStore(screen.get()).revoke(principal)
+        screen.restart().resume()
+        idle()
+        assertEquals("Patcher stopped — retry.", ShadowToast.getTextOfLatestToast())
+        assertTrue(text("GET OR APPROVE PATCHER").single().isEnabled)
+        patchResult(request.requestCode, Activity.RESULT_OK, resultApk())
+        assertFalse(YoutubeSetupStateStore.state.canInstall)
+        assertTrue(text("GET OR APPROVE PATCHER").single().isEnabled)
+    }
+
+    @Test fun `recreation preserves the live patch request and its validated result boundary`() {
+        approvePatcher()
+        val request = launchPatch()
+        val saved = Bundle()
+        screen.pause().stop().saveInstanceState(saved).destroy()
+        screen = Robolectric.buildActivity(YoutubeSetupActivity::class.java).create(saved).start().resume()
+        idle()
+        assertFalse(text("PATCH AND INSTALL").single().isEnabled)
+        assertTrue(text("PATCHER STOPPED? RETRY").single().isEnabled)
+        patchResult(request.requestCode, Activity.RESULT_OK, resultApk())
+        assertTrue(YoutubeSetupStateStore.state.canInstall)
+        assertTrue(text("PATCHER STOPPED? RETRY").isEmpty())
+    }
 
     @Test fun `picker result delivered after onStart is imported while glasses are connected`() {
         val picker = launchPicker()
