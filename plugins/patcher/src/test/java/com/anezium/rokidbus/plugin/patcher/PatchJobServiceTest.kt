@@ -129,4 +129,28 @@ class PatchJobServiceTest {
         controller.destroy()
     }
 
+    @Test @Config(sdk = [34]) fun prepareFailureAlertsOnlyWhenHiddenAndNotificationsAreAllowed() {
+        val store = store()
+        val job = store.prepare()
+        val screen = Robolectric.buildActivity(PatchActivity::class.java).setup()
+        val controller = Robolectric.buildService(PatchJobService::class.java).create()
+        val service = controller.get()
+        val notify = PatchJobService::class.java.getDeclaredMethod("notifyState", PatchJobState::class.java).apply { isAccessible = true }
+        val manager = service.getSystemService(android.app.NotificationManager::class.java)
+        val application = RuntimeEnvironment.getApplication()
+        shadowOf(application).grantPermissions(android.Manifest.permission.POST_NOTIFICATIONS)
+        store.change(job.id) { it.copy(status = PatchJobStatus.FAILURE, message = "Choose a supported stock APK.") }
+        notify.invoke(service, store.state.value)
+        assertTrue(shadowOf(manager).allNotifications.isEmpty())
+        screen.pause().stop()
+        notify.invoke(service, store.state.value)
+        assertEquals(1, shadowOf(manager).allNotifications.size)
+        assertEquals("Choose a supported stock APK.", shadowOf(manager).allNotifications.single().extras.getString(Notification.EXTRA_TEXT))
+        manager.cancelAll()
+        shadowOf(application).denyPermissions(android.Manifest.permission.POST_NOTIFICATIONS)
+        notify.invoke(service, store.state.value)
+        assertTrue(shadowOf(manager).allNotifications.isEmpty())
+        screen.destroy(); controller.destroy()
+    }
+
 }

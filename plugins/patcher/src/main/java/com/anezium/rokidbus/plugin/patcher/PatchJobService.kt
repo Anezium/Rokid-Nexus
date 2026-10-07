@@ -191,6 +191,9 @@ class PatchJobService : Service() {
     }
 
     private fun notifyState(state: PatchJobState) {
+        if (!state.active && PatchVisibility.hasResumedActivity) return
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
+            android.content.pm.PackageManager.PERMISSION_GRANTED) return
         runCatching { getSystemService(NotificationManager::class.java).notify(NOTIFICATION, notification(state)) }
     }
 
