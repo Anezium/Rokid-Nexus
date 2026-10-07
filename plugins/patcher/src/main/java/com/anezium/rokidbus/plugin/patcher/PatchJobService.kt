@@ -202,6 +202,10 @@ class PatchJobService : Service() {
     }
 
     private fun notifyState(state: PatchJobState) {
+        if (state.status == PatchJobStatus.SUCCESS && state.delivered) {
+            clearResultNotification(this)
+            return
+        }
         if (!state.active && PatchVisibility.hasResumedActivity) return
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
             android.content.pm.PackageManager.PERMISSION_GRANTED) return
@@ -306,6 +310,10 @@ class PatchJobService : Service() {
     }
 
     companion object {
+        internal fun clearResultNotification(context: android.content.Context) {
+            context.getSystemService(NotificationManager::class.java).cancel(NOTIFICATION)
+        }
+
         const val JOB_ID = "job_id"
         const val CANCEL = "cancel_patch"
         private const val CHANNEL = "patch-jobs"

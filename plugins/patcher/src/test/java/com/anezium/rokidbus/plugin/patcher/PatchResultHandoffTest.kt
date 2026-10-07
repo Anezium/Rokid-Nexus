@@ -299,6 +299,53 @@ class PatchResultHandoffTest {
         screen.pause().stop().destroy()
     }
 
+    @Test fun returningFromRecentsOrTheReadyNotificationClearsTheDeliveredNotification() {
+        listOf(false, true).forEach { fromNotification ->
+            val store = runningStore()
+            val screen = screen(request(store)).setup()
+            shadowOf(Looper.getMainLooper()).idle()
+            screen.pause().stop()
+            succeed(store)
+            val controller = Robolectric.buildService(PatchJobService::class.java).create()
+            val service = controller.get()
+            val notify = PatchJobService::class.java.getDeclaredMethod("notifyState", PatchJobState::class.java).apply { isAccessible = true }
+            val manager = service.getSystemService(android.app.NotificationManager::class.java)
+            notify.invoke(service, store.state.value)
+            assertEquals(1, shadowOf(manager).allNotifications.size)
+            if (fromNotification) screen.newIntent(Intent().putExtra(PatchActivity.EXTRA_READY_JOB_ID, store.state.value.id))
+            screen.start().resume()
+            shadowOf(Looper.getMainLooper()).idle()
+            assertDelivered(screen, store)
+            assertTrue(shadowOf(manager).allNotifications.isEmpty())
+            screen.pause().stop().destroy()
+            // A worker completion that reaches the main thread after delivery must not repost it.
+            notify.invoke(service, store.state.value)
+            assertTrue(shadowOf(manager).allNotifications.isEmpty())
+            controller.destroy()
+        }
+    }
+
+    @Test fun explicitlyUsingASavedResultAlsoClearsTheReadyNotification() {
+        val store = runningStore()
+        succeed(store)
+        val controller = Robolectric.buildService(PatchJobService::class.java).create()
+        val service = controller.get()
+        val notify = PatchJobService::class.java.getDeclaredMethod("notifyState", PatchJobState::class.java).apply { isAccessible = true }
+        val manager = service.getSystemService(android.app.NotificationManager::class.java)
+        notify.invoke(service, store.state.value)
+        assertEquals(1, shadowOf(manager).allNotifications.size)
+        val screen = screen(request(store)).setup()
+        shadowOf(Looper.getMainLooper()).idle()
+        assertFalse(screen.get().isFinishing)
+        assertEquals(1, shadowOf(manager).allNotifications.size)
+        PatchActivity::class.java.getDeclaredMethod("deliverResult", Boolean::class.javaPrimitiveType)
+            .apply { isAccessible = true }.invoke(screen.get(), true)
+        shadowOf(Looper.getMainLooper()).idle()
+        assertDelivered(screen, store)
+        assertTrue(shadowOf(manager).allNotifications.isEmpty())
+        screen.pause().stop().destroy(); controller.destroy()
+    }
+
     @Test fun successInTheCallersTaskReturnsWithoutLaunchingTheHub() {
         val store = runningStore()
         val screen = screen(request(store)).setup()

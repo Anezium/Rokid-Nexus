@@ -770,6 +770,7 @@ class PatchActivity : Activity() {
                         // task root also needs the handoff when the original task id is unavailable.
                         val separateTask = hubTaskId?.let { it != taskId } == true || isTaskRoot
                         jobs.markDelivered(state.id)
+                        PatchJobService.clearResultNotification(this@PatchActivity)
                         setResult(RESULT_OK, data)
                         finish()
                         if (separateTask) bringHubToFront()
