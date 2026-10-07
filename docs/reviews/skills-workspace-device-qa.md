@@ -184,6 +184,27 @@ The temporary provider was uninstalled after Workspace was disabled; uninstall
 returned `Success`. Its private test data and URI grants were removed. The native
 phone-storage issue is still open.
 
+### Folder creation retry on 2026-10-08
+
+At the wearer's request, the USB test was repeated by creating fresh directories
+through Android's own `New folder` dialog. A new directory directly under shared
+storage opened successfully, but `Use this folder` remained disabled inside it.
+
+Because the picker did not list the existing storage contents, a fresh standalone
+`ACTION_OPEN_DOCUMENT_TREE` task was opened with `EXTRA_INITIAL_URI` pointing to
+the existing `primary:Download` directory. Inside `Download`, `New folder` created
+`NexusWorkspace-20261008` and automatically entered it. The breadcrumb showed
+`Download` followed by the new subfolder. Android still displayed its privacy
+restriction message; the UI hierarchy confirmed `android:id/button1` had
+`enabled=false`. A shell existence check independently confirmed the new path
+`/sdcard/Download/NexusWorkspace-20261008`.
+
+Thus the failure also reproduces inside a freshly created Downloads subfolder,
+not only at a restricted storage root. No folder grant or Assistant indexing was
+claimed from this retry. The Downloads directory was retained for inspection;
+the empty temporary root-directory trial was removed. No production code or
+device permission settings changed.
+
 ## Handoff state and remaining acceptance
 
 Assistant was left on `Type first`, as requested for testing without microphone
