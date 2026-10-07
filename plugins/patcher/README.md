@@ -247,16 +247,18 @@ startup sweeps killed-job leftovers. Retry needs a new pick after input expiry. 
 step, so no runtime D8 cache or mutable patch-instance cache is added. The job's
 dedicated thread uses Android's default CPU priority even with the screen off.
 
-## Picture-in-picture experiment
+## Picture-in-picture
 
-This round enables PiP only during RUNNING, with a compact live phase/elapsed view.
+PiP is enabled by default only during RUNNING, with a compact live phase/elapsed view
+and an explicit Cancel action.
 Android 12+ receives auto-enter parameters; leaving the activity also requests PiP.
 Finished floating tasks move behind the user while retaining the activity-result
-relationship. No job is cancelled by leaving or expanding PiP. The owner must measure
-whether Samsung keeps this visible window out of its moderate scheduling group.
-
-Disable it at build time with `-PpatcherPipExperiment=false`; omit that flag or set it
-true to enable it. The separate PiP commit can be reverted to remove the experiment.
+relationship. Dismissing PiP or removing the task leaves the foreground job running.
+The full screen and visible PiP window keep the screen on while patching; manually
+locking the phone remains possible and never wakes or unlocks it. Android background
+restrictions can still refuse or remove the foreground lease. The service checks that
+lease and reports interruption if it cannot restore it, rather than leaving a RUNNING
+job without foreground protection. The former experiment flag has been removed.
 
 ## Trust model
 
