@@ -212,4 +212,49 @@ class PatchActivityTest {
         screen.pause().stop().destroy()
     }
 
+    @Test fun aNewHubLaunchNeverFinishesWithAnOldDeliveredResult() {
+        val (store, job) = runningStore()
+        val output = File(RuntimeEnvironment.getApplication().filesDir, "results/patched-complete.apk").apply {
+            parentFile!!.mkdirs(); writeBytes(byteArrayOf(1))
+        }
+        store.change(job.id) { it.copy(status = PatchJobStatus.SUCCESS, result = output.name) }
+        store.markDelivered(job.id)
+        val request = Intent(PatcherContract.ACTION_PATCH).putExtra(PatcherContract.EXTRA_TARGET_ID, job.targetId)
+        val screen = Robolectric.buildActivity(PatchActivity::class.java, request)
+        val hub = com.anezium.rokidbus.client.HubTarget.PHONE.packageName
+        shadowOf(screen.get()).setCallingActivity(ComponentName(hub, "Setup"))
+        shadowOf(screen.get()).setCallingPackage(hub)
+        screen.setup()
+        shadowOf(Looper.getMainLooper()).idle()
+        assertFalse(screen.get().isFinishing)
+        assertNotNull(button(screen.get(), "Patch again"))
+        assertTrue(views(screen.get().findViewById(android.R.id.content)).filterIsInstance<Button>().any { it.text.startsWith("Use this result (") })
+        screen.pause().stop().destroy()
+    }
+
+    @Test @Config(sdk = [34]) fun deniedNotificationPermissionStillStartsTheUserRequestedForegroundJob() {
+        val (store, _) = runningStore()
+        val old = store.state.value
+        store.change(old.id) { it.copy(status = PatchJobStatus.CANCELLED) }
+        val screen = Robolectric.buildActivity(PatchActivity::class.java).setup()
+        val activity = screen.get()
+        shadowOf(RuntimeEnvironment.getApplication()).denyPermissions(android.Manifest.permission.POST_NOTIFICATIONS)
+        val compatible = listOf(app.morphe.patcher.patch.bytecodePatch(name = "Permission test"))
+        val loaded = BundleStore.Loaded(File("fixture.mpp"), "fixture", "hash", null, compatible)
+        PatchActivity::class.java.getDeclaredField("bundle").apply { isAccessible = true }.set(activity, loaded)
+        PatchActivity::class.java.getDeclaredField("busy").apply { isAccessible = true }.setBoolean(activity, false)
+        PatchActivity::class.java.getDeclaredField("choices").apply { isAccessible = true }.set(activity, mutableMapOf(compatible.first().name!! to true))
+        PatchActivity::class.java.getDeclaredMethod("startPatch").apply { isAccessible = true }.invoke(activity)
+        val request = requireNotNull(shadowOf(activity).lastRequestedPermission)
+        assertArrayEquals(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), request.requestedPermissions)
+        assertEquals(PatchJobStatus.CANCELLED, store.state.value.status)
+        activity.onRequestPermissionsResult(request.requestCode, request.requestedPermissions, intArrayOf(android.content.pm.PackageManager.PERMISSION_DENIED))
+        assertEquals(PatchJobStatus.RUNNING, store.state.value.status)
+        assertNotEquals(old.id, store.state.value.id)
+        val started = shadowOf(activity).nextStartedService
+        assertEquals(PatchJobService::class.java.name, started.component!!.className)
+        assertEquals(store.state.value.id, started.getStringExtra(PatchJobService.JOB_ID))
+        screen.pause().stop().destroy()
+    }
+
 }

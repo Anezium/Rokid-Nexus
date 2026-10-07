@@ -59,4 +59,16 @@ class PatchStorageTest {
             assertEquals(9L, store.result()!!.length())
         } finally { files.deleteRecursively() }
     }
+    @Test fun unreferencedRetryInputIsRemovedAfterPrepareFailure() {
+        val files = Files.createTempDirectory("unused-retry").toFile()
+        try {
+            val store = PatchJobStore(files)
+            val job = store.prepare()
+            File(files, "retry/stock.apk").apply { parentFile!!.mkdirs(); writeBytes(ByteArray(7)) }
+            store.change(job.id) { it.copy(status = PatchJobStatus.FAILURE) }
+            store.cleanStorage()
+            assertFalse(File(files, "retry").exists())
+        } finally { files.deleteRecursively() }
+    }
+
 }

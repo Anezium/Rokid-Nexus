@@ -5,6 +5,9 @@ import org.junit.Test
 
 class PatchExecutionDiagnosticsTest {
     @Test fun schedulerValuesAreNumericOrAllowlistedAndMissingFilesStayUnknown() {
+        assertTrue(PatchExecutionDiagnostics.isDispatcherThread("DefaultDispatch\n"))
+        assertTrue(PatchExecutionDiagnostics.isDispatcherThread("DefaultDispatcher-worker-4"))
+        assertFalse(PatchExecutionDiagnostics.isDispatcherThread("/private/account"))
         assertEquals("/moderate", PatchExecutionDiagnostics.cpuset("/moderate\n"))
         assertEquals("unknown", PatchExecutionDiagnostics.cpuset("/user/private/account"))
         assertEquals("0-2", PatchExecutionDiagnostics.cpus("Name: private\nCpus_allowed_list:\t0-2\n"))

@@ -92,6 +92,7 @@ class PatchJobStore(private val directory: File) {
         if (name == "retry/stock.apk") storage.retry.takeIf {
             it.isFile && System.currentTimeMillis() - it.lastModified() in 0 until PatchStorage.RETRY_MAX_AGE_MS
         } else {
+            if (!state.workId.matches(Regex("[a-f0-9-]{36}"))) return@let null
             val work = File(directory, "jobs/${state.workId}")
             File(work, name).takeIf { it.isFile && it.canonicalFile.toPath().startsWith(work.canonicalFile.toPath()) }
         }
@@ -102,6 +103,7 @@ class PatchJobStore(private val directory: File) {
         if (current.active) return
         val retained = stock(current)?.let(storage::retain)
         if (current.stock != retained) update(current.copy(stock = retained))
+        if (retained == null) storage.discardRetry()
         storage.sweep()
     }
 
@@ -151,7 +153,7 @@ class PatchJobStore(private val directory: File) {
         }
 
         internal fun encode(s: PatchJobState) = buildJsonObject {
-            put("id", s.id); put("status", s.status.name); put("message", s.message); put("started", s.startedAt)
+            put("safe_failures", true); put("id", s.id); put("status", s.status.name); put("message", s.message); put("started", s.startedAt)
             s.stock?.let { put("stock", it) }; s.result?.let { put("result", it) }
             s.bundleHash?.let { put("bundle", it) }; put("selected", JsonArray(s.selected.map(::JsonPrimitive)))
             put("phase", s.progress.phase.name); s.progress.fraction?.let { put("fraction", it) }
@@ -168,7 +170,9 @@ class PatchJobStore(private val directory: File) {
             val json = Json.parseToJsonElement(text).jsonObject
             return PatchJobState(json.getValue("id").jsonPrimitive.content,
                 PatchJobStatus.valueOf(json.getValue("status").jsonPrimitive.content),
-                json.getValue("message").jsonPrimitive.content, json.getValue("started").jsonPrimitive.long,
+                if (json["safe_failures"]?.jsonPrimitive?.boolean != true &&
+                    json.getValue("status").jsonPrimitive.content == "FAILURE") "Patching failed. Retry with a supported stock APK."
+                else json.getValue("message").jsonPrimitive.content, json.getValue("started").jsonPrimitive.long,
                 json["stock"]?.jsonPrimitive?.content, json["result"]?.jsonPrimitive?.content,
                 json["bundle"]?.jsonPrimitive?.content, json.getValue("selected").jsonArray.map { it.jsonPrimitive.content },
                 PatchProgress(json["phase"]?.jsonPrimitive?.content?.let(PatchPhase::valueOf) ?: PatchPhase.READ_INPUT,

@@ -153,4 +153,93 @@ class PatchJobServiceTest {
         screen.destroy(); controller.destroy()
     }
 
+    private fun runningJob(store: PatchJobStore): PatchJobState {
+        val prepared = store.prepare()
+        File(store.work(prepared.id), "stock.apk").writeBytes(byteArrayOf(1))
+        store.change(prepared.id) { it.copy(status = PatchJobStatus.READY, stock = "stock.apk") }
+        return store.patch("hash", listOf("patch"))
+    }
+
+    @Test @Config(sdk = [34]) fun runningCancelWaitsForUncooperativeWorkAndNeverKillsAResumedScreen() {
+        val store = store()
+        val job = runningJob(store)
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val exited = CountDownLatch(1)
+        val controller = Robolectric.buildService(PatchJobService::class.java).create()
+        val service = controller.get()
+        service.runJob = { _, _ ->
+            entered.countDown()
+            try {
+                while (release.count > 0) try { release.await() } catch (_: InterruptedException) {}
+            } finally { exited.countDown() }
+        }
+        val screen = Robolectric.buildActivity(PatchActivity::class.java).setup()
+        org.robolectric.shadows.ShadowProcess.clearKilledProcesses()
+        service.onStartCommand(Intent(service, PatchJobService::class.java).putExtra(PatchJobService.JOB_ID, job.id), 0, 1)
+        assertTrue(entered.await(5, TimeUnit.SECONDS))
+        try {
+            assertEquals(ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC, service.foregroundServiceType)
+            service.onStartCommand(Intent(service, PatchJobService::class.java).setAction(PatchJobService.CANCEL).putExtra(PatchJobService.JOB_ID, job.id), 0, 2)
+            assertEquals(PatchJobStatus.CANCELLED, store.state.value.status)
+            assertFalse(ShadowPowerManager.getLatestWakeLock().isHeld)
+            assertTrue(shadowOf(service).isForegroundStopped)
+            shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofSeconds(3))
+            assertFalse(org.robolectric.shadows.ShadowProcess.wasKilled(android.os.Process.myPid()))
+            assertFalse(screen.get().isFinishing)
+            val retry = store.patch("hash", listOf("patch"))
+            service.onStartCommand(Intent(service, PatchJobService::class.java).putExtra(PatchJobService.JOB_ID, retry.id), 0, 3)
+            assertEquals(ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC, service.foregroundServiceType)
+            service.onStartCommand(Intent(service, PatchJobService::class.java).setAction(PatchJobService.CANCEL).putExtra(PatchJobService.JOB_ID, job.id), 0, 4)
+            assertEquals(PatchJobStatus.RUNNING, store.state.value.status)
+            assertEquals(ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC, service.foregroundServiceType)
+            service.onStartCommand(Intent(service, PatchJobService::class.java).setAction(PatchJobService.CANCEL).putExtra(PatchJobService.JOB_ID, retry.id), 0, 5)
+            assertEquals(PatchJobStatus.CANCELLED, store.state.value.status)
+            screen.pause().stop()
+            shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofSeconds(3))
+            assertTrue(org.robolectric.shadows.ShadowProcess.wasKilled(android.os.Process.myPid()))
+            assertEquals(PatchJobStatus.CANCELLED, PatchJobStore.decode(File(service.filesDir, "patch-job.json").readText()).status)
+        } finally {
+            release.countDown(); assertTrue(exited.await(5, TimeUnit.SECONDS))
+            screen.destroy(); controller.destroy()
+        }
+    }
+
+    @Test @Config(sdk = [34]) fun runningTimeoutPersistsInterruptedBeforeAnyFallbackKill() {
+        val store = store()
+        val job = runningJob(store)
+        val entered = CountDownLatch(1)
+        val controller = Robolectric.buildService(PatchJobService::class.java).create()
+        val service = controller.get()
+        service.runJob = { _, _ -> entered.countDown(); CountDownLatch(1).await() }
+        service.onStartCommand(Intent(service, PatchJobService::class.java).putExtra(PatchJobService.JOB_ID, job.id), 0, 1)
+        assertTrue(entered.await(5, TimeUnit.SECONDS))
+        service.onTimeout(1, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+        shadowOf(Looper.getMainLooper()).idle()
+        assertEquals(PatchJobStatus.INTERRUPTED, store.state.value.status)
+        assertEquals(PatchJobStatus.INTERRUPTED, PatchJobStore.decode(File(service.filesDir, "patch-job.json").readText()).status)
+        assertFalse(ShadowPowerManager.getLatestWakeLock().isHeld)
+        assertTrue(shadowOf(service).isForegroundStopped)
+        controller.destroy()
+    }
+
+    @Test @Config(sdk = [34]) fun oneHourDeadlineAlsoUsesInterruptedAndUnknownProgressOmitsTheProgressExtra() {
+        val store = store()
+        val job = runningJob(store)
+        val entered = CountDownLatch(1)
+        val controller = Robolectric.buildService(PatchJobService::class.java).create()
+        val service = controller.get()
+        service.runJob = { _, _ -> entered.countDown(); CountDownLatch(1).await() }
+        service.onStartCommand(Intent(service, PatchJobService::class.java).putExtra(PatchJobService.JOB_ID, job.id), 0, 1)
+        assertTrue(entered.await(5, TimeUnit.SECONDS))
+        val notice = shadowOf(service).lastForegroundNotification
+        assertEquals(0, notice.extras.getInt(Notification.EXTRA_PROGRESS_MAX))
+        assertFalse(notice.extras.getString(Notification.EXTRA_TEXT).orEmpty().contains("0%"))
+        val deadline = PatchJobService::class.java.getDeclaredField("deadline").apply { isAccessible = true }.get(service) as Runnable
+        deadline.run()
+        assertEquals(PatchJobStatus.INTERRUPTED, store.state.value.status)
+        assertFalse(ShadowPowerManager.getLatestWakeLock().isHeld)
+        controller.destroy()
+    }
+
 }

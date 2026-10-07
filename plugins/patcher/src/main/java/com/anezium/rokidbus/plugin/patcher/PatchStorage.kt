@@ -19,6 +19,8 @@ internal class PatchStorage(private val files: File) {
         return "retry/stock.apk"
     }
 
+    fun discardRetry() { remove(File(files, "retry")) }
+
     fun sweep(keepWorkId: String? = null, now: Long = System.currentTimeMillis()) {
         File(files, "jobs").listFiles()?.filter { it.name != keepWorkId }?.forEach(::remove)
         if (retry.exists() && (now < retry.lastModified() || now - retry.lastModified() >= RETRY_MAX_AGE_MS)) remove(retry)

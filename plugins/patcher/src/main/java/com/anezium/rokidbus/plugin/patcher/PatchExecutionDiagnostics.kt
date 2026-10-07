@@ -23,7 +23,7 @@ internal class PatchExecutionDiagnostics(private val context: Context,
         thread(workerTid, "worker")
         File("/proc/self/task").listFiles()?.forEach { task ->
             val tid = task.name.toIntOrNull() ?: return@forEach
-            if (tid != workerTid && read("${task.path}/comm")?.trim()?.matches(Regex("DefaultDispatcher-worker-[0-9]+")) == true)
+            if (tid != workerTid && isDispatcherThread(read("${task.path}/comm")))
                 thread(tid, "dex_dispatcher")
         }
     }
@@ -38,6 +38,10 @@ internal class PatchExecutionDiagnostics(private val context: Context,
     }
     companion object {
         private val GROUPS = setOf("/top-app", "/foreground", "/moderate", "/background", "/system-background", "/low", "/")
+        // Linux comm is truncated to 15 bytes, including Android coroutine worker names.
+        fun isDispatcherThread(value: String?): Boolean = value?.trim()?.let {
+            it == "DefaultDispatch" || it.matches(Regex("DefaultDispatcher-worker-[0-9]+"))
+        } == true
         fun cpuset(value: String?): String = value?.trim()?.takeIf { it in GROUPS } ?: "unknown"
         fun cpus(status: String?): String = status?.lineSequence()?.firstOrNull { it.startsWith("Cpus_allowed_list:") }
             ?.substringAfter(':')?.trim()?.takeIf { it.length <= 64 && it.matches(Regex("[0-9,-]+")) } ?: "unknown"

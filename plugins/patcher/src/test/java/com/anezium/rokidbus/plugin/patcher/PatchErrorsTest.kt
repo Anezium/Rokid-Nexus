@@ -21,4 +21,10 @@ class PatchErrorsTest {
         val empty = IllegalStateException("")
         assertEquals("Fallback", PatchErrors.reason(empty, "Fallback") {})
     }
+    @Test fun preSanitizationFailureSnapshotsCannotResurfaceRawMessages() {
+        val encoded = PatchJobStore.encode(PatchJobState(status = PatchJobStatus.FAILURE, message = "/private/upstream/path"))
+        val legacy = encoded.replace("\"safe_failures\":true,", "")
+        assertEquals("Patching failed. Retry with a supported stock APK.", PatchJobStore.decode(legacy).message)
+    }
+
 }

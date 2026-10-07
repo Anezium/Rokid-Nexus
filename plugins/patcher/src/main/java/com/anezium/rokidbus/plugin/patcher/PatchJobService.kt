@@ -24,12 +24,16 @@ class PatchJobService : Service() {
     private var pendingStart: Intent? = null
     private var pendingStartId = 0
     private var latestStartId = 0
-    private var workerTid = 0
+    @Volatile private var workerTid = 0
     private var lastDiagnostic = 0L
     private var measuredStep: String? = null
     private var measuredStarted = 0L
     private val phaseTimings = PatchTimings()
     private var workerExited = AtomicBoolean(true)
+
+    internal var runJob: suspend (PatchJobState, Uri?) -> Unit = { state, source ->
+        if (state.status == PatchJobStatus.PREPARING) prepare(state, requireNotNull(source)) else patch(state)
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -50,7 +54,8 @@ class PatchJobService : Service() {
                 store.change(requested) { it.copy(status = PatchJobStatus.CANCELLED, message = "Patching cancelled. You can retry.", result = null) }
                 pendingStart = null
                 if (runningId != null) terminate(PatchJobStatus.CANCELLED, "Patching cancelled. You can retry.") else stopSelf()
-            } else if (requested == runningId) terminate(PatchJobStatus.CANCELLED, "Patching cancelled. You can retry.")
+            } else if (requested == runningId && requested == store.state.value.id && store.state.value.active)
+                terminate(PatchJobStatus.CANCELLED, "Patching cancelled. You can retry.")
             else if (runningId == null) stopSelf()
             return START_NOT_STICKY
         }
@@ -58,7 +63,13 @@ class PatchJobService : Service() {
         latestStartId = startId
         if (runningId != null) {
             if (state.active && state.id != runningId && intent?.getStringExtra(JOB_ID) == state.id) {
-                pendingStart = intent; pendingStartId = startId
+                try {
+                    startForeground(NOTIFICATION, notification(state), ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+                    pendingStart = intent; pendingStartId = startId
+                } catch (e: Exception) {
+                    store.change(state.id) { it.copy(status = PatchJobStatus.FAILURE,
+                        message = PatchErrors.reason(e, "Cannot start background patching. Return to this screen and retry.")) }
+                }
             }
             return START_NOT_STICKY
         }
@@ -80,7 +91,7 @@ class PatchJobService : Service() {
                     Process.setThreadPriority(Process.THREAD_PRIORITY_DEFAULT)
                     workerTid = Process.myTid()
                     PatchExecutionDiagnostics(this).sample(state.progress.phase, workerTid)
-                    runBlocking { if (state.status == PatchJobStatus.PREPARING) prepare(state, requireNotNull(intent.data)) else patch(state) }
+                    runBlocking { runJob(state, intent.data) }
                 } catch (_: CancellationException) {
                     store.change(state.id) { it.copy(status = PatchJobStatus.CANCELLED, message = "Patching cancelled. You can retry.") }
                 } catch (_: InterruptedException) {
@@ -228,7 +239,12 @@ class PatchJobService : Service() {
         // Future.isDone becomes true on cancel even if upstream code ignores the interrupt.
         fun reap() {
             if (exited.get()) { finishJob(id); return }
-            if (!PatchVisibility.hasResumedActivity) { Process.killProcess(Process.myPid()); return }
+            if (!PatchVisibility.hasResumedActivity) {
+                val current = store.state.value
+                if (current.active) store.change(current.id) { it.copy(status = PatchJobStatus.INTERRUPTED,
+                    message = "The last patch was interrupted. Retry when you are ready.", result = null) }
+                Process.killProcess(Process.myPid()); return
+            }
             handler.postDelayed({ reap() }, CANCEL_GRACE_MS)
         }
         handler.postDelayed({ reap() }, CANCEL_GRACE_MS)

@@ -8,11 +8,16 @@ import java.util.IdentityHashMap
 
 internal object PatchVisibility : Application.ActivityLifecycleCallbacks {
     private val resumed = Collections.newSetFromMap(IdentityHashMap<Activity, Boolean>())
-    private var installed = false
+    private var installed: Application? = null
     val hasResumedActivity: Boolean get() = resumed.isNotEmpty()
 
     fun install(application: Application) {
-        if (!installed) { application.registerActivityLifecycleCallbacks(this); installed = true }
+        if (installed !== application) {
+            installed?.unregisterActivityLifecycleCallbacks(this)
+            resumed.clear()
+            application.registerActivityLifecycleCallbacks(this)
+            installed = application
+        }
     }
     override fun onActivityResumed(activity: Activity) { resumed.add(activity) }
     override fun onActivityPaused(activity: Activity) { resumed.remove(activity) }
