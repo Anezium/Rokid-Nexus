@@ -2,7 +2,6 @@ package com.anezium.rokidbus.plugin.patcher
 
 import app.morphe.patcher.Patcher
 import app.morphe.patcher.PatcherConfig
-import app.morphe.patcher.apk.ApkUtils.applyTo
 import app.morphe.patcher.patch.Patch
 import com.android.apksig.ApkVerifier
 import com.reandroid.apk.ApkModule
@@ -21,35 +20,38 @@ class PatchRuntime(private val target: PatchTarget = PatchTargets.default) {
         try {
             currentCoroutineContext().ensureActive()
             progress(PatchProgress(PatchPhase.READ_APK))
-            timings.measure("patch_read") { Patcher(PatcherConfig(input, File(work, "patch-work"))) }.use { patcher ->
-                inputVersion = patcher.context.packageMetadata.versionName
-                require(patcher.context.packageMetadata.packageName == target.stockPackage && inputVersion in target.acceptedVersions) { "Prepared stock identity does not match the target." }
-                patcher += patches
-                var index = 0
-                val completed = mutableSetOf<Patch<*>>()
-                var patchStarted = timings.start()
-                progress(PatchProgress(PatchPhase.APPLY_PATCHES, 0.0, patchTotal = patches.size))
-                timings.measureSuspend("patch_apply_total") {
-                    patcher().collect { result ->
-                        currentCoroutineContext().ensureActive()
-                        timings.end("patch_apply", patchStarted, if (result.exception == null) "ok" else "failed", "patch_index=${++index}")
-                        patchStarted = timings.start()
-                        result.exception?.let { throw IllegalStateException("A selected patch failed. Review your selection and retry.", it) }
-                        if (result.patch in patches) {
-                            completed += result.patch
-                            progress(PatchProgress(PatchPhase.APPLY_PATCHES, completed.size.toDouble() / patches.size,
-                                result.patch.name, completed.size, patches.size))
+            PatchEngineMilestones(progress).observe {
+                timings.measure("patch_read") { Patcher(PatcherConfig(input, File(work, "patch-work"))) }.use { patcher ->
+                    inputVersion = patcher.context.packageMetadata.versionName
+                    require(patcher.context.packageMetadata.packageName == target.stockPackage && inputVersion in target.acceptedVersions) { "Prepared stock identity does not match the target." }
+                    patcher += patches
+                    var index = 0
+                    val completed = mutableSetOf<Patch<*>>()
+                    var patchStarted = timings.start()
+                    progress(PatchProgress(PatchPhase.APPLY_PATCHES, 0.0, patchTotal = patches.size))
+                    timings.measureSuspend("patch_apply_total") {
+                        patcher().collect { result ->
+                            currentCoroutineContext().ensureActive()
+                            timings.end("patch_apply", patchStarted, if (result.exception == null) "ok" else "failed", "patch_index=${++index}")
+                            patchStarted = timings.start()
+                            result.exception?.let { throw IllegalStateException("A selected patch failed. Review your selection and retry.", it) }
+                            if (result.patch in patches) {
+                                completed += result.patch
+                                progress(PatchProgress(PatchPhase.APPLY_PATCHES, completed.size.toDouble() / patches.size,
+                                    result.patch.name, completed.size, patches.size))
+                            }
                         }
                     }
-                }
-                currentCoroutineContext().ensureActive()
-                progress(PatchProgress(PatchPhase.COMPILE))
-                val patched = timings.measureSuspend("patch_compile") { patcher.get() }
-                progress(PatchProgress(PatchPhase.ALIGN))
-                timings.measure("write") {
-                    input.inputStream().use { source -> unsigned.outputStream().use { PatchPolicy.copyBounded(source, it) } }
-                    timings.withAlignmentTiming(onAlign = { progress(PatchProgress(PatchPhase.ALIGN)) },
-                        onWrite = { progress(PatchProgress(PatchPhase.WRITE)) }) { patched.applyTo(unsigned) }
+                    currentCoroutineContext().ensureActive()
+                    progress(PatchProgress(PatchPhase.COMPILE))
+                    val patched = timings.measureSuspend("patch_compile") { patcher.get() }
+                    progress(PatchProgress(PatchPhase.COMPILE, substep = PatchSubstep.COPY))
+                    try {
+                        timings.measure("write") {
+                            input.inputStream().use { source -> unsigned.outputStream().use { PatchPolicy.copyBounded(source, it) } }
+                            PatchApkWriter.apply(patched, unsigned, timings, progress)
+                        }
+                    } finally { patched.dexFiles.forEach { runCatching { it.stream.close() } } }
                 }
             }
             currentCoroutineContext().ensureActive()

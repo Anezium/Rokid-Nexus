@@ -40,6 +40,8 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.1")
     implementation("org.bouncycastle:bcpkix-jdk18on:1.79")
     implementation("com.android.tools.build:apksig:9.1.1")
+    implementation("com.android.tools.build:apkzlib:9.1.1")
+    implementation("com.google.guava:guava:33.3.1-jre")
     implementation("com.github.REAndroid:arsclib:a28c6fb2a7")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.robolectric:robolectric:4.13")

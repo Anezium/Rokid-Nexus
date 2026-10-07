@@ -156,6 +156,9 @@ class PatchJobStore(private val directory: File) {
             s.bundleHash?.let { put("bundle", it) }; put("selected", JsonArray(s.selected.map(::JsonPrimitive)))
             put("phase", s.progress.phase.name); s.progress.fraction?.let { put("fraction", it) }
             s.progress.patchName?.let { put("patch_name", it) }; put("patch_index", s.progress.patchIndex)
+            s.progress.substep?.let { put("substep", it.name) }
+            s.progress.completedBytes?.let { put("written_bytes", it) }
+            s.progress.workTotal?.let { put("work_total", it) }
             put("patch_total", s.progress.patchTotal); put("elapsed", s.elapsedMs)
             put("target", s.targetId)
             put("work", s.workId); put("delivered", s.delivered)
@@ -170,7 +173,9 @@ class PatchJobStore(private val directory: File) {
                 json["bundle"]?.jsonPrimitive?.content, json.getValue("selected").jsonArray.map { it.jsonPrimitive.content },
                 PatchProgress(json["phase"]?.jsonPrimitive?.content?.let(PatchPhase::valueOf) ?: PatchPhase.READ_INPUT,
                     json["fraction"]?.jsonPrimitive?.double, json["patch_name"]?.jsonPrimitive?.content,
-                    json["patch_index"]?.jsonPrimitive?.int ?: 0, json["patch_total"]?.jsonPrimitive?.int ?: 0),
+                    json["patch_index"]?.jsonPrimitive?.int ?: 0, json["patch_total"]?.jsonPrimitive?.int ?: 0,
+                    json["substep"]?.jsonPrimitive?.content?.let(PatchSubstep::valueOf),
+                    json["written_bytes"]?.jsonPrimitive?.long, json["work_total"]?.jsonPrimitive?.long),
                 json["elapsed"]?.jsonPrimitive?.long ?: 0,
                 json["target"]?.jsonPrimitive?.content ?: PatchTargets.default.id,
                 json["work"]?.jsonPrimitive?.content ?: json.getValue("id").jsonPrimitive.content,

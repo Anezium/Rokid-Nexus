@@ -33,6 +33,10 @@ object PatchPresentation {
 
     /** What is happening right now, with a number only when the model measured one. */
     fun phaseLine(progress: PatchProgress): String {
+        progress.substep?.let { step ->
+            return listOfNotNull(step.label, progress.completedBytes?.let { "${it / (1024 * 1024)} MiB written" },
+                progress.workTotal?.let { "$it classes" }).joinToString(" ? ")
+        }
         val percent = progress.fraction?.let { "${(it * 100).toInt()}%" }
         return when (progress.phase) {
             PatchPhase.READ_INPUT -> listOfNotNull("Reading your file", percent).joinToString(" · ")

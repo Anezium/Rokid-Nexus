@@ -1,3 +1,8 @@
+PatchApkWriter adapts the APK merge/alignment algorithm in Morphe Patcher 1.7.0
+ApkUtils.kt (GPLv3), originally forked from revanced/revanced-library commit
+06733072045c8016a75f232dec76505c0ba2e1cd. It adds physical-write progress callbacks.
+Source: https://github.com/MorpheApp/morphe-patcher/blob/v1.7.0/src/main/kotlin/app/morphe/patcher/apk/ApkUtils.kt
+
 Patcher uses Morphe Patcher 1.7.0 under GPLv3.
 https://github.com/MorpheApp/morphe-patcher
 Original patcher source includes code from:
