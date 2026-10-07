@@ -1,6 +1,7 @@
 package com.anezium.rokidbus.plugin.assistant
 
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -125,6 +126,52 @@ class WorkspaceIndexerTest {
         assertEquals(WorkspaceProblem.CHECK_LIMIT, store.snapshot().state.problem)
     }
 
+    @Test
+    fun `per-file and aggregate character limits retain complete bounded chunks`() = runBlocking {
+        val (store, gateway, indexer) = fixture()
+        repeat(12) { gateway.put("$it", "terms${it.toString().padStart(2, '0')}.txt", "Notice words ".repeat(9_000)) }
+        indexer.refresh()
+        val index = store.snapshot().state.index!!
+        assertTrue(index.characterCount <= WorkspaceLimits.MAX_TOTAL_CHARS)
+        assertTrue(index.characterCount > 900_000)
+        assertTrue(index.documents.all { document -> document.chunks.sumOf { it.text.length } <= 100_000 })
+        assertTrue(index.documents.all { it.status == WorkspaceDocumentStatus.TRUNCATED })
+        assertTrue(index.documents.flatMap { it.chunks }.all { it.text.last().isLetter() })
+    }
+
+    @Test
+    fun `chunk count and source byte limits independently bound extraction`() = runBlocking {
+        val (store, gateway, indexer) = fixture()
+        val markdown = (0..399).joinToString("\n") { "# Heading $it\nNotice " + "words ".repeat(40) }
+        repeat(8) { gateway.put("$it", "terms$it.md", markdown) }
+        gateway.put("oversize", "large.txt", "Notice")
+        gateway.entries["oversize"] = gateway.entries.getValue("oversize").copy(sizeBytes = 2_097_153)
+        indexer.refresh()
+        val index = store.snapshot().state.index!!
+        assertEquals(WorkspaceLimits.MAX_CHUNKS, index.chunkCount)
+        assertTrue(index.characterCount < WorkspaceLimits.MAX_TOTAL_CHARS)
+        assertTrue(index.truncatedFiles > 0)
+        assertNull(gateway.opens["oversize"])
+        assertEquals(WorkspaceDocumentStatus.TOO_LARGE, index.documents.first { it.entry.documentId == "oversize" }.status)
+    }
+
+    @Test
+    fun `a slow metadata check times out without waiting for content extraction`() = runTest {
+        val store = WorkspaceStore(temporary.newFolder())
+        store.selectTree(WorkspaceStoreTest.TREE, "Documents", enable = true)
+        val fake = FakeWorkspaceGateway()
+        val slow = object : WorkspaceDocumentGateway by fake {
+            override suspend fun children(treeUri: String, documentId: String): List<WorkspaceEntry> {
+                kotlinx.coroutines.delay(WorkspaceLimits.CHECK_TIMEOUT_MS + 1)
+                return emptyList()
+            }
+        }
+        WorkspaceIndexer(store, slow).refresh()
+        assertEquals(WorkspaceProblem.CHECK_LIMIT, store.snapshot().state.problem)
+        assertNull(store.snapshot().state.index)
+        assertTrue(fake.opens.isEmpty())
+    }
+
     private fun fixture(): Triple<WorkspaceStore, FakeWorkspaceGateway, WorkspaceIndexer> {
         val store = WorkspaceStore(temporary.newFolder())
         store.selectTree(WorkspaceStoreTest.TREE, "Documents", enable = true)
@@ -134,6 +181,10 @@ class WorkspaceIndexerTest {
 }
 
 internal class FakeWorkspaceGateway : WorkspaceDocumentGateway {
+    var rootCalls = 0
+    var rootDelayMs = 0L
+    var activeObservers = 0
+    var changed: (() -> Unit)? = null
     var granted = true
     var rootExists = true
     var listFailure = false
@@ -147,6 +198,8 @@ internal class FakeWorkspaceGateway : WorkspaceDocumentGateway {
     override fun persistReadGrant(treeUri: String, returnedFlags: Int) { persistedFlags += treeUri to returnedFlags }
     override fun releaseReadGrant(treeUri: String) { released += treeUri }
     override suspend fun root(treeUri: String): WorkspaceEntry {
+        rootCalls++
+        if (rootDelayMs > 0) kotlinx.coroutines.delay(rootDelayMs)
         if (!rootExists) throw FileNotFoundException()
         return WorkspaceEntry("root", "Documents", directory = true)
     }
@@ -159,6 +212,11 @@ internal class FakeWorkspaceGateway : WorkspaceDocumentGateway {
         opens[documentId] = (opens[documentId] ?: 0) + 1
         onOpen?.invoke()
         return ByteArrayInputStream(contents.getValue(documentId))
+    }
+    override fun observe(treeUri: String, onChange: () -> Unit): AutoCloseable {
+        changed = onChange
+        activeObservers++
+        return AutoCloseable { activeObservers-- }
     }
     fun put(id: String, name: String, text: String, modified: Long = 10) {
         val bytes = text.toByteArray(Charsets.UTF_8)

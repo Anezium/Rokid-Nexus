@@ -33,6 +33,7 @@ internal class WorkspaceIndexer(
         val before = store.snapshot().state
         val settings = before.settings
         if (!settings.enabled || settings.treeUri.isEmpty()) return
+        var rootChecked = false
         try {
             if (!gateway.hasReadGrant(settings.treeUri)) {
                 store.folderUnavailable(settings.generation)
@@ -41,6 +42,7 @@ internal class WorkspaceIndexer(
             withTimeout(WorkspaceLimits.CHECK_TIMEOUT_MS) {
                 val root = gateway.root(settings.treeUri)
                 if (!root.directory) throw FileNotFoundException()
+                rootChecked = true
                 val entries = walk(settings.treeUri, root.documentId)
                 val supported = entries.filter { it.type != null && !it.directory && !it.virtual }
                     .sortedWith(compareBy<WorkspaceEntry> { it.relativePath }.thenBy { it.documentId })
@@ -75,6 +77,7 @@ internal class WorkspaceIndexer(
                     if (retained.isEmpty()) skipped++
                 }
                 if (!gateway.hasReadGrant(settings.treeUri)) throw SecurityException()
+                currentCoroutineContext().ensureActive()
                 store.publish(WorkspaceIndex(settings.generation, documents.toList(), clock(), skipped))
             }
         } catch (_: TimeoutCancellationException) {
@@ -82,9 +85,11 @@ internal class WorkspaceIndexer(
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: SecurityException) {
-            store.folderUnavailable(settings.generation)
+            if (!rootChecked || !gateway.hasReadGrant(settings.treeUri)) store.folderUnavailable(settings.generation)
+            else store.failed(settings.generation, WorkspaceProblem.CHECK_FAILED)
         } catch (_: FileNotFoundException) {
-            store.folderUnavailable(settings.generation)
+            if (!rootChecked) store.folderUnavailable(settings.generation)
+            else store.failed(settings.generation, WorkspaceProblem.CHECK_FAILED)
         } catch (_: WorkspaceCheckLimitException) {
             store.failed(settings.generation, WorkspaceProblem.CHECK_LIMIT)
         } catch (_: Exception) {
