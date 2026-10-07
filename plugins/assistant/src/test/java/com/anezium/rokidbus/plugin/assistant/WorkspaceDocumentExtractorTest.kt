@@ -5,6 +5,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.io.PrintStream
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
@@ -42,6 +43,24 @@ class WorkspaceDocumentExtractorTest {
         assertTrue(runCatching { extract(oversized, WorkspaceFileType.DOCX) }.isFailure)
         val entries = (0..128).map { "entry$it" to "" }.toTypedArray()
         assertTrue(runCatching { extract(zip(*entries), WorkspaceFileType.DOCX) }.isFailure)
+    }
+
+    @Test
+    fun `malformed document errors do not print source-derived parser diagnostics`() {
+        val captured = ByteArrayOutputStream()
+        val previous = System.err
+        val diagnostic = PrintStream(captured)
+        try {
+            System.setErr(diagnostic)
+            val result = runCatching { extract(zip("word/document.xml" to body(
+                "<w:p><w:t>private contract clause</w:t></private-clause>")), WorkspaceFileType.DOCX) }
+            assertTrue(result.isFailure)
+            assertEquals("invalid_docx", result.exceptionOrNull()!!.message)
+            assertEquals("", captured.toString("UTF-8"))
+        } finally {
+            System.setErr(previous)
+            diagnostic.close()
+        }
     }
 
     private fun extract(bytes: ByteArray, type: WorkspaceFileType) =

@@ -50,6 +50,8 @@ internal object WorkspaceDocumentExtractor {
         val text = StringBuilder()
         val handler = object : DefaultHandler2() {
             private var inText = false
+            override fun error(error: org.xml.sax.SAXParseException) { throw SAXException("invalid_docx") }
+            override fun fatalError(error: org.xml.sax.SAXParseException) { throw SAXException("invalid_docx") }
             override fun startDTD(name: String?, publicId: String?, systemId: String?) {
                 throw SAXException("invalid_docx")
             }
@@ -76,6 +78,7 @@ internal object WorkspaceDocumentExtractor {
         reader.setFeature("http://xml.org/sax/features/external-parameter-entities", false)
         reader.setProperty("http://xml.org/sax/properties/lexical-handler", handler)
         reader.contentHandler = handler
+        reader.errorHandler = handler
         reader.entityResolver = handler
         reader.parse(InputSource(ByteArrayInputStream(xml)))
         return text.toString()
