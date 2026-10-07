@@ -373,8 +373,10 @@ Off recalls information already sent in an approved provider request.
 Register `SearchWorkspaceTool.kt` through `AssistantToolRegistry.kt`'s definition
 and availability path. Advertise it only for a tool-capable non-Hermes provider
 when Workspace is enabled, access is valid, and the index has at least one
-searchable chunk. Recheck those conditions and the active request generation
-at execution; an old advertised definition is not continued authorization.
+searchable chunk. Capture generation and index revision when preparing the
+question, carry that identity in request-scoped state, and bind the advertised
+tool to it. Recheck availability and both identity fields before and after
+execution; an old advertised definition is not continued authorization.
 
 Accept exactly one nonblank string `query`, trimmed and capped at 240 characters;
 reject unknown fields and invalid/oversized arguments. Search only the current
@@ -477,6 +479,10 @@ SDK/Gradle home/cache in the tree, or repair environment configuration. If an
 environment failure blocks verification, stop and report it.
 
 ### Observed verification (2026-10-07)
+
+The 391-test figure below records the initial implementation. Re-observe the
+test count and required build after all five round-1 review fixes; do not carry
+that figure forward as verification of the revised implementation.
 
 The exact command above completed with exit code 0. The module report contains
 391 tests with zero failures/errors, including 50 Workspace tests. The debug APK

@@ -4,7 +4,13 @@ import org.json.JSONObject
 
 internal const val SEARCH_WORKSPACE_TOOL_NAME = "search_workspace"
 
-internal class SearchWorkspaceTool(private val access: () -> WorkspaceSearchAccess?) : AssistantToolDefinition {
+internal class SearchWorkspaceTool private constructor(
+    private val workspaceVersion: Pair<Long, Long>?,
+    private val access: () -> WorkspaceSearchAccess?,
+) : AssistantToolDefinition {
+    constructor(access: () -> WorkspaceSearchAccess?) : this(null, access)
+
+    override fun bindToTurn(workspaceVersion: Pair<Long, Long>?) = SearchWorkspaceTool(workspaceVersion, access)
     override val name = SEARCH_WORKSPACE_TOOL_NAME
     override val description = "Search the enabled local workspace for relevant document passages. " +
         "Use the already injected Workspace excerpts first; call only if they do not cover the question. " +
@@ -19,7 +25,7 @@ internal class SearchWorkspaceTool(private val access: () -> WorkspaceSearchAcce
 
     override fun isAvailable(context: AssistantToolAvailabilityContext): Boolean =
         context.session.active && context.provider.supportsTools && context.provider.supportsWorkspaceSearch &&
-            access()?.isSearchAvailable() == true
+            access()?.let { it.isSearchAvailable() && it.searchVersion() == workspaceVersion } == true
 
     override fun validate(argumentsJson: String): AssistantToolValidation {
         if (argumentsJson.length > 2_048) return AssistantToolValidation.Invalid()
@@ -33,12 +39,11 @@ internal class SearchWorkspaceTool(private val access: () -> WorkspaceSearchAcce
     }
 
     override suspend fun execute(call: AssistantToolCall, arguments: JSONObject): AssistantToolResult {
-        val current = access()?.takeIf { it.isSearchAvailable() }
+        val current = access()?.takeIf { it.isSearchAvailable() && it.searchVersion() == workspaceVersion }
             ?: return AssistantToolResult.Error(executionFailureCode)
-        val version = current.searchVersion()
         val result = current.search(arguments.getString("query"))
             ?: return AssistantToolResult.Error(executionFailureCode)
-        if (!current.isSearchAvailable() || current.searchVersion() != version) return AssistantToolResult.Error(executionFailureCode)
+        if (!current.isSearchAvailable() || current.searchVersion() != workspaceVersion) return AssistantToolResult.Error(executionFailureCode)
         return AssistantToolResult.Json(JSONObject().put("ok", true)
             .put("matchCount", result.matchCount).put("excerpts", result.excerpts).toString())
     }

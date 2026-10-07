@@ -507,7 +507,7 @@ internal class ChatGptCodexProvider(
         }
 
         try {
-            val toolPhase = toolRegistry.newExecutionPhase(CODEX_PROVIDER_FEATURES)
+            val toolPhase = toolRegistry.newExecutionPhase(CODEX_PROVIDER_FEATURES, request.workspaceVersion)
             val originalInput = request.toCodexResponsesInput()
             val modelId = request.model ?: modelProvider()
             val reasoningEffort = reasoningEffortProvider()

@@ -815,6 +815,7 @@ class AssistantPluginService : NexusPluginService() {
         val keepPhotosInConversations = authStore.keepPhotosInConversations()
         val personalContext = authStore.combinedAssistantContextForPrompt()
         val workspaceContext = workspaceController?.contextForQuestion(transcript, personalContext)
+        val workspaceVersion = workspaceContext?.let { it.generation to it.revision }
         val conversationContext = withContext(Dispatchers.IO) {
             if (!keepPhotosInConversations && threadStore.hasStoredPhotos()) {
                 threadStore.deleteAllPhotos()
@@ -828,7 +829,7 @@ class AssistantPluginService : NexusPluginService() {
         val hermesTextToolBackend = providerId != ChatGptCodexProvider.ID &&
             authStore.providerBackend(providerId) == ProviderBackend.HERMES
         val availableToolDefinitions = assistantToolRegistry
-            .availableDefinitions(assistantProviderFeatures(providerId))
+            .availableDefinitions(assistantProviderFeatures(providerId), workspaceVersion)
         val promptToolDefinitions = if (hermesTextToolBackend) {
             availableToolDefinitions.filter { definition ->
                 definition.name in HERMES_TEXT_TOOL_NAMES
@@ -850,6 +851,7 @@ class AssistantPluginService : NexusPluginService() {
         val request = ChatRequest(
             userText = transcript,
             systemPrompt = prompt(),
+            workspaceVersion = workspaceVersion,
             history = conversationContext.history,
             model = when (providerId) {
                 ChatGptCodexProvider.ID -> authStore.chatGptModel()

@@ -55,6 +55,8 @@ internal interface AssistantToolDefinition {
 
     fun isAvailable(context: AssistantToolAvailabilityContext): Boolean
 
+    fun bindToTurn(workspaceVersion: Pair<Long, Long>?): AssistantToolDefinition = this
+
     fun validate(argumentsJson: String): AssistantToolValidation
 
     suspend fun execute(
@@ -93,16 +95,18 @@ internal class AssistantToolRegistry(
         }
     }
 
-    fun availableDefinitions(features: AssistantProviderFeatures): List<AssistantToolDefinition> {
+    fun availableDefinitions(features: AssistantProviderFeatures,
+        workspaceVersion: Pair<Long, Long>? = null): List<AssistantToolDefinition> {
         if (!features.supportsTools) return emptyList()
         val context = AssistantToolAvailabilityContext(features, sessionContext())
-        return definitionsByName.values.filter { definition ->
+        return definitionsByName.values.map { it.bindToTurn(workspaceVersion) }.filter { definition ->
             runCatching { definition.isAvailable(context) }.getOrDefault(false)
         }
     }
 
-    fun newExecutionPhase(features: AssistantProviderFeatures): AssistantToolExecutionPhase =
-        AssistantToolExecutionPhase(availableDefinitions(features), progressReporter)
+    fun newExecutionPhase(features: AssistantProviderFeatures,
+        workspaceVersion: Pair<Long, Long>? = null): AssistantToolExecutionPhase =
+        AssistantToolExecutionPhase(availableDefinitions(features, workspaceVersion), progressReporter)
 
     companion object {
         private val TOOL_NAME = Regex("[a-z][a-z0-9_]{0,63}")

@@ -301,6 +301,7 @@ internal class OpenAiCompatProvider(
                     supportsVision = visionSupported,
                     supportsWorkspaceSearch = !useTextToolBridge,
                 ),
+                request.workspaceVersion,
             )
             val textToolDefinitions = toolPhase.availableDefinitions.filter { definition ->
                 definition.name in HERMES_TEXT_TOOL_NAMES

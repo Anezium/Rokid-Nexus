@@ -20,12 +20,12 @@ class WorkspaceProviderTest {
             val tool = SearchWorkspaceTool { access }
             val registry = AssistantToolRegistry(listOf(tool))
             val features = SearchWorkspaceToolTest.FEATURES.copy(supportsWorkspaceSearch = backend != ProviderBackend.HERMES)
-            val available = registry.availableDefinitions(features)
+            val available = registry.availableDefinitions(features, access.searchVersion())
             val prompt = prompt(available.map { it.name })
             val client = RecordingClient()
             val provider = OpenAiCompatProvider(preset, client, { true }, registry,
                 supportsVision = { false }, backendProvider = { backend })
-            provider.streamEvents(ChatRequest(userText = "What is the notice period?", systemPrompt = prompt)).toList()
+            provider.streamEvents(ChatRequest(userText = "What is the notice period?", systemPrompt = prompt, workspaceVersion = access.searchVersion())).toList()
             assertEquals(preset.id, 1, client.requests.size)
             assertEquals(prompt, client.requests.single().messages.getJSONObject(0).getString("content"))
             assertTrue(client.requests.single().request.systemPrompt!!.endsWith("$MEMORY\n\n$EXCERPTS"))
@@ -44,7 +44,7 @@ class WorkspaceProviderTest {
         val transport = RecordingCodexTransport(listOf(textResponse()))
         val provider = codex(transport, access)
         val prompt = prompt(listOf(SEARCH_WORKSPACE_TOOL_NAME))
-        provider.streamEvents(ChatRequest(userText = "What is the notice period?", systemPrompt = prompt)).toList()
+        provider.streamEvents(ChatRequest(userText = "What is the notice period?", systemPrompt = prompt, workspaceVersion = access.searchVersion())).toList()
         assertEquals(1, transport.requests.size)
         assertEquals(prompt, JSONObject(transport.requests.single().body).getString("instructions"))
         assertEquals(0, access.executions)
@@ -58,7 +58,7 @@ class WorkspaceProviderTest {
             .put("item", JSONObject().put("type", "function_call").put("call_id", id)
                 .put("name", SEARCH_WORKSPACE_TOOL_NAME).put("arguments", "{\"query\":\"notice\"}")).toString() }
         val transport = RecordingCodexTransport(listOf(calls + COMPLETED, textResponse()))
-        codex(transport, access).streamEvents(ChatRequest(userText = "What does it say?", systemPrompt = prompt(listOf(SEARCH_WORKSPACE_TOOL_NAME)))).toList()
+        codex(transport, access).streamEvents(ChatRequest(userText = "What does it say?", systemPrompt = prompt(listOf(SEARCH_WORKSPACE_TOOL_NAME)), workspaceVersion = access.searchVersion())).toList()
         assertEquals(1, access.executions)
         assertEquals(2, transport.requests.size)
         val replay = JSONObject(transport.requests[1].body)
