@@ -30,12 +30,14 @@ object PatcherContract {
 
     /**
      * Optional request-only `android.app.PendingIntent`, created by the phone hub for its
-     * own non-exported setup activity with `FLAG_IMMUTABLE` and activity flags `NEW_TASK |
-     * REORDER_TO_FRONT`. Patcher checks `creatorPackage` against the authenticated hub caller
+     * own non-exported setup activity with `FLAG_IMMUTABLE | FLAG_ONE_SHOT` and activity flags
+     * `NEW_TASK | REORDER_TO_FRONT`. Patcher checks `creatorPackage` against the authenticated hub caller
      * and sends it only after returning a successful result from a separate task. It never
-     * sends it for standalone opens or visible failed/cancelled outcomes. The sender opts in
-     * to activity launch privileges on Android 14+, including the just-finished activity's
-     * grace period on Android 16. Only an absent extra permits the older-hub launcher fallback.
+     * sends it for standalone opens or visible failed/cancelled outcomes.
+     * Recreation retains the unused token; its first successful send consumes it.
+     * The sender opts in to activity launch privileges on Android 14+, including the
+     * just-finished activity's grace period on Android 16. Only an absent extra permits
+     * the older-hub launcher fallback.
      */
     const val EXTRA_RETURN_TO_HUB = "returnToHub"
     const val TARGET_YOUTUBE = "youtube"

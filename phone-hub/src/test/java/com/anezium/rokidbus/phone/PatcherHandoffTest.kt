@@ -26,6 +26,7 @@ class PatcherHandoffTest {
         assertEquals(screen.get().packageName, token.creatorPackage)
         assertTrue(token.isActivity)
         assertTrue(token.isImmutable)
+        assertTrue(shadowOf(token).flags and PendingIntent.FLAG_ONE_SHOT != 0)
         val returnIntent = shadowOf(token).savedIntent
         assertEquals(ComponentName(screen.get(), YoutubeSetupActivity::class.java), returnIntent.component)
         assertFalse(screen.get().packageManager.getActivityInfo(returnIntent.component!!, 0).exported)
@@ -35,7 +36,32 @@ class PatcherHandoffTest {
         // An immutable token cannot be redirected by the receiving app.
         token.send(screen.get(), 0, Intent(Intent.ACTION_MAIN).setClassName("untrusted.app", "Other"))
         assertEquals(returnIntent.component, shadowOf(screen.get()).nextStartedActivity.component)
+        assertThrows(PendingIntent.CanceledException::class.java) { token.send() }
         screen.destroy()
+    }
+
+    @Test fun `an unused one-shot return token survives setup recreation and a later patch gets a fresh token`() {
+        val first = Robolectric.buildActivity(YoutubeSetupActivity::class.java).create()
+        val token = requireNotNull(PatcherHandoff.patchIntent(first.get())
+            .getParcelableExtra<PendingIntent>(PatcherContract.EXTRA_RETURN_TO_HUB))
+        val saved = android.os.Bundle()
+        first.saveInstanceState(saved).destroy()
+        val recreated = Robolectric.buildActivity(YoutubeSetupActivity::class.java).create(saved)
+        val restoredToken = requireNotNull(PatcherHandoff.patchIntent(recreated.get())
+            .getParcelableExtra<PendingIntent>(PatcherContract.EXTRA_RETURN_TO_HUB))
+        assertEquals(token, restoredToken)
+        restoredToken.send(recreated.get(), 0, null)
+        assertEquals(ComponentName(recreated.get(), YoutubeSetupActivity::class.java),
+            shadowOf(recreated.get()).nextStartedActivity.component)
+        assertThrows(PendingIntent.CanceledException::class.java) { token.send() }
+        val nextToken = requireNotNull(PatcherHandoff.patchIntent(recreated.get())
+            .getParcelableExtra<PendingIntent>(PatcherContract.EXTRA_RETURN_TO_HUB))
+        assertTrue(shadowOf(token).isCanceled)
+        assertFalse(shadowOf(nextToken).isCanceled)
+        nextToken.send(recreated.get(), 0, null)
+        assertEquals(ComponentName(recreated.get(), YoutubeSetupActivity::class.java),
+            shadowOf(recreated.get()).nextStartedActivity.component)
+        recreated.destroy()
     }
 
     @Test fun `handoff uses only the explicit patch component and targeted Store entry`() {

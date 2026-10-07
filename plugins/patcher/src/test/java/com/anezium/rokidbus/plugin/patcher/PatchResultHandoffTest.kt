@@ -103,7 +103,7 @@ class PatchResultHandoffTest {
     private fun returnToken(creator: String = hub): PendingIntent = PendingIntent.getActivity(
         RuntimeEnvironment.getApplication(), 10, Intent().setComponent(setup)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT),
-        PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_CANCEL_CURRENT,
+        PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_CANCEL_CURRENT,
     ).also { shadowOf(it).setCreatorPackage(creator) }
 
     private fun request(store: PatchJobStore, withReturn: Boolean = true) = Intent(PatcherContract.ACTION_PATCH)

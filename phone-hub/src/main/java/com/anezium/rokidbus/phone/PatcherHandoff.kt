@@ -21,7 +21,7 @@ internal object PatcherHandoff {
         val returnToHub = PendingIntent.getActivity(activity, activity.taskId,
             Intent(activity, activity.javaClass)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_UPDATE_CURRENT)
         return patchIntent(targetId).putExtra(PatcherContract.EXTRA_RETURN_TO_HUB, returnToHub)
     }
 
