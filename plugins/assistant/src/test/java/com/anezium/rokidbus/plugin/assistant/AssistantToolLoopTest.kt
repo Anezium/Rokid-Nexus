@@ -132,9 +132,10 @@ class AssistantToolLoopTest {
     }
 
     @Test
-    fun `built-in mutation guards survive repeated rounds while plugin operations use their own identity`() = runTest {
+    fun `workspace search and built-in guards survive plugin operation rounds`() = runTest {
         var deletes = 0
         var pluginCalls = 0
+        val workspace = FakeWorkspaceSearchAccess()
         val delete = tool(name = "delete_calendar_event_fake", sideEffecting = true, executor = { _, _ ->
             deletes += 1
             AssistantToolResult.Json("""{"ok":true}""")
@@ -146,14 +147,17 @@ class AssistantToolLoopTest {
                 return AssistantToolResult.Json("""{"status":"completed"}""")
             }
         }
-        val registry = AssistantToolRegistry(listOf(delete), dynamicDefinitions = { listOf(pluginAction) })
-        val phase = registry.newExecutionPhase(AssistantProviderFeatures(supportsTools = true, supportsVision = false))
+        val registry = AssistantToolRegistry(listOf(delete, SearchWorkspaceTool { workspace }),
+            dynamicDefinitions = { listOf(pluginAction) })
+        val phase = registry.newExecutionPhase(AssistantProviderFeatures(supportsTools = true, supportsVision = false),
+            workspace.searchVersion())
         val model = ScriptedModel({ r, offered, _ ->
             when {
                 offered.isEmpty() || r >= 2 -> AssistantLoopPass("Done.")
                 else -> AssistantLoopPass(
                     "",
-                    listOf(call("delete_calendar_event_fake", "{\"r\":$r}"), call("sk_transit__stop_journey", "{\"r\":$r}")),
+                    listOf(call("delete_calendar_event_fake", "{\"r\":$r}"), call("sk_transit__stop_journey", "{\"r\":$r}"),
+                        call(SEARCH_WORKSPACE_TOOL_NAME, "{\"query\":\"notice\"}")),
                 )
             }
         })
@@ -162,7 +166,9 @@ class AssistantToolLoopTest {
 
         assertEquals(1, deletes)
         assertEquals(2, pluginCalls)
+        assertEquals(1, workspace.executions)
         assertTrue(model.transcript.contains("delete_calendar_event_fake:error:already_used"))
+        assertTrue(model.transcript.contains("search_workspace:error:already_used"))
     }
 
     @Test

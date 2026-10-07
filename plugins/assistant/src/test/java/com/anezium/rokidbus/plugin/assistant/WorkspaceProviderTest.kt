@@ -54,7 +54,7 @@ class WorkspaceProviderTest {
     }
 
     @Test
-    fun `two model-requested searches consume one execution and one existing final round`() = runTest {
+    fun `two model-requested searches consume one execution within the shared tool loop`() = runTest {
         val access = FakeWorkspaceSearchAccess().apply { result = WorkspaceSearchResult(EXCERPTS, 1) }
         val calls = listOf("one", "two").map { id -> JSONObject().put("type", "response.output_item.done")
             .put("item", JSONObject().put("type", "function_call").put("call_id", id)
@@ -65,7 +65,9 @@ class WorkspaceProviderTest {
         assertEquals(2, transport.requests.size)
         val replay = JSONObject(transport.requests[1].body)
         val replayTools = replay.getJSONArray("tools")
-        assertFalse((0 until replayTools.length()).any { replayTools.getJSONObject(it).optString("type") == "function" })
+        assertTrue((0 until replayTools.length()).any {
+            replayTools.getJSONObject(it).optString("name") == SEARCH_WORKSPACE_TOOL_NAME
+        })
         val inputs = replay.getJSONArray("input")
         val results = (0 until inputs.length()).map { inputs.getJSONObject(it) }
             .filter { it.optString("type") == "function_call_output" }

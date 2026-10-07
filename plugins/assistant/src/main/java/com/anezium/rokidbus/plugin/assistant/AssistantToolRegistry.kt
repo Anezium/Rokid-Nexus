@@ -120,7 +120,7 @@ internal class AssistantToolRegistry(
         val plugin = runCatching(dynamicDefinitions).getOrDefault(emptyList())
             .filter { it.name.startsWith(SkillsContract.ALIAS_PREFIX) && TOOL_NAME.matches(it.name) }
             .distinctBy(AssistantToolDefinition::name)
-        return (definitionsByName.values + plugin).map { it.bindToTurn(workspaceVersion) }.filter { definition ->
+        return (definitionsByName.values.map { it.bindToTurn(workspaceVersion) } + plugin).filter { definition ->
             runCatching { definition.isAvailable(context) }.getOrDefault(false)
         }
     }

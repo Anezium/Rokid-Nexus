@@ -37,10 +37,11 @@ class SearchWorkspaceToolTest {
         assertEquals(first, phase.execute(call("one", "different")))
         assertEquals(AssistantToolResult.Error(TOOL_ERROR_ALREADY_USED), phase.execute(call("two")))
         assertEquals(1, access.executions)
-        assertTrue(phase.execute(AssistantToolCall("third", "other", "{}")) is AssistantToolResult.Json)
-        assertTrue(phase.execute(AssistantToolCall("fourth", "other", "{}")) is AssistantToolResult.Json)
+        for (execution in 2..8) {
+            assertTrue(phase.execute(AssistantToolCall("other-$execution", "other", "{}")) is AssistantToolResult.Json)
+        }
         assertEquals(AssistantToolResult.Error(TOOL_ERROR_ALREADY_USED),
-            phase.execute(AssistantToolCall("fifth", "other", "{}")))
+            phase.execute(AssistantToolCall("over-budget", "other", "{}")))
     }
 
     @Test
