@@ -4,7 +4,8 @@ import org.json.JSONObject
 import java.io.File
 import java.net.URI
 
-internal data class WorkspaceSnapshot(val state: WorkspaceState, val retriever: WorkspaceRetriever? = null)
+internal data class WorkspaceSnapshot(val state: WorkspaceState, val retriever: WorkspaceRetriever? = null,
+    val revision: Long = 0)
 
 internal fun isLocalWorkspaceTree(uri: String): Boolean = runCatching {
     val value = URI(uri)
@@ -57,9 +58,11 @@ internal class WorkspaceStore(
     fun publish(index: WorkspaceIndex): Boolean = synchronized(lock) {
         if (!isCurrent(index.generation)) return@synchronized false
         val text = WorkspaceIndexJson.render(index)
-        val retriever = WorkspaceRetriever(index.documents)
+        val changed = current.state.index?.documents != index.documents
+        val retriever = if (changed) WorkspaceRetriever(index.documents) else current.retriever
+        val revision = current.revision + if (changed) 1 else 0
         writeAssistantJsonAtomically(indexFile, text, fileOperations)
-        current = WorkspaceSnapshot(WorkspaceState(current.state.settings, index, validated = true), retriever)
+        current = WorkspaceSnapshot(WorkspaceState(current.state.settings, index, validated = true), retriever, revision)
         true
     }
 
