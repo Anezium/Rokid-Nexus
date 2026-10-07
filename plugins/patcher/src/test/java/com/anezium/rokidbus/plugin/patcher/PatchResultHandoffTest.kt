@@ -1,6 +1,7 @@
 package com.anezium.rokidbus.plugin.patcher
 
 import android.app.Activity
+import android.app.ActivityManager
 import android.app.ActivityOptions
 import android.app.PendingIntent
 import android.content.ComponentName
@@ -27,13 +28,21 @@ import org.robolectric.annotation.Implementation
 import org.robolectric.annotation.Implements
 import org.robolectric.android.controller.ActivityController
 import org.robolectric.shadows.ShadowActivity
+import org.robolectric.shadows.ShadowActivityManager
 import org.robolectric.shadows.ShadowPendingIntent
 import java.io.File
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [32], shadows = [PatchResultHandoffTest.TaskActivity::class,
-    PatchResultHandoffTest.ResultProvider::class, PatchResultHandoffTest.HubReturnToken::class])
+    PatchResultHandoffTest.ResultProvider::class, PatchResultHandoffTest.HubReturnToken::class,
+    PatchResultHandoffTest.TaskManager::class])
 class PatchResultHandoffTest {
+    @Implements(ActivityManager::class)
+    class TaskManager : ShadowActivityManager() {
+        val movedTasks = mutableListOf<Int>()
+        @Implementation fun moveTaskToFront(taskId: Int, flags: Int) { movedTasks += taskId }
+    }
+
     @Implements(PendingIntent::class)
     class HubReturnToken : ShadowPendingIntent() {
         var sendOptions: Bundle? = null
@@ -148,6 +157,75 @@ class PatchResultHandoffTest {
         assertTrue(launch.flags and Intent.FLAG_ACTIVITY_NEW_TASK != 0)
         assertEquals(0, launch.flags and (Intent.FLAG_ACTIVITY_CLEAR_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_MULTIPLE_TASK))
         assertNull(shadowOf(activity).nextStartedActivity)
+    }
+
+    @Test fun aHubLaunchTakesOverAnOrphanAfterBackAndNotificationReopen() {
+        listOf(20, 30).forEach { hubTask ->
+            val store = runningStore()
+            val original = screen(request(store)).setup()
+            shadowOf(Looper.getMainLooper()).idle()
+            original.get().onBackPressed()
+            assertEquals(Activity.RESULT_CANCELED, shadowOf(original.get()).resultCode)
+            original.pause().stop().destroy()
+            val orphan = screen(Intent().putExtra(PatcherContract.EXTRA_TARGET_ID, store.state.value.targetId), null)
+            (shadowOf(orphan.get()) as TaskActivity).currentTask = 20
+            orphan.setup()
+            shadowOf(Looper.getMainLooper()).idle()
+            assertFalse(orphan.get().canReturnToHub())
+            val running = store.state.value
+            val attached = screen(request(store))
+            (shadowOf(attached.get()) as TaskActivity).currentTask = hubTask
+            attached.setup()
+            shadowOf(Looper.getMainLooper()).idle()
+            assertTrue(orphan.get().isFinishing)
+            assertFalse(attached.get().isFinishing)
+            assertTrue(attached.get().canReturnToHub())
+            assertEquals(running, store.state.value)
+            val manager = shadowOf(attached.get().getSystemService(ActivityManager::class.java)) as TaskManager
+            assertTrue(manager.movedTasks.isEmpty())
+            // Delayed destruction of the former owner must not release the new owner's lock.
+            orphan.pause().stop().destroy()
+            (shadowOf(attached.get()) as TaskActivity).currentTask = 40
+            succeed(store)
+            shadowOf(Looper.getMainLooper()).idle()
+            assertDelivered(attached, store)
+            assertHubBroughtForward(attached.get())
+            attached.pause().stop().destroy()
+        }
+    }
+
+    @Test fun notificationOpensStillReturnToTheLiveHubAttachedWindow() {
+        val store = runningStore()
+        val attached = screen(request(store)).setup()
+        shadowOf(Looper.getMainLooper()).idle()
+        val notification = screen(Intent().putExtra(PatcherContract.EXTRA_TARGET_ID, store.state.value.targetId), null)
+        (shadowOf(notification.get()) as TaskActivity).currentTask = 20
+        notification.setup()
+        assertTrue(notification.get().isFinishing)
+        assertFalse(attached.get().isFinishing)
+        val manager = shadowOf(notification.get().getSystemService(ActivityManager::class.java)) as TaskManager
+        assertEquals(listOf(10), manager.movedTasks)
+        notification.pause().stop().destroy()
+        succeed(store)
+        shadowOf(Looper.getMainLooper()).idle()
+        assertDelivered(attached, store)
+        attached.pause().stop().destroy()
+    }
+
+    @Test fun anUntrustedCallerCannotTakeOwnershipOfTheLiveHubWindow() {
+        val store = runningStore()
+        val attached = screen(request(store)).setup()
+        shadowOf(Looper.getMainLooper()).idle()
+        val untrusted = screen(request(store), "untrusted.app")
+        (shadowOf(untrusted.get()) as TaskActivity).currentTask = 20
+        untrusted.setup()
+        assertTrue(untrusted.get().isFinishing)
+        assertFalse(attached.get().isFinishing)
+        untrusted.pause().stop().destroy()
+        succeed(store)
+        shadowOf(Looper.getMainLooper()).idle()
+        assertDelivered(attached, store)
+        attached.pause().stop().destroy()
     }
 
     @Test fun anOlderHubWithoutTheReturnExtraUsesTheLauncherFallback() {

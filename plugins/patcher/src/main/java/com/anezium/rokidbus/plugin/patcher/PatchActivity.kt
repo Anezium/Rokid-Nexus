@@ -30,6 +30,7 @@ import com.anezium.rokidbus.client.ui.NexusUi
 import com.anezium.rokidbus.shared.PatcherContract as Contract
 import kotlinx.coroutines.*
 import java.io.File
+import java.lang.ref.WeakReference
 
 class PatchActivity : Activity() {
     /** Where a status message belongs on screen: each step card shows only its own. */
@@ -87,12 +88,23 @@ class PatchActivity : Activity() {
         if (canReturnToHub()) hubTaskId = savedInstanceState?.getInt("hub_task", -1)?.takeIf { it >= 0 } ?: taskId
         PatchVisibility.install(application)
         lockFile = java.io.RandomAccessFile(File(filesDir, "screen.lock"), "rw")
-        screenLock = try { lockFile!!.channel.tryLock() } catch (_: java.nio.channels.OverlappingFileLockException) { null }
+        screenLock = acquireScreenLock()
+        if (screenLock == null && canReturnToHub()) {
+            // A new result caller must own its screen; an older notification window cannot
+            // inherit Android's activity-result relationship from this launch.
+            liveScreen?.get()?.let { previous ->
+                previous.finish()
+                previous.stopPulse()
+                previous.scope.cancel()
+                previous.releaseScreenLock()
+                screenLock = acquireScreenLock()
+            }
+        }
         if (screenLock == null) {
             // The notification opens a new task; the live screen may sit in the hub's task.
             // Bring that one forward instead of a second copy that cannot share the job.
             val liveTask = liveTaskId
-            if (liveTask != null && liveTask != taskId &&
+            if (!canReturnToHub() && liveTask != null && liveTask != taskId &&
                 runCatching { getSystemService(ActivityManager::class.java).moveTaskToFront(liveTask, 0) }.isSuccess) {
                 finish()
                 return
@@ -102,6 +114,7 @@ class PatchActivity : Activity() {
             return
         }
         liveTaskId = taskId
+        liveScreen = WeakReference(this)
         window.statusBarColor = NexusUi.BG
         window.navigationBarColor = NexusUi.BG
         jobs = PatchJobStore.get(this)
@@ -911,18 +924,30 @@ class PatchActivity : Activity() {
     override fun onStart() { super.onStart(); started = true; updateScreenAwake() }
     override fun onStop() { started = false; updateScreenAwake(); super.onStop() }
     @Deprecated("Platform callback") override fun onBackPressed() { cancelAndClose() }
+    private fun acquireScreenLock(): java.nio.channels.FileLock? =
+        try { lockFile!!.channel.tryLock() } catch (_: java.nio.channels.OverlappingFileLockException) { null }
+
+    private fun releaseScreenLock() {
+        if (liveScreen?.get() === this) {
+            liveScreen = null
+            liveTaskId = null
+        }
+        screenLock?.release(); screenLock = null
+        lockFile?.close(); lockFile = null
+    }
+
     override fun onDestroy() {
         window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         stopPulse()
         scope.cancel()
-        if (screenLock != null && liveTaskId == taskId) liveTaskId = null
         backupPassword?.fill('\u0000'); backupPassword = null
-        screenLock?.release(); lockFile?.close()
+        releaseScreenLock()
         super.onDestroy()
     }
     companion object {
         /** Task of the screen holding the lock; the service and both screens share the :patcher process. */
         @Volatile private var liveTaskId: Int? = null
+        private var liveScreen: WeakReference<PatchActivity>? = null
         const val EXTRA_READY_JOB_ID = "ready_job_id"
         private const val REQUEST_NOTIFICATIONS = 5
         private const val REQUEST_STOCK = 1
