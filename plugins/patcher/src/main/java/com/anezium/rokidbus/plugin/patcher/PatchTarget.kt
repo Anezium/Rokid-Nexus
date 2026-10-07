@@ -57,7 +57,7 @@ object PatchTargets {
         bundle = PatchBundleSource(
             "https://raw.githubusercontent.com/Anezium/morphe-patches/rokid/patches-bundle.json",
             "https://github.com/Anezium/morphe-patches/releases/download/",
-            "d07e9aae4a5b9fffdd8e2eb81dfcdf8f0305805a9b777ac094a5065d96df6601",
+            "d2b7de48fe7d58b04027754ad7bbd79f0cdff5b2b61364d652b2f4684185adf7",
             "https://github.com/Anezium/morphe-patches",
         ),
         defaultSelection = mapOf("Rokid controls" to true, "GmsCore support" to true, "Hide ads" to true, "SponsorBlock" to true),

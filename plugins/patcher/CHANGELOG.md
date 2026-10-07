@@ -2,6 +2,8 @@
 
 ## 1.0.0
 
+- Ship the Rokid patches 1.39.1-rokid.3 bundle: the first-launch "Restart required"
+  dialog and other Morphe dialogs now work with the glasses touchpad and the R08 ring.
 - Enter picture-in-picture while a patch runs and design that window: a label with a
   breathing dot, a large elapsed clock, the live line and a thin phosphor bar, closing
   in the outcome's colour at the end, with a Cancel action.

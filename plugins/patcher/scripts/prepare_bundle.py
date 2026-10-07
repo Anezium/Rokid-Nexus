@@ -1,10 +1,10 @@
 """Prepare the pinned genuine release for Android using SDK D8 (no runtime shim)."""
 import argparse, hashlib, json, os, pathlib, subprocess, sys, tempfile, urllib.error, urllib.request, zipfile
 
-URL = 'https://github.com/Anezium/morphe-patches/releases/download/v1.39.1-rokid.2/patches-1.39.1-rokid.2.mpp'
-EXPECTED = 'd07e9aae4a5b9fffdd8e2eb81dfcdf8f0305805a9b777ac094a5065d96df6601'
+URL = 'https://github.com/Anezium/morphe-patches/releases/download/v1.39.1-rokid.3/patches-1.39.1-rokid.3.mpp'
+EXPECTED = 'd2b7de48fe7d58b04027754ad7bbd79f0cdff5b2b61364d652b2f4684185adf7'
 VERSION = URL.rsplit("/", 2)[1].removeprefix("v")
-OFFLINE_HINT = 'Pass -PpatchBundleInput=/absolute/path/to/patches-1.39.1-rokid.2.mpp to build offline.'
+OFFLINE_HINT = 'Pass -PpatchBundleInput=/absolute/path/to/patches-1.39.1-rokid.3.mpp to build offline.'
 
 
 def split_classpath(value, separator=os.pathsep):
@@ -23,7 +23,7 @@ def download(url, target):
 def verify(source, expected=EXPECTED):
     digest = hashlib.sha256(source.read_bytes()).hexdigest()
     if digest != expected:
-        raise SystemExit(f'{source} is not the pinned rokid.2 release: SHA-256 {digest}, expected {expected}.')
+        raise SystemExit(f'{source} is not the pinned rokid.3 release: SHA-256 {digest}, expected {expected}.')
     return digest
 
 
@@ -78,7 +78,7 @@ def main(argv=None):
                 raise SystemExit('D8 did not produce executable Android patches')
         (out / 'bundled.json').write_text(json.dumps({'version': VERSION, 'source_sha256': digest,
             'sha256': hashlib.sha256(target.read_bytes()).hexdigest(), 'download_url': URL}))
-        print('Prepared genuine rokid.2 for Android; source SHA-256:', digest)
+        print('Prepared genuine rokid.3 for Android; source SHA-256:', digest)
 
 
 if __name__ == '__main__':

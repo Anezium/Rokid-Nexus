@@ -7,7 +7,7 @@ import prepare_bundle
 
 class SplitClasspathTest(unittest.TestCase):
     def test_version_matches_release_tag_and_asset(self):
-        self.assertEqual(prepare_bundle.VERSION, '1.39.1-rokid.2')
+        self.assertEqual(prepare_bundle.VERSION, '1.39.1-rokid.3')
         self.assertEqual(prepare_bundle.URL.rsplit('/', 1)[1], f'patches-{prepare_bundle.VERSION}.mpp')
 
     def test_windows_separator_keeps_drive_letters(self):

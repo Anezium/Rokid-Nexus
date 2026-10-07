@@ -46,7 +46,7 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.robolectric:robolectric:4.13")
 }
-// Published rokid.2 is a JVM JAR, not an Android bundle. Convert at build time,
+// Published rokid releases are JVM JARs, not an Android bundle. Convert at build time,
 // never pretend the JVM class files can be executed by Android.
 val prepareAndroidBundle by tasks.registering(Exec::class) {
     val output = layout.buildDirectory.dir("generated/patch-assets")

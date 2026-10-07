@@ -37,23 +37,23 @@ The script runs with `python3`, or `python` on Windows; override it with
 ```sh
 ./gradlew :plugin-patcher:testDebugUnitTest :plugin-patcher:assembleDebug \
   -PskipCxrGlobal=true \
-  -PpatchBundleInput=/absolute/path/to/patches-1.39.1-rokid.2.mpp
+  -PpatchBundleInput=/absolute/path/to/patches-1.39.1-rokid.3.mpp
 ```
 
 Omit `patchBundleInput` to download the pinned genuine release from GitHub during
 preparation; that build needs network access (CI has it). A failed download or a
 SHA-256 mismatch fails the build with the reason; nothing is skipped. The SHA-256 is
 pinned to
-`d07e9aae4a5b9fffdd8e2eb81dfcdf8f0305805a9b777ac094a5065d96df6601`.
+`d2b7de48fe7d58b04027754ad7bbd79f0cdff5b2b61364d652b2f4684185adf7`.
 The raw release is copied outside the APK assets for the JVM fixture test.
 `prepareAndroidBundle` runs the installed SDK D8 against the real bundle and its
 pinned dependency classpath, retains original resources/classes/notices, adds real
 DEX, and records both original and prepared hashes. DEX entries get fixed ZIP
 metadata, so the same inputs give the same `bundled.mpp` and hash on every build. No
-generated binary is checked into git. The original rokid.2 release contains no DEX:
+generated binary is checked into git. The original rokid.3 release contains no DEX:
 shipping it unprepared would not work on Android. No runtime conversion or fake loader is used.
 
-Patcher 1.7.0 is pinned and proved against rokid.2 (137 patches, 80 compatible with
+Patcher 1.7.0 is pinned and proved against rokid.3 (137 patches, 80 compatible with
 stock YouTube 21.04.223, 76 compatible defaults). The signing and split APIs now
 live in this patcher, so a second incompatible `morphe-library` is not added.
 Bouncy Castle is pinned to 1.79. Hubs do not request `app.morphe` artifacts.
@@ -92,7 +92,7 @@ Update these literals together after validating a genuine upstream artifact:
    `PatchTargetTest.kt` against the genuine bundle as well.
 4. This README: the build example filename, source SHA-256, release/version references,
    patch counts and compatibility description. Find remaining copies with
-   `rg "1\.39\.1-rokid\.2|d07e9aae|137|80|76" plugins/patcher`.
+   `rg "1\.39\.1-rokid\.3|d2b7de48|137|80|76" plugins/patcher`.
 
 Run the host script tests and the plugin test/build commands above against the new
 fixture. Changing the patcher API also requires reviewing `build.gradle.kts`,
@@ -151,7 +151,7 @@ needs the GitHub Packages credentials above.
   must be pinned fork release URLs. Android-incompatible bundles or wrong patcher
   APIs are refused without replacing the last working one. Runtime updates support
   only publisher-prepared `.mpp` archives containing Android `classes.dex` and the
-  exact Patcher 1.7.0 API. The pinned rokid.2 raw release is JVM-only: upstream JVM-only
+  exact Patcher 1.7.0 API. The pinned rokid.3 raw release is JVM-only: upstream JVM-only
   updates do **not** work on the phone. Obtain a plugin rebuilt with a supported
   build-time-prepared bundle, or a publisher-prepared compatible release. There is
   no on-phone D8 conversion and no promise that "latest" is compatible.

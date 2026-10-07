@@ -8,8 +8,8 @@ import java.io.File
 class RealBundleTest {
     @Test fun genuineRokidReleaseLoadsWithPinnedPatcher() {
         val fixture = File(requireNotNull(System.getProperty("patchBundleFixture")))
-        assertTrue("Real bundle missing: pass -PpatchBundleInput=/path/to/patches-1.39.1-rokid.2.mpp", fixture.isFile)
-        assertEquals("d07e9aae4a5b9fffdd8e2eb81dfcdf8f0305805a9b777ac094a5065d96df6601", PatchPolicy.sha256(fixture))
+        assertTrue("Real bundle missing: pass -PpatchBundleInput=/path/to/patches-1.39.1-rokid.3.mpp", fixture.isFile)
+        assertEquals("d2b7de48fe7d58b04027754ad7bbd79f0cdff5b2b61364d652b2f4684185adf7", PatchPolicy.sha256(fixture))
         val all = loadPatchesFromJar(setOf(fixture))
         val compatible = BundleStore.compatible(all)
         assertEquals(137, all.size)
