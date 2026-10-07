@@ -2,6 +2,8 @@
 
 ## 1.0.0
 
+- Deliver ready-notification job identity to the existing hub-attached window and
+  preserve it across recreation. Nexus setup offers Open Patcher while waiting.
 - Ship the Rokid patches 1.39.1-rokid.3 bundle: the first-launch "Restart required"
   dialog and other Morphe dialogs now work with the glasses touchpad and the R08 ring.
 - Enter picture-in-picture while a patch runs and design that window: a label with a
