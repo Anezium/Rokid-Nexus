@@ -69,6 +69,7 @@ class PatchActivity : Activity() {
     private var patching = false
     private var result: File? = null
     private lateinit var jobs: PatchJobStore
+    private var started = false
     private var resumed = false
     private var returningResult = false
     private val pip by lazy { PatchPictureInPicture(this) }
@@ -840,7 +841,8 @@ class PatchActivity : Activity() {
     }
     private fun cancelAndClose() { setResult(RESULT_CANCELED); finish() }
     private fun updateScreenAwake() {
-        if (resumed && ::jobs.isInitialized && jobs.state.value.active) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        if (::jobs.isInitialized && jobs.state.value.active && (resumed || started && isInPictureInPictureMode))
+            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
     }
     override fun onUserLeaveHint() {
@@ -849,6 +851,7 @@ class PatchActivity : Activity() {
     }
     override fun onPictureInPictureModeChanged(inPictureInPicture: Boolean, configuration: Configuration) {
         super.onPictureInPictureModeChanged(inPictureInPicture, configuration)
+        updateScreenAwake()
         if (screenLock != null) liveTaskId = taskId
         if (!::jobs.isInitialized) return
         if (inPictureInPicture) { stopPulse(); pip.show(jobs.state.value) }
@@ -865,8 +868,11 @@ class PatchActivity : Activity() {
     }
     override fun onResume() { super.onResume(); resumed = true; updateScreenAwake(); if (::jobs.isInitialized) deliverResult() }
     override fun onPause() { resumed = false; updateScreenAwake(); super.onPause() }
+    override fun onStart() { super.onStart(); started = true; updateScreenAwake() }
+    override fun onStop() { started = false; updateScreenAwake(); super.onStop() }
     @Deprecated("Platform callback") override fun onBackPressed() { cancelAndClose() }
     override fun onDestroy() {
+        window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         stopPulse()
         scope.cancel()
         if (screenLock != null && liveTaskId == taskId) liveTaskId = null

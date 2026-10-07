@@ -116,6 +116,41 @@ class PatchActivityTest {
         return store to store.patch("hash", listOf("Rokid controls"))
     }
 
+    @Test fun pausedVisiblePipKeepsTheScreenOnUntilItIsHiddenOrTheJobEnds() {
+        val (store, job) = runningStore()
+        val screen = Robolectric.buildActivity(PatchActivity::class.java).setup()
+        val activity = screen.get()
+        fun screenAwake() = activity.window.attributes.flags and WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON != 0
+        assertTrue(screenAwake())
+        activity.enterPictureInPictureMode(PatchPictureInPicture.params(true))
+        activity.onPictureInPictureModeChanged(true, android.content.res.Configuration())
+        screen.pause()
+        assertTrue(activity.isInPictureInPictureMode)
+        assertTrue(screenAwake())
+        screen.stop()
+        assertFalse(screenAwake())
+        assertEquals(PatchJobStatus.RUNNING, store.state.value.status)
+        screen.start()
+        assertTrue(screenAwake())
+        store.change(job.id) { it.copy(status = PatchJobStatus.CANCELLED) }
+        shadowOf(Looper.getMainLooper()).idle()
+        assertFalse(screenAwake())
+        assertFalse(activity.isFinishing)
+        screen.stop().destroy()
+    }
+
+    @Test fun everyTerminalStateClearsTheVisibleRunningScreenFlag() {
+        PatchJobStatus.entries.filter { !PatchJobState(status = it).active }.forEach { status ->
+            val (store, job) = runningStore()
+            val screen = Robolectric.buildActivity(PatchActivity::class.java).setup()
+            assertTrue(screen.get().window.attributes.flags and WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON != 0)
+            store.change(job.id) { it.copy(status = status) }
+            shadowOf(Looper.getMainLooper()).idle()
+            assertEquals(0, screen.get().window.attributes.flags and WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            screen.pause().stop().destroy()
+        }
+    }
+
     @Test fun runningPatchShowsALiveBlockThatUpdatesInPlace() {
         val (store, job) = runningStore()
         store.progress(job.id, PatchProgress(PatchPhase.APPLY_PATCHES, 7.0 / 23, "Hide ads", 7, 23), 134_000)
