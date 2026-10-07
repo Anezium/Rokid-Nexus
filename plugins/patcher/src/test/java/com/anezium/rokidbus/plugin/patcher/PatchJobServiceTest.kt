@@ -84,4 +84,49 @@ class PatchJobServiceTest {
         assertEquals(PatchJobStatus.SUCCESS, store.state.value.status)
         controller.destroy()
     }
+    @Test fun cancellationReleasesForegroundLeaseAndKeepsTheVisibleScreen() {
+        val store = store()
+        val job = store.prepare()
+        val entered = CountDownLatch(1)
+        val source = Uri.parse("content://test/cancel")
+        shadowOf(RuntimeEnvironment.getApplication().contentResolver).registerInputStream(source, object : InputStream() {
+            override fun read(): Int { entered.countDown(); CountDownLatch(1).await(); return -1 }
+        })
+        val screen = Robolectric.buildActivity(PatchActivity::class.java).setup()
+        val controller = Robolectric.buildService(PatchJobService::class.java).create()
+        val service = controller.get()
+        service.onStartCommand(Intent(service, PatchJobService::class.java).setData(source).putExtra(PatchJobService.JOB_ID, job.id), 0, 1)
+        assertTrue(entered.await(5, TimeUnit.SECONDS))
+        val wake = ShadowPowerManager.getLatestWakeLock()
+        service.onStartCommand(Intent(service, PatchJobService::class.java).setAction(PatchJobService.CANCEL).putExtra(PatchJobService.JOB_ID, job.id), 0, 2)
+        shadowOf(Looper.getMainLooper()).idle()
+        assertEquals(PatchJobStatus.CANCELLED, store.state.value.status)
+        assertEquals(PatchJobStatus.CANCELLED, PatchJobStore(RuntimeEnvironment.getApplication().filesDir).state.value.status)
+        assertFalse(wake.isHeld)
+        assertTrue(shadowOf(service).isForegroundStopped)
+        assertFalse(screen.get().isFinishing)
+        screen.pause().stop().destroy()
+        controller.destroy()
+    }
+
+    @Test fun androidTimeoutPersistsInterruptedAndReleasesTheLease() {
+        val store = store()
+        val job = store.prepare()
+        val entered = CountDownLatch(1)
+        val source = Uri.parse("content://test/timeout")
+        shadowOf(RuntimeEnvironment.getApplication().contentResolver).registerInputStream(source, object : InputStream() {
+            override fun read(): Int { entered.countDown(); CountDownLatch(1).await(); return -1 }
+        })
+        val controller = Robolectric.buildService(PatchJobService::class.java).create()
+        val service = controller.get()
+        service.onStartCommand(Intent(service, PatchJobService::class.java).setData(source).putExtra(PatchJobService.JOB_ID, job.id), 0, 1)
+        assertTrue(entered.await(5, TimeUnit.SECONDS))
+        service.onTimeout(1, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+        shadowOf(Looper.getMainLooper()).idle()
+        assertEquals(PatchJobStatus.INTERRUPTED, store.state.value.status)
+        assertFalse(ShadowPowerManager.getLatestWakeLock().isHeld)
+        assertTrue(shadowOf(service).isForegroundStopped)
+        controller.destroy()
+    }
+
 }

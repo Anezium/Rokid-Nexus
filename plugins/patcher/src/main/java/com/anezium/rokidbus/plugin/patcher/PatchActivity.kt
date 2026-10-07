@@ -78,6 +78,7 @@ class PatchActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        PatchVisibility.install(application)
         lockFile = java.io.RandomAccessFile(File(filesDir, "screen.lock"), "rw")
         screenLock = try { lockFile!!.channel.tryLock() } catch (_: java.nio.channels.OverlappingFileLockException) { null }
         if (screenLock == null) {

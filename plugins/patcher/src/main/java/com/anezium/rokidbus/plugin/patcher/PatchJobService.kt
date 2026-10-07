@@ -11,6 +11,7 @@ import java.io.File
 import java.util.UUID
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
+import java.util.concurrent.atomic.AtomicBoolean
 
 class PatchJobService : Service() {
     private lateinit var store: PatchJobStore
@@ -23,9 +24,11 @@ class PatchJobService : Service() {
     private var pendingStart: Intent? = null
     private var pendingStartId = 0
     private var latestStartId = 0
+    private var workerExited = AtomicBoolean(true)
 
     override fun onCreate() {
         super.onCreate()
+        PatchVisibility.install(application)
         store = PatchJobStore.get(this)
         getSystemService(NotificationManager::class.java).createNotificationChannels(listOf(
             NotificationChannel(CHANNEL, "Patching progress", NotificationManager.IMPORTANCE_LOW),
@@ -56,6 +59,7 @@ class PatchJobService : Service() {
         }
         if (!state.active || intent?.getStringExtra(JOB_ID) != state.id) { stopSelf(); return START_NOT_STICKY }
         runningId = state.id
+        workerExited = AtomicBoolean(true)
         startedRealtime = SystemClock.elapsedRealtime()
         try {
             startForeground(NOTIFICATION, notification(state), ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
@@ -63,7 +67,9 @@ class PatchJobService : Service() {
                 "$packageName:patch-job").apply { acquire(MAX_JOB_MS) }
             handler.postDelayed(deadline, MAX_JOB_MS)
             handler.postDelayed(heartbeat, 1000)
+            val exited = workerExited
             task = executor.submit {
+                exited.set(false)
                 try {
                     Process.setThreadPriority(Process.THREAD_PRIORITY_DEFAULT)
                     runBlocking { if (state.status == PatchJobStatus.PREPARING) prepare(state, requireNotNull(intent.data)) else patch(state) }
@@ -76,6 +82,7 @@ class PatchJobService : Service() {
                 } catch (e: Exception) {
                     store.change(state.id) { it.copy(status = PatchJobStatus.FAILURE, message = e.message ?: "Patching failed. Retry with a supported stock APK.") }
                 } finally {
+                    exited.set(true)
                     handler.post { finishJob(state.id) }
                 }
             }
@@ -197,13 +204,22 @@ class PatchJobService : Service() {
         val id = runningId ?: return
         store.change(id) { it.copy(status = status, message = reason, result = null) }
         task?.cancel(true)
-        finishJob(id)
-        // Upstream synchronous patches can ignore interrupts. Only explicit cancellation
-        // or a service deadline may terminate the isolated patcher process.
-        Process.killProcess(Process.myPid())
+        handler.removeCallbacks(deadline)
+        handler.removeCallbacks(heartbeat)
+        if (wakeLock?.isHeld == true) wakeLock?.release()
+        wakeLock = null
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        val exited = workerExited
+        // Future.isDone becomes true on cancel even if upstream code ignores the interrupt.
+        fun reap() {
+            if (exited.get()) { finishJob(id); return }
+            if (!PatchVisibility.hasResumedActivity) { Process.killProcess(Process.myPid()); return }
+            handler.postDelayed({ reap() }, CANCEL_GRACE_MS)
+        }
+        handler.postDelayed({ reap() }, CANCEL_GRACE_MS)
     }
 
-    private val deadline = Runnable { terminate(PatchJobStatus.FAILURE, "Patching exceeded the one-hour limit. Retry with a supported stock APK.") }
+    private val deadline = Runnable { terminate(PatchJobStatus.INTERRUPTED, "Patching exceeded the one-hour limit. Retry with a supported stock APK.") }
     private fun reportProgress(id: String, progress: PatchProgress) {
         store.progress(id, progress, SystemClock.elapsedRealtime() - startedRealtime)
     }
@@ -223,11 +239,8 @@ class PatchJobService : Service() {
         handler.removeCallbacks(heartbeat)
         if (wakeLock?.isHeld == true) wakeLock?.release()
         executor.shutdownNow()
-        runningId?.let { id ->
-            store.change(id) { it.copy(status = PatchJobStatus.INTERRUPTED,
-                message = "The last patch was interrupted. Retry when you are ready.", result = null) }
-            Process.killProcess(Process.myPid())
-        }
+        if (runningId != null) terminate(PatchJobStatus.INTERRUPTED,
+            "The last patch was interrupted. Retry when you are ready.")
         super.onDestroy()
     }
 
@@ -237,6 +250,7 @@ class PatchJobService : Service() {
         private const val CHANNEL = "patch-jobs"
         private const val RESULTS_CHANNEL = "patch-results"
         private const val NOTIFICATION = 41
+        private const val CANCEL_GRACE_MS = 3000L
         private const val MAX_JOB_MS = 60L * 60 * 1000
     }
 }
