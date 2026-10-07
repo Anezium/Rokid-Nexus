@@ -64,7 +64,7 @@ class PatchJobService : Service() {
         if (runningId != null) {
             if (state.active && state.id != runningId && intent?.getStringExtra(JOB_ID) == state.id) {
                 try {
-                    startForeground(NOTIFICATION, notification(state), ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+                    promote(state)
                     pendingStart = intent; pendingStartId = startId
                 } catch (e: Exception) {
                     store.change(state.id) { it.copy(status = PatchJobStatus.FAILURE,
@@ -79,7 +79,7 @@ class PatchJobService : Service() {
         workerExited = AtomicBoolean(true)
         startedRealtime = SystemClock.elapsedRealtime()
         try {
-            startForeground(NOTIFICATION, notification(state), ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+            promote(state)
             wakeLock = getSystemService(PowerManager::class.java).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK,
                 "$packageName:patch-job").apply { acquire(MAX_JOB_MS) }
             handler.postDelayed(deadline, MAX_JOB_MS)
@@ -208,6 +208,29 @@ class PatchJobService : Service() {
         runCatching { getSystemService(NotificationManager::class.java).notify(NOTIFICATION, notification(state)) }
     }
 
+    private fun promote(state: PatchJobState) {
+        startForeground(NOTIFICATION, notification(state), ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+        // Android can silently refuse promotion under background restrictions.
+        check(foregroundServiceType and ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC != 0) {
+            "Android stopped background patching. Return to Patcher and retry."
+        }
+    }
+
+    private fun retainForeground(state: PatchJobState): Boolean {
+        if (foregroundServiceType and ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC != 0) return true
+        return try { promote(state); true } catch (e: Exception) {
+            terminate(PatchJobStatus.INTERRUPTED,
+                PatchErrors.reason(e, "Android stopped background patching. Return to Patcher and retry."), allowProcessKill = false)
+            false
+        }
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        super.onTaskRemoved(rootIntent)
+        val current = store.state.value
+        if (current.active && runningId != null) retainForeground(current)
+    }
+
     private fun finishJob(id: String) {
         if (runningId != id) return
         measuredStep?.let { phaseTimings.end(it, measuredStarted,
@@ -226,7 +249,7 @@ class PatchJobService : Service() {
         else stopSelfResult(latestStartId)
     }
 
-    private fun terminate(status: PatchJobStatus, reason: String) {
+    private fun terminate(status: PatchJobStatus, reason: String, allowProcessKill: Boolean = true) {
         val id = runningId ?: return
         store.change(id) { it.copy(status = status, message = reason, result = null) }
         task?.cancel(true)
@@ -239,7 +262,7 @@ class PatchJobService : Service() {
         // Future.isDone becomes true on cancel even if upstream code ignores the interrupt.
         fun reap() {
             if (exited.get()) { finishJob(id); return }
-            if (!PatchVisibility.hasResumedActivity) {
+            if (allowProcessKill && !PatchVisibility.hasResumedActivity) {
                 val current = store.state.value
                 if (current.active) store.change(current.id) { it.copy(status = PatchJobStatus.INTERRUPTED,
                     message = "The last patch was interrupted. Retry when you are ready.", result = null) }
@@ -265,6 +288,7 @@ class PatchJobService : Service() {
         override fun run() {
             val current = store.state.value
             if (current.active && current.id == runningId) {
+                if (!retainForeground(current)) return
                 store.tick(current.id, SystemClock.elapsedRealtime() - startedRealtime)
                 notifyState(store.state.value)
                 val now = SystemClock.elapsedRealtime()
@@ -278,12 +302,14 @@ class PatchJobService : Service() {
     }
     override fun onTimeout(startId: Int, fgsType: Int) { terminate(PatchJobStatus.INTERRUPTED, "Android stopped the patch service after its time limit. Retry when you are ready.") }
     override fun onDestroy() {
-        handler.removeCallbacks(deadline)
-        handler.removeCallbacks(heartbeat)
+        handler.removeCallbacksAndMessages(null)
+        val current = store.state.value
+        if (current.active && (current.id == runningId || current.id == pendingStart?.getStringExtra(JOB_ID)))
+            store.change(current.id) { it.copy(status = PatchJobStatus.INTERRUPTED,
+                message = "The last patch was interrupted. Retry when you are ready.", result = null) }
+        task?.cancel(true)
         if (wakeLock?.isHeld == true) wakeLock?.release()
         executor.shutdownNow()
-        if (runningId != null) terminate(PatchJobStatus.INTERRUPTED,
-            "The last patch was interrupted. Retry when you are ready.")
         super.onDestroy()
     }
 
