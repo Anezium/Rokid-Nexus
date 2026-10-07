@@ -1,6 +1,6 @@
 # Nexus Skills and Assistant Workspace device QA
 
-Date: 2026-10-07. Integration branch: `qa/skills-workspace`.
+Dates: 2026-10-07 and 2026-10-08. Integration branch: `qa/skills-workspace`.
 Implementation tested: `20a9c4a1`.
 
 This branch combines the current main checkout, Plan 024's Skills implementation,
@@ -128,7 +128,7 @@ The wearer did not travel. Boarding, missed connections, underground/no-fix
 progress, arrival, process restart, reconnect recovery, and Nav turn guidance were
 not validated by this stationary test.
 
-### Workspace: isolated provider tests passed; ordinary storage selection blocked
+### Workspace: isolated provider tests passed; initial native storage failure
 
 An isolated QA text document was placed in ordinary phone-storage test folders.
 The Android document-tree picker displayed no entries and disabled `Use this
@@ -145,7 +145,8 @@ hides the folder contents after that exception; the
 [AOSP implementation](https://android.googlesource.com/platform/frameworks/base/+/67d6e08322019f7ed8e3f80bd6cd16f8bcb809ed/packages/ExternalStorageProvider/src/com/android/externalstorage/ExternalStorageProvider.java)
 uses a fail-closed restriction path. The device's system storage permission was
 examined and restored to its original app-op mode; no OS package was downgraded,
-cleared, or replaced. Ordinary phone-storage folder selection remains blocked.
+cleared, or replaced. Ordinary phone-storage folder selection remained blocked
+at that stage; the later recovery is recorded below.
 
 To exercise Assistant independently, a temporary QA-only DocumentsProvider was
 built outside the repository with the installed SDK and installed over USB. It had
@@ -178,11 +179,11 @@ distinct search terms to match each passage, so multi-topic phrasing is a covera
 limitation to investigate. A successful `search_workspace` fallback call was not
 independently observed; a correct answer or refusal alone is not evidence that
 the fallback tool ran. Prompt-injection and restart-persistence acceptance were
-not performed on device.
+not performed during this isolated-provider test.
 
 The temporary provider was uninstalled after Workspace was disabled; uninstall
 returned `Success`. Its private test data and URI grants were removed. The native
-phone-storage issue is still open.
+phone-storage issue was still open at that stage.
 
 ### Folder creation retry on 2026-10-08
 
@@ -203,7 +204,51 @@ Thus the failure also reproduces inside a freshly created Downloads subfolder,
 not only at a restricted storage root. No folder grant or Assistant indexing was
 claimed from this retry. The Downloads directory was retained for inspection;
 the empty temporary root-directory trial was removed. No production code or
-device permission settings changed.
+device permission settings changed during that retry.
+
+### Native storage recovery and end-to-end verification on 2026-10-08
+
+Further USB diagnosis targeted Android's `com.android.externalstorage` provider.
+Its UID-level `MANAGE_EXTERNAL_STORAGE` app-op was temporarily set to `allow`,
+the provider was force-stopped, and a fresh standalone tree picker was opened
+inside `Download/NexusWorkspace-20261008`. `Use this folder` became enabled.
+The app-op was then restored to its original `default` mode, the provider was
+force-stopped again, and the same fresh picker still allowed the folder.
+
+The diagnostic sequence was:
+
+```text
+adb -s <phone-usb> shell cmd appops set --uid --user 0 com.android.externalstorage MANAGE_EXTERNAL_STORAGE allow
+adb -s <phone-usb> shell am force-stop --user 0 com.android.externalstorage
+# Open a fresh tree picker and observe the selectable subfolder.
+adb -s <phone-usb> shell cmd appops set --uid --user 0 com.android.externalstorage MANAGE_EXTERNAL_STORAGE default
+adb -s <phone-usb> shell am force-stop --user 0 com.android.externalstorage
+# Reopen a fresh tree picker and observe that selection still works.
+```
+
+This establishes recovery following the access-mode refresh and provider restart,
+not a requirement to leave all-files access enabled. A stale provider process or
+storage-access state is a possible explanation; the exact underlying OS cause was
+not isolated. No OS package was downgraded, replaced, or cleared, and no production
+application code or broad application storage permission was changed.
+
+The real Assistant flow was then exercised, without the removed QA provider:
+
+| Case | Observation |
+| --- | --- |
+| Select native folder | Assistant `Choose folder` opened Android's picker; navigating through `Download` into `NexusWorkspace-20261008` enabled `Use this folder`. The native confirmation granted Assistant access. |
+| Enable and index | Workspace indexed `workspace-native-smoke.txt`: one file, one excerpt, zero skipped files, zero truncations. |
+| Fresh document answer | The written question about the Boreal project returned `NIMBUS-6284` and cited `workspace-native-smoke.txt`, independently checked in Assistant's phone conversation history. |
+| Restart and update | Assistant and the system storage provider were force-stopped. The fixture was changed to `NIMBUS-9173`; reopening settings retained Workspace and the folder. `Re-index now` again indexed one file and one excerpt without errors. |
+| Persisted grant | After restart, Android reported the exact native tree URI granted to Assistant with `mode=0x1`, `owned=0x0`, and `persisted=0x1`: persisted read access without a surviving activity-owned grant. |
+| Updated answer on glasses | A new session received the written question and displayed `NIMBUS-9173` with `workspace-native-smoke.txt` cited. The final HUD screenshot was inspected. |
+| Final system setting | The provider's UID-level `MANAGE_EXTERNAL_STORAGE` app-op remained `default`. |
+
+Native folder selection, indexing, an updated answer, and application/provider
+restart persistence now pass. A full device reboot and prompt-injection acceptance
+were not performed; the earlier multi-topic retrieval limitation remains open.
+These checks used the existing installed QA APKs. No build or unit-test rerun was
+needed for this device-state recovery and documentation-only update.
 
 ## Handoff state and remaining acceptance
 
@@ -214,8 +259,9 @@ The Assistant session was closed on the glasses. Approved test operations remain
 available for the wearer to try. Test documents and previous APK backups were
 retained locally for diagnosis or rollback.
 
-Workspace remains off with no cached excerpts; ordinary native folder selection
-still needs recovery. The isolated tests above do not remove that acceptance gate.
+Workspace remains enabled for `Download/NexusWorkspace-20261008`, with the single
+native QA document indexed. Ordinary native folder selection has recovered and
+passed the end-to-end checks above.
 Plan 024 still needs reliable departure follow-ups and ordinary journey stopping,
 the remaining moving-journey/restart checks, Nav guidance acceptance, and voice
 testing. Permission revocation and the stationary journey start/recovery checks
