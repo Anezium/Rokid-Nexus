@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Keep active questions bound to their Workspace.** Reject delayed searches
+  after folder/index changes or Off–On. Stop follow-up AI requests and retries
+  when that turn's Workspace becomes unavailable, so old excerpts are not sent
+  again after disabling it.
+
 - **Ask about documents on your phone.** Choose a local Workspace folder in
   Assistant settings. Index Text, Markdown, and Word body text (`.txt`, `.md`,
   `.docx`) and send relevant passages with the first question request to any

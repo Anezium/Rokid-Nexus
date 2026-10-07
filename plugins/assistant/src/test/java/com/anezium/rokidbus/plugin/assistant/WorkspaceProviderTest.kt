@@ -1,6 +1,8 @@
 package com.anezium.rokidbus.plugin.assistant
 
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.runTest
@@ -90,11 +92,121 @@ class WorkspaceProviderTest {
         }
     }
 
-    private fun codex(transport: RecordingCodexTransport, access: WorkspaceSearchAccess) = ChatGptCodexProvider(
-        ChatGptCodexApiClient(tokenProvider = { CodexChatGptOAuthTokenBundle("token", "id", "refresh", "account", "plus", "person@example.test") },
-            refreshTokens = { error("Unexpected token refresh") }, transport = transport, sessionId = "workspace-fixture"),
-        oauthConfigured = { true }, toolRegistry = AssistantToolRegistry(listOf(SearchWorkspaceTool { access })),
+    @Test
+    fun `Off while a phone tool waits prevents compat and Hermes follow-up requests`() = runTest {
+        for ((preset, backend) in listOf(ProviderCatalog.openAi to ProviderBackend.OPENAI_COMPAT,
+            ProviderCatalog.hermes to ProviderBackend.HERMES, ProviderCatalog.custom to ProviderBackend.HERMES)
+        ) {
+            val access = FakeWorkspaceSearchAccess()
+            val started = CompletableDeferred<Unit>()
+            val finish = CompletableDeferred<Unit>()
+            val tool = TestAssistantTool(LIST_NOTES_TOOL_NAME, executor = { _, _ ->
+                started.complete(Unit)
+                finish.await()
+                AssistantToolResult.Json("{\"ok\":true}")
+            })
+            val client = ScriptedClient { index ->
+                check(index == 1) { "Workspace excerpts were sent again" }
+                if (backend == ProviderBackend.HERMES) listOf(OpenAiChatSseEvent.Delta(
+                    content = "$COMPAT_TEXT_TOOL_REQUEST_TOKEN{\"name\":\"${tool.name}\",\"arguments\":{}}\n"))
+                else listOf(OpenAiChatSseEvent.Delta(toolCalls = listOf(OpenAiChatToolCallDelta(
+                    index = 0, id = "phone", nameFragment = tool.name, argumentsFragment = "{}"))))
+            }
+            val provider = OpenAiCompatProvider(preset, client, { true }, AssistantToolRegistry(listOf(tool)),
+                supportsVision = { false }, backendProvider = { backend })
+            val response = async { provider.streamEvents(guardedRequest(access, listOf(tool.name))).toList() }
+            started.await()
+            access.available = false
+            finish.complete(Unit)
+            assertWorkspaceRevoked(response.await())
+            assertEquals(preset.id, 1, client.requests.size)
+            assertTrue(client.requests.single().messages.getJSONObject(0).getString("content").contains(EXCERPTS))
+        }
+    }
+
+    @Test
+    fun `Off while a Codex phone tool waits prevents the final request`() = runTest {
+        val access = FakeWorkspaceSearchAccess()
+        val started = CompletableDeferred<Unit>()
+        val finish = CompletableDeferred<Unit>()
+        val tool = TestAssistantTool(LIST_NOTES_TOOL_NAME, executor = { _, _ ->
+            started.complete(Unit)
+            finish.await()
+            AssistantToolResult.Json("{\"ok\":true}")
+        })
+        val call = JSONObject().put("type", "response.output_item.done").put("item", JSONObject()
+            .put("type", "function_call").put("call_id", "phone").put("name", tool.name)
+            .put("arguments", "{}")).toString()
+        val transport = RecordingCodexTransport(listOf(listOf(call, COMPLETED)))
+        val response = async {
+            codex(transport, access, listOf(tool)).streamEvents(guardedRequest(access, listOf(tool.name))).toList()
+        }
+        started.await()
+        access.available = false
+        finish.complete(Unit)
+        assertWorkspaceRevoked(response.await())
+        assertEquals(1, transport.requests.size)
+        assertEquals(prompt(listOf(tool.name)), JSONObject(transport.requests.single().body).getString("instructions"))
+    }
+
+    @Test
+    fun `a changed workspace blocks the compat retry without tool declarations`() = runTest {
+        val access = FakeWorkspaceSearchAccess()
+        val client = ScriptedClient {
+            access.generation++
+            throw OpenAiCompatHttpException(400, "Tools rejected")
+        }
+        val provider = OpenAiCompatProvider(ProviderCatalog.openAi, client, { true },
+            AssistantToolRegistry(listOf(SearchWorkspaceTool { access })), supportsVision = { false })
+        assertWorkspaceRevoked(provider.streamEvents(guardedRequest(access)).toList())
+        assertEquals(1, client.requests.size)
+    }
+
+    @Test
+    fun `Off prevents Codex unauthorized and transient stream retries`() = runTest {
+        for (unauthorized in listOf(true, false)) {
+            val access = FakeWorkspaceSearchAccess()
+            val events = if (unauthorized) emptyList() else listOf(
+                "{\"type\":\"response.failed\",\"response\":{\"error\":{\"type\":\"server_error\",\"message\":\"Retry\"}}}")
+            val transport = RecordingCodexTransport(listOf(events), listOf(if (unauthorized) 401 else 200)) {
+                access.available = false
+            }
+            var refreshCount = 0
+            val provider = codex(transport, access, refreshTokens = { refreshCount++; tokens() })
+            assertWorkspaceRevoked(provider.streamEvents(guardedRequest(access)).toList())
+            assertEquals(1, transport.requests.size)
+            assertEquals(if (unauthorized) 1 else 0, refreshCount)
+        }
+    }
+
+    private fun guardedRequest(access: WorkspaceSearchAccess, names: List<String> = listOf(SEARCH_WORKSPACE_TOOL_NAME)): ChatRequest {
+        val version = access.searchVersion()
+        return ChatRequest(userText = "What is the notice period?", systemPrompt = prompt(names),
+            workspaceVersion = version, beforeSend = workspaceTurnGuard(access, version))
+    }
+
+    private fun assertWorkspaceRevoked(events: List<AiProviderEvent>) {
+        assertTrue(events.filterIsInstance<AiProviderEvent.Failed>().single().message.contains("Workspace changed"))
+        assertTrue(events.none { it is AiProviderEvent.MessageDone })
+    }
+
+    private fun codex(transport: RecordingCodexTransport, access: WorkspaceSearchAccess,
+        tools: List<AssistantToolDefinition> = listOf(SearchWorkspaceTool { access }),
+        refreshTokens: suspend () -> CodexChatGptOAuthTokenBundle = { error("Unexpected token refresh") },
+    ) = ChatGptCodexProvider(
+        ChatGptCodexApiClient(tokenProvider = { tokens() },
+            refreshTokens = refreshTokens, transport = transport, sessionId = "workspace-fixture"),
+        oauthConfigured = { true }, toolRegistry = AssistantToolRegistry(tools),
     )
+
+    private class ScriptedClient(private val response: suspend (Int) -> List<OpenAiChatSseEvent>) : OpenAiCompatChatClient {
+        val requests = mutableListOf<OpenAiCompatChatRequest>()
+        override fun streamChat(request: OpenAiCompatChatRequest): Flow<OpenAiChatSseEvent> = flow {
+            requests += request
+            response(requests.size).forEach { emit(it) }
+        }
+        override fun cancel(requestId: String) = Unit
+    }
 
     private class RecordingClient : OpenAiCompatChatClient {
         val requests = mutableListOf<OpenAiCompatChatRequest>()
@@ -105,14 +217,18 @@ class WorkspaceProviderTest {
         override fun cancel(requestId: String) = Unit
     }
 
-    private class RecordingCodexTransport(responses: List<List<String>>) : ChatGptCodexHttpTransport {
+    private class RecordingCodexTransport(responses: List<List<String>>,
+        statuses: List<Int> = responses.map { 200 }, private val afterResponse: () -> Unit = {},
+    ) : ChatGptCodexHttpTransport {
         private val responses = ArrayDeque(responses)
+        private val statuses = ArrayDeque(statuses)
         val requests = mutableListOf<ChatGptCodexHttpRequest>()
         override suspend fun execute(requestId: String, request: ChatGptCodexHttpRequest,
             consumeData: suspend (String) -> Boolean): ChatGptCodexHttpResponse {
             requests += request
             for (event in responses.removeFirst()) if (!consumeData(event)) break
-            return ChatGptCodexHttpResponse(200)
+            afterResponse()
+            return ChatGptCodexHttpResponse(statuses.removeFirst())
         }
         override fun cancel(requestId: String) = Unit
     }
@@ -127,5 +243,6 @@ class WorkspaceProviderTest {
             workspace = EXCERPTS, workspaceEnabled = true, availableToolNames = names)
         private fun textResponse() = listOf("{\"type\":\"response.output_text.delta\",\"delta\":\"Two months, according to notice.txt.\"}",
             "{\"type\":\"response.output_item.done\",\"item\":{\"type\":\"message\"}}", COMPLETED)
+        private fun tokens() = CodexChatGptOAuthTokenBundle("token", "id", "refresh", "account", "plus", "person@example.test")
     }
 }

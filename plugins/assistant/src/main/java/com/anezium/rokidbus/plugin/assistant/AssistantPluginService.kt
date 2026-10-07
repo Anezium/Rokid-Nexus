@@ -869,7 +869,11 @@ class AssistantPluginService : NexusPluginService() {
         var failed = false
         var finalAnswer: String? = null
         try {
-            providerRouter.providerFor(providerId).streamEvents(request.copy(systemPrompt = prompt())).collect { event ->
+            val dispatchWorkspace = workspaceContext?.takeIf { workspaceController?.isCurrent(it) == true }
+            val dispatchRequest = request.copy(systemPrompt = prompt(), beforeSend = dispatchWorkspace?.let {
+                workspaceTurnGuard(checkNotNull(workspaceController), it.generation to it.revision)
+            })
+            providerRouter.providerFor(providerId).streamEvents(dispatchRequest).collect { event ->
                 when (event) {
                     is AiProviderEvent.Started -> Unit
                     is AiProviderEvent.Progress -> uiController.showTransient(event.message)

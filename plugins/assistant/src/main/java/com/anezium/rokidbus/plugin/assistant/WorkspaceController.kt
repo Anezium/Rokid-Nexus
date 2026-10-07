@@ -31,6 +31,12 @@ internal interface WorkspaceSearchAccess {
     suspend fun search(query: String): WorkspaceSearchResult?
 }
 
+internal fun workspaceTurnGuard(access: WorkspaceSearchAccess, version: Pair<Long, Long>): () -> Unit = {
+    check(access.isSearchAvailable() && access.searchVersion() == version) {
+        "Workspace changed during this answer. Ask your question again."
+    }
+}
+
 internal class WorkspaceController(
     private val store: WorkspaceStore,
     private val gateway: WorkspaceDocumentGateway,

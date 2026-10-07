@@ -360,6 +360,16 @@ tool**. Do not change provider selection/authentication, Hermes discovery, or
 server-side agent behavior. Do not silently expose workspace files to a remote
 agent as paths or attachments.
 
+After dispatch, attach a request-scoped guard to every outbound provider call.
+If Workspace becomes unavailable or its captured generation/revision changes,
+stop the remaining provider requests for that turn with a fixed safe retry
+message. This covers OpenAI-compatible structured and Hermes text-tool
+follow-ups, the compatible endpoint's retry without tools, and Codex OAuth
+tool follow-ups, unauthorized retries, and transient-stream retries. Do not
+replay stale excerpts in either original prompts or tool transcripts. An
+already dispatched request cannot be recalled; the guard prevents subsequent
+requests and adds no model round. Preserve the guard across request copies.
+
 Do not save excerpt blocks into `AssistantThreadStore`: retrieve afresh for each
 turn, keep the excerpts only in request memory, and release them on completion
 or cancellation. Existing conversation answers may contain facts the wearer
