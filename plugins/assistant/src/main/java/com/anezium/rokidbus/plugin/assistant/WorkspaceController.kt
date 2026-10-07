@@ -119,6 +119,8 @@ internal class WorkspaceController(
             val job = context.job
             val (selection, before) = synchronized(lock) {
                 selectionJob?.cancel()
+                // Returning from the picker can race the check started by onStart.
+                cancelWorkers()
                 selectionJob = job
                 ++selectionRevision to store.snapshot()
             }

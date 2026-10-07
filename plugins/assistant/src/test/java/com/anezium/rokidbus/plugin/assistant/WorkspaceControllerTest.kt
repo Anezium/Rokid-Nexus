@@ -1,11 +1,14 @@
 package com.anezium.rokidbus.plugin.assistant
 
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -81,6 +84,36 @@ class WorkspaceControllerTest {
                 assertTrue(fixture.gateway.opens.isEmpty())
             } finally { fixture.scope.cancel() }
         }
+    }
+
+    @Test
+    fun `reselecting the current folder supersedes an automatic check already in progress`() = runBlocking {
+        val fixture = fixture(seed = true)
+        val checkStarted = CompletableDeferred<Unit>()
+        val finishCheck = CompletableDeferred<Unit>()
+        fixture.gateway.put("notice", "notice.txt", "Notice is two months.")
+        fixture.gateway.onRoot = {
+            when (fixture.gateway.rootCalls) {
+                1 -> {
+                    checkStarted.complete(Unit)
+                    finishCheck.await()
+                }
+                2 -> {
+                    finishCheck.complete(Unit)
+                    fixture.controller.state.first { !it.checking }
+                }
+            }
+        }
+        try {
+            fixture.controller.attach(Any())
+            withTimeout(2_000) { checkStarted.await() }
+            assertEquals(WorkspaceFolderResult.SELECTED,
+                withTimeout(2_000) { fixture.controller.chooseFolder(WorkspaceStoreTest.TREE, 1, enable = true) })
+            withTimeout(2_000) { fixture.controller.state.first { it.workspace.validated } }
+            assertEquals(WorkspaceStoreTest.TREE, fixture.store.snapshot().state.settings.treeUri)
+            assertEquals(1, fixture.store.snapshot().state.index?.chunkCount)
+            assertTrue(fixture.gateway.released.isEmpty())
+        } finally { fixture.scope.cancel() }
     }
 
     @Test

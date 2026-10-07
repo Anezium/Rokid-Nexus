@@ -234,6 +234,7 @@ internal class FakeWorkspaceGateway : WorkspaceDocumentGateway {
     var granted = true
     var rootExists = true
     var rootFailure: Exception? = null
+    var onRoot: (suspend () -> Unit)? = null
     var persistFailure: Exception? = null
     var listFailure = false
     var onOpen: (() -> Unit)? = null
@@ -259,6 +260,7 @@ internal class FakeWorkspaceGateway : WorkspaceDocumentGateway {
     override fun releaseReadGrant(treeUri: String) { released += treeUri }
     override suspend fun root(treeUri: String): WorkspaceEntry {
         rootCalls++
+        onRoot?.invoke()
         if (rootDelayMs > 0) kotlinx.coroutines.delay(rootDelayMs)
         rootFailure?.let { throw it }
         if (!rootExists) throw FileNotFoundException()
