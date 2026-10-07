@@ -6,8 +6,10 @@
   result-byte validation, same-signer CXR updates and confirmed-install records.
 - Patcher replaces the unpublished YouTube Patcher package and generates a new key;
   existing output needs an imported backup or an explicit manual reinstall on glasses.
-- YouTube setup says what to expect from Patcher: a few minutes, kept running when
-  you leave the app, then checked and installed by Nexus.
+- YouTube setup says what to expect from Patcher: about 6–7 minutes, kept going in a
+  small window while you use other apps, then checked and installed by Nexus. When a
+  patched APK is waiting, step 3 leads with Install on glasses and says whether the
+  glasses still need connecting.
 
 ## 1.5.0
 

@@ -216,7 +216,9 @@ names the sub-phase with a number only when one was measured, and the last appli
 patch shows with its count. The screen adds a ticking elapsed clock and a
 `PhosphorBar` that fills for a known fraction, sweeps for an unknown one and draws a
 static dashed fill when the user has turned animations off. Notifications use the
-same words, name the target and carry the elapsed time; the result notification
+same words, name the target and carry the substep and elapsed time in their text; a
+percentage bar is added only when the model measured movement, so an unknown or zero
+fraction never shows as 0%. The result notification
 reopens the screen, and when the live screen already exists in the hub's task it is
 brought forward (`REORDER_TASKS`) instead of a second copy. Failure, cancelled and
 interrupted states are shown on the screen. Terminal notifications are posted only
@@ -249,8 +251,17 @@ dedicated thread uses Android's default CPU priority even with the screen off.
 
 ## Picture-in-picture
 
-PiP is enabled by default only during RUNNING, with a compact live phase/elapsed view
-and an explicit Cancel action.
+A full patch takes about 6–7 minutes while the full screen or the floating window is
+visible. Hidden in the background or with the phone locked, Samsung schedules the
+worker on the small cores and the same patch takes 30 minutes or more; the screens,
+notifications and docs say so rather than promising screen-off speed.
+
+PiP is enabled by default only during RUNNING, with a compact live view and an explicit
+Cancel action. The window shows a dim label with a breathing dot, a large elapsed
+clock, the live phase or substep line, and a thin phosphor bar that fills for a known
+fraction and sweeps for an unknown one (static when animations are off). At the end
+the line and the bar take the outcome's colour (green ready, amber cancelled, red
+failed or interrupted) for the moment before the window moves behind the user.
 Android 12+ receives auto-enter parameters; leaving the activity also requests PiP.
 Finished floating tasks move behind the user while retaining the activity-result
 relationship. Dismissing PiP or removing the task leaves the foreground job running.

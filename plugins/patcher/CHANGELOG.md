@@ -2,6 +2,17 @@
 
 ## 1.0.0
 
+- Enter picture-in-picture while a patch runs and design that window: a label with a
+  breathing dot, a large elapsed clock, the live line and a thin phosphor bar, closing
+  in the outcome's colour at the end, with a Cancel action.
+- Say honestly that a patch takes about 6–7 minutes with the screen or the floating
+  window visible and much longer hidden or locked; drop the "a few minutes" and
+  "turn the display off" claims everywhere.
+- Name substeps in plain words with grouped class counts and decimal megabytes, show a
+  notification bar only for measured movement, and put the substep and elapsed time in
+  the notification text. The ready notification asks to keep the glasses connected.
+- Show how old a saved result is above a plain "Use this result" action when Nexus asks
+  again, and phrase every fallback message as what happened, then what to do.
 - Rename the unpublished plugin to Patcher (`:plugin-patcher`, package
   `com.anezium.rokidbus.plugin.patcher`, id `patcher`). The new package generates a
   new private signing key; import a portable backup or manually reinstall YouTube

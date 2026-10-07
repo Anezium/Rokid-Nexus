@@ -164,6 +164,29 @@ class YoutubeSetupActivityTest {
             shadowOf(screen.get()).nextStartedActivity.component)
     }
 
+    @Test fun `a waiting patched APK leads step 3 with Install on glasses and says when to connect them`() {
+        val picker = launchPicker()
+        pickerResult(picker)
+        idle()
+        assertTrue(YoutubeSetupStateStore.state.canInstall)
+        val label = requireNotNull(YoutubeSetupStateStore.state.preparedLabel)
+        assertEquals(1, text("Ready to install — $label is patched and waiting.").size)
+        val install = text("INSTALL ON GLASSES").single()
+        assertTrue(install.isEnabled)
+        assertTrue(text("PATCH AND INSTALL").isEmpty())
+        assertTrue(text("RETRY PREPARED INSTALL").isEmpty())
+        assertEquals(View.GONE, (text("PATCH AGAIN").single().parent as View).visibility)
+        // The glasses dropped: the line says what to do next and the primary action stays put.
+        YoutubeSetupStateStore.update(YoutubeSetupStateStore.state.copy(inventory = null,
+            message = "The glasses disconnected. Reconnect and refresh before continuing."))
+        assertEquals(1, text("Ready to install — $label is patched and waiting. Connect the glasses, then install.").size)
+        assertEquals(1, text("INSTALL ON GLASSES").size)
+        val before = sent.size
+        text("INSTALL ON GLASSES").single().performClick()
+        idle()
+        assertEquals("install asks the glasses for their apps first", before + 1, sent.size)
+    }
+
     private class ImmediateExecutor : AbstractExecutorService() {
         private var stopped = false
         override fun execute(command: Runnable) = command.run()

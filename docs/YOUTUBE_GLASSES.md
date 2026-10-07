@@ -48,7 +48,11 @@ This adds no bus access or glasses installer capability. Manual patched APK
 import remains a separate, explicit user action.
 
 In Patcher, choose your download and review the patches. Patching adds
-the glasses controls to YouTube. You can switch apps or turn the screen off while it patches. Return from the progress or ready-to-install notification to continue.
+the glasses controls to YouTube and takes about 6–7 minutes. It keeps going at
+full speed in a small floating window while you use other apps; locking the phone
+or closing that window slows it down a lot, but it keeps going. Return from the
+progress or ready-to-install notification to continue, and keep the glasses
+connected for the install.
 Nexus receives a read-granted `content://` URI, copies and validates the APK,
 then installs it on the glasses without another tap. The card is done only when
 fresh glasses inventory reports `app.morphe.android.youtube` with the version code

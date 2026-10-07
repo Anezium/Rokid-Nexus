@@ -127,38 +127,39 @@ class YoutubeSetupActivity : Activity() {
         val confirmedYoutube = installHistory.installed(YoutubeSetupContract.YOUTUBE)
         val installStatus = youtubeInstallStatus(state.inventory, confirmedYoutube)
         val youtubeDone = installStatus == "Done"
-        card("3. Patch and install", if (youtubeDone) "Done — YouTube ${confirmedYoutube?.versionName} is installed."
-            else installStatus +
-                " — Approve Patcher first, then choose your file and review the patches. Patching takes a few minutes and keeps running if you leave the app. Nexus checks the result and installs it on the glasses.") { box ->
-            button(box, if (youtubeDone) "Reinstall / update"
-                else if (patcherApproved) "Patch and install" else "Get or approve Patcher",
-                enabled, secondary = youtubeDone) {
-                val identity = PatcherHandoff.authenticatedIdentity(this)
-                patcherApproved = identity != null
-                if (identity == null) {
-                    startActivity(PatcherHandoff.reviewIntent(this))
-                } else {
-                    patcherIdentity = identity
-                    patchPending = true
-                    rerender()
-                    runCatching { startActivityForResult(PatcherHandoff.patchIntent(), PATCH_APK) }
-                        .onFailure {
-                            patchPending = false
-                            patcherIdentity = null
-                            rerender()
-                            toast("Patcher could not open. Update it from the Store.")
-                        }
-                }
+        val prepared = state.preparedLabel?.takeIf { state.canInstall }
+        val action = patchStepAction(prepared != null, youtubeDone, patcherApproved)
+        val patch = {
+            val identity = PatcherHandoff.authenticatedIdentity(this)
+            patcherApproved = identity != null
+            if (identity == null) {
+                startActivity(PatcherHandoff.reviewIntent(this))
+            } else {
+                patcherIdentity = identity
+                patchPending = true
+                rerender()
+                runCatching { startActivityForResult(PatcherHandoff.patchIntent(), PATCH_APK) }
+                    .onFailure {
+                        patchPending = false
+                        patcherIdentity = null
+                        rerender()
+                        toast("Patcher could not open. Update it from the Store.")
+                    }
+            }
+        }
+        card("3. Patch and install", when {
+            prepared != null -> patchStepLine(prepared, checked)
+            youtubeDone -> "Done — YouTube ${confirmedYoutube?.versionName} is installed."
+            else -> installStatus +
+                " — Approve Patcher first, then choose your file and review the patches. Patching takes about 6–7 minutes and keeps going in a small window while you use other apps. Nexus then checks the result and installs it on the glasses."
+        }) { box ->
+            button(box, action.label, enabled, secondary = action == PatchStepAction.REINSTALL) {
+                if (action == PatchStepAction.INSTALL_PREPARED) command(YoutubeSetupController.INSTALL) else patch()
             }
             more(box, "patch") { extras ->
+                if (prepared != null) button(extras, if (youtubeDone) "Reinstall / update" else "Patch again", enabled) { patch() }
                 button(extras, "Patcher in Store", enabled) {
                     startActivity(PatcherHandoff.storeIntent(this))
-                }
-                state.preparedLabel?.let {
-                    extras.addView(NexusUi.cardBody(this, it), NexusUi.block())
-                    button(extras, "Retry prepared install", enabled && state.canInstall) {
-                        command(YoutubeSetupController.INSTALL)
-                    }
                 }
                 button(extras, "Refresh glasses apps", enabled) { command(YoutubeSetupController.REFRESH) }
             }
