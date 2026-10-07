@@ -1,7 +1,7 @@
 package com.anezium.rokidbus.plugin.assistant
 
 internal object WorkspaceChunker {
-    fun chunk(text: String, markdown: Boolean = false): List<WorkspaceChunk> {
+    fun chunk(text: String, markdown: Boolean = false, onTruncated: () -> Unit = {}): List<WorkspaceChunk> {
         val lines = text.replace("\r\n", "\n").replace('\r', '\n').split('\n')
         val chunks = mutableListOf<WorkspaceChunk>()
         val headings = sortedMapOf<Int, String>()
@@ -26,7 +26,7 @@ internal object WorkspaceChunker {
             paragraph.clear()
             val heading = workspaceLabel(headings.values.joinToString(" › "))
             val position = paragraphNumber++
-            val pieces = splitParagraph(value)
+            val pieces = splitParagraph(value, onTruncated)
             for (piece in pieces) {
                 if (pending.isNotEmpty() && (pendingHeading != heading ||
                     pending.length + piece.length + 2 > WorkspaceLimits.MAX_CHUNK_CHARS)
@@ -87,7 +87,7 @@ internal object WorkspaceChunker {
         return chunks
     }
 
-    private fun splitParagraph(paragraph: String): List<String> {
+    private fun splitParagraph(paragraph: String, onTruncated: () -> Unit): List<String> {
         val result = mutableListOf<String>()
         var remaining = paragraph
         while (remaining.isNotBlank()) {
@@ -97,6 +97,7 @@ internal object WorkspaceChunker {
             }
             val prefix = workspaceWordPrefix(remaining, WorkspaceLimits.MAX_CHUNK_CHARS)
             if (prefix.isEmpty()) {
+                onTruncated()
                 remaining = remaining.dropWhile { !it.isWhitespace() }.trimStart()
                 continue
             }
