@@ -157,7 +157,7 @@ class AssistantToolLoopTest {
                 else -> AssistantLoopPass(
                     "",
                     listOf(call("delete_calendar_event_fake", "{\"r\":$r}"), call("sk_transit__stop_journey", "{\"r\":$r}"),
-                        call(SEARCH_WORKSPACE_TOOL_NAME, "{\"query\":\"notice\"}")),
+                        call(SEARCH_WORKSPACE_TOOL_NAME, "{\"query\":\"notice\"}", id = "workspace-round-$r")),
                 )
             }
         })
