@@ -24,10 +24,19 @@ class PhosphorBar(context: Context) : View(context) {
     private var sweeping: ValueAnimator? = null
 
     val isSweeping: Boolean get() = sweeping != null
+    val shownFraction: Float? get() = fraction
 
     fun show(fraction: Double?) {
         this.fraction = fraction?.toFloat()
         if (fraction == null) startSweep() else stopSweep()
+        invalidate()
+    }
+
+    /** The bar keeps its phosphor green while alive and closes in the outcome's colour at the end. */
+    fun tint(color: Int) {
+        if (fill.color == color) return
+        fill.color = color
+        dim.color = NexusUi.alpha(color, 0x70)
         invalidate()
     }
 

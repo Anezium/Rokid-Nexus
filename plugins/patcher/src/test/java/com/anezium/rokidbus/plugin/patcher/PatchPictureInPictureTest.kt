@@ -30,6 +30,8 @@ class PatchPictureInPictureTest {
         assertTrue(params.isAutoEnterEnabled)
         val action = params.actions.single()
         assertEquals("Cancel", action.title.toString())
+        assertEquals("Cancel patching", action.contentDescription.toString())
+        assertEquals(R.drawable.ic_patch_cancel, action.icon.resId)
         val cancel = org.robolectric.Shadows.shadowOf(action.actionIntent).savedIntent
         assertEquals(PatchJobService::class.java.name, cancel.component!!.className)
         assertEquals(PatchJobService.CANCEL, cancel.action)
@@ -78,4 +80,38 @@ class PatchPictureInPictureTest {
         screen.pause().stop().destroy()
     }
 
+    @Test fun compactWindowShowsTheClockLineAndBarAndClosesInTheOutcomeColour() {
+        val screen = org.robolectric.Robolectric.buildActivity(android.app.Activity::class.java).setup()
+        val activity = screen.get()
+        val pip = PatchPictureInPicture(activity)
+        val running = PatchJobState(id = "job", status = PatchJobStatus.RUNNING,
+            progress = PatchProgress(PatchPhase.APPLY_PATCHES, 7.0 / 23, "Hide ads", 7, 23), elapsedMs = 134_000)
+        pip.show(running)
+        val views = requireNotNull(pip.compact)
+        assertSame(views.root, (activity.findViewById<android.view.ViewGroup>(android.R.id.content)).getChildAt(0))
+        assertEquals("PATCHER · YOUTUBE", views.label.text.toString())
+        assertEquals("2:14", views.clock.text.toString())
+        assertEquals("Applying patches · 7 of 23", views.line.text.toString())
+        assertEquals(com.anezium.rokidbus.client.ui.NexusUi.INK, views.line.currentTextColor)
+        assertEquals((7.0 / 23).toFloat(), requireNotNull(views.bar.shownFraction), 1e-6f)
+        pip.update(running.copy(progress = PatchProgress(PatchPhase.COMPILE, substep = PatchSubstep.DEX, workTotal = 900), elapsedMs = 150_000))
+        assertSame("the window updates in place", views, pip.compact)
+        assertEquals("2:30", views.clock.text.toString())
+        assertEquals("Compiling code · 900 classes", views.line.text.toString())
+        assertNull(views.bar.shownFraction)
+        pip.update(running.copy(status = PatchJobStatus.CANCELLED, elapsedMs = 151_000))
+        assertEquals("Patch cancelled", views.line.text.toString())
+        assertEquals(com.anezium.rokidbus.client.ui.NexusUi.AMBER, views.line.currentTextColor)
+        assertEquals(1f, requireNotNull(views.bar.shownFraction), 0f)
+        assertEquals(1f, views.dot.alpha, 0f)
+        pip.update(running.copy(status = PatchJobStatus.FAILURE))
+        assertEquals("Patch failed", views.line.text.toString())
+        assertEquals(com.anezium.rokidbus.client.ui.NexusUi.DANGER, views.line.currentTextColor)
+        pip.update(running.copy(status = PatchJobStatus.SUCCESS))
+        assertEquals("Ready to install", views.line.text.toString())
+        assertEquals(com.anezium.rokidbus.client.ui.NexusUi.GREEN, views.line.currentTextColor)
+        pip.expanded()
+        assertNull(pip.compact)
+        screen.pause().stop().destroy()
+    }
 }
