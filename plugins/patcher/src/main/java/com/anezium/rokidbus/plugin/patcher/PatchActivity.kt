@@ -417,7 +417,8 @@ class PatchActivity : Activity() {
         if (hubWaiting) {
             // Nexus asked again while a result waits: say how old it is and let the user choose.
             val age = PatchPresentation.age(System.currentTimeMillis() - (result?.lastModified() ?: System.currentTimeMillis()))
-            card.addView(NexusUi.rowSub(this, "Patched $age · Nexus is waiting for it"), NexusUi.block().apply { topMargin = dp(4) })
+            val delivery = if (jobs.state.value.delivered) "Already sent to Nexus" else "Nexus is waiting for it"
+            card.addView(NexusUi.rowSub(this, "Patched $age · $delivery"), NexusUi.block().apply { topMargin = dp(4) })
             card.addView(BusTheme.gap(this, 14))
             card.addView(primary("Use this result", enabled = !busy) { deliverResult(explicit = true) }, NexusUi.block())
             card.addView(BusTheme.gap(this, 4))

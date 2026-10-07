@@ -3,6 +3,7 @@ package com.anezium.rokidbus.plugin.patcher
 import android.app.Activity
 import android.content.Intent
 import android.content.ComponentName
+import android.content.IntentFilter
 import android.os.Looper
 import android.view.WindowManager
 import android.widget.Button
@@ -265,7 +266,56 @@ class PatchActivityTest {
         assertFalse(screen.get().isFinishing)
         assertNotNull(button(screen.get(), "Patch again"))
         assertNotNull(button(screen.get(), "Use this result"))
-        assertNotNull(text(screen.get(), "Patched 54 min ago · Nexus is waiting for it"))
+        assertNotNull(text(screen.get(), "Patched 54 min ago · Already sent to Nexus"))
+        assertNull(text(screen.get(), "Patched 54 min ago · Nexus is waiting for it"))
+        screen.pause().stop().destroy()
+    }
+
+    @Test fun aSavedUndeliveredResultKeepsTheWaitingCopyAndExplicitChoice() {
+        val (store, job) = runningStore()
+        val output = File(RuntimeEnvironment.getApplication().filesDir, "results/patched-complete.apk").apply {
+            parentFile!!.mkdirs(); writeBytes(byteArrayOf(1))
+            setLastModified(System.currentTimeMillis() - 42 * 60_000L)
+        }
+        store.change(job.id) { it.copy(status = PatchJobStatus.SUCCESS, result = output.name) }
+        val request = Intent(PatcherContract.ACTION_PATCH).putExtra(PatcherContract.EXTRA_TARGET_ID, job.targetId)
+        val screen = Robolectric.buildActivity(PatchActivity::class.java, request)
+        val hub = com.anezium.rokidbus.client.HubTarget.PHONE.packageName
+        shadowOf(screen.get()).setCallingActivity(ComponentName(hub, "Setup"))
+        shadowOf(screen.get()).setCallingPackage(hub)
+        screen.setup()
+        shadowOf(Looper.getMainLooper()).idle()
+        assertFalse(screen.get().isFinishing)
+        assertFalse(store.state.value.delivered)
+        assertNotNull(text(screen.get(), "Patched 42 min ago · Nexus is waiting for it"))
+        assertNotNull(button(screen.get(), "Use this result"))
+        assertNotNull(button(screen.get(), "Patch again"))
+        screen.pause().stop().destroy()
+    }
+
+    @Test fun standaloneOpenNexusUsesTheExistingLauncherWithoutClaimingAWaitingCaller() {
+        val hub = com.anezium.rokidbus.client.HubTarget.PHONE.packageName
+        val launcher = ComponentName(hub, "$hub.MainActivity")
+        val manager = shadowOf(RuntimeEnvironment.getApplication().packageManager)
+        manager.addActivityIfNotPresent(launcher).exported = true
+        manager.addIntentFilterForActivity(launcher, IntentFilter(Intent.ACTION_MAIN).apply {
+            addCategory(Intent.CATEGORY_LAUNCHER)
+        })
+        val (store, job) = runningStore()
+        val output = File(RuntimeEnvironment.getApplication().filesDir, "results/patched-complete.apk").apply {
+            parentFile!!.mkdirs(); writeBytes(byteArrayOf(1))
+        }
+        store.change(job.id) { it.copy(status = PatchJobStatus.SUCCESS, result = output.name) }
+        store.markDelivered(job.id)
+        val screen = Robolectric.buildActivity(PatchActivity::class.java).setup()
+        shadowOf(Looper.getMainLooper()).idle()
+        assertFalse(screen.get().canReturnToHub())
+        assertNull(button(screen.get(), "Use this result"))
+        assertTrue(views(screen.get().findViewById(android.R.id.content)).filterIsInstance<TextView>()
+            .none { it.text.contains("Nexus is waiting for it") })
+        requireNotNull(button(screen.get(), "Open Nexus")).performClick()
+        assertEquals(launcher, shadowOf(screen.get()).nextStartedActivity.component)
+        assertFalse(screen.get().isFinishing)
         screen.pause().stop().destroy()
     }
 
