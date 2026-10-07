@@ -1,10 +1,6 @@
 package com.anezium.rokidbus.plugin.patcher
 
 import android.util.Log
-import java.util.logging.Handler
-import java.util.logging.Level
-import java.util.logging.LogRecord
-import java.util.logging.Logger
 
 class PatchTimings(
     private val clock: () -> Long = System::nanoTime,
@@ -30,29 +26,5 @@ class PatchTimings(
         finally { end(step, started, outcome) }
     }
 
-    // Patcher 1.7.0 aligns inside applyTo; these fixed log boundaries expose that
-    // duration without a second realignment pass or changing the upstream writer.
-    fun <T> withAlignmentTiming(onAlign: () -> Unit = {}, onWrite: () -> Unit = {}, block: () -> T): T {
-        val logger = Logger.getLogger("app.morphe.patcher.apk.ApkUtils")
-        val previous = logger.level
-        var started: Long? = null
-        val observer = object : Handler() {
-            override fun publish(record: LogRecord) {
-                if (record.message == "Aligning APK") { onAlign(); started = start() }
-                if (record.message == "Writing changes") {
-                    started?.let { end("align", it); started = null }
-                    onWrite()
-                }
-            }
-            override fun flush() {}
-            override fun close() {}
-        }
-        logger.addHandler(observer); logger.level = Level.FINE
-        try { return block() }
-        finally {
-            started?.let { end("align", it, "failed") }
-            logger.removeHandler(observer); logger.level = previous
-        }
-    }
     companion object { const val TAG = "Patcher" }
 }
