@@ -53,8 +53,9 @@ glasses APK was not installed.
 
 ## Device observations
 
-The phone ran Android 16/API 36. Testing used wireless ADB; USB ADB was also
-available. Assistant used the already-connected ChatGPT provider. Questions were
+The phone ran Android 16/API 36; the glasses ran Android 12L/API 32. Initial
+checks used wireless ADB; the resumed session used USB ADB for both devices,
+as requested by the wearer. Assistant used the already-connected ChatGPT provider. Questions were
 submitted through typed input and the existing DUMP-protected debug question
 receiver, so this session does not validate microphone capture.
 
@@ -72,18 +73,62 @@ glasses displayed the expected answer: `3 mots, 15 caractères.`
 The count was also exercised through normal typed submission. A model-generated
 count alone was not used as evidence: the bus round trip was checked separately.
 
-### Transit stop search: passed for the ambiguity case
+The USB session also disabled `Count words` through Plugin access. A new explicit
+request reported that the skill was unavailable and did not count independently.
+The inspector showed a new catalog exchange, with no new Hello Nexus invocation;
+its last invocation remained from before revocation. Re-enabling the operation
+restored invocation and returned `3 mots, 18 caractères` for `bleu cuivre soleil`.
+The new provider invocation/result and SKILL event were observed in the inspector.
+
+### Transit: search, departures, and basic journey lifecycle exercised
 
 Transit was approved, and `Search stops by name` and `Departures at a stop` were
-enabled for Assistant. Favorite access and journey actions were left disabled.
+enabled for Assistant. Favorite access and journey actions were temporarily
+enabled during the USB checks and disabled again before handoff.
 
 The test searched for the public Gare du Nord station in Paris. The bus inspector
 showed a Transit provider invocation and result, the result delivered to Assistant,
 and a non-rejected SKILL event. Assistant reported several matching stations and
 asked the wearer to choose. It did not claim a departure from a guessed station.
-No departure-board lookup or journey was validated in this session.
+The USB session searched for Bibliothèque François Mitterrand in Paris. Assistant
+again requested a choice. Selecting the first returned stop produced a real
+departure board on the glasses, including bus, metro, and RER services. The
+inspector showed the provider invocation/result and the result to Assistant.
 
-### Workspace folder selection: blocked
+Two follow-up requests did not meet acceptance: asking for the next line 14
+service toward Orly, then explicitly selecting that line without `after`, returned
+no matching departure despite Orly services on the earlier board. A subsequent
+unfiltered board again contained an Orly service. This is an unresolved observed
+behavior, not proof of a particular feed or argument bug: the inspector does not
+show invocation payloads, and live boards can change. The follow-up matrix must
+not be marked passed.
+
+The favorites-count and inactive-journey questions produced two separate provider
+round trips in one Assistant turn. Existing favorites were not modified. With
+`No home saved` independently observed in Transit settings, a home-guidance request
+correctly explained the missing setup and did not invent a home or a journey.
+
+A test journey to the public Bibliothèque François Mitterrand station did start.
+The glasses displayed its walking activity and itinerary summary, and a later
+`Journey progress` call confirmed the destination and current walking leg.
+Android's service dump showed `isForeground=true`, `startRequested=true`, and
+foreground service types `0x40000008` while guidance was active.
+
+The first ordinary stop request reported that the journey reference was missing;
+Assistant correctly did not claim success. An explicit request to retrieve the
+current journey reference and then stop recovered. The glasses reported guidance
+ended, the walking activity disappeared, and the Transit service dump no longer
+contained a running service. Ordinary cross-turn stop behavior remains an
+acceptance issue. Source inspection shows conversation memory preserves a
+provider's `focus` object, while journey results declare a top-level `journey`
+reference without that focus; this is a likely cause to investigate, not a
+verified fix. No production code was changed during these resumed device tests.
+
+The wearer did not travel. Boarding, missed connections, underground/no-fix
+progress, arrival, process restart, reconnect recovery, and Nav turn guidance were
+not validated by this stationary test.
+
+### Workspace: isolated provider tests passed; ordinary storage selection blocked
 
 An isolated QA text document was placed in ordinary phone-storage test folders.
 The Android document-tree picker displayed no entries and disabled `Use this
@@ -91,25 +136,68 @@ folder` with the privacy restriction message. Attempts to open the test subfolde
 through `EXTRA_INITIAL_URI`, including a fresh standalone `ACTION_OPEN_DOCUMENT_TREE`
 task, did not produce a selectable folder. This also occurred outside Assistant.
 
-The storage root itself is restricted for document-tree selection; seeing that
-restriction does not establish why the test subfolders could not be selected.
-The underlying picker/provider cause remains unverified. No folder grant was
-returned, and Workspace remains off with `No folder selected`.
+The USB session confirmed that the picker was inside the QA subfolder, not merely
+the restricted storage root. The system `ExternalStorage` log showed
+`NoSuchFileException: /storage/emulated` from `Files.isSameFile` inside
+`ExternalStorageProvider.isRestrictedPath`, reached through `shouldHideDocument`
+and `queryChildDocuments`. The inference is that the platform's restriction check
+hides the folder contents after that exception; the
+[AOSP implementation](https://android.googlesource.com/platform/frameworks/base/+/67d6e08322019f7ed8e3f80bd6cd16f8bcb809ed/packages/ExternalStorageProvider/src/com/android/externalstorage/ExternalStorageProvider.java)
+uses a fail-closed restriction path. The device's system storage permission was
+examined and restored to its original app-op mode; no OS package was downgraded,
+cleared, or replaced. Ordinary phone-storage folder selection remains blocked.
 
-Consequently, on-device indexing, prompt injection, fallback search, document
-editing/re-indexing, and grant revocation were not validated. Their unit tests
-passed in the combined suite; those results do not replace device acceptance.
+To exercise Assistant independently, a temporary QA-only DocumentsProvider was
+built outside the repository with the installed SDK and installed over USB. It had
+no network or broad storage permissions, exposed only four fixed fixtures in its
+own private directory, and only opened documents for reading. Android's native
+folder picker and its confirmation dialog granted the tree; the persisted tree
+grant was read-only (`persistedModeFlags=0x1`). The helper also explicitly granted
+read access to its own root metadata so Assistant could verify the local-provider
+flag. This additional test accommodation means the results do not establish
+ordinary storage recovery or general third-party-provider compatibility.
+
+Observed device results:
+
+| Case | Observation |
+| --- | --- |
+| Index formats | Three files and three excerpts indexed; the unsupported PDF was skipped; zero truncations. |
+| TXT answer | `VELA-5836`, Wednesday 16:45, with `nebuleuse.txt` cited. |
+| Markdown answer | 47 green spools, citing `vega.md` and its Logistics section. |
+| Word body answer | Prototype `Cobalt-19`, citing `aurora.docx`. |
+| Edited TXT and re-index | New answer `VELA-9042`, Thursday 11:20, citing the current file. |
+| Missing fact | No relevant excerpt for the nonexistent Orphée/navette fixture; no invented answer. |
+| Folder removed | `Folder unavailable`, zero files/excerpts, and no answer from the older Aurora response. |
+| Folder restored | Three files/excerpts indexed again with the existing read grant. |
+| Tree grant revoked | `Folder unavailable`, zero files/excerpts, and no answer from the older Nebuleuse response. |
+| Workspace disabled | Cached index cleared to zero files/excerpts. |
+
+The combined Vega/Aurora question initially reported no relevant excerpt. Each
+format worked separately. The retriever requires at least half of the question's
+distinct search terms to match each passage, so multi-topic phrasing is a coverage
+limitation to investigate. A successful `search_workspace` fallback call was not
+independently observed; a correct answer or refusal alone is not evidence that
+the fallback tool ran. Prompt-injection and restart-persistence acceptance were
+not performed on device.
+
+The temporary provider was uninstalled after Workspace was disabled; uninstall
+returned `Success`. Its private test data and URI grants were removed. The native
+phone-storage issue is still open.
 
 ## Handoff state and remaining acceptance
 
-Assistant's original `Voice only` input setting was restored and visually checked.
+Assistant was left on `Type first`, as requested for testing without microphone
+input. Its original conversation-retention and voice-output settings were retained.
 Temporary phone Developer mode was disabled after recording the bus evidence.
 The Assistant session was closed on the glasses. Approved test operations remain
 available for the wearer to try. Test documents and previous APK backups were
 retained locally for diagnosis or rollback.
 
-Workspace needs a successful native folder selection before its hardware tests
-can continue. Plan 024 still needs departure/follow-up tests, permission revocation
-checks, real Transit journey and Nav guidance acceptance, and voice testing.
+Workspace remains off with no cached excerpts; ordinary native folder selection
+still needs recovery. The isolated tests above do not remove that acceptance gate.
+Plan 024 still needs reliable departure follow-ups and ordinary journey stopping,
+the remaining moving-journey/restart checks, Nav guidance acceptance, and voice
+testing. Permission revocation and the stationary journey start/recovery checks
+were exercised in the USB session.
 Media Deck's Skills integration is not implemented on the tested branch, as
 documented in Plan 024. No complete-plan or production-release acceptance is claimed.
