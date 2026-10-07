@@ -27,7 +27,7 @@ class BundleStore internal constructor(
     // lastUpdateTime changes on every reinstall, so even a rebuild with the same versionCode counts as a new build.
     constructor(context: Context, target: PatchTarget = PatchTargets.default) : this(File(context.filesDir, "bundles/${target.id}"), context.assets::open,
         context.packageManager.getPackageInfo(context.packageName, 0).let { "${it.longVersionCode}:${it.lastUpdateTime}" },
-        loadPatches = { compatible(loadPatchesFromDex(setOf(it)), target) }, target = target)
+        loadPatches = { file -> PatchStorage.loadBundle(context.cacheDir) { compatible(loadPatchesFromDex(setOf(file)), target) } }, target = target)
     data class Loaded(val file: File, val version: String, val hash: String, val sourceHash: String?, val patches: List<Patch<*>>,
                       val notice: String? = null)
     data class Update(val message: String?, val switched: Boolean)

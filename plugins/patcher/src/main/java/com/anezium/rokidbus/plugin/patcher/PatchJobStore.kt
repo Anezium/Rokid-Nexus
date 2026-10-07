@@ -31,6 +31,7 @@ data class PatchJobState(
 
 /** Activity and service share this store in :patcher; disk is the process-death boundary. */
 class PatchJobStore(private val directory: File) {
+    private val storage = PatchStorage(directory)
     private val file = File(directory, "patch-job.json")
     private val mutable = MutableStateFlow(read())
     val state: StateFlow<PatchJobState> = mutable
@@ -38,6 +39,7 @@ class PatchJobStore(private val directory: File) {
     init {
         if (mutable.value.active) update(mutable.value.copy(status = PatchJobStatus.INTERRUPTED,
             message = "The last patch was interrupted. Retry when you are ready.", result = null))
+        cleanStorage()
     }
 
     @Synchronized fun selectTarget(targetId: String) {
@@ -87,7 +89,20 @@ class PatchJobStore(private val directory: File) {
     }
 
     fun stock(state: PatchJobState = this.state.value): File? = state.stock?.let { name ->
-        File(work(state.workId), name).takeIf { it.isFile && it.canonicalFile.toPath().startsWith(work(state.workId).canonicalFile.toPath()) }
+        if (name == "retry/stock.apk") storage.retry.takeIf {
+            it.isFile && System.currentTimeMillis() - it.lastModified() in 0 until PatchStorage.RETRY_MAX_AGE_MS
+        } else {
+            val work = File(directory, "jobs/${state.workId}")
+            File(work, name).takeIf { it.isFile && it.canonicalFile.toPath().startsWith(work.canonicalFile.toPath()) }
+        }
+    }
+
+    @Synchronized fun cleanStorage() {
+        val current = state.value
+        if (current.active) return
+        val retained = stock(current)?.let(storage::retain)
+        if (current.stock != retained) update(current.copy(stock = retained))
+        storage.sweep()
     }
 
     fun result(state: PatchJobState = this.state.value): File? = state.result?.let { name ->

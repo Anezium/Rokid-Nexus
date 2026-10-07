@@ -58,6 +58,7 @@ class PatchJobService : Service() {
             return START_NOT_STICKY
         }
         if (!state.active || intent?.getStringExtra(JOB_ID) != state.id) { stopSelf(); return START_NOT_STICKY }
+        PatchStorage.cleanBundleCache(cacheDir)
         runningId = state.id
         workerExited = AtomicBoolean(true)
         startedRealtime = SystemClock.elapsedRealtime()
@@ -82,8 +83,9 @@ class PatchJobService : Service() {
                 } catch (e: Exception) {
                     store.change(state.id) { it.copy(status = PatchJobStatus.FAILURE, message = PatchErrors.reason(e)) }
                 } finally {
-                    exited.set(true)
-                    handler.post { finishJob(state.id) }
+                    try { store.cleanStorage(); PatchStorage.cleanBundleCache(cacheDir) }
+                    catch (e: Exception) { PatchErrors.reason(e) }
+                    finally { exited.set(true); handler.post { finishJob(state.id) } }
                 }
             }
         } catch (e: Exception) {
@@ -97,7 +99,7 @@ class PatchJobService : Service() {
         val target = PatchTargets.require(state.targetId)
         val timings = PatchTimings()
         val work = store.work(state.workId)
-        File(filesDir, "jobs").listFiles()?.filter { it != work }?.forEach { it.deleteRecursively() }
+        PatchStorage(filesDir).sweep(state.workId)
         try {
             val input = File(work, "input.zip")
             val size = runCatching { contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.SIZE), null, null, null)?.use {
@@ -119,7 +121,7 @@ class PatchJobService : Service() {
             } }
             val stock = ApkPreparer(target = target).prepare(input, File(work, "prepare"), timings) { reportProgress(state.id, it) }
             store.change(state.id) { it.copy(status = PatchJobStatus.READY, message = "Validated: stock ${target.displayName} ${target.versionLabel}",
-                stock = stock.relativeTo(work).invariantSeparatorsPath) }
+                stock = PatchStorage(filesDir).retain(stock)) }
         } finally { runCatching { contentResolver.releasePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } }
     }
 
