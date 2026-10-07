@@ -24,6 +24,7 @@ data class PatchJobState(
     val elapsedMs: Long = 0,
     val targetId: String = PatchTargets.default.id,
     val workId: String = id,
+    val delivered: Boolean = false,
 ) {
     val active get() = status == PatchJobStatus.PREPARING || status == PatchJobStatus.RUNNING
 }
@@ -59,7 +60,7 @@ class PatchJobStore(private val directory: File) {
         require(selected.isNotEmpty()) { "Select at least one patch." }
         return current.copy(id = UUID.randomUUID().toString(), status = PatchJobStatus.RUNNING, message = "Loading the patch bundle",
             startedAt = System.currentTimeMillis(), result = null, bundleHash = hash, selected = selected,
-            progress = PatchProgress(PatchPhase.BUNDLE_LOAD), elapsedMs = 0).also(::update)
+            progress = PatchProgress(PatchPhase.BUNDLE_LOAD), elapsedMs = 0, delivered = false).also(::update)
     }
 
     @Synchronized fun change(id: String, block: (PatchJobState) -> PatchJobState) {
@@ -91,6 +92,14 @@ class PatchJobStore(private val directory: File) {
 
     fun result(state: PatchJobState = this.state.value): File? = state.result?.let { name ->
         File(directory, "results/$name").takeIf { PatchPolicy.isResult(name) && it.isFile && it.parentFile!!.canonicalFile == File(directory, "results").canonicalFile }
+    }
+
+    @Synchronized fun markDelivered(id: String) {
+        val current = state.value
+        check(current.id == id && current.status == PatchJobStatus.SUCCESS && result(current) != null) {
+            "The saved result is no longer available."
+        }
+        update(current.copy(delivered = true))
     }
 
     @Synchronized fun reconcileResult(now: Long = System.currentTimeMillis()) {
@@ -134,7 +143,7 @@ class PatchJobStore(private val directory: File) {
             s.progress.patchName?.let { put("patch_name", it) }; put("patch_index", s.progress.patchIndex)
             put("patch_total", s.progress.patchTotal); put("elapsed", s.elapsedMs)
             put("target", s.targetId)
-            put("work", s.workId)
+            put("work", s.workId); put("delivered", s.delivered)
         }.toString()
 
         internal fun decode(text: String): PatchJobState {
@@ -149,7 +158,8 @@ class PatchJobStore(private val directory: File) {
                     json["patch_index"]?.jsonPrimitive?.int ?: 0, json["patch_total"]?.jsonPrimitive?.int ?: 0),
                 json["elapsed"]?.jsonPrimitive?.long ?: 0,
                 json["target"]?.jsonPrimitive?.content ?: PatchTargets.default.id,
-                json["work"]?.jsonPrimitive?.content ?: json.getValue("id").jsonPrimitive.content)
+                json["work"]?.jsonPrimitive?.content ?: json.getValue("id").jsonPrimitive.content,
+                json["delivered"]?.jsonPrimitive?.boolean ?: false)
         }
     }
 }

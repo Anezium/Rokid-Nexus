@@ -70,6 +70,8 @@ class PatchActivity : Activity() {
     private lateinit var jobs: PatchJobStore
     private var resumed = false
     private var returningResult = false
+    private var watchedJobId: String? = null
+    private var readyJobId: String? = null
     private var backupPassword: CharArray? = null
     private var screenLock: java.nio.channels.FileLock? = null
     private var lockFile: java.io.RandomAccessFile? = null
@@ -111,6 +113,8 @@ class PatchActivity : Activity() {
         selections = SelectionStore(File(filesDir, "selections/${target.id}.json"))
         key = SigningKey(File(filesDir, "signing/patcher.p12"))
         val state = jobs.state.value
+        watchedJobId = savedInstanceState?.getString("watched_job")
+        readyJobId = intent.getStringExtra(EXTRA_READY_JOB_ID)
         stock = jobs.stock(); result = jobs.result()
         busy = state.active; patching = state.active
         noteFor(state)
@@ -122,6 +126,7 @@ class PatchActivity : Activity() {
         scope.launch {
             var previousStatus: PatchJobStatus? = null
             jobs.state.collect { current ->
+                if (current.status == PatchJobStatus.RUNNING) watchedJobId = current.id
                 busy = current.active; patching = current.active
                 stock = jobs.stock(current); result = jobs.result(current)
                 if (current.status == PatchJobStatus.PREPARING) slot = Slot.STOCK
@@ -388,9 +393,12 @@ class PatchActivity : Activity() {
         val hubWaiting = intent.action == Contract.ACTION_PATCH && callingActivity != null
         card.addView(noteView(Slot.PATCH), NexusUi.block())
         card.addView(BusTheme.gap(this, 8))
-        card.addView(NexusUi.cardBody(this, if (hubWaiting) "Handing it to Nexus, which installs it on your glasses."
-        else "Nexus installs it on the glasses: open ${target.displayName} on glasses in Nexus and choose Patch and install. It picks this result up without patching again."), NexusUi.block())
-        if (hubWaiting) return
+        val age = ((System.currentTimeMillis() - (result?.lastModified() ?: System.currentTimeMillis())).coerceAtLeast(0) / 60_000)
+        if (hubWaiting) {
+            card.addView(primary("Use this result ($age min old)", enabled = !busy) { deliverResult(explicit = true) }, NexusUi.block())
+            card.addView(quiet("Patch again", enabled = !busy) { patchAgain() }, endAligned())
+            return
+        }
         card.addView(BusTheme.gap(this, 14))
         val nexus = hubLaunchIntent()
         if (nexus != null) card.addView(primary("Open Nexus", enabled = !busy) { startActivity(nexus) }, NexusUi.block())
@@ -400,7 +408,7 @@ class PatchActivity : Activity() {
             gravity = Gravity.END
             if (nexus != null) addView(quiet("Share", enabled = !busy) { result?.let(::shareResult) })
             addView(quiet("Save APK", enabled = !busy) { picker(REQUEST_SAVE, Intent.ACTION_CREATE_DOCUMENT, "application/vnd.android.package-archive", "${target.id}-patched.apk") })
-            addView(quiet("Patch again", enabled = !busy) { confirmPatch() })
+            addView(quiet("Patch again", enabled = !busy) { patchAgain() })
             addView(quiet("Close") { cancelAndClose() })
         }, NexusUi.block())
     }
@@ -712,9 +720,14 @@ class PatchActivity : Activity() {
             jobs.change(state.id) { it.copy(status = PatchJobStatus.FAILURE, message = "Cannot start background patching. Return to this screen and retry.") }
         }
     }
-    private fun deliverResult() {
+    private fun patchAgain() {
+        if (stock == null) picker(REQUEST_STOCK, Intent.ACTION_OPEN_DOCUMENT, "*/*") else confirmPatch()
+    }
+    private fun deliverResult(explicit: Boolean = false) {
         val file = result ?: return
         if (!resumed || returningResult || intent.action != Contract.ACTION_PATCH || callingActivity == null) return
+        val state = jobs.state.value
+        if (!explicit && !PatchDelivery.canAutoDeliver(state, watchedJobId, readyJobId)) return
         returningResult = true
         scope.launch {
             try {
@@ -724,7 +737,7 @@ class PatchActivity : Activity() {
                         .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                         .putExtra(Contract.EXTRA_TARGET_ID, target.id)
                     data.clipData = ClipData.newRawUri("Patched ${target.displayName}", contentUri)
-                    if (resumed) { setResult(RESULT_OK, data); finish() }
+                    if (resumed) { jobs.markDelivered(state.id); setResult(RESULT_OK, data); finish() }
                 }
             } catch (e: CancellationException) { throw e }
             catch (e: Exception) { report("Cannot return the result: ${e.message}", Tone.ERROR, Slot.PATCH) }
@@ -821,6 +834,15 @@ class PatchActivity : Activity() {
         if (resumed && ::jobs.isInitialized && jobs.state.value.active) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
     }
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putString("watched_job", watchedJobId)
+        super.onSaveInstanceState(outState)
+    }
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        readyJobId = intent.getStringExtra(EXTRA_READY_JOB_ID)
+        if (::jobs.isInitialized) deliverResult()
+    }
     override fun onResume() { super.onResume(); resumed = true; updateScreenAwake(); if (::jobs.isInitialized) deliverResult() }
     override fun onPause() { resumed = false; updateScreenAwake(); super.onPause() }
     @Deprecated("Platform callback") override fun onBackPressed() { cancelAndClose() }
@@ -835,6 +857,7 @@ class PatchActivity : Activity() {
     companion object {
         /** Task of the screen holding the lock; the service and both screens share the :patcher process. */
         @Volatile private var liveTaskId: Int? = null
+        const val EXTRA_READY_JOB_ID = "ready_job_id"
         private const val REQUEST_NOTIFICATIONS = 5
         private const val REQUEST_STOCK = 1
         private const val REQUEST_EXPORT = 2

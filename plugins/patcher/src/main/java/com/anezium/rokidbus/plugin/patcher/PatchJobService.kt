@@ -153,6 +153,7 @@ class PatchJobService : Service() {
     private fun notification(state: PatchJobState): Notification {
         val open = PendingIntent.getActivity(this, 0, Intent(this, PatchActivity::class.java)
             .putExtra(com.anezium.rokidbus.shared.PatcherContract.EXTRA_TARGET_ID, state.targetId)
+            .apply { if (state.status == PatchJobStatus.SUCCESS && !state.delivered) putExtra(PatchActivity.EXTRA_READY_JOB_ID, state.id) }
             .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val notice = PatchPresentation.notice(state, PatchTargets.find(state.targetId) ?: PatchTargets.default)
         return NotificationCompat.Builder(this, if (state.active) CHANNEL else RESULTS_CHANNEL)
