@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Return from stalled folder checks.** Bound provider calls and cancellation
+  attempts, release indexing on timeout, and reject late selection results.
+  Keep another folder usable while one provider ignores cancellation.
+
 - **Accept verified local document providers.** Use the selected root's local-only
   metadata for third-party file managers, retain the system-storage fast path,
   and reject cloud or unverifiable roots.

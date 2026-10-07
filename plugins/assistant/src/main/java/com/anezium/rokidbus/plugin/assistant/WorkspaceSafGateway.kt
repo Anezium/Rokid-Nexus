@@ -10,20 +10,17 @@ import android.os.Handler
 import android.os.Looper
 import android.os.ParcelFileDescriptor
 import android.provider.DocumentsContract
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlinx.coroutines.withContext
-import java.io.Closeable
 import java.io.FileNotFoundException
 import java.io.InputStream
-import kotlin.coroutines.resumeWithException
 
 internal class WorkspaceSafGateway(private val resolver: ContentResolver) : WorkspaceDocumentGateway {
+    private val providerCalls = WorkspaceProviderCalls()
+
     override suspend fun isLocalTree(treeUri: String): Boolean {
         if (!isWorkspaceTreeUri(treeUri)) return false
         if (isPlatformWorkspaceTree(treeUri)) return true
         val tree = Uri.parse(treeUri)
-        return query { signal ->
+        return query(treeUri) { signal ->
             val documentId = DocumentsContract.getTreeDocumentId(tree)
             workspaceFolderIsLocal(treeUri, documentId,
                 readRoots = { readProviderRoots(checkNotNull(tree.authority), signal) },
@@ -59,16 +56,16 @@ internal class WorkspaceSafGateway(private val resolver: ContentResolver) : Work
         return metadata(treeUri, DocumentsContract.getTreeDocumentId(tree))
     }
 
-    override suspend fun children(treeUri: String, documentId: String): List<WorkspaceEntry> = query {
+    override suspend fun children(treeUri: String, documentId: String): List<WorkspaceEntry> = query(treeUri) {
         val uri = DocumentsContract.buildChildDocumentsUriUsingTree(Uri.parse(treeUri), documentId)
         readEntries(uri, it, WorkspaceLimits.MAX_ENTRIES)
     }
 
-    override suspend fun metadata(treeUri: String, documentId: String): WorkspaceEntry = query {
+    override suspend fun metadata(treeUri: String, documentId: String): WorkspaceEntry = query(treeUri) {
         readEntries(documentUri(treeUri, documentId), it, 1).singleOrNull() ?: throw FileNotFoundException()
     }
 
-    override suspend fun open(treeUri: String, documentId: String): InputStream = query { signal ->
+    override suspend fun open(treeUri: String, documentId: String): InputStream = query(treeUri) { signal ->
         val descriptor = resolver.openFileDescriptor(documentUri(treeUri, documentId), "r", signal)
             ?: throw FileNotFoundException()
         ParcelFileDescriptor.AutoCloseInputStream(descriptor)
@@ -120,18 +117,11 @@ internal class WorkspaceSafGateway(private val resolver: ContentResolver) : Work
         }
     }
 
-    private suspend fun <T> query(block: (CancellationSignal) -> T): T = withContext(Dispatchers.IO) {
-        suspendCancellableCoroutine { continuation ->
-            val signal = CancellationSignal()
-            continuation.invokeOnCancellation { signal.cancel() }
-            try {
-                signal.throwIfCanceled()
-                continuation.resume(block(signal), onCancellation = { _, value, _ ->
-                    if (value is Closeable) runCatching { value.close() }
-                })
-            } catch (error: Exception) {
-                continuation.resumeWithException(error)
-            }
+    private suspend fun <T> query(treeUri: String, block: (CancellationSignal) -> T): T {
+        val signal = CancellationSignal()
+        return providerCalls.await(treeUri, cancel = signal::cancel) {
+            signal.throwIfCanceled()
+            block(signal)
         }
     }
 

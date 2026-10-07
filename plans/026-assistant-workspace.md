@@ -1,8 +1,8 @@
 # Plan 026 — Assistant Workspace: local documents in the first answer
 
-Status: IN PROGRESS — approved and implemented, 2026-10-07. JVM tests and the
-debug build pass; owner device validation and the separate review passes remain
-pending. Baseline: local `main` at `49128717`, branch
+Status: IN PROGRESS — approved and implemented with round-1 and round-2 review
+fixes, 2026-10-07. JVM tests and the debug build pass; owner device validation
+remains pending. Baseline: local `main` at `49128717`, branch
 `dev/assistant-workspace`. The owner's **go** in this thread approved all four
 recommendations before implementation. Limits are implemented bounds, not
 measured device performance or released behavior.
@@ -138,6 +138,30 @@ an unverifiable parent relationship rejects selection with the existing
 explanation to choose a folder stored on the phone. Do not add permissions to
 work around a provider that prevents these queries under its SAF grant.
 
+Run blocking root queries, relationship checks, document metadata queries, and
+file-open calls on a dedicated two-thread executor. Await them asynchronously:
+the 15-second folder-selection/check deadline and 150 ms retrieval deadline
+must return even when a provider ignores cancellation. Pass a
+`CancellationSignal` to queries and file opens; `isChildDocument` has no signal
+parameter. Dispatch signal cancellation separately on one thread with a bounded
+two-entry queue so cancellation itself cannot block the deadline caller.
+
+Allow one in-flight provider call per tree and at most two across Workspace.
+Healthy callers for the same tree wait under their own deadline. An abandoned
+call retains its slot until the provider actually returns; reject another call
+for that tree, or any new call when both slots are occupied, with the safe check
+failure reason. Never add replacement threads for abandoned calls. A different
+folder can still be selected and indexed while one call is stuck. Drop late
+results and close late file handles. The awaiting indexer releases its check
+mutex and leaves `Indexing…` when its deadline expires.
+
+A new selection cancels the previous selection job; On/Off also invalidates
+pending selection. Capture the selection revision and Workspace generation/index
+revision before checking, and revalidate all three before committing the choice
+or displaying its failure. A timeout reports `Folder check failed. Try Re-index
+now.` without replacing the selected folder. Do not let a delayed check commit
+a selection or overwrite a newer folder's status.
+
 Check locality before persisting a new grant or reading documents, and recheck
 it on indexing and before root-access validation for retrieval. URI syntax alone
 is not proof of locality; privately restored settings still need validation.
@@ -175,8 +199,8 @@ to a request or tool. A missing grant, removed tree, or root `SecurityException`
 or `FileNotFoundException` clears cached contents, reports **"Folder
 unavailable"**, and allows the ordinary Assistant answer to continue. Keep the
 folder label for recovery; do not keep using its cached excerpts. Distinguish
-root failure from a bad individual file. A slow root check uses a cancellable,
-bounded query; if validation cannot complete within 150 ms, omit Workspace for
+root failure from a bad individual file. A slow root check awaits a bounded,
+detached provider call; if validation cannot complete within 150 ms, omit Workspace for
 that turn and surface a check failure rather than delaying the provider call.
 This timing is a device acceptance target, not a measured guarantee.
 
@@ -491,7 +515,8 @@ observed verification below for completed checks and remaining device work.
 | DOCX | A small zipped body-text fixture preserves paragraph breaks/Unicode. Missing XML, malformed ZIP/XML, DTD/entities, excessive entries, and decompression overflow fail safely, with no filesystem unpack or external resolution. |
 | SAF grant lifecycle | A fake grant gateway verifies only the returned read flag is persisted, restart restores the saved URI, cancel/rejected authority leaves the choice unchanged, and replacement releases the old workspace grant. |
 | Revocation/removal | Fake revoked grant, removed folder, root permission exception, missing root, and query timeout yield `Folder unavailable`/safe check status, no excerpts/tool, and no crash; cache clears when access is lost. Device checks separately validate actual Android persistence. |
-| Off and concurrency | Off during scan/write/retrieval immediately suppresses delivery, deletes cache/temp files, and prevents late generation publication. Re-enable rebuilds only under the retained valid grant. Closing a session leaves no observer or worker leak. |
+| Stalled providers | Real blocking fake root/relationship calls ignore cancellation and remain blocked after the deadline. Selection returns the safe check failure; indexing releases its mutex and leaves `Indexing…`; another folder can be selected and indexed before the blocked call returns. Bound abandoned calls, detach a blocking cancellation callback, close late handles, and reject late selection results after selection/generation/revision changes. |
+| Off and concurrency | Off during scan/write/retrieval immediately suppresses delivery, deletes cache/temp files, and prevents late generation publication. Re-enable rebuilds only under the retained valid grant. Closing a session removes observers and cancels awaiting callers; unresponsive provider calls remain bounded and cannot publish. |
 | Memory and prompt caps | Existing AccountContextSync tests remain green; captured memory/notes and order match the old output exactly. Full 6,000/4,000 inputs yield no Workspace; partial/empty combinations stay within the 10,002-character combined-source envelope. |
 | Provider happy path | Fake transcripts for every catalog preset, Custom, and Codex OAuth observe the same block on request one, one provider round for an excerpt-answerable question, and no workspace-related HTTP/extraction during retrieval. |
 | Hermes | Both preset and detected Custom-Hermes receive the common block; no `search_workspace` schema or `[[NEXUS_TOOL]]` listing is advertised or executed. Existing phone-tool bridge behavior remains unchanged. |
@@ -512,14 +537,15 @@ environment failure blocks verification, stop and report it.
 
 ### Observed verification (2026-10-07)
 
-The initial implementation passed 391 tests, including 50 Workspace tests.
-Re-observe the count after review fixes rather than carrying that figure
-forward. The required command was rerun after all five round-1 fix commits;
-the observations below cover the revised source and tests. Only delivery
-documentation was amended afterward.
+The initial implementation passed 391 tests, including 50 Workspace tests;
+round 1 passed 410 tests, including 69 Workspace tests. Keep these as historical
+counts. Re-observe the final count after the round-2 deadline fix: the required
+command was rerun after committing that source and its nine regression tests.
+The observations below cover that run. Only delivery documentation was amended
+into the same commit afterward.
 
 The exact command above completed with exit code 0. The module report contains
-410 tests with zero failures/errors, including 69 Workspace tests. Debug
+419 tests with zero failures/errors, including 78 Workspace tests. Debug
 assembly passed. Coverage includes FR/EN retrieval, extraction bounds and safe XML
 diagnostics, metadata reuse, private cache clearing, fake grant/observer
 lifecycle, prompt caps, catalog-provider request fixtures, Hermes gating, and
@@ -527,19 +553,27 @@ the one-search fallback budget. Add regression coverage for identity changes
 between advertisement and execution, Off during a waiting phone tool on
 compatible/Codex/Hermes paths, compatible and Codex retries, nested long-path
 collisions, local-root declarations and failures, and prompt reuse/redaction at
-dispatch. No device or live-provider check was performed;
+dispatch. Round-2 tests additionally exercise real blocking root/relationship
+fakes that ignore cancellation, selection and indexing deadline return,
+released check mutex, successful selection/indexing while a call remains
+blocked, two-slot/per-tree abandoned-call limits, blocked cancellation
+callbacks, late handle cleanup, serialization of healthy calls, and late
+selection/generation/revision rejection. Tests inject 200 ms deadlines rather
+than waiting 15 seconds; provider fakes stay blocked until explicit test cleanup.
+No device or live-provider check was performed;
 the 150 ms access-check bound and retrieval latency targets still need device
 validation.
 
 The command output was redirected to an OS temporary file. Its actual tail was:
 
 ```text
-> Task :plugin-assistant:compileDebugUnitTestJavaWithJavac NO-SOURCE
-> Task :plugin-assistant:processDebugUnitTestJavaRes UP-TO-DATE
-> Task :plugin-assistant:testDebugUnitTest
+> Task :plugin-assistant:packageDebug
+> Task :plugin-assistant:createDebugApkListingFileRedirect UP-TO-DATE
+> Task :plugin-assistant:assembleDebug
 
-BUILD SUCCESSFUL in 11s
-82 actionable tasks: 2 executed, 80 up-to-date
+BUILD SUCCESSFUL in 14s
+82 actionable tasks: 5 executed, 77 up-to-date
+Consider enabling configuration cache to speed up this build: https://docs.gradle.org/9.5.1/userguide/configuration_cache_enabling.html
 ```
 
 Keep machine configuration unchanged: `local.properties` remains absent in this

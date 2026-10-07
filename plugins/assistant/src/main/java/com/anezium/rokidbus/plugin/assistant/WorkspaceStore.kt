@@ -46,6 +46,11 @@ internal class WorkspaceStore(
         current = current.copy(state = current.state.copy(problem = problem, validated = false))
     }
 
+    fun selectionFailed(generation: Long, revision: Long) = synchronized(lock) {
+        if (current.state.settings.generation != generation || current.revision != revision) return@synchronized
+        current = current.copy(state = current.state.copy(problem = WorkspaceProblem.CHECK_FAILED, validated = false))
+    }
+
     fun publish(index: WorkspaceIndex): Boolean = synchronized(lock) {
         if (!isCurrent(index.generation)) return@synchronized false
         val text = WorkspaceIndexJson.render(index)

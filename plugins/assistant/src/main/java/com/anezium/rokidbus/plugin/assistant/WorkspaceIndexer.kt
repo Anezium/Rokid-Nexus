@@ -29,6 +29,7 @@ internal class WorkspaceIndexer(
     private val store: WorkspaceStore,
     private val gateway: WorkspaceDocumentGateway,
     private val clock: () -> Long = System::currentTimeMillis,
+    private val checkTimeoutMs: Long = WorkspaceLimits.CHECK_TIMEOUT_MS,
 ) {
     suspend fun refresh() {
         val before = store.snapshot().state
@@ -40,7 +41,7 @@ internal class WorkspaceIndexer(
                 store.folderUnavailable(settings.generation)
                 return
             }
-            withTimeout(WorkspaceLimits.CHECK_TIMEOUT_MS) {
+            withTimeout(checkTimeoutMs) {
                 if (!gateway.isLocalTree(settings.treeUri)) throw SecurityException()
                 val root = gateway.root(settings.treeUri)
                 if (!root.directory) throw FileNotFoundException()

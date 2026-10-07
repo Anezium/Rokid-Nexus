@@ -1867,6 +1867,7 @@ class AssistantSettingsActivity : Activity() {
                 WorkspaceFolderResult.LOCAL_FOLDER_REQUIRED -> toast("Choose a folder stored on the phone or SD card.")
                 WorkspaceFolderResult.NO_READ_GRANT -> toast("The picker did not grant folder read access.")
                 WorkspaceFolderResult.UNAVAILABLE -> toast("Folder unavailable. Choose another folder.")
+                WorkspaceFolderResult.CHECK_FAILED -> toast(WorkspaceProblem.CHECK_FAILED.label)
                 WorkspaceFolderResult.STORE_FAILED -> toast("Could not save the folder choice.")
             }
             renderWorkspace()

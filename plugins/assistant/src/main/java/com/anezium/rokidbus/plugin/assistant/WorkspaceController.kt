@@ -4,14 +4,19 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.FileNotFoundException
 
@@ -19,7 +24,7 @@ internal data class WorkspaceUiState(val workspace: WorkspaceState, val checking
     val promptSpaceEmpty: Boolean = false)
 
 internal enum class WorkspaceFolderResult {
-    SELECTED, LOCAL_FOLDER_REQUIRED, NO_READ_GRANT, UNAVAILABLE, STORE_FAILED;
+    SELECTED, LOCAL_FOLDER_REQUIRED, NO_READ_GRANT, UNAVAILABLE, CHECK_FAILED, STORE_FAILED;
 }
 
 internal data class WorkspacePromptContext(val generation: Long, val enabled: Boolean, val excerpts: String = "",
@@ -35,12 +40,15 @@ internal class WorkspaceController(
     private val store: WorkspaceStore,
     private val gateway: WorkspaceDocumentGateway,
     private val scope: CoroutineScope,
+    private val checkTimeoutMs: Long = WorkspaceLimits.CHECK_TIMEOUT_MS,
 ) : WorkspaceSearchAccess {
     private val lock = Any()
     private val owners = mutableSetOf<Any>()
     private val checkMutex = Mutex()
     private var checkJob: Job? = null
     private var changeJob: Job? = null
+    private var selectionJob: Job? = null
+    private var selectionRevision = 0L
     private var observer: AutoCloseable? = null
     @Volatile private var suppressed = false
     private val mutableState = MutableStateFlow(WorkspaceUiState(store.snapshot().state))
@@ -69,7 +77,7 @@ internal class WorkspaceController(
             checkMutex.withLock {
                 emit(checking = true)
                 try {
-                    WorkspaceIndexer(store, gateway).refresh()
+                    WorkspaceIndexer(store, gateway, checkTimeoutMs = checkTimeoutMs).refresh()
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (_: Exception) {
@@ -84,9 +92,13 @@ internal class WorkspaceController(
     suspend fun setEnabled(enabled: Boolean) {
         if (!enabled) suppressed = true
         withContext(Dispatchers.IO) {
-            synchronized(lock) { cancelWorkers() }
+            synchronized(lock) {
+                selectionJob?.cancel()
+                selectionRevision++
+                cancelWorkers()
+            }
             try {
-                store.setEnabled(enabled)
+                synchronized(lock) { store.setEnabled(enabled) }
             } catch (error: Exception) {
                 if (!enabled) gateway.releaseReadGrant(store.snapshot().state.settings.treeUri)
                 throw error
@@ -103,35 +115,68 @@ internal class WorkspaceController(
         if (!isWorkspaceTreeUri(uri)) return WorkspaceFolderResult.LOCAL_FOLDER_REQUIRED
         if (returnedFlags and READ_GRANT == 0) return WorkspaceFolderResult.NO_READ_GRANT
         return withContext(Dispatchers.IO) {
-            val previous = store.snapshot().state.settings
+            val context = currentCoroutineContext()
+            val job = context.job
+            val (selection, before) = synchronized(lock) {
+                selectionJob?.cancel()
+                selectionJob = job
+                ++selectionRevision to store.snapshot()
+            }
+            val previous = before.state.settings
             var persisted = false
             try {
-                val local = withTimeoutOrNull(WorkspaceLimits.CHECK_TIMEOUT_MS) { gateway.isLocalTree(uri) }
-                if (local != true) return@withContext WorkspaceFolderResult.LOCAL_FOLDER_REQUIRED
-                gateway.persistReadGrant(uri, READ_GRANT)
-                persisted = true
-                val root = withTimeoutOrNull(WorkspaceLimits.CHECK_TIMEOUT_MS) { gateway.root(uri) }
-                if (root?.directory != true) {
+                val root = withTimeout(checkTimeoutMs) {
+                    if (!gateway.isLocalTree(uri)) return@withTimeout null
+                    currentCoroutineContext().ensureActive()
+                    gateway.persistReadGrant(uri, READ_GRANT)
+                    persisted = true
+                    gateway.root(uri)
+                } ?: return@withContext WorkspaceFolderResult.LOCAL_FOLDER_REQUIRED
+                if (!root.directory) {
                     if (uri != previous.treeUri) gateway.releaseReadGrant(uri)
                     return@withContext WorkspaceFolderResult.UNAVAILABLE
                 }
-                synchronized(lock) { cancelWorkers() }
-                store.selectTree(uri, root.name, enable)
-                if (previous.treeUri.isNotEmpty() && previous.treeUri != uri) gateway.releaseReadGrant(previous.treeUri)
-                suppressed = !enable
-                synchronized(lock) { restartObserver() }
+                synchronized(lock) {
+                    context.ensureActive()
+                    if (selection != selectionRevision || searchVersion() != (previous.generation to before.revision)) {
+                        if (uri != store.snapshot().state.settings.treeUri) gateway.releaseReadGrant(uri)
+                        return@withContext WorkspaceFolderResult.CHECK_FAILED
+                    }
+                    cancelWorkers()
+                    store.selectTree(uri, root.name, enable)
+                    if (previous.treeUri.isNotEmpty() && previous.treeUri != uri) gateway.releaseReadGrant(previous.treeUri)
+                    suppressed = !enable
+                    restartObserver()
+                }
                 emit(checking = false)
                 refresh()
                 WorkspaceFolderResult.SELECTED
+            } catch (_: TimeoutCancellationException) {
+                currentCoroutineContext().ensureActive()
+                selectionFailed(selection, before, uri, persisted)
+            } catch (_: WorkspaceProviderCheckException) {
+                selectionFailed(selection, before, uri, persisted)
             } catch (cancelled: CancellationException) {
-                if (persisted && uri != previous.treeUri) gateway.releaseReadGrant(uri)
+                if (persisted && uri != store.snapshot().state.settings.treeUri) gateway.releaseReadGrant(uri)
                 throw cancelled
             } catch (_: Exception) {
                 if (persisted && uri != previous.treeUri) gateway.releaseReadGrant(uri)
                 emit(checking = false)
                 WorkspaceFolderResult.STORE_FAILED
+            } finally {
+                synchronized(lock) { if (selectionJob === job) selectionJob = null }
             }
         }
+    }
+
+    private fun selectionFailed(selection: Long, before: WorkspaceSnapshot, uri: String,
+        persisted: Boolean): WorkspaceFolderResult = synchronized(lock) {
+        if (persisted && uri != store.snapshot().state.settings.treeUri) gateway.releaseReadGrant(uri)
+        if (selection == selectionRevision && searchVersion() == (before.state.settings.generation to before.revision)) {
+            store.selectionFailed(before.state.settings.generation, before.revision)
+            emit()
+        }
+        WorkspaceFolderResult.CHECK_FAILED
     }
 
     override fun isSearchAvailable(): Boolean {
