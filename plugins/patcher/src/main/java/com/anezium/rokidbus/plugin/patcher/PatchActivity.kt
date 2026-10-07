@@ -75,12 +75,14 @@ class PatchActivity : Activity() {
     private val pip by lazy { PatchPictureInPicture(this) }
     private var watchedJobId: String? = null
     private var readyJobId: String? = null
+    private var hubTaskId: Int? = null
     private var backupPassword: CharArray? = null
     private var screenLock: java.nio.channels.FileLock? = null
     private var lockFile: java.io.RandomAccessFile? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (canReturnToHub()) hubTaskId = savedInstanceState?.getInt("hub_task", -1)?.takeIf { it >= 0 } ?: taskId
         PatchVisibility.install(application)
         lockFile = java.io.RandomAccessFile(File(filesDir, "screen.lock"), "rw")
         screenLock = try { lockFile!!.channel.tryLock() } catch (_: java.nio.channels.OverlappingFileLockException) { null }
@@ -747,12 +749,26 @@ class PatchActivity : Activity() {
                         .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                         .putExtra(Contract.EXTRA_TARGET_ID, target.id)
                     data.clipData = ClipData.newRawUri("Patched ${target.displayName}", contentUri)
-                    if (resumed) { jobs.markDelivered(state.id); setResult(RESULT_OK, data); finish() }
+                    if (resumed) {
+                        // PiP can move this activity out of the waiting hub's task. A restored
+                        // task root also needs the handoff when the original task id is unavailable.
+                        val separateTask = hubTaskId?.let { it != taskId } == true || isTaskRoot
+                        jobs.markDelivered(state.id)
+                        setResult(RESULT_OK, data)
+                        finish()
+                        if (separateTask) bringHubToFront()
+                    }
                 }
             } catch (e: CancellationException) { throw e }
             catch (e: Exception) { report(PatchErrors.reason(e, "Could not hand the result to Nexus. Try again."), Tone.ERROR, Slot.PATCH) }
             finally { returningResult = false }
         }
+    }
+    private fun bringHubToFront() {
+        try {
+            packageManager.getLaunchIntentForPackage(com.anezium.rokidbus.client.HubTarget.PHONE.packageName)
+                ?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)?.let { startActivity(it) }
+        } catch (e: Exception) { PatchErrors.reason(e) }
     }
     private fun uri(file: File) = FileProvider.getUriForFile(this, "$packageName.results", file)
     private fun shareResult(file: File) {
@@ -862,6 +878,7 @@ class PatchActivity : Activity() {
     }
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putString("watched_job", watchedJobId)
+        hubTaskId?.let { outState.putInt("hub_task", it) }
         super.onSaveInstanceState(outState)
     }
     override fun onNewIntent(intent: Intent) {
