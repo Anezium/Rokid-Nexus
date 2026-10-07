@@ -275,13 +275,12 @@ class PatchJobService : Service() {
 
     private val deadline = Runnable { terminate(PatchJobStatus.INTERRUPTED, "Patching took more than an hour and was stopped. Try again when you are ready.") }
     private fun reportProgress(id: String, progress: PatchProgress) {
+        if (!store.progress(id, progress, SystemClock.elapsedRealtime() - startedRealtime)) return
         val step = "substep_" + (progress.substep?.name ?: progress.phase.name).lowercase()
-        if (store.state.value.id != id || !store.state.value.active) return
         if (step != measuredStep) {
             measuredStep?.let { phaseTimings.end(it, measuredStarted) }
             measuredStep = step; measuredStarted = phaseTimings.start()
         }
-        store.progress(id, progress, SystemClock.elapsedRealtime() - startedRealtime)
         diagnostics.sample(store.state.value.progress.phase, workerTid)
     }
     private val heartbeat = object : Runnable {

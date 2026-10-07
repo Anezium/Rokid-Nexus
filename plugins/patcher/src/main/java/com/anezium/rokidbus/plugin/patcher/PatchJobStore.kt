@@ -30,11 +30,13 @@ data class PatchJobState(
 }
 
 /** Activity and service share this store in :patcher; disk is the process-death boundary. */
-class PatchJobStore(private val directory: File) {
+class PatchJobStore(private val directory: File,
+                    private val diagnostic: (String) -> Unit = { android.util.Log.w(PatchTimings.TAG, it) }) {
     private val storage = PatchStorage(directory)
     private val file = File(directory, "patch-job.json")
     private val mutable = MutableStateFlow(read())
     val state: StateFlow<PatchJobState> = mutable
+    private var backwardsMilestoneId: String? = null
 
     init {
         if (mutable.value.active) update(mutable.value.copy(status = PatchJobStatus.INTERRUPTED,
@@ -69,13 +71,20 @@ class PatchJobStore(private val directory: File) {
         if (state.value.id == id && state.value.active) update(block(state.value))
     }
 
-    @Synchronized fun progress(id: String, progress: PatchProgress, elapsedMs: Long) {
+    @Synchronized fun progress(id: String, progress: PatchProgress, elapsedMs: Long): Boolean {
         val current = state.value
-        if (current.id != id || !current.active) return
-        require(progress.phase.ordinal >= current.progress.phase.ordinal) { "Patch phases cannot move backwards." }
+        if (current.id != id || !current.active) return false
+        if (progress.phase.ordinal < current.progress.phase.ordinal) {
+            if (backwardsMilestoneId != id) {
+                backwardsMilestoneId = id
+                diagnostic("ignored_backwards_milestone_class=${progress.javaClass.name}")
+            }
+            return false
+        }
         val next = current.copy(progress = progress, elapsedMs = elapsedMs.coerceAtLeast(current.elapsedMs), message = progress.display())
         // Persist phase boundaries; patch callbacks are observable immediately without an fsync each.
         if (progress.phase != current.progress.phase) update(next) else mutable.value = next
+        return true
     }
 
     @Synchronized fun tick(id: String, elapsedMs: Long) {

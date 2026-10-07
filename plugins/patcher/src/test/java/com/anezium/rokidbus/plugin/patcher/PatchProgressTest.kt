@@ -8,12 +8,17 @@ import org.junit.rules.TemporaryFolder
 class PatchProgressTest {
     @get:Rule val temp = TemporaryFolder()
     @Test fun phasesAdvanceAndElapsedCannotGoBackwards() {
-        val store = PatchJobStore(temp.newFolder())
+        val logs = mutableListOf<String>()
+        val store = PatchJobStore(temp.newFolder(), logs::add)
         val job = store.prepare()
         store.progress(job.id, PatchProgress(PatchPhase.SIGNATURE_CHECK, .5), 1200)
         store.tick(job.id, 100)
         assertEquals(1200, store.state.value.elapsedMs)
-        assertThrows(IllegalArgumentException::class.java) { store.progress(job.id, PatchProgress(PatchPhase.READ_INPUT), 1400) }
+        val before = store.state.value
+        assertFalse(store.progress(job.id, PatchProgress(PatchPhase.READ_INPUT), 1400))
+        assertFalse(store.progress(job.id, PatchProgress(PatchPhase.READ_INPUT), 1500))
+        assertEquals(before, store.state.value)
+        assertEquals(listOf("ignored_backwards_milestone_class=${PatchProgress::class.java.name}"), logs)
         store.progress(job.id, PatchProgress(PatchPhase.SPLIT_MERGE), 1400)
         assertEquals(3, store.state.value.progress.phaseIndex)
         assertEquals(13, store.state.value.progress.phaseTotal)
