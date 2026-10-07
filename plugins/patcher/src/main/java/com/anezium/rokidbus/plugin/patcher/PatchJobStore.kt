@@ -171,7 +171,7 @@ class PatchJobStore(private val directory: File) {
             return PatchJobState(json.getValue("id").jsonPrimitive.content,
                 PatchJobStatus.valueOf(json.getValue("status").jsonPrimitive.content),
                 if (json["safe_failures"]?.jsonPrimitive?.boolean != true &&
-                    json.getValue("status").jsonPrimitive.content == "FAILURE") "Patching failed. Retry with a supported stock APK."
+                    json.getValue("status").jsonPrimitive.content == "FAILURE") "Patching failed. Try again with the stock APK."
                 else json.getValue("message").jsonPrimitive.content, json.getValue("started").jsonPrimitive.long,
                 json["stock"]?.jsonPrimitive?.content, json["result"]?.jsonPrimitive?.content,
                 json["bundle"]?.jsonPrimitive?.content, json.getValue("selected").jsonArray.map { it.jsonPrimitive.content },

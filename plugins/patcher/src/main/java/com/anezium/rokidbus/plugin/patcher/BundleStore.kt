@@ -63,7 +63,7 @@ class BundleStore internal constructor(
             // Without a saved bundle there is nothing validated to fall back to. Otherwise keep
             // the saved pointer untouched so the adoption is retried on the next open.
             if (saved == null) throw e
-            notice = "Could not install the bundle included in this plugin version (${PatchErrors.reason(e, "Bundle validation failed.")}). Keeping the saved bundle; it will be retried next time."
+            notice = "Could not install the bundle included in this version (${PatchErrors.reason(e, "Bundle validation failed.")}). Keeping the saved bundle; Patcher will retry next time."
         }
         val json = Json.parseToJsonElement(pointer.readText()).jsonObject
         var file = File(directory, json["file"]?.jsonPrimitive?.content ?: "bundled.mpp")

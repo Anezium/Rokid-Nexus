@@ -34,7 +34,7 @@ class PatchRuntime(private val target: PatchTarget = PatchTargets.default) {
                             currentCoroutineContext().ensureActive()
                             timings.end("patch_apply", patchStarted, if (result.exception == null) "ok" else "failed", "patch_index=${++index}")
                             patchStarted = timings.start()
-                            result.exception?.let { throw IllegalStateException("A selected patch failed. Review your selection and retry.", it) }
+                            result.exception?.let { throw IllegalStateException("One of the selected patches failed. Review your selection and try again.", it) }
                             if (result.patch in patches) {
                                 completed += result.patch
                                 progress(PatchProgress(PatchPhase.APPLY_PATCHES, completed.size.toDouble() / patches.size,

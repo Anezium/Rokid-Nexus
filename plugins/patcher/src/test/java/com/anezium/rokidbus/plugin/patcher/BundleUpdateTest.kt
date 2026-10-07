@@ -189,7 +189,7 @@ class BundleUpdateTest {
             val loaded = current()
             assertEquals(saved.file, loaded.file)
             assertEquals(activeVersion, loaded.version)
-            assertTrue(loaded.notice, loaded.notice!!.startsWith("Could not install the bundle included in this plugin version ("))
+            assertTrue(loaded.notice, loaded.notice!!.startsWith("Could not install the bundle included in this version ("))
             assertEquals(savedPointer, pointer)
             assertEquals(setOf(saved.file.name, "active.json"), directory.list()!!.toSet())
         }

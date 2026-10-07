@@ -24,7 +24,7 @@ class PatchErrorsTest {
     @Test fun preSanitizationFailureSnapshotsCannotResurfaceRawMessages() {
         val encoded = PatchJobStore.encode(PatchJobState(status = PatchJobStatus.FAILURE, message = "/private/upstream/path"))
         val legacy = encoded.replace("\"safe_failures\":true,", "")
-        assertEquals("Patching failed. Retry with a supported stock APK.", PatchJobStore.decode(legacy).message)
+        assertEquals("Patching failed. Try again with the stock APK.", PatchJobStore.decode(legacy).message)
     }
 
 }

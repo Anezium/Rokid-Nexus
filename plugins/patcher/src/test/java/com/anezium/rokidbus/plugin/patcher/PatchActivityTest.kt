@@ -251,6 +251,7 @@ class PatchActivityTest {
         val (store, job) = runningStore()
         val output = File(RuntimeEnvironment.getApplication().filesDir, "results/patched-complete.apk").apply {
             parentFile!!.mkdirs(); writeBytes(byteArrayOf(1))
+            setLastModified(System.currentTimeMillis() - 54 * 60_000L)
         }
         store.change(job.id) { it.copy(status = PatchJobStatus.SUCCESS, result = output.name) }
         store.markDelivered(job.id)
@@ -263,7 +264,8 @@ class PatchActivityTest {
         shadowOf(Looper.getMainLooper()).idle()
         assertFalse(screen.get().isFinishing)
         assertNotNull(button(screen.get(), "Patch again"))
-        assertTrue(views(screen.get().findViewById(android.R.id.content)).filterIsInstance<Button>().any { it.text.startsWith("Use this result (") })
+        assertNotNull(button(screen.get(), "Use this result"))
+        assertNotNull(text(screen.get(), "Patched 54 min ago · Nexus is waiting for it"))
         screen.pause().stop().destroy()
     }
 
@@ -292,4 +294,31 @@ class PatchActivityTest {
         screen.pause().stop().destroy()
     }
 
+    @Test fun screensTellTheHonestDurationAndNeverPromiseScreenOffPatching() {
+        shadowOf(RuntimeEnvironment.getApplication().packageManager)
+            .setSystemFeature(android.content.pm.PackageManager.FEATURE_PICTURE_IN_PICTURE, true)
+        fun bodies(activity: Activity) = views(activity.findViewById(android.R.id.content)).filterIsInstance<TextView>()
+            .filter { it !is Button }.map { it.text.toString() }
+        fun honest(activity: Activity) {
+            val advice = bodies(activity).filter { it.contains("6–7 minutes") }
+            assertEquals(1, advice.size)
+            assertTrue(advice.single(), advice.single().contains("small window"))
+            assertTrue(bodies(activity).none { it.contains("few minutes") || it.contains("turn the display") || it.contains("display off") })
+        }
+        val (store, job) = runningStore()
+        val running = Robolectric.buildActivity(PatchActivity::class.java).setup()
+        shadowOf(Looper.getMainLooper()).idle()
+        honest(running.get())
+        assertTrue(bodies(running.get()).single { it.contains("6–7 minutes") }.contains("slows it down"))
+        running.pause().stop().destroy()
+        // A validated file and no job yet: the idle card says what to expect before the first tap.
+        val ready = activeStore()
+        File(ready.work(ready.state.value.workId), "prepare/stock.apk").apply { parentFile!!.mkdirs(); writeBytes(byteArrayOf(1)) }
+        ready.change(ready.state.value.id) { it.copy(status = PatchJobStatus.READY, stock = "prepare/stock.apk") }
+        val idle = Robolectric.buildActivity(PatchActivity::class.java).setup()
+        shadowOf(Looper.getMainLooper()).idle()
+        assertNotNull(button(idle.get(), "Patch ${PatchTargets.default.displayName}"))
+        honest(idle.get())
+        idle.pause().stop().destroy()
+    }
 }

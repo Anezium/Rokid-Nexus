@@ -68,7 +68,7 @@ class PatchJobService : Service() {
                     pendingStart = intent; pendingStartId = startId
                 } catch (e: Exception) {
                     store.change(state.id) { it.copy(status = PatchJobStatus.FAILURE,
-                        message = PatchErrors.reason(e, "Cannot start background patching. Return to this screen and retry.")) }
+                        message = PatchErrors.reason(e, "Patching could not start. Come back to this screen and try again.")) }
                 }
             }
             return START_NOT_STICKY
@@ -108,7 +108,7 @@ class PatchJobService : Service() {
                 }
             }
         } catch (e: Exception) {
-            store.change(state.id) { it.copy(status = PatchJobStatus.FAILURE, message = PatchErrors.reason(e, "Cannot start background patching. Return to this screen and retry.")) }
+            store.change(state.id) { it.copy(status = PatchJobStatus.FAILURE, message = PatchErrors.reason(e, "Patching could not start. Come back to this screen and try again.")) }
             finishJob(state.id)
         }
         return START_NOT_STICKY
@@ -212,7 +212,7 @@ class PatchJobService : Service() {
         startForeground(NOTIFICATION, notification(state), ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
         // Android can silently refuse promotion under background restrictions.
         check(foregroundServiceType and ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC != 0) {
-            "Android stopped background patching. Return to Patcher and retry."
+            "Android stopped patching in the background. Open Patcher and try again."
         }
     }
 
@@ -220,7 +220,7 @@ class PatchJobService : Service() {
         if (foregroundServiceType and ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC != 0) return true
         return try { promote(state); true } catch (e: Exception) {
             terminate(PatchJobStatus.INTERRUPTED,
-                PatchErrors.reason(e, "Android stopped background patching. Return to Patcher and retry."), allowProcessKill = false)
+                PatchErrors.reason(e, "Android stopped patching in the background. Open Patcher and try again."), allowProcessKill = false)
             false
         }
     }
@@ -273,7 +273,7 @@ class PatchJobService : Service() {
         handler.postDelayed({ reap() }, CANCEL_GRACE_MS)
     }
 
-    private val deadline = Runnable { terminate(PatchJobStatus.INTERRUPTED, "Patching exceeded the one-hour limit. Retry with a supported stock APK.") }
+    private val deadline = Runnable { terminate(PatchJobStatus.INTERRUPTED, "Patching took more than an hour and was stopped. Try again when you are ready.") }
     private fun reportProgress(id: String, progress: PatchProgress) {
         val step = "substep_" + (progress.substep?.name ?: progress.phase.name).lowercase()
         if (store.state.value.id != id || !store.state.value.active) return
@@ -296,7 +296,7 @@ class PatchJobService : Service() {
             }
         }
     }
-    override fun onTimeout(startId: Int, fgsType: Int) { terminate(PatchJobStatus.INTERRUPTED, "Android stopped the patch service after its time limit. Retry when you are ready.") }
+    override fun onTimeout(startId: Int, fgsType: Int) { terminate(PatchJobStatus.INTERRUPTED, "Android stopped the patch after its time limit. Try again when you are ready.") }
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
         val current = store.state.value

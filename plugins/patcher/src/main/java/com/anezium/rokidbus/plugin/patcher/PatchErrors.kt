@@ -3,7 +3,7 @@ package com.anezium.rokidbus.plugin.patcher
 import android.util.Log
 
 internal object PatchErrors {
-    fun reason(error: Throwable, fallback: String = "Patching failed. Retry with a supported stock APK.",
+    fun reason(error: Throwable, fallback: String = "Patching failed. Try again with the stock APK.",
                log: (String) -> Unit = { Log.w(PatchTimings.TAG, it) }): String {
         log("failure_class=${error.javaClass.name}")
         val ownValidation = (error is IllegalArgumentException || error is IllegalStateException) &&

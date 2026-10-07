@@ -171,7 +171,7 @@ class PatchActivity : Activity() {
                 if (update.switched) withContext(Dispatchers.IO) { bundleStore.current() }.also { adopt(it); notice = it.notice }
                 report(listOfNotNull(notice, update.message).joinToString("\n"), if (notice == null) Tone.INFO else Tone.WARN)
             } catch (e: CancellationException) { throw e }
-            catch (e: Exception) { report(listOfNotNull(notice, "Using saved bundle. " + PatchErrors.reason(e, "The update check failed. Try again later.")).joinToString("\n"), Tone.WARN) }
+            catch (e: Exception) { report(listOfNotNull(notice, PatchErrors.reason(e, "Using saved bundle. Could not check for a newer one.")).joinToString("\n"), Tone.WARN) }
         }
     }
     private fun purgeResults(keep: File?) {
@@ -315,7 +315,7 @@ class PatchActivity : Activity() {
             isEnabled = !busy
             setOnCheckedChangeListener { _, checked ->
                 choices[name] = checked
-                try { selections.save(version, choices) } catch (e: Exception) { report(PatchErrors.reason(e, "Cannot save choices."), Tone.ERROR, Slot.BUNDLE) }
+                try { selections.save(version, choices) } catch (e: Exception) { report(PatchErrors.reason(e, "Could not save your choices."), Tone.ERROR, Slot.BUNDLE) }
             }
         }
         return LinearLayout(this).apply {
@@ -387,9 +387,7 @@ class PatchActivity : Activity() {
             card.addView(row.index.parent as View, NexusUi.block())
         }
         card.addView(BusTheme.gap(this, 14))
-        card.addView(NexusUi.cardBody(this, if (notificationsDenied())
-            "Usually a few minutes. You can leave this screen or turn the display off: patching continues. Notifications are off for Patcher, so come back here to check on it."
-        else "Usually a few minutes. You can leave this screen or turn the display off: patching continues, and the notification brings you back when it is ready."), NexusUi.block())
+        card.addView(NexusUi.cardBody(this, PatchPresentation.runningAdvice(pipSupported(), !notificationsDenied())), NexusUi.block())
         card.addView(BusTheme.gap(this, 14))
         card.addView(NexusUi.pillButton(this, "Cancel patching", danger = true).apply { setOnClickListener { cancelJob() } }, NexusUi.block())
         updateLive(state)
@@ -399,9 +397,13 @@ class PatchActivity : Activity() {
         val hubWaiting = canReturnToHub()
         card.addView(noteView(Slot.PATCH), NexusUi.block())
         card.addView(BusTheme.gap(this, 8))
-        val age = ((System.currentTimeMillis() - (result?.lastModified() ?: System.currentTimeMillis())).coerceAtLeast(0) / 60_000)
         if (hubWaiting) {
-            card.addView(primary("Use this result ($age min old)", enabled = !busy) { deliverResult(explicit = true) }, NexusUi.block())
+            // Nexus asked again while a result waits: say how old it is and let the user choose.
+            val age = PatchPresentation.age(System.currentTimeMillis() - (result?.lastModified() ?: System.currentTimeMillis()))
+            card.addView(NexusUi.rowSub(this, "Patched $age · Nexus is waiting for it"), NexusUi.block().apply { topMargin = dp(4) })
+            card.addView(BusTheme.gap(this, 14))
+            card.addView(primary("Use this result", enabled = !busy) { deliverResult(explicit = true) }, NexusUi.block())
+            card.addView(BusTheme.gap(this, 4))
             card.addView(quiet("Patch again", enabled = !busy) { patchAgain() }, endAligned())
             return
         }
@@ -441,7 +443,7 @@ class PatchActivity : Activity() {
     }
 
     private fun renderIdle(card: LinearLayout, ready: Boolean) {
-        card.addView(NexusUi.cardBody(this, "Patching takes a few minutes and keeps running if you leave the app. The result is signed with this plugin's key."), NexusUi.block())
+        card.addView(NexusUi.cardBody(this, PatchPresentation.idleAdvice(pipSupported())), NexusUi.block())
         card.addView(noteView(Slot.PATCH), NexusUi.block())
         if (shouldAskNotifications()) {
             card.addView(BusTheme.gap(this, 8))
@@ -715,7 +717,7 @@ class PatchActivity : Activity() {
         try {
             val state = jobs.patch(loaded.hash, loaded.patches.filter { choices[it.name] == true }.map { it.name!! })
             startJob(state)
-        } catch (e: Exception) { report(PatchErrors.reason(e, "Cannot start patching."), Tone.ERROR, Slot.PATCH) }
+        } catch (e: Exception) { report(PatchErrors.reason(e, "Could not start patching."), Tone.ERROR, Slot.PATCH) }
     }
     private fun startJob(state: PatchJobState, source: Uri? = null) {
         try {
@@ -723,7 +725,7 @@ class PatchActivity : Activity() {
                 .putExtra(PatchJobService.JOB_ID, state.id).setData(source)
                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
         } catch (e: Exception) {
-            jobs.change(state.id) { it.copy(status = PatchJobStatus.FAILURE, message = "Cannot start background patching. Return to this screen and retry.") }
+            jobs.change(state.id) { it.copy(status = PatchJobStatus.FAILURE, message = "Patching could not start. Come back to this screen and try again.") }
         }
     }
     internal fun canReturnToHub(): Boolean = intent.action == Contract.ACTION_PATCH &&
@@ -748,7 +750,7 @@ class PatchActivity : Activity() {
                     if (resumed) { jobs.markDelivered(state.id); setResult(RESULT_OK, data); finish() }
                 }
             } catch (e: CancellationException) { throw e }
-            catch (e: Exception) { report(PatchErrors.reason(e, "Cannot return the result. Try again."), Tone.ERROR, Slot.PATCH) }
+            catch (e: Exception) { report(PatchErrors.reason(e, "Could not hand the result to Nexus. Try again."), Tone.ERROR, Slot.PATCH) }
             finally { returningResult = false }
         }
     }
@@ -831,6 +833,7 @@ class PatchActivity : Activity() {
             } }
         }
     }
+    private fun pipSupported(): Boolean = packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_PICTURE_IN_PICTURE)
     private fun notificationsDenied(): Boolean = Build.VERSION.SDK_INT >= 33 &&
         checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED
     private fun shouldAskNotifications(): Boolean =
