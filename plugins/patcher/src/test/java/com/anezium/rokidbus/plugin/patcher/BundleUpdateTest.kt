@@ -8,6 +8,9 @@ import kotlinx.serialization.json.*
 import org.junit.Assert.*
 import org.junit.Assume.assumeTrue
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import java.io.File
 import java.io.IOException
 import java.io.OutputStream
@@ -15,6 +18,8 @@ import java.nio.file.Files
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [32])
 class BundleUpdateTest {
     private val activeVersion = "1.39.1-rokid.2"
     private fun url(version: String, asset: String = "patches.mpp") = PatchTargets.default.bundle.downloadPrefix + "v$version/$asset"
