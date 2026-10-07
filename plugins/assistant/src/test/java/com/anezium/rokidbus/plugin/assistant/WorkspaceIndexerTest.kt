@@ -172,6 +172,34 @@ class WorkspaceIndexerTest {
         assertTrue(fake.opens.isEmpty())
     }
 
+    @Test
+    fun `long nested paths preserve file names and disambiguate identical shortened labels`() = runBlocking {
+        val (store, gateway, indexer) = fixture()
+        gateway.entries["ancestor"] = WorkspaceEntry("ancestor", "Long ancestor ".repeat(15), directory = true)
+        gateway.entries["first"] = WorkspaceEntry("first", "Long intermediate ".repeat(15) + "first", directory = true)
+        gateway.entries["second"] = WorkspaceEntry("second", "Long intermediate ".repeat(15) + "second", directory = true)
+        gateway.put("a", "contract.txt", "Notice is two months.")
+        gateway.put("b", "contract.txt", "Notice is three months.")
+        gateway.put("c", "handbook.md", "Notice must be signed.")
+        gateway.childrenByParent["root"] = listOf("ancestor")
+        gateway.childrenByParent["ancestor"] = listOf("first", "second")
+        gateway.childrenByParent["first"] = listOf("a", "c")
+        gateway.childrenByParent["second"] = listOf("b")
+        indexer.refresh()
+        val documents = store.snapshot().state.index!!.documents
+        assertEquals(3, documents.size)
+        assertEquals(3, documents.map { it.entry.relativePath }.distinct().size)
+        assertTrue(documents.all { it.entry.relativePath.length <= 160 })
+        assertTrue(documents.all { it.entry.relativePath.endsWith("/" + it.entry.name) })
+        val excerpts = store.snapshot().retriever!!.search("notice").excerpts
+        assertTrue(excerpts.contains("contract.txt"))
+        assertTrue(excerpts.contains("handbook.md"))
+        val before = documents.map { it.entry.relativePath }
+        indexer.refresh()
+        assertEquals(before, store.snapshot().state.index!!.documents.map { it.entry.relativePath })
+        assertEquals(mapOf("a" to 1, "b" to 1, "c" to 1), gateway.opens)
+    }
+
     private fun fixture(): Triple<WorkspaceStore, FakeWorkspaceGateway, WorkspaceIndexer> {
         val store = WorkspaceStore(temporary.newFolder())
         store.selectTree(WorkspaceStoreTest.TREE, "Documents", enable = true)
@@ -190,6 +218,7 @@ internal class FakeWorkspaceGateway : WorkspaceDocumentGateway {
     var listFailure = false
     var onOpen: (() -> Unit)? = null
     val entries = linkedMapOf<String, WorkspaceEntry>()
+    val childrenByParent = mutableMapOf<String, List<String>>()
     val contents = mutableMapOf<String, ByteArray>()
     val opens = mutableMapOf<String, Int>()
     val persistedFlags = mutableListOf<Pair<String, Int>>()
@@ -205,7 +234,8 @@ internal class FakeWorkspaceGateway : WorkspaceDocumentGateway {
     }
     override suspend fun children(treeUri: String, documentId: String): List<WorkspaceEntry> {
         if (listFailure) error("fixture list failure")
-        return if (documentId == "root") entries.values.toList() else emptyList()
+        return childrenByParent[documentId]?.map { entries.getValue(it) }
+            ?: if (documentId == "root") entries.values.toList() else emptyList()
     }
     override suspend fun metadata(treeUri: String, documentId: String) = entries.getValue(documentId)
     override suspend fun open(treeUri: String, documentId: String): InputStream {

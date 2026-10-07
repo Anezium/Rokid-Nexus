@@ -119,6 +119,12 @@ internal fun workspaceLabel(text: String, maxChars: Int = 160): String =
             workspaceWordPrefix(value, maxChars).ifEmpty { value.take(maxChars) }
         }
 
+internal fun workspacePathLabel(parent: String, name: String, discriminator: Int = 0): String {
+    val suffix = if (discriminator == 0) name else "[$discriminator]/$name"
+    val directory = workspaceLabel(parent, (160 - suffix.length - 1).coerceAtLeast(0))
+    return if (directory.isEmpty()) suffix else "$directory/$suffix"
+}
+
 internal fun workspacePromptBudget(existingContext: String): Int = minOf(
     WorkspaceLimits.MAX_EXCERPT_CHARS,
     (WorkspaceLimits.MAX_PERSONAL_CONTEXT_CHARS - existingContext.length -

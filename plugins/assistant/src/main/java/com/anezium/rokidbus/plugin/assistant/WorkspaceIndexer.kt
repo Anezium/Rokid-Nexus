@@ -101,6 +101,7 @@ internal class WorkspaceIndexer(
         data class Directory(val id: String, val path: String, val depth: Int)
         val queue = ArrayDeque<Directory>()
         val visited = mutableSetOf(rootId)
+        val labels = mutableSetOf<String>()
         val entries = mutableListOf<WorkspaceEntry>()
         var queries = 0
         queue.add(Directory(rootId, "", 0))
@@ -108,13 +109,17 @@ internal class WorkspaceIndexer(
             currentCoroutineContext().ensureActive()
             if (++queries > WorkspaceLimits.MAX_DIRECTORIES) throw WorkspaceCheckLimitException()
             val directory = queue.removeFirst()
-            for (entry in gateway.children(treeUri, directory.id).sortedBy { it.name }) {
+            for (entry in gateway.children(treeUri, directory.id)
+                .sortedWith(compareBy<WorkspaceEntry> { it.name }.thenBy { it.documentId })) {
                 if (!visited.add(entry.documentId)) continue
                 if (entry.documentId.isEmpty() || entry.documentId.length > 1_024 ||
                     entries.size >= WorkspaceLimits.MAX_ENTRIES
                 ) throw WorkspaceCheckLimitException()
-                val path = workspaceLabel(listOf(directory.path, entry.name).filter(String::isNotEmpty).joinToString("/"))
-                val bounded = entry.copy(name = workspaceLabel(entry.name, 96), relativePath = path)
+                val name = workspaceLabel(entry.name, 96)
+                var path = workspacePathLabel(directory.path, name)
+                var discriminator = 2
+                while (!labels.add(path)) path = workspacePathLabel(directory.path, name, discriminator++)
+                val bounded = entry.copy(name = name, relativePath = path)
                 entries += bounded
                 if (entry.directory) {
                     if (directory.depth >= WorkspaceLimits.MAX_DEPTH) throw WorkspaceCheckLimitException()
