@@ -6,6 +6,7 @@ import org.json.JSONObject
 internal data class AssistantProviderFeatures(
     val supportsTools: Boolean,
     val supportsVision: Boolean,
+    val supportsWorkspaceSearch: Boolean = true,
 )
 
 internal data class AssistantToolSessionContext(
@@ -44,6 +45,8 @@ internal interface AssistantToolDefinition {
     val description: String
     val parametersSchema: AssistantToolJsonSchema
     val sideEffecting: Boolean
+    val maxExecutionsPerTurn: Int
+        get() = Int.MAX_VALUE
     val progressLabel: String?
     val retiresProgressOnSuccess: Boolean
         get() = false
@@ -74,6 +77,7 @@ internal class AssistantToolRegistry(
             "Assistant tool names must be unique."
         }
         definitions.forEach { definition ->
+            require(definition.maxExecutionsPerTurn > 0)
             require(TOOL_NAME.matches(definition.name)) {
                 "Assistant tool names must be stable lowercase identifiers."
             }
@@ -113,6 +117,7 @@ internal class AssistantToolExecutionPhase(
     private val definitionsByName = availableDefinitions.associateBy(AssistantToolDefinition::name)
     private val resultsByCallId = mutableMapOf<String, AssistantToolResult>()
     private val executedSideEffectingTools = mutableSetOf<String>()
+    private val executionsByName = mutableMapOf<String, Int>()
     private var executedCalls = 0
 
     suspend fun execute(call: AssistantToolCall): AssistantToolResult {
@@ -144,12 +149,14 @@ internal class AssistantToolExecutionPhase(
 
         if (
             executedCalls >= MAX_EXECUTED_CALLS ||
+            (executionsByName[definition.name] ?: 0) >= definition.maxExecutionsPerTurn ||
             definition.sideEffecting && definition.name in executedSideEffectingTools
         ) {
             return memoize(call, AssistantToolResult.Error(TOOL_ERROR_ALREADY_USED))
         }
 
         executedCalls += 1
+        executionsByName[definition.name] = (executionsByName[definition.name] ?: 0) + 1
         if (definition.sideEffecting) executedSideEffectingTools += definition.name
         val result = try {
             definition.progressLabel?.let(::reportProgress)

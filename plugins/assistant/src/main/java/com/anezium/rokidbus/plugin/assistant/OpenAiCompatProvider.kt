@@ -299,6 +299,7 @@ internal class OpenAiCompatProvider(
                 AssistantProviderFeatures(
                     supportsTools = true,
                     supportsVision = visionSupported,
+                    supportsWorkspaceSearch = !useTextToolBridge,
                 ),
             )
             val textToolDefinitions = toolPhase.availableDefinitions.filter { definition ->

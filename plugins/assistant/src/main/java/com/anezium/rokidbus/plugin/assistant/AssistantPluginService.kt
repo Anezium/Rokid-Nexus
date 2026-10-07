@@ -61,6 +61,9 @@ class AssistantPluginService : NexusPluginService() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val authStore by lazy { CodexAuthStore(applicationContext) }
     private val accountContextSync by lazy { AccountContextSync(applicationContext) }
+    private val workspaceOwner = Any()
+    private var workspaceController: WorkspaceController? = null
+    private var workspaceOpenJob: Job? = null
     private val threadStore by lazy { AssistantThreadStore(applicationContext) }
     private val noteStore by lazy { AssistantNoteStore(applicationContext) }
     private val reminderStore by lazy { AssistantReminderStore(applicationContext) }
@@ -85,6 +88,7 @@ class AssistantPluginService : NexusPluginService() {
                 TakePhotoTool(createTakePhotoToolCapabilities()),
                 RenderTemplateTool(inkPageToolRuntime, inkTemplateLoader),
                 RenderInkPageTool(inkPageToolRuntime),
+                SearchWorkspaceTool { workspaceController.takeIf { isNexusSessionOpen } },
             ) +
                 assistantProductivityTools(
                     noteStore = noteStore,
@@ -273,9 +277,12 @@ class AssistantPluginService : NexusPluginService() {
         )
         scheduleAccountContextSyncIfStale()
         if (anchored) startLauncherCapture()
+        scheduleWorkspaceCheck()
     }
 
     override fun onNexusClose() {
+        workspaceOpenJob?.cancel()
+        workspaceController?.detach(workspaceOwner)
         optionsMenu.close()
         uiController.onClose()
         captureTriggerGate.resetSession()
@@ -510,6 +517,8 @@ class AssistantPluginService : NexusPluginService() {
     }
 
     override fun onDestroy() {
+        workspaceOpenJob?.cancel()
+        workspaceController?.detach(workspaceOwner)
         if (debugInstance === this) debugInstance = null
         uiController.onClose()
         resetCapture()
@@ -785,6 +794,18 @@ class AssistantPluginService : NexusPluginService() {
         }
     }
 
+    private fun scheduleWorkspaceCheck() {
+        workspaceOpenJob?.cancel()
+        workspaceOpenJob = serviceScope.launch {
+            val controller = WorkspaceRuntime.get(applicationContext)
+            workspaceController = controller
+            if (isNexusSessionOpen) {
+                controller.attach(workspaceOwner)
+                controller.refresh()
+            }
+        }
+    }
+
     private suspend fun streamAssistantAnswer(transcript: String) {
         val noticeBandMode = uiController.isNoticeBandMode
         val providerId = selectedProviderId()
@@ -792,6 +813,8 @@ class AssistantPluginService : NexusPluginService() {
         ensureProviderBackendDetected(providerId)
         val keepConversation = authStore.keepConversation()
         val keepPhotosInConversations = authStore.keepPhotosInConversations()
+        val personalContext = authStore.combinedAssistantContextForPrompt()
+        val workspaceContext = workspaceController?.contextForQuestion(transcript, personalContext)
         val conversationContext = withContext(Dispatchers.IO) {
             if (!keepPhotosInConversations && threadStore.hasStoredPhotos()) {
                 threadStore.deleteAllPhotos()
@@ -813,17 +836,20 @@ class AssistantPluginService : NexusPluginService() {
         } else {
             availableToolDefinitions
         }
+        fun prompt(): String = NexusAgentPolicy.buildSystemPrompt(
+            customPrompt = authStore.customSystemPrompt(),
+            noticeBand = noticeBandMode,
+            memory = personalContext,
+            workspace = workspaceContext?.takeIf { workspaceController?.isCurrent(it) == true }?.excerpts.orEmpty(),
+            workspaceEnabled = workspaceController?.state?.value?.workspace?.settings?.enabled == true,
+            currentDateTime = ZonedDateTime.now(),
+            availableToolNames = promptToolDefinitions.map(AssistantToolDefinition::name),
+            textToolDefinitions = promptToolDefinitions,
+            allowTextToolFallback = hermesTextToolBackend,
+        )
         val request = ChatRequest(
             userText = transcript,
-            systemPrompt = NexusAgentPolicy.buildSystemPrompt(
-                customPrompt = authStore.customSystemPrompt(),
-                noticeBand = noticeBandMode,
-                memory = authStore.combinedAssistantContextForPrompt(),
-                currentDateTime = ZonedDateTime.now(),
-                availableToolNames = promptToolDefinitions.map(AssistantToolDefinition::name),
-                textToolDefinitions = promptToolDefinitions,
-                allowTextToolFallback = hermesTextToolBackend,
-            ),
+            systemPrompt = prompt(),
             history = conversationContext.history,
             model = when (providerId) {
                 ChatGptCodexProvider.ID -> authStore.chatGptModel()
@@ -841,7 +867,7 @@ class AssistantPluginService : NexusPluginService() {
         var failed = false
         var finalAnswer: String? = null
         try {
-            providerRouter.providerFor(providerId).streamEvents(request).collect { event ->
+            providerRouter.providerFor(providerId).streamEvents(request.copy(systemPrompt = prompt())).collect { event ->
                 when (event) {
                     is AiProviderEvent.Started -> Unit
                     is AiProviderEvent.Progress -> uiController.showTransient(event.message)
@@ -1343,6 +1369,8 @@ class AssistantPluginService : NexusPluginService() {
         AssistantProviderFeatures(
             supportsTools = true,
             supportsVision = providerSupportsPhotos(providerId),
+            supportsWorkspaceSearch = providerId == ChatGptCodexProvider.ID ||
+                authStore.providerBackend(providerId) != ProviderBackend.HERMES,
         )
 
     private fun providerSupportsPhotos(providerId: String): Boolean =

@@ -20,6 +20,8 @@ internal object NexusAgentPolicy {
         customPrompt: String = "",
         noticeBand: Boolean = false,
         memory: String = "",
+        workspace: String = "",
+        workspaceEnabled: Boolean = false,
         currentDateTime: ZonedDateTime? = null,
         availableToolNames: Collection<String> = listOf(TAKE_PHOTO_TOOL_NAME),
         textToolDefinitions: Collection<AssistantToolDefinition> = emptyList(),
@@ -109,6 +111,12 @@ internal object NexusAgentPolicy {
                 }
             }
             append("- Give actionable, concise error or retry guidance when something is unavailable.")
+            if (workspaceEnabled) {
+                append("\n- For questions requiring workspace documents, use only Workspace excerpts in this request")
+                if (SEARCH_WORKSPACE_TOOL_NAME in availableToolNames) append(" or a successful search_workspace result")
+                append(". If none cover the question, say no " +
+                    "relevant workspace excerpt was found. Unrelated questions can be answered normally.")
+            }
             if (noticeBand) {
                 append("\n- ")
                 append(NOTICE_BAND_RESPONSE_RULE)
@@ -116,6 +124,10 @@ internal object NexusAgentPolicy {
             if (memory.isNotBlank()) {
                 append("\n\nWhat the user has told you about themselves:\n")
                 append(memory)
+            }
+            if (workspace.isNotBlank()) {
+                append("\n\n")
+                append(workspace)
             }
         }
     }
