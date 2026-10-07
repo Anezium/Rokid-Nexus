@@ -395,7 +395,7 @@ class PatchActivity : Activity() {
     }
 
     private fun renderDone(card: LinearLayout) {
-        val hubWaiting = intent.action == Contract.ACTION_PATCH && callingActivity != null
+        val hubWaiting = canReturnToHub()
         card.addView(noteView(Slot.PATCH), NexusUi.block())
         card.addView(BusTheme.gap(this, 8))
         val age = ((System.currentTimeMillis() - (result?.lastModified() ?: System.currentTimeMillis())).coerceAtLeast(0) / 60_000)
@@ -725,12 +725,14 @@ class PatchActivity : Activity() {
             jobs.change(state.id) { it.copy(status = PatchJobStatus.FAILURE, message = "Cannot start background patching. Return to this screen and retry.") }
         }
     }
+    internal fun canReturnToHub(): Boolean = intent.action == Contract.ACTION_PATCH &&
+        callingActivity != null && callingPackage == com.anezium.rokidbus.client.HubTarget.PHONE.packageName
     private fun patchAgain() {
         if (stock == null) picker(REQUEST_STOCK, Intent.ACTION_OPEN_DOCUMENT, "*/*") else confirmPatch()
     }
     private fun deliverResult(explicit: Boolean = false) {
         val file = result ?: return
-        if (!resumed || returningResult || intent.action != Contract.ACTION_PATCH || callingActivity == null) return
+        if (!resumed || returningResult || !canReturnToHub()) return
         val state = jobs.state.value
         if (!explicit && !PatchDelivery.canAutoDeliver(state, watchedJobId, readyJobId)) return
         returningResult = true

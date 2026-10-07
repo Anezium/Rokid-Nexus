@@ -80,13 +80,15 @@ class PatchActivityTest {
         val store = activeStore()
         val job = store.state.value
         val request = Intent(PatcherContract.ACTION_PATCH).putExtra(PatcherContract.EXTRA_TARGET_ID, job.targetId)
+            .putExtra(PatchActivity.EXTRA_READY_JOB_ID, job.id)
         val first = Robolectric.buildActivity(PatchActivity::class.java, request).setup()
         first.pause().stop().destroy()
         val context = RuntimeEnvironment.getApplication()
         val output = File(context.filesDir, "results/patched-complete.apk").apply { parentFile!!.mkdirs(); writeBytes(byteArrayOf(1)) }
         store.change(job.id) { it.copy(status = PatchJobStatus.SUCCESS, result = output.name) }
         val reopened = Robolectric.buildActivity(PatchActivity::class.java, request).create()
-        shadowOf(reopened.get()).setCallingActivity(ComponentName("example.hub", "example.hub.Setup"))
+        shadowOf(reopened.get()).setCallingActivity(ComponentName(com.anezium.rokidbus.client.HubTarget.PHONE.packageName, "Setup"))
+        shadowOf(reopened.get()).setCallingPackage(com.anezium.rokidbus.client.HubTarget.PHONE.packageName)
         assertNotNull(reopened.get().callingActivity)
         reopened.start().resume()
         shadowOf(Looper.getMainLooper()).idle()
@@ -191,6 +193,22 @@ class PatchActivityTest {
         assertEquals(android.provider.DocumentsContract.buildRootUri("com.android.providers.downloads.documents", "downloads"),
             picker.getParcelableExtra<android.net.Uri>(android.provider.DocumentsContract.EXTRA_INITIAL_URI))
         assertTrue(picker.getStringArrayExtra(Intent.EXTRA_MIME_TYPES)!!.contains("application/zip"))
+        screen.pause().stop().destroy()
+    }
+
+    @Test fun onlyTheActualNexusCallingPackageCanReceiveAResult() {
+        val store = activeStore()
+        val request = Intent(PatcherContract.ACTION_PATCH).putExtra(PatcherContract.EXTRA_TARGET_ID, store.state.value.targetId)
+        val screen = Robolectric.buildActivity(PatchActivity::class.java, request).setup()
+        val shadow = shadowOf(screen.get())
+        val hub = com.anezium.rokidbus.client.HubTarget.PHONE.packageName
+        shadow.setCallingActivity(ComponentName(hub, "Setup"))
+        shadow.setCallingPackage("untrusted.app")
+        assertFalse(screen.get().canReturnToHub())
+        shadow.setCallingPackage(hub)
+        assertTrue(screen.get().canReturnToHub())
+        screen.get().intent.action = null
+        assertFalse(screen.get().canReturnToHub())
         screen.pause().stop().destroy()
     }
 
