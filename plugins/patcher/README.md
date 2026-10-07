@@ -260,6 +260,11 @@ restrictions can still refuse or remove the foreground lease. The service checks
 lease and reports interruption if it cannot restore it, rather than leaving a RUNNING
 job without foreground protection. The former experiment flag has been removed.
 
+Execution diagnostics use the `Patcher` tag and emit a snapshot only at a phase,
+visibility, screen/keyguard, or scheduler-group change. Stable heartbeat and substep
+updates do not repeat it. The snapshot includes foreground-service type and Android's
+background-restriction state; scheduling values remain numeric or allowlisted.
+
 ## Trust model
 
 - The phone hub installs this plugin's output automatically only while the plugin

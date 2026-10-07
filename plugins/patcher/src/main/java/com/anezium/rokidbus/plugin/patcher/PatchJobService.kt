@@ -25,7 +25,7 @@ class PatchJobService : Service() {
     private var pendingStartId = 0
     private var latestStartId = 0
     @Volatile private var workerTid = 0
-    private var lastDiagnostic = 0L
+    private val diagnostics by lazy { PatchExecutionDiagnostics(this) }
     private var measuredStep: String? = null
     private var measuredStarted = 0L
     private val phaseTimings = PatchTimings()
@@ -76,6 +76,7 @@ class PatchJobService : Service() {
         if (!state.active || intent?.getStringExtra(JOB_ID) != state.id) { stopSelf(); return START_NOT_STICKY }
         PatchStorage.cleanBundleCache(cacheDir)
         runningId = state.id
+        diagnostics.reset()
         workerExited = AtomicBoolean(true)
         startedRealtime = SystemClock.elapsedRealtime()
         try {
@@ -90,7 +91,7 @@ class PatchJobService : Service() {
                 try {
                     Process.setThreadPriority(Process.THREAD_PRIORITY_DEFAULT)
                     workerTid = Process.myTid()
-                    PatchExecutionDiagnostics(this).sample(state.progress.phase, workerTid)
+                    diagnostics.sample(state.progress.phase, workerTid)
                     runBlocking { runJob(state, intent.data) }
                 } catch (_: CancellationException) {
                     store.change(state.id) { it.copy(status = PatchJobStatus.CANCELLED, message = "Patching cancelled. You can retry.") }
@@ -280,9 +281,9 @@ class PatchJobService : Service() {
         if (step != measuredStep) {
             measuredStep?.let { phaseTimings.end(it, measuredStarted) }
             measuredStep = step; measuredStarted = phaseTimings.start()
-            PatchExecutionDiagnostics(this).sample(progress.phase, workerTid)
         }
         store.progress(id, progress, SystemClock.elapsedRealtime() - startedRealtime)
+        diagnostics.sample(store.state.value.progress.phase, workerTid)
     }
     private val heartbeat = object : Runnable {
         override fun run() {
@@ -291,11 +292,7 @@ class PatchJobService : Service() {
                 if (!retainForeground(current)) return
                 store.tick(current.id, SystemClock.elapsedRealtime() - startedRealtime)
                 notifyState(store.state.value)
-                val now = SystemClock.elapsedRealtime()
-                if (now - lastDiagnostic >= 15_000) {
-                    PatchExecutionDiagnostics(this@PatchJobService).sample(current.progress.phase, workerTid)
-                    lastDiagnostic = now
-                }
+                diagnostics.sample(store.state.value.progress.phase, workerTid)
                 handler.postDelayed(this, 1000)
             }
         }
