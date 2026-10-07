@@ -63,7 +63,7 @@ class BundleStore internal constructor(
             // Without a saved bundle there is nothing validated to fall back to. Otherwise keep
             // the saved pointer untouched so the adoption is retried on the next open.
             if (saved == null) throw e
-            notice = "Could not install the bundle included in this plugin version (${e.message ?: e.javaClass.simpleName}). Keeping the saved bundle; it will be retried next time."
+            notice = "Could not install the bundle included in this plugin version (${PatchErrors.reason(e, "Bundle validation failed.")}). Keeping the saved bundle; it will be retried next time."
         }
         val json = Json.parseToJsonElement(pointer.readText()).jsonObject
         var file = File(directory, json["file"]?.jsonPrimitive?.content ?: "bundled.mpp")
@@ -96,7 +96,7 @@ class BundleStore internal constructor(
         if (metadata.version == activeVersion) return Update(null, false)
         val active = Json.parseToJsonElement(pointer.readText()).jsonObject
         rejection(active, metadata, pluginBuild)?.let { reason ->
-            return Update("Bundle ${metadata.version} was rejected: $reason Using saved bundle $activeVersion.", false)
+            return Update("Bundle ${metadata.version} was rejected. Using saved bundle $activeVersion.", false)
         }
         var rejected: String? = null
         val staging = try {
@@ -107,7 +107,7 @@ class BundleStore internal constructor(
                     require(loadPatches(it).isNotEmpty()) { "New bundle has no compatible patches." }
                 } catch (e: CancellationException) { throw e }
                 catch (e: Exception) {
-                    rejected = e.message ?: e.javaClass.simpleName
+                    rejected = PatchErrors.reason(e, "Bundle validation failed.")
                     throw e
                 }
             })

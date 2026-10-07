@@ -80,14 +80,14 @@ class PatchJobService : Service() {
                 } catch (_: OutOfMemoryError) {
                     store.change(state.id) { it.copy(status = PatchJobStatus.FAILURE, message = "Not enough memory to patch this APK. Close other apps and retry.") }
                 } catch (e: Exception) {
-                    store.change(state.id) { it.copy(status = PatchJobStatus.FAILURE, message = e.message ?: "Patching failed. Retry with a supported stock APK.") }
+                    store.change(state.id) { it.copy(status = PatchJobStatus.FAILURE, message = PatchErrors.reason(e)) }
                 } finally {
                     exited.set(true)
                     handler.post { finishJob(state.id) }
                 }
             }
         } catch (e: Exception) {
-            store.change(state.id) { it.copy(status = PatchJobStatus.FAILURE, message = "Cannot start background patching: ${e.message}") }
+            store.change(state.id) { it.copy(status = PatchJobStatus.FAILURE, message = PatchErrors.reason(e, "Cannot start background patching. Return to this screen and retry.")) }
             finishJob(state.id)
         }
         return START_NOT_STICKY

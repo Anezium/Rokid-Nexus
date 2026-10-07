@@ -167,7 +167,7 @@ class PatchActivity : Activity() {
                 if (update.switched) withContext(Dispatchers.IO) { bundleStore.current() }.also { adopt(it); notice = it.notice }
                 report(listOfNotNull(notice, update.message).joinToString("\n"), if (notice == null) Tone.INFO else Tone.WARN)
             } catch (e: CancellationException) { throw e }
-            catch (e: Exception) { report(listOfNotNull(notice, "Using saved bundle. Update check: ${e.message}").joinToString("\n"), Tone.WARN) }
+            catch (e: Exception) { report(listOfNotNull(notice, "Using saved bundle. " + PatchErrors.reason(e, "The update check failed. Try again later.")).joinToString("\n"), Tone.WARN) }
         }
     }
     private fun purgeResults(keep: File?) {
@@ -310,7 +310,7 @@ class PatchActivity : Activity() {
             isEnabled = !busy
             setOnCheckedChangeListener { _, checked ->
                 choices[name] = checked
-                try { selections.save(version, choices) } catch (e: Exception) { report(e.message ?: "Cannot save choices.", Tone.ERROR, Slot.BUNDLE) }
+                try { selections.save(version, choices) } catch (e: Exception) { report(PatchErrors.reason(e, "Cannot save choices."), Tone.ERROR, Slot.BUNDLE) }
             }
         }
         return LinearLayout(this).apply {
@@ -674,7 +674,7 @@ class PatchActivity : Activity() {
             try { block() }
             catch (e: CancellationException) { throw e }
             catch (e: OutOfMemoryError) { report("Not enough memory to patch this APK on this phone. No result was saved.", Tone.ERROR, target) }
-            catch (e: Exception) { report(e.message ?: e.javaClass.simpleName, Tone.ERROR, target) }
+            catch (e: Exception) { report(PatchErrors.reason(e), Tone.ERROR, target) }
             finally {
                 busy = false; patching = false
                 window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -710,7 +710,7 @@ class PatchActivity : Activity() {
         try {
             val state = jobs.patch(loaded.hash, loaded.patches.filter { choices[it.name] == true }.map { it.name!! })
             startJob(state)
-        } catch (e: Exception) { report(e.message ?: "Cannot start patching.", Tone.ERROR, Slot.PATCH) }
+        } catch (e: Exception) { report(PatchErrors.reason(e, "Cannot start patching."), Tone.ERROR, Slot.PATCH) }
     }
     private fun startJob(state: PatchJobState, source: Uri? = null) {
         try {
@@ -741,7 +741,7 @@ class PatchActivity : Activity() {
                     if (resumed) { jobs.markDelivered(state.id); setResult(RESULT_OK, data); finish() }
                 }
             } catch (e: CancellationException) { throw e }
-            catch (e: Exception) { report("Cannot return the result: ${e.message}", Tone.ERROR, Slot.PATCH) }
+            catch (e: Exception) { report(PatchErrors.reason(e, "Cannot return the result. Try again."), Tone.ERROR, Slot.PATCH) }
             finally { returningResult = false }
         }
     }
