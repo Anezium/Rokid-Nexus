@@ -14,6 +14,11 @@ import com.anezium.rokidbus.shared.ActivitySurfaceContract
  *     ride       title "3 arrêts jusqu'à"              subtitle "<stop to get off at>"
  *     every step eta "Arrivée : 18:23 (83 min)"
  *
+ * Korean keeps the same layout with its verb last, in Citymapper's own `ko`
+ * strings: "정류소까지 걷기", "3 정거장 뒤 하차", "4분 거리",
+ * "도착 18:23 (83분)". Where "대기" sits against the lines is not known, so
+ * the wait step is read with it on either side.
+ *
  * No line icon is exposed, so a ride's vehicle and line number come from the
  * wait or departure step before it; the parser keeps that much of the trip.
  * The stop count only ever comes from Citymapper, so a ride's track is the
@@ -35,7 +40,7 @@ internal class CitymapperParser {
         val prediction = texts[VIEW_PREDICTION]?.clean()?.let(::minutes)
         val etaLine = texts[VIEW_ETA]?.clean()
         val eta = NavText.clock(etaLine)
-        val remaining = etaLine?.let { ETA_REMAINING.find(it)?.groupValues?.get(1) }
+        val remaining = etaLine?.let { ETA_REMAINING.find(it)?.groupValues?.get(1)?.replace(Regex("\\s+"), " ") }
         val folded = NavText.fold(title)
 
         RIDE.find(folded)?.let { match ->
@@ -43,16 +48,20 @@ internal class CitymapperParser {
         }
         if (NEXT_STOP.any(folded::contains)) return ride(1, title, subtitle, eta, imminent = true)
         if (ARRIVED.any(folded::contains)) return arrived(title, eta, labels)
-        WAIT.find(title)?.let { match -> return wait(match.groupValues[1], title, subtitle, eta, labels) }
+        (WAIT.find(title) ?: WAIT_AFTER.find(title))?.let { match ->
+            return wait(match.groupValues[1], title, subtitle, eta, labels)
+        }
         DEPARTURE.find(title)?.let { match ->
             if (subtitle != null && PLATFORM.containsMatchIn(NavText.fold(subtitle))) {
                 return departure(match, subtitle, eta)
             }
         }
-        if (WALK.any(folded::startsWith)) return walk(title, subtitle, prediction, eta)
+        if (WALK.any(folded::startsWith) || WALK_AFTER.any(folded::contains)) {
+            return walk(title, subtitle, prediction, eta)
+        }
         // A step Citymapper words in a way this parser does not know: its own
         // words are still right, only the arrow is unknown.
-        val primary = prediction ?: remaining?.let { "$it min" } ?: return null
+        val primary = prediction ?: remaining ?: return null
         return guidance(
             glyph = NavText.ROUTE_GLYPH,
             primary = primary,
@@ -73,8 +82,10 @@ internal class CitymapperParser {
     private fun walk(title: String, subtitle: String?, prediction: String?, eta: String?): NavGuidance? {
         rideDestination = null
         // Without a walk time, Citymapper's own verb leads: the trip's
-        // remaining minutes would read as the length of this walk.
-        val primary = prediction ?: title.substringBefore(' ').takeIf(String::isNotEmpty) ?: return null
+        // remaining minutes would read as the length of this walk. Korean
+        // puts its verb last.
+        val verb = if (HANGUL.containsMatchIn(title)) title.substringAfterLast(' ') else title.substringBefore(' ')
+        val primary = prediction ?: verb.takeIf(String::isNotEmpty) ?: return null
         return guidance(
             glyph = NexusGuidanceGlyphs.WALK,
             primary = primary,
@@ -95,6 +106,7 @@ internal class CitymapperParser {
         val primary = when {
             next == null -> title
             next == 0 -> labels.now
+            subtitle?.contains('분') == true -> "${next}분"
             else -> "$next min"
         }
         return guidance(
@@ -200,7 +212,7 @@ internal class CitymapperParser {
 
     private fun String.clean(): String = replace(' ', ' ').replace(Regex("\\s+"), " ").trim()
 
-    /** "(à 4 min)" or "in 4 min" -> "4 min". */
+    /** "(à 4 min)", "in 4 min" or "4분 거리" -> "4 min" or "4분". */
     private fun minutes(value: String): String? = MINUTES.find(value)?.value?.replace(Regex("\\s+"), " ")
 
     private fun vehicleFor(line: String): String {
@@ -209,7 +221,9 @@ internal class CitymapperParser {
             plain.startsWith("rer") || plain.startsWith("train") || plain.startsWith("transilien") -> NexusGuidanceGlyphs.TRAIN
             Regex("""^m(etro)?\s?\d""").containsMatchIn(plain) -> NexusGuidanceGlyphs.METRO
             Regex("""^t(ram)?\s?\d""").containsMatchIn(plain) -> NexusGuidanceGlyphs.TRAM
-            Regex("""^\d+[a-z]?$""").matches(plain) -> NexusGuidanceGlyphs.BUS
+            plain.endsWith("호선") -> NexusGuidanceGlyphs.METRO
+            plain.startsWith("ktx") || plain.startsWith("itx") || plain.startsWith("srt") -> NexusGuidanceGlyphs.TRAIN
+            Regex("""^\d+[a-z]?$""").matches(plain) || Regex("""^\d+-\d+$""").matches(plain) -> NexusGuidanceGlyphs.BUS
             else -> NavText.ROUTE_GLYPH
         }
     }
@@ -221,17 +235,22 @@ internal class CitymapperParser {
         const val VIEW_PREDICTION = "notification_prediction"
         const val VIEW_ETA = "notification_eta"
 
-        val RIDE = Regex("""^(\d+)\s+(arrets?|stops?)\b""")
+        // Java's \b takes Hangul for a non-word character, so the Korean
+        // words stay outside the word boundaries.
+        val RIDE = Regex("""^(\d+)\s*(?:(?:arrets?|stops?)\b|정거장|정류장)""")
         val RIDE_PRIMARY = Regex("""^\d+\s+\S+""")
-        val NEXT_STOP = listOf("prochain arret", "next stop", "descendre", "get off")
-        val ARRIVED = listOf("vous etes arrive", "you have arrived", "you've arrived")
-        val WAIT = Regex("""^(?:Attendre|Attendez|Wait for|Board)\s+(.+)$""", RegexOption.IGNORE_CASE)
-        val LINE_SEPARATOR = Regex("""\s+(?:ou|or)\s+|,\s*""")
+        val NEXT_STOP = listOf("prochain arret", "next stop", "descendre", "get off", "하차", "다음 정거장", "다음 역")
+        val ARRIVED = listOf("vous etes arrive", "you have arrived", "you've arrived", "도착 완료", "도착했습니다")
+        val WAIT = Regex("""^(?:Attendre|Attendez|Wait for|Board|대기)\s+(.+)$""", RegexOption.IGNORE_CASE)
+        val WAIT_AFTER = Regex("""^(.+?)\s+대기$""")
+        val LINE_SEPARATOR = Regex("""\s+(?:ou|or|또는)\s+|,\s*""")
         val NEXT_DEPARTURE = Regex("""^\s*(\d+)""")
         val DEPARTURE = Regex("""^(\d{1,2}:\d{2})\s+(\S+)\s+(.+?)\s*(\([^)]*\))?\s*$""")
-        val PLATFORM = Regex("""\b(voie|quai|platform|track)\b""")
+        val PLATFORM = Regex("""\b(?:voie|quai|platform|track)\b|플랫폼|승강장""")
         val WALK = listOf("marcher", "marchez", "rejoindre", "walk", "head to")
-        val MINUTES = Regex("""\d+\s?min""")
-        val ETA_REMAINING = Regex("""\((\d+)\s?min\)""")
+        val WALK_AFTER = listOf("걷기", "도보", "이동하기")
+        val HANGUL = Regex("""\p{IsHangul}""")
+        val MINUTES = Regex("""\d+\s?(?:min|분)""")
+        val ETA_REMAINING = Regex("""\((\d+\s?(?:min|분))\)""")
     }
 }

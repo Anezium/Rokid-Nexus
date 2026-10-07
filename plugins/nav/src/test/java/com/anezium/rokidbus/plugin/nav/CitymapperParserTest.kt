@@ -126,6 +126,60 @@ class CitymapperParserTest {
         assertEquals("Prenez la sortie 3", guidance.secondary)
     }
 
+    // Korean steps below are composed from Citymapper 11.59's own `ko` strings
+    // (step_walk_to, walk_to_stop_bus, d_min_away, step_ride_stops_to,
+    // on_journey_eta), not captured on a device.
+    private val koreanEta = "도착 18:23 (83분)"
+
+    @Test
+    fun `a Korean walk reads its verb-last title, the minutes and the stop`() {
+        val guidance = CitymapperParser().parse(step("정류소까지 걷기", "시청", "4분 거리", koreanEta))!!
+
+        assertEquals("walk", guidance.glyph)
+        assertEquals("4분", guidance.primary)
+        assertEquals("시청", guidance.secondary)
+        assertEquals("18:23", guidance.eta)
+
+        val untimed = CitymapperParser().parse(step("역까지 걷기", "강남역", eta = koreanEta))!!
+        assertEquals("걷기", untimed.primary)
+    }
+
+    @Test
+    fun `a Korean wait and ride keep the line and count the stops down`() {
+        val parser = CitymapperParser()
+        val wait = parser.parse(step("대기 470 또는 471", "4, 11분", eta = koreanEta))!!
+        assertEquals("bus", wait.glyph)
+        assertEquals("470", wait.badge)
+        assertEquals("4분", wait.primary)
+
+        val ride = parser.parse(step("3 정거장 뒤 하차", "강남역", eta = koreanEta))!!
+        assertEquals("bus", ride.glyph)
+        assertEquals("470", ride.badge)
+        assertEquals("3 정거장", ride.primary)
+        assertEquals(NavTrack(count = 4, at = 0, target = 3, label = "강남역"), ride.track)
+        assertFalse(ride.imminent)
+
+        assertTrue(parser.parse(step("1 정거장 뒤 하차", "강남역", eta = koreanEta))!!.imminent)
+    }
+
+    @Test
+    fun `a Korean wait reads with the verb on either side, and line 2 is the metro`() {
+        val guidance = CitymapperParser().parse(step("2호선 대기", "0, 5분", eta = koreanEta), NavLabels(now = "Now"))!!
+
+        assertEquals("metro", guidance.glyph)
+        assertEquals("2호선", guidance.badge)
+        assertEquals("Now", guidance.primary)
+        assertTrue(guidance.imminent)
+    }
+
+    @Test
+    fun `a Korean step it does not know keeps the trip's minutes in Korean`() {
+        val guidance = CitymapperParser().parse(step("3번 출구로 나가기", eta = koreanEta))!!
+
+        assertEquals(NavText.ROUTE_GLYPH, guidance.glyph)
+        assertEquals("83분", guidance.primary)
+    }
+
     @Test
     fun `other Citymapper notifications and empty layouts are refused`() {
         val parser = CitymapperParser()

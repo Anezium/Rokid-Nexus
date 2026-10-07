@@ -1,22 +1,66 @@
 # Navigation
 
-Navigation follows the route Google Maps or Citymapper is already guiding on
-the phone and keeps it on the glasses as one activity: the next maneuver or leg,
+Navigation follows the route Google Maps, Citymapper, OsmAnd, Organic Maps, maps.me or Yandex Maps
+is already guiding on the phone and keeps it on the glasses as one activity: the next maneuver or leg,
 the distance or the stops left, the street or the stop, and the arrival time.
 A new step flares; the moment a turn is a few metres away, or the stop to get
 off at is next, is urgent. When the app stops guiding, the activity ends.
 
 Navigation reads notifications and nothing else. It needs Notification Access,
-and it ignores every notification that is not Google Maps' `navigation`
-guidance or Citymapper's GO `trip-progress`, before reading it. Guidance lives
-in process memory only; nothing is stored.
+and ignores unknown packages and disabled sources before reading their text.
+Each parser also checks its navigation channel/category and ongoing state.
+Guidance lives in process memory only; nothing is stored.
 
 ## What it reads
+
+- **maps.me** (`com.mapswithme.maps.pro`): background driving distance and
+  next street on `ActiveNavigationChannel`, captured in English and French
+  with 17.12.72038-googleRelease. Disable its picture-in-picture mode and
+  leave the app for the notification to appear. Its bitmap-only maneuver
+  stays neutral; no ETA, close-turn warning or arrival is inferred. The APK
+  notification code also enables cycling, but excludes walking and transit;
+  cycling has not been exercised on the emulator. On a Galaxy S23 (Android
+  16) maps.me never updates it: in picture-in-picture it posts no
+  notification, and without it Android refuses its navigation service the
+  location ("Foreground service started from background can not have
+  location access"), so the first distance stays frozen. Organic Maps does
+  not have this problem.
+
+- **Yandex Maps** (`ru.yandex.yandexmaps`): driving distance and street, plus
+  ETA from its expanded notification view. Captured in English and Russian
+  on the API 36.1 emulator with version 30.9.1. Its maneuver is bitmap-only,
+  so the glyph stays neutral and a short distance does not trigger an urgent
+  turn. The generic "Navigator is running" notification is ignored; that was
+  all the walking trip and the initial leg of a metro route exposed. Cycling,
+  transit ride/transfer steps and arrival are not verified.
+  French is not among its [documented app languages](https://yandex.com/support/m-maps/en/configure-app).
+
+- **OsmAnd / OsmAnd+** (`net.osmand`, `net.osmand.plus`) posts a distance and
+  maneuver title plus a BigTextStyle route description and trip summary.
+  Navigation reads the next distance and the summary's ETA, not the trip's
+  distance or the following leg's distance. English, French and Korean
+  maneuver words come from upstream `route_*` resources. Unworded arrows,
+  including exit-only roundabout instructions, stay neutral. Zero metres
+  does not mean arrival; route removal ends the activity. Driving captures
+  from OsmAnd+ 5.4.4 confirm English/French straight and right-turn steps,
+  including a 300 m to 15 m countdown. After a language change, an old-language
+  description is omitted until its maneuver prefix matches the title; confirmed
+  distance, maneuver and ETA remain visible. Korean remains source-derived. Contract derived
+  from [NavigationNotification](https://github.com/osmandapp/OsmAnd/blob/7c4433506fe831e32ebb791522ac8ecd5262ca09/OsmAnd/src/net/osmand/plus/notifications/NavigationNotification.java).
+
+- **Organic Maps** (`app.organicmaps`, GitHub `app.organicmaps.web`) posts
+  distance as title and street as text on the `NAVIGATION` channel. The
+  maneuver is bitmap-only: Navigation keeps the neutral route glyph and
+  does not infer a turn warning or arrival from a short/zero distance.
+  There is no ETA; at arrival the app removes its notification. English
+  and French metric fields are covered. English walking (distance only) and French driving (distance and street)
+  were captured on the API 36.1 emulator with Organic Maps 2026.08.27-18-web. Contract derived from upstream
+  [NavigationService](https://github.com/organicmaps/organicmaps/blob/98099c37a3c353a240a9d41959492e67990a2083/android/libs/routing/src/main/java/app/organicmaps/routing/NavigationService.java).
 
 - **Google Maps** posts turn-by-turn as a `ProgressStyle` notification:
   `"80 m · Prendre à droite sur Av. X"` as the title and the arrival time as the
   sub-text. The maneuver itself is a bitmap, so the arrow comes from the
-  instruction's words (English and French); one it cannot place gets the
+  instruction's words (English, French and Korean); one it cannot place gets the
   plugin's neutral `route` mark instead of a guessed arrow. Its progress is a
   share of the whole trip, which barely moves, so it is not shown.
 - **Google Maps on public transport** posts an empty notification first and
@@ -43,7 +87,7 @@ transcript test pins Navigation's activity traffic across that move.
 ## Settings
 
 The plugin screen on the phone (Rokid Nexus, Navigation) has a main switch and
-one switch per app, Google Maps and Citymapper. Switching one off ends that
+one switch per app. OsmAnd editions share a switch, as do Organic Maps editions. Switching one off ends that
 app's live route on the glasses at once and ignores its guidance until it is
 switched back on, so nobody has to uninstall the plugin to keep one app off
 the HUD. Switched back on, a route already running is picked up straight away.
@@ -54,9 +98,13 @@ The screen also asks for Notification Access and shows the route it sees.
 - Both Rokid Nexus hubs 1.5.0 or newer. Badge, measure, track and the
   urgent beat are activity extras; a hub that does not announce them shows the
   same route without them.
-- Google Maps or Citymapper set to English or French, the two wordings the
-  plugin reads.
+- Google Maps or Citymapper set to English, French or Korean, the wordings the
+  plugin reads. Korean is read from the apps' own Korean strings and has not
+  yet been checked on a real trip in Korea.
 - Notification Access for Navigation (Settings button in the plugin screen).
+
+See [validation evidence and device checklist](VALIDATION.md) for observed
+formats, mode limits and the remaining phone/glasses checks.
 
 ## Build
 

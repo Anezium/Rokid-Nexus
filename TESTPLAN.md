@@ -179,6 +179,20 @@ Useful PASS log fragments:
 - Phone probe: `Big echo reply ... side=glasses`
 - Phone probe: `HTTP via bus status=200 totalBytes=...`
 
+## Phone hub command boundary
+
+From a separate APK, send starts without authority for `STOP`, `SET_TOKEN`, install/query/open/setup, unknown and empty actions; verify rejection and unchanged hub settings.
+Repeat with `startService` and `startForegroundService`, hub enabled/disabled, Bluetooth permission granted/denied, and a plugin bound; wait beyond the FGS deadline and check for crashes.
+Repeat in debug/release, then exercise the same actions through the phone UI and bind an approved plugin from another publisher.
+Only `DEBUG_IMAGE_SURFACE` and `DEBUG_MANUAL_PAIRING` retain external starts in debug builds (including other apps); release rejects both.
+```sh
+adb shell am start-foreground-service -n com.anezium.rokidbus.phone/.BusHubService -a com.anezium.rokidbus.phone.DEBUG_IMAGE_SURFACE
+adb shell am start-foreground-service -n com.anezium.rokidbus.phone/.BusHubService -a com.anezium.rokidbus.phone.DEBUG_MANUAL_PAIRING --es manual_operation start
+adb shell am startservice -n com.anezium.rokidbus.phone/.BusHubService -a com.anezium.rokidbus.phone.DEBUG_MANUAL_PAIRING --es manual_operation cancel
+```
+Manual pairing also accepts `manual_operation=submit`, `manual_host`, integer `manual_pair_port`, and `manual_code`; use the private UI for real codes to avoid shell history.
+Retry UI commands interrupted by process death; null sticky restarts must not enable a stopped hub. Android `stopService` is outside this command gate.
+
 ## Image surface v1 hardware gates
 
 Install the debug phone and glasses hubs, arm accessibility, start both hubs,

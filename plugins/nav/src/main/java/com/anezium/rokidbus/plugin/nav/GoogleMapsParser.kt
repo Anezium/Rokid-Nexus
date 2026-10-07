@@ -29,6 +29,11 @@ import com.anezium.rokidbus.shared.ActivitySurfaceContract
  *            shortCriticalText "17:48"
  *     every step subText "Arrivée à 18:51"
  *
+ * In Korean, Maps' own `ko` strings put the verb last: "도보 3분(250m)",
+ * "470 탑승", "정류장 3개", "곧 <stop>에서 하차", "18:51 도착". Korea has
+ * no turn-by-turn guidance in Maps, so transit is the shape that matters
+ * there.
+ *
  * Its text line is what tells the two apart: turn-by-turn leaves it empty.
  * Anything that is not a navigation notification with guidance in it yields
  * null: Navigation shows nothing rather than a wrong street.
@@ -101,14 +106,14 @@ internal object GoogleMapsParser {
         val place = parts.firstOrNull()
         val folded = NavText.fold(title)
         val context = NavText.fold(listOf(title, notification.text.orEmpty()).joinToString(" "))
-        val stops = TRANSIT_STOPS.find(title)
+        val stops = TRANSIT_STOPS.find(title) ?: TRANSIT_STOPS_KO.find(title)
         val nextStop = NEXT_STOP.any(folded::contains)
         val arrived = TRANSIT_ARRIVED.any(folded::contains)
-        val boarding = TRANSIT_BOARD.any(folded::startsWith)
-        val line = transitLine(context)
+        val boarding = TRANSIT_BOARD.any(folded::startsWith) || TRANSIT_BOARD_KO.containsMatchIn(title)
+        val line = transitLine(context) ?: TRANSIT_BOARD_KO.find(title)?.groupValues?.get(1)?.trim()
         val glyph = when {
             arrived -> NexusGuidanceGlyphs.ARRIVE
-            TRANSIT_WALK.any(folded::startsWith) -> NexusGuidanceGlyphs.WALK
+            TRANSIT_WALK.any(folded::startsWith) || folded.contains("도보") -> NexusGuidanceGlyphs.WALK
             else -> transitVehicle(context) ?: line?.let(::vehicleOfLine) ?: NavText.ROUTE_GLYPH
         }
         val short = notification.shortCriticalText?.trim()
@@ -155,6 +160,11 @@ internal object GoogleMapsParser {
         Regex("""\b(metro|m\d{1,2})\b""").containsMatchIn(context) -> NexusGuidanceGlyphs.METRO
         Regex("""\btram(way)?\b""").containsMatchIn(context) -> NexusGuidanceGlyphs.TRAM
         Regex("""\b(bus|autobus|noctilien)\b""").containsMatchIn(context) -> NexusGuidanceGlyphs.BUS
+        // Hangul has no \b around it in Java; these match anywhere.
+        Regex("""ktx|itx|srt|기차|열차""").containsMatchIn(context) -> NexusGuidanceGlyphs.TRAIN
+        Regex("""지하철|호선""").containsMatchIn(context) -> NexusGuidanceGlyphs.METRO
+        context.contains("트램") -> NexusGuidanceGlyphs.TRAM
+        context.contains("버스") -> NexusGuidanceGlyphs.BUS
         else -> null
     }
 
@@ -169,7 +179,8 @@ internal object GoogleMapsParser {
             Regex("""^[a-e]$""").matches(plain) -> NexusGuidanceGlyphs.TRAIN
             Regex("""^t\d{1,2}[a-z]?$""").matches(plain) -> NexusGuidanceGlyphs.TRAM
             Regex("""^m\d{1,2}$""").matches(plain) -> NexusGuidanceGlyphs.METRO
-            Regex("""^\d{3,4}[a-z]?$""").matches(plain) -> NexusGuidanceGlyphs.BUS
+            plain.endsWith("호선") -> NexusGuidanceGlyphs.METRO
+            Regex("""^\d{3,4}[a-z]?$""").matches(plain) || Regex("""^\d+-\d+$""").matches(plain) -> NexusGuidanceGlyphs.BUS
             else -> null
         }
     }
@@ -180,11 +191,14 @@ internal object GoogleMapsParser {
 
     private const val CATEGORY_NAVIGATION = "navigation"
     private val TRANSIT_STOPS = Regex("""(\d+)\s+(arr[êe]ts?|stops?)\b""", RegexOption.IGNORE_CASE)
-    private val NEXT_STOP = listOf("prochain arret", "next stop")
-    private val TRANSIT_ARRIVED = listOf("vous etes arrive", "you have arrived", "you've arrived")
+    private val TRANSIT_STOPS_KO = Regex("""정류장\s*(\d+)\s*개""")
+    private val NEXT_STOP = listOf("prochain arret", "next stop", "다음 경유지", "다음 역", "곧 ")
+    private val TRANSIT_ARRIVED = listOf("vous etes arrive", "you have arrived", "you've arrived", "도착했습니다")
     private val TRANSIT_WALK = listOf("marchez", "marcher", "walk")
     private val TRANSIT_BOARD = listOf("prenez", "montez", "take ", "board")
-    private val MINUTES = Regex("""\d+\s?min""")
+    /** "470 탑승", "2호선(으)로 환승": the line comes first. */
+    private val TRANSIT_BOARD_KO = Regex("""^(.+?)\s*(?:\(으\)로)?\s*(?:탑승|환승)$""")
+    private val MINUTES = Regex("""\d+\s?(?:min|분)""")
     private val PARENTHESISED_DISTANCE = Regex("""\(([^)]+)\)""")
     private val DIGITS = Regex("""\d+""")
     private val LINE = Regex("""\b(bus|rer|ligne|line|metro|tram)\s+([a-z]?\d{1,4}[a-z]?|[a-z])\b""")

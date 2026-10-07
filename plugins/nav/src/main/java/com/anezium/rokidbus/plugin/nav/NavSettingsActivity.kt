@@ -18,7 +18,7 @@ import com.anezium.rokidbus.client.ui.NexusUi
 /**
  * Navigation's switches (all of it, or one app at a time) and the one thing it
  * needs from the wearer: Notification Access, so it can read the guidance
- * Google Maps and Citymapper already post.
+ * the enabled apps already post.
  */
 class NavSettingsActivity : Activity() {
     private lateinit var accessStatus: TextView
@@ -119,6 +119,10 @@ class NavSettingsActivity : Activity() {
         listOf(
             Triple(NavSource.GOOGLE_MAPS, current.googleMaps, R.string.nav_settings_maps_sub),
             Triple(NavSource.CITYMAPPER, current.citymapper, R.string.nav_settings_citymapper_sub),
+            Triple(NavSource.ORGANIC_MAPS, current.organicMaps, R.string.nav_settings_organic_sub),
+            Triple(NavSource.OSMAND, current.osmand, R.string.nav_settings_osmand_sub),
+            Triple(NavSource.YANDEX_MAPS, current.yandexMaps, R.string.nav_settings_yandex_sub),
+            Triple(NavSource.MAPS_ME, current.mapsMe, R.string.nav_settings_maps_me_sub),
         ).forEach { (source, checked, sub) ->
             val control = NexusUi.switch(this@NavSettingsActivity).apply {
                 isChecked = checked
