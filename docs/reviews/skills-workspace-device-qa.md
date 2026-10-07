@@ -250,6 +250,38 @@ were not performed; the earlier multi-topic retrieval limitation remains open.
 These checks used the existing installed QA APKs. No build or unit-test rerun was
 needed for this device-state recovery and documentation-only update.
 
+### General-user release readiness
+
+The recovered owner's phone does not establish an unattended recovery path for
+other users. The access-mode refresh above uses privileged shell operations;
+an ordinary Assistant installation cannot reproduce it through the public API.
+[AOSP's UID app-op setter](https://android.googlesource.com/platform/frameworks/base/+/refs/heads/main/core/java/android/app/AppOpsManager.java)
+requires `MANAGE_APP_OPS_MODES`. Do not ship an automatic system-permission reset,
+an ADB setup requirement, or broad storage access as the Workspace solution.
+
+Before presenting native folder setup as generally release-ready:
+
+1. Add setup guidance to create or choose a dedicated local subfolder, for
+   example `Download/NexusWorkspace`, then select `Use this folder`. Android 11+
+   intentionally blocks selection of the storage root and `Download` itself;
+   [the SAF documentation](https://developer.android.com/training/data-storage/shared/documents-files#access-restrictions-1)
+   describes these restrictions.
+2. Provide persistent setup help and actionable retry/reselect guidance for
+   failed access checks. Assistant cannot directly observe a disabled button
+   inside the system picker, and canceling it must remain a normal cancellation,
+   not a diagnosis of this OS failure. A phone restart can be suggested as a
+   troubleshooting step, but was not validated as a fix for this incident.
+3. Validate first installation, grant persistence after a device reboot, revoked
+   grants, and folder replacement on clean supported phones without access-mode
+   changes. Include the observed Samsung/Android 16 configuration and another
+   manufacturer; preserve the existing local-only and read-only contracts.
+
+If ordinary setup still fails on a supported phone, keep that compatibility issue
+open and investigate a user-selected import/share-to-Assistant path into plugin
+private storage as a separate product change. Such a fallback is not implemented
+or validated here and cannot be assumed to survive the same provider failure.
+The exact cause and prevalence of this incident remain unconfirmed.
+
 ## Handoff state and remaining acceptance
 
 Assistant was left on `Type first`, as requested for testing without microphone
