@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+- **Ask about documents on your phone.** Choose a local Workspace folder in
+  Assistant settings. Index Text, Markdown, and Word body text (`.txt`, `.md`,
+  `.docx`) and send relevant passages with the first question request to any
+  configured provider, including Hermes. Cite the source file when answering;
+  PDF support remains deferred.
+- **Keep document context bounded.** Retrieve at most 2,500 characters of
+  passages, within the existing Memory and notes envelope. Skip unrelated
+  passages and allow one fallback search per turn on structured-tool providers.
+- **Manage the folder locally.** Recheck document metadata on Assistant open,
+  folder changes, or Re-index now; reuse unchanged files. Display indexed counts
+  and safe error reasons, and clear private cached documents when Workspace is
+  turned off or folder access is lost.
+
 ## 1.4.8
 
 - **With the assist button, typing keeps to the band.** No full Assistant card

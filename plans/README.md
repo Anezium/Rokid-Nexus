@@ -38,7 +38,7 @@ refreshed on 2026-09-22. The individual plan headers remain the detail of record
 | [020](020-ink-surface.md) | Ink Surface: native port of the AIUI page format as a Nexus surface tier | IN PROGRESS — public implementation shipped in 1.4.1; M1–M4 complete, M5 hardware conformance and measurement remain |
 | [023](023-activity-v2.md) | Activity v2: autosized panel, badge, measure, track, urgent tone, island motion | SHIPPED 1.5.0 (SDK 0.21.0, Navigation 0.1.0) |
 | [024](024-nexus-skills.md) | Nexus Skills: shared invocation contract, Media Deck, Transit, native transit guidance, and multi-step Assistant conversations | TODO — specification proposal; no implementation |
-| [026](026-assistant-workspace.md) | Assistant Workspace: local document indexing and first-request excerpt injection | TODO — specification proposal; awaiting owner approval; no implementation |
+| [026](026-assistant-workspace.md) | Assistant Workspace: local document indexing and first-request excerpt injection | IN PROGRESS — approved and implemented; JVM tests/build pass; owner device validation and reviews pending |
 
 Status values are `TODO`, `IN PROGRESS`, `BLOCKED`, and `DONE`. Update both this
 table and the individual plan when execution status changes. Current priorities

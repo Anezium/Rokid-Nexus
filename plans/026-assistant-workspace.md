@@ -1,10 +1,11 @@
 # Plan 026 — Assistant Workspace: local documents in the first answer
 
-Status: TODO — specification proposal, 2026-10-07. No implementation or device
-validation. Baseline: local `main` at `49128717`, branch
-`dev/assistant-workspace`. Recommendations below require the owner's approval
-in this thread before implementation starts. Limits are proposed, not measured
-device performance or released behavior.
+Status: IN PROGRESS — approved and implemented, 2026-10-07. JVM tests and the
+debug build pass; owner device validation and the separate review passes remain
+pending. Baseline: local `main` at `49128717`, branch
+`dev/assistant-workspace`. The owner's **go** in this thread approved all four
+recommendations before implementation. Limits are implemented bounds, not
+measured device performance or released behavior.
 
 ## Product outcome
 
@@ -51,7 +52,7 @@ shared meaningful tokens, or freshness before a metadata check completes.
 
 ## Existing foundations and gaps
 
-Sources inspected for this proposal:
+Sources inspected for this plan:
 
 | Source | Current behavior and implication |
 |---|---|
@@ -77,7 +78,7 @@ Recommended v1:
 | `.txt` | Stream UTF-8, accepting a UTF-8 BOM; reject invalid encoding/binary data rather than guessing. Normalize line endings and paragraph whitespace. | File name; no invented heading. |
 | `.md` | Same bounded text reader. Recognize ATX and Setext headings outside fenced code; preserve plain source text without fetching links or images. | File name and the nested heading path. |
 | `.docx` | Include only a small body-text adapter: `ZipInputStream`, the exact `word/document.xml` entry, and a streaming XML parser collecting `w:t`, paragraph breaks, tabs, and line breaks. No Apache POI or new dependency. Keep format-specific code around 50 lines, using common bounded-stream helpers; if safe extraction needs more, defer this adapter and report the scope change. | File name; no styles-based heading reconstruction in v1. |
-| PDF text | Recommend deferring PDF to v2 pending question 1 below. Count PDFs as unsupported without reading their contents. The UI explicitly lists supported types. | Future real extractor can add page provenance. |
+| PDF text | Defer PDF to v2, as approved in owner decision 1 below. Count PDFs as unsupported without reading their contents. The UI explicitly lists supported types. | Future real extractor can add page provenance. |
 
 The DOCX reader never unpacks files to disk, resolves XML entities, follows
 relationships, or reads external references. Disable DTD/external entity
@@ -297,7 +298,7 @@ battery, and incremental index cost; cloud embeddings remain excluded.
 
 ## 5. Prompt format, existing caps, and provider integration
 
-Recommended allocation pending question 4: treat the existing joined personal
+Approved allocation from owner decision 4: treat the existing joined personal
 context's effective maximum as the aggregate envelope: **6,000 + 4,000 + 2 =
 10,002 characters**, where the two characters are the existing join separator.
 This is derived from current source limits, not an existing named aggregate
@@ -420,14 +421,14 @@ After loss of access, the On choice can remain selected with `Folder
 unavailable`; Choose folder is the recovery action. Re-index cannot bypass a
 missing grant. Enable/disable is independent from the Memory sync toggle.
 
-## 8. Delivery slices after approval
+## 8. Delivery slices
 
 Small commits, one concern each; no version bump, release, tag, push, or merge.
 
 | Slice | Concrete deliverable | Exit condition |
 |---|---|---|
 | A — index model and retrieval | `WorkspaceRetriever.kt`, pure tokenizer/chunker/diff/budget helpers, FR/EN fixture tests. | Ranking, empty results, heading boundaries, and budgets have deterministic JVM coverage. |
-| B — private store and SAF indexing | `WorkspaceStore.kt`, `WorkspaceIndexer.kt`, thin fakeable SAF/grant gateway, optional compact DOCX adapter. | Atomic snapshots, unchanged-file reuse, removal, revocation, and late-worker invalidation are covered. |
+| B — private store and SAF indexing | `WorkspaceStore.kt`, `WorkspaceIndexer.kt`, thin fakeable SAF/grant gateway, compact DOCX adapter. | Atomic snapshots, unchanged-file reuse, removal, revocation, and late-worker invalidation are covered. |
 | C — settings and first-request injection | Workspace card, picker/persisted read grant, active-lifetime refresh triggers, common prompt assembly. | All providers receive the bounded block in the first request; Memory/notes and HUD/TTS behavior remain intact. |
 | D — fallback and verification | `SearchWorkspaceTool.kt`, one-search limit in registry, Unreleased changelog entry, provider transcript fixtures. | Only eligible providers advertise it; happy path remains one provider round and required module checks pass. |
 
@@ -439,9 +440,10 @@ Tests live under the matching `src/test/java/` package. Update
 
 ## 9. Acceptance and verification plan
 
-These are required future checks, **not tests executed for this document**.
-Run pure Kotlin/JVM unit tests with fake gateways and provider transcripts; do
-not require a device, instrumented resolver, or live network for unit acceptance.
+Use the following acceptance matrix for implementation and review. Run pure
+Kotlin/JVM unit tests with fake gateways and provider transcripts; do not require
+a device, instrumented resolver, or live network for unit acceptance. See the
+observed verification below for completed checks and remaining device work.
 
 | Area | Required scenario and observable result |
 |---|---|
@@ -452,7 +454,7 @@ not require a device, instrumented resolver, or live network for unit acceptance
 | Empty behavior | Unknown/stopword-only queries, below-coverage passages, empty index, disabled state, failed validation, and zero prompt room yield exactly `""` with no fabricated provenance. |
 | Index diff | Fake content-open counters prove initial files are read once and unchanged files zero additional times, including Re-index now. Timestamp/size changes reread only their file; rename reuses text; removed files lose chunks. Unknown metadata is skipped. |
 | Index bounds/failures | File, entry, depth, time, text/chunk, ZIP, and serialized-byte limits are enforced. Concurrent edits, partial enumeration, extractor errors, and corrupt JSON never expose a partial or stale invalid snapshot. |
-| DOCX | If included, a small zipped body-text fixture preserves paragraph breaks/Unicode. Missing XML, malformed ZIP/XML, DTD/entities, excessive entries, and decompression overflow fail safely, with no filesystem unpack or external resolution. |
+| DOCX | A small zipped body-text fixture preserves paragraph breaks/Unicode. Missing XML, malformed ZIP/XML, DTD/entities, excessive entries, and decompression overflow fail safely, with no filesystem unpack or external resolution. |
 | SAF grant lifecycle | A fake grant gateway verifies only the returned read flag is persisted, restart restores the saved URI, cancel/rejected authority leaves the choice unchanged, and replacement releases the old workspace grant. |
 | Revocation/removal | Fake revoked grant, removed folder, root permission exception, missing root, and query timeout yield `Folder unavailable`/safe check status, no excerpts/tool, and no crash; cache clears when access is lost. Device checks separately validate actual Android persistence. |
 | Off and concurrency | Off during scan/write/retrieval immediately suppresses delivery, deletes cache/temp files, and prevents late generation publication. Re-enable rebuilds only under the retained valid grant. Closing a session leaves no observer or worker leak. |
@@ -472,13 +474,38 @@ Redirect Gradle stdout/stderr to an OS temporary file and read only its real
 tail; record the observed exit code. Paste the actual output tail in the owner
 handoff. Never modify or regenerate `local.properties`, create a private
 SDK/Gradle home/cache in the tree, or repair environment configuration. If an
-environment failure blocks verification, stop and report it. No build was run
-for this documentation-only deliverable.
+environment failure blocks verification, stop and report it.
 
-### Owner's device checklist (after implementation)
+### Observed verification (2026-10-07)
+
+The exact command above completed with exit code 0. The module report contains
+391 tests with zero failures/errors, including 50 Workspace tests. The debug APK
+was assembled. Coverage includes FR/EN retrieval, extraction bounds and safe XML
+diagnostics, metadata reuse, private cache clearing, fake grant/observer
+lifecycle, prompt caps, catalog-provider request fixtures, Hermes gating, and
+the one-search fallback budget. No device or live-provider check was performed;
+the 150 ms access-check bound and retrieval latency targets still need device
+validation.
+
+The command output was redirected to an OS temporary file. Its actual tail was:
+
+```text
+> Task :plugin-assistant:compileDebugUnitTestJavaWithJavac NO-SOURCE
+> Task :plugin-assistant:processDebugUnitTestJavaRes UP-TO-DATE
+> Task :plugin-assistant:testDebugUnitTest
+
+BUILD SUCCESSFUL in 29s
+82 actionable tasks: 8 executed, 74 up-to-date
+```
+
+Keep machine configuration unchanged: `local.properties` remains absent in this
+worktree; use the existing Android SDK and Gradle environment. Add no dependency,
+manifest permission, hub/SDK/bus/public-contract change, or version bump.
+
+### Owner's device checklist (pending)
 
 1. Open Assistant settings; verify Workspace is visible with the chosen provider, including Hermes if used, and defaults to Off.
-2. Turn On and pick a phone-local folder with `.txt`/`.md` fixtures (and `.docx` if retained); wait for its name, nonzero file/excerpt counts, and indexed time.
+2. Turn On and pick a phone-local folder with `.txt`/`.md`/`.docx` fixtures; wait for its name, nonzero file/excerpt counts, and indexed time.
 3. Reopen settings after ending/reopening Assistant; verify the folder grant and counts survive without selecting it again.
 4. Ask on the glasses a question answered only by a file; check its exact fact and file-name citation on the HUD and out loud with speech enabled, at the usual response latency.
 5. Ask a question absent from those files; check no irrelevant document facts are used and missing workspace coverage is acknowledged when requested.
@@ -487,13 +514,16 @@ for this documentation-only deliverable.
 8. Choose the local folder again and verify recovery; turn Off and check zero cached/searchable counts and continued ordinary Memory/notes answers.
 9. Turn On again and verify a fresh index; if using a structured-tool provider, try a question whose specific wording needs fallback and check at most one search while ordinary file questions keep their first-call path.
 
-## 10. Open questions for the owner
+## 10. Owner decisions
+
+All four recommendations below were approved by the owner's **go** in this
+thread on 2026-10-07. No implementation question remains open.
 
 1. **Is PDF text essential in v1?** Recommend `.txt`/`.md` plus the compact DOCX reader now and PDF in v2: no PDF dependency cost, no false promise of extracting text with PdfRenderer. If PDF is essential, approve a revised extractor/size/test slice before implementation.
 2. **Include minimal DOCX body text or defer it?** Recommend including it only while the format adapter stays around 50 lines and reuses bounded streams/secure XML; no layout or headings-by-style promise. Defer if those constraints cannot be met cleanly.
 3. **Include subfolders?** Recommend a deterministic recursive walk to depth 4 under the 100-file/1,000-entry caps. This supports a small organized reference folder; a flat-only selection is simpler but ignores documents in its subfolders.
 4. **How should the aggregate personal-context cap apply to Workspace?** Recommend the conservative 10,002-character existing effective envelope, giving unchanged Memory/notes first priority and Workspace at most 2,500 characters of remaining space. This can omit Workspace when those sources fill the envelope; any different interpretation needs an explicit clarification of the MUST-NOT before coding.
 
-The owner can approve these recommendations with **go** in this thread, or
-answer the questions first. Commit this spec and stop here. Implementation,
-changelog changes, and device work start only after that approval.
+Commit the approved implementation and leave the branch clean for the separate
+model review, the owner's main-assistant review, and the device checklist. Let
+the owner decide any release, tag, push, merge, or version bump.
