@@ -206,7 +206,7 @@ object PluginGrantCodec {
     }
 }
 
-private class SharedPreferencesGrantStorage(
+internal class SharedPreferencesGrantStorage(
     private val preferences: android.content.SharedPreferences,
 ) : PluginGrantStorage {
     override fun read(): String? = preferences.getString(KEY_GRANTS, null)

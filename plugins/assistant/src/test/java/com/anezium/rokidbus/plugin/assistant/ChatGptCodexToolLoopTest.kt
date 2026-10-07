@@ -75,15 +75,12 @@ class ChatGptCodexToolLoopTest {
         val firstBody = JSONObject(transport.requests[0].body)
         assertEquals(2, firstBody.getJSONArray("tools").length())
 
+        // The continuation keeps the tools while the turn has rounds left, so a result can
+        // lead to a dependent call; the phase still refuses a second photo.
         val secondBody = JSONObject(transport.requests[1].body)
         val secondTools = secondBody.getJSONArray("tools")
-        assertEquals(1, secondTools.length())
+        assertEquals(2, secondTools.length())
         assertEquals("web_search", secondTools.getJSONObject(0).getString("type"))
-        assertTrue(
-            (0 until secondTools.length()).none { index ->
-                secondTools.getJSONObject(index).optString("name") == TAKE_PHOTO_TOOL_NAME
-            },
-        )
 
         val replay = secondBody.getJSONArray("input")
         assertEquals(3, replay.length())

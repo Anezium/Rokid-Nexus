@@ -27,6 +27,16 @@ object BusConstants {
     const val META_PLUGIN_SETTINGS_ACTIVITY = "com.anezium.rokidbus.plugin.SETTINGS_ACTIVITY"
     const val META_PLUGIN_LAUNCHABLE = "com.anezium.rokidbus.plugin.LAUNCHABLE"
     const val META_PLUGIN_GUARDIAN_SERVICE = "com.anezium.rokidbus.plugin.GUARDIAN_SERVICE"
+
+    /**
+     * A raw JSON resource holding the plugin's skill catalog; declaring it requests the
+     * `skills_provider` grant. Hubs that predate skills ignore the key, so the plugin still loads.
+     * See [com.anezium.rokidbus.shared.skills.SkillCatalogParser].
+     */
+    const val META_PLUGIN_SKILLS = "com.anezium.rokidbus.plugin.SKILLS"
+
+    /** `true` requests the `skills_client` grant, ignored by hubs that predate skills. */
+    const val META_PLUGIN_SKILLS_CLIENT = "com.anezium.rokidbus.plugin.SKILLS_CLIENT"
     const val API_VERSION = 3
     const val CXR_CONTROL_MAX_BYTES = 3 * 1024
     val SPP_UUID: UUID = UUID.fromString(SPP_UUID_STRING)
@@ -161,6 +171,22 @@ object BusPaths {
      */
     const val ASSISTANT_TAKEOVER_REQUEST = "/assistant/takeover/request"
     const val ASSISTANT_TAKEOVER_REPLY = "/assistant/takeover/reply"
+
+    /**
+     * Skills: typed operations one plugin publishes and another invokes, always through the
+     * phone hub, which stamps both identities. Client requests need `skills_client`; the
+     * provider's result needs `skills_provider`; every delivery path is hub-only and owner-scoped.
+     * See [com.anezium.rokidbus.shared.skills.SkillsContract]. Skill traffic never leaves the phone.
+     */
+    const val SKILLS_CATALOG_REQUEST = "/skills/catalog/request"
+    const val SKILLS_CATALOG_REPLY = "/skills/catalog/reply"
+    const val SKILLS_INVOKE = "/skills/invoke"
+    const val SKILLS_CANCEL = "/skills/cancel"
+    const val SKILLS_SESSION_CLOSE = "/skills/session/close"
+    const val SKILLS_RESULT = "/skills/result"
+    const val SKILLS_PROVIDER_INVOKE = "/skills/provider/invoke"
+    const val SKILLS_PROVIDER_CANCEL = "/skills/provider/cancel"
+    const val SKILLS_PROVIDER_RESULT = "/skills/provider/result"
 
     /** Phone hub to glasses hub only; see [PhoneBatteryContract] for why it is not a plugin path. */
     const val PHONE_BATTERY = "/phone/battery"

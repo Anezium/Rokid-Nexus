@@ -1,5 +1,7 @@
 package com.anezium.rokidbus.plugin.assistant
 
+import com.anezium.rokidbus.shared.skills.SkillLimits
+import com.anezium.rokidbus.shared.skills.SkillsContract
 import kotlinx.coroutines.CancellationException
 import org.json.JSONObject
 
@@ -50,6 +52,17 @@ internal interface AssistantToolDefinition {
     val executionFailureCode: String
         get() = "${name}_failed"
 
+    /**
+     * Whether a side-effecting tool may run only once per turn. Built-in tools keep that guard;
+     * plugin operations carry their own invocation identity and the hub's duplicate policy.
+     */
+    val oncePerTurn: Boolean
+        get() = sideEffecting
+
+    /** Whether the declared schema is complete enough for a provider's strict schema mode. */
+    val strictSchema: Boolean
+        get() = true
+
     fun isAvailable(context: AssistantToolAvailabilityContext): Boolean
 
     fun validate(argumentsJson: String): AssistantToolValidation
@@ -66,6 +79,8 @@ internal class AssistantToolRegistry(
         AssistantToolSessionContext(active = true)
     },
     private val progressReporter: (String) -> Unit = {},
+    /** Plugin operations for the current turn, named by hub aliases under the reserved prefix. */
+    private val dynamicDefinitions: () -> List<AssistantToolDefinition> = { emptyList() },
 ) {
     private val definitionsByName = definitions.associateBy(AssistantToolDefinition::name)
 
@@ -76,6 +91,9 @@ internal class AssistantToolRegistry(
         definitions.forEach { definition ->
             require(TOOL_NAME.matches(definition.name)) {
                 "Assistant tool names must be stable lowercase identifiers."
+            }
+            require(!definition.name.startsWith(SkillsContract.ALIAS_PREFIX)) {
+                "The ${SkillsContract.ALIAS_PREFIX} prefix is reserved for plugin operations."
             }
             require(definition.description.isNotBlank()) {
                 "Assistant tool descriptions must not be blank."
@@ -92,7 +110,10 @@ internal class AssistantToolRegistry(
     fun availableDefinitions(features: AssistantProviderFeatures): List<AssistantToolDefinition> {
         if (!features.supportsTools) return emptyList()
         val context = AssistantToolAvailabilityContext(features, sessionContext())
-        return definitionsByName.values.filter { definition ->
+        val plugin = runCatching(dynamicDefinitions).getOrDefault(emptyList())
+            .filter { it.name.startsWith(SkillsContract.ALIAS_PREFIX) && TOOL_NAME.matches(it.name) }
+            .distinctBy(AssistantToolDefinition::name)
+        return (definitionsByName.values + plugin).filter { definition ->
             runCatching { definition.isAvailable(context) }.getOrDefault(false)
         }
     }
@@ -114,6 +135,10 @@ internal class AssistantToolExecutionPhase(
     private val resultsByCallId = mutableMapOf<String, AssistantToolResult>()
     private val executedSideEffectingTools = mutableSetOf<String>()
     private var executedCalls = 0
+
+    /** No further call can execute this turn; the runner stops offering tools. */
+    val budgetExhausted: Boolean
+        get() = executedCalls >= MAX_EXECUTED_CALLS
 
     suspend fun execute(call: AssistantToolCall): AssistantToolResult {
         var restoreProgress = true
@@ -142,15 +167,16 @@ internal class AssistantToolExecutionPhase(
         }
         validation as AssistantToolValidation.Valid
 
+        val guarded = definition.sideEffecting && definition.oncePerTurn
         if (
             executedCalls >= MAX_EXECUTED_CALLS ||
-            definition.sideEffecting && definition.name in executedSideEffectingTools
+            guarded && definition.name in executedSideEffectingTools
         ) {
             return memoize(call, AssistantToolResult.Error(TOOL_ERROR_ALREADY_USED))
         }
 
         executedCalls += 1
-        if (definition.sideEffecting) executedSideEffectingTools += definition.name
+        if (guarded) executedSideEffectingTools += definition.name
         val result = try {
             definition.progressLabel?.let(::reportProgress)
             definition.execute(call, validation.arguments)
@@ -175,6 +201,6 @@ internal class AssistantToolExecutionPhase(
     }
 
     private companion object {
-        const val MAX_EXECUTED_CALLS = 3
+        const val MAX_EXECUTED_CALLS = SkillLimits.ASSISTANT_MAX_EXECUTED_CALLS
     }
 }

@@ -1,5 +1,20 @@
 # Changelog — Transit
 
+## Unreleased
+
+- Skills for an approved assistant: favorite stops, stop search, and
+  departures with their observation time and realtime quality, including "the
+  one after that" by trip identity rather than row position.
+- **Journey guidance.** "Take me home" plans a public transport journey to a
+  saved home and guides it step by step in Transit's own activity on the
+  glasses: walk, board, ride with the stops left, get off at the next stop,
+  transfer, arrive. A missed departure replans once, and boarding a later
+  vehicle is still noticed. The journey survives a restart, and opening
+  Transit during it shows every leg.
+- Home setting, chosen from the geocoder. Only its name ever reaches an
+  assistant; its location and yours stay in Transit.
+- Requests identify Transit with its version and a contact.
+
 ## 1.0.4
 
 - Add realtime ETAs for Hong Kong KMB, Citybus, and green-minibus stops, with automatic fallback to Transitous schedules.

@@ -1,5 +1,7 @@
 package com.anezium.rokidbus.plugin.nav
 
+import com.anezium.rokidbus.client.plugin.NexusGuidancePlan
+import com.anezium.rokidbus.client.plugin.NexusGuidancePlanner
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -20,7 +22,7 @@ class OsmAndParserTest {
     @Test
     fun `captured driving countdown keeps one step and warns once at fifteen metres`() {
         // API 36.1 emulator, Notre-Dame to Hotel de Ville, F-Droid x86 build.
-        val planner = NavActivityPlanner()
+        val planner = NexusGuidancePlanner()
         val far = OsmAndParser.parse(step.copy(
             packageName = "net.osmand.plus",
             title = "300 m • Turn right and go",
@@ -35,11 +37,11 @@ class OsmAndParserTest {
         assertEquals("4:12 PM", far.eta)
         assertEquals("15 m • Turn right and go · Quai de l'Hôtel de Ville", close.instruction)
         assertEquals(far.stepKey, close.stepKey)
-        assertTrue(planner.plan(far) is NavPlan.Start)
-        val update = planner.plan(close) as NavPlan.Update
+        assertTrue(planner.plan(far.toGuidanceStep()) is NexusGuidancePlan.Start)
+        val update = planner.plan(close.toGuidanceStep()) as NexusGuidancePlan.Update
         assertTrue(update.significant)
         assertTrue(update.urgent)
-        assertEquals(NavPlan.Unchanged, planner.plan(close))
+        assertEquals(NexusGuidancePlan.Unchanged, planner.plan(close.toGuidanceStep()))
         val straight = OsmAndParser.parse(step.copy(
             title = "80 m • Head",
             bigText = "Head Rue d'Arcole 250 m\n900 m • 7 min • 4:12 PM • 0 km/h",

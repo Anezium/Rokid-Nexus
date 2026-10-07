@@ -453,7 +453,7 @@ internal class ChatGptCodexApiClient(
             .put("name", definition.name)
             .put("description", definition.description)
             .put("parameters", definition.parametersSchema.toJsonObject())
-            .put("strict", true)
+            .put("strict", definition.strictSchema)
 
     companion object {
         const val DEFAULT_ENDPOINT = "https://chatgpt.com/backend-api/codex/responses"
@@ -533,50 +533,51 @@ internal class ChatGptCodexProvider(
                 )
             }
 
-            val firstResponse = apiClient.executeResponses(
-                request = request,
-                modelId = modelId,
-                reasoningEffort = reasoningEffort,
-                input = originalInput,
-                toolDefinitions = toolPhase.availableDefinitions,
-                requestId = request.requestId,
-                onTextDelta = ::streamDelta,
-                onStreamRestart = ::resetStreamedText,
-                onWebSearchStateChanged = ::streamWebSearchState,
-            )
-            currentCoroutineContext().ensureActive()
+            var input = originalInput
+            val adapter = object : AssistantLoopAdapter {
+                override val maxToolRounds: Int = Int.MAX_VALUE
 
-            val functionCalls = firstResponse.outputItems
-                .mapNotNull(::parseFunctionCall)
-            if (functionCalls.isNotEmpty()) {
-                resetStreamedText()
-                val replayInput = JSONArray()
-                originalInput.forEachJsonValue(replayInput::put)
-                functionCalls.forEach { call ->
-                    val result = toolPhase.execute(call)
-                    currentCoroutineContext().ensureActive()
-                    replayInput.put(functionCallReplay(call))
-                    replayInput.put(functionCallOutput(call, result))
+                override suspend fun pass(tools: List<AssistantToolDefinition>, round: Int): AssistantLoopPass {
+                    val result = apiClient.executeResponses(
+                        request = request,
+                        modelId = modelId,
+                        reasoningEffort = reasoningEffort,
+                        input = input,
+                        toolDefinitions = tools,
+                        requestId = request.requestId,
+                        onTextDelta = ::streamDelta,
+                        onStreamRestart = ::resetStreamedText,
+                        onWebSearchStateChanged = ::streamWebSearchState,
+                    )
+                    return AssistantLoopPass(
+                        text = response.toString(),
+                        toolCalls = result.outputItems.mapNotNull(::parseFunctionCall),
+                    )
                 }
-                apiClient.executeResponses(
-                    request = request,
-                    modelId = modelId,
-                    reasoningEffort = reasoningEffort,
-                    input = replayInput,
-                    toolDefinitions = emptyList(),
-                    requestId = request.requestId,
-                    onTextDelta = ::streamDelta,
-                    onStreamRestart = ::resetStreamedText,
-                    onWebSearchStateChanged = ::streamWebSearchState,
-                )
+
+                override fun appendToolResults(
+                    pass: AssistantLoopPass,
+                    results: List<Pair<AssistantToolCall, AssistantToolResult>>,
+                ) {
+                    val replayInput = JSONArray()
+                    input.forEachJsonValue(replayInput::put)
+                    results.forEach { (call, result) ->
+                        replayInput.put(functionCallReplay(call))
+                        replayInput.put(functionCallOutput(call, result))
+                    }
+                    input = replayInput
+                }
+
+                override suspend fun resetVisibleText() = resetStreamedText()
             }
+            val finalText = AssistantToolLoop(toolPhase).run(adapter)
 
             send(
                 AiProviderEvent.MessageDone(
                     ChatMessage(
                         id = messageId,
                         role = "assistant",
-                        content = response.toString(),
+                        content = finalText,
                     ),
                 ),
             )
