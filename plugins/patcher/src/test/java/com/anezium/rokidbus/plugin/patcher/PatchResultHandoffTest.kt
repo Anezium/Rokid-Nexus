@@ -159,6 +159,75 @@ class PatchResultHandoffTest {
         assertNull(shadowOf(activity).nextStartedActivity)
     }
 
+    private fun assertCancelled(screen: ActivityController<PatchActivity>) {
+        assertTrue(screen.get().isFinishing)
+        assertEquals(Activity.RESULT_CANCELED, shadowOf(screen.get()).resultCode)
+        assertNull(shadowOf(screen.get()).resultIntent)
+        assertNull(shadowOf(screen.get()).nextStartedActivity)
+    }
+
+    @Test fun unsuccessfulHubJobsFinishAfterTheirPipOutcomeIsShown() {
+        listOf(PatchJobStatus.CANCELLED, PatchJobStatus.FAILURE, PatchJobStatus.INTERRUPTED).forEach { status ->
+            val store = runningStore()
+            val screen = screen(request(store)).setup()
+            val activity = screen.get()
+            activity.enterPictureInPictureMode(PatchPictureInPicture.params(true))
+            activity.onPictureInPictureModeChanged(true, android.content.res.Configuration())
+            screen.pause()
+            assertTrue(activity.isInPictureInPictureMode)
+            store.change(store.state.value.id) { it.copy(status = status) }
+            shadowOf(Looper.getMainLooper()).idle()
+            assertCancelled(screen)
+            assertFalse(store.state.value.delivered)
+            screen.stop().destroy()
+        }
+    }
+
+    @Test fun unsuccessfulHubJobsFinishWhenTheyEndAfterPipDismissal() {
+        listOf(PatchJobStatus.CANCELLED, PatchJobStatus.FAILURE, PatchJobStatus.INTERRUPTED).forEach { status ->
+            val store = runningStore()
+            val screen = screen(request(store)).setup()
+            val activity = screen.get()
+            activity.enterPictureInPictureMode(PatchPictureInPicture.params(true))
+            activity.onPictureInPictureModeChanged(true, android.content.res.Configuration())
+            screen.pause()
+            activity.moveTaskToBack(true)
+            activity.onPictureInPictureModeChanged(false, android.content.res.Configuration())
+            screen.stop()
+            assertFalse(activity.isFinishing)
+            assertTrue(store.state.value.active)
+            store.change(store.state.value.id) { it.copy(status = status) }
+            shadowOf(Looper.getMainLooper()).idle()
+            assertCancelled(screen)
+            screen.destroy()
+        }
+    }
+
+    @Test fun unsuccessfulHubJobsKeepFullscreenRetryUntilTheScreenIsHidden() {
+        listOf(PatchJobStatus.CANCELLED, PatchJobStatus.FAILURE, PatchJobStatus.INTERRUPTED).forEach { status ->
+            val store = runningStore()
+            val screen = screen(request(store)).setup()
+            store.change(store.state.value.id) { it.copy(status = status) }
+            shadowOf(Looper.getMainLooper()).idle()
+            assertFalse(screen.get().isFinishing)
+            screen.pause().stop()
+            assertCancelled(screen)
+            screen.destroy()
+        }
+    }
+
+    @Test fun hiddenHubSuccessKeepsTheUndeliveredResultForTheReadyNotification() {
+        val store = runningStore()
+        val screen = screen(request(store)).setup()
+        screen.pause().stop()
+        succeed(store)
+        shadowOf(Looper.getMainLooper()).idle()
+        assertFalse(screen.get().isFinishing)
+        assertFalse(store.state.value.delivered)
+        assertNull(shadowOf(screen.get()).nextStartedActivity)
+        screen.destroy()
+    }
+
     @Test fun aHubLaunchTakesOverAnOrphanAfterBackAndNotificationReopen() {
         listOf(20, 30).forEach { hubTask ->
             val store = runningStore()

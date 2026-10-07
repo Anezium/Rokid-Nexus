@@ -417,6 +417,56 @@ class PatchJobServiceTest {
         }
     }
 
+    @Test @Config(sdk = [34]) fun hubPipCancelFinishesWithCancelledResultBeforeTheReaperKills() {
+        val store = store()
+        val job = runningJob(store)
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val exited = CountDownLatch(1)
+        val controller = Robolectric.buildService(PatchJobService::class.java).create()
+        val service = controller.get()
+        service.runJob = { _, _ ->
+            entered.countDown()
+            try { while (release.count > 0) try { release.await() } catch (_: InterruptedException) {} }
+            finally { exited.countDown() }
+        }
+        val screen = Robolectric.buildActivity(PatchActivity::class.java,
+            Intent(PatcherContract.ACTION_PATCH).putExtra(PatcherContract.EXTRA_TARGET_ID, job.targetId))
+        val activity = screen.get()
+        val hub = com.anezium.rokidbus.client.HubTarget.PHONE.packageName
+        shadowOf(activity).setCallingPackage(hub)
+        shadowOf(activity).setCallingActivity(android.content.ComponentName(hub, "$hub.YoutubeSetupActivity"))
+        shadowOf(activity.packageManager).setSystemFeature(android.content.pm.PackageManager.FEATURE_PICTURE_IN_PICTURE, true)
+        screen.setup()
+        service.onStartCommand(Intent(service, PatchJobService::class.java).putExtra(PatchJobService.JOB_ID, job.id), 0, 1)
+        assertTrue(entered.await(5, TimeUnit.SECONDS))
+        org.robolectric.shadows.ShadowProcess.clearKilledProcesses()
+        try {
+            activity.enterPictureInPictureMode(PatchPictureInPicture.params(true))
+            activity.onPictureInPictureModeChanged(true, android.content.res.Configuration())
+            screen.pause()
+            assertEquals("pip", PatchVisibility.mode)
+            val cancel = PatchPictureInPicture(activity).params(store.state.value).actions.single().actionIntent
+            cancel.send()
+            service.onStartCommand(shadowOf(activity).nextStartedService, 0, 2)
+            shadowOf(Looper.getMainLooper()).idle()
+            assertTrue(activity.isFinishing)
+            assertEquals(android.app.Activity.RESULT_CANCELED, shadowOf(activity).resultCode)
+            assertNull(shadowOf(activity).resultIntent)
+            assertEquals(PatchJobStatus.CANCELLED, store.state.value.status)
+            assertFalse(ShadowPowerManager.getLatestWakeLock().isHeld)
+            assertTrue(shadowOf(service).isForegroundStopped)
+            assertFalse(org.robolectric.shadows.ShadowProcess.wasKilled(android.os.Process.myPid()))
+            screen.stop()
+            shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofSeconds(3))
+            assertTrue(org.robolectric.shadows.ShadowProcess.wasKilled(android.os.Process.myPid()))
+            assertEquals(PatchJobStatus.CANCELLED, PatchJobStore.decode(File(service.filesDir, "patch-job.json").readText()).status)
+        } finally {
+            release.countDown(); assertTrue(exited.await(5, TimeUnit.SECONDS))
+            screen.destroy(); controller.destroy()
+        }
+    }
+
     @Test @Config(sdk = [34]) fun retryWhileThePreviousWorkerIsStoppingIsRefusedAndNeverQueued() {
         val store = store()
         val job = runningJob(store)

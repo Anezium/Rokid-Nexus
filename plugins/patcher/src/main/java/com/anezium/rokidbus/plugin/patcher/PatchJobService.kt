@@ -266,6 +266,8 @@ class PatchJobService : Service() {
                 val current = store.state.value
                 if (current.active) store.change(current.id) { it.copy(status = PatchJobStatus.INTERRUPTED,
                     message = "The last patch was interrupted. Retry when you are ready.", result = null) }
+                // A hidden screen can still own the hub's pending activity result.
+                PatchActivity.finishHiddenHubActivity()
                 Process.killProcess(Process.myPid()); return
             }
             handler.postDelayed({ reap() }, CANCEL_GRACE_MS)

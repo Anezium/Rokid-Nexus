@@ -73,6 +73,7 @@ class PatchActivity : Activity() {
     private var result: File? = null
     private lateinit var jobs: PatchJobStore
     private var started = false
+    private var stopped = false
     private var resumed = false
     private var returningResult = false
     private val pip by lazy { PatchPictureInPicture(this) }
@@ -153,7 +154,9 @@ class PatchActivity : Activity() {
                 if (current.status == PatchJobStatus.PREPARING) slot = Slot.STOCK
                 noteFor(current)
                 updateScreenAwake()
+                val wasInPip = isInPictureInPictureMode
                 pip.update(current)
+                if ((wasInPip || stopped) && finishStoppedHubJob()) return@collect
                 if (previousStatus != current.status) renderAll() else updateLive(current)
                 previousStatus = current.status
                 deliverResult()
@@ -894,6 +897,12 @@ class PatchActivity : Activity() {
             .setAction(PatchJobService.CANCEL).putExtra(PatchJobService.JOB_ID, jobs.state.value.id))
     }
     private fun cancelAndClose() { setResult(RESULT_CANCELED); finish() }
+    private fun finishStoppedHubJob(): Boolean {
+        if (!::jobs.isInitialized || !canReturnToHub() || jobs.state.value.status !in
+            setOf(PatchJobStatus.CANCELLED, PatchJobStatus.FAILURE, PatchJobStatus.INTERRUPTED)) return false
+        if (!isFinishing) cancelAndClose()
+        return true
+    }
     private fun updateScreenAwake() {
         if (::jobs.isInitialized && jobs.state.value.active && (resumed || started && isInPictureInPictureMode))
             window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -923,8 +932,13 @@ class PatchActivity : Activity() {
     }
     override fun onResume() { super.onResume(); resumed = true; updateScreenAwake(); if (::jobs.isInitialized) deliverResult() }
     override fun onPause() { resumed = false; updateScreenAwake(); super.onPause() }
-    override fun onStart() { super.onStart(); started = true; updateScreenAwake() }
-    override fun onStop() { started = false; updateScreenAwake(); super.onStop() }
+    override fun onStart() { super.onStart(); started = true; stopped = false; updateScreenAwake() }
+    override fun onStop() {
+        started = false; stopped = true
+        updateScreenAwake()
+        finishStoppedHubJob()
+        super.onStop()
+    }
     @Deprecated("Platform callback") override fun onBackPressed() { cancelAndClose() }
     private fun acquireScreenLock(): java.nio.channels.FileLock? =
         try { lockFile!!.channel.tryLock() } catch (_: java.nio.channels.OverlappingFileLockException) { null }
@@ -950,6 +964,7 @@ class PatchActivity : Activity() {
         /** Task of the screen holding the lock; the service and both screens share the :patcher process. */
         @Volatile private var liveTaskId: Int? = null
         private var liveScreen: WeakReference<PatchActivity>? = null
+        internal fun finishHiddenHubActivity() { liveScreen?.get()?.finishStoppedHubJob() }
         const val EXTRA_READY_JOB_ID = "ready_job_id"
         private const val REQUEST_NOTIFICATIONS = 5
         private const val REQUEST_STOCK = 1
