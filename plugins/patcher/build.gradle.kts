@@ -3,12 +3,14 @@ apply(from = rootProject.file("gradle/plugin-release-signing.gradle"))
 android {
     namespace = "com.anezium.rokidbus.plugin.patcher"
     compileSdk = 36
+    buildFeatures.resValues = true
     defaultConfig {
         applicationId = "com.anezium.rokidbus.plugin.patcher"
         minSdk = 30
         targetSdk = 36
         versionCode = 1
         versionName = "1.0.0"
+        resValue("bool", "patcher_pip_experiment", providers.gradleProperty("patcherPipExperiment").orElse("true").get())
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

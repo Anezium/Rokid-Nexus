@@ -70,6 +70,7 @@ class PatchActivity : Activity() {
     private lateinit var jobs: PatchJobStore
     private var resumed = false
     private var returningResult = false
+    private val pip by lazy { PatchPictureInPicture(this) }
     private var watchedJobId: String? = null
     private var readyJobId: String? = null
     private var backupPassword: CharArray? = null
@@ -133,6 +134,7 @@ class PatchActivity : Activity() {
                 if (current.status == PatchJobStatus.PREPARING) slot = Slot.STOCK
                 noteFor(current)
                 updateScreenAwake()
+                pip.update(current)
                 if (previousStatus != current.status) renderAll() else updateLive(current)
                 previousStatus = current.status
                 deliverResult()
@@ -178,7 +180,8 @@ class PatchActivity : Activity() {
         super.onConfigurationChanged(newConfig)
         // The manifest keeps this activity alive across configuration changes so a running
         // patch survives; rebuild only the views so sizes follow the new configuration.
-        if (::content.isInitialized) build()
+        if (::jobs.isInitialized && isInPictureInPictureMode) pip.show(jobs.state.value)
+        else if (::content.isInitialized) build()
     }
     private fun adopt(loaded: BundleStore.Loaded) {
         bundle = loaded
@@ -834,6 +837,17 @@ class PatchActivity : Activity() {
     private fun updateScreenAwake() {
         if (resumed && ::jobs.isInitialized && jobs.state.value.active) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+    }
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        if (::jobs.isInitialized) pip.leave(jobs.state.value)
+    }
+    override fun onPictureInPictureModeChanged(inPictureInPicture: Boolean, configuration: Configuration) {
+        super.onPictureInPictureModeChanged(inPictureInPicture, configuration)
+        if (screenLock != null) liveTaskId = taskId
+        if (!::jobs.isInitialized) return
+        if (inPictureInPicture) { stopPulse(); pip.show(jobs.state.value) }
+        else { pip.expanded(); build() }
     }
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putString("watched_job", watchedJobId)
