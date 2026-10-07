@@ -101,13 +101,28 @@ class WorkspaceStoreTest {
     }
 
     @Test
-    fun `only platform local tree URIs are accepted`() {
-        assertTrue(isLocalWorkspaceTree(TREE))
-        for (uri in listOf("https://example.com/tree/a", "content://cloud.provider/tree/a",
+    fun `tree URI syntax is checked separately from provider locality`() {
+        assertTrue(isWorkspaceTreeUri(TREE))
+        assertTrue(isWorkspaceTreeUri("content://local.example.documents/tree/a"))
+        assertTrue(isWorkspaceTreeUri("content://cloud.provider/tree/a"))
+        for (uri in listOf("https://example.com/tree/a", "content:///tree/a",
             "content://com.android.externalstorage.documents/document/a", TREE + "?remote=true",
+            TREE + "#fragment", "content://com.android.externalstorage.documents:123/tree/a",
             "content://user@com.android.externalstorage.documents/tree/a")) {
-            assertFalse(uri, isLocalWorkspaceTree(uri))
+            assertFalse(uri, isWorkspaceTreeUri(uri))
         }
+    }
+
+    @Test
+    fun `persisted third-party trees restore without treating their URI as locality proof`() {
+        val directory = temporary.newFolder()
+        val tree = "content://local.example.documents/tree/a"
+        WorkspaceStore(directory).selectTree(tree, "Local documents", enable = true)
+        val restored = WorkspaceStore(directory).snapshot().state
+        assertEquals(tree, restored.settings.treeUri)
+        assertTrue(restored.settings.enabled)
+        assertFalse(restored.validated)
+        assertNull(restored.index)
     }
 
     private fun index(store: WorkspaceStore) = WorkspaceIndex(

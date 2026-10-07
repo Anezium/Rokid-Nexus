@@ -12,6 +12,7 @@ import java.io.InputStream
 import java.nio.charset.CharacterCodingException
 
 internal interface WorkspaceDocumentGateway {
+    suspend fun isLocalTree(treeUri: String): Boolean
     fun hasReadGrant(treeUri: String): Boolean
     fun persistReadGrant(treeUri: String, returnedFlags: Int)
     fun releaseReadGrant(treeUri: String)
@@ -40,6 +41,7 @@ internal class WorkspaceIndexer(
                 return
             }
             withTimeout(WorkspaceLimits.CHECK_TIMEOUT_MS) {
+                if (!gateway.isLocalTree(settings.treeUri)) throw SecurityException()
                 val root = gateway.root(settings.treeUri)
                 if (!root.directory) throw FileNotFoundException()
                 rootChecked = true

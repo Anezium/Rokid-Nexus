@@ -2,18 +2,9 @@ package com.anezium.rokidbus.plugin.assistant
 
 import org.json.JSONObject
 import java.io.File
-import java.net.URI
 
 internal data class WorkspaceSnapshot(val state: WorkspaceState, val retriever: WorkspaceRetriever? = null,
     val revision: Long = 0)
-
-internal fun isLocalWorkspaceTree(uri: String): Boolean = runCatching {
-    val value = URI(uri)
-    uri.length <= 2_048 && value.scheme == "content" &&
-        value.rawAuthority == "com.android.externalstorage.documents" &&
-        value.rawQuery == null && value.rawFragment == null &&
-        Regex("/tree/[^/]+").matches(value.rawPath.orEmpty())
-}.getOrDefault(false)
 
 internal class WorkspaceStore(
     private val directory: File,
@@ -37,7 +28,7 @@ internal class WorkspaceStore(
     }
 
     fun selectTree(uri: String, name: String, enable: Boolean = current.state.settings.enabled) = synchronized(lock) {
-        require(isLocalWorkspaceTree(uri))
+        require(isWorkspaceTreeUri(uri))
         updateSettings(WorkspaceSettings(enable, uri, workspaceLabel(name, 96),
             current.state.settings.generation + 1))
     }
@@ -92,7 +83,7 @@ internal class WorkspaceStore(
             WorkspaceSettings(root.getBoolean("enabled"), root.getString("treeUri"),
                 root.getString("folderName"), root.getLong("generation")).also {
                 require(it.generation >= 0 && it.folderName.length <= 96)
-                require(it.treeUri.isEmpty() || isLocalWorkspaceTree(it.treeUri))
+                require(it.treeUri.isEmpty() || isWorkspaceTreeUri(it.treeUri))
             }
         } else WorkspaceSettings()
         if (!settings.enabled) {

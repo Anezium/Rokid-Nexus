@@ -32,7 +32,7 @@ class WorkspaceControllerTest {
     }
 
     @Test
-    fun `cloud provider and missing read grant do not query or persist a folder`() = runBlocking {
+    fun `unverified provider and missing read grant never persist or read documents`() = runBlocking {
         val fixture = fixture()
         try {
             assertEquals(WorkspaceFolderResult.LOCAL_FOLDER_REQUIRED,
@@ -41,7 +41,31 @@ class WorkspaceControllerTest {
                 fixture.controller.chooseFolder(WorkspaceStoreTest.TREE, 2, enable = true))
             assertTrue(fixture.gateway.persistedFlags.isEmpty())
             assertEquals(0, fixture.gateway.rootCalls)
+            assertEquals(1, fixture.gateway.localRootQueries)
             assertFalse(fixture.store.snapshot().state.settings.enabled)
+        } finally { fixture.scope.cancel() }
+    }
+
+    @Test
+    fun `third-party local roots are selected while missing flags and failed root queries keep the old folder`() = runBlocking {
+        val fixture = fixture()
+        val tree = "content://local.example.documents/tree/local"
+        try {
+            fixture.gateway.providerRoots[tree] = listOf(WorkspaceProviderRoot("device", "local", 2))
+            assertEquals(WorkspaceFolderResult.SELECTED, fixture.controller.chooseFolder(tree, 3, enable = true))
+            assertEquals(listOf(tree to 1), fixture.gateway.persistedFlags)
+            assertEquals(tree, fixture.store.snapshot().state.settings.treeUri)
+            for (failQuery in listOf(false, true)) {
+                fixture.gateway.providerRoots[tree] = listOf(WorkspaceProviderRoot("device", "local", null))
+                fixture.gateway.providerRootFailure = failQuery
+                assertEquals(WorkspaceFolderResult.LOCAL_FOLDER_REQUIRED,
+                    fixture.controller.chooseFolder(tree, 1, enable = true))
+                assertEquals(tree, fixture.store.snapshot().state.settings.treeUri)
+                assertEquals(listOf(tree to 1), fixture.gateway.persistedFlags)
+                assertEquals(1, fixture.gateway.rootCalls)
+                assertTrue(fixture.gateway.opens.isEmpty())
+            }
+            assertEquals(3, fixture.gateway.localRootQueries)
         } finally { fixture.scope.cancel() }
     }
 

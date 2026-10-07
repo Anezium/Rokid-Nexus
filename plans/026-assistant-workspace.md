@@ -121,13 +121,28 @@ acquires the new grant, invalidates and clears the old index, then releases the
 old workspace grant and indexes the new tree. Never search both folders.
 
 SAF can expose cloud-backed providers whose reads would trigger network access.
-To keep the local-only requirement enforceable, v1 accepts only device/SD-card
-trees from the platform `com.android.externalstorage.documents` provider.
-Reject other authorities before querying document contents or persisting their
-grant, with an explanation to choose a folder stored on the phone. No cloud
-provider, virtual document conversion, account access, or app network request
-is part of Workspace. Support for another verified local provider is a later,
-explicitly evaluated addition. Android's own picker restrictions still apply.
+Request `Intent.EXTRA_LOCAL_ONLY` in the picker and validate its returned tree.
+Keep `com.android.externalstorage.documents` as an always-accepted local fast
+path. For other providers, query at most 64 roots through
+`DocumentsContract.buildRootsUri` with `Root.COLUMN_ROOT_ID`,
+`Root.COLUMN_DOCUMENT_ID`, and `Root.COLUMN_FLAGS`. Require the picked tree's
+root to declare `Root.FLAG_LOCAL_ONLY`, which promises strictly local content
+without content-related network requests. [Root flags](https://developer.android.com/reference/android/provider/DocumentsContract.Root#FLAG_LOCAL_ONLY).
+
+Match a selected top directory by document ID. For a subfolder, a complete
+declaration that every provider root is local also suffices; in a mixed provider,
+require an unambiguous `DocumentsContract.isChildDocument` relationship to a
+local root. Never authorize a cloud root merely because the same authority has
+another local root. Root-query failure, missing flags, ambiguous metadata, or
+an unverifiable parent relationship rejects selection with the existing
+explanation to choose a folder stored on the phone. Do not add permissions to
+work around a provider that prevents these queries under its SAF grant.
+
+Check locality before persisting a new grant or reading documents, and recheck
+it on indexing and before root-access validation for retrieval. URI syntax alone
+is not proof of locality; privately restored settings still need validation.
+No cloud content, virtual document conversion, account access, or app network
+request is part of Workspace. Android's own picker restrictions still apply.
 See [Android's SAF guidance](https://developer.android.com/training/data-storage/shared/documents-files).
 
 `WorkspaceStore.kt` owns settings and an immutable index snapshot. Put atomic

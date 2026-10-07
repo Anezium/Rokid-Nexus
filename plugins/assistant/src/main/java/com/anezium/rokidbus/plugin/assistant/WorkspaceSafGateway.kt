@@ -19,16 +19,33 @@ import java.io.InputStream
 import kotlin.coroutines.resumeWithException
 
 internal class WorkspaceSafGateway(private val resolver: ContentResolver) : WorkspaceDocumentGateway {
-    override fun hasReadGrant(treeUri: String): Boolean = isLocalWorkspaceTree(treeUri) &&
+    override suspend fun isLocalTree(treeUri: String): Boolean {
+        if (!isWorkspaceTreeUri(treeUri)) return false
+        if (isPlatformWorkspaceTree(treeUri)) return true
+        val tree = Uri.parse(treeUri)
+        return query { signal ->
+            val documentId = DocumentsContract.getTreeDocumentId(tree)
+            workspaceFolderIsLocal(treeUri, documentId,
+                readRoots = { readProviderRoots(checkNotNull(tree.authority), signal) },
+                isChild = { parentId ->
+                    signal.throwIfCanceled()
+                    DocumentsContract.isChildDocument(resolver,
+                        DocumentsContract.buildDocumentUri(checkNotNull(tree.authority), parentId),
+                        DocumentsContract.buildDocumentUriUsingTree(tree, documentId))
+                })
+        }
+    }
+
+    override fun hasReadGrant(treeUri: String): Boolean = isWorkspaceTreeUri(treeUri) &&
         resolver.persistedUriPermissions.any { it.uri.toString() == treeUri && it.isReadPermission }
 
     override fun persistReadGrant(treeUri: String, returnedFlags: Int) {
-        require(isLocalWorkspaceTree(treeUri) && returnedFlags and Intent.FLAG_GRANT_READ_URI_PERMISSION != 0)
+        require(isWorkspaceTreeUri(treeUri) && returnedFlags and Intent.FLAG_GRANT_READ_URI_PERMISSION != 0)
         resolver.takePersistableUriPermission(Uri.parse(treeUri), Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
 
     override fun releaseReadGrant(treeUri: String) {
-        if (isLocalWorkspaceTree(treeUri)) {
+        if (isWorkspaceTreeUri(treeUri)) {
             try {
                 resolver.releasePersistableUriPermission(Uri.parse(treeUri), Intent.FLAG_GRANT_READ_URI_PERMISSION)
             } catch (_: SecurityException) {
@@ -58,7 +75,7 @@ internal class WorkspaceSafGateway(private val resolver: ContentResolver) : Work
     }
 
     override fun observe(treeUri: String, onChange: () -> Unit): AutoCloseable? {
-        if (!isLocalWorkspaceTree(treeUri)) return null
+        if (!isWorkspaceTreeUri(treeUri)) return null
         val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
             override fun onChange(selfChange: Boolean) = onChange()
         }
@@ -75,7 +92,7 @@ internal class WorkspaceSafGateway(private val resolver: ContentResolver) : Work
     }
 
     private fun documentUri(treeUri: String, documentId: String): Uri {
-        require(isLocalWorkspaceTree(treeUri))
+        require(isWorkspaceTreeUri(treeUri))
         return DocumentsContract.buildDocumentUriUsingTree(Uri.parse(treeUri), documentId)
     }
 
@@ -123,7 +140,31 @@ internal class WorkspaceSafGateway(private val resolver: ContentResolver) : Work
         return if (position < 0 || isNull(position)) null else getLong(position)
     }
 
+    private fun readProviderRoots(authority: String, signal: CancellationSignal): List<WorkspaceProviderRoot> {
+        val cursor = resolver.query(DocumentsContract.buildRootsUri(authority), ROOT_PROJECTION,
+            null, null, null, signal) ?: error("workspace_roots_unavailable")
+        return cursor.use {
+            if (it.extras.getBoolean(DocumentsContract.EXTRA_LOADING, false) ||
+                it.extras.containsKey(DocumentsContract.EXTRA_ERROR)
+            ) error("workspace_roots_incomplete")
+            buildList {
+                while (it.moveToNext()) {
+                    signal.throwIfCanceled()
+                    if (size >= WorkspaceLimits.MAX_PROVIDER_ROOTS) throw WorkspaceCheckLimitException()
+                    add(WorkspaceProviderRoot(
+                        rootId = it.getString(it.getColumnIndexOrThrow(DocumentsContract.Root.COLUMN_ROOT_ID)).orEmpty(),
+                        documentId = it.getString(it.getColumnIndexOrThrow(DocumentsContract.Root.COLUMN_DOCUMENT_ID)).orEmpty(),
+                        flags = it.optionalLong(DocumentsContract.Root.COLUMN_FLAGS)
+                            ?.takeIf { flags -> flags in 0..Int.MAX_VALUE.toLong() }?.toInt(),
+                    ))
+                }
+            }
+        }
+    }
+
     companion object {
+        private val ROOT_PROJECTION = arrayOf(DocumentsContract.Root.COLUMN_ROOT_ID,
+            DocumentsContract.Root.COLUMN_DOCUMENT_ID, DocumentsContract.Root.COLUMN_FLAGS)
         private val PROJECTION = arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID,
             DocumentsContract.Document.COLUMN_DISPLAY_NAME, DocumentsContract.Document.COLUMN_MIME_TYPE,
             DocumentsContract.Document.COLUMN_LAST_MODIFIED, DocumentsContract.Document.COLUMN_SIZE,

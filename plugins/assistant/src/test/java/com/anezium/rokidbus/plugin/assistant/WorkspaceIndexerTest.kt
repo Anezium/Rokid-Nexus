@@ -200,6 +200,22 @@ class WorkspaceIndexerTest {
         assertEquals(mapOf("a" to 1, "b" to 1, "c" to 1), gateway.opens)
     }
 
+    @Test
+    fun `a third-party root losing its local-only declaration clears cached excerpts before any reread`() = runBlocking {
+        val (store, gateway, indexer) = fixture()
+        val tree = "content://local.example.documents/tree/local"
+        store.selectTree(tree, "Local documents", enable = true)
+        gateway.providerRoots[tree] = listOf(WorkspaceProviderRoot("device", "local", 2))
+        gateway.put("a", "notice.txt", "Notice is two months.")
+        indexer.refresh()
+        assertEquals(1, store.snapshot().state.index!!.fileCount)
+        gateway.providerRoots[tree] = listOf(WorkspaceProviderRoot("device", "local", null))
+        indexer.refresh()
+        assertNull(store.snapshot().state.index)
+        assertEquals(WorkspaceProblem.FOLDER_UNAVAILABLE, store.snapshot().state.problem)
+        assertEquals(mapOf("a" to 1), gateway.opens)
+    }
+
     private fun fixture(): Triple<WorkspaceStore, FakeWorkspaceGateway, WorkspaceIndexer> {
         val store = WorkspaceStore(temporary.newFolder())
         store.selectTree(WorkspaceStoreTest.TREE, "Documents", enable = true)
@@ -210,6 +226,8 @@ class WorkspaceIndexerTest {
 
 internal class FakeWorkspaceGateway : WorkspaceDocumentGateway {
     var rootCalls = 0
+    var localRootQueries = 0
+    var providerRootFailure = false
     var rootDelayMs = 0L
     var activeObservers = 0
     var changed: (() -> Unit)? = null
@@ -219,10 +237,18 @@ internal class FakeWorkspaceGateway : WorkspaceDocumentGateway {
     var onOpen: (() -> Unit)? = null
     val entries = linkedMapOf<String, WorkspaceEntry>()
     val childrenByParent = mutableMapOf<String, List<String>>()
+    val providerRoots = mutableMapOf<String, List<WorkspaceProviderRoot>>()
+    val localParents = mutableMapOf<String, Set<String>>()
     val contents = mutableMapOf<String, ByteArray>()
     val opens = mutableMapOf<String, Int>()
     val persistedFlags = mutableListOf<Pair<String, Int>>()
     val released = mutableListOf<String>()
+    override suspend fun isLocalTree(treeUri: String): Boolean = workspaceFolderIsLocal(treeUri,
+        java.net.URI(treeUri).path.substringAfter("/tree/"), readRoots = {
+            localRootQueries++
+            if (providerRootFailure) error("fixture roots failure")
+            providerRoots[treeUri].orEmpty()
+        }, isChild = { it in localParents[treeUri].orEmpty() })
     override fun hasReadGrant(treeUri: String) = granted
     override fun persistReadGrant(treeUri: String, returnedFlags: Int) { persistedFlags += treeUri to returnedFlags }
     override fun releaseReadGrant(treeUri: String) { released += treeUri }

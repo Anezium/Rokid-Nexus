@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Accept verified local document providers.** Use the selected root's local-only
+  metadata for third-party file managers, retain the system-storage fast path,
+  and reject cloud or unverifiable roots.
+
 - **Keep active questions bound to their Workspace.** Reject delayed searches
   after folder/index changes or Off–On. Stop follow-up AI requests and retries
   when that turn's Workspace becomes unavailable, so old excerpts are not sent

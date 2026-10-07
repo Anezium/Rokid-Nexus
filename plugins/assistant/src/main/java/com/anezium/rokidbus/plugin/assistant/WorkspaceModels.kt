@@ -4,6 +4,7 @@ internal object WorkspaceLimits {
     const val MAX_FILES = 100
     const val MAX_ENTRIES = 1_000
     const val MAX_DIRECTORIES = 100
+    const val MAX_PROVIDER_ROOTS = 64
     const val MAX_DEPTH = 4
     const val MAX_FILE_CHARS = 100_000
     const val MAX_TOTAL_CHARS = 1_000_000

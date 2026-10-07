@@ -106,12 +106,14 @@ internal class WorkspaceController(
     }
 
     suspend fun chooseFolder(uri: String, returnedFlags: Int, enable: Boolean): WorkspaceFolderResult {
-        if (!isLocalWorkspaceTree(uri)) return WorkspaceFolderResult.LOCAL_FOLDER_REQUIRED
+        if (!isWorkspaceTreeUri(uri)) return WorkspaceFolderResult.LOCAL_FOLDER_REQUIRED
         if (returnedFlags and READ_GRANT == 0) return WorkspaceFolderResult.NO_READ_GRANT
         return withContext(Dispatchers.IO) {
             val previous = store.snapshot().state.settings
             var persisted = false
             try {
+                val local = withTimeoutOrNull(WorkspaceLimits.CHECK_TIMEOUT_MS) { gateway.isLocalTree(uri) }
+                if (local != true) return@withContext WorkspaceFolderResult.LOCAL_FOLDER_REQUIRED
                 gateway.persistReadGrant(uri, READ_GRANT)
                 persisted = true
                 val root = withTimeoutOrNull(WorkspaceLimits.CHECK_TIMEOUT_MS) { gateway.root(uri) }
@@ -178,7 +180,10 @@ internal class WorkspaceController(
             return null
         }
         if (!snapshot.state.validated || snapshot.retriever == null) return null
-        val access = scope.async { gateway.root(settings.treeUri) }
+        val access = scope.async {
+            if (!gateway.isLocalTree(settings.treeUri)) throw SecurityException()
+            gateway.root(settings.treeUri)
+        }
         try {
             val root = withTimeoutOrNull(WorkspaceLimits.ACCESS_TIMEOUT_MS) { access.await() }
             if (root == null) {
