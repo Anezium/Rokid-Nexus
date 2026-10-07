@@ -7,13 +7,14 @@ enum class PatchPhase(val label: String) {
     SIGN("Signing APK"), VERIFY("Verifying output"), PUBLISH("Saving result"), HAND_OFF("Ready to install")
 }
 
+// Labels are the words the user reads while waiting: what the engine is doing, in plain terms.
 enum class PatchSubstep(val label: String) {
-    DECODE("Decoding resources and code"), EXECUTE("Executing patches"),
-    DEX("Compiling DEX"), STRIP("Removing replaced classes"), RESOURCES("Compiling resources"),
-    RESOURCE_APK("Writing compiled resources"), COPY("Copying the input APK"),
-    STAGE_RESOURCES("Preparing resource entries"), STAGE_DEX("Preparing DEX entries"),
-    COMPRESS("Finishing entry compression"), WRITE_ENTRIES("Writing APK entries"),
-    WRITE_DIRECTORY("Writing the APK directory")
+    DECODE("Unpacking resources and code"), EXECUTE("Applying patches"),
+    DEX("Compiling code"), STRIP("Removing replaced code"), RESOURCES("Compiling resources"),
+    RESOURCE_APK("Packing resources"), COPY("Copying the original APK"),
+    STAGE_RESOURCES("Adding resources"), STAGE_DEX("Adding compiled code"),
+    COMPRESS("Compressing files"), WRITE_ENTRIES("Writing the APK"),
+    WRITE_DIRECTORY("Finishing the APK")
 }
 
 data class PatchProgress(
@@ -40,8 +41,8 @@ data class PatchProgress(
     fun display(): String = buildString {
         append("Phase $phaseIndex/$phaseTotal: ${phase.label}")
         fraction?.let { append(" · ${(it * 100).toInt()}%") }
-        substep?.let { append(" ? ${it.label}") }
-        completedBytes?.let { append(" ? ${it / (1024 * 1024)} MiB written") }
+        substep?.let { append(" · ${it.label}") }
+        completedBytes?.let { append(" · ${PatchPresentation.written(it)}") }
         patchName?.let { append("\nCompleted patch $patchIndex/$patchTotal: $it") }
     }
 }

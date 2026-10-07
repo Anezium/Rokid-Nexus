@@ -396,6 +396,18 @@ class PatchJobServiceTest {
         val notice = shadowOf(service).lastForegroundNotification
         assertEquals(0, notice.extras.getInt(Notification.EXTRA_PROGRESS_MAX))
         assertFalse(notice.extras.getString(Notification.EXTRA_TEXT).orEmpty().contains("0%"))
+        assertEquals("Loading the patch bundle · 0:00", notice.extras.getString(Notification.EXTRA_TEXT))
+        val notification = PatchJobService::class.java.getDeclaredMethod("notification", PatchJobState::class.java).apply { isAccessible = true }
+        // A measured zero is still nothing to show: the bar appears with the first real movement.
+        val zero = notification.invoke(service, store.state.value.copy(progress = PatchProgress(PatchPhase.APPLY_PATCHES, 0.0, patchTotal = 23),
+            elapsedMs = 61_000)) as Notification
+        assertEquals(0, zero.extras.getInt(Notification.EXTRA_PROGRESS_MAX))
+        assertEquals("Applying 23 patches · 1:01", zero.extras.getString(Notification.EXTRA_TEXT))
+        val moving = notification.invoke(service, store.state.value.copy(progress = PatchProgress(PatchPhase.APPLY_PATCHES, 7.0 / 23, "Hide ads", 7, 23),
+            elapsedMs = 134_000)) as Notification
+        assertEquals(100, moving.extras.getInt(Notification.EXTRA_PROGRESS_MAX))
+        assertEquals(30, moving.extras.getInt(Notification.EXTRA_PROGRESS))
+        assertEquals("Applying patches · 7 of 23 · 2:14", moving.extras.getString(Notification.EXTRA_TEXT))
         val deadline = PatchJobService::class.java.getDeclaredField("deadline").apply { isAccessible = true }.get(service) as Runnable
         deadline.run()
         assertEquals(PatchJobStatus.INTERRUPTED, store.state.value.status)

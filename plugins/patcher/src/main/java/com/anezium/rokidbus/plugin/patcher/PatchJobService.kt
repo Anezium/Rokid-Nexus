@@ -192,8 +192,7 @@ class PatchJobService : Service() {
             .setOngoing(state.active).setAutoCancel(!state.active)
             .apply {
                 if (state.active) {
-                    setSubText(PatchPresentation.elapsed(state.elapsedMs))
-                    state.progress.fraction?.let { setProgress(100, (it * 100).toInt(), false) }
+                    PatchPresentation.notificationPercent(state.progress)?.let { setProgress(100, it, false) }
                     val cancel = PendingIntent.getService(this@PatchJobService, 1,
                         Intent(this@PatchJobService, PatchJobService::class.java).setAction(CANCEL).putExtra(JOB_ID, state.id),
                         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
