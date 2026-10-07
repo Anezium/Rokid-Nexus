@@ -258,7 +258,7 @@ class PatchJobService : Service() {
         // Future.isDone becomes true on cancel even if upstream code ignores the interrupt.
         fun reap() {
             if (exited.get()) { finishJob(id); return }
-            if (allowProcessKill && !PatchVisibility.hasResumedActivity) {
+            if (allowProcessKill && PatchVisibility.mode == "hidden") {
                 val current = store.state.value
                 if (current.active) store.change(current.id) { it.copy(status = PatchJobStatus.INTERRUPTED,
                     message = "The last patch was interrupted. Retry when you are ready.", result = null) }

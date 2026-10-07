@@ -367,6 +367,56 @@ class PatchJobServiceTest {
         }
     }
 
+    @Test @Config(sdk = [34]) fun cancelFromAVisiblePausedPipPreservesTheCancelledWindowUntilItMovesBehind() {
+        val store = store()
+        val job = runningJob(store)
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val exited = CountDownLatch(1)
+        val controller = Robolectric.buildService(PatchJobService::class.java).create()
+        val service = controller.get()
+        service.runJob = { _, _ ->
+            entered.countDown()
+            try { while (release.count > 0) try { release.await() } catch (_: InterruptedException) {} }
+            finally { exited.countDown() }
+        }
+        val screen = Robolectric.buildActivity(android.app.Activity::class.java).setup()
+        val activity = screen.get()
+        shadowOf(activity.packageManager).setSystemFeature(android.content.pm.PackageManager.FEATURE_PICTURE_IN_PICTURE, true)
+        val pip = PatchPictureInPicture(activity)
+        service.onStartCommand(Intent(service, PatchJobService::class.java).putExtra(PatchJobService.JOB_ID, job.id), 0, 1)
+        assertTrue(entered.await(5, TimeUnit.SECONDS))
+        org.robolectric.shadows.ShadowProcess.clearKilledProcesses()
+        try {
+            assertTrue(activity.enterPictureInPictureMode(pip.params(store.state.value)))
+            screen.pause()
+            pip.show(store.state.value)
+            assertTrue(activity.isInPictureInPictureMode)
+            assertFalse(PatchVisibility.hasResumedActivity)
+            assertEquals("pip", PatchVisibility.mode)
+            val cancel = shadowOf(pip.params(store.state.value).actions.single().actionIntent).savedIntent
+            service.onStartCommand(cancel, 0, 2)
+            shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofSeconds(6))
+            assertEquals(PatchJobStatus.CANCELLED, store.state.value.status)
+            assertTrue(activity.isInPictureInPictureMode)
+            assertFalse(activity.isFinishing)
+            assertFalse(ShadowPowerManager.getLatestWakeLock().isHeld)
+            assertTrue(shadowOf(service).isForegroundStopped)
+            assertFalse(org.robolectric.shadows.ShadowProcess.wasKilled(android.os.Process.myPid()))
+            pip.update(store.state.value)
+            assertEquals("Patch cancelled", requireNotNull(pip.compact).line.text.toString())
+            assertFalse(activity.isInPictureInPictureMode)
+            assertFalse(activity.isFinishing)
+            assertEquals("hidden", PatchVisibility.mode)
+            shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofSeconds(3))
+            assertTrue(org.robolectric.shadows.ShadowProcess.wasKilled(android.os.Process.myPid()))
+            assertEquals(PatchJobStatus.CANCELLED, PatchJobStore.decode(File(service.filesDir, "patch-job.json").readText()).status)
+        } finally {
+            release.countDown(); assertTrue(exited.await(5, TimeUnit.SECONDS))
+            screen.stop().destroy(); controller.destroy()
+        }
+    }
+
     @Test @Config(sdk = [34]) fun retryWhileThePreviousWorkerIsStoppingIsRefusedAndNeverQueued() {
         val store = store()
         val job = runningJob(store)
