@@ -10,6 +10,31 @@
   once-per-turn guards, calendar deletion included, still hold across rounds.
 - Follow-ups such as "and the one after that?" continue from the departure
   just mentioned; choices a plugin asks for appear as chips on the answer band.
+- **Return from stalled folder checks.** Bound provider calls and cancellation
+  attempts, release indexing on timeout, and reject late selection results.
+  Keep another folder usable while one provider ignores cancellation.
+
+- **Accept verified local document providers.** Use the selected root's local-only
+  metadata for third-party file managers, retain the system-storage fast path,
+  and reject cloud or unverifiable roots.
+
+- **Keep active questions bound to their Workspace.** Reject delayed searches
+  after folder/index changes or Off–On. Stop follow-up AI requests and retries
+  when that turn's Workspace becomes unavailable, so old excerpts are not sent
+  again after disabling it.
+
+- **Ask about documents on your phone.** Choose a local Workspace folder in
+  Assistant settings. Index Text, Markdown, and Word body text (`.txt`, `.md`,
+  `.docx`) and send relevant passages with the first question request to any
+  configured provider, including Hermes. Cite the source file when answering;
+  PDF support remains deferred.
+- **Keep document context bounded.** Retrieve at most 2,500 characters of
+  passages, within the existing Memory and notes envelope. Skip unrelated
+  passages and allow one fallback search per turn on structured-tool providers.
+- **Manage the folder locally.** Recheck document metadata on Assistant open,
+  folder changes, or Re-index now; reuse unchanged files. Display indexed counts
+  and safe error reasons, and clear private cached documents when Workspace is
+  turned off or folder access is lost.
 
 ## 1.4.8
 

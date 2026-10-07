@@ -289,6 +289,7 @@ internal class ChatGptCodexApiClient(
             )
             val response = try {
                 withContext(Dispatchers.IO) {
+                    request.beforeSend?.invoke()
                     transport.execute(requestId, httpRequest) { payload ->
                         when (val event = ChatGptCodexSseParser.parseData(payload)) {
                             is ChatGptCodexSseEvent.TextDelta -> {
@@ -507,7 +508,7 @@ internal class ChatGptCodexProvider(
         }
 
         try {
-            val toolPhase = toolRegistry.newExecutionPhase(CODEX_PROVIDER_FEATURES)
+            val toolPhase = toolRegistry.newExecutionPhase(CODEX_PROVIDER_FEATURES, request.workspaceVersion)
             val originalInput = request.toCodexResponsesInput()
             val modelId = request.model ?: modelProvider()
             val reasoningEffort = reasoningEffortProvider()

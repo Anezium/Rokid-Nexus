@@ -39,6 +39,7 @@ refreshed on 2026-09-22. The individual plan headers remain the detail of record
 | [023](023-activity-v2.md) | Activity v2: autosized panel, badge, measure, track, urgent tone, island motion | SHIPPED 1.5.0 (SDK 0.21.0, Navigation 0.1.0) |
 | [024](024-nexus-skills.md) | Nexus Skills: shared invocation contract, Media Deck, Transit, native transit guidance, and multi-step Assistant conversations | IN PROGRESS — foundation, Transit, and guidance planner implemented, unreleased and not device-validated; Media Deck not started |
 | [025](025-youtube-patcher-plugin.md) | Patcher: target-aware background patching and four-step YouTube setup | Implemented on `dev/youtube-patcher-fixes`; device acceptance pending |
+| [026](026-assistant-workspace.md) | Assistant Workspace: local document indexing and first-request excerpt injection | IN PROGRESS — implemented with round-1 and round-2 fixes; 419 JVM tests/build pass; owner device validation pending |
 
 Status values are `TODO`, `IN PROGRESS`, `BLOCKED`, and `DONE`. Update both this
 table and the individual plan when execution status changes. Current priorities

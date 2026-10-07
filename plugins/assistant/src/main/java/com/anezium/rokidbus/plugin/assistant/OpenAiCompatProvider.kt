@@ -42,6 +42,7 @@ internal class OpenAiCompatApiClient(
     private val activeConnections = ConcurrentHashMap<String, HttpURLConnection>()
 
     override fun streamChat(request: OpenAiCompatChatRequest): Flow<OpenAiChatSseEvent> = flow {
+        request.request.beforeSend?.invoke()
         val connection = openConnection(request).apply {
             doOutput = true
             setRequestProperty("Accept", "text/event-stream")
@@ -299,7 +300,9 @@ internal class OpenAiCompatProvider(
                 AssistantProviderFeatures(
                     supportsTools = true,
                     supportsVision = visionSupported,
+                    supportsWorkspaceSearch = !useTextToolBridge,
                 ),
+                request.workspaceVersion,
             )
             val textToolNames = toolPhase.availableDefinitions
                 .filter { definition -> definition.name in HERMES_TEXT_TOOL_NAMES }
@@ -328,6 +331,7 @@ internal class OpenAiCompatProvider(
                     emit(AiProviderEvent.TextDelta(messageId, visible))
                 }
 
+                effectiveRequest.beforeSend?.invoke()
                 apiClient.streamChat(
                     OpenAiCompatChatRequest(
                         request = effectiveRequest,

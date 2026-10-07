@@ -8,6 +8,7 @@ import org.json.JSONObject
 internal data class AssistantProviderFeatures(
     val supportsTools: Boolean,
     val supportsVision: Boolean,
+    val supportsWorkspaceSearch: Boolean = true,
 )
 
 internal data class AssistantToolSessionContext(
@@ -46,6 +47,8 @@ internal interface AssistantToolDefinition {
     val description: String
     val parametersSchema: AssistantToolJsonSchema
     val sideEffecting: Boolean
+    val maxExecutionsPerTurn: Int
+        get() = Int.MAX_VALUE
     val progressLabel: String?
     val retiresProgressOnSuccess: Boolean
         get() = false
@@ -64,6 +67,8 @@ internal interface AssistantToolDefinition {
         get() = true
 
     fun isAvailable(context: AssistantToolAvailabilityContext): Boolean
+
+    fun bindToTurn(workspaceVersion: Pair<Long, Long>?): AssistantToolDefinition = this
 
     fun validate(argumentsJson: String): AssistantToolValidation
 
@@ -89,6 +94,7 @@ internal class AssistantToolRegistry(
             "Assistant tool names must be unique."
         }
         definitions.forEach { definition ->
+            require(definition.maxExecutionsPerTurn > 0)
             require(TOOL_NAME.matches(definition.name)) {
                 "Assistant tool names must be stable lowercase identifiers."
             }
@@ -107,19 +113,21 @@ internal class AssistantToolRegistry(
         }
     }
 
-    fun availableDefinitions(features: AssistantProviderFeatures): List<AssistantToolDefinition> {
+    fun availableDefinitions(features: AssistantProviderFeatures,
+        workspaceVersion: Pair<Long, Long>? = null): List<AssistantToolDefinition> {
         if (!features.supportsTools) return emptyList()
         val context = AssistantToolAvailabilityContext(features, sessionContext())
         val plugin = runCatching(dynamicDefinitions).getOrDefault(emptyList())
             .filter { it.name.startsWith(SkillsContract.ALIAS_PREFIX) && TOOL_NAME.matches(it.name) }
             .distinctBy(AssistantToolDefinition::name)
-        return (definitionsByName.values + plugin).filter { definition ->
+        return (definitionsByName.values + plugin).map { it.bindToTurn(workspaceVersion) }.filter { definition ->
             runCatching { definition.isAvailable(context) }.getOrDefault(false)
         }
     }
 
-    fun newExecutionPhase(features: AssistantProviderFeatures): AssistantToolExecutionPhase =
-        AssistantToolExecutionPhase(availableDefinitions(features), progressReporter)
+    fun newExecutionPhase(features: AssistantProviderFeatures,
+        workspaceVersion: Pair<Long, Long>? = null): AssistantToolExecutionPhase =
+        AssistantToolExecutionPhase(availableDefinitions(features, workspaceVersion), progressReporter)
 
     companion object {
         private val TOOL_NAME = Regex("[a-z][a-z0-9_]{0,63}")
@@ -134,6 +142,7 @@ internal class AssistantToolExecutionPhase(
     private val definitionsByName = availableDefinitions.associateBy(AssistantToolDefinition::name)
     private val resultsByCallId = mutableMapOf<String, AssistantToolResult>()
     private val executedSideEffectingTools = mutableSetOf<String>()
+    private val executionsByName = mutableMapOf<String, Int>()
     private var executedCalls = 0
 
     /** No further call can execute this turn; the runner stops offering tools. */
@@ -170,12 +179,14 @@ internal class AssistantToolExecutionPhase(
         val guarded = definition.sideEffecting && definition.oncePerTurn
         if (
             executedCalls >= MAX_EXECUTED_CALLS ||
+            (executionsByName[definition.name] ?: 0) >= definition.maxExecutionsPerTurn ||
             guarded && definition.name in executedSideEffectingTools
         ) {
             return memoize(call, AssistantToolResult.Error(TOOL_ERROR_ALREADY_USED))
         }
 
         executedCalls += 1
+        executionsByName[definition.name] = (executionsByName[definition.name] ?: 0) + 1
         if (guarded) executedSideEffectingTools += definition.name
         val result = try {
             definition.progressLabel?.let(::reportProgress)
