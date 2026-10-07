@@ -29,6 +29,8 @@
 
     <queries>
         <package android:name="com.rokid.sprite.global.aiapp" />
+        <package android:name="app.morphe.manager" />
+        <package android:name="com.anezium.rokidbus.plugin.patcher" />
         <intent>
             <action android:name="com.rokid.sprite.aiapp.externalapp.AUTHORIZATION" />
         </intent>
@@ -53,6 +55,8 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.RokidBus.Phone">
+
+        <activity android:name=".YoutubeSetupActivity" android:exported="false" />
 
         <activity
             android:name=".MainActivity"

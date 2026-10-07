@@ -26,11 +26,15 @@ releases. The Gradle project names keep the historical `:plugin-<id>` form
 | [Media Deck](media/) | `media` | Universal now-playing surface with transport controls |
 | [Photos Sync](photosync/) | `photosync` | Copies glasses captures into the phone gallery on their own |
 | [Wireless ADB](wireless-adb/) | `wirelessadb` | Enables and pairs the glasses' real ADB-over-Wi-Fi transport under an explicit high-risk grant |
+| [Patcher](patcher/) | `patcher` | Patches stock YouTube on the phone for the hub's YouTube setup; phone-only, not shown in the glasses launcher |
 | [Tasker](tasker/) | `tasker` | Lists named Tasker tasks on the HUD and runs the selected automation on the phone |
 | [Sample](sample/) | `hello` | Minimal copyable reference plugin |
 
 Feeds lives at the repository root as `plugin-feeds/`; everything else about
 it follows the same layout and rules.
+
+[Patcher](patcher/) is GPL-3.0-only (its `LICENSE`) because it links
+the GPLv3 Morphe Patcher; the rest of this repository stays Apache-2.0.
 
 ## Releases
 
@@ -52,3 +56,5 @@ tags**, one stream per plugin, separate from the app's `v*` releases:
 
 Before pushing a plugin tag, set that module's `versionName` and add the
 matching `## <version>` changelog section; release CI rejects either mismatch.
+The tag id must be a case in `.github/workflows/plugin-release.yml`; YouTube
+Patcher (`patcher`) releases as `patcher-v1.0.0`.

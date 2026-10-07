@@ -2154,6 +2154,25 @@ the current transport, the glasses send the largest valid prefix that does.
 This protocol lists and opens apps that are already installed. It has no APK
 download, transfer, install, uninstall, or privilege-elevation operation.
 
+YouTube setup also uses these same trusted routes for `youtube_setup_request`
+and `youtube_setup_result` (version 1, matching `requestId`). The request has no
+package selector. The result contains `sdk` and exactly three `apps`, in order:
+`app.revanced.android.gms`, `app.morphe.android.youtube`, and
+`app.morphe.android.youtube.rokidtest`. Each entry contains `packageName`, integer
+`versionCode` (zero means absent), `signer` (a lowercase SHA-256 certificate digest,
+or empty when absent/unverifiable), and boolean `launchable`. Missing or ambiguous
+signers never authorize an update. This bounded inventory includes installed apps
+without launcher icons and fits in 2,000 UTF-8 bytes. It contains no account state.
+Older hubs do not support this request; the phone times out with an update prompt.
+
+The phone's private YouTube setup screen downloads/imports and verifies APKs locally,
+then uses the existing CXR upload/install API. Installation adds no bus route or
+plugin capability. The phone hub may receive a patched APK from the Patcher
+plugin with the explicit YouTube target id as an Android activity-result content URI;
+it copies and validates the bytes
+through the same private import path, without trusting result metadata. A fresh inventory is required before upload and after the SDK
+reports success; Nexus never uninstalls an app to resolve a signature conflict.
+
 ### Remote input
 
 - Glasses → phone `/core/remote-input/session`: `session_open` and
@@ -2182,8 +2201,12 @@ persist or log command JSON.
 field is the glasses hub's own editable-surface field: a plugin asked for text,
 rather than the wearer landing on a field while moving through a screen. The
 glasses trust the marker only from their own package. The phone may then bring
-its keyboard screen forward without being asked; for every other session it
-waits for the user to open it. Absent means `false`; a present non-boolean value
+its keyboard screen forward without being asked. The phone also offers a local,
+default-off YouTube auto-keyboard preference: when enabled, sessions targeting
+exactly `app.morphe.android.youtube` or `app.morphe.android.youtube.rokidtest`
+receive the same phone UI behavior. This does not change the wire flag or trust
+foreign editor markers; other sessions wait for the user to open the keyboard.
+Absent means `false`; a present non-boolean value
 makes the message invalid. Older phones ignore the field.
 
 ### Remote navigation

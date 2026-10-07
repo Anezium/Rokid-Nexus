@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.6.0
+
+Install both Nexus hubs 1.6.0 and Patcher 1.0.0 for guided YouTube setup.
+
+- Open native Android apps from the glasses launcher, with cached app icons.
+- Guide MicroG installation, stock YouTube download, on-phone patching, and Google
+  sign-in through Keyboard & remote. Nexus never reads Google accounts or tokens.
+- Opening YouTube or MicroG restores the glasses' Wi-Fi radio when needed.
+  Automatic phone-keyboard opening for YouTube remains an explicit preference.
+
+- Use the target-aware Patcher plugin for YouTube setup, keeping signer-bound approval,
+  result-byte validation, same-signer CXR updates and confirmed-install records.
+- Patcher replaces the unpublished YouTube Patcher package and generates a new key;
+  existing output needs an imported backup or an explicit manual reinstall on glasses.
+- YouTube setup says what to expect from Patcher: about 6–7 minutes, kept going in a
+  small window while you use other apps, then checked and installed by Nexus. When a
+  patched APK is waiting, step 3 leads with Install on glasses and says whether the
+  glasses still need connecting.
+- Returning to setup while a patch is pending offers **Open Patcher** to check
+  progress or use the saved result, without claiming the patch has stopped.
+- Ready notifications carry the completed job to the existing Patcher window,
+  including after activity recreation, so its authenticated result reaches Nexus.
+
 ## 1.5.0
 
 ### Upgrade together

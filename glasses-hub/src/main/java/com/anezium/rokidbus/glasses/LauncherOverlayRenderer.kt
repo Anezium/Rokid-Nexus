@@ -36,7 +36,12 @@ object LauncherOverlayRenderer {
     private var root: LauncherOverlayRoot? = null
     private var unsubscribeLauncher: (() -> Unit)? = null
     private var insetUnsubscribe: (() -> Unit)? = null
-    private var launcherEntries: List<GlassesHub.LauncherEntry> = emptyList()
+    private var pluginEntries: List<GlassesHub.LauncherEntry> = emptyList()
+    private var nativeAppEntries = emptyList<com.anezium.rokidbus.shared.NativeAppEntry>()
+    // Rows are rebuilt on every selection move; resolving icons through PackageManager each
+    // time is what the plugin glyph cache already avoids for plugin rows.
+    private var nativeAppIcons = emptyMap<String, android.graphics.drawable.Drawable>()
+    private var launcherEntries: List<LauncherMenuEntry> = emptyList()
     private var selectedIndex = 0
     private val swipeDedupe = DpadPairDedupe()
     private val main = Handler(Looper.getMainLooper())
@@ -72,6 +77,15 @@ object LauncherOverlayRenderer {
         val activeService = service ?: return false
         launcherReturnCoordinator.clearPendingLauncherOpen()
         GlassesHub.start(activeService.applicationContext)
+        nativeAppEntries = runCatching { NativeAppsController.discover(activeService.applicationContext) }
+            .getOrElse {
+                log("Native launcher discovery failed")
+                emptyList()
+            }
+        nativeAppIcons = nativeAppEntries.associate { entry ->
+            entry.packageName to NativeAppsController.icon(activeService.applicationContext, entry.packageName)
+        }
+        updateEntries()
         val manager = windowManager ?: activeService.getSystemService(WindowManager::class.java) ?: return false
         val currentRoot = root ?: LauncherOverlayRoot(activeService).also { next ->
             next.setHudTopInsetDp(hudTopInsetDp)
@@ -89,9 +103,8 @@ object LauncherOverlayRenderer {
         }
         if (unsubscribeLauncher == null) {
             unsubscribeLauncher = GlassesHub.observeLauncher { entries ->
-                launcherEntries = entries
-                selectedIndex = selectedIndex.coerceIn(0, (entries.size - 1).coerceAtLeast(0))
-                root?.render(launcherEntries, selectedIndex)
+                pluginEntries = entries
+                updateEntries()
             }
         }
         currentRoot.render(launcherEntries, selectedIndex)
@@ -191,16 +204,37 @@ object LauncherOverlayRenderer {
         root?.render(launcherEntries, selectedIndex)
     }
 
+    private fun updateEntries() {
+        val selectedId = launcherEntries.getOrNull(selectedIndex)?.stableId
+        launcherEntries = LauncherMenuCatalog.merge(pluginEntries, nativeAppEntries)
+        selectedIndex = selectedId
+            ?.let { id -> launcherEntries.indexOfFirst { it.stableId == id } }
+            ?.takeIf { it >= 0 }
+            ?: selectedIndex.coerceIn(0, (launcherEntries.size - 1).coerceAtLeast(0))
+        root?.render(launcherEntries, selectedIndex)
+    }
+
     private fun openSelected() {
         val entry = launcherEntries.getOrNull(selectedIndex) ?: return
-        val result = GlassesHub.openLauncherEntry(entry.id)
-        log("Launcher overlay open result: $result")
-        if (result.startsWith("launcherOpen=true")) {
-            launcherReturnCoordinator.recordLauncherOpen(entry.id)
-            if (GlassesHub.launcherEntryOpensSurface(entry.id)) {
-                service?.applicationContext?.let(RingFocusBroadcastCoordinator::beginSurfaceHandoff)
+        when (entry) {
+            is LauncherMenuEntry.Plugin -> {
+                val plugin = entry.entry
+                val result = GlassesHub.openLauncherEntry(plugin.id)
+                log("Launcher overlay plugin result: $result")
+                if (result.startsWith("launcherOpen=true")) {
+                    launcherReturnCoordinator.recordLauncherOpen(plugin.id)
+                    if (GlassesHub.launcherEntryOpensSurface(plugin.id)) {
+                        service?.applicationContext?.let(RingFocusBroadcastCoordinator::beginSurfaceHandoff)
+                    }
+                    hide()
+                }
             }
-            hide()
+            is LauncherMenuEntry.NativeApp -> {
+                val context = service?.applicationContext ?: return
+                val error = NativeAppsController.launch(context, entry.entry.packageName)
+                log("Launcher overlay native result=${error?.wireValue ?: "ok"}")
+                if (error == null) hide()
+            }
         }
     }
 
@@ -213,7 +247,7 @@ object LauncherOverlayRenderer {
             addView(menu, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         }
 
-        fun render(entries: List<GlassesHub.LauncherEntry>, selectedIndex: Int) {
+        fun render(entries: List<LauncherMenuEntry>, selectedIndex: Int) {
             menu.render(entries, selectedIndex)
         }
 
@@ -234,7 +268,7 @@ object LauncherOverlayRenderer {
             orientation = VERTICAL
         }
         private val emptyView = monoText(17f, BusTheme.dim).apply {
-            text = "No phone plugins synced"
+            text = "No apps available"
             gravity = Gravity.CENTER
         }
         private val scroll = ScrollView(context).apply {
@@ -269,18 +303,13 @@ object LauncherOverlayRenderer {
                 gravity = Gravity.CENTER_HORIZONTAL
             }, matchWrap())
             addView(gap(18))
-            addView(monoText(10.5f, BusTheme.dim).apply {
-                text = "PLUGINS"
-                gravity = Gravity.CENTER_HORIZONTAL
-            }, matchWrap())
-            addView(gap(10))
             addView(scroll, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         }
 
-        fun render(entries: List<GlassesHub.LauncherEntry>, selectedIndex: Int) {
+        fun render(entries: List<LauncherMenuEntry>, selectedIndex: Int) {
             listView.removeAllViews()
             if (entries.isEmpty()) {
-                countView.text = "Waiting for phone"
+                countView.text = "Nothing installed"
                 listView.addView(
                     emptyView,
                     LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, scroll.height.coerceAtLeast(dp(260))),
@@ -290,11 +319,23 @@ object LauncherOverlayRenderer {
 
             countView.text = "${selectedIndex + 1}/${entries.size}"
             var selectedRow: View? = null
+            var previousSection: String? = null
             entries.forEachIndexed { index, entry ->
-                val row = pluginRow(entry, selected = index == selectedIndex)
+                val section = when (entry) {
+                    is LauncherMenuEntry.Plugin -> "PLUGINS"
+                    is LauncherMenuEntry.NativeApp -> "GLASSES APPS"
+                }
+                if (section != previousSection) {
+                    listView.addView(sectionLabel(section), matchWrap().apply {
+                        topMargin = if (previousSection == null) 0 else dp(16)
+                        bottomMargin = dp(8)
+                    })
+                    previousSection = section
+                }
+                val row = entryRow(entry, selected = index == selectedIndex)
                 if (index == selectedIndex) selectedRow = row
                 listView.addView(row, matchWrap().apply {
-                    topMargin = if (index == 0) 0 else dp(8)
+                    topMargin = if (index == 0 || entries[index - 1]::class != entry::class) 0 else dp(8)
                 })
             }
             selectedRow?.let { row ->
@@ -309,12 +350,18 @@ object LauncherOverlayRenderer {
             requestLayout()
         }
 
-        private fun pluginRow(
-            entry: GlassesHub.LauncherEntry,
+        private fun entryRow(
+            entry: LauncherMenuEntry,
             selected: Boolean,
         ): View {
             val icon = ImageView(context).apply {
-                setImageDrawable(GlassesHub.launcherDrawable(context, entry))
+                setImageDrawable(
+                    when (entry) {
+                        is LauncherMenuEntry.Plugin -> GlassesHub.launcherDrawable(context, entry.entry)
+                        is LauncherMenuEntry.NativeApp -> nativeAppIcons[entry.entry.packageName]
+                            ?: NativeAppsController.icon(context, entry.entry.packageName)
+                    },
+                )
                 layoutParams = LinearLayout.LayoutParams(dp(24), dp(24)).apply { marginEnd = dp(14) }
             }
             val label = monoText(18f, if (selected) BusTheme.phosphor else BusTheme.text, bold = selected).apply {
@@ -334,6 +381,12 @@ object LauncherOverlayRenderer {
                 addView(label)
             }
         }
+
+        private fun sectionLabel(value: String): TextView =
+            monoText(10.5f, BusTheme.dim, bold = true).apply {
+                text = value
+                gravity = Gravity.CENTER_HORIZONTAL
+            }
 
         private fun monoText(sizeSp: Float, color: Int, bold: Boolean = false): TextView =
             TextView(context).apply {

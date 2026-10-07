@@ -19,8 +19,8 @@ android {
         applicationId = "com.anezium.rokidbus.phone"
         minSdk = 30
         targetSdk = 36
-        versionCode = 10500
-        versionName = "1.5.0"
+        versionCode = 10600
+        versionName = "1.6.0"
         buildConfigField("String", "GLASSES_APK_SIGNER_SHA256", "\"${glassesApkSignerSha256.lowercase()}\"")
     }
 
@@ -57,7 +57,7 @@ dependencies {
     implementation("androidx.activity:activity:1.10.1")
     implementation("androidx.exifinterface:exifinterface:1.4.2")
     implementation("com.example.cxrglobal:lib:0.2.0")
-    implementation("com.flyfishxu:kadb:2.1.1")
+    implementation(project(":kadb-compat"))
     implementation("com.android.tools.build:apksig:9.2.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")

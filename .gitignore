@@ -3,6 +3,7 @@ build/
 */build/
 local.properties
 .kotlin/
+__pycache__/
 
 # Reverse-engineering / on-device scratch artifacts (not source)
 /tmp_launcher/

@@ -83,3 +83,12 @@ jobs:
             :plugin-wireless-adb:testDebugUnitTest \
             :plugin-sample:testDebugUnitTest \
             -PskipCxrGlobal=true
+
+      - name: Check Patcher bundle preparation
+        run: python3 -m unittest discover -s plugins/patcher/scripts
+
+      - name: Run Patcher unit tests
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.MORPHE_PACKAGES_TOKEN || github.token }}
+        run: ./gradlew :plugin-patcher:testDebugUnitTest -PskipCxrGlobal=true

@@ -4,6 +4,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.drawable.Drawable
 import com.anezium.rokidbus.shared.NativeAppContract
 import com.anezium.rokidbus.shared.NativeAppEntry
 import com.anezium.rokidbus.shared.NativeAppErrorCode
@@ -22,6 +23,10 @@ internal object NativeAppsController {
         payload: JSONObject,
         reply: (JSONObject) -> Boolean,
     ): Boolean {
+        com.anezium.rokidbus.shared.YoutubeSetupContract.requestId(payload)?.let { id ->
+            runCatching { YoutubePackageInventory.result(context, id) }.onSuccess { reply(it) }
+            return true
+        }
         NativeAppContract.parseListRequest(payload)?.let { requestId ->
             val apps = runCatching { discover(context) }.getOrElse {
                 reply(
@@ -99,16 +104,22 @@ internal object NativeAppsController {
             .toList()
     }
 
-    private fun launch(context: Context, packageName: String): NativeAppErrorCode? {
+    internal fun launch(context: Context, packageName: String): NativeAppErrorCode? {
         if (packageName == context.packageName) return NativeAppErrorCode.NOT_ALLOWED
         val resolved = launcherActivities(context.packageManager)
             .firstOrNull { it.activityInfo.packageName == packageName }
             ?: return NativeAppErrorCode.NOT_LAUNCHABLE
         val component = ComponentName(resolved.activityInfo.packageName, resolved.activityInfo.name)
         val intent = Intent.makeMainActivity(component).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        // Asynchronous on purpose: the app opens now and reconnects once the radio is up.
+        GlassesHub.ensureWifiForNativeApp(context, packageName)
         return runCatching { context.startActivity(intent) }
             .fold(onSuccess = { null }, onFailure = { NativeAppErrorCode.INTERNAL })
     }
+
+    internal fun icon(context: Context, packageName: String): Drawable =
+        runCatching { context.packageManager.getApplicationIcon(packageName) }
+            .getOrElse { context.applicationInfo.loadIcon(context.packageManager) }
 
     private fun launcherActivities(packageManager: PackageManager) =
         packageManager.queryIntentActivities(

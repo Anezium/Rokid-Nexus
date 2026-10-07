@@ -21,7 +21,7 @@ Plugins are **normally dormant unless open**: the hub initiates everything. Your
 only between `PLUGIN_OPEN` and a final `PLUGIN_CLOSE`. Do not register yourself at boot, do
 not poll in the background, do not post notifications. The SDK holds a
 foreground-service session while you are open and drops it on close; the
-user-facing notification that names the live plugin belongs to the hub. Three
+user-facing notification that names the live plugin belongs to the hub. Four
 sanctioned exceptions:
 
 1. A capability that Android forces into its own foreground service *while your
@@ -44,6 +44,13 @@ sanctioned exceptions:
    retaining the active microphone session and its SDK foreground service.
    `onNexusBackground()` is not a final close; the lease ending is. The phone hub
    exposes Stop, and reopening resumes the plugin. See the lifecycle rules below.
+
+4. **User-started phone patching**: Patcher may run one explicitly requested APK
+   preparation/patch job in a private `:patcher` foreground `dataSync` service.
+   Its progress notification supports cancellation and reopening the patch screen;
+   a completion notification may remain. The service and timed partial wake lock
+   end with that job. Leaving the screen does not cancel it. No boot restart,
+   polling, bus installer capability, or automatic retry is permitted.
 
 A phone plugin may also call an Android platform API directly under permissions
 declared in its own manifest. Those runtime permissions are separate from Nexus
@@ -87,8 +94,8 @@ Copy `plugins/sample` as the canonical template. The hard rules:
    AAR manifest, but declare it in your own manifest too for clarity).
 5. Foreground-service permissions: `FOREGROUND_SERVICE` +
    `FOREGROUND_SERVICE_SPECIAL_USE`. Do **not** declare `POST_NOTIFICATIONS` — the
-   session FGS runs fine with its notification suppressed on Android 13+. The one
-   exception is scheduled delivery (§1): a plugin that delivers user-created
+   session FGS runs fine with its notification suppressed on Android 13+. The
+   exceptions are phone patching (§1, progress/completion only) and scheduled delivery: a plugin that delivers user-created
    reminders may declare `POST_NOTIFICATIONS`, `SCHEDULE_EXACT_ALARM`, and
    `RECEIVE_BOOT_COMPLETED`, strictly for those deliveries.
 6. `REQUEST_DELETE_PACKAGES` — required for the in-app Uninstall row

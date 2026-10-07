@@ -119,6 +119,17 @@ internal class GlassesWifiOwnership(
         )
     }
 
+    /**
+     * Wi-Fi the wearer asked for through an app is theirs to keep: drop any session lease so no
+     * later reconciliation switches the radio off underneath that app.
+     */
+    @Synchronized
+    fun handOverToUser(): Boolean {
+        if (persistence.read() == null) return false
+        persistence.clear()
+        return true
+    }
+
     @Synchronized
     fun observeRadioState(wifiEnabled: Boolean): Boolean {
         if (wifiEnabled || persistence.read() == null) return false

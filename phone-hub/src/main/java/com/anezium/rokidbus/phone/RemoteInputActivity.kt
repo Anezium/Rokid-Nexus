@@ -64,6 +64,7 @@ class RemoteInputActivity : Activity() {
     private var closeSent = false
     private var keyboardPending = false
     private var openedForKeyboard = false
+    private var secureSession = false
     private var pointerShown = false
     private var requestedSessionId: String? = null
     private var glassesClient: BusClient? = null
@@ -83,6 +84,9 @@ class RemoteInputActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         openedForKeyboard = intent.getBooleanExtra(EXTRA_KEYBOARD_REQUEST, false)
+        secureSession = savedInstanceState?.getBoolean(EXTRA_SECURE_SESSION) == true ||
+            intent.getBooleanExtra(EXTRA_SECURE_SESSION, false)
+        if (secureSession) window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         publisher = BroadcastRemoteInputPublisher(applicationContext)
         trackpadPublisher = RemoteTrackpadPublisher(applicationContext)
         glassesClient = BusClient(
@@ -134,9 +138,19 @@ class RemoteInputActivity : Activity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        secureSession = secureSession || intent.getBooleanExtra(EXTRA_SECURE_SESSION, false)
+        if (secureSession) {
+            intent.putExtra(EXTRA_SECURE_SESSION, true)
+            window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        }
         setIntent(intent)
         openedForKeyboard = intent.getBooleanExtra(EXTRA_KEYBOARD_REQUEST, false)
         requestedSessionId = null
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putBoolean(EXTRA_SECURE_SESSION, secureSession)
+        super.onSaveInstanceState(outState)
     }
 
     private fun showPointer() {
@@ -571,6 +585,7 @@ class RemoteInputActivity : Activity() {
     }
 
     private fun applyState(next: RemoteInputViewState) {
+        if (isFinishing) return
         val sessionChanged = next.sessionId != viewState.sessionId || next.password != viewState.password
         val backToWaiting = next.phase == RemoteInputViewState.Phase.WAITING_FOR_FIELD &&
             viewState.phase != RemoteInputViewState.Phase.WAITING_FOR_FIELD
@@ -580,6 +595,7 @@ class RemoteInputActivity : Activity() {
             // Opened for one field, so it leaves with it: the reply is sent or
             // cancelled, and the user goes back to whatever they had open.
             hideKeyboard()
+            closeSent = true
             finishAndRemoveTask()
             return
         }
@@ -592,10 +608,8 @@ class RemoteInputActivity : Activity() {
         // ended because another keyboard took over, and that is exactly when the row must show.
         if (backToWaiting) glassesKeyboardStale = true
         maybeCheckGlassesKeyboard()
-        // The keyboard opens when the wearer asks for it, never because the
-        // glasses focused a field: navigating through a screen full of inputs
-        // otherwise reopens the IME under your thumb on every step. A field a
-        // plugin opened to be typed into is the asking, so that one raises it.
+        // Only requested sessions raise the keyboard: editable surfaces or the
+        // owner's YouTube auto-keyboard opt-in. Other fields stay manual.
         if (sessionChanged && next.editorEnabled && next.keyboardRequested) requestKeyboard()
     }
 
@@ -637,7 +651,7 @@ class RemoteInputActivity : Activity() {
         }
         privacyLabel.setTextColor(if (viewState.password) NexusUi.AMBER else NexusUi.GREEN_DIM)
 
-        if (viewState.secureWindow) {
+        if (viewState.secureWindow || secureSession) {
             window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         } else {
             window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
@@ -656,6 +670,10 @@ class RemoteInputActivity : Activity() {
             EditorInfo.IME_ACTION_NEXT
         } else {
             EditorInfo.IME_ACTION_DONE
+        }
+        if (secureSession) {
+            editor.inputType = editor.inputType or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+            editor.imeOptions = editor.imeOptions or EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING
         }
         // Uppercased like every other pill on this screen: outlinePillButton does it
         // at construction, and this label is replaced after that.
@@ -852,6 +870,7 @@ class RemoteInputActivity : Activity() {
     }
 
     companion object {
+        const val EXTRA_SECURE_SESSION = "secure_session"
         /** Set when the screen is opened for a keyboard request; see RemoteKeyboardPrompt. */
         const val EXTRA_KEYBOARD_REQUEST = "keyboard_request"
 

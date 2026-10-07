@@ -105,6 +105,9 @@ class NativeAppsActivity : Activity() {
             NexusUi.block(),
         )
         list.addView(BusTheme.gap(this, 22))
+        addStateCard("YouTube on glasses", "Patch YouTube with Patcher in about 6–7 minutes, install it next to MicroG on the glasses, then sign in with the phone keyboard.",
+            "Set up YouTube" to { startActivity(Intent(this, YoutubeSetupActivity::class.java)) })
+        list.addView(BusTheme.gap(this, 22))
         list.addView(NexusUi.sectionRow(this, getString(R.string.native_apps_section)), NexusUi.block())
         list.addView(BusTheme.gap(this, 10))
         when (val current = state) {
@@ -141,10 +144,7 @@ class NativeAppsActivity : Activity() {
                         NexusUi.outlinePillButton(this@NativeAppsActivity, label).apply {
                             setOnClickListener { callback() }
                         },
-                        LinearLayout.LayoutParams(
-                            ViewGroup.LayoutParams.WRAP_CONTENT,
-                            ViewGroup.LayoutParams.WRAP_CONTENT,
-                        ),
+                        NexusUi.block(),
                     )
                 }
             },

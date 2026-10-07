@@ -14,11 +14,10 @@ import android.util.Log
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * Brings Keyboard & remote forward when a plugin on the glasses asks for text.
+ * Brings Keyboard & remote forward for a requested keyboard session.
  *
- * Only for sessions the glasses marked `keyboardRequested` (BUSSPEC, Remote
- * input). A field the wearer merely lands on still waits for the user to open
- * the screen, for the reason RemoteInputActivity keeps its keyboard down.
+ * Requested either by the glasses' editable surface or by the owner's YouTube
+ * auto-keyboard preference. Other fields wait for the user to open the screen.
  *
  * Android blocks a background app from starting an activity unless it may draw
  * over other apps. With that grant the screen opens by itself; without it, or

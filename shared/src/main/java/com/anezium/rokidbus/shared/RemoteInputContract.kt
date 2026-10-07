@@ -73,8 +73,8 @@ data class RemoteInputSessionOpen(
     val nextSequence: Long = 1L,
     /**
      * The field was opened by a plugin asking for text (an editable surface),
-     * not merely focused while the wearer moved through a screen. Only then may
-     * the phone bring its keyboard forward on its own.
+     * not merely focused while the wearer moved through a screen. The phone may
+     * also open its keyboard under an explicit local per-app preference.
      */
     val keyboardRequested: Boolean = false,
 )

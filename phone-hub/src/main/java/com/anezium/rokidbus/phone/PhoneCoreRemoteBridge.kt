@@ -38,7 +38,13 @@ internal class PhoneCoreRemoteBridge(
     private val isNativePointerAvailable: () -> Boolean,
 ) : AutoCloseable {
     private val appContext = context.applicationContext
+    private val youtubeKeyboard = YoutubeKeyboardSettings(appContext)
     private val main = Handler(Looper.getMainLooper())
+    private val showYoutubeKeyboard = Runnable {
+        if (inputState.fieldActive && inputState.keyboardRequested && youtubeKeyboard.autoOpen) {
+            RemoteKeyboardPrompt.bringForward(appContext)
+        }
+    }
     private var receiverRegistered = false
     private var inputState = RemoteInputTransportState(connected = false, fieldActive = false)
     private var nextInputSequence = 1L
@@ -138,6 +144,7 @@ internal class PhoneCoreRemoteBridge(
     }
 
     override fun close() {
+        main.removeCallbacks(showYoutubeKeyboard)
         if (!receiverRegistered) return
         PhonePointerChannel.setHandler(null)
         runCatching { appContext.unregisterReceiver(commandReceiver) }
@@ -473,8 +480,12 @@ internal class PhoneCoreRemoteBridge(
     private fun handleRemoteSession(envelope: BusEnvelope): Boolean {
         if (envelope.binary != null) return false
         RemoteInputContract.decodeSessionOpen(envelope.payload)?.let { session ->
+            main.removeCallbacks(showYoutubeKeyboard)
             remoteImeOptions = session.imeOptions
             nextInputSequence = session.nextSequence
+            val keyboardRequested = youtubeKeyboard.shouldRequestKeyboard(
+                session.packageName, session.keyboardRequested, session.inputType,
+            )
             inputState = RemoteInputTransportState(
                 connected = true,
                 fieldActive = true,
@@ -482,10 +493,18 @@ internal class PhoneCoreRemoteBridge(
                 sessionId = session.sessionId,
                 fieldLabel = null,
                 imeAction = localImeAction(session.imeOptions),
-                keyboardRequested = session.keyboardRequested,
+                keyboardRequested = keyboardRequested,
             )
             publishInputState()
-            if (session.keyboardRequested) RemoteKeyboardPrompt.bringForward(appContext)
+            if (keyboardRequested) {
+                if (session.keyboardRequested) {
+                    RemoteKeyboardPrompt.bringForward(appContext)
+                } else {
+                    // YouTube restarts its input connection while opening Search.
+                    // Wait for that transition before opening a phone activity.
+                    main.postDelayed(showYoutubeKeyboard, 400L)
+                }
+            }
             return true
         }
         val closed = RemoteInputContract.decodeSessionClosed(envelope.payload) ?: return false
@@ -537,6 +556,7 @@ internal class PhoneCoreRemoteBridge(
     }
 
     private fun clearActiveInput() {
+        main.removeCallbacks(showYoutubeKeyboard)
         remoteImeOptions = EditorInfo.IME_ACTION_NONE
         nextInputSequence = 1L
         inputState = RemoteInputTransportState(

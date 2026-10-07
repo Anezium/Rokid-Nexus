@@ -12,8 +12,8 @@ android {
         applicationId = "com.anezium.rokidbus.glasses"
         minSdk = 31
         targetSdk = 32
-        versionCode = 10500
-        versionName = "1.5.0"
+        versionCode = 10600
+        versionName = "1.6.0"
     }
 
     buildTypes {
@@ -50,7 +50,7 @@ dependencies {
     implementation("com.airbnb.android:lottie:6.7.1")
     implementation("com.rokid.cxr:cxr-service-bridge:1.0-20260522.063600-105")
     implementation("dev.mobile:dadb:1.2.10")
-    implementation("com.flyfishxu:kadb:2.1.1")
+    implementation(project(":kadb-compat"))
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
     testImplementation("junit:junit:4.13.2")
     // Plain-JUnit ink tests exercise wire JSON against the real org.json, not the

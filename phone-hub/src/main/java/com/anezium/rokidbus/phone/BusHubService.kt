@@ -347,6 +347,8 @@ class BusHubService : Service() {
     private lateinit var pluginGuardianCoordinator: PluginGuardianCoordinator
     private lateinit var mediaSyncCoordinator: MediaSyncCoordinator
     private lateinit var coreRemoteBridge: PhoneCoreRemoteBridge
+    private lateinit var youtubeSetup: YoutubeSetupController
+    @Volatile private var youtubeUploadId: Long? = null
     private lateinit var manualPairingEngine: GlassesManualPairingEngine
     private var manualPairingEngineSubscription: Closeable? = null
     private val phoneAssistedSetupOfferPolicy = PhoneAssistedSetupOfferPolicy()
@@ -726,6 +728,13 @@ class BusHubService : Service() {
         super.onCreate()
         NexusPhoneState.restore(applicationContext)
         activeInstance = this
+        youtubeSetup = YoutubeSetupController(
+            applicationContext,
+            connected = { linkState() and (LinkStateBits.CXR_CONTROL_UP or LinkStateBits.SPP_DATA_UP) != 0 },
+            installReady = { isCxrUp() && cxrLink != null && isPhoneWifiEnabled() },
+            send = ::sendRemote,
+            upload = ::uploadYoutubeApk,
+        )
         coreRemoteBridge = PhoneCoreRemoteBridge(
             context = applicationContext,
             sendRemote = ::sendRemote,
@@ -941,6 +950,7 @@ class BusHubService : Service() {
         }
         connectSpp()
         startPeriodicUpdateChecks()
+        youtubeSetup.start()
         log("BusHubService created enabled=$hubEnabled")
     }
 
@@ -1070,6 +1080,7 @@ class BusHubService : Service() {
     }
 
     override fun onDestroy() {
+        if (::youtubeSetup.isInitialized) youtubeSetup.close()
         stopPeriodicUpdateChecks()
         pinHandler.removeCallbacks(pinExpiryTick)
         inkResultHandler.removeCallbacksAndMessages(null)
@@ -1362,7 +1373,8 @@ class BusHubService : Service() {
             envelope.path == RemotePointerContract.RESULT_PATH ||
             envelope.path == NativeAppContract.RESULT_PATH
         ) {
-            val handled = ::coreRemoteBridge.isInitialized && coreRemoteBridge.handleRemote(envelope)
+            val handled = (::youtubeSetup.isInitialized && youtubeSetup.handleRemote(envelope)) ||
+                (::coreRemoteBridge.isInitialized && coreRemoteBridge.handleRemote(envelope))
             recordRemoteRoute(
                 envelope,
                 if (handled) PluginBusJournal.Verdict.OK else PluginBusJournal.Verdict.REJECTED,
@@ -3674,12 +3686,17 @@ class BusHubService : Service() {
             return
         }
         NexusPhoneState.setGlassesSetupHandoff(NexusPhoneState.SetupHandoff.SENDING)
+        val operationId = beginGlassesAppOperation() ?: run {
+            NexusPhoneState.setGlassesSetupHandoff(NexusPhoneState.SetupHandoff.FAILED)
+            return
+        }
         SetupJournal.record(applicationContext, fromGlasses = false, code = "start_requested")
         val started = runCatching {
             link.appStart(
                 "$GLASSES_HUB_PACKAGE.SetupEntryActivity",
                 object : IGlassAppCbk {
                     override fun onOpenAppResult(success: Boolean) {
+                        if (!finishGlassesAppOperation(operationId)) return
                         log("glasses setup start result=$success")
                         SetupJournal.record(
                             context = applicationContext,
@@ -3703,6 +3720,7 @@ class BusHubService : Service() {
             )
         }.isSuccess
         if (!started) {
+            finishGlassesAppOperation(operationId)
             log("glasses setup start failed to dispatch")
             NexusPhoneState.setGlassesSetupHandoff(NexusPhoneState.SetupHandoff.FAILED)
         }
@@ -3714,16 +3732,21 @@ class BusHubService : Service() {
             log("glasses app open skipped: CXR link down")
             return
         }
+        val operationId = beginGlassesAppOperation() ?: return
         runCatching {
             link.appStart(
                 "$GLASSES_HUB_PACKAGE.MainActivity",
                 object : IGlassAppCbk {
                     override fun onOpenAppResult(success: Boolean) {
+                        if (!finishGlassesAppOperation(operationId)) return
                         log("glasses app open result=$success")
                     }
                 },
             )
-        }.onFailure { log("glasses app open failed: ${it.message}") }
+        }.onFailure {
+            finishGlassesAppOperation(operationId)
+            log("glasses app open failed: ${it.message}")
+        }
     }
 
     private fun queryGlassesApp(installIfMissing: Boolean = false) {
@@ -4279,8 +4302,30 @@ class BusHubService : Service() {
         }
     }
 
+    private fun uploadYoutubeApk(apk: File, callback: (Boolean) -> Unit): Boolean {
+        val link = cxrLink ?: return false
+        val id = synchronized(glassesAppOperationLock) {
+            if (!isCxrUp() || activeGlassesAppOperationId != null || youtubeUploadId != null) return false
+            (++glassesAppOperationSequence).also { youtubeUploadId = it }
+        }
+        // CXR has one app callback slot. Hold it even after the UI timeout until the
+        // actual callback or disconnection; a late callback must not finish another upload.
+        fun complete(success: Boolean) {
+            val active = synchronized(glassesAppOperationLock) {
+                if (youtubeUploadId != id) false else { youtubeUploadId = null; true }
+            }
+            if (active) callback(success)
+        }
+        runCatching {
+            link.appUploadAndInstall(apk.absolutePath, object : IGlassAppCbk {
+                override fun onInstallAppResult(success: Boolean) = complete(success)
+            })
+        }.onFailure { complete(false) }
+        return true
+    }
+
     private fun beginGlassesAppOperation(): Long? = synchronized(glassesAppOperationLock) {
-        if (activeGlassesAppOperationId != null) return@synchronized null
+        if (activeGlassesAppOperationId != null || youtubeUploadId != null) return@synchronized null
         glassesAppOperationSequence += 1L
         glassesAppOperationSequence.also { activeGlassesAppOperationId = it }
     }
@@ -4759,6 +4804,14 @@ class BusHubService : Service() {
 
     private fun notifyLinkState() {
         val state = linkState()
+        if (::youtubeSetup.isInitialized) {
+            val cxrConnected = state and LinkStateBits.CXR_CONTROL_UP != 0
+            if (!cxrConnected) synchronized(glassesAppOperationLock) { youtubeUploadId = null }
+            youtubeSetup.onLinkChanged(
+                state and (LinkStateBits.CXR_CONTROL_UP or LinkStateBits.SPP_DATA_UP) != 0,
+                cxrConnected,
+            )
+        }
         val previousTransportState = lastTransportLinkState
         lastTransportLinkState = state
         val transportBits = LinkStateBits.CXR_CONTROL_UP or LinkStateBits.SPP_DATA_UP

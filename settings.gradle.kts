@@ -14,6 +14,24 @@ dependencyResolutionManagement {
         google()
         mavenCentral()
         maven { url = uri("https://jitpack.io") }
+        maven {
+            url = uri("https://maven.pkg.github.com/MorpheApp/registry")
+            // GitHub Packages rejects anonymous reads even of public packages. CI passes
+            // GITHUB_ACTOR/GITHUB_TOKEN; developer machines may set gpr.user/gpr.key.
+            val packagesUser = listOf(providers.environmentVariable("GITHUB_ACTOR"), providers.gradleProperty("gpr.user"))
+                .firstNotNullOfOrNull { it.orNull?.takeIf(String::isNotBlank) }
+            val packagesKey = listOf(providers.environmentVariable("GITHUB_TOKEN"), providers.gradleProperty("gpr.key"))
+                .firstNotNullOfOrNull { it.orNull?.takeIf(String::isNotBlank) }
+            if (packagesUser != null && packagesKey != null) {
+                credentials {
+                    username = packagesUser
+                    password = packagesKey
+                }
+            }
+            content {
+                includeGroup("app.morphe")
+            }
+        }
         maven { url = uri("https://maven.rokid.com/repository/maven-public/") }
     }
 }
@@ -38,6 +56,9 @@ include(":glasses-client-probe")
 include(":plugin-sample")
 include(":plugin-wireless-adb")
 include(":ink-engine")
+include(":kadb-compat")
+include(":plugin-patcher")
+project(":plugin-patcher").projectDir = file("plugins/patcher")
 
 // Plugin modules live under plugins/ (one folder per plugin, each with its own
 // README and CHANGELOG); feeds moves there once the in-flight feeds branch lands.
