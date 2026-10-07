@@ -248,6 +248,11 @@ SDK publication and the published-coordinate sample build do not require it.
 [wire specification](BUSSPEC.md) · [protocol guide](docs/PROTOCOL.md) ·
 [verification matrix](TESTPLAN.md)
 
+## License
+
 This project is licensed under the [Apache License 2.0](LICENSE), except
 [plugins/patcher](plugins/patcher/), which is GPL-3.0-only (see its
-`LICENSE`).
+`LICENSE`). See [NOTICE](NOTICE) for attribution.
+
+Contributions to the Apache-licensed modules are accepted under the same license
+(Apache-2.0, section 5) — no CLA required.
