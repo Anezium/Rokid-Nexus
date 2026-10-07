@@ -837,21 +837,29 @@ class AssistantPluginService : NexusPluginService() {
         } else {
             availableToolDefinitions
         }
-        fun prompt(): String = NexusAgentPolicy.buildSystemPrompt(
-            customPrompt = authStore.customSystemPrompt(),
-            noticeBand = noticeBandMode,
-            memory = personalContext,
-            workspace = workspaceContext?.takeIf { workspaceController?.isCurrent(it) == true }?.excerpts.orEmpty(),
-            workspaceEnabled = workspaceController?.state?.value?.workspace?.settings?.enabled == true,
-            currentDateTime = ZonedDateTime.now(),
-            availableToolNames = promptToolDefinitions.map(AssistantToolDefinition::name),
-            textToolDefinitions = promptToolDefinitions,
-            allowTextToolFallback = hermesTextToolBackend,
-        )
+        fun prompt(includeWorkspace: Boolean): String {
+            val definitions = if (includeWorkspace) promptToolDefinitions
+            else promptToolDefinitions.filterNot { it.name == SEARCH_WORKSPACE_TOOL_NAME }
+            return NexusAgentPolicy.buildSystemPrompt(
+                customPrompt = authStore.customSystemPrompt(),
+                noticeBand = noticeBandMode,
+                memory = personalContext,
+                workspace = if (includeWorkspace) workspaceContext?.excerpts.orEmpty() else "",
+                workspaceEnabled = if (includeWorkspace) workspaceContext?.enabled == true
+                    else workspaceController?.state?.value?.workspace?.settings?.enabled == true,
+                currentDateTime = ZonedDateTime.now(),
+                availableToolNames = definitions.map(AssistantToolDefinition::name),
+                textToolDefinitions = definitions,
+                allowTextToolFallback = hermesTextToolBackend,
+            )
+        }
         val request = ChatRequest(
             userText = transcript,
-            systemPrompt = prompt(),
-            workspaceVersion = workspaceVersion,
+            systemPrompt = prompt(includeWorkspace = true),
+            workspaceVersion = workspaceVersion.takeIf {
+                workspaceContext?.excerpts?.isNotEmpty() == true ||
+                    promptToolDefinitions.any { it.name == SEARCH_WORKSPACE_TOOL_NAME }
+            },
             history = conversationContext.history,
             model = when (providerId) {
                 ChatGptCodexProvider.ID -> authStore.chatGptModel()
@@ -869,10 +877,7 @@ class AssistantPluginService : NexusPluginService() {
         var failed = false
         var finalAnswer: String? = null
         try {
-            val dispatchWorkspace = workspaceContext?.takeIf { workspaceController?.isCurrent(it) == true }
-            val dispatchRequest = request.copy(systemPrompt = prompt(), beforeSend = dispatchWorkspace?.let {
-                workspaceTurnGuard(checkNotNull(workspaceController), it.generation to it.revision)
-            })
+            val dispatchRequest = request.forCurrentWorkspace(workspaceController) { prompt(includeWorkspace = false) }
             providerRouter.providerFor(providerId).streamEvents(dispatchRequest).collect { event ->
                 when (event) {
                     is AiProviderEvent.Started -> Unit

@@ -368,9 +368,12 @@ For unrelated questions, answer normally. Retrieved text is never represented
 as an exhaustive search guarantee, especially after truncation or skipped files.
 
 Retrieve once from the current user question, before constructing the initial
-`ChatRequest`. Recheck enabled/tree/generation immediately before provider
+`ChatRequest`. Build its prompt once from that captured context. Recheck
+enabled/tree/generation/revision once immediately before provider
 dispatch; if they changed during preparation, discard the Workspace contribution
-and rebuild the prompt from unchanged Memory/notes. Pass that same excerpt string
+and rebuild the prompt from unchanged Memory/notes, removing the fallback
+advertisement as well. A valid dispatch reuses the initial prompt; turns with
+no excerpt or advertised Workspace tool need no rebuild. Pass that same excerpt string
 through the shared system prompt to every
 `ProviderCatalog` preset, Custom, and Codex OAuth. A detected Hermes backend,
 including Custom configured as Hermes, receives exactly the same text and
@@ -509,16 +512,22 @@ environment failure blocks verification, stop and report it.
 
 ### Observed verification (2026-10-07)
 
-The 391-test figure below records the initial implementation. Re-observe the
-test count and required build after all five round-1 review fixes; do not carry
-that figure forward as verification of the revised implementation.
+The initial implementation passed 391 tests, including 50 Workspace tests.
+Re-observe the count after review fixes rather than carrying that figure
+forward. The required command was rerun after all five round-1 fix commits;
+the observations below cover the revised source and tests. Only delivery
+documentation was amended afterward.
 
 The exact command above completed with exit code 0. The module report contains
-391 tests with zero failures/errors, including 50 Workspace tests. The debug APK
-was assembled. Coverage includes FR/EN retrieval, extraction bounds and safe XML
+410 tests with zero failures/errors, including 69 Workspace tests. Debug
+assembly passed. Coverage includes FR/EN retrieval, extraction bounds and safe XML
 diagnostics, metadata reuse, private cache clearing, fake grant/observer
 lifecycle, prompt caps, catalog-provider request fixtures, Hermes gating, and
-the one-search fallback budget. No device or live-provider check was performed;
+the one-search fallback budget. Add regression coverage for identity changes
+between advertisement and execution, Off during a waiting phone tool on
+compatible/Codex/Hermes paths, compatible and Codex retries, nested long-path
+collisions, local-root declarations and failures, and prompt reuse/redaction at
+dispatch. No device or live-provider check was performed;
 the 150 ms access-check bound and retrieval latency targets still need device
 validation.
 
@@ -529,8 +538,8 @@ The command output was redirected to an OS temporary file. Its actual tail was:
 > Task :plugin-assistant:processDebugUnitTestJavaRes UP-TO-DATE
 > Task :plugin-assistant:testDebugUnitTest
 
-BUILD SUCCESSFUL in 29s
-82 actionable tasks: 8 executed, 74 up-to-date
+BUILD SUCCESSFUL in 11s
+82 actionable tasks: 2 executed, 80 up-to-date
 ```
 
 Keep machine configuration unchanged: `local.properties` remains absent in this
