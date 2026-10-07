@@ -12,6 +12,7 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.Build
 import android.provider.OpenableColumns
+import android.provider.DocumentsContract
 import android.text.util.Linkify
 import android.view.Gravity
 import android.view.View
@@ -760,6 +761,8 @@ class PatchActivity : Activity() {
     private fun picker(request: Int, action: String, type: String, name: String? = null) {
         startActivityForResult(Intent(action).apply {
             addCategory(Intent.CATEGORY_OPENABLE); this.type = type
+            if (request == REQUEST_STOCK) putExtra(DocumentsContract.EXTRA_INITIAL_URI,
+                DocumentsContract.buildRootUri("com.android.providers.downloads.documents", "downloads"))
             if (request == REQUEST_STOCK) putExtra(Intent.EXTRA_MIME_TYPES, arrayOf(
                 "application/vnd.android.package-archive", "application/octet-stream",
                 "application/zip", "application/x-zip-compressed",

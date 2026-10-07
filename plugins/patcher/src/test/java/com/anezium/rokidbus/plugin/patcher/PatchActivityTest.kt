@@ -180,4 +180,18 @@ class PatchActivityTest {
         assertEquals(PatchJobStatus.PREPARING, store.state.value.status)
         screen.pause().stop().destroy()
     }
+    @Test fun stockPickerStartsInDownloadsWithTheSupportedMimeTypes() {
+        activeStore()
+        val screen = Robolectric.buildActivity(PatchActivity::class.java).setup()
+        PatchActivity::class.java.getDeclaredMethod("picker", Int::class.javaPrimitiveType,
+            String::class.java, String::class.java, String::class.java).apply { isAccessible = true }
+            .invoke(screen.get(), 1, Intent.ACTION_OPEN_DOCUMENT, "*/*", null)
+        val picker = shadowOf(screen.get()).nextStartedActivity
+        assertEquals(Intent.ACTION_OPEN_DOCUMENT, picker.action)
+        assertEquals(android.provider.DocumentsContract.buildRootUri("com.android.providers.downloads.documents", "downloads"),
+            picker.getParcelableExtra<android.net.Uri>(android.provider.DocumentsContract.EXTRA_INITIAL_URI))
+        assertTrue(picker.getStringArrayExtra(Intent.EXTRA_MIME_TYPES)!!.contains("application/zip"))
+        screen.pause().stop().destroy()
+    }
+
 }
