@@ -45,10 +45,11 @@ class PatchRuntime(private val target: PatchTarget = PatchTargets.default) {
                 currentCoroutineContext().ensureActive()
                 progress(PatchProgress(PatchPhase.COMPILE))
                 val patched = timings.measureSuspend("patch_compile") { patcher.get() }
-                progress(PatchProgress(PatchPhase.WRITE))
+                progress(PatchProgress(PatchPhase.ALIGN))
                 timings.measure("write") {
                     input.inputStream().use { source -> unsigned.outputStream().use { PatchPolicy.copyBounded(source, it) } }
-                    timings.withAlignmentTiming({ progress(PatchProgress(PatchPhase.ALIGN)) }) { patched.applyTo(unsigned) }
+                    timings.withAlignmentTiming(onAlign = { progress(PatchProgress(PatchPhase.ALIGN)) },
+                        onWrite = { progress(PatchProgress(PatchPhase.WRITE)) }) { patched.applyTo(unsigned) }
                 }
             }
             currentCoroutineContext().ensureActive()

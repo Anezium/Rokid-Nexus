@@ -3,7 +3,7 @@ package com.anezium.rokidbus.plugin.patcher
 enum class PatchPhase(val label: String) {
     READ_INPUT("Reading input"), SIGNATURE_CHECK("Checking stock signatures"), SPLIT_MERGE("Merging splits"),
     BUNDLE_LOAD("Loading bundle"), READ_APK("Reading APK"), APPLY_PATCHES("Applying patches"),
-    COMPILE("Compiling patches"), WRITE("Writing APK"), ALIGN("Aligning APK"),
+    COMPILE("Compiling patches"), ALIGN("Aligning APK"), WRITE("Writing APK"),
     SIGN("Signing APK"), VERIFY("Verifying output"), PUBLISH("Saving result"), HAND_OFF("Ready to install")
 }
 

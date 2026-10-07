@@ -29,4 +29,16 @@ class PatchTimingsTest {
         assertEquals(originalLevel, logger.level)
         assertEquals(handlers, logger.handlers.toList())
     }
+    @Test fun alignmentAndWritingMarkersFollowTheRealUpstreamOrder() {
+        val phases = mutableListOf<PatchPhase>()
+        val logger = Logger.getLogger("app.morphe.patcher.apk.ApkUtils")
+        PatchTimings(sink = {}).withAlignmentTiming(
+            onAlign = { phases += PatchPhase.ALIGN }, onWrite = { phases += PatchPhase.WRITE }) {
+            logger.info("Aligning APK")
+            logger.fine("Writing changes")
+        }
+        assertEquals(listOf(PatchPhase.ALIGN, PatchPhase.WRITE), phases)
+        assertTrue(phases.zipWithNext().all { (before, after) -> before.ordinal < after.ordinal })
+    }
+
 }

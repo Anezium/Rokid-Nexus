@@ -12,7 +12,7 @@ object PatchPresentation {
     val patchStages = listOf(
         Stage("Load", listOf(PatchPhase.BUNDLE_LOAD, PatchPhase.READ_APK)),
         Stage("Patch", listOf(PatchPhase.APPLY_PATCHES)),
-        Stage("Build", listOf(PatchPhase.COMPILE, PatchPhase.WRITE, PatchPhase.ALIGN)),
+        Stage("Build", listOf(PatchPhase.COMPILE, PatchPhase.ALIGN, PatchPhase.WRITE)),
         Stage("Sign", listOf(PatchPhase.SIGN, PatchPhase.VERIFY)),
         Stage("Save", listOf(PatchPhase.PUBLISH, PatchPhase.HAND_OFF)),
     )

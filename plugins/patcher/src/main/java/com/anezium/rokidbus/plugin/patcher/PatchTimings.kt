@@ -32,14 +32,17 @@ class PatchTimings(
 
     // Patcher 1.7.0 aligns inside applyTo; these fixed log boundaries expose that
     // duration without a second realignment pass or changing the upstream writer.
-    fun <T> withAlignmentTiming(onAlign: () -> Unit = {}, block: () -> T): T {
+    fun <T> withAlignmentTiming(onAlign: () -> Unit = {}, onWrite: () -> Unit = {}, block: () -> T): T {
         val logger = Logger.getLogger("app.morphe.patcher.apk.ApkUtils")
         val previous = logger.level
         var started: Long? = null
         val observer = object : Handler() {
             override fun publish(record: LogRecord) {
                 if (record.message == "Aligning APK") { onAlign(); started = start() }
-                if (record.message == "Writing changes") started?.let { end("align", it); started = null }
+                if (record.message == "Writing changes") {
+                    started?.let { end("align", it); started = null }
+                    onWrite()
+                }
             }
             override fun flush() {}
             override fun close() {}
