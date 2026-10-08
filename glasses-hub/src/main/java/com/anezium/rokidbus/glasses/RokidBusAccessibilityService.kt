@@ -1325,6 +1325,7 @@ internal object NexusSession {
     )
 
     val state: SessionState get() = runner.state
+    val generation: Long get() = runner.model.generation
 
     fun onServiceConnected(service: AccessibilityService) {
         runOnMain {
@@ -1689,6 +1690,7 @@ internal object NexusInput {
         override val sessionGate: Boolean get() = NexusSession.state is SessionState.Opening
         override val sessionOpen: Boolean
             get() = NexusSession.state.let { it != SessionState.Closed && it !is SessionState.Opening }
+        override val sessionGeneration: Long get() = NexusSession.generation
 
         // The plan's armed notice: interactive, action-bearing, paged or backdrop. It reads false
         // while the camera overlay or an open session suppresses the band.

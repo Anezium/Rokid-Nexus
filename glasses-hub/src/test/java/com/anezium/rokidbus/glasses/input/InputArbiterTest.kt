@@ -47,6 +47,7 @@ class InputArbiterTest {
         override val sessionGate: Boolean get() = model.state is SessionState.Opening
         override val sessionOpen: Boolean
             get() = model.state !is SessionState.Closed && model.state !is SessionState.Opening
+        override val sessionGeneration: Long get() = model.generation
 
         override fun noticeHandles(event: RawKeyEvent): Boolean {
             noticeAsked += event
@@ -132,7 +133,7 @@ class InputArbiterTest {
     }
 
     @Test
-    fun `A2 a session press keeps the session through its up after the session closed`() {
+    fun `A2 a session press whose session closed is swallowed silently and never retargeted`() {
         openSessionRoot(at = 1_000)
         arbiter.onKey(raw(InputKeys.ENTER, DOWN, at = 3_000))
         rig.reduce(SessionEvent.Back(3_050))
@@ -142,8 +143,32 @@ class InputArbiterTest {
 
         val up = arbiter.onKey(raw(InputKeys.ENTER, UP, at = 3_100, down = 3_000))
 
-        assertTrue(up.consumed)
-        assertEquals(listOf<RoutedIntent>(ToSession(SessionEvent.Enter(3_100))), rig.delivered)
+        assertEquals(InputDecision(true), up)
+        assertTrue(rig.delivered.isEmpty())
+    }
+
+    @Test
+    fun `A2 a press from an aborted session never acts on the session that replaced it`() {
+        openSessionRoot(at = 1_000)
+        assertTrue(arbiter.onKey(raw(InputKeys.BACK, DOWN, at = 3_000)).consumed)
+
+        // Switch to LEGACY and back: the open session aborts and the arbiter resets.
+        rig.backend = LauncherBackend.LEGACY
+        rig.reduce(SessionEvent.Abort)
+        arbiter.reset()
+        rig.backend = LauncherBackend.SESSION
+        arbiter.reset()
+        tripleTap(3_100, 3_200, 3_300)
+        rig.reduce(SessionEvent.Tick(3_300 + PageSurfaceContract.GATE_MS))
+        assertTrue(rig.model.state is SessionState.Root)
+        assertEquals(2L, rig.model.generation)
+        rig.delivered.clear()
+
+        val up = arbiter.onKey(raw(InputKeys.BACK, UP, at = 4_200, down = 3_000))
+
+        assertEquals(InputDecision(true), up)
+        assertTrue(rig.delivered.isEmpty())
+        assertTrue(rig.model.state is SessionState.Root)
     }
 
     @Test

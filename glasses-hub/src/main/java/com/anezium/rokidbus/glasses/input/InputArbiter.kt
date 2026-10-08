@@ -44,6 +44,9 @@ internal interface InputContext {
     /** The session is past its gate: root, page or a pending plugin open. */
     val sessionOpen: Boolean
 
+    /** The generation of the latest session; every session that opens has a new one. */
+    val sessionGeneration: Long
+
     /**
      * A visible notice can claim input (interactive, action-bearing, paged or backdrop). False
      * while the notice is suppressed by the camera overlay or an open session.
@@ -87,7 +90,14 @@ internal class InputArbiter(private val context: InputContext) {
      * record is then kept until [PRESS_TTL_MS] passes, so a window that receives the UP the filter
      * let through still recognises it, and a duplicate UP finds it.
      */
-    private class Held(val owner: Owner, val consumed: Boolean, val viaWindow: Boolean, var lastSeenMs: Long) {
+    private class Held(
+        val owner: Owner,
+        val consumed: Boolean,
+        val viaWindow: Boolean,
+        var lastSeenMs: Long,
+        /** For a session press, the generation of the session it began in. */
+        val generation: Long?,
+    ) {
         var completed = false
     }
 
@@ -97,6 +107,7 @@ internal class InputArbiter(private val context: InputContext) {
     private val ringTaps = RingTapPolicy()
     private var ringTapPending = false
     private var ringTapAt = 0L
+    private var ringTapGeneration = 0L
 
     /** Time of the latest contact the detector let through, while its streak may still be replayed. */
     private var contactAt: Long? = null
@@ -183,8 +194,12 @@ internal class InputArbiter(private val context: InputContext) {
         if (event.isUp) held.completed = true
         val out = ArrayList<RoutedIntent>(1)
         val consumed = when (held.owner) {
+            // A session press acts only on the session it began in, and only while that session
+            // is up: an aborted session's press must not close the one that replaced it.
             Owner.SESSION -> {
-                sessionEvent(event)?.let { deliver(RoutedIntent.ToSession(it), out) }
+                if (sessionStillUp(held.generation)) {
+                    sessionEvent(event)?.let { deliver(RoutedIntent.ToSession(it), out) }
+                }
                 true
             }
             // The dispatcher keeps its own press bookkeeping and answers for the whole press.
@@ -226,7 +241,8 @@ internal class InputArbiter(private val context: InputContext) {
             // wearer likes (a modifier on a bonded keyboard sends no repeats).
             val stale = event.eventTime - PRESS_TTL_MS
             presses.values.removeAll { it.completed && it.lastSeenMs < stale }
-            presses[pressOf(event)] = Held(owner, consumed, viaWindow, event.eventTime)
+            val generation = if (owner == Owner.SESSION) context.sessionGeneration else null
+            presses[pressOf(event)] = Held(owner, consumed, viaWindow, event.eventTime, generation)
         }
         return InputDecision(consumed, out)
     }
@@ -354,6 +370,7 @@ internal class InputArbiter(private val context: InputContext) {
                     ringTaps.onTap(event.eventTime)
                     ringTapPending = true
                     ringTapAt = event.eventTime
+                    ringTapGeneration = context.sessionGeneration
                 }
             }
             return own(event, Owner.SESSION, consumed = true, out)
@@ -372,6 +389,7 @@ internal class InputArbiter(private val context: InputContext) {
         if (!ringTapPending) return
         val resolution = ringTaps.resolveExpired(nowMs) ?: return
         ringTapPending = false
+        if (!sessionStillUp(ringTapGeneration)) return
         when (resolution) {
             RingTapPolicy.Resolution.SINGLE -> deliver(RoutedIntent.ToSession(SessionEvent.Enter(nowMs)), out)
             RingTapPolicy.Resolution.DOUBLE -> deliver(RoutedIntent.ToSession(SessionEvent.Back(nowMs)), out)
@@ -402,6 +420,9 @@ internal class InputArbiter(private val context: InputContext) {
         )
         repeat(count) { deliver(RoutedIntent.ToSurface(contact, unclassifiedContact = true), out) }
     }
+
+    private fun sessionStillUp(generation: Long?): Boolean =
+        generation == context.sessionGeneration && (context.sessionGate || context.sessionOpen)
 
     private fun deliver(intent: RoutedIntent, out: MutableList<RoutedIntent>): Boolean {
         out += intent
