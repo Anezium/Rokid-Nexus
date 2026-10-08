@@ -249,8 +249,11 @@ Rules (each is a test):
     opens (PR2).
 
 Deadlines are enforced on the incoming event's own time, not only on `Tick`: a
-`PageResponse` or live revision whose `nowMs` is at or past the request's absolute
-deadline is rejected as `PAGE_TIMEOUT` (frame → `Unavailable`, last snapshot kept), and a
+`PageResponse` answering a pending request whose `nowMs` is at or past the request's
+absolute deadline is rejected as `PAGE_TIMEOUT` (frame → `Unavailable`, last snapshot
+kept). A live revision on a `Shown` frame has no pending request: it is governed by the
+lease only, accepted strictly before `leaseUntilMs` and rejected at or after it (review
+round 2 decision). A
 `PageResult` whose `nowMs` is at or past the invocation's deadline settles the
 invocation as `UNCONFIRMED_ACTION` and is otherwise ignored. Revisions are monotonic per
 page across refresh and retry too: a correlated response whose `revision` is lower
@@ -312,6 +315,22 @@ Verdict "merge-ready after these edits". Required before PR1 is closed:
    rejects subsequent replies; (g) `LinkLost` in `Opening` or at the root makes a
    subsequent `Enter` local-only until restoration and Retry; (h) deeply nested or huge
    payloads return Invalid without an escaping exception.
+
+Then rerun acceptance tests 1–9 and report their real tails.
+
+# Review round 2 (GPT-6.1 Sol, 2026-10-08, `design/nav-map-mockups/sol-review-pr1-round2.md`)
+
+Verdict "merge-ready after these edits". Edits 1, 3, 5, 6 resolved; 2 and 4 partially:
+
+1. Live revisions while `Shown`: decided above (lease governs, not the request deadline);
+   the reducer already behaves this way (`SessionReducer.kt` ≈ 421, test ≈ `T:513`).
+   No code change; keep the BUSSPEC/SDK wording consistent with it.
+2. **should-fix** `PageSurfaceContract.kt` ≈ 311: the minimum-size precheck counts every
+   `Number` or unsupported object as one byte, so a huge finite `BigDecimal` or an object
+   whose `toString()` is a million characters reaches full serialization before the size
+   check. Bound scalar representations (reject any `Number` whose string form exceeds 32
+   chars, reject unsupported scalar types outright, both as `INVALID_PAGE`) before full
+   serialization, and add oversized-scalar regressions to `PageSurfaceContractTest`.
 
 Then rerun acceptance tests 1–9 and report their real tails.
 
