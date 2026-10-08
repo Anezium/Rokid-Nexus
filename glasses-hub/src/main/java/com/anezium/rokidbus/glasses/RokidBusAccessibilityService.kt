@@ -27,9 +27,8 @@ import com.anezium.rokidbus.glasses.input.LauncherBackend
 import com.anezium.rokidbus.glasses.input.RawKeyEvent
 import com.anezium.rokidbus.glasses.input.RoutedIntent
 import com.anezium.rokidbus.glasses.session.HostScreen
-import com.anezium.rokidbus.glasses.session.NoticePreview
+import com.anezium.rokidbus.glasses.session.NoticeArrivals
 import com.anezium.rokidbus.glasses.session.OpenFailure
-import com.anezium.rokidbus.glasses.session.RootStops
 import com.anezium.rokidbus.glasses.session.SessionEffect
 import com.anezium.rokidbus.glasses.session.SessionEffectSink
 import com.anezium.rokidbus.glasses.session.SessionEvent
@@ -1312,7 +1311,7 @@ internal object NexusSession {
     private var noticeUnsubscribe: (() -> Unit)? = null
     private var surfaceUnsubscribe: (() -> Unit)? = null
     private var noticeArmed: Boolean? = null
-    private var noticeShownId: String? = null
+    private val noticeArrivals = NoticeArrivals()
     private var editableFocused: Boolean? = null
     private var surfaceShownId: String? = null
     private var phoneLinked: Boolean? = null
@@ -1363,7 +1362,6 @@ internal object NexusSession {
     /**
      * The notice facts the reducer keeps: an armed band refuses the triple tap, and every new
      * notice updates the root's preview and counter, even while the session hides the band.
-     * The preview opens the hub's notifications page, which lands with the notification centre.
      */
     private fun onNoticeChanged() {
         val armed = NoticeController.ownsRingInput()
@@ -1371,15 +1369,7 @@ internal object NexusSession {
             noticeArmed = armed
             runner.dispatch(if (armed) SessionEvent.NoticeArmed else SessionEvent.NoticeCleared)
         }
-        val notice = NoticeController.activeNotice()
-        if (notice?.surfaceId == noticeShownId) return
-        noticeShownId = notice?.surfaceId
-        if (notice == null) return
-        val content = notice.content
-        val text = listOfNotNull(content.title, content.body, content.lines.firstOrNull())
-            .firstOrNull { it.isNotBlank() }
-            .orEmpty()
-        runner.dispatch(SessionEvent.NoticeArrived(NoticePreview(RootStops.NOTIFICATIONS_PAGE_ID, text)))
+        noticeArrivals.onNotice(NoticeController.activeNotice())?.let(runner::dispatch)
     }
 
     private fun onSurfaceChanged(surface: NexusSurface?) {
