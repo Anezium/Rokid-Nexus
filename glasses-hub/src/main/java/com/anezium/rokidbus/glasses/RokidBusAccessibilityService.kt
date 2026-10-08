@@ -19,8 +19,17 @@ import android.view.accessibility.AccessibilityEvent
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.anezium.rokidbus.client.ui.BusTheme
+import com.anezium.rokidbus.glasses.input.InputArbiter
+import com.anezium.rokidbus.glasses.input.InputContext
+import com.anezium.rokidbus.glasses.input.InputDecision
+import com.anezium.rokidbus.glasses.input.KeyEventAdapter
+import com.anezium.rokidbus.glasses.input.LauncherBackend
+import com.anezium.rokidbus.glasses.input.RawKeyEvent
+import com.anezium.rokidbus.glasses.input.RoutedIntent
 import com.anezium.rokidbus.glasses.session.HostScreen
+import com.anezium.rokidbus.glasses.session.NoticePreview
 import com.anezium.rokidbus.glasses.session.OpenFailure
+import com.anezium.rokidbus.glasses.session.RootStops
 import com.anezium.rokidbus.glasses.session.SessionEffect
 import com.anezium.rokidbus.glasses.session.SessionEffectSink
 import com.anezium.rokidbus.glasses.session.SessionEvent
@@ -40,17 +49,10 @@ import com.anezium.rokidbus.shared.SetupStage
 import org.json.JSONObject
 
 class RokidBusAccessibilityService : AccessibilityService() {
-    private val tripleTapDetector = TripleTapDetector()
     private val main = Handler(Looper.getMainLooper())
     private val displayStandbyWatchdog by lazy(LazyThreadSafetyMode.NONE) {
         DisplayStandbyWatchdog(this, main)
     }
-    private val tapExpiry = Runnable { flushPendingTaps() }
-    // Keys whose DOWN we consumed. Their UP must be consumed too even if the
-    // consumer vanished in between (selecting a launcher entry hides the
-    // overlay before the UP arrives; the orphan ENTER UP then reaches the
-    // Rokid launcher, whose key-up handler starts phone music playback).
-    private val consumedDownKeys = mutableSetOf<Int>()
     private var wirelessDebuggingAutomator: SelfArmWirelessDebuggingAutomator? = null
     private var developerOptionsEnabler: SelfArmDeveloperOptionsEnabler? = null
     private var wirelessBootstrapActive = false
@@ -103,15 +105,15 @@ class RokidBusAccessibilityService : AccessibilityService() {
         )
         SurfaceOverlayRenderer.onServiceConnected(this)
         PinOverlayRenderer.onServiceConnected(this)
-        ActivityController.onServiceConnected(applicationContext) {
-            performGlobalAction(GLOBAL_ACTION_BACK)
-        }
+        ActivityController.onServiceConnected(applicationContext)
         NoticeController.onServiceConnected(applicationContext) {
             performGlobalAction(GLOBAL_ACTION_LOCK_SCREEN)
         }
         ActivityOverlayRenderer.onServiceConnected(this)
         NoticeOverlayRenderer.onServiceConnected(this)
         LauncherOverlayRenderer.onServiceConnected(this)
+        NexusInput.onServiceConnected(this)
+        NexusSession.onServiceConnected(this)
         StatusBadgeOverlayRenderer.onServiceConnected(this)
         GlassesHub.start(applicationContext)
         displayStandbyWatchdog.start()
@@ -173,20 +175,20 @@ class RokidBusAccessibilityService : AccessibilityService() {
 
     override fun onKeyEvent(event: KeyEvent): Boolean {
         displayStandbyWatchdog.noteKeyEvent(event)
+        if (event.keyCode == KEYCODE_PROG_BLUE) return false
         if (event.device?.name?.uppercase()?.contains("R08") == true) {
             return handleRingKeyEvent(event)
         }
-        if (event.keyCode == KEYCODE_PROG_BLUE) return false
         // An editable card owns confirm/direction the same keys would
         // otherwise answer a notice with — Enter submits the field, arrows
-        // move the caret — so this notice claim steps aside while one is the
+        // move the caret — so the notice claim steps aside while one is the
         // active surface, the same way the notice itself already steps aside
         // for it (see startTyping). It also means the touchpad's tap gesture
-        // must never reach the triple-tap launcher trigger here: a hand
-        // resting near the touchpad while typing on a keyboard bonded to the
-        // glasses reads as exactly the tap burst that opens it (seen on
-        // hardware — the launcher appearing mid-reply, unrelated to anything
-        // the wearer meant to do).
+        // must never reach the triple-tap trigger: a hand resting near the
+        // touchpad while typing on a keyboard bonded to the glasses reads as
+        // exactly the tap burst that opens it (seen on hardware — the
+        // launcher appearing mid-reply, unrelated to anything the wearer
+        // meant to do). The arbiter skips recognition while a field is focused.
         val editableSurfaceActive = SurfaceController.hasFocusedEditableSurface()
         // Raw gesture trace: the temple firmware's key bursts keep surprising us
         // (duplicated swipe pairs, tap contacts); keep the evidence cheap to grab.
@@ -195,94 +197,11 @@ class RokidBusAccessibilityService : AccessibilityService() {
         if (!editableSurfaceActive) {
             log("key code=${event.keyCode} action=${event.action} repeat=${event.repeatCount} t=${event.eventTime}")
         }
-
-        if (event.action == KeyEvent.ACTION_UP) {
-            val noticeConsumed = NoticeKeyDispatcher.handleKeyEvent(event)
-            val otherConsumed = consumedDownKeys.remove(event.keyCode)
-            if (noticeConsumed || otherConsumed) return true
-        }
-
-        val decision = if (editableSurfaceActive) {
-            TripleTapDetector.Decision.PASS
-        } else {
-            tripleTapDetector.onKey(event.keyCode, event.action, event.repeatCount, event.eventTime)
-        }
-        if (event.action == KeyEvent.ACTION_DOWN && event.keyCode != TripleTapDetector.KEYCODE_NOTIFICATION) {
-            main.removeCallbacks(tapExpiry)
-        }
-
-        val handled = when (decision) {
-            TripleTapDetector.Decision.TRIGGER -> {
-                main.removeCallbacks(tapExpiry)
-                if (!LauncherOverlayRenderer.isShown()) {
-                    LauncherOverlayRenderer.show(this)
-                }
-                true
-            }
-            TripleTapDetector.Decision.CONSUME -> true
-            TripleTapDetector.Decision.PASS -> {
-                if (!editableSurfaceActive &&
-                    event.keyCode == TripleTapDetector.KEYCODE_NOTIFICATION &&
-                    event.action == KeyEvent.ACTION_DOWN &&
-                    event.repeatCount == 0
-                ) {
-                    main.removeCallbacks(tapExpiry)
-                    main.postDelayed(tapExpiry, TripleTapDetector.DEFAULT_WINDOW_MS + 1L)
-                }
-                when {
-                    event.action != KeyEvent.ACTION_UP && NoticeKeyDispatcher.handleKeyEvent(event) -> true
-                    LauncherOverlayRenderer.handleKeyEvent(event) -> true
-                    SurfaceController.handleKeyEvent(event) -> true
-                    ActivityController.handleKeyEvent(event) -> true
-                    else -> false
-                }
-            }
-        }
-        if (event.action == KeyEvent.ACTION_DOWN) {
-            if (handled) consumedDownKeys.add(event.keyCode) else consumedDownKeys.remove(event.keyCode)
-        }
-        return handled
+        return NexusInput.onKey(event)
     }
 
-    private fun handleRingKeyEvent(event: KeyEvent): Boolean {
-        // Preserve the raw R08 DOWN/UP pair even if its translated action hides
-        // the current owner before the physical UP arrives.
-        if (event.action == KeyEvent.ACTION_UP && consumedDownKeys.remove(event.keyCode)) {
-            return true
-        }
-        val launcherShown = LauncherOverlayRenderer.isShown()
-        val surfaceActive = SurfaceController.activeSurface() != null
-        val noticeOwnsRing = NoticeController.ownsRingInput()
-        val noticeRingClaims = NoticeController.claimsRingKey(event.keyCode)
-        val activityClaims = ActivityController.claimsRingKey(event.keyCode)
-        if (!launcherShown && !surfaceActive && !noticeOwnsRing && !activityClaims) return false
-
-        if (event.action != KeyEvent.ACTION_DOWN) return true
-        if (event.repeatCount == 0) {
-            when {
-                // Claimed keys change notice state. While the band owns the ring,
-                // every other R08 key stops here as a no-op so neither the bridge
-                // nor an underlying Nexus layer can drive hidden native UI.
-                //
-                // It is asked before the launcher because the band is drawn on
-                // top of it: a paged notice that arrives over an open launcher is
-                // what the wearer is reading, and turning its pages must not
-                // scroll a tile row they cannot see.
-                noticeRingClaims ->
-                    NoticeController.handleRingKey(event.keyCode, event.eventTime)
-                noticeOwnsRing -> Unit
-                launcherShown ->
-                    LauncherOverlayRenderer.handleRingKey(event.keyCode, event.eventTime)
-                surfaceActive ->
-                    SurfaceController.handleRingKey(event.keyCode, event.eventTime)
-                activityClaims ->
-                    ActivityController.handleRingKey(event.keyCode, event.eventTime)
-                else -> Unit
-            }
-        }
-        consumedDownKeys.add(event.keyCode)
-        return true
-    }
+    /** The R08 ring passes the session's gate and open session before its own policy. */
+    private fun handleRingKeyEvent(event: KeyEvent): Boolean = NexusInput.onKey(event)
 
     override fun onInterrupt() {
         wirelessDebuggingAutomator?.stop()
@@ -299,7 +218,8 @@ class RokidBusAccessibilityService : AccessibilityService() {
         log("AccessibilityService destroyed")
         AssistantDisplayEpisode.end(DisplayHoldReleaseReason.SERVICE_DESTROYED)
         displayStandbyWatchdog.stop()
-        main.removeCallbacks(tapExpiry)
+        NexusSession.onServiceDestroyed()
+        NexusInput.onServiceDestroyed()
         wirelessDebuggingAutomator?.stop()
         developerOptionsEnabler?.stop()
         pauseSetupWifiEnableIfActive(SetupStage.ENABLING_WIFI)
@@ -323,34 +243,8 @@ class RokidBusAccessibilityService : AccessibilityService() {
         SurfaceController.cancelRingInput()
         NoticeController.cancelRingInput()
         NoticeKeyDispatcher.reset()
-        ActivityController.cancelRingInput()
         RingFocusBroadcastCoordinator.onServiceDestroyed(this)
-        consumedDownKeys.clear()
         super.onDestroy()
-    }
-
-    private fun flushPendingTaps() {
-        val tapCount = tripleTapDetector.consumeExpiredTapCount(SystemClock.uptimeMillis())
-        if (tapCount <= 0) return
-        // Deliberately no notice branch. A band is answered once and cannot take
-        // it back, so it must never be answered by a contact that the firmware
-        // had not finished classifying — this path fires when the triple-tap
-        // window expires, which races a classification allowed to take 500 ms
-        // and loses often enough to send a reply the wearer did not ask for.
-        // The band hears the ENTER instead, a few hundred milliseconds later and
-        // only when the touch really was a tap.
-        if (SurfaceController.activeSurface() != null) {
-            repeat(tapCount) {
-                SurfaceController.forwardSurfaceInput(
-                    TripleTapDetector.KEYCODE_NOTIFICATION,
-                    KeyEvent.ACTION_DOWN,
-                )
-            }
-            return
-        }
-        repeat(tapCount) {
-            ActivityController.handlePendingTempleTap()
-        }
     }
 
     private fun scheduleNativeAssistantDismissChecks(reason: String) {
@@ -1415,6 +1309,13 @@ internal object NexusSession {
     private var status: SessionStatus? = null
     private var statusFresh = false
     private var renderedState: SessionState? = null
+    private var noticeUnsubscribe: (() -> Unit)? = null
+    private var surfaceUnsubscribe: (() -> Unit)? = null
+    private var noticeArmed: Boolean? = null
+    private var noticeShownId: String? = null
+    private var editableFocused: Boolean? = null
+    private var surfaceShownId: String? = null
+    private var phoneLinked: Boolean? = null
     private val runner = SessionRunner(
         reducer = SessionReducer(),
         clock = SystemClock::uptimeMillis,
@@ -1429,6 +1330,10 @@ internal object NexusSession {
         runOnMain {
             appContext = service.applicationContext
             host = SessionHost(SessionOverlayWindow(service), abort = { dispatch(SessionEvent.Abort) }, log = ::log)
+            noticeUnsubscribe?.invoke()
+            noticeUnsubscribe = NoticeController.observe { runOnMain(::onNoticeChanged) }
+            surfaceUnsubscribe?.invoke()
+            surfaceUnsubscribe = SurfaceController.observe { surface -> runOnMain { onSurfaceChanged(surface) } }
         }
     }
 
@@ -1437,8 +1342,56 @@ internal object NexusSession {
             runner.dispatch(SessionEvent.Abort)
             host?.detach()
             host = null
+            noticeUnsubscribe?.invoke()
+            noticeUnsubscribe = null
+            surfaceUnsubscribe?.invoke()
+            surfaceUnsubscribe = null
             appContext = null
         }
+    }
+
+    /** Link changes reach the reducer as they happen; a session that opens is told again. */
+    fun onPhoneLink(connected: Boolean) {
+        runOnMain {
+            if (connected == phoneLinked) return@runOnMain
+            phoneLinked = connected
+            runner.dispatch(if (connected) SessionEvent.LinkRestored else SessionEvent.LinkLost)
+        }
+    }
+
+    /**
+     * The notice facts the reducer keeps: an armed band refuses the triple tap, and every new
+     * notice updates the root's preview and counter, even while the session hides the band.
+     * The preview opens the hub's notifications page, which lands with the notification centre.
+     */
+    private fun onNoticeChanged() {
+        val armed = NoticeController.ownsRingInput()
+        if (armed != noticeArmed) {
+            noticeArmed = armed
+            runner.dispatch(if (armed) SessionEvent.NoticeArmed else SessionEvent.NoticeCleared)
+        }
+        val notice = NoticeController.activeNotice()
+        if (notice?.surfaceId == noticeShownId) return
+        noticeShownId = notice?.surfaceId
+        if (notice == null) return
+        val content = notice.content
+        val text = listOfNotNull(content.title, content.body, content.lines.firstOrNull())
+            .firstOrNull { it.isNotBlank() }
+            .orEmpty()
+        runner.dispatch(SessionEvent.NoticeArrived(NoticePreview(RootStops.NOTIFICATIONS_PAGE_ID, text)))
+    }
+
+    private fun onSurfaceChanged(surface: NexusSurface?) {
+        val editable = SurfaceController.hasFocusedEditableSurface()
+        if (editable != editableFocused) {
+            editableFocused = editable
+            runner.dispatch(SessionEvent.EditableFocused(editable))
+        }
+        val surfaceId = surface?.surfaceId
+        if (surface != null && surfaceId != surfaceShownId) {
+            runner.dispatch(SessionEvent.SurfaceShown(surface.surfaceId, surface.ownerPluginId, SystemClock.uptimeMillis()))
+        }
+        surfaceShownId = surfaceId
     }
 
     fun dispatch(event: SessionEvent) {
@@ -1454,7 +1407,8 @@ internal object NexusSession {
             when (effect) {
                 SessionEffect.AttachHost -> attach()
                 SessionEffect.DetachHost -> detach()
-                is SessionEffect.RestoreUnderneath -> Unit
+                // The base was never touched: lifting the band's suppression is all a restore does.
+                is SessionEffect.RestoreUnderneath -> NoticeController.setSessionOverlayActive(false)
                 is SessionEffect.RequestPage -> send(BusPaths.PAGE_REQUEST, effect.request.toPayload())
                 is SessionEffect.SendAction -> send(BusPaths.PAGE_ACTION, effect.action.toPayload())
                 is SessionEffect.SendVisibility -> send(
@@ -1504,14 +1458,18 @@ internal object NexusSession {
                 return
             }
             current.attach()
+            if (!current.isAttached) return
+            // No ambient band while the session is up; the notice keeps its deadline.
+            NoticeController.setSessionOverlayActive(true)
             // The session owns the ring while it is up, exactly as the legacy launcher does.
-            if (current.isAttached) {
-                appContext?.let { RingFocusBroadcastCoordinator.setLauncherShown(it, shown = true) }
-            }
+            appContext?.let { RingFocusBroadcastCoordinator.setLauncherShown(it, shown = true) }
+            // A new session starts linked; tell it if the phone is already gone.
+            if (!GlassesHub.isPhoneConnected()) dispatch(SessionEvent.LinkLost)
         }
 
         private fun detach() {
             host?.detach()
+            NoticeController.setSessionOverlayActive(false)
             appContext?.let { RingFocusBroadcastCoordinator.setLauncherShown(it, shown = false) }
             renderedState = null
         }
@@ -1620,3 +1578,151 @@ private class HandlerSessionTimer(private val handler: Handler) : SessionTimer {
         pending = null
     }
 }
+
+/**
+ * Every key of the glasses goes through one [InputArbiter]: the accessibility filter, the ring,
+ * the late replay of unclassified contacts, and the key dispatch of the Nexus windows. This is
+ * the arbiter's Android side: it reads the hub's state and hands each routed key to its owner.
+ */
+internal object NexusInput {
+    private val main = Handler(Looper.getMainLooper())
+    private var service: AccessibilityService? = null
+
+    /** The Android event being decided, for the owners that still take a `KeyEvent`. */
+    private var current: KeyEvent? = null
+    private val arbiter = InputArbiter(AndroidInputContext)
+    private val tick = Runnable(::onTick)
+
+    @Volatile
+    var backend: LauncherBackend = LauncherBackend.DEFAULT
+        private set
+
+    fun onServiceConnected(service: AccessibilityService) {
+        this.service = service
+        backend = LauncherBackend.parse(ActivityPresentationSettings.launcherBackend(service)) ?: LauncherBackend.DEFAULT
+        log("Launcher backend=${backend.name}")
+    }
+
+    fun onServiceDestroyed() {
+        main.removeCallbacks(tick)
+        arbiter.reset()
+        service = null
+    }
+
+    /** A key the accessibility filter sees, before any window does. */
+    fun onKey(event: KeyEvent): Boolean = decide(event) { arbiter.onKey(it) }
+
+    /** A key delivered to a Nexus window: only a press the filter never routed is decided here. */
+    fun onWindowKey(event: KeyEvent): Boolean = decide(event) { arbiter.onWindowKey(it) }
+
+    /**
+     * Switches the launcher backend. The active one closes first, so at most one launcher ever
+     * has a window and only the new one receives the global gesture.
+     */
+    fun setBackend(context: Context, next: LauncherBackend) {
+        ActivityPresentationSettings.setLauncherBackend(context.applicationContext, next.name)
+        runOnMain {
+            if (next == backend) return@runOnMain
+            when (backend) {
+                LauncherBackend.LEGACY -> if (LauncherOverlayRenderer.isShown()) LauncherOverlayRenderer.hide()
+                LauncherBackend.SESSION -> NexusSession.dispatch(SessionEvent.Abort)
+            }
+            backend = next
+            arbiter.reset()
+            scheduleTick()
+            log("Launcher backend=${next.name}")
+        }
+    }
+
+    private inline fun decide(event: KeyEvent, route: (RawKeyEvent) -> InputDecision): Boolean {
+        val outer = current
+        current = event
+        try {
+            return route(event.toRawKeyEvent()).consumed
+        } finally {
+            current = outer
+            scheduleTick()
+        }
+    }
+
+    private fun onTick() {
+        arbiter.onTick(SystemClock.uptimeMillis())
+        scheduleTick()
+    }
+
+    private fun scheduleTick() {
+        main.removeCallbacks(tick)
+        arbiter.nextDeadlineMs()?.let { main.postAtTime(tick, it) }
+    }
+
+    private fun openLegacyLauncher(): Boolean {
+        val context = service ?: return false
+        if (!LauncherOverlayRenderer.isShown()) LauncherOverlayRenderer.show(context)
+        return true
+    }
+
+    /**
+     * The ring's existing precedence. Claimed keys change notice state. While the band owns the
+     * ring, every other R08 key stops here as a no-op so neither the bridge nor an underlying
+     * Nexus layer can drive hidden native UI. It is asked before the launcher because the band
+     * is drawn on top of it: a paged notice that arrives over an open launcher is what the
+     * wearer is reading, and turning its pages must not scroll a tile row they cannot see.
+     */
+    private fun deliverRingKey(keyCode: Int, eventTimeMs: Long) {
+        when {
+            NoticeController.claimsRingKey(keyCode) -> NoticeController.handleRingKey(keyCode, eventTimeMs)
+            NoticeController.ownsRingInput() -> Unit
+            LauncherOverlayRenderer.isShown() -> LauncherOverlayRenderer.handleRingKey(keyCode, eventTimeMs)
+            SurfaceController.activeSurface() != null -> SurfaceController.handleRingKey(keyCode, eventTimeMs)
+            else -> Unit
+        }
+    }
+
+    private fun runOnMain(block: () -> Unit) {
+        if (Looper.myLooper() == Looper.getMainLooper()) block() else main.post(block)
+    }
+
+    private object AndroidInputContext : InputContext {
+        override val backend: LauncherBackend get() = NexusInput.backend
+        override val editableFocused: Boolean get() = SurfaceController.hasFocusedEditableSurface()
+        override val sessionGate: Boolean get() = NexusSession.state is SessionState.Opening
+        override val sessionOpen: Boolean
+            get() = NexusSession.state.let { it != SessionState.Closed && it !is SessionState.Opening }
+
+        // The plan's armed notice: interactive, action-bearing, paged or backdrop. It reads false
+        // while the camera overlay or an open session suppresses the band.
+        override val noticeArmed: Boolean get() = NoticeController.ownsRingInput()
+        override val legacyShown: Boolean get() = LauncherOverlayRenderer.isShown()
+        override val surfaceOwnsKeys: Boolean get() = SurfaceController.activeSurface() != null
+        override val activeSurfaceId: String? get() = SurfaceController.activeSurface()?.surfaceId
+        override val nativeInFront: Boolean get() = !surfaceOwnsKeys && !legacyShown
+
+        override fun noticeHandles(event: RawKeyEvent): Boolean =
+            current?.let(NoticeKeyDispatcher::handleKeyEvent) == true
+
+        override fun deliver(intent: RoutedIntent): Boolean = when (intent) {
+            is RoutedIntent.ToSession -> {
+                NexusSession.dispatch(intent.event)
+                true
+            }
+            is RoutedIntent.ToLegacyLauncher ->
+                if (intent.open) openLegacyLauncher() else current?.let(LauncherOverlayRenderer::handleKeyEvent) == true
+            is RoutedIntent.ToSurface ->
+                if (intent.unclassifiedContact) {
+                    // Deliberately never the notice: a band is answered once, and this contact
+                    // was never classified as a tap by the firmware.
+                    SurfaceController.forwardSurfaceInput(TripleTapDetector.KEYCODE_NOTIFICATION, KeyEvent.ACTION_DOWN)
+                } else {
+                    current?.let(SurfaceController::handleKeyEvent) == true
+                }
+            is RoutedIntent.ToRing -> {
+                deliverRingKey(intent.key.keyCode, intent.key.eventTime)
+                true
+            }
+            is RoutedIntent.ToNotice, RoutedIntent.PassThrough -> false
+        }
+    }
+}
+
+private fun KeyEvent.toRawKeyEvent(): RawKeyEvent =
+    KeyEventAdapter.from(keyCode, action, repeatCount, eventTime, downTime, deviceId, device?.name)

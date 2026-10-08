@@ -24,6 +24,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import com.anezium.rokidbus.client.ui.BusTheme
+import com.anezium.rokidbus.glasses.input.LauncherBackend
 
 object LauncherOverlayRenderer {
     private const val KEYCODE_PROG_BLUE = 186
@@ -74,6 +75,11 @@ object LauncherOverlayRenderer {
     }
 
     fun show(context: Context): Boolean {
+        // Only the active backend ever has a window; the session backend never shows this one.
+        if (NexusInput.backend != LauncherBackend.LEGACY) {
+            log("Launcher overlay not shown: backend=${NexusInput.backend.name}")
+            return false
+        }
         val activeService = service ?: return false
         launcherReturnCoordinator.clearPendingLauncherOpen()
         GlassesHub.start(activeService.applicationContext)
@@ -255,11 +261,8 @@ object LauncherOverlayRenderer {
             menu.setHudTopInsetDp(value)
         }
 
-        override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-            if (NoticeKeyDispatcher.handleKeyEvent(event)) return true
-            if (LauncherOverlayRenderer.handleKeyEvent(event)) return true
-            return super.dispatchKeyEvent(event)
-        }
+        // The menu's views never consume a key the arbiter did not route to the launcher.
+        override fun dispatchKeyEvent(event: KeyEvent): Boolean = NexusInput.onWindowKey(event)
     }
 
     private class LauncherMenuView(context: Context) : LinearLayout(context) {
