@@ -10,11 +10,14 @@ This product includes software adapted from the Rokid-Nexus fork by alvarosw
 Version 2.0. The glasses hub's input arbiter, session runner, session host,
 the plugin open handoff and the record of what a session covers were rewritten
 from that fork's HudInput, HudKeyEventAdapter, HudRunner, HudHost and
-HudStateMachine. Each adapted file says so at its top:
+HudStateMachine. Each adapted file says so at its top, or at the adapted class
+where only part of a file comes from the fork:
 
   glasses-hub/src/main/java/com/anezium/rokidbus/glasses/input/InputArbiter.kt
   glasses-hub/src/main/java/com/anezium/rokidbus/glasses/input/KeyEventAdapter.kt
   glasses-hub/src/main/java/com/anezium/rokidbus/glasses/input/RawKeyEvent.kt
+  glasses-hub/src/main/java/com/anezium/rokidbus/glasses/RokidBusAccessibilityService.kt
+    (SessionOverlayWindow only)
   glasses-hub/src/main/java/com/anezium/rokidbus/glasses/session/SessionHost.kt
   glasses-hub/src/main/java/com/anezium/rokidbus/glasses/session/SessionReducer.kt
     (the plugin open handoff only)

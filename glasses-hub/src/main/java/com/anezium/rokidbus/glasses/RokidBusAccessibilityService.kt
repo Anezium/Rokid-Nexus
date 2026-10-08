@@ -1484,6 +1484,7 @@ internal object NexusSession {
     }
 }
 
+// Adapted from the Rokid-Nexus fork by alvarosw (https://github.com/alvarosw/Rokid-Nexus), Apache-2.0.
 /** The session's one opaque overlay; it holds the screen on only while it exists. */
 private class SessionOverlayWindow(private val service: AccessibilityService) : SessionWindow {
     private val windowManager: WindowManager? = service.getSystemService(WindowManager::class.java)
