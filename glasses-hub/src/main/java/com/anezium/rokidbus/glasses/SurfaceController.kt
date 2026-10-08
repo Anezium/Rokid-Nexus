@@ -483,8 +483,7 @@ object SurfaceController {
                 active = true,
                 completesHandoff = completesRingHandoff,
             )
-            notifyListeners(surface)
-            displaySurface(context, surface, forcedPath, isHandoff)
+            publishAndDisplay(context, surface, forcedPath, isHandoff)
         }
     }
 
@@ -546,8 +545,8 @@ object SurfaceController {
                     active = true,
                     completesHandoff = completesRingHandoff,
                 )
-                notifyListeners(surface)
-                displaySurface(context, surface, null, isHandoff)
+                // A surface closed while it was announced is not decoded either.
+                if (!publishAndDisplay(context, surface, null, isHandoff)) return@runOnMain
             }
             imageDecodeExecutor.execute {
                 val decoded = ImageHudView.decodeRgb565(bytes, metadata)
@@ -597,13 +596,30 @@ object SurfaceController {
                                 active = true,
                                 completesHandoff = completesRingHandoff,
                             )
-                            notifyListeners(published)
-                            displaySurface(context, published, null, isHandoff)
+                            publishAndDisplay(context, published, null, isHandoff)
                         }
                     }
                 }
             }
         }
+    }
+
+    /**
+     * Announces [surface] to the listeners, then displays it unless one of them synchronously
+     * closed or replaced it. The Nexus session closes the late surface of an open the wearer
+     * cancelled from inside that announcement; displaying it afterwards would leave a window up
+     * with no active surface behind it. False when the surface was not displayed.
+     */
+    private fun publishAndDisplay(
+        context: Context,
+        surface: NexusSurface,
+        forcedPath: SurfaceDisplayPath?,
+        isHandoff: Boolean,
+    ): Boolean {
+        notifyListeners(surface)
+        if (active !== surface) return false
+        displaySurface(context, surface, forcedPath, isHandoff)
+        return true
     }
 
     private fun displaySurface(
