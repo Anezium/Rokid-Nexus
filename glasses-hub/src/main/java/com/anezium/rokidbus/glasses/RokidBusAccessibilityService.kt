@@ -97,6 +97,9 @@ class RokidBusAccessibilityService : AccessibilityService() {
         RemoteNavigationController.onServiceConnected(this)
         RemotePointerController.onServiceConnected(this)
         log("AccessibilityService connected; starting glasses hub")
+        // Ahead of every renderer: a surface accepted while the service was gone goes through the
+        // session's gate before the overlay or the ring focus can restore it.
+        NexusSession.onServiceConnected(this)
         RingFocusBroadcastCoordinator.onServiceConnected(
             this,
             surfaceActive = SurfaceController.activeSurface() != null,
@@ -112,7 +115,6 @@ class RokidBusAccessibilityService : AccessibilityService() {
         NoticeOverlayRenderer.onServiceConnected(this)
         LauncherOverlayRenderer.onServiceConnected(this)
         NexusInput.onServiceConnected(this)
-        NexusSession.onServiceConnected(this)
         StatusBadgeOverlayRenderer.onServiceConnected(this)
         GlassesHub.start(applicationContext)
         displayStandbyWatchdog.start()
@@ -1334,8 +1336,11 @@ internal object NexusSession {
             noticeUnsubscribe = NoticeController.observe { runOnMain(::onNoticeChanged) }
             surfaceUnsubscribe?.invoke()
             surfaceUnsubscribe = SurfaceController.observe { surface -> runOnMain { onSurfaceChanged(surface) } }
-            // Ahead of every observer, so a surface the session closes unseen reaches no renderer.
-            SurfaceController.setPresentationGate(::onSurfacePresented)
+            // Ahead of every observer, so a surface the session closes unseen reaches no renderer;
+            // installing it also reconciles the surface already active.
+            if (!SurfaceController.setPresentationGate(::onSurfacePresented)) {
+                log("Session closed a surface accepted while the service was away")
+            }
         }
     }
 
@@ -1349,6 +1354,9 @@ internal object NexusSession {
             surfaceUnsubscribe?.invoke()
             surfaceUnsubscribe = null
             SurfaceController.setPresentationGate(null)
+            // Whatever is presented while the service is away is reconciled afresh on reconnect.
+            surfaceShownId = null
+            editableFocused = null
             appContext = null
         }
     }

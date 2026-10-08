@@ -102,9 +102,17 @@ object SurfaceController {
      * Installs the one callback that hears of a surface before any observer. It may close the
      * surface on the spot, through the surface's own close path; then no observer and no window
      * ever sees it. The Nexus session uses it to close the late surface of a cancelled open.
+     *
+     * A surface that became active while no gate was installed (the accessibility service gone,
+     * for instance) is put through the new gate at once, as its presentation would have been.
+     * True when the surface active at installation, if any, is still the active one afterwards.
      */
-    internal fun setPresentationGate(gate: ((NexusSurface) -> Unit)?) {
+    internal fun setPresentationGate(gate: ((NexusSurface) -> Unit)?): Boolean {
         presentationGate = gate
+        val current = active ?: return true
+        gate ?: return true
+        runCatching { gate(current) }.onFailure { logError("Surface presentation gate failed", it) }
+        return active === current
     }
 
     fun observe(listener: (NexusSurface?) -> Unit): () -> Unit {

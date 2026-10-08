@@ -104,6 +104,44 @@ class CancelledOpenPublicationTest {
     }
 
     @Test
+    fun `a cancelled surface accepted while the service was away is closed when the session reconnects`() {
+        installSession()
+        cancelOpen("maps")
+        // The accessibility service goes away at 5000: the session's observer and gate go with it.
+        now = 5_000
+        removeSession()
+
+        // The hub, still running, accepts maps at 9000 and falls back to its activity.
+        now = 9_000
+        show("maps:surface", "maps", title = "Cancelled maps")
+        assertEquals(listOf("maps:surface"), displayedSurfaces())
+        assertTrue(closes.isEmpty())
+
+        // Reconnect at 9500, before the cancellation expires at 14000.
+        now = 9_500
+        assertEquals(false, installSession())
+
+        assertEquals(listOf(SessionEffect.CloseSurface("maps:surface", SessionReducer.SURFACE_OPEN_CANCELLED)), closes)
+        assertNull(SurfaceController.activeSurface())
+    }
+
+    @Test
+    fun `a surface nobody cancelled survives the session reconnecting`() {
+        installSession()
+        cancelOpen("maps")
+        now = 5_000
+        removeSession()
+        now = 9_000
+        show("lens:surface", "lens", title = "Lens")
+
+        now = 9_500
+        assertEquals(true, installSession())
+
+        assertTrue(closes.isEmpty())
+        assertEquals("lens:surface", SurfaceController.activeSurface()?.surfaceId)
+    }
+
+    @Test
     fun `an observer that closes a surface keeps it from the observers after it`() {
         show("notes:card", "notes", title = "Notes")
         // Any observer ahead of the activity that closes what it hears about, as the session's
@@ -146,12 +184,22 @@ class CancelledOpenPublicationTest {
         assertTrue("rendered=$rendered", "Lens" in rendered)
     }
 
-    /** What NexusSession registers: its surface observer, then the presentation gate. */
-    private fun installSession() {
+    /**
+     * What NexusSession registers when the service connects: its surface observer, then the
+     * presentation gate. True when the surface already active, if any, survived the gate.
+     */
+    private fun installSession(): Boolean {
         unsubscribes += SurfaceController.observe { }
-        SurfaceController.setPresentationGate { surface ->
+        return SurfaceController.setPresentationGate { surface ->
             runner.dispatch(SessionEvent.SurfaceShown(surface.surfaceId, surface.ownerPluginId, now))
         }
+    }
+
+    /** What NexusSession removes when the service goes away. */
+    private fun removeSession() {
+        SurfaceController.setPresentationGate(null)
+        unsubscribes.forEach { it() }
+        unsubscribes.clear()
     }
 
     /** Starts a `SurfaceActivity` and records every text its views are given from then on. */
