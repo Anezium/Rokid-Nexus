@@ -162,6 +162,14 @@ internal class InputArbiter(private val context: InputContext) {
         suppressionHonoured = false
     }
 
+    /**
+     * Forgets every press, held ones included. Only for the end of the input lifecycle (the
+     * service going away): no key the arbiter decided can arrive after it.
+     */
+    fun forgetPresses() {
+        presses.clear()
+    }
+
     // ---- press ownership -----------------------------------------------------------------------
 
     /** Repeats and the UP of a known press go to its owner; an UP or repeat of an unknown press is an orphan. */
@@ -214,8 +222,10 @@ internal class InputArbiter(private val context: InputContext) {
         viaWindow: Boolean = false,
     ): InputDecision {
         if (event.startsPress) {
+            // Only completed presses expire: a key can be held, silently, for as long as the
+            // wearer likes (a modifier on a bonded keyboard sends no repeats).
             val stale = event.eventTime - PRESS_TTL_MS
-            presses.values.removeAll { it.lastSeenMs < stale }
+            presses.values.removeAll { it.completed && it.lastSeenMs < stale }
             presses[pressOf(event)] = Held(owner, consumed, viaWindow, event.eventTime)
         }
         return InputDecision(consumed, out)
@@ -405,7 +415,7 @@ internal class InputArbiter(private val context: InputContext) {
         const val RING_TAP_DEADLINE_MS = RingTapPolicy.DEFAULT_WINDOW_MS + 1L
         const val CONTACT_DEADLINE_MS = TripleTapDetector.DEFAULT_WINDOW_MS + 1L
 
-        /** Longer than any press the pad or the ring produces; repeats of a held key keep it alive. */
+        /** How long a completed press is remembered, for its window echo and a duplicate UP. */
         private const val PRESS_TTL_MS = 5_000L
         private val PASS = InputDecision(consumed = false, listOf(RoutedIntent.PassThrough))
     }

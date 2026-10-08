@@ -168,6 +168,23 @@ class InputArbiterTest {
     }
 
     @Test
+    fun `A2 a held modifier keeps its press past five seconds and its up still passes`() {
+        rig.backend = LauncherBackend.LEGACY
+        rig.editableFocused = true
+        rig.activeSurfaceId = "notes:card"
+        rig.surfaceTakes = { false }
+
+        val shift = arbiter.onKey(raw(KEYCODE_SHIFT_LEFT, DOWN, at = 1_000, deviceId = 5))
+        val letter = arbiter.onKey(raw(KEYCODE_A, DOWN, at = 7_000, deviceId = 5))
+        val shiftUp = arbiter.onKey(raw(KEYCODE_SHIFT_LEFT, UP, at = 7_100, down = 1_000, deviceId = 5))
+
+        assertFalse(shift.consumed)
+        assertFalse(letter.consumed)
+        assertFalse(shiftUp.consumed)
+        assertEquals(listOf<RoutedIntent>(ToSurface(raw(KEYCODE_SHIFT_LEFT, UP, 7_100, 1_000, deviceId = 5))), shiftUp.intents)
+    }
+
+    @Test
     fun `A2 a missing up cannot swallow the up of a later press`() {
         rig.activeSurfaceId = "player:card"
         assertTrue(arbiter.onKey(raw(InputKeys.ENTER, DOWN, at = 1_000, deviceId = 7)).consumed)
@@ -634,5 +651,6 @@ class InputArbiterTest {
         const val UP = RawKeyEvent.ACTION_UP
         const val KEYCODE_SPACE = 62
         const val KEYCODE_A = 29
+        const val KEYCODE_SHIFT_LEFT = 59
     }
 }

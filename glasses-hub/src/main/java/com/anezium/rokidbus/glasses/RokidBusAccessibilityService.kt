@@ -1606,6 +1606,7 @@ internal object NexusInput {
     fun onServiceDestroyed() {
         main.removeCallbacks(tick)
         arbiter.reset()
+        arbiter.forgetPresses()
         service = null
     }
 
