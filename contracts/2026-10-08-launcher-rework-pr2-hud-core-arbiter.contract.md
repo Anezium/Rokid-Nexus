@@ -125,15 +125,23 @@ Deliverables, each its own commit on `dev/launcher-rework`:
   `claimsInput`, `claimsRingKey`, `handleRingKey`, `handlePendingTempleTap`,
   `cancelRingInput`, `moveSelection`, `fireOrOpen` and the island selection state they
   drive. Islands stay rendered and animated as today; they take no key on any backend.
-  `ActivityOverlayRenderer` keeps drawing; selection chrome, if any, is not drawn.
-  `MAX_ACTIVE_ACTIVITIES` and the activity wire contract are untouched. Tests that only
-  exercised the removed branch are deleted and listed by name in the report; every other
-  existing test stays untouched and green.
+  `ActivityOverlayRenderer` keeps drawing; no chip is highlighted because the published
+  snapshot carries `selectedActionIndex = -1` (the selection is simply no longer driven).
+  The pure `ActivityStateMachine` action-selection API, `ActivityPresentationPolicy`'s
+  `ActivityInputTarget`/`canResolveActivityTap` and their tests stay as unused, passing
+  code (outside this PR's scope; PR3 removes them when actions move to the commands page).
+  `MAX_ACTIVE_ACTIVITIES` and the activity wire contract are untouched. Tests inside the
+  scope that only exercised the removed branch are deleted and listed by name in the
+  report; every other existing test stays untouched and green.
 - MUST NOT change `TripleTapDetector` (`TouchpadGestureDetectors.kt` is forbidden). The
   arbiter wraps it. Its 800 ms post-trigger suppression stays effective for the legacy
-  backend; for the session backend the arbiter forwards post-trigger contacts and
-  classifications to the reducer as events and lets rule 2 of the PR1 contract absorb them
-  (rule A3 below).
+  backend. For the session backend: a `TRIGGER` that opens the session (session `Closed`)
+  is followed by the reducer's gate, so post-trigger contacts and classifications are
+  forwarded as events and PR1 rule 2 absorbs them (rule A3 below); a `TRIGGER` while the
+  session is already open opens no gate (PR1 rules 3 and 7f), so for that case the arbiter
+  honours the detector's own `CONSUME` decisions for the following 800 ms: ENTER/BACK are
+  swallowed, not forwarded, while contacts are forwarded as `Contact` and are inert at the
+  root. Two absorption mechanisms, each already tested, neither changed.
 - MUST keep the editable exception of `onKeyEvent`: while
   `SurfaceController.hasFocusedEditableSurface()` is true there is no GLOBAL recognition,
   the raw key trace is skipped, and `EditableFocused(true)` is dispatched to the reducer
@@ -145,8 +153,10 @@ Deliverables, each its own commit on `dev/launcher-rework`:
   suppression (rule A8), implemented by the same mechanism the camera overlay already uses
   (`cameraOverlayActive` in `noticeVisibleForInput`), never by a new timer or a new state.
 - MUST NOT send anything on the bus except what `SessionEffect` already names
-  (`RequestPage`, `SendAction`, `SendVisibility`, `SendClosed`) and `SendLauncherOpen`
-  (which reuses `GlassesHub.openLauncherEntry` exactly as `LauncherOverlayRenderer` does).
+  (`RequestPage`, `SendAction`, `SendVisibility`, `SendClosed`), `SendLauncherOpen`
+  (which reuses `GlassesHub.openLauncherEntry` exactly as `LauncherOverlayRenderer` does)
+  and `CloseSurface` (which reuses the existing `SurfaceController` close path as is,
+  including its `/ink/closed` for an Ink surface; no `KEYCODE_BACK` is forwarded).
 - MUST commit in small commits, author Anezium, no AI attribution, no `Co-Authored-By`.
   MUST NOT push. MUST NOT switch branches, rebase, or touch the main checkout at
   `E:\Tools\Rokid\RokidNexus`. MUST NOT modify `local.properties` or any Gradle file.
@@ -157,8 +167,11 @@ Deliverables, each its own commit on `dev/launcher-rework`:
 
 Input: a `RawKeyEvent(keyCode, action, repeatCount, eventTime, downTime, deviceId,
 deviceClass)` built by `KeyEventAdapter` from the Android `KeyEvent` (`deviceClass` by
-device name: contains "R08" → `R08`; the glasses touchpad → `TOUCHPAD`; a bonded keyboard
-or dpad → `KEYBOARD_DPAD`; else `OTHER`). Context read at each event through an interface
+device name: contains "R08" → `R08`; every other device → `TOUCHPAD`, which is today's
+behaviour (triple-tap recognition runs on every non-ring device and the editable exception
+covers the bonded-keyboard case). `KEYBOARD_DPAD` and `OTHER` are declared but never
+assigned in PR2; a comment says the touchpad reports as `ROKID,PSOC-TP-R` through
+`Generic.kl` and that telling it from a keyboard needs a device trace first.) Context read at each event through an interface
 (`backend`, `editableFocused`, `sessionOpen`, `noticeHandles(event)`, `legacyShown`,
 `surfaceOwnsKeys`, `nativeInFront`). Output: `consumed: Boolean` plus a list of routed
 intents (`ToSession(SessionEvent)`, `ToLegacyLauncher(key)`, `ToNotice(key)`,
@@ -183,7 +196,13 @@ A4. **GLOBAL recognition.** Only `TOUCHPAD` events reach `TripleTapDetector`, on
     and 2 would answer it, so a triple tap is not recognised (plan decision 1). `TRIGGER`
     → `ToSession(TripleTap(eventTime))` when `backend == SESSION`, else
     `ToLegacyLauncher(open)`. A `TRIGGER` while the session is already open is still
-    forwarded (PR1 test f: returns the anchored root).
+    forwarded (PR1 test f: returns the anchored root) and the detector's 800 ms
+    suppression of ENTER/BACK applies to the taps that complete it (see the
+    `TripleTapDetector` constraint). The "armed notice" predicate is
+    `NoticeController.ownsRingInput()` (interactive, action-bearing, paged or backdrop
+    notice, which is the plan's gesture-table row); `NoticeKeyDispatcher` never sees a
+    contact. The predicate must be false while the notice is suppressed (camera overlay or
+    open session); wrap it if `ownsRingInput()` does not already account for that.
 
 A5. **Open session owns navigation.** When `sessionOpen`, touchpad and ring keys are
     translated to `Contact`/`Enter`/`Back`/`Step` and routed to the session, consumed;
@@ -210,8 +229,9 @@ A8. **Ambient suppression.** While the session is open the notice band is not pr
 
 Numbered after the PR1 rules (1–14):
 
-15. **Launching.** Selecting a plugin immersion item (`RootStops`/`PageItems` item kind
-    `immersion`, inert in PR1) → state `Launching(pluginId, token, deadlineMs =
+15. **Launching.** Selecting a `PageItem.Launch(pluginId)` (new item kind, produced only
+    by an injected item resolver; `DefaultPageItems` stays unchanged and its PR1 test
+    "rule 11 ... inert" stays green; nothing produces it at runtime until PR3) → state `Launching(pluginId, token, deadlineMs =
     nowMs + OPEN_TIMEOUT_MS)` with `OPEN_TIMEOUT_MS = 10_000` (the fork's F-4 bound, equal
     to the ring handoff), effects `SendLauncherOpen(pluginId, token)`, `ScheduleDeadline`.
     The root stays drawn underneath (`ShowRoot` is not re-emitted). Input during
@@ -295,10 +315,10 @@ commit (expected `f37bcc7c`).
 | 2 | phone-hub suite untouched | `./gradlew :phone-hub:testDebugUnitTest` | exit 0 |
 | 3 | diff scope | `git diff --name-only $BASE..HEAD` | every path matches `scope_globs`, none matches `forbidden_globs` |
 | 4 | shared untouched | `git diff --stat $BASE..HEAD -- shared BUSSPEC.md docs` | empty |
-| 5 | arbiter tests | `InputArbiterTest` | named tests for A1–A8 incl.: gate trace TripleTap(1000), Contact(1700), Tick(1800), Enter(2500) absorbed; armed notice blocks recognition; editable blocks recognition; ring dropped during gate; native pass-through when nothing owns; backend switch exclusivity; orphan UP consumed; retargeting never happens across a press |
+| 5 | arbiter tests | `InputArbiterTest` | named tests for A1–A8 incl.: gate trace TripleTap(1000), Contact(1700), Tick(1800), Enter(2500) absorbed; armed notice blocks recognition; editable blocks recognition; ring dropped during gate; native pass-through when nothing owns; backend switch exclusivity; orphan UP consumed; retargeting never happens across a press; TripleTap at the root followed by ENTER at +300 ms and BACK at +600 ms produces no `SendAction`, `ShowFrame` or close |
 | 6 | reducer tests | `SessionReducerTest` | named tests for rules 15–20 incl.: cancelled open closes the late surface unseen; a second open keeps the first cancellation; `NexusSurface` underneath receives no close; `nextDeadlineMs` equals the earliest pending deadline |
 | 7 | runner tests | `SessionRunnerTest` (ported) | re-entrant dispatch is queued, not interleaved; exactly one timer pending; a throwing sink does not stop the drain |
-| 8 | activity removal | `grep -rn "claimsInput\|handleRingKey\|handlePendingTempleTap\|fireOrOpen" glasses-hub/src/main` | no match |
+| 8 | activity removal | `grep -n "fun claimsInput\|fun claimsRingKey\|fun handleRingKey\|fun handleKeyEvent\|fun handlePendingTempleTap\|fireOrOpen" glasses-hub/src/main/java/com/anezium/rokidbus/glasses/ActivityController.kt; grep -rn "ActivityController\.\(claims\|handle\|cancelRingInput\)" glasses-hub/src/main` | both empty (`NoticeController`, `SurfaceController` and `LauncherOverlayRenderer` keep their own `claimsInput`/`handleRingKey`) |
 | 9 | attribution | `grep -rln "alvarosw" glasses-hub/src NOTICE` | every ported file and `NOTICE` |
 | 10 | default behaviour | code read | preference absent → `LEGACY`; `SessionHost` never attached on `LEGACY` |
 | 11 | commits | `git log --format='%an %s%n%b' $BASE..HEAD` | author Anezium only; no `Co-Authored-By`, no AI name |
@@ -307,6 +327,15 @@ Device smoke test (owner, not the executor): `LEGACY` → triple tap opens today
 islands never react to a tap; `SESSION` → triple tap shows the gate then the root, BACK
 closes and the app underneath is intact, `adb shell am broadcast` back to `LEGACY` with the
 session open closes it.
+
+# Executor stop 1 (Opus 5.5, 2026-10-08 18:10, no code written)
+
+Three contradictions and four questions, settled above: acceptance 8 narrowed to
+`ActivityController`; island selection state left undriven, not removed (option B);
+re-trigger while open relies on the detector's suppression (option A, PR1 unchanged);
+`PageItem.Launch(pluginId)` from the injected resolver only; every non-ring device is
+`TOUCHPAD` in PR2; armed-notice predicate is `ownsRingInput()`; `CloseSurface` reuses the
+existing close path including `/ink/closed`.
 
 # Plan sketch
 
