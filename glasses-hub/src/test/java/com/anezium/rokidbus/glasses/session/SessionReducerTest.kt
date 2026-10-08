@@ -486,6 +486,36 @@ class SessionReducerTest {
     }
 
     @Test
+    fun `rule 10 review d refresh or retry cannot replace a retained revision with a lower one`() {
+        openRoot()
+        val request = showFirst(4_000, actions = listOf(action("detail", kind = "hub")))
+        send(PageResponse(page(request, revision = 9, actions = listOf(action("detail", kind = "hub"))), 4_500))
+        val nine = (top().status as FrameStatus.Shown).snapshot
+
+        send(Enter(5_000))
+        respond(requested(), now = 5_100)
+        send(Back(6_000))
+        val refresh = requested()
+        val refreshing = model
+        send(PageResponse(page(refresh, revision = 1), 6_100))
+        assertEquals(refreshing, model)
+        assertEquals(listOf(SessionEffect.None), effects)
+        send(PageResponse(page(refresh, revision = 9, text = "same revision"), 6_200))
+        assertEquals(FrameStatus.Shown(nine, 9, 6_000 + PageSurfaceContract.LEASE_MS, refresh.correlation.requestId), top().status)
+
+        send(Enter(7_000))
+        send(Back(7_100))
+        send(Tick(7_100 + PageSurfaceContract.PAGE_TIMEOUT_MS))
+        send(Enter(16_000))
+        val retry = requested()
+        assertEquals("retry", retry.reason)
+        send(PageResponse(page(retry, revision = 3), 16_100))
+        assertTrue(top().status is FrameStatus.Loading)
+        send(PageResponse(page(retry, revision = 10), 16_200))
+        assertEquals(10L, (top().status as FrameStatus.Shown).revision)
+    }
+
+    @Test
     fun `rule 10 live revisions need a live page and are dropped on a covered frame`() {
         openRoot()
         val still = showFirst(4_000, live = false, actions = listOf(action("detail", kind = "hub")))

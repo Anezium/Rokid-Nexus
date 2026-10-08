@@ -48,6 +48,8 @@ internal data class Frame(
     val paramsJson: String? = null,
     val invocation: PendingInvocation? = null,
     val outcome: ActionOutcome? = null,
+    /** Highest revision shown on this frame; it survives eviction, timeouts and link loss. */
+    val revisionFloor: Long? = null,
 )
 
 internal sealed interface SessionState {

@@ -385,14 +385,19 @@ internal class SessionReducer(
         nowMs: Long,
     ): SessionTransition {
         val top = state.frames.last()
+        // Revisions stay monotonic across refresh and retry; a rollback is dropped as stale.
+        val floor = top.revisionFloor
+        if (floor != null && page.revision < floor) return keep(model)
+        val snapshot = status.previous?.takeIf { page.revision == floor } ?: Snapshot(page)
         // The first display of a frame starts its lease; an uncovered frame already holds one.
         val lease = status.leaseUntilMs ?: (nowMs + PageSurfaceContract.LEASE_MS)
         val granted = listOfNotNull(
             SendVisibility(top.pageId, visible = true, leaseUntilMs = lease).takeIf { status.leaseUntilMs == null },
         )
         val shown = top.copy(
-            status = FrameStatus.Shown(Snapshot(page), page.revision, lease, status.requestId),
+            status = FrameStatus.Shown(snapshot, page.revision, lease, status.requestId),
             selected = if (status.reason == REASON_REFRESH) top.selected else 0,
+            revisionFloor = page.revision,
         )
         val frame = shown.copy(selected = shown.selected.coerceIn(0, itemsOf(shown).lastIndex.coerceAtLeast(0)))
         return SessionTransition(
@@ -455,7 +460,10 @@ internal class SessionReducer(
         status: FrameStatus.Shown,
         page: PageSurfaceResponse.Page,
     ): SessionTransition {
-        val replaced = top.copy(status = status.copy(snapshot = Snapshot(page), revision = page.revision))
+        val replaced = top.copy(
+            status = status.copy(snapshot = Snapshot(page), revision = page.revision),
+            revisionFloor = page.revision,
+        )
         val frame = replaced.copy(selected = replaced.selected.coerceIn(0, itemsOf(replaced).lastIndex.coerceAtLeast(0)))
         return SessionTransition(
             model.copy(state = state.copy(frames = evictCovered(state.frames.dropLast(1) + frame))),
