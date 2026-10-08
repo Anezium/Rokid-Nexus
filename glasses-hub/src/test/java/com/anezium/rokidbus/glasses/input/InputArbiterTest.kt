@@ -1,6 +1,7 @@
 // Adapted from the Rokid-Nexus fork by alvarosw (https://github.com/alvarosw/Rokid-Nexus), Apache-2.0.
 package com.anezium.rokidbus.glasses.input
 
+import com.anezium.rokidbus.glasses.NoticeKeyInputRouter
 import com.anezium.rokidbus.glasses.input.RoutedIntent.PassThrough
 import com.anezium.rokidbus.glasses.input.RoutedIntent.ToLegacyLauncher
 import com.anezium.rokidbus.glasses.input.RoutedIntent.ToNotice
@@ -314,6 +315,39 @@ class InputArbiterTest {
         // Past 800 ms the launcher, now shown, gets the next tap.
         tap(InputKeys.ENTER, 1_300)
         assertEquals(1, rig.delivered.count { it is ToLegacyLauncher && !it.open })
+    }
+
+    @Test
+    fun `A4 a notice armed after a legacy trigger cannot take the ENTER or BACK its suppression swallows`() {
+        rig.backend = LauncherBackend.LEGACY
+        var answers = 0
+        var dismissals = 0
+        val router = NoticeKeyInputRouter(
+            editableSurfaceActive = { false },
+            dismiss = { rig.noticeArmed.also { if (it) dismissals++ } },
+            claimsDirection = { false },
+            moveDirection = {},
+            confirm = { rig.noticeArmed.also { if (it) answers++ } },
+            claimsAllInput = { false },
+        )
+        rig.noticeTakes = { router.handleKey(it.keyCode, it.action, it.repeatCount, it.eventTime, it.downTime, it.deviceId) }
+        tripleTap(0, 200, 400)
+        assertEquals(1, rig.delivered.count { it is ToLegacyLauncher && it.open })
+
+        // An action-bearing notice arrives inside the detector's 800 ms.
+        rig.noticeArmed = true
+        val enter = tap(InputKeys.ENTER, 700)
+        val back = tap(InputKeys.BACK, 900)
+
+        assertTrue(enter.first.consumed && enter.second.consumed && back.first.consumed && back.second.consumed)
+        assertEquals(0, answers)
+        assertEquals(0, dismissals)
+        assertTrue(rig.delivered.none { it is ToNotice })
+
+        // Once the window is over, the armed notice is the first to hear the next tap.
+        val next = tap(InputKeys.ENTER, 1_300)
+        assertEquals(1, answers)
+        assertEquals(listOf<RoutedIntent>(ToNotice(raw(InputKeys.ENTER, DOWN, at = 1_300))), next.first.intents)
     }
 
     @Test
