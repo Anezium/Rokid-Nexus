@@ -1574,6 +1574,200 @@ Activity errors mirror pins and notices:
 - `CAPABILITY_NOT_AVAILABLE` — activity v1 was not announced or the glasses
   cannot accept the activity.
 
+## Session and page protocol v1 (specified, not active)
+
+No hub version implements this protocol yet. PR1 reserves the wire names and
+provides isolated validation and reducer tests only; it changes no running input,
+provider binding, capability announcement, or plugin behaviour. The activity and
+notice protocols above describe today's shipped behaviour.
+
+### Base, session, and anchored frames
+
+The base is the native app or exclusive Nexus immersion underneath. A Nexus
+session is a hub-owned excursion over that base, with an anchored root and up to
+six frames **including the root** (five provider pages). Closing the session
+restores the still-live base without forwarding BACK or emitting
+`PLUGIN_CLOSE(switch)`. Immersions are not stacked in v1. Opening a consultation
+page never calls `/launcher/open`, `/surface/show`, or `/ink/show`.
+
+The root has at most six stops, in this order: pinned activity, second activity,
+latest notification preview, `Activities · n` when more than two activities are
+live, `Notifications · n`, Applications. Optional stops are omitted when absent.
+Root order, stop membership, card sizes, and selection anchors are frozen until
+the session closes. Newly started activities wait for the next session; ended
+activities stay in place as Ended. Arriving notices update the existing preview
+and the shell counter without moving selection or inserting a stop. The root
+builder accepts any number of activities; the shipped two-activity capacity
+remains unchanged until a later negotiated activity contract.
+
+### Gate and gesture ownership
+
+Triple tap opens a visible Opening… gate for 800 ms. All touchpad classifications
+and ring gestures are absorbed during the gate, including classifications that
+arrive later for contacts begun inside it. Input ownership stays with the captured
+gesture through repeats and UP; it is never retargeted to a dying layer. The
+host must identify the source first, pass reserved hardware keys, apply the gate,
+recognise GLOBAL from validated touchpad contacts, then dispatch to the session.
+The ring is an optional accelerator and has no GLOBAL gesture.
+
+| Context | Tap / SELECT | Swipe / STEP | BACK | Triple tap / GLOBAL |
+|---|---|---|---|---|
+| Native app or Nexus immersion, session closed | underneath | underneath | underneath | opens root |
+| Native home with a primary activity island, session closed | underneath | underneath | underneath | opens root, island selected |
+| Notice that claims input today, within its window | existing preselected answer policy | existing action/page policy | dismiss band | not recognised: double tap to dismiss first, then triple tap; dismissed notice is an unarmed root preview |
+| Unarmed notice or expired window | underneath | underneath | underneath | opens root; notice remains consultable |
+| Opening gate | absorbed | absorbed | absorbed | absorbed |
+| Session root | open selected page | bounded selection, no wrap | close and restore base | stay at root |
+| Page | activate item or open next frame | selection, document page, or bounded adjustment | pop one frame | return to same root |
+| Composer (later delivery) | pause editing and review | consumed | leave to mode choice, keep draft | suspend draft and return to root |
+| Focused editable field in an immersion | field | field | field | disabled, preserving Bluetooth keyboard protection |
+
+An armed notice is an opaque host-supplied fact: the detector must not recognise
+triple tap while any visible notice can claim input, and the reducer also refuses
+it. The first contacts would otherwise spend the notice answer before recognition.
+The shipped notice dispatcher keeps all its claims: interactive/action notices
+claim confirm, multi-action or paged notices claim directions, BACK dismisses a
+visible band, backdrop notices claim otherwise unhandled classifications, camera
+suppresses notice input, and editable fields reclaim confirm/directions. A notice
+arriving inside a session only updates snapshots and counters; its deadline
+continues, and hidden answers/dismissals cannot fire. Activity islands become
+passive everywhere when this design is activated in later deliveries. Outside a
+session, notice, legacy launcher, surface/editor, then native pass-through keep
+their ownership order. Long press and two-finger gestures belong to firmware.
+The HUD is 480×640 portrait at 240 dpi with green monochrome additive optics.
+
+### Paths, provider identity, and payloads
+
+The six reserved paths carry JSON objects:
+
+| Path | Direction | Fields |
+|---|---|---|
+| `/page/request` | hub → provider | `requestId`, `sessionGeneration`, `frameIndex`, `pageId`, optional `params` object, `reason`: `open`, `refresh`, or `retry` |
+| `/page/response` | provider → hub | `requestId`, `sessionGeneration`, `frameIndex`, `pageId`, then a page or `error` |
+| `/page/action` | hub → provider | `invocationId`, `sessionGeneration`, `frameIndex`, `pageId`, `revision` seen by the wearer, `actionId` |
+| `/page/result` | provider → hub | `invocationId`, `status`: `done`, `rejected`, or `stale`, optional `message` (64 characters), optional `replacement` containing a full page response |
+| `/page/visibility` | hub → provider | `pageId`, `visible` boolean; `leaseUntilMs` required when visible and absent when covered |
+| `/page/closed` | hub → provider | `pageId`, `reason`: `back`, `session_closed`, `timeout`, `link_lost`, `replaced`, or `frame_limit` |
+
+`sessionGeneration` and `revision` are nonnegative JSON integers representable as
+signed 64-bit values. `frameIndex` is an integer from 0 through 5; 0 names the
+root, and the first provider frame is 1. Every id is a nonempty string of printable
+ASCII without whitespace, at most 128 characters. These page identities have a
+broader grammar than descriptor plugin ids and cannot confer provider authority.
+The phone hub stamps the authenticated plugin id on provider traffic and delivers
+callbacks only to that owner. The glasses hub never trusts an owner supplied in
+the payload; correlation also requires the authenticated provider registration.
+
+A successful `/page/response` additionally requires `revision`, `template`,
+`title` (at most 48 characters), `body` (an object), `actions` (an array), and
+`live` (a boolean). Each action is `{id, label, kind, confirm}`: label is at most
+24 characters, kind is `hub`, `plugin`, or `immersion`, and confirm is a strict
+boolean. Action ids must be unique within a page. Templates are `summary`,
+`selectableList`, `document`, `commands`, `conversation`, `media`, `route`, and
+`ink`. Template-specific body fields remain opaque to PR1. An optional `data`
+object inside `body` is the template dataset; if an additive top-level `data`
+object is supplied, the same dataset cap applies there. `ink` requires the
+existing `ink_surface` grant; the renderer will enforce it in a later delivery.
+An error response carries the four correlation fields and `error` instead of
+any successful-page fields. A replacement in a result is a successful response
+for the same session, frame, and page, with a higher revision.
+
+```json
+{
+  "requestId": "session-1-request-1", "sessionGeneration": 1,
+  "frameIndex": 1, "pageId": "navigation:route", "reason": "open",
+  "params": {"view": "route"}
+}
+```
+
+```json
+{
+  "requestId": "session-1-request-1", "sessionGeneration": 1,
+  "frameIndex": 1, "pageId": "navigation:route", "revision": 1,
+  "template": "summary", "title": "Route", "body": {"text": "300 m, right"},
+  "actions": [{"id": "mute", "label": "Mute", "kind": "plugin", "confirm": true}],
+  "live": true
+}
+```
+
+### Limits, correlation, and errors
+
+| Limit | Value |
+|---|---:|
+| Version | 1 |
+| Opening gate | 800 ms |
+| Still-loading hint | 2,000 ms |
+| Absolute page/action deadline | 8,000 ms from initiating selection |
+| Cold provider registration within that deadline | at most 5,000 ms |
+| Visible lease | 120,000 ms |
+| Lease renewal window before expiry | 30,000 ms |
+| Frames including root / root stops | 6 / 6 |
+| Id / title / action label / result message | 128 / 48 / 24 / 64 characters |
+| Actions per page | 64 |
+| Serialized `params` / dataset `data` object | 2,048 bytes each |
+| Entire serialized page response | 65,536 bytes |
+| Sum of retained frame snapshots | 524,288 bytes |
+
+Byte limits use `toString().toByteArray(Charsets.UTF_8).size`, including object
+syntax and correlation fields, not character counts or transport compression.
+Pages above the small CXR control-plane limit require SPP. Oversize values are
+rejected rather than truncated. Before accepting a snapshot that would exceed
+the cumulative bound, evict the oldest covered snapshots while retaining their
+page ids for a later refresh.
+
+- `INVALID_PAGE_REQUEST`: request, action, result, visibility, or closed shape,
+  enum, id, or parameter validation failed.
+- `INVALID_PAGE`: invalid response shape, template, action, label, or dataset.
+- `PAGE_TOO_LARGE`: the whole response exceeds 65,536 UTF-8 bytes.
+- `PAGE_TIMEOUT`: no usable page arrived by the absolute eight-second deadline.
+- `PAGE_UNAVAILABLE`: the provider cannot supply the page.
+- `FRAME_LIMIT`: opening another frame would exceed the six-frame stack.
+- `STALE_GENERATION`: request/session/frame/page correlation no longer matches.
+- `UNCONFIRMED_ACTION`: an invocation has no result by its eight-second deadline.
+
+Only the visible top frame may have a pending request. Another SELECT while
+loading is ignored. Responses to a cancelled, popped, timed-out, superseded, or
+closed request are dropped and never reopen a session. Retry always creates a
+fresh request id. Refresh preserves the previous snapshot while validating it;
+at two seconds a still-loading hint appears, and at eight seconds the frame
+becomes Unavailable with the dated last snapshot, Retry, and Back. It never falls
+back to immersion automatically. Live revisions require the visible frame, its
+current session/request identity, a held lease, `live: true`, and a strictly
+higher revision; covered, stale, or duplicate revisions are dropped.
+
+### Visibility, actions, link loss, and negotiation
+
+Covering a frame sends `visible: false`, drops its lease, and invalidates pending
+work. Uncovering sends `visible: true` with a fresh hub-clock lease and requests
+`reason: refresh`, keeping the snapshot displayed. A visible Shown frame renews
+its lease when a tick falls within 30 seconds of expiry. No scheduler or transport
+runs inside the reducer; it only returns effects for a future host.
+
+An action uses a fresh invocation id and the revision the wearer saw. A pending
+invocation blocks another SELECT. `done`, `stale`, and `rejected` clear it;
+rejection keeps the page. A lost acknowledgement becomes Unconfirmed and is
+never retried automatically. Actions requiring confirmation and all notice
+answers must pass hub confirmation (Cancel preselected) before an invocation;
+notice answers keep their existing reply-token validation. Page items are
+resolved by the future template host, not by PR1's opaque-body validator.
+
+On link loss all frames become inert Unavailable, preserve bounded snapshots,
+and invalidate leases, pending requests, and invocations. Local BACK still pops
+frames without sending effects to the disconnected provider. The session stays
+open. Restoration does not replay requests or actions; explicit Retry after
+fresh authorization is required. SPP loss and total disconnection must be
+distinguished by the future host. Base restoration only promises a still-live
+base; an Ink immersion closes on link loss under its existing contract.
+
+Future support will require **both** hub announcements on
+`/system/hub/capabilities` to include additive `pageSessionVersion: 1`. PR1 only
+reserves the field name and never announces it. Unknown announcement fields are
+ignored; a mixed/old pair keeps today's launcher, activities, and immersions.
+Provider opt-in is additive descriptor metadata `rokidbus.plugin.pages` with
+string value `"1"`, never a new `PluginCapability` value. Template pages reuse
+`surfaces`, authored Ink pages reuse `ink_surface`, and API v3 and old-plugin
+immersion entry points remain intact. No `/core/*` route becomes a plugin power.
+
 ## Camera contract
 
 The generic camera contract is available only to an installed plugin whose exact
