@@ -187,7 +187,12 @@ Rules (each is a test):
    a `Tick` at `sinceMs + GATE_MS` or later → `Root`, effect `ShowRoot`. A `Contact`
    begun inside the gate whose classification (`Enter`/`Back`/`Step`) arrives after
    the deadline is still absorbed: the reducer tracks pending contacts started during
-   the gate.
+   the gate. A pending gate contact has **no time expiry**: it is settled by the next
+   classification (which consumes the oldest pending contact), or discarded when a
+   new `Contact` begins after the gate (a new contact proves the earlier gesture is
+   over; this is how a double tap's second contact, which never gets its own
+   classification, stops absorbing). Review trace that must be absorbed:
+   TripleTap(1000), Contact(1700), Tick(1800), Enter(2500).
 3. `Root`: `Step` moves the selection without wrap (at either end it stays); `Enter`
    on a stop → `InPage` with one `Loading` frame, effect `RequestPage(frameIndex=1,
    reason=open)`; `Back` → `Closed`, effect `RestoreUnderneath`; `TripleTap` → stays
@@ -243,6 +248,15 @@ Rules (each is a test):
     only while a session is open; the host re-sends the link state when a session
     opens (PR2).
 
+Deadlines are enforced on the incoming event's own time, not only on `Tick`: a
+`PageResponse` or live revision whose `nowMs` is at or past the request's absolute
+deadline is rejected as `PAGE_TIMEOUT` (frame → `Unavailable`, last snapshot kept), and a
+`PageResult` whose `nowMs` is at or past the invocation's deadline settles the
+invocation as `UNCONFIRMED_ACTION` and is otherwise ignored. Revisions are monotonic per
+page across refresh and retry too: a correlated response whose `revision` is lower
+than the retained one is rejected (`STALE_GENERATION`); an equal revision may keep the
+existing content.
+
 Decisions taken for the executor's questions: snapshot bytes are the UTF-8 size of the
 serialized payload (rule 13 is tested with an injected smaller budget); what a selected
 item does comes from an injected item resolver (default: a `plugin` action without
@@ -266,7 +280,40 @@ are excluded from the scope, test-file and commit checks).
 | 5 | Scope | `git diff --name-only $BASE..HEAD` | every path matches `scope_globs`, none matches `forbidden_globs` |
 | 6 | Docs placed | `grep -n "## Session and page protocol v1 (specified, not active)" BUSSPEC.md` and `grep -n "## Pages (preview, not yet shipped)" docs/PLUGIN_SDK.md` | one hit each, BUSSPEC hit after the `## Activity protocol v1` section and before `## Camera contract` |
 | 7 | Existing suites intact | same as 1 and 2 | no previously existing test removed or renamed (`git diff --stat $BASE..HEAD -- '*Test.kt'` shows only the two new files) |
+| 9 | Review round 1 regressions | `./gradlew :glasses-hub:testDebugUnitTest :shared:testDebugUnitTest` | the eight tests listed under "Review round 1" exist by name and pass |
 | 8 | Commits | `git log --format='%an %s' $BASE..HEAD` | author Anezium on every commit, ≥ 3 commits, no AI attribution |
+
+# Review round 1 (GPT-6.1 Sol, 2026-10-08, `design/nav-map-mockups/sol-review-pr1.md`)
+
+Verdict "merge-ready after these edits". Required before PR1 is closed:
+
+1. **blocker** `SessionReducer.kt:476`: gate ownership must not expire by time; apply the
+   rule-2 wording above (settled by the next classification or by a new contact after
+   the gate). Replace the expectation in `SessionReducerTest.kt:118`.
+2. **blocker** `SessionReducer.kt:142, 362`: enforce page and action deadlines on the
+   incoming event time (see the paragraph above rule 14's decisions).
+3. **should-fix** `SessionReducer.kt:390`: revision floor across refresh/retry.
+4. **should-fix** `PageSurfaceContract.kt:134`: bound the size check before retaining
+   or fully serializing a payload: reject nesting deeper than 8 and any single string
+   longer than `MAX_PAGE_BYTES` during an iterative walk, then measure the exact UTF-8
+   size of the serialized payload; any serialization failure is `INVALID_PAGE`, never an
+   escaping exception (`PageSurfaceContract.kt:277`).
+5. **should-fix** `BUSSPEC.md` ≈ 1740: state that grant revocation and registration
+   replacement invalidate pending requests, invocations and leases, that replies from a
+   prior registration are rejected, and that Retry requires fresh authorization. Docs
+   only, no runtime.
+6. **should-fix** tests, each named with its rule number: (a) a gate-owned
+   classification at contact + 800 ms is still absorbed; (b) `PageResponse` at
+   selection + 8 000 ms without a prior `Tick` yields timeout; (c) `PageResult` at
+   invocation + 8 000 ms without a prior `Tick` yields `UNCONFIRMED_ACTION`; (d) refresh
+   or retry cannot replace a retained revision with a lower one; (e) a `live: true`
+   covered frame rejects revisions, including its old request after uncover; (f)
+   `TripleTap` during loading or during a pending action returns the anchored root and
+   rejects subsequent replies; (g) `LinkLost` in `Opening` or at the root makes a
+   subsequent `Enter` local-only until restoration and Retry; (h) deeply nested or huge
+   payloads return Invalid without an escaping exception.
+
+Then rerun acceptance tests 1–9 and report their real tails.
 
 # Plan sketch
 

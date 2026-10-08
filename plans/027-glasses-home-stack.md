@@ -184,7 +184,8 @@ fingers, colour, haptics, voice or a ring.
   (≤ 128 chars), action count (≤ 64), parameters and datasets (≤ 2 KiB each), one
   pending request per frame, six frames including the root (overflow rejected).
   Sizes: a complete serialized page ≤ 64 KiB, cumulative retained snapshots ≤ 512 KiB,
-  measured on decoded memory; a document above the control-plane limit goes over SPP.
+  measured as the UTF-8 size of the serialized payload; a document above the
+  control-plane limit goes over SPP.
   Timeouts: "still loading" at 2 s, absolute 8 s measured from the initiating
   selection and including cold registration (≤ 5 s), compilation and transport; on
   failure "Detail unavailable" with the last known summary dated, Retry and Back,
@@ -192,8 +193,8 @@ fingers, colour, haptics, voice or a ring.
   cover, pop, retry, revocation and disconnect; responses are correlated with request,
   frame and session generation and with the authenticated registration; returning to
   the top of a frame starts a fresh validation. Live updates only to the visible
-  frame, 120 s lease renewed every 30 s; covered frames keep their snapshot without a
-  lease. Actions carry an invocation id and a target revision; a lost acknowledgement
+  frame, 120 s lease renewed within 30 s of its expiry; covered frames keep their
+  snapshot without a lease. Actions carry an invocation id and a target revision; a lost acknowledgement
   shows "unconfirmed", never an automatic retry; notice answers reuse the notice reply
   tokens. Provider binding is separate from immersion so closing a page never closes
   its base surface (`ExternalPluginController`).
