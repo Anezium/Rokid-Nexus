@@ -62,6 +62,13 @@ object BusPaths {
     const val ACTIVITY_END = "/activity/end"
     const val ACTIVITY_ACTION = "/activity/action"
     const val ACTIVITY_CLOSED = "/activity/closed"
+    // Reserved page v1 paths; no running hub dispatches them yet.
+    const val PAGE_REQUEST = "/page/request"
+    const val PAGE_RESPONSE = "/page/response"
+    const val PAGE_ACTION = "/page/action"
+    const val PAGE_RESULT = "/page/result"
+    const val PAGE_VISIBILITY = "/page/visibility"
+    const val PAGE_CLOSED = "/page/closed"
     const val TTS_SPEAK = "/tts/speak"
     const val TTS_STOP = "/tts/stop"
 
