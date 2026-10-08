@@ -369,6 +369,35 @@ class SessionReducerTest {
     }
 
     @Test
+    fun `rule 7 review f triple tap during loading or a pending action returns the anchored root and rejects replies`() {
+        send(ActivityStarted(ActivityStop("transit", "transit:ride", "2 stops")))
+        openRoot()
+        send(Step(1, 2_000))
+        send(Enter(3_000))
+        val loading = requested()
+
+        send(TripleTap(3_100))
+        assertEquals(1, root().selected)
+        assertEquals(listOf(SendClosed("transit:ride", "back"), ShowRoot), effects)
+        val root = model.state
+        send(PageResponse(page(loading), 3_200))
+        assertEquals(root, model.state)
+        assertEquals(listOf(SessionEffect.None), effects)
+
+        send(Enter(4_000))
+        val request = requested()
+        respond(request, now = 4_100, actions = listOf(action("mute")))
+        send(Enter(4_200))
+        val invocation = effects.filterIsInstance<SendAction>().single().action
+        send(TripleTap(4_300))
+        assertEquals(root, model.state)
+        send(PageResult(JSONObject().put("invocationId", invocation.invocationId).put("status", "done"), 4_400))
+        send(PageResponse(page(request, revision = 2), 4_500))
+        assertEquals(root, model.state)
+        assertEquals(listOf(SessionEffect.None), effects)
+    }
+
+    @Test
     fun `rule 8 loading shows a hint at two seconds and times out at eight`() {
         openRoot()
         send(Enter(3_000))
@@ -530,6 +559,30 @@ class SessionReducerTest {
     }
 
     @Test
+    fun `rule 10 review e a live covered frame rejects revisions including its old request after uncover`() {
+        openRoot()
+        val first = showFirst(4_000, actions = listOf(action("detail", kind = "hub")))
+        send(Enter(5_000))
+        respond(requested(), now = 5_100)
+
+        send(PageResponse(page(first, revision = 2), 5_200))
+        assertEquals(1L, (frames().first().status as FrameStatus.Shown).revision)
+        assertEquals(listOf(SessionEffect.None), effects)
+
+        send(Back(6_000))
+        val refresh = requested()
+        send(PageResponse(page(first, revision = 3), 6_100))
+        assertTrue(top().status is FrameStatus.Loading)
+        assertEquals(listOf(SessionEffect.None), effects)
+
+        respond(refresh, now = 6_200)
+        send(PageResponse(page(first, revision = 4), 6_300))
+        assertEquals(1L, (top().status as FrameStatus.Shown).revision)
+        send(PageResponse(page(refresh, revision = 4), 6_400))
+        assertEquals(4L, (top().status as FrameStatus.Shown).revision)
+    }
+
+    @Test
     fun `rule 11 an action sends a fresh invocation with the shown revision`() {
         openRoot()
         val request = showFirst(4_000, actions = listOf(action("mute")))
@@ -681,6 +734,35 @@ class SessionReducerTest {
         assertTrue(top().status is FrameStatus.Unavailable)
 
         send(Enter(5_000))
+        assertEquals("retry", requested().reason)
+    }
+
+    @Test
+    fun `rule 12 review g link loss in opening or at the root keeps the next enter local until restore and retry`() {
+        send(ActivityStarted(ActivityStop("maps", "maps:route", "300 m", pinned = true)))
+        send(TripleTap(1_000))
+        send(SessionEvent.LinkLost)
+        send(Tick(1_800))
+        assertTrue(model.state is SessionState.Root)
+
+        send(Enter(3_000))
+        assertEquals(FrameStatus.Unavailable(null, "link_lost"), top().status)
+        assertEquals(listOf(ShowFrame), effects)
+        send(Enter(3_100))
+        assertEquals(listOf(SessionEffect.None), effects)
+        send(SessionEvent.LinkRestored)
+        assertEquals(listOf(SessionEffect.None), effects)
+        send(Enter(3_200))
+        assertEquals("retry", requested().reason)
+
+        send(Back(3_300))
+        assertTrue(model.state is SessionState.Root)
+        send(SessionEvent.LinkLost)
+        send(Enter(3_400))
+        assertEquals(listOf(ShowFrame), effects)
+        assertEquals(FrameStatus.Unavailable(null, "link_lost"), top().status)
+        send(SessionEvent.LinkRestored)
+        send(Enter(3_500))
         assertEquals("retry", requested().reason)
     }
 
