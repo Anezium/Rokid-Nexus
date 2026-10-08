@@ -16,6 +16,7 @@ import com.anezium.rokidbus.client.HubTarget
 import com.anezium.rokidbus.client.PluginRegistrationResult
 import com.anezium.rokidbus.client.R
 import com.anezium.rokidbus.shared.BusConstants
+import com.anezium.rokidbus.shared.PageSurfaceContract
 import com.anezium.rokidbus.shared.plugin.NexusInputEvent
 import com.anezium.rokidbus.shared.plugin.PluginDescriptor
 import com.anezium.rokidbus.shared.plugin.PluginDescriptorParseResult
@@ -186,6 +187,12 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
     final override fun onAssistantTakeoverError(code: String) = onNexusAssistantTakeoverError(code)
     final override fun onMessage(path: String, id: String, payload: JSONObject) =
         onNexusMessage(path, id, payload)
+
+    // Pages never touch the immersion: no open, no foreground promotion, no released session.
+    final override fun onPageRequest(request: NexusPageRequest): NexusPage = onNexusPageRequest(request)
+    final override fun onPageAction(action: NexusPageAction): NexusPageResult = onNexusPageAction(action)
+    final override fun onPageVisibility(visibility: NexusPageVisibility) = onNexusPageVisibility(visibility)
+    final override fun onPageClosed(closed: NexusPageClosed) = onNexusPageClosed(closed)
     final override fun onBinary(path: String, id: String, payload: JSONObject, data: ByteArray) =
         onNexusBinaryMessage(path, id, payload, data)
 
@@ -247,6 +254,19 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
     protected open fun onNexusAssistantTakeoverError(code: String) = Unit
     protected open fun onNexusRegistrationState(result: Int) = Unit
     protected open fun onNexusMessage(path: String, id: String, payload: JSONObject) = Unit
+
+    /**
+     * One of this plugin's pages, for the glasses' Nexus session. Needs the
+     * `rokidbus.plugin.pages` metadata; the default answers that the page is unavailable.
+     * Return quickly from the main thread: the whole answer, cold start included, must reach
+     * the glasses within eight seconds of the wearer's selection.
+     */
+    protected open fun onNexusPageRequest(request: NexusPageRequest): NexusPage = NexusPage.Unavailable
+
+    /** A confirmed action on one of this plugin's pages; the default rejects it. */
+    protected open fun onNexusPageAction(action: NexusPageAction): NexusPageResult = NexusPageResult.rejected()
+    protected open fun onNexusPageVisibility(visibility: NexusPageVisibility) = Unit
+    protected open fun onNexusPageClosed(closed: NexusPageClosed) = Unit
     protected open fun onNexusBinaryMessage(
         path: String,
         id: String,
@@ -362,6 +382,7 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
             BusConstants.META_PLUGIN_RECEIVE_PREFIXES,
             BusConstants.META_PLUGIN_SETTINGS_ACTIVITY,
             BusConstants.META_PLUGIN_LAUNCHABLE,
+            PageSurfaceContract.META_PLUGIN_PAGES,
         )
     }
 }

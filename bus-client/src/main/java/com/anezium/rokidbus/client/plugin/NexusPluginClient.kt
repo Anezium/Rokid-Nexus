@@ -14,6 +14,7 @@ import com.anezium.rokidbus.shared.LinkStateBits
 import com.anezium.rokidbus.shared.InkSurfaceContract
 import com.anezium.rokidbus.shared.NoticeSurfaceContract
 import com.anezium.rokidbus.shared.NoticeSurfaceValidationResult
+import com.anezium.rokidbus.shared.PageSurfaceContract
 import com.anezium.rokidbus.shared.PinSurfaceContract
 import com.anezium.rokidbus.shared.PinSurfaceValidationResult
 import com.anezium.rokidbus.shared.plugin.NexusInputEvent
@@ -30,7 +31,9 @@ class NexusPluginClient internal constructor(
     private val pluginId: String,
     private val callbacks: NexusPluginCallbacks,
     private val transport: NexusPluginTransport,
+    pageClock: () -> Long = { android.os.SystemClock.elapsedRealtime() },
 ) : NexusPluginTransport.Listener, AutoCloseable {
+    private val pages = NexusPageChannel(pluginId, pageClock) { path, id, payload -> send(path, id, payload) }
     private val seenEventIds = ArrayDeque<String>()
     private val seenEventIdSet = linkedSetOf<String>()
     // Correlates a surface request's id to the callback that wants to know if
@@ -104,6 +107,27 @@ class NexusPluginClient internal constructor(
      */
     val supportsPinSurface: Boolean
         get() = hubCapabilities and BusCapabilityBits.PIN_SURFACE != 0
+
+    /**
+     * Whether pages can be served right now: approved with the `surfaces` grant, both hubs on
+     * session/page v1 for this plugin, and a live glasses link. A hub too old to say so reads
+     * as unsupported.
+     */
+    val supportsPageSession: Boolean
+        get() = !closed && hasCapability(PluginCapability.SURFACES) &&
+            pages.sessionVersion == PageSurfaceContract.VERSION && currentLinkState != 0
+
+    /**
+     * Sends a live revision of the page [request] asked for. Only for the frame's current request,
+     * after a `live` answer, while the page is visible under an unexpired lease, and at a revision
+     * above every one already sent for it. The first answer is the callback's return value.
+     */
+    fun publishPage(request: NexusPageRequest, page: NexusPage): NexusSdkResult = when {
+        !isApproved -> NexusSdkResult.NOT_REGISTERED
+        !hasCapability(PluginCapability.SURFACES) -> NexusSdkResult.CAPABILITY_NOT_GRANTED
+        !supportsPageSession -> NexusSdkResult.CAPABILITY_NOT_AVAILABLE
+        else -> pages.publish(request, page)
+    }
 
     fun showPin(pin: NexusPin): NexusSdkResult {
         pinPreflight()?.let { return it }
@@ -491,6 +515,8 @@ class NexusPluginClient internal constructor(
 
     override fun onRegistrationState(result: Int) {
         if (closed) return
+        // A new registration holds no page work; the hub announces its page support afresh.
+        pages.reset()
         registrationGeneration++
         clearNoticeContext()
         noticeApprovalAwaitingMetadata = result == PluginRegistrationResult.APPROVED
@@ -521,6 +547,7 @@ class NexusPluginClient internal constructor(
         }
         if (result != PluginRegistrationResult.APPROVED) {
             approvedCapabilities = emptySet()
+            pages.reset()
             clearNoticeContext()
             terminateAudioSession(
                 reason = NexusAudioStopReason.ERROR,
@@ -546,6 +573,8 @@ class NexusPluginClient internal constructor(
 
     override fun onLinkState(state: Int) {
         if (closed) return
+        // Without a link every page lease on the glasses is void; support itself is unchanged.
+        if (state == 0) pages.reset(keepVersion = true)
         currentLinkState = state
         hubCapabilities = transport.capabilities()
         callbacks.onLinkState(state)
@@ -595,6 +624,11 @@ class NexusPluginClient internal constructor(
             routeInkMessage(payload)
             return
         }
+        if (path == BusPaths.HUB_CAPABILITIES) {
+            if (isApproved) pages.onCapabilities(payload)
+            return
+        }
+        if (routePageMessage(path, payload)) return
         if (path == BusPaths.NOTICE_INPUT) {
             if (isApproved && !noticeHidePending && acceptsNoticeCallback(payload)) {
                 callbacks.onNoticeInput(
@@ -799,6 +833,7 @@ class NexusPluginClient internal constructor(
             stopCurrent = false,
         )
         terminateSnapshotSession(NexusSnapshotError.ERROR)
+        pages.reset()
         if (opened || backgrounded) {
             opened = false
             backgrounded = false
@@ -809,6 +844,22 @@ class NexusPluginClient internal constructor(
         hubCapabilities = 0
         seenEventIds.clear()
         seenEventIdSet.clear()
+    }
+
+    /** Page callbacks need no open: approval, the `surfaces` grant and announced support suffice. */
+    private fun routePageMessage(path: String, payload: JSONObject): Boolean {
+        val handler: (JSONObject, NexusPluginCallbacks) -> Unit = when (path) {
+            BusPaths.PAGE_REQUEST -> pages::onRequest
+            BusPaths.PAGE_ACTION -> pages::onAction
+            BusPaths.PAGE_VISIBILITY -> pages::onVisibility
+            BusPaths.PAGE_CLOSED -> pages::onClosed
+            BusPaths.PAGE_RESPONSE, BusPaths.PAGE_RESULT -> return true
+            else -> return false
+        }
+        if (hasCapability(PluginCapability.SURFACES) && pages.sessionVersion == PageSurfaceContract.VERSION) {
+            handler(payload, callbacks)
+        }
+        return true
     }
 
     private fun routeAudioMessage(path: String, payload: JSONObject): Boolean {

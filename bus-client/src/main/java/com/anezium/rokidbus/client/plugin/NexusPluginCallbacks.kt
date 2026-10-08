@@ -97,4 +97,20 @@ interface NexusPluginCallbacks {
     fun onAssistantTakeoverError(code: String) = Unit
     fun onMessage(path: String, id: String, payload: JSONObject) = Unit
     fun onBinary(path: String, id: String, payload: JSONObject, data: ByteArray) = Unit
+
+    /**
+     * The glasses want one of this plugin's pages; what this returns is the answer. Delivered on
+     * the main thread to a plugin that opted in with `rokidbus.plugin.pages`, whether or not it
+     * is open: a page is consultation inside the Nexus session, never an [onOpen].
+     */
+    fun onPageRequest(request: NexusPageRequest): NexusPage = NexusPage.Unavailable
+
+    /** The wearer confirmed one of a page's actions; what this returns is the result. */
+    fun onPageAction(action: NexusPageAction): NexusPageResult = NexusPageResult.rejected()
+
+    /** A page was covered or uncovered, or its visible lease renewed. */
+    fun onPageVisibility(visibility: NexusPageVisibility) = Unit
+
+    /** A page left the glasses. It is not [onClose]: an open immersion of this plugin is untouched. */
+    fun onPageClosed(closed: NexusPageClosed) = Unit
 }
