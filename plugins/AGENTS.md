@@ -21,7 +21,7 @@ Plugins are **normally dormant unless open**: the hub initiates everything. Your
 only between `PLUGIN_OPEN` and a final `PLUGIN_CLOSE`. Do not register yourself at boot, do
 not poll in the background, do not post notifications. The SDK holds a
 foreground-service session while you are open and drops it on close; the
-user-facing notification that names the live plugin belongs to the hub. Four
+user-facing notification that names the live plugin belongs to the hub. Five
 sanctioned exceptions:
 
 1. A capability that Android forces into its own foreground service *while your
@@ -51,6 +51,14 @@ sanctioned exceptions:
    a completion notification may remain. The service and timed partial wake lock
    end with that job. Leaving the screen does not cancel it. No boot restart,
    polling, bus installer capability, or automatic retry is permitted.
+
+5. **User-pulled pages**: a plugin whose service declares `rokidbus.plugin.pages`
+   may be bound without `PLUGIN_OPEN` to answer a page the wearer pulled in the
+   glasses' Nexus session. The hub keeps that binding only while one of its
+   pages is pending or visible under its 120-second lease, and releases it after.
+   Answer from memory on the main thread; no foreground service, notification,
+   polling or background refresh is permitted for pages, and live revisions are
+   sent only on real changes while the page is visible.
 
 A phone plugin may also call an Android platform API directly under permissions
 declared in its own manifest. Those runtime permissions are separate from Nexus
@@ -127,6 +135,12 @@ install → discovery → user approval (Plugin access) → glasses launcher ope
   → /surface/hide or /ink/hide (self-close), leased /surface/hide detach,
     or PLUGIN_CLOSE
   → unbind, FGS dropped, back to dormant
+
+pages (opted-in plugins, session backend, both hubs on page v1):
+  wearer selects a page → hub uses your live registration or binds you cold
+  (registration within the 8 s page budget) → /page/request → your answer on
+  /page/response → /page/visibility (lease) → optional live revisions and
+  confirmed /page/action → /page/closed → page-only binding released
 ```
 
 Facts you must build around:
@@ -154,6 +168,10 @@ Facts you must build around:
   sequence numbers; never hardcode the namespaced form.
 - Revocation, binder death, package removal, or link loss close you and hide your
   surfaces. Requests time out after 15 s by default.
+- **A page is not an open.** Page callbacks never call `onNexusOpen`/`onNexusClose`,
+  start the session foreground service, or release your sessions, and closing a
+  page leaves any immersion of yours untouched. Never answer a page by showing a
+  surface, opening yourself, or switching plugins.
 
 ## 6. Bus endpoints
 
@@ -170,6 +188,7 @@ Paths a plugin can **send to** (gated by capability):
 | `/camera/freeze/result`, `/camera/overlay`, `/camera/link/offer` | `camera` | Camera platform sends (signer/grant-bound). `/camera/link/offer` is bidirectional so an approved camera plugin can advertise a reverse transport role. `/camera/session/state` and `/camera/freeze/image/chunk` remain **receive-only** (declare them in RECEIVE_PREFIXES); sending them is rejected |
 | `/mediasync/settings`, `/mediasync/now` | `mediasync` | Photo sync control: partial settings updates (`autoSyncOnCharge`, `deleteAfterSync`; an empty request is a refresh) and a manual "sync now". `/mediasync/status` is **receive-only** (declare it in RECEIVE_PREFIXES); every other `/mediasync/…` path is hub-to-hub and rejected if you send it |
 | `/debug/adb/request` → `/debug/adb/reply` | `wireless_debugging` | High-risk wireless ADB control. Actions are `status`, `enable`, `start_pairing`, `cancel_pairing`, and `disable`. Replies are owner-scoped direct replies and need no receive prefix. The phone hub stamps the authenticated plugin id; plugins must not add or trust one themselves. Pairing codes expire after two minutes and must not be persisted or logged; code-bearing windows use `FLAG_SECURE`, and only an explicit user action may copy a sensitive-marked command to the Android clipboard. |
+| `/page/response`, `/page/result` | `surfaces` | Answers to the page requests and confirmed actions the hub recorded for you, sent by the SDK from your page callbacks and `publishPage`. Needs `rokidbus.plugin.pages`; the hub stamps your identity and refuses unsolicited or cross-owner pages. |
 | `/plugin/<yourId>/…` | — | Your private namespace (must match your declared receive prefixes) |
 
 Wireless ADB requires both phone and glasses hubs 1.3.0 or newer and the
@@ -183,9 +202,13 @@ turning normal Wi-Fi off.
 Paths a plugin **receives** (reserved, hub-generated — you never send these):
 `/system/plugin/registration`, `/system/plugin/open`, `/system/plugin/close`,
 `/system/plugin/input`, `/glasses/device-info`, `/surface/text-committed`, plus
-deliveries into your `/plugin/<id>/…` namespace.
+deliveries into your `/plugin/<id>/…` namespace. An opted-in page provider also
+receives `/page/request`, `/page/action`, `/page/visibility` and `/page/closed`,
+and its effective page version on `/system/hub/capabilities`, owner-scoped and
+with no receive prefix (none may be declared under `/page`).
 Reserved sender roots you can never use: `/launcher`, `/surface/input`, `/ink/event`,
-`/core`, `/system`, `/security`, `/error`. Rejections and undeliverable traffic
+`/core`, `/system`, `/security`, `/error`, and every `/page` path except the two
+answers above. Rejections and undeliverable traffic
 come back on `/error` as `{code, forId, pluginId}` (hubs before 1.4.6 omitted
 `pluginId`, and the SDK dropped those errors unseen). `/core/native-apps/*`, `/core/remote-input/*`,
 `/core/navigation/*`, and `/core/pointer/*` are trusted phone-hub/glasses-hub

@@ -1574,31 +1574,62 @@ Activity errors mirror pins and notices:
 - `CAPABILITY_NOT_AVAILABLE` — activity v1 was not announced or the glasses
   cannot accept the activity.
 
-## Session and page protocol v1 (specified, not active)
+## Session and page protocol v1
 
-No hub version implements this protocol yet. PR1 reserves the wire names and
-provides isolated validation and reducer tests only; it changes no running input,
-provider binding, capability announcement, or plugin behaviour. The activity and
-notice protocols above describe today's shipped behaviour.
+The Nexus session and its consultation pages are opt-in. The glasses hub keeps
+its shipped launcher and notice behaviour on the default `LEGACY` launcher
+backend (`launcher.backend`, switched with the
+`com.anezium.rokidbus.glasses.action.SET_LAUNCHER_BACKEND` broadcast); only the
+`SESSION` backend opens the session described here. Both hubs negotiate the
+page protocol separately from that local preference, so support can be
+announced while page UI and page requests stay unreachable on `LEGACY`.
+
+This version delivers consultation: a root built from live state, four typed hub
+templates, authenticated provider routing, and labelled immersion launches. It
+does not deliver a foreground resolver, per-app ambient modes or budgets,
+notification history, late notice replies or a composer, maps, images, or Ink
+page bodies; those remain later deliveries. Activity islands take no input on
+either backend. The activity and notice protocols above are unchanged.
 
 ### Base, session, and anchored frames
 
 The base is the native app or exclusive Nexus immersion underneath. A Nexus
 session is a hub-owned excursion over that base, with an anchored root and up to
-six frames **including the root** (five provider pages). Closing the session
-restores the still-live base without forwarding BACK or emitting
-`PLUGIN_CLOSE(switch)`. Immersions are not stacked in v1. Opening a consultation
-page never calls `/launcher/open`, `/surface/show`, or `/ink/show`.
+six frames **including the root** (five pages). Closing the session restores the
+still-live base without forwarding BACK or emitting `PLUGIN_CLOSE(switch)`.
+Immersions are not stacked in v1. Opening a consultation page never calls
+`/launcher/open`, `/surface/show`, or `/ink/show`.
 
-The root has at most six stops, in this order: pinned activity, second activity,
-latest notification preview, `Activities · n` when more than two activities are
-live, `Notifications · n`, Applications. Optional stops are omitted when absent.
-Root order, stop membership, card sizes, and selection anchors are frozen until
-the session closes. Newly started activities wait for the next session; ended
-activities stay in place as Ended. Arriving notices update the existing preview
-and the shell counter without moving selection or inserting a stop. The root
-builder accepts any number of activities; the shipped two-activity capacity
-remains unchanged until a later negotiated activity contract.
+The root has at most six stops, in this order: the head activity, a second
+activity, the current notification preview, `Activities · n` when more than two
+activities are live, `Notifications · n`, Applications. Optional stops are
+omitted when absent. The head activity is the shipped primary activity at the
+moment the session opens. Root order, stop membership and card sizes are frozen
+from the accepted triple tap until the session closes; values inside a card may
+update in place. Newly started activities wait for the next session. An activity
+that ends stays in place as Ended and inert until the session closes; STEP moves
+past it normally and SELECT on it does nothing. Arriving notices update the
+existing preview and counter without moving selection or inserting a stop. The
+root builder accepts any number of activities; the shipped two-activity capacity
+is unchanged until a later negotiated activity contract.
+
+`Notifications · n` counts the readable notices the hub retains in memory, which
+is at most one: the current notice, or the last one after it was dismissed or
+expired. It is not a history and survives no restart. Its page is a local
+document of that notice's source, time and content, with the shipped redaction
+and hidden-preview policy applied; it carries no armed answer, dismissal or
+reply. A Relay notice page offers a navigation row to Relay's own thread list;
+there is no authenticated thread reference in today's notice wire, so the hub
+never guesses an exact thread from sender or text.
+
+Applications lists Nexus plugins and native apps as the shipped launcher catalog
+merges them. A plugin that provides pages and is reachable over a negotiated
+pair opens its `<pluginId>:main` page. Every other plugin row reads "Open the
+full app · exclusive surface"; selecting it shows a local panel naming the
+plugin and the replacement, with Open preselected and Cancel, and only SELECT on
+Open launches the immersion. BACK cancels; a late surface of a cancelled launch
+is closed unseen. Native apps and the hub camera launch locally and close the
+session on success. A page failure never turns into a launch.
 
 ### Gate and gesture ownership
 
@@ -1606,8 +1637,8 @@ Triple tap opens a visible Opening… gate for 800 ms. All touchpad classificati
 and ring gestures are absorbed during the gate, including classifications that
 arrive later for contacts begun inside it. Input ownership stays with the captured
 gesture through repeats and UP; it is never retargeted to a dying layer. The
-host must identify the source first, pass reserved hardware keys, apply the gate,
-recognise GLOBAL from validated touchpad contacts, then dispatch to the session.
+host identifies the source first, passes reserved hardware keys, applies the gate,
+recognises GLOBAL from validated touchpad contacts, then dispatches to the session.
 The ring is an optional accelerator and has no GLOBAL gesture.
 
 | Context | Tap / SELECT | Swipe / STEP | BACK | Triple tap / GLOBAL |
@@ -1618,11 +1649,11 @@ The ring is an optional accelerator and has no GLOBAL gesture.
 | Unarmed notice or expired window | underneath | underneath | underneath | opens root; notice remains consultable |
 | Opening gate | absorbed | absorbed | absorbed | absorbed |
 | Session root | open selected page | bounded selection, no wrap | close and restore base | stay at root |
-| Page | activate item or open next frame | selection, document page, or bounded adjustment | pop one frame | return to same root |
+| Page | activate row or open next frame | row selection or document page | pop one frame | return to same root |
 | Composer (later delivery) | pause editing and review | consumed | leave to mode choice, keep draft | suspend draft and return to root |
 | Focused editable field in an immersion | field | field | field | disabled, preserving Bluetooth keyboard protection |
 
-An armed notice is an opaque host-supplied fact: the detector must not recognise
+An armed notice is an opaque host-supplied fact: the detector does not recognise
 triple tap while any visible notice can claim input, and the reducer also refuses
 it. The first contacts would otherwise spend the notice answer before recognition.
 The shipped notice dispatcher keeps all its claims: interactive/action notices
@@ -1630,15 +1661,17 @@ claim confirm, multi-action or paged notices claim directions, BACK dismisses a
 visible band, backdrop notices claim otherwise unhandled classifications, camera
 suppresses notice input, and editable fields reclaim confirm/directions. A notice
 arriving inside a session only updates snapshots and counters; its deadline
-continues, and hidden answers/dismissals cannot fire. Activity islands become
-passive everywhere when this design is activated in later deliveries. Outside a
-session, notice, legacy launcher, surface/editor, then native pass-through keep
-their ownership order. Long press and two-finger gestures belong to firmware.
-The HUD is 480×640 portrait at 240 dpi with green monochrome additive optics.
+continues, and hidden answers/dismissals cannot fire. Outside a session, notice,
+legacy launcher, surface/editor, then native pass-through keep their ownership
+order. Long press and two-finger gestures belong to firmware. The HUD is 480×640
+portrait at 240 dpi with green monochrome additive optics.
 
 ### Paths, provider identity, and payloads
 
-The six reserved paths carry JSON objects:
+The six page paths carry JSON objects. The whole `/page` root is reserved: a
+plugin may send only `/page/response` and `/page/result`, and only about work
+the hub recorded for it; it can declare no `/page` receive prefix, and the four
+hub-to-provider paths are delivered to their one owner, never fanned out.
 
 | Path | Direction | Fields |
 |---|---|---|
@@ -1651,44 +1684,97 @@ The six reserved paths carry JSON objects:
 
 `sessionGeneration` and `revision` are nonnegative JSON integers representable as
 signed 64-bit values. `frameIndex` is an integer from 0 through 5; 0 names the
-root, and the first provider frame is 1. Every id is a nonempty string of printable
+root, and the first page frame is 1. Every id is a nonempty string of printable
 ASCII without whitespace, at most 128 characters. These page identities have a
-broader grammar than descriptor plugin ids and cannot confer provider authority.
-The phone hub stamps the authenticated plugin id on provider traffic and delivers
-callbacks only to that owner. The glasses hub never trusts an owner supplied in
-the payload; correlation also requires the authenticated provider registration.
+broader grammar than descriptor plugin ids and confer no provider authority.
+
+A provider's pages live in its own namespace, `<pluginId>:<suffix>`, and its
+conventional entry page is `<pluginId>:main`; the complete id still obeys the
+id rules above. Pages the glasses hub draws itself use `nexus:` and are answered
+in-process by the glasses hub: they never travel on the bus and stay readable
+without a phone. No plugin may provide or author a `nexus:` page.
+
+Additive transport metadata rides on the existing paths; old fields keep their
+meaning and unknown fields stay ignorable:
+
+| Field | On | Meaning |
+|---|---|---|
+| `pluginId` | every page path | The authenticated owner. The phone hub stamps it from the verified sender on responses and results, overwriting anything supplied, and uses it to route the four hub paths to their owner. |
+| `providerRegistrationId` | the four hub paths | Opaque registration epoch the phone hub generates. The phone records work against the exact registration, binder and grant that received it, and stamps the sender's current epoch on answers; an echoed epoch is never trusted, and replacing a registration cancels its work even for the same app. |
+| `sessionGeneration`, `frameIndex` | visibility, closed | The frame the call concerns. A page id alone cannot tell two frames apart; refresh keeps the frame identity while the request id changes. |
+| `remainingTimeoutMs` | request | What is left of the glasses' absolute eight-second budget when sent, never above 8,000. The glasses' own deadline stays authoritative on arrival. |
+| `minimumRevision` | request | The revision floor the frame retains, when it retains one, so a cold provider can answer without rolling back. |
+| `leaseDurationMs` | visible visibility | What is left of the lease on the glasses when sent, 1 to 120,000. `leaseUntilMs` stays a glasses-clock deadline the phone and provider treat as opaque; a provider times its lease with this duration on its own clock. Covered visibility has neither. |
 
 A successful `/page/response` additionally requires `revision`, `template`,
 `title` (at most 48 characters), `body` (an object), `actions` (an array), and
 `live` (a boolean). Each action is `{id, label, kind, confirm}`: label is at most
 24 characters, kind is `hub`, `plugin`, or `immersion`, and confirm is a strict
-boolean. Action ids must be unique within a page. Templates are `summary`,
-`selectableList`, `document`, `commands`, `conversation`, `media`, `route`, and
-`ink`. Template-specific body fields remain opaque to PR1. An optional `data`
-object inside `body` is the template dataset; if an additive top-level `data`
-object is supplied, the same dataset cap applies there. `ink` requires the
-existing `ink_surface` grant; the renderer will enforce it in a later delivery.
-An error response carries the four correlation fields and `error` instead of
-any successful-page fields. A replacement in a result is a successful response
-for the same session, frame, and page, with a higher revision.
+boolean. Action ids must be unique within a page. An optional `data` object
+inside `body` is the template dataset; if an additive top-level `data` object is
+supplied, the same dataset cap applies there. An error response carries the four
+correlation fields and `error` instead of any successful-page fields. A
+replacement in a result is a successful response for the same session, frame,
+and page, with a higher revision.
 
 ```json
 {
-  "requestId": "session-1-request-1", "sessionGeneration": 1,
-  "frameIndex": 1, "pageId": "navigation:route", "reason": "open",
-  "params": {"view": "route"}
+  "requestId": "s1-r1", "sessionGeneration": 1, "frameIndex": 1,
+  "pageId": "nav:main", "reason": "open", "remainingTimeoutMs": 7940
 }
 ```
 
 ```json
 {
-  "requestId": "session-1-request-1", "sessionGeneration": 1,
-  "frameIndex": 1, "pageId": "navigation:route", "revision": 1,
-  "template": "summary", "title": "Route", "body": {"text": "300 m, right"},
-  "actions": [{"id": "mute", "label": "Mute", "kind": "plugin", "confirm": true}],
-  "live": true
+  "requestId": "s1-r1", "sessionGeneration": 1, "frameIndex": 1,
+  "pageId": "nav:main", "revision": 4, "template": "summary",
+  "title": "Navigation",
+  "body": {"primary": "Turn right", "secondary": "Rue de Rivoli",
+           "facts": [{"id": "distance", "label": "Distance", "value": "300 m"}],
+           "items": [{"id": "commands", "label": "Commands",
+                      "target": {"pageId": "nav:commands"}}]},
+  "actions": [], "live": true
 }
 ```
+
+### Typed template bodies
+
+The envelope is validated first, for size and correlation, with the body kept
+opaque. The body is then decoded by the one shared typed codec before anything
+is drawn or acted on. This hub draws four templates; `conversation`, `media`,
+`route` and `ink` remain valid envelope names but are unavailable here: a page
+using one shows as unavailable and never opens an immersion instead. No hub
+announces an Ink page profile.
+
+| Template | Body |
+|---|---|
+| `summary` | optional `primary`, `secondary`, `text` strings; optional `facts` array of `{id, label, value}`; optional `items` |
+| `selectableList` | required `items` array; optional `emptyText` |
+| `document` | required `segments` array of `{id, kind, text}`, kind `header`, `prose` or `aside`; optional `items`, `footer` |
+| `commands` | required `items` array; optional `text` |
+
+A row is `{id, label, sub?, enabled?, target?}`; `enabled` defaults to true. A
+target is exactly one of `{pageId, params?}` or `{actionId}`; a row without one
+is readable but inert, and a disabled row can be selected but SELECT does
+nothing. Row, fact and segment ids follow the page id rules and are unique within
+their array. A provider's navigation targets stay in its own namespace; an
+action target names one of the envelope's `actions` and confers no authority of
+its own. Unknown fields are ignored; wrong types, duplicate ids, missing or
+undeclared targets make the page `INVALID_PAGE`. Bodies carry text only: no
+markup, no URL is fetched, nothing is executed.
+
+| Body limit | Value |
+|---|---:|
+| Rows / facts / document segments | 64 / 16 / 240 |
+| Row and fact label, summary `primary` | 120 characters |
+| `sub`, `secondary`, `footer`, `emptyText`, fact `value` | 240 characters |
+| Summary and commands `text`, each segment | 4,096 characters |
+| Serialized row target `params` | 2,048 bytes |
+
+Characters count UTF-16 code units, as the title and action label limits do.
+These limits add to the envelope's; the whole response still fits 65,536 bytes,
+and a document provider sizes its page to that whole budget. A provider may
+shorten its own text before sending; the hub never truncates a received page.
 
 ### Limits, correlation, and errors
 
@@ -1705,31 +1791,33 @@ for the same session, frame, and page, with a higher revision.
 | Id / title / action label / result message | 128 / 48 / 24 / 64 characters |
 | Actions per page | 64 |
 | Serialized `params` / dataset `data` object | 2,048 bytes each |
-| Entire serialized page response | 65,536 bytes |
+| Entire serialized page response, or result with its replacement | 65,536 bytes |
 | Sum of retained frame snapshots | 524,288 bytes |
 | JSON nesting depth, payload object counted as level 1 | 8 levels |
 | Text form of any JSON number | 32 characters |
 
 Byte limits use `toString().toByteArray(Charsets.UTF_8).size`, including object
-syntax and correlation fields, not character counts or transport compression.
-Pages above the small CXR control-plane limit require SPP. Oversize values are
+syntax, correlation fields and transport metadata, not character counts or
+transport compression; the phone hub rechecks a response after stamping it.
+Pages above the small CXR control-plane limit need SPP. Oversize values are
 rejected rather than truncated. Validation walks a payload iteratively before
 serializing it: deeper nesting, any string longer than 65,536 characters, any
 number whose text exceeds 32 characters, any value that is not a JSON object,
 array, string, number, boolean, or null, or a value whose minimum serialized
 size already exceeds its cap is rejected first, and a value that cannot be
-serialized is invalid. The future host must still
-bound raw ingress before parsing. Before accepting a snapshot that would exceed
-the cumulative bound, evict the oldest covered snapshots while retaining their
-page ids for a later refresh.
+serialized is invalid. Where raw ingress bytes are available they are bounded
+before parsing. Before accepting a snapshot that would exceed the cumulative
+bound, the hub evicts the oldest covered snapshots while retaining their page
+ids for a later refresh.
 
 - `INVALID_PAGE_REQUEST`: request, action, result, visibility, or closed shape,
   enum, id, or parameter validation failed.
-- `INVALID_PAGE`: invalid response shape, template, action, label, dataset,
-  nesting, or serialization.
-- `PAGE_TOO_LARGE`: the whole response exceeds 65,536 UTF-8 bytes.
+- `INVALID_PAGE`: invalid response shape, template, body, target, action, label,
+  dataset, nesting, or serialization.
+- `PAGE_TOO_LARGE`: the whole response, or result, exceeds 65,536 UTF-8 bytes.
 - `PAGE_TIMEOUT`: no usable page arrived by the absolute eight-second deadline.
-- `PAGE_UNAVAILABLE`: the provider cannot supply the page.
+- `PAGE_UNAVAILABLE`: the provider cannot supply the page, or the phone hub
+  invalidated the provider's work.
 - `FRAME_LIMIT`: opening another frame would exceed the six-frame stack.
 - `STALE_GENERATION`: request/session/frame/page correlation no longer matches.
 - `UNCONFIRMED_ACTION`: an invocation has no result by its eight-second deadline.
@@ -1737,65 +1825,89 @@ page ids for a later refresh.
 Only the visible top frame may have a pending request. Another SELECT while
 loading is ignored. Responses to a cancelled, popped, timed-out, superseded, or
 closed request are dropped and never reopen a session. Retry always creates a
-fresh request id. Refresh preserves the previous snapshot while validating it;
-at two seconds a still-loading hint appears, and at eight seconds the frame
-becomes Unavailable with the dated last snapshot, Retry, and Back. It never falls
-back to immersion automatically. Deadlines are judged on each reply's arrival
-time, not on the next timer tick: a response to a pending request arriving at or
-after that request's deadline times the frame out, and a result arriving at or
-after its invocation deadline leaves the action Unconfirmed. Live revisions
-answer no pending request, so no request deadline applies to them; they follow
-the lease alone and are accepted strictly before `leaseUntilMs`, dropped at or
-after it. They also require the visible frame, its
-current session/request identity, `live: true`, and a strictly
-higher revision; covered, stale, or duplicate revisions are dropped. Revisions
-stay monotonic per frame across refresh and retry: a correlated response below
-the highest revision already shown is dropped as stale, and an equal revision
-keeps the displayed content.
+fresh request id. Refresh preserves the previous snapshot, readable but inert,
+while validating it; at two seconds a still-loading hint appears, and at eight
+seconds the frame becomes unavailable with the dated last snapshot, Retry, and
+Back. It never falls back to immersion automatically. Deadlines are judged on
+each reply's arrival time, not on the next timer tick: a response to a pending
+request arriving at or after that request's deadline times the frame out, and a
+result arriving at or after its invocation deadline leaves the action
+unconfirmed. Live revisions answer no pending request, so no request deadline
+applies to them; they follow the lease alone and are accepted strictly before
+`leaseUntilMs`, dropped at or after it. They also require the visible frame, its
+current session/request identity, `live: true`, and a strictly higher revision;
+covered, stale, or duplicate revisions are dropped. Revisions stay monotonic per
+frame across refresh and retry: a correlated response below the highest
+revision already shown is dropped as stale, and an equal revision keeps the
+displayed content. A refusal to open a seventh frame allocates nothing: the hub
+shows a local status and sends no close for any frame.
 
 ### Visibility, actions, link loss, and negotiation
 
 Covering a frame sends `visible: false`, drops its lease, and invalidates pending
-work. Uncovering sends `visible: true` with a fresh hub-clock lease and requests
+work. Uncovering sends `visible: true` with a fresh lease and requests
 `reason: refresh`, keeping the snapshot displayed. A page displayed on a frame
 that holds no lease (its first display, or after Retry) also sends `visible: true`
 with a fresh lease; a refreshed, uncovered frame keeps the lease sent on uncover.
-A visible Shown frame renews
-its lease when a tick falls within 30 seconds of expiry. No scheduler or transport
-runs inside the reducer; it only returns effects for a future host.
+A visible frame renews its lease within 30 seconds of expiry. A lease that
+expires without renewal voids that frame's live context on the phone.
 
-An action uses a fresh invocation id and the revision the wearer saw. A pending
-invocation blocks another SELECT. `done`, `stale`, and `rejected` clear it;
-rejection keeps the page. A lost acknowledgement becomes Unconfirmed and is
-never retried automatically. Actions requiring confirmation and all notice
-answers must pass hub confirmation (Cancel preselected) before an invocation;
-notice answers keep their existing reply-token validation. Page items are
-resolved by the future template host, not by PR1's opaque-body validator.
+Every plugin action is confirmed in a hub-owned panel, with Cancel preselected
+and Confirm second, whatever its `confirm` flag says. The confirmation is bound
+to the provider registration, page, action and shown revision; cover, refresh, a
+changed revision, BACK, GLOBAL, link loss or invalidation cancels it, and none is
+actionable while a frame loads or is unavailable. Confirm alone creates one
+invocation with a fresh id and the revision the wearer saw. A pending invocation
+blocks another SELECT. `done`, `stale`, and `rejected` clear it; rejection keeps
+the page. A lost acknowledgement becomes Unconfirmed and is never resent. A
+provider's `kind: hub` action gives it no hub control and is rejected; only
+hub-authored local navigation is handled. `kind: immersion` can only open that
+provider's own full app, after the labelled launch step. Notice answers keep
+their existing reply-token validation and are not offered from pages yet.
 
-On link loss all frames become inert Unavailable, preserve bounded snapshots,
-and invalidate leases, pending requests, and invocations. Local BACK still pops
-frames without sending effects to the disconnected provider. The session stays
-open. Restoration does not replay requests or actions; explicit Retry after
-fresh authorization is required. SPP loss and total disconnection must be
-distinguished by the future host. Base restoration only promises a still-live
-base; an Ink immersion closes on link loss under its existing contract.
+On total link loss all provider frames become inert unavailable, keep bounded
+snapshots, and lose leases, pending requests, and invocations; local `nexus:`
+frames stay readable. Local BACK still pops frames without sending anything to
+the disconnected provider. The session stays open. Restoration replays nothing;
+an explicit Retry with fresh authorization is required. Losing only SPP disables
+pages that need the data plane while small pages over CXR may remain. Base
+restoration only promises a still-live base; an Ink immersion closes on link
+loss under its existing contract.
 
-Grant revocation and replacement of the provider's registration are cancellation
-boundaries too. The hub invalidates that provider's pending requests,
-invocations, and leases; rejects any later response or result correlated with
-the earlier registration, even when its ids still match; and sends nothing more
-to it. Its frames become inert Unavailable, and Retry requires the provider's
-fresh authorization before a new request is sent. This specifies the future
-host; PR1 adds no runtime wiring for it.
+Grant revocation, package removal, provider death and replacement of the
+provider's registration are cancellation boundaries too. The phone hub cancels
+that provider's pending requests, invocations and leases, sends a hub-stamped,
+correlated `PAGE_UNAVAILABLE` on `/page/response` for each affected retained
+frame, rejects any later reply tied to the earlier registration even when its
+ids still match, and sends nothing more to it. The glasses hub treats that
+trusted invalidation as owner-scoped: it cancels that owner's work and keeps its
+snapshots inert in every affected frame, even with no request pending.
 
-Future support will require **both** hub announcements on
-`/system/hub/capabilities` to include additive `pageSessionVersion: 1`. PR1 only
-reserves the field name and never announces it. Unknown announcement fields are
-ignored; a mixed/old pair keeps today's launcher, activities, and immersions.
-Provider opt-in is additive descriptor metadata `rokidbus.plugin.pages` with
-string value `"1"`, never a new `PluginCapability` value. Template pages reuse
-`surfaces`, authored Ink pages reuse `ink_surface`, and API v3 and old-plugin
-immersion entry points remain intact. No `/core/*` route becomes a plugin power.
+Provider binding is separate from immersion. To answer a request the phone hub
+uses the provider's live registration, or binds its plugin service cold through
+its own connection, within at most five seconds of the eight-second budget; a
+cold failure is a correlated error, never a launch or a rebind loop. It never
+opens the plugin, adopts a surface, acknowledges an open, or closes, hides,
+unbinds, mutes or refocuses a live base immersion, even one of the same plugin.
+It keeps a page-only binding while that plugin has a visible leased page or a
+pending request, tells the owner about a close before unbinding, and releases
+the binding when no demand remains. Page traffic is never queued while a link is
+down, and logs carry ids, sizes and error codes, never page text.
+
+Pages need **both** hub announcements on `/system/hub/capabilities` to carry
+`pageSessionVersion: 1` over the current link; an absent, malformed, negative or
+newer value means unsupported, and support resets on disconnect, hub restart and
+a replacement connection. The phone hub then tells each opted-in provider its
+effective version with an owner-scoped `/system/hub/capabilities` message
+carrying `pluginId` and `pageSessionVersion` (1 or 0), at registration and on
+every change; plugins without the metadata receive nothing new, and a missing
+update means unsupported. Provider opt-in is additive descriptor metadata
+`rokidbus.plugin.pages` with string value `"1"`; any other value means no pages
+and never invalidates the plugin or its grant. It is never a new
+`PluginCapability` value. Template pages need the `surfaces` grant. A mixed or
+old pair keeps today's launcher, activities and immersions, and API v3 and the
+old-plugin immersion entry points remain intact. No `/core/*` route becomes a
+plugin power.
 
 ## Camera contract
 

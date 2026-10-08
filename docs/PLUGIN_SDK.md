@@ -1636,88 +1636,168 @@ plugin remains one launcher pick away, so a plugin that offers this switch
 should also do something useful when opened with `PluginOpenTypes.OPEN` —
 Assistant listens at once.
 
-## Pages (preview, not yet shipped)
+## Pages
 
-No hub version implements pages yet, and these callbacks and Kotlin types are
-not available in the shipped SDK. This section previews the session/page v1
-contract specified in `BUSSPEC.md`; declaring metadata today does not enable it.
+A page is consultation content the glasses hub draws inside the Nexus session,
+over whatever the wearer was doing: a native app, the Rokid home, or another
+plugin's immersion. It is not an `onNexusOpen` call and never replaces the
+screen underneath. The wearer opens the session with a triple tap, picks your
+plugin's row or card, reads, and goes BACK to exactly where they were. The wire
+contract is BUSSPEC's "Session and page protocol v1".
 
-A page is consultation content drawn by the glasses hub inside a Nexus session,
-over a still-live native app or exclusive plugin immersion. It is not an
-`onNexusOpen` call. The hub pulls a page only after selection and keeps its
-provider binding separate from any immersion binding. Closing a page never
-closes the base surface. BACK pops one frame; BACK at the anchored root restores
-the base without sending it a key. The session has six frames including root.
+The session is opt-in on the glasses (the default launcher backend is the
+shipped one), and both hubs must negotiate page support. An old phone or glasses
+hub, or a plugin without the metadata below, keeps today's behaviour: your
+plugin appears in Applications as an explicitly labelled full-app immersion.
 
-The proposed provider callbacks are:
+### Opting in
+
+Add one metadata entry to the plugin service, next to the existing descriptor
+keys. It is not a capability: the wearer approves nothing new, and an existing
+grant is kept.
+
+```xml
+<meta-data
+    android:name="rokidbus.plugin.pages"
+    android:value="1" />
+```
+
+Any other value means no pages; it never makes the plugin invalid. Template
+pages need the existing `surfaces` grant.
+
+### Callbacks
+
+`NexusPluginService` gains four protected hooks, called on the main thread:
 
 ```kotlin
-// Preview signatures only; these types and hooks have not shipped.
-onNexusPageRequest(request: NexusPageRequest): NexusPage
-onNexusPageAction(action: NexusPageAction): NexusPageResult
-onNexusPageVisibility(visibility: NexusPageVisibility)
-onNexusPageClosed(closed: NexusPageClosed)
+protected open fun onNexusPageRequest(request: NexusPageRequest): NexusPage
+protected open fun onNexusPageAction(action: NexusPageAction): NexusPageResult
+protected open fun onNexusPageVisibility(visibility: NexusPageVisibility)
+protected open fun onNexusPageClosed(closed: NexusPageClosed)
+```
+
+A plugin that drives its own `NexusPluginClient` overrides the same callbacks
+on `NexusPluginCallbacks`: `onPageRequest`, `onPageAction`, `onPageVisibility`
+and `onPageClosed`. The defaults answer unavailable and reject actions, so an
+unchanged plugin compiles and behaves as before.
+
+Pages arrive whether or not your plugin is open. They never call `onNexusOpen`
+or `onNexusClose`, never start the session foreground service, and never release
+your audio, speech, TTS or surface sessions: an immersion of your plugin can be
+running underneath while the wearer reads one of its pages. `onNexusPageClosed`
+is not `onNexusClose`. The hub keeps your service bound while a page needs it;
+do not poll, and do not start a foreground service for pages.
+
+Return the answer from `onNexusPageRequest`; that return value is the response.
+Answer quickly and from memory: the wearer's eight-second budget runs from their
+selection and includes a cold start of your service (at most five seconds), so
+do no blocking I/O on this path. An exception is answered as unavailable without
+its message.
+
+```kotlin
+override fun onNexusPageRequest(request: NexusPageRequest): NexusPage =
+    when (request.pageId) {
+        "myplugin:main" -> NexusPage.Content(
+            revision = revision,
+            title = "Today",
+            body = PageBody.SelectableList(
+                items = items.map { PageRow(it.key, it.title, sub = it.detail,
+                    target = PageTarget.Page("myplugin:item", """{"key":"${it.key}"}""")) },
+                emptyText = "Nothing yet",
+            ),
+        )
+        else -> NexusPage.Unavailable
+    }
 ```
 
 `NexusPageRequest` carries `requestId`, `sessionGeneration`, `frameIndex`,
-`pageId`, optional `params`, and reason `open`, `refresh`, or `retry`.
-`NexusPage` echoes correlation fields and supplies a `revision` that never goes
-backwards, even across refresh and retry (a lower one is dropped), plus
-`template`, `title`, object `body`, action list, and `live`. Templates are
-`summary`, `selectableList`, `document`, `commands`, `conversation`, `media`,
-`route`, or `ink`: the provider sends content and the hub owns layout, selection,
-and one-axis navigation. An action has a unique id, label, kind (`hub`, `plugin`,
-or `immersion`), and a required confirmation boolean. An explicitly labelled
-Open the full app immersion remains an exception and is never stacked in v1.
+`pageId`, `reason` (`OPEN`, `REFRESH`, `RETRY`), a copy of the row's `params`,
+and `minimumRevision`: the revision the glasses already retain for that frame.
+Answer at that revision or above, even after a cold start; a lower one is
+refused. Your pages live in your namespace, `<pluginId>:<suffix>`, and the
+glasses open `<pluginId>:main` first. The SDK supplies the correlation and
+envelope ids; you never write your plugin id or another owner into a page.
 
-`NexusPageAction` carries a fresh `invocationId`, session/frame/page identity,
-the shown revision, and `actionId`. The result echoes the invocation and reports
-`done`, `rejected`, or `stale`, with an optional message and full `replacement`
-response for the same page at a higher revision. A rejected/stale result keeps
-the page. Missing acknowledgement becomes Unconfirmed after eight seconds;
-the hub never automatically retries an action. Confirmed notice answers still
-use fresh, validated notice reply tokens; saved previews cannot revive them.
+### Templates
 
-Visibility callbacks carry `pageId`, `visible`, and a hub-clock `leaseUntilMs`
-only when visible. Cover stops the lease; uncover requests fresh validation
-while retaining the snapshot. The visible lease is 120 seconds and renewal is
-sent within the final 30 seconds before expiry. Send live revisions only while
-visible under that lease, with the current request identity and a higher
-revision. Closed callbacks carry `pageId` and `back`, `session_closed`,
-`timeout`, `link_lost`, `replaced`, or `frame_limit`.
+`NexusPage.Content(revision, title, body, actions, live)` names one of four
+typed bodies from `com.anezium.rokidbus.shared`. The hub owns layout, selection
+and one-axis navigation.
 
-Ids use nonempty printable ASCII without whitespace, at most 128 characters.
-A page permits 64 actions, a 48-character title, 24-character action labels,
-and a 64-character result message. Serialized `params` and template dataset
-`data` objects each fit 2,048 UTF-8 bytes. The complete response fits 65,536
-UTF-8 bytes and all retained snapshots fit 524,288 bytes. Bodies are opaque to
-PR1 beyond shape and size; typed rendering comes later. Large documents need
-SPP above the CXR control-plane limit. Limits include serialized JSON syntax.
-JSON nesting is limited to eight levels, counting the payload object itself,
-and a number's text to 32 characters. A
-response to a pending request, or an action result, arriving at or after its
-eight-second deadline counts as missed. Live revisions answer no request: they
-are judged by the lease alone and must arrive strictly before `leaseUntilMs`.
-At two seconds the hub shows Still loading; the absolute eight-second budget
-starts at selection and includes cold registration (at most five seconds),
-compilation, and transport. Failure shows Detail unavailable with the dated last
-snapshot, Retry, and Back; it never opens an immersion as a fallback.
+| Body | Content |
+|---|---|
+| `PageBody.Summary` | optional `primary`, `secondary`, `text`; `facts` (`PageFact(id, label, value)`); `items` |
+| `PageBody.SelectableList` | `items`; optional `emptyText` |
+| `PageBody.Document` | `segments` (`PageSegment(id, kind, text)`, kind `HEADER`, `PROSE` or `ASIDE`); `items`; optional `footer` |
+| `PageBody.Commands` | `items`; optional `text` |
 
-Do not call `/launcher/open`, `/surface/show`, or `/ink/show` to answer a page
-request, and do not stack exclusive surfaces or close/switch the base plugin.
-The `ink` template reuses `ink_surface`; its bounded page profile and grant
-check belong to the future renderer. Template pages reuse `surfaces`; there is
-no new capability string or receive-prefix requirement. Future provider opt-in
-is additive descriptor metadata `rokidbus.plugin.pages` with string value `"1"`.
-Both hubs must later negotiate `pageSessionVersion: 1`; neither announces it
-today. API v3 and unchanged plugins keep their existing immersion behaviour.
+A row is `PageRow(id, label, sub, enabled, target)`. Its target opens another of
+your pages, `PageTarget.Page(pageId, paramsJson)`, or invokes one of the page's
+declared actions, `PageTarget.Action(actionId)`; a row without a target is
+readable but inert. Ids are unique within their list. A document keeps its text
+order, paragraphs, explicit line breaks and Unicode, and the wearer pages
+through it with swipes.
 
-Link loss makes pages inert, invalidates requests/actions/leases, and preserves
-local snapshots and BACK. Reconnect alone replays nothing: a wearer Retry and
-fresh authorization are required. Revoking your grant or replacing your
-registration has the same effect, and replies tied to the earlier registration
-are rejected. See the wire section for the eight error
-codes and authenticated, owner-scoped provider routing.
+`conversation`, `media`, `route` and `ink` are reserved names this hub does not
+draw yet; a page using one shows as unavailable, never as an immersion. There
+is no Ink page body yet.
+
+Limits: 64 rows, 16 facts, 240 segments; labels and `primary` 120 characters;
+`sub`, `secondary`, `footer`, `emptyText` and fact values 240; `text` and each
+segment 4,096; row params 2,048 serialized UTF-8 bytes. The title is at most 48
+characters and the whole response at most 65,536 UTF-8 bytes. Shorten your own
+summaries before sending if you need to; the hub never truncates a page. A
+content page the SDK finds invalid is answered as `INVALID_PAGE` instead.
+
+### Actions
+
+`NexusPageActionSpec(id, label, kind, confirm)` declares an action: label at
+most 24 characters, kind `PLUGIN`, `IMMERSION` or `HUB`. The hub confirms every
+plugin action with the wearer, Cancel preselected, whatever `confirm` says, and
+only then calls `onNexusPageAction` with a fresh `invocationId` and the revision
+the wearer saw. Return `NexusPageResult.done(message, replacement)`,
+`.rejected(message)` or `.stale(message)`; a message is at most 64 characters
+and a replacement is the same page at a higher revision. A lost result shows as
+unconfirmed and is never resent. `IMMERSION` only opens your own full app, after
+the hub's labelled launch step; `HUB` gives you no hub control.
+
+### Visibility and live updates
+
+`NexusPageVisibility` reports `visible` and, when visible, `leaseDurationMs`:
+how long the lease still runs, counted on your device from the callback's
+arrival. The glasses' own clock is meaningless on the phone. A page answered with
+`live = true` may send newer revisions while it is visible under that lease:
+
+```kotlin
+nexusClient?.publishPage(request, NexusPage.Content(revision + 1, title, body, live = true))
+```
+
+`NexusPluginClient.publishPage(request, page)` returns `SENT` only for the
+frame's current request, while visible, before the lease runs out, and at a
+revision above every one already sent; otherwise it refuses without sending.
+After a cover, a refresh request takes over the frame: publish against the
+newest request you received. Publish on real changes, at most about two
+revisions a second; never poll. `NexusPluginClient.supportsPageSession` says
+whether pages can be served at all: approved with `surfaces`, both hubs on page
+v1 for your plugin, and a live link.
+
+`NexusPageClosed` arrives with `back`, `session_closed`, `timeout`,
+`link_lost`, `replaced` or `frame_limit`; drop that page's state. Link loss,
+revocation, a replaced registration or a closed client void every page and
+publisher at once, and nothing is replayed on reconnect.
+
+### Examples
+
+Navigation answers `nav:main` with a `summary` of the guidance it already shows
+in its activity: the manoeuvre, the distance or remaining stops, the street, the
+ETA when the source app supplies one, and the source and time. Missing values
+are left out rather than invented. A Commands row opens `nav:commands`, a
+`commands` page whose only row opens the full app.
+
+Relay answers `relay:main` with a `selectableList` of the inbox's threads and
+each thread with a `document` of its messages, speaker headers and the time the
+snapshot was captured. Its pages are read-only: no reply, read-aloud or
+mark-as-read, and the inbox's redaction and hidden-preview settings apply.
 
 ## 4. Approve and debug
 
