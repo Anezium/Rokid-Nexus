@@ -5,6 +5,7 @@ import com.anezium.rokidbus.glasses.DpadPairDedupe
 import com.anezium.rokidbus.glasses.RingTapPolicy
 import com.anezium.rokidbus.glasses.TripleTapDetector
 import com.anezium.rokidbus.glasses.session.SessionEvent
+import com.anezium.rokidbus.glasses.session.Underneath
 
 /** Where the arbiter sent an event, in the order it was sent. */
 internal sealed interface RoutedIntent {
@@ -276,12 +277,20 @@ internal class InputArbiter(private val context: InputContext) {
         // it stay swallowed by the detector; a session it opens has its gate absorb them.
         suppressionHonoured = session && context.sessionOpen
         if (session) {
-            deliver(RoutedIntent.ToSession(SessionEvent.TripleTap(event.eventTime)), out)
+            deliver(RoutedIntent.ToSession(SessionEvent.TripleTap(event.eventTime, underneath())), out)
             return own(event, Owner.SESSION, consumed = true, out)
         }
         deliver(RoutedIntent.ToLegacyLauncher(event, open = true), out)
         return own(event, Owner.LEGACY, consumed = true, out)
     }
+
+    /**
+     * What the session opens over. Telling the Rokid home from another native scene needs a
+     * foreground resolver, so a native base is recorded as [Underneath.NativeApp] for now.
+     */
+    private fun underneath(): Underneath =
+        context.activeSurfaceId?.let { Underneath.NexusSurface(it) }
+            ?: if (context.nativeInFront) Underneath.NativeApp else Underneath.Unknown
 
     private fun toSession(event: RawKeyEvent, viaWindow: Boolean, out: MutableList<RoutedIntent>): InputDecision {
         sessionEvent(event)?.let { deliver(RoutedIntent.ToSession(it), out) }

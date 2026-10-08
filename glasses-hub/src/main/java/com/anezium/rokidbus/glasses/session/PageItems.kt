@@ -6,6 +6,9 @@ import com.anezium.rokidbus.shared.PageSurfaceResponse
 internal sealed interface PageItem {
     data class OpenPage(val pageId: String, val paramsJson: String? = null) : PageItem
     data class Invoke(val actionId: String) : PageItem
+
+    /** Opens [pluginId]'s immersion. Only an injected resolver produces it; nothing does before PR3. */
+    data class Launch(val pluginId: String) : PageItem
     data object Retry : PageItem
     data object Back : PageItem
     data object Inert : PageItem

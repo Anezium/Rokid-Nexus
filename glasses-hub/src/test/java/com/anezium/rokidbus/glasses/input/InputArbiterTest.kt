@@ -12,6 +12,7 @@ import com.anezium.rokidbus.glasses.session.SessionEvent
 import com.anezium.rokidbus.glasses.session.SessionModel
 import com.anezium.rokidbus.glasses.session.SessionReducer
 import com.anezium.rokidbus.glasses.session.SessionState
+import com.anezium.rokidbus.glasses.session.Underneath
 import com.anezium.rokidbus.shared.PageSurfaceContract
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -161,7 +162,7 @@ class InputArbiterTest {
     @Test
     fun `A3 the gate trace TripleTap 1000 Contact 1700 Tick 1800 Enter 2500 is absorbed`() {
         tripleTap(600, 800, 1_000)
-        assertEquals(SessionEvent.TripleTap(1_000), rig.sessionEvents().single())
+        assertEquals(nativeTripleTap(1_000), rig.sessionEvents().single())
         assertTrue(rig.sessionGate)
 
         val contact = arbiter.onKey(raw(InputKeys.NOTIFICATION, DOWN, at = 1_700))
@@ -176,7 +177,7 @@ class InputArbiterTest {
 
         assertTrue(down.consumed && up.consumed)
         assertEquals(
-            listOf(SessionEvent.TripleTap(1_000), SessionEvent.Contact(1_700), SessionEvent.Enter(2_500)),
+            listOf(nativeTripleTap(1_000), SessionEvent.Contact(1_700), SessionEvent.Enter(2_500)),
             rig.sessionEvents(),
         )
         assertTrue(rig.model.state is SessionState.Root)
@@ -198,7 +199,7 @@ class InputArbiterTest {
 
         assertEquals(
             listOf(
-                SessionEvent.TripleTap(1_000), SessionEvent.Enter(1_130), SessionEvent.Back(1_230),
+                nativeTripleTap(1_000), SessionEvent.Enter(1_130), SessionEvent.Back(1_230),
                 SessionEvent.Step(1, 1_300),
             ),
             rig.sessionEvents(),
@@ -230,7 +231,7 @@ class InputArbiterTest {
         assertTrue(rig.sessionEvents().isEmpty())
 
         tripleTap(2_000, 2_300, 2_600)
-        assertEquals(listOf(SessionEvent.TripleTap(2_600)), rig.sessionEvents())
+        assertEquals(listOf(nativeTripleTap(2_600)), rig.sessionEvents())
         assertEquals(listOf(SessionEffect.ShowGate), rig.sessionEffects)
     }
 
@@ -256,7 +257,7 @@ class InputArbiterTest {
 
         rig.noticeArmed = false
         tripleTap(2_000, 2_200, 2_400)
-        assertEquals(listOf(SessionEvent.TripleTap(2_400)), rig.sessionEvents())
+        assertEquals(listOf(nativeTripleTap(2_400)), rig.sessionEvents())
     }
 
     @Test
@@ -280,7 +281,7 @@ class InputArbiterTest {
         tap(InputKeys.BACK, 5_900)
 
         assertEquals(
-            listOf(SessionEvent.Contact(5_000), SessionEvent.Contact(5_150), SessionEvent.TripleTap(5_300)),
+            listOf(SessionEvent.Contact(5_000), SessionEvent.Contact(5_150), nativeTripleTap(5_300)),
             rig.sessionEvents(),
         )
         assertTrue(rig.model.state is SessionState.Root)
@@ -445,7 +446,7 @@ class InputArbiterTest {
         rig.backend = LauncherBackend.SESSION
         arbiter.reset()
         tripleTap(2_000, 2_200, 2_400)
-        assertEquals(listOf(SessionEvent.TripleTap(2_400)), rig.sessionEvents())
+        assertEquals(listOf(nativeTripleTap(2_400)), rig.sessionEvents())
         assertEquals(1, rig.delivered.count { it is ToLegacyLauncher && it.open })
 
         // Two contacts, then a switch: the streak is gone and nothing is replayed.
@@ -525,6 +526,20 @@ class InputArbiterTest {
         assertEquals(DeviceClass.TOUCHPAD, KeyEventAdapter.classify("Logitech K380"))
         assertEquals(DeviceClass.TOUCHPAD, KeyEventAdapter.classify(null))
     }
+
+    @Test
+    fun `A4 the triple tap records the surface it was made over`() {
+        rig.activeSurfaceId = "player:card"
+        tripleTap(0, 200, 400)
+
+        assertEquals(
+            listOf(SessionEvent.TripleTap(400, Underneath.NexusSurface("player:card"))),
+            rig.sessionEvents(),
+        )
+        assertEquals(Underneath.NexusSurface("player:card"), rig.model.underneath)
+    }
+
+    private fun nativeTripleTap(at: Long) = SessionEvent.TripleTap(at, Underneath.NativeApp)
 
     private fun openSessionRoot(at: Long) {
         tripleTap(at - 400, at - 200, at)

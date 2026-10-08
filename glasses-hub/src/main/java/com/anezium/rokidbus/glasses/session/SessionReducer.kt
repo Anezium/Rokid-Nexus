@@ -1,6 +1,11 @@
+// Adapted from the Rokid-Nexus fork by alvarosw (https://github.com/alvarosw/Rokid-Nexus), Apache-2.0.
+// Only the plugin open handoff (rules 15-17) and the record of what a session covers (rule 18)
+// come from the fork's HudStateMachine; the rest is this repository's PR1 reducer.
 package com.anezium.rokidbus.glasses.session
 
+import com.anezium.rokidbus.glasses.session.SessionEffect.CancelDeadline
 import com.anezium.rokidbus.glasses.session.SessionEffect.RequestPage
+import com.anezium.rokidbus.glasses.session.SessionEffect.RestoreUnderneath
 import com.anezium.rokidbus.glasses.session.SessionEffect.SendClosed
 import com.anezium.rokidbus.glasses.session.SessionEffect.SendVisibility
 import com.anezium.rokidbus.glasses.session.SessionEffect.ShowFrame
@@ -33,11 +38,19 @@ internal class SessionReducer(
             is SessionEvent.NoticeArrived -> onNoticeArrived(model, event.preview)
             is SessionEvent.ActivityStarted -> onActivityStarted(model, event.stop)
             is SessionEvent.ActivityEnded -> onActivityEnded(model, event.stopId)
-            else -> when (val state = model.state) {
-                SessionState.Closed -> onClosed(model, event)
-                is SessionState.Opening -> onOpening(model, state, event)
-                is SessionState.Root -> absorbGateClassification(model, event) ?: onRoot(model, state, event)
-                is SessionState.InPage -> absorbGateClassification(model, event) ?: onPage(model, state, event)
+            is SessionEvent.SurfaceShown -> onSurfaceShown(model, event)
+            SessionEvent.Abort -> abort(model)
+            else -> {
+                // Rule 17: a cancelled open is remembered only until its own deadline.
+                val current = if (event is SessionEvent.Tick) model.expireCancelledOpens(event.nowMs) else model
+                when (val state = current.state) {
+                    SessionState.Closed -> onClosed(current, event)
+                    is SessionState.Opening -> onOpening(current, state, event)
+                    is SessionState.Root -> absorbGateClassification(current, event) ?: onRoot(current, state, event)
+                    is SessionState.InPage -> absorbGateClassification(current, event) ?: onPage(current, state, event)
+                    is SessionState.Launching ->
+                        absorbGateClassification(current, event) ?: onLaunching(current, state, event)
+                }
             }
         }
         return transition.copy(effects = transition.effects.ifEmpty { listOf(SessionEffect.None) })
@@ -78,6 +91,7 @@ internal class SessionReducer(
                 generation = model.generation + 1,
                 linkLost = false,
                 gateContacts = emptyList(),
+                underneath = event.underneath,
             ),
             listOf(SessionEffect.ShowGate),
         )
@@ -116,16 +130,7 @@ internal class SessionReducer(
             is SessionEvent.Enter -> state.stops.getOrNull(state.selected)
                 ?.let { stop -> openFrame(model, state, emptyList(), stop.pageId, null, event.nowMs) }
                 ?: keep(model)
-            is SessionEvent.Back -> SessionTransition(
-                model.copy(
-                    state = SessionState.Closed,
-                    activities = model.queuedActivities.fold(model.activities) { live, stop -> live.upsert(stop) },
-                    queuedActivities = emptyList(),
-                    linkLost = false,
-                    gateContacts = emptyList(),
-                ),
-                listOf(SessionEffect.RestoreUnderneath),
-            )
+            is SessionEvent.Back -> SessionTransition(closed(model), listOf(RestoreUnderneath(model.underneath)))
             SessionEvent.LinkLost -> keep(model.copy(linkLost = true))
             SessionEvent.LinkRestored -> keep(model.copy(linkLost = false))
             // A new contact after the gate proves the gate's gestures are over.
@@ -147,26 +152,129 @@ internal class SessionReducer(
             is SessionEvent.Tick -> tick(model, state, event.nowMs)
             is SessionEvent.PageResponse -> response(model, state, event.payload, event.nowMs)
             is SessionEvent.PageResult -> result(model, state, event.payload, event.nowMs)
-            SessionEvent.LinkLost -> SessionTransition(
-                model.copy(
-                    linkLost = true,
-                    state = state.copy(
-                        frames = state.frames.map {
-                            it.copy(
-                                status = FrameStatus.Unavailable(it.retained(), UNAVAILABLE_LINK_LOST),
-                                selected = 0,
-                                invocation = null,
-                            )
-                        },
-                    ),
-                ),
-                listOf(ShowFrame),
-            )
+            SessionEvent.LinkLost -> SessionTransition(model.copy(linkLost = true, state = state.linkLost()), listOf(ShowFrame))
             // Restoration replays nothing; the wearer's next Retry does.
             SessionEvent.LinkRestored -> keep(model.copy(linkLost = false))
             is SessionEvent.Contact -> keep(model.copy(gateContacts = emptyList()))
             else -> keep(model)
         }
+
+    /**
+     * Rule 15. The previous screen stays drawn while the plugin answers; only BACK acts, and it
+     * cancels the open so the plugin's late surface is closed unseen (rule 16).
+     */
+    private fun onLaunching(model: SessionModel, state: SessionState.Launching, event: SessionEvent): SessionTransition =
+        when (event) {
+            is SessionEvent.Back -> SessionTransition(
+                model.copy(
+                    state = state.previous,
+                    cancelledOpen = model.expireCancelledOpens(event.nowMs).cancelledOpen +
+                        (state.pluginId to state.deadlineMs),
+                ),
+                listOf(CancelDeadline),
+            )
+            is SessionEvent.OpenFailed ->
+                if (event.token == state.token) openFailed(model, state, event.reason) else keep(model)
+            is SessionEvent.Tick ->
+                if (event.nowMs >= state.deadlineMs) {
+                    openFailed(model, state, OpenFailure.TIMEOUT)
+                } else {
+                    underPrevious(model, state, event)
+                }
+            SessionEvent.LinkLost -> keep(
+                model.copy(
+                    linkLost = true,
+                    state = state.copy(previous = (state.previous as? SessionState.InPage)?.linkLost() ?: state.previous),
+                ),
+            )
+            SessionEvent.LinkRestored -> keep(model.copy(linkLost = false))
+            is SessionEvent.Contact -> keep(model.copy(gateContacts = emptyList()))
+            // A second selection never sends a second open; late page traffic waits for the return.
+            else -> keep(model)
+        }
+
+    private fun launch(model: SessionModel, state: SessionState.InPage, pluginId: String, nowMs: Long): SessionTransition {
+        val token = model.nextId
+        val deadline = nowMs + OPEN_TIMEOUT_MS
+        return SessionTransition(
+            model.copy(
+                state = SessionState.Launching(pluginId, token, deadline, state),
+                nextId = model.nextId + 1,
+                // Opening the plugin again makes its next surface this open's answer, not a late one.
+                cancelledOpen = model.cancelledOpen - pluginId,
+            ),
+            listOf(SessionEffect.SendLauncherOpen(pluginId, token), SessionEffect.ScheduleDeadline(deadline)),
+        )
+    }
+
+    /** Rule 17: back to the screen the open was made from, with the reason on the status line. */
+    private fun openFailed(model: SessionModel, state: SessionState.Launching, reason: OpenFailure): SessionTransition =
+        SessionTransition(
+            model.copy(state = state.previous),
+            listOf(SessionEffect.ShowStatus(SessionStatus.OpenFailed(state.pluginId, reason))),
+        )
+
+    /** A tick before the open deadline keeps the screen underneath alive: its lease, its pending action. */
+    private fun underPrevious(
+        model: SessionModel,
+        state: SessionState.Launching,
+        event: SessionEvent.Tick,
+    ): SessionTransition {
+        val previous = state.previous as? SessionState.InPage ?: return keep(model)
+        val transition = tick(model.copy(state = previous), previous, event.nowMs)
+        return transition.copy(model = transition.model.copy(state = state.copy(previous = transition.model.state)))
+    }
+
+    /**
+     * Rule 16. The surface of the open in progress replaces the session; the base it covered is
+     * not restored. A surface from a cancelled open is closed before the wearer sees it, unless it
+     * is the very surface the session was opened over (rule 18).
+     */
+    private fun onSurfaceShown(model: SessionModel, event: SessionEvent.SurfaceShown): SessionTransition {
+        val state = model.state
+        if (state is SessionState.Launching && state.pluginId == event.ownerPluginId) {
+            return SessionTransition(closed(model), closedFrames(model, state.previous))
+        }
+        val current = model.expireCancelledOpens(event.nowMs)
+        val base = (model.underneath as? Underneath.NexusSurface)?.surfaceId
+        if (event.ownerPluginId in current.cancelledOpen && event.surfaceId != base) {
+            return SessionTransition(
+                current.copy(cancelledOpen = current.cancelledOpen - event.ownerPluginId),
+                listOf(SessionEffect.CloseSurface(event.surfaceId, SURFACE_OPEN_CANCELLED)),
+            )
+        }
+        return keep(current)
+    }
+
+    /** Rule 19: the host takes the session down from wherever it is. */
+    private fun abort(model: SessionModel): SessionTransition {
+        val state = model.state
+        if (state == SessionState.Closed) return keep(model)
+        return SessionTransition(
+            closed(model),
+            closedFrames(model, state) + RestoreUnderneath(model.underneath) + CancelDeadline,
+        )
+    }
+
+    /** The frames a closing session tells their providers about, top first. */
+    private fun closedFrames(model: SessionModel, state: SessionState): List<SessionEffect> {
+        val frames = when (state) {
+            is SessionState.InPage -> state.frames
+            is SessionState.Launching -> (state.previous as? SessionState.InPage)?.frames.orEmpty()
+            else -> emptyList()
+        }
+        return frames.asReversed().filter { model.canReach(it) }.map { SendClosed(it.pageId, CLOSE_SESSION_CLOSED) }
+    }
+
+    /** Leaves the session: queued activities join the live ones and per-session bookkeeping resets. */
+    private fun closed(model: SessionModel): SessionModel = model.copy(
+        state = SessionState.Closed,
+        activities = model.queuedActivities.fold(model.activities) { live, stop -> live.upsert(stop) },
+        queuedActivities = emptyList(),
+        linkLost = false,
+        gateContacts = emptyList(),
+        underneath = Underneath.Unknown,
+    )
 
     private fun step(model: SessionModel, state: SessionState.InPage, delta: Int): SessionTransition {
         val top = state.frames.last()
@@ -190,6 +298,7 @@ internal class SessionReducer(
                 when (val item = itemResolver.items(status.snapshot.page).getOrNull(top.selected)) {
                     is PageItem.OpenPage -> openFrame(model, state.root, state.frames, item.pageId, item.paramsJson, nowMs)
                     is PageItem.Invoke -> invoke(model, state, status, item.actionId, nowMs)
+                    is PageItem.Launch -> launch(model, state, item.pluginId, nowMs)
                     PageItem.Back -> pop(model, state, nowMs)
                     else -> keep(model)
                 }
@@ -527,11 +636,16 @@ internal class SessionReducer(
         const val REASON_REFRESH = "refresh"
         const val REASON_RETRY = "retry"
         const val CLOSE_BACK = "back"
+        const val CLOSE_SESSION_CLOSED = "session_closed"
         const val CLOSE_FRAME_LIMIT = "frame_limit"
         const val RESULT_DONE = "done"
         const val UNAVAILABLE_LINK_LOST = "link_lost"
         const val UNAVAILABLE_EVICTED = "evicted"
         val UNAVAILABLE_ITEMS: List<PageItem> = listOf(PageItem.Retry, PageItem.Back)
+
+        /** The fork's F-4 bound, equal to the ring's surface handoff. */
+        const val OPEN_TIMEOUT_MS = 10_000L
+        const val SURFACE_OPEN_CANCELLED = "OPEN_CANCELLED"
     }
 }
 
@@ -552,6 +666,20 @@ private fun Frame.retained(): Snapshot? = when (val status = status) {
 
 private fun SessionState.InPage.withTop(frame: Frame) = copy(frames = frames.dropLast(1) + frame)
 
+/** Link loss makes every frame unavailable and drops leases and pending actions (rule 12). */
+private fun SessionState.InPage.linkLost() = copy(
+    frames = frames.map {
+        it.copy(
+            status = FrameStatus.Unavailable(it.retained(), SessionReducer.UNAVAILABLE_LINK_LOST),
+            selected = 0,
+            invocation = null,
+        )
+    },
+)
+
+private fun SessionModel.expireCancelledOpens(nowMs: Long): SessionModel =
+    if (cancelledOpen.values.all { it > nowMs }) this else copy(cancelledOpen = cancelledOpen.filterValues { it > nowMs })
+
 /** Page and action deadlines run from the initiating selection, whichever event observes them. */
 private fun FrameStatus.Loading.expiredAt(nowMs: Long) = nowMs >= sinceMs + PageSurfaceContract.PAGE_TIMEOUT_MS
 
@@ -568,6 +696,7 @@ private fun SessionState.mapRootStops(transform: (List<RootStop>) -> List<RootSt
     is SessionState.Opening -> copy(root = root.copy(stops = transform(root.stops)))
     is SessionState.Root -> copy(stops = transform(stops))
     is SessionState.InPage -> copy(root = root.copy(stops = transform(root.stops)))
+    is SessionState.Launching -> copy(previous = previous.mapRootStops(transform))
 }
 
 private fun List<ActivityStop>.upsert(stop: ActivityStop): List<ActivityStop> {

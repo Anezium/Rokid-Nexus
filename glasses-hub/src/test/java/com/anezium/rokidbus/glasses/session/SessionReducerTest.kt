@@ -1,3 +1,5 @@
+// Adapted from the Rokid-Nexus fork by alvarosw (https://github.com/alvarosw/Rokid-Nexus), Apache-2.0.
+// Only the rule 15-18 cases port the fork's open-handoff tests; the rest are this repository's PR1 tests.
 package com.anezium.rokidbus.glasses.session
 
 import com.anezium.rokidbus.glasses.session.SessionEffect.RequestPage
@@ -843,6 +845,322 @@ class SessionReducerTest {
         assertEquals(1, model.notificationCount)
         assertTrue(model.noticeArmed)
         assertTrue(model.editableFocused)
+    }
+
+    /** Test rows for the open handoff: an `immersion` action opens the plugin named by its id. */
+    private val launching = SessionReducer(
+        PageItemResolver { page ->
+            page.actions.map { if (it.kind == "immersion") PageItem.Launch(it.id) else PageItem.Invoke(it.id) }
+        },
+    )
+
+    @Test
+    fun `rule 15 selecting a launch item sends the open and keeps the page drawn underneath`() {
+        showImmersions(4_000, "maps")
+        val page = model.state
+
+        send(Enter(5_000), launching)
+
+        val state = model.state as SessionState.Launching
+        assertEquals("maps", state.pluginId)
+        assertEquals(5_000 + SessionReducer.OPEN_TIMEOUT_MS, state.deadlineMs)
+        assertEquals(page, state.previous)
+        assertEquals(
+            listOf(
+                SessionEffect.SendLauncherOpen("maps", state.token),
+                SessionEffect.ScheduleDeadline(5_000 + SessionReducer.OPEN_TIMEOUT_MS),
+            ),
+            effects,
+        )
+
+        // A second selection never sends a second open.
+        listOf(Enter(5_100), Step(1, 5_200), Step(-1, 5_300), TripleTap(5_400)).forEach {
+            send(it, launching)
+            assertEquals(state, model.state)
+            assertEquals(listOf(SessionEffect.None), effects)
+        }
+    }
+
+    @Test
+    fun `rule 15 back during launching returns to the page and remembers the cancelled open`() {
+        showImmersions(4_000, "maps")
+        val page = model.state
+        send(Enter(5_000), launching)
+
+        send(Back(6_000), launching)
+
+        assertEquals(page, model.state)
+        assertEquals(listOf(SessionEffect.CancelDeadline), effects)
+        assertEquals(mapOf("maps" to 5_000 + SessionReducer.OPEN_TIMEOUT_MS), model.cancelledOpen)
+    }
+
+    @Test
+    fun `rule 16 the surface of the open in progress replaces the session without restoring underneath`() {
+        showImmersions(4_000, "maps")
+        send(Enter(5_000), launching)
+
+        send(SessionEvent.SurfaceShown("maps:surface", "maps", 7_000), launching)
+
+        assertSame(SessionState.Closed, model.state)
+        assertEquals(listOf(SendClosed("maps:route", SessionReducer.CLOSE_SESSION_CLOSED)), effects)
+        assertEquals(Underneath.Unknown, model.underneath)
+    }
+
+    @Test
+    fun `rule 16 a surface from another plugin does not answer the open in progress`() {
+        showImmersions(4_000, "maps")
+        send(Enter(5_000), launching)
+        val state = model.state
+
+        send(SessionEvent.SurfaceShown("lens:surface", "lens", 6_000), launching)
+
+        assertEquals(state, model.state)
+        assertEquals(listOf(SessionEffect.None), effects)
+    }
+
+    @Test
+    fun `rule 16 cancelled open closes the late surface unseen`() {
+        showImmersions(4_000, "maps")
+        send(Enter(5_000), launching)
+        send(Back(6_000), launching)
+        send(Back(6_100), launching)
+        send(Back(6_200), launching)
+        assertSame(SessionState.Closed, model.state)
+
+        send(SessionEvent.SurfaceShown("maps:surface", "maps", 9_000), launching)
+        assertEquals(listOf(SessionEffect.CloseSurface("maps:surface", SessionReducer.SURFACE_OPEN_CANCELLED)), effects)
+        assertTrue(model.cancelledOpen.isEmpty())
+
+        // The cancellation answered once; the plugin's next surface is its own.
+        send(SessionEvent.SurfaceShown("maps:surface", "maps", 9_500), launching)
+        assertEquals(listOf(SessionEffect.None), effects)
+    }
+
+    @Test
+    fun `rule 16 a surface arriving after the cancelled open's deadline is left alone`() {
+        showImmersions(4_000, "maps")
+        send(Enter(5_000), launching)
+        send(Back(6_000), launching)
+
+        send(SessionEvent.SurfaceShown("maps:surface", "maps", 5_000 + SessionReducer.OPEN_TIMEOUT_MS), launching)
+
+        assertEquals(listOf(SessionEffect.None), effects)
+        assertTrue(model.cancelledOpen.isEmpty())
+    }
+
+    @Test
+    fun `rule 17 a second open keeps the first cancellation`() {
+        showImmersions(4_000, "maps", "lens")
+        send(Enter(5_000), launching)
+        send(Back(5_500), launching)
+        send(Step(1, 5_600), launching)
+        send(Enter(6_000), launching)
+        assertEquals("lens", (model.state as SessionState.Launching).pluginId)
+        send(Back(6_500), launching)
+
+        assertEquals(
+            mapOf("maps" to 5_000 + SessionReducer.OPEN_TIMEOUT_MS, "lens" to 6_000 + SessionReducer.OPEN_TIMEOUT_MS),
+            model.cancelledOpen,
+        )
+        send(SessionEvent.SurfaceShown("maps:surface", "maps", 7_000), launching)
+        assertEquals(listOf(SessionEffect.CloseSurface("maps:surface", SessionReducer.SURFACE_OPEN_CANCELLED)), effects)
+        assertEquals(setOf("lens"), model.cancelledOpen.keys)
+    }
+
+    @Test
+    fun `rule 17 opening a plugin again forgets its own cancellation`() {
+        showImmersions(4_000, "maps")
+        send(Enter(5_000), launching)
+        send(Back(5_500), launching)
+        send(Enter(6_000), launching)
+
+        assertTrue(model.cancelledOpen.isEmpty())
+        send(SessionEvent.SurfaceShown("maps:surface", "maps", 6_500), launching)
+        assertSame(SessionState.Closed, model.state)
+    }
+
+    @Test
+    fun `rule 17 a failed send returns to the page with the reason`() {
+        showImmersions(4_000, "maps")
+        val page = model.state
+        send(Enter(5_000), launching)
+        val token = (model.state as SessionState.Launching).token
+
+        send(SessionEvent.OpenFailed(token + 1, OpenFailure.SEND_FAILED), launching)
+        assertTrue(model.state is SessionState.Launching)
+        assertEquals(listOf(SessionEffect.None), effects)
+
+        send(SessionEvent.OpenFailed(token, OpenFailure.SEND_FAILED), launching)
+        assertEquals(page, model.state)
+        assertEquals(
+            listOf(SessionEffect.ShowStatus(SessionStatus.OpenFailed("maps", OpenFailure.SEND_FAILED))),
+            effects,
+        )
+        assertTrue(model.cancelledOpen.isEmpty())
+    }
+
+    @Test
+    fun `rule 17 the open times out on the tick at its deadline`() {
+        showImmersions(4_000, "maps")
+        val page = model.state
+        send(Enter(5_000), launching)
+
+        send(Tick(5_000 + SessionReducer.OPEN_TIMEOUT_MS - 1), launching)
+        assertTrue(model.state is SessionState.Launching)
+        send(Tick(5_000 + SessionReducer.OPEN_TIMEOUT_MS), launching)
+
+        assertEquals(page, model.state)
+        assertEquals(listOf(SessionEffect.ShowStatus(SessionStatus.OpenFailed("maps", OpenFailure.TIMEOUT))), effects)
+    }
+
+    @Test
+    fun `rule 17 cancelled opens expire on the tick at their deadline`() {
+        showImmersions(4_000, "maps")
+        send(Enter(5_000), launching)
+        send(Back(5_500), launching)
+
+        send(Tick(5_000 + SessionReducer.OPEN_TIMEOUT_MS - 1), launching)
+        assertEquals(setOf("maps"), model.cancelledOpen.keys)
+        send(Tick(5_000 + SessionReducer.OPEN_TIMEOUT_MS), launching)
+        assertTrue(model.cancelledOpen.isEmpty())
+    }
+
+    @Test
+    fun `rule 18 the session records what it was opened over and restores it`() {
+        send(TripleTap(1_000, Underneath.NexusSurface("player:card")))
+        assertEquals(Underneath.NexusSurface("player:card"), model.underneath)
+        send(Tick(1_000 + PageSurfaceContract.GATE_MS))
+
+        send(Back(3_000))
+
+        assertEquals(listOf(SessionEffect.RestoreUnderneath(Underneath.NexusSurface("player:card"))), effects)
+        assertEquals(Underneath.Unknown, model.underneath)
+        // A triple tap inside a session does not rewrite what it was opened over.
+        send(TripleTap(4_000, Underneath.NativeApp))
+        send(TripleTap(4_500, Underneath.NexusSurface("other")))
+        assertEquals(Underneath.NativeApp, model.underneath)
+    }
+
+    @Test
+    fun `rule 18 NexusSurface underneath receives no close`() {
+        // The player plugin's open was cancelled, then a session is opened over its surface.
+        showImmersions(4_000, "player")
+        send(Enter(5_000), launching)
+        send(Back(5_500), launching)
+        send(Back(5_600), launching)
+        send(Back(5_700), launching)
+        send(TripleTap(6_000, Underneath.NexusSurface("player:card")), launching)
+        send(Tick(6_000 + PageSurfaceContract.GATE_MS), launching)
+        val seen = mutableListOf<SessionEffect>()
+
+        seen += send(SessionEvent.SurfaceShown("player:card", "player", 7_000), launching)
+        seen += send(Enter(7_100), launching)
+        seen += send(TripleTap(7_200), launching)
+        seen += send(SessionEvent.Abort, launching)
+
+        assertTrue(seen.none { it is SessionEffect.CloseSurface })
+        assertTrue(seen.none { it is SendClosed && it.pageId.startsWith("player:card") })
+        assertTrue(SessionEffect.RestoreUnderneath(Underneath.NexusSurface("player:card")) in seen)
+    }
+
+    @Test
+    fun `rule 19 abort closes from every open state and does nothing when closed`() {
+        send(SessionEvent.Abort)
+        assertEquals(listOf(SessionEffect.None), effects)
+
+        send(TripleTap(1_000, Underneath.NativeApp))
+        send(SessionEvent.Abort)
+        assertSame(SessionState.Closed, model.state)
+        assertEquals(
+            listOf(SessionEffect.RestoreUnderneath(Underneath.NativeApp), SessionEffect.CancelDeadline),
+            effects,
+        )
+
+        showImmersions(4_000, "maps")
+        send(SessionEvent.Abort, launching)
+        assertEquals(
+            listOf(
+                SendClosed("maps:route", SessionReducer.CLOSE_SESSION_CLOSED),
+                SessionEffect.RestoreUnderneath,
+                SessionEffect.CancelDeadline,
+            ),
+            effects,
+        )
+
+        showImmersions(8_000, "maps")
+        send(Enter(9_000), launching)
+        send(SessionEvent.Abort, launching)
+        assertSame(SessionState.Closed, model.state)
+        assertEquals(
+            listOf(
+                SendClosed("maps:route", SessionReducer.CLOSE_SESSION_CLOSED),
+                SessionEffect.RestoreUnderneath,
+                SessionEffect.CancelDeadline,
+            ),
+            effects,
+        )
+    }
+
+    @Test
+    fun `rule 20 nextDeadlineMs equals the earliest pending deadline`() {
+        assertNull(model.nextDeadlineMs())
+
+        send(TripleTap(1_000), launching)
+        assertEquals(1_000 + PageSurfaceContract.GATE_MS, model.nextDeadlineMs())
+        send(Tick(1_000 + PageSurfaceContract.GATE_MS), launching)
+        assertNull(model.nextDeadlineMs())
+
+        send(Enter(3_000), launching)
+        val request = requested()
+        assertEquals(3_000 + PageSurfaceContract.LOADING_HINT_MS, model.nextDeadlineMs())
+        send(Tick(3_000 + PageSurfaceContract.LOADING_HINT_MS), launching)
+        assertEquals(3_000 + PageSurfaceContract.PAGE_TIMEOUT_MS, model.nextDeadlineMs())
+
+        respond(request, now = 6_000, actions = listOf(action("mute"), action("maps", kind = "immersion")), using = launching)
+        val renewal = 6_000 + PageSurfaceContract.LEASE_MS - PageSurfaceContract.LEASE_RENEW_MS
+        assertEquals(renewal, model.nextDeadlineMs())
+
+        send(Enter(7_000), launching)
+        assertEquals(7_000 + PageSurfaceContract.PAGE_TIMEOUT_MS, model.nextDeadlineMs())
+        val invocation = effects.filterIsInstance<SendAction>().single().action.invocationId
+        send(PageResult(JSONObject().put("invocationId", invocation).put("status", "done"), 7_100), launching)
+        assertEquals(renewal, model.nextDeadlineMs())
+
+        send(Step(1, 7_200), launching)
+        send(Enter(8_000), launching)
+        assertEquals(8_000 + SessionReducer.OPEN_TIMEOUT_MS, model.nextDeadlineMs())
+        send(Back(8_500), launching)
+        // The cancelled open's expiry is the earliest deadline left while the session is open.
+        assertEquals(8_000 + SessionReducer.OPEN_TIMEOUT_MS, model.nextDeadlineMs())
+        assertEquals(renewal, model.state.nextDeadlineMs())
+
+        send(Back(9_000), launching)
+        send(Back(9_100), launching)
+        assertSame(SessionState.Closed, model.state)
+        assertTrue(model.cancelledOpen.isNotEmpty())
+        // Nothing is ever scheduled while the session is closed.
+        assertNull(model.nextDeadlineMs())
+    }
+
+    @Test
+    fun `rule 20 a tick at the next deadline always moves the deadline forward`() {
+        send(TripleTap(1_000), launching)
+        var guard = 0
+        send(Tick(model.nextDeadlineMs()!!), launching)
+        send(Enter(3_000), launching)
+        while (guard++ < 10) {
+            val at = model.nextDeadlineMs() ?: break
+            send(Tick(at), launching)
+            model.nextDeadlineMs()?.let { assertTrue("deadline $it after tick $at", it > at) }
+        }
+        assertTrue(top().status is FrameStatus.Unavailable)
+    }
+
+    /** Opens the Navigation page whose actions are plugin immersions named by [pluginIds]. */
+    private fun showImmersions(at: Long, vararg pluginIds: String) {
+        openRoot(at - 2_000, using = launching)
+        send(Enter(at), launching)
+        respond(requested(), now = at + 50, actions = pluginIds.map { action(it, kind = "immersion") }, using = launching)
     }
 
     private fun send(event: SessionEvent, using: SessionReducer = reducer): List<SessionEffect> {

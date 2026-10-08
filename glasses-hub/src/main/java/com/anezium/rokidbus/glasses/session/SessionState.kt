@@ -1,5 +1,6 @@
 package com.anezium.rokidbus.glasses.session
 
+import com.anezium.rokidbus.shared.PageSurfaceContract
 import com.anezium.rokidbus.shared.PageSurfaceResponse
 
 /** A validated page as retained by a frame; [byteSize] is the UTF-8 size of its serialized payload. */
@@ -62,6 +63,39 @@ internal sealed interface SessionState {
 
     /** [frames] excludes the root; `frames[i]` is wire frame index `i + 1`. */
     data class InPage(val frames: List<Frame>, val root: Root) : SessionState
+
+    /**
+     * A plugin immersion was asked to open; [previous] stays drawn until the plugin's surface
+     * arrives, the open fails, or the wearer cancels it.
+     */
+    data class Launching(
+        val pluginId: String,
+        val token: Long,
+        val deadlineMs: Long,
+        val previous: SessionState,
+    ) : SessionState
+
+    /**
+     * The earliest time a `Tick` has something to do in this state, or null. Only the top frame
+     * holds a deadline: a pending request, its loading hint, its pending action, or the renewal
+     * point of its lease.
+     */
+    fun nextDeadlineMs(): Long? = when (this) {
+        Closed, is Root -> null
+        is Opening -> sinceMs + PageSurfaceContract.GATE_MS
+        is InPage -> frames.last().nextDeadlineMs()
+        is Launching -> listOfNotNull(deadlineMs, previous.nextDeadlineMs()).min()
+    }
+}
+
+private fun Frame.nextDeadlineMs(): Long? = when (val status = status) {
+    is FrameStatus.Loading ->
+        status.sinceMs + if (status.stillLoading) PageSurfaceContract.PAGE_TIMEOUT_MS else PageSurfaceContract.LOADING_HINT_MS
+    is FrameStatus.Shown -> listOfNotNull(
+        status.leaseUntilMs?.let { it - PageSurfaceContract.LEASE_RENEW_MS },
+        invocation?.let { it.sinceMs + PageSurfaceContract.PAGE_TIMEOUT_MS },
+    ).minOrNull()
+    is FrameStatus.Unavailable -> null
 }
 
 /**
@@ -82,6 +116,22 @@ internal data class SessionModel(
     val gateContacts: List<Long> = emptyList(),
     val generation: Long = 0,
     val nextId: Long = 0,
-)
+    /** What the open session was opened over; [Underneath.Unknown] while closed. */
+    val underneath: Underneath = Underneath.Unknown,
+    /**
+     * Opens the wearer cancelled, by plugin, with the deadline of each open: a surface that
+     * plugin shows before it is closed unseen. It outlives the session that recorded it.
+     */
+    val cancelledOpen: Map<String, Long> = emptyMap(),
+) {
+    /**
+     * The one time the runner's timer is set for: the state's own deadline and, while a session
+     * is open, the expiry of a cancelled open. Never anything while closed.
+     */
+    fun nextDeadlineMs(): Long? {
+        if (state == SessionState.Closed) return null
+        return listOfNotNull(state.nextDeadlineMs(), cancelledOpen.values.minOrNull()).minOrNull()
+    }
+}
 
 internal data class SessionTransition(val model: SessionModel, val effects: List<SessionEffect>)
