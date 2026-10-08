@@ -384,6 +384,24 @@ class SessionReducerTest {
     }
 
     @Test
+    fun `rule 8 review b a page response at the deadline without a tick times out`() {
+        openRoot()
+        send(Enter(3_000))
+        send(PageResponse(page(requested()), 3_000 + PageSurfaceContract.PAGE_TIMEOUT_MS))
+        assertEquals(FrameStatus.Unavailable(null, "PAGE_TIMEOUT"), top().status)
+        assertEquals(listOf(ShowFrame), effects)
+
+        send(Back(12_000))
+        showFirst(13_000, actions = listOf(action("detail", kind = "hub")))
+        val shown = (top().status as FrameStatus.Shown).snapshot
+        send(Enter(14_000))
+        send(Back(14_100))
+        val refresh = requested()
+        send(PageResponse(page(refresh, revision = 2), 14_100 + PageSurfaceContract.PAGE_TIMEOUT_MS))
+        assertEquals(FrameStatus.Unavailable(shown, "PAGE_TIMEOUT"), top().status)
+    }
+
+    @Test
     fun `rule 8 a refresh timeout keeps the snapshot and retry sends a fresh request`() {
         openRoot()
         showFirst(4_000, actions = listOf(action("detail", kind = "hub")))
@@ -549,6 +567,26 @@ class SessionReducerTest {
 
         send(PageResult(JSONObject().put("invocationId", invocation.invocationId).put("status", "done"), 13_100))
         assertEquals("UNCONFIRMED_ACTION", top().outcome?.status)
+    }
+
+    @Test
+    fun `rule 11 review c a page result at the invocation deadline without a tick is unconfirmed`() {
+        openRoot()
+        val request = showFirst(4_000, actions = listOf(action("mute")))
+        send(Enter(5_000))
+        val invocation = effects.filterIsInstance<SendAction>().single().action
+
+        val replacement = page(request, revision = 5, actions = listOf(action("unmute")))
+        send(
+            PageResult(
+                JSONObject().put("invocationId", invocation.invocationId).put("status", "done").put("replacement", replacement),
+                5_000 + PageSurfaceContract.PAGE_TIMEOUT_MS,
+            ),
+        )
+        assertNull(top().invocation)
+        assertEquals(ActionOutcome("mute", "UNCONFIRMED_ACTION"), top().outcome)
+        assertEquals(1L, (top().status as FrameStatus.Shown).revision)
+        assertEquals(listOf(ShowFrame), effects)
     }
 
     @Test

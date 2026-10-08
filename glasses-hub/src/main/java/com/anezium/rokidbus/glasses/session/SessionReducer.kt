@@ -146,7 +146,7 @@ internal class SessionReducer(
             )
             is SessionEvent.Tick -> tick(model, state, event.nowMs)
             is SessionEvent.PageResponse -> response(model, state, event.payload, event.nowMs)
-            is SessionEvent.PageResult -> result(model, state, event.payload)
+            is SessionEvent.PageResult -> result(model, state, event.payload, event.nowMs)
             SessionEvent.LinkLost -> SessionTransition(
                 model.copy(
                     linkLost = true,
@@ -298,17 +298,7 @@ internal class SessionReducer(
         val top = state.frames.last()
         return when (val status = top.status) {
             is FrameStatus.Loading -> when {
-                nowMs >= status.sinceMs + PageSurfaceContract.PAGE_TIMEOUT_MS -> SessionTransition(
-                    model.copy(
-                        state = state.withTop(
-                            top.copy(
-                                status = FrameStatus.Unavailable(status.previous, PageSurfaceContract.ERROR_PAGE_TIMEOUT),
-                                selected = 0,
-                            ),
-                        ),
-                    ),
-                    listOf(ShowFrame),
-                )
+                status.expiredAt(nowMs) -> timeOut(model, state, status)
                 !status.stillLoading && nowMs >= status.sinceMs + PageSurfaceContract.LOADING_HINT_MS ->
                     SessionTransition(
                         model.copy(state = state.withTop(top.copy(status = status.copy(stillLoading = true)))),
@@ -326,18 +316,22 @@ internal class SessionReducer(
                     effects += SendVisibility(top.pageId, visible = true, leaseUntilMs = renewed)
                 }
                 val invocation = top.invocation
-                if (invocation != null && nowMs >= invocation.sinceMs + PageSurfaceContract.PAGE_TIMEOUT_MS) {
-                    // A lost acknowledgement is shown as unconfirmed and never retried here.
-                    frame = frame.copy(
-                        invocation = null,
-                        outcome = ActionOutcome(invocation.actionId, PageSurfaceContract.ERROR_UNCONFIRMED_ACTION),
-                    )
+                if (invocation != null && invocation.expiredAt(nowMs)) {
+                    frame = frame.unconfirmed(invocation)
                     effects += ShowFrame
                 }
                 SessionTransition(model.copy(state = state.withTop(frame)), effects)
             }
             is FrameStatus.Unavailable -> keep(model)
         }
+    }
+
+    private fun timeOut(model: SessionModel, state: SessionState.InPage, status: FrameStatus.Loading): SessionTransition {
+        val frame = state.frames.last().copy(
+            status = FrameStatus.Unavailable(status.previous, PageSurfaceContract.ERROR_PAGE_TIMEOUT),
+            selected = 0,
+        )
+        return SessionTransition(model.copy(state = state.withTop(frame)), listOf(ShowFrame))
     }
 
     private fun response(
@@ -349,7 +343,9 @@ internal class SessionReducer(
         if (model.linkLost) return keep(model)
         val top = state.frames.last()
         return when (val status = top.status) {
-            is FrameStatus.Loading -> pendingResponse(model, state, status, payload, nowMs)
+            // The deadline is absolute: a reply arriving after it loses even if no tick ran yet.
+            is FrameStatus.Loading ->
+                if (status.expiredAt(nowMs)) timeOut(model, state, status) else pendingResponse(model, state, status, payload, nowMs)
             is FrameStatus.Shown -> liveRevision(model, state, status, payload, nowMs)
             is FrameStatus.Unavailable -> keep(model)
         }
@@ -422,13 +418,21 @@ internal class SessionReducer(
         return replaceTopSnapshot(model, state, top, status, page)
     }
 
-    private fun result(model: SessionModel, state: SessionState.InPage, payload: JSONObject): SessionTransition {
+    private fun result(
+        model: SessionModel,
+        state: SessionState.InPage,
+        payload: JSONObject,
+        nowMs: Long,
+    ): SessionTransition {
         if (model.linkLost) return keep(model)
+        val top = state.frames.last()
+        val invocation = top.invocation ?: return keep(model)
+        if (invocation.expiredAt(nowMs)) {
+            return SessionTransition(model.copy(state = state.withTop(top.unconfirmed(invocation))), listOf(ShowFrame))
+        }
         val result = (PageSurfaceContract.validateResult(payload) as? PageSurfaceValidationResult.Valid)?.value
             ?: return keep(model)
-        val top = state.frames.last()
-        val invocation = top.invocation
-        if (invocation == null || invocation.invocationId != result.invocationId) return keep(model)
+        if (invocation.invocationId != result.invocationId) return keep(model)
         val settled = top.copy(invocation = null, outcome = ActionOutcome(invocation.actionId, result.status, result.message))
         val status = settled.status
         val replacement = result.replacement
@@ -539,6 +543,17 @@ private fun Frame.retained(): Snapshot? = when (val status = status) {
 }
 
 private fun SessionState.InPage.withTop(frame: Frame) = copy(frames = frames.dropLast(1) + frame)
+
+/** Page and action deadlines run from the initiating selection, whichever event observes them. */
+private fun FrameStatus.Loading.expiredAt(nowMs: Long) = nowMs >= sinceMs + PageSurfaceContract.PAGE_TIMEOUT_MS
+
+private fun PendingInvocation.expiredAt(nowMs: Long) = nowMs >= sinceMs + PageSurfaceContract.PAGE_TIMEOUT_MS
+
+/** A lost acknowledgement is shown as unconfirmed and never retried here. */
+private fun Frame.unconfirmed(invocation: PendingInvocation) = copy(
+    invocation = null,
+    outcome = ActionOutcome(invocation.actionId, PageSurfaceContract.ERROR_UNCONFIRMED_ACTION),
+)
 
 private fun SessionState.mapRootStops(transform: (List<RootStop>) -> List<RootStop>): SessionState = when (this) {
     SessionState.Closed -> this
