@@ -132,6 +132,31 @@ class PageSurfaceContractTest {
     }
 
     @Test
+    fun `review h deeply nested huge and unserializable payloads are invalid without throwing`() {
+        fun nested(levels: Int): JSONObject {
+            var value = JSONObject()
+            repeat(levels - 1) { value = JSONObject().put("n", value) }
+            return value
+        }
+        // The response is level 1 and its body level 2, so seven body levels reach the limit of eight.
+        valid(PageSurfaceContract.validateResponse(response().put("body", nested(7))))
+        invalid(PageSurfaceContract.ERROR_INVALID_PAGE, PageSurfaceContract.validateResponse(response().put("body", nested(8))))
+        invalid(PageSurfaceContract.ERROR_INVALID_PAGE, PageSurfaceContract.validateResponse(response().put("body", nested(100_000))))
+        invalid(PageSurfaceContract.ERROR_INVALID_PAGE_REQUEST, PageSurfaceContract.validateRequest(request().put("params", nested(100_000))))
+
+        val huge = JSONObject().put("text", "x".repeat(1_000_000))
+        invalid(PageSurfaceContract.ERROR_PAGE_TOO_LARGE, PageSurfaceContract.validateResponse(response().put("body", huge)))
+        val many = JSONObject().put("items", JSONArray().apply { repeat(100_000) { put("x") } })
+        invalid(PageSurfaceContract.ERROR_PAGE_TOO_LARGE, PageSurfaceContract.validateResponse(response().put("body", many)))
+
+        val unserializable = object : Any() {
+            override fun toString(): String = throw IllegalStateException("cannot render")
+        }
+        val broken = response().put("body", JSONObject().put("value", unserializable))
+        invalid(PageSurfaceContract.ERROR_INVALID_PAGE, PageSurfaceContract.validateResponse(broken))
+    }
+
+    @Test
     fun `action count accepts 64 and rejects 65 without truncation`() {
         fun actions(count: Int) = JSONArray().apply { repeat(count) { put(action("action-$it")) } }
         assertEquals(64, (valid(PageSurfaceContract.validateResponse(response().put("actions", actions(64)))) as PageSurfaceResponse.Page).actions.size)

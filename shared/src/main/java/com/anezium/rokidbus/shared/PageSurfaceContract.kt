@@ -93,6 +93,8 @@ object PageSurfaceContract {
     const val MAX_DATASET_BYTES = 2_048
     const val MAX_PAGE_BYTES = 65_536
     const val MAX_SNAPSHOT_TOTAL_BYTES = 524_288
+    /** Container depth of any validated JSON value; the payload object itself is level 1. */
+    const val MAX_NESTING_DEPTH = 8
     const val META_PLUGIN_PAGES = "rokidbus.plugin.pages"
     const val CAPABILITY_FIELD_PAGE_SESSION_VERSION = "pageSessionVersion"
 
@@ -136,7 +138,7 @@ object PageSurfaceContract {
     fun validateRequest(payload: JSONObject): PageSurfaceValidationResult<PageSurfaceRequest> =
         validate(ERROR_INVALID_PAGE_REQUEST) {
             val params = if (payload.has("params")) {
-                objectValue(payload, "params").also { requireSize(it, MAX_PARAMS_BYTES, "params") }.toString()
+                boundedJson(objectValue(payload, "params"), MAX_PARAMS_BYTES, "params")
             } else null
             PageSurfaceRequest(readCorrelation(payload), enumValue(payload, "reason", requestReasons), params)
         }
@@ -145,9 +147,7 @@ object PageSurfaceContract {
         payload: JSONObject,
         pending: PageSurfaceRequest? = null,
     ): PageSurfaceValidationResult<PageSurfaceResponse> = validate(ERROR_INVALID_PAGE) {
-        if (serializedBytes(payload) > MAX_PAGE_BYTES) {
-            fail("response exceeds $MAX_PAGE_BYTES bytes", ERROR_PAGE_TOO_LARGE)
-        }
+        val serialized = boundedJson(payload, MAX_PAGE_BYTES, "response", ERROR_PAGE_TOO_LARGE)
         val correlation = readCorrelation(payload)
         if (pending != null && correlation != pending.correlation) {
             fail("response does not match the pending request", ERROR_STALE_GENERATION)
@@ -169,10 +169,9 @@ object PageSurfaceContract {
                 )
             }
             checkShape(actions.map { it.id }.distinct().size == actions.size, "action ids must be unique")
-            val serialized = payload.toString()
             PageSurfaceResponse.Page(
                 correlation, long(payload, "revision"), enumValue(payload, "template", templates),
-                text(payload, "title", MAX_TITLE_CHARS), body.toString(), actions,
+                text(payload, "title", MAX_TITLE_CHARS), boundedJson(body, MAX_PAGE_BYTES, "body"), actions,
                 boolean(payload, "live"), serialized, serialized.toByteArray(Charsets.UTF_8).size,
             )
         }
@@ -267,8 +266,59 @@ object PageSurfaceContract {
         return value
     }
 
-    private fun requireSize(payload: JSONObject, limit: Int, key: String) =
-        checkShape(serializedBytes(payload) <= limit, "$key exceeds $limit UTF-8 bytes")
+    private fun requireSize(payload: JSONObject, limit: Int, key: String) {
+        boundedJson(payload, limit, key)
+    }
+
+    /**
+     * Serializes [payload] only after an iterative walk has bounded it, so a
+     * hostile value can neither exhaust the stack nor force an oversized copy:
+     * nesting beyond [MAX_NESTING_DEPTH], any string longer than [MAX_PAGE_BYTES],
+     * and any value whose minimum serialized size already exceeds [limit] fail
+     * first. The exact UTF-8 size of the serialized text is then enforced.
+     */
+    private fun boundedJson(payload: JSONObject, limit: Int, key: String, tooLarge: String? = null): String {
+        var minimumBytes = 0L
+        fun count(bytes: Long) {
+            minimumBytes += bytes
+            if (minimumBytes > limit) fail("$key exceeds $limit UTF-8 bytes", tooLarge)
+        }
+        fun countText(value: String) {
+            if (value.length > MAX_PAGE_BYTES) fail("$key contains a string above $MAX_PAGE_BYTES characters", tooLarge)
+            count(value.length + 2L)
+        }
+
+        val pending = ArrayDeque<Pair<Any?, Int>>()
+        pending.addLast(payload to 1)
+        while (pending.isNotEmpty()) {
+            val (value, depth) = pending.removeLast()
+            when (value) {
+                is JSONObject -> {
+                    checkShape(depth <= MAX_NESTING_DEPTH, "$key nests deeper than $MAX_NESTING_DEPTH levels")
+                    count(2L + maxOf(value.length() - 1, 0))
+                    for (name in value.keys()) {
+                        countText(name)
+                        count(1)
+                        pending.addLast(value.opt(name) to depth + 1)
+                    }
+                }
+                is JSONArray -> {
+                    checkShape(depth <= MAX_NESTING_DEPTH, "$key nests deeper than $MAX_NESTING_DEPTH levels")
+                    count(2L + maxOf(value.length() - 1, 0))
+                    for (index in 0 until value.length()) pending.addLast(value.opt(index) to depth + 1)
+                }
+                is String -> countText(value)
+                else -> count(1)
+            }
+        }
+        val serialized = try {
+            payload.toString()
+        } catch (_: Exception) {
+            null
+        } ?: fail("$key cannot be serialized")
+        if (serialized.toByteArray(Charsets.UTF_8).size > limit) fail("$key exceeds $limit UTF-8 bytes", tooLarge)
+        return serialized
+    }
 
     private class InvalidPayload(val detail: String, val code: String?) : RuntimeException()
     private fun fail(reason: String, error: String? = null): Nothing = throw InvalidPayload(reason, error)
@@ -278,5 +328,8 @@ object PageSurfaceContract {
         PageSurfaceValidationResult.Valid(read())
     } catch (invalid: InvalidPayload) {
         PageSurfaceValidationResult.Invalid(invalid.code ?: error, invalid.detail)
+    } catch (_: Exception) {
+        // A validator at the provider boundary reports malformed input; it never throws it.
+        PageSurfaceValidationResult.Invalid(error, "payload could not be read")
     }
 }
