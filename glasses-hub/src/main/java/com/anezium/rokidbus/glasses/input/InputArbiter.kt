@@ -83,10 +83,13 @@ internal class InputArbiter(private val context: InputContext) {
     private data class Press(val deviceId: Int, val keyCode: Int, val downTime: Long)
 
     /**
-     * [viaWindow] marks a press the filter never saw. An ended press is kept until [PRESS_TTL_MS]
-     * passes, so a window that receives the UP the filter let through still recognises it.
+     * [viaWindow] marks a press the filter never saw. A press is [completed] by its first UP; the
+     * record is then kept until [PRESS_TTL_MS] passes, so a window that receives the UP the filter
+     * let through still recognises it, and a duplicate UP finds it.
      */
-    private class Held(val owner: Owner, val consumed: Boolean, val viaWindow: Boolean, var lastSeenMs: Long)
+    private class Held(val owner: Owner, val consumed: Boolean, val viaWindow: Boolean, var lastSeenMs: Long) {
+        var completed = false
+    }
 
     private val presses = LinkedHashMap<Press, Held>()
     private var tripleTap = TripleTapDetector()
@@ -166,7 +169,10 @@ internal class InputArbiter(private val context: InputContext) {
         if (event.startsPress) return null
         if (!event.isDown && !event.isUp) return null
         val held = presses[pressOf(event)] ?: return InputDecision(consumed = true)
+        // A press ends at its first UP: a duplicate UP or a repeat after it means nothing.
+        if (held.completed) return InputDecision(consumed = true)
         held.lastSeenMs = event.eventTime
+        if (event.isUp) held.completed = true
         val out = ArrayList<RoutedIntent>(1)
         val consumed = when (held.owner) {
             Owner.SESSION -> {

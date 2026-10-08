@@ -147,6 +147,27 @@ class InputArbiterTest {
     }
 
     @Test
+    fun `A2 a duplicate up or a repeat after the up of a completed press is swallowed silently`() {
+        openSessionRoot(at = 1_000)
+        tap(InputKeys.ENTER, 2_000)
+        assertTrue(rig.model.state is SessionState.InPage)
+        rig.delivered.clear()
+
+        val down = arbiter.onKey(raw(InputKeys.BACK, DOWN, at = 3_000))
+        val up = arbiter.onKey(raw(InputKeys.BACK, UP, at = 3_030, down = 3_000))
+        assertTrue(down.consumed && up.consumed)
+        assertTrue(rig.model.state is SessionState.Root)
+
+        val duplicate = arbiter.onKey(raw(InputKeys.BACK, UP, at = 3_040, down = 3_000))
+        val lateRepeat = arbiter.onKey(raw(InputKeys.BACK, DOWN, at = 3_050, down = 3_000, repeat = 1))
+
+        assertEquals(InputDecision(true), duplicate)
+        assertEquals(InputDecision(true), lateRepeat)
+        assertTrue(rig.model.state is SessionState.Root)
+        assertEquals(listOf(SessionEvent.Back(3_030)), rig.sessionEvents())
+    }
+
+    @Test
     fun `A2 a missing up cannot swallow the up of a later press`() {
         rig.activeSurfaceId = "player:card"
         assertTrue(arbiter.onKey(raw(InputKeys.ENTER, DOWN, at = 1_000, deviceId = 7)).consumed)
