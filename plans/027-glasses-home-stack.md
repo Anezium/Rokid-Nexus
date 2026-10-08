@@ -168,7 +168,7 @@ fingers, colour, haptics, voice or a ring.
 |---|---|---|---|---|
 | Native app / Nexus immersion, session closed (islands passive, residents or signals only per app) | underneath | underneath | underneath | opens session root |
 | Native home with a primary activity island, session closed | underneath (today: opens the owner plugin) | underneath (today: wraps the island's actions) | underneath | opens session root, island selected |
-| Notice with actions, within its window (unchanged) | preselected action | other action, or page with a single action | dismiss the band | opens session with that notice selected |
+| Notice that claims input today (actions, interactive, paged, backdrop), within its window (unchanged) | preselected action | other action, or page with a single action | dismiss the band | not recognised: dismiss with double tap first, then triple tap; the dismissed notice is an unarmed preview at the root |
 | Notice without actions, or window passed | underneath | underneath | underneath | opens session root; the notice is consultable there |
 | Gate after triple tap (≈ 800 ms) | absorbed | absorbed | absorbed | absorbed |
 | Session root | open selected card / enter its page | move selection, no wrap | close session, restore underneath | stay at root |
