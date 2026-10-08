@@ -76,4 +76,33 @@ class AndroidExternalPluginRuntimeTest {
         hideCallback = {},
         disconnectedCallback = { disconnected += it.descriptor.id },
     )
+
+    @Test
+    fun `a separate runtime keeps its own connection to the same plugin`() {
+        val connections = mutableListOf<ServiceConnection>()
+        val unbound = mutableListOf<ServiceConnection>()
+        val context = object : ContextWrapper(RuntimeEnvironment.getApplication()) {
+            override fun bindService(service: Intent, conn: ServiceConnection, flags: Int): Boolean {
+                connections += conn
+                return true
+            }
+
+            override fun unbindService(conn: ServiceConnection) {
+                unbound += conn
+            }
+        }
+        val immersion = AndroidExternalPluginRuntime(context, { true }, { _, _, _, _ -> true }, hideCallback = {}, disconnectedCallback = {})
+        val pages = AndroidExternalPluginRuntime(context, { true }, { _, _, _, _ -> false }, hideCallback = {}, disconnectedCallback = {})
+
+        assertTrue(immersion.bind(principal))
+        assertTrue(pages.bind(principal))
+        assertEquals(2, connections.size)
+        assertTrue(connections[0] !== connections[1])
+
+        // Releasing the page binding leaves the immersion's binding in place, and the reverse.
+        pages.unbind(principal)
+        assertEquals(listOf(connections[1]), unbound)
+        immersion.unbind(principal)
+        assertEquals(listOf(connections[1], connections[0]), unbound)
+    }
 }

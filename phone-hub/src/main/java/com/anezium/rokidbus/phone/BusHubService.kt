@@ -40,6 +40,7 @@ import com.anezium.rokidbus.shared.BusPaths
 import com.anezium.rokidbus.shared.FrameProtocol
 import com.anezium.rokidbus.shared.ForegroundSurfacePathPolicy
 import com.anezium.rokidbus.shared.GlassesHubCapabilitiesContract
+import com.anezium.rokidbus.shared.PageSurfaceContract
 import com.anezium.rokidbus.shared.GlassesRepairContract
 import com.anezium.rokidbus.shared.ImageSurfaceContract
 import com.anezium.rokidbus.shared.SetupNoteContract
@@ -169,6 +170,12 @@ private const val AUDIO_SAMPLE_RATE = 16_000
 private const val AUDIO_CHANNELS = 1
 private const val AUDIO_ENCODING = "pcm16le"
 
+/**
+ * The session/page version this phone hub announces. Zero until the glasses side of the page
+ * protocol ships with it; the broker never negotiates support it does not announce.
+ */
+private const val ANNOUNCED_PAGE_SESSION_VERSION = 0
+
 class BusHubService : Service() {
     private data class Registration(
         val clientId: String,
@@ -179,7 +186,10 @@ class BusHubService : Service() {
         val deathRecipient: IBinder.DeathRecipient,
         val principal: PhonePluginPrincipal? = null,
         val grantedCapabilities: Set<PluginCapability> = emptySet(),
-    )
+    ) {
+        /** Opaque epoch naming this registration to page providers; a replacement gets a new one. */
+        val pageEpoch: String = UUID.randomUUID().toString()
+    }
 
     private data class AuthorizedSender(
         val caller: PluginRouteCaller,
@@ -342,6 +352,36 @@ class BusHubService : Service() {
     private lateinit var developerModeStore: DeveloperModeStore
     private var developerModeJournalSubscription: DeveloperModeStore.Subscription? = null
     private lateinit var externalPluginController: ExternalPluginController
+    private lateinit var pagePluginRuntime: AndroidExternalPluginRuntime
+    private val pageHandler = Handler(Looper.getMainLooper())
+    private val pageTick: Runnable = Runnable { pageBroker.onTick() }
+    private val pageProviderCache = ConcurrentHashMap<String, java.util.Optional<PhonePluginPrincipal>>()
+    private val pageBroker: PhonePageBroker = PhonePageBroker(
+        host = object : PhonePageHost {
+            override fun nowMs(): Long = SystemClock.uptimeMillis()
+            override fun pageProvider(pluginId: String): PhonePluginPrincipal? = pageProviderFor(pluginId)
+            override fun registrations(principal: PhonePluginPrincipal): List<PageRegistration> =
+                registrations.filter { it.principal?.grantKey() == principal.grantKey() }.map(::pageRegistrationOf)
+            override fun providerRegistrations(): List<PageRegistration> =
+                registrations.filter { it.principal?.descriptor?.pageSessionVersion == PageSurfaceContract.VERSION }
+                    .map(::pageRegistrationOf)
+            override fun deliver(registration: PageRegistration, path: String, payload: JSONObject): Boolean =
+                deliverPage(registration, path, payload)
+            override fun sendToGlasses(path: String, payload: JSONObject): String? =
+                sendRemote(BusEnvelope(path = path, payload = payload))
+            override fun bind(principal: PhonePluginPrincipal): Boolean =
+                ::pagePluginRuntime.isInitialized && pagePluginRuntime.bind(principal)
+            override fun unbind(principal: PhonePluginPrincipal) {
+                if (::pagePluginRuntime.isInitialized) pagePluginRuntime.unbind(principal)
+            }
+            override fun scheduleTick(atMs: Long?) {
+                pageHandler.removeCallbacks(pageTick)
+                atMs?.let { pageHandler.postAtTime(pageTick, it) }
+            }
+            override fun log(message: String) = this@BusHubService.log(message)
+        },
+        localVersion = ANNOUNCED_PAGE_SESSION_VERSION,
+    )
     private lateinit var cameraConsumerReadiness: CameraConsumerReadiness
     private lateinit var cameraCompanionController: CameraCompanionController
     private lateinit var pluginGuardianCoordinator: PluginGuardianCoordinator
@@ -455,6 +495,13 @@ class BusHubService : Service() {
         }
 
         override fun send(path: String, id: String, payload: ByteArray) {
+            // A page answer is bounded on its raw bytes, before it is ever parsed.
+            if (PhonePageBroker.rawAnswerTooLarge(path, payload.size)) {
+                val callingUid = Binder.getCallingUid()
+                log("page drop path=$path id=$id bytes=${payload.size} reason=PAGE_TOO_LARGE")
+                deliverError(resolveSender(callingUid).replyBinder, id, PageSurfaceContract.ERROR_PAGE_TOO_LARGE)
+                return
+            }
             val json = runCatching { JSONObject(String(payload, Charsets.UTF_8)) }.getOrElse { JSONObject() }
             routeLocal(BusEnvelope(path = path, id = id, payload = json), Binder.getCallingUid())
         }
@@ -550,6 +597,9 @@ class BusHubService : Service() {
                         )
                     ) {
                         notifyPluginRegistration(principal, state.capabilities, cb)
+                        // After the registration message, so the provider hears its page version
+                        // before any page work waiting for this registration.
+                        pageBroker.onRegistered(principal)
                         if (::externalPluginController.isInitialized) {
                             externalPluginController.onRegistered(principal)
                         }
@@ -872,6 +922,14 @@ class BusHubService : Service() {
                 }
             },
         )
+        // Its own connections: releasing a page-only binding never releases an immersion's.
+        pagePluginRuntime = AndroidExternalPluginRuntime(
+            context = applicationContext,
+            isRegisteredCallback = ::isExternalPrincipalRegistered,
+            deliverCallback = { _, _, _, _ -> false },
+            hideCallback = {},
+            disconnectedCallback = { principal -> pageBroker.onProviderUnavailable(principal.descriptor.id) },
+        )
         externalPluginController = ExternalPluginController(
             runtime = externalRuntime,
             scheduler = MainThreadExternalPluginScheduler(),
@@ -916,6 +974,7 @@ class BusHubService : Service() {
             },
             externalController = externalPluginController,
             journal = pluginBusJournal,
+            pageVersion = { entry -> entry.principal?.let { pageProviderFor(it.descriptor.id)?.descriptor?.pageSessionVersion } ?: 0 },
         )
         mediaSyncCoordinator = MediaSyncCoordinator(
             context = applicationContext,
@@ -1134,6 +1193,10 @@ class BusHubService : Service() {
     private fun routeLocal(envelope: BusEnvelope, senderUid: Int) {
         if (SppKeyProvisioning.isReserved(envelope.path)) return
         val sender = resolveSender(senderUid)
+        if (isPagePath(envelope.path)) {
+            routeLocalPage(envelope, senderUid, sender)
+            return
+        }
         if (isGlassesControlRequest(envelope.path)) {
             val strictlyHubOwned = isStrictlyHubOwnedGlassesPath(envelope.path)
             if (senderUid != Process.myUid() && (strictlyHubOwned || !isDebuggableBuild())) {
@@ -1347,6 +1410,66 @@ class BusHubService : Service() {
         }
     }
 
+    /**
+     * Every page path a local client sends ends here, before any generic route: only an
+     * approved provider's single registration may answer work the broker recorded for it.
+     */
+    private fun routeLocalPage(envelope: BusEnvelope, senderUid: Int, sender: AuthorizedSender) {
+        val path = PathRules.normalizeAbsolute(envelope.path) ?: envelope.path
+        val registration = registrations.filter { it.uid == senderUid && it.principal != null }.singleOrNull()
+        val plugin = sender.caller as? PluginRouteCaller.Plugin
+        val pageSender = registration?.takeIf {
+            senderUid != Process.myUid() && envelope.binary == null && plugin != null &&
+                plugin.pluginId == it.principal?.descriptor?.id &&
+                PluginCapability.SURFACES in plugin.grantedCapabilities
+        }?.let(::pageRegistrationOf)
+        val error = pageBroker.onProvider(path, envelope.payload, pageSender)
+        if (error == null) {
+            recordLocalRoute(envelope, senderUid, sender, PluginBusJournal.Verdict.OK)
+            return
+        }
+        log("page answer rejected path=$path id=${envelope.id} code=$error")
+        recordLocalRoute(envelope, senderUid, sender, PluginBusJournal.Verdict.REJECTED, error)
+        deliverError(sender.replyBinder, envelope.id, error)
+    }
+
+    private fun isPagePath(path: String): Boolean =
+        PathRules.isPagePath(PathRules.normalizeAbsolute(path) ?: path)
+
+    private fun pageRegistrationOf(registration: Registration): PageRegistration {
+        val principal = requireNotNull(registration.principal)
+        return PageRegistration(registration.pageEpoch, principal.descriptor.id, principal.grantKey())
+    }
+
+    /** Page traffic goes to the one registration that holds [registration]'s epoch, never a fan-out. */
+    private fun deliverPage(registration: PageRegistration, path: String, payload: JSONObject): Boolean {
+        val target = registrations.firstOrNull { it.pageEpoch == registration.epoch } ?: return false
+        val bytes = payload.toString().toByteArray(Charsets.UTF_8)
+        return runCatching {
+            target.callback.onMessage(path, UUID.randomUUID().toString(), bytes)
+            true
+        }.getOrElse {
+            removeRegistration(target, "dead callback")
+            false
+        }
+    }
+
+    /**
+     * The approved principal that may provide pages under [pluginId]: page metadata, the
+     * `surfaces` grant, and a valid catalog descriptor. Cached until packages or grants change.
+     */
+    private fun pageProviderFor(pluginId: String): PhonePluginPrincipal? =
+        pageProviderCache.getOrPut(pluginId) {
+            java.util.Optional.ofNullable(
+                installedPluginPrincipals().singleOrNull { principal ->
+                    principal.descriptor.id == pluginId &&
+                        principal.descriptor.pageSessionVersion == PageSurfaceContract.VERSION &&
+                        (pluginGrantStore.stateFor(principal) as? PluginGrantState.Approved)
+                            ?.capabilities?.contains(PluginCapability.SURFACES) == true
+                },
+            )
+        }.orElse(null)
+
     private fun routeRemote(envelope: BusEnvelope) {
         if (SppKeyProvisioning.isReserved(envelope.path)) return
         if (envelope.path == "/hub/probe") {
@@ -1357,6 +1480,7 @@ class BusHubService : Service() {
         if (envelope.path == BusPaths.HUB_CAPABILITIES) {
             recordRemoteRoute(envelope, PluginBusJournal.Verdict.OK)
             updateRemoteCapabilities(envelope.payload)
+            pageBroker.onGlassesCapabilities(GlassesHubCapabilitiesContract.parse(envelope.payload).pageSessionVersion)
             // The glasses re-announce on every transport-up, including after a hub restart that
             // wiped their photo-sync consent. Re-push it on the same edge.
             if (::mediaSyncCoordinator.isInitialized) {
@@ -1365,6 +1489,12 @@ class BusHubService : Service() {
             // The glasses persist the boot-repair switch, but a reinstall or a toggle flipped
             // while the link was down leaves them stale; ride the same edge the consent does.
             executor.execute { pushGlassesRepairConfig() }
+            return
+        }
+        // Page traffic is answered by its one owner and never reaches a prefix subscriber.
+        if (isPagePath(envelope.path)) {
+            pageBroker.onGlasses(PathRules.normalizeAbsolute(envelope.path) ?: envelope.path, envelope.payload)
+            recordRemoteRoute(envelope, PluginBusJournal.Verdict.OK)
             return
         }
         if (envelope.path == RemoteInputContract.SESSION_PATH ||
@@ -2331,6 +2461,7 @@ class BusHubService : Service() {
             )
         }
         runCatching { registration.callbackBinder.unlinkToDeath(registration.deathRecipient, 0) }
+        registration.principal?.let { pageBroker.onRegistrationRemoved(pageRegistrationOf(registration)) }
         releaseAudioLeaseForLocalBinder(registration.callbackBinder, reason)
         releaseSpeechSessionForLocalBinder(registration, reason)
         registration.principal?.descriptor?.id?.let { pluginId ->
@@ -2362,6 +2493,8 @@ class BusHubService : Service() {
     }
 
     private fun revokePrincipal(key: PluginGrantKey) {
+        pageProviderCache.clear()
+        pageBroker.onProviderUnavailable(key.pluginId)
         if (::cameraCompanionController.isInitialized) cameraCompanionController.onRevoked(key)
         if (::externalPluginController.isInitialized) externalPluginController.onRevoked(key)
         pinRouter.clearForRevokedOwner(key.pluginId, "authorizationChanged")
@@ -2407,6 +2540,7 @@ class BusHubService : Service() {
     }
 
     private fun reconcilePluginPackage(packageName: String, action: String?, replacing: Boolean) {
+        pageProviderCache.clear()
         val reconciliation = pluginGrantReconciler.reconcile()
         val validPrincipals = reconciliation.validPrincipals
         handleSideloadNotification(packageName, action, replacing, reconciliation.candidates)
@@ -2436,6 +2570,7 @@ class BusHubService : Service() {
                 pluginGrantStore.stateFor(principal) is PluginGrantState.Approved
         }
         if (!available) externalPluginController.onPackageUnavailable(packageName)
+        pageBroker.onCatalogChanged()
         val cameraAvailable = validPrincipals.any { principal ->
             principal.packageName == packageName &&
                 cameraConsumerReadiness.isApprovedCameraConsumer(principal)
@@ -4834,6 +4969,8 @@ class BusHubService : Service() {
         }
         if (state and (LinkStateBits.CXR_CONTROL_UP or LinkStateBits.SPP_DATA_UP) == 0) {
             if (::mediaSyncCoordinator.isInitialized) mediaSyncCoordinator.onLinkLost()
+            // Page support is a property of this connection: a reconnect renegotiates it.
+            pageBroker.onLinkLost()
             remoteImageSurfaceVersion = 0
             remoteInkSurfaceVersion = 0
             remoteMaxImageBytes = 0
@@ -4888,6 +5025,7 @@ class BusHubService : Service() {
                 PhoneActivityPresentationSettings(this).isAlwaysExpanded(),
             hudTopInsetDp = hudPosition.hudTopInsetDp(),
             hudPositionAuto = hudPosition.hudPositionAuto(),
+            pageSessionVersion = ANNOUNCED_PAGE_SESSION_VERSION,
         )
         if (announced == lastAnnouncedPhoneCapabilities) return
         val envelope = BusEnvelope(

@@ -165,4 +165,20 @@ class PluginRoutePolicyTest {
             assertEquals("hello:ink-main", result.getString("surfaceId"))
         }
     }
+
+    @Test
+    fun `no caller but the hub itself may use a page path through a generic route`() {
+        val paths = listOf("/page/request", "/page/response", "/page/action", "/page/result", "/page/visibility", "/page/closed", "/page", "/page/x")
+        paths.forEach { path ->
+            listOf(
+                PluginRouteCaller.DebugLegacy,
+                plugin(PluginCapability.SURFACES, PluginCapability.INK_SURFACE),
+                PluginRouteCaller.Unregistered,
+            ).forEach { caller ->
+                assertEquals("$caller $path", PluginRouteDecision.Denied("PAGE_ROUTE_DENIED"), PluginRoutePolicy.authorize(caller, path))
+            }
+        }
+        // The private namespace that merely starts with the same letters is unaffected.
+        assertEquals(PluginRouteDecision.Allowed, PluginRoutePolicy.authorize(PluginRouteCaller.Plugin("pages", emptySet()), "/plugin/pages/x"))
+    }
 }

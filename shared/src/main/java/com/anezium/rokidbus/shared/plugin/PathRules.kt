@@ -3,6 +3,7 @@ package com.anezium.rokidbus.shared.plugin
 import com.anezium.rokidbus.shared.BusPaths
 
 object PathRules {
+    private const val PAGE_ROOT = "/page"
     private val reservedRoots = setOf(
         "/core",
         "/launcher",
@@ -10,6 +11,8 @@ object PathRules {
         "/system",
         "/security",
         "/error",
+        // Page traffic is brokered by the hubs; a provider's two answers are intercepted earlier.
+        PAGE_ROOT,
     )
     private val hubOnlyPaths = setOf(BusPaths.TTS_CANCEL)
     private val lifecyclePrefixes = setOf("/system/plugin")
@@ -49,6 +52,9 @@ object PathRules {
         val normalized = normalizeAbsolute(path) ?: return true
         return isHubOnly(normalized) || reservedRoots.any { matchesPrefix(normalized, it) }
     }
+
+    /** Any path under the session/page root, which no generic route or receive prefix may carry. */
+    fun isPagePath(path: String): Boolean = normalizeAbsolute(path)?.let { matchesPrefix(it, PAGE_ROOT) } == true
 
     fun isHubOnly(path: String): Boolean =
         normalizeAbsolute(path)?.let(hubOnlyPaths::contains) == true

@@ -30,6 +30,8 @@ object PluginRoutePolicy {
             return PluginRouteDecision.Allowed
         }
         if (PathRules.isHubOnly(path)) return PluginRouteDecision.Denied("SYSTEM_ROUTE_DENIED")
+        // Pages go through the page broker only, never a generic route, whoever the caller is.
+        if (PathRules.isPagePath(path)) return PluginRouteDecision.Denied(PhonePageBroker.ERROR_PAGE_ROUTE_DENIED)
         if (caller == PluginRouteCaller.DebugLegacy) return PluginRouteDecision.Allowed
         when (caller) {
             PluginRouteCaller.Unregistered -> return PluginRouteDecision.Denied("UNREGISTERED_CALLER")
