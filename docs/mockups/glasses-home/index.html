@@ -1,0 +1,339 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Rokid Nexus — l'accueil lunettes, mockup complet (plan 027)</title>
+<style>
+  :root{--ph:#71FF97;--ink:#c8d6cc;--mute:#7E9585;--dim:#2f6b45;--hair:#1d3a28;--page:#0a0d0b;--card:#111614;--line:#1e2a23;--txt:#d7ded9;--txt2:#9aa69e;
+    --mono:ui-monospace,"Cascadia Mono","JetBrains Mono",Consolas,monospace;--sans:system-ui,"Segoe UI",Inter,sans-serif;--scale:.75}
+  *{box-sizing:border-box}
+  html,body{background:var(--page);color:var(--txt);font-family:var(--sans);margin:0;line-height:1.5}
+  header{position:sticky;top:0;z-index:10;background:rgba(10,13,11,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line);padding:12px 28px;display:flex;align-items:center;gap:18px;flex-wrap:wrap}
+  header h1{font-family:var(--mono);font-size:14px;letter-spacing:.14em;text-transform:uppercase;color:var(--ph);margin:0 18px 0 0}
+  header nav a{color:var(--txt2);text-decoration:none;font-size:13px;margin-right:14px}
+  header nav a:hover{color:var(--txt)}
+  .scale{margin-left:auto;font-family:var(--mono);font-size:12px;color:var(--txt2);display:flex;gap:6px;align-items:center}
+  .scale button{background:transparent;border:1px solid var(--line);color:var(--txt2);border-radius:6px;padding:3px 9px;font:inherit;cursor:pointer}
+  .scale button.on{color:var(--ph);border-color:var(--dim)}
+  main{max-width:1560px;margin:0 auto;padding:28px}
+  h2{font-family:var(--mono);font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:var(--txt2);margin:44px 0 8px;display:flex;align-items:baseline;gap:14px}
+  h2 small{font-size:12px;letter-spacing:0;text-transform:none;color:var(--mute)}
+  p.lead{margin:0 0 16px;font-size:14.5px;color:var(--txt2);max-width:86ch}
+  p.lead b{color:var(--txt)}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(calc(480px * var(--scale) + 2px),1fr));gap:22px 18px}
+  .shot .tag{display:inline-block;font-family:var(--mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;padding:1px 7px;border:1px solid var(--line);border-radius:4px;color:var(--txt2);margin-bottom:8px}
+  .shot .tag.d{color:var(--ph);border-color:var(--dim)}
+  .shot .cap{font-size:12.5px;color:var(--txt2);margin-top:8px;max-width:calc(480px * var(--scale) + 2px)}
+  .shot .cap b{color:var(--txt);font-weight:600}
+  .ok,.lim,.no{display:inline-block;font-family:var(--mono);font-size:12px;padding:0 5px;border-radius:4px;margin-right:4px;border:1px solid}
+  .ok{color:#6c6;border-color:#3a6a3a}.lim{color:#db5;border-color:#6a5a2a}.no{color:#d66;border-color:#6a3a3a}
+  .wrap{width:calc(480px * var(--scale) + 2px);height:calc(640px * var(--scale) + 2px);position:relative;overflow:hidden;border-radius:12px;background:#000;border:1px solid #1c2a21}
+  .frame{position:absolute;left:1px;top:1px;width:480px;height:640px;transform-origin:0 0;transform:scale(var(--scale));background:#000;color:var(--ph);font-family:var(--mono);overflow:hidden}
+  .frame svg text{font-family:var(--mono)}
+  .abs{position:absolute}
+  /* backgrounds */
+  .native{position:absolute;inset:0;opacity:.22;font-family:var(--sans);color:#fff}
+  .native .t{position:absolute;left:0;right:0;top:16px;text-align:center;font-size:14px;letter-spacing:.1em;color:var(--ph)}
+  .native .line{position:absolute;left:30px;right:30px;height:14px;border-radius:7px;background:#9c9}
+  .home{position:absolute;inset:0;opacity:.3;font-family:var(--sans)}
+  .home .t{position:absolute;left:0;right:0;top:14px;text-align:center;font-family:var(--mono);font-size:13px;letter-spacing:.1em;color:var(--ph)}
+  .home .tile{position:absolute;left:26px;right:26px;height:62px;border:1.5px solid var(--dim);border-radius:10px;color:var(--dim);font-size:22px;padding:14px 0 0 70px}
+  .home .tile.sel{border-color:var(--ph);color:var(--ph)}
+  /* session chrome */
+  .hdr{position:absolute;left:0;right:0;top:0;height:54px;display:flex;align-items:center;justify-content:space-between;padding:0 22px;font-size:13px;letter-spacing:.1em;color:var(--ph);border-bottom:1px solid var(--hair);background:#000}
+  .hdr span.r{color:var(--mute);letter-spacing:0;font-size:12px}
+  .hint{position:absolute;left:0;right:0;bottom:0;height:40px;border-top:1px solid var(--hair);background:#000;display:flex;align-items:center;justify-content:space-between;padding:0 22px;font-size:12px;color:var(--mute)}
+  .hint b{color:var(--ink);font-weight:500}
+  .sec{position:absolute;left:22px;font-size:12px;letter-spacing:.14em;color:var(--mute)}
+  .card{position:absolute;left:18px;right:18px;border:1.5px solid var(--hair);border-radius:12px;background:#000;overflow:hidden}
+  .card.sel{border-color:var(--ph)}
+  .card.dead{border-style:dashed;color:var(--mute)}
+  .lbl{font-size:12px;letter-spacing:.14em;color:var(--mute);padding:10px 14px 0;display:flex;justify-content:space-between}
+  .row{display:flex;align-items:center;gap:12px}
+  .dist{font-size:30px;font-weight:700;line-height:1;white-space:nowrap}
+  .street{font-size:17px;color:var(--ink);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .item{position:absolute;left:18px;right:18px;height:46px;border:1.5px solid var(--hair);border-radius:12px;display:flex;align-items:center;gap:14px;padding:0 16px;font-size:17px;color:var(--ink);font-family:var(--sans)}
+  .item.sel{border-color:var(--ph);color:var(--ph)}
+  .item small{margin-left:auto;font-family:var(--mono);font-size:12px;color:var(--mute)}
+  .item .st{font-family:var(--mono);font-size:12px;color:var(--mute);margin-left:8px}
+  .rowitem{position:absolute;left:18px;right:18px;height:60px;border:1.5px solid var(--hair);border-radius:12px;display:flex;align-items:center;gap:14px;padding:0 16px}
+  .rowitem.sel{border-color:var(--ph)}
+  .rowitem .n{font-size:17px;color:var(--ink)}
+  .rowitem.sel .n{color:var(--ph)}
+  .rowitem .d{font-size:12px;color:var(--mute);margin-top:1px}
+  .rowitem .r{margin-left:auto;font-size:12px;color:var(--mute)}
+  .rowitem.cur .r{color:var(--ink)}
+  /* ambient */
+  .island{position:absolute;left:18px;top:18px;border:1.5px solid var(--hair);border-radius:14px;background:#000;overflow:hidden}
+  .band{position:absolute;left:19px;top:18px;width:442px;border:1.5px solid var(--ph);border-radius:14px;background:#000;padding:14px 18px;display:flex;align-items:center;gap:16px}
+  .nband{position:absolute;left:19px;top:18px;width:442px;border:1.5px solid var(--hair);border-radius:14px;background:#000;padding:12px 16px 14px;overflow:hidden}
+  .pin{position:absolute;right:18px;bottom:18px;border:1.5px solid var(--hair);border-radius:12px;background:#000;padding:8px 12px;font-size:13px;color:var(--ink)}
+  .achip{border:1.5px solid var(--hair);border-radius:9px;padding:4px 10px;font-size:13px;color:var(--ink);font-family:var(--sans);white-space:nowrap}.achip.sel{border-color:var(--ph);color:var(--ph)}
+  .cd{position:absolute;left:0;right:0;bottom:0;height:2px;background:#163020}.cd>div{height:2px;background:var(--ph)}
+  .pin small{display:block;font-size:12px;letter-spacing:.12em;color:var(--mute)}
+  .badge{display:inline-block;border:2px solid var(--ph);border-radius:6px;padding:0 7px;font-size:13px;font-weight:700;line-height:1.4;white-space:nowrap}
+  .foot{display:flex;justify-content:space-between;font-size:12px;color:var(--mute);padding:6px 14px 10px}
+  .foot b{color:var(--ink);font-weight:500}
+  .divider{border-top:1px solid var(--hair)}
+  .then{font-size:13px;color:var(--mute);border-top:1px solid var(--hair);padding-top:8px;margin-top:8px}
+  .panel{position:absolute;left:18px;top:18px;width:190px;height:344px;display:flex;flex-direction:column}
+  /* doc */
+  .doc{position:absolute;left:22px;right:22px;top:66px;font-family:var(--sans);font-size:17px;color:var(--ink);line-height:1.5}
+  .doc .me{color:var(--mute);text-align:right}
+  .doc .ts{font-family:var(--mono);font-size:12px;color:var(--mute);margin:10px 0 2px}
+  table{border-collapse:collapse;width:100%;font-size:13px;margin-top:8px;max-width:1100px}
+  th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{font-family:var(--mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--txt2);font-weight:500}
+  td.chg{color:#db5}
+  .rules{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px;margin:14px 0 4px;max-width:1300px}
+  .rule{border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-size:12.5px;background:var(--card)}
+  .rule b{display:block;font-family:var(--mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--ph);margin-bottom:4px}
+  .rule.taken b{color:#d66}
+  footer{margin:60px 0 20px;font-size:12px;color:var(--mute);font-family:var(--mono)}
+</style>
+</head>
+<body>
+<header>
+  <h1>Rokid Nexus · accueil lunettes</h1>
+  <nav><a href="#p">Principes</a><a href="#amb">Ambiant</a><a href="#stack">La pile</a><a href="#nav">Navigation</a><a href="#relay">Relay &amp; notifs</a><a href="#states">États</a><a href="#transit">Transports</a><a href="#gram">Grammaire</a></nav>
+  <div class="scale">échelle <button data-s=".5">½</button><button data-s=".75" class="on">¾</button><button data-s="1">1:1</button></div>
+</header>
+<main>
+
+<h2 id="p">0 · Principes <small>plan 027 · 480×640 · optique verte additive</small></h2>
+<p class="lead"><b>L'ambiant est la porte pour voir, la pile est la porte pour agir.</b> Les notices, les îles d'activité et les pins se posent par-dessus le home Rokid et les apps. Une notice garde exactement les gestes qu'elle réclame aujourd'hui : tap = la réponse présélectionnée, swipe = une autre réponse ou la page suivante, double tap = fermer. Tant qu'elle est armée, le triple tap n'est pas reconnu. Les îles d'activité et les pins sont passifs partout : aujourd'hui l'île vole le tap du home (il ouvre le plugin) et ses swipes bloquent la navigation des tuiles ; la pile remplace ça. Le triple tap ouvre la session Nexus par-dessus n'importe quoi ; elle possède alors tous les gestes jusqu'au Back. Dedans, une pile courte de cartes, et des pages dessinées par le hub à partir des données des plugins. On n'« ouvre » plus un plugin pour consulter.</p>
+<div class="rules">
+  <div class="rule taken"><b>tap</b>l'app devant · la notice armée</div>
+  <div class="rule taken"><b>double tap</b>Back, système</div>
+  <div class="rule taken"><b>swipe 1 doigt</b>l'app devant · la rangée de réponses si elle en a plusieurs</div>
+  <div class="rule taken"><b>appui long</b>IA Rokid</div>
+  <div class="rule taken"><b>swipe 2 doigts</b>luminosité / volume</div>
+  <div class="rule"><b>triple tap</b>Nexus, partout</div>
+</div>
+<div class="rules">
+  <div class="rule"><b>Hiérarchie = luminosité</b>Vif pour ce qui compte maintenant, pâle pour les noms, sombre pour le contexte. Jamais d'aplat clair : il occulte le monde.</div>
+  <div class="rule"><b>Un axe, quatre primitives</b>STEP ±, SELECT, BACK, GLOBAL. Rien n'exige un deuxième axe, un pointage, un maintien, une bague.</div>
+  <div class="rule"><b>Ordre gelé en session</b>La pertinence réordonne entre deux ouvertures, jamais sous le doigt. Une carte terminée reste en place.</div>
+  <div class="rule"><b>Pages tirées, pas plugins ouverts</b>Le hub demande la page au tap, la dessine avec ses modèles, Back dépile. L'app dessous n'est jamais fermée.</div>
+  <div class="rule"><b>Immersion = exception</b>Caméra, lecture continue, saisie, jeu. Toujours nommée par sa fonction, jamais déguisée en détail.</div>
+  <div class="rule"><b>Tailles mini</b>Chiffre principal ≥ 30 px, nom ≥ 17 px, tertiaire ≥ 12 px. Deux noms de rue max par carte, zéro dans le chip.</div>
+</div>
+
+<h2 id="amb">1 · La couche ambiante <small>sur le home Rokid et dans les apps · notice armée, îles passives · budget 3 / 2 / 0</small></h2>
+<p class="lead">Ce que le porteur voit sans rien faire. Une seule fenêtre armée, inchangée : la notice avec réponses pendant sa durée. Les îles et les pins ne prennent aucun geste, sur le home comme dans une app : le triple tap est la porte, l'île est la tête de pile. Sur le home : au plus une activité à sa taille préférée, une seconde en chip, un pin. Dans une app : texte seul et un pin court. Pendant la pile : rien.</p>
+<div class="grid" id="g-amb"></div>
+
+<h2 id="stack">2 · La pile <small>triple tap depuis n'importe où · racine ≤ 6 arrêts</small></h2>
+<p class="lead">Le sas de 800 ms est visible. La racine s'ouvre sur l'activité épinglée. Swipe = carte suivante, tap = ouvrir, Back = rendre la couche dessous.</p>
+<div class="grid" id="g-stack"></div>
+
+<h2 id="nav">3 · Navigation dans la pile <small>aperçu → commandes → affichage</small></h2>
+<p class="lead">Trois représentations d'une seule activité : l'île, la carte de racine, l'aperçu du tracé. Les commandes du hub d'abord, celles du plugin ensuite, confirmées.</p>
+<div class="grid" id="g-nav"></div>
+
+<h2 id="relay">4 · Relay et notifications <small>lire avant d'agir · une réponse validée</small></h2>
+<p class="lead">La notice ambiante est un signal. Le détail, le fil et la réponse sont des pages fournies par Relay et dessinées par le hub. Dans la pile, aucune action armée par défaut, un envoi volontaire ; la bande ambiante garde ses réponses armées.</p>
+<div class="grid" id="g-relay"></div>
+
+<h2 id="states">5 · États honnêtes <small>chargement, indisponible, terminée, immersion</small></h2>
+<div class="grid" id="g-states"></div>
+
+<h2 id="transit">6 · Transports <small>ruban, pas carte, sous terre</small></h2>
+<div class="grid" id="g-transit"></div>
+
+<h2 id="gram">7 · Grammaire des gestes</h2>
+<table>
+<tr><th>Contexte</th><th>tap</th><th>swipe</th><th>back (double tap)</th><th>triple tap</th></tr>
+<tr><td>App native / immersion Nexus, pile fermée</td><td>dessous</td><td>dessous</td><td>dessous</td><td>ouvre la racine</td></tr>
+<tr><td>Home Rokid avec île d'activité, pile fermée</td><td class="chg">dessous (aujourd'hui : ouvre le plugin)</td><td class="chg">dessous (aujourd'hui : boucle sur les actions de l'île)</td><td>dessous</td><td>ouvre la racine, île sélectionnée</td></tr>
+<tr><td>Notice armée (selon les règles du NoticeController : actions, interactive, pagée, backdrop)</td><td>la réponse présélectionnée, inchangé</td><td>autre réponse, ou page si une seule action, inchangé</td><td>ferme la bande, inchangé</td><td class="chg">non reconnu : double tap d'abord, puis triple tap</td></tr>
+<tr><td class="chg">Notice fenêtre passée, ou notice sans action</td><td class="chg">dessous</td><td class="chg">dessous</td><td class="chg">dessous</td><td class="chg">ouvre la racine, la notice y est consultable</td></tr>
+<tr><td class="chg">Sas après triple tap (≈ 800 ms)</td><td class="chg">absorbé</td><td class="chg">absorbé</td><td class="chg">absorbé</td><td class="chg">absorbé</td></tr>
+<tr><td class="chg">Racine</td><td class="chg">ouvre la carte sélectionnée</td><td class="chg">carte suivante / précédente, sans boucle</td><td class="chg">ferme, rend la couche dessous</td><td class="chg">reste à la racine</td></tr>
+<tr><td class="chg">Page liste / document / commandes</td><td class="chg">active l'élément ou descend d'un niveau</td><td class="chg">sélection / page suivante / valeur bornée</td><td class="chg">dépile un cran</td><td class="chg">racine, même session</td></tr>
+<tr><td class="chg">Composeur de réponse</td><td class="chg">pause → relecture</td><td class="chg">consommé</td><td class="chg">choix du mode, brouillon gardé</td><td class="chg">suspend le brouillon, racine</td></tr>
+<tr><td>Champ éditable d'une immersion</td><td>le champ</td><td>le champ</td><td>le champ</td><td>désactivé (clavier BT), inchangé</td></tr>
+</table>
+<table>
+<tr><th>Contexte ambiant</th><th>Plafond simultané</th></tr>
+<tr><td>Home Rokid reconnu</td><td>3 résidents : activité principale à sa taille préférée, seconde activité en chip, pin compact. Une seule présentation développée.</td></tr>
+<tr><td>App native ou immersion Nexus devant</td><td>Mode par app : <b>Résidents</b> = 2 compacts (activité principale en texte, pin court) ; <b>Signaux seulement</b> = 0 résident, flares uniquement ; <b>Rien</b>. Défauts : texte → Résidents ; caméra, vidéo, jeux, inconnues → Signaux.</td></tr>
+<tr><td>Bande notice ou flare</td><td>1 signal temporaire dans la zone de bande ; il remplace l'île qu'il concerne, ne la double pas. Une notice armée garde ses gestes pendant sa durée, comme aujourd'hui.</td></tr>
+<tr><td>Pile ouverte</td><td>0 overlay ambiant ; une notice qui arrive alimente les pages et un compteur du shell, garde son échéance, et ne peut ni répondre ni se fermer en caché.</td></tr>
+</table>
+
+<footer>plan 027 · mockup statique · géométrie de rues fictive, noms génériques · E:\Tools\Rokid\RokidNexus\docs\mockups\glasses-home\index.html</footer>
+</main>
+
+<script>
+/* ---------- shared drawing ---------- */
+const STREETS=[[[0,520],[300,500],[600,470],[1000,440]],[[480,0],[500,300],[520,520],[540,800],[560,1000]],[[0,300],[230,310],[500,300],[760,280],[1000,260]],[[0,720],[260,700],[540,800],[800,790],[1000,780]],[[200,0],[230,310],[260,700],[280,1000]],[[760,0],[770,280],[780,470],[800,790],[810,1000]],[[100,1000],[300,500],[500,300]],[[600,470],[760,280]],[[0,130],[230,310]],[[540,800],[620,1000]],[[0,880],[260,700]],[[780,470],[1000,600]],[[870,0],[1000,130]],[[0,620],[150,610],[260,700]],[[300,500],[330,650],[540,800]],[[500,300],[480,130]]];
+const ROUTE=[[280,1000],[260,700],[230,310],[500,300],[760,280],[880,270]];
+const PH='#71FF97',DIM='#2f6b45',DONE='#3D8A54',INK='#c8d6cc',MUTE='#7E9585',HAIR='#1d3a28';
+const pts=a=>a.map(p=>p.join(',')).join(' ');
+const headingOf=(a,b)=>Math.atan2(b[0]-a[0],-(b[1]-a[1]))*180/Math.PI;
+const POS=[255,640], HD=headingOf([260,700],[230,310]);
+function map(o){
+  const {w,h,cx=POS[0],cy=POS[1],heading=HD,scale,route=ROUTE,pos=POS,posHeading,marks=[],labels=[],anchorY=.66,major=false,compass=true,scaleBar=null,lost=false,streets=true}=o;
+  const id='c'+Math.random().toString(36).slice(2,8); const list=major?STREETS.slice(0,6):STREETS;
+  let s=`<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" style="display:block"><defs><clipPath id="${id}"><rect width="${w}" height="${h}"/></clipPath></defs><g clip-path="url(#${id})"><g transform="translate(${w/2},${h*anchorY}) rotate(${-heading}) scale(${scale}) translate(${-cx},${-cy})">`;
+  if(streets) s+=list.map((p,i)=>`<polyline points="${pts(p)}" fill="none" stroke="${DIM}" stroke-width="${i<6?2.2:1.4}" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>`).join('');
+  if(route){const col=lost?DONE:PH,dash=lost?' stroke-dasharray="8 6"':'';s+=`<polyline points="${pts(route)}" fill="none" stroke="#000" stroke-width="10" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/><polyline points="${pts(route)}" fill="none" stroke="${col}" stroke-width="6"${dash} stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>`;}
+  for(const m of marks){const k=`translate(${m.at[0]},${m.at[1]}) rotate(${heading}) scale(${1/scale})`;
+    if(m.kind==='turn') s+=`<g transform="${k}"><circle r="12" fill="#000" stroke="${PH}" stroke-width="3"/><circle r="4" fill="${PH}"/></g>`;
+    if(m.kind==='dest') s+=`<g transform="${k}"><circle r="26" fill="none" stroke="${DIM}" stroke-width="2"/><circle r="11" fill="#000" stroke="${PH}" stroke-width="3"/><circle r="4" fill="${PH}"/></g>`;
+    if(m.kind==='stop') s+=`<g transform="${k}"><rect x="-17" y="-13" width="34" height="26" rx="6" fill="#000" stroke="${PH}" stroke-width="2.5"/><text y="6" font-size="16" font-weight="700" fill="${PH}" text-anchor="middle">${m.text}</text></g>`;}
+  for(const l of labels) s+=`<text transform="translate(${l.at[0]},${l.at[1]}) rotate(${l.rot||0})" font-size="${(l.size||13)/scale}" fill="${l.bright?INK:MUTE}" text-anchor="middle" stroke="#000" stroke-width="${5/scale}" paint-order="stroke">${l.text}</text>`;
+  if(pos){const hd=posHeading??heading; if(lost) s+=`<g transform="translate(${pos[0]},${pos[1]}) scale(${1/scale})"><circle r="22" fill="none" stroke="${MUTE}" stroke-width="1.5" stroke-dasharray="4 4"/><circle r="7" fill="${MUTE}" stroke="#000" stroke-width="2"/></g>`;
+    else s+=`<g transform="translate(${pos[0]},${pos[1]}) rotate(${hd}) scale(${1/scale})"><circle r="19" fill="none" stroke="${PH}" stroke-width="1.2" opacity=".6"/><path d="M0,-14 L11,11 L0,5 L-11,11 Z" fill="${PH}" stroke="#000" stroke-width="2"/></g>`;}
+  s+=`</g>`;
+  if(compass) s+=`<g transform="translate(${w-22},22)"><circle r="13" fill="#000" stroke="${HAIR}" stroke-width="1.5"/><g transform="rotate(${-heading})"><path d="M0,-9 L4,3 L0,0 L-4,3 Z" fill="${MUTE}"/></g></g><text x="${w-22}" y="44" font-size="12" fill="${MUTE}" text-anchor="middle">N</text>`;
+  if(scaleBar){const [px,label]=scaleBar;s+=`<g transform="translate(12,${h-12})" stroke="${MUTE}" stroke-width="1.5" fill="none"><path d="M0,-6 V0 H${px} V-6"/></g><text x="${12+px+6}" y="${h-11}" font-size="12" fill="${MUTE}">${label}</text>`;}
+  return s+`</g></svg>`;
+}
+function ribbon(stops,w,h,pb){const x=36,top=28,step=(h-56)/(stops.length-1);const yOf=i=>top+i*step;const cut=yOf(pb[0])+(yOf(pb[1])-yOf(pb[0]))*pb[2];
+  let s=`<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" style="display:block"><line x1="${x}" x2="${x}" y1="${yOf(0)}" y2="${cut}" stroke="${DIM}" stroke-width="6" stroke-linecap="round"/><line x1="${x}" x2="${x}" y1="${cut}" y2="${yOf(stops.length-1)}" stroke="${PH}" stroke-width="6" stroke-linecap="round"/>`;
+  stops.forEach((st,i)=>{const y=yOf(i),passed=i<=pb[0];
+    if(st.off) s+=`<circle cx="${x}" cy="${y}" r="15" fill="none" stroke="${DIM}" stroke-width="2"/><circle cx="${x}" cy="${y}" r="9" fill="#000" stroke="${PH}" stroke-width="3"/><circle cx="${x}" cy="${y}" r="3.5" fill="${PH}"/>`; else s+=`<circle cx="${x}" cy="${y}" r="7" fill="#000" stroke="${passed?DIM:PH}" stroke-width="3"/>`;
+    s+=`<text x="${x+30}" y="${y+6}" font-size="${st.off?19:17}" fill="${st.off?PH:passed?DIM:INK}" font-weight="${st.off?700:400}">${st.name}</text>`; if(st.right) s+=`<text x="${w-18}" y="${y+6}" font-size="14" fill="${st.off?INK:MUTE}" text-anchor="end">${st.right}</text>`;});
+  return s+`<g transform="translate(${x},${cut})"><rect x="-13" y="-10" width="26" height="20" rx="5" fill="#000" stroke="${PH}" stroke-width="3"/><rect x="-7" y="-5" width="14" height="5" fill="${PH}"/></g></svg>`;}
+const arrow=sz=>`<svg width="${sz}" height="${sz}" viewBox="0 0 46 46" fill="none" stroke="${PH}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"><path d="M10 42 V22 Q10 14 18 14 H34"/><path d="M26 6 L34 14 L26 22"/></svg>`;
+const ico=(d,c=PH,sz=24)=>`<svg width="${sz}" height="${sz}" viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
+const I={eye:ico('<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>'),term:ico('<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3M12 15h5"/>'),msg:ico('<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1.1-4.6A8 8 0 1 1 21 12z"/>'),cal:ico('<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>'),music:ico('<path d="M9 18V6l11-2v12"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/>'),grid:ico('<rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/>'),bell:ico('<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10 21h4"/>'),star:ico('<path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z"/>'),bat:ico('<rect x="2" y="7" width="18" height="10" rx="2"/><path d="M22 10v4"/>',MUTE),cam:ico('<path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/>'),kb:ico('<rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/>'),mic:ico('<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>')};
+const train=sz=>`<svg width="${sz}" height="${sz}" viewBox="0 0 40 40" fill="none" stroke="${PH}" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="4" width="22" height="26" rx="6"/><path d="M9 20 H31 M15 36 L12 30 M25 36 L28 30"/><circle cx="15" cy="25" r="1.6" fill="${PH}"/><circle cx="25" cy="25" r="1.6" fill="${PH}"/></svg>`;
+const walk=sz=>`<svg width="${sz}" height="${sz}" viewBox="0 0 40 40" fill="none" stroke="${PH}" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="22" cy="6" r="3.5"/><path d="M20 12 L14 20 L8 24 M14 20 L18 28 L12 38 M18 28 L26 32 L30 38 M20 12 L27 16 L32 14"/></svg>`;
+const gps=sz=>`<svg width="${sz}" height="${sz}" viewBox="0 0 46 46" fill="none" stroke="${MUTE}" stroke-width="4" stroke-linecap="round" stroke-dasharray="5 5"><circle cx="23" cy="23" r="16"/><circle cx="23" cy="23" r="4" fill="${MUTE}" stroke="none"/></svg>`;
+const native=`<div class="native"><div class="t">TELEPROMPTER</div>${[0,1,2,3,4,5,6,7,8,9].map(i=>`<div class="line" style="top:${90+i*52}px;width:${[82,64,90,58,76,88,50,70,84,60][i]}%"></div>`).join('')}</div>`;
+const home=`<div class="home"><div class="t">ROKID HOME</div>${['Phone','Camera','Teleprompter','Settings'].map((n,i)=>`<div class="tile${i==0?' sel':''}" style="top:${150+i*74}px">${n}</div>`).join('')}</div>`;
+const hdr=(t,r)=>`<div class="hdr"><span>${t}</span><span class="r">${r}</span></div>`;
+const hint=(l,r)=>`<div class="hint"><span>${l}</span><span>${r}</span></div>`;
+const chipHead=(glyph,dist,street,measure)=>`<div class="row" style="padding:12px 14px 0">${glyph}<div style="min-width:0"><div class="dist" style="font-size:30px">${dist}${measure?` <span style="font-size:17px;font-weight:400;color:${INK}">${measure}</span>`:''}</div><div class="street" style="font-size:17px">${street}</div></div></div>`;
+const F=(tag,html,cap,d)=>({tag,html,cap,d});
+
+/* ---------- 1. ambient ---------- */
+const amb=[
+F('home · île texte (préférence Texte)',home+`<div class="island" style="width:232px;padding-bottom:12px">${chipHead(arrow(40),'120 m','Rue de Rivoli')}</div><div class="pin"><small>PIN · TRANSIT</small>RER B · 3 min</div>`,
+ '<b>Le minimum.</b> Flèche, distance, rue. Un pin compact à droite. Rien n\'est pour l\'île : le home garde tap et swipe. Aujourd\'hui le tap ouvrirait le plugin à la place de la tuile ; ça disparaît.'),
+F('home · île minimap (préférence Minimap)',home+`<div class="island" style="width:262px">${chipHead(arrow(40),'120 m','Rue de Rivoli')}<div style="margin-top:8px" class="divider">${map({w:259,h:190,scale:.42,marks:[{kind:'turn',at:[230,310]}],scaleBar:[42,'50 m']})}</div><div class="foot"><span><b>12:24</b> arrival</span><span>1.2 km</span></div></div>`,
+ '<b>Cap vers le haut, toi au tiers bas</b>, rues en contexte, prochain virage cerclé, échelle. Pas de nom de rue à cette taille.'),
+F('home · île panel (préférence Panel)',home+`<div class="island" style="width:374px"><div style="padding:14px 16px 0"><div class="row">${arrow(44)}<div style="min-width:0"><div class="dist" style="font-size:34px">120 m</div><div class="street" style="font-size:19px">Rue de Rivoli</div></div><div style="margin-left:auto;align-self:flex-start;font-size:17px;color:${MUTE}">12:24</div></div><div class="then">then <b style="color:${INK};font-weight:500">Châtelet</b> on your left · 1.2 km</div></div><div style="margin-top:10px" class="divider">${map({w:371,h:300,scale:.62,anchorY:.68,marks:[{kind:'turn',at:[230,310]}],labels:[{text:'Rue de Rivoli',at:[330,292],rot:HD-3},{text:'Bd Sébastopol',at:[275,480],rot:HD+86}],scaleBar:[62,'50 m']})}</div></div>`,
+ '<b>La plus grande taille ambiante.</b> Deux noms de rue, l\'étape d\'après. C\'est une préférence, pas un état gagné par un geste. Toujours passif.'),
+F('home · 3 résidents',home+`<div class="island" style="width:262px">${chipHead(arrow(40),'120 m','Rue de Rivoli')}<div style="margin-top:8px" class="divider">${map({w:259,h:150,scale:.42,anchorY:.7,marks:[{kind:'turn',at:[230,310]}]})}</div><div class="foot"><span><b>12:24</b></span><span>1.2 km</span></div></div>
+ <div class="island" style="left:18px;top:304px;width:232px;padding:10px 14px"><div class="row">${I.music}<div style="min-width:0"><div style="font-size:17px;color:${INK};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Reptilia</div><div style="font-size:12px;color:${MUTE}">The Strokes · 2:15</div></div></div></div>
+ <div class="pin"><small>PIN · TRANSIT</small>RER B · 3 min</div>`,
+ '<b>Le plafond sur le home.</b> Activité principale à sa taille, seconde activité en chip, un pin. Jamais plus. Les coins sont fixes, rien ne saute à chaque GPS.'),
+F('app native · 2 compacts',native+`<div class="island" style="width:232px;padding-bottom:12px">${chipHead(arrow(40),'120 m','Rue de Rivoli')}</div><div class="pin"><small>PIN</small>RER B · 3 min</div>`,
+ '<b>Dans Teleprompter, mode « Résidents ».</b> Texte seul plus un pin court, passifs. Mode réglé par app depuis la page Apps natives du téléphone ; défaut Résidents pour les apps de texte.'),
+F('app native · mode « Signaux seulement »',`<div class="native"><div class="t">VIDEO</div><div class="abs" style="left:40px;right:40px;top:150px;bottom:150px;border:1.5px solid #1b3a26;border-radius:8px"></div><div class="abs" style="left:0;right:0;top:300px;text-align:center;color:#1b3a26;font-size:40px">▶</div></div><div class="band" style="border-color:var(--hair)">${arrow(44)}<div style="min-width:0"><div class="dist" style="font-size:32px">300 m</div><div class="street" style="font-size:17px">à droite · Rue de Rivoli</div></div></div>`,
+ '<b>Pas de résident, que des signaux.</b> Défaut pour caméra, vidéo, jeux et apps inconnues : l\'île ne s\'affiche pas, l\'activité ne parle que par ses flares, ≈ 3,5 s chacun, puis rien. « 300 m à droite », « 2 arrêts restants ». Tout l\'état reste à un triple tap.'),
+F('flare · virage imminent',home+`<div class="band">${arrow(56)}<div style="min-width:0"><div class="dist" style="font-size:44px">30 m</div><div class="street" style="font-size:20px">Rue de Rivoli</div></div><div style="margin-left:auto;font-size:14px;color:${MUTE};align-self:flex-end">then ↑ 400 m</div></div><div class="pin"><small>PIN · TRANSIT</small>RER B · 3 min</div>`,
+ '<b>Un seul signal à la fois.</b> Le flare remplace l\'île qu\'il concerne pendant ≈ 3,5 s, bordure vive, puis se replie. Le pin garde sa place en bas à droite : les résidents ne bougent jamais pendant un signal. Aucun bouton armé, aucun geste capté.'),
+F('notice · signal ambiant',native+`<div class="nband"><div class="row" style="justify-content:space-between"><span style="font-size:12px;letter-spacing:.14em;color:${MUTE}">RELAY · MIKA</span><span style="font-size:12px;color:${MUTE}">à l\'instant</span></div><div style="font-size:18px;color:${INK};margin-top:6px;font-family:var(--sans)">tu arrives quand ? on est devant</div><div class="row" style="gap:8px;margin-top:10px"><span class="achip sel">Répondre</span><span class="achip">👍</span><span class="achip">Plus tard</span><span style="margin-left:auto;font-size:12px;color:${MUTE}">••• Nexus</span></div><div class="cd"><div style="width:62%"></div></div></div>`,
+ '<b>Inchangé : la fenêtre armée.</b> Pendant la durée de la notice, tap = la réponse présélectionnée, swipe = une autre, double tap = fermer. Les plugins n\'ont rien à changer. Le triple tap n\'est pas reconnu tant que la bande est armée : ses deux premiers taps seraient des réponses. Double tap pour fermer, puis triple tap.'),
+F('notice · fenêtre passée',native+`<div class="nband" style="border-color:var(--dim)"><div class="row" style="justify-content:space-between"><span style="font-size:12px;letter-spacing:.14em;color:${MUTE}">RELAY · MIKA</span><span style="font-size:12px;color:${MUTE}">il y a 8 s</span></div><div style="font-size:18px;color:${MUTE};margin-top:6px;font-family:var(--sans)">tu arrives quand ? on est devant</div><div style="font-size:12px;color:${MUTE};margin-top:8px">••• Nexus · dans la pile</div></div>`,
+ '<b>Après la fenêtre.</b> La bande s\'éteint en moins d\'une seconde, elle ne devient pas une fenêtre passive : tap et swipe reviennent à l\'app. La pile garde un instantané borné (aperçu, puis Notifications · n) avec une réponse revalidée par le plugin.'),
+F('home · activité terminée',home+`<div class="island dead" style="width:232px;padding-bottom:12px"><div class="row" style="padding:12px 14px 0">${ico('<circle cx="12" cy="12" r="9"/><path d="M8 12l3 3 5-6"/>',MUTE,40)}<div><div class="dist" style="font-size:30px;color:${MUTE}">Arrived</div><div class="street" style="font-size:17px;color:${MUTE}">Châtelet · exit 3</div></div></div></div>`,
+ '<b>Fin de trajet.</b> L\'île s\'éteint en pointillé quelques secondes puis disparaît. Dans la pile, la carte reste « Terminée » jusqu\'à ce que tu bouges.'),
+];
+
+/* ---------- 2. stack ---------- */
+const navCard=(sel,top=66)=>`<div class="card${sel?' sel':''}" style="top:${top}px"><div class="lbl"><span>NAVIGATION · EN COURS</span><span>12:24</span></div><div class="row" style="padding:6px 14px 0">${arrow(34)}<div style="min-width:0"><div class="dist">120 m</div><div class="street">Rue de Rivoli</div></div><div style="margin-left:auto;align-self:flex-end;font-size:12px;color:${MUTE}">1.2 km</div></div><div style="margin-top:8px" class="divider">${map({w:441,h:108,scale:.4,anchorY:.72})}</div></div>`;
+const relayCard=(sel,top=290)=>`<div class="card${sel?' sel':''}" style="top:${top}px"><div class="lbl"><span>RELAY · CONVERSATION</span><span>2 min</span></div><div class="row" style="padding:4px 14px 12px">${I.msg}<div><div style="font-size:17px;color:${INK}">Mika</div><div style="font-size:13px;color:${MUTE}">réponse attendue</div></div></div></div>`;
+const notifCard=(sel,top=393)=>`<div class="card${sel?' sel':''}" style="top:${top}px"><div class="lbl"><span>NOTIFICATION · IL Y A 2 MIN</span></div><div class="row" style="padding:4px 14px 12px">${I.cal}<div style="font-size:17px;color:${INK}">Standup · 14:00</div></div></div>`;
+const accessRows=(sel)=>`<div class="item${sel==='n'?' sel':''}" style="top:477px">${I.bell}Notifications<small>6</small></div><div class="item${sel==='a'?' sel':''}" style="top:535px">${I.grid}Applications<small>37</small></div>`;
+const stack=[
+F('sas · 800 ms après le triple tap',`<div class="hdr"><span>NEXUS</span><span class="r">ouverture…</span></div><div class="abs" style="left:0;right:0;top:280px;text-align:center;color:${MUTE};font-size:14px">Ouverture…</div><div class="abs" style="left:120px;right:120px;top:312px;height:3px;background:#163020;border-radius:2px"><div style="width:60%;height:3px;background:${PH};border-radius:2px"></div></div>${hint('les gestes sont absorbés','')}`,
+ '<b>Le sas est visible.</b> Les classifications résiduelles du triple tap et les contacts commencés dedans sont absorbés. Rien n\'est sélectionnable tant qu\'il n\'est pas fini.',true),
+F('racine · Navigation sélectionnée',hdr('NEXUS','back: Teleprompter')+navCard(true)+relayCard(false)+notifCard(false)+accessRows()+hint('<b>swipe</b> carte suivante · <b>tap</b> ouvrir','<b>back</b> Teleprompter'),
+ '<b>Six arrêts au plus.</b> L\'activité épinglée en tête, la seconde activité, la dernière notification, deux accès. Aucune commande à la racine.',true),
+F('racine · swipe → Relay',hdr('NEXUS','back: Teleprompter')+navCard(false)+relayCard(true)+notifCard(false)+accessRows()+hint('<b>swipe</b> carte suivante · <b>tap</b> ouvrir','<b>back</b> Teleprompter'),
+ '<b>Un swipe = une carte.</b> Pas de boucle aux extrémités. Les valeurs vivent, l\'ordre et les tailles ne bougent pas.',true),
+F('racine · swipe → Notifications',hdr('NEXUS','back: Teleprompter')+navCard(false)+relayCard(false)+notifCard(false)+accessRows('n')+hint('<b>tap</b> ouvrir la collection','<b>back</b> Teleprompter'),
+ '<b>Les accès sont toujours à distance bornée</b> : cinq swipes max de la tête à Applications, quel que soit l\'historique.',true),
+F('racine · sans trajet',hdr('NEXUS','back: Teleprompter')+`<div class="card sel" style="top:66px"><div class="lbl"><span>NOTIFICATION · IL Y A 2 MIN</span></div><div class="row" style="padding:4px 14px 12px">${I.cal}<div style="font-size:17px;color:${INK}">Standup · 14:00</div></div></div><div class="item" style="top:150px">${I.bell}Notifications<small>6</small></div><div class="item" style="top:208px">${I.grid}Applications<small>37</small></div>`+hint('<b>swipe</b> choisir · <b>tap</b> ouvrir','<b>back</b> Teleprompter'),
+ '<b>Rien en cours.</b> La racine commence par l\'aperçu de notification, puis les accès. Aucune horloge artificielle pour remplir la tête.',true),
+F('racine · activité terminée en place',hdr('NEXUS','back: Teleprompter')+`<div class="card sel dead" style="top:66px;height:212px"><div class="lbl"><span>NAVIGATION · TERMINÉE</span><span>12:24</span></div><div class="row" style="padding:6px 14px 14px">${ico('<circle cx="12" cy="12" r="9"/><path d="M8 12l3 3 5-6"/>',MUTE,34)}<div><div class="dist" style="color:${MUTE}">Arrived</div><div class="street" style="color:${MUTE}">Châtelet · exit 3</div></div></div></div>`+relayCard(false)+notifCard(false)+`<div class="item" style="top:477px">${I.bell}Notifications<small>6</small></div><div class="item" style="top:535px">${I.grid}Applications<small>37</small></div>`+hint('<b>swipe</b> carte suivante','<b>back</b> Teleprompter'),
+ '<b>La carte ne saute pas.</b> Terminée pendant que tu la regardais : elle garde sa taille et sa place, inerte, jusqu\'à ton prochain mouvement. Les cartes dessous ne bougent pas. Le tap en cours n\'agit jamais sur la voisine.',true),
+];
+
+/* ---------- 3. navigation pages ---------- */
+const nav=[
+F('aperçu du tracé · suivi',`${map({w:480,h:640,scale:.95,anchorY:.64,marks:[{kind:'turn',at:[230,310]}],labels:[{text:'Rue de Rivoli',at:[330,292],rot:HD-3,bright:true,size:14},{text:'Bd Sébastopol',at:[275,470],rot:HD+86}],scaleBar:[76,'50 m']})}<div class="hdr" style="background:transparent;border:0"><span style="text-shadow:0 0 8px #000">NAVIGATION · APERÇU</span><span class="r" style="text-shadow:0 0 8px #000">suivi · zoom 2/4</span></div><div class="abs" style="left:18px;top:60px;display:flex;align-items:center;gap:14px;text-shadow:0 0 10px #000">${arrow(50)}<div><div style="font-size:40px;font-weight:700;line-height:1">120 m</div><div style="font-size:18px;color:${INK};margin-top:4px">Rue de Rivoli</div></div></div>${hint('<b>swipe</b> zoom · <b>tap</b> commandes','<b>back</b> racine')}`,
+ '<b>Triple tap puis tap.</b> La carte occupe tout, dessinée par le hub. Le zoom est borné et annoncé. Back revient exactement sur la carte de racine.',true),
+F('aperçu du tracé · trajet entier',`${map({w:480,h:640,cx:570,cy:640,heading:0,scale:.36,anchorY:.5,posHeading:HD,marks:[{kind:'turn',at:[230,310]},{kind:'dest',at:[880,270]}],labels:[{text:'Châtelet',at:[880,330],bright:true,size:14},{text:'Rue de Rivoli',at:[470,340]}],scaleBar:[72,'200 m']})}<div class="hdr" style="background:transparent;border:0"><span style="text-shadow:0 0 8px #000">NAVIGATION · APERÇU</span><span class="r" style="text-shadow:0 0 8px #000">trajet entier · nord ↑</span></div><div class="abs" style="left:18px;top:60px;display:flex;align-items:baseline;gap:14px;text-shadow:0 0 8px #000"><span style="font-size:36px;font-weight:700">15 min</span><span style="font-size:17px;color:${INK}">1.2 km · arrive <b style="color:${PH}">12:24</b></span></div>${hint('<b>swipe</b> zoom · <b>tap</b> commandes','<b>back</b> racine')}`,
+ '<b>Nord en haut, tout le tracé</b>, départ, arrivée. Choisi dans les commandes, mémorisé pour la session.',true),
+F('commandes',hdr('NAVIGATION · COMMANDES','back: aperçu')+[
+ {n:'Suivi',d:'carte centrée sur toi',sel:true,r:'actuel',cur:true},{n:'Trajet entier',d:'tout le tracé, nord en haut'},{n:'Affichage · Minimap',d:'taille de l\'île pendant le trajet',r:'›'},
+].map((o,i)=>`<div class="rowitem${o.sel?' sel':''}${o.cur?' cur':''}" style="top:${72+i*72}px"><div><div class="n">${o.n}</div><div class="d">${o.d}</div></div>${o.r?`<div class="r">${o.r}</div>`:''}</div>`).join('')+`<div class="sec" style="top:300px">ACTIONS DU PLUGIN</div><div class="rowitem" style="top:320px"><div><div class="n" style="color:${MUTE}">Terminer le trajet</div><div class="d">demande une confirmation</div></div></div><div class="sec" style="top:400px">IMMERSION</div><div class="rowitem" style="top:420px"><div><div class="n" style="color:${MUTE}">Ouvrir l\'application complète</div><div class="d">surface exclusive · remplace l\'autre plugin Nexus</div></div><div class="r">↗</div></div>`+hint('<b>swipe</b> choisir · <b>tap</b> exécuter','<b>back</b> aperçu'),
+ '<b>Hub d\'abord, plugin ensuite.</b> Suivi, trajet, taille de l\'île ; puis les actions du plugin, confirmées ; l\'immersion tout en bas, nommée pour ce qu\'elle fait.',true),
+F('affichage · taille de l\'île',hdr('NAVIGATION · AFFICHAGE','back: commandes')+`<div class="sec" style="top:66px">TAILLE AMBIANTE · PENDANT LE TRAJET</div>`+[
+ {n:'Texte',d:'flèche, distance, rue'},{n:'Minimap',d:'texte + carte cap vers le haut',r:'actuel',cur:true},{n:'Panel',d:'carte large, noms de rue',sel:true},
+].map((o,i)=>`<div class="rowitem${o.sel?' sel':''}${o.cur?' cur':''}" style="top:${90+i*76}px;height:64px"><div><div class="n">${o.n}</div><div class="d">${o.d}</div></div>${o.r?`<div class="r">${o.r}</div>`:''}</div>`).join('')+`<div class="abs" style="left:22px;right:22px;top:330px;font-size:12px;color:${MUTE};line-height:1.5">Choix provisoire au swipe, enregistré au tap. Dans une app, le hub plafonne à Texte. Back annule.</div>`+hint('<b>swipe</b> choisir · <b>tap</b> enregistrer','<b>back</b> commandes'),
+ '<b>Trois tailles, pas quatre.</b> La carte est une commande, pas une taille. Préférence par plugin, miroir sur le téléphone.',true),
+F('confirmation · action du plugin',hdr('NAVIGATION · CONFIRMER','back: commandes')+`<div class="abs" style="left:22px;right:22px;top:120px;text-align:center"><div style="font-size:22px;color:${INK};font-family:var(--sans)">Terminer le trajet ?</div><div style="font-size:13px;color:${MUTE};margin-top:8px">Navigation arrêtera le guidage sur le téléphone.</div></div><div class="rowitem sel" style="top:260px;justify-content:center"><div class="n">Annuler</div></div><div class="rowitem" style="top:332px;justify-content:center"><div class="n">Confirmer</div></div>`+hint('<b>swipe</b> choisir · <b>tap</b> valider','<b>back</b> annuler'),
+ '<b>Annuler est présélectionné.</b> Toute action qui a un effet dehors passe par là. Un swipe en marchant ne termine jamais un trajet.',true),
+];
+
+/* ---------- 4. relay & notifications ---------- */
+const relay=[
+F('détail · conversation',hdr('RELAY · CONVERSATION','back: racine')+`<div class="card" style="top:66px;padding:12px 14px"><div class="row">${I.msg}<div><div style="font-size:19px;color:${INK}">Mika</div><div style="font-size:12px;color:${MUTE}">réponse attendue · il y a 2 min</div></div></div><div style="margin-top:12px;font-size:17px;color:${INK};line-height:1.4;font-family:var(--sans)">« tu arrives quand ? on est devant »</div><div style="margin-top:6px;font-size:12px;color:${MUTE}">3 messages dans ce fil</div></div>`+[
+ {n:'Lire le fil',d:'3 messages, pages au swipe',sel:true},{n:'Répondre',d:'clavier téléphone ou dicter · relecture avant envoi'},{n:'Marquer comme lu',d:'local, sans envoi'},
+].map((o,i)=>`<div class="rowitem${o.sel?' sel':''}" style="top:${232+i*72}px"><div><div class="n">${o.n}</div><div class="d">${o.d}</div></div></div>`).join('')+hint('<b>swipe</b> choisir · <b>tap</b> ouvrir','<b>back</b> racine'),
+ '<b>Page fournie par Relay, dessinée par le hub.</b> Lire avant d\'agir. Plus de « Ouvrir Relay » : tout ce qu\'il faut est là.',true),
+F('lire le fil · document',hdr('RELAY · MIKA','back: détail')+`<div class="doc"><div class="ts">14:02 · Mika</div><div>on est devant le cinéma</div><div class="ts" style="text-align:right">14:05 · toi</div><div class="me">j\'arrive, 10 min</div><div class="ts">14:11 · Mika</div><div style="color:${PH}">tu arrives quand ? on est devant</div></div><div class="abs" style="right:22px;top:66px;font-size:12px;color:${MUTE}">1/1</div>`+hint('<b>swipe</b> page · <b>tap</b> répondre','<b>back</b> détail'),
+ '<b>Modèle « conversation » du hub.</b> Relay envoie trois messages et des horodatages, le hub met en page. Le swipe tourne les pages si le fil déborde.',true),
+F('répondre · choix du mode',hdr('RELAY · RÉPONDRE','back: détail')+`<div class="abs" style="left:22px;right:22px;top:70px;font-size:13px;color:${MUTE};font-family:var(--sans)">À Mika · « tu arrives quand ? on est devant »</div>`+[
+ {i:I.kb,n:'Clavier du téléphone',d:'le texte s\'affiche ici pendant la saisie',sel:true},{i:I.mic,n:'Dicter',d:'micro des lunettes · relecture avant envoi'},
+].map((o,i)=>`<div class="rowitem${o.sel?' sel':''}" style="top:${120+i*76}px;height:64px">${o.i}<div><div class="n">${o.n}</div><div class="d">${o.d}</div></div></div>`).join('')+`<div class="abs" style="left:22px;right:22px;top:300px;font-size:12px;color:${MUTE};line-height:1.5">Avec le seul touchpad on choisit et on confirme, on ne tape pas. Sans téléphone ni dictée : « Répondre sur le téléphone ».</div>`+hint('<b>tap</b> choisir','<b>back</b> détail'),
+ '<b>Le composeur appartient au hub.</b> Pas une surface Relay. Le brouillon survit à un passage par la racine ; une seule réponse en cours à la fois.',true),
+F('répondre · relecture',hdr('RELAY · RELECTURE','back: mode')+`<div class="card" style="top:66px;padding:14px"><div style="font-size:12px;letter-spacing:.14em;color:${MUTE}">BROUILLON · À MIKA</div><div style="font-size:19px;color:${INK};margin-top:8px;line-height:1.4;font-family:var(--sans)">J\'arrive dans 5 minutes, je suis rue de Rivoli.</div></div>`+[
+ {n:'Modifier',d:'rouvre le clavier ou la dictée',sel:true},{n:'Envoyer',d:'une seule tentative · acquitté « Envoyé »'},{n:'Effacer',d:'demande une confirmation'},
+].map((o,i)=>`<div class="rowitem${o.sel?' sel':''}" style="top:${200+i*72}px"><div><div class="n">${o.n}</div><div class="d">${o.d}</div></div></div>`).join('')+hint('<b>swipe</b> choisir · <b>tap</b> valider','<b>back</b> mode'),
+ '<b>Modifier est présélectionné</b>, pas Envoyer. L\'envoi est un tap volontaire sur un élément choisi. Résultat ambigu = « Envoi non confirmé », jamais de renvoi automatique.',true),
+F('notifications · collection',hdr('NOTIFICATIONS · 6','back: racine')+[
+ {i:I.cal,n:'Standup · 14:00',t:'2 min',sel:true},{i:I.msg,n:'Mika · tu arrives quand ?',t:'2 min',st:'LU'},{i:I.msg,n:'Vivo Promo · image',t:'50 min'},{i:I.star,n:'Feeds · 7 nouveaux',t:'1 h'},{i:I.bat,n:'Lunettes · 20 %',t:'2 h',st:'EXPIRÉ',dim:true},{i:I.msg,n:'Alan · ok pour ce soir',t:'3 h',st:'RÉPONDU'},
+].map((o,i)=>`<div class="item${o.sel?' sel':''}" style="top:${68+i*56}px;height:48px;${o.dim?'color:'+MUTE:''}">${o.i}<span style="font-size:17px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${o.n}</span>${o.st?`<span class="st">${o.st}</span>`:''}<small>${o.t}</small></div>`).join('')+`<div class="abs" style="left:22px;right:22px;top:414px;font-size:12px;color:${MUTE};line-height:1.5">Reçu ≠ lu. Une action n\'est proposée que si elle est encore valide. Historique : 30 entrées ou 24 h, désactivable.</div>`+hint('<b>swipe</b> choisir · <b>tap</b> lire','<b>back</b> racine'),
+ '<b>Récence, états lu / répondu / expiré.</b> Rien n\'est armé par défaut. Une entrée stockée ne ressuscite jamais un jeton de réponse expiré.',true),
+F('notification · détail expiré',hdr('NOTIFICATION · LUNETTES','back: collection')+`<div class="card" style="top:66px;padding:14px"><div class="row">${I.bat}<div><div style="font-size:18px;color:${INK}">Batterie des lunettes à 20 %</div><div style="font-size:12px;color:${MUTE}">il y a 2 h · système</div></div></div><div style="margin-top:12px;font-size:17px;color:${INK};font-family:var(--sans)">Branchez les lunettes avant le trajet retour.</div></div><div class="rowitem" style="top:200px"><div><div class="n" style="color:${MUTE}">Rappeler dans 30 min</div><div class="d">action expirée</div></div><div class="r">EXPIRÉ</div></div><div class="rowitem sel" style="top:272px"><div><div class="n">Retirer de l\'historique</div><div class="d">local</div></div></div>`+hint('<b>swipe</b> choisir · <b>tap</b> valider','<b>back</b> collection'),
+ '<b>Lisible, pas armé.</b> L\'action de la bande d\'origine est expirée et le dit. Seule l\'opération locale reste.',true),
+F('applications',hdr('APPLICATIONS','1/37 · back: racine')+[
+ {i:I.eye,n:'Lens',sel:true},{i:I.term,n:'Agents'},{i:I.star,n:'Assistant'},{i:I.star,n:'Feeds'},{i:I.music,n:'Media Deck',t:'playing'},{i:I.grid,n:'Teleprompter',t:'app Rokid'},{i:I.cam,n:'Caméra',t:'app Rokid'},
+].map((o,i)=>`<div class="item${o.sel?' sel':''}" style="top:${68+i*56}px;height:48px">${o.i}<span>${o.n}</span>${o.t?`<small>${o.t}</small>`:''}</div>`).join('')+hint('<b>swipe</b> choisir · <b>tap</b> ouvrir','<b>back</b> racine'),
+ '<b>Liste simple, apps Rokid comprises.</b> Un plugin adapté s\'ouvre en page ; un plugin tiers inchangé s\'ouvre en immersion, annoncée.',true),
+];
+
+/* ---------- 5. states ---------- */
+const states=[
+F('page · chargement',hdr('MEDIA DECK','back: racine')+`<div class="card" style="top:66px;padding:14px"><div class="row">${I.music}<div><div style="font-size:17px;color:${INK}">Reptilia</div><div style="font-size:12px;color:${MUTE}">The Strokes · résumé connu · 12:21</div></div></div></div><div class="abs" style="left:0;right:0;top:300px;text-align:center;color:${MUTE};font-size:14px">Chargement…</div><div class="abs" style="left:140px;right:140px;top:332px;height:3px;background:#163020;border-radius:2px"><div style="width:35%;height:3px;background:${PH};border-radius:2px"></div></div>`+hint('','<b>back</b> racine'),
+ '<b>Cadre local immédiat</b>, titre authentifié, le résumé déjà connu, Back disponible. Aucune action métier présélectionnée pendant l\'attente.',true),
+F('page · détail indisponible',hdr('MEDIA DECK','back: racine')+`<div class="card" style="top:66px;padding:14px"><div class="row">${I.music}<div><div style="font-size:17px;color:${INK}">Reptilia</div><div style="font-size:12px;color:${MUTE}">dernier état connu · 12:21</div></div></div></div><div class="abs" style="left:22px;right:22px;top:200px;text-align:center"><div style="font-size:20px;color:${INK};font-family:var(--sans)">Détail indisponible</div><div style="font-size:13px;color:${MUTE};margin-top:6px">Le plugin n\'a pas répondu en 8 s.</div></div><div class="rowitem sel" style="top:290px;justify-content:center"><div class="n">Réessayer</div></div>`+hint('<b>tap</b> réessayer','<b>back</b> racine'),
+ '<b>Pas de repli automatique vers l\'immersion.</b> Le dernier état connu reste lisible et daté. Réessayer crée une nouvelle requête ; l\'ancienne réponse est rejetée.',true),
+F('immersion · ouverture annoncée',hdr('LENS','back: applications')+`<div class="abs" style="left:22px;right:22px;top:110px;text-align:center">${ico('<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',PH,64)}<div style="font-size:22px;color:${INK};margin-top:14px;font-family:var(--sans)">Traduire en direct</div><div style="font-size:13px;color:${MUTE};margin-top:8px;line-height:1.5">Expérience exclusive : caméra des lunettes, remplace l\'autre plugin Nexus au premier plan. Back la quitte.</div></div><div class="rowitem sel" style="top:300px;justify-content:center"><div class="n">Ouvrir</div></div><div class="rowitem" style="top:372px;justify-content:center"><div class="n">Annuler</div></div>`+hint('<b>tap</b> valider','<b>back</b> applications'),
+ '<b>L\'immersion est nommée par sa fonction</b> et dit ce qu\'elle coûte. Caméra, lecture continue, saisie riche, jeu : les seuls cas.',true),
+F('lien perdu pendant une page',hdr('RELAY · MIKA','back: détail')+`<div class="doc" style="opacity:.5"><div class="ts">14:02 · Mika</div><div>on est devant le cinéma</div><div class="ts" style="text-align:right">14:05 · toi</div><div class="me">j\'arrive, 10 min</div></div><div class="abs" style="left:22px;right:22px;top:300px;text-align:center"><div style="font-size:18px;color:${INK};font-family:var(--sans)">Téléphone déconnecté</div><div style="font-size:13px;color:${MUTE};margin-top:6px">La page reste lisible. Aucune action ne sera rejouée à la reconnexion.</div></div>`+hint('','<b>back</b> détail'),
+ '<b>La pile ne se ferme jamais toute seule.</b> La page devient inerte, Back dépile localement, rien n\'est renvoyé au retour du lien.',true),
+F('GPS perdu · île',home+`<div class="island" style="width:262px">${chipHead(gps(40),'<span style="color:'+MUTE+'">~120 m</span>','Rue de Rivoli')}<div style="margin-top:8px" class="divider">${map({w:259,h:190,heading:0,scale:.42,anchorY:.6,lost:true,marks:[{kind:'turn',at:[230,310]}],scaleBar:[42,'50 m']})}</div><div class="foot"><span style="color:${MUTE}">GPS lost · last fix 40 s</span><span>12:24</span></div></div>`,
+ '<b>On le dit, on ne devine pas.</b> Nord en haut, point sans flèche, tracé en pointillé, distance en « ~ ». Le texte de Maps reste vrai, la carte avoue.'),
+F('Maps guide · pas de tracé',home+`<div class="island" style="width:262px">${chipHead(arrow(40),'120 m','Rue de Rivoli')}<div style="margin-top:8px" class="divider">${map({w:259,h:190,scale:.42,route:null,scaleBar:[42,'50 m']})}</div><div class="foot"><span><b>12:24</b> arrival</span><span>Google Maps</span></div></div>`,
+ '<b>Le cas Google Maps / Citymapper.</b> Pas de géométrie d\'itinéraire, donc rues + toi + cap, et la manœuvre lue dans la notif. La source est dite en pied.'),
+];
+
+/* ---------- 6. transit ---------- */
+const transit=[
+F('marcher vers l\'arrêt · île',home+`<div class="island" style="width:262px">${chipHead(walk(40),'4 min','Gare du Nord','250 m')}<div style="margin-top:8px" class="divider">${map({w:259,h:190,scale:.36,anchorY:.7,route:[[255,640],[230,310],[500,300]],marks:[{kind:'stop',at:[500,300],text:'B'}],compass:false,scaleBar:[36,'50 m']})}</div><div class="foot"><span><span class="badge" style="font-size:12px;padding:0 6px">RER B</span> departs <b>12:36</b></span><span>12:51</span></div></div>`,
+ '<b>Minutes + mètres empilés</b>, l\'arrêt sur la carte avec la lettre de la ligne, le départ visé en pied.'),
+F('attendre à l\'arrêt · panel',home+`<div class="island" style="width:374px;padding:14px 16px 12px"><div class="row"><span class="badge" style="font-size:20px">RER B</span><span style="font-size:17px;color:${INK}">→ Robinson</span><span style="margin-left:auto;font-size:14px;color:${MUTE}">Platform 2</span></div><div class="row" style="margin-top:12px;align-items:baseline;gap:18px"><span class="dist" style="font-size:44px">3 min</span><span style="font-size:17px;color:${MUTE}">then 11 · 18</span></div><div class="then" style="margin-top:12px">Get off at <b style="color:${INK};font-weight:500">Luxembourg</b> · 3 stops · 7 min</div></div>`,
+ '<b>Pas de carte debout à l\'arrêt.</b> Ligne, direction, quai, prochains départs, et déjà où descendre.'),
+F('à bord · ruban (page)',hdr('NAVIGATION · RER B','back: racine')+`<div class="row" style="position:absolute;left:22px;top:66px;right:22px">${train(36)}<div><div class="dist" style="font-size:30px">3 stops</div><div style="font-size:13px;color:${MUTE}">to <b style="color:${INK};font-weight:500">Luxembourg</b> · 7 min</div></div><span class="badge" style="margin-left:auto">RER B</span></div><div style="position:absolute;left:18px;right:18px;top:130px">${ribbon([{name:'Gare du Nord',right:'12:40'},{name:'Châtelet–Les Halles',right:'12:44'},{name:'Saint-Michel',right:'12:46'},{name:'Luxembourg',right:'12:48',off:true},{name:'Port-Royal'}],444,330,[0,1,.4])}</div><div class="abs" style="left:22px;right:22px;top:480px;font-size:12px;color:${MUTE}">exit <b style="color:${INK}">Jardin</b> · then walk 3 min · sous terre : position estimée entre deux arrêts</div>`+hint('<b>tap</b> commandes','<b>back</b> racine'),
+ '<b>Le ruban remplace la carte sous terre.</b> Arrêts passés sombres, à venir pâles, descente en vif. Le train est posé entre deux arrêts : on ne sait pas mieux et on ne fait pas semblant.',true),
+F('descendre · flare',home+`<div class="band">${train(52)}<div style="min-width:0"><div class="dist" style="font-size:40px">Next stop</div><div class="street" style="font-size:20px">Luxembourg · get off</div></div><span class="badge" style="margin-left:auto">RER B</span></div>`,
+ '<b>Urgent transit.</b> Même bande que le virage, déclenchée par « 1 arrêt » ou l\'heure prévue selon la source.'),
+];
+
+function fill(id,frames){const g=document.getElementById(id);for(const f of frames){const el=document.createElement('div');el.className='shot';el.innerHTML=`<span class="tag${f.d?' d':''}">${f.tag}</span><div class="wrap"><div class="frame">${f.html}</div></div><div class="cap">${f.cap}</div>`;g.appendChild(el)}}
+fill('g-amb',amb);fill('g-stack',stack);fill('g-nav',nav);fill('g-relay',relay);fill('g-states',states);fill('g-transit',transit);
+document.querySelectorAll('.scale button').forEach(b=>b.addEventListener('click',()=>{document.documentElement.style.setProperty('--scale',b.dataset.s);document.querySelectorAll('.scale button').forEach(x=>x.classList.toggle('on',x===b));}));
+</script>
+</body>
+</html>
