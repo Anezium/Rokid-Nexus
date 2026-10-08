@@ -1661,7 +1661,8 @@ onNexusPageClosed(closed: NexusPageClosed)
 
 `NexusPageRequest` carries `requestId`, `sessionGeneration`, `frameIndex`,
 `pageId`, optional `params`, and reason `open`, `refresh`, or `retry`.
-`NexusPage` echoes correlation fields and supplies a monotonic `revision`,
+`NexusPage` echoes correlation fields and supplies a `revision` that never goes
+backwards, even across refresh and retry (a lower one is dropped), plus
 `template`, `title`, object `body`, action list, and `live`. Templates are
 `summary`, `selectableList`, `document`, `commands`, `conversation`, `media`,
 `route`, or `ink`: the provider sends content and the hub owns layout, selection,
@@ -1692,6 +1693,8 @@ and a 64-character result message. Serialized `params` and template dataset
 UTF-8 bytes and all retained snapshots fit 524,288 bytes. Bodies are opaque to
 PR1 beyond shape and size; typed rendering comes later. Large documents need
 SPP above the CXR control-plane limit. Limits include serialized JSON syntax.
+JSON nesting is limited to eight levels, counting the payload object itself. A
+response or result arriving at or after its eight-second deadline counts as missed.
 At two seconds the hub shows Still loading; the absolute eight-second budget
 starts at selection and includes cold registration (at most five seconds),
 compilation, and transport. Failure shows Detail unavailable with the dated last
@@ -1708,7 +1711,9 @@ today. API v3 and unchanged plugins keep their existing immersion behaviour.
 
 Link loss makes pages inert, invalidates requests/actions/leases, and preserves
 local snapshots and BACK. Reconnect alone replays nothing: a wearer Retry and
-fresh authorization are required. See the wire section for the eight error
+fresh authorization are required. Revoking your grant or replacing your
+registration has the same effect, and replies tied to the earlier registration
+are rejected. See the wire section for the eight error
 codes and authenticated, owner-scoped provider routing.
 
 ## 4. Approve and debug

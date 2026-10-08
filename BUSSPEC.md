@@ -1707,17 +1707,23 @@ for the same session, frame, and page, with a higher revision.
 | Serialized `params` / dataset `data` object | 2,048 bytes each |
 | Entire serialized page response | 65,536 bytes |
 | Sum of retained frame snapshots | 524,288 bytes |
+| JSON nesting depth, payload object counted as level 1 | 8 levels |
 
 Byte limits use `toString().toByteArray(Charsets.UTF_8).size`, including object
 syntax and correlation fields, not character counts or transport compression.
 Pages above the small CXR control-plane limit require SPP. Oversize values are
-rejected rather than truncated. Before accepting a snapshot that would exceed
+rejected rather than truncated. Validation walks a payload iteratively before
+serializing it: deeper nesting, any string longer than 65,536 characters, or a
+value whose minimum serialized size already exceeds its cap is rejected first,
+and a value that cannot be serialized is invalid. The future host must still
+bound raw ingress before parsing. Before accepting a snapshot that would exceed
 the cumulative bound, evict the oldest covered snapshots while retaining their
 page ids for a later refresh.
 
 - `INVALID_PAGE_REQUEST`: request, action, result, visibility, or closed shape,
   enum, id, or parameter validation failed.
-- `INVALID_PAGE`: invalid response shape, template, action, label, or dataset.
+- `INVALID_PAGE`: invalid response shape, template, action, label, dataset,
+  nesting, or serialization.
 - `PAGE_TOO_LARGE`: the whole response exceeds 65,536 UTF-8 bytes.
 - `PAGE_TIMEOUT`: no usable page arrived by the absolute eight-second deadline.
 - `PAGE_UNAVAILABLE`: the provider cannot supply the page.
@@ -1731,9 +1737,15 @@ closed request are dropped and never reopen a session. Retry always creates a
 fresh request id. Refresh preserves the previous snapshot while validating it;
 at two seconds a still-loading hint appears, and at eight seconds the frame
 becomes Unavailable with the dated last snapshot, Retry, and Back. It never falls
-back to immersion automatically. Live revisions require the visible frame, its
+back to immersion automatically. Deadlines are judged on each reply's arrival
+time, not on the next timer tick: a response at or after its request deadline
+times the frame out, and a result at or after its invocation deadline leaves the
+action Unconfirmed. Live revisions require the visible frame, its
 current session/request identity, a held lease, `live: true`, and a strictly
-higher revision; covered, stale, or duplicate revisions are dropped.
+higher revision; covered, stale, or duplicate revisions are dropped. Revisions
+stay monotonic per frame across refresh and retry: a correlated response below
+the highest revision already shown is dropped as stale, and an equal revision
+keeps the displayed content.
 
 ### Visibility, actions, link loss, and negotiation
 
@@ -1761,6 +1773,14 @@ open. Restoration does not replay requests or actions; explicit Retry after
 fresh authorization is required. SPP loss and total disconnection must be
 distinguished by the future host. Base restoration only promises a still-live
 base; an Ink immersion closes on link loss under its existing contract.
+
+Grant revocation and replacement of the provider's registration are cancellation
+boundaries too. The hub invalidates that provider's pending requests,
+invocations, and leases; rejects any later response or result correlated with
+the earlier registration, even when its ids still match; and sends nothing more
+to it. Its frames become inert Unavailable, and Retry requires the provider's
+fresh authorization before a new request is sent. This specifies the future
+host; PR1 adds no runtime wiring for it.
 
 Future support will require **both** hub announcements on
 `/system/hub/capabilities` to include additive `pageSessionVersion: 1`. PR1 only
