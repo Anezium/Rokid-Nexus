@@ -237,7 +237,19 @@ Rules (each is a test):
     would exceed `MAX_SNAPSHOT_TOTAL_BYTES` evicts the oldest covered snapshot
     (keeping its `pageId` for refresh) before accepting.
 14. `Closed` ignores everything except `TripleTap`, `ActivityStarted/Ended`,
-    `NoticeArrived/Armed/Cleared` (state bookkeeping only).
+    `NoticeArrived/Armed/Cleared` and `EditableFocused` (state bookkeeping only; the
+    editable flag is recorded in every state so that rule 1 sees it, and it is cleared
+    by `EditableFocused(false)` in every state). `LinkLost/LinkRestored` are tracked
+    only while a session is open; the host re-sends the link state when a session
+    opens (PR2).
+
+Decisions taken for the executor's questions: snapshot bytes are the UTF-8 size of the
+serialized payload (rule 13 is tested with an injected smaller budget); what a selected
+item does comes from an injected item resolver (default: a `plugin` action without
+`confirm` sends an action, `confirm`, `hub` and `immersion` items are inert until PR2);
+the first display of a frame also emits `SendVisibility(visible=true, lease)` (one
+sentence added to BUSSPEC); live revisions follow the stricter BUSSPEC text (`live:
+true`, lease held, same original request id), which satisfies rule 10.
 
 # Acceptance tests
 
