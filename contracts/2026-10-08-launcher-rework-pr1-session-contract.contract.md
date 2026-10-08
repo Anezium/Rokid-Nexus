@@ -241,16 +241,20 @@ Rules (each is a test):
 
 # Acceptance tests
 
+`$BASE` is the worktree HEAD recorded by the executor with `git rev-parse HEAD`
+before its first edit (the owner's plan, mockup and contract commits lie below it and
+are excluded from the scope, test-file and commit checks).
+
 | # | Check | Command | Expected |
 |---|-------|---------|----------|
 | 1 | Shared contract tests | `./gradlew :shared:testDebugUnitTest` | BUILD SUCCESSFUL, `PageSurfaceContractTest` ≥ 12 tests covering: valid request, each error code, byte limits computed on UTF-8, template list, action label limit, id safety |
 | 2 | Reducer tests | `./gradlew :glasses-hub:testDebugUnitTest :glasses-hub:assembleDebug` | BUILD SUCCESSFUL, `SessionReducerTest` with at least one test per rule 1–14 (≥ 20 tests), named after the rule |
 | 3 | No wiring | `git grep -n "session\.Session" -- glasses-hub/src/main | grep -v "/session/"` | no output |
 | 4 | No Android in the reducer | `git grep -n "^import android" -- glasses-hub/src/main/java/com/anezium/rokidbus/glasses/session` | no output |
-| 5 | Scope | `git diff --name-only fb8bc866..HEAD` | every path matches `scope_globs`, none matches `forbidden_globs` |
+| 5 | Scope | `git diff --name-only $BASE..HEAD` | every path matches `scope_globs`, none matches `forbidden_globs` |
 | 6 | Docs placed | `grep -n "## Session and page protocol v1 (specified, not active)" BUSSPEC.md` and `grep -n "## Pages (preview, not yet shipped)" docs/PLUGIN_SDK.md` | one hit each, BUSSPEC hit after the `## Activity protocol v1` section and before `## Camera contract` |
-| 7 | Existing suites intact | same as 1 and 2 | no previously existing test removed or renamed (`git diff --stat fb8bc866..HEAD -- '*Test.kt'` shows only the two new files) |
-| 8 | Commits | `git log --format='%an %s' fb8bc866..HEAD` | author Anezium on every commit, ≥ 3 commits, no AI attribution; the baseline `fb8bc866` (plan, mockup, contract) is the owner's and is excluded from the scope and test-file checks |
+| 7 | Existing suites intact | same as 1 and 2 | no previously existing test removed or renamed (`git diff --stat $BASE..HEAD -- '*Test.kt'` shows only the two new files) |
+| 8 | Commits | `git log --format='%an %s' $BASE..HEAD` | author Anezium on every commit, ≥ 3 commits, no AI attribution |
 
 # Plan sketch
 
@@ -276,7 +280,7 @@ Rules (each is a test):
 
 - Shared checkout rule: the owner runs several sessions on one clone. Work ONLY in the
   worktree `E:\Tools\Rokid\RokidNexus-launcher-rework` (branch `dev/launcher-rework`,
-  starting commit `fb8bc866`). Never `git checkout` another branch there. Commit at
+  starting commit = `$BASE`, see Acceptance tests). Never `git checkout` another branch there. Commit at
   every coherent step; an uncommitted file can vanish.
 - `local.properties` in the worktree is a verbatim copy of the main checkout's; it is
   untracked and must not be edited or regenerated. The hubs link against the vendor CXR
