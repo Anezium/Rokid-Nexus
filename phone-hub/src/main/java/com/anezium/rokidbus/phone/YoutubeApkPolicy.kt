@@ -79,13 +79,13 @@ internal object YoutubeApkPolicy {
         return "This APK is YouTube ${archive.versionName ?: archive.versionCode}, not $STOCK_YOUTUBE_VERSION which the Rokid controls patch targets."
     }
 
-    fun updateError(archive: ArtifactArchiveInfo, minSdk: Int, inventory: YoutubeInventory): String? {
+    fun updateError(archive: ArtifactArchiveInfo, minSdk: Int, inventory: YoutubeInventory, displayName: String = "YouTube"): String? {
         if (minSdk > inventory.sdk) return "This APK requires a newer Android version than the glasses."
         val installed = inventory.apps.singleOrNull { it.packageName == archive.packageName }
             ?: return "The glasses did not report this package. Refresh and retry."
         if (!installed.installed) return null
         if (installed.signer.isEmpty() || installed.signer != signer(archive)) {
-            return "This APK has a different signing key. Use an update signed with the original key; Nexus will not remove the installed app. If Patcher produced the installed app, import the key backup you exported from it; otherwise remove YouTube from the glasses by hand only if you accept losing its data."
+            return "This APK has a different signing key. Use an update signed with the original key; Nexus will not remove the installed app. If Patcher produced the installed app, import the key backup you exported from it; otherwise remove $displayName from the glasses by hand only if you accept losing its data."
         }
         if (archive.versionCode < installed.versionCode) return "A newer version is already installed on the glasses."
         return null

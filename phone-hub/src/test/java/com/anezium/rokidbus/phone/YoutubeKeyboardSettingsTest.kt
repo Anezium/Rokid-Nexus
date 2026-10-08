@@ -32,6 +32,19 @@ class YoutubeKeyboardSettingsTest {
     }
 
     @Test
+    fun `Reddit has a separate opt in and cannot open a lookalike package`() {
+        val settings = YoutubeKeyboardSettings(context).apply { autoOpen = true }
+        val reddit = com.anezium.rokidbus.shared.RedditSetupContract.REDDIT
+        assertFalse(settings.shouldRequestKeyboard(reddit, false, 1))
+        settings.redditAutoOpen = true
+        settings.autoOpen = false
+        assertTrue(settings.shouldRequestKeyboard(reddit, false, 177))
+        assertFalse(settings.shouldRequestKeyboard(YoutubeSetupContract.YOUTUBE, false, 1))
+        assertFalse(settings.shouldRequestKeyboard("$reddit.fake", false, 1))
+        assertFalse(settings.shouldRequestKeyboard(reddit, false, 0))
+    }
+
+    @Test
     fun `auto keyboard defaults off and remembers both choices`() {
         val settings = YoutubeKeyboardSettings(context)
         assertFalse(settings.autoOpen)

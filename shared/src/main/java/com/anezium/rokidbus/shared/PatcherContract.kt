@@ -41,6 +41,7 @@ object PatcherContract {
      */
     const val EXTRA_RETURN_TO_HUB = "returnToHub"
     const val TARGET_YOUTUBE = "youtube"
+    const val TARGET_REDDIT = "reddit"
 
     fun isTargetId(id: String): Boolean = id.matches(Regex("[a-z][a-z0-9._-]{0,63}"))
 }

@@ -360,6 +360,7 @@ class BusHubService : Service() {
     private lateinit var mediaSyncCoordinator: MediaSyncCoordinator
     private lateinit var coreRemoteBridge: PhoneCoreRemoteBridge
     private lateinit var youtubeSetup: YoutubeSetupController
+    private lateinit var redditSetup: YoutubeSetupController
     @Volatile private var youtubeUploadId: Long? = null
     private lateinit var manualPairingEngine: GlassesManualPairingEngine
     private var manualPairingEngineSubscription: Closeable? = null
@@ -750,6 +751,14 @@ class BusHubService : Service() {
             send = ::sendRemote,
             upload = ::uploadYoutubeApk,
         )
+        redditSetup = YoutubeSetupController(
+            applicationContext,
+            connected = { linkState() and (LinkStateBits.CXR_CONTROL_UP or LinkStateBits.SPP_DATA_UP) != 0 },
+            installReady = { isCxrUp() && cxrLink != null && isPhoneWifiEnabled() },
+            send = ::sendRemote,
+            upload = ::uploadYoutubeApk,
+            target = NativeSetupTarget.REDDIT,
+        )
         coreRemoteBridge = PhoneCoreRemoteBridge(
             context = applicationContext,
             sendRemote = ::sendRemote,
@@ -972,6 +981,7 @@ class BusHubService : Service() {
         connectSpp()
         startPeriodicUpdateChecks()
         youtubeSetup.start()
+        redditSetup.start()
         log("BusHubService created enabled=$hubEnabled")
     }
 
@@ -1066,6 +1076,8 @@ class BusHubService : Service() {
     private fun enableHub() {
         prefs().edit().putBoolean(PREF_ENABLED, true).apply()
         hubEnabled = true
+        // Bound plugins can keep this service alive after stopHub closes the UI bridge.
+        if (::coreRemoteBridge.isInitialized) coreRemoteBridge.start()
         if (canRunHub(this)) {
             startForegroundWithType()
         } else {
@@ -1102,6 +1114,7 @@ class BusHubService : Service() {
 
     override fun onDestroy() {
         if (::youtubeSetup.isInitialized) youtubeSetup.close()
+        if (::redditSetup.isInitialized) redditSetup.close()
         stopPeriodicUpdateChecks()
         pinHandler.removeCallbacks(pinExpiryTick)
         inkResultHandler.removeCallbacksAndMessages(null)
@@ -1409,6 +1422,7 @@ class BusHubService : Service() {
             envelope.path == NativeAppContract.RESULT_PATH
         ) {
             val handled = (::youtubeSetup.isInitialized && youtubeSetup.handleRemote(envelope)) ||
+                (::redditSetup.isInitialized && redditSetup.handleRemote(envelope)) ||
                 (::coreRemoteBridge.isInitialized && coreRemoteBridge.handleRemote(envelope))
             recordRemoteRoute(
                 envelope,
@@ -4947,6 +4961,10 @@ class BusHubService : Service() {
             val cxrConnected = state and LinkStateBits.CXR_CONTROL_UP != 0
             if (!cxrConnected) synchronized(glassesAppOperationLock) { youtubeUploadId = null }
             youtubeSetup.onLinkChanged(
+                state and (LinkStateBits.CXR_CONTROL_UP or LinkStateBits.SPP_DATA_UP) != 0,
+                cxrConnected,
+            )
+            if (::redditSetup.isInitialized) redditSetup.onLinkChanged(
                 state and (LinkStateBits.CXR_CONTROL_UP or LinkStateBits.SPP_DATA_UP) != 0,
                 cxrConnected,
             )
