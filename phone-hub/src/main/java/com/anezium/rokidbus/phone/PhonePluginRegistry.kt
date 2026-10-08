@@ -7,6 +7,7 @@ import com.anezium.rokidbus.shared.BusEnvelope
 import com.anezium.rokidbus.shared.BusPaths
 import com.anezium.rokidbus.shared.EditableSurfaceContract
 import com.anezium.rokidbus.shared.GlyphContract
+import com.anezium.rokidbus.shared.PageSurfaceContract
 import com.anezium.rokidbus.shared.ForegroundSurfacePathPolicy
 import com.anezium.rokidbus.shared.plugin.NexusInputEvent
 import com.anezium.rokidbus.shared.plugin.NexusPlugin
@@ -30,6 +31,8 @@ class PhonePluginRegistry(
     private val externalController: ExternalPluginController? = null,
     private val journal: PluginBusJournal? = null,
     glyphReader: ((PhonePluginPrincipal) -> List<GlyphContract.CustomGlyph>)? = null,
+    /** The page version an approved entry provides; 0 for built-ins and plugins without pages. */
+    private val pageVersion: (PluginCatalogEntry) -> Int = { it.principal?.descriptor?.pageSessionVersion ?: 0 },
 ) : NexusPluginHost {
     private data class Subscription(
         val pathPrefix: String,
@@ -172,7 +175,13 @@ class PhonePluginRegistry(
                             JSONObject()
                                 .put("id", entry.id)
                                 .put("displayName", entry.displayName)
-                                .apply { entry.iconKey?.let { put("iconKey", it) } },
+                                .apply { entry.iconKey?.let { put("iconKey", it) } }
+                                .apply {
+                                    // Absent means no pages, which is what an old glasses hub assumes anyway.
+                                    pageVersion(entry).takeIf { it > 0 }?.let {
+                                        put(PageSurfaceContract.CAPABILITY_FIELD_PAGE_SESSION_VERSION, it)
+                                    }
+                                },
                         )
                     }
                 },

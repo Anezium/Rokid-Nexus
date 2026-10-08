@@ -273,4 +273,41 @@ class PhonePluginRegistryTest {
         iconKey = principal.descriptor.iconKey,
         principal = principal,
     )
+
+    @Test
+    fun `launcher entries carry the page version only for providers that offer pages`() {
+        val provider = principal("nav", launchable = true, iconKey = "nav")
+            .let { it.copy(descriptor = it.descriptor.copy(pageSessionVersion = 1)) }
+        val plain = principal("hello", launchable = true, iconKey = "star")
+        val ungranted = principal("relay", launchable = true, iconKey = "relay")
+            .let { it.copy(descriptor = it.descriptor.copy(pageSessionVersion = 1)) }
+        val catalog = PluginCatalog(
+            listOf(provider, plain, ungranted).map { catalogEntry(it, PluginCatalogState.ENABLED, launchable = true) },
+        )
+        val sent = mutableListOf<BusEnvelope>()
+        val registry = PhonePluginRegistry(
+            context = RuntimeEnvironment.getApplication(),
+            plugins = emptyList(),
+            sendEnvelope = { envelope ->
+                sent += envelope
+                null
+            },
+            capabilitiesProvider = { 0 },
+            logger = {},
+            catalogProvider = { catalog },
+            glyphReader = { emptyList() },
+            // The hub only counts an entry whose grant can serve pages.
+            pageVersion = { entry -> if (entry.id == "relay") 0 else entry.principal?.descriptor?.pageSessionVersion ?: 0 },
+        )
+
+        registry.syncLauncherList()
+
+        val entries = sent.single().payload.getJSONArray("plugins")
+        val versions = (0 until entries.length()).associate { index ->
+            val entry = entries.getJSONObject(index)
+            entry.getString("id") to entry.opt("pageSessionVersion")
+        }
+        assertEquals(mapOf("nav" to 1, "hello" to null, "relay" to null), versions)
+        registry.close()
+    }
 }

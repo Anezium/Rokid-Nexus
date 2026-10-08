@@ -1,5 +1,6 @@
 package com.anezium.rokidbus.phone
 
+import com.anezium.rokidbus.shared.PageSurfaceContract
 import android.content.ComponentName
 import com.anezium.rokidbus.shared.BusConstants
 import org.junit.Assert.assertEquals
@@ -137,5 +138,19 @@ class PhonePluginDiscoveryTest {
             ),
         )
         assertEquals(listOf("alpha", "zulu"), results.map { it.displayName.lowercase() })
+    }
+
+    @Test
+    fun `page metadata is read into the descriptor and never invalidates a plugin`() {
+        fun pages(value: String?): Int {
+            val result = PhonePluginDiscovery.evaluate(
+                listOf(record(extraMetadata = listOfNotNull(value?.let { PageSurfaceContract.META_PLUGIN_PAGES to it }))),
+            ).single()
+            assertTrue("$result", result is PhonePluginCandidate.Valid)
+            return (result as PhonePluginCandidate.Valid).principal.descriptor.pageSessionVersion
+        }
+        assertEquals(1, pages("1"))
+        assertEquals(0, pages(null))
+        assertEquals(0, pages("7"))
     }
 }
