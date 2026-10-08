@@ -115,13 +115,31 @@ class SessionReducerTest {
     }
 
     @Test
-    fun `rule 2 a gate contact without classification expires instead of swallowing later input`() {
+    fun `rule 2 review a gate-owned classification at contact plus 800 ms is still absorbed`() {
         send(TripleTap(1_000))
         send(Contact(1_700))
         send(Tick(1_800))
+        val root = model.state
 
-        send(Step(1, 1_700 + PageSurfaceContract.GATE_MS))
-        assertEquals(1, (model.state as SessionState.Root).selected)
+        send(Enter(1_700 + PageSurfaceContract.GATE_MS))
+        assertEquals(root, model.state)
+        assertEquals(listOf(SessionEffect.None), effects)
+        assertTrue(model.gateContacts.isEmpty())
+    }
+
+    @Test
+    fun `rule 2 a new contact after the gate releases an unsettled gate contact`() {
+        send(TripleTap(1_000))
+        send(Contact(1_600))
+        send(Contact(1_700))
+        send(Tick(1_800))
+        send(Back(2_000))
+        assertTrue(model.state is SessionState.Root)
+        assertEquals(1, model.gateContacts.size)
+
+        send(Contact(5_000))
+        send(Step(1, 5_300))
+        assertEquals(1, root().selected)
         assertEquals(listOf(ShowRoot), effects)
     }
 

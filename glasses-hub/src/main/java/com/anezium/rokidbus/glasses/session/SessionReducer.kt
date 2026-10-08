@@ -36,8 +36,8 @@ internal class SessionReducer(
             else -> when (val state = model.state) {
                 SessionState.Closed -> onClosed(model, event)
                 is SessionState.Opening -> onOpening(model, state, event)
-                is SessionState.Root -> absorbGateClassification(model, event) ?: onRoot(gestureSettled(model, event), state, event)
-                is SessionState.InPage -> absorbGateClassification(model, event) ?: onPage(gestureSettled(model, event), state, event)
+                is SessionState.Root -> absorbGateClassification(model, event) ?: onRoot(model, state, event)
+                is SessionState.InPage -> absorbGateClassification(model, event) ?: onPage(model, state, event)
             }
         }
         return transition.copy(effects = transition.effects.ifEmpty { listOf(SessionEffect.None) })
@@ -86,8 +86,13 @@ internal class SessionReducer(
     private fun onOpening(model: SessionModel, state: SessionState.Opening, event: SessionEvent): SessionTransition {
         val deadline = state.sinceMs + PageSurfaceContract.GATE_MS
         return when (event) {
-            is SessionEvent.Contact ->
-                keep(if (event.nowMs < deadline) model.copy(gateContacts = model.gateContacts + event.nowMs) else model)
+            is SessionEvent.Contact -> keep(
+                if (event.nowMs < deadline) {
+                    model.copy(gateContacts = model.gateContacts + event.nowMs)
+                } else {
+                    model.copy(gateContacts = emptyList())
+                },
+            )
             is SessionEvent.Enter, is SessionEvent.Back, is SessionEvent.Step ->
                 keep(model.copy(gateContacts = model.gateContacts.drop(1)))
             is SessionEvent.Tick ->
@@ -123,6 +128,8 @@ internal class SessionReducer(
             )
             SessionEvent.LinkLost -> keep(model.copy(linkLost = true))
             SessionEvent.LinkRestored -> keep(model.copy(linkLost = false))
+            // A new contact after the gate proves the gate's gestures are over.
+            is SessionEvent.Contact -> keep(model.copy(gateContacts = emptyList()))
             // Triple tap stays at the root; late page traffic never reopens a frame.
             else -> keep(model)
         }
@@ -157,6 +164,7 @@ internal class SessionReducer(
             )
             // Restoration replays nothing; the wearer's next Retry does.
             SessionEvent.LinkRestored -> keep(model.copy(linkLost = false))
+            is SessionEvent.Contact -> keep(model.copy(gateContacts = emptyList()))
             else -> keep(model)
         }
 
@@ -470,22 +478,15 @@ internal class SessionReducer(
         is FrameStatus.Unavailable -> UNAVAILABLE_ITEMS
     }
 
-    /** A classification that completes a contact begun inside the gate is still absorbed. */
+    /**
+     * A classification completing a contact begun inside the gate is absorbed
+     * however late it arrives; ownership never expires by time. It is settled by
+     * that classification or dropped when a new contact begins after the gate.
+     */
     private fun absorbGateClassification(model: SessionModel, event: SessionEvent): SessionTransition? {
-        val nowMs = gestureTime(event) ?: return null
-        val pending = model.gateContacts.filter { nowMs - it < PageSurfaceContract.GATE_MS }
-        if (pending.isEmpty()) return null
-        return SessionTransition(model.copy(gateContacts = pending.drop(1)), listOf(SessionEffect.None))
-    }
-
-    private fun gestureSettled(model: SessionModel, event: SessionEvent): SessionModel =
-        if (gestureTime(event) != null && model.gateContacts.isNotEmpty()) model.copy(gateContacts = emptyList()) else model
-
-    private fun gestureTime(event: SessionEvent): Long? = when (event) {
-        is SessionEvent.Enter -> event.nowMs
-        is SessionEvent.Back -> event.nowMs
-        is SessionEvent.Step -> event.nowMs
-        else -> null
+        val classification = event is SessionEvent.Enter || event is SessionEvent.Back || event is SessionEvent.Step
+        if (!classification || model.gateContacts.isEmpty()) return null
+        return SessionTransition(model.copy(gateContacts = model.gateContacts.drop(1)), listOf(SessionEffect.None))
     }
 
     private fun rootBookkeeping(before: SessionModel, after: SessionModel): SessionTransition =
