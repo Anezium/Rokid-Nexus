@@ -1334,6 +1334,8 @@ internal object NexusSession {
             noticeUnsubscribe = NoticeController.observe { runOnMain(::onNoticeChanged) }
             surfaceUnsubscribe?.invoke()
             surfaceUnsubscribe = SurfaceController.observe { surface -> runOnMain { onSurfaceChanged(surface) } }
+            // Ahead of every observer, so a surface the session closes unseen reaches no renderer.
+            SurfaceController.setPresentationGate(::onSurfacePresented)
         }
     }
 
@@ -1346,6 +1348,7 @@ internal object NexusSession {
             noticeUnsubscribe = null
             surfaceUnsubscribe?.invoke()
             surfaceUnsubscribe = null
+            SurfaceController.setPresentationGate(null)
             appContext = null
         }
     }
@@ -1378,11 +1381,18 @@ internal object NexusSession {
             editableFocused = editable
             runner.dispatch(SessionEvent.EditableFocused(editable))
         }
-        val surfaceId = surface?.surfaceId
-        if (surface != null && surfaceId != surfaceShownId) {
-            runner.dispatch(SessionEvent.SurfaceShown(surface.surfaceId, surface.ownerPluginId, SystemClock.uptimeMillis()))
-        }
-        surfaceShownId = surfaceId
+        if (surface == null) surfaceShownId = null
+    }
+
+    /**
+     * A surface about to be presented, before any observer hears of it. A surface from an open
+     * the wearer cancelled is closed from here, synchronously, so it never reaches a renderer.
+     */
+    private fun onSurfacePresented(surface: NexusSurface) {
+        if (surface.surfaceId == surfaceShownId) return
+        // Recorded before dispatching: closing it unseen publishes the null that clears it again.
+        surfaceShownId = surface.surfaceId
+        runner.dispatch(SessionEvent.SurfaceShown(surface.surfaceId, surface.ownerPluginId, SystemClock.uptimeMillis()))
     }
 
     fun dispatch(event: SessionEvent) {

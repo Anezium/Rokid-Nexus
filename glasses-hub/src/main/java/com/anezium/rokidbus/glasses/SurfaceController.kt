@@ -52,6 +52,7 @@ object SurfaceController {
     private var inkDisplayTransitioning = false
     private var pendingInk: NexusSurface? = null
     @Volatile private var inkResyncListener: ((InkResyncRequest) -> Unit)? = null
+    private var presentationGate: ((NexusSurface) -> Unit)? = null
     @Volatile private var active: NexusSurface? = null
     // Which display path the active surface actually rendered through, not
     // just which one displayPath(context) currently names — the overlay path
@@ -95,6 +96,15 @@ object SurfaceController {
             .edit()
             .putString(PREF_DISPLAY_PATH, path.prefValue)
             .apply()
+    }
+
+    /**
+     * Installs the one callback that hears of a surface before any observer. It may close the
+     * surface on the spot, through the surface's own close path; then no observer and no window
+     * ever sees it. The Nexus session uses it to close the late surface of a cancelled open.
+     */
+    internal fun setPresentationGate(gate: ((NexusSurface) -> Unit)?) {
+        presentationGate = gate
     }
 
     fun observe(listener: (NexusSurface?) -> Unit): () -> Unit {
@@ -605,10 +615,10 @@ object SurfaceController {
     }
 
     /**
-     * Announces [surface] to the listeners, then displays it unless one of them synchronously
-     * closed or replaced it. The Nexus session closes the late surface of an open the wearer
-     * cancelled from inside that announcement; displaying it afterwards would leave a window up
-     * with no active surface behind it. False when the surface was not displayed.
+     * Presents [surface]: the presentation gate first, then the observers, then the window, each
+     * only while [surface] is still the active one. The gate closes the late surface of an open
+     * the wearer cancelled before any renderer hears of it; announcing or displaying it after
+     * that would draw content that was closed unseen. False when the surface was not displayed.
      */
     private fun publishAndDisplay(
         context: Context,
@@ -616,6 +626,10 @@ object SurfaceController {
         forcedPath: SurfaceDisplayPath?,
         isHandoff: Boolean,
     ): Boolean {
+        presentationGate?.let { gate ->
+            runCatching { gate(surface) }.onFailure { logError("Surface presentation gate failed", it) }
+        }
+        if (active !== surface) return false
         notifyListeners(surface)
         if (active !== surface) return false
         displaySurface(context, surface, forcedPath, isHandoff)
@@ -1067,6 +1081,8 @@ object SurfaceController {
 
     private fun notifyListeners(surface: NexusSurface?) {
         listeners.forEach { listener ->
+            // A listener may close or replace the surface; the ones after it never hear of it.
+            if (surface != null && active !== surface) return
             runCatching { listener(surface) }
         }
     }

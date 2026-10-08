@@ -1,6 +1,12 @@
 package com.anezium.rokidbus.glasses.session
 
 import android.app.Application
+import android.os.Looper
+import android.text.Editable
+import android.text.TextWatcher
+import android.view.View
+import android.view.ViewGroup
+import android.widget.TextView
 import com.anezium.rokidbus.glasses.SurfaceActivity
 import com.anezium.rokidbus.glasses.SurfaceController
 import com.anezium.rokidbus.shared.BusEnvelope
@@ -14,16 +20,19 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
+import org.robolectric.android.controller.ActivityController
 import org.robolectric.annotation.Config
 
 /**
- * Rule 16 at the window: the real surface controller announces a late surface, the session
- * closes it from inside that announcement, and nothing of it may be displayed afterwards. With
- * no accessibility service connected, a displayed surface falls back to `SurfaceActivity`, so a
- * started activity is the display this test watches for.
+ * Rule 16 at the window: the real surface controller presents a late surface, the session closes
+ * it from its presentation gate, and nothing of it may reach a renderer afterwards. With no
+ * accessibility service connected, a displayed surface falls back to `SurfaceActivity`, so a
+ * started activity is one display this test watches for; an already running `SurfaceActivity`,
+ * whose text views record every text they are given, is the other.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [32])
@@ -31,6 +40,7 @@ class CancelledOpenPublicationTest {
     private val app: Application = RuntimeEnvironment.getApplication()
     private val requests = mutableListOf<SessionEffect.RequestPage>()
     private val closes = mutableListOf<SessionEffect.CloseSurface>()
+    private val rendered = mutableListOf<String>()
     private var now = 0L
     private val runner = SessionRunner(
         reducer = SessionReducer(PageItemResolver { page -> page.actions.map { PageItem.Launch(it.id) } }),
@@ -55,31 +65,108 @@ class CancelledOpenPublicationTest {
             override fun settled(model: SessionModel) = Unit
         },
     )
-    private var unsubscribe: (() -> Unit)? = null
+    private val unsubscribes = mutableListOf<() -> Unit>()
+    private var activity: ActivityController<SurfaceActivity>? = null
 
     @After
     fun tearDown() {
-        unsubscribe?.invoke()
+        SurfaceController.setPresentationGate(null)
+        unsubscribes.forEach { it() }
         SurfaceController.activeSurface()?.let { SurfaceController.closeUnseen(it.surfaceId) }
+        activity?.destroy()
     }
 
     @Test
     fun `CloseSurface is never followed by a display of that surface`() {
         cancelOpen("maps")
-        unsubscribe = SurfaceController.observe { surface ->
-            if (surface != null) runner.dispatch(SessionEvent.SurfaceShown(surface.surfaceId, surface.ownerPluginId, now))
-        }
+        installSession()
 
-        show("maps:surface", "maps", seq = 1)
+        show("maps:surface", "maps", title = "Cancelled maps")
 
         assertEquals(listOf(SessionEffect.CloseSurface("maps:surface", SessionReducer.SURFACE_OPEN_CANCELLED)), closes)
         assertNull(SurfaceController.activeSurface())
         assertTrue(displayedSurfaces().isEmpty())
 
         // The same path displays a surface nobody cancelled.
-        show("lens:surface", "lens", seq = 2)
+        show("lens:surface", "lens", title = "Lens")
         assertEquals("lens:surface", SurfaceController.activeSurface()?.surfaceId)
         assertEquals(listOf("lens:surface"), displayedSurfaces())
+    }
+
+    @Test
+    fun `the cancelled surface never reaches a SurfaceActivity subscribed after the session`() {
+        cancelledSurfaceStaysOutOfRunningActivity(activityFirst = false)
+    }
+
+    @Test
+    fun `the cancelled surface never reaches a SurfaceActivity subscribed before the session`() {
+        cancelledSurfaceStaysOutOfRunningActivity(activityFirst = true)
+    }
+
+    @Test
+    fun `an observer that closes a surface keeps it from the observers after it`() {
+        show("notes:card", "notes", title = "Notes")
+        // Any observer ahead of the activity that closes what it hears about, as the session's
+        // own observer once did.
+        unsubscribes += SurfaceController.observe { surface ->
+            if (surface?.surfaceId == "maps:surface") SurfaceController.closeUnseen(surface.surfaceId)
+        }
+        startActivity()
+
+        show("maps:surface", "maps", title = "Cancelled maps")
+
+        assertTrue(rendered.none { "Cancelled maps" in it })
+        assertNull(SurfaceController.activeSurface())
+        show("lens:surface", "lens", title = "Lens")
+        assertTrue("rendered=$rendered", "Lens" in rendered)
+    }
+
+    private fun cancelledSurfaceStaysOutOfRunningActivity(activityFirst: Boolean) {
+        cancelOpen("maps")
+        // A surface underneath, displayed through the activity path and its running activity.
+        show("notes:card", "notes", title = "Notes")
+        assertEquals(listOf("notes:card"), displayedSurfaces())
+        if (activityFirst) {
+            startActivity()
+            installSession()
+        } else {
+            installSession()
+            startActivity()
+        }
+
+        show("maps:surface", "maps", title = "Cancelled maps")
+
+        assertEquals(listOf(SessionEffect.CloseSurface("maps:surface", SessionReducer.SURFACE_OPEN_CANCELLED)), closes)
+        assertTrue("rendered=$rendered", rendered.none { "Cancelled maps" in it })
+        assertNull(SurfaceController.activeSurface())
+        assertTrue(displayedSurfaces().isEmpty())
+
+        // The recording is live: a surface nobody cancelled reaches the same renderer.
+        show("lens:surface", "lens", title = "Lens")
+        assertTrue("rendered=$rendered", "Lens" in rendered)
+    }
+
+    /** What NexusSession registers: its surface observer, then the presentation gate. */
+    private fun installSession() {
+        unsubscribes += SurfaceController.observe { }
+        SurfaceController.setPresentationGate { surface ->
+            runner.dispatch(SessionEvent.SurfaceShown(surface.surfaceId, surface.ownerPluginId, now))
+        }
+    }
+
+    /** Starts a `SurfaceActivity` and records every text its views are given from then on. */
+    private fun startActivity() {
+        val controller = Robolectric.buildActivity(SurfaceActivity::class.java).create()
+        activity = controller
+        controller.get().window.decorView.textViews().forEach { view ->
+            view.addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
+                override fun afterTextChanged(s: Editable?) {
+                    rendered += s.toString()
+                }
+            })
+        }
     }
 
     /** Opens maps from a page, cancels the open with BACK, then closes the session. */
@@ -116,15 +203,17 @@ class CancelledOpenPublicationTest {
         runner.dispatch(event)
     }
 
-    private fun show(surfaceId: String, ownerPluginId: String, seq: Long) {
+    private fun show(surfaceId: String, ownerPluginId: String, title: String) {
         val payload = JSONObject()
             .put("surfaceId", surfaceId)
             .put("ownerPluginId", ownerPluginId)
-            .put("seq", seq)
+            // The surface controller is a process-wide singleton that remembers each surface's
+            // last sequence number across tests, so every show here is newer than any before it.
+            .put("seq", nextSeq++)
             .put("kind", "card")
-            .put("title", ownerPluginId)
+            .put("title", title)
         SurfaceController.handleSurfaceEnvelope(app, BusEnvelope(path = BusPaths.SURFACE_SHOW, payload = payload))
-        shadowOf(android.os.Looper.getMainLooper()).idle()
+        shadowOf(Looper.getMainLooper()).idle()
     }
 
     private fun displayedSurfaces(): List<String> {
@@ -133,5 +222,15 @@ class CancelledOpenPublicationTest {
             .filter { it.component?.className == SurfaceActivity::class.java.name }
             .map { it.getStringExtra("surfaceId").orEmpty() }
             .toList()
+    }
+
+    private companion object {
+        var nextSeq = 1L
+    }
+
+    private fun View.textViews(): List<TextView> = when (this) {
+        is TextView -> listOf(this)
+        is ViewGroup -> (0 until childCount).flatMap { getChildAt(it).textViews() }
+        else -> emptyList()
     }
 }
