@@ -1694,7 +1694,9 @@ UTF-8 bytes and all retained snapshots fit 524,288 bytes. Bodies are opaque to
 PR1 beyond shape and size; typed rendering comes later. Large documents need
 SPP above the CXR control-plane limit. Limits include serialized JSON syntax.
 JSON nesting is limited to eight levels, counting the payload object itself. A
-response or result arriving at or after its eight-second deadline counts as missed.
+response to a pending request, or an action result, arriving at or after its
+eight-second deadline counts as missed. Live revisions answer no request: they
+are judged by the lease alone and must arrive strictly before `leaseUntilMs`.
 At two seconds the hub shows Still loading; the absolute eight-second budget
 starts at selection and includes cold registration (at most five seconds),
 compilation, and transport. Failure shows Detail unavailable with the dated last

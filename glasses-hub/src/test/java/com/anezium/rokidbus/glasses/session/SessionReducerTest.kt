@@ -545,6 +545,21 @@ class SessionReducerTest {
     }
 
     @Test
+    fun `rule 10 a live revision past the request deadline is governed by the lease alone`() {
+        openRoot()
+        val request = showFirst(4_000)
+        val lease = 4_050 + PageSurfaceContract.LEASE_MS
+
+        send(PageResponse(page(request, revision = 2), 4_000 + PageSurfaceContract.PAGE_TIMEOUT_MS))
+        assertEquals(2L, (top().status as FrameStatus.Shown).revision)
+        send(PageResponse(page(request, revision = 3), lease - 1))
+        assertEquals(3L, (top().status as FrameStatus.Shown).revision)
+        send(PageResponse(page(request, revision = 4), lease))
+        assertEquals(3L, (top().status as FrameStatus.Shown).revision)
+        assertEquals(listOf(SessionEffect.None), effects)
+    }
+
+    @Test
     fun `rule 10 live revisions need a live page and are dropped on a covered frame`() {
         openRoot()
         val still = showFirst(4_000, live = false, actions = listOf(action("detail", kind = "hub")))

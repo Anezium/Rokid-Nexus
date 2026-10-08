@@ -1738,10 +1738,13 @@ fresh request id. Refresh preserves the previous snapshot while validating it;
 at two seconds a still-loading hint appears, and at eight seconds the frame
 becomes Unavailable with the dated last snapshot, Retry, and Back. It never falls
 back to immersion automatically. Deadlines are judged on each reply's arrival
-time, not on the next timer tick: a response at or after its request deadline
-times the frame out, and a result at or after its invocation deadline leaves the
-action Unconfirmed. Live revisions require the visible frame, its
-current session/request identity, a held lease, `live: true`, and a strictly
+time, not on the next timer tick: a response to a pending request arriving at or
+after that request's deadline times the frame out, and a result arriving at or
+after its invocation deadline leaves the action Unconfirmed. Live revisions
+answer no pending request, so no request deadline applies to them; they follow
+the lease alone and are accepted strictly before `leaseUntilMs`, dropped at or
+after it. They also require the visible frame, its
+current session/request identity, `live: true`, and a strictly
 higher revision; covered, stale, or duplicate revisions are dropped. Revisions
 stay monotonic per frame across refresh and retry: a correlated response below
 the highest revision already shown is dropped as stale, and an equal revision
