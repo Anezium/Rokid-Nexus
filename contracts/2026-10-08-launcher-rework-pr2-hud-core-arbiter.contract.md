@@ -1,7 +1,7 @@
 ---
 task: launcher-rework-pr2-hud-core-arbiter
 date: 2026-10-08
-status: active
+status: closed
 branch: dev/launcher-rework
 worktree: E:\Tools\Rokid\RokidNexus-launcher-rework
 base: f37bcc7c (origin/main after PR #47)
@@ -432,6 +432,21 @@ Verdict "not merge-ready". B1 closed; S1 closed for both observer orders. Two sh
    accepted, with a live attached-renderer cancellation test. Not to be fixed here.
 
 Then rerun acceptance 1-12 (row 12 now also covers F2) and report real tails.
+
+# Review round 4 (GPT-6.1 Sol, 2026-10-08, `design/nav-map-mockups/sol-review-pr2-round4.md`)
+
+Verdict "merge-ready". F2 closed (gate reconciles the active surface at installation,
+`NexusSession` connects before ring focus and the overlay restore on reconnect, identity
+checked after the callback); no blocker, should-fix or nit. F1 stays deferred to PR3 and no
+Ink runtime code changed. PR2 is closed at `cf06746d`; maintainer rerun on that commit:
+glasses-hub 799 tests / 0 failures / build OK, phone-hub 713 / 0.
+
+Carried to the PR3 contract: F1 (stage validated Ink state, run the presentation decision,
+project only if still accepted, live attached-renderer cancellation test); the items the
+executor deferred (live activities in the root, incoming `/page/*` replies on the glasses
+and their phone routing, `Home` vs `NativeApp` underneath via the foreground resolver,
+ambient layers that re-add themselves over the session window, an unrequested surface
+arriving while a session is open); removal of the undriven island selection model.
 
 # Plan sketch
 
