@@ -241,6 +241,20 @@ class GlassesHubCapabilitiesContractTest {
         .put("setupComplete", setupComplete)
         .put("setupFailureState", setupFailureState)
 
+    @Test
+    fun `page session version defaults to zero and round trips when announced`() {
+        val old = GlassesHubCapabilitiesContract.parse(legacyPayload(setupComplete = true, setupFailureState = ""))
+        assertEquals(0, old.pageSessionVersion)
+        val announced = GlassesHubCapabilitiesContract.create(features = 0, imageSurfaceVersion = 0, maxImageBytes = 0, versionName = null, pageSessionVersion = 1)
+        val payload = GlassesHubCapabilitiesContract.toJson(announced)
+        assertEquals(1, payload.getInt("pageSessionVersion"))
+        assertEquals(1, GlassesHubCapabilitiesContract.parse(payload).pageSessionVersion)
+        listOf("1", -3, 1.5).forEach {
+            assertEquals(0, GlassesHubCapabilitiesContract.parse(JSONObject(payload.toString()).put("pageSessionVersion", it)).pageSessionVersion)
+        }
+        assertEquals(0, GlassesHubCapabilitiesContract.create(features = 0, imageSurfaceVersion = 0, maxImageBytes = 0, versionName = null, pageSessionVersion = -1).pageSessionVersion)
+    }
+
     private data class LegacyCapabilities(
         val versionName: String?,
         val setupComplete: Boolean,

@@ -1,6 +1,7 @@
 package com.anezium.rokidbus.shared.plugin
 
 import com.anezium.rokidbus.shared.BusConstants
+import com.anezium.rokidbus.shared.PageSurfaceContract
 
 data class PluginDescriptor(
     val id: String,
@@ -18,6 +19,11 @@ data class PluginDescriptor(
      * plugin that declares none simply has no custom glyphs.
      */
     val glyphsResId: Int? = null,
+    /**
+     * The page protocol version this plugin provides, from `rokidbus.plugin.pages`; 0 when it
+     * provides no pages. Additive metadata: it is not a capability and needs no approval.
+     */
+    val pageSessionVersion: Int = 0,
 ) {
     companion object {
         private val idPattern = Regex("[a-z][a-z0-9._-]{2,63}")
@@ -114,6 +120,12 @@ object PluginDescriptorParser {
             ?.trim()
             ?.toIntOrNull()
             ?.takeIf { it != 0 }
+        // Page opt-in never invalidates an otherwise valid plugin: anything but one agreed
+        // supported value, conflicting entries included, simply means no pages.
+        val pageValues = metadata.filter { it.first == PageSurfaceContract.META_PLUGIN_PAGES }
+            .map { it.second?.trim() }
+            .toSet()
+        val pageSessionVersion = if (pageValues == setOf(PAGES_VALUE_V1)) PageSurfaceContract.VERSION else 0
         val launchable = when (values[BusConstants.META_PLUGIN_LAUNCHABLE]?.trim()?.lowercase()) {
             null, "", "true" -> true
             "false" -> false
@@ -131,7 +143,10 @@ object PluginDescriptorParser {
                 iconKey = iconKey,
                 iconDrawableResId = iconDrawableResId,
                 glyphsResId = glyphsResId,
+                pageSessionVersion = pageSessionVersion,
             ),
         )
     }
+
+    private const val PAGES_VALUE_V1 = "1"
 }

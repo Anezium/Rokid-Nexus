@@ -29,6 +29,8 @@ data class GlassesHubCapabilities(
     val coreReady: Boolean = false,
     val maintenanceReady: Boolean = false,
     val ttsVersion: Int = 0,
+    /** Session/page protocol version; only [PageSurfaceContract.VERSION] on both hubs enables pages. */
+    val pageSessionVersion: Int = 0,
 )
 
 /** Additive glasses-to-phone hub capabilities payload. Unknown fields remain ignorable. */
@@ -63,6 +65,7 @@ object GlassesHubCapabilitiesContract {
         coreReady: Boolean = false,
         maintenanceReady: Boolean = false,
         ttsVersion: Int = 0,
+        pageSessionVersion: Int = 0,
     ): GlassesHubCapabilities = GlassesHubCapabilities(
         protocolVersion = VERSION,
         features = features,
@@ -87,6 +90,7 @@ object GlassesHubCapabilitiesContract {
         coreReady = coreReady,
         maintenanceReady = maintenanceReady,
         ttsVersion = ttsVersion,
+        pageSessionVersion = PageSurfaceContract.sanitizeSessionVersion(pageSessionVersion),
     )
 
     fun toJson(capabilities: GlassesHubCapabilities): JSONObject = JSONObject()
@@ -115,6 +119,10 @@ object GlassesHubCapabilitiesContract {
         .put("coreReady", capabilities.coreReady)
         .put("maintenanceReady", capabilities.maintenanceReady)
         .put("ttsVersion", capabilities.ttsVersion)
+        .put(
+            PageSurfaceContract.CAPABILITY_FIELD_PAGE_SESSION_VERSION,
+            PageSurfaceContract.sanitizeSessionVersion(capabilities.pageSessionVersion),
+        )
         .also { payload ->
             capabilities.versionName?.let { payload.put("versionName", it) }
         }
@@ -147,6 +155,9 @@ object GlassesHubCapabilitiesContract {
         coreReady = payload.optBoolean("coreReady", false),
         maintenanceReady = payload.optBoolean("maintenanceReady", false),
         ttsVersion = payload.optInt("ttsVersion", 0),
+        pageSessionVersion = PageSurfaceContract.parseSessionVersion(
+            payload.opt(PageSurfaceContract.CAPABILITY_FIELD_PAGE_SESSION_VERSION),
+        ),
     )
 
     fun supportsInkSurface(capabilities: GlassesHubCapabilities): Boolean =

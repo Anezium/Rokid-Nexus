@@ -263,6 +263,33 @@ class PageSurfaceContractTest {
         assertEquals("pageSessionVersion", PageSurfaceContract.CAPABILITY_FIELD_PAGE_SESSION_VERSION)
     }
 
+    @Test
+    fun `a bounded result caps the whole payload including its replacement and identity`() {
+        val replacement = response().put("body", sizedObject(40_000))
+        val fits = result().put("replacement", replacement).put("pluginId", "maps")
+        valid(PageSurfaceContract.validateBoundedResult(fits))
+        // Each replacement fits its own page cap; together with the result they do not.
+        val padded = result().put("replacement", response().put("body", sizedObject(65_000)))
+            .put("providerRegistrationId", "x".repeat(600))
+        valid(PageSurfaceContract.validateResult(padded))
+        invalid(PageSurfaceContract.ERROR_PAGE_TOO_LARGE, PageSurfaceContract.validateBoundedResult(padded))
+        invalid(PageSurfaceContract.ERROR_INVALID_PAGE_REQUEST, PageSurfaceContract.validateBoundedResult(result().put("status", "maybe")))
+    }
+
+    @Test
+    fun `session versions are strict integers and negotiate only on both hubs at one`() {
+        assertEquals(1, PageSurfaceContract.parseSessionVersion(1))
+        assertEquals(1, PageSurfaceContract.parseSessionVersion(1L))
+        assertEquals(2, PageSurfaceContract.parseSessionVersion(2))
+        listOf(null, "1", 1.0, -1, Long.MAX_VALUE, true, JSONObject.NULL).forEach {
+            assertEquals("$it", 0, PageSurfaceContract.parseSessionVersion(it))
+        }
+        assertEquals(1, PageSurfaceContract.negotiatedSessionVersion(1, 1))
+        listOf(0 to 1, 1 to 0, 2 to 1, 1 to 2, 0 to 0).forEach { (local, remote) ->
+            assertEquals(0, PageSurfaceContract.negotiatedSessionVersion(local, remote))
+        }
+    }
+
     private fun correlation() = PageSurfaceContract.correlationPayload(PageCorrelation("req-1", 1L, 1, "maps:route"))
     private fun request() = correlation().put("reason", "open")
     private fun response() = correlation().put("revision", 1L).put("template", "summary").put("title", "Route")

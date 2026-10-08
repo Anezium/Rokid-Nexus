@@ -140,4 +140,18 @@ class PhoneHubCapabilitiesContractTest {
             )
         }
     }
+
+    @Test
+    fun `page session version defaults to zero and round trips when announced`() {
+        assertEquals(0, PhoneHubCapabilitiesContract.parse(JSONObject().put("features", 0)).pageSessionVersion)
+        val announced = PhoneHubCapabilitiesContract.create(0, null, pageSessionVersion = 1)
+        val payload = PhoneHubCapabilitiesContract.toJson(announced)
+        assertEquals(1, payload.getInt("pageSessionVersion"))
+        assertEquals(1, PhoneHubCapabilitiesContract.parse(payload).pageSessionVersion)
+        listOf("1", -2, 1.5, JSONObject.NULL).forEach {
+            assertEquals(0, PhoneHubCapabilitiesContract.parse(JSONObject(payload.toString()).put("pageSessionVersion", it)).pageSessionVersion)
+        }
+        // A future version is carried as announced and simply never negotiates.
+        assertEquals(2, PhoneHubCapabilitiesContract.parse(JSONObject().put("pageSessionVersion", 2)).pageSessionVersion)
+    }
 }

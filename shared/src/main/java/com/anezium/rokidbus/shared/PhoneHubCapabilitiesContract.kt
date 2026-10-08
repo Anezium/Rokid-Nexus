@@ -8,6 +8,8 @@ data class PhoneHubCapabilities(
     val activityAlwaysExpanded: Boolean = false,
     val hudTopInsetDp: Int = 0,
     val hudPositionAuto: Boolean = true,
+    /** Session/page protocol version; only [PageSurfaceContract.VERSION] on both hubs enables pages. */
+    val pageSessionVersion: Int = 0,
 )
 
 /** Additive phone-to-glasses hub capabilities payload. Unknown fields remain ignorable. */
@@ -25,6 +27,7 @@ object PhoneHubCapabilitiesContract {
         activityAlwaysExpanded: Boolean = false,
         hudTopInsetDp: Int = DEFAULT_HUD_TOP_INSET_DP,
         hudPositionAuto: Boolean = DEFAULT_HUD_POSITION_AUTO,
+        pageSessionVersion: Int = 0,
     ): PhoneHubCapabilities {
         val ready = features and BusCapabilityBits.CAMERA_CONSUMER_READY != 0
         return PhoneHubCapabilities(
@@ -33,6 +36,7 @@ object PhoneHubCapabilitiesContract {
             activityAlwaysExpanded = activityAlwaysExpanded,
             hudTopInsetDp = sanitizeHudTopInsetDp(hudTopInsetDp),
             hudPositionAuto = hudPositionAuto,
+            pageSessionVersion = PageSurfaceContract.sanitizeSessionVersion(pageSessionVersion),
         )
     }
 
@@ -42,6 +46,10 @@ object PhoneHubCapabilitiesContract {
         .put("activityAlwaysExpanded", capabilities.activityAlwaysExpanded)
         .put("hudTopInsetDp", sanitizeHudTopInsetDp(capabilities.hudTopInsetDp))
         .put("hudPositionAuto", capabilities.hudPositionAuto)
+        .put(
+            PageSurfaceContract.CAPABILITY_FIELD_PAGE_SESSION_VERSION,
+            PageSurfaceContract.sanitizeSessionVersion(capabilities.pageSessionVersion),
+        )
         .also { payload ->
             capabilities.cameraConsumerName?.let { payload.put("cameraConsumerName", it) }
         }
@@ -54,6 +62,9 @@ object PhoneHubCapabilitiesContract {
         hudPositionAuto = payload.optBoolean(
             "hudPositionAuto",
             DEFAULT_HUD_POSITION_AUTO,
+        ),
+        pageSessionVersion = PageSurfaceContract.parseSessionVersion(
+            payload.opt(PageSurfaceContract.CAPABILITY_FIELD_PAGE_SESSION_VERSION),
         ),
     )
 

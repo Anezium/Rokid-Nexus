@@ -104,6 +104,17 @@ object PageSurfaceContract {
     const val META_PLUGIN_PAGES = "rokidbus.plugin.pages"
     const val CAPABILITY_FIELD_PAGE_SESSION_VERSION = "pageSessionVersion"
 
+    // Additive transport metadata on the existing page routes. The phone hub stamps the first
+    // two from the authenticated sender; nothing a plugin supplies for them is trusted.
+    const val FIELD_PLUGIN_ID = "pluginId"
+    const val FIELD_PROVIDER_REGISTRATION_ID = "providerRegistrationId"
+    /** On a request: what is left of the glasses' absolute page budget when it was sent. */
+    const val FIELD_REMAINING_TIMEOUT_MS = "remainingTimeoutMs"
+    /** On a request: the revision floor the frame retains, when it retains one. */
+    const val FIELD_MINIMUM_REVISION = "minimumRevision"
+    /** On a visible visibility: what is left of the lease on the glasses when it was sent. */
+    const val FIELD_LEASE_DURATION_MS = "leaseDurationMs"
+
     const val TEMPLATE_SUMMARY = "summary"
     const val TEMPLATE_SELECTABLE_LIST = "selectableList"
     const val TEMPLATE_DOCUMENT = "document"
@@ -135,6 +146,22 @@ object PageSurfaceContract {
     private val resultStatuses = setOf("done", "rejected", "stale")
     private val closeReasons = setOf("back", "session_closed", "timeout", "link_lost", "replaced", "frame_limit")
     private val pageFields = setOf("revision", "template", "title", "body", "actions", "live", "data")
+
+    /**
+     * A peer's announced session/page version as this build reads it: a nonnegative integer, or
+     * 0 for anything absent, malformed, negative or not an integer.
+     */
+    fun parseSessionVersion(value: Any?): Int = when (value) {
+        is Int -> sanitizeSessionVersion(value)
+        is Long -> if (value in 0..Int.MAX_VALUE) value.toInt() else 0
+        else -> 0
+    }
+
+    fun sanitizeSessionVersion(value: Int): Int = value.coerceAtLeast(0)
+
+    /** Pages need both hubs on exactly this version; anything else, including a newer one, is unsupported. */
+    fun negotiatedSessionVersion(local: Int, remote: Int): Int =
+        if (local == VERSION && remote == VERSION) VERSION else 0
 
     fun isValidId(value: String): Boolean =
         value.isNotEmpty() && value.length <= MAX_ID_CHARS && value.all { it.code in 33..126 }
@@ -205,6 +232,19 @@ object PageSurfaceContract {
                 if (payload.has("message")) text(payload, "message", MAX_MESSAGE_CHARS) else null,
                 replacement,
             )
+        }
+
+    /**
+     * [validateResult] behind a bound on the whole result, replacement and transport identity
+     * included, so a result can never carry more than one complete page.
+     */
+    fun validateBoundedResult(payload: JSONObject): PageSurfaceValidationResult<PageSurfaceResult> =
+        validate(ERROR_INVALID_PAGE_REQUEST) {
+            boundedJson(payload, MAX_PAGE_BYTES, "result", ERROR_PAGE_TOO_LARGE)
+            when (val result = validateResult(payload)) {
+                is PageSurfaceValidationResult.Valid -> result.value
+                is PageSurfaceValidationResult.Invalid -> fail(result.reason, result.error)
+            }
         }
 
     fun validateVisibility(payload: JSONObject): PageSurfaceValidationResult<PageSurfaceVisibility> =
