@@ -414,6 +414,30 @@ class InputArbiterTest {
     }
 
     @Test
+    fun `A4 a field focused after a legacy trigger gets its ENTER and its BACK inside the suppression window`() {
+        rig.backend = LauncherBackend.LEGACY
+        tripleTap(0, 200, 400)
+        assertEquals(1, rig.delivered.count { it is ToLegacyLauncher && it.open })
+
+        // At 500 an editable card arrives through the activity path and the launcher steps aside.
+        rig.legacyShown = false
+        rig.activeSurfaceId = "notes:card"
+        rig.editableFocused = true
+        // An editable card claims BACK only; everything else is typed into its field.
+        rig.surfaceTakes = { it.keyCode == InputKeys.BACK && it.isDown }
+        rig.delivered.clear()
+
+        val enter = tap(InputKeys.ENTER, 700)
+        val back = tap(InputKeys.BACK, 900)
+
+        assertFalse(enter.first.consumed)
+        assertFalse(enter.second.consumed)
+        assertEquals(listOf<RoutedIntent>(ToSurface(raw(InputKeys.ENTER, DOWN, at = 700))), enter.first.intents)
+        assertTrue(back.first.consumed)
+        assertEquals(listOf<RoutedIntent>(ToSurface(raw(InputKeys.BACK, DOWN, at = 900))), back.first.intents)
+    }
+
+    @Test
     fun `A5 an open session owns touchpad navigation and nothing else hears it`() {
         openSessionRoot(at = 1_000)
         rig.activeSurfaceId = "player:card"

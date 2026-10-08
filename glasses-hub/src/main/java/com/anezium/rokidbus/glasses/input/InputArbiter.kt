@@ -256,13 +256,15 @@ internal class InputArbiter(private val context: InputContext) {
         // A3: the gate absorbs every contact and classification through the reducer.
         if (session && context.sessionGate) return toSession(event, viaWindow, out)
 
-        // A4: global recognition, from touchpad contacts the filter saw. Recognising a new triple
-        // tap and enforcing the suppression of one already recognised are separate questions: a
-        // focused field or an armed notice stops the first, never the second, or a notice that
-        // arrives after the trigger would be answered by the taps that completed it.
+        // A4: global recognition, from touchpad contacts the filter saw. A focused field turns the
+        // detector off entirely, as it always has: its keys are the wearer's typing, suppression
+        // included. An armed notice only stops a new triple tap from being recognised; the
+        // suppression of one already recognised stays in force under it, or a notice arriving
+        // after the trigger would be answered by the taps that completed it.
         if (global && event.isDown && event.keyCode != InputKeys.NOTIFICATION) contactAt = null
         val recognising = global && recognises(event)
-        val enforcing = global && event.deviceClass == DeviceClass.TOUCHPAD && event.keyCode != InputKeys.NOTIFICATION
+        val enforcing = global && event.deviceClass == DeviceClass.TOUCHPAD && !context.editableFocused &&
+            event.keyCode != InputKeys.NOTIFICATION
         // A key other than a contact can only be suppressed or passed by the detector, never trigger it.
         val decision = if (recognising || enforcing) {
             tripleTap.onKey(event.keyCode, event.action, event.repeatCount, event.eventTime)
