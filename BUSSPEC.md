@@ -1708,14 +1708,17 @@ for the same session, frame, and page, with a higher revision.
 | Entire serialized page response | 65,536 bytes |
 | Sum of retained frame snapshots | 524,288 bytes |
 | JSON nesting depth, payload object counted as level 1 | 8 levels |
+| Text form of any JSON number | 32 characters |
 
 Byte limits use `toString().toByteArray(Charsets.UTF_8).size`, including object
 syntax and correlation fields, not character counts or transport compression.
 Pages above the small CXR control-plane limit require SPP. Oversize values are
 rejected rather than truncated. Validation walks a payload iteratively before
-serializing it: deeper nesting, any string longer than 65,536 characters, or a
-value whose minimum serialized size already exceeds its cap is rejected first,
-and a value that cannot be serialized is invalid. The future host must still
+serializing it: deeper nesting, any string longer than 65,536 characters, any
+number whose text exceeds 32 characters, any value that is not a JSON object,
+array, string, number, boolean, or null, or a value whose minimum serialized
+size already exceeds its cap is rejected first, and a value that cannot be
+serialized is invalid. The future host must still
 bound raw ingress before parsing. Before accepting a snapshot that would exceed
 the cumulative bound, evict the oldest covered snapshots while retaining their
 page ids for a later refresh.

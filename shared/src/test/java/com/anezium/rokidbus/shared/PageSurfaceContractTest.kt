@@ -1,5 +1,8 @@
 package com.anezium.rokidbus.shared
 
+import java.math.BigDecimal
+import java.math.BigInteger
+import java.util.concurrent.atomic.AtomicLong
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -154,6 +157,28 @@ class PageSurfaceContractTest {
         }
         val broken = response().put("body", JSONObject().put("value", unserializable))
         invalid(PageSurfaceContract.ERROR_INVALID_PAGE, PageSurfaceContract.validateResponse(broken))
+    }
+
+    @Test
+    fun `review round 2 oversized numbers and unsupported scalars are invalid before serialization`() {
+        fun withValue(value: Any) = response().put("body", JSONObject().put("value", value))
+        valid(PageSurfaceContract.validateResponse(withValue(BigDecimal("9".repeat(32)))))
+        valid(PageSurfaceContract.validateResponse(withValue(-1.25e-300)))
+        invalid(PageSurfaceContract.ERROR_INVALID_PAGE, PageSurfaceContract.validateResponse(withValue(BigDecimal("9".repeat(33)))))
+
+        // Rejected as INVALID_PAGE by the walk, before serialization could measure them as too large.
+        val hugeInteger = BigInteger.ONE.shiftLeft(3_000_000)
+        invalid(PageSurfaceContract.ERROR_INVALID_PAGE, PageSurfaceContract.validateResponse(withValue(BigDecimal(hugeInteger))))
+        invalid(PageSurfaceContract.ERROR_INVALID_PAGE, PageSurfaceContract.validateResponse(withValue(hugeInteger)))
+        val chatty = object : Any() {
+            override fun toString(): String = "x".repeat(1_000_000)
+        }
+        invalid(PageSurfaceContract.ERROR_INVALID_PAGE, PageSurfaceContract.validateResponse(withValue(chatty)))
+        invalid(PageSurfaceContract.ERROR_INVALID_PAGE, PageSurfaceContract.validateResponse(withValue(AtomicLong(5))))
+        invalid(
+            PageSurfaceContract.ERROR_INVALID_PAGE_REQUEST,
+            PageSurfaceContract.validateRequest(request().put("params", JSONObject().put("n", BigDecimal("9".repeat(33))))),
+        )
     }
 
     @Test

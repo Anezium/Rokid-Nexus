@@ -1693,7 +1693,8 @@ and a 64-character result message. Serialized `params` and template dataset
 UTF-8 bytes and all retained snapshots fit 524,288 bytes. Bodies are opaque to
 PR1 beyond shape and size; typed rendering comes later. Large documents need
 SPP above the CXR control-plane limit. Limits include serialized JSON syntax.
-JSON nesting is limited to eight levels, counting the payload object itself. A
+JSON nesting is limited to eight levels, counting the payload object itself,
+and a number's text to 32 characters. A
 response to a pending request, or an action result, arriving at or after its
 eight-second deadline counts as missed. Live revisions answer no request: they
 are judged by the lease alone and must arrive strictly before `leaseUntilMs`.

@@ -1,5 +1,7 @@
 package com.anezium.rokidbus.shared
 
+import java.math.BigDecimal
+import java.math.BigInteger
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -95,6 +97,10 @@ object PageSurfaceContract {
     const val MAX_SNAPSHOT_TOTAL_BYTES = 524_288
     /** Container depth of any validated JSON value; the payload object itself is level 1. */
     const val MAX_NESTING_DEPTH = 8
+    /** Longest accepted text form of a JSON number. */
+    const val MAX_NUMBER_CHARS = 32
+    // 2^128 has 39 digits, so any integer part wider than this exceeds MAX_NUMBER_CHARS.
+    private const val MAX_NUMBER_BITS = 128
     const val META_PLUGIN_PAGES = "rokidbus.plugin.pages"
     const val CAPABILITY_FIELD_PAGE_SESSION_VERSION = "pageSessionVersion"
 
@@ -266,6 +272,23 @@ object PageSurfaceContract {
         return value
     }
 
+    /**
+     * The text of a finite number of a type a JSON parser produces, or null when
+     * it is unsupported or longer than [MAX_NUMBER_CHARS]. Arbitrary-precision
+     * values are measured by bit length first so a huge one is never rendered.
+     */
+    private fun numberText(value: Number): String? {
+        val text = when (value) {
+            is Int, is Long, is Short, is Byte -> value.toString()
+            is Double -> value.takeIf(Double::isFinite)?.toString()
+            is Float -> value.takeIf(Float::isFinite)?.toString()
+            is BigInteger -> value.takeIf { it.bitLength() <= MAX_NUMBER_BITS }?.toString()
+            is BigDecimal -> value.takeIf { it.unscaledValue().bitLength() <= MAX_NUMBER_BITS }?.toString()
+            else -> null
+        }
+        return text?.takeIf { it.length <= MAX_NUMBER_CHARS }
+    }
+
     private fun requireSize(payload: JSONObject, limit: Int, key: String) {
         boundedJson(payload, limit, key)
     }
@@ -274,8 +297,10 @@ object PageSurfaceContract {
      * Serializes [payload] only after an iterative walk has bounded it, so a
      * hostile value can neither exhaust the stack nor force an oversized copy:
      * nesting beyond [MAX_NESTING_DEPTH], any string longer than [MAX_PAGE_BYTES],
-     * and any value whose minimum serialized size already exceeds [limit] fail
-     * first. The exact UTF-8 size of the serialized text is then enforced.
+     * any number longer than [MAX_NUMBER_CHARS], any scalar that is not a JSON
+     * string, number, boolean or null, and any value whose minimum serialized
+     * size already exceeds [limit] fail first. The exact UTF-8 size of the
+     * serialized text is then enforced.
      */
     private fun boundedJson(payload: JSONObject, limit: Int, key: String, tooLarge: String? = null): String {
         var minimumBytes = 0L
@@ -308,7 +333,12 @@ object PageSurfaceContract {
                     for (index in 0 until value.length()) pending.addLast(value.opt(index) to depth + 1)
                 }
                 is String -> countText(value)
-                else -> count(1)
+                is Number -> {
+                    checkShape(numberText(value) != null, "$key contains a number above $MAX_NUMBER_CHARS characters")
+                    count(1)
+                }
+                is Boolean, JSONObject.NULL, null -> count(1)
+                else -> fail("$key contains an unsupported ${value.javaClass.simpleName} value")
             }
         }
         val serialized = try {
