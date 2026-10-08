@@ -4,6 +4,8 @@ import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.Context
 import android.content.Intent
+import android.graphics.PixelFormat
+import android.graphics.Typeface
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
@@ -12,11 +14,30 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.view.KeyEvent
+import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
+import android.widget.LinearLayout
+import android.widget.TextView
+import com.anezium.rokidbus.client.ui.BusTheme
+import com.anezium.rokidbus.glasses.session.HostScreen
+import com.anezium.rokidbus.glasses.session.OpenFailure
+import com.anezium.rokidbus.glasses.session.SessionEffect
+import com.anezium.rokidbus.glasses.session.SessionEffectSink
+import com.anezium.rokidbus.glasses.session.SessionEvent
+import com.anezium.rokidbus.glasses.session.SessionHost
+import com.anezium.rokidbus.glasses.session.SessionModel
+import com.anezium.rokidbus.glasses.session.SessionReducer
+import com.anezium.rokidbus.glasses.session.SessionRunner
+import com.anezium.rokidbus.glasses.session.SessionState
+import com.anezium.rokidbus.glasses.session.SessionStatus
+import com.anezium.rokidbus.glasses.session.SessionTimer
+import com.anezium.rokidbus.glasses.session.SessionWindow
+import com.anezium.rokidbus.shared.BusPaths
 import com.anezium.rokidbus.shared.SetupCompletionMode
 import com.anezium.rokidbus.shared.SetupPairingResult
 import com.anezium.rokidbus.shared.SetupNote
 import com.anezium.rokidbus.shared.SetupStage
+import org.json.JSONObject
 
 class RokidBusAccessibilityService : AccessibilityService() {
     private val tripleTapDetector = TripleTapDetector()
@@ -1382,3 +1403,220 @@ class RokidBusAccessibilityService : AccessibilityService() {
 
 private fun SelfArmManualTarget.requiresWifi(): Boolean =
     this == SelfArmManualTarget.WIRELESS_DEBUGGING || this == SelfArmManualTarget.PAIRING_DIALOG
+
+/**
+ * The running Nexus session: the PR1 reducer behind its runner, the one overlay window that
+ * draws it, and the bus. Only the input arbiter opens it, and only on the session backend.
+ */
+internal object NexusSession {
+    private val main = Handler(Looper.getMainLooper())
+    private var appContext: Context? = null
+    private var host: SessionHost? = null
+    private var status: SessionStatus? = null
+    private var statusFresh = false
+    private var renderedState: SessionState? = null
+    private val runner = SessionRunner(
+        reducer = SessionReducer(),
+        clock = SystemClock::uptimeMillis,
+        timer = HandlerSessionTimer(main),
+        sink = Sink,
+        onError = { logError("session effect failed", it) },
+    )
+
+    val state: SessionState get() = runner.state
+
+    fun onServiceConnected(service: AccessibilityService) {
+        runOnMain {
+            appContext = service.applicationContext
+            host = SessionHost(SessionOverlayWindow(service), abort = { dispatch(SessionEvent.Abort) }, log = ::log)
+        }
+    }
+
+    fun onServiceDestroyed() {
+        runOnMain {
+            runner.dispatch(SessionEvent.Abort)
+            host?.detach()
+            host = null
+            appContext = null
+        }
+    }
+
+    fun dispatch(event: SessionEvent) {
+        runOnMain { runner.dispatch(event) }
+    }
+
+    private fun runOnMain(block: () -> Unit) {
+        if (Looper.myLooper() == Looper.getMainLooper()) block() else main.post(block)
+    }
+
+    private object Sink : SessionEffectSink {
+        override fun execute(effect: SessionEffect) {
+            when (effect) {
+                SessionEffect.AttachHost -> attach()
+                SessionEffect.DetachHost -> detach()
+                is SessionEffect.RestoreUnderneath -> Unit
+                is SessionEffect.RequestPage -> send(BusPaths.PAGE_REQUEST, effect.request.toPayload())
+                is SessionEffect.SendAction -> send(BusPaths.PAGE_ACTION, effect.action.toPayload())
+                is SessionEffect.SendVisibility -> send(
+                    BusPaths.PAGE_VISIBILITY,
+                    JSONObject()
+                        .put("pageId", effect.pageId)
+                        .put("visible", effect.visible)
+                        .apply { effect.leaseUntilMs?.let { put("leaseUntilMs", it) } },
+                )
+                is SessionEffect.SendClosed -> send(
+                    BusPaths.PAGE_CLOSED,
+                    JSONObject().put("pageId", effect.pageId).put("reason", effect.reason),
+                )
+                is SessionEffect.SendLauncherOpen -> openPlugin(effect)
+                is SessionEffect.CloseSurface -> SurfaceController.closeUnseen(effect.surfaceId)
+                is SessionEffect.ShowStatus -> {
+                    status = effect.status
+                    statusFresh = true
+                }
+                SessionEffect.ShowGate,
+                SessionEffect.ShowRoot,
+                SessionEffect.ShowFrame,
+                is SessionEffect.ScheduleDeadline,
+                SessionEffect.CancelDeadline,
+                SessionEffect.None,
+                -> Unit
+            }
+        }
+
+        /** The window is redrawn from the settled state; a status line lasts until the screen changes. */
+        override fun settled(model: SessionModel) {
+            if (statusFresh) {
+                statusFresh = false
+            } else if (model.state != renderedState) {
+                status = null
+            }
+            renderedState = model.state
+            host?.render(model.state, status)
+        }
+
+        private fun attach() {
+            status = null
+            val current = host
+            if (current == null) {
+                log("session opened without a service window; closing it")
+                dispatch(SessionEvent.Abort)
+                return
+            }
+            current.attach()
+            // The session owns the ring while it is up, exactly as the legacy launcher does.
+            if (current.isAttached) {
+                appContext?.let { RingFocusBroadcastCoordinator.setLauncherShown(it, shown = true) }
+            }
+        }
+
+        private fun detach() {
+            host?.detach()
+            appContext?.let { RingFocusBroadcastCoordinator.setLauncherShown(it, shown = false) }
+            renderedState = null
+        }
+
+        /** Reuses the launcher's own open, and its ring handoff to the plugin's surface. */
+        private fun openPlugin(effect: SessionEffect.SendLauncherOpen) {
+            val result = GlassesHub.openLauncherEntry(effect.pluginId)
+            log("Session plugin open result: $result")
+            if (!result.startsWith("launcherOpen=true")) {
+                dispatch(SessionEvent.OpenFailed(effect.token, OpenFailure.SEND_FAILED))
+                return
+            }
+            if (GlassesHub.launcherEntryOpensSurface(effect.pluginId)) {
+                appContext?.let(RingFocusBroadcastCoordinator::beginSurfaceHandoff)
+            }
+        }
+
+        private fun send(path: String, payload: JSONObject) {
+            if (!GlassesHub.sendToPhone(path, payload)) log("session send dropped path=$path")
+        }
+    }
+}
+
+/** The session's one opaque overlay; it holds the screen on only while it exists. */
+private class SessionOverlayWindow(private val service: AccessibilityService) : SessionWindow {
+    private val windowManager: WindowManager? = service.getSystemService(WindowManager::class.java)
+    private var root: LinearLayout? = null
+    private var insetUnsubscribe: (() -> Unit)? = null
+
+    override fun add(): Boolean {
+        val manager = windowManager ?: return false
+        val view = LinearLayout(service).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(BusTheme.glassesBg)
+        }
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            // Not focusable: every key reaches the session through the filter, and the app
+            // underneath keeps its window focus for when the session closes.
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON,
+            PixelFormat.OPAQUE,
+        )
+        val added = runCatching { manager.addView(view, params) }
+            .onFailure { logError("Session host window could not be added", it) }
+            .isSuccess
+        if (!added) return false
+        root = view
+        insetUnsubscribe = HudTopInset.observe(service) { inset ->
+            view.setPadding(dp(18), dp(16 + HudTopInset.sanitize(inset)), dp(18), dp(12))
+        }
+        return true
+    }
+
+    override fun remove() {
+        insetUnsubscribe?.invoke()
+        insetUnsubscribe = null
+        root?.let { view -> runCatching { windowManager?.removeView(view) } }
+        root = null
+    }
+
+    override fun show(screen: HostScreen) {
+        val view = root ?: return
+        view.removeAllViews()
+        screen.title?.let { view.addView(line(it, 20f, BusTheme.text, bold = true)) }
+        screen.rows.forEach { row ->
+            val marker = if (row.selected) "› " else "  "
+            val color = if (row.selected) BusTheme.phosphor else BusTheme.text
+            view.addView(line(marker + row.text, 18f, color, bold = row.selected))
+        }
+        screen.status?.let { view.addView(line(it, 14f, BusTheme.dim)) }
+    }
+
+    private fun line(value: String, sizeSp: Float, color: Int, bold: Boolean = false): TextView =
+        TextView(service).apply {
+            text = value
+            textSize = sizeSp
+            setTextColor(color)
+            typeface = Typeface.create(Typeface.MONOSPACE, if (bold) Typeface.BOLD else Typeface.NORMAL)
+            includeFontPadding = false
+            setPadding(0, dp(6), 0, dp(6))
+        }
+
+    private fun dp(value: Int): Int = BusTheme.dp(service, value)
+}
+
+/** One pending task on the main looper, posted on the uptime clock the runner reads. */
+private class HandlerSessionTimer(private val handler: Handler) : SessionTimer {
+    private var pending: Runnable? = null
+
+    override fun schedule(atUptimeMs: Long, task: () -> Unit) {
+        cancel()
+        val runnable = Runnable {
+            pending = null
+            task()
+        }
+        pending = runnable
+        handler.postAtTime(runnable, atUptimeMs)
+    }
+
+    override fun cancel() {
+        pending?.let(handler::removeCallbacks)
+        pending = null
+    }
+}

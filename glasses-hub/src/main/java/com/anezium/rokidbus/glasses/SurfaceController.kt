@@ -966,12 +966,27 @@ object SurfaceController {
         if (surface.handlesBack) {
             armBackFailsafe(surface.surfaceId)
         } else {
-            if (surface.isInk) sendInkClosed(surface.surfaceId, InkSurfaceContract.CLOSE_USER)
-            if (surface.kind == NexusSurface.KIND_CARD && surface.editable != null) {
-                forwardSurfaceText("", cancelled = true)
-            }
-            hideLocal(DisplayHoldReleaseReason.WEARER_DISMISSED)
+            dismissAsWearer(surface)
         }
+    }
+
+    /**
+     * Closes [surfaceId] through the wearer's own dismiss path, `/ink/closed` included, without
+     * forwarding BACK to its plugin: the session uses it for a surface from an open the wearer
+     * cancelled, which must go before it is seen.
+     */
+    fun closeUnseen(surfaceId: String) {
+        runOnMain {
+            active?.takeIf { it.surfaceId == surfaceId }?.let(::dismissAsWearer)
+        }
+    }
+
+    private fun dismissAsWearer(surface: NexusSurface) {
+        if (surface.isInk) sendInkClosed(surface.surfaceId, InkSurfaceContract.CLOSE_USER)
+        if (surface.kind == NexusSurface.KIND_CARD && surface.editable != null) {
+            forwardSurfaceText("", cancelled = true)
+        }
+        hideLocal(DisplayHoldReleaseReason.WEARER_DISMISSED)
     }
 
     private fun prepareRingInputForSurface(surfaceId: String) {
