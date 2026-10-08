@@ -14,11 +14,13 @@ session owns the touchpad and the ring. Pages are requested on `/page/request` b
 hub answers them yet, so they end as `Unavailable`.
 
 The choice is the glasses-local preference `launcher.backend`, stored with the hub's other
-settings; an absent value means `LEGACY`. Switch it at runtime with a broadcast:
+settings; an absent value means `LEGACY`. Switch it at runtime with a broadcast addressed to
+the receiver explicitly (Android drops the implicit form for a manifest receiver with
+"Background execution not allowed"):
 
 ```
-adb shell am broadcast -a com.anezium.rokidbus.glasses.action.SET_LAUNCHER_BACKEND --es backend SESSION
-adb shell am broadcast -a com.anezium.rokidbus.glasses.action.SET_LAUNCHER_BACKEND --es backend LEGACY
+adb shell am broadcast -a com.anezium.rokidbus.glasses.action.SET_LAUNCHER_BACKEND -n com.anezium.rokidbus.glasses/.SetLauncherBackendReceiver --es backend SESSION
+adb shell am broadcast -a com.anezium.rokidbus.glasses.action.SET_LAUNCHER_BACKEND -n com.anezium.rokidbus.glasses/.SetLauncherBackendReceiver --es backend LEGACY
 ```
 
 Switching closes the active launcher first, an open session included. On both backends every
