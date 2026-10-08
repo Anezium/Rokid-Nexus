@@ -381,6 +381,34 @@ Verdict "not merge-ready". Required before PR2 is closed (file:line as of `0790c
 
 Then rerun acceptance 1-12 and report their real tails.
 
+# Review round 2 (GPT-6.1 Sol, 2026-10-08, `design/nav-map-mockups/sol-review-pr2-round2.md`)
+
+Verdict "not merge-ready". Items 3-7 of round 1 are closed; item 1 is closed for its trace
+but introduced B1; item 2 is closed for the direct-display trace but S1 remains. Required:
+
+1. **blocker B1** `InputArbiter.kt:265, :267, :278`: the suppression-enforcement predicate
+   must keep the editable exception. Trace: LEGACY contacts 0/40, 200/240, 400/440 open the
+   launcher; at 500 an editable card is presented through the ACTIVITY path (legacy launcher
+   steps aside); a bonded keyboard (classified TOUCHPAD) sends ENTER DOWN 700 / UP 730: the
+   field must receive its submit, BACK must reach the editable surface's handler, as before
+   PR2 (the old service returned PASS while editable). Keep `!editableFocused` in the
+   enforcement predicate; only the armed notice leaves an existing suppression enforceable.
+   Fix the comment. Named LEGACY test: trigger, then editor focused, ENTER and BACK inside the
+   window reach the editor/surface; keep the arriving-notice positive and negative controls.
+2. **should-fix S1** `SurfaceController.kt:619` (notification loop at ~1068),
+   `SurfaceActivity.kt:31`: the session's cancellation veto must run before the presentation
+   observers are notified, and the active identity must be checked before publishing to
+   them. Trace: an ACTIVITY surface underneath the session with its `SurfaceActivity`
+   subscribed after `NexusSession`; cancel maps, close the session, maps arrives before the
+   cancellation expiry: today the outer `notifyListeners(maps)` closes maps through
+   `NexusSession`, the nested `notifyListeners(null)` clears the activity, then the outer loop
+   resumes and hands maps to the still-subscribed activity, whose callback renders it.
+   Preserve the existing close implementation. Extend `CancelledOpenPublicationTest` with an
+   already-created `SurfaceActivity` and both observer orders; assert the cancelled surface
+   never reaches its renderer (counting `startActivity` cannot detect this path).
+
+Then rerun acceptance 1-12 (row 12 now also covers B1 and S1) and report real tails.
+
 # Plan sketch
 
 1. `input/` package + `InputArbiterTest` (pure, no wiring). Commit.
