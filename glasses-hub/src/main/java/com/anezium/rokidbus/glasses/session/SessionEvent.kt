@@ -4,7 +4,8 @@ import org.json.JSONObject
 
 /** Facts fed by the host. Gestures are already classified; time is the host clock. */
 internal sealed interface SessionEvent {
-    data class TripleTap(val nowMs: Long) : SessionEvent
+    /** [underneath] is what the triple tap was made over; a session records it when it opens. */
+    data class TripleTap(val nowMs: Long, val underneath: Underneath = Underneath.Unknown) : SessionEvent
     data class Contact(val nowMs: Long) : SessionEvent
     data class Enter(val nowMs: Long) : SessionEvent
     data class Back(val nowMs: Long) : SessionEvent
@@ -31,4 +32,15 @@ internal sealed interface SessionEvent {
     data object LinkLost : SessionEvent
     data object LinkRestored : SessionEvent
     data class EditableFocused(val focused: Boolean) : SessionEvent
+
+    /** A plugin surface came to the front; [ownerPluginId] is the hub's own record, never a payload claim. */
+    data class SurfaceShown(val surfaceId: String, val ownerPluginId: String, val nowMs: Long) : SessionEvent
+
+    /** The open sent for [token] did not leave the hub, or was refused. */
+    data class OpenFailed(val token: Long, val reason: OpenFailure) : SessionEvent
+
+    /** The host takes the session down: a backend switch, or a window that could not be added. */
+    data object Abort : SessionEvent
 }
+
+internal enum class OpenFailure { SEND_FAILED, REJECTED, TIMEOUT }

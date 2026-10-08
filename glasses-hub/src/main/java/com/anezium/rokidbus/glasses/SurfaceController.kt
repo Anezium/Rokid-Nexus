@@ -52,6 +52,7 @@ object SurfaceController {
     private var inkDisplayTransitioning = false
     private var pendingInk: NexusSurface? = null
     @Volatile private var inkResyncListener: ((InkResyncRequest) -> Unit)? = null
+    private var presentationGate: ((NexusSurface) -> Unit)? = null
     @Volatile private var active: NexusSurface? = null
     // Which display path the active surface actually rendered through, not
     // just which one displayPath(context) currently names — the overlay path
@@ -95,6 +96,23 @@ object SurfaceController {
             .edit()
             .putString(PREF_DISPLAY_PATH, path.prefValue)
             .apply()
+    }
+
+    /**
+     * Installs the one callback that hears of a surface before any observer. It may close the
+     * surface on the spot, through the surface's own close path; then no observer and no window
+     * ever sees it. The Nexus session uses it to close the late surface of a cancelled open.
+     *
+     * A surface that became active while no gate was installed (the accessibility service gone,
+     * for instance) is put through the new gate at once, as its presentation would have been.
+     * True when the surface active at installation, if any, is still the active one afterwards.
+     */
+    internal fun setPresentationGate(gate: ((NexusSurface) -> Unit)?): Boolean {
+        presentationGate = gate
+        val current = active ?: return true
+        gate ?: return true
+        runCatching { gate(current) }.onFailure { logError("Surface presentation gate failed", it) }
+        return active === current
     }
 
     fun observe(listener: (NexusSurface?) -> Unit): () -> Unit {
@@ -483,8 +501,7 @@ object SurfaceController {
                 active = true,
                 completesHandoff = completesRingHandoff,
             )
-            notifyListeners(surface)
-            displaySurface(context, surface, forcedPath, isHandoff)
+            publishAndDisplay(context, surface, forcedPath, isHandoff)
         }
     }
 
@@ -546,8 +563,8 @@ object SurfaceController {
                     active = true,
                     completesHandoff = completesRingHandoff,
                 )
-                notifyListeners(surface)
-                displaySurface(context, surface, null, isHandoff)
+                // A surface closed while it was announced is not decoded either.
+                if (!publishAndDisplay(context, surface, null, isHandoff)) return@runOnMain
             }
             imageDecodeExecutor.execute {
                 val decoded = ImageHudView.decodeRgb565(bytes, metadata)
@@ -597,13 +614,34 @@ object SurfaceController {
                                 active = true,
                                 completesHandoff = completesRingHandoff,
                             )
-                            notifyListeners(published)
-                            displaySurface(context, published, null, isHandoff)
+                            publishAndDisplay(context, published, null, isHandoff)
                         }
                     }
                 }
             }
         }
+    }
+
+    /**
+     * Presents [surface]: the presentation gate first, then the observers, then the window, each
+     * only while [surface] is still the active one. The gate closes the late surface of an open
+     * the wearer cancelled before any renderer hears of it; announcing or displaying it after
+     * that would draw content that was closed unseen. False when the surface was not displayed.
+     */
+    private fun publishAndDisplay(
+        context: Context,
+        surface: NexusSurface,
+        forcedPath: SurfaceDisplayPath?,
+        isHandoff: Boolean,
+    ): Boolean {
+        presentationGate?.let { gate ->
+            runCatching { gate(surface) }.onFailure { logError("Surface presentation gate failed", it) }
+        }
+        if (active !== surface) return false
+        notifyListeners(surface)
+        if (active !== surface) return false
+        displaySurface(context, surface, forcedPath, isHandoff)
+        return true
     }
 
     private fun displaySurface(
@@ -966,12 +1004,27 @@ object SurfaceController {
         if (surface.handlesBack) {
             armBackFailsafe(surface.surfaceId)
         } else {
-            if (surface.isInk) sendInkClosed(surface.surfaceId, InkSurfaceContract.CLOSE_USER)
-            if (surface.kind == NexusSurface.KIND_CARD && surface.editable != null) {
-                forwardSurfaceText("", cancelled = true)
-            }
-            hideLocal(DisplayHoldReleaseReason.WEARER_DISMISSED)
+            dismissAsWearer(surface)
         }
+    }
+
+    /**
+     * Closes [surfaceId] through the wearer's own dismiss path, `/ink/closed` included, without
+     * forwarding BACK to its plugin: the session uses it for a surface from an open the wearer
+     * cancelled, which must go before it is seen.
+     */
+    fun closeUnseen(surfaceId: String) {
+        runOnMain {
+            active?.takeIf { it.surfaceId == surfaceId }?.let(::dismissAsWearer)
+        }
+    }
+
+    private fun dismissAsWearer(surface: NexusSurface) {
+        if (surface.isInk) sendInkClosed(surface.surfaceId, InkSurfaceContract.CLOSE_USER)
+        if (surface.kind == NexusSurface.KIND_CARD && surface.editable != null) {
+            forwardSurfaceText("", cancelled = true)
+        }
+        hideLocal(DisplayHoldReleaseReason.WEARER_DISMISSED)
     }
 
     private fun prepareRingInputForSurface(surfaceId: String) {
@@ -1036,6 +1089,8 @@ object SurfaceController {
 
     private fun notifyListeners(surface: NexusSurface?) {
         listeners.forEach { listener ->
+            // A listener may close or replace the surface; the ones after it never hear of it.
+            if (surface != null && active !== surface) return
             runCatching { listener(surface) }
         }
     }

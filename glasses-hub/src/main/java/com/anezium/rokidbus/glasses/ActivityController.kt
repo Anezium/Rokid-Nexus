@@ -4,7 +4,6 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
-import android.view.KeyEvent
 import com.anezium.rokidbus.shared.ActivityCloseReason
 import com.anezium.rokidbus.shared.ActivitySurfaceContent
 import com.anezium.rokidbus.shared.ActivitySurfaceContract
@@ -328,7 +327,8 @@ internal class ActivityStateMachine {
                         lastSignificantOrder = resident.lastSignificantOrder,
                         collapseAtMs = resident.collapseAtMs,
                         maxDurationDeadlineMs = resident.maxDurationDeadlineMs,
-                        selectedActionIndex = resident.selectedActionIndex,
+                        // Islands take no input, so no action chip is ever shown as selected.
+                        selectedActionIndex = NO_SELECTED_ACTION,
                         motionToken = resident.motionToken,
                     ),
                     primary = resident.surfaceId == primary,
@@ -394,12 +394,14 @@ internal class ActivityStateMachine {
     companion object {
         const val COLLAPSE_AFTER_MS = 10_000L
         const val FLARE_INTERVAL_MS = 10_000L
+        const val NO_SELECTED_ACTION = -1
     }
 }
 
 internal object ActivityPresentationSettings {
     private const val PREFS = "activity_presentation"
     private const val ALWAYS_EXPANDED = "always_expanded"
+    private const val LAUNCHER_BACKEND = "launcher.backend"
 
     fun alwaysExpanded(context: Context): Boolean =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -411,28 +413,37 @@ internal object ActivityPresentationSettings {
             .putBoolean(ALWAYS_EXPANDED, enabled)
             .apply()
     }
+
+    /**
+     * The launcher backend lives in this store, the one the phone's settings already write,
+     * rather than a preferences file of its own. Absent means the legacy launcher.
+     */
+    fun launcherBackend(context: Context): String? =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getString(LAUNCHER_BACKEND, null)
+
+    fun setLauncherBackend(context: Context, value: String) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putString(LAUNCHER_BACKEND, value)
+            .apply()
+    }
 }
 
 internal object ActivityController {
     private val main = Handler(Looper.getMainLooper())
     private val state = ActivityStateMachine()
     private val listeners = CopyOnWriteArrayList<(ActivityRenderState) -> Unit>()
-    private val inputDedupe = DpadPairDedupe()
-    private val ringTapPolicy = RingTapPolicy()
-    private val ringTapExpiry = Runnable(::resolveRingTap)
     private var deadlineTask: Runnable? = null
     private var context: Context? = null
     private var surfaceUnsubscribe: (() -> Unit)? = null
     private var pinUnsubscribe: (() -> Unit)? = null
     private var cameraOverlayActive = false
     private var latestRender = ActivityRenderState()
-    private var pendingRingTapTarget: ActivityInputTarget? = null
-    private var performRingBack: (() -> Unit)? = null
 
-    fun onServiceConnected(context: Context, performRingBack: () -> Unit) {
+    fun onServiceConnected(context: Context) {
         runOnMain {
             this.context = context.applicationContext
-            this.performRingBack = performRingBack
             surfaceUnsubscribe?.invoke()
             pinUnsubscribe?.invoke()
             surfaceUnsubscribe = SurfaceController.observe { contextChanged() }
@@ -447,9 +458,7 @@ internal object ActivityController {
             surfaceUnsubscribe = null
             pinUnsubscribe?.invoke()
             pinUnsubscribe = null
-            cancelRingInput()
             cancelDeadline()
-            performRingBack = null
             context = null
         }
     }
@@ -497,77 +506,6 @@ internal object ActivityController {
     }
 
     fun isPresenting(): Boolean = latestRender.primary != null
-
-    fun claimsInput(): Boolean =
-        isPresenting() &&
-            !cameraOverlayActive &&
-            SurfaceController.activeSurface() == null &&
-            NoticeController.visibleNotice() == null &&
-            !LauncherOverlayRenderer.isShown()
-
-    fun claimsRingKey(keyCode: Int): Boolean {
-        if (!claimsInput()) return false
-        return when (keyCode) {
-            RingSurfaceInputPolicy.RING_KEYCODE_TAP -> true
-            RingSurfaceInputPolicy.RING_KEYCODE_FORWARD,
-            RingSurfaceInputPolicy.RING_KEYCODE_BACKWARD,
-            -> latestRender.primary
-                ?.activity
-                ?.surfaceId
-                ?.let(state::hasActions) == true
-            else -> false
-        }
-    }
-
-    /**
-     * Claims only activity directions and confirmation. BACK and unrelated keys
-     * continue down the pre-existing chain unchanged.
-     */
-    fun handleKeyEvent(event: KeyEvent): Boolean {
-        if (!claimsInput()) return false
-        if (event.keyCode == TripleTapDetector.KEYCODE_NOTIFICATION) {
-            return event.action == KeyEvent.ACTION_DOWN || event.action == KeyEvent.ACTION_UP
-        }
-        if (event.action != KeyEvent.ACTION_DOWN || event.repeatCount != 0) return false
-        when (inputDedupe.onKey(event.keyCode, event.action, event.repeatCount, event.eventTime)) {
-            DpadPairDedupe.Direction.FORWARD -> return moveSelection(1)
-            DpadPairDedupe.Direction.BACKWARD -> return moveSelection(-1)
-            null -> Unit
-        }
-        return when (event.keyCode) {
-            KeyEvent.KEYCODE_ENTER,
-            KeyEvent.KEYCODE_DPAD_CENTER,
-            -> fireOrOpen()
-            else -> false
-        }
-    }
-
-    fun handlePendingTempleTap(): Boolean =
-        if (claimsInput()) fireOrOpen() else false
-
-    fun handleRingKey(keyCode: Int, eventTimeMs: Long): Boolean {
-        if (!claimsRingKey(keyCode)) return false
-        return when (keyCode) {
-            RingSurfaceInputPolicy.RING_KEYCODE_FORWARD -> moveSelection(1)
-            RingSurfaceInputPolicy.RING_KEYCODE_BACKWARD -> moveSelection(-1)
-            RingSurfaceInputPolicy.RING_KEYCODE_TAP -> {
-                if (pendingRingTapTarget == null) {
-                    pendingRingTapTarget = currentInputTarget()
-                }
-                ringTapPolicy.onTap(eventTimeMs)
-                main.removeCallbacks(ringTapExpiry)
-                main.postDelayed(ringTapExpiry, RingTapPolicy.DEFAULT_WINDOW_MS + 1L)
-                true
-            }
-            else -> false
-        }
-    }
-
-    fun cancelRingInput() {
-        main.removeCallbacks(ringTapExpiry)
-        ringTapPolicy.reset()
-        pendingRingTapTarget = null
-    }
 
     private fun start(envelope: BusEnvelope) {
         val payload = envelope.payload
@@ -728,81 +666,6 @@ internal object ActivityController {
     private fun cancelDeadline() {
         deadlineTask?.let(main::removeCallbacks)
         deadlineTask = null
-    }
-
-    private fun moveSelection(delta: Int): Boolean {
-        val surfaceId = latestRender.primary?.activity?.surfaceId ?: return false
-        val now = SystemClock.elapsedRealtime()
-        if (!state.moveSelection(surfaceId, delta, now)) return false
-        publish(nowMs = now)
-        return true
-    }
-
-    private fun fireOrOpen(): Boolean {
-        val surfaceId = latestRender.primary?.activity?.surfaceId ?: return false
-        return fireOrOpen(surfaceId)
-    }
-
-    private fun fireOrOpen(surfaceId: String): Boolean {
-        val action = state.selectedAction(surfaceId)
-        if (action != null) {
-            GlassesHub.sendToPhone(
-                BusPaths.ACTIVITY_ACTION,
-                ActivitySurfaceContract.actionPayload(surfaceId, action.id),
-            )
-            return true
-        }
-        val owner = state.ownerPluginId(surfaceId) ?: return false
-        val result = GlassesHub.openLauncherEntry(owner)
-        log("activity owner open result: $result")
-        return true
-    }
-
-    private fun fireCaptured(target: ActivityInputTarget): Boolean {
-        target.actionId?.let { actionId ->
-            GlassesHub.sendToPhone(
-                BusPaths.ACTIVITY_ACTION,
-                ActivitySurfaceContract.actionPayload(target.activityId, actionId),
-            )
-            return true
-        }
-        val owner = state.ownerPluginId(target.activityId) ?: return false
-        val result = GlassesHub.openLauncherEntry(owner)
-        log("activity owner open result: $result")
-        return true
-    }
-
-    private fun currentInputTarget(): ActivityInputTarget? =
-        latestRender.primary?.activity?.let { activity ->
-            ActivityInputTarget(
-                activityId = activity.surfaceId,
-                startedOrder = activity.startedOrder,
-                actionId = state.selectedAction(activity.surfaceId)?.id,
-            )
-        }
-
-    private fun resolveRingTap() {
-        val target = pendingRingTapTarget
-        pendingRingTapTarget = null
-        when (ringTapPolicy.resolveExpired(SystemClock.elapsedRealtime())) {
-            RingTapPolicy.Resolution.SINGLE -> {
-                if (
-                    canResolveActivityTap(
-                        captured = target,
-                        current = currentInputTarget(),
-                        idleLayerStillOwned = claimsInput(),
-                    )
-                ) {
-                    fireCaptured(target!!)
-                }
-            }
-            // Activities do not dismiss on BACK. Preserve the ring's existing
-            // double-tap translation by returning it to the system instead.
-            RingTapPolicy.Resolution.DOUBLE -> performRingBack?.invoke()
-            RingTapPolicy.Resolution.IGNORE,
-            null,
-            -> Unit
-        }
     }
 
     private fun reportClosed(surfaceId: String, reason: ActivityCloseReason) {

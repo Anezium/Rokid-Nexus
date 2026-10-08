@@ -568,6 +568,13 @@ internal object NoticeController {
     }
     private var expiry: Runnable? = null
     private var cameraOverlayActive = false
+
+    /**
+     * An open Nexus session hides the band through the camera overlay's own seam: the notice
+     * keeps its deadline, but it is not presented and can neither be answered nor dismissed.
+     */
+    private var sessionOverlayActive = false
+    private val inputSuppressed: Boolean get() = cameraOverlayActive || sessionOverlayActive
     private var serviceContext: Context? = null
     private var sleepDisplay: (() -> Boolean)? = null
     private var episodeOwnsWake = false
@@ -665,7 +672,7 @@ internal object NoticeController {
     }
 
     fun visibleNotice(): NexusNoticeSurface? =
-        noticeVisibleForInput(state.activeNotice(), cameraOverlayActive)
+        noticeVisibleForInput(state.activeNotice(), inputSuppressed)
 
     fun observe(listener: (NexusNoticeSurface?) -> Unit): () -> Unit {
         listeners += listener
@@ -726,14 +733,14 @@ internal object NoticeController {
 
     /** A backdrop hides the native UI, so none of its touchpad input may leak through. */
     fun claimsAllInput(): Boolean =
-        noticeClaimsAllInput(state.activeNotice(), cameraOverlayActive)
+        noticeClaimsAllInput(state.activeNotice(), inputSuppressed)
 
     /**
      * The ring bridge must stand down for every interactive, paged, or backdrop
      * notice. Per-key claims still decide which gestures change notice state.
      */
     fun ownsRingInput(): Boolean =
-        noticeOwnsRingInput(state.activeNotice(), cameraOverlayActive)
+        noticeOwnsRingInput(state.activeNotice(), inputSuppressed)
 
     /**
      * The wearer confirmed. The owner hears about it once; nobody else does.
@@ -865,6 +872,15 @@ internal object NoticeController {
         runOnMain {
             if (cameraOverlayActive == active) return@runOnMain
             cameraOverlayActive = active
+            if (active) resetRingInput()
+            notifyChanged()
+        }
+    }
+
+    fun setSessionOverlayActive(active: Boolean) {
+        runOnMain {
+            if (sessionOverlayActive == active) return@runOnMain
+            sessionOverlayActive = active
             if (active) resetRingInput()
             notifyChanged()
         }
