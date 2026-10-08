@@ -29,3 +29,16 @@ HUD surface, and forwards only play/pause/previous/next transport commands.
 
 Media titles and artwork are user data. They may be rendered on the requested HUD but
 must not be included in production logs.
+
+## Assistant operations
+
+On hubs advertising Skills v1, separately approved `get_now_playing` and `pause`
+operations work without opening the media HUD. Notification access is required.
+Reads return metadata for a unique playing session or bounded player choices.
+Pause can run with its control operation alone and returns no title or artist.
+It sends explicit pause to the exact session, observes its playback callback, and
+reports accepted if dispatch was confirmed but the paused state was not observed.
+Several possible players require a choice; a destroyed reference is never
+redirected. References are bounded, expire after ten idle minutes, and become
+invalid when the provider process restarts. Skill calls fetch no artwork and
+leave the HUD monitor's listener lifecycle independent.

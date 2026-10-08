@@ -6,6 +6,8 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.time.Instant
 import java.time.ZoneId
+import java.text.Normalizer
+import java.util.Locale
 import kotlin.math.ceil
 
 /** How one Transit skill call ended, before it becomes the SDK's answer. */
@@ -140,12 +142,12 @@ internal class TransitReadSkills(
 
         val (match, rows) = when {
             anchor != null -> followAnchor(anchor, board, upcoming, now)
-            lineSelector != null && upcoming.none { lineOf(it).equals(lineSelector, ignoreCase = true) } ->
+            lineSelector != null && upcoming.none { sameLabel(lineOf(it), lineSelector) } ->
                 "no_matching_line" to emptyList()
             lineSelector != null || directionSelector != null -> {
                 val filtered = upcoming.filter { departure ->
-                    (lineSelector == null || lineOf(departure).equals(lineSelector, ignoreCase = true)) &&
-                        (directionSelector == null || directionOf(departure).equals(directionSelector, ignoreCase = true))
+                    (lineSelector == null || sameLabel(lineOf(departure), lineSelector)) &&
+                        (directionSelector == null || sameLabel(directionOf(departure), directionSelector))
                 }
                 val ambiguous = lineSelector != null && directionSelector == null &&
                     filtered.map(::directionOf).distinct().size > 1
@@ -176,7 +178,7 @@ internal class TransitReadSkills(
                 .put(
                     "directions",
                     JSONArray(
-                        upcoming.filter { lineSelector == null || lineOf(it).equals(lineSelector, true) }
+                        upcoming.filter { lineSelector == null || sameLabel(lineOf(it), lineSelector) }
                             .map(::directionOf).distinct().take(MAX_LIST),
                     ),
                 )
@@ -187,6 +189,12 @@ internal class TransitReadSkills(
                         .put("stop", TransitSkillContract.encodeStop(stop))
                         .put("stop_name", stop.name)
                         .put("observed_at", board.observedAt.toString())
+                        .put("groups", JSONArray().apply {
+                            upcoming.map { lineOf(it) to directionOf(it) }.distinct().take(MAX_LIST)
+                                .forEach { (line, direction) ->
+                                    put(JSONObject().putOpt("line", line).put("direction", direction))
+                                }
+                        })
                         .apply {
                             val grouped = anchor != null || lineSelector != null || directionSelector != null
                             focusRow?.let { row ->
@@ -284,7 +292,18 @@ internal class TransitReadSkills(
     private fun directionOf(departure: TransitDeparture): String =
         departure.headsign.trim().take(TransitSkillContract.MAX_DIRECTION_CHARS)
 
+    private fun sameLabel(first: String?, second: String): Boolean =
+        first != null && normalizeLabel(first) == normalizeLabel(second)
+
+    private fun normalizeLabel(label: String): String =
+        Normalizer.normalize(label, Normalizer.Form.NFKD).replace(LABEL_MARKS, "")
+            .lowercase(Locale.ROOT).replace(LABEL_APOSTROPHES, "")
+            .replace(LABEL_SPACES, " ").trim()
+
     companion object {
+        private val LABEL_MARKS = Regex("\\p{M}+")
+        private val LABEL_APOSTROPHES = Regex("['\u2018\u2019\u02bc]")
+        private val LABEL_SPACES = Regex("[\\s\\p{Z}\\p{Pd}]+")
         const val FOCUS_KIND = "transit_departure_focus"
         private const val MAX_BOARDS = 16
         private const val MAX_LIST = 12

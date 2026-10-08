@@ -307,6 +307,12 @@ document-frequency values.
 
 For an eligible passage, require a positive body match and coverage of at least
 half the distinct normalized query terms, rounded up, across body plus metadata.
+For compound questions, split on `and`, `et`, semicolons, and question marks and
+apply that same eligibility rule separately to each substantive clause. Prefer
+the highest-ranked eligible passage for each clause before filling remaining
+excerpt slots, and share the character budget so one long passage cannot crowd
+out another topic. This remains lexical matching: conjunctions inside a single
+topic can broaden eligibility, and more than three topics exceed the excerpt cap.
 A one-term substantive query requires that term in the body. This is a lexical
 relevance heuristic, not proof of semantic coverage. Freeze the examples and
 the stopword list with FR/EN fixtures; do not choose a magic BM25 score cutoff

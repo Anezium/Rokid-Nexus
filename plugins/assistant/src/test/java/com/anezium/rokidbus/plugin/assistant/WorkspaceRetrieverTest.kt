@@ -82,6 +82,37 @@ class WorkspaceRetrieverTest {
     }
 
     @Test
+    fun `compound questions retrieve each topic in French and English within the shared budget`() {
+        val retriever = WorkspaceRetriever(listOf(
+            document("vega.txt", "Vega launch code is VELA-5836. " + "Detail ".repeat(400)),
+            document("aurora.md", "Aurora stock quantity is 47 green spools. " + "Inventory ".repeat(400)),
+            document("recipe.txt", "Bake potatoes for twenty minutes."),
+        ))
+        for (query in listOf(
+            "What is the Vega launch code and the Aurora stock quantity?",
+            "Quel code pour le lancement Vega et quelle quantite du stock Aurora ?",
+        )) {
+            val result = retriever.search(query)
+            assertEquals(2, result.matchCount)
+            assertTrue(result.excerpts.contains("VELA-5836"))
+            assertTrue(result.excerpts.contains("47 green spools"))
+            assertFalse(result.excerpts.contains("recipe.txt"))
+            assertTrue(result.excerpts.length <= WorkspaceLimits.MAX_EXCERPT_CHARS)
+        }
+    }
+
+    @Test
+    fun `an uncovered compound topic does not add a metadata-only or unrelated source`() {
+        val retriever = WorkspaceRetriever(listOf(
+            document("vega.txt", "Vega launch code is VELA-5836."),
+            document("aurora-stock-quantity.txt", "Bake potatoes for twenty minutes."),
+        ))
+        val result = retriever.search("Vega launch code and Aurora stock quantity")
+        assertEquals(1, result.matchCount)
+        assertFalse(result.excerpts.contains("potatoes"))
+    }
+
+    @Test
     fun `memory keeps its entire allocation before workspace framing`() {
         assertEquals(0, workspacePromptBudget("x".repeat(10_002)))
         assertEquals(500, workspacePromptBudget("x".repeat(9_500)))

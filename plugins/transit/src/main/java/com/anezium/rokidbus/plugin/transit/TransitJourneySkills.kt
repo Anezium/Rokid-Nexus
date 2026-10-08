@@ -80,7 +80,7 @@ internal class TransitJourneySkills(
         val active = controller.active()
         val asked = arguments.optString("journey").takeIf(String::isNotEmpty)
         if (active == null || (asked != null && asked != active.id)) {
-            return TransitSkillOutcome.Completed(JSONObject().put("active", false))
+            return TransitSkillOutcome.Completed(JSONObject().put("active", false).put("focus", focus(active)))
         }
         val zone = zone()
         val legs = active.itinerary.legs
@@ -88,6 +88,7 @@ internal class TransitJourneySkills(
         val json = JSONObject()
             .put("active", true)
             .put("journey", active.id)
+            .put("focus", focus(active))
             .put("destination", active.destinationLabel)
             .put("phase", active.phase.wireValue)
             .put("leg", (active.legIndex + 1).coerceIn(1, MAX_LEGS))
@@ -115,7 +116,9 @@ internal class TransitJourneySkills(
         val journeyId = arguments.optString("journey").takeIf(String::isNotEmpty)
             ?: return TransitSkillOutcome.Failed(SkillErrorCodes.INVALID_ARGUMENTS)
         val wasActive = controller.stop(journeyId)
-        return TransitSkillOutcome.Completed(JSONObject().put("ended", true).put("was_active", wasActive))
+        return TransitSkillOutcome.Completed(
+            JSONObject().put("ended", true).put("was_active", wasActive).put("focus", focus(controller.active())),
+        )
     }
 
     private fun summary(journey: JourneyState): JSONObject {
@@ -125,6 +128,7 @@ internal class TransitJourneySkills(
         val firstDeparture = firstRide?.start ?: itinerary.start
         return JSONObject()
             .put("journey", journey.id)
+            .put("focus", focus(journey))
             .put("destination", journey.destinationLabel.take(TransitSkillContract.MAX_NAME_CHARS))
             .put("first_departure", firstDeparture.toString())
             .put("first_departure_local", TransitSkillContract.localTime(firstDeparture, zone))
@@ -156,6 +160,16 @@ internal class TransitJourneySkills(
                 },
             )
     }
+
+    private fun focus(journey: JourneyState?): JSONObject = JSONObject()
+        .put("kind", "transit_journey_focus")
+        .put("active", journey != null)
+        .apply {
+            journey?.let {
+                put("journey", it.id)
+                put("destination", it.destinationLabel.take(TransitSkillContract.MAX_NAME_CHARS))
+            }
+        }
 
     private fun placeName(journey: JourneyState, place: TransitPlace, isLast: Boolean): String =
         if (isLast) journey.destinationLabel.take(TransitSkillContract.MAX_NAME_CHARS) else name(place.name)

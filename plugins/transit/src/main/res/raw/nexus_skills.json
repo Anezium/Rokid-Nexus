@@ -144,6 +144,17 @@
               "line": {"type": "string", "maxLength": 16},
               "direction": {"type": "string", "maxLength": 80},
               "departure": {"type": "string", "nexusRef": "departure"},
+              "groups": {
+                "type": "array", "maxItems": 12,
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "line": {"type": "string", "maxLength": 16},
+                    "direction": {"type": "string", "maxLength": 80}
+                  },
+                  "required": ["direction"]
+                }
+              },
               "observed_at": {"type": "string", "maxLength": 40}
             },
             "required": ["kind", "stop", "stop_name", "observed_at"]
@@ -204,9 +215,19 @@
               },
               "required": ["mode", "from", "to", "departure_local", "arrival_local", "realtime", "minutes"]
             }
+          },
+          "focus": {
+            "type": "object",
+            "properties": {
+              "kind": {"type": "string", "enum": ["transit_journey_focus"]},
+              "active": {"type": "boolean"},
+              "journey": {"type": "string", "nexusRef": "journey"},
+              "destination": {"type": "string", "maxLength": 80}
+            },
+            "required": ["kind", "active"]
           }
         },
-        "required": ["journey", "destination", "arrival", "arrival_local", "duration_minutes", "transfers", "alternatives", "legs"]
+        "required": ["journey", "destination", "arrival", "arrival_local", "duration_minutes", "transfers", "alternatives", "legs", "focus"]
       }
     },
     {
@@ -242,9 +263,19 @@
           "next_time_local": {"type": "string", "maxLength": 8},
           "stops_remaining": {"type": "integer", "minimum": 0, "maximum": 300},
           "arrival_local": {"type": "string", "maxLength": 8},
-          "replanned": {"type": "boolean"}
+          "replanned": {"type": "boolean"},
+          "focus": {
+            "type": "object",
+            "properties": {
+              "kind": {"type": "string", "enum": ["transit_journey_focus"]},
+              "active": {"type": "boolean"},
+              "journey": {"type": "string", "nexusRef": "journey"},
+              "destination": {"type": "string", "maxLength": 80}
+            },
+            "required": ["kind", "active"]
+          }
         },
-        "required": ["active"]
+        "required": ["active", "focus"]
       }
     },
     {
@@ -270,9 +301,19 @@
         "type": "object",
         "properties": {
           "ended": {"type": "boolean"},
-          "was_active": {"type": "boolean"}
+          "was_active": {"type": "boolean"},
+          "focus": {
+            "type": "object",
+            "properties": {
+              "kind": {"type": "string", "enum": ["transit_journey_focus"]},
+              "active": {"type": "boolean"},
+              "journey": {"type": "string", "nexusRef": "journey"},
+              "destination": {"type": "string", "maxLength": 80}
+            },
+            "required": ["kind", "active"]
+          }
         },
-        "required": ["ended", "was_active"]
+        "required": ["ended", "was_active", "focus"]
       }
     }
   ]

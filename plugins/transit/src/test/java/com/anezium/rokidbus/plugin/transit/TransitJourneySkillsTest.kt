@@ -105,6 +105,29 @@ class TransitJourneySkillsTest {
     }
 
     @Test
+    fun `journey focus carries the ref through start status and stop`() {
+        val started = (start() as TransitSkillOutcome.Completed).data
+        assertEquals("journey-1", started.getJSONObject("focus").getString("journey"))
+        val status = (skills.status(JSONObject()) as TransitSkillOutcome.Completed).data
+        assertMatchesOutput(TransitSkillContract.JOURNEY_STATUS, status)
+        assertEquals("journey-1", status.getJSONObject("focus").getString("journey"))
+        val stopped = (skills.stop(JSONObject().put("journey", "journey-1")) as TransitSkillOutcome.Completed).data
+        assertMatchesOutput(TransitSkillContract.STOP_JOURNEY, stopped)
+        assertFalse(stopped.getJSONObject("focus").getBoolean("active"))
+        assertFalse(stopped.getJSONObject("focus").has("journey"))
+    }
+
+    @Test
+    fun `status for an older journey does not erase the current journey focus`() {
+        start()
+        val status = (skills.status(JSONObject().put("journey", "older-journey")) as TransitSkillOutcome.Completed).data
+        assertMatchesOutput(TransitSkillContract.JOURNEY_STATUS, status)
+        assertFalse(status.getBoolean("active"))
+        assertTrue(status.getJSONObject("focus").getBoolean("active"))
+        assertEquals("journey-1", status.getJSONObject("focus").getString("journey"))
+    }
+
+    @Test
     fun `the result never carries the position or home's location`() {
         val text = (start() as TransitSkillOutcome.Completed).data.toString()
         listOf("48.8262", "2.3503", "48.8", "START", "END").forEach { forbidden ->

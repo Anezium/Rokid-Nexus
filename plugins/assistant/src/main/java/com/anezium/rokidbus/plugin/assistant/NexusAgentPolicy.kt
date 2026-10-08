@@ -156,7 +156,11 @@ internal object NexusAgentPolicy {
             "- Say which stop and direction an answer uses. A scheduled time is not a live prediction, " +
             "and you cannot know how long it takes the wearer to reach a stop.\n" +
             "- For a follow-up such as \"the one after that\", continue from the departure in the " +
-            "plugin context by passing it as after, rather than reading the next row of a new board.\n"
+            "plugin context by passing it as after, rather than reading the next row of a new board. " +
+            "When the wearer selects a different line or direction, omit after and copy the exact " +
+            "line and direction labels from the board or its context groups.\n" +
+            "- To stop a journey, use its journey ref from plugin context. If none is available, " +
+            "first request the active journey status, then stop that returned ref.\n"
 
     private val CURRENT_TIME_FORMAT = DateTimeFormatter.ofPattern(
         "EEEE yyyy-MM-dd HH:mm (xxx VV)",

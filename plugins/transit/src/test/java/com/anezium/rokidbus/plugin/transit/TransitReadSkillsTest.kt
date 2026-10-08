@@ -170,6 +170,21 @@ class TransitReadSkillsTest {
     }
 
     @Test
+    fun `direction typography is normalized and exact groups survive in conversation focus`() {
+        data.boards[stop.id] = listOf(
+            departure("14", "A\u00e9roport d\u2019Orly", 3),
+            departure("14", "Saint-Denis Pleyel", 5),
+        )
+        val board = departures()
+        assertEquals(2, board.getJSONObject("focus").getJSONArray("groups").length())
+        val selected = departures(JSONObject().put("line", "14").put("direction", "Aeroport d'Orly"))
+        assertEquals(1, selected.getJSONArray("departures").length())
+        assertEquals("A\u00e9roport d\u2019Orly", selected.getJSONObject("focus").getString("direction"))
+        val shortened = departures(JSONObject().put("line", "14").put("direction", "Orly"))
+        assertEquals(0, shortened.getJSONArray("departures").length())
+    }
+
+    @Test
     fun `the one after that follows the trip in its own group, not the next row`() {
         data.boards[stop.id] = listOf(
             departure("T3", "North", 3, trip = "t1"),
