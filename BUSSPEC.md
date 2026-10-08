@@ -1739,7 +1739,10 @@ higher revision; covered, stale, or duplicate revisions are dropped.
 
 Covering a frame sends `visible: false`, drops its lease, and invalidates pending
 work. Uncovering sends `visible: true` with a fresh hub-clock lease and requests
-`reason: refresh`, keeping the snapshot displayed. A visible Shown frame renews
+`reason: refresh`, keeping the snapshot displayed. A page displayed on a frame
+that holds no lease (its first display, or after Retry) also sends `visible: true`
+with a fresh lease; a refreshed, uncovered frame keeps the lease sent on uncover.
+A visible Shown frame renews
 its lease when a tick falls within 30 seconds of expiry. No scheduler or transport
 runs inside the reducer; it only returns effects for a future host.
 
