@@ -409,6 +409,30 @@ but introduced B1; item 2 is closed for the direct-display trace but S1 remains.
 
 Then rerun acceptance 1-12 (row 12 now also covers B1 and S1) and report real tails.
 
+# Review round 3 (GPT-6.1 Sol, 2026-10-08, `design/nav-map-mockups/sol-review-pr2-round3.md`)
+
+Verdict "not merge-ready". B1 closed; S1 closed for both observer orders. Two should-fix:
+
+1. **should-fix F2, required** `RokidBusAccessibilityService.kt:1336, :1338, :1384`,
+   `SurfaceController.kt:106` (introduced in this range): installing the presentation gate
+   must reconcile the surface that is already active through the same presentation callback,
+   identity checked afterwards, and before the retained presentation is restored on
+   reconnect. Trace: cancel maps at 4500, close the session, the accessibility service is
+   destroyed at 5000; the hub accepts maps at 9000 (falls back to `SurfaceActivity`);
+   reconnect at 9500, before the cancellation expiry: maps must be closed unseen as the
+   pre-fix observer snapshot did. Named test for the service-gap/reconnect trace plus an
+   ordinary surviving-surface positive control.
+2. **should-fix F1, deferred to PR3 by maintainer decision** `SurfaceController.kt:629` via
+   `:508/:518`, `InkRendererLayer.kt:85, :99`: an attached Ink renderer projects a committed
+   document before `onCommitted` reaches the gate, so a cancelled late Ink surface reaches
+   its view before being closed. Repair means re-ordering Ink projection in
+   `InkRendererLayer`, outside this PR's scope and inside the Ink runtime; the path is not
+   reachable in PR2 (nothing produces `PageItem.Launch` until PR3). PR3's contract carries
+   it: stage validated Ink state, run the presentation decision, project only if still
+   accepted, with a live attached-renderer cancellation test. Not to be fixed here.
+
+Then rerun acceptance 1-12 (row 12 now also covers F2) and report real tails.
+
 # Plan sketch
 
 1. `input/` package + `InputArbiterTest` (pure, no wiring). Commit.
