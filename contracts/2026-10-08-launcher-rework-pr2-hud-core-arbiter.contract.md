@@ -319,6 +319,7 @@ commit (expected `f37bcc7c`).
 | 6 | reducer tests | `SessionReducerTest` | named tests for rules 15–20 incl.: cancelled open closes the late surface unseen; a second open keeps the first cancellation; `NexusSurface` underneath receives no close; `nextDeadlineMs` equals the earliest pending deadline |
 | 7 | runner tests | `SessionRunnerTest` (ported) | re-entrant dispatch is queued, not interleaved; exactly one timer pending; a throwing sink does not stop the drain |
 | 8 | activity removal | `grep -n "fun claimsInput\|fun claimsRingKey\|fun handleRingKey\|fun handleKeyEvent\|fun handlePendingTempleTap\|fireOrOpen" glasses-hub/src/main/java/com/anezium/rokidbus/glasses/ActivityController.kt; grep -rn "ActivityController\.\(claims\|handleKeyEvent\|handleRingKey\|handlePendingTempleTap\|cancelRingInput\)" glasses-hub/src/main` | both empty (`handleActivityEnvelope`, the wire handler, is kept and not matched) (`NoticeController`, `SurfaceController` and `LauncherOverlayRenderer` keep their own `claimsInput`/`handleRingKey`) |
+| 12 | Review round 1 regressions | `./gradlew :glasses-hub:testDebugUnitTest` | the seven items under "Review round 1" each have a named test (items 1-6) or the NOTICE line (item 7), and pass |
 | 9 | attribution | `grep -rln "alvarosw" glasses-hub/src NOTICE` | every ported file and `NOTICE` |
 | 10 | default behaviour | code read | preference absent → `LEGACY`; `SessionHost` never attached on `LEGACY` |
 | 11 | commits | `git log --format='%an %s%n%b' $BASE..HEAD` | author Anezium only; no `Co-Authored-By`, no AI name |
@@ -336,6 +337,49 @@ re-trigger while open relies on the detector's suppression (option A, PR1 unchan
 `PageItem.Launch(pluginId)` from the injected resolver only; every non-ring device is
 `TOUCHPAD` in PR2; armed-notice predicate is `ownsRingInput()`; `CloseSurface` reuses the
 existing close path including `/ink/closed`.
+
+# Review round 1 (GPT-6.1 Sol, 2026-10-08, `design/nav-map-mockups/sol-review-pr2.md`)
+
+Verdict "not merge-ready". Required before PR2 is closed (file:line as of `0790c4bc`):
+
+1. **blocker** `InputArbiter.kt:229, :272`: on LEGACY, a notice that becomes armed after a
+   triple tap must not defeat the detector's 800 ms ENTER/BACK suppression. Trace: contacts
+   at 0/40, 200/240, 400/440 open the legacy launcher; an action-bearing notice arrives at
+   500; ENTER DOWN at 700 must still be swallowed by the detector (it was before PR2), not
+   routed to the notice. Separate "may recognise a new triple tap" (editable and armed-notice
+   exclusions) from "an already-triggered suppression window is enforced" (always asked).
+   Test with the real notice router: notice arriving after the trigger.
+2. **blocker** `RokidBusAccessibilityService.kt:1392, :1426`, `SurfaceController.kt:978`
+   (and the media / decoded-image branches at ~549/550 and ~600/601): a cancelled late
+   surface is closed unseen by the synchronous `NexusSession` notification, then the
+   original `showOrUpdate` resumes and calls `displaySurface` anyway, leaving a visible
+   window with no active surface. Every presentation branch must stop when the notification
+   synchronously cleared or replaced its active surface (cancellation vetoes presentation
+   before publishing). Test at the publication/window level: `CloseSurface` can never be
+   followed by a display of that surface.
+3. **should-fix** `InputArbiter.kt:165`: a press is marked completed on its first UP; a
+   duplicate UP (same device/key/downTime) or a post-UP repeat is consumed and emits no
+   intent. Trace: page frame, BACK DOWN 3000 / UP 3030 pops to root; duplicate UP 3040 must
+   not close the session.
+4. **should-fix** `InputArbiter.kt:210`: the 5 s TTL applies only to completed records,
+   never to a live press (a held SHIFT on a bonded keyboard with an editable card focused,
+   then a letter at 7000 and SHIFT UP at 7100 with downTime 1000: both must pass as before).
+5. **should-fix** `InputArbiter.kt:89, :153, :172`: a press owned by a session generation is
+   delivered only to that generation; after Abort and a new session, the old UP is consumed
+   silently. Trace: BACK DOWN 3000 at root; switch LEGACY 3020, SESSION 3040; contacts
+   3100/3200/3300 open a new session, gate ends 4100; BACK UP 4200 (downTime 3000) must not
+   close the new root.
+6. **should-fix** `RokidBusAccessibilityService.kt:1374`: deduplicate notice arrivals by the
+   notice instance identity (`NoticeInteractionIdentity`/instanceId), not by surfaceId: two
+   successive Relay notices share `LOCAL_SURFACE_ID`. Test two same-plugin shows while the
+   session suppresses the band: second preview and count of 2, root order and selection
+   unchanged; cosmetic redraws and suppression toggles do not count as arrivals.
+7. **should-fix** attribution: `SessionOverlayWindow` inside `RokidBusAccessibilityService.kt`
+   is adapted from the fork's `HudHost`. Decision: do not put the fork header on the whole
+   upstream service file; put the attribution comment on the `SessionOverlayWindow` class
+   itself and list `RokidBusAccessibilityService.kt (SessionOverlayWindow only)` in `NOTICE`.
+
+Then rerun acceptance 1-12 and report their real tails.
 
 # Plan sketch
 
