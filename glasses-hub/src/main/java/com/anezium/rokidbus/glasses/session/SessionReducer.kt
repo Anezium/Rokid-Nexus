@@ -16,19 +16,24 @@ import com.anezium.rokidbus.shared.PageSurfaceInvocation
 import com.anezium.rokidbus.shared.PageSurfaceRequest
 import com.anezium.rokidbus.shared.PageSurfaceResponse
 import com.anezium.rokidbus.shared.PageSurfaceValidationResult
+import com.anezium.rokidbus.shared.PageTemplateContract
 import org.json.JSONObject
 
 /**
- * Pure Nexus session reducer for the reserved session/page v1 contract.
+ * Pure Nexus session reducer for the session/page v1 contract.
  *
  * Nothing here schedules, posts, or draws: time arrives on events as `nowMs`
- * and every consequence is returned as a [SessionEffect] for a future host.
+ * and every consequence is returned as a [SessionEffect] for a host.
  * Host facts (armed notice, focused editable, link) are opaque inputs; the
  * notice dispatcher's own claims are not re-implemented here.
+ *
+ * [isLocalPage] names the pages the glasses hub answers itself: they need no phone, so link loss
+ * and provider invalidation never touch them, while provider frames keep every loss rule.
  */
 internal class SessionReducer(
     private val itemResolver: PageItemResolver = DefaultPageItems,
     private val maxSnapshotTotalBytes: Int = PageSurfaceContract.MAX_SNAPSHOT_TOTAL_BYTES,
+    private val isLocalPage: (String) -> Boolean = { false },
 ) {
     fun reduce(model: SessionModel, event: SessionEvent): SessionTransition {
         val transition = when (event) {
@@ -37,8 +42,10 @@ internal class SessionReducer(
             is SessionEvent.EditableFocused -> keep(model.copy(editableFocused = event.focused))
             is SessionEvent.NoticeArrived -> onNoticeArrived(model, event.preview)
             is SessionEvent.ActivityStarted -> onActivityStarted(model, event.stop)
+            is SessionEvent.ActivityUpdated -> onActivityUpdated(model, event.stop)
             is SessionEvent.ActivityEnded -> onActivityEnded(model, event.stopId)
             is SessionEvent.SurfaceShown -> onSurfaceShown(model, event)
+            is SessionEvent.ProviderInvalidated -> invalidateOwner(model, event.ownerPluginId)
             SessionEvent.Abort -> abort(model)
             else -> {
                 // Rule 17: a cancelled open is remembered only until its own deadline.
@@ -56,12 +63,13 @@ internal class SessionReducer(
         return transition.copy(effects = transition.effects.ifEmpty { listOf(SessionEffect.None) })
     }
 
+    /** D1: the root counts the one retained notice, while [SessionModel.notificationCount] counts arrivals. */
     private fun onNoticeArrived(model: SessionModel, preview: NoticePreview): SessionTransition {
-        val count = model.notificationCount + 1
+        val retained = RootStops.retainedNotices(preview)
         val updated = model.copy(
             preview = preview,
-            notificationCount = count,
-            state = model.state.mapRootStops { RootStops.withNotice(it, preview, count) },
+            notificationCount = model.notificationCount + 1,
+            state = model.state.mapRootStops { RootStops.withNotice(it, preview, retained) },
         )
         return rootBookkeeping(model, updated)
     }
@@ -72,6 +80,20 @@ internal class SessionReducer(
         } else {
             keep(model.copy(queuedActivities = model.queuedActivities.upsert(stop)))
         }
+
+    /** Values change in place; an activity that is not a member yet waits like a start would. */
+    private fun onActivityUpdated(model: SessionModel, stop: ActivityStop): SessionTransition {
+        val known = model.activities.any { it.id == stop.id }
+        val updated = when {
+            known -> model.copy(
+                activities = model.activities.upsert(stop),
+                state = model.state.mapRootStops { RootStops.withActivity(it, stop) },
+            )
+            model.state == SessionState.Closed -> model.copy(activities = model.activities.upsert(stop))
+            else -> model.copy(queuedActivities = model.queuedActivities.upsert(stop))
+        }
+        return rootBookkeeping(model, updated)
+    }
 
     private fun onActivityEnded(model: SessionModel, stopId: String): SessionTransition {
         val updated = model.copy(
@@ -84,7 +106,9 @@ internal class SessionReducer(
 
     private fun onClosed(model: SessionModel, event: SessionEvent): SessionTransition {
         if (event !is SessionEvent.TripleTap || model.noticeArmed || model.editableFocused) return keep(model)
-        val root = SessionState.Root(RootStops.build(model.activities, model.preview, model.notificationCount))
+        val root = SessionState.Root(
+            RootStops.build(model.activities, model.preview, RootStops.retainedNotices(model.preview)),
+        )
         return SessionTransition(
             model.copy(
                 state = SessionState.Opening(event.nowMs, root),
@@ -127,7 +151,8 @@ internal class SessionReducer(
                     SessionTransition(model.copy(state = state.copy(selected = target)), listOf(ShowRoot))
                 }
             }
-            is SessionEvent.Enter -> state.stops.getOrNull(state.selected)
+            // An ended activity keeps its place but opens nothing.
+            is SessionEvent.Enter -> state.stops.getOrNull(state.selected)?.takeUnless { it.ended }
                 ?.let { stop -> openFrame(model, state, emptyList(), stop.pageId, null, event.nowMs) }
                 ?: keep(model)
             is SessionEvent.Back -> SessionTransition(closed(model), listOf(RestoreUnderneath(model.underneath)))
@@ -135,6 +160,7 @@ internal class SessionReducer(
             SessionEvent.LinkRestored -> keep(model.copy(linkLost = false))
             // A new contact after the gate proves the gate's gestures are over.
             is SessionEvent.Contact -> keep(model.copy(gateContacts = emptyList()))
+            is SessionEvent.LocalLaunchFinished -> localLaunchFinished(model, state, event)
             // Triple tap stays at the root; late page traffic never reopens a frame.
             else -> keep(model)
         }
@@ -143,15 +169,17 @@ internal class SessionReducer(
         when (event) {
             is SessionEvent.Step -> step(model, state, event.delta)
             is SessionEvent.Enter -> enter(model, state, event.nowMs)
-            is SessionEvent.Back -> pop(model, state, event.nowMs)
+            is SessionEvent.Back -> back(model, state, event.nowMs)
             is SessionEvent.TripleTap -> SessionTransition(
                 model.copy(state = state.root),
-                state.frames.asReversed().filter { model.canReach(it) }.map { SendClosed(it.pageId, CLOSE_BACK) } +
-                    ShowRoot,
+                state.frames.withIndex().reversed().filter { model.canReach(it.value) }
+                    .map { closedEffect(model, it.value, it.index, CLOSE_BACK) } + ShowRoot,
             )
             is SessionEvent.Tick -> tick(model, state, event.nowMs)
             is SessionEvent.PageResponse -> response(model, state, event.payload, event.nowMs)
             is SessionEvent.PageResult -> result(model, state, event.payload, event.nowMs)
+            is SessionEvent.DocumentPaged -> documentPaged(model, state, event)
+            is SessionEvent.LocalLaunchFinished -> localLaunchFinished(model, state, event)
             SessionEvent.LinkLost -> SessionTransition(model.copy(linkLost = true, state = state.linkLost()), listOf(ShowFrame))
             // Restoration replays nothing; the wearer's next Retry does.
             SessionEvent.LinkRestored -> keep(model.copy(linkLost = false))
@@ -263,7 +291,8 @@ internal class SessionReducer(
             is SessionState.Launching -> (state.previous as? SessionState.InPage)?.frames.orEmpty()
             else -> emptyList()
         }
-        return frames.asReversed().filter { model.canReach(it) }.map { SendClosed(it.pageId, CLOSE_SESSION_CLOSED) }
+        return frames.withIndex().reversed().filter { model.canReach(it.value) }
+            .map { closedEffect(model, it.value, it.index, CLOSE_SESSION_CLOSED) }
     }
 
     /** Leaves the session: queued activities join the live ones and per-session bookkeeping resets. */
@@ -276,11 +305,55 @@ internal class SessionReducer(
         underneath = Underneath.Unknown,
     )
 
+    /**
+     * A native app or the camera opened from the session: on success the session closes cleanly,
+     * it never waits for a surface; on failure the wearer stays where they were, told why.
+     */
+    private fun localLaunchFinished(
+        model: SessionModel,
+        state: SessionState,
+        event: SessionEvent.LocalLaunchFinished,
+    ): SessionTransition =
+        if (event.launched) {
+            SessionTransition(closed(model), closedFrames(model, state) + RestoreUnderneath(model.underneath))
+        } else {
+            SessionTransition(model, listOf(SessionEffect.ShowStatus(SessionStatus.LaunchFailed(event.label))))
+        }
+
     private fun step(model: SessionModel, state: SessionState.InPage, delta: Int): SessionTransition {
         val top = state.frames.last()
-        val target = (top.selected + delta).coerceIn(0, itemsOf(top).lastIndex.coerceAtLeast(0))
+        top.panel?.let { panel ->
+            val target = (panel.selected + delta).coerceIn(0, 1)
+            if (target == panel.selected) return keep(model)
+            val next = when (panel) {
+                is FramePanel.Confirm -> panel.copy(selected = target)
+                is FramePanel.Launch -> panel.copy(selected = target)
+            }
+            return SessionTransition(model.copy(state = state.withTop(top.copy(panel = next))), listOf(ShowFrame))
+        }
+        val status = top.status
+        if (status is FrameStatus.Shown && top.mode == FrameMode.READING) {
+            // A document pages through its own measured layout; bounded at both ends.
+            if (top.pageStarts.isEmpty()) return keep(model)
+            val target = (top.page + delta).coerceIn(0, top.pageStarts.lastIndex)
+            if (target == top.page) return keep(model)
+            val frame = top.copy(page = target, anchor = top.pageStarts[target])
+            return SessionTransition(model.copy(state = state.withTop(frame)), listOf(ShowFrame))
+        }
+        val entries = entriesOf(top)
+        if (top.tombstone != null && status is FrameStatus.Shown) {
+            // Stepping off a removed row lands on the row on that side of it, never across it.
+            val at = top.selected
+            val target = if (delta > 0) at else at - 1
+            if (target !in entries.indices) return keep(model)
+            val frame = top.copy(selected = target, selectedKey = entries[target].key, tombstone = null)
+            return SessionTransition(model.copy(state = state.withTop(frame)), listOf(ShowFrame))
+        }
+        val count = if (status is FrameStatus.Shown || status is FrameStatus.Loading) entries.size else UNAVAILABLE_ITEMS.size
+        val target = (top.selected + delta).coerceIn(0, (count - 1).coerceAtLeast(0))
         if (target == top.selected) return keep(model)
-        return SessionTransition(model.copy(state = state.withTop(top.copy(selected = target))), listOf(ShowFrame))
+        val frame = top.copy(selected = target, selectedKey = entries.getOrNull(target)?.key?.takeIf { status is FrameStatus.Shown })
+        return SessionTransition(model.copy(state = state.withTop(frame)), listOf(ShowFrame))
     }
 
     private fun enter(model: SessionModel, state: SessionState.InPage, nowMs: Long): SessionTransition {
@@ -294,16 +367,81 @@ internal class SessionReducer(
                 else -> keep(model)
             }
             is FrameStatus.Shown -> {
+                top.panel?.let { return enterPanel(model, state, top, status, it, nowMs) }
                 if (top.invocation != null) return keep(model)
-                when (val item = itemResolver.items(status.snapshot.page).getOrNull(top.selected)) {
+                if (top.mode == FrameMode.READING) {
+                    // SELECT on a document reaches its rows, when it has any; reading never fires one.
+                    if (entriesOf(top).isEmpty()) return keep(model)
+                    return SessionTransition(
+                        model.copy(state = state.withTop(top.copy(mode = FrameMode.ROWS, selected = 0, selectedKey = entriesOf(top).first().key))),
+                        listOf(ShowFrame),
+                    )
+                }
+                if (top.tombstone != null) return keep(model)
+                when (val item = entriesOf(top).getOrNull(top.selected)?.item) {
                     is PageItem.OpenPage -> openFrame(model, state.root, state.frames, item.pageId, item.paramsJson, nowMs)
                     is PageItem.Invoke -> invoke(model, state, status, item.actionId, nowMs)
                     is PageItem.Launch -> launch(model, state, item.pluginId, nowMs)
+                    is PageItem.Confirm -> SessionTransition(
+                        model.copy(
+                            state = state.withTop(
+                                top.copy(panel = FramePanel.Confirm(item.actionId, item.label, status.revision, top.providerEpoch)),
+                            ),
+                        ),
+                        listOf(ShowFrame),
+                    )
+                    is PageItem.LaunchPrompt -> SessionTransition(
+                        model.copy(state = state.withTop(top.copy(panel = FramePanel.Launch(item.pluginId, item.label)))),
+                        listOf(ShowFrame),
+                    )
+                    is PageItem.LocalLaunch -> SessionTransition(model, listOf(SessionEffect.LaunchLocal(item.key, item.label)))
                     PageItem.Back -> pop(model, state, nowMs)
                     else -> keep(model)
                 }
             }
         }
+    }
+
+    /** G5/G6: only the panel's own choice acts, and a confirmation only for what was shown. */
+    private fun enterPanel(
+        model: SessionModel,
+        state: SessionState.InPage,
+        top: Frame,
+        status: FrameStatus.Shown,
+        panel: FramePanel,
+        nowMs: Long,
+    ): SessionTransition {
+        val cleared = state.withTop(top.copy(panel = null))
+        return when (panel) {
+            is FramePanel.Confirm -> {
+                if (panel.selected != FramePanel.CONFIRM) {
+                    SessionTransition(model.copy(state = cleared), listOf(ShowFrame))
+                } else if (panel.revision != status.revision || panel.providerEpoch != top.providerEpoch || top.invocation != null) {
+                    SessionTransition(model.copy(state = cleared), listOf(ShowFrame))
+                } else {
+                    invoke(model.copy(state = cleared), cleared, status, panel.actionId, nowMs)
+                }
+            }
+            is FramePanel.Launch ->
+                if (panel.selected == FramePanel.OPEN) {
+                    launch(model.copy(state = cleared), cleared, panel.pluginId, nowMs)
+                } else {
+                    SessionTransition(model.copy(state = cleared), listOf(ShowFrame))
+                }
+        }
+    }
+
+    /** BACK closes a panel, then leaves a document's rows for its text, then pops the frame. */
+    private fun back(model: SessionModel, state: SessionState.InPage, nowMs: Long): SessionTransition {
+        val top = state.frames.last()
+        if (top.panel != null) {
+            return SessionTransition(model.copy(state = state.withTop(top.copy(panel = null))), listOf(ShowFrame))
+        }
+        val status = top.status
+        if (status is FrameStatus.Shown && top.mode == FrameMode.ROWS && itemResolver.isDocument(status.snapshot.page)) {
+            return SessionTransition(model.copy(state = state.withTop(top.copy(mode = FrameMode.READING))), listOf(ShowFrame))
+        }
+        return pop(model, state, nowMs)
     }
 
     /** Opens the frame above [below]; the root counts as frame 0 in the six-frame budget. */
@@ -316,29 +454,34 @@ internal class SessionReducer(
         nowMs: Long,
     ): SessionTransition {
         if (below.size + 1 >= PageSurfaceContract.MAX_FRAMES) {
-            return SessionTransition(model, listOf(SendClosed(pageId, CLOSE_FRAME_LIMIT)))
+            // Nothing is allocated: the close names no frame and is never sent.
+            return SessionTransition(
+                model,
+                listOf(SessionEffect.ShowStatus(SessionStatus.FrameLimit), SendClosed(pageId, CLOSE_FRAME_LIMIT)),
+            )
         }
         val frameIndex = below.size + 1
-        if (model.linkLost) {
+        if (model.linkLost && !isLocalPage(pageId)) {
             val frame = Frame(pageId, FrameStatus.Unavailable(null, UNAVAILABLE_LINK_LOST), paramsJson = paramsJson)
             return SessionTransition(model.copy(state = SessionState.InPage(below + frame, root)), listOf(ShowFrame))
         }
         val (requestId, counted) = model.nextId("r")
         val request = request(model, requestId, frameIndex, pageId, REASON_OPEN, paramsJson)
         if (!isWireValid(request)) return keep(model)
-        val covered = below.lastOrNull()?.let { coverFrame(it) }
+        val covered = below.lastOrNull()?.let { coverFrame(model, it, below.lastIndex) }
         val frame = Frame(pageId, FrameStatus.Loading(nowMs, requestId, REASON_OPEN), paramsJson = paramsJson)
         val frames = below.dropLast(if (covered == null) 0 else 1) + listOfNotNull(covered?.first) + frame
         return SessionTransition(
             counted.copy(state = SessionState.InPage(frames, root)),
-            listOfNotNull(covered?.second) + RequestPage(request) + ShowFrame,
+            listOfNotNull(covered?.second) + requestEffect(request, nowMs, null) + ShowFrame,
         )
     }
 
-    private fun coverFrame(frame: Frame): Pair<Frame, SessionEffect> {
+    private fun coverFrame(model: SessionModel, frame: Frame, index: Int): Pair<Frame, SessionEffect> {
         val status = frame.status
-        val next = if (status is FrameStatus.Shown) frame.copy(status = status.copy(leaseUntilMs = null)) else frame
-        return next to SendVisibility(frame.pageId, visible = false)
+        val next = (if (status is FrameStatus.Shown) frame.copy(status = status.copy(leaseUntilMs = null)) else frame)
+            .copy(panel = null)
+        return next to SendVisibility(frame.pageId, false, null, identity(model, index))
     }
 
     private fun retry(
@@ -347,15 +490,21 @@ internal class SessionReducer(
         status: FrameStatus.Unavailable,
         nowMs: Long,
     ): SessionTransition {
-        if (model.linkLost) return keep(model)
         val top = state.frames.last()
+        if (model.linkLost && !isLocalPage(top.pageId)) return keep(model)
         val (requestId, counted) = model.nextId("r")
         val request = request(model, requestId, state.frames.size, top.pageId, REASON_RETRY, top.paramsJson)
         val frame = top.copy(
             status = FrameStatus.Loading(nowMs, requestId, REASON_RETRY, previous = status.lastSnapshot),
             selected = 0,
+            selectedKey = null,
+            tombstone = null,
+            panel = null,
         )
-        return SessionTransition(counted.copy(state = state.withTop(frame)), listOf(RequestPage(request), ShowFrame))
+        return SessionTransition(
+            counted.copy(state = state.withTop(frame)),
+            listOf(requestEffect(request, nowMs, top.revisionFloor), ShowFrame),
+        )
     }
 
     private fun invoke(
@@ -379,7 +528,9 @@ internal class SessionReducer(
 
     private fun pop(model: SessionModel, state: SessionState.InPage, nowMs: Long): SessionTransition {
         val popped = state.frames.last()
-        val closed = listOfNotNull(SendClosed(popped.pageId, CLOSE_BACK).takeIf { model.canReach(popped) })
+        val closed = listOfNotNull(
+            closedEffect(model, popped, state.frames.lastIndex, CLOSE_BACK).takeIf { model.canReach(popped) },
+        )
         val below = state.frames.dropLast(1)
         val uncovered = below.lastOrNull()
             ?: return SessionTransition(model.copy(state = state.root), closed + ShowRoot)
@@ -395,11 +546,12 @@ internal class SessionReducer(
                 nowMs, requestId, REASON_REFRESH, previous = uncovered.retained(), leaseUntilMs = lease,
             ),
             invocation = null,
+            panel = null,
         )
         return SessionTransition(
             counted.copy(state = state.copy(frames = below.dropLast(1) + frame)),
-            closed + SendVisibility(uncovered.pageId, visible = true, leaseUntilMs = lease) + RequestPage(request) +
-                ShowFrame,
+            closed + SendVisibility(uncovered.pageId, true, lease, identity(model, below.lastIndex)) +
+                requestEffect(request, nowMs, uncovered.revisionFloor) + ShowFrame,
         )
     }
 
@@ -422,7 +574,7 @@ internal class SessionReducer(
                 if (lease != null && nowMs >= lease - PageSurfaceContract.LEASE_RENEW_MS) {
                     val renewed = nowMs + PageSurfaceContract.LEASE_MS
                     frame = frame.copy(status = status.copy(leaseUntilMs = renewed))
-                    effects += SendVisibility(top.pageId, visible = true, leaseUntilMs = renewed)
+                    effects += SendVisibility(top.pageId, true, renewed, identity(model, state.frames.lastIndex))
                 }
                 val invocation = top.invocation
                 if (invocation != null && invocation.expiredAt(nowMs)) {
@@ -439,6 +591,7 @@ internal class SessionReducer(
         val frame = state.frames.last().copy(
             status = FrameStatus.Unavailable(status.previous, PageSurfaceContract.ERROR_PAGE_TIMEOUT),
             selected = 0,
+            panel = null,
         )
         return SessionTransition(model.copy(state = state.withTop(frame)), listOf(ShowFrame))
     }
@@ -449,14 +602,68 @@ internal class SessionReducer(
         payload: JSONObject,
         nowMs: Long,
     ): SessionTransition {
-        if (model.linkLost) return keep(model)
         val top = state.frames.last()
+        if (model.linkLost && !isLocalPage(top.pageId)) return keep(model)
+        if (isInvalidation(model, state, payload)) {
+            return invalidateOwner(model, payload.optString(PageSurfaceContract.FIELD_PLUGIN_ID))
+        }
         return when (val status = top.status) {
             // The deadline is absolute: a reply arriving after it loses even if no tick ran yet.
             is FrameStatus.Loading ->
                 if (status.expiredAt(nowMs)) timeOut(model, state, status) else pendingResponse(model, state, status, payload, nowMs)
             is FrameStatus.Shown -> liveRevision(model, state, status, payload, nowMs)
             is FrameStatus.Unavailable -> keep(model)
+        }
+    }
+
+    /**
+     * P4: a hub-stamped `PAGE_UNAVAILABLE` naming a retained frame of its owner, when it answers
+     * no pending request on top, is the phone hub invalidating that owner's work.
+     */
+    private fun isInvalidation(model: SessionModel, state: SessionState.InPage, payload: JSONObject): Boolean {
+        if (payload.opt("error") != PageSurfaceContract.ERROR_PAGE_UNAVAILABLE) return false
+        val owner = payload.opt(PageSurfaceContract.FIELD_PLUGIN_ID) as? String ?: return false
+        val correlation = correlationOf(payload) ?: return false
+        if (correlation.sessionGeneration != model.generation) return false
+        val top = state.frames.last()
+        val topPending = (top.status as? FrameStatus.Loading)?.requestId
+        if (correlation.frameIndex == state.frames.size && correlation.requestId == topPending) return false
+        val frame = state.frames.getOrNull(correlation.frameIndex - 1) ?: return false
+        val requestId = when (val status = frame.status) {
+            is FrameStatus.Loading -> status.requestId
+            is FrameStatus.Shown -> status.requestId
+            is FrameStatus.Unavailable -> null
+        }
+        return frame.pageId == correlation.pageId && requestId == correlation.requestId &&
+            !isLocalPage(frame.pageId) && PageTemplateContract.namespaceOf(frame.pageId) == owner
+    }
+
+    /** Every frame of [owner] keeps its snapshot, inert; its requests, actions, leases and panels end. */
+    private fun invalidateOwner(model: SessionModel, owner: String): SessionTransition {
+        fun invalidated(page: SessionState.InPage): SessionState.InPage = page.copy(
+            frames = page.frames.map { frame ->
+                if (isLocalPage(frame.pageId) || PageTemplateContract.namespaceOf(frame.pageId) != owner) {
+                    frame
+                } else {
+                    frame.copy(
+                        status = FrameStatus.Unavailable(frame.retained(), PageSurfaceContract.ERROR_PAGE_UNAVAILABLE),
+                        selected = 0,
+                        invocation = null,
+                        panel = null,
+                    )
+                }
+            },
+        )
+        return when (val state = model.state) {
+            is SessionState.InPage -> {
+                val next = invalidated(state)
+                if (next == state) keep(model) else SessionTransition(model.copy(state = next), listOf(ShowFrame))
+            }
+            is SessionState.Launching -> {
+                val previous = state.previous as? SessionState.InPage ?: return keep(model)
+                keep(model.copy(state = state.copy(previous = invalidated(previous))))
+            }
+            else -> keep(model)
         }
     }
 
@@ -472,7 +679,12 @@ internal class SessionReducer(
         val failure = when (val result = PageSurfaceContract.validateResponse(payload, pending)) {
             is PageSurfaceValidationResult.Valid -> when (val response = result.value) {
                 is PageSurfaceResponse.Error -> response.code
-                is PageSurfaceResponse.Page -> return acceptPending(model, state, status, response, nowMs)
+                is PageSurfaceResponse.Page ->
+                    if (itemResolver.accepts(response)) {
+                        return acceptPending(model, state, status, response, epochOf(payload), nowMs)
+                    } else {
+                        UNAVAILABLE_UNSUPPORTED
+                    }
             }
             is PageSurfaceValidationResult.Invalid -> {
                 val ours = result.error != PageSurfaceContract.ERROR_STALE_GENERATION &&
@@ -482,7 +694,7 @@ internal class SessionReducer(
                 result.error
             }
         }
-        val frame = top.copy(status = FrameStatus.Unavailable(status.previous, failure), selected = 0)
+        val frame = top.copy(status = FrameStatus.Unavailable(status.previous, failure), selected = 0, panel = null)
         return SessionTransition(model.copy(state = state.withTop(frame)), listOf(ShowFrame))
     }
 
@@ -491,24 +703,44 @@ internal class SessionReducer(
         state: SessionState.InPage,
         status: FrameStatus.Loading,
         page: PageSurfaceResponse.Page,
+        epoch: String?,
         nowMs: Long,
     ): SessionTransition {
         val top = state.frames.last()
         // Revisions stay monotonic across refresh and retry; a rollback is dropped as stale.
         val floor = top.revisionFloor
         if (floor != null && page.revision < floor) return keep(model)
-        val snapshot = status.previous?.takeIf { page.revision == floor } ?: Snapshot(page)
+        val kept = status.previous?.takeIf { page.revision == floor }
+        val snapshot = kept ?: Snapshot(page)
         // The first display of a frame starts its lease; an uncovered frame already holds one.
         val lease = status.leaseUntilMs ?: (nowMs + PageSurfaceContract.LEASE_MS)
         val granted = listOfNotNull(
-            SendVisibility(top.pageId, visible = true, leaseUntilMs = lease).takeIf { status.leaseUntilMs == null },
+            SendVisibility(top.pageId, true, lease, identity(model, state.frames.lastIndex))
+                .takeIf { status.leaseUntilMs == null },
         )
+        val refresh = status.reason == REASON_REFRESH
         val shown = top.copy(
             status = FrameStatus.Shown(snapshot, page.revision, lease, status.requestId),
-            selected = if (status.reason == REASON_REFRESH) top.selected else 0,
+            selected = if (refresh) top.selected else 0,
             revisionFloor = page.revision,
+            providerEpoch = epoch ?: top.providerEpoch,
+            shownAtMs = if (kept != null) top.shownAtMs else nowMs,
+            panel = null,
         )
-        val frame = shown.copy(selected = shown.selected.coerceIn(0, itemsOf(shown).lastIndex.coerceAtLeast(0)))
+        val document = itemResolver.isDocument(snapshot.page)
+        val frame = if (refresh) {
+            reselect(shown, top, snapshot.page).let { if (it.mode == FrameMode.READING && !document) it.copy(mode = FrameMode.ROWS) else it }
+        } else {
+            val entries = itemResolver.entries(snapshot.page)
+            shown.copy(
+                selectedKey = entries.firstOrNull()?.key,
+                tombstone = null,
+                mode = if (document) FrameMode.READING else FrameMode.ROWS,
+                anchor = null,
+                page = 0,
+                pageStarts = emptyList(),
+            ).let { it.copy(selected = it.selected.coerceIn(0, entries.lastIndex.coerceAtLeast(0))) }
+        }
         return SessionTransition(
             model.copy(state = state.copy(frames = evictCovered(state.frames.dropLast(1) + frame))),
             granted + ShowFrame,
@@ -527,9 +759,10 @@ internal class SessionReducer(
             ?.value as? PageSurfaceResponse.Page ?: return keep(model)
         val lease = status.leaseUntilMs
         val accepted = page.correlation == PageCorrelation(status.requestId, model.generation, state.frames.size, top.pageId) &&
-            lease != null && nowMs < lease && status.snapshot.page.live && page.revision > status.revision
+            lease != null && nowMs < lease && status.snapshot.page.live && page.revision > status.revision &&
+            sameEpoch(top, payload) && itemResolver.accepts(page)
         if (!accepted) return keep(model)
-        return replaceTopSnapshot(model, state, top, status, page)
+        return replaceTopSnapshot(model, state, top, status, page, nowMs)
     }
 
     private fun result(
@@ -538,15 +771,15 @@ internal class SessionReducer(
         payload: JSONObject,
         nowMs: Long,
     ): SessionTransition {
-        if (model.linkLost) return keep(model)
         val top = state.frames.last()
+        if (model.linkLost && !isLocalPage(top.pageId)) return keep(model)
         val invocation = top.invocation ?: return keep(model)
         if (invocation.expiredAt(nowMs)) {
             return SessionTransition(model.copy(state = state.withTop(top.unconfirmed(invocation))), listOf(ShowFrame))
         }
         val result = (PageSurfaceContract.validateResult(payload) as? PageSurfaceValidationResult.Valid)?.value
             ?: return keep(model)
-        if (invocation.invocationId != result.invocationId) return keep(model)
+        if (invocation.invocationId != result.invocationId || !sameEpoch(top, payload)) return keep(model)
         val settled = top.copy(invocation = null, outcome = ActionOutcome(invocation.actionId, result.status, result.message))
         val status = settled.status
         val replacement = result.replacement
@@ -554,9 +787,10 @@ internal class SessionReducer(
             replacement.correlation.sessionGeneration == model.generation &&
             replacement.correlation.frameIndex == state.frames.size &&
             replacement.correlation.pageId == top.pageId &&
-            replacement.revision > status.revision
+            replacement.revision > status.revision &&
+            itemResolver.accepts(replacement)
         ) {
-            return replaceTopSnapshot(model, state, settled, status, replacement)
+            return replaceTopSnapshot(model, state, settled, status, replacement, nowMs)
         }
         // A rejected or stale action keeps the page exactly as the wearer saw it.
         return SessionTransition(model.copy(state = state.withTop(settled)), listOf(ShowFrame))
@@ -568,16 +802,66 @@ internal class SessionReducer(
         top: Frame,
         status: FrameStatus.Shown,
         page: PageSurfaceResponse.Page,
+        nowMs: Long,
     ): SessionTransition {
         val replaced = top.copy(
             status = status.copy(snapshot = Snapshot(page), revision = page.revision),
             revisionFloor = page.revision,
+            shownAtMs = nowMs,
+            // A confirmation was for the revision the wearer saw; a new one cancels it.
+            panel = null,
         )
-        val frame = replaced.copy(selected = replaced.selected.coerceIn(0, itemsOf(replaced).lastIndex.coerceAtLeast(0)))
+        val frame = reselect(replaced, top, page)
         return SessionTransition(
             model.copy(state = state.copy(frames = evictCovered(state.frames.dropLast(1) + frame))),
             listOf(ShowFrame),
         )
+    }
+
+    /**
+     * G3: the selection follows its row's stable key into new content. A row that is gone stays
+     * selected as an inert tombstone at its place. Positional resolvers keep the clamped index.
+     */
+    private fun reselect(next: Frame, before: Frame, page: PageSurfaceResponse.Page): Frame {
+        val entries = itemResolver.entries(page)
+        val withLayout = next.copy(pageStarts = emptyList())
+        if (!itemResolver.hasStableKeys()) {
+            return withLayout.copy(selected = next.selected.coerceIn(0, entries.lastIndex.coerceAtLeast(0)))
+        }
+        val key = before.selectedKey
+        if (before.tombstone != null) {
+            return withLayout.copy(selected = before.selected.coerceIn(0, entries.size))
+        }
+        if (key == null) {
+            return withLayout.copy(
+                selected = next.selected.coerceIn(0, entries.lastIndex.coerceAtLeast(0)),
+                selectedKey = entries.getOrNull(next.selected)?.key,
+            )
+        }
+        val index = entries.indexOfFirst { it.key == key }
+        if (index >= 0) return withLayout.copy(selected = index, selectedKey = key, tombstone = null)
+        val label = before.retained()?.let { previous -> itemResolver.entries(previous.page).firstOrNull { it.key == key }?.label }
+        return withLayout.copy(
+            selected = before.selected.coerceIn(0, entries.size),
+            selectedKey = null,
+            tombstone = label?.ifBlank { null } ?: REMOVED_ROW_LABEL,
+        )
+    }
+
+    /** The renderer's measured pages of the shown document; never an action, never another frame's. */
+    private fun documentPaged(
+        model: SessionModel,
+        state: SessionState.InPage,
+        event: SessionEvent.DocumentPaged,
+    ): SessionTransition {
+        val top = state.frames.last()
+        val status = top.status as? FrameStatus.Shown ?: return keep(model)
+        val current = event.frame == FrameIdentity(model.generation, state.frames.size) &&
+            event.pageId == top.pageId && event.revision == status.revision && event.pageStarts.isNotEmpty()
+        if (!current) return keep(model)
+        val page = event.anchorPage.coerceIn(0, event.pageStarts.lastIndex)
+        val frame = top.copy(pageStarts = event.pageStarts, page = page, anchor = top.anchor ?: event.pageStarts.first())
+        return if (frame == top) keep(model) else SessionTransition(model.copy(state = state.withTop(frame)), listOf(ShowFrame))
     }
 
     /** Drops the oldest covered snapshots until the retained total fits; page ids stay for a later refresh. */
@@ -593,10 +877,10 @@ internal class SessionReducer(
         return result
     }
 
-    private fun itemsOf(frame: Frame): List<PageItem> = when (val status = frame.status) {
-        is FrameStatus.Shown -> itemResolver.items(status.snapshot.page)
-        is FrameStatus.Loading -> status.previous?.let { itemResolver.items(it.page) }.orEmpty()
-        is FrameStatus.Unavailable -> UNAVAILABLE_ITEMS
+    private fun entriesOf(frame: Frame): List<PageEntry> = when (val status = frame.status) {
+        is FrameStatus.Shown -> itemResolver.entries(status.snapshot.page)
+        is FrameStatus.Loading -> status.previous?.let { itemResolver.entries(it.page) }.orEmpty()
+        is FrameStatus.Unavailable -> UNAVAILABLE_ITEMS.mapIndexed { index, item -> PageEntry("#$index", item) }
     }
 
     /**
@@ -625,11 +909,46 @@ internal class SessionReducer(
         paramsJson: String?,
     ) = PageSurfaceRequest(PageCorrelation(requestId, model.generation, frameIndex, pageId), reason, paramsJson)
 
+    private fun requestEffect(request: PageSurfaceRequest, nowMs: Long, minimumRevision: Long?) =
+        RequestPage(request, nowMs + PageSurfaceContract.PAGE_TIMEOUT_MS, minimumRevision)
+
+    private fun closedEffect(model: SessionModel, frame: Frame, index: Int, reason: String) =
+        SendClosed(frame.pageId, reason, identity(model, index))
+
+    /** `frames[index]` is wire frame `index + 1`. */
+    private fun identity(model: SessionModel, index: Int) = FrameIdentity(model.generation, index + 1)
+
     private fun isWireValid(request: PageSurfaceRequest): Boolean =
         runCatching { PageSurfaceContract.validateRequest(request.toPayload()) }.getOrNull() is
             PageSurfaceValidationResult.Valid
 
     private fun keep(model: SessionModel) = SessionTransition(model, emptyList())
+
+    /**
+     * Frames invalidated by link loss or by their provider's invalidation stay inert: nothing is
+     * sent for them, even after the link returns, until the wearer's own Retry.
+     */
+    private fun SessionModel.canReach(frame: Frame): Boolean {
+        if (isLocalPage(frame.pageId)) return true
+        val status = frame.status
+        return !linkLost && !(status is FrameStatus.Unavailable && status.reason in INERT_REASONS)
+    }
+
+    /** Link loss makes every provider frame unavailable and drops leases and pending actions (rule 12). */
+    private fun SessionState.InPage.linkLost() = copy(
+        frames = frames.map {
+            if (isLocalPage(it.pageId)) {
+                it
+            } else {
+                it.copy(
+                    status = FrameStatus.Unavailable(it.retained(), UNAVAILABLE_LINK_LOST),
+                    selected = 0,
+                    invocation = null,
+                    panel = null,
+                )
+            }
+        },
+    )
 
     companion object {
         const val REASON_OPEN = "open"
@@ -641,18 +960,17 @@ internal class SessionReducer(
         const val RESULT_DONE = "done"
         const val UNAVAILABLE_LINK_LOST = "link_lost"
         const val UNAVAILABLE_EVICTED = "evicted"
+
+        /** A valid envelope whose typed body this hub cannot draw. */
+        const val UNAVAILABLE_UNSUPPORTED = "unsupported"
+        const val REMOVED_ROW_LABEL = "Removed"
         val UNAVAILABLE_ITEMS: List<PageItem> = listOf(PageItem.Retry, PageItem.Back)
+        private val INERT_REASONS = setOf(UNAVAILABLE_LINK_LOST, PageSurfaceContract.ERROR_PAGE_UNAVAILABLE)
 
         /** The fork's F-4 bound, equal to the ring's surface handoff. */
         const val OPEN_TIMEOUT_MS = 10_000L
         const val SURFACE_OPEN_CANCELLED = "OPEN_CANCELLED"
     }
-}
-
-/** Frames invalidated by link loss stay inert: nothing is sent for them, even after the link returns. */
-private fun SessionModel.canReach(frame: Frame): Boolean {
-    val status = frame.status
-    return !linkLost && !(status is FrameStatus.Unavailable && status.reason == SessionReducer.UNAVAILABLE_LINK_LOST)
 }
 
 private fun SessionModel.nextId(kind: String): Pair<String, SessionModel> =
@@ -666,16 +984,21 @@ private fun Frame.retained(): Snapshot? = when (val status = status) {
 
 private fun SessionState.InPage.withTop(frame: Frame) = copy(frames = frames.dropLast(1) + frame)
 
-/** Link loss makes every frame unavailable and drops leases and pending actions (rule 12). */
-private fun SessionState.InPage.linkLost() = copy(
-    frames = frames.map {
-        it.copy(
-            status = FrameStatus.Unavailable(it.retained(), SessionReducer.UNAVAILABLE_LINK_LOST),
-            selected = 0,
-            invocation = null,
-        )
-    },
-)
+private fun epochOf(payload: JSONObject): String? =
+    (payload.opt(PageSurfaceContract.FIELD_PROVIDER_REGISTRATION_ID) as? String)?.takeIf(PageSurfaceContract::isValidId)
+
+/** Once a frame learned its provider's registration, only that registration may speak for it. */
+private fun sameEpoch(frame: Frame, payload: JSONObject): Boolean =
+    frame.providerEpoch == null || epochOf(payload) == frame.providerEpoch
+
+private fun correlationOf(payload: JSONObject): PageCorrelation? = runCatching {
+    PageCorrelation(
+        payload.get("requestId") as String,
+        (payload.get("sessionGeneration") as Number).toLong(),
+        (payload.get("frameIndex") as Number).toInt(),
+        payload.get("pageId") as String,
+    )
+}.getOrNull()
 
 private fun SessionModel.expireCancelledOpens(nowMs: Long): SessionModel =
     if (cancelledOpen.values.all { it > nowMs }) this else copy(cancelledOpen = cancelledOpen.filterValues { it > nowMs })

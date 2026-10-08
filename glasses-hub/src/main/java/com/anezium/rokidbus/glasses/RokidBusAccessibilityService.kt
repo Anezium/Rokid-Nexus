@@ -1433,6 +1433,7 @@ internal object NexusSession {
                 )
                 is SessionEffect.SendLauncherOpen -> openPlugin(effect)
                 is SessionEffect.CloseSurface -> SurfaceController.closeUnseen(effect.surfaceId)
+                is SessionEffect.LaunchLocal -> Unit
                 is SessionEffect.ShowStatus -> {
                     status = effect.status
                     statusFresh = true

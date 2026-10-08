@@ -23,6 +23,9 @@ internal sealed interface SessionEvent {
     data class ActivityEnded(val stopId: String) : SessionEvent
     data class ActivityStarted(val stop: ActivityStop) : SessionEvent
 
+    /** New values for an activity already known; membership and order never change for it. */
+    data class ActivityUpdated(val stop: ActivityStop) : SessionEvent
+
     /** Raw `/page/response` payload; the reducer validates and correlates it. */
     data class PageResponse(val payload: JSONObject, val nowMs: Long) : SessionEvent
 
@@ -41,6 +44,27 @@ internal sealed interface SessionEvent {
 
     /** The host takes the session down: a backend switch, or a window that could not be added. */
     data object Abort : SessionEvent
+
+    /**
+     * The trusted phone hub invalidated [ownerPluginId]'s work, or the hub itself lost that
+     * provider: its frames keep their snapshots, inert, and its pending work is cancelled.
+     */
+    data class ProviderInvalidated(val ownerPluginId: String) : SessionEvent
+
+    /**
+     * The renderer laid out a shown document: where each page starts, and which page holds the
+     * frame's reading anchor. Ignored unless it describes the top frame at its current revision.
+     */
+    data class DocumentPaged(
+        val frame: FrameIdentity,
+        val pageId: String,
+        val revision: Long,
+        val pageStarts: List<DocumentAnchor>,
+        val anchorPage: Int,
+    ) : SessionEvent
+
+    /** A [SessionEffect.LaunchLocal] ran: [launched] closes the session, a failure keeps it open. */
+    data class LocalLaunchFinished(val key: String, val label: String, val launched: Boolean) : SessionEvent
 }
 
 internal enum class OpenFailure { SEND_FAILED, REJECTED, TIMEOUT }

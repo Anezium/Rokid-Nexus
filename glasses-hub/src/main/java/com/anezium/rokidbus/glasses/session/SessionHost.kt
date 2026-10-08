@@ -105,6 +105,9 @@ internal class SessionHost(
 
         private fun statusText(status: SessionStatus): String = when (status) {
             is SessionStatus.OpenFailed -> "Could not open ${status.pluginId} (${status.reason.name.lowercase()})"
+            is SessionStatus.LaunchFailed -> "Could not open ${status.label}"
+            SessionStatus.FrameLimit -> "Too many pages open"
+            SessionStatus.NotAvailable -> "Not available here"
         }
     }
 }

@@ -42,6 +42,42 @@ internal sealed interface FrameStatus {
     data class Unavailable(val lastSnapshot: Snapshot?, val reason: String) : FrameStatus
 }
 
+/**
+ * A reading position in a document: a segment and a character offset inside it. It names text,
+ * not a screen, so it survives relayout, live revisions and cover/uncover.
+ */
+internal data class DocumentAnchor(val segmentId: String, val offset: Int = 0)
+
+/** A document is read page by page first; its rows are a separate mode reached by SELECT. */
+internal enum class FrameMode { READING, ROWS }
+
+/** A hub-owned step over a frame that consumes no wire frame. */
+internal sealed interface FramePanel {
+    val selected: Int
+
+    /**
+     * A plugin action waiting for the wearer, bound to what they were shown. Cancel is row 0 and
+     * preselected; Confirm is row 1.
+     */
+    data class Confirm(
+        val actionId: String,
+        val label: String,
+        val revision: Long,
+        val providerEpoch: String?,
+        override val selected: Int = CANCEL,
+    ) : FramePanel
+
+    /** The labelled step before an exclusive immersion replaces the screen. Open is row 0 and preselected. */
+    data class Launch(val pluginId: String, val label: String, override val selected: Int = OPEN) : FramePanel
+
+    companion object {
+        const val CANCEL = 0
+        const val CONFIRM = 1
+        const val OPEN = 0
+        const val DISMISS = 1
+    }
+}
+
 internal data class Frame(
     val pageId: String,
     val status: FrameStatus,
@@ -51,6 +87,23 @@ internal data class Frame(
     val outcome: ActionOutcome? = null,
     /** Highest revision shown on this frame; it survives eviction, timeouts and link loss. */
     val revisionFloor: Long? = null,
+    /** The stable key of the selected row, when the resolver gives rows a stable identity. */
+    val selectedKey: String? = null,
+    /**
+     * The label of a selected row that a newer revision removed. It stays at [selected], inert,
+     * until the wearer steps away, so a completing tap never lands on its neighbour.
+     */
+    val tombstone: String? = null,
+    val mode: FrameMode = FrameMode.ROWS,
+    val anchor: DocumentAnchor? = null,
+    /** Where each laid-out page of the shown document starts, as the renderer measured it. */
+    val pageStarts: List<DocumentAnchor> = emptyList(),
+    val page: Int = 0,
+    val panel: FramePanel? = null,
+    /** The registration epoch the phone stamped on the answer that established this frame. */
+    val providerEpoch: String? = null,
+    /** When the retained snapshot arrived, on the session clock, so a stale summary can be dated. */
+    val shownAtMs: Long? = null,
 )
 
 internal sealed interface SessionState {
@@ -107,7 +160,9 @@ internal data class SessionModel(
     val state: SessionState = SessionState.Closed,
     val activities: List<ActivityStop> = emptyList(),
     val queuedActivities: List<ActivityStop> = emptyList(),
+    /** The one readable notice retained in memory, the current one or the last one shown. */
     val preview: NoticePreview? = null,
+    /** Notice instances that ever arrived; the root counts only the retained one. */
     val notificationCount: Int = 0,
     val noticeArmed: Boolean = false,
     val editableFocused: Boolean = false,
