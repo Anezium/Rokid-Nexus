@@ -72,7 +72,7 @@ class RelayAdoptedReplyTest {
     }
 
     @Test
-    fun `an adopted reply card stays the band's, with no inbox, no lost reply and no session service`() {
+    fun `an adopted reply card stays the band's, with no inbox, no lost reply and its session service stopped`() {
         val mark = typingFromANotice()
         // An idle HUD adopts the card's sender with a real PLUGIN_OPEN.
         hub.deliver(BusPaths.PLUGIN_OPEN, JSONObject().put("type", PluginOpenTypes.ADOPTED))
@@ -82,7 +82,7 @@ class RelayAdoptedReplyTest {
         assertFalse(inboxDrawn(mark))
         val afterOpen = hub.sentSince(mark).map { it.first }
         assertFalse(afterOpen.toString(), BusPaths.NOTICE_HIDE in afterOpen || BusPaths.SURFACE_HIDE in afterOpen)
-        // The SDK's session service is for immersions; this band never had one.
+        // The SDK promotes its session service on every open; for the band's card it is stopped again.
         assertTrue(shadowOf(service.get()).isForegroundStopped)
 
         // The wearer's typed reply still lands in the band, ready to send.

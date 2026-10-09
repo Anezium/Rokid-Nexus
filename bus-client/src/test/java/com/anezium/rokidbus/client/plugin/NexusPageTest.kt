@@ -491,38 +491,67 @@ class NexusPageTest {
         refusedAfter("send-failed", { content(it.pageId, revision = 5) })
     }
 
-    @Test
-    fun `an old revision's action after a refused refresh, or during one, reaches nothing`() {
+    private fun dispatched() = provider.events.filter { it.startsWith("action:") }
+
+    /**
+     * A page accepted at revision 3, whose action is shown to reach the plugin; then a refresh
+     * answered by [answer], with old-revision actions while it waits and after it.
+     */
+    private fun refreshThenOldAction(answer: (NexusPageRequest) -> NexusPage, floor: Long? = null, sendFails: Boolean = false) {
         register()
         provider.answer = { content(it.pageId, revision = 3) }
         deliver(BusPaths.PAGE_REQUEST, request(requestId = "r1"))
         deliver(BusPaths.PAGE_VISIBILITY, visibility(true))
+        deliver(BusPaths.PAGE_ACTION, action("before", revision = 3))
+        assertEquals(listOf("action:read@3"), dispatched())
 
-        fun refreshedThenActed(requestId: String, answer: (NexusPageRequest) -> NexusPage, floor: Long? = null) {
-            provider.answer = { refresh ->
-                // An action arriving while this refresh awaits its answer reaches nothing.
-                deliver(BusPaths.PAGE_ACTION, action("during-$requestId", revision = 3))
-                answer(refresh)
-            }
-            deliver(BusPaths.PAGE_REQUEST, request(requestId = requestId, reason = "refresh", minimumRevision = floor))
-            deliver(BusPaths.PAGE_VISIBILITY, visibility(true))
-            deliver(BusPaths.PAGE_ACTION, action("after-$requestId", revision = 3))
+        provider.answer = { refresh ->
+            // An action arriving while this refresh awaits its answer reaches nothing.
+            deliver(BusPaths.PAGE_ACTION, action("during", revision = 3))
+            answer(refresh)
         }
-        refreshedThenActed("unavailable", { NexusPage.Unavailable })
-        refreshedThenActed("invalid", { NexusPage.Content(4, "Bad", PageBody.Commands(listOf(PageRow("x", "X", target = PageTarget.Action("missing"))))) })
-        refreshedThenActed("below-floor", { content(it.pageId, revision = 2) }, floor = 3)
-        transport.accept = false
-        refreshedThenActed("send-failed", { content(it.pageId, revision = 5) })
+        transport.accept = !sendFails
+        deliver(BusPaths.PAGE_REQUEST, request(requestId = "r2", reason = "refresh", minimumRevision = floor))
         transport.accept = true
-        assertTrue(provider.events.filter { it.startsWith("action:") }.toString(), provider.events.none { it.startsWith("action:") })
-        assertTrue(results().isEmpty())
+        deliver(BusPaths.PAGE_VISIBILITY, visibility(true))
+        deliver(BusPaths.PAGE_ACTION, action("after", revision = 3))
+    }
 
-        // Control: a valid refresh that reached the hub makes its own revision actionable again.
-        provider.answer = { content(it.pageId, revision = 6) }
-        deliver(BusPaths.PAGE_REQUEST, request(requestId = "r9", reason = "refresh", minimumRevision = 3))
-        deliver(BusPaths.PAGE_ACTION, action("old", revision = 3))
+    private fun assertOnlyTheFirstAction() {
+        assertEquals(listOf("action:read@3"), dispatched())
+        assertEquals(listOf("before"), results().map { it.getString("invocationId") })
+    }
+
+    @Test
+    fun `an action on the old revision reaches nothing after an Unavailable refresh`() {
+        refreshThenOldAction({ NexusPage.Unavailable })
+        assertOnlyTheFirstAction()
+    }
+
+    @Test
+    fun `an action on the old revision reaches nothing after an invalid refresh answer`() {
+        refreshThenOldAction({ NexusPage.Content(4, "Bad", PageBody.Commands(listOf(PageRow("x", "X", target = PageTarget.Action("missing"))))) })
+        assertOnlyTheFirstAction()
+    }
+
+    @Test
+    fun `an action on the old revision reaches nothing after a refresh answer below the floor`() {
+        refreshThenOldAction({ content(it.pageId, revision = 2) }, floor = 3)
+        assertOnlyTheFirstAction()
+    }
+
+    @Test
+    fun `an action on the old revision reaches nothing after a refresh answer that was not sent`() {
+        refreshThenOldAction({ content(it.pageId, revision = 5) }, sendFails = true)
+        assertOnlyTheFirstAction()
+    }
+
+    @Test
+    fun `a valid refresh that was sent makes only its own revision actionable`() {
+        refreshThenOldAction({ content(it.pageId, revision = 6) }, floor = 3)
         deliver(BusPaths.PAGE_ACTION, action("new", revision = 6))
-        assertEquals(listOf("action:read@6"), provider.events.filter { it.startsWith("action:") })
+        assertEquals(listOf("action:read@3", "action:read@6"), dispatched())
+        assertEquals(listOf("before", "new"), results().map { it.getString("invocationId") })
     }
 
     /** Runs [send] on another thread with its transport send held open while [during] runs. */
