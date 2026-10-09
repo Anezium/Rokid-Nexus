@@ -1,8 +1,21 @@
 package com.anezium.rokidbus.plugin.nav
 
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
 import android.view.KeyEvent
+import com.anezium.rokidbus.client.PluginRegistrationResult
+import com.anezium.rokidbus.client.plugin.NexusPage
+import com.anezium.rokidbus.client.plugin.NexusPageClosed
+import com.anezium.rokidbus.client.plugin.NexusPageRequest
+import com.anezium.rokidbus.client.plugin.NexusPageVisibility
 import com.anezium.rokidbus.client.plugin.NexusPluginService
+import com.anezium.rokidbus.client.plugin.NexusSdkResult
+import com.anezium.rokidbus.shared.LinkStateBits
 import com.anezium.rokidbus.shared.plugin.NexusInputEvent
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /**
  * Navigation's one registration with the hub.
@@ -15,10 +28,55 @@ import com.anezium.rokidbus.shared.plugin.NexusInputEvent
  * whole current instruction or how to start one.
  */
 class NavPluginService : NexusPluginService() {
+    private val main = Handler(Looper.getMainLooper())
+    private var scheduled: Runnable? = null
+    private val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
+
+    // Pages are read here, in the one client, and never touch the card or its open state.
+    private val pages = NavPageProvider<NexusPageRequest>(
+        pageIdOf = NexusPageRequest::pageId,
+        floorOf = NexusPageRequest::minimumRevision,
+        publish = { request, page -> nexusClient?.publishPage(request, page) ?: NexusSdkResult.NOT_REGISTERED },
+        state = {
+            NavPageState(
+                guidance = NavState.guidance,
+                listenerConnected = NavState.listenerConnected,
+                enabled = NavSettings(this).switches().enabled,
+                updatedAt = NavState.updatedAtMs?.let { timeFormat.format(Date(it)) },
+            )
+        },
+        text = {
+            NavPageText(
+                noAccess = getString(R.string.nav_card_no_access),
+                off = getString(R.string.nav_card_off),
+                idle = getString(R.string.nav_card_idle),
+            )
+        },
+        now = SystemClock::elapsedRealtime,
+        schedule = { delayMs, task ->
+            val runnable = Runnable { scheduled = null; task() }
+            scheduled?.let(main::removeCallbacks)
+            scheduled = runnable
+            main.postDelayed(runnable, delayMs)
+        },
+        cancelScheduled = {
+            scheduled?.let(main::removeCallbacks)
+            scheduled = null
+        },
+    )
+
     override fun onCreate() {
         super.onCreate()
         nexusClient?.let(NavControl::serviceCreated)
+        NavControl.pageListener = { main.post { pages.guidanceChanged() } }
     }
+
+    override fun onNexusPageRequest(request: NexusPageRequest): NexusPage = pages.onRequest(request)
+
+    override fun onNexusPageVisibility(visibility: NexusPageVisibility) =
+        pages.onVisibility(visibility.pageId, visibility.visible)
+
+    override fun onNexusPageClosed(closed: NexusPageClosed) = pages.onClosed(closed.pageId)
 
     override fun onNexusOpen() {
         NavControl.cardOpen = true
@@ -44,13 +102,21 @@ class NavPluginService : NexusPluginService() {
         nexusSurfaceSession(NavCard.SURFACE_ID)?.hide()
     }
 
-    override fun onNexusRegistrationState(result: Int) = NavControl.registrationState(result)
+    override fun onNexusRegistrationState(result: Int) {
+        if (result != PluginRegistrationResult.APPROVED) pages.forget()
+        NavControl.registrationState(result)
+    }
 
-    override fun onNexusLinkState(state: Int) = NavControl.linkState(state)
+    override fun onNexusLinkState(state: Int) {
+        if (state and (LinkStateBits.CXR_CONTROL_UP or LinkStateBits.SPP_DATA_UP) == 0) pages.forget()
+        NavControl.linkState(state)
+    }
 
     override fun onNexusActivityClosed(reason: String) = NavControl.activityClosed(reason)
 
     override fun onDestroy() {
+        NavControl.pageListener = null
+        pages.forget()
         nexusClient?.let(NavControl::serviceDestroyed)
         super.onDestroy()
     }

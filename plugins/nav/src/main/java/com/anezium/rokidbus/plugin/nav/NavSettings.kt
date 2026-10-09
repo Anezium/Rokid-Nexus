@@ -95,6 +95,14 @@ internal object NavControl {
     @Volatile
     var cardOpen: Boolean = false
 
+    /** Told when the guidance changes, so a visible page can follow it; set by the plugin service. */
+    @Volatile
+    var pageListener: (() -> Unit)? = null
+
+    fun guidanceChanged() {
+        pageListener?.invoke()
+    }
+
     private var busBinding: ServiceConnection? = null
 
     fun attach(service: NavNotificationListener, routeRuntime: NavRuntime) {

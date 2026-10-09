@@ -77,6 +77,17 @@ Guidance lives in process memory only; nothing is stored.
 Anything that does not read as guidance is dropped: no value is estimated or
 invented between two notifications.
 
+## Pages
+
+With the glasses' Nexus session and hubs that both support pages, the
+Navigation card in the session opens `nav:main`: the same guidance as a page,
+with the turn or leg, its distance or stops, the street, the arrival time when
+the app gives one, the source and when it was received. It follows the route
+while it is on screen, at most twice a second, and says so plainly when there
+is no route or no Notification Access. Its Commands row opens `nav:commands`,
+which only offers the full app, behind the hub's labelled launch step. Pages are
+read-only and leave the card and the activity as they are.
+
 ## Settings
 
 The plugin screen on the phone (Rokid Nexus, Navigation) has a main switch and

@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Pages for the glasses' Nexus session, on hubs that support them: the
+  current guidance as a page (the turn, its distance, the street, the arrival
+  time when the app gives one, the source and when it was received), kept
+  live while it is on screen, and a Commands page that opens the full app.
+  Read-only; the card and the activity are unchanged.
+
 ## 0.2.0
 
 - OsmAnd and OsmAnd+: the turn in words, its distance, the street and the

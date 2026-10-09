@@ -39,6 +39,8 @@ internal class NavRuntime(context: Context) {
 
     fun onGuidance(guidance: NavGuidance) = onMain {
         NavState.guidance = guidance
+        NavState.updatedAtMs = System.currentTimeMillis()
+        NavControl.guidanceChanged()
         main.removeCallbacks(releaseIdle)
         pending = guidance
         NavControl.holdBus(appContext)
@@ -50,6 +52,8 @@ internal class NavRuntime(context: Context) {
     fun onRouteEnded(source: NavSource) = onMain {
         if (NavState.guidance?.source != source && pending?.source != source) return@onMain
         NavState.guidance = null
+        NavState.updatedAtMs = System.currentTimeMillis()
+        NavControl.guidanceChanged()
         pending = null
         deferred = null
         main.removeCallbacks(sendDeferred)

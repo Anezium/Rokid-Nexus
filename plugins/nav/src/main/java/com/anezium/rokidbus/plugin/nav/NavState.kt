@@ -8,6 +8,10 @@ internal object NavState {
     @Volatile
     var guidance: NavGuidance? = null
 
+    /** Wall-clock time the guidance last changed, for the page's received line. */
+    @Volatile
+    var updatedAtMs: Long? = null
+
     @Volatile
     var listenerConnected: Boolean = false
 
