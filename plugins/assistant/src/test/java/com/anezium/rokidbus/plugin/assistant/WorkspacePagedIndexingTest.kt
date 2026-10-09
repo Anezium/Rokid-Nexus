@@ -261,6 +261,12 @@ internal class FakePageReader(private val beforePage: () -> Unit = {}) : Workspa
         return WorkspacePagedText(pages, complete = true)
     }
 
+    override fun render(type: WorkspaceFileType, bytes: ByteArray, page: Int): ByteArray? {
+        val text = bytes.toString(Charsets.UTF_8)
+        val all = if (type == WorkspaceFileType.IMAGE) listOf(text) else text.split(PAGE_BREAK)
+        return all.getOrNull(page - 1)?.let { "jpeg:$type:$page:$it".toByteArray() }
+    }
+
     companion object {
         const val PAGE_BREAK = "\u000C"
         const val LOCKED = "locked"

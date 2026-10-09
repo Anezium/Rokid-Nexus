@@ -350,7 +350,8 @@ class AssistantSettingsActivity : Activity() {
                 "Choose a folder stored on your phone. Text (.txt), Markdown (.md), Word body text " +
                     "(.docx), PDFs, and images (.jpg, .png, .webp, .heic) are indexed on the phone; scanned " +
                     "pages and photos are read with on-device text recognition. Relevant excerpts are sent " +
-                    "with your questions to the AI provider you configured."),
+                    "with your questions to the AI provider you configured; when a chart or layout matters, " +
+                    "a provider that supports images may also receive that one page."),
                 NexusUi.block())
             addView(BusTheme.gap(this@AssistantSettingsActivity, 12))
             addView(workspaceCard(), NexusUi.block())

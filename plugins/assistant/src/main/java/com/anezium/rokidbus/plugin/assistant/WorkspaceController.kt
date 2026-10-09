@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -34,6 +35,9 @@ internal interface WorkspaceSearchAccess {
     fun isSearchAvailable(): Boolean
     fun searchVersion(): Pair<Long, Long> = 0L to 0L
     suspend fun search(query: String): WorkspaceSearchResult?
+    fun hasViewablePages(): Boolean = false
+    /** A JPEG of [page] (PDFs) or of the whole image, for a file cited by its Workspace path. */
+    suspend fun viewPage(file: String, page: Int?): ByteArray? = null
 }
 
 internal class WorkspaceController(
@@ -211,6 +215,40 @@ internal class WorkspaceController(
 
     override fun searchVersion(): Pair<Long, Long> = store.snapshot().let { it.state.settings.generation to it.epoch }
 
+    override fun hasViewablePages(): Boolean = pageReader != null &&
+        store.snapshot().state.index?.documents?.any { it.viewable() } == true
+
+    override suspend fun viewPage(file: String, page: Int?): ByteArray? {
+        val reader = pageReader ?: return null
+        val snapshot = validatedSnapshot() ?: return null
+        val documents = snapshot.state.index?.documents.orEmpty().filter { it.viewable() }
+        val document = documents.firstOrNull { it.entry.relativePath == file }
+            ?: documents.filter { it.entry.name.equals(file, ignoreCase = true) }.singleOrNull()
+            ?: return null
+        val type = document.entry.type!!
+        val pageNumber = if (type == WorkspaceFileType.PDF) page ?: return null else 1
+        val treeUri = snapshot.state.settings.treeUri
+        val maxBytes = if (type == WorkspaceFileType.PDF) WorkspaceLimits.MAX_PDF_BYTES else WorkspaceLimits.MAX_IMAGE_BYTES
+        return try {
+            withTimeout(VIEW_TIMEOUT_MS) {
+                val bytes = gateway.open(treeUri, document.entry.documentId).use {
+                    runInterruptible(Dispatchers.IO) { readWorkspaceBytes(it, maxBytes).data!! }
+                }
+                // Only the version that was indexed may leave the phone.
+                if (!document.entry.hasSameContent(gateway.metadata(treeUri, document.entry.documentId))) {
+                    return@withTimeout null
+                }
+                runInterruptible(Dispatchers.IO) { reader.render(type, bytes, pageNumber) }
+            }?.takeIf { store.isCurrent(snapshot.state.settings.generation) && store.snapshot().epoch == snapshot.epoch }
+        } catch (cancelled: CancellationException) {
+            if (cancelled is TimeoutCancellationException) null else throw cancelled
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun WorkspaceDocument.viewable(): Boolean = entry.type?.paged == true && status in VIEWABLE
+
     private fun indexVersion(): Pair<Long, Long> = store.snapshot().let { it.state.settings.generation to it.revision }
 
     fun isCurrent(context: WorkspacePromptContext): Boolean = !suppressed &&
@@ -307,6 +345,9 @@ internal class WorkspaceController(
     }
 
     companion object {
+        private const val VIEW_TIMEOUT_MS = 8_000L
+        private val VIEWABLE = setOf(WorkspaceDocumentStatus.INDEXED, WorkspaceDocumentStatus.TRUNCATED,
+            WorkspaceDocumentStatus.PENDING, WorkspaceDocumentStatus.NO_TEXT)
         const val READ_GRANT = 1
     }
 }

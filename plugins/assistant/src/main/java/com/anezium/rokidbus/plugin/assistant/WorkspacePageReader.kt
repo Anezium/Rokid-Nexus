@@ -15,6 +15,7 @@ import com.tom_roush.pdfbox.io.MemoryUsageSetting
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.pdmodel.encryption.InvalidPasswordException
 import com.tom_roush.pdfbox.text.PDFTextStripper
+import java.io.ByteArrayOutputStream
 import java.io.Closeable
 import java.io.File
 import java.io.IOException
@@ -37,6 +38,9 @@ internal interface WorkspacePageReader {
         firstPage: Int,
         shouldStop: (characters: Int) -> Boolean,
     ): WorkspacePagedText
+
+    /** A JPEG of one page (1-based) small enough to send to a vision model, or null when it cannot render. */
+    fun render(type: WorkspaceFileType, bytes: ByteArray, page: Int): ByteArray?
 }
 
 /**
@@ -105,23 +109,48 @@ internal class AndroidWorkspacePageReader(context: Context) : WorkspacePageReade
         }
     }
 
-    private fun recognizeImage(bytes: ByteArray): String {
-        val source = ImageDecoder.createSource(ByteBuffer.wrap(bytes))
-        val bitmap = ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
-            decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
-            val edge = maxOf(info.size.width, info.size.height)
-            if (edge > RECOGNITION_EDGE) {
-                val scale = RECOGNITION_EDGE.toFloat() / edge
-                decoder.setTargetSize((info.size.width * scale).roundToInt().coerceAtLeast(1),
-                    (info.size.height * scale).roundToInt().coerceAtLeast(1))
+    override fun render(type: WorkspaceFileType, bytes: ByteArray, page: Int): ByteArray? {
+        val bitmap = when (type) {
+            WorkspaceFileType.PDF -> openScanner(bytes).use { it.render(page - 1, VIEW_EDGE) }
+            WorkspaceFileType.IMAGE -> if (page == 1) decodeImage(bytes, VIEW_EDGE) else null
+            else -> null
+        } ?: return null
+        var current = bitmap
+        try {
+            while (true) {
+                val output = ByteArrayOutputStream()
+                if (!current.compress(Bitmap.CompressFormat.JPEG, VIEW_JPEG_QUALITY, output)) return null
+                if (output.size() <= MAX_VIEW_JPEG_BYTES) return output.toByteArray()
+                val scaled = Bitmap.createScaledBitmap(current, (current.width * 0.8f).roundToInt().coerceAtLeast(1),
+                    (current.height * 0.8f).roundToInt().coerceAtLeast(1), true)
+                if (scaled === current) return null
+                current.recycle()
+                current = scaled
             }
+        } finally {
+            current.recycle()
         }
+    }
+
+    private fun recognizeImage(bytes: ByteArray): String {
+        val bitmap = decodeImage(bytes, RECOGNITION_EDGE)
         return try {
             recognize(bitmap)
         } finally {
             bitmap.recycle()
         }
     }
+
+    private fun decodeImage(bytes: ByteArray, maxEdge: Int): Bitmap =
+        ImageDecoder.decodeBitmap(ImageDecoder.createSource(ByteBuffer.wrap(bytes))) { decoder, info, _ ->
+            decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+            val edge = maxOf(info.size.width, info.size.height)
+            if (edge > maxEdge) {
+                val scale = maxEdge.toFloat() / edge
+                decoder.setTargetSize((info.size.width * scale).roundToInt().coerceAtLeast(1),
+                    (info.size.height * scale).roundToInt().coerceAtLeast(1))
+            }
+        }
 
     private fun recognize(bitmap: Bitmap): String {
         val result = Tasks.await(recognizer.process(InputImage.fromBitmap(bitmap, 0)),
@@ -136,19 +165,23 @@ internal class AndroidWorkspacePageReader(context: Context) : WorkspacePageReade
         private val renderer: PdfRenderer?,
     ) : Closeable {
         fun recognize(index: Int): String {
-            val renderer = renderer?.takeIf { index < it.pageCount } ?: return ""
-            val bitmap = renderer.openPage(index).use { page ->
-                val scale = RECOGNITION_EDGE.toFloat() / maxOf(page.width, page.height, 1)
+            val bitmap = render(index, RECOGNITION_EDGE) ?: return ""
+            return try {
+                recognize(bitmap)
+            } finally {
+                bitmap.recycle()
+            }
+        }
+
+        fun render(index: Int, edge: Int): Bitmap? {
+            val renderer = renderer?.takeIf { index in 0 until it.pageCount } ?: return null
+            return renderer.openPage(index).use { page ->
+                val scale = edge.toFloat() / maxOf(page.width, page.height, 1)
                 Bitmap.createBitmap((page.width * scale).roundToInt().coerceAtLeast(1),
                     (page.height * scale).roundToInt().coerceAtLeast(1), Bitmap.Config.ARGB_8888).also {
                     it.eraseColor(Color.WHITE)
                     page.render(it, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
                 }
-            }
-            return try {
-                recognize(bitmap)
-            } finally {
-                bitmap.recycle()
             }
         }
 
@@ -182,5 +215,8 @@ internal class AndroidWorkspacePageReader(context: Context) : WorkspacePageReade
         const val MAX_SCRATCH_BYTES = 64L * 1_024 * 1_024
         const val RECOGNITION_EDGE = 2_000
         const val RECOGNITION_TIMEOUT_SECONDS = 30L
+        const val VIEW_EDGE = 1_600
+        const val VIEW_JPEG_QUALITY = 80
+        const val MAX_VIEW_JPEG_BYTES = 1_000_000
     }
 }

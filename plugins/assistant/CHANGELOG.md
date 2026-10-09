@@ -7,6 +7,10 @@
   `.webp`, `.heic`) are read with on-device text recognition while indexing,
   so asking a question never waits for it. Password-protected files and images
   without text are reported in the folder status.
+- **Look at a page when text is not enough.** With an image-capable provider,
+  Assistant can view the one PDF page or image an excerpt cites, for charts,
+  diagrams, table layouts, or poorly recognized text. Only the indexed version
+  of a cited file is rendered, once per question.
 - **Index large folders in the background.** Slow files are read over several
   passes that resume after the last page read, and their finished pages are
   searchable right away. Text added this way no longer cancels an answer in

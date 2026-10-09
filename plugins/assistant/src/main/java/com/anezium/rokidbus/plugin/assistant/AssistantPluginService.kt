@@ -122,6 +122,7 @@ class AssistantPluginService : NexusPluginService() {
                 RenderTemplateTool(inkPageToolRuntime, inkTemplateLoader),
                 RenderInkPageTool(inkPageToolRuntime),
                 SearchWorkspaceTool { workspaceController.takeIf { isNexusSessionOpen } },
+                ViewWorkspacePageTool { workspaceController.takeIf { isNexusSessionOpen } },
             ) +
                 assistantProductivityTools(
                     noteStore = noteStore,
