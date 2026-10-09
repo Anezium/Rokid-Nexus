@@ -537,14 +537,16 @@ class PhonePageBroker(
     /**
      * Sends a page to the glasses and applies [candidate] to [frame] only once it was sent, if the
      * frame, its request and its epoch are still the same. A page that could not be sent, or one
-     * that needed SPP while SPP was lost before it counted, ends the frame on both sides: the
-     * glasses get a small, honest answer and the provider a close.
+     * that needed SPP while SPP was lost between the start of its send and its commit, ends the
+     * frame on both sides: the glasses get a small, honest answer and the provider a close.
      */
     private fun forwardPage(path: String, payload: JSONObject, frame: Frame, candidate: Candidate) {
         val requestId = frame.requestId
         val epoch = frame.epoch
-        val losses = dataPlaneLosses
         later {
+            // Counted when the send starts, not when it was queued: a loss and a reconnect while
+            // it waited leave a send over the new session that crosses nothing.
+            val losses = synchronized(lock) { dataPlaneLosses }
             val error = host.sendToGlasses(path, payload)
             if (error != null) {
                 host.log("page send failed path=$path code=$error bytes=${PageSurfaceContract.serializedBytes(payload)}")

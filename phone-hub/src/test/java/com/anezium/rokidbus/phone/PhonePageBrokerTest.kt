@@ -609,6 +609,33 @@ class PhonePageBrokerTest {
     }
 
     @Test
+    fun `a big revision queued across an SPP loss and its return counts once it is sent`() {
+        connect(relay)
+        val relayA = register(relay, "relay-a")
+        broker.onGlasses(BusPaths.PAGE_REQUEST, request())
+        assertNull(broker.onProvider(BusPaths.PAGE_RESPONSE, page(revision = 1), relayA))
+        broker.onGlasses(BusPaths.PAGE_VISIBILITY, visibility(true))
+        val both = LinkStateBits.CXR_CONTROL_UP or LinkStateBits.SPP_DATA_UP
+
+        // While the outbox is busy, a big revision is queued; SPP drops and comes back before it is sent.
+        var queued: String? = "unset"
+        host.onDelivered = BusPaths.PAGE_VISIBILITY to {
+            queued = broker.onProvider(BusPaths.PAGE_RESPONSE, page(revision = 2, body = big), relayA)
+            broker.onLinkState(both, LinkStateBits.CXR_CONTROL_UP)
+            broker.onLinkState(LinkStateBits.CXR_CONTROL_UP, both)
+        }
+        broker.onGlasses(BusPaths.PAGE_VISIBILITY, visibility(true))
+        assertNull(queued)
+
+        // It went out whole over the new SPP session: nothing is closed and its revision is shown.
+        assertTrue(responses().none { it.has("error") })
+        assertTrue(host.delivered.none { it.second == BusPaths.PAGE_CLOSED })
+        assertEquals(2L, responses().last().getLong("revision"))
+        broker.onGlasses(BusPaths.PAGE_ACTION, action(invocationId = "after", revision = 2))
+        assertEquals(listOf("after"), host.delivered.filter { it.second == BusPaths.PAGE_ACTION }.map { it.third.getString("invocationId") })
+    }
+
+    @Test
     fun `results are bounded, correlated and carry a higher replacement`() {
         connect(relay)
         val relayA = register(relay, "relay-a")
