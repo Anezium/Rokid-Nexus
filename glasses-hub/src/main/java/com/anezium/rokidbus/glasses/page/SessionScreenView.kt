@@ -93,6 +93,7 @@ internal class SessionScreenView(context: Context) : LinearLayout(context) {
         viewport.onOverflow = fit?.let {
             { onContentOverflowed?.invoke(SessionEvent.ContentOverflowed(it.frame, it.pageId, it.revision)) }
         }
+        viewport.whole = screen.blocks.filterIsInstance<ScreenBlock.Fact>().mapNotNull { blockViews[it.key] }
         viewport.fit = fit?.untilKey?.let(blockViews::get)
     }
 

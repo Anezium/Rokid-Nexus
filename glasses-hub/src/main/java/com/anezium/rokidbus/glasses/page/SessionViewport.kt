@@ -3,6 +3,7 @@ package com.anezium.rokidbus.glasses.page
 import android.content.Context
 import android.view.View
 import android.view.ViewGroup
+import android.widget.TextView
 
 /**
  * The column between the fixed header and hint. It never scrolls by itself or by touch: it only
@@ -30,6 +31,9 @@ internal class SessionViewport(context: Context) : ViewGroup(context) {
             requestLayout()
         }
     var onOverflow: (() -> Unit)? = null
+
+    /** Blocks drawn in capped lines: one cut short does not fit either, as part of its text is never shown. */
+    var whole: List<View> = emptyList()
     private val main = android.os.Handler(android.os.Looper.getMainLooper())
 
     /** How far the column is moved up; kept across renders so a still-visible focus does not jump. */
@@ -66,7 +70,8 @@ internal class SessionViewport(context: Context) : ViewGroup(context) {
             y += getChildAt(index).measuredHeight
         }
         val until = fit?.takeIf { it.parent === this }?.let(::indexOfChild) ?: -1
-        if (until >= 0 && height > 0 && tops[until] + getChildAt(until).measuredHeight > height) {
+        val tall = until >= 0 && tops[until] + getChildAt(until).measuredHeight > height
+        if (until >= 0 && height > 0 && (tall || whole.any { it.parent === this && it.cutShort() })) {
             val overflow = onOverflow
             onOverflow = null
             // Reported after this pass, on the main looper whether or not the view is attached
@@ -86,6 +91,15 @@ internal class SessionViewport(context: Context) : ViewGroup(context) {
             val side = paramsOf(child).side
             child.layout(side, tops[index] - offset, side + child.measuredWidth, tops[index] - offset + child.measuredHeight)
         }
+    }
+
+    private fun View.cutShort(): Boolean = when (this) {
+        is TextView -> layout?.let { layout ->
+            val last = minOf(layout.lineCount, maxLines) - 1
+            last >= 0 && (layout.getEllipsisCount(last) > 0 || layout.getLineEnd(last) < text.length)
+        } == true
+        is ViewGroup -> (0 until childCount).any { getChildAt(it).cutShort() }
+        else -> false
     }
 
     /** Forgets the scroll position, for a new screen rather than an update of the same one. */

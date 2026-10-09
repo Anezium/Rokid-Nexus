@@ -479,6 +479,38 @@ class ReadingRunnerTest {
         assertTrue("rows=$rows reading=$reading", rows > 0 && reading > 0)
     }
 
+    /** What the wearer can reach from here: every page by STEP, or the text drawn, as ellipsized. */
+    private fun reachable(): String =
+        if (top().mode == FrameMode.READING) readOn() else texts(view.viewport).joinToString("\n", transform = ::shownPart)
+
+    private fun shownPart(text: TextView): String {
+        val layout = text.layout ?: return ""
+        val last = minOf(layout.lineCount, text.maxLines) - 1
+        return (0..last).joinToString("") { line ->
+            val start = layout.getLineStart(line)
+            val end = if (layout.getEllipsisCount(line) > 0) start + layout.getEllipsisStart(line) else layout.getLineEnd(line)
+            text.text.subSequence(start, end).toString()
+        }.replace("\n", "")
+    }
+
+    @Test
+    fun `a fact longer than its lines is read whole by STEP, before and after link loss`() {
+        val label = "Ångström".repeat(7) + "\n" + "Øresund".repeat(8)
+        val value = "Straße".repeat(40)
+        assertTrue(label.length <= PageTemplateContract.MAX_LABEL_CHARS && value.length <= PageTemplateContract.MAX_DETAIL_CHARS)
+        val summary = PageBody.Summary(primary = "Turn right in 120 m", facts = listOf(PageFact("far", label, value)), items = listOf(commandsRow))
+        open("nav:main", summary, actions = acknowledge)
+        val read = reachable()
+        assertTrue(read, label.replace("\n", "") in read)
+        assertTrue(read, value in read)
+
+        dispatch(SessionEvent.LinkLost)
+        if (top().mode == FrameMode.ROWS && top().overflowing) dispatch(SessionEvent.Back(now))
+        val retained = reachable()
+        assertTrue(retained, label.replace("\n", "") in retained && value in retained)
+        assertNoActionAfterPresses()
+    }
+
     /** Rows, a child page, back: the uncovered frame's revalidation then times out. */
     private fun timeOutRefresh() {
         dispatch(SessionEvent.Enter(now))
