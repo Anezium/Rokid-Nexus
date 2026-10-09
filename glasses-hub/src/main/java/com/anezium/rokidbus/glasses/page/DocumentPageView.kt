@@ -46,9 +46,11 @@ internal class DocumentPageView(context: Context) : View(context) {
      * [identity] names what is shown, such as its frame, page and revision. A new one reports its
      * layout again even when the page starts are the same, since whoever reads them was reset.
      */
-    fun bind(segments: List<PageSegment>, anchor: DocumentAnchor?, dimmed: Boolean, identity: Any? = null) {
-        val contentChanged = segments != this.segments || dimmed != this.dimmed
-        this.segments = segments
+    fun bind(segments: List<PageSegment>, anchor: DocumentAnchor?, dimmed: Boolean, identity: Any? = null, footer: String? = null) {
+        // The footer is laid out and paged with the text, after it, in the caption style.
+        val shown = segments + listOfNotNull(footer?.takeIf(String::isNotBlank)?.let { PageSegment(FOOTER_ID, PageSegmentKind.HEADER, it) })
+        val contentChanged = shown != this.segments || dimmed != this.dimmed
+        this.segments = shown
         this.anchor = anchor
         this.dimmed = dimmed
         this.identity = identity
@@ -181,5 +183,10 @@ internal class DocumentPageView(context: Context) : View(context) {
         PageSegmentKind.HEADER -> PageStyle.CAPTION_PX
         PageSegmentKind.PROSE -> PageStyle.BODY_PX
         PageSegmentKind.ASIDE -> PageStyle.ASIDE_PX
+    }
+
+    private companion object {
+        /** The footer's place among the segments; the space keeps it apart from every wire id. */
+        const val FOOTER_ID = "footer "
     }
 }

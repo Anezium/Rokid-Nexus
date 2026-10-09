@@ -263,6 +263,35 @@ class SessionScreenViewTest {
     }
 
     @Test
+    fun `a document's footer is drawn after its text, and a document without one is unchanged`() {
+        val segments = listOf(
+            PageSegment("h", PageSegmentKind.HEADER, "Mika · captured 14:11"),
+            PageSegment("p", PageSegmentKind.PROSE, (1..60).joinToString(" ") { "line $it of the thread, said plainly" }),
+        )
+        fun read(body: PageBody.Document): Pair<List<DocumentAnchor>, List<String>> {
+            val document = page("relay:thread", body)
+            render(screens.screen(shown(document, mode = FrameMode.READING), null, 1))
+            val pager = view.blockViews.getValue("document") as DocumentPageView
+            val starts = pager.pageStarts
+            val texts = starts.map { start ->
+                render(screens.screen(shown(document, mode = FrameMode.READING, anchor = start), null, 1))
+                pager.visibleText()
+            }
+            return starts to texts
+        }
+        val (plainStarts, plainPages) = read(PageBody.Document(segments))
+        assertTrue(plainPages.none { "Captured on the phone" in it })
+
+        val (starts, pages) = read(PageBody.Document(segments, footer = "Captured on the phone · 2 messages"))
+        // The footer follows the last of the text, inside the measured pages.
+        assertTrue(pages.last(), pages.last().trimEnd().endsWith("Captured on the phone · 2 messages"))
+        assertEquals(1, pages.count { "Captured on the phone" in it })
+        // The text's own pages start where they did without a footer.
+        assertEquals(plainStarts, starts.take(plainStarts.size))
+        assertEquals(plainPages.dropLast(1), pages.take(plainPages.size - 1))
+    }
+
+    @Test
     fun `a long document pages through measured text without losing a character`() {
         val prose = (1..60).joinToString(" ") { "line $it of the thread, said plainly" } + "\n" + "x".repeat(700) + " fin ünïcødé 🙂"
         val document = page(

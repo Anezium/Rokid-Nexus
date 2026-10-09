@@ -205,7 +205,7 @@ internal class SessionScreenView(context: Context) : LinearLayout(context) {
         view.onPaged = { starts, anchorPage ->
             onDocumentPaged?.invoke(SessionEvent.DocumentPaged(block.frame, block.pageId, block.revision, starts, anchorPage))
         }
-        view.bind(block.segments, block.anchor, block.dimmed, Triple(block.frame, block.pageId, block.revision))
+        view.bind(block.segments, block.anchor, block.dimmed, Triple(block.frame, block.pageId, block.revision), block.footer)
         return view
     }
 }

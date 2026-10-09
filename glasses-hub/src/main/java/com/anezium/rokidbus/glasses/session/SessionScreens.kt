@@ -74,6 +74,8 @@ internal sealed interface ScreenBlock {
         val segments: List<PageSegment>,
         val anchor: DocumentAnchor?,
         val dimmed: Boolean,
+        /** The document's own footer, drawn after its text. */
+        val footer: String? = null,
     ) : ScreenBlock
 }
 
@@ -223,7 +225,7 @@ internal class SessionScreens(
         if (body is PageBody.Document && frame.mode == FrameMode.READING) {
             val document = ScreenBlock.Document(
                 "document", identity, frame.pageId, status.revision,
-                body.segments, frame.anchor, dimmed = false,
+                body.segments, frame.anchor, dimmed = false, footer = body.footer,
             )
             val pages = frame.pageStarts.size
             val trail = if (pages > 0) "${frame.page + 1}/$pages" else null
