@@ -41,6 +41,7 @@ internal class WorkspaceController(
     private val gateway: WorkspaceDocumentGateway,
     private val scope: CoroutineScope,
     private val checkTimeoutMs: Long = WorkspaceLimits.CHECK_TIMEOUT_MS,
+    private val pdfReader: WorkspacePdfReader? = null,
 ) : WorkspaceSearchAccess {
     private val lock = Any()
     private val owners = mutableSetOf<Any>()
@@ -77,7 +78,16 @@ internal class WorkspaceController(
             checkMutex.withLock {
                 emit(checking = true)
                 try {
-                    WorkspaceIndexer(store, gateway, checkTimeoutMs = checkTimeoutMs).refresh()
+                    // Each pass reads at least one PENDING PDF, so the count only falls until none remain.
+                    var pending = Int.MAX_VALUE
+                    while (true) {
+                        WorkspaceIndexer(store, gateway, checkTimeoutMs = checkTimeoutMs, pdfReader = pdfReader).refresh()
+                        val state = store.snapshot().state
+                        val left = state.index?.takeIf { state.problem == null && it.generation == settings.generation }
+                            ?.documents?.count { it.status == WorkspaceDocumentStatus.PENDING } ?: 0
+                        if (left == 0 || left >= pending) break
+                        pending = left
+                    }
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (_: Exception) {

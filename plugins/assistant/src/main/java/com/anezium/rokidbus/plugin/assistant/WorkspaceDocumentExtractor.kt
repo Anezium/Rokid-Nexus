@@ -43,6 +43,7 @@ internal object WorkspaceDocumentExtractor {
             value
         }
         WorkspaceFileType.DOCX -> extractDocx(readWorkspaceBytes(input, WorkspaceLimits.MAX_DOCX_BYTES).data!!)
+        WorkspaceFileType.PDF -> throw IllegalArgumentException("PDF pages are read by WorkspacePdfReader")
     }
 
     private fun extractDocx(bytes: ByteArray): String {

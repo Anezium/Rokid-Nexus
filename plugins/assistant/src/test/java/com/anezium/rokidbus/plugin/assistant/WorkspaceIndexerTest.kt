@@ -42,7 +42,7 @@ class WorkspaceIndexerTest {
         val (store, gateway, indexer) = fixture()
         gateway.put("unknown", "unknown.txt", "Notice unavailable.")
         gateway.entries["unknown"] = gateway.entries.getValue("unknown").copy(modifiedAtMs = null)
-        gateway.put("pdf", "contract.pdf", "Should never be read.")
+        gateway.put("sheet", "budget.xlsx", "Should never be read.")
         gateway.put("virtual", "virtual.txt", "Should never be read.")
         gateway.entries["virtual"] = gateway.entries.getValue("virtual").copy(virtual = true)
         indexer.refresh()
@@ -110,7 +110,7 @@ class WorkspaceIndexerTest {
         assertEquals(100, store.snapshot().state.index!!.fileCount)
         assertEquals(10, store.snapshot().state.index!!.skippedFiles)
         assertEquals(100, gateway.opens.size)
-        repeat(1_001) { gateway.put("overflow$it", "ignore$it.pdf", "unsupported") }
+        repeat(1_001) { gateway.put("overflow$it", "ignore$it.xlsx", "unsupported") }
         indexer.refresh()
         assertEquals(WorkspaceProblem.CHECK_LIMIT, store.snapshot().state.problem)
         assertFalse(store.snapshot().state.validated)

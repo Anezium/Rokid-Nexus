@@ -31,6 +31,10 @@ dependencies {
     implementation(project(":bus-client"))
     implementation(project(":shared"))
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+    // Text extraction only; BouncyCastle serves certificate-encrypted PDFs, which Workspace reports as protected.
+    implementation("com.tom-roush:pdfbox-android:2.0.27.0") {
+        exclude(group = "org.bouncycastle")
+    }
 
     testImplementation(project(":ink-engine"))
     testImplementation("junit:junit:4.13.2")

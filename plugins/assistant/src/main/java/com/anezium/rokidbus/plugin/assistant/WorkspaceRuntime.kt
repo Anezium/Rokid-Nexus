@@ -16,6 +16,7 @@ internal object WorkspaceRuntime {
                 WorkspaceStore(File(context.applicationContext.noBackupFilesDir, "assistant-workspace")),
                 WorkspaceSafGateway(context.applicationContext.contentResolver),
                 CoroutineScope(SupervisorJob() + Dispatchers.IO),
+                pdfReader = PdfBoxWorkspacePdfReader(context.applicationContext),
             ).also { instance = it }
         }
     }

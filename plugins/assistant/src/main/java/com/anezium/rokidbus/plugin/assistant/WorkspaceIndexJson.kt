@@ -17,7 +17,8 @@ internal object WorkspaceIndexJson {
                         .put("status", document.status.name).put("chunks", JSONArray().apply {
                             document.chunks.forEach { chunk ->
                                 put(JSONObject().put("ordinal", chunk.ordinal).put("text", chunk.text)
-                                    .put("heading", chunk.headingPath).put("paragraph", chunk.paragraph))
+                                    .put("heading", chunk.headingPath).put("paragraph", chunk.paragraph)
+                                    .put("page", chunk.page))
                             }
                         }))
                 }
@@ -53,7 +54,7 @@ internal object WorkspaceIndexJson {
                     chunks = List(chunks.length()) { ordinal ->
                         val chunk = chunks.getJSONObject(ordinal)
                         WorkspaceChunk(chunk.getInt("ordinal"), chunk.getString("text"),
-                            chunk.getString("heading"), chunk.getInt("paragraph"))
+                            chunk.getString("heading"), chunk.getInt("paragraph"), chunk.optInt("page", 0))
                     },
                 )
             },
@@ -78,7 +79,7 @@ internal object WorkspaceIndexJson {
                 require(document.status in setOf(WorkspaceDocumentStatus.INDEXED, WorkspaceDocumentStatus.TRUNCATED))
             }
             document.chunks.forEach { chunk ->
-                require(chunk.ordinal >= 0 && chunk.paragraph >= 0 && chunk.headingPath.length <= 160)
+                require(chunk.ordinal >= 0 && chunk.paragraph >= 0 && chunk.page >= 0 && chunk.headingPath.length <= 160)
                 require(chunk.text.isNotBlank() && chunk.text.length <= WorkspaceLimits.MAX_CHUNK_CHARS)
             }
         }

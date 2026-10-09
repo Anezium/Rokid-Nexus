@@ -12,6 +12,8 @@ internal object WorkspaceLimits {
     const val MAX_INDEX_BYTES = 8 * 1_024 * 1_024
     const val MAX_TEXT_BYTES = 2 * 1_024 * 1_024
     const val MAX_DOCX_BYTES = 4 * 1_024 * 1_024
+    const val MAX_PDF_BYTES = 32 * 1_024 * 1_024
+    const val MAX_PDF_PAGES = 500
     const val MAX_ZIP_ENTRIES = 128
     const val MAX_EXCERPT_CHARS = 2_500
     const val MAX_QUERY_CHARS = 240
@@ -23,13 +25,14 @@ internal object WorkspaceLimits {
 }
 
 internal enum class WorkspaceFileType {
-    TEXT, MARKDOWN, DOCX;
+    TEXT, MARKDOWN, DOCX, PDF;
 
     companion object {
         fun fromName(name: String): WorkspaceFileType? = when {
             name.endsWith(".txt", ignoreCase = true) -> TEXT
             name.endsWith(".md", ignoreCase = true) -> MARKDOWN
             name.endsWith(".docx", ignoreCase = true) -> DOCX
+            name.endsWith(".pdf", ignoreCase = true) -> PDF
             else -> null
         }
     }
@@ -58,10 +61,14 @@ internal data class WorkspaceChunk(
     val text: String,
     val headingPath: String = "",
     val paragraph: Int = 0,
+    val page: Int = 0,
 )
 
 internal enum class WorkspaceDocumentStatus {
-    INDEXED, TRUNCATED, METADATA_UNAVAILABLE, UNREADABLE, TOO_LARGE, INVALID_TEXT;
+    INDEXED, TRUNCATED, METADATA_UNAVAILABLE, UNREADABLE, TOO_LARGE, INVALID_TEXT,
+    PROTECTED, NO_TEXT,
+    // Left for the next pass of the same check so one run stays within its time limit.
+    PENDING;
 }
 
 internal data class WorkspaceDocument(
