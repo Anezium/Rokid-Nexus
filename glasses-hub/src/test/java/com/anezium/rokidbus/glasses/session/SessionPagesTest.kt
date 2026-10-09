@@ -623,6 +623,105 @@ class SessionPagesTest {
         assertEquals(entries[1].key, top().selectedKey)
     }
 
+    private var catalog: List<AppEntry> = emptyList()
+    private val localPages = LocalPages(
+        notice = { null },
+        activities = { emptyList() },
+        applications = { catalog },
+        providerPagesReady = { false },
+        formatTime = { "t$it" },
+    )
+
+    private fun app(name: String) = AppEntry("app:$name", name, AppKind.NATIVE)
+
+    /** What the bridge does with a local request: answer it in-process. */
+    private fun answerLocal(now: Long) {
+        send(SessionEvent.PageResponse(localPages.answer(requested().request, live = true), now))
+    }
+
+    /** What the bridge does when a catalog changes under a visible local page. */
+    private fun refreshLocal(now: Long) {
+        val frame = top()
+        val shown = frame.status as FrameStatus.Shown
+        val request = PageSurfaceRequest(
+            PageCorrelation(shown.requestId, model.generation, page().frames.size, frame.pageId),
+            SessionReducer.REASON_REFRESH,
+            frame.paramsJson,
+        )
+        send(SessionEvent.PageResponse(localPages.answer(request, live = true), now))
+    }
+
+    private fun shownLabels() = items.entries((top().status as FrameStatus.Shown).snapshot.page).map { it.label }
+
+    /** The root's Applications stop, entered. */
+    private fun enterApplications() {
+        openRoot()
+        send(SessionEvent.Step(1, 2_000))
+        send(SessionEvent.Enter(2_050))
+        assertEquals(RootStops.APPLICATIONS_PAGE_ID, requested().request.correlation.pageId)
+        answerLocal(2_060)
+    }
+
+    @Test
+    fun `Applications keeps the entries it was entered with, and a removed one stays inert in place`() {
+        catalog = listOf(app("Alpha"), app("Bravo"), app("Charlie"), app("Delta"))
+        enterApplications()
+        send(SessionEvent.Step(1, 2_100))
+        send(SessionEvent.Step(1, 2_110))
+        assertEquals("Charlie", shownLabels()[top().selected])
+
+        // An app installed before the selected row and one removed before it.
+        catalog = listOf(app("Xray"), app("Alpha"), app("Charlie"), app("Delta"))
+        refreshLocal(2_200)
+        assertEquals(listOf("Alpha", "Bravo", "Charlie", "Delta"), shownLabels())
+        assertEquals(2, top().selected)
+        val entries = items.entries((top().status as FrameStatus.Shown).snapshot.page)
+        assertEquals(PageItem.Inert, entries[1].item)
+
+        // SELECT acts on the entry still there, and the removed one does nothing.
+        send(SessionEvent.Enter(2_300))
+        assertEquals(SessionEffect.LaunchLocal("app:Charlie", "Charlie"), effects.single())
+        send(SessionEvent.Step(-1, 2_400))
+        send(SessionEvent.Enter(2_410))
+        assertTrue(effects.none { it is SessionEffect.LaunchLocal || it is RequestPage })
+
+        // Entering again from the root takes the catalog as it is now.
+        send(SessionEvent.Back(2_500))
+        send(SessionEvent.Enter(2_600))
+        answerLocal(2_610)
+        assertEquals(listOf("Xray", "Alpha", "Charlie", "Delta"), shownLabels())
+    }
+
+    @Test
+    fun `More pages page through the order Applications was entered with`() {
+        val room = PageTemplateContract.MAX_ITEMS - 1
+        catalog = (0 until room + 3).map { app("k$it") }
+        enterApplications()
+        assertEquals("More applications", shownLabels().last())
+        repeat(room) { send(SessionEvent.Step(1, 2_100L + it)) }
+        send(SessionEvent.Enter(2_110))
+        answerLocal(2_120)
+        val tail = listOf("k$room", "k${room + 1}", "k${room + 2}")
+        assertEquals(tail, shownLabels())
+
+        // An app installed before the More boundary does not shift what this page shows.
+        catalog = listOf(app("new")) + (0 until room + 3).map { app("k$it") }
+        refreshLocal(2_200)
+        assertEquals(tail, shownLabels())
+        // Nor does one removed before it.
+        catalog = (0 until room + 3).filter { it != 1 }.map { app("k$it") }
+        refreshLocal(2_300)
+        assertEquals(tail, shownLabels())
+
+        // Back on the first page, its own rows and its More count are those it was entered with.
+        send(SessionEvent.Back(2_400))
+        answerLocal(2_410)
+        val first = shownLabels()
+        assertEquals("k0", first.first())
+        assertEquals("k1", first[1])
+        assertEquals(room + 1, first.size)
+    }
+
     private fun errorFor(requestId: String, generation: Long, frameIndex: Int, pageId: String, owner: String) =
         PageSurfaceContract.correlationPayload(PageCorrelation(requestId, generation, frameIndex, pageId))
             .put("error", PageSurfaceContract.ERROR_PAGE_UNAVAILABLE).put(PageSurfaceContract.FIELD_PLUGIN_ID, owner)

@@ -54,6 +54,9 @@ internal class LocalPages(
 ) {
     private var revision = 0L
 
+    /** G6: Applications as the wearer entered it, in that order; refreshes and More pages read it. */
+    private var enteredApplications: List<AppEntry>? = null
+
     fun isLocal(pageId: String): Boolean = PageTemplateContract.isLocalPageId(pageId)
 
     /** The response payload for [request], always correlated: a page, or an honest error. */
@@ -64,7 +67,7 @@ internal class LocalPages(
             pageId == RootStops.NOTICE_PAGE_ID -> currentNotice()
             pageId == RootStops.ACTIVITIES_PAGE_ID -> activityList()
             pageId.startsWith(ACTIVITY_PAGE_PREFIX) -> activity(pageId.removePrefix(ACTIVITY_PAGE_PREFIX))
-            pageId == RootStops.APPLICATIONS_PAGE_ID -> applicationList(request.paramsJson)
+            pageId == RootStops.APPLICATIONS_PAGE_ID -> applicationList(request.paramsJson, request.reason)
             else -> null
         } ?: return PageSurfaceContract.correlationPayload(request.correlation)
             .put("error", PageSurfaceContract.ERROR_PAGE_UNAVAILABLE)
@@ -143,16 +146,28 @@ internal class LocalPages(
         )
     }
 
-    private fun applicationList(paramsJson: String?): LocalPage {
-        val all = applications()
-        val from = paramsJson?.let { runCatching { JSONObject(it).optInt(PARAM_FROM, 0) }.getOrNull() }
-            ?.coerceIn(0, all.size) ?: 0
+    /**
+     * G6: entering Applications from elsewhere freezes its entries and their order. Later answers,
+     * a refresh or a More page, keep that membership and order: labels and availability follow
+     * the catalog by key, a removed entry stays in place as an inert tombstone, and an entry added
+     * since waits for the next entry. Launches still check the catalog as it is when they run.
+     */
+    private fun applicationList(paramsJson: String?, reason: String): LocalPage {
+        val requested = paramsJson?.let { runCatching { JSONObject(it).optInt(PARAM_FROM, 0) }.getOrNull() } ?: 0
+        val current = applications()
+        val entered = enteredApplications?.takeUnless { reason == SessionReducer.REASON_OPEN && requested == 0 }
+            ?: current.also { enteredApplications = it }
+        val live = current.associateBy(AppEntry::key)
+        val all = entered.map { frozen -> live[frozen.key] to frozen }
+        val from = requested.coerceIn(0, all.size)
         // One row stays free for "More" when the catalog does not fit a page.
         val room = PageTemplateContract.MAX_ITEMS - 1
         val chunk = all.drop(from).take(room)
         val actions = mutableListOf<Pair<String, String>>()
-        val rows = chunk.mapNotNull { entry ->
-            val id = rowId(entry.key)
+        val rows = chunk.mapNotNull { (present, frozen) ->
+            val id = rowId(frozen.key)
+            val entry = present
+                ?: return@mapNotNull PageRow(id, clip(frozen.label, PageTemplateContract.MAX_LABEL_CHARS), sub = REMOVED, enabled = false)
             when (entry.kind) {
                 AppKind.PAGES -> entry.pluginId?.let {
                     PageRow(id, clip(entry.label, PageTemplateContract.MAX_LABEL_CHARS), target = PageTarget.Page(PageTemplateContract.mainPageId(it)))
@@ -227,6 +242,7 @@ internal class LocalPages(
         private const val OPEN_APP_ROW = "open-app"
         private const val MORE_ROW = "more"
         private const val PARAM_FROM = "from"
+        private const val REMOVED = "No longer available"
 
         fun activityPageId(ownerPluginId: String): String = ACTIVITY_PAGE_PREFIX + ownerPluginId
     }
