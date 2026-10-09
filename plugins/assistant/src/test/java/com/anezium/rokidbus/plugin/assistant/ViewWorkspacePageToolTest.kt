@@ -4,7 +4,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -14,6 +16,8 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.util.Base64
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 class ViewWorkspacePageToolTest {
     @get:Rule val temporary = TemporaryFolder()
@@ -80,6 +84,57 @@ class ViewWorkspacePageToolTest {
         assertEquals("jpeg:IMAGE:1:Sprint plan", controller.viewPage("whiteboard.jpg", null)?.let { String(it) })
         controller.contextForQuestion("sprint plan", "")
         assertNull(controller.viewPage("reports/sales.pdf", 2))
+    }
+
+    @Test
+    fun `a stuck render releases the question at its deadline and refuses overlapping views`() = runBlocking {
+        val store = WorkspaceStore(temporary.newFolder())
+        store.selectTree(WorkspaceStoreTest.TREE, "Documents", enable = true)
+        val gateway = FakeWorkspaceGateway()
+        gateway.put("sales", "sales.pdf", listOf("Summary.", "Quarterly chart.").joinToString(FakePageReader.PAGE_BREAK))
+        val gate = CountDownLatch(1)
+        val fake = FakePageReader()
+        val stuck = object : WorkspacePageReader by fake {
+            override fun render(type: WorkspaceFileType, bytes: ByteArray, page: Int): ByteArray? {
+                gate.await()
+                return fake.render(type, bytes, page)
+            }
+        }
+        WorkspaceIndexer(store, gateway, clock = { 1_000 }, pageReader = fake).refresh()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        try {
+            val controller = WorkspaceController(store, gateway, scope, pageReader = stuck, viewTimeoutMs = 200)
+            controller.search("quarterly chart")
+            val started = System.nanoTime()
+            assertNull(controller.viewPage("sales.pdf", 2))
+            assertTrue(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started) < 2_000)
+            assertNull(controller.viewPage("sales.pdf", 2))
+            gate.countDown()
+            withTimeout(2_000) { while (controller.viewPage("sales.pdf", 2) == null) delay(20) }
+        } finally {
+            gate.countDown()
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `a file name containing the citation separator still resolves`() = runBlocking {
+        val store = WorkspaceStore(temporary.newFolder())
+        store.selectTree(WorkspaceStoreTest.TREE, "Documents", enable = true)
+        val gateway = FakeWorkspaceGateway()
+        gateway.put("draft", "sales › draft.pdf", "Quarterly chart.")
+        val reader = FakePageReader()
+        WorkspaceIndexer(store, gateway, clock = { 1_000 }, pageReader = reader).refresh()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        try {
+            val controller = WorkspaceController(store, gateway, scope, pageReader = reader)
+            controller.search("quarterly chart")
+            assertEquals("jpeg:PDF:1:Quarterly chart.", controller.viewPage("sales › draft.pdf", 1)?.let { String(it) })
+            assertEquals("jpeg:PDF:1:Quarterly chart.",
+                controller.viewPage("sales › draft.pdf › page 1", 1)?.let { String(it) })
+        } finally {
+            scope.cancel()
+        }
     }
 
     @Test

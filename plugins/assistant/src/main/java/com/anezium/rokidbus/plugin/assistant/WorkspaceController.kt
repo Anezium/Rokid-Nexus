@@ -1,6 +1,7 @@
 package com.anezium.rokidbus.plugin.assistant
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -20,6 +21,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.FileNotFoundException
+import java.util.concurrent.atomic.AtomicBoolean
 
 internal data class WorkspaceUiState(val workspace: WorkspaceState, val checking: Boolean = false,
     val promptSpaceEmpty: Boolean = false)
@@ -46,6 +48,7 @@ internal class WorkspaceController(
     private val scope: CoroutineScope,
     private val checkTimeoutMs: Long = WorkspaceLimits.CHECK_TIMEOUT_MS,
     private val pageReader: WorkspacePageReader? = null,
+    private val viewTimeoutMs: Long = VIEW_TIMEOUT_MS,
 ) : WorkspaceSearchAccess {
     private val lock = Any()
     private val owners = mutableSetOf<Any>()
@@ -58,6 +61,7 @@ internal class WorkspaceController(
     @Volatile private var suppressed = false
     // Pages the current question's excerpts showed the model; only these may be viewed.
     @Volatile private var turnCitations = emptySet<WorkspaceCitation>()
+    private val renderBusy = AtomicBoolean(false)
     private val mutableState = MutableStateFlow(WorkspaceUiState(store.snapshot().state))
     val state: StateFlow<WorkspaceUiState> = mutableState
 
@@ -224,11 +228,15 @@ internal class WorkspaceController(
         val reader = pageReader ?: return null
         val snapshot = validatedSnapshot() ?: return null
         val documents = snapshot.state.index?.documents.orEmpty().filter { it.viewable() }
-        // Models sometimes copy the whole citation, page and visual mark included.
-        val cited = file.removeSuffix(WorkspaceRetriever.VISUAL_MARK).substringBefore(" › ").trim()
-        val document = documents.firstOrNull { it.entry.relativePath == cited }
-            ?: documents.filter { it.entry.name.equals(cited, ignoreCase = true) }.singleOrNull()
-            ?: return null
+        // Models sometimes copy the whole citation, page and visual mark included; the exact name wins
+        // first because a file name may itself contain " › ".
+        val decorated = file.trim()
+        val unmarked = decorated.removeSuffix(WorkspaceRetriever.VISUAL_MARK).trim()
+        val document = listOf(decorated, unmarked, unmarked.replace(CITED_PAGE, "").trim()).distinct()
+            .firstNotNullOfOrNull { cited ->
+                documents.firstOrNull { it.entry.relativePath == cited }
+                    ?: documents.filter { it.entry.name.equals(cited, ignoreCase = true) }.singleOrNull()
+            } ?: return null
         val type = document.entry.type!!
         val pageNumber = if (type == WorkspaceFileType.PDF) page ?: return null else 1
         val citation = WorkspaceCitation(document.entry.documentId, if (type == WorkspaceFileType.PDF) pageNumber else 0)
@@ -236,7 +244,7 @@ internal class WorkspaceController(
         val treeUri = snapshot.state.settings.treeUri
         val maxBytes = if (type == WorkspaceFileType.PDF) WorkspaceLimits.MAX_PDF_BYTES else WorkspaceLimits.MAX_IMAGE_BYTES
         return try {
-            withTimeout(VIEW_TIMEOUT_MS) {
+            withTimeout(viewTimeoutMs) {
                 val bytes = gateway.open(treeUri, document.entry.documentId).use {
                     runInterruptible(Dispatchers.IO) { readWorkspaceBytes(it, maxBytes).data!! }
                 }
@@ -244,13 +252,38 @@ internal class WorkspaceController(
                 if (!document.entry.hasSameContent(gateway.metadata(treeUri, document.entry.documentId))) {
                     return@withTimeout null
                 }
-                runInterruptible(Dispatchers.IO) { reader.render(type, bytes, pageNumber) }
+                renderDetached { reader.render(type, bytes, pageNumber) }
             }?.takeIf { store.isCurrent(snapshot.state.settings.generation) && store.snapshot().epoch == snapshot.epoch }
         } catch (cancelled: CancellationException) {
             if (cancelled is TimeoutCancellationException) null else throw cancelled
         } catch (_: Exception) {
             null
         }
+    }
+
+    /**
+     * Renders on a thread the question never joins. A native page render can neither be interrupted
+     * nor stop waiting for the platform renderer's process-wide lock, so the question stops waiting at
+     * its deadline and a late page is dropped. One render at a time; a busy slot refuses at once.
+     */
+    private suspend fun renderDetached(render: () -> ByteArray?): ByteArray? {
+        if (!renderBusy.compareAndSet(false, true)) return null
+        val result = CompletableDeferred<ByteArray?>()
+        try {
+            Thread({
+                try {
+                    result.complete(render())
+                } catch (_: Throwable) {
+                    result.complete(null)
+                } finally {
+                    renderBusy.set(false)
+                }
+            }, "workspace-view-render").apply { isDaemon = true }.start()
+        } catch (error: Throwable) {
+            renderBusy.set(false)
+            throw error
+        }
+        return result.await()
     }
 
     private fun WorkspaceDocument.viewable(): Boolean = entry.type?.paged == true && status in VIEWABLE
@@ -355,6 +388,7 @@ internal class WorkspaceController(
 
     companion object {
         private const val VIEW_TIMEOUT_MS = 8_000L
+        private val CITED_PAGE = Regex(" › page \\d+$")
         private val VIEWABLE = setOf(WorkspaceDocumentStatus.INDEXED, WorkspaceDocumentStatus.TRUNCATED,
             WorkspaceDocumentStatus.PENDING, WorkspaceDocumentStatus.NO_TEXT)
         const val READ_GRANT = 1
