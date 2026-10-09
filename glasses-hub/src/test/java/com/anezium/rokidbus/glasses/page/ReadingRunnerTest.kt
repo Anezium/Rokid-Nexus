@@ -450,6 +450,35 @@ class ReadingRunnerTest {
         assertRowKeptAndTextBehindBack(requests().size, lines.take(16))
     }
 
+    @Test
+    fun `an unavailable page keeps its failure, Retry and Back in view together, whatever its length`() {
+        var rows = 0
+        var reading = 0
+        for (count in 1..24) {
+            val body = PageBody.Summary(primary = "Turn right in 120 m", text = lines.take(count).joinToString("\n"), items = listOf(commandsRow))
+            if (count == 1) {
+                open("nav:main", body)
+            } else {
+                dispatch(SessionEvent.LinkRestored)
+                if (top().mode == FrameMode.READING) dispatch(SessionEvent.Enter(now))
+                assertEquals(0, top().selected)
+                dispatch(SessionEvent.Enter(now))
+                dispatch(SessionEvent.PageResponse(answer(requests().last().request, count.toLong(), body), now))
+                assertTrue("${top().status}", top().status is FrameStatus.Shown)
+            }
+            dispatch(SessionEvent.LinkLost)
+            if (top().mode == FrameMode.READING) {
+                reading++
+                assertTrue(inViewport("unavailable"))
+            } else {
+                rows++
+                listOf("unavailable", "reason", "retry", "back").forEach { assertTrue("$count lines: $it", inViewport(it)) }
+            }
+        }
+        // The sweep crossed from what fits beside the failure to what is read page by page.
+        assertTrue("rows=$rows reading=$reading", rows > 0 && reading > 0)
+    }
+
     /** Rows, a child page, back: the uncovered frame's revalidation then times out. */
     private fun timeOutRefresh() {
         dispatch(SessionEvent.Enter(now))

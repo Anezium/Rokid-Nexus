@@ -264,7 +264,7 @@ internal class SessionScreens(
             ScreenHint("tap $focus", if (readsFirst) BACK_TO_TEXT else back),
             statusText,
             focus,
-            fit = snapshot?.takeIf { retained.isNotEmpty() }?.let { FitCheck(identity, frame.pageId, it.page.revision, "retry") },
+            fit = snapshot?.takeIf { retained.isNotEmpty() }?.let { FitCheck(identity, frame.pageId, it.page.revision, "back") },
         )
     }
 
