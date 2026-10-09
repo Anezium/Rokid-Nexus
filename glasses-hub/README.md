@@ -10,8 +10,11 @@ Two launchers answer the triple tap, never both at once. `LEGACY` is today's lau
 and the default. `SESSION` opens the Nexus session of plan 027 instead: an "Opening…" gate,
 then the anchored root; BACK at the root closes it and leaves the app underneath as it was.
 While a session is open the notice band is hidden (the notice keeps its deadline) and the
-session owns the touchpad and the ring. Pages are requested on `/page/request` but no phone
-hub answers them yet, so they end as `Unavailable`.
+session owns the touchpad and the ring. The root holds the live activities, the retained
+notice, `Notifications · n` and Applications. Pages the hub authors (`nexus:`) are answered on
+the glasses and work without a phone; plugin pages are pulled over `/page/*` once both hubs
+announce `pageSessionVersion: 1`, and drawn from the four typed templates. Plugins that offer
+no pages appear in Applications as "Open the full app", behind a labelled launch step.
 
 The choice is the glasses-local preference `launcher.backend`, stored with the hub's other
 settings; an absent value means `LEGACY`. Switch it at runtime with a broadcast addressed to

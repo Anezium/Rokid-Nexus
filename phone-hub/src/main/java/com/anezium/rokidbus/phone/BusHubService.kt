@@ -171,10 +171,10 @@ private const val AUDIO_CHANNELS = 1
 private const val AUDIO_ENCODING = "pcm16le"
 
 /**
- * The session/page version this phone hub announces. Zero until the glasses side of the page
- * protocol ships with it; the broker never negotiates support it does not announce.
+ * The session/page version this phone hub announces; the broker never negotiates support it
+ * does not announce.
  */
-private const val ANNOUNCED_PAGE_SESSION_VERSION = 0
+private const val ANNOUNCED_PAGE_SESSION_VERSION = PageSurfaceContract.VERSION
 
 class BusHubService : Service() {
     private data class Registration(

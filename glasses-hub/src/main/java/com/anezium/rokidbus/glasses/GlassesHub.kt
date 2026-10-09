@@ -1659,6 +1659,6 @@ object GlassesHub {
      * The session/page version these glasses announce: what lets a phone route pages here. The
      * pages stay unreachable on the LEGACY backend whatever is negotiated.
      */
-    private const val GLASSES_PAGE_SESSION_VERSION = 0
+    private const val GLASSES_PAGE_SESSION_VERSION = PageSurfaceContract.VERSION
     private const val CAMERA_CLIENT_ID = "glasses-camera-domain"
 }

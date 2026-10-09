@@ -75,7 +75,7 @@ data class PageSurfaceResult(
 data class PageSurfaceVisibility(val pageId: String, val visible: Boolean, val leaseUntilMs: Long?)
 data class PageSurfaceClosed(val pageId: String, val reason: String)
 
-/** Reserved page v1 contract. No running hub announces or dispatches it yet. */
+/** Session/page v1 envelopes, limits and correlation; typed bodies live in [PageTemplateContract]. */
 object PageSurfaceContract {
     const val VERSION = 1
     const val GATE_MS = 800L
