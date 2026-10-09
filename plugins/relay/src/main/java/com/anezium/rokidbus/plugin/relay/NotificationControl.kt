@@ -92,6 +92,15 @@ internal object NotificationControl {
         }
     }
 
+    /**
+     * The repository or what it may show changed without a capture: access was lost, Relay was
+     * switched off, or a preview setting changed. Only a visible page looks again; no notice or
+     * reply follows from it.
+     */
+    fun notifyInboxChanged() {
+        main.post { pageListener?.invoke() }
+    }
+
     /** The notice band's callbacks, when the listener is connected; the plugin service forwards to them. */
     fun noticeCallbacks(): RelayNoticeRuntime? = listener?.noticeCallbacks
 

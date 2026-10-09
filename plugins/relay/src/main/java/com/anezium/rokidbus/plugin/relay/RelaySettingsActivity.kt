@@ -149,7 +149,10 @@ class RelaySettingsActivity : Activity() {
                 "Hide previews in the inbox",
                 "The list names senders · open a conversation to read",
                 settings.hideInboxPreviews(),
-            ) { enabled -> settings.setHideInboxPreviews(enabled) },
+            ) { enabled ->
+                settings.setHideInboxPreviews(enabled)
+                NotificationControl.notifyInboxChanged()
+            },
             NexusUi.block(),
         )
         content.addView(BusTheme.gap(this, 8))

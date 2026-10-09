@@ -31,6 +31,9 @@ internal class FakeHub : IBusService.Stub() {
     var link = LinkStateBits.CXR_CONTROL_UP or LinkStateBits.SPP_DATA_UP
     var features = BusCapabilityBits.NOTICE_SURFACE or BusCapabilityBits.EDITABLE_SURFACE
     var registrations = 0
+
+    /** The effective page version the hub announces to this client, or none. */
+    var pageVersion: Int? = null
     private var nextId = 0
 
     override fun apiVersion(): Int = 3
@@ -52,6 +55,7 @@ internal class FakeHub : IBusService.Stub() {
                 .put("capabilities", CAPABILITIES)
                 .put("noticeInteractionVersion", 1),
         )
+        pageVersion?.let { deliver(BusPaths.HUB_CAPABILITIES, JSONObject().put("pageSessionVersion", it)) }
         return PluginRegistrationResult.APPROVED
     }
     override fun capabilities(): Int = features
