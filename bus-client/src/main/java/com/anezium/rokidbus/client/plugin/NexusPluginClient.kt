@@ -33,7 +33,10 @@ class NexusPluginClient internal constructor(
     private val transport: NexusPluginTransport,
     pageClock: () -> Long = { android.os.SystemClock.elapsedRealtime() },
 ) : NexusPluginTransport.Listener, AutoCloseable {
-    private val pages = NexusPageChannel(pluginId, pageClock) { path, id, payload -> send(path, id, payload) }
+    // A page answer is current or it is nothing: it never waits in the reconnect queue.
+    private val pages = NexusPageChannel(pluginId, pageClock) { path, id, payload ->
+        !closed && isApproved && transport.sendImmediate(path, id, payload)
+    }
     private val seenEventIds = ArrayDeque<String>()
     private val seenEventIdSet = linkedSetOf<String>()
     // Correlates a surface request's id to the callback that wants to know if

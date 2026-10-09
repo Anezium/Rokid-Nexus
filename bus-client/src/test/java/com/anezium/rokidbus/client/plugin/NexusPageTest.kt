@@ -41,6 +41,7 @@ class NexusPageTest {
             sendIds += id
             return accept
         }
+        override fun sendImmediate(path: String, id: String, payload: JSONObject) = send(path, id, payload)
         override fun sendBinary(path: String, id: String, payload: JSONObject, data: ByteArray) = true
         override fun capabilities(): Int = 0
         override fun approvedCapabilities(): String? = null

@@ -14,6 +14,12 @@ interface NexusPluginTransport {
 
     fun connect(listener: Listener)
     fun send(path: String, id: String, payload: JSONObject): Boolean
+
+    /**
+     * Sends only if the hub can take it now, never queued for a reconnect or replayed. Page
+     * traffic uses this. The default refuses, so a transport without such a path carries no page.
+     */
+    fun sendImmediate(path: String, id: String, payload: JSONObject): Boolean = false
     fun sendBinary(path: String, id: String, payload: JSONObject, data: ByteArray): Boolean
     fun capabilities(): Int
 

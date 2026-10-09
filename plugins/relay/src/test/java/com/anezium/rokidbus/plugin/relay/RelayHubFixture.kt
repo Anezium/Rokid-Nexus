@@ -80,6 +80,8 @@ internal object RelayHubFixture {
         packages.addServiceIfNotPresent(HUB)
         packages.addIntentFilterForService(HUB, IntentFilter(BusConstants.ACTION_HUB))
         shadowOf(app).setComponentNameAndServiceForBindService(HUB, hub)
+        // As on a device: an explicit unbind is not a disconnect.
+        shadowOf(app).setUnbindServiceCallsOnServiceDisconnected(false)
         val own = ComponentName(app, RelayPluginService::class.java)
         val info = ServiceInfo().apply {
             packageName = own.packageName
