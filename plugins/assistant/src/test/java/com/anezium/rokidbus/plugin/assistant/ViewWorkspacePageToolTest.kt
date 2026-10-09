@@ -79,6 +79,23 @@ class ViewWorkspacePageToolTest {
         assertFalse(schema.getBoolean("additionalProperties"))
     }
 
+    @Test
+    fun `workspace and photo tool schemas are accepted by strict function calling`() {
+        listOf(SearchWorkspaceTool { null }.parametersSchema, ViewWorkspacePageTool { null }.parametersSchema,
+            TAKE_PHOTO_PARAMETERS_SCHEMA).forEach { assertTrue(it.text, it.isStrictCompatible()) }
+    }
+
+    @Test
+    fun `strict compatibility catches optional, open, and nested loose schemas`() {
+        fun strict(json: String) = AssistantToolJsonSchema(json).isStrictCompatible()
+        assertTrue(strict("""{"type":"object","properties":{},"additionalProperties":false}"""))
+        assertFalse(strict("""{"type":"object","properties":{"a":{"type":"string"}},"additionalProperties":false}"""))
+        assertFalse(strict("""{"type":"object","properties":{"a":{"type":"string"}},"required":["a"]}"""))
+        assertFalse(strict("""{"type":"object","properties":{"a":{"type":"array","items":{"type":"object",""" +
+            """"properties":{"b":{"type":"string"}},"additionalProperties":false}}},"required":["a"],""" +
+            """"additionalProperties":false}"""))
+    }
+
     private fun decode(result: AssistantToolResult): String {
         val image = result as AssistantToolResult.Image
         assertEquals("image/jpeg", image.mimeType)

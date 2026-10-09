@@ -356,7 +356,7 @@ internal class ChatGptCodexApiClient(
             }
 
             if (response.statusCode !in 200..299) {
-                throw IllegalStateException(httpFailureMessage(response))
+                throw ChatGptCodexHttpException(response.statusCode, httpFailureMessage(response))
             }
 
             streamError?.let { error ->
@@ -454,7 +454,8 @@ internal class ChatGptCodexApiClient(
             .put("name", definition.name)
             .put("description", definition.description)
             .put("parameters", definition.parametersSchema.toJsonObject())
-            .put("strict", definition.strictSchema)
+            // Strict mode rejects the whole request over one incomplete schema; send that one loose.
+            .put("strict", definition.strictSchema && definition.parametersSchema.isStrictCompatible())
 
     companion object {
         const val DEFAULT_ENDPOINT = "https://chatgpt.com/backend-api/codex/responses"
@@ -539,17 +540,29 @@ internal class ChatGptCodexProvider(
                 override val maxToolRounds: Int = Int.MAX_VALUE
 
                 override suspend fun pass(tools: List<AssistantToolDefinition>, round: Int): AssistantLoopPass {
-                    val result = apiClient.executeResponses(
+                    suspend fun execute(offered: List<AssistantToolDefinition>) = apiClient.executeResponses(
                         request = request,
                         modelId = modelId,
                         reasoningEffort = reasoningEffort,
                         input = input,
-                        toolDefinitions = tools,
+                        toolDefinitions = offered,
                         requestId = request.requestId,
                         onTextDelta = ::streamDelta,
                         onStreamRestart = ::resetStreamedText,
                         onWebSearchStateChanged = ::streamWebSearchState,
                     )
+                    // A tool declaration the backend refuses must cost the tools, not the answer,
+                    // as on the OpenAI-compatible providers.
+                    val result = if (round == 0 && tools.isNotEmpty()) {
+                        try {
+                            execute(tools)
+                        } catch (error: ChatGptCodexHttpException) {
+                            if (error.statusCode != HTTP_BAD_REQUEST && error.statusCode != HTTP_UNPROCESSABLE) throw error
+                            execute(emptyList())
+                        }
+                    } else {
+                        execute(tools)
+                    }
                     return AssistantLoopPass(
                         text = response.toString(),
                         toolCalls = result.outputItems.mapNotNull(::parseFunctionCall),
@@ -740,3 +753,11 @@ private fun JSONObject.itemId(): String? = optString("id").takeIf(String::isNotB
 private inline fun JSONArray.forEachJsonValue(block: (Any) -> Unit) {
     for (index in 0 until length()) block(get(index))
 }
+
+internal class ChatGptCodexHttpException(
+    val statusCode: Int,
+    message: String,
+) : IllegalStateException(message)
+
+private const val HTTP_BAD_REQUEST = 400
+private const val HTTP_UNPROCESSABLE = 422

@@ -534,6 +534,62 @@ class ChatGptCodexToolLoopTest {
         assertFalse(input.getJSONObject(0).toString().contains(OMITTED_HISTORY_PHOTO_BASE64))
     }
 
+    @Test
+    fun `a refused tool declaration retries the answer without tools`() = runTest {
+        val transport = FakeTransport(
+            StubResponse(
+                statusCode = 400,
+                errorBody = """{"error":{"code":"invalid_function_parameters","param":"tools[1].parameters"}}""",
+            ),
+            completedText("The guest Wi-Fi password is Tamarin-82."),
+        )
+        val provider = provider(transport) { error("No tool may run.") }
+
+        val events = provider.streamEvents(ChatRequest(userText = "Wi-Fi password?")).toList()
+
+        assertEquals(2, transport.requests.size)
+        assertTrue(JSONObject(transport.requests[0].body).getJSONArray("tools").length() > 1)
+        val retried = JSONObject(transport.requests[1].body).optJSONArray("tools")
+        assertTrue(retried == null || (0 until retried.length()).none {
+            retried.getJSONObject(it).optString("type") == "function"
+        })
+        assertEquals(
+            "The guest Wi-Fi password is Tamarin-82.",
+            (events.last() as AiProviderEvent.MessageDone).message.content,
+        )
+    }
+
+    @Test
+    fun `a server failure is not retried without tools`() = runTest {
+        val transport = FakeTransport(StubResponse(statusCode = 500, errorBody = "boom"))
+        val provider = provider(transport) { error("No tool may run.") }
+
+        val events = provider.streamEvents(ChatRequest(userText = "Wi-Fi password?")).toList()
+
+        assertEquals(1, transport.requests.size)
+        assertTrue(events.last() is AiProviderEvent.Failed)
+    }
+
+    @Test
+    fun `a schema strict mode would refuse is declared loose instead`() = runTest {
+        val loose = TestAssistantTool(
+            name = "loose_tool",
+            parametersSchema = AssistantToolJsonSchema(
+                """{"type":"object","properties":{"a":{"type":"string"}},"additionalProperties":false}""",
+            ),
+        )
+        val transport = FakeTransport(completedText("Done."))
+        val provider = provider(transport, additionalTools = listOf(loose)) { error("No tool may run.") }
+
+        provider.streamEvents(ChatRequest(userText = "Hello")).toList()
+
+        val tools = JSONObject(transport.requests.single().body).getJSONArray("tools")
+        val declarations = (0 until tools.length()).map { tools.getJSONObject(it) }
+            .filter { it.optString("type") == "function" }.associateBy { it.getString("name") }
+        assertFalse(declarations.getValue("loose_tool").getBoolean("strict"))
+        assertTrue(declarations.getValue(TAKE_PHOTO_TOOL_NAME).getBoolean("strict"))
+    }
+
     private fun provider(
         transport: ChatGptCodexHttpTransport,
         refreshTokens: suspend () -> CodexChatGptOAuthTokenBundle = {

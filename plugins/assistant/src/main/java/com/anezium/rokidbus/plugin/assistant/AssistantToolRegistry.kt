@@ -31,6 +31,31 @@ internal data class AssistantToolJsonSchema(
     }
 
     fun toJsonObject(): JSONObject = JSONObject(text)
+
+    /**
+     * Whether strict function calling accepts this schema: every object lists all of its
+     * properties as required and closes additional properties; optional values must be nullable.
+     */
+    fun isStrictCompatible(): Boolean = toJsonObject().isStrictObject()
+
+    private fun JSONObject.isStrictObject(): Boolean {
+        val properties = optJSONObject("properties") ?: JSONObject()
+        val required = optJSONArray("required")?.let { array -> List(array.length()) { array.optString(it) } }.orEmpty()
+        if (opt("additionalProperties") != false || properties.keys().asSequence().toSet() != required.toSet()) {
+            return false
+        }
+        return properties.keys().asSequence().all { key -> properties.optJSONObject(key)?.isStrictValue() != false }
+    }
+
+    private fun JSONObject.isStrictValue(): Boolean {
+        val types = when (val type = opt("type")) {
+            is String -> setOf(type)
+            is org.json.JSONArray -> List(type.length()) { type.optString(it) }.toSet()
+            else -> emptySet()
+        }
+        if ("object" in types && !isStrictObject()) return false
+        return optJSONObject("items")?.isStrictValue() != false
+    }
 }
 
 internal sealed interface AssistantToolValidation {

@@ -984,6 +984,9 @@ class AssistantPluginService : NexusPluginService() {
                     is AiProviderEvent.Failed -> {
                         completed = true
                         failed = true
+                        // The status alone: provider messages can quote the request.
+                        val status = HTTP_STATUS.find(event.message)?.groupValues?.get(1) ?: "none"
+                        Log.w(TAG, "Assistant answer failed: provider=$providerId status=$status")
                         showError(event.message)
                     }
                 }
@@ -1515,6 +1518,7 @@ class AssistantPluginService : NexusPluginService() {
         private const val MAX_HUD_LINE_CHARS = 42
         private const val MAX_CARD_LINE_CHARS = 240
         private const val MAX_ERROR_CHARS = 180
+        private val HTTP_STATUS = Regex("\\((\\d{3})\\)")
 
         @Volatile
         private var debugInstance: AssistantPluginService? = null
