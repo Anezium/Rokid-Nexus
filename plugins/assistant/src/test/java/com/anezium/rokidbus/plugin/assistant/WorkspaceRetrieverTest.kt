@@ -127,6 +127,44 @@ class WorkspaceRetrieverTest {
         document("handbook.txt", "The employment contract identifies the registered employer."),
     ))
 
+    @Test
+    fun `an attribute named next to a subject never pulls in another file`() {
+        val retriever = WorkspaceRetriever(listOf(
+            document("vega.md", "Vega stores 47 green spools for the assembly line."),
+            document("lyon.txt", "Delivery schedule: Lyon trucks arrive at seven on Monday."),
+        ))
+        listOf("What is the delivery schedule for Vega green spools?",
+            "What Is The Delivery Schedule For Vega Green Spools?",
+            "Quel est le planning de livraison pour les bobines vertes de Vega ?").forEach { question ->
+            assertFalse(question, retriever.search(question).excerpts.contains("lyon.txt"))
+        }
+    }
+
+    @Test
+    fun `a missing subject is refused even when another file holds the attribute`() {
+        val retriever = WorkspaceRetriever(listOf(
+            document("nebuleuse.txt", "Nebuleuse launch details. Code: VELA-5836."),
+            document("code.txt", "The cabinet code is 4471."),
+        ))
+        listOf("What is the code, for the Orphee shuttle departure?",
+            "Quel est le code ou le mot de passe d'Orphee ?",
+            "Quelles bobines d'Orphee ne sont plus en stock ?").forEach { question ->
+            assertEquals(question, WorkspaceSearchResult(), retriever.search(question))
+        }
+    }
+
+    @Test
+    fun `parts joined with and are each retrieved, as a follow-up search writes them`() {
+        val result = WorkspaceRetriever(listOf(
+            document("vega.md", "Vega stores 47 green spools for the assembly line."),
+            document("aurora.docx", "Aurora prototype is Cobalt-19."),
+            document("nebuleuse.txt", "Nebuleuse launch code is VELA-5836."),
+        )).search("Aurora prototype and Nebuleuse launch code")
+        assertTrue(result.excerpts.contains("aurora.docx"))
+        assertTrue(result.excerpts.contains("nebuleuse.txt"))
+        assertFalse(result.excerpts.contains("vega.md"))
+    }
+
     private fun document(name: String, text: String, heading: String = "") = WorkspaceDocument(
         WorkspaceEntry(name, name), listOf(WorkspaceChunk(0, text, heading)),
     )

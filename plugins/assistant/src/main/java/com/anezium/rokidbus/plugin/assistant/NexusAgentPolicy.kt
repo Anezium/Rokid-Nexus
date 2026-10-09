@@ -123,6 +123,15 @@ internal object NexusAgentPolicy {
                 if (VIEW_WORKSPACE_PAGE_TOOL_NAME in availableToolNames) append(" or a page shown by view_workspace_page")
                 append(". If none cover the question, say no " +
                     "relevant workspace excerpt was found. Unrelated questions can be answered normally.")
+                if (SEARCH_WORKSPACE_TOOL_NAME in availableToolNames) {
+                    // Retrieval stays lexical and precise; the model bridges what words alone cannot:
+                    // a second topic, a pronoun, or a question asked in another language than the files.
+                    append(" If the question asks about several things and the excerpts cover only some, or " +
+                        "none match because the documents may use other words or another language, call " +
+                        "search_workspace once before answering, with the words the documents likely use for " +
+                        "the missing parts (translated if needed, several parts joined with \"and\"). Never " +
+                        "answer one part from an excerpt about something else.")
+                }
                 append(" Never infer what a chart, figure, table, or image shows from the text around it.")
                 if (VIEW_WORKSPACE_PAGE_TOOL_NAME in availableToolNames) {
                     append(" If a relevant excerpt is marked" + WorkspaceRetriever.VISUAL_MARK + " and its text " +

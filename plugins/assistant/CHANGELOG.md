@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Answer questions that span several Workspace files.** When the passages found
+  first cover only part of a question, or the question uses other words or another
+  language than the files, Assistant searches the Workspace once more for the
+  missing part instead of answering from an unrelated passage.
 - **Use the current GPT-6 models.** ChatGPT offers GPT-6-Luna (still the
   fast default), GPT-6.1-Sol, and GPT-6-Astra; a GPT-5.6 or GPT-6-Sol model
   you picked before moves to its current equivalent instead of resetting.
