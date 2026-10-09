@@ -1,0 +1,80 @@
+package com.anezium.rokidbus.glasses.page
+
+import android.content.Context
+import android.view.View
+import android.view.ViewGroup
+
+/**
+ * The column between the fixed header and hint. It never scrolls by itself or by touch: it only
+ * follows the focused block, moving as little as needed to keep it whole on screen, so the first
+ * hidden row, the last row and a row that wraps all come into view when they are selected.
+ */
+internal class SessionViewport(context: Context) : ViewGroup(context) {
+    /** [fill] takes exactly the viewport's height; [side] is the left and right margin. */
+    class Params(val fill: Boolean = false, val side: Int = PageStyle.SIDE_PX) :
+        ViewGroup.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+
+    var focus: View? = null
+        set(value) {
+            field = value
+            requestLayout()
+        }
+
+    /** How far the column is moved up; kept across renders so a still-visible focus does not jump. */
+    var offset = 0
+        private set
+
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        val width = MeasureSpec.getSize(widthMeasureSpec)
+        val height = MeasureSpec.getSize(heightMeasureSpec)
+        for (index in 0 until childCount) {
+            val child = getChildAt(index)
+            val params = paramsOf(child)
+            val childWidth = MeasureSpec.makeMeasureSpec((width - 2 * params.side).coerceAtLeast(0), MeasureSpec.EXACTLY)
+            val childHeight = if (params.fill) {
+                MeasureSpec.makeMeasureSpec(height, MeasureSpec.EXACTLY)
+            } else {
+                MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED)
+            }
+            child.measure(childWidth, childHeight)
+        }
+        setMeasuredDimension(width, height)
+    }
+
+    override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
+        val height = bottom - top
+        var y = 0
+        val tops = IntArray(childCount)
+        for (index in 0 until childCount) {
+            if (index > 0) y += PageStyle.GAP_PX
+            tops[index] = y
+            y += getChildAt(index).measuredHeight
+        }
+        val target = focus?.takeIf { it.parent === this }?.let(::indexOfChild) ?: -1
+        if (target >= 0) {
+            val focusTop = tops[target]
+            val focusBottom = focusTop + getChildAt(target).measuredHeight
+            if (focusTop - offset < 0) offset = focusTop
+            if (focusBottom - offset > height) offset = focusBottom - height
+        }
+        offset = offset.coerceIn(0, (y - height).coerceAtLeast(0))
+        for (index in 0 until childCount) {
+            val child = getChildAt(index)
+            val side = paramsOf(child).side
+            child.layout(side, tops[index] - offset, side + child.measuredWidth, tops[index] - offset + child.measuredHeight)
+        }
+    }
+
+    /** Forgets the scroll position, for a new screen rather than an update of the same one. */
+    fun resetOffset() {
+        offset = 0
+    }
+
+    override fun generateDefaultLayoutParams(): LayoutParams = Params()
+
+    override fun checkLayoutParams(p: LayoutParams?): Boolean = p is Params
+
+    override fun generateLayoutParams(p: LayoutParams?): LayoutParams = Params()
+
+    private fun paramsOf(child: View): Params = child.layoutParams as? Params ?: Params()
+}
