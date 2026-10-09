@@ -141,6 +141,11 @@ class ReadingRunnerTest {
         else -> emptyList()
     }
 
+    /** The text drawn in the viewport, blocks and document page alike. */
+    private fun drawn(): String = view.blockViews.values.joinToString("\n") { block ->
+        if (block is DocumentPageView) block.visibleText() else texts(block).joinToString("\n") { it.text }
+    }
+
     private fun inViewport(key: String): Boolean {
         val block = view.blockViews.getValue(key)
         return block.top >= 0 && block.bottom <= view.viewport.height
@@ -273,6 +278,55 @@ class ReadingRunnerTest {
         open("relay:thread", thread, actions = acknowledge)
         timeOutRefresh()
         assertUnavailableReading(null, listOf("Mika · captured 14:11", "line 80 of the thread"))
+    }
+
+    /**
+     * After a link loss, Retry answered at [revision]; what the glasses then draw. The providers
+     * answer a rebuilt page above the floor; an equal revision keeps the retained body.
+     */
+    private fun retryAnswered(after: PageBody, revision: Long): String {
+        dispatch(SessionEvent.LinkLost)
+        dispatch(SessionEvent.LinkRestored)
+        assertTrue(top().status is FrameStatus.Unavailable)
+        dispatch(SessionEvent.Enter(now))
+        val retry = requests().last()
+        assertEquals(SessionReducer.REASON_RETRY, retry.request.reason)
+        assertEquals(top().revisionFloor, retry.minimumRevision)
+        dispatch(SessionEvent.PageResponse(answer(retry.request, revision, after), now))
+        assertTrue("${top().status}", top().status is FrameStatus.Shown)
+        return drawn()
+    }
+
+    private fun inbox(sub: String) =
+        PageBody.SelectableList(listOf(PageRow("mika", "Mika", sub = sub, target = PageTarget.Page("relay:thread"))), emptyText = "No conversations yet")
+
+    private fun guidance(primary: String, street: String) = PageBody.Summary(primary = primary, secondary = street, items = listOf(commandsRow))
+
+    @Test
+    fun `Retry draws newly hidden Relay previews above the floor, and keeps them at an equal revision`() {
+        open("relay:main", inbox("14:11 · See you at eight"))
+        val hidden = retryAnswered(inbox("14:11"), revision = 2)
+        assertTrue(hidden, "Mika" in hidden && "See you at eight" !in hidden)
+        val equal = retryAnswered(inbox("14:11 · See you at eight"), revision = 2)
+        assertTrue(equal, "Mika" in equal && "See you at eight" !in equal)
+    }
+
+    @Test
+    fun `Retry draws an emptied Relay inbox above the floor, and keeps it at an equal revision`() {
+        open("relay:main", inbox("14:11 · See you at eight"))
+        val empty = retryAnswered(PageBody.SelectableList(emptyList(), emptyText = "No conversations yet"), revision = 2)
+        assertTrue(empty, "No conversations yet" in empty && "Mika" !in empty)
+        val equal = retryAnswered(inbox("14:11 · See you at eight"), revision = 2)
+        assertTrue(equal, "No conversations yet" in equal && "Mika" !in equal)
+    }
+
+    @Test
+    fun `Retry draws changed Navigation guidance above the floor, and keeps it at an equal revision`() {
+        open("nav:main", guidance("Turn right in 120 m", "Rue de Rivoli"))
+        val changed = retryAnswered(guidance("Turn left in 300 m", "Avenue Foch"), revision = 2)
+        assertTrue(changed, "Turn left in 300 m" in changed && "Turn right" !in changed)
+        val equal = retryAnswered(guidance("Turn right in 120 m", "Rue de Rivoli"), revision = 2)
+        assertTrue(equal, "Avenue Foch" in equal && "Rue de Rivoli" !in equal)
     }
 
     /** Rows, a child page, back: the uncovered frame's revalidation then times out. */
