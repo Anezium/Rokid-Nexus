@@ -95,6 +95,9 @@ class PhonePageBroker(
 
     private val lock = Any()
     private val frames = linkedMapOf<FrameKey, Frame>()
+
+    /** Counts SPP losses, so a page whose send straddled one can be judged against it. */
+    private var dataPlaneLosses = 0L
     private val bound = linkedMapOf<String, PhonePluginPrincipal>()
     private var generation = -1L
     private var remoteVersion = 0
@@ -136,6 +139,7 @@ class PhonePageBroker(
      * same rule. Nothing is replayed when SPP returns.
      */
     private fun onDataPlaneLost() = mutate {
+        dataPlaneLosses += 1
         frames.values.filter { it.dataPlane }.toList().forEach { frame ->
             val registration = currentRegistration(frame)
             frames.remove(frame.key)
@@ -532,12 +536,14 @@ class PhonePageBroker(
 
     /**
      * Sends a page to the glasses and applies [candidate] to [frame] only once it was sent, if the
-     * frame, its request and its epoch are still the same. A page that could not be sent ends the
-     * frame on both sides: the glasses get a small, honest answer and the provider a close.
+     * frame, its request and its epoch are still the same. A page that could not be sent, or one
+     * that needed SPP while SPP was lost before it counted, ends the frame on both sides: the
+     * glasses get a small, honest answer and the provider a close.
      */
     private fun forwardPage(path: String, payload: JSONObject, frame: Frame, candidate: Candidate) {
         val requestId = frame.requestId
         val epoch = frame.epoch
+        val losses = dataPlaneLosses
         later {
             val error = host.sendToGlasses(path, payload)
             if (error != null) {
@@ -545,7 +551,10 @@ class PhonePageBroker(
             }
             mutate {
                 if (frames[frame.key] === frame && frame.requestId == requestId && frame.epoch == epoch) {
-                    if (error == null) commit(frame, candidate) else failClosed(frame)
+                    // A page that needed SPP and crossed its loss was judged by the old one: the
+                    // glasses may hold it, inert or not, so it counts as lost, never as shown.
+                    val crossedLoss = candidate.dataPlane && dataPlaneLosses != losses
+                    if (error == null && !crossedLoss) commit(frame, candidate) else failClosed(frame)
                 }
             }
         }

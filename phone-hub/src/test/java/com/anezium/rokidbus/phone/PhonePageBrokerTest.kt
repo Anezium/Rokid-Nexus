@@ -37,6 +37,9 @@ class PhonePageBrokerTest {
         /** Runs once, before the send returns, when a page of that revision goes to the glasses. */
         var onGlassesSend: Pair<Long, () -> Unit>? = null
 
+        /** Runs once after the transport took a page of that revision, before the broker hears of it. */
+        var onGlassesSent: Pair<Long, () -> Unit>? = null
+
         override fun nowMs(): Long = now
         override fun pageProvider(pluginId: String): PhonePluginPrincipal? = providers[pluginId]
         override fun registrations(principal: PhonePluginPrincipal): List<PageRegistration> =
@@ -59,6 +62,10 @@ class PhonePageBrokerTest {
             }
             if (!sppUp && PageSurfaceContract.needsDataPlane(path, payload)) return "NO_DATA_PLANE"
             glasses += path to JSONObject(payload.toString())
+            onGlassesSent?.takeIf { payload.optLong("revision", -1) == it.first && glassesError == null }?.let { (_, hook) ->
+                onGlassesSent = null
+                hook()
+            }
             return glassesError
         }
         override fun bind(principal: PhonePluginPrincipal): Boolean {
@@ -562,6 +569,43 @@ class PhonePageBrokerTest {
         }
         broker.onGlasses(BusPaths.PAGE_VISIBILITY, visibility(true))
         assertEquals(listOf("in-time"), actions())
+    }
+
+    @Test
+    fun `SPP lost after a big revision went out but before it counted closes the frame on both sides`() {
+        connect(relay)
+        val relayA = register(relay, "relay-a")
+        broker.onGlasses(BusPaths.PAGE_REQUEST, request())
+        assertNull(broker.onProvider(BusPaths.PAGE_RESPONSE, page(revision = 1), relayA))
+        broker.onGlasses(BusPaths.PAGE_VISIBILITY, visibility(true))
+        val both = LinkStateBits.CXR_CONTROL_UP or LinkStateBits.SPP_DATA_UP
+
+        // A small revision that crosses an SPP loss still counts: CXR carries it.
+        host.onGlassesSent = 2L to { broker.onLinkState(both, LinkStateBits.CXR_CONTROL_UP) }
+        assertNull(broker.onProvider(BusPaths.PAGE_RESPONSE, page(revision = 2), relayA))
+        assertTrue(host.delivered.none { it.second == BusPaths.PAGE_CLOSED })
+        broker.onGlasses(BusPaths.PAGE_ACTION, action(invocationId = "small", revision = 2))
+        assertEquals(1, host.delivered.count { it.second == BusPaths.PAGE_ACTION })
+        assertNull(broker.onProvider(BusPaths.PAGE_RESULT, result("small"), relayA))
+
+        // SPP is back; a big revision is written over it, and SPP goes before the broker records it.
+        broker.onLinkState(LinkStateBits.CXR_CONTROL_UP, both)
+        host.onGlassesSent = 3L to { broker.onLinkState(both, LinkStateBits.CXR_CONTROL_UP) }
+        assertNull(broker.onProvider(BusPaths.PAGE_RESPONSE, page(revision = 3, body = big), relayA))
+
+        // The provider hears link_lost, and the glasses a small correlated answer after the big page.
+        val closed = host.delivered.filter { it.second == BusPaths.PAGE_CLOSED }.map { it.third }
+        assertEquals(listOf("relay:main"), closed.map { it.getString("pageId") })
+        assertEquals("link_lost", closed.single().getString("reason"))
+        val answer = responses().last()
+        assertEquals(PageSurfaceContract.ERROR_PAGE_UNAVAILABLE, answer.getString("error"))
+        assertEquals("r1", answer.getString("requestId"))
+        assertEquals("relay", answer.getString(PageSurfaceContract.FIELD_PLUGIN_ID))
+        // Nothing of any revision is usable any more.
+        broker.onGlasses(BusPaths.PAGE_ACTION, action(invocationId = "big", revision = 3))
+        broker.onGlasses(BusPaths.PAGE_ACTION, action(invocationId = "old", revision = 2))
+        assertEquals(1, host.delivered.count { it.second == BusPaths.PAGE_ACTION })
+        assertEquals(PhonePageBroker.ERROR_PAGE_NOT_REQUESTED, broker.onProvider(BusPaths.PAGE_RESPONSE, page(revision = 4), relayA))
     }
 
     @Test
