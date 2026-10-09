@@ -25,4 +25,5 @@ android {
 dependencies {
     implementation(project(":bus-client"))
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.robolectric:robolectric:4.13")
 }

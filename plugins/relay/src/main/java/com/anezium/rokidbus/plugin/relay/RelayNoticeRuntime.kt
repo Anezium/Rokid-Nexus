@@ -155,6 +155,10 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
 
     override fun onInput(event: NexusInputEvent) = Unit
 
+    /** The band's reply card is on the hub, so an adoption of this plugin on an idle HUD is the band's. */
+    val ownsReplyCard: Boolean
+        get() = activeNotice && typingSurface != null
+
     override fun onLinkState(state: Int) = onMain { tryShowPending() }
 
     override fun onRegistrationState(result: Int) = onMain {

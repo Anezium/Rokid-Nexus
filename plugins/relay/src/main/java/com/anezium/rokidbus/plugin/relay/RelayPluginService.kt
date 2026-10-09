@@ -22,6 +22,7 @@ import com.anezium.rokidbus.client.plugin.NexusSpeechState
 import com.anezium.rokidbus.client.plugin.NexusSpeechStopReason
 import com.anezium.rokidbus.client.plugin.NexusSurfaceSession
 import com.anezium.rokidbus.shared.LinkStateBits
+import com.anezium.rokidbus.shared.plugin.PluginOpenTypes
 import com.anezium.rokidbus.shared.NoticeSurfaceContract
 import com.anezium.rokidbus.shared.plugin.NexusInputEvent
 
@@ -137,6 +138,25 @@ class RelayPluginService : NexusPluginService() {
         NotificationControl.noticeCallbacks()?.onSurfaceTextCommitted(surfaceId, text, cancelled)
     }
 
+    /**
+     * The band's reply card was adopted on an idle HUD. That open, its input and its close
+     * belong to the band, whose own client used to take them as no-ops; the inbox stays shut.
+     */
+    private var bandAdopted = false
+
+    override fun onNexusOpen(openType: String) {
+        val band = NotificationControl.noticeCallbacks()
+        if (openType == PluginOpenTypes.ADOPTED && band?.ownsReplyCard == true) {
+            bandAdopted = true
+            // The session service is the inbox's; the band never had one.
+            stopNexusSessionForeground()
+            band.onOpen(openType)
+            return
+        }
+        bandAdopted = false
+        onNexusOpen()
+    }
+
     override fun onNexusOpen() {
         // One client per plugin id on the bus: the band steps aside while the
         // wearer is in here. See NotificationControl.inboxOpen.
@@ -150,6 +170,11 @@ class RelayPluginService : NexusPluginService() {
     }
 
     override fun onNexusClose() {
+        if (bandAdopted) {
+            bandAdopted = false
+            NotificationControl.noticeCallbacks()?.onClose()
+            return
+        }
         NotificationControl.inboxClosed(this)
         invalidateSpeech()
         entries = emptyList()
@@ -159,6 +184,10 @@ class RelayPluginService : NexusPluginService() {
     }
 
     override fun onNexusInput(event: NexusInputEvent) {
+        if (bandAdopted) {
+            NotificationControl.noticeCallbacks()?.onInput(event)
+            return
+        }
         if (event.action != KeyEvent.ACTION_DOWN) return
         when (event.keyCode) {
             KeyEvent.KEYCODE_DPAD_RIGHT,
