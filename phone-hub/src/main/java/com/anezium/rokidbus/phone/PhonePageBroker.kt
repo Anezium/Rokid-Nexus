@@ -432,11 +432,15 @@ class PhonePageBroker(
         frame.invocationDeadline = now + PageSurfaceContract.PAGE_TIMEOUT_MS
         val outgoing = stamped(payload, registration)
         later {
-            // Queued is not delivered: a cover, a cancellation or the lease end may have come first.
+            // Queued is not delivered: a cover, a cancellation, the lease end or the invocation's
+            // own eight seconds may have come first, with no tick in between.
             val current = synchronized(lock) {
                 val lease = frame.leaseUntil
+                val deadline = frame.invocationDeadline
+                val now = host.nowMs()
                 val live = frames[frame.key] === frame && frame.invocationId == action.invocationId &&
-                    frame.epoch == registration.epoch && frame.actionable && lease != null && host.nowMs() < lease
+                    frame.epoch == registration.epoch && frame.actionable && lease != null && now < lease &&
+                    deadline != null && now < deadline
                 // An invocation that never reached its provider is released; the glasses show it unconfirmed.
                 if (!live && frame.invocationId == action.invocationId) {
                     frame.invocationId = null

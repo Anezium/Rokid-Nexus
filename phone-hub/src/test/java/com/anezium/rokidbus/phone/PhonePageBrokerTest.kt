@@ -539,6 +539,32 @@ class PhonePageBrokerTest {
     }
 
     @Test
+    fun `an action queued past its invocation deadline is dropped even under a live lease`() {
+        connect(relay)
+        val relayA = register(relay, "relay-a")
+        broker.onGlasses(BusPaths.PAGE_REQUEST, request())
+        assertNull(broker.onProvider(BusPaths.PAGE_RESPONSE, page(revision = 3), relayA))
+        fun actions() = host.delivered.filter { it.second == BusPaths.PAGE_ACTION }.map { it.third.getString("invocationId") }
+
+        // Admitted while the outbox is busy; it is still waiting when its eight seconds are up,
+        // the 120-second lease still runs and no tick came.
+        host.onDelivered = BusPaths.PAGE_VISIBILITY to {
+            broker.onGlasses(BusPaths.PAGE_ACTION, action(invocationId = "late", revision = 3))
+            host.now += PageSurfaceContract.PAGE_TIMEOUT_MS
+        }
+        broker.onGlasses(BusPaths.PAGE_VISIBILITY, visibility(true))
+        assertTrue(actions().isEmpty())
+
+        // Control: one millisecond earlier it goes, and the dropped one did not hold the slot.
+        host.onDelivered = BusPaths.PAGE_VISIBILITY to {
+            broker.onGlasses(BusPaths.PAGE_ACTION, action(invocationId = "in-time", revision = 3))
+            host.now += PageSurfaceContract.PAGE_TIMEOUT_MS - 1
+        }
+        broker.onGlasses(BusPaths.PAGE_VISIBILITY, visibility(true))
+        assertEquals(listOf("in-time"), actions())
+    }
+
+    @Test
     fun `results are bounded, correlated and carry a higher replacement`() {
         connect(relay)
         val relayA = register(relay, "relay-a")
