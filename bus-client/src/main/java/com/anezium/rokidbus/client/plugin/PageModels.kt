@@ -287,6 +287,8 @@ internal class NexusPageChannel(
                 if (send(BusPaths.PAGE_RESULT, UUID.randomUUID().toString(), outgoing)) {
                     context.shownRevision = replacement.revision
                     context.shownActions = actionIdsOf(sentReplacement)
+                    // The replacement is now the page: whether it is live decides publishing, as for an answer.
+                    context.publishable = sentReplacement.optBoolean("live")
                 }
             } else {
                 send(BusPaths.PAGE_RESULT, UUID.randomUUID().toString(), outgoing)

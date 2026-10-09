@@ -436,6 +436,33 @@ class NexusPageTest {
     }
 
     @Test
+    fun `a sent replacement decides whether its page may publish live revisions`() {
+        register()
+        provider.answer = { content(it.pageId, revision = 1, live = false) }
+        deliver(BusPaths.PAGE_REQUEST, request(requestId = "r1"))
+        deliver(BusPaths.PAGE_VISIBILITY, visibility(true))
+        val request = provider.requests.single()
+        assertEquals(NexusSdkResult.CAPABILITY_NOT_AVAILABLE, client.publishPage(request, content(request.pageId, 2)))
+
+        // A live replacement makes the page live.
+        provider.actionAnswer = { NexusPageResult.done(replacement = content("relay:main", 3, live = true)) }
+        deliver(BusPaths.PAGE_ACTION, action("to-live", revision = 1))
+        assertEquals(NexusSdkResult.SENT, client.publishPage(request, content(request.pageId, 4)))
+
+        // A static replacement ends live publishing.
+        provider.actionAnswer = { NexusPageResult.done(replacement = content("relay:main", 5, live = false)) }
+        deliver(BusPaths.PAGE_ACTION, action("to-static", revision = 4))
+        assertEquals(NexusSdkResult.CAPABILITY_NOT_AVAILABLE, client.publishPage(request, content(request.pageId, 6)))
+
+        // A live replacement that could not be sent grants nothing.
+        provider.actionAnswer = { NexusPageResult.done(replacement = content("relay:main", 7, live = true)) }
+        transport.accept = false
+        deliver(BusPaths.PAGE_ACTION, action("unsent", revision = 5))
+        transport.accept = true
+        assertEquals(NexusSdkResult.CAPABILITY_NOT_AVAILABLE, client.publishPage(request, content(request.pageId, 8)))
+    }
+
+    @Test
     fun `a replacement must be above the acted revision and everything sent since`() {
         register()
         provider.answer = { content(it.pageId, revision = 4) }
