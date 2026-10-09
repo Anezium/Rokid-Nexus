@@ -538,6 +538,43 @@ class SessionPagesTest {
 
     private fun local() = LocalPages({ null }, { emptyList() }, { emptyList() }, { false }, { "" })
 
+    @Test
+    fun `a page from the plugin whose surface is underneath leaves that surface alone`() {
+        // Navigation's own card is the base; the wearer consults nav:main over it, sees a live
+        // revision, and leaves. Nothing is closed, switched or launched underneath.
+        val base = Underneath.NexusSurface("nav:card")
+        send(SessionEvent.ActivityStarted(ActivityStop("nav:local", "nav:main", "Turn left", pinned = true)))
+        val seen = mutableListOf<SessionEffect>()
+        val step = { event: SessionEvent ->
+            send(event)
+            seen += effects
+        }
+        step(SessionEvent.TripleTap(1_000, base))
+        step(SessionEvent.Tick(1_000 + PageSurfaceContract.GATE_MS))
+        step(SessionEvent.Enter(2_000))
+        val request = requested().request
+        assertEquals("nav:main", request.correlation.pageId)
+        respond(request, 2_100, pluginId = "nav", epoch = "e1")
+        seen += effects
+        respond(request, 2_600, revision = 2, pluginId = "nav", epoch = "e1")
+        seen += effects
+        assertEquals(2L, (top().status as FrameStatus.Shown).revision)
+        step(SessionEvent.Back(3_000))
+        step(SessionEvent.Back(3_100))
+
+        assertEquals(SessionState.Closed, model.state)
+        val consultation = setOf(
+            SessionEffect.ShowGate::class, SessionEffect.ShowRoot::class, SessionEffect.ShowFrame::class,
+            RequestPage::class, SendVisibility::class, SendClosed::class, SessionEffect.ShowStatus::class,
+            SessionEffect.ScheduleDeadline::class, SessionEffect.CancelDeadline::class,
+            SessionEffect.AttachHost::class, SessionEffect.DetachHost::class, SessionEffect.None::class,
+        )
+        val other = seen.filterNot { it::class in consultation || it is SessionEffect.RestoreUnderneath }
+        assertTrue("$other", other.isEmpty())
+        assertEquals(listOf(SessionEffect.RestoreUnderneath(base)), seen.filterIsInstance<SessionEffect.RestoreUnderneath>())
+        assertTrue(seen.filterIsInstance<SendClosed>().all { it.pageId == "nav:main" })
+    }
+
     private fun errorFor(requestId: String, generation: Long, frameIndex: Int, pageId: String, owner: String) =
         PageSurfaceContract.correlationPayload(PageCorrelation(requestId, generation, frameIndex, pageId))
             .put("error", PageSurfaceContract.ERROR_PAGE_UNAVAILABLE).put(PageSurfaceContract.FIELD_PLUGIN_ID, owner)
