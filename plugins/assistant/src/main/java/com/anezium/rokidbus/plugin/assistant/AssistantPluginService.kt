@@ -977,7 +977,7 @@ class AssistantPluginService : NexusPluginService() {
                         if (finalText.isBlank()) {
                             uiController.showError("No answer received. Try again.")
                         } else {
-                            finalAnswer = finalText
+                            finalAnswer = stripCitationMarkup(finalText)
                             showAnswer(finalText)
                         }
                     }
@@ -995,7 +995,7 @@ class AssistantPluginService : NexusPluginService() {
                 if (answer.isBlank()) {
                     uiController.showError("No answer received. Try again.")
                 } else {
-                    finalAnswer = answer.toString()
+                    finalAnswer = stripCitationMarkup(answer.toString())
                     showAnswer(finalAnswer.orEmpty())
                 }
             }
@@ -1299,7 +1299,7 @@ class AssistantPluginService : NexusPluginService() {
     }
 
     private fun showAnswer(text: String, choices: List<NexusNoticeAction> = emptyList()) {
-        val plain = stripHudMarkdown(text)
+        val plain = stripHudMarkdown(stripCitationMarkup(text))
         if (inkAnswerOwnsPresentation(inkShownRequestId, currentRequestId)) return
         uiController.showAnswer(
             body = plain,
@@ -1627,6 +1627,26 @@ private fun normalizeTranscript(text: String): String =
  * being begged away in the prompt. Bullets keep their "- " and code fences their
  * content; only the decoration goes.
  */
+/**
+ * ChatGPT can cite with private-use tokens such as U+E200 cite U+E202 file U+E201 that render as boxes
+ * on the HUD and get spelled out by speech. Keep a cited file name, drop everything else, including a
+ * token still streaming.
+ */
+internal fun stripCitationMarkup(text: String): String {
+    if (text.none { it in '\uE200'..'\uE2FF' }) return text
+    return text.replace(CITATION_TOKEN) { match ->
+        val parts = match.groupValues[1].split('\uE202')
+        val source = parts.last().trim()
+        if (parts.size > 1 && parts.first() == "cite" && '.' in source && !source.startsWith("turn")) " ($source)" else ""
+    }
+        .replace(PRIVATE_USE, "")
+        .replace(Regex("[ \t]+\n"), "\n")
+        .trimEnd()
+}
+
+private val CITATION_TOKEN = Regex("[ \\t]*\uE200([^\uE201]*)(?:\uE201|$)")
+private val PRIVATE_USE = Regex("[\uE200-\uE2FF]")
+
 internal fun stripHudMarkdown(text: String): String {
     if (text.indexOf('*') < 0 && text.indexOf('_') < 0 && text.indexOf('`') < 0) return text
     return text
