@@ -133,7 +133,12 @@ class NexusPageClosed internal constructor(
 /**
  * The provider side of the page protocol for one client: it validates what the hub asks,
  * dispatches it to the callbacks, answers with correlated replies, and remembers just enough of
- * each frame to judge a live revision. Bounded to the six frames of the one glasses session.
+ * each frame to judge an action or a live revision. Bounded to the six frames of the one glasses
+ * session.
+ *
+ * Callbacks into the plugin run outside the lock. Everything that sends runs under it, together
+ * with the state it depends on, so a publication can never interleave with a cover, a close or a
+ * loss of support, and a revision once used is never sent again or undercut.
  */
 internal class NexusPageChannel(
     private val pluginId: String,
@@ -143,11 +148,17 @@ internal class NexusPageChannel(
     private data class FrameKey(val generation: Long, val frameIndex: Int)
 
     private class FrameContext(
-        var pageId: String,
+        val pageId: String,
         var requestId: String,
-        var registrationId: String,
-        var lastRevision: Long? = null,
-        var live: Boolean = false,
+        /** The current request has not been answered yet; nothing may be published for it. */
+        var awaitingAnswer: Boolean = true,
+        /** The current request was answered with valid live content, so revisions may follow. */
+        var publishable: Boolean = false,
+        /** Highest revision ever sent or reserved for this frame; never goes down. */
+        var highestRevision: Long? = null,
+        /** The revision the glasses were last sent, and the actions it advertised. */
+        var shownRevision: Long? = null,
+        var shownActions: Set<String> = emptySet(),
         var visible: Boolean = false,
         var leaseExpiresAt: Long? = null,
     )
@@ -156,6 +167,9 @@ internal class NexusPageChannel(
     private val frames = linkedMapOf<FrameKey, FrameContext>()
     private val seenRequests = ArrayDeque<String>()
     private val seenInvocations = ArrayDeque<String>()
+
+    /** The registration epoch the hub stamped on this client's page work; anchored until it re-registers. */
+    private var epoch: String? = null
 
     @Volatile var sessionVersion = 0
         private set
@@ -171,12 +185,22 @@ internal class NexusPageChannel(
         }
     }
 
-    /** Registration replaced, revoked, link or client gone: every frame and publisher is void. */
-    fun reset(keepVersion: Boolean = false) = synchronized(lock) {
-        if (!keepVersion) sessionVersion = 0
+    /** A new registration, a revoked one, or a closed client: every frame, publisher and the epoch are void. */
+    fun onRegistrationReset() = synchronized(lock) {
+        sessionVersion = 0
+        epoch = null
         frames.clear()
         seenRequests.clear()
         seenInvocations.clear()
+    }
+
+    /**
+     * No usable transport to the glasses: every lease there is void, and support only returns
+     * with the hub's next owner-scoped capability update. The registration and its epoch remain.
+     */
+    fun onLinkUnusable() = synchronized(lock) {
+        sessionVersion = 0
+        frames.clear()
     }
 
     fun onRequest(payload: JSONObject, callbacks: NexusPluginCallbacks) {
@@ -195,17 +219,20 @@ internal class NexusPageChannel(
             registrationId = registrationId,
         )
         synchronized(lock) {
+            // Another registration's work never replaces this one's.
+            if (!anchor(registrationId)) return
             if (!remember(seenRequests, request.requestId)) return
-            adoptRegistration(registrationId)
-            dropOtherSessions(request.sessionGeneration)
+            frames.keys.filter { it.generation != request.sessionGeneration }.forEach(frames::remove)
             val key = FrameKey(request.sessionGeneration, request.frameIndex)
             val existing = frames[key]?.takeIf { it.pageId == pageId }
             if (existing != null) {
-                // A refresh on uncover keeps the frame's visibility; it only changes the request.
+                // A refresh keeps the frame's lease but loses its publishing right until answered.
                 existing.requestId = request.requestId
+                existing.awaitingAnswer = true
+                existing.publishable = false
             } else {
                 frames.remove(key)
-                frames[key] = FrameContext(pageId, request.requestId, registrationId)
+                frames[key] = FrameContext(pageId, request.requestId)
                 while (frames.size > PageSurfaceContract.MAX_FRAMES) frames.remove(frames.keys.first())
             }
         }
@@ -216,29 +243,42 @@ internal class NexusPageChannel(
     fun onAction(payload: JSONObject, callbacks: NexusPluginCallbacks) {
         val parsed = (PageSurfaceContract.validateAction(payload) as? PageSurfaceValidationResult.Valid)?.value ?: return
         val registrationId = registrationOf(payload) ?: return
-        if (!PageTemplateContract.isProviderPageId(parsed.pageId, pluginId)) return
+        val key = FrameKey(parsed.sessionGeneration, parsed.frameIndex)
         val requestId = synchronized(lock) {
+            // Only an action on an accepted page of this registration, at the revision the
+            // glasses were sent and naming an action that revision advertised, reaches the plugin.
+            if (registrationId != epoch) return
+            val context = frames[key]?.takeIf { it.pageId == parsed.pageId } ?: return
+            if (context.shownRevision != parsed.revision || parsed.actionId !in context.shownActions) return
             if (!remember(seenInvocations, parsed.invocationId)) return
-            adoptRegistration(registrationId)
-            frames[FrameKey(parsed.sessionGeneration, parsed.frameIndex)]?.takeIf { it.pageId == parsed.pageId }?.requestId
+            context.requestId
         }
         val action = NexusPageAction(
             parsed.invocationId, parsed.sessionGeneration, parsed.frameIndex, parsed.pageId,
             parsed.revision, parsed.actionId, registrationId,
         )
         val result = runCatching { callbacks.onPageAction(action) }.getOrElse { NexusPageResult.rejected() }
-        val correlation = PageCorrelation(requestId ?: parsed.invocationId, parsed.sessionGeneration, parsed.frameIndex, parsed.pageId)
-        val outgoing = resultPayload(action.invocationId, result, correlation)
-            ?.takeIf { PageSurfaceContract.validateBoundedResult(it) is PageSurfaceValidationResult.Valid }
-            ?: resultPayload(action.invocationId, NexusPageResult.rejected(), correlation)
-            ?: return
-        if (send(BusPaths.PAGE_RESULT, UUID.randomUUID().toString(), outgoing)) {
-            result.replacement?.takeIf { outgoing.has("replacement") }?.let { replacement ->
-                synchronized(lock) {
-                    frames[FrameKey(parsed.sessionGeneration, parsed.frameIndex)]?.takeIf { it.pageId == parsed.pageId }?.let {
-                        it.lastRevision = maxOf(it.lastRevision ?: replacement.revision, replacement.revision)
-                    }
+        val correlation = PageCorrelation(requestId, parsed.sessionGeneration, parsed.frameIndex, parsed.pageId)
+        synchronized(lock) {
+            val context = frames[key]?.takeIf { it.pageId == parsed.pageId }
+            // A replacement must be newer than what the wearer acted on and than anything sent since.
+            val replacement = result.replacement
+            val replacementAllowed = replacement == null || (
+                context != null && replacement.revision > parsed.revision &&
+                    replacement.revision > (context.highestRevision ?: Long.MIN_VALUE)
+                )
+            val outgoing = resultPayload(action.invocationId, result, correlation)
+                ?.takeIf { replacementAllowed && PageSurfaceContract.validateBoundedResult(it) is PageSurfaceValidationResult.Valid }
+                ?: resultPayload(action.invocationId, NexusPageResult.rejected(), correlation)
+                ?: return
+            if (replacement != null && context != null && outgoing.has("replacement")) {
+                context.highestRevision = replacement.revision
+                if (send(BusPaths.PAGE_RESULT, UUID.randomUUID().toString(), outgoing)) {
+                    context.shownRevision = replacement.revision
+                    context.shownActions = replacement.actions.mapTo(linkedSetOf()) { it.id }
                 }
+            } else {
+                send(BusPaths.PAGE_RESULT, UUID.randomUUID().toString(), outgoing)
             }
         }
     }
@@ -254,7 +294,7 @@ internal class NexusPageChannel(
             null
         }
         synchronized(lock) {
-            if (registrationId != currentRegistration()) return
+            if (registrationId != epoch) return
             val context = frames[key]?.takeIf { it.pageId == parsed.pageId } ?: return
             context.visible = parsed.visible && lease != null
             context.leaseExpiresAt = lease?.let { clock() + it }
@@ -269,32 +309,38 @@ internal class NexusPageChannel(
         val registrationId = registrationOf(payload) ?: return
         val key = frameKey(payload) ?: return
         synchronized(lock) {
-            if (registrationId != currentRegistration()) return
+            if (registrationId != epoch) return
             if (frames[key]?.pageId != parsed.pageId) return
             frames.remove(key)
         }
         runCatching { callbacks.onPageClosed(NexusPageClosed(parsed.pageId, key.generation, key.frameIndex, parsed.reason)) }
     }
 
-    /** A live revision for the current request of a frame that is visible under an unexpired lease. */
+    /**
+     * A live revision for the frame's current, answered request while it is visible under an
+     * unexpired lease. Authorization, the revision it takes and the send are one step.
+     */
     fun publish(request: NexusPageRequest, page: NexusPage): NexusSdkResult {
         val content = page as? NexusPage.Content ?: return NexusSdkResult.INVALID_PAYLOAD
         val key = FrameKey(request.sessionGeneration, request.frameIndex)
         synchronized(lock) {
             val context = frames[key] ?: return NexusSdkResult.CAPABILITY_NOT_AVAILABLE
-            val current = context.requestId == request.requestId && context.pageId == request.pageId &&
-                context.registrationId == request.registrationId
-            if (!current || !context.live || !content.live) return NexusSdkResult.CAPABILITY_NOT_AVAILABLE
+            val current = request.registrationId == epoch && context.requestId == request.requestId &&
+                context.pageId == request.pageId
+            if (!current || context.awaitingAnswer || !context.publishable || !content.live) {
+                return NexusSdkResult.CAPABILITY_NOT_AVAILABLE
+            }
             val expires = context.leaseExpiresAt
             if (!context.visible || expires == null || clock() >= expires) return NexusSdkResult.CAPABILITY_NOT_AVAILABLE
-            if (content.revision <= (context.lastRevision ?: Long.MIN_VALUE)) return NexusSdkResult.INVALID_PAYLOAD
+            if (content.revision <= (context.highestRevision ?: Long.MIN_VALUE)) return NexusSdkResult.INVALID_PAYLOAD
+            // The payload is built now: what is sent is this snapshot, whatever the caller does next.
+            val payload = contentPayload(request.correlation, content) ?: return NexusSdkResult.INVALID_PAYLOAD
+            context.highestRevision = content.revision
+            if (!send(BusPaths.PAGE_RESPONSE, UUID.randomUUID().toString(), payload)) return NexusSdkResult.NOT_REGISTERED
+            context.shownRevision = content.revision
+            context.shownActions = content.actions.mapTo(linkedSetOf()) { it.id }
+            return NexusSdkResult.SENT
         }
-        val payload = contentPayload(request.correlation, content) ?: return NexusSdkResult.INVALID_PAYLOAD
-        if (!send(BusPaths.PAGE_RESPONSE, UUID.randomUUID().toString(), payload)) return NexusSdkResult.NOT_REGISTERED
-        synchronized(lock) {
-            frames[key]?.takeIf { it.requestId == request.requestId }?.lastRevision = content.revision
-        }
-        return NexusSdkResult.SENT
     }
 
     private fun respond(request: NexusPageRequest, page: NexusPage) {
@@ -306,13 +352,19 @@ internal class NexusPageChannel(
             request.correlation,
             if (page is NexusPage.Content) PageSurfaceContract.ERROR_INVALID_PAGE else PageSurfaceContract.ERROR_PAGE_UNAVAILABLE,
         )
-        if (!send(BusPaths.PAGE_RESPONSE, UUID.randomUUID().toString(), payload)) return
-        if (answer == null || content == null) return
         synchronized(lock) {
             val context = frames[FrameKey(request.sessionGeneration, request.frameIndex)]
-                ?.takeIf { it.requestId == request.requestId } ?: return
-            context.lastRevision = maxOf(context.lastRevision ?: content.revision, content.revision)
-            context.live = content.live
+                ?.takeIf { it.requestId == request.requestId && request.registrationId == epoch } ?: return
+            context.awaitingAnswer = false
+            context.publishable = false
+            if (answer != null && content != null) {
+                context.highestRevision = maxOf(context.highestRevision ?: content.revision, content.revision)
+            }
+            if (!send(BusPaths.PAGE_RESPONSE, UUID.randomUUID().toString(), payload)) return
+            if (answer == null || content == null) return
+            context.shownRevision = content.revision
+            context.shownActions = content.actions.mapTo(linkedSetOf()) { it.id }
+            context.publishable = content.live
         }
     }
 
@@ -372,15 +424,14 @@ internal class NexusPageChannel(
         else -> null
     }
 
-    /** A callback from another registration than the frames were recorded under voids them all. */
-    private fun adoptRegistration(registrationId: String) {
-        if (frames.values.any { it.registrationId != registrationId }) frames.clear()
-    }
-
-    private fun currentRegistration(): String? = frames.values.firstOrNull()?.registrationId
-
-    private fun dropOtherSessions(generation: Long) {
-        frames.keys.filter { it.generation != generation }.forEach(frames::remove)
+    /** The first request after a registration anchors its epoch; any other epoch is refused. */
+    private fun anchor(registrationId: String): Boolean {
+        val current = epoch
+        if (current == null) {
+            epoch = registrationId
+            return true
+        }
+        return current == registrationId
     }
 
     private fun remember(seen: ArrayDeque<String>, id: String): Boolean {

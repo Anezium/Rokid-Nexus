@@ -13,21 +13,33 @@ import com.anezium.rokidbus.shared.plugin.NexusInputEvent
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.Collections
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import kotlin.concurrent.thread
 
 class NexusPageTest {
     private class FakeTransport : NexusPluginTransport {
         lateinit var listener: NexusPluginTransport.Listener
-        val sends = mutableListOf<Pair<String, JSONObject>>()
-        val sendIds = mutableListOf<String>()
+        val sends: MutableList<Pair<String, JSONObject>> = Collections.synchronizedList(mutableListOf())
+        val sendIds: MutableList<String> = Collections.synchronizedList(mutableListOf())
+        var accept = true
+
+        /** When set, a send signals [entered] and then waits for [release]: a send in flight. */
+        @Volatile var entered: CountDownLatch? = null
+        @Volatile var release: CountDownLatch? = null
         override fun connect(listener: NexusPluginTransport.Listener) {
             this.listener = listener
         }
         override fun send(path: String, id: String, payload: JSONObject): Boolean {
+            entered?.countDown()
+            release?.await(5, TimeUnit.SECONDS)
             sends += path to JSONObject(payload.toString())
             sendIds += id
-            return true
+            return accept
         }
         override fun sendBinary(path: String, id: String, payload: JSONObject, data: ByteArray) = true
         override fun capabilities(): Int = 0
@@ -102,8 +114,27 @@ class NexusPageTest {
                 }
             }
 
+    /** Every fixture page advertises the `read` action the tests invoke. */
     private fun content(pageId: String, revision: Long, live: Boolean = true, body: PageBody = PageBody.SelectableList(listOf(PageRow("a", "Mika")))) =
-        NexusPage.Content(revision, "Relay", body, live = live)
+        NexusPage.Content(revision, "Relay", body, actions = listOf(NexusPageActionSpec("read", "Read")), live = live)
+
+    private fun action(
+        invocationId: String,
+        revision: Long = 1,
+        actionId: String = "read",
+        registration: String = "reg-a",
+        frameIndex: Int = 1,
+        generation: Long = 1,
+        pageId: String = "relay:main",
+    ) = JSONObject().put("invocationId", invocationId).put("sessionGeneration", generation).put("frameIndex", frameIndex)
+        .put("pageId", pageId).put("revision", revision).put("actionId", actionId)
+        .put(PageSurfaceContract.FIELD_PROVIDER_REGISTRATION_ID, registration)
+
+    private fun closed(registration: String = "reg-a", frameIndex: Int = 1, pageId: String = "relay:main") =
+        JSONObject().put("pageId", pageId).put("reason", "back").put("sessionGeneration", 1L).put("frameIndex", frameIndex)
+            .put(PageSurfaceContract.FIELD_PROVIDER_REGISTRATION_ID, registration)
+
+    private fun results() = transport.sends.filter { it.first == BusPaths.PAGE_RESULT }.map { it.second }
 
     private fun responses(): List<JSONObject> = transport.sends.filter { it.first == BusPaths.PAGE_RESPONSE }.map { it.second }
 
@@ -112,12 +143,8 @@ class NexusPageTest {
         register()
         deliver(BusPaths.PAGE_REQUEST, request())
         deliver(BusPaths.PAGE_VISIBILITY, visibility(true))
-        deliver(
-            BusPaths.PAGE_ACTION,
-            JSONObject().put("invocationId", "i1").put("sessionGeneration", 1L).put("frameIndex", 1).put("pageId", "relay:main")
-                .put("revision", 1L).put("actionId", "read").put(PageSurfaceContract.FIELD_PROVIDER_REGISTRATION_ID, "reg-a"),
-        )
-        deliver(BusPaths.PAGE_CLOSED, JSONObject().put("pageId", "relay:main").put("reason", "back").put("sessionGeneration", 1L).put("frameIndex", 1).put(PageSurfaceContract.FIELD_PROVIDER_REGISTRATION_ID, "reg-a"))
+        deliver(BusPaths.PAGE_ACTION, action("i1"))
+        deliver(BusPaths.PAGE_CLOSED, closed())
 
         assertEquals(
             listOf("request:relay:main:open", "visibility:true:120000", "action:read@1", "closed:back"),
@@ -196,10 +223,8 @@ class NexusPageTest {
         register()
         deliver(BusPaths.PAGE_REQUEST, request(requestId = "r1"))
         deliver(BusPaths.PAGE_REQUEST, request(requestId = "r1"))
-        val action = JSONObject().put("invocationId", "i1").put("sessionGeneration", 1L).put("frameIndex", 1).put("pageId", "relay:main")
-            .put("revision", 1L).put("actionId", "read").put(PageSurfaceContract.FIELD_PROVIDER_REGISTRATION_ID, "reg-a")
-        deliver(BusPaths.PAGE_ACTION, JSONObject(action.toString()))
-        deliver(BusPaths.PAGE_ACTION, JSONObject(action.toString()))
+        deliver(BusPaths.PAGE_ACTION, action("i1"))
+        deliver(BusPaths.PAGE_ACTION, action("i1"))
         assertEquals(1, provider.requests.size)
         assertEquals(1, provider.events.count { it.startsWith("action:") })
         assertEquals(1, transport.sends.count { it.first == BusPaths.PAGE_RESULT })
@@ -249,20 +274,91 @@ class NexusPageTest {
     }
 
     @Test
-    fun `callbacks from another registration epoch are ignored and void the old frames`() {
+    fun `another registration epoch never replaces the anchored one, even with every frame closed`() {
         register()
         deliver(BusPaths.PAGE_REQUEST, request(requestId = "r1", registration = "reg-a"))
         val first = provider.requests.single()
         deliver(BusPaths.PAGE_VISIBILITY, visibility(true, registration = "reg-b"))
-        assertEquals(NexusSdkResult.CAPABILITY_NOT_AVAILABLE, client.publishPage(first, content(first.pageId, 2)))
         assertFalse(provider.events.any { it.startsWith("visibility") })
         deliver(BusPaths.PAGE_VISIBILITY, visibility(true, registration = "reg-a"))
+        // A request from another epoch is refused instead of voiding the current work.
         deliver(BusPaths.PAGE_REQUEST, request(requestId = "r2", frameIndex = 2, pageId = "relay:thread", registration = "reg-b"))
-        assertEquals(NexusSdkResult.CAPABILITY_NOT_AVAILABLE, client.publishPage(first, content(first.pageId, 2)))
+        assertEquals(1, provider.requests.size)
+        assertEquals(NexusSdkResult.SENT, client.publishPage(first, content(first.pageId, 2)))
+        // Closing every frame keeps the epoch anchored: reg-b is still not this registration.
+        deliver(BusPaths.PAGE_CLOSED, closed())
+        deliver(BusPaths.PAGE_REQUEST, request(requestId = "r3", registration = "reg-b"))
+        assertEquals(1, provider.requests.size)
+        // Only a real registration reset lets a new epoch in.
+        transport.listener.onRegistrationState(PluginRegistrationResult.APPROVED)
+        deliver(BusPaths.HUB_CAPABILITIES, JSONObject().put("pageSessionVersion", 1))
+        deliver(BusPaths.PAGE_REQUEST, request(requestId = "r4", registration = "reg-b"))
+        assertEquals("r4", provider.requests.last().requestId)
     }
 
     @Test
-    fun `a new registration, revocation, link loss or close cancel page work`() {
+    fun `an action reaches the plugin only for an accepted page at its revision and advertised action`() {
+        register()
+        deliver(BusPaths.PAGE_REQUEST, request(requestId = "r1"))
+        provider.answer = { content(it.pageId, revision = 1) }
+        deliver(BusPaths.PAGE_REQUEST, request(requestId = "r2", frameIndex = 2, pageId = "relay:thread"))
+        deliver(BusPaths.PAGE_CLOSED, closed(frameIndex = 2, pageId = "relay:thread"))
+        listOf(
+            action("old-epoch", registration = "reg-old"),
+            action("closed-frame", frameIndex = 2, pageId = "relay:thread"),
+            action("unknown-frame", frameIndex = 3, pageId = "relay:other"),
+            action("unknown-generation", generation = 9),
+            action("wrong-revision", revision = 2),
+            action("undeclared", actionId = "delete"),
+            action("wrong-page", pageId = "relay:else"),
+        ).forEach { deliver(BusPaths.PAGE_ACTION, it) }
+        assertFalse(provider.events.any { it.startsWith("action:") })
+        assertTrue(results().isEmpty())
+        // The old epoch did not displace the accepted page either.
+        deliver(BusPaths.PAGE_ACTION, action("good"))
+        assertEquals(listOf("action:read@1"), provider.events.filter { it.startsWith("action:") })
+        assertEquals("good", results().single().getString("invocationId"))
+    }
+
+    @Test
+    fun `an action on a page answered unavailable or not yet answered reaches nothing`() {
+        register()
+        provider.answer = { NexusPage.Unavailable }
+        deliver(BusPaths.PAGE_REQUEST, request(requestId = "r1"))
+        deliver(BusPaths.PAGE_ACTION, action("i1"))
+        assertFalse(provider.events.any { it.startsWith("action:") })
+        assertTrue(results().isEmpty())
+    }
+
+    @Test
+    fun `a bond or worn state alone carries no page and loss needs a fresh capability update`() {
+        register()
+        deliver(BusPaths.PAGE_REQUEST, request(requestId = "r1"))
+        val first = provider.requests.single()
+        deliver(BusPaths.PAGE_VISIBILITY, visibility(true))
+        listOf(LinkStateBits.GLASSES_BT_BONDED_OR_PHONE_CONNECTED, LinkStateBits.GLASSES_WORN, 0).forEach { state ->
+            transport.listener.onLinkState(state)
+            assertFalse("state=$state", client.supportsPageSession)
+        }
+        assertEquals(NexusSdkResult.CAPABILITY_NOT_AVAILABLE, client.publishPage(first, content(first.pageId, 2)))
+        // A request and an action delayed past the loss are not dispatched.
+        deliver(BusPaths.PAGE_REQUEST, request(requestId = "late"))
+        deliver(BusPaths.PAGE_ACTION, action("late-action"))
+        assertEquals(1, provider.requests.size)
+        assertFalse(provider.events.any { it.startsWith("action:") })
+        // The link coming back is not enough: support waits for the hub's next update.
+        transport.listener.onLinkState(LinkStateBits.CXR_CONTROL_UP)
+        assertFalse(client.supportsPageSession)
+        deliver(BusPaths.PAGE_REQUEST, request(requestId = "r2"))
+        assertEquals(1, provider.requests.size)
+        deliver(BusPaths.HUB_CAPABILITIES, JSONObject().put("pageSessionVersion", 1))
+        assertTrue(client.supportsPageSession)
+        deliver(BusPaths.PAGE_REQUEST, request(requestId = "r3"))
+        assertEquals("r3", provider.requests.last().requestId)
+    }
+
+    @Test
+    fun `a new registration, revocation or close cancel page work`() {
         register()
         deliver(BusPaths.PAGE_REQUEST, request(requestId = "r1"))
         val first = provider.requests.single()
@@ -278,6 +374,8 @@ class NexusPageTest {
         transport.listener.onLinkState(0)
         assertEquals(NexusSdkResult.CAPABILITY_NOT_AVAILABLE, client.publishPage(second, content(second.pageId, 2)))
         transport.listener.onLinkState(LinkStateBits.SPP_DATA_UP)
+        assertFalse(client.supportsPageSession)
+        deliver(BusPaths.HUB_CAPABILITIES, JSONObject().put("pageSessionVersion", 1))
         assertTrue(client.supportsPageSession)
         assertEquals(NexusSdkResult.CAPABILITY_NOT_AVAILABLE, client.publishPage(second, content(second.pageId, 2)))
 
@@ -291,20 +389,16 @@ class NexusPageTest {
     fun `action results are bounded and an invalid replacement becomes a rejection`() {
         register()
         deliver(BusPaths.PAGE_REQUEST, request(requestId = "r1"))
-        fun act(id: String) = deliver(
-            BusPaths.PAGE_ACTION,
-            JSONObject().put("invocationId", id).put("sessionGeneration", 1L).put("frameIndex", 1).put("pageId", "relay:main")
-                .put("revision", 1L).put("actionId", "read").put(PageSurfaceContract.FIELD_PROVIDER_REGISTRATION_ID, "reg-a"),
-        )
         provider.actionAnswer = { NexusPageResult.done("Marked", content("relay:main", 2)) }
-        act("i1")
+        deliver(BusPaths.PAGE_ACTION, action("i1", revision = 1))
+        // The replacement is now what the glasses show: actions target its revision.
         provider.actionAnswer = { NexusPageResult.done(replacement = content("relay:main", 3, body = PageBody.SelectableList(listOf(PageRow("x", "X", target = PageTarget.Page("nav:main")))))) }
-        act("i2")
+        deliver(BusPaths.PAGE_ACTION, action("i2", revision = 2))
         provider.actionAnswer = { throw IllegalStateException("token=secret") }
-        act("i3")
+        deliver(BusPaths.PAGE_ACTION, action("i3", revision = 2))
         provider.actionAnswer = { NexusPageResult.stale("x".repeat(65)) }
-        act("i4")
-        val results = transport.sends.filter { it.first == BusPaths.PAGE_RESULT }.map { it.second }
+        deliver(BusPaths.PAGE_ACTION, action("i4", revision = 2))
+        val results = results()
         assertEquals(listOf("done", "rejected", "rejected", "rejected"), results.map { it.getString("status") })
         val replacement = results[0].getJSONObject("replacement")
         assertEquals("r1", replacement.getString("requestId"))
@@ -312,6 +406,142 @@ class NexusPageTest {
         assertTrue(PageSurfaceContract.validateBoundedResult(results[0]) is PageSurfaceValidationResult.Valid)
         assertFalse(results.drop(1).any { it.has("message") || it.has("replacement") })
         assertFalse(results.any { "secret" in it.toString() })
+    }
+
+    @Test
+    fun `a replacement must be above the acted revision and everything sent since`() {
+        register()
+        provider.answer = { content(it.pageId, revision = 4) }
+        deliver(BusPaths.PAGE_REQUEST, request(requestId = "r1"))
+        provider.actionAnswer = { NexusPageResult.done(replacement = content("relay:main", 4)) }
+        deliver(BusPaths.PAGE_ACTION, action("equal", revision = 4))
+        provider.actionAnswer = { NexusPageResult.done(replacement = content("relay:main", 3)) }
+        deliver(BusPaths.PAGE_ACTION, action("lower", revision = 4))
+        // A live revision taken meanwhile raises the bar for a replacement too.
+        deliver(BusPaths.PAGE_VISIBILITY, visibility(true))
+        val request = provider.requests.single()
+        assertEquals(NexusSdkResult.SENT, client.publishPage(request, content("relay:main", 6)))
+        provider.actionAnswer = { NexusPageResult.done(replacement = content("relay:main", 5)) }
+        deliver(BusPaths.PAGE_ACTION, action("below-live", revision = 6))
+        provider.actionAnswer = { NexusPageResult.done("Done", replacement = content("relay:main", 7)) }
+        deliver(BusPaths.PAGE_ACTION, action("higher", revision = 6))
+        val results = results()
+        assertEquals(listOf("rejected", "rejected", "rejected", "done"), results.map { it.getString("status") })
+        assertFalse(results.take(3).any { it.has("replacement") })
+        assertEquals(7L, results.last().getJSONObject("replacement").getLong("revision"))
+    }
+
+    @Test
+    fun `a refresh publishes nothing until its own valid live answer is sent`() {
+        register()
+        deliver(BusPaths.PAGE_REQUEST, request(requestId = "r1"))
+        deliver(BusPaths.PAGE_VISIBILITY, visibility(true))
+        val refreshPublishes = mutableListOf<NexusSdkResult>()
+        provider.answer = { refresh ->
+            // Publishing from inside the refresh callback, before it is answered, is refused.
+            refreshPublishes += client.publishPage(refresh, content(refresh.pageId, 9))
+            content(refresh.pageId, revision = 2)
+        }
+        deliver(BusPaths.PAGE_REQUEST, request(requestId = "r2", reason = "refresh", minimumRevision = 1))
+        assertEquals(listOf(NexusSdkResult.CAPABILITY_NOT_AVAILABLE), refreshPublishes)
+        val refreshed = provider.requests.last()
+        assertEquals(NexusSdkResult.SENT, client.publishPage(refreshed, content(refreshed.pageId, 3)))
+
+        fun refusedAfter(requestId: String, answer: (NexusPageRequest) -> NexusPage, floor: Long? = null) {
+            provider.answer = answer
+            deliver(BusPaths.PAGE_REQUEST, request(requestId = requestId, reason = "refresh", minimumRevision = floor))
+            val current = provider.requests.last()
+            assertEquals(requestId, NexusSdkResult.CAPABILITY_NOT_AVAILABLE, client.publishPage(current, content(current.pageId, 20)))
+        }
+        refusedAfter("unavailable", { NexusPage.Unavailable })
+        refusedAfter("invalid", { NexusPage.Content(30, "Bad", PageBody.Commands(listOf(PageRow("x", "X", target = PageTarget.Action("missing"))))) })
+        refusedAfter("below-floor", { content(it.pageId, revision = 2) }, floor = 3)
+        refusedAfter("not-live", { content(it.pageId, revision = 4, live = false) })
+        // A live answer whose send failed grants nothing either.
+        transport.accept = false
+        refusedAfter("send-failed", { content(it.pageId, revision = 5) })
+    }
+
+    @Test
+    fun `concurrent publishes are serialized, counted and never go back`() {
+        register()
+        deliver(BusPaths.PAGE_REQUEST, request(requestId = "r1"))
+        deliver(BusPaths.PAGE_VISIBILITY, visibility(true))
+        val request = provider.requests.single()
+        val before = responses().size
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        transport.entered = entered
+        transport.release = release
+        var first: NexusSdkResult? = null
+        val holder = thread { first = client.publishPage(request, content(request.pageId, 2)) }
+        assertTrue(entered.await(5, TimeUnit.SECONDS))
+        transport.entered = null
+        transport.release = null
+        // While revision 2 is in flight, the same revision and a later one queue behind it.
+        var same: NexusSdkResult? = null
+        var later: NexusSdkResult? = null
+        val sameThread = thread { same = client.publishPage(request, content(request.pageId, 2)) }
+        val laterThread = thread { later = client.publishPage(request, content(request.pageId, 3)) }
+        Thread.sleep(100)
+        assertNull(same)
+        assertNull(later)
+        assertEquals(before, responses().size)
+        release.countDown()
+        listOf(holder, sameThread, laterThread).forEach { it.join(5_000) }
+        assertEquals(NexusSdkResult.SENT, first)
+        assertEquals(NexusSdkResult.INVALID_PAYLOAD, same)
+        assertEquals(NexusSdkResult.SENT, later)
+        val revisions = responses().drop(before).map { it.getLong("revision") }
+        assertEquals(listOf(2L, 3L), revisions)
+        assertEquals(NexusSdkResult.INVALID_PAYLOAD, client.publishPage(request, content(request.pageId, 3)))
+    }
+
+    @Test
+    fun `a close during a publication applies after it and stops the next one`() {
+        register()
+        deliver(BusPaths.PAGE_REQUEST, request(requestId = "r1"))
+        deliver(BusPaths.PAGE_VISIBILITY, visibility(true))
+        val request = provider.requests.single()
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        transport.entered = entered
+        transport.release = release
+        var inFlight: NexusSdkResult? = null
+        val publisher = thread { inFlight = client.publishPage(request, content(request.pageId, 2)) }
+        assertTrue(entered.await(5, TimeUnit.SECONDS))
+        transport.entered = null
+        transport.release = null
+        var closedSeen = false
+        val closer = thread {
+            deliver(BusPaths.PAGE_CLOSED, closed())
+            closedSeen = true
+        }
+        Thread.sleep(100)
+        assertFalse(closedSeen)
+        release.countDown()
+        publisher.join(5_000)
+        closer.join(5_000)
+        assertEquals(NexusSdkResult.SENT, inFlight)
+        assertTrue(closedSeen)
+        val sends = responses().size
+        assertEquals(NexusSdkResult.CAPABILITY_NOT_AVAILABLE, client.publishPage(request, content(request.pageId, 3)))
+        assertEquals(sends, responses().size)
+    }
+
+    @Test
+    fun `a cover or a lost capability before a publication sends nothing`() {
+        register()
+        deliver(BusPaths.PAGE_REQUEST, request(requestId = "r1"))
+        deliver(BusPaths.PAGE_VISIBILITY, visibility(true))
+        val request = provider.requests.single()
+        val sends = responses().size
+        deliver(BusPaths.PAGE_VISIBILITY, visibility(false))
+        assertEquals(NexusSdkResult.CAPABILITY_NOT_AVAILABLE, client.publishPage(request, content(request.pageId, 2)))
+        deliver(BusPaths.PAGE_VISIBILITY, visibility(true))
+        deliver(BusPaths.HUB_CAPABILITIES, JSONObject().put("pageSessionVersion", 0))
+        assertEquals(NexusSdkResult.CAPABILITY_NOT_AVAILABLE, client.publishPage(request, content(request.pageId, 2)))
+        assertEquals(sends, responses().size)
     }
 
     @Test

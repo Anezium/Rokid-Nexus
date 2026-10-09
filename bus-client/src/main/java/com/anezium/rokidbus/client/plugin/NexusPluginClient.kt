@@ -115,7 +115,7 @@ class NexusPluginClient internal constructor(
      */
     val supportsPageSession: Boolean
         get() = !closed && hasCapability(PluginCapability.SURFACES) &&
-            pages.sessionVersion == PageSurfaceContract.VERSION && currentLinkState != 0
+            pages.sessionVersion == PageSurfaceContract.VERSION && hasUsableLink(currentLinkState)
 
     /**
      * Sends a live revision of the page [request] asked for. Only for the frame's current request,
@@ -516,7 +516,7 @@ class NexusPluginClient internal constructor(
     override fun onRegistrationState(result: Int) {
         if (closed) return
         // A new registration holds no page work; the hub announces its page support afresh.
-        pages.reset()
+        pages.onRegistrationReset()
         registrationGeneration++
         clearNoticeContext()
         noticeApprovalAwaitingMetadata = result == PluginRegistrationResult.APPROVED
@@ -547,7 +547,7 @@ class NexusPluginClient internal constructor(
         }
         if (result != PluginRegistrationResult.APPROVED) {
             approvedCapabilities = emptySet()
-            pages.reset()
+            pages.onRegistrationReset()
             clearNoticeContext()
             terminateAudioSession(
                 reason = NexusAudioStopReason.ERROR,
@@ -573,8 +573,9 @@ class NexusPluginClient internal constructor(
 
     override fun onLinkState(state: Int) {
         if (closed) return
-        // Without a link every page lease on the glasses is void; support itself is unchanged.
-        if (state == 0) pages.reset(keepVersion = true)
+        // Without a usable transport every page lease is void, and support waits for the hub's
+        // next owner-scoped capability update; worn or bonded alone carries no page.
+        if (!hasUsableLink(state)) pages.onLinkUnusable()
         currentLinkState = state
         hubCapabilities = transport.capabilities()
         callbacks.onLinkState(state)
@@ -833,7 +834,7 @@ class NexusPluginClient internal constructor(
             stopCurrent = false,
         )
         terminateSnapshotSession(NexusSnapshotError.ERROR)
-        pages.reset()
+        pages.onRegistrationReset()
         if (opened || backgrounded) {
             opened = false
             backgrounded = false
@@ -846,7 +847,7 @@ class NexusPluginClient internal constructor(
         seenEventIdSet.clear()
     }
 
-    /** Page callbacks need no open: approval, the `surfaces` grant and announced support suffice. */
+    /** Page callbacks need no open: approval, the `surfaces` grant, announced support and a usable link do. */
     private fun routePageMessage(path: String, payload: JSONObject): Boolean {
         val handler: (JSONObject, NexusPluginCallbacks) -> Unit = when (path) {
             BusPaths.PAGE_REQUEST -> pages::onRequest
@@ -856,9 +857,7 @@ class NexusPluginClient internal constructor(
             BusPaths.PAGE_RESPONSE, BusPaths.PAGE_RESULT -> return true
             else -> return false
         }
-        if (hasCapability(PluginCapability.SURFACES) && pages.sessionVersion == PageSurfaceContract.VERSION) {
-            handler(payload, callbacks)
-        }
+        if (supportsPageSession) handler(payload, callbacks)
         return true
     }
 
@@ -1089,6 +1088,10 @@ class NexusPluginClient internal constructor(
 
     companion object {
         private const val MAX_SEEN_EVENTS = 128
+
+        /** A transport that can carry a page: CXR control or the SPP data plane, not merely a bond. */
+        private fun hasUsableLink(state: Int): Boolean =
+            state and (LinkStateBits.CXR_CONTROL_UP or LinkStateBits.SPP_DATA_UP) != 0
 
         fun create(
             context: Context,
