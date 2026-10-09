@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Read PDFs in Workspace.** Index the text layer of `.pdf` files page by page
+  and cite the page with the file name. Password-protected PDFs and scans
+  without text are reported in the folder status; scanned pages and images are
+  not read yet. Large PDF folders are indexed over several passes so one check
+  never exceeds its time limit.
 - Uses plugin operations the wearer approves, such as Transit's departures and
   journey guidance, with a phone hub that routes skills.
 - One shared tool loop for every structured provider: up to four rounds and
@@ -26,8 +31,7 @@
 - **Ask about documents on your phone.** Choose a local Workspace folder in
   Assistant settings. Index Text, Markdown, and Word body text (`.txt`, `.md`,
   `.docx`) and send relevant passages with the first question request to any
-  configured provider, including Hermes. Cite the source file when answering;
-  PDF support remains deferred.
+  configured provider, including Hermes. Cite the source file when answering.
 - **Keep document context bounded.** Retrieve at most 2,500 characters of
   passages, within the existing Memory and notes envelope. Skip unrelated
   passages and allow one fallback search per turn on structured-tool providers.
