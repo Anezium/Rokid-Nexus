@@ -414,7 +414,25 @@ class PhonePageBroker(
         frame.invocationId = action.invocationId
         frame.invocationDeadline = now + PageSurfaceContract.PAGE_TIMEOUT_MS
         val outgoing = stamped(payload, registration)
-        later { host.deliver(registration, BusPaths.PAGE_ACTION, outgoing) }
+        later {
+            // Queued is not delivered: a cover, a cancellation or the lease end may have come first.
+            val current = synchronized(lock) {
+                val lease = frame.leaseUntil
+                val live = frames[frame.key] === frame && frame.invocationId == action.invocationId &&
+                    frame.epoch == registration.epoch && frame.actionable && lease != null && host.nowMs() < lease
+                // An invocation that never reached its provider is released; the glasses show it unconfirmed.
+                if (!live && frame.invocationId == action.invocationId) {
+                    frame.invocationId = null
+                    frame.invocationDeadline = null
+                }
+                live
+            }
+            if (current) {
+                host.deliver(registration, BusPaths.PAGE_ACTION, outgoing)
+            } else {
+                host.log("page drop path=action id=${action.invocationId} reason=CANCELLED")
+            }
+        }
     }
 
     private fun visibility(payload: JSONObject) {

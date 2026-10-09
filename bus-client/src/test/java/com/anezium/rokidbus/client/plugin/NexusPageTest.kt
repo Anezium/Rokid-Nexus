@@ -224,6 +224,8 @@ class NexusPageTest {
         register()
         deliver(BusPaths.PAGE_REQUEST, request(requestId = "r1"))
         deliver(BusPaths.PAGE_REQUEST, request(requestId = "r1"))
+        // A wearer can only act on a page shown under its lease.
+        deliver(BusPaths.PAGE_VISIBILITY, visibility(true))
         deliver(BusPaths.PAGE_ACTION, action("i1"))
         deliver(BusPaths.PAGE_ACTION, action("i1"))
         assertEquals(1, provider.requests.size)
@@ -301,6 +303,8 @@ class NexusPageTest {
     fun `an action reaches the plugin only for an accepted page at its revision and advertised action`() {
         register()
         deliver(BusPaths.PAGE_REQUEST, request(requestId = "r1"))
+        // A wearer can only act on a page shown under its lease.
+        deliver(BusPaths.PAGE_VISIBILITY, visibility(true))
         provider.answer = { content(it.pageId, revision = 1) }
         deliver(BusPaths.PAGE_REQUEST, request(requestId = "r2", frameIndex = 2, pageId = "relay:thread"))
         deliver(BusPaths.PAGE_CLOSED, closed(frameIndex = 2, pageId = "relay:thread"))
@@ -319,6 +323,26 @@ class NexusPageTest {
         deliver(BusPaths.PAGE_ACTION, action("good"))
         assertEquals(listOf("action:read@1"), provider.events.filter { it.startsWith("action:") })
         assertEquals("good", results().single().getString("invocationId"))
+    }
+
+    @Test
+    fun `an action reaches the plugin only while its frame is visible under an unexpired lease`() {
+        register()
+        deliver(BusPaths.PAGE_REQUEST, request(requestId = "r1"))
+        deliver(BusPaths.PAGE_VISIBILITY, visibility(true, lease = 1_000))
+        deliver(BusPaths.PAGE_ACTION, action("visible"))
+        // Covered: the glasses no longer show it, so a delayed action does nothing.
+        deliver(BusPaths.PAGE_VISIBILITY, visibility(false))
+        deliver(BusPaths.PAGE_ACTION, action("covered"))
+        // Uncovered with a new lease, then reached at the exact end of it.
+        deliver(BusPaths.PAGE_VISIBILITY, visibility(true, lease = 1_000))
+        now += 1_000
+        deliver(BusPaths.PAGE_ACTION, action("expired"))
+        // A renewed lease makes it actionable again.
+        deliver(BusPaths.PAGE_VISIBILITY, visibility(true, lease = 1_000))
+        deliver(BusPaths.PAGE_ACTION, action("renewed"))
+        assertEquals(listOf("visible", "renewed"), results().map { it.getString("invocationId") })
+        assertEquals(2, provider.events.count { it.startsWith("action:") })
     }
 
     @Test
@@ -390,6 +414,8 @@ class NexusPageTest {
     fun `action results are bounded and an invalid replacement becomes a rejection`() {
         register()
         deliver(BusPaths.PAGE_REQUEST, request(requestId = "r1"))
+        // A wearer can only act on a page shown under its lease.
+        deliver(BusPaths.PAGE_VISIBILITY, visibility(true))
         provider.actionAnswer = { NexusPageResult.done("Marked", content("relay:main", 2)) }
         deliver(BusPaths.PAGE_ACTION, action("i1", revision = 1))
         // The replacement is now what the glasses show: actions target its revision.
@@ -414,6 +440,8 @@ class NexusPageTest {
         register()
         provider.answer = { content(it.pageId, revision = 4) }
         deliver(BusPaths.PAGE_REQUEST, request(requestId = "r1"))
+        // A wearer can only act on a page shown under its lease.
+        deliver(BusPaths.PAGE_VISIBILITY, visibility(true))
         provider.actionAnswer = { NexusPageResult.done(replacement = content("relay:main", 4)) }
         deliver(BusPaths.PAGE_ACTION, action("equal", revision = 4))
         provider.actionAnswer = { NexusPageResult.done(replacement = content("relay:main", 3)) }

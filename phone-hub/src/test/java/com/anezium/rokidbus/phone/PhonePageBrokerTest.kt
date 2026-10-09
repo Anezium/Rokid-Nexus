@@ -28,6 +28,9 @@ class PhonePageBrokerTest {
         var bindAccepted = true
         var tick: Long? = null
 
+        /** Runs once, inside the broker's flush, when a delivery of [path] goes out. */
+        var onDelivered: Pair<String, () -> Unit>? = null
+
         override fun nowMs(): Long = now
         override fun pageProvider(pluginId: String): PhonePluginPrincipal? = providers[pluginId]
         override fun registrations(principal: PhonePluginPrincipal): List<PageRegistration> =
@@ -37,6 +40,10 @@ class PhonePageBrokerTest {
         override fun deliver(registration: PageRegistration, path: String, payload: JSONObject): Boolean {
             delivered += Triple(registration.epoch, path, JSONObject(payload.toString()))
             calls += "deliver:${registration.epoch}:$path"
+            onDelivered?.takeIf { it.first == path }?.let { (_, hook) ->
+                onDelivered = null
+                hook()
+            }
             return live[registration.pluginId]?.any { it.epoch == registration.epoch } == true
         }
         override fun sendToGlasses(path: String, payload: JSONObject): String? {
@@ -439,6 +446,36 @@ class PhonePageBrokerTest {
         // Losing CXR too ends everything.
         broker.onLinkState(LinkStateBits.CXR_CONTROL_UP, 0)
         assertEquals(0, broker.negotiatedVersion)
+    }
+
+    @Test
+    fun `an action already queued for its provider is dropped when a cover or the lease end comes first`() {
+        connect(relay)
+        val relayA = register(relay, "relay-a")
+        broker.onGlasses(BusPaths.PAGE_REQUEST, request())
+        assertNull(broker.onProvider(BusPaths.PAGE_RESPONSE, page(revision = 3), relayA))
+        fun actions() = host.delivered.filter { it.second == BusPaths.PAGE_ACTION }.map { it.third.getString("invocationId") }
+
+        // The action is recorded and queued while the frame is visible; the cover lands before it goes.
+        host.onDelivered = BusPaths.PAGE_VISIBILITY to {
+            broker.onGlasses(BusPaths.PAGE_ACTION, action(invocationId = "covered", revision = 3))
+            broker.onGlasses(BusPaths.PAGE_VISIBILITY, visibility(false))
+        }
+        broker.onGlasses(BusPaths.PAGE_VISIBILITY, visibility(true))
+        assertTrue(actions().isEmpty())
+
+        // Likewise when the lease ends between recording and delivery.
+        host.onDelivered = BusPaths.PAGE_VISIBILITY to {
+            broker.onGlasses(BusPaths.PAGE_ACTION, action(invocationId = "expired", revision = 3))
+            host.now += 120_000
+        }
+        broker.onGlasses(BusPaths.PAGE_VISIBILITY, visibility(true))
+        assertTrue(actions().isEmpty())
+
+        // Control: an action under a live lease is delivered.
+        broker.onGlasses(BusPaths.PAGE_VISIBILITY, visibility(true))
+        broker.onGlasses(BusPaths.PAGE_ACTION, action(invocationId = "leased", revision = 3))
+        assertEquals(listOf("leased"), actions())
     }
 
     @Test

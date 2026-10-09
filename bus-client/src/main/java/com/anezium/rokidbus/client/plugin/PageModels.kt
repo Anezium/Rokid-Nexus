@@ -256,6 +256,9 @@ internal class NexusPageChannel(
             if (registrationId != epoch) return
             val context = frames[key]?.takeIf { it.pageId == parsed.pageId } ?: return
             if (!context.actionable || context.awaitingAnswer) return
+            // A covered page, or one whose lease ran out here, is no longer what the wearer sees.
+            val expires = context.leaseExpiresAt
+            if (!context.visible || expires == null || clock() >= expires) return
             if (context.shownRevision != parsed.revision || parsed.actionId !in context.shownActions) return
             if (!remember(seenInvocations, parsed.invocationId)) return
             context.requestId
