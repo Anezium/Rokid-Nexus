@@ -282,7 +282,7 @@ internal class ChatGptCodexApiClient(
             val httpRequest = buildHttpRequest(
                 request = request,
                 modelId = supportedModel(modelId),
-                reasoningEffort = supportedReasoningEffort(reasoningEffort),
+                reasoningEffort = supportedReasoningEffort(modelId, reasoningEffort),
                 input = input,
                 toolDefinitions = toolDefinitions,
                 tokens = tokens,
@@ -459,32 +459,68 @@ internal class ChatGptCodexApiClient(
 
     companion object {
         const val DEFAULT_ENDPOINT = "https://chatgpt.com/backend-api/codex/responses"
-        const val FAST_MODEL_ID = "gpt-5.6-luna"
-        const val BALANCED_MODEL_ID = "gpt-5.6-terra"
-        const val DEEP_MODEL_ID = "gpt-5.6-sol"
+        const val FAST_MODEL_ID = "gpt-6-luna"
+        const val BALANCED_MODEL_ID = "gpt-6.1-sol"
+        const val DEEP_MODEL_ID = "gpt-6-astra"
 
         // Luna leads: the glasses are a voice surface where the answer has to land
-        // before the wearer gives up on it. Measured against the same question with
-        // web search, luna answers in ~3.4 s where sol takes ~5.3 s. Sol is one tap
-        // away in settings when a question deserves the wait.
+        // before the wearer gives up on it. The deeper tiers are one tap away in
+        // settings when a question deserves the wait.
         const val DEFAULT_MODEL_ID = FAST_MODEL_ID
 
-        // Measured against the private backend: these three ids are the whole GPT-5.6
-        // family a ChatGPT account may use. Everything else -- older gpt-5 ids, mini or
-        // max variants, codex-mini-latest -- comes back "not supported when using Codex
-        // with a ChatGPT account".
+        // The current ChatGPT model trio. Older ids are still served but marked older,
+        // and anything else comes back "not supported when using Codex with a ChatGPT
+        // account".
         val SUPPORTED_MODEL_IDS = listOf(FAST_MODEL_ID, BALANCED_MODEL_ID, DEEP_MODEL_ID)
-        // "none" measured ~2x faster than "low" on web-searched questions
-        // (8.6s vs 14.4s end to end) and answer quality holds for voice Q&A.
-        const val DEFAULT_REASONING_EFFORT = "none"
-        val SUPPORTED_REASONING_EFFORTS = setOf("none", "low", "medium", "high", "xhigh")
 
-        fun supportedModel(modelId: String): String =
-            modelId.trim().takeIf(SUPPORTED_MODEL_IDS::contains) ?: DEFAULT_MODEL_ID
+        // A selection saved by an earlier release keeps its tier rather than falling
+        // back to the default.
+        private val LEGACY_MODEL_ALIASES = mapOf(
+            "gpt-5.6-luna" to FAST_MODEL_ID,
+            "gpt-5.6-terra" to BALANCED_MODEL_ID,
+            "gpt-5.6-sol" to DEEP_MODEL_ID,
+            "gpt-6-sol" to BALANCED_MODEL_ID,
+        )
+
+        // The backend's catalog: Luna stops at "max", the other two at "ultra", and
+        // none of them accepts "none".
+        private val REASONING_EFFORTS_BY_MODEL = mapOf(
+            FAST_MODEL_ID to setOf("low", "medium", "high", "xhigh", "max"),
+            BALANCED_MODEL_ID to setOf("low", "medium", "high", "xhigh", "ultra"),
+            DEEP_MODEL_ID to setOf("low", "medium", "high", "xhigh", "ultra"),
+        )
+
+        // The cheapest effort every current model accepts; the wearer is waiting.
+        const val DEFAULT_REASONING_EFFORT = "low"
+
+        // What the settings picker may store: the efforts every current model accepts.
+        val SUPPORTED_REASONING_EFFORTS = setOf("low", "medium", "high", "xhigh")
+
+        fun supportedModel(modelId: String): String {
+            val trimmed = modelId.trim()
+            return trimmed.takeIf(SUPPORTED_MODEL_IDS::contains)
+                ?: LEGACY_MODEL_ALIASES[trimmed]
+                ?: DEFAULT_MODEL_ID
+        }
 
         fun supportedReasoningEffort(reasoningEffort: String): String =
             reasoningEffort.takeIf(SUPPORTED_REASONING_EFFORTS::contains)
                 ?: DEFAULT_REASONING_EFFORT
+
+        fun reasoningEffortsFor(modelId: String): Set<String> =
+            REASONING_EFFORTS_BY_MODEL.getValue(supportedModel(modelId))
+
+        /** The effort actually sent for [modelId]: always one that model accepts. */
+        fun supportedReasoningEffort(modelId: String, reasoningEffort: String): String {
+            val allowed = reasoningEffortsFor(modelId)
+            val requested = reasoningEffort.trim()
+            return when {
+                requested in allowed -> requested
+                requested == "ultra" && "max" in allowed -> "max"
+                requested == "max" && "ultra" in allowed -> "ultra"
+                else -> DEFAULT_REASONING_EFFORT
+            }
+        }
     }
 }
 

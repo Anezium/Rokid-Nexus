@@ -53,7 +53,7 @@ class ChatGptCodexProviderTest {
         assertEquals("text/event-stream", sent.headers["Accept"])
 
         val body = JSONObject(sent.body)
-        assertEquals("gpt-5.6-luna", ChatGptCodexApiClient.DEFAULT_MODEL_ID)
+        assertEquals("gpt-6-luna", ChatGptCodexApiClient.DEFAULT_MODEL_ID)
         assertEquals(ChatGptCodexApiClient.DEFAULT_MODEL_ID, body.getString("model"))
         assertEquals("Answer for a glasses HUD.", body.getString("instructions"))
         assertEquals(1, Regex("\"tools\"\\s*:").findAll(sent.body).count())
@@ -123,16 +123,14 @@ class ChatGptCodexProviderTest {
         provider.streamEvents(ChatRequest(userText = "Hello")).toList()
 
         val body = JSONObject(transport.requests.single().body)
-        assertEquals("gpt-5.6-luna", body.getString("model"))
+        assertEquals("gpt-6-luna", body.getString("model"))
         assertEquals("medium", body.getJSONObject("reasoning").getString("effort"))
         assertEquals("auto", body.getJSONObject("reasoning").getString("summary"))
     }
 
     @Test
-    fun everyGpt56TierSurvivesToTheRequestBody() = runTest {
-        // Measured against the private backend: luna, terra and sol are the whole
-        // family a ChatGPT account may use. Anything else falls back to luna.
-        listOf("gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol").forEach { modelId ->
+    fun everyCurrentTierSurvivesToTheRequestBody() = runTest {
+        listOf("gpt-6-luna", "gpt-6.1-sol", "gpt-6-astra").forEach { modelId ->
             val transport = FakeTransport(
                 StubResponse(
                     statusCode = 200,
@@ -150,6 +148,136 @@ class ChatGptCodexProviderTest {
 
             val body = JSONObject(transport.requests.single().body)
             assertEquals(modelId, body.getString("model"))
+        }
+    }
+
+    @Test
+    fun defaultModelIsLuna() {
+        assertEquals("gpt-6-luna", ChatGptCodexApiClient.FAST_MODEL_ID)
+        assertEquals("gpt-6.1-sol", ChatGptCodexApiClient.BALANCED_MODEL_ID)
+        assertEquals("gpt-6-astra", ChatGptCodexApiClient.DEEP_MODEL_ID)
+        assertEquals(ChatGptCodexApiClient.FAST_MODEL_ID, ChatGptCodexApiClient.DEFAULT_MODEL_ID)
+        assertEquals(
+            listOf("gpt-6-luna", "gpt-6.1-sol", "gpt-6-astra"),
+            ChatGptCodexApiClient.SUPPORTED_MODEL_IDS,
+        )
+        assertEquals("low", ChatGptCodexApiClient.DEFAULT_REASONING_EFFORT)
+        assertEquals(
+            "low",
+            ChatGptCodexApiClient.supportedReasoningEffort(
+                ChatGptCodexApiClient.DEFAULT_MODEL_ID,
+                ChatGptCodexApiClient.DEFAULT_REASONING_EFFORT,
+            ),
+        )
+    }
+
+    @Test
+    fun legacyModelMigrationKeepsEachSavedTier() {
+        mapOf(
+            "gpt-5.6-luna" to "gpt-6-luna",
+            "gpt-5.6-terra" to "gpt-6.1-sol",
+            "gpt-5.6-sol" to "gpt-6-astra",
+            "gpt-6-sol" to "gpt-6.1-sol",
+            " gpt-5.6-terra " to "gpt-6.1-sol",
+            "gpt-6-luna" to "gpt-6-luna",
+            "gpt-6.1-sol" to "gpt-6.1-sol",
+            "gpt-6-astra" to "gpt-6-astra",
+            "gpt-4o" to "gpt-6-luna",
+            "unsupported-model" to "gpt-6-luna",
+            "" to "gpt-6-luna",
+        ).forEach { (saved, expected) ->
+            assertEquals(saved, expected, ChatGptCodexApiClient.supportedModel(saved))
+        }
+    }
+
+    @Test
+    fun legacyModelMigrationReachesTheRequestBody() = runTest {
+        mapOf(
+            "gpt-5.6-luna" to "gpt-6-luna",
+            "gpt-5.6-terra" to "gpt-6.1-sol",
+            "gpt-5.6-sol" to "gpt-6-astra",
+            "gpt-6-sol" to "gpt-6.1-sol",
+        ).forEach { (saved, expected) ->
+            val transport = FakeTransport(
+                StubResponse(
+                    statusCode = 200,
+                    sseData = listOf("""{"type":"response.completed"}"""),
+                ),
+            )
+            val provider = ChatGptCodexProvider(
+                apiClient = client(transport),
+                oauthConfigured = { true },
+                toolRegistry = unusedToolRegistry(),
+                modelProvider = { saved },
+            )
+
+            provider.streamEvents(ChatRequest(userText = "Hello")).toList()
+
+            val body = JSONObject(transport.requests.single().body)
+            assertEquals(saved, expected, body.getString("model"))
+        }
+    }
+
+    @Test
+    fun effortClampSendsOnlyEffortsTheModelAccepts() {
+        val allowed = mapOf(
+            "gpt-6-luna" to setOf("low", "medium", "high", "xhigh", "max"),
+            "gpt-6.1-sol" to setOf("low", "medium", "high", "xhigh", "ultra"),
+            "gpt-6-astra" to setOf("low", "medium", "high", "xhigh", "ultra"),
+        )
+        val efforts = listOf(
+            "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra",
+            "LOW", " medium ", "", "bogus",
+        ) + ChatGptCodexApiClient.SUPPORTED_REASONING_EFFORTS +
+            ChatGptCodexApiClient.DEFAULT_REASONING_EFFORT
+        assertEquals(allowed.keys.toList(), ChatGptCodexApiClient.SUPPORTED_MODEL_IDS)
+
+        allowed.forEach { (model, modelEfforts) ->
+            assertEquals(modelEfforts, ChatGptCodexApiClient.reasoningEffortsFor(model))
+            efforts.forEach { effort ->
+                val sent = ChatGptCodexApiClient.supportedReasoningEffort(model, effort)
+                assertTrue("$model/$effort -> $sent", sent in modelEfforts)
+                if (effort in modelEfforts) assertEquals("$model/$effort", effort, sent)
+            }
+            assertEquals("low", ChatGptCodexApiClient.supportedReasoningEffort(model, "none"))
+        }
+        assertEquals("max", ChatGptCodexApiClient.supportedReasoningEffort("gpt-6-luna", "ultra"))
+        assertEquals("ultra", ChatGptCodexApiClient.supportedReasoningEffort("gpt-6.1-sol", "ultra"))
+        assertEquals("ultra", ChatGptCodexApiClient.supportedReasoningEffort("gpt-6-astra", "ultra"))
+        assertEquals("ultra", ChatGptCodexApiClient.supportedReasoningEffort("gpt-6.1-sol", "max"))
+        assertEquals("ultra", ChatGptCodexApiClient.supportedReasoningEffort("gpt-6-astra", "max"))
+        // A legacy saved model is clamped against the model it migrates to.
+        assertEquals("max", ChatGptCodexApiClient.supportedReasoningEffort("gpt-5.6-luna", "ultra"))
+        assertEquals("ultra", ChatGptCodexApiClient.supportedReasoningEffort("gpt-5.6-sol", "ultra"))
+    }
+
+    @Test
+    fun effortClampReachesTheRequestBody() = runTest {
+        listOf(
+            Triple("gpt-6-luna", "ultra", "max"),
+            Triple("gpt-6-luna", "none", "low"),
+            Triple("gpt-6.1-sol", "ultra", "ultra"),
+            Triple("gpt-6-astra", "xhigh", "xhigh"),
+        ).forEach { (model, effort, expected) ->
+            val transport = FakeTransport(
+                StubResponse(
+                    statusCode = 200,
+                    sseData = listOf("""{"type":"response.completed"}"""),
+                ),
+            )
+            val provider = ChatGptCodexProvider(
+                apiClient = client(transport),
+                oauthConfigured = { true },
+                toolRegistry = unusedToolRegistry(),
+                modelProvider = { model },
+                reasoningEffortProvider = { effort },
+            )
+
+            provider.streamEvents(ChatRequest(userText = "Hello")).toList()
+
+            val body = JSONObject(transport.requests.single().body)
+            assertEquals(model, body.getString("model"))
+            assertEquals("$model/$effort", expected, body.getJSONObject("reasoning").getString("effort"))
         }
     }
 

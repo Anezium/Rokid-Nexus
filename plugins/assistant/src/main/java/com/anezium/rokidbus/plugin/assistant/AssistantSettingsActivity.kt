@@ -160,8 +160,7 @@ class AssistantSettingsActivity : Activity() {
         ),
     )
     private val reasoningChoices = listOf(
-        ReasoningChoice("none", "None", "fastest"),
-        ReasoningChoice("low", "Low"),
+        ReasoningChoice("low", "Low", "fastest"),
         ReasoningChoice("medium", "Medium"),
         ReasoningChoice("high", "High"),
         ReasoningChoice("xhigh", "X-High", "deepest"),

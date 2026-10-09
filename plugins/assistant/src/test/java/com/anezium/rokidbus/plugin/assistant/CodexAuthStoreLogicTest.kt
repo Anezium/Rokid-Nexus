@@ -334,12 +334,12 @@ class CodexAuthStoreLogicTest {
     }
 
     @Test
-    fun chatGptReasoningEffortDefaultsNoneAndRoundTripsSupportedValues() {
+    fun chatGptReasoningEffortDefaultsLowAndRoundTripsSupportedValues() {
         val store = CodexAuthStore(FakeSharedPreferences())
 
-        assertEquals("none", store.chatGptReasoningEffort())
+        assertEquals("low", store.chatGptReasoningEffort())
 
-        listOf("none", "low", "medium", "high", "xhigh").forEach { effort ->
+        listOf("low", "medium", "high", "xhigh").forEach { effort ->
             store.setChatGptReasoningEffort(effort)
             assertEquals(effort, store.chatGptReasoningEffort())
         }
@@ -349,12 +349,37 @@ class CodexAuthStoreLogicTest {
     fun chatGptReasoningEffortRejectsUnknownValues() {
         val store = CodexAuthStore(FakeSharedPreferences())
 
-        listOf("minimal", "ultra", "LOW", " medium ", "").forEach { effort ->
+        listOf("none", "minimal", "max", "ultra", "LOW", " medium ", "").forEach { effort ->
             assertThrows(IllegalArgumentException::class.java) {
                 store.setChatGptReasoningEffort(effort)
             }
         }
-        assertEquals("none", store.chatGptReasoningEffort())
+        assertEquals("low", store.chatGptReasoningEffort())
+    }
+
+    @Test
+    fun effortClampReadsASavedNoneAsLow() {
+        val store = CodexAuthStore(
+            FakeSharedPreferences(mapOf("chatgpt_reasoning_effort" to "none")),
+        )
+
+        assertEquals("low", store.chatGptReasoningEffort())
+    }
+
+    @Test
+    fun legacyModelMigrationOfTheSavedChatGptModel() {
+        mapOf(
+            "gpt-5.6-luna" to "gpt-6-luna",
+            "gpt-5.6-terra" to "gpt-6.1-sol",
+            "gpt-5.6-sol" to "gpt-6-astra",
+            "gpt-6-sol" to "gpt-6.1-sol",
+            "retired-model" to "gpt-6-luna",
+        ).forEach { (saved, expected) ->
+            val store = CodexAuthStore(FakeSharedPreferences(mapOf("chatgpt_model" to saved)))
+
+            assertEquals(saved, expected, store.chatGptModel())
+        }
+        assertEquals("gpt-6-luna", CodexAuthStore(FakeSharedPreferences()).chatGptModel())
     }
 
     @Test
