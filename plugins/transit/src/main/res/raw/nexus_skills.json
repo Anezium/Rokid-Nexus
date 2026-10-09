@@ -85,7 +85,7 @@
       "id": "get_departures",
       "version": 1,
       "label": "Departures at a stop",
-      "description": "Upcoming departures at a stop returned by an earlier result, at most twelve, with the time the board was observed. Filter with a line or direction taken from an earlier board. For the one after a departure already mentioned, pass it as after: the answer follows that departure in its own line and direction. Times are absolute and in the phone's local time; realtime says whether each is a live prediction, the timetable, or unknown. Walking time to the stop is not known.",
+      "description": "Upcoming departures at a stop returned by an earlier result, at most twelve, with the time the board was observed. Filter with a line or direction as the wearer says it or as an earlier board named it. For the one after a departure already mentioned, pass it as after: the answer follows that departure in its own line and direction. Times are absolute and in the phone's local time; realtime says whether each is a live prediction, the timetable, or unknown. Walking time to the stop is not known.",
       "examples": ["And the one after that?"],
       "effect": "read",
       "cancellable": true,
@@ -97,8 +97,8 @@
         "type": "object",
         "properties": {
           "stop": {"type": "string", "nexusRef": "stop"},
-          "line": {"type": "string", "minLength": 1, "maxLength": 16, "description": "A line exactly as an earlier board named it."},
-          "direction": {"type": "string", "minLength": 1, "maxLength": 80, "description": "A direction exactly as an earlier board named it."},
+          "line": {"type": "string", "minLength": 1, "maxLength": 16, "description": "A line as an earlier board named it or as the wearer says it, such as 14, ligne 14, M14, or RER C."},
+          "direction": {"type": "string", "minLength": 1, "maxLength": 80, "description": "A direction as an earlier board named it, or whole words of it as the wearer says them, such as Orly or vers Orly for Aéroport d'Orly."},
           "after": {"type": "string", "nexusRef": "departure"}
         },
         "required": ["stop"]
@@ -110,7 +110,7 @@
           "observed_at": {"type": "string", "maxLength": 40},
           "observed_local": {"type": "string", "maxLength": 8},
           "freshness": {"type": "string", "enum": ["live", "cached"]},
-          "match": {"type": "string", "enum": ["all", "filtered", "no_matching_line", "ambiguous_direction", "after_anchor", "anchor_departed", "board_changed"]},
+          "match": {"type": "string", "enum": ["all", "filtered", "no_matching_line", "ambiguous_direction", "after_anchor", "anchor_departed", "board_changed", "no_matching_direction", "ambiguous_line"]},
           "departures": {
             "type": "array",
             "maxItems": 12,
@@ -132,8 +132,9 @@
               "required": ["departure", "direction", "mode", "time", "time_local", "minutes", "realtime", "cancelled"]
             }
           },
-          "lines": {"type": "array", "maxItems": 12, "items": {"type": "string", "maxLength": 16}},
-          "directions": {"type": "array", "maxItems": 12, "items": {"type": "string", "maxLength": 80}},
+          "lines": {"type": "array", "maxItems": 12, "description": "Lines the board has; after no_matching_line, offer these.", "items": {"type": "string", "maxLength": 16}},
+          "directions": {"type": "array", "maxItems": 12, "description": "Directions the board has, only the selected line's when a line was named; after no_matching_direction, offer these.", "items": {"type": "string", "maxLength": 80}},
+          "candidates": {"type": "array", "maxItems": 12, "description": "After ambiguous_line or ambiguous_direction: the lines or directions the selector could mean, to ask which one.", "items": {"type": "string", "maxLength": 80}},
           "focus": {
             "type": "object",
             "description": "The stop, line, direction, and departure this answer is about, for a follow-up.",

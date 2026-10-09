@@ -181,7 +181,8 @@ class TransitReadSkillsTest {
         assertEquals(1, selected.getJSONArray("departures").length())
         assertEquals("A\u00e9roport d\u2019Orly", selected.getJSONObject("focus").getString("direction"))
         val shortened = departures(JSONObject().put("line", "14").put("direction", "Orly"))
-        assertEquals(0, shortened.getJSONArray("departures").length())
+        assertEquals("filtered", shortened.getString("match"))
+        assertEquals(1, shortened.getJSONArray("departures").length())
     }
 
     /** Bibliothèque François Mitterrand as Transitous labels it: metro 14, RER C missions, buses. */
@@ -214,6 +215,139 @@ class TransitReadSkillsTest {
         val withMode = departures(JSONObject().put("line", "ligne 14").put("direction", "vers Orly"))
         assertEquals("filtered", withMode.getString("match"))
         assertEquals(orlyBound, withMode.rows())
+    }
+
+    private fun JSONObject.strings(name: String): List<String> = getJSONArray(name).let { list ->
+        (0 until list.length()).map(list::getString)
+    }
+
+    @Test
+    fun `linePrefix - a line named with its mode word selects the board label`() {
+        data.boards[stop.id] = parisBoard()
+        listOf("14", "ligne 14", "M14", "Métro 14", "metro-14", "m 14", "line 14").forEach { spoken ->
+            val board = departures(JSONObject().put("line", spoken))
+            assertEquals(spoken, "ambiguous_direction", board.getString("match"))
+            assertEquals(spoken, List(5) { "14" }, board.rows().map { it.first })
+            assertEquals(spoken, setOf("Saint-Denis - Pleyel", "Aéroport d'Orly"), board.strings("candidates").toSet())
+        }
+        assertEquals(setOf("C"), departures(JSONObject().put("line", "RER C")).rows().map { it.first }.toSet())
+        val bus = departures(JSONObject().put("line", "bus 62"))
+        assertEquals("filtered", bus.getString("match"))
+        assertEquals(listOf("62" to "Porte de France"), bus.rows())
+        assertEquals("no_matching_line", departures(JSONObject().put("line", "M")).getString("match"))
+    }
+
+    @Test
+    fun `linePrefix - an exact label wins and a prefix shared by two lines is ambiguous`() {
+        data.boards[stop.id] = listOf(
+            departure("M1", "Renens", 2),
+            departure("1", "Maladière", 3),
+            departure("T3a", "Porte de Vincennes", 4),
+            departure("T3b", "Porte Dauphine", 5),
+        )
+        assertEquals(listOf("1" to "Maladière"), departures(JSONObject().put("line", "1")).rows())
+        assertEquals(listOf("M1" to "Renens"), departures(JSONObject().put("line", "M1")).rows())
+        assertEquals(listOf("T3a" to "Porte de Vincennes"), departures(JSONObject().put("line", "T3a")).rows())
+        assertEquals(listOf("T3a" to "Porte de Vincennes"), departures(JSONObject().put("line", "tram T3a")).rows())
+
+        val either = departures(JSONObject().put("line", "métro 1"))
+        assertEquals("ambiguous_line", either.getString("match"))
+        assertEquals(setOf("M1", "1"), either.strings("candidates").toSet())
+        assertEquals(2, either.getJSONArray("departures").length())
+        // A direction that only one of the two lines serves settles which line was meant.
+        val settled = departures(JSONObject().put("line", "métro 1").put("direction", "Renens"))
+        assertEquals("filtered", settled.getString("match"))
+        assertEquals(listOf("M1" to "Renens"), settled.rows())
+    }
+
+    @Test
+    fun `directionPartial - whole words of a headsign select it, with or without a connector`() {
+        data.boards[stop.id] = parisBoard()
+        val orlyBound = List(3) { "14" to "Aéroport d'Orly" }
+        listOf("Orly", "vers Orly", "direction Orly", "towards Orly", "aéroport", "Aéroport Orly", "Aeroport d’Orly")
+            .forEach { spoken ->
+                val board = departures(JSONObject().put("line", "14").put("direction", spoken))
+                assertEquals(spoken, "filtered", board.getString("match"))
+                assertEquals(spoken, orlyBound, board.rows())
+            }
+        assertEquals(orlyBound, departures(JSONObject().put("direction", "vers Orly")).rows())
+        val pleyel = departures(JSONObject().put("line", "M14").put("direction", "Saint-Denis Pleyel"))
+        assertEquals("filtered", pleyel.getString("match"))
+        assertEquals(List(2) { "14" to "Saint-Denis - Pleyel" }, pleyel.rows())
+    }
+
+    @Test
+    fun `ambiguousDirection - a word shared by several headsigns lists them, an exact headsign wins`() {
+        data.boards[stop.id] = parisBoard() + listOf(
+            departure("B", "Aéroport Charles de Gaulle 2 TGV", 6),
+            departure("Orlybus", "Orly", 9),
+        )
+        val airports = departures(JSONObject().put("direction", "aéroport"))
+        assertEquals("ambiguous_direction", airports.getString("match"))
+        assertEquals(4, airports.getJSONArray("departures").length())
+        assertEquals(
+            setOf("Aéroport d'Orly", "Aéroport Charles de Gaulle 2 TGV"),
+            airports.strings("candidates").toSet(),
+        )
+        assertEquals("filtered", departures(JSONObject().put("line", "14").put("direction", "aéroport")).getString("match"))
+
+        val exact = departures(JSONObject().put("direction", "Orly"))
+        assertEquals("filtered", exact.getString("match"))
+        assertEquals(listOf("Orlybus" to "Orly"), exact.rows())
+    }
+
+    @Test
+    fun `noMatch - an unknown line or direction lists what the board actually has`() {
+        data.boards[stop.id] = parisBoard()
+        val noLine = departures(JSONObject().put("line", "ligne 7").put("direction", "Orly"))
+        assertEquals("no_matching_line", noLine.getString("match"))
+        assertEquals(0, noLine.getJSONArray("departures").length())
+        assertEquals(listOf("14", "C", "62", "325"), noLine.strings("lines"))
+
+        val noDirection = departures(JSONObject().put("line", "Métro 14").put("direction", "Versailles"))
+        assertEquals("no_matching_direction", noDirection.getString("match"))
+        assertEquals(0, noDirection.getJSONArray("departures").length())
+        assertEquals(listOf("Saint-Denis - Pleyel", "Aéroport d'Orly"), noDirection.strings("directions"))
+
+        val anywhere = departures(JSONObject().put("direction", "vers Versailles"))
+        assertEquals("no_matching_direction", anywhere.getString("match"))
+        assertEquals(6, anywhere.strings("directions").size)
+    }
+
+    @Test
+    fun `afterWithFilter - the one after that keeps the named line and direction`() {
+        data.boards[stop.id] = parisBoard()
+        val first = departures(JSONObject().put("line", "ligne 14").put("direction", "vers Orly"))
+        assertEquals("10:02", first.getJSONArray("departures").getJSONObject(0).getString("time_local"))
+        val anchor = first.getJSONObject("focus").getString("departure")
+
+        now = now.plusSeconds(20)
+        val next = departures(JSONObject().put("line", "14").put("direction", "Orly").put("after", anchor))
+        assertEquals("after_anchor", next.getString("match"))
+        assertEquals(List(2) { "14" to "Aéroport d'Orly" }, next.rows())
+        assertEquals(
+            listOf("10:05", "10:08"),
+            (0 until 2).map { next.getJSONArray("departures").getJSONObject(it).getString("time_local") },
+        )
+        assertEquals(listOf("Saint-Denis - Pleyel", "Aéroport d'Orly"), next.strings("directions"))
+    }
+
+    @Test
+    fun `unrelated - a direction or line never matches by a fragment of a word`() {
+        data.boards[stop.id] = listOf(
+            departure("14", "Olympiades", 2),
+            departure("14", "Aéroport d'Orly", 3),
+            departure("4", "Bagneux - Lucie Aubrac", 4),
+        )
+        val orly = departures(JSONObject().put("direction", "Orly"))
+        assertEquals("filtered", orly.getString("match"))
+        assertEquals(listOf("14" to "Aéroport d'Orly"), orly.rows())
+        assertTrue(orly.rows().none { it.second == "Olympiades" })
+
+        assertEquals("no_matching_direction", departures(JSONObject().put("direction", "Or")).getString("match"))
+        assertEquals("no_matching_direction", departures(JSONObject().put("line", "14").put("direction", "Or")).getString("match"))
+        assertEquals("no_matching_line", departures(JSONObject().put("line", "1")).getString("match"))
+        assertEquals(listOf("4" to "Bagneux - Lucie Aubrac"), departures(JSONObject().put("line", "ligne 4")).rows())
     }
 
     @Test

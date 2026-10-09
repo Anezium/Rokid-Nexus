@@ -5,6 +5,12 @@
 - Skills for an approved assistant: favorite stops, stop search, and
   departures with their observation time and realtime quality, including "the
   one after that" by trip identity rather than row position.
+- **Lines and directions as you say them.** Asking for departures accepts
+  "ligne 14", "M14", or "RER C" for a line and "vers Orly" or "aéroport" for
+  Aéroport d'Orly, matching whole words only. When a name fits several lines
+  or directions the answer lists them, and when nothing fits it lists the
+  lines and directions the stop actually has instead of reporting no
+  departure.
 - **Journey guidance.** "Take me home" plans a public transport journey to a
   saved home and guides it step by step in Transit's own activity on the
   glasses: walk, board, ride with the stops left, get off at the next stop,

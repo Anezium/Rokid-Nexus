@@ -6,8 +6,6 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.time.Instant
 import java.time.ZoneId
-import java.text.Normalizer
-import java.util.Locale
 import kotlin.math.ceil
 
 /** How one Transit skill call ended, before it becomes the SDK's answer. */
@@ -140,19 +138,22 @@ internal class TransitReadSkills(
             .filterNot { it.departure.isBefore(now.minusMillis(TransitSkillContract.DEPARTED_GRACE_MS)) }
             .sortedBy(TransitDeparture::departure)
 
+        val lineLabels = lineSelector?.let { TransitLabelMatch.lines(it, upcoming.mapNotNull(::lineOf).distinct()) }
+        val onLine = if (lineLabels == null) upcoming else upcoming.filter { lineOf(it) in lineLabels }
+        val headsigns = directionSelector?.let { TransitLabelMatch.directions(it, onLine.map(::directionOf).distinct()) }
+        val selected = if (headsigns == null) onLine else onLine.filter { directionOf(it) in headsigns }
+        val selectedLines = selected.mapNotNull(::lineOf).distinct()
+        val selectedDirections = selected.map(::directionOf).distinct()
+
         val (match, rows) = when {
             anchor != null -> followAnchor(anchor, board, upcoming, now)
-            lineSelector != null && upcoming.none { sameLabel(lineOf(it), lineSelector) } ->
-                "no_matching_line" to emptyList()
-            lineSelector != null || directionSelector != null -> {
-                val filtered = upcoming.filter { departure ->
-                    (lineSelector == null || sameLabel(lineOf(departure), lineSelector)) &&
-                        (directionSelector == null || sameLabel(directionOf(departure), directionSelector))
-                }
-                val ambiguous = lineSelector != null && directionSelector == null &&
-                    filtered.map(::directionOf).distinct().size > 1
-                (if (ambiguous) "ambiguous_direction" else "filtered") to filtered
-            }
+            lineLabels != null && lineLabels.isEmpty() -> "no_matching_line" to emptyList()
+            headsigns != null && headsigns.isEmpty() -> "no_matching_direction" to emptyList()
+            lineLabels != null && TransitLabelMatch.distinctLines(selectedLines) > 1 -> "ambiguous_line" to selected
+            headsigns != null && TransitLabelMatch.distinctDirections(headsigns) > 1 -> "ambiguous_direction" to selected
+            lineSelector != null && directionSelector == null && selectedDirections.size > 1 ->
+                "ambiguous_direction" to selected
+            lineSelector != null || directionSelector != null -> "filtered" to selected
             else -> "all" to upcoming
         }
         val shown = rows.take(TransitSkillContract.MAX_BOARD_DEPARTURES)
@@ -175,13 +176,13 @@ internal class TransitReadSkills(
                     },
                 )
                 .put("lines", JSONArray(upcoming.mapNotNull(::lineOf).distinct().take(MAX_LIST)))
-                .put(
-                    "directions",
-                    JSONArray(
-                        upcoming.filter { lineSelector == null || sameLabel(lineOf(it), lineSelector) }
-                            .map(::directionOf).distinct().take(MAX_LIST),
-                    ),
-                )
+                .put("directions", JSONArray(onLine.map(::directionOf).distinct().take(MAX_LIST)))
+                .apply {
+                    when (match) {
+                        "ambiguous_line" -> put("candidates", JSONArray(selectedLines.take(MAX_LIST)))
+                        "ambiguous_direction" -> put("candidates", JSONArray(selectedDirections.take(MAX_LIST)))
+                    }
+                }
                 .put(
                     "focus",
                     JSONObject()
@@ -292,18 +293,7 @@ internal class TransitReadSkills(
     private fun directionOf(departure: TransitDeparture): String =
         departure.headsign.trim().take(TransitSkillContract.MAX_DIRECTION_CHARS)
 
-    private fun sameLabel(first: String?, second: String): Boolean =
-        first != null && normalizeLabel(first) == normalizeLabel(second)
-
-    private fun normalizeLabel(label: String): String =
-        Normalizer.normalize(label, Normalizer.Form.NFKD).replace(LABEL_MARKS, "")
-            .lowercase(Locale.ROOT).replace(LABEL_APOSTROPHES, "")
-            .replace(LABEL_SPACES, " ").trim()
-
     companion object {
-        private val LABEL_MARKS = Regex("\\p{M}+")
-        private val LABEL_APOSTROPHES = Regex("['\u2018\u2019\u02bc]")
-        private val LABEL_SPACES = Regex("[\\s\\p{Z}\\p{Pd}]+")
         const val FOCUS_KIND = "transit_departure_focus"
         private const val MAX_BOARDS = 16
         private const val MAX_LIST = 12
