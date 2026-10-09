@@ -4,6 +4,7 @@ import android.os.Looper
 import android.view.View
 import com.anezium.rokidbus.glasses.session.ActivityStop
 import com.anezium.rokidbus.glasses.session.FrameMode
+import com.anezium.rokidbus.glasses.session.FrameStatus
 import com.anezium.rokidbus.glasses.session.SessionEffect
 import com.anezium.rokidbus.glasses.session.SessionEffectSink
 import com.anezium.rokidbus.glasses.session.SessionEvent
@@ -144,6 +145,48 @@ class DocumentPagingRunnerTest {
         assertEquals(FrameMode.READING, top().mode)
 
         runner.dispatch(SessionEvent.Step(1, now + 70))
+        assertEquals(1, top().page)
+        assertEquals(1, (view.blockViews.getValue("document") as DocumentPageView).page)
+    }
+
+    @Test
+    fun `an equal-revision answer to Retry keeps the document paging`() {
+        val thread = PageBody.Document(
+            listOf(
+                PageSegment("h", PageSegmentKind.HEADER, "Mika · captured 14:11"),
+                PageSegment("p", PageSegmentKind.PROSE, (1..80).joinToString(" ") { "line $it of the thread, said plainly" }),
+            ),
+            items = listOf(PageRow("child", "Open the details", target = PageTarget.Page("relay:child"))),
+        )
+        runner.dispatch(SessionEvent.ActivityStarted(ActivityStop("relay:local", "relay:thread", "Mika: hi", pinned = true)))
+        runner.dispatch(SessionEvent.TripleTap(now))
+        now += PageSurfaceContract.GATE_MS
+        runner.dispatch(SessionEvent.Tick(now))
+        runner.dispatch(SessionEvent.Enter(now))
+        runner.dispatch(SessionEvent.PageResponse(answer(requests.last(), 1, "document", thread), now))
+        idle()
+        assertTrue("pages=${top().pageStarts.size}", top().pageStarts.size > 1)
+
+        // Commands, a child page, back; the thread's revalidation then times out.
+        runner.dispatch(SessionEvent.Enter(now + 10))
+        runner.dispatch(SessionEvent.Enter(now + 20))
+        runner.dispatch(SessionEvent.PageResponse(answer(requests.last(), 1, "selectableList", PageBody.SelectableList(listOf(PageRow("a", "A")))), now + 30))
+        idle()
+        runner.dispatch(SessionEvent.Back(now + 40))
+        now += 40 + PageSurfaceContract.PAGE_TIMEOUT_MS
+        runner.dispatch(SessionEvent.Tick(now))
+        idle()
+        assertTrue("${top().status}", top().status is FrameStatus.Unavailable)
+
+        // Retry, answered with the same revision.
+        runner.dispatch(SessionEvent.Enter(now + 10))
+        val retry = requests.last()
+        assertEquals(SessionReducer.REASON_RETRY, retry.reason)
+        runner.dispatch(SessionEvent.PageResponse(answer(retry, 1, "document", thread), now + 20))
+        idle()
+        assertEquals(FrameMode.READING, top().mode)
+
+        runner.dispatch(SessionEvent.Step(1, now + 30))
         assertEquals(1, top().page)
         assertEquals(1, (view.blockViews.getValue("document") as DocumentPageView).page)
     }

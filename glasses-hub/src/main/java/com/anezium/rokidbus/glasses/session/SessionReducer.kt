@@ -801,7 +801,8 @@ internal class SessionReducer(
                 mode = if (document) FrameMode.READING else FrameMode.ROWS,
                 anchor = null,
                 page = 0,
-                pageStarts = emptyList(),
+                // A Retry answered with the retained snapshot lays out the pages already measured.
+                pageStarts = if (kept != null) top.pageStarts else emptyList(),
             ).let { it.copy(selected = it.selected.coerceIn(0, entries.lastIndex.coerceAtLeast(0))) }
         }
         return SessionTransition(
