@@ -37,30 +37,27 @@ internal object TransitLabelMatch {
     /** How many different directions [headsigns] are, typography and punctuation aside. */
     fun distinctDirections(headsigns: Collection<String>): Int = headsigns.map(::words).distinct().size
 
-    private fun normalize(label: String): String = spaced(label).lowercase(Locale.ROOT)
+    private fun normalize(label: String): String =
+        unmarked(label).lowercase(Locale.ROOT).replace(APOSTROPHES, "").replace(SPACES, " ").trim()
 
     private fun words(label: String): List<String> =
         unmarked(label).lowercase(Locale.ROOT).split(NOT_WORD).filter(String::isNotEmpty)
 
-    private fun spaced(label: String): String =
-        unmarked(label).replace(APOSTROPHES, "").replace(SPACES, " ").trim()
-
     private fun unmarked(label: String): String =
         Normalizer.normalize(label, Normalizer.Form.NFKD).replace(MARKS, "")
 
-    private fun withoutMode(label: String): String = strippedMode(spaced(label)).lowercase(Locale.ROOT)
+    private fun withoutMode(label: String): String = strippedMode(normalize(label))
 
-    // Case is still the speaker's here: glued to the line, a mode word must be followed by a digit
-    // or a short code that starts upper-case ("M14", "RERC", "tramT3a"), so ordinary words such as
-    // "Tramway", "Linea", or "Metropole" stay whole.
+    // Casing comes from whoever relayed the speech, so a glued mode word is judged by the shape of
+    // what follows: a code with a digit ("m14", "tramt3a"), or after "rer" one or two letters
+    // ("rerc"). Words such as "tramway", "linea", "lines", or "metropole" stay whole.
     private tailrec fun strippedMode(label: String): String {
-        val lower = label.lowercase(Locale.ROOT)
-        val word = MODE_WORDS.firstOrNull(lower::startsWith) ?: return label
+        val word = MODE_WORDS.firstOrNull(label::startsWith) ?: return label
         val rest = label.substring(word.length)
         val bare = when {
             word == "m" -> rest.removePrefix(" ").takeIf { it.firstOrNull()?.isDigit() == true }
             rest.startsWith(' ') -> rest.substring(1)
-            rest.firstOrNull()?.isDigit() == true || GLUED_CODE.matches(rest) -> rest
+            DIGIT_CODE.matches(rest) || (word == "rer" && LETTER_CODE.matches(rest)) -> rest
             else -> null
         }
         return if (bare.isNullOrEmpty()) label else strippedMode(bare)
@@ -70,7 +67,8 @@ internal object TransitLabelMatch {
     private val APOSTROPHES = Regex("['\u2018\u2019\u02bc]")
     private val SPACES = Regex("[\\s\\p{Z}\\p{Pd}]+")
     private val NOT_WORD = Regex("[^\\p{L}\\p{N}]+")
-    private val GLUED_CODE = Regex("\\p{Lu}[\\p{L}\\p{N}]{0,3}")
+    private val DIGIT_CODE = Regex("[\\p{L}\\p{N}]*\\p{N}[\\p{L}\\p{N}]*")
+    private val LETTER_CODE = Regex("\\p{L}{1,2}")
     private val MODE_WORDS = listOf("ligne", "line", "metro", "bus", "tram", "rer", "m")
     private val CONNECTORS = setOf("vers", "direction", "dir", "to", "towards", "toward")
 }
