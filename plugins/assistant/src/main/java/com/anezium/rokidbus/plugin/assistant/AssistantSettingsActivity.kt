@@ -137,26 +137,26 @@ class AssistantSettingsActivity : Activity() {
     )
 
     /**
-     * The GPT-5.6 family, ordered the way a wearer picks: fastest first, because the
-     * glasses are a voice surface and most questions are quick ones. Captions follow
+     * The current ChatGPT models, ordered the way a wearer picks: fastest first, because
+     * the glasses are a voice surface and most questions are quick ones. Captions follow
      * how OpenAI positions the tiers -- speed and depth, not price, since a ChatGPT
      * plan is not billed per token.
      */
     private val planModelChoices = listOf(
         ModelChoice(
             ChatGptCodexApiClient.FAST_MODEL_ID,
-            "Luna",
+            "GPT-6-Luna",
             "Fastest. Best for quick questions",
         ),
         ModelChoice(
             ChatGptCodexApiClient.BALANCED_MODEL_ID,
-            "Terra",
-            "Balanced. Good for most things",
+            "GPT-6.1-Sol",
+            "Everyday workhorse. Good for most things",
         ),
         ModelChoice(
             ChatGptCodexApiClient.DEEP_MODEL_ID,
-            "Sol",
-            "Deepest reasoning. Slower to answer",
+            "GPT-6-Astra",
+            "Frontier intelligence. Slower to answer",
         ),
     )
     private val reasoningChoices = listOf(
