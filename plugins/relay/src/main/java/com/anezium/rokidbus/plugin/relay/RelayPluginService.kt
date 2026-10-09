@@ -3,6 +3,12 @@ package com.anezium.rokidbus.plugin.relay
 import android.view.KeyEvent
 import com.anezium.rokidbus.client.plugin.NexusCard
 import com.anezium.rokidbus.client.plugin.NexusCardLine
+import com.anezium.rokidbus.client.PluginRegistrationResult
+import com.anezium.rokidbus.client.plugin.NexusNoticeCloseReason
+import com.anezium.rokidbus.client.plugin.NexusPage
+import com.anezium.rokidbus.client.plugin.NexusPageClosed
+import com.anezium.rokidbus.client.plugin.NexusPageRequest
+import com.anezium.rokidbus.client.plugin.NexusPageVisibility
 import com.anezium.rokidbus.client.plugin.NexusPluginService
 import com.anezium.rokidbus.client.plugin.NexusReader
 import com.anezium.rokidbus.client.plugin.NexusReaderSegment
@@ -15,10 +21,15 @@ import com.anezium.rokidbus.client.plugin.NexusSpeechSession
 import com.anezium.rokidbus.client.plugin.NexusSpeechState
 import com.anezium.rokidbus.client.plugin.NexusSpeechStopReason
 import com.anezium.rokidbus.client.plugin.NexusSurfaceSession
+import com.anezium.rokidbus.shared.LinkStateBits
 import com.anezium.rokidbus.shared.NoticeSurfaceContract
 import com.anezium.rokidbus.shared.plugin.NexusInputEvent
 
-/** Menu-launched inbox. The notification-band runtime remains a separate, untouched flow. */
+/**
+ * Menu-launched inbox, read-only session pages, and the owner of Relay's one client. The
+ * notification band keeps this service bound while it needs the bus and hears its callbacks
+ * through here; see [RelayBus].
+ */
 class RelayPluginService : NexusPluginService() {
     private enum class ThreadMode {
         READING,
@@ -57,6 +68,74 @@ class RelayPluginService : NexusPluginService() {
     private var speechFinalReceived = false
     private var speechGeneration = 0
     private var speech: NexusSpeechSession? = null
+    private var pageScheduled: Runnable? = null
+    private val pageTime = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
+
+    // Read-only: nothing here replies, speaks, marks read or touches a notification.
+    private val pages = RelayPageProvider<NexusPageRequest>(
+        pageIdOf = NexusPageRequest::pageId,
+        floorOf = NexusPageRequest::minimumRevision,
+        publish = { request, page -> nexusClient?.publishPage(request, page) ?: NexusSdkResult.NOT_REGISTERED },
+        build = { pageId, revision ->
+            RelayPages.page(pageId, revision, ReplyRepository.inboxEntries(), settings.hideInboxPreviews()) {
+                pageTime.format(java.util.Date(it))
+            }
+        },
+        now = android.os.SystemClock::elapsedRealtime,
+        schedule = { delayMs, task ->
+            pageScheduled?.let(main::removeCallbacks)
+            val runnable = Runnable { pageScheduled = null; task() }
+            pageScheduled = runnable
+            main.postDelayed(runnable, delayMs)
+        },
+        cancelScheduled = {
+            pageScheduled?.let(main::removeCallbacks)
+            pageScheduled = null
+        },
+    )
+
+    override fun onCreate() {
+        super.onCreate()
+        nexusClient?.let(RelayBus::serviceCreated)
+        NotificationControl.pageListener = { main.post { pages.inboxChanged() } }
+    }
+
+    override fun onDestroy() {
+        NotificationControl.pageListener = null
+        pages.forget()
+        nexusClient?.let(RelayBus::serviceDestroyed)
+        super.onDestroy()
+    }
+
+    override fun onNexusPageRequest(request: NexusPageRequest): NexusPage = pages.onRequest(request)
+
+    override fun onNexusPageVisibility(visibility: NexusPageVisibility) =
+        pages.onVisibility(visibility.pageId, visibility.visible)
+
+    override fun onNexusPageClosed(closed: NexusPageClosed) = pages.onClosed(closed.pageId)
+
+    // The band's callbacks arrive on this, Relay's only client, and belong to the band.
+    override fun onNexusRegistrationState(result: Int) {
+        if (result != PluginRegistrationResult.APPROVED) pages.forget()
+        NotificationControl.noticeCallbacks()?.onRegistrationState(result)
+    }
+
+    override fun onNexusLinkState(state: Int) {
+        if (state and (LinkStateBits.CXR_CONTROL_UP or LinkStateBits.SPP_DATA_UP) == 0) pages.forget()
+        NotificationControl.noticeCallbacks()?.onLinkState(state)
+    }
+
+    override fun onNexusNoticeAction(id: String) {
+        NotificationControl.noticeCallbacks()?.onNoticeAction(id)
+    }
+
+    override fun onNexusNoticeClosed(reason: NexusNoticeCloseReason) {
+        NotificationControl.noticeCallbacks()?.onNoticeClosed(reason)
+    }
+
+    override fun onNexusSurfaceTextCommitted(surfaceId: String, text: String, cancelled: Boolean) {
+        NotificationControl.noticeCallbacks()?.onSurfaceTextCommitted(surfaceId, text, cancelled)
+    }
 
     override fun onNexusOpen() {
         // One client per plugin id on the bus: the band steps aside while the

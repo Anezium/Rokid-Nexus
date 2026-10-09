@@ -16,6 +16,16 @@ Inbox conversations open as native reader documents. When the source
 notification adds a message to the conversation already being read, Relay
 updates that document in place without interrupting an active reply flow.
 
+With the glasses' Nexus session and hubs that both support pages, the Relay card
+in the session opens `relay:main`, the inbox's conversations as a list, and
+each conversation as a document of who said what, headed by the time Relay
+captured it; there is no per-message time to show. A long conversation keeps
+its newest messages and says that earlier ones are not shown. Pages follow the
+hidden-preview and redaction settings, follow new captures while on screen at
+most twice a second, and are read-only: no reply, read-aloud or mark as read.
+The notice band, the inbox and a page share the plugin service's one hub
+connection.
+
 Notification content, sender names, images, and speech text are process-memory
 only. The settings screen stores only feature flags and the thread message
 limit.

@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Pages for the glasses' Nexus session, on hubs that support them: the inbox's
+  conversations as a list, and each conversation as a document with who said
+  what and when it was captured. Read-only: no reply, read-aloud or mark as
+  read from a page. The inbox's hidden-preview and redaction settings apply.
+- One connection to the hub instead of two: the notification band now sends
+  through the plugin's own service, so a band, the inbox and a page share it,
+  and ending a band no longer drops a page that is open.
+
 ## 1.2.4
 
 - **Switch to typing mid-dictation.** About a second after dictation starts, a

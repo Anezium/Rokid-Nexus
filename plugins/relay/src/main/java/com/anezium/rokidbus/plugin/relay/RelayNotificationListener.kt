@@ -9,6 +9,10 @@ import android.util.Log
 class RelayNotificationListener : NotificationListenerService() {
     private val runtime by lazy { RelayNoticeRuntime(applicationContext) }
 
+    /** Where the plugin service forwards the notice's callbacks. */
+    internal val noticeCallbacks: RelayNoticeRuntime
+        get() = runtime
+
     override fun onCreate() {
         super.onCreate()
         NotificationControl.instanceCreated(this)

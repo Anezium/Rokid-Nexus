@@ -86,8 +86,18 @@ internal object NotificationControl {
      * the time this runs; the visible inbox surface only has to look again.
      */
     fun notifyCaptured(notificationId: String) {
-        main.post { inbox?.onCaptureChanged(notificationId) }
+        main.post {
+            inbox?.onCaptureChanged(notificationId)
+            pageListener?.invoke()
+        }
     }
+
+    /** The notice band's callbacks, when the listener is connected; the plugin service forwards to them. */
+    fun noticeCallbacks(): RelayNoticeRuntime? = listener?.noticeCallbacks
+
+    /** Told when the inbox changes, so a visible page can follow it; set by the plugin service. */
+    @Volatile
+    var pageListener: (() -> Unit)? = null
 
     fun refreshFromSettings() {
         main.post { listener?.refreshFromSettings() }

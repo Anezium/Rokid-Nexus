@@ -34,14 +34,25 @@ import com.anezium.rokidbus.shared.plugin.PluginCapability
 import org.json.JSONObject
 import java.util.ArrayDeque
 
-/** One bus connection per live notice/reply exchange; it closes when that band closes. */
+/**
+ * One notice/reply exchange at a time, sent through Relay's one client: [RelayPluginService]'s,
+ * which [RelayBus] keeps bound for as long as the exchange lasts. The service forwards the
+ * notice's callbacks here. Releasing the band's hold never closes the client, so an inbox or a
+ * page using it at the same time keeps it.
+ */
 internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
     private val appContext = context.applicationContext
     private val main = Handler(Looper.getMainLooper())
     private val essentialUpdates = ArrayDeque<NexusNoticeUpdate>()
     private val settings = RelaySettings(appContext)
 
-    private var client: NexusPluginClient? = null
+    private val client: NexusPluginClient?
+        get() = RelayBus.client
+
+    init {
+        // A band waiting for the service's client goes up as soon as there is one.
+        RelayBus.setOnClientReady { onMain { tryShowPending() } }
+    }
     private var typingSurface: NexusSurfaceSession? = null
     private var pendingShow: ReplyRepository.PendingReply? = null
     private var pendingShowStartedAtMs = 0L
@@ -113,9 +124,7 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
         val captureAgeMs = (System.currentTimeMillis() - reply.capturedAtMs).coerceAtLeast(0L)
         Log.i(TAG, "showRequested generation=$generation captureAgeMs=$captureAgeMs")
 
-        if (client == null) {
-            client = NexusPluginClient.create(appContext, PLUGIN_ID, this).also(NexusPluginClient::connect)
-        }
+        RelayBus.holdForNotice(appContext)
         tryShowPending()
         main.postDelayed({
             val elapsedNowMs = SystemClock.elapsedRealtime()
@@ -903,8 +912,8 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
         currentReply = null
         currentTranscript = null
         activeNotice = false
-        client?.close()
-        client = null
+        // Only the band's own hold: an inbox or a page on the same client keeps it.
+        RelayBus.releaseNotice()
     }
 
     private fun onMain(block: () -> Unit) {
@@ -963,7 +972,6 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
 
     companion object {
         const val TAG = "NexusRelayNotice"
-        const val PLUGIN_ID = "relay"
         const val HIDE_FALLBACK_MS = 500L
         const val MIN_NOTICE_MESSAGE_INTERVAL_MS = 210L
 
