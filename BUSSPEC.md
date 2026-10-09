@@ -1838,14 +1838,17 @@ Back. It never falls back to immersion automatically. Deadlines are judged on
 each reply's arrival time, not on the next timer tick: a response to a pending
 request arriving at or after that request's deadline times the frame out, and a
 result arriving at or after its invocation deadline leaves the action
-unconfirmed. Live revisions answer no pending request, so no request deadline
+unconfirmed. The phone hub never hands an action to its provider at or after
+that deadline, even when its delivery waited and no timer ran. Live revisions answer no pending request, so no request deadline
 applies to them; they follow the lease alone and are accepted strictly before
 `leaseUntilMs`, dropped at or after it. They also require the visible frame, its
 current session/request identity, `live: true`, and a strictly higher revision;
 covered, stale, or duplicate revisions are dropped. Revisions stay monotonic per
 frame across refresh and retry: a correlated response below the highest
 revision already shown is dropped as stale, and an equal revision keeps the
-displayed content. A refusal to open a seventh frame allocates nothing: the hub
+displayed content. When a refresh or a Retry is answered with the very snapshot
+the frame retained, a document keeps the pages already measured for it, so
+reading goes on paging from there. A refusal to open a seventh frame allocates nothing: the hub
 shows a local status and sends no close for any frame.
 
 ### Visibility, actions, link loss, and negotiation
@@ -1885,9 +1888,10 @@ the disconnected provider. The session stays open. Restoration replays nothing;
 an explicit Retry with fresh authorization is required. Losing only SPP while
 CXR stays up ends just the frames whose last page sent to the glasses needed the
 data plane, that is whose envelope exceeds the 3 KiB CXR message: the phone hub
-drops them and tells
-their provider `link_lost`, the glasses hub keeps their snapshots inert by the
-same rule, and smaller pages go on over CXR. Nothing replays when SPP returns. Base
+drops them and tells their provider `link_lost`, the glasses hub keeps their
+snapshots inert by the same rule, and smaller pages go on over CXR. A page that
+needed SPP and was still being sent when SPP went counts as lost too, never as
+shown. Nothing replays when SPP returns. Base
 restoration only promises a still-live base; an Ink immersion closes on link
 loss under its existing contract.
 
@@ -1915,7 +1919,8 @@ page answer, revision or result over the live Binder or drops it, and a send
 that failed grants no publishing or action right. The phone hub applies a
 page's revision, actions and transport needs to its frame only once that page
 was sent to the glasses; a page it could not send, an answer, a live revision or
-a result's replacement, ends the frame on both sides, with a small correlated
+a result's replacement, or one needing SPP whose send SPP's loss overtook, ends
+the frame on both sides, with a small correlated
 `PAGE_UNAVAILABLE` to the glasses and `link_lost` to the provider. Logs carry
 ids, sizes and error codes, never page text.
 

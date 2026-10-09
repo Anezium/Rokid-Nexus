@@ -1736,8 +1736,8 @@ your pages, `PageTarget.Page(pageId, paramsJson)`, or invokes one of the page's
 declared actions, `PageTarget.Action(actionId)`; a row without a target is
 readable but inert. Ids are unique within their list. A document keeps its text
 order, paragraphs, explicit line breaks and Unicode, and the wearer pages
-through it with swipes; its `footer` is drawn after the text, in the caption
-style, on the last page.
+through it with swipes; its `footer` is paginated after the text, in the caption
+style.
 
 `conversation`, `media`, `route` and `ink` are reserved names this hub does not
 draw yet; a page using one shows as unavailable, never as an immersion. There
