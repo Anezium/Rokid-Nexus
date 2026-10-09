@@ -68,6 +68,15 @@ class ViewWorkspacePageToolTest {
             """{"file":"a.pdf","page":"2"}""", """{"file":"a.pdf","page":1.5}""",
             """{"file":"a.pdf","uri":"content://secret"}""", JSONObject().put("file", "x".repeat(161)).toString())
         invalid.forEach { assertTrue(it, tool.validate(it) is AssistantToolValidation.Invalid) }
+        assertTrue(tool.validate("""{"file":"board.jpg","page":null}""") is AssistantToolValidation.Valid)
+    }
+
+    @Test
+    fun `the schema lists every property as required for strict providers`() {
+        val schema = JSONObject(ViewWorkspacePageTool { null }.parametersSchema.text)
+        val required = schema.getJSONArray("required").let { array -> List(array.length()) { array.getString(it) } }
+        assertEquals(schema.getJSONObject("properties").keys().asSequence().toSet(), required.toSet())
+        assertFalse(schema.getBoolean("additionalProperties"))
     }
 
     private fun decode(result: AssistantToolResult): String {

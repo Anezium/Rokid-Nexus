@@ -23,8 +23,9 @@ internal class ViewWorkspacePageTool private constructor(
         "page number cited. Do not call it when the excerpt text already answers."
     override val parametersSchema = AssistantToolJsonSchema(
         """{"type":"object","properties":{"file":{"type":"string","minLength":1,"maxLength":160},""" +
-            """"page":{"type":"integer","minimum":1,"maximum":${WorkspaceLimits.MAX_PDF_PAGES}}},""" +
-            """"required":["file"],"additionalProperties":false}""",
+            """"page":{"type":["integer","null"],"minimum":1,"maximum":${WorkspaceLimits.MAX_PDF_PAGES},""" +
+            """"description":"PDF page number; null for an image"}},""" +
+            """"required":["file","page"],"additionalProperties":false}""",
     )
     override val sideEffecting = false
     override val maxExecutionsPerTurn = 1
@@ -42,7 +43,7 @@ internal class ViewWorkspacePageTool private constructor(
         val arguments = runCatching { JSONObject(argumentsJson) }.getOrNull()
             ?: return AssistantToolValidation.Invalid()
         val file = (arguments.opt("file") as? String)?.trim()
-        val page = arguments.opt("page")
+        val page = arguments.opt("page").takeUnless { it == JSONObject.NULL }
         val validPage = page == null || page is Int && page in 1..WorkspaceLimits.MAX_PDF_PAGES
         val known = arguments.keys().asSequence().all { it == "file" || it == "page" }
         return if (known && validPage && !file.isNullOrEmpty() && file.length <= 160) {
