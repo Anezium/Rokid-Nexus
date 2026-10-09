@@ -15,6 +15,11 @@ android {
         versionCode = 17
         versionName = "1.4.8"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // ML Kit's recognizer is a native library; one ABI keeps it from multiplying the APK.
+        ndk {
+            abiFilters += "arm64-v8a"
+        }
     }
 
     compileOptions {
@@ -35,6 +40,7 @@ dependencies {
     implementation("com.tom-roush:pdfbox-android:2.0.27.0") {
         exclude(group = "org.bouncycastle")
     }
+    implementation("com.google.mlkit:text-recognition:16.0.1")
 
     testImplementation(project(":ink-engine"))
     testImplementation("junit:junit:4.13.2")

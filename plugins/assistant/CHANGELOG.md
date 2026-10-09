@@ -2,11 +2,15 @@
 
 ## Unreleased
 
-- **Read PDFs in Workspace.** Index the text layer of `.pdf` files page by page
-  and cite the page with the file name. Password-protected PDFs and scans
-  without text are reported in the folder status; scanned pages and images are
-  not read yet. Large PDF folders are indexed over several passes so one check
-  never exceeds its time limit.
+- **Read PDFs and images in Workspace.** Index `.pdf` files page by page and
+  cite the page with the file name. Scanned pages and photos (`.jpg`, `.png`,
+  `.webp`, `.heic`) are read with on-device text recognition while indexing,
+  so asking a question never waits for it. Password-protected files and images
+  without text are reported in the folder status.
+- **Index large folders in the background.** Slow files are read over several
+  passes that resume after the last page read, and their finished pages are
+  searchable right away. Text added this way no longer cancels an answer in
+  progress; only removed or changed passages do.
 - Uses plugin operations the wearer approves, such as Transit's departures and
   journey guidance, with a phone hub that routes skills.
 - One shared tool loop for every structured provider: up to four rounds and

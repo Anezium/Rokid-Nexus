@@ -41,7 +41,7 @@ internal class WorkspaceController(
     private val gateway: WorkspaceDocumentGateway,
     private val scope: CoroutineScope,
     private val checkTimeoutMs: Long = WorkspaceLimits.CHECK_TIMEOUT_MS,
-    private val pdfReader: WorkspacePdfReader? = null,
+    private val pageReader: WorkspacePageReader? = null,
 ) : WorkspaceSearchAccess {
     private val lock = Any()
     private val owners = mutableSetOf<Any>()
@@ -78,15 +78,21 @@ internal class WorkspaceController(
             checkMutex.withLock {
                 emit(checking = true)
                 try {
-                    // Each pass reads at least one PENDING PDF, so the count only falls until none remain.
-                    var pending = Int.MAX_VALUE
+                    // Each pass reads at least one page of a PENDING file, so passes continue only
+                    // while they make progress and stop once nothing is left to read.
+                    var progress = -1L
                     while (true) {
-                        WorkspaceIndexer(store, gateway, checkTimeoutMs = checkTimeoutMs, pdfReader = pdfReader).refresh()
+                        WorkspaceIndexer(store, gateway, checkTimeoutMs = checkTimeoutMs, pageReader = pageReader).refresh()
                         val state = store.snapshot().state
-                        val left = state.index?.takeIf { state.problem == null && it.generation == settings.generation }
-                            ?.documents?.count { it.status == WorkspaceDocumentStatus.PENDING } ?: 0
-                        if (left == 0 || left >= pending) break
-                        pending = left
+                        val documents = state.index?.takeIf { state.problem == null && it.generation == settings.generation }
+                            ?.documents.orEmpty()
+                        if (documents.none { it.status == WorkspaceDocumentStatus.PENDING }) break
+                        val reached = documents.sumOf {
+                            if (it.status == WorkspaceDocumentStatus.PENDING) it.pagesRead.toLong()
+                            else WorkspaceLimits.MAX_PDF_PAGES + 1L
+                        }
+                        if (reached <= progress) break
+                        progress = reached
                     }
                 } catch (cancelled: CancellationException) {
                     throw cancelled
@@ -150,7 +156,7 @@ internal class WorkspaceController(
                 }
                 synchronized(lock) {
                     context.ensureActive()
-                    if (selection != selectionRevision || searchVersion() != (previous.generation to before.revision)) {
+                    if (selection != selectionRevision || indexVersion() != (previous.generation to before.revision)) {
                         if (uri != store.snapshot().state.settings.treeUri) gateway.releaseReadGrant(uri)
                         return@withContext WorkspaceFolderResult.CHECK_FAILED
                     }
@@ -188,7 +194,7 @@ internal class WorkspaceController(
     private fun selectionFailed(selection: Long, before: WorkspaceSnapshot, uri: String,
         persisted: Boolean): WorkspaceFolderResult = synchronized(lock) {
         if (persisted && uri != store.snapshot().state.settings.treeUri) gateway.releaseReadGrant(uri)
-        if (selection == selectionRevision && searchVersion() == (before.state.settings.generation to before.revision)) {
+        if (selection == selectionRevision && indexVersion() == (before.state.settings.generation to before.revision)) {
             store.selectionFailed(before.state.settings.generation, before.revision)
             emit()
         }
@@ -203,10 +209,12 @@ internal class WorkspaceController(
             }.getOrDefault(false)
     }
 
-    override fun searchVersion(): Pair<Long, Long> = store.snapshot().let { it.state.settings.generation to it.revision }
+    override fun searchVersion(): Pair<Long, Long> = store.snapshot().let { it.state.settings.generation to it.epoch }
+
+    private fun indexVersion(): Pair<Long, Long> = store.snapshot().let { it.state.settings.generation to it.revision }
 
     fun isCurrent(context: WorkspacePromptContext): Boolean = !suppressed &&
-        store.isCurrent(context.generation) && store.snapshot().revision == context.revision && isSearchAvailable()
+        store.isCurrent(context.generation) && store.snapshot().epoch == context.revision && isSearchAvailable()
 
     suspend fun contextForQuestion(query: String, existingContext: String): WorkspacePromptContext {
         val budget = workspacePromptBudget(existingContext)
@@ -215,14 +223,14 @@ internal class WorkspaceController(
         val settings = store.snapshot().state.settings
         val excerpts = if (snapshot != null && budget > 0) snapshot.retriever?.search(query, budget)?.excerpts.orEmpty() else ""
         return WorkspacePromptContext(snapshot?.state?.settings?.generation ?: settings.generation,
-            settings.enabled && !suppressed, excerpts, snapshot?.revision ?: -1)
+            settings.enabled && !suppressed, excerpts, snapshot?.epoch ?: -1)
     }
 
     override suspend fun search(query: String): WorkspaceSearchResult? {
         val snapshot = validatedSnapshot() ?: return null
         val result = snapshot.retriever?.search(query) ?: return null
         return result.takeIf { store.isCurrent(snapshot.state.settings.generation) &&
-            store.snapshot().revision == snapshot.revision && !suppressed }
+            store.snapshot().epoch == snapshot.epoch && !suppressed }
     }
 
     private suspend fun validatedSnapshot(): WorkspaceSnapshot? {

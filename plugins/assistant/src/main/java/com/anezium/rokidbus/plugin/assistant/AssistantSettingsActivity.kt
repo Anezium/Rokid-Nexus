@@ -348,8 +348,9 @@ class AssistantSettingsActivity : Activity() {
             addView(BusTheme.gap(this@AssistantSettingsActivity, 12))
             addView(NexusUi.cardBody(this@AssistantSettingsActivity,
                 "Choose a folder stored on your phone. Text (.txt), Markdown (.md), Word body text " +
-                    "(.docx), and PDF text (.pdf) are indexed locally; scanned pages and images are not " +
-                    "read yet. Relevant excerpts are sent with your questions to the AI provider you configured."),
+                    "(.docx), PDFs, and images (.jpg, .png, .webp, .heic) are indexed on the phone; scanned " +
+                    "pages and photos are read with on-device text recognition. Relevant excerpts are sent " +
+                    "with your questions to the AI provider you configured."),
                 NexusUi.block())
             addView(BusTheme.gap(this@AssistantSettingsActivity, 12))
             addView(workspaceCard(), NexusUi.block())
@@ -1928,9 +1929,9 @@ class AssistantSettingsActivity : Activity() {
                         " · Some files could not be extracted within the limits." else
                     if (index.documents.any { it.status in setOf(WorkspaceDocumentStatus.PROTECTED,
                         WorkspaceDocumentStatus.NO_TEXT) })
-                        " · Some PDFs are password-protected or scanned without text." else
+                        " · Some files are password-protected or have no readable text." else
                     if (index.documents.any { it.status == WorkspaceDocumentStatus.PENDING })
-                        " · Some PDFs are still waiting. Tap Re-index now." else ""
+                        " · Some files are still being read. Keep Assistant open or tap Re-index now." else ""
         }
     }
 

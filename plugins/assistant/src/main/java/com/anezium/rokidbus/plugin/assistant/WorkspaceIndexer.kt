@@ -30,7 +30,7 @@ internal class WorkspaceIndexer(
     private val gateway: WorkspaceDocumentGateway,
     private val clock: () -> Long = System::currentTimeMillis,
     private val checkTimeoutMs: Long = WorkspaceLimits.CHECK_TIMEOUT_MS,
-    private val pdfReader: WorkspacePdfReader? = null,
+    private val pageReader: WorkspacePageReader? = null,
     private val elapsed: () -> Long = { System.nanoTime() / 1_000_000 },
 ) {
     suspend fun refresh() {
@@ -38,10 +38,11 @@ internal class WorkspaceIndexer(
         val settings = before.settings
         if (!settings.enabled || settings.treeUri.isEmpty()) return
         var rootChecked = false
-        // PDFs are slow to extract, so a pass reads them only during the first half of the check
-        // and leaves the rest PENDING. The first PDF of a pass always runs, so every pass progresses.
-        val pdfDeadline = elapsed() + checkTimeoutMs / 2
-        var pdfStarted = false
+        // PDFs and images are slow to read, so a pass reads their pages only during the first half of
+        // the check and leaves the rest PENDING for the next pass, which resumes after the last page
+        // read. The first paged file of a pass always reads a page, so every pass progresses.
+        val pagedDeadline = elapsed() + checkTimeoutMs / 2
+        var pagedStarted = false
         try {
             if (!gateway.hasReadGrant(settings.treeUri)) {
                 store.folderUnavailable(settings.generation)
@@ -65,20 +66,20 @@ internal class WorkspaceIndexer(
                     currentCoroutineContext().ensureActive()
                     if (!store.isCurrent(settings.generation)) return@withTimeout
                     val previous = old[entry.documentId]
+                    val unchanged = previous != null && entry.hasSameContent(previous.entry)
+                    val resume = previous?.takeIf { unchanged && it.status == WorkspaceDocumentStatus.PENDING }
                     val extracted = when {
                         !entry.hasReliableMetadata() -> WorkspaceDocument(entry, emptyList(),
                             WorkspaceDocumentStatus.METADATA_UNAVAILABLE)
-                        previous != null && entry.hasSameContent(previous.entry) &&
-                            previous.status != WorkspaceDocumentStatus.PENDING -> previous.copy(entry = entry)
-                        entry.type != WorkspaceFileType.PDF -> readDocument(settings.treeUri, entry)
-                        pdfStarted && elapsed() >= pdfDeadline ->
-                            WorkspaceDocument(entry, emptyList(), WorkspaceDocumentStatus.PENDING)
+                        unchanged && resume == null -> previous!!.copy(entry = entry)
+                        entry.type?.paged != true -> readDocument(settings.treeUri, entry)
+                        pagedStarted && elapsed() >= pagedDeadline -> resume?.copy(entry = entry)
+                            ?: WorkspaceDocument(entry, emptyList(), WorkspaceDocumentStatus.PENDING)
                         else -> {
-                            val guaranteed = !pdfStarted
-                            pdfStarted = true
-                            val stopAt = if (guaranteed) maxOf(pdfDeadline, elapsed() + checkTimeoutMs / 4)
-                            else pdfDeadline
-                            readDocument(settings.treeUri, entry, stopAt, guaranteed)
+                            val stopAt = if (pagedStarted) pagedDeadline
+                            else maxOf(pagedDeadline, elapsed() + checkTimeoutMs / 4)
+                            pagedStarted = true
+                            readDocument(settings.treeUri, entry, resume, stopAt)
                         }
                     }
                     val retained = extracted.chunks.takeWhile { chunk ->
@@ -152,44 +153,45 @@ internal class WorkspaceIndexer(
     private suspend fun readDocument(
         treeUri: String,
         entry: WorkspaceEntry,
-        pdfStopAt: Long = Long.MAX_VALUE,
-        pdfGuaranteed: Boolean = true,
+        resume: WorkspaceDocument? = null,
+        stopAt: Long = Long.MAX_VALUE,
     ): WorkspaceDocument {
-        val maxBytes = when (entry.type) {
+        val type = entry.type!!
+        val maxBytes = when (type) {
             WorkspaceFileType.DOCX -> WorkspaceLimits.MAX_DOCX_BYTES
             WorkspaceFileType.PDF -> WorkspaceLimits.MAX_PDF_BYTES
+            WorkspaceFileType.IMAGE -> WorkspaceLimits.MAX_IMAGE_BYTES
             else -> WorkspaceLimits.MAX_TEXT_BYTES
         }
         if (entry.sizeBytes!! > maxBytes) return WorkspaceDocument(entry, emptyList(), WorkspaceDocumentStatus.TOO_LARGE)
-        if (entry.type == WorkspaceFileType.PDF && pdfReader == null) {
+        if (type.paged && pageReader == null) {
             return WorkspaceDocument(entry, emptyList(), WorkspaceDocumentStatus.UNREADABLE)
         }
+        val firstPage = (resume?.pagesRead ?: 0) + 1
+        val chunks = resume?.chunks.orEmpty().toMutableList()
+        var remaining = WorkspaceLimits.MAX_FILE_CHARS - chunks.sumOf { it.text.length }
         return try {
             val stream = gateway.open(treeUri, entry.documentId)
             var timedOut = false
             val content = stream.use {
                 runInterruptible(Dispatchers.IO) {
-                    if (entry.type == WorkspaceFileType.PDF) {
-                        val bytes = readWorkspaceBytes(it, WorkspaceLimits.MAX_PDF_BYTES).data!!
-                        pdfReader!!.read(bytes) { characters ->
-                            if (elapsed() >= pdfStopAt) timedOut = true
-                            timedOut || characters >= WorkspaceLimits.MAX_FILE_CHARS
+                    if (type.paged) {
+                        val bytes = readWorkspaceBytes(it, maxBytes).data!!
+                        pageReader!!.read(type, bytes, firstPage) { characters ->
+                            if (elapsed() >= stopAt) timedOut = true
+                            timedOut || characters >= remaining
                         }
                     } else {
-                        WorkspacePagedText(listOf(WorkspaceDocumentExtractor.extract(it, entry.type!!)), complete = true)
+                        WorkspacePagedText(listOf(WorkspaceDocumentExtractor.extract(it, type)), complete = true)
                     }
                 }
             }
             val after = gateway.metadata(treeUri, entry.documentId)
             if (!entry.hasSameContent(after)) throw WorkspaceCheckLimitException()
-            if (timedOut && !pdfGuaranteed) return WorkspaceDocument(entry, emptyList(), WorkspaceDocumentStatus.PENDING)
-            val paged = entry.type == WorkspaceFileType.PDF
-            val chunks = mutableListOf<WorkspaceChunk>()
-            var remaining = WorkspaceLimits.MAX_FILE_CHARS
-            var lostText = !content.complete
-            var paragraphs = 0
+            var lostText = !content.complete && !timedOut
+            var paragraphs = (chunks.maxOfOrNull { it.paragraph } ?: -1) + 1
             for ((position, page) in content.pages.withIndex()) {
-                val text = if (paged) page.replace(PDF_CONTROL, " ") else page
+                val text = if (type.paged) page.replace(PAGED_CONTROL, " ") else page
                 val capped = workspaceWordPrefix(text, remaining)
                 if (capped.length < text.trim().length) lostText = true
                 val pageChunks = WorkspaceChunker.chunk(capped, entry.type == WorkspaceFileType.MARKDOWN,
@@ -197,18 +199,20 @@ internal class WorkspaceIndexer(
                 val first = chunks.size
                 pageChunks.mapTo(chunks) { chunk ->
                     chunk.copy(ordinal = first + chunk.ordinal, paragraph = paragraphs + chunk.paragraph,
-                        page = if (paged) position + 1 else 0)
+                        page = if (type == WorkspaceFileType.PDF) firstPage + position else 0)
                 }
                 paragraphs += (pageChunks.maxOfOrNull { it.paragraph } ?: -1) + 1
                 remaining -= pageChunks.sumOf { it.text.length }
                 if (capped.length < text.trim().length) break
             }
             val status = when {
-                chunks.isEmpty() && paged && !timedOut -> WorkspaceDocumentStatus.NO_TEXT
                 lostText -> WorkspaceDocumentStatus.TRUNCATED
+                timedOut -> WorkspaceDocumentStatus.PENDING
+                chunks.isEmpty() && type.paged -> WorkspaceDocumentStatus.NO_TEXT
                 else -> WorkspaceDocumentStatus.INDEXED
             }
-            WorkspaceDocument(entry, chunks, status)
+            WorkspaceDocument(entry, chunks, status,
+                pagesRead = if (status == WorkspaceDocumentStatus.PENDING) firstPage - 1 + content.pages.size else 0)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (limit: WorkspaceCheckLimitException) {
@@ -225,6 +229,6 @@ internal class WorkspaceIndexer(
     }
 
     private companion object {
-        val PDF_CONTROL = Regex("[\\p{Cc}\\p{Cf}&&[^\\n\\t]]")
+        val PAGED_CONTROL = Regex("[\\p{Cc}\\p{Cf}&&[^\\n\\t]]")
     }
 }

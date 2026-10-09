@@ -14,7 +14,8 @@ internal object WorkspaceIndexJson {
                     put(JSONObject().put("id", entry.documentId).put("name", entry.name)
                         .put("path", entry.relativePath).put("modifiedAtMs", entry.modifiedAtMs)
                         .put("sizeBytes", entry.sizeBytes).put("type", entry.type?.name)
-                        .put("status", document.status.name).put("chunks", JSONArray().apply {
+                        .put("status", document.status.name).put("pagesRead", document.pagesRead)
+                        .put("chunks", JSONArray().apply {
                             document.chunks.forEach { chunk ->
                                 put(JSONObject().put("ordinal", chunk.ordinal).put("text", chunk.text)
                                     .put("heading", chunk.headingPath).put("paragraph", chunk.paragraph)
@@ -51,6 +52,7 @@ internal object WorkspaceIndexJson {
                         type = WorkspaceFileType.valueOf(document.getString("type")),
                     ),
                     status = WorkspaceDocumentStatus.valueOf(document.getString("status")),
+                    pagesRead = document.optInt("pagesRead", 0),
                     chunks = List(chunks.length()) { ordinal ->
                         val chunk = chunks.getJSONObject(ordinal)
                         WorkspaceChunk(chunk.getInt("ordinal"), chunk.getString("text"),
@@ -74,9 +76,11 @@ internal object WorkspaceIndexJson {
             require(entry.name.length <= 96 && entry.relativePath.length <= 160)
             require(document.chunks.sumOf { it.text.length } <= WorkspaceLimits.MAX_FILE_CHARS)
             require(document.chunks.map { it.ordinal }.distinct().size == document.chunks.size)
+            require(document.pagesRead in 0..WorkspaceLimits.MAX_PDF_PAGES)
             if (document.chunks.isNotEmpty()) {
                 require(entry.hasReliableMetadata())
-                require(document.status in setOf(WorkspaceDocumentStatus.INDEXED, WorkspaceDocumentStatus.TRUNCATED))
+                require(document.status in setOf(WorkspaceDocumentStatus.INDEXED, WorkspaceDocumentStatus.TRUNCATED,
+                    WorkspaceDocumentStatus.PENDING))
             }
             document.chunks.forEach { chunk ->
                 require(chunk.ordinal >= 0 && chunk.paragraph >= 0 && chunk.page >= 0 && chunk.headingPath.length <= 160)

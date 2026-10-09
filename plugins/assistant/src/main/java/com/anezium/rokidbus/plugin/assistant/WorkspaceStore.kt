@@ -3,8 +3,13 @@ package com.anezium.rokidbus.plugin.assistant
 import org.json.JSONObject
 import java.io.File
 
+/**
+ * [revision] moves on every published change. [epoch] moves only when a publication withdraws or alters
+ * an excerpt that was already searchable, so background indexing that only adds text never invalidates
+ * an answer in flight.
+ */
 internal data class WorkspaceSnapshot(val state: WorkspaceState, val retriever: WorkspaceRetriever? = null,
-    val revision: Long = 0)
+    val revision: Long = 0, val epoch: Long = 0)
 
 internal class WorkspaceStore(
     private val directory: File,
@@ -57,8 +62,10 @@ internal class WorkspaceStore(
         val changed = current.state.index?.documents != index.documents
         val retriever = if (changed) WorkspaceRetriever(index.documents) else current.retriever
         val revision = current.revision + if (changed) 1 else 0
+        val epoch = current.epoch + if (current.state.index?.let { workspaceRetracts(it, index) } == true) 1 else 0
         writeAssistantJsonAtomically(indexFile, text, fileOperations)
-        current = WorkspaceSnapshot(WorkspaceState(current.state.settings, index, validated = true), retriever, revision)
+        current = WorkspaceSnapshot(WorkspaceState(current.state.settings, index, validated = true), retriever,
+            revision, epoch)
         true
     }
 
@@ -112,5 +119,14 @@ internal class WorkspaceStore(
     private fun readBounded(file: File, maxBytes: Int): String = file.inputStream().use {
         require(file.length() <= maxBytes)
         readWorkspaceBytes(it, maxBytes).data!!.toString(Charsets.UTF_8)
+    }
+}
+
+internal fun workspaceRetracts(before: WorkspaceIndex, after: WorkspaceIndex): Boolean {
+    val documents = after.documents.associateBy { it.entry.documentId }
+    return before.documents.any { old ->
+        val new = documents[old.entry.documentId]
+        old.chunks.isNotEmpty() && (new == null || new.entry != old.entry ||
+            new.chunks.size < old.chunks.size || new.chunks.subList(0, old.chunks.size) != old.chunks)
     }
 }

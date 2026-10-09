@@ -14,6 +14,7 @@ internal object WorkspaceLimits {
     const val MAX_DOCX_BYTES = 4 * 1_024 * 1_024
     const val MAX_PDF_BYTES = 32 * 1_024 * 1_024
     const val MAX_PDF_PAGES = 500
+    const val MAX_IMAGE_BYTES = 24 * 1_024 * 1_024
     const val MAX_ZIP_ENTRIES = 128
     const val MAX_EXCERPT_CHARS = 2_500
     const val MAX_QUERY_CHARS = 240
@@ -25,14 +26,20 @@ internal object WorkspaceLimits {
 }
 
 internal enum class WorkspaceFileType {
-    TEXT, MARKDOWN, DOCX, PDF;
+    TEXT, MARKDOWN, DOCX, PDF, IMAGE;
+
+    /** Read page by page through [WorkspacePageReader], within a time budget and resumable across passes. */
+    val paged: Boolean get() = this == PDF || this == IMAGE
 
     companion object {
+        private val IMAGE_EXTENSIONS = listOf(".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif")
+
         fun fromName(name: String): WorkspaceFileType? = when {
             name.endsWith(".txt", ignoreCase = true) -> TEXT
             name.endsWith(".md", ignoreCase = true) -> MARKDOWN
             name.endsWith(".docx", ignoreCase = true) -> DOCX
             name.endsWith(".pdf", ignoreCase = true) -> PDF
+            IMAGE_EXTENSIONS.any { name.endsWith(it, ignoreCase = true) } -> IMAGE
             else -> null
         }
     }
@@ -75,6 +82,8 @@ internal data class WorkspaceDocument(
     val entry: WorkspaceEntry,
     val chunks: List<WorkspaceChunk>,
     val status: WorkspaceDocumentStatus = WorkspaceDocumentStatus.INDEXED,
+    // Pages already read while the document is PENDING; the next pass resumes after them.
+    val pagesRead: Int = 0,
 )
 
 internal data class WorkspaceIndex(
