@@ -1631,7 +1631,11 @@ full app · exclusive surface"; selecting it shows a local panel naming the
 plugin and the replacement, with Open preselected and Cancel, and only SELECT on
 Open launches the immersion. BACK cancels; a late surface of a cancelled launch
 is closed unseen. Native apps and the hub camera launch locally and close the
-session on success. A page failure never turns into a launch.
+session on success. A page failure never turns into a launch. Entering
+Applications from the root freezes its entries and their order: refreshes and
+More pages keep that order, labels and availability follow the catalog by entry
+key, a removed entry stays in place as an inert row, an entry added since waits
+for the next entry, and a launch still checks the catalog as it is when it runs.
 
 ### Gate and gesture ownership
 
@@ -1860,7 +1864,11 @@ confirmation is bound to the provider registration, page, action and shown
 revision; cover, refresh, a changed revision, BACK, GLOBAL, link loss or
 invalidation cancels it, and none is actionable while a frame loads or is
 unavailable. Confirm alone creates one invocation with a fresh id and the
-revision the wearer saw. A pending invocation
+revision the wearer saw. The phone hub forwards, and the SDK dispatches, an
+action only for a frame whose current request was answered with a valid page
+that was sent on, at its shown revision and naming an action that page
+advertised: a refresh suspends that right until its own answer is sent, and a
+refused, invalid or below-floor answer, or a failed send, clears it. A pending invocation
 blocks another SELECT. `done`, `stale`, and `rejected` clear it; rejection keeps
 the page. A lost acknowledgement becomes Unconfirmed and is never resent. A
 provider's `kind: hub` action gives it no hub control and is rejected; only
@@ -1872,8 +1880,11 @@ On total link loss all provider frames become inert unavailable, keep bounded
 snapshots, and lose leases, pending requests, and invocations; local `nexus:`
 frames stay readable. Local BACK still pops frames without sending anything to
 the disconnected provider. The session stays open. Restoration replays nothing;
-an explicit Retry with fresh authorization is required. Losing only SPP disables
-pages that need the data plane while small pages over CXR may remain. Base
+an explicit Retry with fresh authorization is required. Losing only SPP while
+CXR stays up ends just the frames whose last page needed the data plane, that is
+whose envelope exceeds the 3 KiB CXR message: the phone hub drops them and tells
+their provider `link_lost`, the glasses hub keeps their snapshots inert by the
+same rule, and smaller pages go on over CXR. Nothing replays when SPP returns. Base
 restoration only promises a still-live base; an Ink immersion closes on link
 loss under its existing contract.
 
@@ -1884,7 +1895,8 @@ correlated `PAGE_UNAVAILABLE` on `/page/response` for each affected retained
 frame, rejects any later reply tied to the earlier registration even when its
 ids still match, and sends nothing more to it. The glasses hub treats that
 trusted invalidation as owner-scoped: it cancels that owner's work and keeps its
-snapshots inert in every affected frame, even with no request pending.
+snapshots inert in every affected frame, even with no request pending and under
+a pending full-app launch.
 
 Provider binding is separate from immersion. To answer a request the phone hub
 must use the provider's live registration, or bind its plugin service cold
@@ -1895,12 +1907,18 @@ unbinds, mutes or refocuses a live base immersion, even one of the same plugin.
 It keeps a page-only binding while that plugin has a visible leased page or a
 pending request, tells the owner about a close before unbinding, and releases
 the binding when no demand remains. Page traffic is never queued while a link is
-down, and logs carry ids, sizes and error codes, never page text.
+down, between the hubs or between a provider and the phone hub: the SDK sends a
+page answer, revision or result over the live Binder or drops it, and a send
+that failed grants no publishing or action right. Logs carry ids, sizes and
+error codes, never page text.
 
 Pages need **both** hub announcements on `/system/hub/capabilities` to carry
 `pageSessionVersion: 1` over the current link; an absent, malformed, negative or
 newer value means unsupported, and support resets on disconnect, hub restart and
-a replacement connection. The phone hub then tells each opted-in provider its
+a replacement connection. When the negotiated version changes while the link
+stays up, the glasses hub tells the session and its launcher catalog: without
+support every provider frame turns inert and Applications offers the full apps,
+and support coming back replays nothing. The phone hub then tells each opted-in provider its
 effective version with an owner-scoped `/system/hub/capabilities` message
 carrying `pluginId` and `pageSessionVersion` (1 or 0), at registration and on
 every change; plugins without the metadata receive nothing new, and a missing
