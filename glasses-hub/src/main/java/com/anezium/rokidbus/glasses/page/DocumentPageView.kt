@@ -59,6 +59,11 @@ internal class DocumentPageView(context: Context) : View(context) {
         invalidate()
     }
 
+    /** Reports the next layout even when it equals the last one reported: its reader may have dropped it. */
+    fun forgetReport() {
+        reported = null
+    }
+
     /** The text drawn on the current page, in order; for tests and accessibility. */
     fun visibleText(): String = pages.getOrNull(page).orEmpty().joinToString("\n") { line ->
         val layout = layouts[line.segment]

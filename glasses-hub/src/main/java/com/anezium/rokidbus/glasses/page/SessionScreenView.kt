@@ -81,6 +81,8 @@ internal class SessionScreenView(context: Context) : LinearLayout(context) {
         hint.visibility = if (screen.hint == null && status == null) View.GONE else View.VISIBLE
         hintLine.visibility = hint.visibility
 
+        // A document coming back on screen reports its pages again, as the state may have reset them meanwhile.
+        if (document?.parent !== viewport) document?.forgetReport()
         viewport.removeAllViews()
         blockViews.clear()
         screen.blocks.forEach { block ->

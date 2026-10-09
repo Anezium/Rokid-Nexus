@@ -530,6 +530,21 @@ class ReadingRunnerTest {
         assertEquals(opened, requests().size)
     }
 
+    @Test
+    fun `a document opened again at the same revision is paged again`() {
+        open("relay:thread", thread)
+        assertTrue("pages=${top().pageStarts.size}", top().pageStarts.size > 1)
+        dispatch(SessionEvent.Back(now))
+        assertTrue(runner.state is SessionState.Root)
+        // The same card, the same depth, the same answer: what the renderer measured is the same.
+        dispatch(SessionEvent.Enter(now))
+        dispatch(SessionEvent.PageResponse(answer(requests().last().request, 1, thread), now))
+        assertEquals(FrameMode.READING, top().mode)
+        assertTrue("pages=${top().pageStarts.size}", top().pageStarts.size > 1)
+        val read = readOn()
+        listOf("Mika · captured 14:11", "line 80 of the thread").forEach { assertTrue(it, it in read) }
+    }
+
     /** Rows, a child page, back: the uncovered frame's revalidation then times out. */
     private fun timeOutRefresh() {
         dispatch(SessionEvent.Enter(now))
