@@ -108,7 +108,9 @@ class ViewWorkspacePageToolTest {
             val started = System.nanoTime()
             assertNull(controller.viewPage("sales.pdf", 2))
             assertTrue(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started) < 2_000)
+            val opens = gateway.opens.getValue("sales")
             assertNull(controller.viewPage("sales.pdf", 2))
+            assertEquals(opens, gateway.opens.getValue("sales"))
             gate.countDown()
             withTimeout(2_000) { while (controller.viewPage("sales.pdf", 2) == null) delay(20) }
         } finally {

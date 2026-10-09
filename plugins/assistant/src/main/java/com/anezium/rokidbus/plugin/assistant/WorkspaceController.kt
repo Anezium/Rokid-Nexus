@@ -226,6 +226,8 @@ internal class WorkspaceController(
 
     override suspend fun viewPage(file: String, page: Int?): ByteArray? {
         val reader = pageReader ?: return null
+        // A render still running would refuse this one anyway; skip reading the file for nothing.
+        if (renderBusy.get()) return null
         val snapshot = validatedSnapshot() ?: return null
         val documents = snapshot.state.index?.documents.orEmpty().filter { it.viewable() }
         // Models sometimes copy the whole citation, page and visual mark included; the exact name wins
@@ -268,8 +270,9 @@ internal class WorkspaceController(
      */
     private suspend fun renderDetached(render: () -> ByteArray?): ByteArray? {
         if (!renderBusy.compareAndSet(false, true)) return null
-        val result = CompletableDeferred<ByteArray?>()
+        val result: CompletableDeferred<ByteArray?>
         try {
+            result = CompletableDeferred()
             Thread({
                 try {
                     result.complete(render())

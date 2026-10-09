@@ -19,8 +19,8 @@ internal class ViewWorkspacePageTool private constructor(
     override val name = VIEW_WORKSPACE_PAGE_TOOL_NAME
     override val description = "Look at one page of a Workspace PDF or image file when the Workspace excerpts " +
         "point to it but their text alone cannot answer, for example a chart, a table layout, a diagram, a " +
-        "photo, or garbled recognized text. Pass the file exactly as cited before \" › \" and, for a PDF, the " +
-        "page number cited. Do not call it when the excerpt text already answers."
+        "photo, or garbled recognized text. Pass the file as cited without its trailing \" › page N\" or " +
+        "visual note and, for a PDF, the page number cited. Do not call it when the excerpt text already answers."
     override val parametersSchema = AssistantToolJsonSchema(
         """{"type":"object","properties":{"file":{"type":"string","minLength":1,"maxLength":160},""" +
             """"page":{"type":["integer","null"],"minimum":1,"maximum":${WorkspaceLimits.MAX_PDF_PAGES},""" +
