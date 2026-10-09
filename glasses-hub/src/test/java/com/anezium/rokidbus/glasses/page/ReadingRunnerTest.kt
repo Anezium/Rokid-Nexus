@@ -329,6 +329,52 @@ class ReadingRunnerTest {
         assertTrue(equal, "Avenue Foch" in equal && "Rue de Rivoli" !in equal)
     }
 
+    /**
+     * The wearer goes from the long text straight to its rows, without paging, and the page is
+     * lost there; Retry is then answered at the floor with the same content.
+     */
+    private fun retryEqualAfter(loss: () -> Unit) {
+        open("nav:main", longSummary)
+        assertTrue("pages=${top().pageStarts.size}", top().pageStarts.size > 1)
+        dispatch(SessionEvent.Enter(now))
+        assertEquals(FrameMode.ROWS, top().mode)
+        loss()
+        assertTrue("${top().status}", top().status is FrameStatus.Unavailable)
+        assertEquals(FrameMode.ROWS, top().mode)
+        dispatch(SessionEvent.Enter(now))
+        val retry = requests().last()
+        assertEquals(SessionReducer.REASON_RETRY, retry.request.reason)
+        dispatch(SessionEvent.PageResponse(answer(retry.request, retry.minimumRevision!!, longSummary), now))
+        assertTrue("${top().status}", top().status is FrameStatus.Shown)
+        assertEquals(FrameMode.READING, top().mode)
+        assertTrue("pages=${top().pageStarts.size}", top().pageStarts.size > 1)
+    }
+
+    @Test
+    fun `Retry at an equal revision after a link loss in the rows keeps long text pageable`() {
+        retryEqualAfter {
+            dispatch(SessionEvent.LinkLost)
+            dispatch(SessionEvent.LinkRestored)
+        }
+        val read = readOn()
+        (listOf("Turn right in 120 m", "ETA · 12:41") + lines).forEach { assertTrue(it, it in read) }
+    }
+
+    @Test
+    fun `Retry at an equal revision after a refresh timeout in the rows keeps long text pageable`() {
+        retryEqualAfter {
+            dispatch(SessionEvent.Enter(now))
+            val child = requests().last().request
+            dispatch(SessionEvent.PageResponse(answer(child, 1, PageBody.SelectableList(listOf(PageRow("a", "A")))), now))
+            dispatch(SessionEvent.Back(now))
+            assertEquals(SessionReducer.REASON_REFRESH, requests().last().request.reason)
+            now += PageSurfaceContract.PAGE_TIMEOUT_MS
+            dispatch(SessionEvent.Tick(now))
+        }
+        val read = readOn()
+        (listOf("Turn right in 120 m", "ETA · 12:41") + lines).forEach { assertTrue(it, it in read) }
+    }
+
     /** Rows, a child page, back: the uncovered frame's revalidation then times out. */
     private fun timeOutRefresh() {
         dispatch(SessionEvent.Enter(now))

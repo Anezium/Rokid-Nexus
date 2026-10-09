@@ -949,7 +949,8 @@ internal class SessionReducer(
         }
         val frame = top.copy(overflowing = true)
         if (!frame.readsFirst()) return keep(model)
-        val reading = frame.copy(mode = FrameMode.READING, anchor = null, pageStarts = emptyList(), page = 0)
+        // Pages measured for this revision stay: the renderer reports the same layout only once.
+        val reading = frame.copy(mode = FrameMode.READING, anchor = null, page = 0)
         return SessionTransition(model.copy(state = state.withTop(reading)), listOf(ShowFrame))
     }
 
