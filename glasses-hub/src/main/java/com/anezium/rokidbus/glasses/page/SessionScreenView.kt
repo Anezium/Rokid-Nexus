@@ -188,6 +188,9 @@ internal class SessionScreenView(context: Context) : LinearLayout(context) {
     private fun fact(block: ScreenBlock.Fact): View = LinearLayout(context).apply {
         orientation = HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
+        // Without baselines the label is measured from what the value leaves, so a value as wide as
+        // the row cuts the label short (and is read whole) instead of pushing past the row's edge.
+        isBaselineAligned = false
         addView(PageStyle.text(context, block.label, PageStyle.CAPTION_PX, PageStyle.muted, PageStyle.mono, 1, 0.1f), LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
         addView(PageStyle.text(context, block.value, PageStyle.BODY_PX, if (block.dimmed) PageStyle.muted else PageStyle.ink, PageStyle.sans, 2))
     }

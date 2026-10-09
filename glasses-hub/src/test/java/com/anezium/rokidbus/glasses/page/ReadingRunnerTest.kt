@@ -484,6 +484,7 @@ class ReadingRunnerTest {
         assertEquals(FrameMode.ROWS, top().mode)
         assertFalse(top().overflowing)
         assertTrue(inViewport("primary") && inViewport("row:commands"))
+        assertFactsInsideTheirRow()
         dispatch(SessionEvent.PageResponse(answer(opened, 3, grown), now))
         assertEquals(3L, (top().status as FrameStatus.Shown).revision)
     }
@@ -495,18 +496,36 @@ class ReadingRunnerTest {
         assertReadFromFirstRow(requests().size, listOf("Turn right in 40 m") + lines, "commands")
     }
 
+    private fun withAlso(value: String) = PageBody.Summary(
+        primary = "Turn right in 80 m", secondary = "Rue de Rivoli",
+        facts = listOf(PageFact("eta", "ETA", "12:41"), PageFact("also", "Also", value)),
+        items = listOf(commandsRow),
+    )
+
+    /** Every drawn fact's label and value sit inside the fact's own width, so none is clipped. */
+    private fun assertFactsInsideTheirRow() {
+        view.blockViews.filterKeys { it.startsWith("fact:") }.values.forEach { fact ->
+            fact as ViewGroup
+            val right = (0 until fact.childCount).maxOf { fact.getChildAt(it).right }
+            assertTrue("${fact.childCount} children end at $right in ${fact.width}", right <= fact.width)
+        }
+    }
+
     @Test
     fun `live guidance whose fact value grows past its lines is read whole`() {
-        fun withAlso(value: String) = PageBody.Summary(
-            primary = "Turn right in 80 m", secondary = "Rue de Rivoli",
-            facts = listOf(PageFact("eta", "ETA", "12:41"), PageFact("also", "Also", value)),
-            items = listOf(commandsRow),
-        )
         // Two lines of value still fit beside their label; this one needs more than two.
         val grown = (1..4).joinToString(", then ") { "change at Châtelet for line 1$it towards Olympiades" }
         assertTrue(grown.length <= PageTemplateContract.MAX_DETAIL_CHARS)
         liveGuidanceGrows(withAlso("Line 14"), withAlso(grown))
         assertReadFromFirstRow(requests().size, listOf("Turn right in 80 m", "ETA · 12:41", "Also · $grown"), "commands")
+    }
+
+    @Test
+    fun `live guidance whose fact value wraps across the full width is read whole, not clipped`() {
+        val wrapping = "Change at Châtelet for line 14 towards Olympiades, then line 7 towards Villejuif"
+        liveGuidanceGrows(withAlso("Line 14"), withAlso(wrapping))
+        assertFactsInsideTheirRow()
+        assertReadFromFirstRow(requests().size, listOf("Turn right in 80 m", "ETA · 12:41", "Also · $wrapping"), "commands")
     }
 
     @Test
