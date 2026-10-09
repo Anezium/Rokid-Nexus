@@ -354,6 +354,39 @@ class TransitReadSkillsTest {
     }
 
     @Test
+    fun `linePrefix - a glued mode word names a line code in any casing`() {
+        data.boards[stop.id] = listOf(
+            departure("C", "SARA", 2),
+            departure("T3a", "Porte de Vincennes", 3),
+            departure("14", "Saint-Denis - Pleyel", 4),
+        )
+        listOf("rerc", "RERC", "rerC").forEach { spoken ->
+            assertEquals(spoken, listOf("C" to "SARA"), departures(JSONObject().put("line", spoken)).rows())
+        }
+        listOf("tramt3a", "tramT3a", "TRAMT3A").forEach { spoken ->
+            assertEquals(spoken, listOf("T3a" to "Porte de Vincennes"), departures(JSONObject().put("line", spoken)).rows())
+        }
+        listOf("metro14", "LIGNE14", "m14").forEach { spoken ->
+            assertEquals(spoken, listOf("14" to "Saint-Denis - Pleyel"), departures(JSONObject().put("line", spoken)).rows())
+        }
+    }
+
+    @Test
+    fun `unrelated - a word that starts with a mode word is never a line code in any casing`() {
+        data.boards[stop.id] = listOf(departure("WAY", "North", 2))
+        listOf("TRAMWAY", "BUSWAY", "Tramway", "tramway").forEach { spoken ->
+            assertEquals(spoken, "no_matching_line", departures(JSONObject().put("line", spoken)).getString("match"))
+        }
+        assertEquals(emptySet<String>(), TransitLabelMatch.lines("WAY", listOf("TRAMWAY", "Tramway")))
+        listOf("Linea", "LINEA", "linea").forEach { spoken ->
+            assertEquals(spoken, emptySet<String>(), TransitLabelMatch.lines(spoken, listOf("A")))
+        }
+        assertEquals(emptySet<String>(), TransitLabelMatch.lines("METROPOLE", listOf("POLE")))
+        assertEquals(emptySet<String>(), TransitLabelMatch.lines("LINES", listOf("S")))
+        assertEquals(emptySet<String>(), TransitLabelMatch.lines("BUSES", listOf("ES")))
+    }
+
+    @Test
     fun `directionPartial - an exact headsign wins over the same words without a connector`() {
         data.boards[stop.id] = listOf(
             departure("7", "to Orly", 2),
