@@ -138,13 +138,14 @@ class RelayPagesTest {
     }
 
     @Test
-    fun `inbox changes reach only visible pages, twice a second at most, from the floor up`() {
+    fun `inbox changes reach only visible pages, twice a second at most, from above the floor`() {
         val harness = Harness()
-        assertEquals(7L, (harness.provider.onRequest(Harness.Request(RelayPages.MAIN, floor = 7)) as NexusPage.Content).revision)
+        // Rebuilt without knowing what the glasses kept, a page never reuses their retained revision.
+        assertEquals(8L, (harness.provider.onRequest(Harness.Request(RelayPages.MAIN, floor = 7)) as NexusPage.Content).revision)
         harness.provider.inboxChanged()
         assertTrue(harness.published.isEmpty())
         harness.provider.onVisibility(RelayPages.MAIN, true)
-        assertEquals(listOf(RelayPages.MAIN to 8L), harness.published)
+        assertEquals(listOf(RelayPages.MAIN to 9L), harness.published)
         harness.clock = 100
         harness.provider.inboxChanged()
         assertEquals(400L, harness.scheduled?.first)

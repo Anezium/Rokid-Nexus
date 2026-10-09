@@ -125,21 +125,51 @@ class NavPagesListenerTest {
     }
 
     /** Shaped on GoogleMapsParserTest's walking capture, as Maps posts it. */
-    private fun mapsGuidance(): StatusBarNotification {
+    private fun mapsGuidance(title: String = "80 m · Prendre à droite sur Rue de Rivoli", id: Int = 1): StatusBarNotification {
         val notification = Notification.Builder(app, "navigation")
             .setSmallIcon(android.R.drawable.ic_dialog_map)
             .setCategory("navigation")
             .setOngoing(true)
-            .setContentTitle("80 m · Prendre à droite sur Rue de Rivoli")
+            .setContentTitle(title)
             .setSubText("Arrivée à 22:50")
             .build()
         return StatusBarNotification(
-            NavSource.GOOGLE_MAPS.packageName, NavSource.GOOGLE_MAPS.packageName, 1, null, 10_456, 0, 0,
+            NavSource.GOOGLE_MAPS.packageName, NavSource.GOOGLE_MAPS.packageName, id, null, 10_456, 0, 0,
             notification, Process.myUserHandle(), System.currentTimeMillis(),
         )
     }
 
     private fun primary(answer: JSONObject) = answer.getJSONObject("body").optString("primary")
+
+    @Test
+    fun `a recreated provider answers a Retry above the retained revision, with the guidance now changed`() {
+        hub.deliver(
+            BusPaths.PAGE_REQUEST,
+            PageSurfaceContract.correlationPayload(PageCorrelation("r1", 1, 1, NavPages.MAIN))
+                .put("reason", "open").put(PageSurfaceContract.FIELD_PROVIDER_REGISTRATION_ID, "reg-a"),
+        )
+        idleFor(0)
+        val first = hub.mainAnswers().single()
+        assertEquals("80 m", primary(first))
+        val floor = first.getLong("revision")
+
+        // The page-only service goes, the route moves on, and the service is bound cold again.
+        service.destroy()
+        idleFor(0)
+        listener.get().onNotificationPosted(mapsGuidance(title = "200 m · Tourner à gauche sur Rue du Bac", id = 2))
+        service = Robolectric.buildService(NavPluginService::class.java).create()
+        idleFor(0)
+        hub.deliver(
+            BusPaths.PAGE_REQUEST,
+            PageSurfaceContract.correlationPayload(PageCorrelation("r2", 1, 1, NavPages.MAIN))
+                .put("reason", "retry").put(PageSurfaceContract.FIELD_PROVIDER_REGISTRATION_ID, "reg-b")
+                .put(PageSurfaceContract.FIELD_MINIMUM_REVISION, floor),
+        )
+        idleFor(0)
+        val answer = hub.mainAnswers().last()
+        assertTrue("revision ${answer.getLong("revision")} floor $floor", answer.getLong("revision") > floor)
+        assertEquals("200 m", primary(answer))
+    }
 
     @Test
     fun `losing access, getting it back and switching off each revise the visible page`() {

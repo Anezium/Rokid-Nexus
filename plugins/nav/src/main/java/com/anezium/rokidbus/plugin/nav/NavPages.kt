@@ -88,7 +88,8 @@ internal object NavPages {
 /**
  * Publishes `nav:main` live, from the guidance events themselves: only to the frame's current
  * visible request, at most two revisions a second, and never after a cover, a close or a loss.
- * Revisions only go up, from the floor the glasses retain.
+ * Revisions only go up, and always above the floor the glasses retain: this provider rebuilds a
+ * page without knowing that it matches what they kept, for instance after it was bound cold again.
  */
 internal class NavPageProvider<R : Any>(
     private val pageIdOf: (R) -> String,
@@ -163,7 +164,8 @@ internal class NavPageProvider<R : Any>(
     }
 
     private fun nextRevision(floor: Long?): Long {
-        revision = maxOf(revision + 1, floor ?: 0)
+        // An equal revision would keep the glasses' old body; only identical content may reuse it.
+        revision = maxOf(revision + 1, (floor ?: -1) + 1)
         return revision
     }
 

@@ -159,13 +159,14 @@ class NavPagesTest {
     }
 
     @Test
-    fun `a cold provider answers at or above the glasses' revision floor`() {
+    fun `a cold provider answers above the glasses' revision floor`() {
         val harness = Harness()
+        // It cannot know the retained snapshot matches what it builds now, so it never reuses that revision.
         val page = harness.provider.onRequest(Harness.Request(NavPages.MAIN, floor = 41)) as NexusPage.Content
-        assertEquals(41L, page.revision)
+        assertEquals(42L, page.revision)
         harness.provider.onVisibility(NavPages.MAIN, true)
         harness.provider.guidanceChanged()
-        assertEquals(listOf(42L), harness.published)
+        assertEquals(listOf(43L), harness.published)
     }
 
     @Test

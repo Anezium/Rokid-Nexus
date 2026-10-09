@@ -7,6 +7,7 @@ import com.anezium.rokidbus.shared.PageSurfaceContract
 import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -48,12 +49,60 @@ class RelayPagesAccessTest {
         listener.destroy()
         ReplyRepository.clear()
         RelaySettings(app).setEnabled(true)
+        RelaySettings(app).setHideInboxPreviews(false)
         RelayHubFixture.idle()
     }
 
-    private fun request(requestId: String, pageId: String, frameIndex: Int) =
+    private fun request(requestId: String, pageId: String, frameIndex: Int, registration: String = "reg-a") =
         PageSurfaceContract.correlationPayload(PageCorrelation(requestId, 1, frameIndex, pageId))
-            .put("reason", "open").put(PageSurfaceContract.FIELD_PROVIDER_REGISTRATION_ID, "reg-a")
+            .put("reason", "open").put(PageSurfaceContract.FIELD_PROVIDER_REGISTRATION_ID, registration)
+
+    /** The glasses' Retry of a frame they retained at [floor], to a provider registered again. */
+    private fun retry(requestId: String, floor: Long) =
+        request(requestId, RelayPages.MAIN, 1, registration = "reg-b").put("reason", "retry")
+            .put(PageSurfaceContract.FIELD_MINIMUM_REVISION, floor)
+
+    /** The page-only service went away with its binding, then is bound cold again: a new provider. */
+    private fun recreateService() {
+        service.destroy()
+        RelayHubFixture.idle()
+        service = Robolectric.buildService(RelayPluginService::class.java).create()
+        RelayHubFixture.idle()
+    }
+
+    /** The list the glasses were sent first, at the revision they retain. */
+    private fun firstList(): Long {
+        hub.deliver(BusPaths.PAGE_REQUEST, request("r1", RelayPages.MAIN, 1))
+        RelayHubFixture.idle()
+        val first = answersFor(RelayPages.MAIN).single()
+        assertTrue(first.toString(), first.toString().contains("on est devant"))
+        return first.getLong("revision")
+    }
+
+    @Test
+    fun `a recreated provider answers a Retry above the retained revision, with previews now hidden`() {
+        val floor = firstList()
+        recreateService()
+        RelaySettings(app).setHideInboxPreviews(true)
+        hub.deliver(BusPaths.PAGE_REQUEST, retry("r2", floor))
+        RelayHubFixture.idle()
+        val answer = answersFor(RelayPages.MAIN).last()
+        assertTrue("revision ${answer.getLong("revision")} floor $floor", answer.getLong("revision") > floor)
+        assertFalse(answer.toString().contains("on est devant"))
+        assertTrue(answer.toString().contains(RelayPrivacy.HIDDEN_BODY))
+    }
+
+    @Test
+    fun `a recreated provider answers a Retry above the retained revision, with the inbox now empty`() {
+        val floor = firstList()
+        recreateService()
+        ReplyRepository.clear()
+        hub.deliver(BusPaths.PAGE_REQUEST, retry("r2", floor))
+        RelayHubFixture.idle()
+        val answer = answersFor(RelayPages.MAIN).last()
+        assertTrue("revision ${answer.getLong("revision")} floor $floor", answer.getLong("revision") > floor)
+        assertEquals(0, rows(answer))
+    }
 
     private fun visibility(pageId: String, frameIndex: Int, visible: Boolean) =
         JSONObject().put("pageId", pageId).put("visible", visible).put("sessionGeneration", 1L).put("frameIndex", frameIndex)

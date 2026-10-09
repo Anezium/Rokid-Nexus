@@ -179,7 +179,8 @@ internal object RelayPages {
 /**
  * Publishes Relay's visible pages again when the inbox changes: only to a current visible
  * request, at most two revisions a second, never after a cover, a close or a loss. Revisions
- * only go up, from the floor the glasses retain.
+ * only go up, and always above the floor the glasses retain: this provider rebuilds a page without
+ * knowing that it matches what they kept, for instance after it was destroyed and bound cold again.
  */
 internal class RelayPageProvider<R : Any>(
     private val pageIdOf: (R) -> String,
@@ -241,7 +242,8 @@ internal class RelayPageProvider<R : Any>(
     }
 
     private fun nextRevision(floor: Long?): Long {
-        revision = maxOf(revision + 1, floor ?: 0)
+        // An equal revision would keep the glasses' old body; only identical content may reuse it.
+        revision = maxOf(revision + 1, (floor ?: -1) + 1)
         return revision
     }
 
