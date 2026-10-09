@@ -184,6 +184,38 @@ class TransitReadSkillsTest {
         assertEquals(0, shortened.getJSONArray("departures").length())
     }
 
+    /** Bibliothèque François Mitterrand as Transitous labels it: metro 14, RER C missions, buses. */
+    private fun parisBoard() = listOf(
+        departure("14", "Saint-Denis - Pleyel", 1, trip = "m14-n1"),
+        departure("14", "Aéroport d'Orly", 2, trip = "m14-o1"),
+        departure("C", "SARA", 3, trip = "rerc-1"),
+        departure("62", "Porte de France", 4, trip = "b62-1"),
+        departure("14", "Saint-Denis - Pleyel", 4, trip = "m14-n2"),
+        departure("14", "Aéroport d'Orly", 5, trip = "m14-o2"),
+        departure("325", "Château de Vincennes", 6, trip = "b325-1"),
+        departure("C", "MONA", 7, trip = "rerc-2"),
+        departure("14", "Aéroport d'Orly", 8, trip = "m14-o3"),
+    )
+
+    private fun JSONObject.rows(): List<Pair<String?, String>> = getJSONArray("departures").let { rows ->
+        (0 until rows.length()).map { rows.getJSONObject(it).let { row -> row.optString("line").ifEmpty { null } to row.getString("direction") } }
+    }
+
+    @Test
+    fun `device case line 14 toward Orly returns the Orly-bound line 14 departures`() {
+        data.boards[stop.id] = parisBoard()
+        val orlyBound = List(3) { "14" to "Aéroport d'Orly" }
+
+        val spoken = departures(JSONObject().put("line", "14").put("direction", "Orly"))
+        assertEquals("filtered", spoken.getString("match"))
+        assertEquals(orlyBound, spoken.rows())
+        assertEquals("Aéroport d'Orly", spoken.getJSONObject("focus").getString("direction"))
+
+        val withMode = departures(JSONObject().put("line", "ligne 14").put("direction", "vers Orly"))
+        assertEquals("filtered", withMode.getString("match"))
+        assertEquals(orlyBound, withMode.rows())
+    }
+
     @Test
     fun `the one after that follows the trip in its own group, not the next row`() {
         data.boards[stop.id] = listOf(
