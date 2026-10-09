@@ -1890,8 +1890,10 @@ CXR stays up ends just the frames whose last page sent to the glasses needed the
 data plane, that is whose envelope exceeds the 3 KiB CXR message: the phone hub
 drops them and tells their provider `link_lost`, the glasses hub keeps their
 snapshots inert by the same rule, and smaller pages go on over CXR. A page that
-needed SPP and was still being sent when SPP went counts as lost too, never as
-shown. Nothing replays when SPP returns. Base
+needs SPP and whose send had started when SPP went, before the phone hub
+recorded it as sent, counts as lost too, never as shown; one still waiting to be
+sent when SPP dropped and came back is sent over the new session and counts.
+Nothing replays when SPP returns. Base
 restoration only promises a still-live base; an Ink immersion closes on link
 loss under its existing contract.
 
@@ -1919,8 +1921,9 @@ page answer, revision or result over the live Binder or drops it, and a send
 that failed grants no publishing or action right. The phone hub applies a
 page's revision, actions and transport needs to its frame only once that page
 was sent to the glasses; a page it could not send, an answer, a live revision or
-a result's replacement, or one needing SPP whose send SPP's loss overtook, ends
-the frame on both sides, with a small correlated
+a result's replacement, or one needing SPP when SPP was lost between the start
+of its send and its recording, ends the frame on both sides, with a small
+correlated
 `PAGE_UNAVAILABLE` to the glasses and `link_lost` to the provider. Logs carry
 ids, sizes and error codes, never page text.
 

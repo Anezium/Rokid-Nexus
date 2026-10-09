@@ -1794,9 +1794,11 @@ the link drops it stays false until the hub sends its next page version.
 
 `NexusPageClosed` arrives with `back`, `session_closed`, `timeout`,
 `link_lost`, `replaced` or `frame_limit`; drop that page's state. `link_lost`
-also comes for one page alone when SPP drops while CXR stays up and that page
-was too big for a CXR message, and when the hub could not send a page of yours
-to the glasses; your other pages go on. Link loss,
+also comes for one page alone when SPP drops while CXR stays up and the page the
+glasses hold, or the one being sent to them, is too big for a CXR message, and
+when the hub could not send a page of yours to the glasses; your other pages go
+on, and a page that merely waited to be sent while SPP dropped and returned is
+sent and kept. Link loss,
 revocation, a replaced registration or a closed client void every page and
 publisher at once, and nothing is replayed on reconnect.
 
