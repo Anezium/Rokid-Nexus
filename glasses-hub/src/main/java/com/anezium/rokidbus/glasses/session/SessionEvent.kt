@@ -33,6 +33,12 @@ internal sealed interface SessionEvent {
     data class PageResult(val payload: JSONObject, val nowMs: Long) : SessionEvent
 
     data object LinkLost : SessionEvent
+
+    /** SPP went away while CXR stayed up: answers too big for CXR can no longer arrive. */
+    data object DataPlaneLost : SessionEvent
+
+    /** The pair no longer negotiates page v1 although the link is up. */
+    data object PageSupportLost : SessionEvent
     data object LinkRestored : SessionEvent
     data class EditableFocused(val focused: Boolean) : SessionEvent
 

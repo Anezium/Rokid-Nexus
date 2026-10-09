@@ -334,6 +334,7 @@ internal class SessionScreens(
     private fun reasonText(reason: String): String = when (reason) {
         PageSurfaceContract.ERROR_PAGE_TIMEOUT -> "The plugin did not respond."
         SessionReducer.UNAVAILABLE_LINK_LOST -> "Phone disconnected. The page stays readable; nothing is replayed."
+        SessionReducer.UNAVAILABLE_DATA_PLANE -> "The phone link is too narrow for this page now. It stays readable; nothing is replayed."
         PageSurfaceContract.ERROR_PAGE_UNAVAILABLE -> "The plugin cannot show this page now."
         SessionReducer.UNAVAILABLE_EVICTED -> "This page was set aside to save memory."
         SessionReducer.UNAVAILABLE_UNSUPPORTED -> "This page needs a newer Nexus."

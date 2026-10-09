@@ -231,6 +231,8 @@ object GlassesHub {
     fun onSppConnected(connected: Boolean) {
         phoneConnected = connected || CxrBusBridge.isUp()
         NexusSession.onPhoneLink(phoneConnected)
+        // CXR stayed: only the pages that needed SPP are lost.
+        if (!connected && phoneConnected) NexusSession.onDataPlaneLost()
         if (!phoneConnected) {
             clearRemotePhoneCapabilities()
             AssistantDisplayEpisode.end(DisplayHoldReleaseReason.LINK_LOSS)
@@ -1372,7 +1374,13 @@ object GlassesHub {
                 " phoneAssistedSetup=${supportsPhoneAssistedSetup(next.features)}",
         )
         if (next.features != previous.features) notifyLinkState()
-        if (cameraLauncherEntry(next) != cameraLauncherEntry(previous)) notifyLauncherEntries()
+        if (next.pageSessionVersion != previous.pageSessionVersion) {
+            // A version-only change: the session and the catalog follow it, and nothing replays.
+            NexusSession.onPageSupport(pageSessionSupported())
+            notifyLauncherEntries()
+        } else if (cameraLauncherEntry(next) != cameraLauncherEntry(previous)) {
+            notifyLauncherEntries()
+        }
     }
 
     private fun allLauncherEntries(): List<LauncherEntry> =

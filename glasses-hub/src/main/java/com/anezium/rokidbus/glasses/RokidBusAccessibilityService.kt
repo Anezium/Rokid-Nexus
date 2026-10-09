@@ -1428,6 +1428,16 @@ internal object NexusSession {
         }
     }
 
+    /** SPP went away while CXR stayed: pages that needed SPP go inert, the small ones go on. */
+    fun onDataPlaneLost() {
+        runOnMain { if (phoneLinked == true) runner.dispatch(SessionEvent.DataPlaneLost) }
+    }
+
+    /** The pair's page version changed with the link up; without support provider pages go inert. */
+    fun onPageSupport(supported: Boolean) {
+        runOnMain { if (!supported) runner.dispatch(SessionEvent.PageSupportLost) }
+    }
+
     /**
      * A page answer from the phone. It enters only stamped for the owner of the page it names,
      * and is judged by the reducer against the frame it claims; a `nexus:` page never comes in.

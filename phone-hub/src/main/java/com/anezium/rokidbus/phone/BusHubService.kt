@@ -4969,8 +4969,6 @@ class BusHubService : Service() {
         }
         if (state and (LinkStateBits.CXR_CONTROL_UP or LinkStateBits.SPP_DATA_UP) == 0) {
             if (::mediaSyncCoordinator.isInitialized) mediaSyncCoordinator.onLinkLost()
-            // Page support is a property of this connection: a reconnect renegotiates it.
-            pageBroker.onLinkLost()
             remoteImageSurfaceVersion = 0
             remoteInkSurfaceVersion = 0
             remoteMaxImageBytes = 0
@@ -4993,6 +4991,9 @@ class BusHubService : Service() {
             )
             imageSurfaceRateLimiter.clear()
         }
+        // Page support is a property of this connection: losing it ends every page and a
+        // reconnect renegotiates it; losing SPP alone ends only the pages that needed it.
+        pageBroker.onLinkState(previousTransportState, state)
         if (::mediaSyncCoordinator.isInitialized &&
             state and LinkStateBits.CXR_CONTROL_UP != 0 &&
             previousTransportState and LinkStateBits.CXR_CONTROL_UP == 0

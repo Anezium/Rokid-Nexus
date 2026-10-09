@@ -12,6 +12,17 @@ import org.junit.Test
 
 class PageSurfaceContractTest {
     @Test
+    fun `a page message needs the data plane exactly when its envelope outgrows one CXR message`() {
+        val overhead = FrameProtocol.toJsonBytes(BusEnvelope(path = BusPaths.PAGE_RESPONSE, payload = JSONObject().put("pad", ""))).size
+        val fits = JSONObject().put("pad", "x".repeat(BusConstants.CXR_CONTROL_MAX_BYTES - overhead))
+        val over = JSONObject().put("pad", "x".repeat(BusConstants.CXR_CONTROL_MAX_BYTES - overhead + 1))
+        assertFalse(PageSurfaceContract.needsDataPlane(BusPaths.PAGE_RESPONSE, fits))
+        assertTrue(PageSurfaceContract.needsDataPlane(BusPaths.PAGE_RESPONSE, over))
+        // Multibyte text counts in UTF-8 bytes, as the transport does.
+        assertTrue(PageSurfaceContract.needsDataPlane(BusPaths.PAGE_RESULT, JSONObject().put("pad", "é".repeat(BusConstants.CXR_CONTROL_MAX_BYTES / 2))))
+    }
+
+    @Test
     fun `valid request round trips with all correlation and params`() {
         val payload = request().put("params", JSONObject().put("view", "route"))
         val parsed = valid(PageSurfaceContract.validateRequest(payload))

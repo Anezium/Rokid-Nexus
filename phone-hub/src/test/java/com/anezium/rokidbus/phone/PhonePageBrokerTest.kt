@@ -2,6 +2,7 @@ package com.anezium.rokidbus.phone
 
 import android.content.ComponentName
 import com.anezium.rokidbus.shared.BusPaths
+import com.anezium.rokidbus.shared.LinkStateBits
 import com.anezium.rokidbus.shared.PageCorrelation
 import com.anezium.rokidbus.shared.PageSurfaceContract
 import com.anezium.rokidbus.shared.plugin.PluginCapability
@@ -400,6 +401,44 @@ class PhonePageBrokerTest {
         assertEquals(PageSurfaceContract.ERROR_INVALID_PAGE, refreshAnswered { broker.onProvider(BusPaths.PAGE_RESPONSE, rollback, it) })
         assertEquals(PageSurfaceContract.ERROR_INVALID_PAGE, responses().last().getString("error"))
         assertTrue(responses().none { it.optLong("revision") == 2L })
+    }
+
+    @Test
+    fun `losing SPP alone ends only the pages that needed it, and their providers hear link_lost`() {
+        connect(relay)
+        val relayA = register(relay, "relay-a")
+        val big = JSONObject().put(
+            "items",
+            JSONArray().apply { (1..40).forEach { put(JSONObject().put("id", "r$it").put("label", "Thread $it " + "x".repeat(90))) } },
+        )
+        broker.onGlasses(BusPaths.PAGE_REQUEST, request())
+        assertNull(broker.onProvider(BusPaths.PAGE_RESPONSE, page(revision = 1, body = big), relayA))
+        assertTrue(PageSurfaceContract.needsDataPlane(BusPaths.PAGE_RESPONSE, host.glasses.last().second))
+        broker.onGlasses(BusPaths.PAGE_REQUEST, request(requestId = "r2", pageId = "relay:small", frameIndex = 2))
+        assertNull(broker.onProvider(BusPaths.PAGE_RESPONSE, page(requestId = "r2", pageId = "relay:small", frameIndex = 2), relayA))
+        broker.onGlasses(BusPaths.PAGE_VISIBILITY, visibility(true, pageId = "relay:small", frameIndex = 2))
+
+        val both = LinkStateBits.CXR_CONTROL_UP or LinkStateBits.SPP_DATA_UP
+        broker.onLinkState(both, both)
+        assertTrue(host.delivered.none { it.second == BusPaths.PAGE_CLOSED })
+        broker.onLinkState(both, LinkStateBits.CXR_CONTROL_UP)
+
+        val closed = host.delivered.filter { it.second == BusPaths.PAGE_CLOSED }.map { it.third }
+        assertEquals(listOf("relay:main"), closed.map { it.getString("pageId") })
+        assertEquals("link_lost", closed.single().getString("reason"))
+        assertEquals(PhonePageBroker.ERROR_PAGE_NOT_REQUESTED, broker.onProvider(BusPaths.PAGE_RESPONSE, page(revision = 2, body = big), relayA))
+        // The small page goes on over CXR: its action is forwarded and support stays.
+        broker.onGlasses(
+            BusPaths.PAGE_ACTION,
+            JSONObject().put("invocationId", "i1").put("sessionGeneration", 1L).put("frameIndex", 2)
+                .put("pageId", "relay:small").put("revision", 1).put("actionId", "read"),
+        )
+        assertEquals(1, host.delivered.count { it.second == BusPaths.PAGE_ACTION })
+        assertEquals(PageSurfaceContract.VERSION, broker.negotiatedVersion)
+
+        // Losing CXR too ends everything.
+        broker.onLinkState(LinkStateBits.CXR_CONTROL_UP, 0)
+        assertEquals(0, broker.negotiatedVersion)
     }
 
     @Test

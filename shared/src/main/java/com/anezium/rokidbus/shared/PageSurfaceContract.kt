@@ -168,6 +168,14 @@ object PageSurfaceContract {
 
     fun serializedBytes(payload: JSONObject): Int = payload.toString().toByteArray(Charsets.UTF_8).size
 
+    /**
+     * Whether a page message travels on the SPP data plane: the hubs carry a JSON envelope over
+     * CXR only when it fits [BusConstants.CXR_CONTROL_MAX_BYTES], so with SPP gone a bigger
+     * answer, revision or result cannot arrive. Both hubs judge a frame by this one rule.
+     */
+    fun needsDataPlane(path: String, payload: JSONObject): Boolean =
+        FrameProtocol.toJsonBytes(BusEnvelope(path = path, payload = payload)).size > BusConstants.CXR_CONTROL_MAX_BYTES
+
     fun validateRequest(payload: JSONObject): PageSurfaceValidationResult<PageSurfaceRequest> =
         validate(ERROR_INVALID_PAGE_REQUEST) {
             val params = if (payload.has("params")) {

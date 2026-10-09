@@ -104,6 +104,8 @@ internal data class Frame(
     val providerEpoch: String? = null,
     /** When the retained snapshot arrived, on the session clock, so a stale summary can be dated. */
     val shownAtMs: Long? = null,
+    /** The message that carried the retained snapshot needed SPP, so it is lost when SPP is. */
+    val dataPlane: Boolean = false,
 )
 
 internal sealed interface SessionState {

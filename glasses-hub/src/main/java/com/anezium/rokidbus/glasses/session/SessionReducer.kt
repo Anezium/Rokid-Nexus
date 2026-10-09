@@ -10,6 +10,7 @@ import com.anezium.rokidbus.glasses.session.SessionEffect.SendClosed
 import com.anezium.rokidbus.glasses.session.SessionEffect.SendVisibility
 import com.anezium.rokidbus.glasses.session.SessionEffect.ShowFrame
 import com.anezium.rokidbus.glasses.session.SessionEffect.ShowRoot
+import com.anezium.rokidbus.shared.BusPaths
 import com.anezium.rokidbus.shared.PageCorrelation
 import com.anezium.rokidbus.shared.PageSurfaceContract
 import com.anezium.rokidbus.shared.PageSurfaceInvocation
@@ -46,6 +47,10 @@ internal class SessionReducer(
             is SessionEvent.ActivityEnded -> onActivityEnded(model, event.stopId)
             is SessionEvent.SurfaceShown -> onSurfaceShown(model, event)
             is SessionEvent.ProviderInvalidated -> invalidateOwner(model, event.ownerPluginId)
+            // Small pages keep working over CXR; nothing is asked again when SPP returns.
+            SessionEvent.DataPlaneLost -> inertProviderFrames(model, UNAVAILABLE_DATA_PLANE) { it.dataPlane }
+            // Unsupported negotiation leaves every provider page inert, with no replay.
+            SessionEvent.PageSupportLost -> inertProviderFrames(model, PageSurfaceContract.ERROR_PAGE_UNAVAILABLE) { true }
             SessionEvent.Abort -> abort(model)
             else -> {
                 // Rule 17: a cancelled open is remembered only until its own deadline.
@@ -176,8 +181,10 @@ internal class SessionReducer(
                     .map { closedEffect(model, it.value, it.index, CLOSE_BACK) } + ShowRoot,
             )
             is SessionEvent.Tick -> tick(model, state, event.nowMs)
-            is SessionEvent.PageResponse -> response(model, state, event.payload, event.nowMs)
-            is SessionEvent.PageResult -> result(model, state, event.payload, event.nowMs)
+            is SessionEvent.PageResponse ->
+                carried(model, response(model, state, event.payload, event.nowMs), BusPaths.PAGE_RESPONSE, event.payload)
+            is SessionEvent.PageResult ->
+                carried(model, result(model, state, event.payload, event.nowMs), BusPaths.PAGE_RESULT, event.payload)
             is SessionEvent.DocumentPaged -> documentPaged(model, state, event)
             is SessionEvent.LocalLaunchFinished -> localLaunchFinished(model, state, event)
             SessionEvent.LinkLost -> SessionTransition(model.copy(linkLost = true, state = state.linkLost()), listOf(ShowFrame))
@@ -647,6 +654,50 @@ internal class SessionReducer(
             !isLocalPage(frame.pageId) && PageTemplateContract.namespaceOf(frame.pageId) == owner
     }
 
+    /**
+     * When [transition] put a new snapshot on the top frame, records whether the message that
+     * carried it needed SPP, by the same rule the phone used to send it.
+     */
+    private fun carried(before: SessionModel, transition: SessionTransition, path: String, payload: JSONObject): SessionTransition {
+        val after = transition.model.state as? SessionState.InPage ?: return transition
+        val top = after.frames.last()
+        val shown = top.status as? FrameStatus.Shown ?: return transition
+        if (isLocalPage(top.pageId)) return transition
+        val earlier = (before.state as? SessionState.InPage)?.frames?.getOrNull(after.frames.lastIndex)?.status
+        if ((earlier as? FrameStatus.Shown)?.snapshot === shown.snapshot) return transition
+        val frame = top.copy(dataPlane = PageSurfaceContract.needsDataPlane(path, payload))
+        return transition.copy(model = transition.model.copy(state = after.withTop(frame)))
+    }
+
+    /** The provider frames [which] selects keep their snapshots, inert, under a page or a pending launch. */
+    private fun inertProviderFrames(model: SessionModel, reason: String, which: (Frame) -> Boolean): SessionTransition {
+        fun inert(page: SessionState.InPage): SessionState.InPage = page.copy(
+            frames = page.frames.map { frame ->
+                if (isLocalPage(frame.pageId) || !which(frame) || frame.status is FrameStatus.Unavailable) {
+                    frame
+                } else {
+                    frame.copy(
+                        status = FrameStatus.Unavailable(frame.retained(), reason),
+                        selected = 0,
+                        invocation = null,
+                        panel = null,
+                    )
+                }
+            },
+        )
+        return when (val state = model.state) {
+            is SessionState.InPage -> {
+                val next = inert(state)
+                if (next == state) keep(model) else SessionTransition(model.copy(state = next), listOf(ShowFrame))
+            }
+            is SessionState.Launching -> {
+                val previous = state.previous as? SessionState.InPage ?: return keep(model)
+                keep(model.copy(state = state.copy(previous = inert(previous))))
+            }
+            else -> keep(model)
+        }
+    }
+
     /** Every frame of [owner] keeps its snapshot, inert; its requests, actions, leases and panels end. */
     private fun invalidateOwner(model: SessionModel, owner: String): SessionTransition {
         fun invalidated(page: SessionState.InPage): SessionState.InPage = page.copy(
@@ -968,13 +1019,16 @@ internal class SessionReducer(
         const val CLOSE_FRAME_LIMIT = "frame_limit"
         const val RESULT_DONE = "done"
         const val UNAVAILABLE_LINK_LOST = "link_lost"
+
+        /** SPP went away with CXR still up, and this page needed SPP. */
+        const val UNAVAILABLE_DATA_PLANE = "data_plane"
         const val UNAVAILABLE_EVICTED = "evicted"
 
         /** A valid envelope whose typed body this hub cannot draw. */
         const val UNAVAILABLE_UNSUPPORTED = "unsupported"
         const val REMOVED_ROW_LABEL = "Removed"
         val UNAVAILABLE_ITEMS: List<PageItem> = listOf(PageItem.Retry, PageItem.Back)
-        private val INERT_REASONS = setOf(UNAVAILABLE_LINK_LOST, PageSurfaceContract.ERROR_PAGE_UNAVAILABLE)
+        private val INERT_REASONS = setOf(UNAVAILABLE_LINK_LOST, UNAVAILABLE_DATA_PLANE, PageSurfaceContract.ERROR_PAGE_UNAVAILABLE)
 
         /** The fork's F-4 bound, equal to the ring's surface handoff. */
         const val OPEN_TIMEOUT_MS = 10_000L

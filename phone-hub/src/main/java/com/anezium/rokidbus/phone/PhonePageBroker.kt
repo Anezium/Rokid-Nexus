@@ -1,6 +1,7 @@
 package com.anezium.rokidbus.phone
 
 import com.anezium.rokidbus.shared.BusPaths
+import com.anezium.rokidbus.shared.LinkStateBits
 import com.anezium.rokidbus.shared.PageCorrelation
 import com.anezium.rokidbus.shared.PageSurfaceContract
 import com.anezium.rokidbus.shared.PageSurfaceRequest
@@ -65,6 +66,8 @@ class PhonePageBroker(
         var actionable: Boolean = false,
         /** The revision floor the glasses sent with the current request. */
         var floor: Long? = null,
+        /** The last page forwarded for this frame needed SPP, so it is lost when SPP is. */
+        var dataPlane: Boolean = false,
         var leaseUntil: Long? = null,
         /** A page just forwarded is about to be displayed; its first visibility follows. */
         var displayDeadline: Long? = null,
@@ -97,6 +100,36 @@ class PhonePageBroker(
         remoteVersion = 0
         dropAll()
         announceIfChanged()
+    }
+
+    /**
+     * The glasses transports changed. Losing both is [onLinkLost]. Losing SPP while CXR stays
+     * ends only the frames whose last page needed SPP; the small ones go on over CXR.
+     */
+    fun onLinkState(previous: Int, state: Int) {
+        val transport = LinkStateBits.CXR_CONTROL_UP or LinkStateBits.SPP_DATA_UP
+        when {
+            state and transport == 0 -> onLinkLost()
+            previous and LinkStateBits.SPP_DATA_UP != 0 && state and LinkStateBits.SPP_DATA_UP == 0 -> onDataPlaneLost()
+        }
+    }
+
+    /**
+     * SPP went away with CXR still up. A frame whose page needed SPP can no longer be revised or
+     * acted on: it ends here and its provider hears `link_lost`; the glasses keep it inert by the
+     * same rule. Nothing is replayed when SPP returns.
+     */
+    private fun onDataPlaneLost() = mutate {
+        frames.values.filter { it.dataPlane }.toList().forEach { frame ->
+            val registration = currentRegistration(frame)
+            frames.remove(frame.key)
+            registration?.let {
+                val closed = JSONObject().put("pageId", frame.pageId).put("reason", CLOSE_LINK_LOST)
+                    .put("sessionGeneration", frame.key.generation).put("frameIndex", frame.key.frameIndex)
+                val outgoing = stamped(closed, it)
+                later { host.deliver(it, BusPaths.PAGE_CLOSED, outgoing) }
+            }
+        }
     }
 
     /** A registration of [principal] was approved: tell it the effective version, then hand over waiting work. */
@@ -297,6 +330,7 @@ class PhonePageBroker(
                         frame.shownRevision = maxOf(frame.shownRevision ?: value.revision, value.revision)
                         frame.live = value.live
                         frame.actions = value.actions.map { it.id }.toSet()
+                        frame.dataPlane = PageSurfaceContract.needsDataPlane(BusPaths.PAGE_RESPONSE, stamped)
                         val requestId = frame.requestId
                         forward(BusPaths.PAGE_RESPONSE, stamped, frame) {
                             if (frames[frame.key] === frame && frame.requestId == requestId) frame.actionable = true
@@ -321,6 +355,7 @@ class PhonePageBroker(
         frame.shownRevision = page.revision
         frame.live = page.live
         frame.actions = page.actions.map { it.id }.toSet()
+        frame.dataPlane = PageSurfaceContract.needsDataPlane(BusPaths.PAGE_RESPONSE, stamped)
         forward(BusPaths.PAGE_RESPONSE, stamped, frame)
         return null
     }
@@ -354,6 +389,7 @@ class PhonePageBroker(
             frame.shownRevision = replacement.revision
             frame.live = replacement.live
             frame.actions = replacement.actions.map { it.id }.toSet()
+            frame.dataPlane = PageSurfaceContract.needsDataPlane(BusPaths.PAGE_RESULT, stamped)
         }
         frame.invocationId = null
         frame.invocationDeadline = null
@@ -585,6 +621,7 @@ class PhonePageBroker(
     companion object {
         const val ERROR_PAGE_ROUTE_DENIED = "PAGE_ROUTE_DENIED"
         const val ERROR_PAGE_NOT_REQUESTED = "PAGE_NOT_REQUESTED"
+        private const val CLOSE_LINK_LOST = "link_lost"
 
         fun isPagePath(path: String): Boolean = PathRules.isPagePath(path)
 
