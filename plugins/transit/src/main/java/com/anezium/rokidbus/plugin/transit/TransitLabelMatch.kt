@@ -67,7 +67,8 @@ internal object TransitLabelMatch {
     private val APOSTROPHES = Regex("['\u2018\u2019\u02bc]")
     private val SPACES = Regex("[\\s\\p{Z}\\p{Pd}]+")
     private val NOT_WORD = Regex("[^\\p{L}\\p{N}]+")
-    private val DIGIT_CODE = Regex("[\\p{L}\\p{N}]*\\p{N}[\\p{L}\\p{N}]*")
+    // At most one letter before the digits (t3a, n01): longer runs are words (tramway1, metropole1).
+    private val DIGIT_CODE = Regex("\\p{L}?\\p{N}+[\\p{L}\\p{N}]*")
     private val LETTER_CODE = Regex("\\p{L}{1,2}")
     private val MODE_WORDS = listOf("ligne", "line", "metro", "bus", "tram", "rer", "m")
     private val CONNECTORS = setOf("vers", "direction", "dir", "to", "towards", "toward")
