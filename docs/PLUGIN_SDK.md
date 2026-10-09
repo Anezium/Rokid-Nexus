@@ -1792,8 +1792,8 @@ publisher at once, and nothing is replayed on reconnect.
 
 ### Examples
 
-These describe the first two providers as they are being integrated in this
-delivery; until their plugin releases ship, treat them as the intended shape.
+Navigation and Relay are the first two providers. Both are in this repository;
+wearers get them with each plugin's next release, on hubs that announce page v1.
 
 Navigation answers `nav:main` with a `summary` of the guidance it already shows
 in its activity: the manoeuvre, the distance or remaining stops, the street, the
@@ -1802,9 +1802,12 @@ are left out rather than invented. A Commands row opens `nav:commands`, a
 `commands` page whose only row opens the full app.
 
 Relay answers `relay:main` with a `selectableList` of the inbox's threads and
-each thread with a `document` of its messages, speaker headers and the time the
-snapshot was captured. Its pages are read-only: no reply, read-aloud or
-mark-as-read, and the inbox's redaction and hidden-preview settings apply.
+each thread with a `document` of its messages, speaker headers when more than
+one person speaks, and the time the snapshot was captured; there is no
+per-message time. A thread too long for one answer keeps its newest whole
+messages and says that earlier ones are not shown. Its pages are read-only: no
+reply, read-aloud or mark-as-read, and the inbox's redaction and hidden-preview
+settings apply.
 
 ## 4. Approve and debug
 
