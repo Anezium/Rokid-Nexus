@@ -1787,10 +1787,12 @@ the chrome and the current top inset, before its rows. Summary and commands
 text is drawn as is when it fits the viewport together with the page's first
 row and each fact is whole in its capped lines; when it does not, the glasses
 read it the same way as a document, each fact as one `label · value` line.
-Text found too long by the first layout of an opened or retried answer opens
-in reading. Found too long later, by a live revision, a refresh or a larger
-inset, it keeps the rows and the selected row, and BACK reaches the text; it
-stays read that way until the frame is opened or retried again. STEP
+Text found too long opens in reading, whenever it is found: on opening, on a
+Retry, or later by a live revision, a refresh or a larger inset. When the
+wearer then holds a row past the first, or a row a newer revision removed, the
+rows and that selection stay instead, and BACK reaches the text. Once found
+too long, the text stays read that way until the frame is opened or retried
+again, even if a later revision or a smaller inset would let it fit. STEP
 pages the measured text, SELECT reaches the rows and never acts on the text,
 and BACK from the rows returns to the text before it pops the frame. The
 reading position names text, not a screen, so it survives relayout, live

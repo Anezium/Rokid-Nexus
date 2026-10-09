@@ -1741,10 +1741,13 @@ readable but inert. Ids are unique within their list. A document keeps its text
 order, paragraphs, explicit line breaks and Unicode, and the wearer pages
 through it with swipes; its `footer` is paginated after the text, in the caption
 style. Summary or commands text that does not fit the HUD with the page's first
-row, or a fact too long for its lines, is read the same way when the page opens:
-swipes page through it, a tap reaches the rows, and BACK returns to the text.
-When a live revision or a refresh makes it too long later, the selected row
-stays and BACK reaches the text. Text that fits is shown as is.
+row, or a fact too long for its lines, is read the same way: swipes page
+through it, a tap reaches the rows, and BACK returns to the text. This applies
+whenever it becomes too long, on opening or after a live revision, a refresh or
+a larger HUD inset, unless the wearer holds a row past the first or a row a
+newer revision removed: that row then stays selected and BACK reaches the text.
+Once too long, it is read this way until the page is opened or retried again.
+Text that has always fitted is shown as is.
 
 When a page becomes unavailable, for a timeout or a lost link, the glasses keep
 its last content readable, dimmed under the failure, with Retry and Back. None
