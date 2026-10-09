@@ -50,6 +50,7 @@ import com.anezium.rokidbus.shared.TtsContract
 import com.anezium.rokidbus.shared.WirelessAdbAction
 import com.anezium.rokidbus.shared.WirelessAdbContract
 import com.anezium.rokidbus.shared.WirelessAdbReply
+import com.anezium.rokidbus.shared.PageSurfaceContract
 import com.anezium.rokidbus.shared.plugin.PathRules
 import org.json.JSONArray
 import org.json.JSONObject
@@ -80,6 +81,8 @@ object GlassesHub {
         val id: String,
         val displayName: String,
         val iconKey: String? = null,
+        /** The page version the phone vouches this approved plugin provides; 0 for none. */
+        val pageSessionVersion: Int = 0,
     )
 
     private data class Registration(
@@ -265,6 +268,13 @@ object GlassesHub {
     fun onRemoteEnvelope(envelope: BusEnvelope) {
         if (SppKeyProvisioning.isReserved(envelope.path)) return
         log("remote RX ${envelope.path} id=${envelope.id}")
+        // Page answers go to the session alone, before any generic route; no plugin subscribes to them.
+        if (PathRules.isPagePath(envelope.path)) {
+            if (envelope.binary == null) {
+                NexusSession.onRemotePage(PathRules.normalizeAbsolute(envelope.path) ?: envelope.path, envelope.payload)
+            }
+            return
+        }
         if (envelope.path == RemoteInputContract.COMMAND_PATH ||
             envelope.path == RemoteNavigationContract.REQUEST_PATH
         ) {
@@ -705,6 +715,7 @@ object GlassesHub {
             coreReady = onboarding.coreReady,
             maintenanceReady = onboarding.maintenanceReady,
             ttsVersion = if (ttsAvailable) TtsContract.VERSION else 0,
+            pageSessionVersion = GLASSES_PAGE_SESSION_VERSION,
         )
         val error = sendRemote(
             BusEnvelope(
@@ -1171,6 +1182,9 @@ object GlassesHub {
                                 id = id,
                                 displayName = item.optString("displayName", id),
                                 iconKey = item.optString("iconKey").takeIf { it.isNotBlank() },
+                                pageSessionVersion = PageSurfaceContract.parseSessionVersion(
+                                    item.opt(PageSurfaceContract.CAPABILITY_FIELD_PAGE_SESSION_VERSION),
+                                ),
                             ),
                         )
                     }
@@ -1270,6 +1284,14 @@ object GlassesHub {
 
     internal fun isPhoneConnected(): Boolean = phoneConnected
 
+    /** Both hubs on session/page v1 over the current link; a disconnect resets the phone's side. */
+    internal fun pageSessionSupported(): Boolean =
+        phoneConnected &&
+            PageSurfaceContract.negotiatedSessionVersion(
+                GLASSES_PAGE_SESSION_VERSION,
+                remotePhoneCapabilities.pageSessionVersion,
+            ) == PageSurfaceContract.VERSION
+
     internal fun isWifiHubOwned(): Boolean {
         val context = appContext ?: return wifiOwnership?.isHubOwned() == true
         return wifiOwnership?.isHubOwned() == true ||
@@ -1331,6 +1353,7 @@ object GlassesHub {
             activityAlwaysExpanded = advertised.activityAlwaysExpanded,
             hudTopInsetDp = advertised.hudTopInsetDp,
             hudPositionAuto = advertised.hudPositionAuto,
+            pageSessionVersion = advertised.pageSessionVersion,
         )
         appContext?.let {
             ActivityController.setAlwaysExpanded(it, next.activityAlwaysExpanded)
@@ -1631,5 +1654,11 @@ object GlassesHub {
     /** Long enough to read a code and type it on the phone; short enough to never strand the screen. */
     private const val MANUAL_SETUP_SCREEN_TIMEOUT_MS = 5 * 60_000L
     private const val CAMERA_LAUNCHER_ID = "camera"
+
+    /**
+     * The session/page version these glasses announce: what lets a phone route pages here. The
+     * pages stay unreachable on the LEGACY backend whatever is negotiated.
+     */
+    private const val GLASSES_PAGE_SESSION_VERSION = 0
     private const val CAMERA_CLIENT_ID = "glasses-camera-domain"
 }
