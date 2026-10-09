@@ -440,6 +440,12 @@ class ReadingRunnerTest {
     fun `a larger HUD inset that makes the text too tall keeps the selected row`() {
         view.setTopInsetPx(0)
         onThirdRow(lineCount = 16)
+        insetToMax()
+        assertRowKeptAndTextBehindBack(requests().size, lines.take(16))
+    }
+
+    /** The phone raises the HUD inset to its largest while the page stays on screen. */
+    private fun insetToMax() {
         view.setTopInsetPx(PhoneHubCapabilitiesContract.MAX_HUD_TOP_INSET_DP * 240 / 160)
         view.measure(
             View.MeasureSpec.makeMeasureSpec(PageStyle.WIDTH_PX, View.MeasureSpec.EXACTLY),
@@ -447,7 +453,86 @@ class ReadingRunnerTest {
         )
         view.layout(0, 0, PageStyle.WIDTH_PX, PageStyle.HEIGHT_PX)
         idle()
-        assertRowKeptAndTextBehindBack(requests().size, lines.take(16))
+    }
+
+    /**
+     * Text found too tall while the wearer is still on the first row is read at once: SELECT from
+     * it returns to that row, so nothing is taken from them, and nothing is sent.
+     */
+    private fun assertReadFromFirstRow(sent: Int, expected: List<String>, firstKey: String) {
+        assertTrue(top().overflowing)
+        assertEquals(FrameMode.READING, top().mode)
+        assertEquals(0, top().page)
+        assertTrue("document" in view.blockViews)
+        assertFalse(view.blockViews.keys.any { it.startsWith("row:") })
+        val read = readOn()
+        expected.forEach { assertTrue(it, it in read) }
+        dispatch(SessionEvent.Enter(now))
+        assertEquals(FrameMode.ROWS, top().mode)
+        assertEquals(firstKey, top().selectedKey)
+        assertTrue(inViewport("row:$firstKey"))
+        assertEquals(sent, requests().size)
+        assertTrue(effects.none { it is SessionEffect.SendAction })
+    }
+
+    /** Live guidance with its single Commands row: it fits at revisions 1 and 2, then [grown] arrives. */
+    private fun liveGuidanceGrows(fits: PageBody, grown: PageBody) {
+        open("nav:main", guidance("Turn right in 120 m", "Rue de Rivoli"))
+        val opened = requests().last().request
+        dispatch(SessionEvent.PageResponse(answer(opened, 2, fits), now))
+        assertEquals(2L, (top().status as FrameStatus.Shown).revision)
+        assertEquals(FrameMode.ROWS, top().mode)
+        assertFalse(top().overflowing)
+        assertTrue(inViewport("primary") && inViewport("row:commands"))
+        dispatch(SessionEvent.PageResponse(answer(opened, 3, grown), now))
+        assertEquals(3L, (top().status as FrameStatus.Shown).revision)
+    }
+
+    @Test
+    fun `live guidance that grows too tall on its one row is read, not hidden behind it`() {
+        val grown = PageBody.Summary(primary = "Turn right in 40 m", text = lines.joinToString("\n"), items = listOf(commandsRow))
+        liveGuidanceGrows(guidance("Turn right in 80 m", "Rue de Rivoli"), grown)
+        assertReadFromFirstRow(requests().size, listOf("Turn right in 40 m") + lines, "commands")
+    }
+
+    @Test
+    fun `live guidance whose fact value grows past its lines is read whole`() {
+        fun withAlso(value: String) = PageBody.Summary(
+            primary = "Turn right in 80 m", secondary = "Rue de Rivoli",
+            facts = listOf(PageFact("eta", "ETA", "12:41"), PageFact("also", "Also", value)),
+            items = listOf(commandsRow),
+        )
+        // Two lines of value still fit beside their label; this one needs more than two.
+        val grown = (1..4).joinToString(", then ") { "change at Châtelet for line 1$it towards Olympiades" }
+        assertTrue(grown.length <= PageTemplateContract.MAX_DETAIL_CHARS)
+        liveGuidanceGrows(withAlso("Line 14"), withAlso(grown))
+        assertReadFromFirstRow(requests().size, listOf("Turn right in 80 m", "ETA · 12:41", "Also · $grown"), "commands")
+    }
+
+    @Test
+    fun `a larger HUD inset that makes the text too tall on the first row opens it in reading`() {
+        view.setTopInsetPx(0)
+        open("nav:main", guidanceRows(16))
+        assertEquals(FrameMode.ROWS, top().mode)
+        assertFalse(top().overflowing)
+        insetToMax()
+        assertReadFromFirstRow(requests().size, lines.take(16), "a")
+    }
+
+    @Test
+    fun `a live revision too tall to fit that removes the first row keeps it, removed`() {
+        open("nav:main", guidanceRows(2))
+        assertEquals("a", top().selectedKey)
+        dispatch(SessionEvent.PageResponse(answer(requests().last().request, 2, guidanceRows(lines.size).copy(items = threeRows.drop(1))), now))
+        assertTrue(top().overflowing)
+        assertEquals(FrameMode.ROWS, top().mode)
+        assertEquals("Alpha", top().tombstone)
+        assertTrue(inViewport("tombstone"))
+        assertTrue(effects.none { it is SessionEffect.SendAction })
+        dispatch(SessionEvent.Back(now))
+        assertEquals(FrameMode.READING, top().mode)
+        val read = readOn()
+        lines.forEach { assertTrue(it, it in read) }
     }
 
     @Test
