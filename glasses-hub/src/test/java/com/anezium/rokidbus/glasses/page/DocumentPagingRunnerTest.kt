@@ -15,6 +15,8 @@ import com.anezium.rokidbus.glasses.session.SessionState
 import com.anezium.rokidbus.glasses.session.SessionTimer
 import com.anezium.rokidbus.glasses.session.TypedPageItems
 import com.anezium.rokidbus.shared.PageBody
+import com.anezium.rokidbus.shared.PageRow
+import com.anezium.rokidbus.shared.PageTarget
 import com.anezium.rokidbus.shared.PageSegment
 import com.anezium.rokidbus.shared.PageSegmentKind
 import com.anezium.rokidbus.shared.PageSurfaceContract
@@ -78,6 +80,14 @@ class DocumentPagingRunnerTest {
 
     private fun top() = (runner.state as SessionState.InPage).frames.last()
 
+    private fun answer(request: PageSurfaceRequest, revision: Long, template: String, body: PageBody) =
+        PageSurfaceContract.correlationPayload(request.correlation)
+            .put("revision", revision).put("template", template).put("title", "Mika")
+            .put("body", PageTemplateContract.encode(body))
+            .put("actions", JSONArray()).put("live", true)
+            .put(PageSurfaceContract.FIELD_PROVIDER_REGISTRATION_ID, "e1")
+            .put(PageSurfaceContract.FIELD_PLUGIN_ID, "relay")
+
     private fun document(request: PageSurfaceRequest, revision: Long) =
         PageSurfaceContract.correlationPayload(request.correlation)
             .put("revision", revision).put("template", "document").put("title", "Mika")
@@ -95,6 +105,48 @@ class DocumentPagingRunnerTest {
             .put("actions", JSONArray()).put("live", true)
             .put(PageSurfaceContract.FIELD_PROVIDER_REGISTRATION_ID, "e1")
             .put(PageSurfaceContract.FIELD_PLUGIN_ID, "relay")
+
+    @Test
+    fun `back from a child, an equal-revision refresh keeps the document paging`() {
+        val thread = PageBody.Document(
+            listOf(
+                PageSegment("h", PageSegmentKind.HEADER, "Mika · captured 14:11"),
+                PageSegment("p", PageSegmentKind.PROSE, (1..80).joinToString(" ") { "line $it of the thread, said plainly" }),
+            ),
+            items = listOf(PageRow("child", "Open the details", target = PageTarget.Page("relay:child"))),
+        )
+        runner.dispatch(SessionEvent.ActivityStarted(ActivityStop("relay:local", "relay:thread", "Mika: hi", pinned = true)))
+        runner.dispatch(SessionEvent.TripleTap(now))
+        now += PageSurfaceContract.GATE_MS
+        runner.dispatch(SessionEvent.Tick(now))
+        runner.dispatch(SessionEvent.Enter(now))
+        val first = requests.last()
+        runner.dispatch(SessionEvent.PageResponse(answer(first, 1, "document", thread), now))
+        idle()
+        val starts = top().pageStarts
+        assertTrue("pages=${starts.size}", starts.size > 1)
+
+        // Into the Commands rows, then a child page, then back.
+        runner.dispatch(SessionEvent.Enter(now + 10))
+        assertEquals(FrameMode.ROWS, top().mode)
+        runner.dispatch(SessionEvent.Enter(now + 20))
+        runner.dispatch(SessionEvent.PageResponse(answer(requests.last(), 1, "selectableList", PageBody.SelectableList(listOf(PageRow("a", "A")))), now + 30))
+        idle()
+        assertEquals("relay:child", top().pageId)
+        runner.dispatch(SessionEvent.Back(now + 40))
+        // The uncovered thread revalidates and the phone answers the same revision.
+        val refresh = requests.last()
+        assertEquals(SessionReducer.REASON_REFRESH, refresh.reason)
+        runner.dispatch(SessionEvent.PageResponse(answer(refresh, 1, "document", thread), now + 50))
+        idle()
+        runner.dispatch(SessionEvent.Back(now + 60))
+        idle()
+        assertEquals(FrameMode.READING, top().mode)
+
+        runner.dispatch(SessionEvent.Step(1, now + 70))
+        assertEquals(1, top().page)
+        assertEquals(1, (view.blockViews.getValue("document") as DocumentPageView).page)
+    }
 
     @Test
     fun `a revision with the same page starts still pages, through the real renderer`() {

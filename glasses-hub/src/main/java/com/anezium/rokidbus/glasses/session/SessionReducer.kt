@@ -789,7 +789,10 @@ internal class SessionReducer(
         )
         val document = itemResolver.isDocument(snapshot.page)
         val frame = if (refresh) {
-            reselect(shown, top, snapshot.page).let { if (it.mode == FrameMode.READING && !document) it.copy(mode = FrameMode.ROWS) else it }
+            reselect(shown, top, snapshot.page)
+                .let { if (it.mode == FrameMode.READING && !document) it.copy(mode = FrameMode.ROWS) else it }
+                // The same snapshot lays out the same pages, and the renderer has no reason to report them again.
+                .let { if (kept != null) it.copy(pageStarts = top.pageStarts) else it }
         } else {
             val entries = itemResolver.entries(snapshot.page)
             shown.copy(
