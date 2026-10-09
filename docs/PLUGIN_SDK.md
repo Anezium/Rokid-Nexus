@@ -1736,7 +1736,8 @@ your pages, `PageTarget.Page(pageId, paramsJson)`, or invokes one of the page's
 declared actions, `PageTarget.Action(actionId)`; a row without a target is
 readable but inert. Ids are unique within their list. A document keeps its text
 order, paragraphs, explicit line breaks and Unicode, and the wearer pages
-through it with swipes.
+through it with swipes; its `footer` is drawn after the text, in the caption
+style, on the last page.
 
 `conversation`, `media`, `route` and `ink` are reserved names this hub does not
 draw yet; a page using one shows as unavailable, never as an immersion. There
@@ -1757,7 +1758,8 @@ confirm every plugin action with the wearer, Cancel preselected, whatever
 `confirm` says, before `onNexusPageAction` is called with a fresh `invocationId`
 and the revision the wearer saw. The SDK delivers an action only for a page it
 answered, at the revision it last sent and for an action that revision declared,
-as encoded when it was sent; anything else never reaches your code. A refresh
+as encoded when it was sent, while that page is visible under an unexpired
+lease; anything else never reaches your code. A refresh
 request suspends that until your answer to it has gone out, and an Unavailable,
 invalid or below-floor answer, or one that could not be sent, leaves nothing of
 the earlier revision to act on. Return `NexusPageResult.done(message, replacement)`,
@@ -1793,7 +1795,8 @@ the link drops it stays false until the hub sends its next page version.
 `NexusPageClosed` arrives with `back`, `session_closed`, `timeout`,
 `link_lost`, `replaced` or `frame_limit`; drop that page's state. `link_lost`
 also comes for one page alone when SPP drops while CXR stays up and that page
-was too big for a CXR message; your smaller pages go on. Link loss,
+was too big for a CXR message, and when the hub could not send a page of yours
+to the glasses; your other pages go on. Link loss,
 revocation, a replaced registration or a closed client void every page and
 publisher at once, and nothing is replayed on reconnect.
 

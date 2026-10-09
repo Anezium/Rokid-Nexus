@@ -1851,7 +1851,7 @@ shows a local status and sends no close for any frame.
 ### Visibility, actions, link loss, and negotiation
 
 Covering a frame sends `visible: false`, drops its lease, and invalidates pending
-work. Uncovering sends `visible: true` with a fresh lease and requests
+work, including an action already queued for its provider. Uncovering sends `visible: true` with a fresh lease and requests
 `reason: refresh`, keeping the snapshot displayed. A page displayed on a frame
 that holds no lease (its first display, or after Retry) also sends `visible: true`
 with a fresh lease; a refreshed, uncovered frame keeps the lease sent on uncover.
@@ -1867,7 +1867,9 @@ unavailable. Confirm alone creates one invocation with a fresh id and the
 revision the wearer saw. The phone hub forwards, and the SDK dispatches, an
 action only for a frame whose current request was answered with a valid page
 that was sent on, at its shown revision and naming an action that page
-advertised: a refresh suspends that right until its own answer is sent, and a
+advertised, while the frame is visible under an unexpired lease; the phone hub
+checks this again when the queued delivery runs, and the SDK against its own
+lease. A refresh suspends that right until its own answer is sent, and a
 refused, invalid or below-floor answer, or a failed send, clears it. A pending invocation
 blocks another SELECT. `done`, `stale`, and `rejected` clear it; rejection keeps
 the page. A lost acknowledgement becomes Unconfirmed and is never resent. A
@@ -1881,8 +1883,9 @@ snapshots, and lose leases, pending requests, and invocations; local `nexus:`
 frames stay readable. Local BACK still pops frames without sending anything to
 the disconnected provider. The session stays open. Restoration replays nothing;
 an explicit Retry with fresh authorization is required. Losing only SPP while
-CXR stays up ends just the frames whose last page needed the data plane, that is
-whose envelope exceeds the 3 KiB CXR message: the phone hub drops them and tells
+CXR stays up ends just the frames whose last page sent to the glasses needed the
+data plane, that is whose envelope exceeds the 3 KiB CXR message: the phone hub
+drops them and tells
 their provider `link_lost`, the glasses hub keeps their snapshots inert by the
 same rule, and smaller pages go on over CXR. Nothing replays when SPP returns. Base
 restoration only promises a still-live base; an Ink immersion closes on link
@@ -1909,8 +1912,12 @@ pending request, tells the owner about a close before unbinding, and releases
 the binding when no demand remains. Page traffic is never queued while a link is
 down, between the hubs or between a provider and the phone hub: the SDK sends a
 page answer, revision or result over the live Binder or drops it, and a send
-that failed grants no publishing or action right. Logs carry ids, sizes and
-error codes, never page text.
+that failed grants no publishing or action right. The phone hub applies a
+page's revision, actions and transport needs to its frame only once that page
+was sent to the glasses; a page it could not send, an answer, a live revision or
+a result's replacement, ends the frame on both sides, with a small correlated
+`PAGE_UNAVAILABLE` to the glasses and `link_lost` to the provider. Logs carry
+ids, sizes and error codes, never page text.
 
 Pages need **both** hub announcements on `/system/hub/capabilities` to carry
 `pageSessionVersion: 1` over the current link; an absent, malformed, negative or
