@@ -199,7 +199,8 @@ internal class WorkspaceIndexer(
                 val first = chunks.size
                 pageChunks.mapTo(chunks) { chunk ->
                     chunk.copy(ordinal = first + chunk.ordinal, paragraph = paragraphs + chunk.paragraph,
-                        page = if (type == WorkspaceFileType.PDF) firstPage + position else 0)
+                        page = if (type == WorkspaceFileType.PDF) firstPage + position else 0,
+                        visual = position in content.visualPages)
                 }
                 paragraphs += (pageChunks.maxOfOrNull { it.paragraph } ?: -1) + 1
                 remaining -= pageChunks.sumOf { it.text.length }

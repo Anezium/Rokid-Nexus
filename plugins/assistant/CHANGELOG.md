@@ -9,8 +9,13 @@
   without text are reported in the folder status.
 - **Look at a page when text is not enough.** With an image-capable provider,
   Assistant can view the one PDF page or image an excerpt cites, for charts,
-  diagrams, table layouts, or poorly recognized text. Only the indexed version
-  of a cited file is rendered, once per question.
+  diagrams, table layouts, or poorly recognized text. Pages that show a chart,
+  table, or picture are marked while indexing so models know to look instead
+  of guessing. Only the indexed version of a cited file is rendered, once per
+  question.
+- **Keep answering when a provider refuses a tool.** ChatGPT now retries
+  without tools after a refused declaration, as the other providers already
+  did, instead of flashing an error and staying silent.
 - **Index large folders in the background.** Slow files are read over several
   passes that resume after the last page read, and their finished pages are
   searchable right away. Text added this way no longer cancels an answer in

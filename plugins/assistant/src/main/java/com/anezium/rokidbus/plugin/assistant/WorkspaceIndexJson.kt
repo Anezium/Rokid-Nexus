@@ -6,7 +6,7 @@ import org.json.JSONObject
 internal object WorkspaceIndexJson {
     fun render(index: WorkspaceIndex): String {
         validate(index)
-        return JSONObject().put("version", 1).put("generation", index.generation)
+        return JSONObject().put("version", VERSION).put("generation", index.generation)
             .put("indexedAtMs", index.indexedAtMs).put("skippedFiles", index.skippedFiles)
             .put("documents", JSONArray().apply {
                 index.documents.forEach { document ->
@@ -19,7 +19,7 @@ internal object WorkspaceIndexJson {
                             document.chunks.forEach { chunk ->
                                 put(JSONObject().put("ordinal", chunk.ordinal).put("text", chunk.text)
                                     .put("heading", chunk.headingPath).put("paragraph", chunk.paragraph)
-                                    .put("page", chunk.page))
+                                    .put("page", chunk.page).put("visual", chunk.visual))
                             }
                         }))
                 }
@@ -31,7 +31,8 @@ internal object WorkspaceIndexJson {
     fun parse(text: String): WorkspaceIndex {
         require(text.toByteArray(Charsets.UTF_8).size <= WorkspaceLimits.MAX_INDEX_BYTES)
         val root = JSONObject(text)
-        require(root.getInt("version") == 1)
+        val version = root.getInt("version")
+        require(version == 1 || version == VERSION)
         val documents = root.getJSONArray("documents")
         require(documents.length() <= WorkspaceLimits.MAX_FILES)
         var totalChunks = 0
@@ -56,13 +57,17 @@ internal object WorkspaceIndexJson {
                     chunks = List(chunks.length()) { ordinal ->
                         val chunk = chunks.getJSONObject(ordinal)
                         WorkspaceChunk(chunk.getInt("ordinal"), chunk.getString("text"),
-                            chunk.getString("heading"), chunk.getInt("paragraph"), chunk.optInt("page", 0))
+                            chunk.getString("heading"), chunk.getInt("paragraph"), chunk.optInt("page", 0),
+                            chunk.optBoolean("visual", false))
                     },
                 )
             },
         )
         validate(index)
-        return index
+        // Version 1 read PDFs and images without visual marks; dropping them makes the next check
+        // read them again while text documents stay cached.
+        return if (version == VERSION) index
+        else index.copy(documents = index.documents.filterNot { it.entry.type?.paged == true })
     }
 
     private fun validate(index: WorkspaceIndex) {
@@ -88,6 +93,8 @@ internal object WorkspaceIndexJson {
             }
         }
     }
+
+    private const val VERSION = 2
 
     private fun JSONObject.nullableLong(key: String): Long? = if (isNull(key)) null else getLong(key)
 }

@@ -12,8 +12,12 @@ import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import com.tom_roush.pdfbox.io.MemoryUsageSetting
+import com.tom_roush.pdfbox.contentstream.operator.Operator
+import com.tom_roush.pdfbox.pdfparser.PDFStreamParser
 import com.tom_roush.pdfbox.pdmodel.PDDocument
+import com.tom_roush.pdfbox.pdmodel.PDPage
 import com.tom_roush.pdfbox.pdmodel.encryption.InvalidPasswordException
+import com.tom_roush.pdfbox.pdmodel.graphics.image.PDImageXObject
 import com.tom_roush.pdfbox.text.PDFTextStripper
 import java.io.ByteArrayOutputStream
 import java.io.Closeable
@@ -23,7 +27,12 @@ import java.nio.ByteBuffer
 import java.util.concurrent.TimeUnit
 import kotlin.math.roundToInt
 
-internal data class WorkspacePagedText(val pages: List<String>, val complete: Boolean)
+/** [visualPages] holds indexes into [pages] whose page shows a chart, table, drawing, or picture. */
+internal data class WorkspacePagedText(
+    val pages: List<String>,
+    val complete: Boolean,
+    val visualPages: Set<Int> = emptySet(),
+)
 
 internal interface WorkspacePageReader {
     /**
@@ -65,7 +74,7 @@ internal class AndroidWorkspacePageReader(context: Context) : WorkspacePageReade
             WorkspaceFileType.PDF -> readPdf(bytes, firstPage, shouldStop)
             WorkspaceFileType.IMAGE ->
                 if (shouldStop(0)) WorkspacePagedText(emptyList(), complete = false)
-                else WorkspacePagedText(listOf(recognizeImage(bytes)), complete = true)
+                else WorkspacePagedText(listOf(recognizeImage(bytes)), complete = true, visualPages = setOf(0))
             else -> throw IllegalArgumentException("$type is not read page by page")
         }
     } catch (_: StackOverflowError) {
@@ -89,20 +98,23 @@ internal class AndroidWorkspacePageReader(context: Context) : WorkspacePageReade
                 val pageCount = it.numberOfPages
                 val lastPage = minOf(pageCount, WorkspaceLimits.MAX_PDF_PAGES)
                 val pages = mutableListOf<String>()
+                val visual = mutableSetOf<Int>()
                 var characters = 0
                 for (page in firstPage..lastPage) {
                     if (Thread.currentThread().isInterrupted) throw IOException("cancelled")
-                    if (shouldStop(characters)) return WorkspacePagedText(pages, complete = false)
+                    if (shouldStop(characters)) return WorkspacePagedText(pages, complete = false, visual)
                     stripper.startPage = page
                     stripper.endPage = page
-                    val text = stripper.getText(it).ifBlank {
+                    val layer = stripper.getText(it)
+                    if (layer.isNotBlank() && hasVisual(it.getPage(page - 1))) visual += pages.size
+                    val text = layer.ifBlank {
                         (scanner ?: openScanner(bytes).also { opened -> scanner = opened })
                             .recognize(page - 1)
                     }
                     pages += text
                     characters += text.length
                 }
-                return WorkspacePagedText(pages, complete = lastPage == pageCount)
+                return WorkspacePagedText(pages, complete = lastPage == pageCount, visual)
             }
         } finally {
             scanner?.close()
@@ -130,6 +142,31 @@ internal class AndroidWorkspacePageReader(context: Context) : WorkspacePageReade
         } finally {
             current.recycle()
         }
+    }
+
+    /**
+     * Flags a text page that also carries a picture or a drawing worth looking at, so its excerpt can
+     * tell the model to view it. Logos and rules stay below the thresholds; a scanned page is read
+     * by recognition instead.
+     */
+    private fun hasVisual(page: PDPage): Boolean = try {
+        val resources = page.resources
+        val picture = resources?.xObjectNames?.any { name ->
+            resources.isImageXObject(name) && (resources.getXObject(name) as? PDImageXObject)
+                ?.let { it.width * it.height >= MIN_VISUAL_IMAGE_PIXELS } == true
+        } == true
+        picture || run {
+            val parser = PDFStreamParser(page)
+            var painted = 0
+            var tokens = 0
+            while (tokens++ < MAX_VISUAL_TOKENS) {
+                val token = parser.parseNextToken() ?: break
+                if (token is Operator && token.name in PAINT_OPERATORS && ++painted >= MIN_VISUAL_PAINTS) break
+            }
+            painted >= MIN_VISUAL_PAINTS
+        }
+    } catch (_: Exception) {
+        false
     }
 
     private fun recognizeImage(bytes: ByteArray): String {
@@ -216,6 +253,10 @@ internal class AndroidWorkspacePageReader(context: Context) : WorkspacePageReade
         const val RECOGNITION_EDGE = 2_000
         const val RECOGNITION_TIMEOUT_SECONDS = 30L
         const val VIEW_EDGE = 1_600
+        const val MIN_VISUAL_IMAGE_PIXELS = 200 * 200
+        const val MIN_VISUAL_PAINTS = 4
+        const val MAX_VISUAL_TOKENS = 20_000
+        val PAINT_OPERATORS = setOf("f", "F", "f*", "S", "s", "B", "B*", "b", "b*")
         const val VIEW_JPEG_QUALITY = 80
         const val MAX_VIEW_JPEG_BYTES = 1_000_000
     }

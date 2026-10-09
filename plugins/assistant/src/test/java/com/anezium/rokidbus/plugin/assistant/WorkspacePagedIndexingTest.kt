@@ -34,6 +34,21 @@ class WorkspacePagedIndexingTest {
     }
 
     @Test
+    fun `pages showing a visual are marked in their citation`() = runBlocking {
+        val (store, gateway, indexer) = fixture()
+        gateway.put("pdf", "sales.pdf", pages("Quarterly sales summary.", "Sales by region chart ${FakePageReader.VISUAL}"))
+        indexer.refresh()
+        val chunks = store.snapshot().state.index!!.documents.single().chunks
+        assertEquals(listOf(false, true), chunks.map { it.visual })
+        assertEquals("Sales by region chart", chunks.last().text)
+        val excerpts = store.snapshot().retriever!!.search("sales region").excerpts
+        assertTrue(excerpts.contains("sales.pdf › page 2${WorkspaceRetriever.VISUAL_MARK}\n"))
+        assertFalse(excerpts.contains("page 1${WorkspaceRetriever.VISUAL_MARK}"))
+        val restored = WorkspaceIndexJson.parse(WorkspaceIndexJson.render(store.snapshot().state.index!!))
+        assertEquals(listOf(false, true), restored.documents.single().chunks.map { it.visual })
+    }
+
+    @Test
     fun `an index stored before pages existed still loads`() {
         val legacy = """{"version":1,"generation":0,"indexedAtMs":1000,"skippedFiles":0,"documents":[{"id":"a",""" +
             """"name":"notice.txt","path":"notice.txt","modifiedAtMs":10,"sizeBytes":5,"type":"TEXT",""" +
@@ -41,6 +56,10 @@ class WorkspacePagedIndexingTest {
         val document = WorkspaceIndexJson.parse(legacy).documents.single()
         assertEquals(0, document.chunks.single().page)
         assertEquals(0, document.pagesRead)
+        val withPdf = legacy.replace("]}]}", """]},{"id":"b","name":"chart.pdf","path":"chart.pdf",""" +
+            """"modifiedAtMs":10,"sizeBytes":5,"type":"PDF","status":"INDEXED",""" +
+            """"chunks":[{"ordinal":0,"text":"Chart","heading":"","paragraph":0,"page":1}]}]}""")
+        assertEquals(listOf("notice.txt"), WorkspaceIndexJson.parse(withPdf).documents.map { it.entry.name })
     }
 
     @Test
@@ -53,7 +72,7 @@ class WorkspacePagedIndexingTest {
         assertEquals(WorkspaceDocumentStatus.INDEXED, statuses["receipt.JPG"])
         assertEquals(WorkspaceDocumentStatus.NO_TEXT, statuses["sunset.png"])
         val excerpts = store.snapshot().retriever!!.search("hotel total").excerpts
-        assertTrue(excerpts.contains("[1] receipt.JPG\n"))
+        assertTrue(excerpts.contains("[1] receipt.JPG${WorkspaceRetriever.VISUAL_MARK}\n"))
     }
 
     @Test
@@ -251,14 +270,16 @@ internal class FakePageReader(private val beforePage: () -> Unit = {}) : Workspa
         if (text == LOCKED) throw WorkspaceReadException(WorkspaceDocumentStatus.PROTECTED)
         val all = if (type == WorkspaceFileType.IMAGE) listOf(text) else text.split(PAGE_BREAK)
         val pages = mutableListOf<String>()
+        val visual = mutableSetOf<Int>()
         var characters = 0
         for (page in all.drop(firstPage - 1)) {
-            if (shouldStop(characters)) return WorkspacePagedText(pages, complete = false)
+            if (shouldStop(characters)) return WorkspacePagedText(pages, complete = false, visual)
             beforePage()
-            pages += page
+            if (type == WorkspaceFileType.IMAGE || VISUAL in page) visual += pages.size
+            pages += page.replace(VISUAL, "")
             characters += page.length
         }
-        return WorkspacePagedText(pages, complete = true)
+        return WorkspacePagedText(pages, complete = true, visual)
     }
 
     override fun render(type: WorkspaceFileType, bytes: ByteArray, page: Int): ByteArray? {
@@ -270,5 +291,6 @@ internal class FakePageReader(private val beforePage: () -> Unit = {}) : Workspa
     companion object {
         const val PAGE_BREAK = "\u000C"
         const val LOCKED = "locked"
+        const val VISUAL = "[visual]"
     }
 }

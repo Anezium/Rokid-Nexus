@@ -69,6 +69,8 @@ internal data class WorkspaceChunk(
     val headingPath: String = "",
     val paragraph: Int = 0,
     val page: Int = 0,
+    // The page also shows a chart, table, drawing, or picture its text does not carry.
+    val visual: Boolean = false,
 )
 
 internal enum class WorkspaceDocumentStatus {

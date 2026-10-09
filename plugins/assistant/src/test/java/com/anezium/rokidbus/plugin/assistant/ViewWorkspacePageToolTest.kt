@@ -49,6 +49,10 @@ class ViewWorkspacePageToolTest {
         val image = AssistantToolRegistry(listOf(ViewWorkspacePageTool { controller }))
             .newExecutionPhase(VISION, controller.searchVersion()).execute(call("""{"file":"WHITEBOARD.JPG"}"""))
         assertEquals("jpeg:IMAGE:1:Sprint plan", decode(image))
+        assertEquals("jpeg:IMAGE:1:Sprint plan",
+            controller.viewPage("whiteboard.jpg${WorkspaceRetriever.VISUAL_MARK}", null)?.let { String(it) })
+        assertEquals("jpeg:PDF:2:Quarterly chart.",
+            controller.viewPage("reports/sales.pdf › page 2", 2)?.let { String(it) })
     }
 
     @Test

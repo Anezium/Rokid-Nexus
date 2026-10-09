@@ -120,8 +120,17 @@ internal object NexusAgentPolicy {
             if (workspaceEnabled) {
                 append("\n- For questions requiring workspace documents, use only Workspace excerpts in this request")
                 if (SEARCH_WORKSPACE_TOOL_NAME in availableToolNames) append(" or a successful search_workspace result")
+                if (VIEW_WORKSPACE_PAGE_TOOL_NAME in availableToolNames) append(" or a page shown by view_workspace_page")
                 append(". If none cover the question, say no " +
                     "relevant workspace excerpt was found. Unrelated questions can be answered normally.")
+                append(" Never infer what a chart, figure, table, or image shows from the text around it.")
+                if (VIEW_WORKSPACE_PAGE_TOOL_NAME in availableToolNames) {
+                    append(" If a relevant excerpt is marked" + WorkspaceRetriever.VISUAL_MARK + " and its text " +
+                        "does not state the answer (values, comparisons, rankings, labels, trends), you must call " +
+                        "view_workspace_page with that file and page before answering; answering, guessing, or " +
+                        "asking the wearer instead is an error. take_photo shows the wearer's surroundings, never " +
+                        "a workspace document.")
+                }
             }
             if (noticeBand) {
                 append("\n- ")

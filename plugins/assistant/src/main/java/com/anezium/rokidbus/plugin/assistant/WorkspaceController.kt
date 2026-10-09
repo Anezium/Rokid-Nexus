@@ -222,8 +222,10 @@ internal class WorkspaceController(
         val reader = pageReader ?: return null
         val snapshot = validatedSnapshot() ?: return null
         val documents = snapshot.state.index?.documents.orEmpty().filter { it.viewable() }
-        val document = documents.firstOrNull { it.entry.relativePath == file }
-            ?: documents.filter { it.entry.name.equals(file, ignoreCase = true) }.singleOrNull()
+        // Models sometimes copy the whole citation, page and visual mark included.
+        val cited = file.removeSuffix(WorkspaceRetriever.VISUAL_MARK).substringBefore(" › ").trim()
+        val document = documents.firstOrNull { it.entry.relativePath == cited }
+            ?: documents.filter { it.entry.name.equals(cited, ignoreCase = true) }.singleOrNull()
             ?: return null
         val type = document.entry.type!!
         val pageNumber = if (type == WorkspaceFileType.PDF) page ?: return null else 1
