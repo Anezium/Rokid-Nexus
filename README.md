@@ -84,8 +84,10 @@ a plugin opens a field, the screen comes forward by itself and leaves once the
 field is done. Password fields are marked sensitive,
 the phone window becomes secure, and Nexus never mirrors the editor's existing
 text. These are trusted hub-to-hub controls, not plugin capabilities.
-**Glasses apps → Set up YouTube** downloads official Morphe MicroG-RE, imports
-your patched YouTube APK or launches Patcher, and installs or updates them over the Rokid link.
+**Patcher → YouTube** (the Patcher plugin's settings) guides the YouTube setup:
+the hub downloads official Morphe MicroG-RE, takes the patched YouTube APK back
+from Patcher or an explicit import, and installs or updates them over the Rokid link.
+Glasses apps keeps listing and opening the installed YouTube like any native app.
 Sign in on the glasses with the phone keyboard; account data stays in MicroG.
 The glasses launcher lists native apps alongside phone plugins. See
 [YouTube setup](docs/YOUTUBE_GLASSES.md) for APK requirements and validation.

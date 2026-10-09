@@ -1,10 +1,21 @@
 # YouTube on glasses
 
-Open **Glasses apps → Set up YouTube** in the phone hub. Update both Nexus hubs
+Open **Patcher → YouTube**: Nexus → Patcher's settings → **Set up YouTube**. The
+screens look like part of Patcher, but the phone hub owns them: it opens them only
+for the approved Patcher, and keeps MicroG, installs, glasses inventory, the
+keyboard setting and the sign-in checklist. Reddit's setup works the same way from
+Patcher's **Set up Reddit**. Glasses apps has no app setup cards; it only lists and
+opens installed apps. Update both Nexus hubs
 before starting. Connect the glasses through Hi Rokid, start Nexus on them, and
 turn on phone Wi-Fi. Keep both devices connected during installation.
 
 ## Four steps
+
+The overview lists the four steps with their own status, the phone keyboard switch
+and a collapsed **Advanced** section. Its bottom button is the one shortcut that
+fits the state: **Patch now**, **Patch an update**, **Install patched APK** or
+**Open running job**. Back from a step returns to the overview; Back from the
+overview returns to Patcher.
 
 ### 1. MicroG on the glasses
 
@@ -73,8 +84,7 @@ already prepared install if the connection was unavailable.
 
 ### 4. Sign in and open
 
-Tap **Open MicroG on glasses**, choose **Add account** there, then expand **More**
-and use **Keyboard & remote** on the phone. Complete Google's sign-in and
+Tap **Open MicroG on glasses**, choose **Add account** there, then use **Keyboard & remote** on the phone. Complete Google's sign-in and
 verification on the glasses. Choose **Open YouTube** and check your account and
 Morphe/SponsorBlock settings. Tap **Done** when finished. This manual checklist
 choice survives reopening Nexus and can be reset with **Mark sign-in to do**.
@@ -90,7 +100,7 @@ Credentials are entered only by the user.
 
 ## Phone keyboard
 
-**Auto-open keyboard** is off by default and remembers your choice. Enable it
+**Auto-open YouTube keyboard** is off by default and remembers your choice. Enable it
 to open the phone keyboard when a field in Morphe YouTube or its Rokid test
 build takes focus. If Android blocks opening it, use the keyboard notification.
 When disabled, use **Keyboard & remote** manually. Changes apply to the next
@@ -98,7 +108,7 @@ field; the setting does not affect MicroG, other apps, or plugin editable surfac
 
 ## Advanced: Morphe Manager fallback
 
-Expand **Advanced → Patch with Morphe Manager instead** if you already use
+Expand **Advanced → Patch with Morphe Manager or import a patched APK** if you already use
 Manager or need a manual workflow:
 
 1. **Add Rokid patches to Morphe** adds the
