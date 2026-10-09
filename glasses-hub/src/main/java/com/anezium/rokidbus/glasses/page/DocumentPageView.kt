@@ -28,7 +28,10 @@ internal class DocumentPageView(context: Context) : View(context) {
     private var layouts: List<StaticLayout> = emptyList()
     private var pages: List<List<Line>> = emptyList()
     private var laidOutFor: Pair<Int, Int>? = null
-    private var reported: Pair<List<DocumentAnchor>, Int>? = null
+
+    /** What the current binding is: a layout report is only ever about the binding it measured. */
+    private var identity: Any? = null
+    private var reported: Triple<Any?, List<DocumentAnchor>, Int>? = null
     private val main = android.os.Handler(android.os.Looper.getMainLooper())
 
     /** Page starts of the current layout, as last measured. */
@@ -39,11 +42,16 @@ internal class DocumentPageView(context: Context) : View(context) {
     var page = 0
         private set
 
-    fun bind(segments: List<PageSegment>, anchor: DocumentAnchor?, dimmed: Boolean) {
+    /**
+     * [identity] names what is shown, such as its frame, page and revision. A new one reports its
+     * layout again even when the page starts are the same, since whoever reads them was reset.
+     */
+    fun bind(segments: List<PageSegment>, anchor: DocumentAnchor?, dimmed: Boolean, identity: Any? = null) {
         val contentChanged = segments != this.segments || dimmed != this.dimmed
         this.segments = segments
         this.anchor = anchor
         this.dimmed = dimmed
+        this.identity = identity
         if (contentChanged) laidOutFor = null
         paginate()
         invalidate()
@@ -71,12 +79,14 @@ internal class DocumentPageView(context: Context) : View(context) {
         }
         pageStarts = pages.map { page -> page.first().let { DocumentAnchor(segments[it.segment].id, it.start) } }
         page = pageOf(anchor)
-        val report = pageStarts to page
+        val report = Triple(identity, pageStarts, page)
         if (report != reported && pageStarts.isNotEmpty()) {
             reported = report
             // Reported after this pass, on the main looper whether or not the view is
-            // attached yet: the state it updates redraws this view again.
-            main.post { onPaged?.invoke(report.first, report.second) }
+            // attached yet: the state it updates redraws this view again. The callback is the
+            // one of this binding, and a report overtaken by a rebind is dropped unread.
+            val callback = onPaged
+            main.post { if (identity == report.first) callback?.invoke(report.second, report.third) }
         }
     }
 

@@ -76,9 +76,9 @@ class SessionScreenViewTest {
         shadowOf(Looper.getMainLooper()).idle()
     }
 
-    private fun page(pageId: String, body: PageBody, title: String = "Relay", actions: JSONArray = JSONArray()): PageSurfaceResponse.Page {
+    private fun page(pageId: String, body: PageBody, title: String = "Relay", actions: JSONArray = JSONArray(), revision: Long = 1): PageSurfaceResponse.Page {
         val payload = PageSurfaceContract.correlationPayload(PageCorrelation("r1", 1, 1, pageId))
-            .put("revision", 1).put("template", body.template).put("title", title)
+            .put("revision", revision).put("template", body.template).put("title", title)
             .put("body", PageTemplateContract.encode(body)).put("actions", actions).put("live", false)
         return (PageSurfaceContract.validateResponse(payload) as PageSurfaceValidationResult.Valid).value as PageSurfaceResponse.Page
     }
@@ -239,6 +239,27 @@ class SessionScreenViewTest {
         render(screens.screen(shown(commands), null, 1))
         assertTrue(visibleInViewport("row:open"))
         assertMinima()
+    }
+
+    @Test
+    fun `a rebind before the queued layout report runs drops that stale report`() {
+        fun prose(word: String) = (1..60).joinToString(" ") { "$word $it of the thread" }
+        val first = page("relay:thread", PageBody.Document(listOf(PageSegment("a", PageSegmentKind.PROSE, prose("old")))))
+        val second = page("relay:thread", PageBody.Document(listOf(PageSegment("b", PageSegmentKind.PROSE, prose("new")))), revision = 2)
+        // Both bindings lay out before the main looper runs either report.
+        listOf(first, second).forEach { document ->
+            view.show(screens.screen(shown(document, mode = FrameMode.READING), null, 1))
+            view.measure(
+                View.MeasureSpec.makeMeasureSpec(PageStyle.WIDTH_PX, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(PageStyle.HEIGHT_PX, View.MeasureSpec.EXACTLY),
+            )
+            view.layout(0, 0, PageStyle.WIDTH_PX, PageStyle.HEIGHT_PX)
+        }
+        shadowOf(Looper.getMainLooper()).idle()
+        val pager = view.blockViews.getValue("document") as DocumentPageView
+        assertEquals(listOf(2L), paged.map { it.revision })
+        assertEquals(pager.pageStarts, paged.single().pageStarts)
+        assertTrue(paged.single().pageStarts.all { it.segmentId == "b" })
     }
 
     @Test
