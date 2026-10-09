@@ -511,6 +511,25 @@ class ReadingRunnerTest {
         assertNoActionAfterPresses()
     }
 
+    @Test
+    fun `an unavailable list too long to fit is read whole, inert, with only Retry and Back`() {
+        val people = (1..30).map { PageRow("p$it", "Person $it", sub = "14:$it · message $it", target = PageTarget.Page("relay:thread")) }
+        open("relay:main", PageBody.SelectableList(people), actions = acknowledge)
+        assertEquals(FrameMode.ROWS, top().mode)
+        val opened = requests().size
+        dispatch(SessionEvent.LinkLost)
+        assertEquals(FrameMode.READING, top().mode)
+        assertTrue(inViewport("unavailable"))
+        assertFalse(view.blockViews.keys.any { it.startsWith("row:") || it.startsWith("last:row:") })
+        val read = readOn()
+        people.forEach { row ->
+            assertTrue(row.label, "${row.label}14:" in read)
+            assertTrue(row.sub!!, row.sub!! in read)
+        }
+        assertNoActionAfterPresses()
+        assertEquals(opened, requests().size)
+    }
+
     /** Rows, a child page, back: the uncovered frame's revalidation then times out. */
     private fun timeOutRefresh() {
         dispatch(SessionEvent.Enter(now))
