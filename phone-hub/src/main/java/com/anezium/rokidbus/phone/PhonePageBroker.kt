@@ -66,8 +66,10 @@ class PhonePageBroker(
         var actionable: Boolean = false,
         /** The revision floor the glasses sent with the current request. */
         var floor: Long? = null,
-        /** The last page forwarded for this frame needed SPP, so it is lost when SPP is. */
+        /** The last page the glasses were sent for this frame needed SPP, so it is lost when SPP is. */
         var dataPlane: Boolean = false,
+        /** The highest revision accepted to be sent; later ones must exceed it even before it went out. */
+        var reservedRevision: Long? = null,
         var leaseUntil: Long? = null,
         /** A page just forwarded is about to be displayed; its first visibility follows. */
         var displayDeadline: Long? = null,
@@ -76,6 +78,20 @@ class PhonePageBroker(
     ) {
         val pending: Boolean get() = requestDeadline != null
     }
+
+    /**
+     * What a page on its way to the glasses changes for its frame. It is applied only once the
+     * send succeeded, and only to the same frame, request and epoch; until then the frame keeps
+     * describing what the glasses hold.
+     */
+    private class Candidate(
+        val revision: Long,
+        val live: Boolean,
+        val actions: Set<String>,
+        val dataPlane: Boolean,
+        /** An answer to the current request, which makes its actions available. */
+        val answersRequest: Boolean,
+    )
 
     private val lock = Any()
     private val frames = linkedMapOf<FrameKey, Frame>()
@@ -123,13 +139,16 @@ class PhonePageBroker(
         frames.values.filter { it.dataPlane }.toList().forEach { frame ->
             val registration = currentRegistration(frame)
             frames.remove(frame.key)
-            registration?.let {
-                val closed = JSONObject().put("pageId", frame.pageId).put("reason", CLOSE_LINK_LOST)
-                    .put("sessionGeneration", frame.key.generation).put("frameIndex", frame.key.frameIndex)
-                val outgoing = stamped(closed, it)
-                later { host.deliver(it, BusPaths.PAGE_CLOSED, outgoing) }
-            }
+            registration?.let { closeProvider(frame, it) }
         }
+    }
+
+    /** Tells [registration] that [frame] is gone for transport reasons. */
+    private fun closeProvider(frame: Frame, registration: PageRegistration) {
+        val closed = JSONObject().put("pageId", frame.pageId).put("reason", CLOSE_LINK_LOST)
+            .put("sessionGeneration", frame.key.generation).put("frameIndex", frame.key.frameIndex)
+        val outgoing = stamped(closed, registration)
+        later { host.deliver(registration, BusPaths.PAGE_CLOSED, outgoing) }
     }
 
     /** A registration of [principal] was approved: tell it the effective version, then hand over waiting work. */
@@ -314,7 +333,7 @@ class PhonePageBroker(
                 is PageSurfaceValidationResult.Valid -> when (val value = validated.value) {
                     is PageSurfaceResponse.Error -> {
                         refuseAnswer(frame)
-                        forward(BusPaths.PAGE_RESPONSE, stamped, frame)
+                        forward(BusPaths.PAGE_RESPONSE, stamped)
                         if (frame.shownRevision == null) frames.remove(frame.key)
                     }
                     is PageSurfaceResponse.Page -> {
@@ -327,14 +346,12 @@ class PhonePageBroker(
                         }
                         frame.requestDeadline = null
                         frame.displayDeadline = now + PageSurfaceContract.PAGE_TIMEOUT_MS
-                        frame.shownRevision = maxOf(frame.shownRevision ?: value.revision, value.revision)
-                        frame.live = value.live
-                        frame.actions = value.actions.map { it.id }.toSet()
-                        frame.dataPlane = PageSurfaceContract.needsDataPlane(BusPaths.PAGE_RESPONSE, stamped)
-                        val requestId = frame.requestId
-                        forward(BusPaths.PAGE_RESPONSE, stamped, frame) {
-                            if (frames[frame.key] === frame && frame.requestId == requestId) frame.actionable = true
-                        }
+                        frame.reservedRevision = maxOf(frame.reservedRevision ?: value.revision, value.revision)
+                        val candidate = Candidate(
+                            value.revision, value.live, value.actions.map { it.id }.toSet(),
+                            PageSurfaceContract.needsDataPlane(BusPaths.PAGE_RESPONSE, stamped), answersRequest = true,
+                        )
+                        forwardPage(BusPaths.PAGE_RESPONSE, stamped, frame, candidate)
                     }
                 }
             }
@@ -350,13 +367,14 @@ class PhonePageBroker(
         if (page.correlation != PageCorrelation(frame.requestId, frame.key.generation, frame.key.frameIndex, frame.pageId)) {
             return ERROR_PAGE_NOT_REQUESTED
         }
-        if (page.revision <= (frame.shownRevision ?: Long.MIN_VALUE)) return PageSurfaceContract.ERROR_STALE_GENERATION
+        if (page.revision <= frame.highestRevision()) return PageSurfaceContract.ERROR_STALE_GENERATION
         if (!bodyAccepted(page, frame.owner)) return PageSurfaceContract.ERROR_INVALID_PAGE
-        frame.shownRevision = page.revision
-        frame.live = page.live
-        frame.actions = page.actions.map { it.id }.toSet()
-        frame.dataPlane = PageSurfaceContract.needsDataPlane(BusPaths.PAGE_RESPONSE, stamped)
-        forward(BusPaths.PAGE_RESPONSE, stamped, frame)
+        frame.reservedRevision = page.revision
+        val candidate = Candidate(
+            page.revision, page.live, page.actions.map { it.id }.toSet(),
+            PageSurfaceContract.needsDataPlane(BusPaths.PAGE_RESPONSE, stamped), answersRequest = false,
+        )
+        forwardPage(BusPaths.PAGE_RESPONSE, stamped, frame, candidate)
         return null
     }
 
@@ -377,23 +395,22 @@ class PhonePageBroker(
             is PageSurfaceValidationResult.Valid -> validated.value
         }
         val replacement = result.replacement
-        if (replacement != null) {
-            val sameFrame = replacement.correlation.sessionGeneration == frame.key.generation &&
-                replacement.correlation.frameIndex == frame.key.frameIndex &&
-                replacement.correlation.pageId == frame.pageId
-            if (!sameFrame || replacement.revision <= (frame.shownRevision ?: Long.MIN_VALUE) ||
-                !bodyAccepted(replacement, frame.owner)
-            ) {
+        val candidate = replacement?.let {
+            val sameFrame = it.correlation.sessionGeneration == frame.key.generation &&
+                it.correlation.frameIndex == frame.key.frameIndex &&
+                it.correlation.pageId == frame.pageId
+            if (!sameFrame || it.revision <= frame.highestRevision() || !bodyAccepted(it, frame.owner)) {
                 return PageSurfaceContract.ERROR_INVALID_PAGE
             }
-            frame.shownRevision = replacement.revision
-            frame.live = replacement.live
-            frame.actions = replacement.actions.map { it.id }.toSet()
-            frame.dataPlane = PageSurfaceContract.needsDataPlane(BusPaths.PAGE_RESULT, stamped)
+            frame.reservedRevision = it.revision
+            Candidate(
+                it.revision, it.live, it.actions.map { action -> action.id }.toSet(),
+                PageSurfaceContract.needsDataPlane(BusPaths.PAGE_RESULT, stamped), answersRequest = false,
+            )
         }
         frame.invocationId = null
         frame.invocationDeadline = null
-        forward(BusPaths.PAGE_RESULT, stamped, frame)
+        if (candidate != null) forwardPage(BusPaths.PAGE_RESULT, stamped, frame, candidate) else forward(BusPaths.PAGE_RESULT, stamped)
         return null
     }
 
@@ -501,25 +518,51 @@ class PhonePageBroker(
         later { host.sendToGlasses(BusPaths.PAGE_RESPONSE, payload) }
     }
 
-    private fun forward(path: String, payload: JSONObject, frame: Frame, onSent: (() -> Unit)? = null) {
+    /** Sends what carries no page: an error answer, or a result without a replacement. */
+    private fun forward(path: String, payload: JSONObject) {
+        later {
+            val error = host.sendToGlasses(path, payload) ?: return@later
+            host.log("page send failed path=$path code=$error bytes=${PageSurfaceContract.serializedBytes(payload)}")
+        }
+    }
+
+    /**
+     * Sends a page to the glasses and applies [candidate] to [frame] only once it was sent, if the
+     * frame, its request and its epoch are still the same. A page that could not be sent ends the
+     * frame on both sides: the glasses get a small, honest answer and the provider a close.
+     */
+    private fun forwardPage(path: String, payload: JSONObject, frame: Frame, candidate: Candidate) {
+        val requestId = frame.requestId
+        val epoch = frame.epoch
         later {
             val error = host.sendToGlasses(path, payload)
-            if (error == null) {
-                onSent?.let { mutate(it) }
-            } else {
+            if (error != null) {
                 host.log("page send failed path=$path code=$error bytes=${PageSurfaceContract.serializedBytes(payload)}")
-                // A page too big for the remaining transport still gets a small, honest answer.
-                if (path == BusPaths.PAGE_RESPONSE && !payload.has("error")) {
-                    mutate {
-                        if (frames[frame.key] === frame) {
-                            frames.remove(frame.key)
-                            answerError(frame, PageSurfaceContract.ERROR_PAGE_UNAVAILABLE)
-                        }
-                    }
+            }
+            mutate {
+                if (frames[frame.key] === frame && frame.requestId == requestId && frame.epoch == epoch) {
+                    if (error == null) commit(frame, candidate) else failClosed(frame)
                 }
             }
         }
     }
+
+    private fun commit(frame: Frame, candidate: Candidate) {
+        frame.shownRevision = maxOf(frame.shownRevision ?: candidate.revision, candidate.revision)
+        frame.live = candidate.live
+        frame.actions = candidate.actions
+        frame.dataPlane = candidate.dataPlane
+        if (candidate.answersRequest) frame.actionable = true
+    }
+
+    private fun failClosed(frame: Frame) {
+        val registration = currentRegistration(frame)
+        frames.remove(frame.key)
+        answerError(frame, PageSurfaceContract.ERROR_PAGE_UNAVAILABLE)
+        registration?.let { closeProvider(frame, it) }
+    }
+
+    private fun Frame.highestRevision(): Long = maxOf(reservedRevision ?: Long.MIN_VALUE, shownRevision ?: Long.MIN_VALUE)
 
     private fun stamped(payload: JSONObject, registration: PageRegistration): JSONObject =
         JSONObject(payload.toString())

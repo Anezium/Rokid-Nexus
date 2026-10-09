@@ -31,6 +31,12 @@ class PhonePageBrokerTest {
         /** Runs once, inside the broker's flush, when a delivery of [path] goes out. */
         var onDelivered: Pair<String, () -> Unit>? = null
 
+        /** Without SPP, what needs the data plane cannot reach the glasses, as on the real transport. */
+        var sppUp = true
+
+        /** Runs once, before the send returns, when a page of that revision goes to the glasses. */
+        var onGlassesSend: Pair<Long, () -> Unit>? = null
+
         override fun nowMs(): Long = now
         override fun pageProvider(pluginId: String): PhonePluginPrincipal? = providers[pluginId]
         override fun registrations(principal: PhonePluginPrincipal): List<PageRegistration> =
@@ -47,6 +53,11 @@ class PhonePageBrokerTest {
             return live[registration.pluginId]?.any { it.epoch == registration.epoch } == true
         }
         override fun sendToGlasses(path: String, payload: JSONObject): String? {
+            onGlassesSend?.takeIf { payload.optLong("revision", -1) == it.first }?.let { (_, hook) ->
+                onGlassesSend = null
+                hook()
+            }
+            if (!sppUp && PageSurfaceContract.needsDataPlane(path, payload)) return "NO_DATA_PLANE"
             glasses += path to JSONObject(payload.toString())
             return glassesError
         }
@@ -476,6 +487,55 @@ class PhonePageBrokerTest {
         broker.onGlasses(BusPaths.PAGE_VISIBILITY, visibility(true))
         broker.onGlasses(BusPaths.PAGE_ACTION, action(invocationId = "leased", revision = 3))
         assertEquals(listOf("leased"), actions())
+    }
+
+    private val big = JSONObject().put(
+        "items",
+        JSONArray().apply { (1..40).forEach { put(JSONObject().put("id", "r$it").put("label", "Thread $it " + "x".repeat(90))) } },
+    )
+
+    @Test
+    fun `a replacement that cannot reach the glasses closes the frame on both sides`() {
+        connect(relay)
+        val relayA = register(relay, "relay-a")
+        // Over CXR alone: the small page arrives, a replacement too big for CXR cannot.
+        host.sppUp = false
+        broker.onGlasses(BusPaths.PAGE_REQUEST, request())
+        assertNull(broker.onProvider(BusPaths.PAGE_RESPONSE, page(revision = 1), relayA))
+        broker.onGlasses(BusPaths.PAGE_VISIBILITY, visibility(true))
+        broker.onGlasses(BusPaths.PAGE_ACTION, action(invocationId = "i1", revision = 1))
+        assertNull(broker.onProvider(BusPaths.PAGE_RESULT, result("i1").put("replacement", page(revision = 2, body = big)), relayA))
+
+        // The glasses get a small correlated unavailable answer, never the result they cannot hold.
+        assertTrue(host.glasses.none { it.first == BusPaths.PAGE_RESULT })
+        val answer = responses().last()
+        assertEquals(PageSurfaceContract.ERROR_PAGE_UNAVAILABLE, answer.getString("error"))
+        assertEquals("relay", answer.getString(PageSurfaceContract.FIELD_PLUGIN_ID))
+        assertEquals("r1", answer.getString("requestId"))
+        // The provider's page is closed too, and nothing of either revision stays usable.
+        val closed = host.delivered.filter { it.second == BusPaths.PAGE_CLOSED }.map { it.third }
+        assertEquals(listOf("link_lost"), closed.map { it.getString("reason") })
+        broker.onGlasses(BusPaths.PAGE_ACTION, action(invocationId = "i2", revision = 1))
+        assertEquals(1, host.delivered.count { it.second == BusPaths.PAGE_ACTION })
+        assertEquals(PhonePageBroker.ERROR_PAGE_NOT_REQUESTED, broker.onProvider(BusPaths.PAGE_RESPONSE, page(revision = 3), relayA))
+    }
+
+    @Test
+    fun `a revision still on its way keeps the frame classified by what the glasses hold`() {
+        connect(relay)
+        val relayA = register(relay, "relay-a")
+        broker.onGlasses(BusPaths.PAGE_REQUEST, request())
+        assertNull(broker.onProvider(BusPaths.PAGE_RESPONSE, page(revision = 1, body = big), relayA))
+        broker.onGlasses(BusPaths.PAGE_VISIBILITY, visibility(true))
+        // A small revision replaces the big page; SPP goes before it reaches the glasses.
+        val both = LinkStateBits.CXR_CONTROL_UP or LinkStateBits.SPP_DATA_UP
+        host.onGlassesSend = 2L to { broker.onLinkState(both, LinkStateBits.CXR_CONTROL_UP) }
+        assertNull(broker.onProvider(BusPaths.PAGE_RESPONSE, page(revision = 2), relayA))
+
+        // The glasses still held the big page, which needs SPP: the frame ends on the phone too.
+        val closed = host.delivered.filter { it.second == BusPaths.PAGE_CLOSED }.map { it.third }
+        assertEquals(listOf("relay:main"), closed.map { it.getString("pageId") })
+        assertEquals(PhonePageBroker.ERROR_PAGE_NOT_REQUESTED, broker.onProvider(BusPaths.PAGE_RESPONSE, page(revision = 3), relayA))
     }
 
     @Test
