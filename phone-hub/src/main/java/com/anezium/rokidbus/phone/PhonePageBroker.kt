@@ -58,6 +58,13 @@ class PhonePageBroker(
         var shownRevision: Long? = null,
         var live: Boolean = false,
         var actions: Set<String> = emptySet(),
+        /**
+         * The glasses hold an accepted answer of the current request, so its advertised actions
+         * may be forwarded. Separate from [shownRevision], which only ever rises.
+         */
+        var actionable: Boolean = false,
+        /** The revision floor the glasses sent with the current request. */
+        var floor: Long? = null,
         var leaseUntil: Long? = null,
         /** A page just forwarded is about to be displayed; its first visibility follows. */
         var displayDeadline: Long? = null,
@@ -203,6 +210,9 @@ class PhonePageBroker(
         frame.requestId = correlation.requestId
         frame.invocationId = null
         frame.invocationDeadline = null
+        // A refresh suspends the old revision's actions until its own answer reaches the glasses.
+        frame.actionable = false
+        frame.floor = (payload.opt(PageSurfaceContract.FIELD_MINIMUM_REVISION) as? Number)?.toLong()
         val now = host.nowMs()
         frame.requestDeadline = now + remaining
         frames[key] = frame
@@ -264,19 +274,21 @@ class PhonePageBroker(
             val request = PageSurfaceRequest(correlation, "open")
             when (val validated = PageSurfaceContract.validateResponse(stamped, request)) {
                 is PageSurfaceValidationResult.Invalid -> {
-                    frame.requestDeadline = null
+                    refuseAnswer(frame)
                     answerError(frame, validated.error)
                     return validated.error
                 }
                 is PageSurfaceValidationResult.Valid -> when (val value = validated.value) {
                     is PageSurfaceResponse.Error -> {
-                        frame.requestDeadline = null
+                        refuseAnswer(frame)
                         forward(BusPaths.PAGE_RESPONSE, stamped, frame)
                         if (frame.shownRevision == null) frames.remove(frame.key)
                     }
                     is PageSurfaceResponse.Page -> {
-                        if (!bodyAccepted(value, frame.owner)) {
-                            frame.requestDeadline = null
+                        // Below the floor the glasses would drop it as a rollback: it is no answer.
+                        val rollback = frame.floor?.let { value.revision < it } == true
+                        if (rollback || !bodyAccepted(value, frame.owner)) {
+                            refuseAnswer(frame)
                             answerError(frame, PageSurfaceContract.ERROR_INVALID_PAGE)
                             return PageSurfaceContract.ERROR_INVALID_PAGE
                         }
@@ -285,7 +297,10 @@ class PhonePageBroker(
                         frame.shownRevision = maxOf(frame.shownRevision ?: value.revision, value.revision)
                         frame.live = value.live
                         frame.actions = value.actions.map { it.id }.toSet()
-                        forward(BusPaths.PAGE_RESPONSE, stamped, frame)
+                        val requestId = frame.requestId
+                        forward(BusPaths.PAGE_RESPONSE, stamped, frame) {
+                            if (frames[frame.key] === frame && frame.requestId == requestId) frame.actionable = true
+                        }
                     }
                 }
             }
@@ -354,7 +369,7 @@ class PhonePageBroker(
             ?.takeIf { it.pageId == action.pageId } ?: return host.log("page drop path=action reason=NO_FRAME")
         val now = host.nowMs()
         val lease = frame.leaseUntil
-        val accepted = frame.shownRevision == action.revision && action.actionId in frame.actions &&
+        val accepted = frame.actionable && frame.shownRevision == action.revision && action.actionId in frame.actions &&
             frame.invocationId == null && !frame.pending && lease != null && now < lease
         if (!accepted) return host.log("page drop path=action id=${action.invocationId} reason=NOT_ACTIONABLE")
         val principal = host.pageProvider(frame.owner) ?: return invalidate(frame)
@@ -407,6 +422,14 @@ class PhonePageBroker(
         answerError(frame, PageSurfaceContract.ERROR_PAGE_UNAVAILABLE)
     }
 
+    /** The current request was refused or answered invalidly: nothing of the old revision stays actionable or live. */
+    private fun refuseAnswer(frame: Frame) {
+        frame.requestDeadline = null
+        frame.actionable = false
+        frame.live = false
+        frame.actions = emptySet()
+    }
+
     /** Forgets [frame] without telling anyone: the glasses already closed it. */
     private fun forget(frame: Frame) {
         frames.remove(frame.key)
@@ -424,10 +447,12 @@ class PhonePageBroker(
         later { host.sendToGlasses(BusPaths.PAGE_RESPONSE, payload) }
     }
 
-    private fun forward(path: String, payload: JSONObject, frame: Frame) {
+    private fun forward(path: String, payload: JSONObject, frame: Frame, onSent: (() -> Unit)? = null) {
         later {
             val error = host.sendToGlasses(path, payload)
-            if (error != null) {
+            if (error == null) {
+                onSent?.let { mutate(it) }
+            } else {
                 host.log("page send failed path=$path code=$error bytes=${PageSurfaceContract.serializedBytes(payload)}")
                 // A page too big for the remaining transport still gets a small, honest answer.
                 if (path == BusPaths.PAGE_RESPONSE && !payload.has("error")) {

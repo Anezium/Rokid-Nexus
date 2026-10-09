@@ -359,6 +359,49 @@ class PhonePageBrokerTest {
         assertTrue(host.glasses.none { it.first == BusPaths.PAGE_RESULT })
     }
 
+    /** An accepted revision 3 with `read`, then a refresh answered by [answer], then a renewed lease. */
+    private fun refreshAnswered(answer: (PageRegistration) -> String?): String? {
+        connect(relay)
+        val relayA = register(relay, "relay-a")
+        broker.onGlasses(BusPaths.PAGE_REQUEST, request())
+        assertNull(broker.onProvider(BusPaths.PAGE_RESPONSE, page(revision = 3), relayA))
+        broker.onGlasses(BusPaths.PAGE_VISIBILITY, visibility(true))
+        broker.onGlasses(
+            BusPaths.PAGE_REQUEST,
+            request(requestId = "r2", reason = "refresh").put(PageSurfaceContract.FIELD_MINIMUM_REVISION, 3),
+        )
+        // While the refresh waits for its answer, the old revision takes no action.
+        broker.onGlasses(BusPaths.PAGE_ACTION, action(invocationId = "i0", revision = 3))
+        val error = answer(relayA)
+        broker.onGlasses(BusPaths.PAGE_VISIBILITY, visibility(true))
+        broker.onGlasses(BusPaths.PAGE_ACTION, action(invocationId = "i1", revision = 3))
+        assertTrue(host.delivered.none { it.second == BusPaths.PAGE_ACTION })
+        return error
+    }
+
+    @Test
+    fun `a refused refresh leaves the old revision's actions dead`() {
+        val refusal = PageSurfaceContract.correlationPayload(PageCorrelation("r2", 1, 1, "relay:main"))
+            .put("error", PageSurfaceContract.ERROR_PAGE_UNAVAILABLE)
+        assertNull(refreshAnswered { broker.onProvider(BusPaths.PAGE_RESPONSE, refusal, it) })
+        assertEquals(PageSurfaceContract.ERROR_PAGE_UNAVAILABLE, responses().last().getString("error"))
+    }
+
+    @Test
+    fun `an invalid refresh answer leaves the old revision's actions dead`() {
+        val invalid = page(requestId = "r2", revision = 4, body = JSONObject())
+        assertEquals(PageSurfaceContract.ERROR_INVALID_PAGE, refreshAnswered { broker.onProvider(BusPaths.PAGE_RESPONSE, invalid, it) })
+        assertEquals(PageSurfaceContract.ERROR_INVALID_PAGE, responses().last().getString("error"))
+    }
+
+    @Test
+    fun `a refresh answer below the glasses' floor is refused and leaves the old actions dead`() {
+        val rollback = page(requestId = "r2", revision = 2)
+        assertEquals(PageSurfaceContract.ERROR_INVALID_PAGE, refreshAnswered { broker.onProvider(BusPaths.PAGE_RESPONSE, rollback, it) })
+        assertEquals(PageSurfaceContract.ERROR_INVALID_PAGE, responses().last().getString("error"))
+        assertTrue(responses().none { it.optLong("revision") == 2L })
+    }
+
     @Test
     fun `results are bounded, correlated and carry a higher replacement`() {
         connect(relay)

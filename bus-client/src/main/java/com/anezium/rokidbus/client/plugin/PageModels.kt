@@ -154,6 +154,11 @@ internal class NexusPageChannel(
         var awaitingAnswer: Boolean = true,
         /** The current request was answered with valid live content, so revisions may follow. */
         var publishable: Boolean = false,
+        /**
+         * The current request's valid answer reached the hub, so the actions it advertised may be
+         * invoked. Separate from the revision history, which survives a refused refresh.
+         */
+        var actionable: Boolean = false,
         /** Highest revision ever sent or reserved for this frame; never goes down. */
         var highestRevision: Long? = null,
         /** The revision the glasses were last sent, and the actions it advertised. */
@@ -226,10 +231,11 @@ internal class NexusPageChannel(
             val key = FrameKey(request.sessionGeneration, request.frameIndex)
             val existing = frames[key]?.takeIf { it.pageId == pageId }
             if (existing != null) {
-                // A refresh keeps the frame's lease but loses its publishing right until answered.
+                // A refresh keeps the frame's lease but loses its publishing and action rights until answered.
                 existing.requestId = request.requestId
                 existing.awaitingAnswer = true
                 existing.publishable = false
+                existing.actionable = false
             } else {
                 frames.remove(key)
                 frames[key] = FrameContext(pageId, request.requestId)
@@ -249,6 +255,7 @@ internal class NexusPageChannel(
             // glasses were sent and naming an action that revision advertised, reaches the plugin.
             if (registrationId != epoch) return
             val context = frames[key]?.takeIf { it.pageId == parsed.pageId } ?: return
+            if (!context.actionable || context.awaitingAnswer) return
             if (context.shownRevision != parsed.revision || parsed.actionId !in context.shownActions) return
             if (!remember(seenInvocations, parsed.invocationId)) return
             context.requestId
@@ -271,11 +278,12 @@ internal class NexusPageChannel(
                 ?.takeIf { replacementAllowed && PageSurfaceContract.validateBoundedResult(it) is PageSurfaceValidationResult.Valid }
                 ?: resultPayload(action.invocationId, NexusPageResult.rejected(), correlation)
                 ?: return
-            if (replacement != null && context != null && outgoing.has("replacement")) {
+            val sentReplacement = outgoing.optJSONObject("replacement")
+            if (replacement != null && context != null && sentReplacement != null) {
                 context.highestRevision = replacement.revision
                 if (send(BusPaths.PAGE_RESULT, UUID.randomUUID().toString(), outgoing)) {
                     context.shownRevision = replacement.revision
-                    context.shownActions = replacement.actions.mapTo(linkedSetOf()) { it.id }
+                    context.shownActions = actionIdsOf(sentReplacement)
                 }
             } else {
                 send(BusPaths.PAGE_RESULT, UUID.randomUUID().toString(), outgoing)
@@ -338,7 +346,7 @@ internal class NexusPageChannel(
             context.highestRevision = content.revision
             if (!send(BusPaths.PAGE_RESPONSE, UUID.randomUUID().toString(), payload)) return NexusSdkResult.NOT_REGISTERED
             context.shownRevision = content.revision
-            context.shownActions = content.actions.mapTo(linkedSetOf()) { it.id }
+            context.shownActions = actionIdsOf(payload)
             return NexusSdkResult.SENT
         }
     }
@@ -357,14 +365,18 @@ internal class NexusPageChannel(
                 ?.takeIf { it.requestId == request.requestId && request.registrationId == epoch } ?: return
             context.awaitingAnswer = false
             context.publishable = false
+            // A refusal, an invalid answer or a failed send leaves nothing of the old revision actionable.
+            context.actionable = false
+            context.shownActions = emptySet()
             if (answer != null && content != null) {
                 context.highestRevision = maxOf(context.highestRevision ?: content.revision, content.revision)
             }
             if (!send(BusPaths.PAGE_RESPONSE, UUID.randomUUID().toString(), payload)) return
             if (answer == null || content == null) return
             context.shownRevision = content.revision
-            context.shownActions = content.actions.mapTo(linkedSetOf()) { it.id }
-            context.publishable = content.live
+            context.shownActions = actionIdsOf(answer)
+            context.actionable = true
+            context.publishable = answer.optBoolean("live")
         }
     }
 
@@ -394,6 +406,12 @@ internal class NexusPageChannel(
             ?.value as? PageSurfaceResponse.Page ?: return null
         if (PageTemplateContract.decode(page, pluginId) !is PageSurfaceValidationResult.Valid) return null
         return payload
+    }
+
+    /** The action ids of a payload as it was sent, never re-read from the caller's model. */
+    private fun actionIdsOf(payload: JSONObject): Set<String> {
+        val actions = payload.optJSONArray("actions") ?: return emptySet()
+        return (0 until actions.length()).mapNotNullTo(linkedSetOf()) { actions.optJSONObject(it)?.optString("id") }
     }
 
     private fun errorPayload(correlation: PageCorrelation, code: String): JSONObject =

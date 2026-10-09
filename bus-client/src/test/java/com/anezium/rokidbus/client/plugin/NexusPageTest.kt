@@ -463,6 +463,112 @@ class NexusPageTest {
     }
 
     @Test
+    fun `an old revision's action after a refused refresh, or during one, reaches nothing`() {
+        register()
+        provider.answer = { content(it.pageId, revision = 3) }
+        deliver(BusPaths.PAGE_REQUEST, request(requestId = "r1"))
+        deliver(BusPaths.PAGE_VISIBILITY, visibility(true))
+
+        fun refreshedThenActed(requestId: String, answer: (NexusPageRequest) -> NexusPage, floor: Long? = null) {
+            provider.answer = { refresh ->
+                // An action arriving while this refresh awaits its answer reaches nothing.
+                deliver(BusPaths.PAGE_ACTION, action("during-$requestId", revision = 3))
+                answer(refresh)
+            }
+            deliver(BusPaths.PAGE_REQUEST, request(requestId = requestId, reason = "refresh", minimumRevision = floor))
+            deliver(BusPaths.PAGE_VISIBILITY, visibility(true))
+            deliver(BusPaths.PAGE_ACTION, action("after-$requestId", revision = 3))
+        }
+        refreshedThenActed("unavailable", { NexusPage.Unavailable })
+        refreshedThenActed("invalid", { NexusPage.Content(4, "Bad", PageBody.Commands(listOf(PageRow("x", "X", target = PageTarget.Action("missing"))))) })
+        refreshedThenActed("below-floor", { content(it.pageId, revision = 2) }, floor = 3)
+        transport.accept = false
+        refreshedThenActed("send-failed", { content(it.pageId, revision = 5) })
+        transport.accept = true
+        assertTrue(provider.events.filter { it.startsWith("action:") }.toString(), provider.events.none { it.startsWith("action:") })
+        assertTrue(results().isEmpty())
+
+        // Control: a valid refresh that reached the hub makes its own revision actionable again.
+        provider.answer = { content(it.pageId, revision = 6) }
+        deliver(BusPaths.PAGE_REQUEST, request(requestId = "r9", reason = "refresh", minimumRevision = 3))
+        deliver(BusPaths.PAGE_ACTION, action("old", revision = 3))
+        deliver(BusPaths.PAGE_ACTION, action("new", revision = 6))
+        assertEquals(listOf("action:read@6"), provider.events.filter { it.startsWith("action:") })
+    }
+
+    /** Runs [send] on another thread with its transport send held open while [during] runs. */
+    private fun duringBlockedSend(send: () -> Unit, during: () -> Unit) {
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        transport.entered = entered
+        transport.release = release
+        val sender = thread { send() }
+        assertTrue(entered.await(5, TimeUnit.SECONDS))
+        transport.entered = null
+        transport.release = null
+        during()
+        release.countDown()
+        sender.join(5_000)
+    }
+
+    private fun sentActionIds(payload: JSONObject): List<String> {
+        val actions = payload.getJSONArray("actions")
+        return (0 until actions.length()).map { actions.getJSONObject(it).getString("id") }
+    }
+
+    @Test
+    fun `what may be acted on is exactly what was sent, whatever the caller does to its list`() {
+        register()
+        val body = PageBody.SelectableList(listOf(PageRow("a", "Mika")))
+        val answered = mutableListOf(NexusPageActionSpec("read", "Read"))
+        provider.answer = { NexusPage.Content(1, "Relay", body, actions = answered, live = true) }
+        duringBlockedSend({ deliver(BusPaths.PAGE_REQUEST, request(requestId = "r1")) }) {
+            answered.clear()
+            answered += NexusPageActionSpec("delete", "Delete")
+        }
+        assertEquals(listOf("read"), sentActionIds(responses().last()))
+        deliver(BusPaths.PAGE_VISIBILITY, visibility(true))
+        deliver(BusPaths.PAGE_ACTION, action("i1", revision = 1, actionId = "delete"))
+        deliver(BusPaths.PAGE_ACTION, action("i2", revision = 1, actionId = "read"))
+
+        // A publication records what it sent, too.
+        val request = provider.requests.single()
+        val published = mutableListOf(NexusPageActionSpec("archive", "Archive"))
+        duringBlockedSend({ client.publishPage(request, NexusPage.Content(2, "Relay", body, actions = published, live = true)) }) {
+            published.clear()
+        }
+        assertEquals(listOf("archive"), sentActionIds(responses().last()))
+        deliver(BusPaths.PAGE_ACTION, action("i3", revision = 2, actionId = "archive"))
+
+        // And so does a result's replacement.
+        val replaced = mutableListOf(NexusPageActionSpec("pin", "Pin"))
+        provider.actionAnswer = { NexusPageResult.done(replacement = NexusPage.Content(3, "Relay", body, actions = replaced, live = true)) }
+        duringBlockedSend({ deliver(BusPaths.PAGE_ACTION, action("i4", revision = 2, actionId = "archive")) }) {
+            replaced.clear()
+            replaced += NexusPageActionSpec("unpin", "Unpin")
+        }
+        provider.actionAnswer = { NexusPageResult.done() }
+        assertEquals(listOf("pin"), sentActionIds(results().last().getJSONObject("replacement")))
+        deliver(BusPaths.PAGE_ACTION, action("i5", revision = 3, actionId = "unpin"))
+        deliver(BusPaths.PAGE_ACTION, action("i6", revision = 3, actionId = "pin"))
+
+        assertEquals(
+            listOf("action:read@1", "action:archive@2", "action:archive@2", "action:pin@3"),
+            provider.events.filter { it.startsWith("action:") },
+        )
+    }
+
+    /** Waits until every one of [threads] has started and is blocked on a monitor. */
+    private fun awaitBlocked(started: CountDownLatch, vararg threads: Thread) {
+        assertTrue(started.await(5, TimeUnit.SECONDS))
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+        while (threads.any { it.state != Thread.State.BLOCKED }) {
+            assertTrue("threads never blocked: ${threads.map { it.state }}", System.nanoTime() < deadline)
+            Thread.onSpinWait()
+        }
+    }
+
+    @Test
     fun `concurrent publishes are serialized, counted and never go back`() {
         register()
         deliver(BusPaths.PAGE_REQUEST, request(requestId = "r1"))
@@ -481,9 +587,16 @@ class NexusPageTest {
         // While revision 2 is in flight, the same revision and a later one queue behind it.
         var same: NexusSdkResult? = null
         var later: NexusSdkResult? = null
-        val sameThread = thread { same = client.publishPage(request, content(request.pageId, 2)) }
-        val laterThread = thread { later = client.publishPage(request, content(request.pageId, 3)) }
-        Thread.sleep(100)
+        val started = CountDownLatch(2)
+        val sameThread = thread {
+            started.countDown()
+            same = client.publishPage(request, content(request.pageId, 2))
+        }
+        val laterThread = thread {
+            started.countDown()
+            later = client.publishPage(request, content(request.pageId, 3))
+        }
+        awaitBlocked(started, sameThread, laterThread)
         assertNull(same)
         assertNull(later)
         assertEquals(before, responses().size)
@@ -513,11 +626,13 @@ class NexusPageTest {
         transport.entered = null
         transport.release = null
         var closedSeen = false
+        val started = CountDownLatch(1)
         val closer = thread {
+            started.countDown()
             deliver(BusPaths.PAGE_CLOSED, closed())
             closedSeen = true
         }
-        Thread.sleep(100)
+        awaitBlocked(started, closer)
         assertFalse(closedSeen)
         release.countDown()
         publisher.join(5_000)
