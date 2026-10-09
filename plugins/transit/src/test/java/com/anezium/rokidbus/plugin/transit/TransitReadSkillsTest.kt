@@ -384,6 +384,11 @@ class TransitReadSkillsTest {
         assertEquals(emptySet<String>(), TransitLabelMatch.lines("METROPOLE", listOf("POLE")))
         assertEquals(emptySet<String>(), TransitLabelMatch.lines("LINES", listOf("S")))
         assertEquals(emptySet<String>(), TransitLabelMatch.lines("BUSES", listOf("ES")))
+        listOf("TRAMWAY1" to "WAY1", "BUSWAY4" to "WAY4", "METROPOLE1" to "POLE1", "LINEAGE1" to "AGE1").forEach { (spoken, line) ->
+            assertEquals(spoken, emptySet<String>(), TransitLabelMatch.lines(spoken, listOf(line)))
+            assertEquals(line, emptySet<String>(), TransitLabelMatch.lines(line, listOf(spoken)))
+        }
+        assertEquals(setOf("N01"), TransitLabelMatch.lines("busn01", listOf("N01")))
     }
 
     @Test
