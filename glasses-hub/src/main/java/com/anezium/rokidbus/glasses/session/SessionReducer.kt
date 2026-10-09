@@ -363,13 +363,17 @@ internal class SessionReducer(
             val at = top.selected
             val target = if (delta > 0) at else at - 1
             if (target !in entries.indices) return keep(model)
-            val frame = top.copy(selected = target, selectedKey = entries[target].key, tombstone = null)
+            val frame = top.copy(selected = target, selectedKey = entries[target].key, tombstone = null, opensReading = false)
             return SessionTransition(model.copy(state = state.withTop(frame)), listOf(ShowFrame))
         }
         val count = if (status is FrameStatus.Shown || status is FrameStatus.Loading) entries.size else UNAVAILABLE_ITEMS.size
         val target = (top.selected + delta).coerceIn(0, (count - 1).coerceAtLeast(0))
         if (target == top.selected) return keep(model)
-        val frame = top.copy(selected = target, selectedKey = entries.getOrNull(target)?.key?.takeIf { status is FrameStatus.Shown })
+        val frame = top.copy(
+            selected = target,
+            selectedKey = entries.getOrNull(target)?.key?.takeIf { status is FrameStatus.Shown },
+            opensReading = false,
+        )
         return SessionTransition(model.copy(state = state.withTop(frame)), listOf(ShowFrame))
     }
 
@@ -796,6 +800,7 @@ internal class SessionReducer(
                 .let { if (it.mode == FrameMode.READING && !it.readsFirst()) it.copy(mode = FrameMode.ROWS) else it }
                 // The same snapshot lays out the same pages, and the renderer has no reason to report them again.
                 .let { if (kept != null) it.copy(pageStarts = top.pageStarts) else it }
+                .copy(opensReading = false)
         } else {
             val entries = itemResolver.entries(snapshot.page)
             shown.copy(
@@ -804,6 +809,7 @@ internal class SessionReducer(
                 mode = if (document) FrameMode.READING else FrameMode.ROWS,
                 // Opened or retried content is measured again, as it is now drawn.
                 overflowing = false,
+                opensReading = true,
                 anchor = null,
                 page = 0,
                 // A Retry answered with the retained snapshot lays out the pages already measured.
@@ -879,6 +885,7 @@ internal class SessionReducer(
             shownAtMs = nowMs,
             // A confirmation was for the revision the wearer saw; a new one cancels it.
             panel = null,
+            opensReading = false,
         )
         val frame = reselect(replaced, top, page)
             .let { if (it.mode == FrameMode.READING && !it.readsFirst()) it.copy(mode = FrameMode.ROWS) else it }
@@ -936,7 +943,8 @@ internal class SessionReducer(
 
     /**
      * Content taller than the viewport is read page by page from its start; SELECT then reaches
-     * its rows, or an unavailable page's Retry and Back. A panel is never displaced.
+     * its rows, or an unavailable page's Retry and Back. A panel is never displaced, and a row the
+     * wearer or a later revision holds is kept: its text is then reached by BACK.
      */
     private fun contentOverflowed(
         model: SessionModel,
@@ -947,11 +955,13 @@ internal class SessionReducer(
         if (top.overflowing || top.panel != null || !describesTop(model, state, event.frame, event.pageId, event.revision)) {
             return keep(model)
         }
-        val frame = top.copy(overflowing = true)
+        // An unavailable page's focus is Retry until the wearer moves it, and SELECT from the text returns there.
+        val opens = if (top.status is FrameStatus.Unavailable) top.selected == 0 else top.opensReading
+        val frame = top.copy(overflowing = true, opensReading = false)
         if (!frame.readsFirst()) return keep(model)
         // Pages measured for this revision stay: the renderer reports the same layout only once.
-        val reading = frame.copy(mode = FrameMode.READING, anchor = null, page = 0)
-        return SessionTransition(model.copy(state = state.withTop(reading)), listOf(ShowFrame))
+        val next = if (opens) frame.copy(mode = FrameMode.READING, anchor = null, page = 0) else frame
+        return SessionTransition(model.copy(state = state.withTop(next)), listOf(ShowFrame))
     }
 
     /** A renderer report names the top frame at the revision of the content it retains. */

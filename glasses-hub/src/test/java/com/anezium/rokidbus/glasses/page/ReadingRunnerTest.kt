@@ -375,6 +375,81 @@ class ReadingRunnerTest {
         (listOf("Turn right in 120 m", "ETA · 12:41") + lines).forEach { assertTrue(it, it in read) }
     }
 
+    private val threeRows = listOf(
+        PageRow("a", "Alpha", target = PageTarget.Page("nav:a")),
+        PageRow("b", "Bravo", target = PageTarget.Page("nav:b")),
+        PageRow("c", "Charlie", target = PageTarget.Page("nav:c")),
+    )
+
+    private fun guidanceRows(lineCount: Int) =
+        PageBody.Summary(primary = "Turn right in 120 m", text = lines.take(lineCount).joinToString("\n"), items = threeRows)
+
+    /** A fitting summary with three rows, the wearer on the third one. */
+    private fun onThirdRow(lineCount: Int = 2) {
+        open("nav:main", guidanceRows(lineCount))
+        assertEquals(FrameMode.ROWS, top().mode)
+        assertFalse(top().overflowing)
+        dispatch(SessionEvent.Step(1, now))
+        dispatch(SessionEvent.Step(1, now))
+        assertEquals("c", top().selectedKey)
+    }
+
+    /**
+     * Text found too tall on a later layout keeps the wearer on the row they chose, and no layout
+     * acts; the text is reached by BACK, and from there STEP reads every line.
+     */
+    private fun assertRowKeptAndTextBehindBack(sent: Int, expected: List<String>) {
+        assertTrue(top().overflowing)
+        assertEquals(FrameMode.ROWS, top().mode)
+        assertEquals("c", top().selectedKey)
+        assertEquals(2, top().selected)
+        assertTrue(inViewport("row:c"))
+        assertEquals(sent, requests().size)
+        assertTrue(effects.none { it is SessionEffect.SendAction })
+        dispatch(SessionEvent.Back(now))
+        assertEquals(FrameMode.READING, top().mode)
+        assertEquals(1, (runner.state as SessionState.InPage).frames.size)
+        val read = readOn()
+        expected.forEach { assertTrue(it, it in read) }
+    }
+
+    @Test
+    fun `a live revision too tall to fit keeps the selected row`() {
+        onThirdRow()
+        val opened = requests().last().request
+        dispatch(SessionEvent.PageResponse(answer(opened, 2, guidanceRows(lines.size)), now))
+        assertEquals(2L, (top().status as FrameStatus.Shown).revision)
+        assertRowKeptAndTextBehindBack(requests().size, lines)
+    }
+
+    @Test
+    fun `a refreshed revision too tall to fit keeps the selected row`() {
+        onThirdRow()
+        dispatch(SessionEvent.Enter(now))
+        assertEquals("nav:c", requests().last().request.correlation.pageId)
+        dispatch(SessionEvent.PageResponse(answer(requests().last().request, 1, PageBody.SelectableList(listOf(PageRow("x", "X")))), now))
+        dispatch(SessionEvent.Back(now))
+        val refresh = requests().last()
+        assertEquals(SessionReducer.REASON_REFRESH, refresh.request.reason)
+        dispatch(SessionEvent.PageResponse(answer(refresh.request, 2, guidanceRows(lines.size)), now))
+        assertEquals(2L, (top().status as FrameStatus.Shown).revision)
+        assertRowKeptAndTextBehindBack(requests().size, lines)
+    }
+
+    @Test
+    fun `a larger HUD inset that makes the text too tall keeps the selected row`() {
+        view.setTopInsetPx(0)
+        onThirdRow(lineCount = 16)
+        view.setTopInsetPx(PhoneHubCapabilitiesContract.MAX_HUD_TOP_INSET_DP * 240 / 160)
+        view.measure(
+            View.MeasureSpec.makeMeasureSpec(PageStyle.WIDTH_PX, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(PageStyle.HEIGHT_PX, View.MeasureSpec.EXACTLY),
+        )
+        view.layout(0, 0, PageStyle.WIDTH_PX, PageStyle.HEIGHT_PX)
+        idle()
+        assertRowKeptAndTextBehindBack(requests().size, lines.take(16))
+    }
+
     /** Rows, a child page, back: the uncovered frame's revalidation then times out. */
     private fun timeOutRefresh() {
         dispatch(SessionEvent.Enter(now))

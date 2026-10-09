@@ -103,6 +103,12 @@ internal data class Frame(
      * page by page like a document. It holds until a new answer opens or retries the frame.
      */
     val overflowing: Boolean = false,
+    /**
+     * An answer opened or retried the frame and the wearer has not moved through its rows since,
+     * nor has a later revision carried their selection: content then found too tall opens in
+     * reading. Afterwards it only sets [overflowing], so no layout takes the wearer's row.
+     */
+    val opensReading: Boolean = false,
     val anchor: DocumentAnchor? = null,
     /** Where each laid-out page of the shown document starts, as the renderer measured it. */
     val pageStarts: List<DocumentAnchor> = emptyList(),
