@@ -186,6 +186,7 @@ internal class SessionReducer(
             is SessionEvent.PageResult ->
                 carried(model, result(model, state, event.payload, event.nowMs), BusPaths.PAGE_RESULT, event.payload)
             is SessionEvent.DocumentPaged -> documentPaged(model, state, event)
+            is SessionEvent.ContentOverflowed -> contentOverflowed(model, state, event)
             is SessionEvent.LocalLaunchFinished -> localLaunchFinished(model, state, event)
             SessionEvent.LinkLost -> SessionTransition(model.copy(linkLost = true, state = state.linkLost()), listOf(ShowFrame))
             // Restoration replays nothing; the wearer's next Retry does.
@@ -348,8 +349,8 @@ internal class SessionReducer(
             return SessionTransition(model.copy(state = state.withTop(top.copy(panel = next))), listOf(ShowFrame))
         }
         val status = top.status
-        if (status is FrameStatus.Shown && top.mode == FrameMode.READING) {
-            // A document pages through its own measured layout; bounded at both ends.
+        if (top.reading()) {
+            // Read text pages through its own measured layout; bounded at both ends.
             if (top.pageStarts.isEmpty()) return keep(model)
             val target = (top.page + delta).coerceIn(0, top.pageStarts.lastIndex)
             if (target == top.page) return keep(model)
@@ -377,7 +378,10 @@ internal class SessionReducer(
         return when (val status = top.status) {
             // One request per frame and one action per gesture; nothing is queued.
             is FrameStatus.Loading -> keep(model)
-            is FrameStatus.Unavailable -> when (UNAVAILABLE_ITEMS.getOrNull(top.selected)) {
+            // SELECT on retained text reaches Retry and Back; the text itself never acts.
+            is FrameStatus.Unavailable -> if (top.reading()) {
+                SessionTransition(model.copy(state = state.withTop(top.copy(mode = FrameMode.ROWS, selected = 0))), listOf(ShowFrame))
+            } else when (UNAVAILABLE_ITEMS.getOrNull(top.selected)) {
                 PageItem.Retry -> retry(model, state, status, nowMs)
                 PageItem.Back -> pop(model, state, nowMs)
                 else -> keep(model)
@@ -385,8 +389,8 @@ internal class SessionReducer(
             is FrameStatus.Shown -> {
                 top.panel?.let { return enterPanel(model, state, top, status, it, nowMs) }
                 if (top.invocation != null) return keep(model)
-                if (top.mode == FrameMode.READING) {
-                    // SELECT on a document reaches its rows, when it has any; reading never fires one.
+                if (top.reading()) {
+                    // SELECT on read text reaches its rows, when it has any; reading never fires one.
                     if (entriesOf(top).isEmpty()) return keep(model)
                     return SessionTransition(
                         model.copy(state = state.withTop(top.copy(mode = FrameMode.ROWS, selected = 0, selectedKey = entriesOf(top).first().key))),
@@ -447,14 +451,13 @@ internal class SessionReducer(
         }
     }
 
-    /** BACK closes a panel, then leaves a document's rows for its text, then pops the frame. */
+    /** BACK closes a panel, then leaves the rows of read text for the text, then pops the frame. */
     private fun back(model: SessionModel, state: SessionState.InPage, nowMs: Long): SessionTransition {
         val top = state.frames.last()
         if (top.panel != null) {
             return SessionTransition(model.copy(state = state.withTop(top.copy(panel = null))), listOf(ShowFrame))
         }
-        val status = top.status
-        if (status is FrameStatus.Shown && top.mode == FrameMode.ROWS && itemResolver.isDocument(status.snapshot.page)) {
+        if (top.mode == FrameMode.ROWS && top.readsFirst()) {
             return SessionTransition(model.copy(state = state.withTop(top.copy(mode = FrameMode.READING))), listOf(ShowFrame))
         }
         return pop(model, state, nowMs)
@@ -790,7 +793,7 @@ internal class SessionReducer(
         val document = itemResolver.isDocument(snapshot.page)
         val frame = if (refresh) {
             reselect(shown, top, snapshot.page)
-                .let { if (it.mode == FrameMode.READING && !document) it.copy(mode = FrameMode.ROWS) else it }
+                .let { if (it.mode == FrameMode.READING && !it.readsFirst()) it.copy(mode = FrameMode.ROWS) else it }
                 // The same snapshot lays out the same pages, and the renderer has no reason to report them again.
                 .let { if (kept != null) it.copy(pageStarts = top.pageStarts) else it }
         } else {
@@ -799,6 +802,8 @@ internal class SessionReducer(
                 selectedKey = entries.firstOrNull()?.key,
                 tombstone = null,
                 mode = if (document) FrameMode.READING else FrameMode.ROWS,
+                // Opened or retried content is measured again, as it is now drawn.
+                overflowing = false,
                 anchor = null,
                 page = 0,
                 // A Retry answered with the retained snapshot lays out the pages already measured.
@@ -876,6 +881,7 @@ internal class SessionReducer(
             panel = null,
         )
         val frame = reselect(replaced, top, page)
+            .let { if (it.mode == FrameMode.READING && !it.readsFirst()) it.copy(mode = FrameMode.ROWS) else it }
         return SessionTransition(
             model.copy(state = state.copy(frames = evictCovered(state.frames.dropLast(1) + frame))),
             listOf(ShowFrame),
@@ -912,21 +918,63 @@ internal class SessionReducer(
         )
     }
 
-    /** The renderer's measured pages of the shown document; never an action, never another frame's. */
+    /** The renderer's measured pages of the text being read; never an action, never another frame's. */
     private fun documentPaged(
         model: SessionModel,
         state: SessionState.InPage,
         event: SessionEvent.DocumentPaged,
     ): SessionTransition {
         val top = state.frames.last()
-        val status = top.status as? FrameStatus.Shown ?: return keep(model)
-        val current = event.frame == FrameIdentity(model.generation, state.frames.size) &&
-            event.pageId == top.pageId && event.revision == status.revision && event.pageStarts.isNotEmpty()
-        if (!current) return keep(model)
+        // A report posted before the wearer went to the rows still describes what BACK returns to.
+        if (!top.readsFirst() || !describesTop(model, state, event.frame, event.pageId, event.revision) || event.pageStarts.isEmpty()) {
+            return keep(model)
+        }
         val page = event.anchorPage.coerceIn(0, event.pageStarts.lastIndex)
         val frame = top.copy(pageStarts = event.pageStarts, page = page, anchor = top.anchor ?: event.pageStarts.first())
         return if (frame == top) keep(model) else SessionTransition(model.copy(state = state.withTop(frame)), listOf(ShowFrame))
     }
+
+    /**
+     * Content taller than the viewport is read page by page from its start; SELECT then reaches
+     * its rows, or an unavailable page's Retry and Back. A panel is never displaced.
+     */
+    private fun contentOverflowed(
+        model: SessionModel,
+        state: SessionState.InPage,
+        event: SessionEvent.ContentOverflowed,
+    ): SessionTransition {
+        val top = state.frames.last()
+        if (top.overflowing || top.panel != null || !describesTop(model, state, event.frame, event.pageId, event.revision)) {
+            return keep(model)
+        }
+        val frame = top.copy(overflowing = true)
+        if (!frame.readsFirst()) return keep(model)
+        val reading = frame.copy(mode = FrameMode.READING, anchor = null, pageStarts = emptyList(), page = 0)
+        return SessionTransition(model.copy(state = state.withTop(reading)), listOf(ShowFrame))
+    }
+
+    /** A renderer report names the top frame at the revision of the content it retains. */
+    private fun describesTop(model: SessionModel, state: SessionState.InPage, frame: FrameIdentity, pageId: String, revision: Long): Boolean {
+        val top = state.frames.last()
+        val retained = when (val status = top.status) {
+            is FrameStatus.Shown -> status.revision
+            is FrameStatus.Unavailable -> status.lastSnapshot?.page?.revision
+            is FrameStatus.Loading -> null
+        }
+        return frame == FrameIdentity(model.generation, state.frames.size) && pageId == top.pageId && revision == retained
+    }
+
+    /**
+     * Whether the frame's retained content is read before its rows: a document, or text measured
+     * taller than the viewport. An unavailable page's retained content of any kind can overflow.
+     */
+    private fun Frame.readsFirst(): Boolean = when (val status = status) {
+        is FrameStatus.Shown -> itemResolver.isDocument(status.snapshot.page) || (overflowing && itemResolver.hasText(status.snapshot.page))
+        is FrameStatus.Unavailable -> status.lastSnapshot?.let { overflowing || itemResolver.isDocument(it.page) } == true
+        is FrameStatus.Loading -> false
+    }
+
+    private fun Frame.reading(): Boolean = mode == FrameMode.READING && readsFirst()
 
     /** Drops the oldest covered snapshots until the retained total fits; page ids stay for a later refresh. */
     private fun evictCovered(frames: List<Frame>): List<Frame> {

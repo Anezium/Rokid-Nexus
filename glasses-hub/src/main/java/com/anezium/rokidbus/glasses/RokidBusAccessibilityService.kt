@@ -1727,7 +1727,10 @@ private class SessionOverlayWindow(
 
     override fun add(): Boolean {
         val manager = windowManager ?: return false
-        val view = SessionScreenView(service).apply { onDocumentPaged = report }
+        val view = SessionScreenView(service).apply {
+            onDocumentPaged = report
+            onContentOverflowed = report
+        }
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.MATCH_PARENT,

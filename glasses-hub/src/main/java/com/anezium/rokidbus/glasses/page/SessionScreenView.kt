@@ -19,6 +19,9 @@ internal class SessionScreenView(context: Context) : LinearLayout(context) {
     /** The document's measured pages, reported back to the session's pure state. */
     var onDocumentPaged: ((SessionEvent.DocumentPaged) -> Unit)? = null
 
+    /** Content found taller than the viewport, reported back so it is read page by page. */
+    var onContentOverflowed: ((SessionEvent.ContentOverflowed) -> Unit)? = null
+
     private val headerTitle = PageStyle.text(context, "", 13f, PageStyle.phosphor, PageStyle.mono, maxLines = 1, letterSpacing = 0.1f)
     private val headerTrail = PageStyle.text(context, "", PageStyle.CAPTION_PX, PageStyle.muted, PageStyle.mono, maxLines = 1)
     private val header = LinearLayout(context).apply {
@@ -86,6 +89,11 @@ internal class SessionScreenView(context: Context) : LinearLayout(context) {
             blockViews[block.key] = view
         }
         viewport.focus = screen.focusKey?.let(blockViews::get)
+        val fit = screen.fit
+        viewport.onOverflow = fit?.let {
+            { onContentOverflowed?.invoke(SessionEvent.ContentOverflowed(it.frame, it.pageId, it.revision)) }
+        }
+        viewport.fit = fit?.untilKey?.let(blockViews::get)
     }
 
     private fun paramsFor(block: ScreenBlock): SessionViewport.Params = when (block) {
@@ -168,7 +176,7 @@ internal class SessionScreenView(context: Context) : LinearLayout(context) {
             TextRole.CAPTION -> Triple(PageStyle.CAPTION_PX, PageStyle.muted, PageStyle.sans)
             TextRole.SECTION -> Triple(PageStyle.CAPTION_PX, PageStyle.muted, PageStyle.mono)
         }
-        return PageStyle.text(context, block.text, size, color, face, letterSpacing = if (block.role == TextRole.SECTION) 0.14f else 0f).apply {
+        return PageStyle.text(context, block.text, size, if (block.dimmed) PageStyle.muted else color, face, letterSpacing = if (block.role == TextRole.SECTION) 0.14f else 0f).apply {
             gravity = if (block.centered) Gravity.CENTER_HORIZONTAL else Gravity.START
             setLineSpacing(0f, 1.25f)
         }
@@ -178,7 +186,7 @@ internal class SessionScreenView(context: Context) : LinearLayout(context) {
         orientation = HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
         addView(PageStyle.text(context, block.label, PageStyle.CAPTION_PX, PageStyle.muted, PageStyle.mono, 1, 0.1f), LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
-        addView(PageStyle.text(context, block.value, PageStyle.BODY_PX, PageStyle.ink, PageStyle.sans, 2))
+        addView(PageStyle.text(context, block.value, PageStyle.BODY_PX, if (block.dimmed) PageStyle.muted else PageStyle.ink, PageStyle.sans, 2))
     }
 
     private fun progress(block: ScreenBlock.Progress): View = ProgressLine(context, block.fraction)

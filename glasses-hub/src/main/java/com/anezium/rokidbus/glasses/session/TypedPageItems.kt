@@ -67,6 +67,8 @@ internal class TypedPageItems(
 
     override fun isDocument(page: PageSurfaceResponse.Page): Boolean = body(page) is PageBody.Document
 
+    override fun hasText(page: PageSurfaceResponse.Page): Boolean = body(page).let { it is PageBody.Summary || it is PageBody.Commands }
+
     override fun accepts(page: PageSurfaceResponse.Page): Boolean = body(page) != null
 
     private fun itemFor(

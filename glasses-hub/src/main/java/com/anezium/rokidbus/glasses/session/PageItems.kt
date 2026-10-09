@@ -40,6 +40,9 @@ internal fun interface PageItemResolver {
     /** Whether the page is read through as a document before its rows. */
     fun isDocument(page: PageSurfaceResponse.Page): Boolean = false
 
+    /** Whether the page has text above its rows, which is read page by page when it overflows. */
+    fun hasText(page: PageSurfaceResponse.Page): Boolean = false
+
     /** Whether the page's typed body can be drawn here at all; checked before it is ever shown. */
     fun accepts(page: PageSurfaceResponse.Page): Boolean = true
 }

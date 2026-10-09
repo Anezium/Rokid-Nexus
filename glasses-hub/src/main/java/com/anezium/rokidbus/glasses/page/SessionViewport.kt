@@ -10,7 +10,7 @@ import android.view.ViewGroup
  * hidden row, the last row and a row that wraps all come into view when they are selected.
  */
 internal class SessionViewport(context: Context) : ViewGroup(context) {
-    /** [fill] takes exactly the viewport's height; [side] is the left and right margin. */
+    /** [fill] takes exactly the height the other blocks leave; [side] is the left and right margin. */
     class Params(val fill: Boolean = false, val side: Int = PageStyle.SIDE_PX) :
         ViewGroup.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
 
@@ -20,6 +20,18 @@ internal class SessionViewport(context: Context) : ViewGroup(context) {
             requestLayout()
         }
 
+    /**
+     * The block that must be in view, with everything above it, at the top of the column; when a
+     * layout puts its bottom below the viewport, [onOverflow] runs once, after that pass.
+     */
+    var fit: View? = null
+        set(value) {
+            field = value
+            requestLayout()
+        }
+    var onOverflow: (() -> Unit)? = null
+    private val main = android.os.Handler(android.os.Looper.getMainLooper())
+
     /** How far the column is moved up; kept across renders so a still-visible focus does not jump. */
     var offset = 0
         private set
@@ -27,17 +39,20 @@ internal class SessionViewport(context: Context) : ViewGroup(context) {
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val width = MeasureSpec.getSize(widthMeasureSpec)
         val height = MeasureSpec.getSize(heightMeasureSpec)
+        fun widthOf(child: View) = MeasureSpec.makeMeasureSpec((width - 2 * paramsOf(child).side).coerceAtLeast(0), MeasureSpec.EXACTLY)
+        var used = PageStyle.GAP_PX * (childCount - 1).coerceAtLeast(0)
+        val fills = mutableListOf<View>()
         for (index in 0 until childCount) {
             val child = getChildAt(index)
-            val params = paramsOf(child)
-            val childWidth = MeasureSpec.makeMeasureSpec((width - 2 * params.side).coerceAtLeast(0), MeasureSpec.EXACTLY)
-            val childHeight = if (params.fill) {
-                MeasureSpec.makeMeasureSpec(height, MeasureSpec.EXACTLY)
-            } else {
-                MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED)
+            if (paramsOf(child).fill) {
+                fills += child
+                continue
             }
-            child.measure(childWidth, childHeight)
+            child.measure(widthOf(child), MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED))
+            used += child.measuredHeight
         }
+        val left = MeasureSpec.makeMeasureSpec((height - used).coerceAtLeast(0) / fills.size.coerceAtLeast(1), MeasureSpec.EXACTLY)
+        fills.forEach { it.measure(widthOf(it), left) }
         setMeasuredDimension(width, height)
     }
 
@@ -49,6 +64,14 @@ internal class SessionViewport(context: Context) : ViewGroup(context) {
             if (index > 0) y += PageStyle.GAP_PX
             tops[index] = y
             y += getChildAt(index).measuredHeight
+        }
+        val until = fit?.takeIf { it.parent === this }?.let(::indexOfChild) ?: -1
+        if (until >= 0 && height > 0 && tops[until] + getChildAt(until).measuredHeight > height) {
+            val overflow = onOverflow
+            onOverflow = null
+            // Reported after this pass, on the main looper whether or not the view is attached
+            // yet: the state it updates draws this column again.
+            if (overflow != null) main.post(overflow)
         }
         val target = focus?.takeIf { it.parent === this }?.let(::indexOfChild) ?: -1
         if (target >= 0) {

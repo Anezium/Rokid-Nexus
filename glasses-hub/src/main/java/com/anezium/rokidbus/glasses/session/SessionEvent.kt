@@ -69,6 +69,12 @@ internal sealed interface SessionEvent {
         val anchorPage: Int,
     ) : SessionEvent
 
+    /**
+     * The renderer laid out the top frame's content and it does not fit the viewport with its
+     * first row or control in view. Ignored unless it describes the top frame's retained revision.
+     */
+    data class ContentOverflowed(val frame: FrameIdentity, val pageId: String, val revision: Long) : SessionEvent
+
     /** A [SessionEffect.LaunchLocal] ran: [launched] closes the session, a failure keeps it open. */
     data class LocalLaunchFinished(val key: String, val label: String, val launched: Boolean) : SessionEvent
 }

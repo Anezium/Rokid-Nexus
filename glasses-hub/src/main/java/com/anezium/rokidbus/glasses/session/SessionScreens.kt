@@ -2,6 +2,7 @@ package com.anezium.rokidbus.glasses.session
 
 import com.anezium.rokidbus.shared.PageBody
 import com.anezium.rokidbus.shared.PageSegment
+import com.anezium.rokidbus.shared.PageSegmentKind
 import com.anezium.rokidbus.shared.PageSurfaceContract
 import com.anezium.rokidbus.shared.PageTemplateContract
 
@@ -56,9 +57,16 @@ internal sealed interface ScreenBlock {
         val centered: Boolean = false,
     ) : ScreenBlock
 
-    data class Text(override val key: String, val text: String, val role: TextRole, val centered: Boolean = false) : ScreenBlock
+    /** [dimmed] is retained content of an unavailable page: readable, drawn as inert. */
+    data class Text(
+        override val key: String,
+        val text: String,
+        val role: TextRole,
+        val centered: Boolean = false,
+        val dimmed: Boolean = false,
+    ) : ScreenBlock
 
-    data class Fact(override val key: String, val label: String, val value: String) : ScreenBlock
+    data class Fact(override val key: String, val label: String, val value: String, val dimmed: Boolean = false) : ScreenBlock
 
     data class Progress(override val key: String, val fraction: Float) : ScreenBlock
 
@@ -88,7 +96,16 @@ internal data class SessionScreen(
     val focusKey: String? = null,
     /** Present while the opening gate runs, for its progress line. */
     val gate: Boolean = false,
+    /** Present while the renderer must tell whether this content fits the viewport. */
+    val fit: FitCheck? = null,
 )
+
+/**
+ * Everything from the top of the viewport through [untilKey] must be in view at once, or the
+ * renderer reports [SessionEvent.ContentOverflowed] for this frame and revision, and the content
+ * is then read page by page.
+ */
+internal data class FitCheck(val frame: FrameIdentity, val pageId: String, val revision: Long, val untilKey: String)
 
 /**
  * Builds what the session window draws from the reducer's state, purely. It reads the same typed
@@ -190,24 +207,93 @@ internal class SessionScreens(
                 }
                 SessionScreen(ScreenHeader(title.uppercase(), "back: $parent"), blocks, ScreenHint(null, back), statusText, "loading")
             }
-            is FrameStatus.Unavailable -> {
-                val blocks = buildList {
-                    status.lastSnapshot?.let { snapshot ->
-                        val dated = frame.shownAtMs?.let { "Last known · ${formatTime(wallTimeOf(it))}" } ?: "Last known"
-                        add(ScreenBlock.Text("last-title", snapshot.page.title, TextRole.BODY))
-                        add(ScreenBlock.Text("last-dated", dated, TextRole.CAPTION))
-                    }
-                    add(ScreenBlock.Text("unavailable", UNAVAILABLE_TITLE, TextRole.TITLE, centered = true))
-                    add(ScreenBlock.Text("reason", reasonText(status.reason), TextRole.CAPTION, centered = true))
-                    add(ScreenBlock.Row("retry", RETRY, selected = frame.selected == 0, centered = true))
-                    add(ScreenBlock.Row("back", BACK, selected = frame.selected == 1, centered = true))
-                }
-                val focus = if (frame.selected == 0) "retry" else "back"
-                SessionScreen(ScreenHeader(title.uppercase(), "back: $parent"), blocks, ScreenHint("tap ${if (frame.selected == 0) "retry" else "back"}", back), statusText, focus)
-            }
+            is FrameStatus.Unavailable ->
+                unavailable(frame, status, FrameIdentity(generation, frameIndex), title, parent, back, statusText)
             is FrameStatus.Shown ->
                 shown(frame, status, FrameIdentity(generation, frameIndex), title, parent, back, statusText ?: outcomeText)
         }
+    }
+
+    /**
+     * G4: the failure, dated, over the retained content, dimmed and inert. Content too tall for
+     * the viewport is read page by page; SELECT reaches only Retry and Back.
+     */
+    private fun unavailable(
+        frame: Frame,
+        status: FrameStatus.Unavailable,
+        identity: FrameIdentity,
+        title: String,
+        parent: String,
+        back: String,
+        statusText: String?,
+    ): SessionScreen {
+        val snapshot = status.lastSnapshot
+        val body = snapshot?.let { items.body(it.page) }
+        val readsFirst = snapshot != null && (frame.overflowing || body is PageBody.Document)
+        val failure = listOfNotNull(
+            ScreenBlock.Text("unavailable", UNAVAILABLE_TITLE, TextRole.TITLE, centered = true),
+            ScreenBlock.Text("reason", reasonText(status.reason), TextRole.CAPTION, centered = true),
+            snapshot?.let {
+                val dated = frame.shownAtMs?.let { "Last known · ${formatTime(wallTimeOf(it))}" } ?: "Last known"
+                ScreenBlock.Text("last-dated", dated, TextRole.CAPTION, centered = true)
+            },
+        )
+        if (snapshot != null && readsFirst && frame.mode == FrameMode.READING) {
+            val document = ScreenBlock.Document(
+                "document", identity, frame.pageId, snapshot.page.revision,
+                readingSegments(body), frame.anchor, dimmed = true, footer = (body as? PageBody.Document)?.footer,
+            )
+            val pages = frame.pageStarts.size
+            return SessionScreen(
+                ScreenHeader(title.uppercase(), if (pages > 0) "${frame.page + 1}/$pages" else "back: $parent"),
+                failure + document,
+                ScreenHint(listOfNotNull("swipe page".takeIf { pages > 1 }, "tap retry").joinToString(" · "), back),
+                statusText,
+                "document",
+            )
+        }
+        val retained = if (snapshot != null && !readsFirst) retainedBlocks(snapshot) else emptyList()
+        val blocks = failure + retained + listOf(
+            ScreenBlock.Row("retry", RETRY, selected = frame.selected == 0, centered = true),
+            ScreenBlock.Row("back", BACK, selected = frame.selected == 1, centered = true),
+        )
+        val focus = if (frame.selected == 0) "retry" else "back"
+        return SessionScreen(
+            ScreenHeader(title.uppercase(), "back: $parent"),
+            blocks,
+            ScreenHint("tap $focus", if (readsFirst) BACK_TO_TEXT else back),
+            statusText,
+            focus,
+            fit = snapshot?.takeIf { retained.isNotEmpty() }?.let { FitCheck(identity, frame.pageId, it.page.revision, "retry") },
+        )
+    }
+
+    /** Retained content that fits beside the failure: what the page showed, dimmed, its actions left out. */
+    private fun retainedBlocks(snapshot: Snapshot): List<ScreenBlock> = when (val body = items.body(snapshot.page)) {
+        is PageBody.Summary -> listOfNotNull(
+            body.primary?.let { ScreenBlock.Text("last:primary", it, TextRole.FIGURE, dimmed = true) },
+            body.secondary?.let { ScreenBlock.Text("last:secondary", it, TextRole.BODY, dimmed = true) },
+            body.text?.let { ScreenBlock.Text("last:text", it, TextRole.BODY, dimmed = true) },
+        ) + body.facts.map { ScreenBlock.Fact("last:fact:${it.id}", it.label, it.value, dimmed = true) }
+        is PageBody.Commands -> listOfNotNull(body.text?.let { ScreenBlock.Text("last:text", it, TextRole.BODY, dimmed = true) })
+        is PageBody.SelectableList -> body.items.map { ScreenBlock.Row("last:row:${it.id}", it.label, it.sub, enabled = false) }
+            .ifEmpty { listOf(ScreenBlock.Text("last:empty", body.emptyText ?: "Nothing here", TextRole.CAPTION, centered = true, dimmed = true)) }
+        is PageBody.Document, null -> emptyList()
+    }
+
+    /** What is read page by page: a document's own segments, or a body's text laid out as prose. */
+    private fun readingSegments(body: PageBody?): List<PageSegment> = when (body) {
+        is PageBody.Document -> body.segments
+        is PageBody.Summary -> listOfNotNull(
+            body.primary?.let { PageSegment("primary", PageSegmentKind.PROSE, it) },
+            body.secondary?.let { PageSegment("secondary", PageSegmentKind.PROSE, it) },
+            body.text?.let { PageSegment("text", PageSegmentKind.PROSE, it) },
+        ) + body.facts.map { PageSegment("fact:${it.id}", PageSegmentKind.PROSE, "${it.label} · ${it.value}") }
+        is PageBody.Commands -> listOfNotNull(body.text?.let { PageSegment("text", PageSegmentKind.PROSE, it) })
+        is PageBody.SelectableList -> body.items.flatMap { row ->
+            listOfNotNull(PageSegment("row:${row.id}", PageSegmentKind.PROSE, row.label), row.sub?.let { PageSegment("sub:${row.id}", PageSegmentKind.ASIDE, it) })
+        }
+        null -> emptyList()
     }
 
     private fun shown(
@@ -222,10 +308,13 @@ internal class SessionScreens(
         val page = status.snapshot.page
         val body = items.body(page)
         val header = title.uppercase()
-        if (body is PageBody.Document && frame.mode == FrameMode.READING) {
+        // Text measured taller than the viewport is read like a document, before its rows.
+        val readsFirst = body is PageBody.Document ||
+            (frame.overflowing && (body is PageBody.Summary || body is PageBody.Commands))
+        if (readsFirst && frame.mode == FrameMode.READING) {
             val document = ScreenBlock.Document(
                 "document", identity, frame.pageId, status.revision,
-                body.segments, frame.anchor, dimmed = false, footer = body.footer,
+                readingSegments(body), frame.anchor, dimmed = false, footer = (body as? PageBody.Document)?.footer,
             )
             val pages = frame.pageStarts.size
             val trail = if (pages > 0) "${frame.page + 1}/$pages" else null
@@ -239,16 +328,15 @@ internal class SessionScreens(
             )
         }
         val blocks = mutableListOf<ScreenBlock>()
-        when (body) {
-            is PageBody.Summary -> {
+        when {
+            readsFirst -> blocks += ScreenBlock.Text("section", COMMANDS, TextRole.SECTION)
+            body is PageBody.Summary -> {
                 body.primary?.let { blocks += ScreenBlock.Text("primary", it, TextRole.FIGURE) }
                 body.secondary?.let { blocks += ScreenBlock.Text("secondary", it, TextRole.BODY) }
                 body.text?.let { blocks += ScreenBlock.Text("text", it, TextRole.BODY) }
                 body.facts.forEach { blocks += ScreenBlock.Fact("fact:${it.id}", it.label, it.value) }
             }
-            is PageBody.Commands -> body.text?.let { blocks += ScreenBlock.Text("text", it, TextRole.BODY) }
-            is PageBody.Document -> blocks += ScreenBlock.Text("section", COMMANDS, TextRole.SECTION)
-            is PageBody.SelectableList, null -> Unit
+            body is PageBody.Commands -> body.text?.let { blocks += ScreenBlock.Text("text", it, TextRole.BODY) }
         }
         val rows = items.rows(page)
         val rowBlocks = rows.mapIndexed { index, row ->
@@ -275,7 +363,13 @@ internal class SessionScreens(
             else -> null
         }
         val trail = if (rows.size > 1) "${(frame.selected + 1).coerceAtMost(rows.size)}/${rows.size}" else "back: $parent"
-        return SessionScreen(ScreenHeader(header, trail), blocks, ScreenHint(action, back), statusText, focus)
+        // The text fits when it is whole on screen with the first row: the scroll that row asks for.
+        val fit = if (!readsFirst && (body is PageBody.Summary || body is PageBody.Commands)) {
+            (rowBlocks.firstOrNull() ?: blocks.lastOrNull())?.let { FitCheck(identity, frame.pageId, status.revision, it.key) }
+        } else {
+            null
+        }
+        return SessionScreen(ScreenHeader(header, trail), blocks, ScreenHint(action, if (readsFirst) BACK_TO_TEXT else back), statusText, focus, fit = fit)
     }
 
     private fun panel(frame: Frame, panel: FramePanel, title: String, statusText: String?): SessionScreen = when (panel) {
@@ -370,6 +464,9 @@ internal class SessionScreens(
         const val CONFIRM = "Confirm"
         const val OPEN = "Open"
         const val COMMANDS = "COMMANDS"
+
+        /** BACK from the rows of read text returns to the text before it leaves the page. */
+        const val BACK_TO_TEXT = "back text"
         const val LAUNCH_EXPLANATION =
             "Opens the full app as an exclusive surface. It replaces what the glasses show now; BACK leaves it."
         private const val ACTIVITY = "Activity"

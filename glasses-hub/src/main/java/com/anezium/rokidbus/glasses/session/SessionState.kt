@@ -48,7 +48,10 @@ internal sealed interface FrameStatus {
  */
 internal data class DocumentAnchor(val segmentId: String, val offset: Int = 0)
 
-/** A document is read page by page first; its rows are a separate mode reached by SELECT. */
+/**
+ * A document, or text the renderer measured taller than the viewport, is read page by page
+ * first; its rows (or an unavailable page's Retry and Back) are a separate mode reached by SELECT.
+ */
 internal enum class FrameMode { READING, ROWS }
 
 /** A hub-owned step over a frame that consumes no wire frame. */
@@ -95,6 +98,11 @@ internal data class Frame(
      */
     val tombstone: String? = null,
     val mode: FrameMode = FrameMode.ROWS,
+    /**
+     * The renderer found the retained content taller than the viewport as drawn: it is then read
+     * page by page like a document. It holds until a new answer opens or retries the frame.
+     */
+    val overflowing: Boolean = false,
     val anchor: DocumentAnchor? = null,
     /** Where each laid-out page of the shown document starts, as the renderer measured it. */
     val pageStarts: List<DocumentAnchor> = emptyList(),
