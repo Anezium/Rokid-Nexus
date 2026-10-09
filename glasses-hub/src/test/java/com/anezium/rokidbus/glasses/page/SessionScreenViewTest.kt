@@ -31,6 +31,7 @@ import com.anezium.rokidbus.shared.PageSurfaceValidationResult
 import com.anezium.rokidbus.shared.PageTarget
 import com.anezium.rokidbus.shared.PageTemplateContract
 import org.json.JSONArray
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -154,6 +155,24 @@ class SessionScreenViewTest {
         // An ended card keeps the same size too.
         render(screens.screen(SessionState.Root(RootStops.withEnded(stops("Rue A"), "nav:local"), 0), null))
         assertEquals(height, view.blockViews.getValue("nav:local").height)
+    }
+
+    @Test
+    fun `a body row and an appended action sharing a wire id are focused as themselves`() {
+        val rows = listOf(PageRow("action:go", "Body go", target = PageTarget.Page("relay:thread:x"))) +
+            (1..20).map { PageRow("f$it", "Thread $it", sub = "2 messages") }
+        val actions = JSONArray().put(JSONObject().put("id", "go").put("label", "Go").put("kind", "plugin").put("confirm", true))
+        val list = page("relay:main", PageBody.SelectableList(rows), actions = actions)
+        // The body row on top is selected; the appended action is far below it.
+        render(screens.screen(shown(list, selected = 0), null, 1))
+        val first = view.viewport.getChildAt(0)
+        assertEquals("Body go", texts(first).first().text.toString())
+        assertTrue(first.top >= 0 && first.bottom <= view.viewport.height)
+        // The appended action, selected, is the one scrolled into view.
+        render(screens.screen(shown(list, selected = rows.size), null, 1))
+        val last = view.viewport.getChildAt(view.viewport.childCount - 1)
+        assertEquals("Go", texts(last).first().text.toString())
+        assertTrue(last.top >= 0 && last.bottom <= view.viewport.height)
     }
 
     @Test

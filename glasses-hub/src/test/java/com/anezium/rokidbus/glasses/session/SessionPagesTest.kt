@@ -575,6 +575,28 @@ class SessionPagesTest {
         assertTrue(seen.filterIsInstance<SendClosed>().all { it.pageId == "nav:main" })
     }
 
+    @Test
+    fun `a body row and an appended action sharing a wire id keep their own selection across a revision`() {
+        // Valid: row ids are unique among the rows and action ids among the actions.
+        val collision = body(listOf(PageRow("action:go", "Body go", target = PageTarget.Page("relay:thread:x"))))
+        val actions = JSONArray().put(JSONObject().put("id", "go").put("label", "Go").put("kind", "plugin").put("confirm", true))
+        send(SessionEvent.ActivityStarted(ActivityStop("relay:local", "relay:main", "Ana: hi", pinned = true)))
+        openRoot()
+        send(SessionEvent.Enter(2_000))
+        val request = requested().request
+        respond(request, 2_100, body = collision, actions = actions, epoch = "e1")
+        val entries = items.entries((top().status as FrameStatus.Shown).snapshot.page)
+        assertEquals(listOf("Body go", "Go"), entries.map { it.label })
+        assertEquals(2, entries.map { it.key }.toSet().size)
+
+        send(SessionEvent.Step(1, 2_200))
+        assertEquals(1, top().selected)
+        respond(request, 2_600, revision = 2, body = collision, actions = actions, epoch = "e1")
+        assertEquals(2L, (top().status as FrameStatus.Shown).revision)
+        assertEquals(1, top().selected)
+        assertEquals(entries[1].key, top().selectedKey)
+    }
+
     private fun errorFor(requestId: String, generation: Long, frameIndex: Int, pageId: String, owner: String) =
         PageSurfaceContract.correlationPayload(PageCorrelation(requestId, generation, frameIndex, pageId))
             .put("error", PageSurfaceContract.ERROR_PAGE_UNAVAILABLE).put(PageSurfaceContract.FIELD_PLUGIN_ID, owner)

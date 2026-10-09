@@ -19,6 +19,8 @@ internal data class TypedRow(
 /**
  * G3: the shared typed body drives rendering and SELECT alike. A row keeps its provider-given id
  * as its key across revisions. Envelope actions no row targets are appended as their own rows.
+ * Body rows and appended actions key in disjoint namespaces: a row id may equal an action id, or
+ * look like an appended key, and the two still never share selection, focus or SELECT.
  *
  * A provider's `plugin` action is confirmed first; its `immersion` action can only open that
  * provider's own full app, behind the labelled launch step; its `hub` actions are refused. Only
@@ -50,8 +52,8 @@ internal class TypedPageItems(
         val targeted = body.items.mapNotNull { (it.target as? PageTarget.Action)?.actionId }.toSet()
         val rows = body.items.map { row -> TypedRow(row.id, row.label, row.sub, row.enabled, itemFor(row, local, owner, actions)) }
         val extra = page.actions.filter { it.id !in targeted }.map { action ->
-            val row = PageRow(ACTION_KEY_PREFIX + action.id, action.label, target = PageTarget.Action(action.id))
-            TypedRow(row.id, row.label, null, true, itemFor(row, local, owner, actions))
+            val row = PageRow(action.id, action.label, target = PageTarget.Action(action.id))
+            TypedRow(ACTION_KEY_PREFIX + action.id, row.label, null, true, itemFor(row, local, owner, actions))
         }
         return rows + extra
     }
@@ -113,7 +115,8 @@ internal class TypedPageItems(
 
         /** A hub action launching a local catalog entry, by its key. */
         const val LOCAL_PREFIX = "local:"
-        const val ACTION_KEY_PREFIX = "action:"
+        /** A space, which no wire id contains, keeps appended keys out of the row ids' namespace. */
+        const val ACTION_KEY_PREFIX = "action "
         private const val CACHE_SIZE = 8
     }
 }
