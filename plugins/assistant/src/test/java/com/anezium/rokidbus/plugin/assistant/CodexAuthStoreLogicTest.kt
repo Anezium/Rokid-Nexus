@@ -334,12 +334,12 @@ class CodexAuthStoreLogicTest {
     }
 
     @Test
-    fun chatGptReasoningEffortDefaultsLowAndRoundTripsSupportedValues() {
+    fun chatGptReasoningEffortDefaultsNoneAndRoundTripsSupportedValues() {
         val store = CodexAuthStore(FakeSharedPreferences())
 
-        assertEquals("low", store.chatGptReasoningEffort())
+        assertEquals("none", store.chatGptReasoningEffort())
 
-        listOf("low", "medium", "high", "xhigh").forEach { effort ->
+        listOf("none", "low", "medium", "high", "xhigh").forEach { effort ->
             store.setChatGptReasoningEffort(effort)
             assertEquals(effort, store.chatGptReasoningEffort())
         }
@@ -349,21 +349,21 @@ class CodexAuthStoreLogicTest {
     fun chatGptReasoningEffortRejectsUnknownValues() {
         val store = CodexAuthStore(FakeSharedPreferences())
 
-        listOf("none", "minimal", "max", "ultra", "LOW", " medium ", "").forEach { effort ->
+        listOf("minimal", "max", "ultra", "LOW", " medium ", "").forEach { effort ->
             assertThrows(IllegalArgumentException::class.java) {
                 store.setChatGptReasoningEffort(effort)
             }
         }
-        assertEquals("low", store.chatGptReasoningEffort())
+        assertEquals("none", store.chatGptReasoningEffort())
     }
 
     @Test
-    fun effortClampReadsASavedNoneAsLow() {
+    fun effortClampPreservesASavedNoneForRequestBoundaryValidation() {
         val store = CodexAuthStore(
             FakeSharedPreferences(mapOf("chatgpt_reasoning_effort" to "none")),
         )
 
-        assertEquals("low", store.chatGptReasoningEffort())
+        assertEquals("none", store.chatGptReasoningEffort())
     }
 
     @Test

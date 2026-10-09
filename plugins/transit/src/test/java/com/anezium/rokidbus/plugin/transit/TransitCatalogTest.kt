@@ -37,7 +37,7 @@ class TransitCatalogTest {
         assertEquals(TransitSkillContract.MAX_QUERY_CHARS, input(TransitSkillContract.SEARCH_STOPS).string("query").maxLength)
         assertEquals(TransitSkillContract.MAX_SEARCH_RESULTS, output(TransitSkillContract.SEARCH_STOPS).array("stops").maxItems)
         assertEquals(TransitSkillContract.MAX_BOARD_DEPARTURES, output(TransitSkillContract.GET_DEPARTURES).array("departures").maxItems)
-        assertEquals(TransitSkillContract.MAX_LINE_CHARS, input(TransitSkillContract.GET_DEPARTURES).string("line").maxLength)
+        assertEquals(TransitSkillContract.MAX_LINE_SELECTOR_CHARS, input(TransitSkillContract.GET_DEPARTURES).string("line").maxLength)
         assertEquals(TransitSkillContract.MAX_DIRECTION_CHARS, input(TransitSkillContract.GET_DEPARTURES).string("direction").maxLength)
     }
 

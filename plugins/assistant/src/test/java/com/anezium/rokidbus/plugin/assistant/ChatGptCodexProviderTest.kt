@@ -161,9 +161,9 @@ class ChatGptCodexProviderTest {
             listOf("gpt-6-luna", "gpt-6.1-sol", "gpt-6-astra"),
             ChatGptCodexApiClient.SUPPORTED_MODEL_IDS,
         )
-        assertEquals("low", ChatGptCodexApiClient.DEFAULT_REASONING_EFFORT)
+        assertEquals("none", ChatGptCodexApiClient.DEFAULT_REASONING_EFFORT)
         assertEquals(
-            "low",
+            "none",
             ChatGptCodexApiClient.supportedReasoningEffort(
                 ChatGptCodexApiClient.DEFAULT_MODEL_ID,
                 ChatGptCodexApiClient.DEFAULT_REASONING_EFFORT,
@@ -221,7 +221,7 @@ class ChatGptCodexProviderTest {
     @Test
     fun effortClampSendsOnlyEffortsTheModelAccepts() {
         val allowed = mapOf(
-            "gpt-6-luna" to setOf("low", "medium", "high", "xhigh", "max"),
+            "gpt-6-luna" to setOf("none", "low", "medium", "high", "xhigh", "max"),
             "gpt-6.1-sol" to setOf("low", "medium", "high", "xhigh", "ultra"),
             "gpt-6-astra" to setOf("low", "medium", "high", "xhigh", "ultra"),
         )
@@ -239,7 +239,7 @@ class ChatGptCodexProviderTest {
                 assertTrue("$model/$effort -> $sent", sent in modelEfforts)
                 if (effort in modelEfforts) assertEquals("$model/$effort", effort, sent)
             }
-            assertEquals("low", ChatGptCodexApiClient.supportedReasoningEffort(model, "none"))
+            assertEquals(if (model == "gpt-6-luna") "none" else "low", ChatGptCodexApiClient.supportedReasoningEffort(model, "none"))
         }
         assertEquals("max", ChatGptCodexApiClient.supportedReasoningEffort("gpt-6-luna", "ultra"))
         assertEquals("ultra", ChatGptCodexApiClient.supportedReasoningEffort("gpt-6.1-sol", "ultra"))
@@ -255,7 +255,9 @@ class ChatGptCodexProviderTest {
     fun effortClampReachesTheRequestBody() = runTest {
         listOf(
             Triple("gpt-6-luna", "ultra", "max"),
-            Triple("gpt-6-luna", "none", "low"),
+            Triple("gpt-6-luna", "none", "none"),
+            Triple("gpt-6.1-sol", "none", "low"),
+            Triple("gpt-6-astra", "none", "low"),
             Triple("gpt-6.1-sol", "ultra", "ultra"),
             Triple("gpt-6-astra", "xhigh", "xhigh"),
         ).forEach { (model, effort, expected) ->

@@ -131,7 +131,7 @@ class WorkspaceRetrieverTest {
     fun `an attribute named next to a subject never pulls in another file`() {
         val retriever = WorkspaceRetriever(listOf(
             document("vega.md", "Vega stores 47 green spools for the assembly line."),
-            document("lyon.txt", "Delivery schedule: Lyon trucks arrive at seven on Monday."),
+            document("lyon.txt", "Delivery schedule: Lyon trucks arrive at seven on Monday. Planning de livraison : les camions de Lyon arrivent à sept heures."),
         ))
         listOf("What is the delivery schedule for Vega green spools?",
             "What Is The Delivery Schedule For Vega Green Spools?",
@@ -144,7 +144,7 @@ class WorkspaceRetrieverTest {
     fun `a missing subject is refused even when another file holds the attribute`() {
         val retriever = WorkspaceRetriever(listOf(
             document("nebuleuse.txt", "Nebuleuse launch details. Code: VELA-5836."),
-            document("code.txt", "The cabinet code is 4471."),
+            document("code.txt", "The cabinet code is 4471. Code du casier : 4471. Bobines disponibles : 29."),
         ))
         listOf("What is the code, for the Orphee shuttle departure?",
             "Quel est le code ou le mot de passe d'Orphee ?",
@@ -154,12 +154,12 @@ class WorkspaceRetrieverTest {
     }
 
     @Test
-    fun `parts joined with and are each retrieved, as a follow-up search writes them`() {
+    fun `parts joined with semicolons are each retrieved, as a follow-up search writes them`() {
         val result = WorkspaceRetriever(listOf(
             document("vega.md", "Vega stores 47 green spools for the assembly line."),
             document("aurora.docx", "Aurora prototype is Cobalt-19."),
             document("nebuleuse.txt", "Nebuleuse launch code is VELA-5836."),
-        )).search("Aurora prototype and Nebuleuse launch code")
+        )).search("Aurora; Nebuleuse")
         assertTrue(result.excerpts.contains("aurora.docx"))
         assertTrue(result.excerpts.contains("nebuleuse.txt"))
         assertFalse(result.excerpts.contains("vega.md"))
@@ -168,4 +168,18 @@ class WorkspaceRetrieverTest {
     private fun document(name: String, text: String, heading: String = "") = WorkspaceDocument(
         WorkspaceEntry(name, name), listOf(WorkspaceChunk(0, text, heading)),
     )
+
+    @Test
+    fun `proper-name follow-up queries refuse an absent subject despite shared attributes`() {
+        val retriever = WorkspaceRetriever(listOf(
+            document("aurora.docx", "Aurora prototype is Cobalt-19."),
+            document("nebuleuse.txt", "Nebuleuse launch details. Code: VELA-5836."),
+            document("code.txt", "The cabinet code is 4471. Code ou mot de passe : 4471."),
+        ))
+        assertEquals(WorkspaceSearchResult(), retriever.search("Orphee"))
+        val mixed = retriever.search("Aurora; Orphee")
+        assertTrue(mixed.excerpts.contains("aurora.docx"))
+        assertFalse(mixed.excerpts.contains("nebuleuse.txt"))
+        assertFalse(mixed.excerpts.contains("code.txt"))
+    }
 }

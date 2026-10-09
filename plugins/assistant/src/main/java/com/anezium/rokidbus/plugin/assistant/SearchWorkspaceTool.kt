@@ -13,11 +13,14 @@ internal class SearchWorkspaceTool private constructor(
     override fun bindToTurn(workspaceVersion: Pair<Long, Long>?) = SearchWorkspaceTool(workspaceVersion, access)
     override val name = SEARCH_WORKSPACE_TOOL_NAME
     override val description = "Search the enabled local workspace for relevant document passages. " +
-        "Use the already injected Workspace excerpts first; call when they miss part of the question, such as " +
-        "a second topic or wording or a language the documents use differently. It matches keywords: name " +
-        "each missing part by one to three specific words, above all proper names from the question, and " +
-        "join parts with \"and\" (for example \"Vega and Aurora prototype\"); if the documents may be in " +
-        "another language, use the proper names alone. " +
+        "Only for questions requiring the wearer's documents; do not search for unrelated general knowledge. " +
+        "Use injected Workspace excerpts first; call when they miss a part or differ in wording or language. " +
+        "It matches keywords: search for missing named subjects by their proper names alone, never mixed " +
+        "with generic attributes like code or schedule (\"Orphee\", not \"Orphee code\"). " +
+        "Join separate subjects with a semicolon (\"Vega; Aurora\"). If no subject is named, use one to three " +
+        "specific keywords. Names containing and or et are themselves split by this keyword search. " +
+        "Check the same full subject is named before using an excerpt; a shared first name is not enough. " +
+        "When coverage is missing, do not repeat personal details from unrelated excerpts. " +
         "At most one search per user turn. Cite the returned file names and acknowledge missing coverage."
     override val parametersSchema = AssistantToolJsonSchema(
         """{"type":"object","properties":{"query":{"type":"string","minLength":1,"maxLength":240}},"required":["query"],"additionalProperties":false}""",

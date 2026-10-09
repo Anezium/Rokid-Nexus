@@ -121,19 +121,21 @@ internal object NexusAgentPolicy {
                 append("\n- For questions requiring workspace documents, use only Workspace excerpts in this request")
                 if (SEARCH_WORKSPACE_TOOL_NAME in availableToolNames) append(" or a successful search_workspace result")
                 if (VIEW_WORKSPACE_PAGE_TOOL_NAME in availableToolNames) append(" or a page shown by view_workspace_page")
-                append(". If none cover the question, say no " +
-                    "relevant workspace excerpt was found. Unrelated questions can be answered normally.")
+                append(". Unrelated questions can be answered normally without searching Workspace.")
                 if (SEARCH_WORKSPACE_TOOL_NAME in availableToolNames) {
                     // Retrieval stays lexical and precise; the model bridges what words alone cannot:
                     // a second topic, a pronoun, or a question asked in another language than the files.
-                    append(" If the question asks about several things and the excerpts cover only some, or " +
-                        "none match because the documents may use other words or another language, call " +
-                        "search_workspace once before answering. Its search matches keywords: name each missing " +
-                        "part by one to three of its most specific words, above all the proper names from the " +
-                        "question, joined with \"and\" (for example \"Vega and Aurora prototype\"); when the " +
-                        "documents may be in another language than the question, search by the proper names " +
-                        "alone (\"Vega and Aurora\"). Never answer one part from an excerpt about something else.")
+                    append(" For questions requiring workspace documents, if the excerpts miss a part or do not " +
+                        "match the wording or language, call search_workspace once before answering. Its search " +
+                        "matches keywords: search for missing named subjects by their proper names alone, never " +
+                        "mixed with generic attributes like code or schedule (\"Orphee\", not \"Orphee code\"). " +
+                        "Join separate subjects with a semicolon (\"Vega; Aurora\"). If no subject is named, use " +
+                        "one to three specific keywords. Check that each excerpt names the same full subject before " +
+                        "using it; sharing only a first name is not enough. When coverage is missing, do not repeat " +
+                        "personal details from unrelated excerpts. Never answer one part from an excerpt about something else.")
                 }
+                append(" If no available excerpt or successful search result covers a requested document fact, " +
+                    "say no relevant workspace excerpt was found for that part.")
                 append(" Never infer what a chart, figure, table, or image shows from the text around it.")
                 if (VIEW_WORKSPACE_PAGE_TOOL_NAME in availableToolNames) {
                     append(" If a relevant excerpt is marked" + WorkspaceRetriever.VISUAL_MARK + " and its text " +

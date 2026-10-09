@@ -951,7 +951,7 @@ class OpenAiCompatToolLoopTest {
 
     private fun bodyFor(request: OpenAiCompatChatRequest): JSONObject =
         OpenAiCompatApiClient(
-            preset = ProviderCatalog.openAi,
+            preset = ProviderCatalog.openRouter,
             apiKeyProvider = { "key" },
         ).requestBody(request)
 

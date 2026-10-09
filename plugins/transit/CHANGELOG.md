@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Explicit bus, metro, tram, and RER selectors now constrain the transport mode.
+  An ambiguous board no longer supplies a departure anchor for a follow-up.
+  Without a named line, destinations such as Orly list all matching directions.
+- After this skill catalog update, re-approve "Departures at a stop" for Assistant
+  in Nexus plugin access. Contract fingerprints include descriptions and schemas;
+  existing approvals are intentionally invalidated when those change.
+
 - Skills for an approved assistant: favorite stops, stop search, and
   departures with their observation time and realtime quality, including "the
   one after that" by trip identity rather than row position.

@@ -138,20 +138,23 @@ internal class TransitReadSkills(
             .filterNot { it.departure.isBefore(now.minusMillis(TransitSkillContract.DEPARTED_GRACE_MS)) }
             .sortedBy(TransitDeparture::departure)
 
-        val lineLabels = lineSelector?.let { TransitLabelMatch.lines(it, upcoming.mapNotNull(::lineOf).distinct()) }
-        val onLine = if (lineLabels == null) upcoming else upcoming.filter { lineOf(it) in lineLabels }
-        val headsigns = directionSelector?.let { TransitLabelMatch.directions(it, onLine.map(::directionOf).distinct()) }
+        val requestedModes = lineSelector?.let { TransitLabelMatch.modes(it, upcoming.mapNotNull(::lineOf)) }
+        val inMode = if (requestedModes == null) upcoming else upcoming.filter { it.mode.uppercase(java.util.Locale.ROOT) in requestedModes }
+        val lineLabels = lineSelector?.let { TransitLabelMatch.lines(it, inMode.mapNotNull(::lineOf).distinct()) }
+        val onLine = if (lineLabels == null) inMode else inMode.filter { lineOf(it) in lineLabels }
+        val headsigns = directionSelector?.let { TransitLabelMatch.directions(it, onLine.map(::directionOf).distinct(), preferExact = lineSelector != null) }
         val selected = if (headsigns == null) onLine else onLine.filter { directionOf(it) in headsigns }
         val selectedLines = selected.mapNotNull(::lineOf).distinct()
-        val selectedDirections = selected.map(::directionOf).distinct()
+        val selectedDirections = TransitLabelMatch.distinctDirectionLabels(selected.map(::directionOf))
 
         val (match, rows) = when {
             anchor != null -> followAnchor(anchor, board, upcoming, now)
             lineLabels != null && lineLabels.isEmpty() -> "no_matching_line" to emptyList()
             headsigns != null && headsigns.isEmpty() -> "no_matching_direction" to emptyList()
-            lineLabels != null && TransitLabelMatch.distinctLines(selectedLines) > 1 -> "ambiguous_line" to selected
+            lineLabels != null && (TransitLabelMatch.distinctLines(selectedLines) > 1 ||
+                selected.map { TransitLabelMatch.modeGroup(it.mode) to lineOf(it) }.distinct().size > 1) -> "ambiguous_line" to selected
             headsigns != null && TransitLabelMatch.distinctDirections(headsigns) > 1 -> "ambiguous_direction" to selected
-            lineSelector != null && directionSelector == null && selectedDirections.size > 1 ->
+            lineSelector != null && directionSelector == null && TransitLabelMatch.distinctDirections(selectedDirections) > 1 ->
                 "ambiguous_direction" to selected
             lineSelector != null || directionSelector != null -> "filtered" to selected
             else -> "all" to upcoming
@@ -179,7 +182,9 @@ internal class TransitReadSkills(
                 .put("directions", JSONArray(onLine.map(::directionOf).distinct().take(MAX_LIST)))
                 .apply {
                     when (match) {
-                        "ambiguous_line" -> put("candidates", JSONArray(selectedLines.take(MAX_LIST)))
+                        "ambiguous_line" -> put("candidates", JSONArray(
+                            (if (selectedLines.size == 1) selected.mapNotNull { TransitLabelMatch.candidate(it.mode, lineOf(it).orEmpty()) }.distinct() else selectedLines).take(MAX_LIST),
+                        ))
                         "ambiguous_direction" -> put("candidates", JSONArray(selectedDirections.take(MAX_LIST)))
                     }
                 }
@@ -191,14 +196,16 @@ internal class TransitReadSkills(
                         .put("stop_name", stop.name)
                         .put("observed_at", board.observedAt.toString())
                         .put("groups", JSONArray().apply {
-                            upcoming.map { lineOf(it) to directionOf(it) }.distinct().take(MAX_LIST)
-                                .forEach { (line, direction) ->
-                                    put(JSONObject().putOpt("line", line).put("direction", direction))
+                            upcoming.distinctBy { Triple(TransitLabelMatch.modeGroup(it.mode), lineOf(it), directionOf(it)) }.take(MAX_LIST)
+                                .forEach { row ->
+                                    put(JSONObject().putOpt("line", lineOf(row)).put("direction", directionOf(row))
+                                        .put("mode", row.mode.take(24).ifBlank { "UNKNOWN" }))
                                 }
                         })
                         .apply {
+                            val ambiguous = match == "ambiguous_line" || match == "ambiguous_direction"
                             val grouped = anchor != null || lineSelector != null || directionSelector != null
-                            focusRow?.let { row ->
+                            focusRow?.takeUnless { ambiguous }?.let { row ->
                                 if (grouped) {
                                     lineOf(row)?.let { put("line", it) }
                                     put("direction", directionOf(row))
@@ -221,7 +228,8 @@ internal class TransitReadSkills(
         upcoming: List<TransitDeparture>,
         now: Instant,
     ): Pair<String, List<TransitDeparture>> {
-        val group = upcoming.filter { lineOf(it) == anchor.line && directionOf(it) == anchor.direction }
+        val group = upcoming.filter { TransitLabelMatch.modeGroup(it.mode) == TransitLabelMatch.modeGroup(anchor.mode) &&
+            lineOf(it) == anchor.line && TransitLabelMatch.distinctDirections(listOf(directionOf(it), anchor.direction)) == 1 }
         val matches = board.departures.filter { identifies(it, anchor) }
         return when {
             matches.size == 1 -> {
@@ -236,6 +244,7 @@ internal class TransitReadSkills(
     }
 
     private fun identifies(departure: TransitDeparture, anchor: TransitSkillContract.DepartureSnapshot): Boolean {
+        if (departure.mode != anchor.mode) return false
         if (departure.tripId != null && anchor.tripId != null) return departure.tripId == anchor.tripId
         if (lineOf(departure) != anchor.line || directionOf(departure) != anchor.direction) return false
         val scheduled = departure.scheduledDeparture

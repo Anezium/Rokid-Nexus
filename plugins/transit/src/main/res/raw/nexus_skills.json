@@ -97,7 +97,7 @@
         "type": "object",
         "properties": {
           "stop": {"type": "string", "nexusRef": "stop"},
-          "line": {"type": "string", "minLength": 1, "maxLength": 16, "description": "A line as an earlier board named it or as the wearer says it, such as 14, ligne 14, M14, or RER C."},
+          "line": {"type": "string", "minLength": 1, "maxLength": 80, "description": "A line or candidate as an earlier board named it, or as the wearer says it, such as 14, ligne 14, M14, RER C, coach 1, or ferry 1. Explicit mode words constrain the transport; a literal M-prefixed board label is preserved."},
           "direction": {"type": "string", "minLength": 1, "maxLength": 80, "description": "A direction as an earlier board named it, or whole words of it as the wearer says them, such as Orly or vers Orly for Aéroport d'Orly."},
           "after": {"type": "string", "nexusRef": "departure"}
         },
@@ -151,7 +151,8 @@
                   "type": "object",
                   "properties": {
                     "line": {"type": "string", "maxLength": 16},
-                    "direction": {"type": "string", "maxLength": 80}
+                    "direction": {"type": "string", "maxLength": 80},
+                    "mode": {"type": "string", "maxLength": 24}
                   },
                   "required": ["direction"]
                 }

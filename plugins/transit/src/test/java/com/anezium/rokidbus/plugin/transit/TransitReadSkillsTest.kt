@@ -42,6 +42,161 @@ class TransitReadSkillsTest {
     private val skills = TransitReadSkills(favorites, clock = { now }, zone = { zone })
     private val data = Data()
 
+    @Test
+    fun `line-only destination ambiguity ignores typography but retains different destinations`() {
+        data.boards[stop.id] = listOf(
+            departure("14", "Aéroport d'Orly", 2),
+            departure("14", "Aeroport d’Orly", 3),
+        )
+        val sameDestination = departures(JSONObject().put("line", "14"))
+        assertEquals("filtered", sameDestination.getString("match"))
+        assertEquals(2, sameDestination.rows().size)
+        assertTrue(sameDestination.getJSONObject("focus").has("departure"))
+        val next = departures(JSONObject().put("after", sameDestination.getJSONObject("focus").getString("departure")))
+        assertEquals("after_anchor", next.getString("match"))
+        assertEquals(listOf("14" to "Aeroport d’Orly"), next.rows())
+        data.boards[stop.id] = data.boards.getValue(stop.id) + departure("14", "Olympiades", 4)
+        now = now.plusSeconds(31)
+        val differentDestinations = departures(JSONObject().put("line", "14"))
+        assertEquals("ambiguous_direction", differentDestinations.getString("match"))
+        assertFalse(differentDestinations.getJSONObject("focus").has("departure"))
+        assertEquals(setOf("Aéroport d'Orly", "Olympiades"), differentDestinations.strings("candidates").toSet())
+    }
+
+    @Test
+    fun `literal M-prefixed tram and bus labels outrank a metro abbreviation`() {
+        data.boards[stop.id] = listOf(
+            departure("M10", "Warschauer Strasse", 2, mode = "TRAM"),
+            departure("M41", "Hauptbahnhof", 3, mode = "BUS"),
+            departure("10", "North", 4, mode = "SUBWAY"),
+        )
+        assertEquals(listOf("M10" to "Warschauer Strasse"), departures(JSONObject().put("line", "M10")).rows())
+        assertEquals(listOf("M41" to "Hauptbahnhof"), departures(JSONObject().put("line", "M41")).rows())
+        assertEquals(listOf("M10" to "Warschauer Strasse"), departures(JSONObject().put("line", "line M10")).rows())
+        listOf("M 10", "M-10", "ligne M 10").forEach { selector ->
+            assertEquals(selector, listOf("M10" to "Warschauer Strasse"), departures(JSONObject().put("line", selector)).rows())
+        }
+        assertEquals(listOf("10" to "North"), departures(JSONObject().put("line", "metro 10")).rows())
+    }
+
+    @Test
+    fun `coach and ferry candidates round-trip and full mode words retain exact route labels`() {
+        data.boards[stop.id] = listOf(
+            departure("1", "Central", 2, mode = "BUS"),
+            departure("1", "Central", 3, mode = "COACH"),
+            departure("1", "Central", 4, mode = "FERRY"),
+            departure("M1", "Central", 5, mode = "SUBWAY"),
+        )
+        val candidates = departures(JSONObject().put("line", "1")).strings("candidates")
+        assertEquals(setOf("bus 1", "coach 1", "ferry 1"), candidates.toSet())
+        candidates.forEach { selector ->
+            val result = departures(JSONObject().put("line", selector))
+            assertEquals(selector, "filtered", result.getString("match"))
+            assertEquals(selector, 1, result.rows().size)
+        }
+        assertEquals(listOf("M1" to "Central"), departures(JSONObject().put("line", "metro M1")).rows())
+    }
+
+    @Test
+    fun `RER follow-up grouping includes equivalent feed modes without weakening anchor identity`() {
+        data.boards[stop.id] = listOf(
+            departure("C", "SARA", 2, trip = "r1", mode = "REGIONAL_RAIL"),
+            departure("C", "SARA", 3, trip = "r2", mode = "SUBURBAN"),
+            departure("C", "SARA", 4, trip = "u1", mode = "SUBWAY"),
+        )
+        val first = departures(JSONObject().put("line", "RER C"))
+        val anchor = first.getJSONObject("focus").getString("departure")
+        assertEquals(2, first.getJSONObject("focus").getJSONArray("groups").length())
+        val next = departures(JSONObject().put("after", anchor))
+        assertEquals(1, next.rows().size)
+        assertEquals("SUBURBAN", next.getJSONArray("departures").getJSONObject(0).getString("mode"))
+    }
+
+    @Test
+    fun `ambiguous mode candidates can be selected and RER accepts suburban feed modes`() {
+        data.boards[stop.id] = listOf(
+            departure("14", "Central", 2, mode = "SUBWAY"),
+            departure("14", "Central", 3, mode = "BUS"),
+            departure("14", "Central", 4, mode = "SUBURBAN"),
+        )
+        val ambiguous = departures(JSONObject().put("line", "ligne 14"))
+        val candidates = ambiguous.strings("candidates")
+        assertEquals(setOf("metro 14", "bus 14", "rer 14"), candidates.toSet())
+        candidates.forEach { selector ->
+            val result = departures(JSONObject().put("line", selector))
+            assertEquals(selector, "filtered", result.getString("match"))
+            assertEquals(selector, 1, result.rows().size)
+        }
+    }
+
+    @Test
+    fun `RER mode variants include the legacy commuter METRO mode without selecting subway`() {
+        data.boards[stop.id] = listOf(
+            departure("C", "Central", 2, mode = "SUBURBAN"),
+            departure("C", "Central", 3, mode = "REGIONAL_FAST_RAIL"),
+            departure("C", "Central", 4, mode = "METRO"),
+            departure("C", "Central", 5, mode = "SUBWAY"),
+        )
+        val result = departures(JSONObject().put("line", "RER C"))
+        assertEquals("filtered", result.getString("match"))
+        assertEquals(3, result.rows().size)
+        assertEquals(1, departures(JSONObject().put("line", "metro C")).rows().size)
+    }
+
+    @Test
+    fun `explicit transport modes never select an incompatible departure`() {
+        data.boards[stop.id] = listOf(
+            departure("14", "Central", 2, mode = "SUBWAY"),
+            departure("14", "Central", 3, mode = "BUS"),
+            departure("14", "Central", 4, mode = "TRAM"),
+            departure("14", "Central", 5, mode = "REGIONAL_RAIL"),
+        )
+        listOf("bus 14" to "BUS", "metro14" to "SUBWAY", "tram 14" to "TRAM", "RER 14" to "REGIONAL_RAIL").forEach { (selector, mode) ->
+            val result = departures(JSONObject().put("line", selector))
+            assertEquals(selector, "filtered", result.getString("match"))
+            assertEquals(selector, 1, result.getJSONArray("departures").length())
+            assertEquals(selector, mode, result.getJSONArray("departures").getJSONObject(0).getString("mode"))
+        }
+        val neutral = departures(JSONObject().put("line", "ligne 14"))
+        assertEquals("ambiguous_line", neutral.getString("match"))
+        assertFalse(neutral.getJSONObject("focus").has("departure"))
+        data.boards[stop.id] = listOf(departure("14", "Central", 2, mode = "SUBWAY"))
+        now = now.plusSeconds(31)
+        val incompatible = departures(JSONObject().put("line", "bus 14"))
+        assertEquals("no_matching_line", incompatible.getString("match"))
+        assertEquals(0, incompatible.rows().size)
+    }
+
+    @Test
+    fun `tram aliases keep their mode and ambiguous destinations provide no anchor`() {
+        data.boards[stop.id] = listOf(
+            departure("T3a", "Orly", 2),
+            departure("3a", "Orly", 3, mode = "BUS"),
+            departure("14", "Aéroport d'Orly", 4, mode = "SUBWAY"),
+        )
+        assertEquals(listOf("T3a" to "Orly"), departures(JSONObject().put("line", "tram 3a")).rows())
+        val ambiguous = departures(JSONObject().put("direction", "Orly"))
+        assertEquals("ambiguous_direction", ambiguous.getString("match"))
+        val focus = ambiguous.getJSONObject("focus")
+        assertFalse(focus.has("departure"))
+        assertFalse(focus.has("line"))
+        assertFalse(focus.has("direction"))
+        assertEquals(3, focus.getJSONArray("groups").length())
+    }
+
+    @Test
+    fun `a follow-up stays in its anchors transport mode`() {
+        data.boards[stop.id] = listOf(
+            departure("14", "Central", 2, mode = "BUS"),
+            departure("14", "Central", 3, mode = "SUBWAY"),
+            departure("14", "Central", 4, mode = "BUS"),
+        )
+        val anchor = departures(JSONObject().put("line", "bus 14")).getJSONObject("focus").getString("departure")
+        val next = departures(JSONObject().put("after", anchor))
+        assertEquals(1, next.rows().size)
+        assertEquals("BUS", next.getJSONArray("departures").getJSONObject(0).getString("mode"))
+    }
+
     private fun departure(
         line: String?,
         headsign: String,
@@ -50,7 +205,8 @@ class TransitReadSkillsTest {
         trip: String? = null,
         realTime: Boolean? = true,
         cancelled: Boolean = false,
-    ) = TransitDeparture("TRAM", line, headsign, at(minutes), scheduled?.let(::at), cancelled, realTime, trip)
+        mode: String = "TRAM",
+    ) = TransitDeparture(mode, line, headsign, at(minutes), scheduled?.let(::at), cancelled, realTime, trip)
 
     private fun completed(outcome: TransitSkillOutcome): JSONObject =
         (outcome as TransitSkillOutcome.Completed).data
@@ -172,8 +328,8 @@ class TransitReadSkillsTest {
     @Test
     fun `direction typography is normalized and exact groups survive in conversation focus`() {
         data.boards[stop.id] = listOf(
-            departure("14", "A\u00e9roport d\u2019Orly", 3),
-            departure("14", "Saint-Denis Pleyel", 5),
+            departure("14", "A\u00e9roport d\u2019Orly", 3, mode = "SUBWAY"),
+            departure("14", "Saint-Denis Pleyel", 5, mode = "SUBWAY"),
         )
         val board = departures()
         assertEquals(2, board.getJSONObject("focus").getJSONArray("groups").length())
@@ -187,15 +343,15 @@ class TransitReadSkillsTest {
 
     /** Bibliothèque François Mitterrand as Transitous labels it: metro 14, RER C missions, buses. */
     private fun parisBoard() = listOf(
-        departure("14", "Saint-Denis - Pleyel", 1, trip = "m14-n1"),
-        departure("14", "Aéroport d'Orly", 2, trip = "m14-o1"),
-        departure("C", "SARA", 3, trip = "rerc-1"),
-        departure("62", "Porte de France", 4, trip = "b62-1"),
-        departure("14", "Saint-Denis - Pleyel", 4, trip = "m14-n2"),
-        departure("14", "Aéroport d'Orly", 5, trip = "m14-o2"),
-        departure("325", "Château de Vincennes", 6, trip = "b325-1"),
-        departure("C", "MONA", 7, trip = "rerc-2"),
-        departure("14", "Aéroport d'Orly", 8, trip = "m14-o3"),
+        departure("14", "Saint-Denis - Pleyel", 1, trip = "m14-n1", mode = "SUBWAY"),
+        departure("14", "Aéroport d'Orly", 2, trip = "m14-o1", mode = "SUBWAY"),
+        departure("C", "SARA", 3, trip = "rerc-1", mode = "REGIONAL_RAIL"),
+        departure("62", "Porte de France", 4, trip = "b62-1", mode = "BUS"),
+        departure("14", "Saint-Denis - Pleyel", 4, trip = "m14-n2", mode = "SUBWAY"),
+        departure("14", "Aéroport d'Orly", 5, trip = "m14-o2", mode = "SUBWAY"),
+        departure("325", "Château de Vincennes", 6, trip = "b325-1", mode = "BUS"),
+        departure("C", "MONA", 7, trip = "rerc-2", mode = "REGIONAL_RAIL"),
+        departure("14", "Aéroport d'Orly", 8, trip = "m14-o3", mode = "SUBWAY"),
     )
 
     private fun JSONObject.rows(): List<Pair<String?, String>> = getJSONArray("departures").let { rows ->
@@ -240,8 +396,8 @@ class TransitReadSkillsTest {
     @Test
     fun `linePrefix - an exact label wins and a prefix shared by two lines is ambiguous`() {
         data.boards[stop.id] = listOf(
-            departure("M1", "Renens", 2),
-            departure("1", "Maladière", 3),
+            departure("M1", "Renens", 2, mode = "SUBWAY"),
+            departure("1", "Maladière", 3, mode = "SUBWAY"),
             departure("T3a", "Porte de Vincennes", 4),
             departure("T3b", "Porte Dauphine", 5),
         )
@@ -277,10 +433,10 @@ class TransitReadSkillsTest {
     }
 
     @Test
-    fun `ambiguousDirection - a word shared by several headsigns lists them, an exact headsign wins`() {
+    fun `ambiguousDirection - without a line exact and partial destinations remain alternatives`() {
         data.boards[stop.id] = parisBoard() + listOf(
-            departure("B", "Aéroport Charles de Gaulle 2 TGV", 6),
-            departure("Orlybus", "Orly", 9),
+            departure("B", "Aéroport Charles de Gaulle 2 TGV", 6, mode = "RAIL"),
+            departure("Orlybus", "Orly", 9, mode = "BUS"),
         )
         val airports = departures(JSONObject().put("direction", "aéroport"))
         assertEquals("ambiguous_direction", airports.getString("match"))
@@ -292,8 +448,9 @@ class TransitReadSkillsTest {
         assertEquals("filtered", departures(JSONObject().put("line", "14").put("direction", "aéroport")).getString("match"))
 
         val exact = departures(JSONObject().put("direction", "Orly"))
-        assertEquals("filtered", exact.getString("match"))
-        assertEquals(listOf("Orlybus" to "Orly"), exact.rows())
+        assertEquals("ambiguous_direction", exact.getString("match"))
+        assertEquals(4, exact.rows().size)
+        assertEquals(setOf("Orly", "Aéroport d'Orly"), exact.strings("candidates").toSet())
     }
 
     @Test
@@ -335,9 +492,9 @@ class TransitReadSkillsTest {
     @Test
     fun `linePrefix - a mode word glued to a line code still names it`() {
         data.boards[stop.id] = listOf(
-            departure("C", "SARA", 2),
+            departure("C", "SARA", 2, mode = "REGIONAL_RAIL"),
             departure("T3a", "Porte de Vincennes", 3),
-            departure("A", "Marne-la-Vallée Chessy", 4),
+            departure("A", "Marne-la-Vallée Chessy", 4, mode = "RAIL"),
         )
         assertEquals(listOf("C" to "SARA"), departures(JSONObject().put("line", "RERC")).rows())
         assertEquals(listOf("C" to "SARA"), departures(JSONObject().put("line", "RER-C")).rows())
@@ -356,9 +513,9 @@ class TransitReadSkillsTest {
     @Test
     fun `linePrefix - a glued mode word names a line code in any casing`() {
         data.boards[stop.id] = listOf(
-            departure("C", "SARA", 2),
+            departure("C", "SARA", 2, mode = "REGIONAL_RAIL"),
             departure("T3a", "Porte de Vincennes", 3),
-            departure("14", "Saint-Denis - Pleyel", 4),
+            departure("14", "Saint-Denis - Pleyel", 4, mode = "SUBWAY"),
         )
         listOf("rerc", "RERC", "rerC").forEach { spoken ->
             assertEquals(spoken, listOf("C" to "SARA"), departures(JSONObject().put("line", spoken)).rows())
@@ -392,23 +549,23 @@ class TransitReadSkillsTest {
     }
 
     @Test
-    fun `directionPartial - an exact headsign wins over the same words without a connector`() {
+    fun `directionPartial - exact headsign priority applies within a named line`() {
         data.boards[stop.id] = listOf(
             departure("7", "to Orly", 2),
             departure("8", "Orly", 3),
         )
-        val exact = departures(JSONObject().put("direction", "to Orly"))
+        val exact = departures(JSONObject().put("line", "7").put("direction", "to Orly"))
         assertEquals("filtered", exact.getString("match"))
         assertEquals(listOf("7" to "to Orly"), exact.rows())
-        assertEquals(listOf("8" to "Orly"), departures(JSONObject().put("direction", "Orly")).rows())
-        assertEquals(listOf("8" to "Orly"), departures(JSONObject().put("direction", "vers Orly")).rows())
+        assertEquals(listOf("8" to "Orly"), departures(JSONObject().put("line", "8").put("direction", "Orly")).rows())
+        assertEquals(listOf("8" to "Orly"), departures(JSONObject().put("line", "8").put("direction", "vers Orly")).rows())
     }
 
     @Test
     fun `unrelated - a direction or line never matches by a fragment of a word`() {
         data.boards[stop.id] = listOf(
-            departure("14", "Olympiades", 2),
-            departure("14", "Aéroport d'Orly", 3),
+            departure("14", "Olympiades", 2, mode = "SUBWAY"),
+            departure("14", "Aéroport d'Orly", 3, mode = "SUBWAY"),
             departure("4", "Bagneux - Lucie Aubrac", 4),
         )
         val orly = departures(JSONObject().put("direction", "Orly"))

@@ -24,6 +24,7 @@ internal data class OpenAiCompatChatRequest(
     val messages: JSONArray,
     val toolDefinitions: List<AssistantToolDefinition>,
     val requestId: String = request.requestId,
+    val responseReasoning: Map<String, List<JSONObject>> = emptyMap(),
 )
 
 internal interface OpenAiCompatChatClient {
@@ -38,6 +39,7 @@ internal class OpenAiCompatApiClient(
     private val baseUrlProvider: () -> String = { preset.defaultBaseUrl },
     private val effortProvider: () -> String = { "" },
     private val backendProvider: () -> ProviderBackend = { preset.backend },
+    private val responsesOverride: Boolean? = null,
 ) : OpenAiCompatChatClient {
     private val activeConnections = ConcurrentHashMap<String, HttpURLConnection>()
 
@@ -60,17 +62,19 @@ internal class OpenAiCompatApiClient(
                         "${preset.displayName} chat failed ($status): ${connection.safeErrorBody()}",
                 )
             }
-            readSse(connection) { event ->
+            var completed = false
+            readSse(connection, if (usesResponses(request.modelId)) OpenAiResponsesAdapter::event else OpenAiChatSseParser::parseData) { event ->
                 when (event) {
                     is OpenAiChatSseEvent.Delta -> {
                         emit(event)
                         true
                     }
                     is OpenAiChatSseEvent.Error -> throw IllegalStateException(event.message)
-                    OpenAiChatSseEvent.Done -> false
+                    OpenAiChatSseEvent.Done -> { completed = true; false }
                     OpenAiChatSseEvent.Ignored -> true
                 }
             }
+            check(!usesResponses(request.modelId) || completed) { "OpenAI response stream ended before completion." }
         } finally {
             activeConnections.remove(request.requestId, connection)
             connection.disconnect()
@@ -81,14 +85,17 @@ internal class OpenAiCompatApiClient(
         activeConnections.remove(requestId)?.disconnect()
     }
 
-    internal fun endpointUrl(): String {
+    internal fun endpointUrl(modelId: String = ""): String {
         val baseUrl = baseUrlProvider().trim().trimEnd('/')
         check(baseUrl.isNotEmpty()) { "${preset.displayName} base URL is not configured." }
-        return "$baseUrl/chat/completions"
+        return "$baseUrl/" + if (usesResponses(modelId)) "responses" else "chat/completions"
     }
 
+    private fun usesResponses(modelId: String): Boolean = preset.id == "openai" && modelId.startsWith("gpt-6") &&
+        (responsesOverride ?: (baseUrlProvider().trim().trimEnd('/') == preset.defaultBaseUrl))
+
     internal fun requestBody(request: OpenAiCompatChatRequest): JSONObject =
-        JSONObject()
+        if (usesResponses(request.modelId)) OpenAiResponsesAdapter.body(request, effortProvider().trim()) else JSONObject()
             .put("model", request.modelId)
             .put("stream", true)
             .put("messages", request.messages)
@@ -149,7 +156,7 @@ internal class OpenAiCompatApiClient(
     }
 
     private fun openConnection(request: OpenAiCompatChatRequest): HttpURLConnection =
-        (URL(endpointUrl()).openConnection() as HttpURLConnection).apply {
+        (URL(endpointUrl(request.modelId)).openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
             connectTimeout = 20_000
             readTimeout = 120_000
@@ -165,6 +172,7 @@ internal class OpenAiCompatApiClient(
 
     private suspend fun readSse(
         connection: HttpURLConnection,
+        parse: (String) -> OpenAiChatSseEvent,
         consume: suspend (OpenAiChatSseEvent) -> Boolean,
     ) {
         BufferedReader(InputStreamReader(connection.inputStream, Charsets.UTF_8)).use { reader ->
@@ -175,7 +183,7 @@ internal class OpenAiCompatApiClient(
                 when {
                     line.isBlank() -> {
                         if (data.isNotEmpty()) {
-                            val keepReading = consume(OpenAiChatSseParser.parseData(data.toString()))
+                            val keepReading = consume(parse(data.toString()))
                             data.clear()
                             if (!keepReading) return
                         }
@@ -186,7 +194,7 @@ internal class OpenAiCompatApiClient(
                     }
                 }
             }
-            if (data.isNotEmpty()) consume(OpenAiChatSseParser.parseData(data.toString()))
+            if (data.isNotEmpty()) consume(parse(data.toString()))
         }
     }
 
@@ -310,6 +318,7 @@ internal class OpenAiCompatProvider(
             val effectiveRequest = request.forVisionSupport(visionSupported)
             val modelId = request.model ?: modelProvider()
             var messages = effectiveRequest.toChatCompletionMessages()
+            val responseReasoning = mutableMapOf<String, List<JSONObject>>()
 
             suspend fun streamPass(
                 messages: JSONArray,
@@ -317,6 +326,7 @@ internal class OpenAiCompatProvider(
             ): OpenAiCompatPassResult {
                 val response = StringBuilder()
                 val toolCalls = OpenAiToolCallAccumulator()
+                val pendingReasoning = mutableListOf<JSONObject>()
                 val thinkTagFilter = ThinkTagStreamFilter()
                 val textToolFilter = if (useTextToolBridge) {
                     ControlLineStreamFilter(COMPAT_TEXT_TOOL_REQUEST_TOKEN)
@@ -339,10 +349,20 @@ internal class OpenAiCompatProvider(
                         messages = messages,
                         toolDefinitions = toolDefinitions,
                         requestId = request.requestId,
+                        responseReasoning = responseReasoning.toMap(),
                     ),
                 ).collect { event ->
                     when (event) {
                         is OpenAiChatSseEvent.Delta -> {
+                            event.responseItem?.let { item ->
+                                when (item.optString("type")) {
+                                    "reasoning" -> pendingReasoning += item
+                                    "function_call" -> {
+                                        responseReasoning[item.getString("call_id")] = pendingReasoning.toList()
+                                        pendingReasoning.clear()
+                                    }
+                                }
+                            }
                             toolCalls.append(event.toolCalls)
                             val content = event.content.orEmpty()
                             if (content.isEmpty()) return@collect

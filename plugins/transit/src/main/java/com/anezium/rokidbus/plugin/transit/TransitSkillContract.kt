@@ -28,6 +28,7 @@ internal object TransitSkillContract {
     const val MAX_SEARCH_RESULTS = 8
     const val MAX_BOARD_DEPARTURES = 12
     const val MAX_LINE_CHARS = 16
+    const val MAX_LINE_SELECTOR_CHARS = 80
     const val MAX_DIRECTION_CHARS = 80
     const val MAX_NAME_CHARS = 80
 

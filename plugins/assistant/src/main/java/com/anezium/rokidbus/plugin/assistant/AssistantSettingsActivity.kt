@@ -160,7 +160,8 @@ class AssistantSettingsActivity : Activity() {
         ),
     )
     private val reasoningChoices = listOf(
-        ReasoningChoice("low", "Low", "fastest"),
+        ReasoningChoice("none", "None", "Luna only; Low on Sol/Astra"),
+        ReasoningChoice("low", "Low", "fast"),
         ReasoningChoice("medium", "Medium"),
         ReasoningChoice("high", "High"),
         ReasoningChoice("xhigh", "X-High", "deepest"),

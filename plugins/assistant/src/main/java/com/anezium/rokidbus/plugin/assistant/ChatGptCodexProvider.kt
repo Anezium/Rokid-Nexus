@@ -482,19 +482,18 @@ internal class ChatGptCodexApiClient(
             "gpt-6-sol" to BALANCED_MODEL_ID,
         )
 
-        // The backend's catalog: Luna stops at "max", the other two at "ultra", and
-        // none of them accepts "none".
+        // The catalog's listed caps differ; a live backend probe also accepts none for Luna.
         private val REASONING_EFFORTS_BY_MODEL = mapOf(
-            FAST_MODEL_ID to setOf("low", "medium", "high", "xhigh", "max"),
+            FAST_MODEL_ID to setOf("none", "low", "medium", "high", "xhigh", "max"),
             BALANCED_MODEL_ID to setOf("low", "medium", "high", "xhigh", "ultra"),
             DEEP_MODEL_ID to setOf("low", "medium", "high", "xhigh", "ultra"),
         )
 
-        // The cheapest effort every current model accepts; the wearer is waiting.
-        const val DEFAULT_REASONING_EFFORT = "low"
+        // Luna accepted none in a live Codex backend probe on 2026-10-09; deeper models clamp it to low.
+        const val DEFAULT_REASONING_EFFORT = "none"
 
-        // What the settings picker may store: the efforts every current model accepts.
-        val SUPPORTED_REASONING_EFFORTS = setOf("low", "medium", "high", "xhigh")
+        // Stored choices are clamped against the selected model at the request boundary.
+        val SUPPORTED_REASONING_EFFORTS = setOf("none", "low", "medium", "high", "xhigh")
 
         fun supportedModel(modelId: String): String {
             val trimmed = modelId.trim()
@@ -518,7 +517,7 @@ internal class ChatGptCodexApiClient(
                 requested in allowed -> requested
                 requested == "ultra" && "max" in allowed -> "max"
                 requested == "max" && "ultra" in allowed -> "ultra"
-                else -> DEFAULT_REASONING_EFFORT
+                else -> if ("none" in allowed) "none" else "low"
             }
         }
     }
