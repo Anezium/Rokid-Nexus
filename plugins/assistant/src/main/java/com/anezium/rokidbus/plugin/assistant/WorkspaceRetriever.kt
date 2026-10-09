@@ -24,7 +24,14 @@ internal object WorkspaceTokenizer {
     """).trim().split(Regex("\\s+")).toSet()
 }
 
-internal data class WorkspaceSearchResult(val excerpts: String = "", val matchCount: Int = 0)
+/** A page an excerpt showed the model; page is 0 for documents without pages. */
+internal data class WorkspaceCitation(val documentId: String, val page: Int)
+
+internal data class WorkspaceSearchResult(
+    val excerpts: String = "",
+    val matchCount: Int = 0,
+    val citations: Set<WorkspaceCitation> = emptySet(),
+)
 
 internal class WorkspaceRetriever(documents: List<WorkspaceDocument>) {
     private data class Passage(
@@ -104,6 +111,7 @@ internal class WorkspaceRetriever(documents: List<WorkspaceDocument>) {
         val opening = "$SOURCE_RULE\n${fence}text\nWorkspace excerpts"
         val closing = "\n$fence"
         val output = StringBuilder(opening)
+        val citations = mutableSetOf<WorkspaceCitation>()
         var count = 0
         for ((index, passage) in candidates.withIndex()) {
             val header = "\n\n[${count + 1}] ${passage.provenance}\n"
@@ -115,10 +123,11 @@ internal class WorkspaceRetriever(documents: List<WorkspaceDocument>) {
                     share)
             if (body.isEmpty()) continue
             output.append(header).append(body)
+            citations += WorkspaceCitation(passage.documentId, passage.chunk.page)
             count++
         }
         return if (count == 0) WorkspaceSearchResult()
-        else WorkspaceSearchResult(output.append(closing).toString(), count)
+        else WorkspaceSearchResult(output.append(closing).toString(), count, citations)
     }
 
     companion object {

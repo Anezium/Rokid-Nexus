@@ -76,10 +76,11 @@ internal class WorkspaceIndexer(
                         pagedStarted && elapsed() >= pagedDeadline -> resume?.copy(entry = entry)
                             ?: WorkspaceDocument(entry, emptyList(), WorkspaceDocumentStatus.PENDING)
                         else -> {
-                            val stopAt = if (pagedStarted) pagedDeadline
-                            else maxOf(pagedDeadline, elapsed() + checkTimeoutMs / 4)
+                            val guaranteed = !pagedStarted
+                            val stopAt = if (guaranteed) maxOf(pagedDeadline, elapsed() + checkTimeoutMs / 4)
+                            else pagedDeadline
                             pagedStarted = true
-                            readDocument(settings.treeUri, entry, resume, stopAt)
+                            readDocument(settings.treeUri, entry, resume, stopAt, guaranteed)
                         }
                     }
                     val retained = extracted.chunks.takeWhile { chunk ->
@@ -155,6 +156,7 @@ internal class WorkspaceIndexer(
         entry: WorkspaceEntry,
         resume: WorkspaceDocument? = null,
         stopAt: Long = Long.MAX_VALUE,
+        guaranteed: Boolean = true,
     ): WorkspaceDocument {
         val type = entry.type!!
         val maxBytes = when (type) {
@@ -177,8 +179,12 @@ internal class WorkspaceIndexer(
                 runInterruptible(Dispatchers.IO) {
                     if (type.paged) {
                         val bytes = readWorkspaceBytes(it, maxBytes).data!!
+                        var asked = 0
                         pageReader!!.read(type, bytes, firstPage) { characters ->
-                            if (elapsed() >= stopAt) timedOut = true
+                            // The pass's first file reads a page even when opening it spent the budget,
+                            // so a slow file still progresses; the check's hard timeout still applies.
+                            val opening = asked++ == 0
+                            if (!(guaranteed && opening) && elapsed() >= stopAt) timedOut = true
                             timedOut || characters >= remaining
                         }
                     } else {

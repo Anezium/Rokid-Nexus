@@ -42,6 +42,8 @@ class ViewWorkspacePageToolTest {
 
     @Test
     fun `the cited pdf page or image is attached as a jpeg`() = fixture { controller, _ ->
+        controller.search("quarterly chart")
+        controller.search("sprint plan")
         val phase = AssistantToolRegistry(listOf(ViewWorkspacePageTool { controller }))
             .newExecutionPhase(VISION, controller.searchVersion())
         val result = phase.execute(call("""{"file":"reports/sales.pdf","page":2}"""))
@@ -57,12 +59,27 @@ class ViewWorkspacePageToolTest {
 
     @Test
     fun `unknown text unpaged changed or out-of-range files are refused`() = fixture { controller, gateway ->
+        controller.search("summary quarterly chart sales notes")
         assertNull(controller.viewPage("missing.pdf", 1))
         assertNull(controller.viewPage("notes.txt", 1))
         assertNull(controller.viewPage("reports/sales.pdf", null))
         assertNull(controller.viewPage("reports/sales.pdf", 9))
         gateway.entries["sales"] = gateway.entries.getValue("sales").copy(modifiedAtMs = 99)
         assertNull(controller.viewPage("reports/sales.pdf", 1))
+    }
+
+    @Test
+    fun `only pages the current question's excerpts cited can be viewed`() = fixture { controller, _ ->
+        assertNull(controller.viewPage("reports/sales.pdf", 2))
+        assertNull(controller.viewPage("whiteboard.jpg", null))
+        controller.contextForQuestion("quarterly chart", "")
+        assertEquals("jpeg:PDF:2:Quarterly chart.", controller.viewPage("reports/sales.pdf", 2)?.let { String(it) })
+        assertNull(controller.viewPage("reports/sales.pdf", 1))
+        assertNull(controller.viewPage("whiteboard.jpg", null))
+        controller.search("sprint plan")
+        assertEquals("jpeg:IMAGE:1:Sprint plan", controller.viewPage("whiteboard.jpg", null)?.let { String(it) })
+        controller.contextForQuestion("sprint plan", "")
+        assertNull(controller.viewPage("reports/sales.pdf", 2))
     }
 
     @Test

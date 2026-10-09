@@ -152,6 +152,22 @@ class WorkspacePagedIndexingTest {
     }
 
     @Test
+    fun `a file whose opening outlasts the pass budget still reads a page each pass`() = runBlocking {
+        var now = 0L
+        val (store, gateway, indexer) = fixture(FakePageReader(beforeLoad = { now += 900 }, beforePage = { now += 10 })) { now }
+        gateway.put("slow", "a-slow.pdf", pages("Alpha.", "Bravo."))
+        gateway.put("next", "b-next.pdf", pages("Charlie."))
+        indexer.refresh()
+        val first = store.snapshot().state.index!!.documents.associateBy { it.entry.name }
+        assertEquals(WorkspaceDocumentStatus.PENDING, first.getValue("a-slow.pdf").status)
+        assertEquals(1, first.getValue("a-slow.pdf").pagesRead)
+        assertEquals(WorkspaceDocumentStatus.PENDING, first.getValue("b-next.pdf").status)
+        indexer.refresh()
+        indexer.refresh()
+        assertTrue(store.snapshot().state.index!!.documents.all { it.status == WorkspaceDocumentStatus.INDEXED })
+    }
+
+    @Test
     fun `a later file running past the pass deadline keeps the pages it read`() = runBlocking {
         var now = 0L
         val (store, gateway, indexer) = fixture(FakePageReader { now += 100 }) { now }
@@ -259,7 +275,10 @@ class WorkspacePagedIndexingTest {
  * Reads the fixture format: a PDF's pages separated by form feeds, an image's recognized text as is,
  * and [LOCKED] standing for a password.
  */
-internal class FakePageReader(private val beforePage: () -> Unit = {}) : WorkspacePageReader {
+internal class FakePageReader(
+    private val beforeLoad: () -> Unit = {},
+    private val beforePage: () -> Unit = {},
+) : WorkspacePageReader {
     override fun read(
         type: WorkspaceFileType,
         bytes: ByteArray,
@@ -268,6 +287,7 @@ internal class FakePageReader(private val beforePage: () -> Unit = {}) : Workspa
     ): WorkspacePagedText {
         val text = bytes.toString(Charsets.UTF_8)
         if (text == LOCKED) throw WorkspaceReadException(WorkspaceDocumentStatus.PROTECTED)
+        beforeLoad()
         val all = if (type == WorkspaceFileType.IMAGE) listOf(text) else text.split(PAGE_BREAK)
         val pages = mutableListOf<String>()
         val visual = mutableSetOf<Int>()

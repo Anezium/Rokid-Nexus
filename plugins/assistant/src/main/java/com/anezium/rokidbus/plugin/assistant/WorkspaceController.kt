@@ -56,6 +56,8 @@ internal class WorkspaceController(
     private var selectionRevision = 0L
     private var observer: AutoCloseable? = null
     @Volatile private var suppressed = false
+    // Pages the current question's excerpts showed the model; only these may be viewed.
+    @Volatile private var turnCitations = emptySet<WorkspaceCitation>()
     private val mutableState = MutableStateFlow(WorkspaceUiState(store.snapshot().state))
     val state: StateFlow<WorkspaceUiState> = mutableState
 
@@ -229,6 +231,8 @@ internal class WorkspaceController(
             ?: return null
         val type = document.entry.type!!
         val pageNumber = if (type == WorkspaceFileType.PDF) page ?: return null else 1
+        val citation = WorkspaceCitation(document.entry.documentId, if (type == WorkspaceFileType.PDF) pageNumber else 0)
+        if (citation !in turnCitations) return null
         val treeUri = snapshot.state.settings.treeUri
         val maxBytes = if (type == WorkspaceFileType.PDF) WorkspaceLimits.MAX_PDF_BYTES else WorkspaceLimits.MAX_IMAGE_BYTES
         return try {
@@ -261,7 +265,9 @@ internal class WorkspaceController(
         mutableState.value = mutableState.value.copy(promptSpaceEmpty = budget <= WorkspaceRetriever.SOURCE_RULE.length + 40)
         val snapshot = validatedSnapshot()
         val settings = store.snapshot().state.settings
-        val excerpts = if (snapshot != null && budget > 0) snapshot.retriever?.search(query, budget)?.excerpts.orEmpty() else ""
+        val result = if (snapshot != null && budget > 0) snapshot.retriever?.search(query, budget) else null
+        turnCitations = result?.citations.orEmpty()
+        val excerpts = result?.excerpts.orEmpty()
         return WorkspacePromptContext(snapshot?.state?.settings?.generation ?: settings.generation,
             settings.enabled && !suppressed, excerpts, snapshot?.epoch ?: -1)
     }
@@ -271,6 +277,7 @@ internal class WorkspaceController(
         val result = snapshot.retriever?.search(query) ?: return null
         return result.takeIf { store.isCurrent(snapshot.state.settings.generation) &&
             store.snapshot().epoch == snapshot.epoch && !suppressed }
+            ?.also { turnCitations = turnCitations + it.citations }
     }
 
     private suspend fun validatedSnapshot(): WorkspaceSnapshot? {

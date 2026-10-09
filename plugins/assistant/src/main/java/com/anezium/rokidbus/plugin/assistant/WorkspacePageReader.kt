@@ -20,11 +20,13 @@ import com.tom_roush.pdfbox.pdmodel.PDPage
 import com.tom_roush.pdfbox.pdmodel.encryption.InvalidPasswordException
 import com.tom_roush.pdfbox.pdmodel.graphics.image.PDImageXObject
 import com.tom_roush.pdfbox.text.PDFTextStripper
+import com.tom_roush.pdfbox.text.TextPosition
 import java.io.ByteArrayOutputStream
 import java.io.Closeable
 import java.io.File
 import java.io.IOException
 import java.nio.ByteBuffer
+import java.util.concurrent.Executor
 import java.util.concurrent.TimeUnit
 import kotlin.math.roundToInt
 
@@ -81,6 +83,9 @@ internal class AndroidWorkspacePageReader(context: Context) : WorkspacePageReade
     } catch (_: StackOverflowError) {
         // Deeply nested forms in a malformed file must not take the indexing thread down.
         throw WorkspaceReadException(WorkspaceDocumentStatus.UNREADABLE)
+    } catch (_: OutOfMemoryError) {
+        // A last resort behind the glyph budget: the allocation that failed is gone with this file.
+        throw WorkspaceReadException(WorkspaceDocumentStatus.TOO_LARGE)
     }
 
     private fun readPdf(bytes: ByteArray, firstPage: Int, shouldStop: (characters: Int) -> Boolean): WorkspacePagedText {
@@ -95,7 +100,7 @@ internal class AndroidWorkspacePageReader(context: Context) : WorkspacePageReade
         var scanner: PdfPageScanner? = null
         try {
             document.use {
-                val stripper = PDFTextStripper().apply { paragraphEnd = lineSeparator }
+                val stripper = BoundedTextStripper().apply { paragraphEnd = lineSeparator }
                 val pageCount = it.numberOfPages
                 val lastPage = minOf(pageCount, WorkspaceLimits.MAX_PDF_PAGES)
                 val pages = mutableListOf<String>()
@@ -106,11 +111,19 @@ internal class AndroidWorkspacePageReader(context: Context) : WorkspacePageReade
                     if (shouldStop(characters)) return WorkspacePagedText(pages, complete = false, visual)
                     stripper.startPage = page
                     stripper.endPage = page
-                    val layer = stripper.getText(it)
-                    if (layer.isNotBlank() && hasVisual(it.getPage(page - 1))) visual += pages.size
-                    val text = layer.ifBlank {
+                    stripper.glyphs = 0
+                    val layer = try {
+                        stripper.getText(it)
+                    } catch (_: PageTooDenseException) {
+                        return WorkspacePagedText(pages, complete = false, visual)
+                    }
+                    val text = if (layer.isNotBlank()) {
+                        if (hasVisual(it.getPage(page - 1))) visual += pages.size
+                        layer
+                    } else {
+                        // A scanned page is a picture: its recognized text may miss what it shows.
                         (scanner ?: openScanner(bytes).also { opened -> scanner = opened })
-                            .recognize(page - 1)
+                            .recognize(page - 1).also { recognized -> if (recognized.isNotBlank()) visual += pages.size }
                     }
                     pages += text
                     characters += text.length
@@ -210,14 +223,7 @@ internal class AndroidWorkspacePageReader(context: Context) : WorkspacePageReade
         return shapes
     }
 
-    private fun recognizeImage(bytes: ByteArray): String {
-        val bitmap = decodeImage(bytes, RECOGNITION_EDGE)
-        return try {
-            recognize(bitmap)
-        } finally {
-            bitmap.recycle()
-        }
-    }
+    private fun recognizeImage(bytes: ByteArray): String = recognize(decodeImage(bytes, RECOGNITION_EDGE))
 
     private fun decodeImage(bytes: ByteArray, maxEdge: Int): Bitmap =
         ImageDecoder.decodeBitmap(ImageDecoder.createSource(ByteBuffer.wrap(bytes))) { decoder, info, _ ->
@@ -230,9 +236,19 @@ internal class AndroidWorkspacePageReader(context: Context) : WorkspacePageReade
             }
         }
 
+    /**
+     * Takes ownership of [bitmap]. It is recycled when recognition ends, not when the wait does: a
+     * cancelled or timed-out wait leaves the task still reading it.
+     */
     private fun recognize(bitmap: Bitmap): String {
-        val result = Tasks.await(recognizer.process(InputImage.fromBitmap(bitmap, 0)),
-            RECOGNITION_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+        val task = try {
+            recognizer.process(InputImage.fromBitmap(bitmap, 0))
+        } catch (error: Exception) {
+            bitmap.recycle()
+            throw error
+        }
+        task.addOnCompleteListener(Executor { it.run() }) { bitmap.recycle() }
+        val result = Tasks.await(task, RECOGNITION_TIMEOUT_SECONDS, TimeUnit.SECONDS)
         return result.textBlocks.joinToString("\n\n") { it.text }
     }
 
@@ -242,14 +258,7 @@ internal class AndroidWorkspacePageReader(context: Context) : WorkspacePageReade
         private val descriptor: ParcelFileDescriptor,
         private val renderer: PdfRenderer?,
     ) : Closeable {
-        fun recognize(index: Int): String {
-            val bitmap = render(index, RECOGNITION_EDGE) ?: return ""
-            return try {
-                recognize(bitmap)
-            } finally {
-                bitmap.recycle()
-            }
-        }
+        fun recognize(index: Int): String = render(index, RECOGNITION_EDGE)?.let(::recognize).orEmpty()
 
         fun render(index: Int, edge: Int): Bitmap? {
             val renderer = renderer?.takeIf { index in 0 until it.pageCount } ?: return null
@@ -289,7 +298,21 @@ internal class AndroidWorkspacePageReader(context: Context) : WorkspacePageReade
         }
     }
 
+    /** Stops a page whose glyph count alone could exhaust memory before the character cap applies. */
+    private class BoundedTextStripper : PDFTextStripper() {
+        var glyphs = 0
+
+        override fun processTextPosition(text: TextPosition) {
+            if (++glyphs > MAX_PAGE_GLYPHS) throw PageTooDenseException()
+            super.processTextPosition(text)
+        }
+    }
+
+    // Unchecked: PdfBox swallows IOExceptions raised inside some operators.
+    private class PageTooDenseException : RuntimeException("page text exceeds the glyph budget")
+
     private companion object {
+        const val MAX_PAGE_GLYPHS = 150_000
         const val MAX_SCRATCH_BYTES = 64L * 1_024 * 1_024
         const val RECOGNITION_EDGE = 2_000
         const val RECOGNITION_TIMEOUT_SECONDS = 30L
