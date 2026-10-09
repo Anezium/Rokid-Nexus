@@ -333,6 +333,40 @@ class TransitReadSkillsTest {
     }
 
     @Test
+    fun `linePrefix - a mode word glued to a line code still names it`() {
+        data.boards[stop.id] = listOf(
+            departure("C", "SARA", 2),
+            departure("T3a", "Porte de Vincennes", 3),
+            departure("A", "Marne-la-Vallée Chessy", 4),
+        )
+        assertEquals(listOf("C" to "SARA"), departures(JSONObject().put("line", "RERC")).rows())
+        assertEquals(listOf("C" to "SARA"), departures(JSONObject().put("line", "RER-C")).rows())
+        assertEquals(listOf("T3a" to "Porte de Vincennes"), departures(JSONObject().put("line", "tramT3a")).rows())
+        assertEquals("no_matching_line", departures(JSONObject().put("line", "Linea")).getString("match"))
+    }
+
+    @Test
+    fun `unrelated - ordinary words that start with a mode word are never stripped`() {
+        assertEquals(emptySet<String>(), TransitLabelMatch.lines("Linea", listOf("A", "a")))
+        assertEquals(emptySet<String>(), TransitLabelMatch.lines("Tramway", listOf("way", "WAY")))
+        assertEquals(emptySet<String>(), TransitLabelMatch.lines("Metropole", listOf("pole", "ropole")))
+        assertEquals(emptySet<String>(), TransitLabelMatch.lines("Busway", listOf("way")))
+    }
+
+    @Test
+    fun `directionPartial - an exact headsign wins over the same words without a connector`() {
+        data.boards[stop.id] = listOf(
+            departure("7", "to Orly", 2),
+            departure("8", "Orly", 3),
+        )
+        val exact = departures(JSONObject().put("direction", "to Orly"))
+        assertEquals("filtered", exact.getString("match"))
+        assertEquals(listOf("7" to "to Orly"), exact.rows())
+        assertEquals(listOf("8" to "Orly"), departures(JSONObject().put("direction", "Orly")).rows())
+        assertEquals(listOf("8" to "Orly"), departures(JSONObject().put("direction", "vers Orly")).rows())
+    }
+
+    @Test
     fun `unrelated - a direction or line never matches by a fragment of a word`() {
         data.boards[stop.id] = listOf(
             departure("14", "Olympiades", 2),
