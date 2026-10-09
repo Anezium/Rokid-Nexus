@@ -7,6 +7,14 @@ import org.junit.Test
 
 class ProviderCatalogTest {
     @Test
+    fun retiredOpenAiModelsKeepPhotoSupport() {
+        assertTrue(ProviderCatalog.supportsVision(ProviderCatalog.openAi, "gpt-4o-mini", null))
+        assertTrue(ProviderCatalog.supportsVision(ProviderCatalog.openAi, " gpt-4o ", null))
+        assertFalse(ProviderCatalog.supportsVision(ProviderCatalog.openAi, "gpt-4o-mini", false))
+        assertFalse(ProviderCatalog.supportsVision(ProviderCatalog.openRouter, "gpt-4o-mini", null))
+    }
+
+    @Test
     fun presetIdsAreUnique() {
         val ids = ProviderCatalog.presets.map(ProviderPreset::id)
 

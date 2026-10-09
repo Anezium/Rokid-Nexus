@@ -22,6 +22,8 @@ data class ProviderPreset(
     val extraHeaders: Map<String, String>,
     val keyHint: String,
     val backend: ProviderBackend = ProviderBackend.OPENAI_COMPAT,
+    // Models no longer suggested that a saved setting may still name; they keep their photo support.
+    val retiredVisionModels: Set<String> = emptySet(),
 )
 
 object ProviderCatalog {
@@ -53,6 +55,7 @@ object ProviderCatalog {
         supportedEfforts = emptyList(),
         extraHeaders = emptyMap(),
         keyHint = "sk-...",
+        retiredVisionModels = setOf("gpt-4o-mini", "gpt-4o"),
     )
 
     val openRouter = ProviderPreset(
@@ -189,5 +192,6 @@ object ProviderCatalog {
         ?: preset.suggestedModels
             .firstOrNull { suggested -> suggested.id == model.trim() }
             ?.vision
+        ?: model.trim().takeIf { it in preset.retiredVisionModels }?.let { true }
         ?: (backend == ProviderBackend.HERMES)
 }
