@@ -14,8 +14,9 @@ internal class SearchWorkspaceTool private constructor(
     override val name = SEARCH_WORKSPACE_TOOL_NAME
     override val description = "Search the enabled local workspace for relevant document passages. " +
         "Use the already injected Workspace excerpts first; call when they miss part of the question, such as " +
-        "a second topic or wording or a language the documents use differently. Query with the words the " +
-        "documents likely use, translated if needed; join several missing parts with \"and\". " +
+        "a second topic or wording or a language the documents use differently. It matches keywords: name " +
+        "each missing part by one to three specific words, above all proper names from the question, and " +
+        "join parts with \"and\" (for example \"Vega and Aurora prototype\"). " +
         "At most one search per user turn. Cite the returned file names and acknowledge missing coverage."
     override val parametersSchema = AssistantToolJsonSchema(
         """{"type":"object","properties":{"query":{"type":"string","minLength":1,"maxLength":240}},"required":["query"],"additionalProperties":false}""",

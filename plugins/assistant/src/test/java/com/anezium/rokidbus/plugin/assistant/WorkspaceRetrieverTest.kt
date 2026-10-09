@@ -165,6 +165,27 @@ class WorkspaceRetrieverTest {
         assertFalse(result.excerpts.contains("vega.md"))
     }
 
+    @Test
+    fun `a search the model asks for is anchored by a file the question names`() {
+        val retriever = WorkspaceRetriever(listOf(
+            document("vega.md", "Vega stores 47 green spools for the assembly line."),
+            document("aurora.docx", "Aurora prototype is Cobalt-19."),
+        ))
+        assertEquals(WorkspaceSearchResult(), retriever.search("Vega bobines vertes"))
+        val anchored = retriever.search("bobines vertes Vega and prototype Aurora", anchoredByName = true).excerpts
+        assertTrue(anchored.contains("vega.md"))
+        assertTrue(anchored.contains("aurora.docx"))
+    }
+
+    @Test
+    fun `a file name word other documents share never anchors a search`() {
+        val retriever = WorkspaceRetriever(listOf(
+            document("nebuleuse.txt", "Nebuleuse launch details. Code: VELA-5836."),
+            document("code.txt", "The cabinet code is 4471."),
+        ))
+        assertEquals(WorkspaceSearchResult(), retriever.search("Orphee shuttle departure code", anchoredByName = true))
+    }
+
     private fun document(name: String, text: String, heading: String = "") = WorkspaceDocument(
         WorkspaceEntry(name, name), listOf(WorkspaceChunk(0, text, heading)),
     )
