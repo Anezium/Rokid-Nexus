@@ -217,6 +217,15 @@ internal class SessionReducer(
             )
             SessionEvent.LinkRestored -> keep(model.copy(linkLost = false))
             is SessionEvent.Contact -> keep(model.copy(gateContacts = emptyList()))
+            // P4: the phone invalidating an owner reaches the page underneath; nothing else does.
+            is SessionEvent.PageResponse -> {
+                val previous = state.previous as? SessionState.InPage
+                if (!model.linkLost && previous != null && isInvalidation(model, previous, event.payload)) {
+                    invalidateOwner(model, event.payload.optString(PageSurfaceContract.FIELD_PLUGIN_ID))
+                } else {
+                    keep(model)
+                }
+            }
             // A second selection never sends a second open; late page traffic waits for the return.
             else -> keep(model)
         }

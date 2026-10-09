@@ -330,6 +330,32 @@ class SessionPagesTest {
     }
 
     @Test
+    fun `the phone's stamped invalidation during a launch leaves the page inert after BACK`() {
+        openProviderPage(
+            pageId = "nav:main",
+            body = body(listOf(PageRow("open", "Open the full app", target = PageTarget.Action("open")))),
+            actions = JSONArray().put(action("open", "immersion")),
+        )
+        val shown = top().status as FrameStatus.Shown
+        send(SessionEvent.Enter(2_200))
+        send(SessionEvent.Enter(2_300))
+        assertTrue(model.state is SessionState.Launching)
+        // An ordinary late answer naming another request is still ignored under the launch.
+        send(SessionEvent.PageResponse(errorFor("elsewhere", model.generation, 1, "nav:main", "nav"), 2_400))
+        assertTrue(((model.state as SessionState.Launching).previous as SessionState.InPage).frames.single().status is FrameStatus.Shown)
+        // The phone revoked the provider while its full app was opening: what the bridge dispatches.
+        send(SessionEvent.PageResponse(errorFor(shown.requestId, model.generation, 1, "nav:main", "nav"), 2_500))
+        send(SessionEvent.Back(2_600))
+
+        val frame = (model.state as SessionState.InPage).frames.single()
+        val status = frame.status as FrameStatus.Unavailable
+        assertEquals(shown.snapshot, status.lastSnapshot)
+        assertEquals(null, frame.panel)
+        send(SessionEvent.Enter(2_700))
+        assertTrue(effects.none { it is SessionEffect.SendLauncherOpen || it is SendAction })
+    }
+
+    @Test
     fun `wire effects carry frame identity and a refused seventh frame sends nothing`() {
         openProviderPage(body = body(listOf(PageRow("n", "Next", target = PageTarget.Page("relay:p2")))))
         val generation = model.generation
