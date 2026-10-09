@@ -130,7 +130,11 @@ class AssistantPluginService : NexusPluginService() {
                     reminderScheduler = reminderScheduler,
                 ) + assistantCalendarTools(calendarGateway),
             sessionContext = ::assistantToolSessionContext,
-            progressReporter = { label -> uiController.showTransient(label) },
+            progressReporter = { label ->
+                // Tool labels name the step only, never its arguments or result.
+                Log.i(TAG, "tool step: $label")
+                uiController.showTransient(label)
+            },
             dynamicDefinitions = { turnSkillTools },
         )
     }
