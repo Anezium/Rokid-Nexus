@@ -69,7 +69,10 @@ internal class NavRuntime(context: Context) {
     }
 
     fun shutdown() = onMain {
+        if (NavState.guidance != null) NavState.updatedAtMs = System.currentTimeMillis()
         NavState.guidance = null
+        // A visible page says the listener is gone instead of keeping the last turn.
+        NavControl.guidanceChanged()
         pending = null
         deferred = null
         planner.reset()

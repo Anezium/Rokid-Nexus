@@ -25,6 +25,8 @@ class NavNotificationListener : NotificationListenerService() {
         NavControl.attach(this, runtime)
         // A route already running when access was granted or the process restarted.
         scanActive()
+        // With or without one, a visible page no longer says access is missing.
+        NavControl.guidanceChanged()
     }
 
     override fun onListenerDisconnected() {

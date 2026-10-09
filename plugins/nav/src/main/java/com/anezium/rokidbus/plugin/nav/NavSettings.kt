@@ -119,6 +119,8 @@ internal object NavControl {
 
     fun settingsChanged() {
         listener?.applySettings()
+        // Switching Navigation off or on changes what a visible page says, route or not.
+        guidanceChanged()
     }
 
     fun serviceCreated(client: NexusPluginClient) {
