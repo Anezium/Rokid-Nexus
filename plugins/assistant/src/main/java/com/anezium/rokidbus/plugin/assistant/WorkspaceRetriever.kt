@@ -41,7 +41,6 @@ internal class WorkspaceRetriever(documents: List<WorkspaceDocument>) {
         val chunk: WorkspaceChunk,
         val terms: Map<String, Int>,
         val metadataTerms: Set<String>,
-        val nameTerms: Set<String>,
         val length: Int,
     )
 
@@ -59,34 +58,14 @@ internal class WorkspaceRetriever(documents: List<WorkspaceDocument>) {
                 chunk = chunk,
                 terms = terms.groupingBy { it }.eachCount(),
                 metadataTerms = WorkspaceTokenizer.tokens("${document.entry.name} ${chunk.headingPath}").toSet(),
-                nameTerms = WorkspaceTokenizer.tokens(document.entry.name.substringBeforeLast('.')).toSet(),
                 length = terms.size,
             )
         }
     }
     private val frequencies = passages.flatMap { it.terms.keys }.groupingBy { it }.eachCount()
     private val averageLength = passages.map { it.length }.average().takeIf { it > 0 } ?: 1.0
-    // A file-name word anchors a search only when no other document uses it, like vega in vega.md;
-    // a word such as code in code.txt is shared and anchors nothing.
-    private val ownWords: Map<String, Set<String>> = run {
-        val byDocument = passages.groupBy { it.documentId }.mapValues { (_, parts) -> parts.flatMap { it.terms.keys }.toSet() }
-        val shared = byDocument.values.flatten().groupingBy { it }.eachCount()
-        byDocument.mapValues { (_, terms) -> terms.filterTo(mutableSetOf()) { shared[it] == 1 } }
-    }
 
-    /**
-     * [anchoredByName] serves a search the model asked for: a part also qualifies when one of its words
-     * names the passage's file and appears in its text, so "Vega bobines vertes" still finds vega.md.
-     * Excerpts injected before the model sees the question keep the stricter rule.
-     */
-    fun search(
-        query: String,
-        maxChars: Int = WorkspaceLimits.MAX_EXCERPT_CHARS,
-        anchoredByName: Boolean = false,
-    ): WorkspaceSearchResult {
-        fun fits(passage: Passage, terms: Set<String>) = qualifies(passage, terms) ||
-            anchoredByName && terms.any { it in passage.nameTerms && it in passage.terms &&
-                it in ownWords[passage.documentId].orEmpty() }
+    fun search(query: String, maxChars: Int = WorkspaceLimits.MAX_EXCERPT_CHARS): WorkspaceSearchResult {
         val queryTerms = WorkspaceTokenizer.tokens(query.take(WorkspaceLimits.MAX_QUERY_CHARS)).toSet()
         val queryGroups = QUERY_PARTS.split(query.take(WorkspaceLimits.MAX_QUERY_CHARS))
             .map { WorkspaceTokenizer.tokens(it).toSet() }.filter { it.isNotEmpty() }
@@ -95,7 +74,7 @@ internal class WorkspaceRetriever(documents: List<WorkspaceDocument>) {
         val ranked = passages.mapNotNull { passage ->
             val bodyTerms = queryTerms.filter { it in passage.terms }
             val coverage = queryTerms.count { it in passage.terms || it in passage.metadataTerms }
-            if (bodyTerms.isEmpty() || queryGroups.none { fits(passage, it) }) return@mapNotNull null
+            if (bodyTerms.isEmpty() || queryGroups.none { qualifies(passage, it) }) return@mapNotNull null
             val score = bodyTerms.sumOf { term ->
                 val frequency = passage.terms.getValue(term).toDouble()
                 val documentFrequency = frequencies.getValue(term)
@@ -119,8 +98,8 @@ internal class WorkspaceRetriever(documents: List<WorkspaceDocument>) {
         }
         if (queryGroups.size > 1) {
             for (group in queryGroups) {
-                if (candidates.any { fits(it, group) }) continue
-                ranked.firstOrNull { fits(it.first, group) && addable(it.first) }?.let { add(it.first) }
+                if (candidates.any { qualifies(it, group) }) continue
+                ranked.firstOrNull { qualifies(it.first, group) && addable(it.first) }?.let { add(it.first) }
             }
         }
         for ((passage) in ranked) add(passage)

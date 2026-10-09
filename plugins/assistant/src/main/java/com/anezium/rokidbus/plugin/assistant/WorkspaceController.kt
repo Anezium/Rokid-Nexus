@@ -310,7 +310,7 @@ internal class WorkspaceController(
 
     override suspend fun search(query: String): WorkspaceSearchResult? {
         val snapshot = validatedSnapshot() ?: return null
-        val result = snapshot.retriever?.search(query, anchoredByName = true) ?: return null
+        val result = snapshot.retriever?.search(query) ?: return null
         return result.takeIf { store.isCurrent(snapshot.state.settings.generation) &&
             store.snapshot().epoch == snapshot.epoch && !suppressed }
             ?.also { turnCitations = turnCitations + it.citations }

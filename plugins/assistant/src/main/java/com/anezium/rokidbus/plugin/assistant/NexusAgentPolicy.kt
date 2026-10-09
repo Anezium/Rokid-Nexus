@@ -128,9 +128,8 @@ internal object NexusAgentPolicy {
                     // a second topic, a pronoun, or a question asked in another language than the files.
                     append(" If the question asks about several things and the excerpts cover only some, or " +
                         "none match because the documents may use other words or another language, call " +
-                        "search_workspace once before answering. Its search matches keywords: name each missing " +
-                        "part by one to three of its most specific words, above all the proper names from the " +
-                        "question, joined with \"and\" (for example \"Vega and Aurora prototype\"). Never " +
+                        "search_workspace once before answering, with the words the documents likely use for " +
+                        "the missing parts (translated if needed, several parts joined with \"and\"). Never " +
                         "answer one part from an excerpt about something else.")
                 }
                 append(" Never infer what a chart, figure, table, or image shows from the text around it.")
