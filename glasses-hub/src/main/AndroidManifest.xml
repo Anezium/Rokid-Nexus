@@ -34,6 +34,7 @@
         <package android:name="app.revanced.android.gms" />
         <package android:name="app.morphe.android.youtube" />
         <package android:name="app.morphe.android.youtube.rokidtest" />
+        <package android:name="com.reddit.frontpage" />
         <package android:name="com.rokid.os.sprite.assistserver" />
         <intent>
             <action android:name="com.rokid.os.sprite.tts.TTS_SERVICE" />

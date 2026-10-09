@@ -23,7 +23,7 @@ def download(url, target):
 def verify(source, expected=EXPECTED):
     digest = hashlib.sha256(source.read_bytes()).hexdigest()
     if digest != expected:
-        raise SystemExit(f'{source} is not the pinned rokid.3 release: SHA-256 {digest}, expected {expected}.')
+        raise SystemExit(f'{source} is not the pinned patch bundle: SHA-256 {digest}, expected {expected}.')
     return digest
 
 
@@ -46,7 +46,16 @@ def main(argv=None):
     p = argparse.ArgumentParser()
     for name in ('input', 'output', 'java', 'd8', 'android', 'classpath'):
         p.add_argument('--' + name, required=True)
+    p.add_argument('--pin-file')
     a = p.parse_args(argv)
+    config = json.loads(pathlib.Path(a.pin_file).read_text()) if a.pin_file else None
+    expected = config['source_sha256'] if config else EXPECTED
+    version = config['version'] if config else VERSION
+    stem = config['asset_stem'] if config else 'bundled'
+    if stem not in ('bundled', 'reddit'):
+        raise SystemExit('Unsupported prepared bundle asset name.')
+    if config and not a.input:
+        raise SystemExit('The Reddit preview is unpublished. Pass -PredditPatchBundleInput=/absolute/path/to/source.mpp.')
     out = pathlib.Path(a.output)
     out.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=out.parent) as scratch:
@@ -56,8 +65,11 @@ def main(argv=None):
             raise SystemExit(f'patchBundleInput does not exist: {source}')
         if not a.input:
             download(URL, source)
-        digest = verify(source)
-        original_copy = out.parent.parent / 'patch-source' / 'source.mpp'
+        digest = verify(source, expected)
+        with zipfile.ZipFile(source) as original:
+            if 'classes.dex' in original.namelist():
+                raise SystemExit('Use the JVM source bundle, before :patches:buildAndroid adds root DEX.')
+        original_copy = out.parent.parent / 'patch-source' / ('reddit-source.mpp' if config else 'source.mpp')
         original_copy.parent.mkdir(parents=True, exist_ok=True)
         original_copy.write_bytes(source.read_bytes())
         dex = scratch / 'dex'
@@ -71,14 +83,19 @@ def main(argv=None):
         cmd.append(str(jar))
         if subprocess.run(cmd).returncode != 0:
             raise SystemExit('D8 failed to convert the pinned patch bundle; see the D8 output above.')
-        target = out / 'bundled.mpp'
+        target = out / f'{stem}.mpp'
         write_prepared(source, list(dex.glob('*.dex')), target)
         with zipfile.ZipFile(target) as prepared:
             if 'classes.dex' not in prepared.namelist():
                 raise SystemExit('D8 did not produce executable Android patches')
-        (out / 'bundled.json').write_text(json.dumps({'version': VERSION, 'source_sha256': digest,
-            'sha256': hashlib.sha256(target.read_bytes()).hexdigest(), 'download_url': URL}))
-        print('Prepared genuine rokid.3 for Android; source SHA-256:', digest)
+        metadata = {'version': version, 'source_sha256': digest,
+            'sha256': hashlib.sha256(target.read_bytes()).hexdigest()}
+        if config:
+            metadata['unpublished'] = True
+        else:
+            metadata['download_url'] = URL
+        (out / f'{stem}.json').write_text(json.dumps(metadata))
+        print(f'Prepared {version} for Android; source SHA-256:', digest)
 
 
 if __name__ == '__main__':

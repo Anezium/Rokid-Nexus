@@ -21,7 +21,6 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.Button
-import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.core.content.FileProvider
@@ -34,7 +33,7 @@ import java.lang.ref.WeakReference
 
 class PatchActivity : Activity() {
     /** Where a status message belongs on screen: each step card shows only its own. */
-    private enum class Slot { STOCK, BUNDLE, PATCH, KEY }
+    private enum class Slot { STOCK, BUNDLE, PATCH }
     private enum class Tone { INFO, OK, WARN, ERROR }
     private class Note(val text: String, val tone: Tone)
     private class NoteView(val row: View, val dot: View, val text: TextView)
@@ -47,7 +46,6 @@ class PatchActivity : Activity() {
     private lateinit var stockHost: LinearLayout
     private lateinit var patchesHost: LinearLayout
     private lateinit var actionHost: LinearLayout
-    private lateinit var keyHost: LinearLayout
     private lateinit var detailsHost: LinearLayout
     private val notes = mutableMapOf<Slot, Note>()
     private val noteViews = mutableMapOf<Slot, NoteView>()
@@ -58,12 +56,10 @@ class PatchActivity : Activity() {
     private var pulsing: View? = null
     private var patchAfterPermission = false
     private var allPatchesOpen = false
-    private var keyMoreOpen = false
     private var detailsOpen = false
     private lateinit var target: PatchTarget
     private lateinit var bundleStore: BundleStore
     private lateinit var selections: SelectionStore
-    private lateinit var key: SigningKey
     private var bundle: BundleStore.Loaded? = null
     private var choices = mutableMapOf<String, Boolean>()
     private var stock: File? = null
@@ -80,7 +76,6 @@ class PatchActivity : Activity() {
     private var watchedJobId: String? = null
     private var readyJobId: String? = null
     private var hubTaskId: Int? = null
-    private var backupPassword: CharArray? = null
     private var screenLock: java.nio.channels.FileLock? = null
     private var lockFile: java.io.RandomAccessFile? = null
 
@@ -129,12 +124,26 @@ class PatchActivity : Activity() {
                 .setPositiveButton("Close") { _, _ -> finish() }.setOnCancelListener { finish() }.show()
             return
         }
+        val held = jobs.state.value
+        if (held.targetId != selectedTarget.id && (held.stock != null || held.result != null)) {
+            // One job store serves both apps: switching discards the other app's checked file and result.
+            val other = PatchTargets.find(held.targetId)?.displayName ?: "the other app"
+            AlertDialog.Builder(this).setTitle("Switch to ${selectedTarget.displayName}?")
+                .setMessage("Patcher keeps one app's files at a time. Your checked $other file and any patched $other APK will be cleared.")
+                .setNegativeButton("Keep $other") { _, _ -> setResult(RESULT_CANCELED); finish() }
+                .setOnCancelListener { setResult(RESULT_CANCELED); finish() }
+                .setPositiveButton("Switch") { _, _ -> begin(selectedTarget, savedInstanceState) }.show()
+            return
+        }
+        begin(selectedTarget, savedInstanceState)
+    }
+    private fun begin(selectedTarget: PatchTarget, savedInstanceState: Bundle?) {
+        if (jobs.state.value.active && jobs.state.value.targetId != selectedTarget.id) { setResult(RESULT_CANCELED); finish(); return }
         target = selectedTarget
         jobs.selectTarget(target.id)
         jobs.reconcileResult()
         bundleStore = BundleStore(this, target)
         selections = SelectionStore(File(filesDir, "selections/${target.id}.json"))
-        key = SigningKey(File(filesDir, "signing/patcher.p12"))
         val state = jobs.state.value
         watchedJobId = savedInstanceState?.getString("watched_job")
         readyJobId = intent.getStringExtra(EXTRA_READY_JOB_ID) ?: savedInstanceState?.getString(EXTRA_READY_JOB_ID)
@@ -218,19 +227,24 @@ class PatchActivity : Activity() {
     private fun build() {
         noteViews.clear()
         content = NexusUi.contentColumn(this)
-        content.addView(NexusUi.cardBody(this, "${target.description} Pick stock ${target.displayName} ${target.versionLabel}, review the patches, then patch. Your APK never leaves this phone."), NexusUi.block())
+        // The caller fixes the app: Patcher's home for a standalone open, Nexus for its hand-off.
+        if (canReturnToHub()) {
+            content.addView(NexusUi.rowSub(this, "Requested by Nexus for ${target.displayName} · the app stays fixed until you return to Nexus").apply {
+                maxLines = 3; setTextColor(NexusUi.GREEN_DIM)
+            }, NexusUi.block())
+            content.addView(BusTheme.gap(this, 10))
+        }
+        content.addView(NexusUi.cardBody(this, "${target.description} Pick stock ${target.displayName} ${target.versionLabel}, review the patches, then patch. Patching runs on this phone, with no cloud upload."), NexusUi.block())
         content.addView(BusTheme.gap(this, 18))
         stockHost = host(); content.addView(BusTheme.gap(this, 12))
         patchesHost = host(); content.addView(BusTheme.gap(this, 12))
         actionHost = host()
-        section("Signing key"); keyHost = host()
         section("Details"); detailsHost = host()
-        section("Plugin")
-        content.addView(NexusUi.uninstallCard(this, "Patcher") {
-            startActivity(Intent(Intent.ACTION_DELETE, Uri.parse("package:$packageName")))
-        }, NexusUi.block())
+        val subtitle = listOfNotNull("Patcher", "Preview".takeIf { target.preview },
+            "Requested by Nexus".takeIf { canReturnToHub() }).joinToString(" · ")
         val root = NexusUi.fixedRoot(this).apply {
-            addView(NexusUi.pluginHeader(this@PatchActivity, target.icon, "Patcher", "Phone-only · v1.0.0"), NexusUi.block())
+            addView(NexusUi.pluginHeader(this@PatchActivity, AppTargets.mark(this@PatchActivity, target, 48),
+                "Patch ${target.displayName}", subtitle) { cancelAndClose() }, NexusUi.block())
             addView(NexusUi.screen(this@PatchActivity, content), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         }
         setContentView(root)
@@ -242,7 +256,7 @@ class PatchActivity : Activity() {
         content.addView(NexusUi.sectionRow(this, label), NexusUi.block())
         content.addView(BusTheme.gap(this, 8))
     }
-    private fun renderAll() { renderStock(); renderPatches(); renderAction(); renderKey(); renderDetails() }
+    private fun renderAll() { renderStock(); renderPatches(); renderAction(); renderDetails() }
     private fun dp(value: Int) = NexusUi.dp(this, value)
 
     private fun renderStock() {
@@ -334,7 +348,9 @@ class PatchActivity : Activity() {
         val control = NexusUi.switch(this).apply {
             isChecked = choices[name] == true
             isEnabled = !busy
-            setOnCheckedChangeListener { _, checked ->
+            setOnCheckedChangeListener { view, checked ->
+                // A late tap must not change the choices a running job was started with.
+                if (jobs.state.value.active) { view.isChecked = choices[name] == true; return@setOnCheckedChangeListener }
                 choices[name] = checked
                 try { selections.save(version, choices) } catch (e: Exception) { report(PatchErrors.reason(e, "Could not save your choices."), Tone.ERROR, Slot.BUNDLE) }
             }
@@ -430,13 +446,18 @@ class PatchActivity : Activity() {
             return
         }
         card.addView(BusTheme.gap(this, 14))
-        val nexus = hubLaunchIntent()
-        if (nexus != null) card.addView(primary("Open Nexus", enabled = !busy) { startActivity(nexus) }, NexusUi.block())
-        else card.addView(primary("Share patched APK", enabled = !busy) { result?.let(::shareResult) }, NexusUi.block())
+        // A hub-owned setup installs from here; Nexus re-requests the result through its own hand-off.
+        val setup = AppTargets.hasHubSetup(this, target)
+        val nexus = if (setup) null else hubLaunchIntent()
+        when {
+            setup -> card.addView(primary("Install on glasses", enabled = !busy) { openHubSetup() }, NexusUi.block())
+            nexus != null -> card.addView(primary("Open Nexus", enabled = !busy) { startActivity(nexus) }, NexusUi.block())
+            else -> card.addView(primary("Share patched APK", enabled = !busy) { result?.let(::shareResult) }, NexusUi.block())
+        }
         card.addView(BusTheme.gap(this, 4))
         card.addView(LinearLayout(this).apply {
             gravity = Gravity.END
-            if (nexus != null) addView(quiet("Share", enabled = !busy) { result?.let(::shareResult) })
+            if (setup || nexus != null) addView(quiet("Share", enabled = !busy) { result?.let(::shareResult) })
             addView(quiet("Save APK", enabled = !busy) { picker(REQUEST_SAVE, Intent.ACTION_CREATE_DOCUMENT, "application/vnd.android.package-archive", "${target.id}-patched.apk") })
             addView(quiet("Patch again", enabled = !busy) { patchAgain() })
             addView(quiet("Close") { cancelAndClose() })
@@ -553,33 +574,6 @@ class PatchActivity : Activity() {
     private fun hubLaunchIntent(): Intent? = runCatching {
         packageManager.getLaunchIntentForPackage(com.anezium.rokidbus.client.HubTarget.PHONE.packageName)
     }.getOrNull()
-
-    private fun renderKey() {
-        keyHost.removeAllViews()
-        keyHost.addView(NexusUi.card(this).apply {
-            addView(NexusUi.cardTitle(this@PatchActivity, "Keep ${target.displayName} updatable"), NexusUi.block())
-            addView(BusTheme.gap(this@PatchActivity, 6))
-            addView(NexusUi.cardBody(this@PatchActivity, "${target.displayName} on the glasses only updates from the key that signed it. Uninstalling this plugin deletes that key, so export a backup now."), NexusUi.block())
-            addView(noteView(Slot.KEY), NexusUi.block())
-            addView(BusTheme.gap(this@PatchActivity, 6))
-            addView(LinearLayout(this@PatchActivity).apply {
-                gravity = Gravity.CENTER_VERTICAL
-                addView(quiet(if (keyMoreOpen) "Less" else "More") { keyMoreOpen = !keyMoreOpen; renderKey() })
-                addView(View(this@PatchActivity), LinearLayout.LayoutParams(0, 0, 1f))
-                addView(quiet("Import key", enabled = !busy) {
-                    AlertDialog.Builder(this@PatchActivity).setTitle("Replace signing key?")
-                        .setMessage("Future patches will use the imported key. The installed app must have the same signer to update.")
-                        .setNegativeButton("Cancel", null).setPositiveButton("Import") { _, _ -> askPassword(true) }.show()
-                })
-                addView(quiet("Export key", enabled = !busy) { askPassword(false) })
-            }, NexusUi.block())
-            if (keyMoreOpen) {
-                addView(BusTheme.gap(this@PatchActivity, 4))
-                addView(NexusUi.cardBody(this@PatchActivity, "The backup is a password-protected file you can import into a fresh install of this plugin.\n\nAn app patched with Morphe Manager uses Manager's key, which this backup format cannot import: keep updating that build with Manager, or uninstall that app on the glasses by hand before installing a build from this plugin.").apply { textSize = 12f; setTextColor(NexusUi.INK3) }, NexusUi.block())
-            }
-        }, NexusUi.block())
-        applyNote(Slot.KEY)
-    }
 
     private fun renderDetails() {
         detailsHost.removeAllViews()
@@ -833,50 +827,27 @@ class PatchActivity : Activity() {
     private fun displayName(uri: Uri): String? = runCatching {
         contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { if (it.moveToFirst()) it.getString(0) else null }
     }.getOrNull() ?: uri.lastPathSegment
-    private fun askPassword(importing: Boolean) {
-        window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
-        val field = EditText(this).apply { inputType = 129; hint = "Backup password (at least 8 characters)" }
-        AlertDialog.Builder(this).setTitle(if (importing) "Import key" else "Export key").setView(field)
-            .setNegativeButton("Cancel", null).setPositiveButton("Choose file") { _, _ ->
-                val password = field.text.toString().toCharArray(); field.text.clear()
-                if (password.size < 8) { password.fill('\u0000'); report("Use at least eight characters.", Tone.ERROR, Slot.KEY) }
-                else {
-                    backupPassword?.fill('\u0000'); backupPassword = password
-                    picker(if (importing) REQUEST_IMPORT else REQUEST_EXPORT,
-                        if (importing) Intent.ACTION_OPEN_DOCUMENT else Intent.ACTION_CREATE_DOCUMENT,
-                        "application/octet-stream", if (importing) null else "patcher-signing-key.ypk")
-                }
-            }.setOnDismissListener { field.text.clear() }.show()
-    }
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (resultCode != RESULT_OK || data?.data == null) {
-            backupPassword?.fill('\u0000'); backupPassword = null; return
-        }
+        if (resultCode != RESULT_OK || data?.data == null) return
         val uri = data.data!!
         when (requestCode) {
             REQUEST_STOCK -> {
-                if (busy) return
+                // A picker opened before the job started must not swap its source.
+                if (jobs.state.value.active) { report("Locked while ${target.displayName} is being patched. Your file was not changed.", Tone.WARN, Slot.STOCK); return }
+                if (busy) { report("Patcher was busy. Choose the file again.", Tone.WARN, Slot.STOCK); return }
+                if (jobs.keyMaintenance.value) { report(PatchJobStore.KEY_BUSY, Tone.WARN, Slot.STOCK); return }
                 try {
                     contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                    stockName = displayName(uri)
-                    notes.remove(Slot.STOCK)
-                    startJob(jobs.prepare(target.id), uri)
-                } catch (e: Exception) { report("Cannot retain access to this file. Choose it with the document picker again.", Tone.ERROR, Slot.STOCK) }
-            }
-            REQUEST_EXPORT, REQUEST_IMPORT -> {
-                val password = backupPassword ?: return
-                backupPassword = null
-                if (busy) { password.fill('\u0000'); return }
-                perform(Slot.KEY) {
-                    try {
-                        withContext(Dispatchers.IO) {
-                            if (requestCode == REQUEST_EXPORT) contentResolver.openOutputStream(uri, "wt").use { key.export(requireNotNull(it), password) }
-                            else contentResolver.openInputStream(uri).use { key.import(requireNotNull(it), password) }
-                        }
-                        report(if (requestCode == REQUEST_EXPORT) "Password-protected key exported." else "Signing key imported.", Tone.OK, Slot.KEY)
-                    } finally { password.fill('\u0000') }
+                } catch (e: Exception) { report("Cannot retain access to this file. Choose it with the document picker again.", Tone.ERROR, Slot.STOCK); return }
+                // The store is the authority: a key import begun since the check above still refuses this.
+                val job = try { jobs.prepare(target.id) } catch (e: IllegalStateException) {
+                    runCatching { contentResolver.releasePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+                    report(PatchErrors.reason(e, "Patcher was busy. Choose the file again."), Tone.WARN, Slot.STOCK); return
                 }
+                stockName = displayName(uri)
+                notes.remove(Slot.STOCK)
+                startJob(job, uri)
             }
             REQUEST_SAVE -> result?.let { file -> perform(Slot.PATCH) {
                 withContext(Dispatchers.IO) {
@@ -897,7 +868,16 @@ class PatchActivity : Activity() {
         if (jobs.state.value.active) startService(Intent(this, PatchJobService::class.java)
             .setAction(PatchJobService.CANCEL).putExtra(PatchJobService.JOB_ID, jobs.state.value.id))
     }
-    private fun cancelAndClose() { setResult(RESULT_CANCELED); finish() }
+    /** Nexus words its next step from this hint; it is not evidence and carries no file. */
+    private fun cancelAndClose() {
+        setResult(RESULT_CANCELED, if (::target.isInitialized) Intent().putExtra(Contract.EXTRA_JOB_STATE,
+            AppTargets.jobHint(jobs.state.value, target, result != null)) else null)
+        finish()
+    }
+    private fun openHubSetup() {
+        if (!AppTargets.openHubSetup(this, target, AppTargets.jobHint(jobs.state.value, target, result != null), REQUEST_HUB_SETUP))
+            report("Update Nexus to install ${target.displayName} on the glasses from here.", Tone.WARN, Slot.PATCH)
+    }
     private fun finishStoppedHubJob(): Boolean {
         if (!::jobs.isInitialized || !canReturnToHub() || jobs.state.value.status !in
             setOf(PatchJobStatus.CANCELLED, PatchJobStatus.FAILURE, PatchJobStatus.INTERRUPTED)) return false
@@ -962,7 +942,6 @@ class PatchActivity : Activity() {
         window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         stopPulse()
         scope.cancel()
-        backupPassword?.fill('\u0000'); backupPassword = null
         releaseScreenLock()
         super.onDestroy()
     }
@@ -974,8 +953,7 @@ class PatchActivity : Activity() {
         const val EXTRA_READY_JOB_ID = "ready_job_id"
         private const val REQUEST_NOTIFICATIONS = 5
         private const val REQUEST_STOCK = 1
-        private const val REQUEST_EXPORT = 2
-        private const val REQUEST_IMPORT = 3
         private const val REQUEST_SAVE = 4
+        private const val REQUEST_HUB_SETUP = 6
     }
 }

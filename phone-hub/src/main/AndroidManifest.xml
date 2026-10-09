@@ -57,6 +57,18 @@
         android:theme="@style/Theme.RokidBus.Phone">
 
         <activity android:name=".YoutubeSetupActivity" android:exported="false" />
+        <!-- Patcher → YouTube: explicit only, no intent filter; it authenticates its caller. -->
+        <activity
+            android:name=".PatcherSetupEntryActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.NoDisplay">
+            <meta-data
+                android:name="com.anezium.rokidbus.patcher.SETUP_TARGETS"
+                android:value="youtube,reddit" />
+        </activity>
+        <activity android:name=".RedditSetupActivity" android:exported="false" />
 
         <activity
             android:name=".MainActivity"

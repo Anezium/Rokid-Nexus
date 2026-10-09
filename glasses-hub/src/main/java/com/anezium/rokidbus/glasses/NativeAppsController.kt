@@ -23,6 +23,10 @@ internal object NativeAppsController {
         payload: JSONObject,
         reply: (JSONObject) -> Boolean,
     ): Boolean {
+        com.anezium.rokidbus.shared.RedditSetupContract.requestId(payload)?.let { id ->
+            runCatching { YoutubePackageInventory.redditResult(context, id) }.onSuccess { reply(it) }
+            return true
+        }
         com.anezium.rokidbus.shared.YoutubeSetupContract.requestId(payload)?.let { id ->
             runCatching { YoutubePackageInventory.result(context, id) }.onSuccess { reply(it) }
             return true

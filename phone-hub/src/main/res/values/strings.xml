@@ -253,4 +253,5 @@
     <string name="native_apps_open">Open</string>
     <string name="native_apps_install">Install</string>
     <string name="native_apps_back">Go back</string>
+    <string name="native_apps_patcher_hint">YouTube and Reddit setup and updates live in Patcher.</string>
 </resources>

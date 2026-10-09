@@ -1,0 +1,7 @@
+{
+  "version": "1.39.1-rokid.3-reddit-preview.23",
+  "source_sha256": "92b8fcf4d176ce9ca3ca518483eecb214ac34441ce899c538213da1948642f30",
+  "asset_stem": "reddit",
+  "unpublished": true,
+  "baseline": "c06102d4b"
+}

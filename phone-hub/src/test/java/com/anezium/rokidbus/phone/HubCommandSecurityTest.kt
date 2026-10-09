@@ -7,9 +7,12 @@ import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.content.pm.ServiceInfo
 import android.os.Bundle
+import android.os.Looper
 import java.util.concurrent.atomic.AtomicBoolean
 import com.anezium.rokidbus.client.IBusService
 import com.anezium.rokidbus.shared.BusConstants
+import com.anezium.rokidbus.shared.BusEnvelope
+import com.anezium.rokidbus.shared.RemoteNavigationContract
 import java.io.File
 import javax.xml.parsers.DocumentBuilderFactory
 import org.junit.Assert.*
@@ -83,6 +86,37 @@ class HubCommandSecurityTest {
         shadowOf(hub.application).grantPermissions(android.Manifest.permission.BLUETOOTH_CONNECT)
         assertEquals(Service.START_STICKY, hub.onStartCommand(HubCommandIntents.create(hub), 0, 1))
         assertTrue(BusHubService.isEnabled(hub))
+    }
+
+    @Test fun restartingRetainedHubRestoresRemoteNavigationWithoutDuplicateReceivers() {
+        field("hubEnabled").set(hub, false)
+        field("startupBlockedByBluetoothPermission").set(hub, false)
+        (field("sppLoopStarted").get(hub) as AtomicBoolean).set(true)
+        hub.getSharedPreferences("rokidbus_phone", 0).edit().putString("cxrl_token", "").commit()
+        shadowOf(hub.application).grantPermissions(android.Manifest.permission.BLUETOOTH_CONNECT)
+        shadowOf(hub.application).grantPermissions(INTERNAL_CORE_PERMISSION)
+        val sent = mutableListOf<BusEnvelope>()
+        val bridge = PhoneCoreRemoteBridge(hub, { sent += it; null }, { false }, { true }, { false })
+        field("coreRemoteBridge").set(hub, bridge)
+        bridge.start()
+        bridge.close()
+        try {
+            fun pressRight(requestId: String) {
+                hub.sendBroadcast(RemoteInputPhoneContract.navigate(hub, requestId, RemoteInputPhoneContract.KEY_RIGHT))
+                shadowOf(Looper.getMainLooper()).idle()
+            }
+            pressRight("navigation-while-stopped")
+            assertTrue(sent.isEmpty())
+
+            repeat(2) { hub.onStartCommand(HubCommandIntents.create(hub), 0, it + 1) }
+            pressRight("navigation-after-restart")
+
+            assertEquals(1, sent.size)
+            assertEquals(RemoteNavigationContract.REQUEST_PATH, sent.single().path)
+            assertEquals("navigation-after-restart", RemoteNavigationContract.parseRequest(sent.single().payload)!!.requestId)
+        } finally {
+            bridge.close()
+        }
     }
 
     @Test fun stickyRestartAndExternalEmptyStartDoNotEnableStoppedHub() {

@@ -435,14 +435,29 @@ object NexusUi {
 
     /** Fixed header for a plugin settings screen: icon tile, name, one-liner, hairline. */
     fun pluginHeader(context: Context, iconRes: Int, title: String, subtitle: String): LinearLayout =
+        pluginHeader(context, iconTileImage(context, iconRes, 48), title, subtitle)
+
+    /**
+     * The same header around a prepared 48 dp tile (multi-tone artwork from
+     * [iconTileDrawable] must not be tinted). [onBack] adds the hub's back chevron for
+     * screens that sit below a plugin's root settings screen.
+     */
+    fun pluginHeader(
+        context: Context,
+        icon: View,
+        title: String,
+        subtitle: String,
+        onBack: (() -> Unit)? = null,
+    ): LinearLayout =
         LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             addView(
                 LinearLayout(context).apply {
                     orientation = LinearLayout.HORIZONTAL
                     gravity = Gravity.CENTER_VERTICAL
-                    setPadding(dp(context, 22), dp(context, 18), dp(context, 22), dp(context, 18))
-                    addView(iconTileImage(context, iconRes, 48))
+                    setPadding(dp(context, if (onBack == null) 22 else 10), dp(context, 18), dp(context, 22), dp(context, 18))
+                    if (onBack != null) addView(backButton(context, onBack))
+                    addView(icon)
                     addView(
                         LinearLayout(context).apply {
                             orientation = LinearLayout.VERTICAL
@@ -466,6 +481,24 @@ object NexusUi {
                     )
                 },
             )
+        }
+
+    /** The hub's 44 dp back chevron for screen headers. */
+    fun backButton(context: Context, onBack: () -> Unit): TextView =
+        TextView(context).apply {
+            text = "‹"
+            textSize = 26f
+            includeFontPadding = false
+            gravity = Gravity.CENTER
+            setTextColor(INK)
+            background = pressed(context, Color.TRANSPARENT, 22)
+            isClickable = true
+            isFocusable = true
+            contentDescription = "Go back"
+            setOnClickListener { onBack() }
+            layoutParams = LinearLayout.LayoutParams(dp(context, 44), dp(context, 44)).apply {
+                marginEnd = dp(context, 4)
+            }
         }
 
     /** Canonical end-of-settings uninstall card: every plugin settings screen ends with one. */

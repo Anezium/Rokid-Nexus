@@ -17,6 +17,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.WindowInsets
 import android.view.WindowManager
+import android.view.inputmethod.BaseInputConnection
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
 import android.view.inputmethod.InputConnectionWrapper
@@ -659,22 +660,23 @@ class RemoteInputActivity : Activity() {
         editor.isEnabled = viewState.editorEnabled
         editor.isFocusable = viewState.editorEnabled
         editor.isFocusableInTouchMode = viewState.editorEnabled
-        editor.inputType = if (viewState.password) {
+        val inputType = if (viewState.password) {
             InputType.TYPE_CLASS_TEXT or
                 InputType.TYPE_TEXT_VARIATION_PASSWORD or
                 InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
         } else {
             InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
         }
-        editor.imeOptions = if (viewState.primaryAction == RemoteInputPhoneContract.EDITOR_NEXT) {
+        val imeOptions = if (viewState.primaryAction == RemoteInputPhoneContract.EDITOR_NEXT) {
             EditorInfo.IME_ACTION_NEXT
         } else {
             EditorInfo.IME_ACTION_DONE
         }
-        if (secureSession) {
-            editor.inputType = editor.inputType or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
-            editor.imeOptions = editor.imeOptions or EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING
-        }
+        val nextInputType = if (secureSession) inputType or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS else inputType
+        val nextImeOptions = if (secureSession) imeOptions or EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING else imeOptions
+        // A transport acknowledgement must not restart the IME and discard its composition or layout.
+        if (editor.inputType != nextInputType) editor.inputType = nextInputType
+        if (editor.imeOptions != nextImeOptions) editor.imeOptions = nextImeOptions
         // Uppercased like every other pill on this screen: outlinePillButton does it
         // at construction, and this label is replaced after that.
         editorAction.text = if (viewState.primaryAction == RemoteInputPhoneContract.EDITOR_NEXT) {
@@ -939,7 +941,7 @@ private class BroadcastRemoteInputPublisher(context: Context) : RemoteInputPubli
     }
 }
 
-private sealed interface LocalInputOperation {
+internal sealed interface LocalInputOperation {
     data class CommitText(val text: CharSequence) : LocalInputOperation
     data class SetComposingText(val text: CharSequence) : LocalInputOperation
     data object FinishComposing : LocalInputOperation
@@ -948,7 +950,7 @@ private sealed interface LocalInputOperation {
 }
 
 /** Mirrors the IME protocol one call at a time instead of shipping editor snapshots. */
-private class StreamingEditText(context: Context) : EditText(context) {
+internal class StreamingEditText(context: Context) : EditText(context) {
     var onInputOperation: ((LocalInputOperation) -> Unit)? = null
 
     override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection? {
@@ -996,18 +998,46 @@ private class StreamingEditText(context: Context) : EditText(context) {
                 return handled
             }
 
-            override fun sendKeyEvent(event: KeyEvent): Boolean =
-                super.sendKeyEvent(event).also { success ->
+            override fun sendKeyEvent(event: KeyEvent): Boolean {
+                if (event.keyCode == KeyEvent.KEYCODE_DEL &&
+                    this@StreamingEditText.selectionStart == this@StreamingEditText.selectionEnd &&
+                    !event.isCtrlPressed && !event.isAltPressed && !event.isMetaPressed
+                ) {
+                    if (event.action == KeyEvent.ACTION_UP) return true
+                    if (event.action == KeyEvent.ACTION_DOWN) return deleteSurroundingTextInCodePoints(1, 0)
+                }
+                val unicode = event.unicodeChar
+                if (!event.isCtrlPressed && !event.isAltPressed && !event.isMetaPressed &&
+                    unicode > 0 && Character.isValidCodePoint(unicode) &&
+                    !Character.isISOControl(unicode)
+                ) {
+                    // Some IMEs send digits as key events instead of commitText. Normalize
+                    // them here so local key dispatch cannot bypass the remote stream.
+                    if (event.action == KeyEvent.ACTION_UP) return true
+                    if (event.action == KeyEvent.ACTION_DOWN) {
+                        val composingStart = this@StreamingEditText.text
+                            ?.let(BaseInputConnection::getComposingSpanStart) ?: -1
+                        if (composingStart >= 0) {
+                            finishComposingText()
+                        }
+                        return commitText(String(Character.toChars(unicode)), 1)
+                    }
+                }
+                val deleteLengths = if (event.keyCode == KeyEvent.KEYCODE_DEL) {
+                    codePointDeleteLengths(1, 0)
+                } else null
+                return super.sendKeyEvent(event).also { success ->
                     if (!success || event.action != KeyEvent.ACTION_DOWN) return@also
                     when (event.keyCode) {
                         KeyEvent.KEYCODE_DEL -> onInputOperation?.invoke(
-                            LocalInputOperation.DeleteSurrounding(1, 0),
+                            LocalInputOperation.DeleteSurrounding(deleteLengths!!.first, deleteLengths.second),
                         )
                         KeyEvent.KEYCODE_ENTER -> onInputOperation?.invoke(
                             LocalInputOperation.PerformEditorAction(EditorInfo.IME_ACTION_DONE),
                         )
                     }
                 }
+            }
 
             private fun codePointDeleteLengths(beforeCodePoints: Int, afterCodePoints: Int): Pair<Int, Int> {
                 val value = this@StreamingEditText.text ?: return beforeCodePoints to afterCodePoints
