@@ -1584,12 +1584,14 @@ backend (`launcher.backend`, switched with the
 page protocol separately from that local preference, so support can be
 announced while page UI and page requests stay unreachable on `LEGACY`.
 
-This version delivers consultation: a root built from live state, four typed hub
-templates, authenticated provider routing, and labelled immersion launches. It
-does not deliver a foreground resolver, per-app ambient modes or budgets,
-notification history, late notice replies or a composer, maps, images, or Ink
-page bodies; those remain later deliveries. Activity islands take no input on
-either backend. The activity and notice protocols above are unchanged.
+Version 1 specifies consultation: a root built from live state, four typed hub
+templates, authenticated provider routing, and labelled immersion launches. A hub
+announces `pageSessionVersion: 1` only once it implements every requirement below
+for its side; until both hubs of a pair do, pages stay unreachable. Version 1 does
+not cover a foreground resolver, per-app ambient modes or budgets, notification
+history, late notice replies or a composer, maps, images, or Ink page bodies;
+those are later deliveries. Activity islands take no input on either backend. The
+activity and notice protocols above are unchanged.
 
 ### Base, session, and anchored frames
 
@@ -1742,9 +1744,9 @@ and page, with a higher revision.
 The envelope is validated first, for size and correlation, with the body kept
 opaque. The body is then decoded by the one shared typed codec before anything
 is drawn or acted on. This hub draws four templates; `conversation`, `media`,
-`route` and `ink` remain valid envelope names but are unavailable here: a page
-using one shows as unavailable and never opens an immersion instead. No hub
-announces an Ink page profile.
+`route` and `ink` remain valid envelope names but are unavailable in version 1: a
+page using one must be shown as unavailable and must never open an immersion
+instead. A version 1 hub announces no Ink page profile.
 
 | Template | Body |
 |---|---|
@@ -1852,12 +1854,13 @@ with a fresh lease; a refreshed, uncovered frame keeps the lease sent on uncover
 A visible frame renews its lease within 30 seconds of expiry. A lease that
 expires without renewal voids that frame's live context on the phone.
 
-Every plugin action is confirmed in a hub-owned panel, with Cancel preselected
-and Confirm second, whatever its `confirm` flag says. The confirmation is bound
-to the provider registration, page, action and shown revision; cover, refresh, a
-changed revision, BACK, GLOBAL, link loss or invalidation cancels it, and none is
-actionable while a frame loads or is unavailable. Confirm alone creates one
-invocation with a fresh id and the revision the wearer saw. A pending invocation
+The glasses hub must confirm every plugin action in a hub-owned panel, with
+Cancel preselected and Confirm second, whatever its `confirm` flag says. The
+confirmation is bound to the provider registration, page, action and shown
+revision; cover, refresh, a changed revision, BACK, GLOBAL, link loss or
+invalidation cancels it, and none is actionable while a frame loads or is
+unavailable. Confirm alone creates one invocation with a fresh id and the
+revision the wearer saw. A pending invocation
 blocks another SELECT. `done`, `stale`, and `rejected` clear it; rejection keeps
 the page. A lost acknowledgement becomes Unconfirmed and is never resent. A
 provider's `kind: hub` action gives it no hub control and is rejected; only
@@ -1884,10 +1887,10 @@ trusted invalidation as owner-scoped: it cancels that owner's work and keeps its
 snapshots inert in every affected frame, even with no request pending.
 
 Provider binding is separate from immersion. To answer a request the phone hub
-uses the provider's live registration, or binds its plugin service cold through
-its own connection, within at most five seconds of the eight-second budget; a
-cold failure is a correlated error, never a launch or a rebind loop. It never
-opens the plugin, adopts a surface, acknowledges an open, or closes, hides,
+must use the provider's live registration, or bind its plugin service cold
+through its own connection, within at most five seconds of the eight-second
+budget; a cold failure is a correlated error, never a launch or a rebind loop. It
+must never open the plugin, adopt a surface, acknowledge an open, or close, hide,
 unbinds, mutes or refocuses a live base immersion, even one of the same plugin.
 It keeps a page-only binding while that plugin has a visible leased page or a
 pending request, tells the owner about a close before unbinding, and releases

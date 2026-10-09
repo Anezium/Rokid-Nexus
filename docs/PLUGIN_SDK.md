@@ -1752,10 +1752,12 @@ content page the SDK finds invalid is answered as `INVALID_PAGE` instead.
 ### Actions
 
 `NexusPageActionSpec(id, label, kind, confirm)` declares an action: label at
-most 24 characters, kind `PLUGIN`, `IMMERSION` or `HUB`. The hub confirms every
-plugin action with the wearer, Cancel preselected, whatever `confirm` says, and
-only then calls `onNexusPageAction` with a fresh `invocationId` and the revision
-the wearer saw. Return `NexusPageResult.done(message, replacement)`,
+most 24 characters, kind `PLUGIN`, `IMMERSION` or `HUB`. The glasses hub must
+confirm every plugin action with the wearer, Cancel preselected, whatever
+`confirm` says, before `onNexusPageAction` is called with a fresh `invocationId`
+and the revision the wearer saw. The SDK delivers an action only for a page it
+answered, at the revision it last sent and for an action that revision declared;
+anything else never reaches your code. Return `NexusPageResult.done(message, replacement)`,
 `.rejected(message)` or `.stale(message)`; a message is at most 64 characters
 and a replacement is the same page at a higher revision. A lost result shows as
 unconfirmed and is never resent. `IMMERSION` only opens your own full app, after
@@ -1773,13 +1775,15 @@ nexusClient?.publishPage(request, NexusPage.Content(revision + 1, title, body, l
 ```
 
 `NexusPluginClient.publishPage(request, page)` returns `SENT` only for the
-frame's current request, while visible, before the lease runs out, and at a
-revision above every one already sent; otherwise it refuses without sending.
-After a cover, a refresh request takes over the frame: publish against the
-newest request you received. Publish on real changes, at most about two
+frame's current request, after its live answer was sent, while visible, before
+the lease runs out, and at a revision above every one already sent; otherwise it
+refuses without sending. After a cover, a refresh request takes over the frame:
+nothing can be published for it until your answer to that refresh has gone out,
+then publish against that newest request. Publish on real changes, at most about two
 revisions a second; never poll. `NexusPluginClient.supportsPageSession` says
 whether pages can be served at all: approved with `surfaces`, both hubs on page
-v1 for your plugin, and a live link.
+v1 for your plugin, and a usable link (CXR control or the SPP data plane). After
+the link drops it stays false until the hub sends its next page version.
 
 `NexusPageClosed` arrives with `back`, `session_closed`, `timeout`,
 `link_lost`, `replaced` or `frame_limit`; drop that page's state. Link loss,
@@ -1787,6 +1791,9 @@ revocation, a replaced registration or a closed client void every page and
 publisher at once, and nothing is replayed on reconnect.
 
 ### Examples
+
+These describe the first two providers as they are being integrated in this
+delivery; until their plugin releases ship, treat them as the intended shape.
 
 Navigation answers `nav:main` with a `summary` of the guidance it already shows
 in its activity: the manoeuvre, the distance or remaining stops, the street, the

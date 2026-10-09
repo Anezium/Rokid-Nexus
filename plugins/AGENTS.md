@@ -54,8 +54,9 @@ sanctioned exceptions:
 
 5. **User-pulled pages**: a plugin whose service declares `rokidbus.plugin.pages`
    may be bound without `PLUGIN_OPEN` to answer a page the wearer pulled in the
-   glasses' Nexus session. The hub keeps that binding only while one of its
-   pages is pending or visible under its 120-second lease, and releases it after.
+   glasses' Nexus session, once both hubs announce page v1. The hub may keep that
+   binding only while one of its pages is pending or visible under its
+   120-second lease, and must release it after.
    Answer from memory on the main thread; no foreground service, notification,
    polling or background refresh is permitted for pages, and live revisions are
    sent only on real changes while the page is visible.
@@ -136,7 +137,7 @@ install → discovery → user approval (Plugin access) → glasses launcher ope
     or PLUGIN_CLOSE
   → unbind, FGS dropped, back to dormant
 
-pages (opted-in plugins, session backend, both hubs on page v1):
+pages (opted-in plugins, session backend, once both hubs announce page v1):
   wearer selects a page → hub uses your live registration or binds you cold
   (registration within the 8 s page budget) → /page/request → your answer on
   /page/response → /page/visibility (lease) → optional live revisions and
