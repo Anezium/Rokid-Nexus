@@ -1655,7 +1655,7 @@ The ring is an optional accelerator and has no GLOBAL gesture.
 | Unarmed notice or expired window | underneath | underneath | underneath | opens root; notice remains consultable |
 | Opening gate | absorbed | absorbed | absorbed | absorbed |
 | Session root | open selected page | bounded selection, no wrap | close and restore base | stay at root |
-| Page | activate row or open next frame | row selection or document page | pop one frame | return to same root |
+| Page | activate row or open next frame; from read text, reach its rows | row selection, or a page of read text | from the rows of read text, return to the text; otherwise pop one frame | return to same root |
 | Composer (later delivery) | pause editing and review | consumed | leave to mode choice, keep draft | suspend draft and return to root |
 | Focused editable field in an immersion | field | field | field | disabled, preserving Bluetooth keyboard protection |
 
@@ -1782,6 +1782,15 @@ These limits add to the envelope's; the whole response still fits 65,536 bytes,
 and a document provider sizes its page to that whole budget. A provider may
 shorten its own text before sending; the hub never truncates a received page.
 
+A document is read page by page through its text measured at the HUD, inside
+the chrome and the current top inset, before its rows. Summary and commands
+text is drawn as is when it fits the viewport together with the page's first
+row; when it does not, the glasses read it the same way as a document. STEP
+pages the measured text, SELECT reaches the rows and never acts on the text,
+and BACK from the rows returns to the text before it pops the frame. The
+reading position names text, not a screen, so it survives relayout, live
+revisions, cover and uncover.
+
 ### Limits, correlation, and errors
 
 | Limit | Value |
@@ -1834,7 +1843,12 @@ closed request are dropped and never reopen a session. Retry always creates a
 fresh request id. Refresh preserves the previous snapshot, readable but inert,
 while validating it; at two seconds a still-loading hint appears, and at eight
 seconds the frame becomes unavailable with the dated last snapshot, Retry, and
-Back. It never falls back to immersion automatically. Deadlines are judged on
+Back. An unavailable frame draws the failure, dated, over its retained content,
+dimmed and inert: summary text and facts, list rows, or a document, never its
+actions. Content too tall for that space is read page by page from the reading
+position the wearer had reached; SELECT then reaches only Retry and Back, and
+BACK from them returns to the content before it pops the frame. It never falls
+back to immersion automatically. Deadlines are judged on
 each reply's arrival time, not on the next timer tick: a response to a pending
 request arriving at or after that request's deadline times the frame out, and a
 result arriving at or after its invocation deadline leaves the action
@@ -1846,7 +1860,10 @@ current session/request identity, `live: true`, and a strictly higher revision;
 covered, stale, or duplicate revisions are dropped. Revisions stay monotonic per
 frame across refresh and retry: a correlated response below the highest
 revision already shown is dropped as stale, and an equal revision keeps the
-displayed content. When a refresh or a Retry is answered with the very snapshot
+displayed content. An equal revision is therefore only for content the provider
+knows to be identical: a provider that rebuilds a page without knowing that, as
+after its service was destroyed and bound cold again, answers strictly above
+`minimumRevision`. When a refresh or a Retry is answered with the very snapshot
 the frame retained, a document keeps the pages already measured for it, so
 reading goes on paging from there. A refusal to open a seventh frame allocates nothing: the hub
 shows a local status and sends no close for any frame.

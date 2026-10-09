@@ -1714,7 +1714,10 @@ override fun onNexusPageRequest(request: NexusPageRequest): NexusPage =
 `pageId`, `reason` (`OPEN`, `REFRESH`, `RETRY`), a copy of the row's `params`,
 and `minimumRevision`: the revision the glasses already retain for that frame.
 Answer at that revision or above, even after a cold start; a lower one is
-refused. Your pages live in your namespace, `<pluginId>:<suffix>`, and the
+refused. An answer at exactly that revision tells the glasses nothing changed,
+and they keep the body they already show. So once your service was recreated,
+or whenever you rebuild a page without knowing it equals what you last sent,
+answer above it. Your pages live in your namespace, `<pluginId>:<suffix>`, and the
 glasses open `<pluginId>:main` first. The SDK supplies the correlation and
 envelope ids; you never write your plugin id or another owner into a page.
 
@@ -1737,7 +1740,13 @@ declared actions, `PageTarget.Action(actionId)`; a row without a target is
 readable but inert. Ids are unique within their list. A document keeps its text
 order, paragraphs, explicit line breaks and Unicode, and the wearer pages
 through it with swipes; its `footer` is paginated after the text, in the caption
-style.
+style. Summary or commands text that does not fit the HUD with the page's first
+row is read the same way: swipes page through it, a tap reaches the rows, and
+BACK returns to the text. Text that fits is shown as is.
+
+When a page becomes unavailable, for a timeout or a lost link, the glasses keep
+its last content readable, dimmed under the failure, with Retry and Back. None
+of its rows or actions can be chosen until a Retry is answered.
 
 `conversation`, `media`, `route` and `ink` are reserved names this hub does not
 draw yet; a page using one shows as unavailable, never as an immersion. There
