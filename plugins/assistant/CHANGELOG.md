@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Use the current GPT-6 models.** ChatGPT offers GPT-6-Luna (still the
+  fast default), GPT-6.1-Sol, and GPT-6-Astra; a GPT-5.6 or GPT-6-Sol model
+  you picked before moves to its current equivalent instead of resetting.
+  Reasoning effort is kept to what the chosen model accepts, so the fastest
+  setting is now Low. The OpenAI API preset suggests the same three models.
 - **Read PDFs and images in Workspace.** Index `.pdf` files page by page and
   cite the page with the file name. Scanned pages and photos (`.jpg`, `.png`,
   `.webp`, `.heic`) are read with on-device text recognition while indexing,
