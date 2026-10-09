@@ -14,17 +14,20 @@ internal object TransitLabelMatch {
     fun lines(selector: String, labels: Collection<String>): Set<String> {
         val wanted = normalize(selector)
         labels.filter { normalize(it) == wanted }.takeIf { it.isNotEmpty() }?.let { return it.toSet() }
-        val bare = withoutMode(wanted)
-        return labels.filter { withoutMode(normalize(it)) == bare }.toSet()
+        val bare = withoutMode(selector)
+        return labels.filter { withoutMode(it) == bare }.toSet()
     }
 
-    /** The headsigns [selector] names: the exact headsign, else every headsign holding all of its words. */
+    /**
+     * The headsigns [selector] names: the exact headsign, else the headsign that is the selector
+     * without its leading connector words, else every headsign holding all of those words.
+     */
     fun directions(selector: String, headsigns: Collection<String>): Set<String> {
         val wanted = normalize(selector)
+        headsigns.filter { normalize(it) == wanted }.takeIf { it.isNotEmpty() }?.let { return it.toSet() }
         val wantedWords = words(selector).dropWhile { it in CONNECTORS }
         if (wantedWords.isEmpty()) return emptySet()
-        headsigns.filter { normalize(it) == wanted || words(it) == wantedWords }
-            .takeIf { it.isNotEmpty() }?.let { return it.toSet() }
+        headsigns.filter { words(it) == wantedWords }.takeIf { it.isNotEmpty() }?.let { return it.toSet() }
         return headsigns.filter { words(it).containsAll(wantedWords) }.toSet()
     }
 
@@ -34,24 +37,40 @@ internal object TransitLabelMatch {
     /** How many different directions [headsigns] are, typography and punctuation aside. */
     fun distinctDirections(headsigns: Collection<String>): Int = headsigns.map(::words).distinct().size
 
-    private fun normalize(label: String): String =
-        fold(label).replace(APOSTROPHES, "").replace(SPACES, " ").trim()
+    private fun normalize(label: String): String = spaced(label).lowercase(Locale.ROOT)
 
-    private fun words(label: String): List<String> = fold(label).split(NOT_WORD).filter(String::isNotEmpty)
+    private fun words(label: String): List<String> =
+        unmarked(label).lowercase(Locale.ROOT).split(NOT_WORD).filter(String::isNotEmpty)
 
-    private fun fold(label: String): String =
-        Normalizer.normalize(label, Normalizer.Form.NFKD).replace(MARKS, "").lowercase(Locale.ROOT)
+    private fun spaced(label: String): String =
+        unmarked(label).replace(APOSTROPHES, "").replace(SPACES, " ").trim()
 
-    // A mode word must be followed by a separator or a digit, so "Tramway" or "Linea" stay whole.
-    private tailrec fun withoutMode(label: String): String {
-        val stripped = label.replaceFirst(MODE_PREFIX, "")
-        return if (stripped == label || stripped.isEmpty()) label else withoutMode(stripped)
+    private fun unmarked(label: String): String =
+        Normalizer.normalize(label, Normalizer.Form.NFKD).replace(MARKS, "")
+
+    private fun withoutMode(label: String): String = strippedMode(spaced(label)).lowercase(Locale.ROOT)
+
+    // Case is still the speaker's here: glued to the line, a mode word must be followed by a digit
+    // or a short code that starts upper-case ("M14", "RERC", "tramT3a"), so ordinary words such as
+    // "Tramway", "Linea", or "Metropole" stay whole.
+    private tailrec fun strippedMode(label: String): String {
+        val lower = label.lowercase(Locale.ROOT)
+        val word = MODE_WORDS.firstOrNull(lower::startsWith) ?: return label
+        val rest = label.substring(word.length)
+        val bare = when {
+            word == "m" -> rest.removePrefix(" ").takeIf { it.firstOrNull()?.isDigit() == true }
+            rest.startsWith(' ') -> rest.substring(1)
+            rest.firstOrNull()?.isDigit() == true || GLUED_CODE.matches(rest) -> rest
+            else -> null
+        }
+        return if (bare.isNullOrEmpty()) label else strippedMode(bare)
     }
 
     private val MARKS = Regex("\\p{M}+")
     private val APOSTROPHES = Regex("['\u2018\u2019\u02bc]")
     private val SPACES = Regex("[\\s\\p{Z}\\p{Pd}]+")
     private val NOT_WORD = Regex("[^\\p{L}\\p{N}]+")
-    private val MODE_PREFIX = Regex("^(?:(?:ligne|line|metro|bus|tram|rer)(?: |(?=\\d))|m ?(?=\\d))")
+    private val GLUED_CODE = Regex("\\p{Lu}[\\p{L}\\p{N}]{0,3}")
+    private val MODE_WORDS = listOf("ligne", "line", "metro", "bus", "tram", "rer", "m")
     private val CONNECTORS = setOf("vers", "direction", "dir", "to", "towards", "toward")
 }
