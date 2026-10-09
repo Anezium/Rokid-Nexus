@@ -13,6 +13,7 @@ import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import com.tom_roush.pdfbox.io.MemoryUsageSetting
 import com.tom_roush.pdfbox.contentstream.operator.Operator
+import com.tom_roush.pdfbox.cos.COSNumber
 import com.tom_roush.pdfbox.pdfparser.PDFStreamParser
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.pdmodel.PDPage
@@ -155,18 +156,58 @@ internal class AndroidWorkspacePageReader(context: Context) : WorkspacePageReade
             resources.isImageXObject(name) && (resources.getXObject(name) as? PDImageXObject)
                 ?.let { it.width * it.height >= MIN_VISUAL_IMAGE_PIXELS } == true
         } == true
-        picture || run {
-            val parser = PDFStreamParser(page)
-            var painted = 0
-            var tokens = 0
-            while (tokens++ < MAX_VISUAL_TOKENS) {
-                val token = parser.parseNextToken() ?: break
-                if (token is Operator && token.name in PAINT_OPERATORS && ++painted >= MIN_VISUAL_PAINTS) break
-            }
-            painted >= MIN_VISUAL_PAINTS
-        }
+        picture || countDrawnShapes(page) >= MIN_VISUAL_SHAPES
     } catch (_: Exception) {
         false
+    }
+
+    /**
+     * Counts painted paths whose bounds cover a meaningful share of the page: full-page backgrounds
+     * and hairline rules or underlines do not count. Bounds ignore transforms; this is only a hint.
+     */
+    private fun countDrawnShapes(page: PDPage): Int {
+        val box = page.mediaBox
+        val pageArea = (box.width * box.height).takeIf { it > 0f } ?: return 0
+        val parser = PDFStreamParser(page)
+        val operands = mutableListOf<Float>()
+        var minX = Float.MAX_VALUE
+        var minY = Float.MAX_VALUE
+        var maxX = -Float.MAX_VALUE
+        var maxY = -Float.MAX_VALUE
+        fun point(x: Float, y: Float) {
+            minX = minOf(minX, x); minY = minOf(minY, y); maxX = maxOf(maxX, x); maxY = maxOf(maxY, y)
+        }
+        fun resetPath() {
+            minX = Float.MAX_VALUE; minY = Float.MAX_VALUE; maxX = -Float.MAX_VALUE; maxY = -Float.MAX_VALUE
+        }
+        var shapes = 0
+        var tokens = 0
+        while (tokens++ < MAX_VISUAL_TOKENS && shapes < MIN_VISUAL_SHAPES) {
+            val token = parser.parseNextToken() ?: break
+            if (token is COSNumber) {
+                operands += token.floatValue()
+                continue
+            }
+            if (token !is Operator) continue
+            when (token.name) {
+                "m", "l" -> operands.takeLast(2).takeIf { it.size == 2 }?.let { point(it[0], it[1]) }
+                "c", "v", "y" -> operands.chunked(2).filter { it.size == 2 }.forEach { point(it[0], it[1]) }
+                "re" -> operands.takeLast(4).takeIf { it.size == 4 }?.let { (x, y, w, h) ->
+                    point(x, y)
+                    point(x + w, y + h)
+                }
+                "n" -> resetPath()
+                in PAINT_OPERATORS -> {
+                    if (maxX >= minX && maxY >= minY) {
+                        val share = (maxX - minX) * (maxY - minY) / pageArea
+                        if (share in MIN_SHAPE_SHARE..MAX_SHAPE_SHARE) shapes++
+                    }
+                    resetPath()
+                }
+            }
+            operands.clear()
+        }
+        return shapes
     }
 
     private fun recognizeImage(bytes: ByteArray): String {
@@ -254,7 +295,9 @@ internal class AndroidWorkspacePageReader(context: Context) : WorkspacePageReade
         const val RECOGNITION_TIMEOUT_SECONDS = 30L
         const val VIEW_EDGE = 1_600
         const val MIN_VISUAL_IMAGE_PIXELS = 200 * 200
-        const val MIN_VISUAL_PAINTS = 4
+        const val MIN_VISUAL_SHAPES = 3
+        const val MIN_SHAPE_SHARE = 0.002f
+        const val MAX_SHAPE_SHARE = 0.8f
         const val MAX_VISUAL_TOKENS = 20_000
         val PAINT_OPERATORS = setOf("f", "F", "f*", "S", "s", "B", "B*", "b", "b*")
         const val VIEW_JPEG_QUALITY = 80
