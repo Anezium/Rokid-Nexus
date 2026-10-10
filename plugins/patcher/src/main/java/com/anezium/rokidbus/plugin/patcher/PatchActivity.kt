@@ -835,8 +835,8 @@ class PatchActivity : Activity() {
             REQUEST_STOCK -> {
                 // A picker opened before the job started must not swap its source.
                 if (jobs.state.value.active) { report("Locked while ${target.displayName} is being patched. Your file was not changed.", Tone.WARN, Slot.STOCK); return }
-                if (busy) { report("Patcher was busy. Choose the file again.", Tone.WARN, Slot.STOCK); return }
                 if (jobs.keyMaintenance.value) { report(PatchJobStore.KEY_BUSY, Tone.WARN, Slot.STOCK); return }
+                if (busy) { report("Patcher was busy. Choose the file again.", Tone.WARN, Slot.STOCK); return }
                 try {
                     contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 } catch (e: Exception) { report("Cannot retain access to this file. Choose it with the document picker again.", Tone.ERROR, Slot.STOCK); return }

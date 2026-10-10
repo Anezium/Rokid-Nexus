@@ -88,3 +88,21 @@ Skills/Assistant thread, so no device inputs or APK updates were issued.
 Publication requires the normal repository checks and tagged release builds.
 Store distribution additionally requires a registry manifest update with the
 actual published APK digest and unchanged signing certificate.
+
+## CI follow-up: overlapping bundle loading and key maintenance
+
+The first PR #49 plugin check failed one UI assertion at
+`PatcherAppFlowTest.kt:274`. The source was still refused and no service started,
+but the asynchronous bundle-loading `busy` guard could mask the more specific
+key-maintenance message. The picker now checks key maintenance before generic
+screen work. The regression test explicitly holds both conditions and verifies
+that the source and key lease stay intact, patching is refused until the lease
+ends, and the key-maintenance explanation appears.
+
+The complete `PatcherAppFlowTest` class passed locally after this change:
+
+```text
+> Task :plugin-patcher:testDebugUnitTest
+BUILD SUCCESSFUL in 21s
+66 actionable tasks: 5 executed, 61 up-to-date
+```

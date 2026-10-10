@@ -264,6 +264,8 @@ class PatcherAppFlowTest {
         val screen = Robolectric.buildActivity(PatchActivity::class.java,
             Intent().putExtra(PatcherContract.EXTRA_TARGET_ID, PatcherContract.TARGET_YOUTUBE)).setup()
         idle()
+        // Bundle loading can overlap key maintenance; the specific lock must win either way.
+        PatchActivity::class.java.getDeclaredField("busy").apply { isAccessible = true }.set(screen.get(), true)
         // A late picker result: no preparation starts and the held file stays.
         PatchActivity::class.java.getDeclaredMethod("onActivityResult", Int::class.javaPrimitiveType,
             Int::class.javaPrimitiveType, Intent::class.java).apply { isAccessible = true }
@@ -272,6 +274,7 @@ class PatcherAppFlowTest {
         assertEquals(held, store.state.value)
         assertNull(shadowOf(screen.get()).nextStartedService)
         assertTrue(texts(screen.get()).contains(PatchJobStore.KEY_BUSY))
+        assertThrows(IllegalStateException::class.java) { store.patch("hash", listOf("Rokid controls")) }
         // Releasing the lease, as the import's finally does on success or failure, allows the retry.
         store.endKeyMaintenance(lease)
         assertEquals(PatchJobStatus.RUNNING, store.patch("hash", listOf("Rokid controls")).status)
