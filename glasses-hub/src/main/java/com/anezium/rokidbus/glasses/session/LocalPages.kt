@@ -95,7 +95,8 @@ internal class LocalPages(
      */
     private fun notice(entryId: String?): LocalPage {
         val all = history()
-        val entry = entryId?.let(all::entry) ?: all.visible(wallClock()).firstOrNull() ?: return LocalPage(
+        // A named entry that is gone (purged) is never replaced by another one.
+        val entry = (if (entryId != null) all.entry(entryId) else all.visible(wallClock()).firstOrNull()) ?: return LocalPage(
             TITLE_NOTIFICATION,
             PageBody.Document(listOf(PageSegment("empty", PageSegmentKind.ASIDE, "No notification to show."))),
         )
