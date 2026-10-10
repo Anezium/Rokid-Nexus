@@ -206,13 +206,9 @@ A plugin is a headless phone APK against the published SDK:
 repositories { maven("https://jitpack.io") }
 
 dependencies {
-    implementation("com.github.Anezium.Rokid-Nexus:bus-client:sdk-v0.21.0")
+    implementation("com.github.Anezium.Rokid-Nexus:bus-client:sdk-v0.22.0")
 }
 ```
-
-Skills, the guidance planner, and `holdNexusOngoingWork` are on `main` but came
-after `sdk-v0.21.0`; until the next `sdk-v*` tag, build against a local
-snapshot (see [Local build](#local-build)) to use them.
 
 Start with [plugins/AGENTS.md](plugins/AGENTS.md) — the complete,
 self-contained plugin contract — then [docs/PLUGIN_SDK.md](docs/PLUGIN_SDK.md)

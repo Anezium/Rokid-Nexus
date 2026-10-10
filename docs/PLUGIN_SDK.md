@@ -19,13 +19,9 @@ resolved transitively.
 repositories { maven("https://jitpack.io") }
 
 dependencies {
-    implementation("com.github.Anezium.Rokid-Nexus:bus-client:sdk-v0.21.0")
+    implementation("com.github.Anezium.Rokid-Nexus:bus-client:sdk-v0.22.0")
 }
 ```
-
-Skills (§3.6), the guidance planner, and `holdNexusOngoingWork` came after
-`sdk-v0.21.0` and ship with the next `sdk-v*` tag; until then, use the local
-snapshot below to build against them.
 
 For local development against a checkout, publish a snapshot instead:
 `.\gradlew.bat :shared:publishToMavenLocal :bus-client:publishToMavenLocal
@@ -682,7 +678,7 @@ is already interactive spends no budget. Activity v1 does not include plan
 
 A plugin that guides a route (Navigation from a navigation app's
 notifications, Transit from its own itinerary) should not decide on its own
-which step flares and which beats. `NexusGuidancePlanner` turns successive
+which step flares and which beats. `NexusGuidancePlanner` (SDK 0.22.0) turns successive
 `NexusGuidanceStep`s into activity traffic identically for every guide: the
 first step starts the activity, a new `stepKey` (the next maneuver or leg) or
 arrival is significant, the moment a step becomes `imminent` is urgent once
@@ -718,7 +714,7 @@ The Sample plugin's demo route runs through the planner.
 **Ongoing work.** An activity ends when its owner disconnects. A plugin that
 keeps guiding after its surface or skill call ends, because the wearer asked
 it to, holds its one session foreground service with
-`holdNexusOngoingWork(additionalTypes)`, which also starts the service so it
+`holdNexusOngoingWork(additionalTypes)` (SDK 0.22.0), which also starts the service so it
 outlives the hub's binding, and calls `releaseNexusOngoingWork()` the moment
 the process ends. This is a narrow exception to dormancy for a process the
 wearer explicitly started and follows as an activity; never hold it to poll or
@@ -1690,8 +1686,8 @@ Assistant listens at once.
 
 ### 3.6 Skills
 
-Skills let an approved plugin publish typed operations that an approved
-caller, in practice Assistant, invokes through the phone hub. The provider
+Skills (SDK 0.22.0, phone hub 1.7.0) let an approved plugin publish typed
+operations that an approved caller, in practice Assistant, invokes through the phone hub. The provider
 keeps its domain logic, Android permissions, and data; the hub discovers the
 operations, asks the wearer which ones each caller may use, routes every call
 with both identities stamped from authenticated registrations, and bounds it.
