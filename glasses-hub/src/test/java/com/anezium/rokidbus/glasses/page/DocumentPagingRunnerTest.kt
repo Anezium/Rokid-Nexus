@@ -42,7 +42,7 @@ import org.robolectric.annotation.LooperMode
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class DocumentPagingRunnerTest {
     private val context = RuntimeEnvironment.getApplication()
-    private val items = TypedPageItems(PageTemplateContract::isLocalPageId) { it.startsWith("relay:") }
+    private val items = TypedPageItems(PageTemplateContract::isLocalPageId, providerPageAllowed = { it.startsWith("relay:") })
     private val screens = SessionScreens(items, { if (it == "relay") "Relay" else null }, { "12:24" }, { it })
     private val view = SessionScreenView(context)
     private val requests = mutableListOf<PageSurfaceRequest>()

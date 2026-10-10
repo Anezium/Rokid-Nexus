@@ -13,19 +13,6 @@ import com.anezium.rokidbus.shared.PageTemplateContract
 import org.json.JSONArray
 import org.json.JSONObject
 
-/**
- * The one readable notice the hub retains (D1), as the notice band received it: its text is
- * already what the owner's redaction and hide policy let through.
- */
-internal data class NoticeSnapshot(
-    val ownerPluginId: String,
-    val sourceLabel: String,
-    val title: String?,
-    val body: String?,
-    val lines: List<String>,
-    val atWallMs: Long,
-)
-
 internal enum class AppKind {
     /** A plugin that provides pages over a negotiated pair: its row opens `<id>:main`. */
     PAGES,
@@ -46,11 +33,15 @@ internal data class AppEntry(val key: String, val label: String, val kind: AppKi
  * the same runner and correlation as provider pages, never over the bus, and need no phone.
  */
 internal class LocalPages(
-    private val notice: () -> NoticeSnapshot?,
+    /** The notification history, its entries as the band showed them. */
+    private val history: () -> NotificationHistory,
     private val activities: () -> List<ActivityStop>,
     private val applications: () -> List<AppEntry>,
     private val providerPagesReady: (String) -> Boolean,
     private val formatTime: (Long) -> String,
+    private val wallClock: () -> Long = { 0L },
+    /** The phone is away: history entries stay readable and lead nowhere until it is back. */
+    private val linkLost: () -> Boolean = { false },
 ) {
     private var revision = 0L
 
@@ -64,7 +55,7 @@ internal class LocalPages(
         val pageId = request.correlation.pageId
         val page = when {
             pageId == RootStops.NOTIFICATIONS_PAGE_ID -> notifications()
-            pageId == RootStops.NOTICE_PAGE_ID -> currentNotice()
+            pageId == RootStops.NOTICE_PAGE_ID -> notice(NotificationHistory.entryOf(request.paramsJson))
             pageId == RootStops.ACTIVITIES_PAGE_ID -> activityList()
             pageId.startsWith(ACTIVITY_PAGE_PREFIX) -> activity(pageId.removePrefix(ACTIVITY_PAGE_PREFIX))
             pageId == RootStops.APPLICATIONS_PAGE_ID -> applicationList(request.paramsJson, request.reason)
@@ -76,50 +67,82 @@ internal class LocalPages(
 
     private class LocalPage(val title: String, val body: PageBody, val actions: List<Pair<String, String>> = emptyList())
 
+    /**
+     * Every history entry still displayed, newest first: its source and the text the band showed.
+     * Each row opens its entry through a hub action, which also marks it seen; the screens add the
+     * source's icon, the entry's state tag and its age.
+     */
     private fun notifications(): LocalPage {
-        val current = notice()
-        val rows = listOfNotNull(
-            current?.let {
-                PageRow(
-                    id = NOTICE_ROW,
-                    label = clip(it.sourceLabel, PageTemplateContract.MAX_LABEL_CHARS),
-                    sub = clip(listOfNotNull(formatTime(it.atWallMs), preview(it)).joinToString(" · "), PageTemplateContract.MAX_DETAIL_CHARS),
-                    target = PageTarget.Page(RootStops.NOTICE_PAGE_ID),
-                )
-            },
-        )
-        return LocalPage(TITLE_NOTIFICATIONS, PageBody.SelectableList(rows, emptyText = "No notifications"))
+        val actions = mutableListOf<Pair<String, String>>()
+        val rows = history().visible(wallClock()).take(PageTemplateContract.MAX_ITEMS).mapNotNull { entry ->
+            val actionId = (TypedPageItems.NOTICE_PREFIX + entry.id).takeIf(PageSurfaceContract::isValidId) ?: return@mapNotNull null
+            val label = clip(entry.notice.sourceLabel.ifBlank { TITLE_NOTIFICATION }, PageTemplateContract.MAX_LABEL_CHARS)
+            actions += actionId to label
+            PageRow(
+                id = rowId(entry.id),
+                label = label,
+                sub = entry.notice.text.ifBlank { null }?.let { clip(it, PageTemplateContract.MAX_DETAIL_CHARS) },
+                target = PageTarget.Action(actionId),
+            )
+        }
+        return LocalPage(TITLE_NOTIFICATIONS, PageBody.SelectableList(rows, emptyText = "No notifications"), actions)
     }
 
-    private fun currentNotice(): LocalPage {
-        val current = notice() ?: return LocalPage(
+    /**
+     * One history entry (the newest when none is named) as the band showed it. A conversation
+     * leads to its exact thread and any other destination to its page; a legacy Relay notice, which
+     * names no thread, keeps Relay's own list. While the phone is away it leads nowhere.
+     */
+    private fun notice(entryId: String?): LocalPage {
+        val all = history()
+        // A named entry that is gone (purged) is never replaced by another one.
+        val entry = (if (entryId != null) all.entry(entryId) else all.visible(wallClock()).firstOrNull()) ?: return LocalPage(
             TITLE_NOTIFICATION,
             PageBody.Document(listOf(PageSegment("empty", PageSegmentKind.ASIDE, "No notification to show."))),
         )
+        val current = entry.notice
+        val source = current.sourceLabel.ifBlank { TITLE_NOTIFICATION }
         val segments = buildList {
-            add(PageSegment("source", PageSegmentKind.HEADER, clip("${current.sourceLabel} · ${formatTime(current.atWallMs)}", PageTemplateContract.MAX_TEXT_CHARS)))
+            add(PageSegment("source", PageSegmentKind.HEADER, clip("$source · ${formatTime(current.atWallMs)}", PageTemplateContract.MAX_TEXT_CHARS)))
             current.title?.takeIf(String::isNotBlank)?.let { add(PageSegment("title", PageSegmentKind.PROSE, clip(it, PageTemplateContract.MAX_TEXT_CHARS))) }
             val text = current.body?.takeIf(String::isNotBlank) ?: current.lines.joinToString("\n").takeIf(String::isNotBlank)
             text?.let { add(PageSegment("body", PageSegmentKind.PROSE, clip(it, PageTemplateContract.MAX_TEXT_CHARS))) }
         }
-        // D2: the notice wire names no thread, so Relay's own list is offered, never a guess.
-        val rows = listOfNotNull(
-            PageRow(RELAY_THREADS_ROW, "Read Relay threads", target = PageTarget.Page(PageTemplateContract.mainPageId(RELAY_PLUGIN_ID)))
-                .takeIf { current.ownerPluginId == RELAY_PLUGIN_ID && providerPagesReady(RELAY_PLUGIN_ID) },
-        )
-        return LocalPage(clip(current.sourceLabel, PageSurfaceContract.MAX_TITLE_CHARS), PageBody.Document(segments, rows))
+        val owner = current.ownerPluginId
+        val destination = current.destination
+        val reachable = !linkLost() && owner.isNotBlank() && providerPagesReady(owner)
+        val row = when {
+            !reachable -> null
+            destination != null && current.conversation ->
+                PageRow(CONVERSATION_ROW, READ_CONVERSATION, target = PageTarget.Page(destination.pageId, destination.paramsJson))
+            destination != null ->
+                PageRow(DESTINATION_ROW, "Open in $source", target = PageTarget.Page(destination.pageId, destination.paramsJson))
+            // D2: a legacy notice names no thread, so Relay's own list is offered, never a guess.
+            owner == RELAY_PLUGIN_ID ->
+                PageRow(RELAY_THREADS_ROW, "Read Relay threads", target = PageTarget.Page(PageTemplateContract.mainPageId(RELAY_PLUGIN_ID)))
+            else -> null
+        }
+        return LocalPage(clip(source, PageSurfaceContract.MAX_TITLE_CHARS), PageBody.Document(segments, listOfNotNull(row)))
     }
 
+    /**
+     * Every collection entry, live and offline, in the root's order. A row does what its card
+     * does: it stands for its owner's entry through a hub action, never for a guessed page.
+     */
     private fun activityList(): LocalPage {
-        val rows = activities().take(PageTemplateContract.MAX_ITEMS).map { activity ->
+        val actions = mutableListOf<Pair<String, String>>()
+        val rows = activities().sortedWith(RootStops.ORDER).take(PageTemplateContract.MAX_ITEMS).map { activity ->
+            val label = clip(activity.ownerLabel ?: activity.ownerPluginId ?: activity.id, PageTemplateContract.MAX_LABEL_CHARS)
+            val actionId = activity.ownerPluginId?.let { TypedPageItems.ACTIVITY_PREFIX + it }?.takeIf(PageSurfaceContract::isValidId)
+            actionId?.let { actions += it to label }
             PageRow(
                 id = rowId(activity.id),
-                label = clip(activity.ownerLabel ?: activity.ownerPluginId ?: activity.id, PageTemplateContract.MAX_LABEL_CHARS),
+                label = label,
                 sub = clip(listOfNotNull(activity.text, activity.detail).joinToString(" · "), PageTemplateContract.MAX_DETAIL_CHARS),
-                target = PageTarget.Page(activity.pageId),
+                target = actionId?.let { PageTarget.Action(it) } ?: PageTarget.Page(activity.pageId),
             )
         }
-        return LocalPage(TITLE_ACTIVITIES, PageBody.SelectableList(rows, emptyText = "No activity"))
+        return LocalPage(TITLE_ACTIVITIES, PageBody.SelectableList(rows, emptyText = "No activity"), actions)
     }
 
     /** A hub summary of an activity whose owner provides no page; never an automatic launch. */
@@ -218,9 +241,6 @@ internal class LocalPages(
             )
             .put("live", live)
 
-    private fun preview(notice: NoticeSnapshot): String? =
-        listOfNotNull(notice.title, notice.body, notice.lines.firstOrNull()).firstOrNull { it.isNotBlank() }
-
     /** Row ids follow page-id safety; a key that does not is replaced by a stable digest of it. */
     private fun rowId(key: String): String =
         key.takeIf(PageSurfaceContract::isValidId) ?: "k" + Integer.toHexString(key.hashCode()) + "-" + key.length
@@ -237,7 +257,9 @@ internal class LocalPages(
         const val TITLE_APPLICATIONS = "Applications"
         const val OPEN_FULL_APP = "Open the full app"
         const val EXCLUSIVE_SURFACE = "exclusive surface"
-        private const val NOTICE_ROW = "notice"
+        const val READ_CONVERSATION = "Read this conversation"
+        private const val CONVERSATION_ROW = "conversation"
+        private const val DESTINATION_ROW = "destination"
         private const val RELAY_THREADS_ROW = "relay-threads"
         private const val OPEN_APP_ROW = "open-app"
         private const val MORE_ROW = "more"
