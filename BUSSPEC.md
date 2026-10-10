@@ -1526,18 +1526,21 @@ to a pulse or hidden by the camera. Non-primary activities remain chips.
 
 ### Actions and input arbitration
 
-With no actions, center tap opens the owner through the standard
-`/system/plugin/open` route, just like a launcher tile. With one to three
-actions, forward/backward selects among the platform-rendered glyphs and center
-tap emits `/activity/action`. Actions are one-shot commands only: there is no
-text entry, scrolling, plugin layout, or fourth action. Anything more involved
-opens a surface.
+Since glasses hub 1.7.0 activities are passive: every key goes through one
+input arbiter, and an activity never claims one, on either launcher backend.
+Up to three platform-rendered action glyphs are still drawn, but nothing
+selects them and the glasses never emit `/activity/action`, so a center tap
+over an island reaches whatever is underneath, a native app included. The
+route stays valid on the phone for older glasses hubs. Actions are one-shot
+commands only: there is no text entry, scrolling, plugin layout, or fourth
+action.
 
-An activity may claim those keys only on the idle layer: there must be no active
-surface, no visible notice, no visible launcher, and no camera overlay. Under
-any of those higher-priority contexts the activity remains passive. Only the
-primary activity can claim input. BACK is never claimed or forwarded by an
-activity, and activity windows never take focus.
+Older glasses hubs let the primary activity claim keys on the idle layer only
+(no active surface, visible notice, visible launcher, or camera overlay): with
+no actions, center tap opened the owner through `/system/plugin/open`; with
+actions, forward/backward selected one and center tap emitted
+`/activity/action`. BACK is never claimed or forwarded by an activity, and
+activity windows never take focus.
 
 ### Lifecycle, reconnect, and errors
 
@@ -2629,6 +2632,9 @@ characters; packages are validated before launch. If a full result does not fit
 the current transport, the glasses send the largest valid prefix that does.
 This protocol lists and opens apps that are already installed. It has no APK
 download, transfer, install, uninstall, or privilege-elevation operation.
+Launching one of the setup packages below (MicroG, YouTube, Reddit) also turns
+the glasses' Wi-Fi on when it is off and hands the radio to the wearer, so
+Nexus does not switch it off again; other apps launch without touching Wi-Fi.
 
 YouTube setup also uses these same trusted routes for `youtube_setup_request`
 and `youtube_setup_result` (version 1, matching `requestId`). The request has no

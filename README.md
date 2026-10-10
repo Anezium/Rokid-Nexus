@@ -107,13 +107,21 @@ The glasses launcher lists native apps alongside phone plugins. See
 
 <p align="center"><i>The phone hub: your plugins, glasses-app status, and one-tap updates — and the Store they install from.</i></p>
 
+<p align="center">
+  <img src="docs/assets/shot-patcher.png" width="400" alt="Patcher on the phone, offering the YouTube setup and the Reddit setup marked Preview" />
+</p>
+
+<p align="center"><i>Patcher — YouTube and Reddit are patched on the phone, then checked and installed on the glasses by Nexus.</i></p>
+
 ### Glasses launcher
 
 <p align="center">
   <img src="docs/assets/shot-glasses-launcher.png" width="270" alt="Nexus launcher on the glasses HUD, listing installed plugins" />
+  &nbsp;
+  <img src="docs/assets/shot-glasses-native-apps.png" width="270" alt="The same launcher further down, listing the Android apps installed on the glasses with their own icons, Reddit selected" />
 </p>
 
-<p align="center"><i>Triple-tap the touchpad from anywhere to bring this up — the only gesture Nexus claims. Pick a plugin, hit back to return to whatever was underneath.</i></p>
+<p align="center"><i>Triple-tap the touchpad from anywhere to bring this up — the only gesture Nexus claims. Pick a plugin, hit back to return to whatever was underneath. &nbsp;·&nbsp; The apps installed on the glasses follow the plugins, with their own icons.</i></p>
 
 ### Plugins on the HUD
 
@@ -148,6 +156,14 @@ The glasses launcher lists native apps alongside phone plugins. See
 </p>
 
 <p align="center"><i>Transit — nearby stops and live departures. &nbsp;·&nbsp; Lyrics — time-synced to whatever is playing.</i></p>
+
+<p align="center">
+  <img src="docs/assets/shot-youtube.png" width="270" alt="YouTube on the glasses: one video per card, with next, open and sections hints for the touchpad" />
+  &nbsp;
+  <img src="docs/assets/shot-reddit.png" width="270" alt="Reddit Preview on the glasses: a green menu of Home, Popular, Latest, Communities, Search and Inbox" />
+</p>
+
+<p align="center"><i>YouTube, patched by Patcher for the touchpad and the ring. &nbsp;·&nbsp; Reddit, in Preview, with its own green HUD.</i></p>
 
 ## Setup — a phone is all you need
 

@@ -564,6 +564,7 @@ class MapsLikePluginService : NexusPluginService() {
         progress = NexusActivityProgress.Percent(percent),
         eta = "12:41",
         detail = listOf("then right on Av. de l'Opera"),
+        // Drawn but not selectable on glasses hubs 1.7.0 and later.
         actions = listOf(
             NexusActivityAction(id = "mute", glyph = "pause", label = "Mute"),
         ),
@@ -654,12 +655,15 @@ deterministic fallback when no non-primary candidate exists. Only the primary
 activity can show the expanded panel
 or claim its action row.
 
-With no actions, a center tap on the idle layer opens the plugin through its
-normal `onNexusOpen` path. With one to three actions, forward/backward selects
-one and center tap invokes `onNexusActivityAction(id)`. Activity input is inert
-while a surface, notice, launcher, or camera overlay owns the context; BACK is
-never claimed. `onNexusActivityClosed(reason)` reports `owner`, `replaced`,
-`disconnect`, or `max-duration`.
+Since glasses hub 1.7.0 an activity never takes a key: a center tap no longer
+opens the plugin, and up to three actions are still drawn but cannot be
+selected, so `onNexusActivityAction(id)` is not called. A key pressed over an
+activity, even inside a native app, goes to whatever is underneath instead.
+Put anything the wearer must act on in a notice or a surface; the wearer opens
+your plugin from the launcher. Older glasses hubs still let the idle-layer
+primary activity take forward/backward and center tap. BACK is never claimed.
+`onNexusActivityClosed(reason)` reports `owner`, `replaced`, `disconnect`, or
+`max-duration`.
 
 The phone hub owns canonical activity state and resends it after a glasses
 reconnect, after first clearing possible ghosts. You should still call
