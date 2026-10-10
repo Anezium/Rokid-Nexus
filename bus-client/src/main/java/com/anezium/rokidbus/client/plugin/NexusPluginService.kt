@@ -17,6 +17,7 @@ import com.anezium.rokidbus.client.PluginRegistrationResult
 import com.anezium.rokidbus.client.R
 import com.anezium.rokidbus.shared.BusConstants
 import com.anezium.rokidbus.shared.PageSurfaceContract
+import com.anezium.rokidbus.shared.QuickActionPolicyContract
 import com.anezium.rokidbus.shared.plugin.NexusInputEvent
 import com.anezium.rokidbus.shared.plugin.PluginDescriptor
 import com.anezium.rokidbus.shared.plugin.PluginDescriptorParseResult
@@ -157,6 +158,8 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
     final override fun onNoticeAction(id: String) = onNexusNoticeAction(id)
     final override fun onNoticeClosed(reason: NexusNoticeCloseReason) = onNexusNoticeClosed(reason)
     final override fun onActivityAction(id: String) = onNexusActivityAction(id)
+    final override fun onActivityCommand(command: NexusActivityCommand): NexusActivityCommandResult? =
+        onNexusActivityCommand(command)
     final override fun onActivityClosed(reason: String) = onNexusActivityClosed(reason)
     final override fun onSurfaceTextCommitted(surfaceId: String, text: String, cancelled: Boolean) =
         onNexusSurfaceTextCommitted(surfaceId, text, cancelled)
@@ -231,6 +234,15 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
 
     /** The wearer fired one of this plugin's current activity actions. */
     protected open fun onNexusActivityAction(id: String) = Unit
+
+    /**
+     * A launcher-bundle activity command; see [NexusPluginCallbacks.onActivityCommand]. The default
+     * forwards to [onNexusActivityAction] and returns null, which the glasses show as unconfirmed.
+     */
+    protected open fun onNexusActivityCommand(command: NexusActivityCommand): NexusActivityCommandResult? {
+        onNexusActivityAction(command.actionId)
+        return null
+    }
 
     /** This plugin's activity ended, once, whatever ended it. */
     protected open fun onNexusActivityClosed(reason: String) = Unit
@@ -383,6 +395,7 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
             BusConstants.META_PLUGIN_SETTINGS_ACTIVITY,
             BusConstants.META_PLUGIN_LAUNCHABLE,
             PageSurfaceContract.META_PLUGIN_PAGES,
+            QuickActionPolicyContract.META_PLUGIN_QUICK_ACTIONS,
         )
     }
 }

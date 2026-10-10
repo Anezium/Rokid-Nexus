@@ -66,6 +66,18 @@ interface NexusPluginCallbacks {
     fun onActivityAction(id: String) = Unit
 
     /**
+     * The wearer ran one of this plugin's activity commands on the revision they saw, between
+     * hubs that negotiated the launcher bundle. The return value is the outcome the glasses show;
+     * null sends none, and the glasses then say the command is unconfirmed rather than invent a
+     * success. The default forwards to [onActivityAction] and returns null, so a plugin written
+     * before commands existed keeps working and never reports anything it did not check.
+     */
+    fun onActivityCommand(command: NexusActivityCommand): NexusActivityCommandResult? {
+        onActivityAction(command.actionId)
+        return null
+    }
+
+    /**
      * This plugin's activity ended. Reasons are strings so a newer hub can add
      * one without an older SDK silently dropping the callback.
      */
@@ -105,7 +117,11 @@ interface NexusPluginCallbacks {
      */
     fun onPageRequest(request: NexusPageRequest): NexusPage = NexusPage.Unavailable
 
-    /** The wearer confirmed one of a page's actions; what this returns is the result. */
+    /**
+     * The wearer invoked one of a page's actions; what this returns is the result. [NexusPageAction.mode]
+     * says how: confirmed, quick (a typed action the user approved for this plugin) or compose
+     * (the hub composer's Send, with its text).
+     */
     fun onPageAction(action: NexusPageAction): NexusPageResult = NexusPageResult.rejected()
 
     /** A page was covered or uncovered, or its visible lease renewed. */
