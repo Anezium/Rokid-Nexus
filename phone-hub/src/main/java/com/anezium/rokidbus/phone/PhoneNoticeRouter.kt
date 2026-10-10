@@ -210,6 +210,17 @@ internal class PhoneNoticeRouter(
     }
 
     /**
+     * After a grant or package change (revoke, disable, uninstall, a new signer or id), purges
+     * every owner the glasses may hold history for that is no longer an approved surfaces owner,
+     * and [changedOwner] on the same rule even if this process never saw it notify.
+     */
+    fun purgeOwnersWithoutAccess(isSurfaceOwner: (String) -> Boolean, reason: String, changedOwner: String? = null) {
+        (historyOwnerIds() + listOfNotNull(changedOwner))
+            .filterNot(isSurfaceOwner)
+            .forEach { purgeOwner(it, reason) }
+    }
+
+    /**
      * The glasses announced. With the bundle they get what waited for them, purges first so a
      * withdrawal never names an owner the glasses are about to forget; without it nothing is
      * owed, since glasses without the bundle keep no history.

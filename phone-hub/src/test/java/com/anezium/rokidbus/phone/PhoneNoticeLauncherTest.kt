@@ -215,6 +215,33 @@ class PhoneNoticeLauncherTest {
     }
 
     @Test
+    fun `a grant or package change purges exactly the owners that lost surfaces`() {
+        router.handleLocal(conversationShow("relay"), hudSender("relay"))
+        router.handleLocal(conversationShow("assistant"), hudSender("assistant"))
+        sink.remote.clear()
+        val surfaceOwners = mutableSetOf("relay", "assistant")
+
+        // An approval or a capability added elsewhere: nobody lost access, nothing is purged.
+        router.purgeOwnersWithoutAccess({ it in surfaceOwners }, "authorizationChanged", "relay")
+        assertTrue(sink.remote.isEmpty())
+
+        // Revoke, disable, uninstall or a new signer: relay is no longer an approved surfaces owner.
+        surfaceOwners -= "relay"
+        router.purgeOwnersWithoutAccess({ it in surfaceOwners }, "ownerUnavailable")
+
+        assertEquals(listOf("relay"), sink.remote.map { NoticeSurfaceContract.parsePurge(it.payload) })
+        assertEquals(setOf("assistant"), router.historyOwnerIds())
+    }
+
+    @Test
+    fun `the changed owner is purged even when this hub never saw it notify`() {
+        router.purgeOwnersWithoutAccess({ false }, "authorizationChanged", "media")
+
+        assertEquals(BusPaths.CORE_NOTICE_PURGE, sink.remote.single().path)
+        assertEquals("media", NoticeSurfaceContract.parsePurge(sink.remote.single().payload))
+    }
+
+    @Test
     fun `a show to glasses without the bundle leaves no history owner to purge`() {
         launcherVersion = 0
         router.handleLocal(conversationShow("relay"), hudSender("relay"))
@@ -240,7 +267,7 @@ class PhoneNoticeLauncherTest {
             .put("kind", NoticeSurfaceContract.KIND)
             .put("title", "Marie")
             .put("body", "On my way")
-            .put("destination", thread())
+            .put("destination", JSONObject().put("pageId", "$pluginId:thread:9f2c"))
             .put("eventKey", "9f2c")
             .put("conversation", true),
     )

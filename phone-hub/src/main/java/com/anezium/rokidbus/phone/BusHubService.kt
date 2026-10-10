@@ -2663,7 +2663,7 @@ class BusHubService : Service() {
     private fun authorizationChanged(key: PluginGrantKey) {
         revokePrincipal(key)
         // revokePrincipal cleared the owner cache, so this reads the grant as it is now.
-        if (surfaceOwnerFor(key.pluginId) == null) noticeRouter.purgeOwner(key.pluginId, "authorizationChanged")
+        noticeRouter.purgeOwnersWithoutAccess({ surfaceOwnerFor(it) != null }, "authorizationChanged", key.pluginId)
         purgeActivityChoicesUnlessApproved(key)
         cameraConsumerReadiness.recompute()
         refreshMediaSyncConsent()
@@ -2727,9 +2727,7 @@ class BusHubService : Service() {
         }
         // Uninstall, a signer change (the new signer starts unapproved) and an id change all leave
         // the old owner without a surfaces grant; its glasses history goes with it.
-        noticeRouter.historyOwnerIds().forEach { owner ->
-            if (surfaceOwnerFor(owner) == null) noticeRouter.purgeOwner(owner, "ownerUnavailable")
-        }
+        noticeRouter.purgeOwnersWithoutAccess({ surfaceOwnerFor(it) != null }, "ownerUnavailable")
         val available = validPrincipals.any { principal ->
             principal.packageName == packageName &&
                 pluginGrantStore.stateFor(principal) is PluginGrantState.Approved
