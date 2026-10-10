@@ -20,9 +20,10 @@ internal class YoutubeSetupController(
     private val installReady: () -> Boolean,
     private val send: (BusEnvelope) -> String?,
     private val upload: (File, (Boolean) -> Unit) -> Boolean,
+    private val target: NativeSetupTarget = NativeSetupTarget.YOUTUBE,
     private val worker: ExecutorService = Executors.newSingleThreadExecutor(),
     private val source: (android.net.Uri?, () -> Boolean, (String) -> Unit) -> PreparedYoutubeApk =
-        YoutubeApkSource(context)::prepare,
+        YoutubeApkSource(context, target)::prepare,
 ) : AutoCloseable {
     private val main = Handler(Looper.getMainLooper())
     @Volatile private var generation = 0L
@@ -36,17 +37,17 @@ internal class YoutubeSetupController(
     private var state = YoutubeSetupState()
 
     fun start() {
-        worker.execute { YoutubeApkSource(context).clearAbandonedFiles() }
-        YoutubeSetupStateStore.update(state)
-        YoutubeSetupCommands.attach(::handle)
+        worker.execute { YoutubeApkSource(context, target).clearAbandonedFiles() }
+        target.publish(state)
+        target.attach(::handle)
     }
 
     fun handle(intent: Intent) {
         if (closed || state.busy) return
         when (intent.action) {
             REFRESH -> refresh()
-            PREPARE_MICROG -> prepare(null)
-            INSTALL_MICROG -> if (prepared?.archive?.packageName == YoutubeSetupContract.MICROG) install()
+            PREPARE_MICROG -> if (target == NativeSetupTarget.YOUTUBE) prepare(null)
+            INSTALL_MICROG -> if (target != NativeSetupTarget.YOUTUBE) return else if (prepared?.archive?.packageName == YoutubeSetupContract.MICROG) install()
                 else prepare(null, autoInstall = true)
             IMPORT_YOUTUBE -> intent.data?.takeIf { it.scheme == "content" }?.let { prepare(it) }
             PATCH_AND_INSTALL -> {
@@ -55,19 +56,19 @@ internal class YoutubeSetupController(
                 else prepare(uri, autoInstall = true)
             }
             INSTALL -> install()
-            OPEN_MICROG -> open(YoutubeSetupContract.MICROG)
+            OPEN_MICROG -> if (target == NativeSetupTarget.YOUTUBE) open(YoutubeSetupContract.MICROG)
             OPEN_YOUTUBE -> {
                 val app = state.inventory?.apps?.firstOrNull {
                     it.packageName != YoutubeSetupContract.MICROG && it.launchable
                 }
-                if (app != null) open(app.packageName) else fail("Refresh the glasses apps before opening YouTube.")
+                if (app != null) open(app.packageName) else fail("Refresh the glasses apps before opening ${target.label}.")
             }
         }
     }
 
     fun handleRemote(envelope: BusEnvelope): Boolean {
         if (envelope.path != NativeAppContract.RESULT_PATH || envelope.binary != null) return false
-        YoutubeSetupContract.parseResult(envelope.payload)?.let { result ->
+        target.parseResult(envelope.payload)?.let { result ->
             main.post {
                 if (closed || inventoryId != result.requestId) return@post
                 inventoryId = null
@@ -80,13 +81,14 @@ internal class YoutubeSetupController(
         }
         val result = NativeAppContract.parseLaunchResult(envelope.payload) ?: return false
         // The prefix separates this screen's replies from the general native-apps screen.
-        if (!result.requestId.startsWith("youtube-")) return false
+        if (!result.requestId.startsWith("${target.id}-")) return false
         main.post {
             if (closed || launchId != result.requestId) return@post
             launchId = null
             publish(state.copy(busy = false, message = if (result.success) {
                 if (result.packageName == YoutubeSetupContract.MICROG)
                     "MicroG is open on the glasses. Choose Add account there, then use Keyboard & remote below."
+                else if (target == NativeSetupTarget.REDDIT) "Reddit is open on the glasses. Sign in with Keyboard & remote, then review replies before sending."
                 else "YouTube is open on the glasses. Check your account and enable automatic skips in Morphe > SponsorBlock."
             } else "The app could not be opened. For MicroG, install the variant with a launcher icon."))
         }
@@ -129,11 +131,11 @@ internal class YoutubeSetupController(
 
     private fun requestInventory(callback: (YoutubeInventory) -> Unit) {
         if (!connected()) { fail("Connect the glasses and start Nexus on them first."); return }
-        val id = "youtube-${UUID.randomUUID()}"
+        val id = "${target.id}-${UUID.randomUUID()}"
         inventoryId = id
         inventoryCallback = callback
         publish(state.copy(busy = true, inventory = null, message = "Checking apps on the glasses…"))
-        val error = send(BusEnvelope(path = NativeAppContract.REQUEST_PATH, payload = YoutubeSetupContract.request(id)))
+        val error = send(BusEnvelope(path = NativeAppContract.REQUEST_PATH, payload = target.request(id)))
         if (error != null) {
             inventoryId = null
             inventoryCallback = null
@@ -174,7 +176,7 @@ internal class YoutubeSetupController(
                         latestMicroGVersionCode = if (apk.archive.packageName == YoutubeSetupContract.MICROG)
                             apk.archive.versionCode else state.latestMicroGVersionCode,
                         message = if (microGCurrent) "MicroG is up to date" else listOfNotNull("${apk.label} is ready. Install it on the glasses below.",
-                            YoutubeApkPolicy.versionNotice(apk.archive)).joinToString(" ")))
+                            if (target == NativeSetupTarget.YOUTUBE) YoutubeApkPolicy.versionNotice(apk.archive) else null).joinToString(" ")))
                     if (autoInstall) install()
                 }, onFailure = {
                     fail(if (it is IllegalArgumentException || it is IllegalStateException) it.message.orEmpty()
@@ -188,7 +190,7 @@ internal class YoutubeSetupController(
         val apk = prepared ?: return
         if (!installReady()) { fail("Connect the glasses through Hi Rokid and turn on phone Wi-Fi first."); return }
         requestInventory { inventory ->
-            val error = YoutubeApkPolicy.updateError(apk.archive, apk.minSdk, inventory)
+            val error = YoutubeApkPolicy.updateError(apk.archive, apk.minSdk, inventory, target.label)
             if (error != null) { fail(error); return@requestInventory }
             val operation = ++generation
             publish(state.copy(busy = true, message = "Verifying ${apk.label} before transfer…"))
@@ -244,7 +246,7 @@ internal class YoutubeSetupController(
 
     private fun open(packageName: String) {
         if (!connected()) { fail("Connect the glasses first."); return }
-        val id = "youtube-${UUID.randomUUID()}"
+        val id = "${target.id}-${UUID.randomUUID()}"
         launchId = id
         publish(state.copy(busy = true, message = "Opening on the glasses…"))
         if (send(BusEnvelope(path = NativeAppContract.REQUEST_PATH,
@@ -260,12 +262,12 @@ internal class YoutubeSetupController(
     private fun fail(message: String) = publish(state.copy(busy = false, message = message))
     private fun publish(next: YoutubeSetupState) {
         state = next
-        YoutubeSetupStateStore.update(next)
+        target.publish(next)
     }
 
     override fun close() {
         closed = true
-        YoutubeSetupCommands.detach()
+        target.detach()
         generation++
         main.removeCallbacksAndMessages(null)
         worker.shutdownNow()
@@ -274,7 +276,7 @@ internal class YoutubeSetupController(
         activeUploadGeneration = null
         prepared?.file?.takeUnless(uploadingFiles::contains)?.delete()
         prepared = null
-        YoutubeSetupStateStore.update(YoutubeSetupState(message = "Nexus stopped. Reopen setup to continue."))
+        target.publish(YoutubeSetupState(message = "Nexus stopped. Reopen setup to continue."))
     }
 
     companion object {

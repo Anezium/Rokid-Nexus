@@ -14,6 +14,7 @@ import com.anezium.rokidbus.client.plugin.NexusInkProblem
 import com.anezium.rokidbus.client.plugin.NexusInkSurfaceSession
 import com.anezium.rokidbus.client.plugin.NexusNotice
 import com.anezium.rokidbus.client.plugin.NexusNoticeCloseReason
+import com.anezium.rokidbus.client.plugin.NexusNoticeAction
 import com.anezium.rokidbus.client.plugin.NexusNoticeUpdate
 import com.anezium.rokidbus.client.plugin.NexusPluginService
 import com.anezium.rokidbus.client.plugin.NexusSdkResult
@@ -37,6 +38,9 @@ import com.anezium.rokidbus.shared.NoticeSurfaceContract
 import com.anezium.rokidbus.shared.plugin.NexusInputEvent
 import com.anezium.rokidbus.shared.plugin.PluginCapability
 import com.anezium.rokidbus.shared.plugin.PluginOpenTypes
+import com.anezium.rokidbus.shared.skills.SkillCatalogEntry
+import com.anezium.rokidbus.shared.skills.SkillInvokeRequest
+import com.anezium.rokidbus.shared.skills.SkillResultEnvelope
 import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -61,6 +65,9 @@ class AssistantPluginService : NexusPluginService() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val authStore by lazy { CodexAuthStore(applicationContext) }
     private val accountContextSync by lazy { AccountContextSync(applicationContext) }
+    private val workspaceOwner = Any()
+    private var workspaceController: WorkspaceController? = null
+    private var workspaceOpenJob: Job? = null
     private val threadStore by lazy { AssistantThreadStore(applicationContext) }
     private val noteStore by lazy { AssistantNoteStore(applicationContext) }
     private val reminderStore by lazy { AssistantReminderStore(applicationContext) }
@@ -79,12 +86,43 @@ class AssistantPluginService : NexusPluginService() {
                 .use { it.readText() }
         }
     }
+    private val skillMemory = AssistantSkillMemory()
+    private val skillGateway by lazy {
+        AssistantSkillGateway(
+            object : AssistantSkillTransport {
+                override val supportsSkills: Boolean
+                    get() = nexusClient?.let { client ->
+                        client.supportsSkills && client.hasCapability(PluginCapability.SKILLS_CLIENT)
+                    } == true
+
+                override fun requestCatalog(): Boolean =
+                    nexusClient?.requestSkillCatalog() == NexusSdkResult.SENT
+
+                override fun invoke(request: SkillInvokeRequest): Boolean =
+                    nexusClient?.invokeSkill(request) == NexusSdkResult.SENT
+
+                override fun cancel(session: String, requestKey: String): Boolean =
+                    nexusClient?.cancelSkill(session, requestKey) == NexusSdkResult.SENT
+
+                override fun closeSession(session: String): Boolean =
+                    nexusClient?.closeSkillSession(session) == NexusSdkResult.SENT
+            },
+        )
+    }
+
+    // Plugin operations exist only for the turn that looked them up.
+    @Volatile private var turnSkillTools: List<AssistantToolDefinition> = emptyList()
+    private var skillSession: String? = null
+    private val fallbackSkillSession by lazy { skillSessionFor(null) }
+
     private val assistantToolRegistry by lazy {
         AssistantToolRegistry(
             definitions = listOf(
                 TakePhotoTool(createTakePhotoToolCapabilities()),
                 RenderTemplateTool(inkPageToolRuntime, inkTemplateLoader),
                 RenderInkPageTool(inkPageToolRuntime),
+                SearchWorkspaceTool { isNexusSessionOpen },
+                ViewWorkspacePageTool { isNexusSessionOpen },
             ) +
                 assistantProductivityTools(
                     noteStore = noteStore,
@@ -92,7 +130,12 @@ class AssistantPluginService : NexusPluginService() {
                     reminderScheduler = reminderScheduler,
                 ) + assistantCalendarTools(calendarGateway),
             sessionContext = ::assistantToolSessionContext,
-            progressReporter = { label -> uiController.showTransient(label) },
+            progressReporter = { label ->
+                // Tool labels name the step only, never its arguments or result.
+                Log.i(TAG, "tool step: $label")
+                uiController.showTransient(label)
+            },
+            dynamicDefinitions = { turnSkillTools },
         )
     }
     private val openAiCompatClients by lazy {
@@ -273,9 +316,12 @@ class AssistantPluginService : NexusPluginService() {
         )
         scheduleAccountContextSyncIfStale()
         if (anchored) startLauncherCapture()
+        scheduleWorkspaceCheck()
     }
 
     override fun onNexusClose() {
+        workspaceOpenJob?.cancel()
+        workspaceController?.detach(workspaceOwner)
         optionsMenu.close()
         uiController.onClose()
         captureTriggerGate.resetSession()
@@ -418,11 +464,37 @@ class AssistantPluginService : NexusPluginService() {
      * before the tap landed has already gone to the model and wins.
      */
     override fun onNexusNoticeAction(id: String) {
+        if (id.startsWith(AssistantSkillMemory.CHOICE_ACTION_PREFIX)) {
+            onChoiceSelected(id)
+            return
+        }
         if (id != AssistantUiController.ACTION_TYPE) return
         if (!uiController.offersTyping || !captureActive) return
         // The generation bump inside drops a final transcript still in flight.
         resetCapture()
         uiController.beginTyping()
+    }
+
+    /**
+     * A choice chip on the answer band. The selection travels as the chip's own action, bound to
+     * the choices it was offered for, so no text, the model's included, can stand in for it; a
+     * stale or replayed pick is dropped. It starts a new bounded turn like a spoken answer.
+     */
+    private fun onChoiceSelected(id: String) {
+        val parts = id.removePrefix(AssistantSkillMemory.CHOICE_ACTION_PREFIX).split(':')
+        val token = parts.getOrNull(0) ?: return
+        val index = parts.getOrNull(1)?.toIntOrNull() ?: return
+        val label = skillMemory.select(token, index) ?: return
+        if (pipelineJob?.isActive == true) return
+        launchAssistantPipeline(label)
+    }
+
+    override fun onNexusSkillCatalog(entries: List<SkillCatalogEntry>, errorCode: String?) {
+        skillGateway.onCatalog(entries, errorCode)
+    }
+
+    override fun onNexusSkillResult(result: SkillResultEnvelope) {
+        skillGateway.onResult(result)
     }
 
     /** Lands where a final transcript does: the typed question takes the same pipeline. */
@@ -510,6 +582,8 @@ class AssistantPluginService : NexusPluginService() {
     }
 
     override fun onDestroy() {
+        workspaceOpenJob?.cancel()
+        workspaceController?.detach(workspaceOwner)
         if (debugInstance === this) debugInstance = null
         uiController.onClose()
         resetCapture()
@@ -785,6 +859,18 @@ class AssistantPluginService : NexusPluginService() {
         }
     }
 
+    private fun scheduleWorkspaceCheck() {
+        workspaceOpenJob?.cancel()
+        workspaceOpenJob = serviceScope.launch {
+            val controller = WorkspaceRuntime.get(applicationContext)
+            workspaceController = controller
+            if (isNexusSessionOpen) {
+                controller.attach(workspaceOwner)
+                controller.refresh()
+            }
+        }
+    }
+
     private suspend fun streamAssistantAnswer(transcript: String) {
         val noticeBandMode = uiController.isNoticeBandMode
         val providerId = selectedProviderId()
@@ -792,6 +878,10 @@ class AssistantPluginService : NexusPluginService() {
         ensureProviderBackendDetected(providerId)
         val keepConversation = authStore.keepConversation()
         val keepPhotosInConversations = authStore.keepPhotosInConversations()
+        val personalContext = authStore.combinedAssistantContextForPrompt()
+        val workspaceContext = workspaceController?.contextForQuestion(transcript, personalContext)
+        val workspaceVersion = workspaceContext?.let { it.generation to it.revision }
+        val workspaceTurn = workspaceContext?.turn
         val conversationContext = withContext(Dispatchers.IO) {
             if (!keepPhotosInConversations && threadStore.hasStoredPhotos()) {
                 threadStore.deleteAllPhotos()
@@ -804,8 +894,22 @@ class AssistantPluginService : NexusPluginService() {
         // Hermes consumes structured calls server-side, so Nexus advertises its phone tools in text.
         val hermesTextToolBackend = providerId != ChatGptCodexProvider.ID &&
             authStore.providerBackend(providerId) == ProviderBackend.HERMES
+        val requestId = UUID.randomUUID().toString()
+        val session = conversationContext.threadId?.let(::skillSessionFor) ?: fallbackSkillSession
+        skillSession?.takeIf { it != session }?.let(skillGateway::closeSession)
+        skillSession = session
+        skillMemory.beginTurn(conversationContext.threadId)
+        // The text bridge cannot carry plugin operations through the shared validation and
+        // limits, so it is gated off rather than given a weaker path.
+        turnSkillTools = if (hermesTextToolBackend) {
+            emptyList()
+        } else {
+            skillGateway.catalog().map { entry ->
+                PluginSkillTool(entry, skillGateway, { session }, { requestId }, skillMemory)
+            }
+        }
         val availableToolDefinitions = assistantToolRegistry
-            .availableDefinitions(assistantProviderFeatures(providerId))
+            .availableDefinitions(assistantProviderFeatures(providerId), workspaceVersion, workspaceTurn)
         val promptToolDefinitions = if (hermesTextToolBackend) {
             availableToolDefinitions.filter { definition ->
                 definition.name in HERMES_TEXT_TOOL_NAMES
@@ -813,23 +917,38 @@ class AssistantPluginService : NexusPluginService() {
         } else {
             availableToolDefinitions
         }
-        val request = ChatRequest(
-            userText = transcript,
-            systemPrompt = NexusAgentPolicy.buildSystemPrompt(
+        fun prompt(includeWorkspace: Boolean): String {
+            val definitions = if (includeWorkspace) promptToolDefinitions
+            else promptToolDefinitions.filterNot { it.name in WORKSPACE_TOOL_NAMES }
+            return NexusAgentPolicy.buildSystemPrompt(
                 customPrompt = authStore.customSystemPrompt(),
                 noticeBand = noticeBandMode,
-                memory = authStore.combinedAssistantContextForPrompt(),
+                memory = personalContext,
+                workspace = if (includeWorkspace) workspaceContext?.excerpts.orEmpty() else "",
+                workspaceEnabled = if (includeWorkspace) workspaceContext?.enabled == true
+                    else workspaceController?.state?.value?.workspace?.settings?.enabled == true,
                 currentDateTime = ZonedDateTime.now(),
-                availableToolNames = promptToolDefinitions.map(AssistantToolDefinition::name),
-                textToolDefinitions = promptToolDefinitions,
+                availableToolNames = definitions.map(AssistantToolDefinition::name),
+                textToolDefinitions = definitions,
                 allowTextToolFallback = hermesTextToolBackend,
-            ),
+                pluginContext = skillMemory.promptContext(),
+            )
+        }
+        val request = ChatRequest(
+            userText = transcript,
+            systemPrompt = prompt(includeWorkspace = true),
+            workspaceVersion = workspaceVersion.takeIf {
+                workspaceContext?.excerpts?.isNotEmpty() == true ||
+                    promptToolDefinitions.any { it.name in WORKSPACE_TOOL_NAMES }
+            },
+            workspaceTurn = workspaceTurn,
             history = conversationContext.history,
             model = when (providerId) {
                 ChatGptCodexProvider.ID -> authStore.chatGptModel()
                 else -> authStore.providerModel(providerId)
             },
             conversationId = conversationContext.threadId,
+            requestId = requestId,
         )
         currentRequestId = request.requestId
         currentAssistantGeneration = captureGeneration
@@ -840,8 +959,17 @@ class AssistantPluginService : NexusPluginService() {
         var completed = false
         var failed = false
         var finalAnswer: String? = null
+        var withheld = false
+        // Withdrawn Workspace access suppresses what this answer would publish only when the turn
+        // already supplied Workspace text or pixels; an unrelated answer still publishes.
+        fun workspaceEffectsAllowed(): Boolean = (workspaceTurn?.finalEffectsAllowed() != false).also {
+            if (!it) withheld = true
+        }
         try {
-            providerRouter.providerFor(providerId).streamEvents(request).collect { event ->
+            val dispatchRequest = request.forCurrentWorkspace(workspaceContext?.carriesEvidence == true) {
+                prompt(includeWorkspace = false)
+            }
+            providerRouter.providerFor(providerId).streamEvents(dispatchRequest).collect { event ->
                 when (event) {
                     is AiProviderEvent.Started -> Unit
                     is AiProviderEvent.Progress -> uiController.showTransient(event.message)
@@ -852,7 +980,9 @@ class AssistantPluginService : NexusPluginService() {
                     is AiProviderEvent.TextDelta -> {
                         answer.append(event.delta)
                         val now = SystemClock.elapsedRealtime()
-                        if (now - lastHudUpdateMs >= HUD_UPDATE_INTERVAL_MS) {
+                        if (now - lastHudUpdateMs >= HUD_UPDATE_INTERVAL_MS &&
+                            workspaceEffectsAllowed()
+                        ) {
                             showAnswer(answer.toString())
                             lastHudUpdateMs = now
                         }
@@ -862,14 +992,19 @@ class AssistantPluginService : NexusPluginService() {
                         val finalText = event.message.content.ifBlank { answer.toString() }
                         if (finalText.isBlank()) {
                             uiController.showError("No answer received. Try again.")
+                        } else if (!workspaceEffectsAllowed()) {
+                            failed = true
                         } else {
-                            finalAnswer = finalText
+                            finalAnswer = stripCitationMarkup(finalText)
                             showAnswer(finalText)
                         }
                     }
                     is AiProviderEvent.Failed -> {
                         completed = true
                         failed = true
+                        // The status alone: provider messages can quote the request.
+                        val status = HTTP_STATUS.find(event.message)?.groupValues?.get(1) ?: "none"
+                        Log.w(TAG, "Assistant answer failed: provider=$providerId status=$status")
                         showError(event.message)
                     }
                 }
@@ -877,15 +1012,35 @@ class AssistantPluginService : NexusPluginService() {
             if (!completed) {
                 if (answer.isBlank()) {
                     uiController.showError("No answer received. Try again.")
+                } else if (!workspaceEffectsAllowed()) {
+                    failed = true
                 } else {
-                    finalAnswer = answer.toString()
+                    finalAnswer = stripCitationMarkup(answer.toString())
                     showAnswer(finalAnswer.orEmpty())
                 }
             }
+            if (!failed && !workspaceEffectsAllowed()) failed = true
+            if (withheld) {
+                Log.w(TAG, "Assistant answer withheld: reason=workspace_source_changed")
+                showError(WORKSPACE_CHANGED_MESSAGE)
+            }
             if (!failed) {
                 currentCoroutineContext().ensureActive()
-                answerSpeaker.speakCompletedAnswer(stripHudMarkdown(finalAnswer.orEmpty()))
-                try {
+                val choices = skillMemory.hudChoices()
+                if (choices != null && !finalAnswer.isNullOrBlank()) {
+                    showAnswer(
+                        finalAnswer.orEmpty(),
+                        choices.labels.mapIndexed { index, label ->
+                            NexusNoticeAction(
+                                id = "${AssistantSkillMemory.CHOICE_ACTION_PREFIX}${choices.token}:$index",
+                                glyph = "send",
+                                label = label,
+                            )
+                        },
+                    )
+                }
+                if (workspaceEffectsAllowed()) answerSpeaker.speakCompletedAnswer(stripHudMarkdown(finalAnswer.orEmpty()))
+                if (workspaceEffectsAllowed()) try {
                     val keepPhotosAtCompletion = authStore.keepPhotosInConversations()
                     withContext(Dispatchers.IO) {
                         if (!keepPhotosAtCompletion && threadStore.hasStoredPhotos()) {
@@ -907,6 +1062,8 @@ class AssistantPluginService : NexusPluginService() {
                 }
             }
         } finally {
+            skillMemory.endTurn()
+            turnSkillTools = emptyList()
             if (currentRequestId == request.requestId) {
                 currentRequestId = null
                 currentAssistantGeneration = null
@@ -1166,12 +1323,13 @@ class AssistantPluginService : NexusPluginService() {
         }
     }
 
-    private fun showAnswer(text: String) {
-        val plain = stripHudMarkdown(text)
+    private fun showAnswer(text: String, choices: List<NexusNoticeAction> = emptyList()) {
+        val plain = stripHudMarkdown(stripCitationMarkup(text))
         if (inkAnswerOwnsPresentation(inkShownRequestId, currentRequestId)) return
         uiController.showAnswer(
             body = plain,
             legacyCardLines = wrapHudText(plain),
+            choices = choices,
         )
     }
 
@@ -1343,6 +1501,8 @@ class AssistantPluginService : NexusPluginService() {
         AssistantProviderFeatures(
             supportsTools = true,
             supportsVision = providerSupportsPhotos(providerId),
+            supportsWorkspaceSearch = providerId == ChatGptCodexProvider.ID ||
+                authStore.providerBackend(providerId) != ProviderBackend.HERMES,
         )
 
     private fun providerSupportsPhotos(providerId: String): Boolean =
@@ -1383,6 +1543,7 @@ class AssistantPluginService : NexusPluginService() {
         private const val MAX_HUD_LINE_CHARS = 42
         private const val MAX_CARD_LINE_CHARS = 240
         private const val MAX_ERROR_CHARS = 180
+        private val HTTP_STATUS = Regex("\\((\\d{3})\\)")
 
         @Volatile
         private var debugInstance: AssistantPluginService? = null
@@ -1491,6 +1652,26 @@ private fun normalizeTranscript(text: String): String =
  * being begged away in the prompt. Bullets keep their "- " and code fences their
  * content; only the decoration goes.
  */
+/**
+ * ChatGPT can cite with private-use tokens such as U+E200 cite U+E202 file U+E201 that render as boxes
+ * on the HUD and get spelled out by speech. Keep a cited file name, drop everything else, including a
+ * token still streaming.
+ */
+internal fun stripCitationMarkup(text: String): String {
+    if (text.none { it in '\uE200'..'\uE2FF' }) return text
+    return text.replace(CITATION_TOKEN) { match ->
+        val parts = match.groupValues[1].split('\uE202')
+        val source = parts.last().trim()
+        if (parts.size > 1 && parts.first() == "cite" && '.' in source && !source.startsWith("turn")) " ($source)" else ""
+    }
+        .replace(PRIVATE_USE, "")
+        .replace(Regex("[ \t]+\n"), "\n")
+        .trimEnd()
+}
+
+private val CITATION_TOKEN = Regex("[ \\t]*\uE200([^\uE201]*)(?:\uE201|$)")
+private val PRIVATE_USE = Regex("[\uE200-\uE2FF]")
+
 internal fun stripHudMarkdown(text: String): String {
     if (text.indexOf('*') < 0 && text.indexOf('_') < 0 && text.indexOf('`') < 0) return text
     return text

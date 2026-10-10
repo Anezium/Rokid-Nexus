@@ -10,6 +10,7 @@ import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
 import android.net.Uri
 import android.os.Bundle
+import android.provider.DocumentsContract
 import android.text.InputType
 import android.text.method.PasswordTransformationMethod
 import android.view.Gravity
@@ -28,6 +29,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 
 /**
@@ -45,6 +47,18 @@ class AssistantSettingsActivity : Activity() {
     private val accountContextSync by lazy { AccountContextSync(applicationContext) }
     private val hermesCapabilitiesClient by lazy { HermesCapabilitiesClient() }
     private val settingsScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val workspaceOwner = Any()
+    private var workspaceController: WorkspaceController? = null
+    private var workspaceVisible = false
+    private var workspacePickerEnables = false
+    private var workspaceFolderMessage: String? = null
+    private lateinit var workspaceFolderStatus: TextView
+    private lateinit var workspaceSetupHint: View
+    private lateinit var workspaceFooter: TextView
+    private lateinit var workspaceChooseButton: View
+    private lateinit var workspaceRefreshButton: View
+    private val workspaceDots = mutableMapOf<Boolean, View>()
+    private val workspaceNames = mutableMapOf<Boolean, TextView>()
 
     private lateinit var providerConfigSlot: LinearLayout
     private lateinit var windowSection: LinearLayout
@@ -123,31 +137,31 @@ class AssistantSettingsActivity : Activity() {
     )
 
     /**
-     * The GPT-5.6 family, ordered the way a wearer picks: fastest first, because the
-     * glasses are a voice surface and most questions are quick ones. Captions follow
+     * The current ChatGPT models, ordered the way a wearer picks: fastest first, because
+     * the glasses are a voice surface and most questions are quick ones. Captions follow
      * how OpenAI positions the tiers -- speed and depth, not price, since a ChatGPT
      * plan is not billed per token.
      */
     private val planModelChoices = listOf(
         ModelChoice(
             ChatGptCodexApiClient.FAST_MODEL_ID,
-            "Luna",
+            "GPT-6-Luna",
             "Fastest. Best for quick questions",
         ),
         ModelChoice(
             ChatGptCodexApiClient.BALANCED_MODEL_ID,
-            "Terra",
-            "Balanced. Good for most things",
+            "GPT-6.1-Sol",
+            "Everyday workhorse. Good for most things",
         ),
         ModelChoice(
             ChatGptCodexApiClient.DEEP_MODEL_ID,
-            "Sol",
-            "Deepest reasoning. Slower to answer",
+            "GPT-6-Astra",
+            "Frontier intelligence. Slower to answer",
         ),
     )
     private val reasoningChoices = listOf(
-        ReasoningChoice("none", "None", "fastest"),
-        ReasoningChoice("low", "Low"),
+        ReasoningChoice("none", "None", "Luna only; Low on Sol/Astra"),
+        ReasoningChoice("low", "Low", "fast"),
         ReasoningChoice("medium", "Medium"),
         ReasoningChoice("high", "High"),
         ReasoningChoice("xhigh", "X-High", "deepest"),
@@ -155,7 +169,33 @@ class AssistantSettingsActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        workspacePickerEnables = savedInstanceState?.getBoolean("workspacePickerEnables") ?: false
+        workspaceFolderMessage = savedInstanceState?.getString("workspaceFolderMessage")
         buildUi()
+        settingsScope.launch {
+            val controller = WorkspaceRuntime.get(applicationContext)
+            workspaceController = controller
+            if (workspaceVisible) controller.attach(workspaceOwner)
+            controller.state.collect { renderWorkspace() }
+        }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        workspaceVisible = true
+        workspaceController?.attach(workspaceOwner)
+    }
+
+    override fun onStop() {
+        workspaceVisible = false
+        workspaceController?.detach(workspaceOwner)
+        super.onStop()
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putBoolean("workspacePickerEnables", workspacePickerEnables)
+        outState.putString("workspaceFolderMessage", workspaceFolderMessage)
+        super.onSaveInstanceState(outState)
     }
 
     override fun onResume() {
@@ -167,12 +207,14 @@ class AssistantSettingsActivity : Activity() {
         renderConversationSettings()
         renderPersona()
         renderMemory()
+        renderWorkspace()
         renderProductivityCard()
         renderCalendarAccess()
         maybeDetectHermes(ProviderCatalog.custom)
     }
 
     override fun onDestroy() {
+        workspaceController?.detach(workspaceOwner)
         settingsScope.cancel()
         super.onDestroy()
     }
@@ -301,6 +343,18 @@ class AssistantSettingsActivity : Activity() {
             }
             addView(syncSection, NexusUi.block())
             addView(notesCard(), NexusUi.block())
+            addView(BusTheme.gap(this@AssistantSettingsActivity, 28))
+            addView(NexusUi.sectionRow(this@AssistantSettingsActivity, "Workspace"), NexusUi.block())
+            addView(BusTheme.gap(this@AssistantSettingsActivity, 12))
+            addView(NexusUi.cardBody(this@AssistantSettingsActivity,
+                "Choose a folder stored on your phone. Text (.txt), Markdown (.md), Word body text " +
+                    "(.docx), PDFs, and images (.jpg, .png, .webp, .heic) are indexed on the phone; scanned " +
+                    "pages and photos are read with on-device text recognition. Relevant excerpts are sent " +
+                    "with your questions to the AI provider you configured; when a chart or layout matters, " +
+                    "a provider that supports images may also receive that one page."),
+                NexusUi.block())
+            addView(BusTheme.gap(this@AssistantSettingsActivity, 12))
+            addView(workspaceCard(), NexusUi.block())
             addView(BusTheme.gap(this@AssistantSettingsActivity, 28))
             addView(
                 NexusUi.sectionRow(this@AssistantSettingsActivity, "Notes & reminders"),
@@ -1747,6 +1801,140 @@ class AssistantSettingsActivity : Activity() {
         if (requestCode == REQUEST_CALENDAR_ACCESS) renderCalendarAccess()
     }
 
+    // ------------------------------------------------------------------ workspace
+
+    private fun workspaceCard(): LinearLayout = NexusUi.card(this).apply {
+        for (enabled in listOf(true, false)) {
+            addView(pickerRow(
+                title = if (enabled) "On" else "Off",
+                hint = if (enabled) "use relevant document excerpts" else "clear cached documents",
+                description = if (enabled) "Enable Workspace" else "Disable Workspace and clear its cache",
+                onClick = {
+                    val controller = workspaceController
+                    if (controller != null) {
+                        if (enabled && controller.state.value.workspace.settings.treeUri.isEmpty()) {
+                            chooseWorkspaceFolder(enable = true)
+                        } else settingsScope.launch {
+                            try {
+                                controller.setEnabled(enabled)
+                            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                                throw cancelled
+                            } catch (_: Exception) {
+                                toast("Could not update Workspace settings.")
+                            }
+                        }
+                    }
+                },
+                nameSink = { workspaceNames[enabled] = it },
+                dotSink = { workspaceDots[enabled] = it },
+            ), NexusUi.block())
+            addView(NexusUi.divider(this@AssistantSettingsActivity))
+        }
+        workspaceFolderStatus = NexusUi.rowSub(this@AssistantSettingsActivity, "No folder selected")
+        addView(workspaceFolderStatus, NexusUi.block())
+        workspaceSetupHint = NexusUi.cardBody(this@AssistantSettingsActivity, WorkspaceFolderHelp.SETUP_HINT)
+        addView(workspaceSetupHint, NexusUi.block())
+        addView(LinearLayout(this@AssistantSettingsActivity).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            workspaceChooseButton = NexusUi.textButton(this@AssistantSettingsActivity, "Choose folder").apply {
+                setOnClickListener { chooseWorkspaceFolder(enable = false) }
+            }
+            addView(workspaceChooseButton)
+            workspaceRefreshButton = NexusUi.textButton(this@AssistantSettingsActivity, "Re-index now").apply {
+                setOnClickListener {
+                    workspaceFolderMessage = null
+                    workspaceController?.reindexNow()
+                    renderWorkspace()
+                }
+            }
+            addView(workspaceRefreshButton)
+        }, NexusUi.block())
+        workspaceFooter = NexusUi.cardBody(this@AssistantSettingsActivity, "Loading…")
+        addView(workspaceFooter, NexusUi.block())
+        addView(NexusUi.textButton(this@AssistantSettingsActivity, "Folder help").apply {
+            setOnClickListener {
+                WorkspaceFolderHelp(this@AssistantSettingsActivity).show { chooseWorkspaceFolder(enable = false) }
+            }
+        })
+    }
+
+    private fun chooseWorkspaceFolder(enable: Boolean) {
+        val controller = workspaceController ?: return
+        workspacePickerEnables = enable || controller.state.value.workspace.settings.enabled
+        try {
+            val tree = controller.state.value.workspace.settings.treeUri
+            val initialUri = if (isPlatformWorkspaceTree(tree)) {
+                val uri = Uri.parse(tree)
+                DocumentsContract.buildDocumentUriUsingTree(uri, DocumentsContract.getTreeDocumentId(uri))
+            } else DocumentsContract.buildDocumentUri("com.android.externalstorage.documents", "primary:Download")
+            startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
+                .putExtra(Intent.EXTRA_LOCAL_ONLY, true)
+                .putExtra(DocumentsContract.EXTRA_INITIAL_URI, initialUri).addFlags(
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION or
+                    Intent.FLAG_GRANT_PREFIX_URI_PERMISSION), REQUEST_WORKSPACE_FOLDER)
+        } catch (_: Exception) {
+            workspacePickerEnables = false
+            workspaceFolderMessage = "Android's folder picker could not be opened. Try again or see Folder help."
+            renderWorkspace()
+        }
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQUEST_WORKSPACE_FOLDER) return
+        val enable = workspacePickerEnables
+        workspacePickerEnables = false
+        val uri = data?.data ?: return
+        if (resultCode != RESULT_OK) return
+        settingsScope.launch {
+            val controller = workspaceController ?: WorkspaceRuntime.get(applicationContext)
+            val result = controller.chooseFolder(uri.toString(), data.flags, enable)
+            workspaceFolderMessage = WorkspaceFolderHelp.selectionMessage(result)
+            renderWorkspace()
+        }
+    }
+
+    private fun renderWorkspace() {
+        val ui = workspaceController?.state?.value
+        val state = ui?.workspace
+        val settings = state?.settings
+        val enabled = settings?.enabled == true
+        workspaceDots.forEach { (value, dot) -> NexusUi.setDotColor(dot, if (value == enabled) NexusUi.GREEN else NexusUi.INK4) }
+        workspaceNames.forEach { (value, name) -> name.setTextColor(if (value == enabled) NexusUi.INK else NexusUi.INK2) }
+        val index = state?.index
+        workspaceFolderStatus.text = if (settings?.treeUri.isNullOrEmpty()) "No folder selected" else
+            "${settings?.folderName} · ${WorkspaceStatusText.state(index, ui?.checking == true)}" +
+                (index?.let { " · indexed ${relativeTime(it.indexedAtMs)}" } ?: "")
+        workspaceChooseButton.isEnabled = ui != null
+        workspaceRefreshButton.isEnabled = enabled && !settings?.treeUri.isNullOrEmpty() && ui?.checking != true
+        workspaceSetupHint.visibility = if (settings?.treeUri.isNullOrEmpty() || state?.problem != null ||
+            workspaceFolderMessage != null) View.VISIBLE else View.GONE
+        workspaceFooter.text = when {
+            ui == null -> "Loading…"
+            workspaceFolderMessage != null -> workspaceFolderMessage
+            !enabled -> "Off · cached documents cleared"
+            state?.problem == WorkspaceProblem.FOLDER_UNAVAILABLE ->
+                "Folder access is unavailable. Choose the folder again and tap Allow. See Folder help."
+            state?.problem != null -> "${state.problem.label} See Folder help."
+            settings?.treeUri.isNullOrEmpty() -> "Choose a folder to get started."
+            index == null -> WorkspaceStatusText.state(null, ui.checking)
+            workspacePromptBudget(authStore.combinedAssistantContextForPrompt()) <= WorkspaceRetriever.SOURCE_RULE.length + 40 ->
+                "No prompt space left after Memory and notes"
+            index.documents.isEmpty() -> "No supported readable documents · ${index.skippedFiles} skipped"
+            else -> "Search by words · ${WorkspaceStatusText.summary(index)} · ${index.skippedFiles} skipped" +
+                if (index.documents.any { it.status == WorkspaceDocumentStatus.METADATA_UNAVAILABLE })
+                    " · Some files have no reliable modification time or size." else
+                    if (index.documents.any { it.status in setOf(WorkspaceDocumentStatus.INVALID_TEXT,
+                        WorkspaceDocumentStatus.UNREADABLE, WorkspaceDocumentStatus.TOO_LARGE) })
+                        " · Some files could not be extracted within the limits." else
+                    if (index.documents.any { it.status in setOf(WorkspaceDocumentStatus.PROTECTED,
+                        WorkspaceDocumentStatus.NO_TEXT) })
+                        " · Some files are password-protected or have no readable text." else
+                    if (index.documents.any { it.status == WorkspaceDocumentStatus.PENDING })
+                        " · Some files are still being read. Keep Assistant open or tap Re-index now." else ""
+        }
+    }
+
     // ------------------------------------------------------------------ memory
 
     private fun syncCard(): LinearLayout =
@@ -2019,6 +2207,7 @@ class AssistantSettingsActivity : Activity() {
 
     private companion object {
         const val REQUEST_CALENDAR_ACCESS = 1201
+        const val REQUEST_WORKSPACE_FOLDER = 1202
         val CALENDAR_PERMISSIONS = arrayOf(
             Manifest.permission.READ_CALENDAR,
             Manifest.permission.WRITE_CALENDAR,

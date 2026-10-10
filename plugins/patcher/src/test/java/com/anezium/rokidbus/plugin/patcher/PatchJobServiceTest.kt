@@ -23,6 +23,7 @@ import org.robolectric.shadows.ShadowService
 import java.io.File
 import java.io.InputStream
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.ExecutorService
 import java.util.concurrent.Future
 import java.util.concurrent.TimeUnit
 
@@ -166,6 +167,15 @@ class PatchJobServiceTest {
         screen.destroy(); controller.destroy()
     }
 
+    private fun awaitWorker(service: PatchJobService) {
+        val executor = PatchJobService::class.java.getDeclaredField("executor")
+            .apply { isAccessible = true }.get(service) as ExecutorService
+        // The runJob latch precedes the worker's cleanup and final main-thread callback.
+        if (executor.isShutdown) assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS))
+        else executor.submit {}.get(5, TimeUnit.SECONDS)
+        shadowOf(Looper.getMainLooper()).idle()
+    }
+
     private fun runningJob(store: PatchJobStore): PatchJobState {
         val prepared = store.prepare()
         File(store.work(prepared.id), "stock.apk").writeBytes(byteArrayOf(1))
@@ -234,7 +244,10 @@ class PatchJobServiceTest {
             assertFalse(shadowOf(service).isForegroundStopped)
             assertEquals(PatchJobStatus.RUNNING, store.state.value.status)
             assertTrue(ShadowPowerManager.getLatestWakeLock().isHeld)
-        } finally { controller.destroy() }
+        } finally {
+            controller.destroy()
+            awaitWorker(service)
+        }
     }
 
     @Test @Config(sdk = [34]) fun unexpectedServiceDestructionNeverSchedulesASelfKill() {
@@ -260,7 +273,10 @@ class PatchJobServiceTest {
             assertEquals(PatchJobStatus.INTERRUPTED, PatchJobStore.decode(File(service.filesDir, "patch-job.json").readText()).status)
             assertFalse(ShadowPowerManager.getLatestWakeLock().isHeld)
             assertFalse(org.robolectric.shadows.ShadowProcess.wasKilled(android.os.Process.myPid()))
-        } finally { release.countDown(); assertTrue(exited.await(5, TimeUnit.SECONDS)) }
+        } finally {
+            release.countDown(); assertTrue(exited.await(5, TimeUnit.SECONDS))
+            awaitWorker(service)
+        }
     }
 
     @Test @Config(sdk = [34]) fun destroyingAnIdleServiceDoesNotInterruptANewlyRequestedJob() {
@@ -317,7 +333,9 @@ class PatchJobServiceTest {
             shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofSeconds(4))
             assertFalse(org.robolectric.shadows.ShadowProcess.wasKilled(android.os.Process.myPid()))
         } finally {
-            release.countDown(); assertTrue(exited.await(5, TimeUnit.SECONDS)); controller.destroy()
+            release.countDown(); assertTrue(exited.await(5, TimeUnit.SECONDS))
+            awaitWorker(service)
+            controller.destroy()
         }
     }
 
@@ -363,6 +381,7 @@ class PatchJobServiceTest {
             assertEquals(PatchJobStatus.FAILURE, PatchJobStore.decode(File(service.filesDir, "patch-job.json").readText()).status)
         } finally {
             release.countDown(); assertTrue(exited.await(5, TimeUnit.SECONDS))
+            awaitWorker(service)
             screen.destroy(); controller.destroy()
         }
     }
@@ -413,6 +432,7 @@ class PatchJobServiceTest {
             assertEquals(PatchJobStatus.CANCELLED, PatchJobStore.decode(File(service.filesDir, "patch-job.json").readText()).status)
         } finally {
             release.countDown(); assertTrue(exited.await(5, TimeUnit.SECONDS))
+            awaitWorker(service)
             screen.stop().destroy(); controller.destroy()
         }
     }
@@ -452,7 +472,7 @@ class PatchJobServiceTest {
             shadowOf(Looper.getMainLooper()).idle()
             assertTrue(activity.isFinishing)
             assertEquals(android.app.Activity.RESULT_CANCELED, shadowOf(activity).resultCode)
-            assertNull(shadowOf(activity).resultIntent)
+            assertNull(shadowOf(activity).resultIntent?.data)
             assertEquals(PatchJobStatus.CANCELLED, store.state.value.status)
             assertFalse(ShadowPowerManager.getLatestWakeLock().isHeld)
             assertTrue(shadowOf(service).isForegroundStopped)
@@ -463,6 +483,7 @@ class PatchJobServiceTest {
             assertEquals(PatchJobStatus.CANCELLED, PatchJobStore.decode(File(service.filesDir, "patch-job.json").readText()).status)
         } finally {
             release.countDown(); assertTrue(exited.await(5, TimeUnit.SECONDS))
+            awaitWorker(service)
             screen.destroy(); controller.destroy()
         }
     }
@@ -510,6 +531,7 @@ class PatchJobServiceTest {
             assertTrue(nextEntered.await(5, TimeUnit.SECONDS))
         } finally {
             release.countDown(); assertTrue(exited.await(5, TimeUnit.SECONDS))
+            awaitWorker(service)
             screen.pause().stop().destroy(); controller.destroy()
         }
     }

@@ -1,0 +1,1359 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Patcher phone UI — YouTube and Reddit (interactive mockup, round 2)</title>
+<meta name="description" content="Interactive design mockup of the Nexus Patcher phone interface: two-app picker, the complete YouTube setup inside Patcher, Reddit preview. Simulation only: no files, keys, installs or network.">
+<style>
+  /* ------------------------------------------------------------------
+     Outer page: fluid, transparent, inherits the host (T3) theme.
+     The host's variable names are not known from this repository, so each
+     token falls back to currentColor-based values that work on any
+     light or dark background.
+     ------------------------------------------------------------------ */
+  :root {
+    --rv-fg: var(--t3-foreground, var(--foreground, inherit));
+    --rv-muted: var(--t3-muted-foreground, var(--muted-foreground, color-mix(in srgb, currentColor 62%, transparent)));
+    --rv-border: var(--t3-border, var(--border, color-mix(in srgb, currentColor 18%, transparent)));
+    --rv-chip: var(--t3-muted, var(--muted, color-mix(in srgb, currentColor 7%, transparent)));
+    --rv-accent: var(--t3-primary, var(--primary, #2f9d5c));
+    --rv-accent-fg: var(--t3-primary-foreground, var(--primary-foreground, #ffffff));
+    --rv-mono: ui-monospace, "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
+    --rv-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: transparent; }
+  body { color: var(--rv-fg); font-family: var(--rv-sans); font-size: 14px; line-height: 1.45; overflow-x: hidden; }
+  .wrap { width: 100%; max-width: 100%; padding: 8px 0 24px; }
+
+  /* ---- review controls (outside the phone) ---- */
+  .review { border: 1px solid var(--rv-border); border-radius: 10px; padding: 10px 12px; margin: 0 0 14px; }
+  .review h1 { font: 600 14px/1.3 var(--rv-sans); margin: 0 0 2px; }
+  .review .sim { font: 500 11px/1.4 var(--rv-mono); color: var(--rv-muted); letter-spacing: .04em; text-transform: uppercase; margin: 0 0 10px; }
+  .review .row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 6px 0; }
+  .review .row > .k { font: 500 11px/1 var(--rv-mono); color: var(--rv-muted); letter-spacing: .06em; text-transform: uppercase; min-width: 64px; }
+  .review button, .review select {
+    font: 500 12px/1 var(--rv-sans); color: var(--rv-fg); background: var(--rv-chip);
+    border: 1px solid var(--rv-border); border-radius: 999px; padding: 6px 11px; cursor: pointer;
+  }
+  .review select { border-radius: 8px; padding: 6px 8px; max-width: 100%; }
+  .review button[aria-pressed="true"] { background: var(--rv-accent); color: var(--rv-accent-fg); border-color: var(--rv-accent); }
+  .review button:focus-visible, .review select:focus-visible, .review input:focus-visible { outline: 2px solid var(--rv-accent); outline-offset: 2px; }
+  .review label.sw { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
+  .review .note { font-size: 12px; color: var(--rv-muted); margin: 8px 0 0; }
+  .review .note code { font-family: var(--rv-mono); font-size: 11px; }
+
+  /* ------------------------------------------------------------------
+     Phone surface: Nexus Phosphor × Mono.
+     ------------------------------------------------------------------ */
+  .stage { display: flex; justify-content: center; width: 100%; }
+  .phone {
+    --green: #4dff8c; --green-dim: #2f9d5c; --green-deep: #04180d;
+    --bg: #070a08; --panel: #0d150f; --panel2: #101912;
+    --line: #182619; --line2: #16241a; --edge: #2c4a37;
+    --ink: #dcf3e4; --ink2: #8ba896; --ink3: #5f7a68; --ink4: #42574a;
+    --warn: #ffd166; --bad: #ff6b6b;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --mono: ui-monospace, "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
+    width: 360px; max-width: 100%; height: 740px; max-height: 92vh; min-height: 560px;
+    background: var(--bg); color: var(--ink); font-family: var(--sans);
+    border-radius: 28px; overflow: hidden; position: relative;
+    box-shadow: 0 0 0 1px #ffffff10, 0 0 0 6px #121513;
+    -webkit-font-smoothing: antialiased;
+  }
+  @media (max-width: 420px) { .phone { border-radius: 18px; box-shadow: 0 0 0 1px #ffffff10; height: 680px; } }
+  .phone *:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; border-radius: 6px; }
+  /* :where keeps the reset at class specificity so .btn, .toggle and .row can override it. */
+  .phone :where(button) { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; text-align: left; }
+  .phone :where(button:disabled) { cursor: not-allowed; opacity: .45; }
+
+  .sb { height: 26px; display: flex; align-items: center; justify-content: space-between; padding: 0 20px; font: 500 11px/1 var(--mono); color: var(--ink3); letter-spacing: .06em; }
+  .screen { position: absolute; inset: 26px 0 0; display: flex; flex-direction: column; }
+
+  .top { display: flex; align-items: center; gap: 10px; padding: 10px 14px 10px 10px; border-bottom: 1px solid var(--line); min-height: 48px; }
+  .top .back { width: 34px; height: 34px; display: grid; place-items: center; color: var(--ink2); border-radius: 10px; flex: none; }
+  .top .back:hover { color: var(--ink); background: #ffffff08; }
+  .top .ttl { flex: 1; min-width: 0; }
+  .top .ttl .t { font: 500 15px/1.15 var(--sans); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .top .ttl .s { display: block; margin-top: 3px; font: 400 10px/1 var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--ink3); }
+  .top .ttl .s b { color: var(--green); font-weight: 600; }
+  .top.nexus { background: linear-gradient(180deg, #0b1a10, var(--bg)); }
+
+  .content { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 14px 16px 24px; scrollbar-width: thin; scrollbar-color: var(--line2) transparent; }
+  .foot { padding: 10px 16px 18px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 8px; }
+  .foot .trio { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+  .foot .trio .btn { padding: 11px 6px; white-space: normal; text-align: center; }
+  .foot .duo { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .foot .duo .btn { padding: 11px 6px; white-space: normal; text-align: center; }
+
+  .lbl { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; font: 500 9.5px/1.3 var(--mono); letter-spacing: .22em; text-transform: uppercase; color: var(--ink4); margin: 14px 2px 10px; }
+  .lbl > span:first-child { flex: none; white-space: nowrap; }
+  .lbl:first-child { margin-top: 2px; }
+  .lbl .c { color: var(--green-dim); letter-spacing: .08em; }
+  .lbl .ex { text-align: right; letter-spacing: .08em; }
+
+  /* app marks: official artwork, single colour adapted to the phosphor palette */
+  .tile { width: 40px; height: 40px; border-radius: 11px; display: grid; place-items: center; background: #4dff8c12; color: var(--green); flex: none; }
+  .tile svg { width: 24px; height: 24px; display: block; }
+  .tile.sm { width: 30px; height: 30px; border-radius: 8px; } .tile.sm svg { width: 18px; height: 18px; }
+  .tile.nx { color: var(--green); }
+
+  /* context band: Nexus request or running job */
+  .band { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 11px; margin-bottom: 12px;
+    background: linear-gradient(150deg, #4dff8c0a, #0d150f); border: 1px solid var(--edge); }
+  .band .ic { color: var(--green); display: grid; place-items: center; width: 20px; height: 20px; flex: none; }
+  .band .t { font: 400 12.5px/1.3 var(--sans); flex: 1; min-width: 0; }
+  .band .t small { display: block; font: 400 10px/1.3 var(--mono); color: var(--ink3); margin-top: 2px; letter-spacing: .04em; }
+  .band button.lnk { color: var(--green); font: 600 10px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; flex: none; }
+  .band.notif { border-color: #ffd16655; background: linear-gradient(150deg, #ffd16608, #0d150f); } .band.notif .ic { color: var(--warn); }
+
+  /* app cards (home) */
+  .appcard { display: block; width: 100%; padding: 14px; border-radius: 15px; background: var(--panel); border: 1px solid var(--line2); margin-bottom: 10px; }
+  .appcard .h { display: flex; align-items: center; gap: 12px; }
+  .appcard .nm { font: 500 16px/1.1 var(--sans); display: flex; align-items: center; gap: 8px; }
+  .appcard .meta { display: block; margin-top: 4px; font: 400 10px/1.3 var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--ink3); }
+  .appcard .sum { margin-top: 10px; font: 400 12.5px/1.5 var(--sans); color: var(--ink2); }
+  .appcard .act { margin-top: 12px; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .appcard .st { font: 400 10px/1.3 var(--mono); color: var(--ink3); letter-spacing: .04em; min-width: 0; }
+  .appcard .st.ok { color: var(--green-dim); } .appcard .st.live { color: var(--green); } .appcard .st.bad { color: var(--bad); } .appcard .st.warn { color: var(--warn); }
+  .badge { font: 600 8.5px/1 var(--mono); letter-spacing: .16em; text-transform: uppercase; padding: 4px 7px; border-radius: 6px; color: var(--green-deep); background: var(--green); flex: none; }
+  .badge.preview { background: var(--warn); }
+  .badge.dim { background: transparent; color: var(--ink3); border: 1px solid var(--line2); }
+
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; font: 600 10.5px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; padding: 11px 16px; border-radius: 20px; white-space: nowrap; }
+  .btn.pri { background: var(--green); color: var(--green-deep); }
+  .btn.sec { border: 1px solid var(--edge); color: var(--green); }
+  .btn.ghost { color: var(--ink2); border: 1px solid var(--line2); }
+  .btn.danger { color: var(--bad); border: 1px solid #ff6b6b40; }
+  .btn.wide { width: 100%; padding: 13px 16px; }
+  .btn:disabled { opacity: .4; }
+
+  /* rows */
+  .row { display: flex; align-items: center; gap: 12px; width: 100%; padding: 12px 4px; border-bottom: 1px solid var(--line2); }
+  .row .t { font: 400 13.5px/1.2 var(--sans); flex: 1; min-width: 0; }
+  .row .t .s { display: block; margin-top: 4px; font: 400 10.5px/1.35 var(--mono); color: var(--ink3); }
+  .row .v { font: 400 11px/1 var(--mono); color: var(--ink2); flex: none; }
+  .row .go { color: var(--ink4); flex: none; }
+  .row.btnrow:hover { background: #ffffff05; }
+  .toggle { width: 38px; height: 22px; border-radius: 13px; background: var(--green); position: relative; flex: none; }
+  .toggle::after { content: ""; position: absolute; top: 3px; right: 3px; width: 16px; height: 16px; border-radius: 50%; background: var(--green-deep); }
+  .toggle[aria-checked="false"] { background: #1c2b21; } .toggle[aria-checked="false"]::after { left: 3px; right: auto; background: var(--ink3); }
+  .toggle:disabled { opacity: .55; }
+  .lock { color: var(--ink4); font: 500 9px/1 var(--mono); letter-spacing: .14em; text-transform: uppercase; flex: none; }
+
+  /* setup steps (YouTube overview) */
+  .step { display: grid; grid-template-columns: 26px 1fr auto; gap: 12px; align-items: center; width: 100%; padding: 12px 4px; border-bottom: 1px solid var(--line2); }
+  .step:hover { background: #ffffff05; }
+  .step .n { width: 24px; height: 24px; border-radius: 50%; border: 1px solid var(--line2); display: grid; place-items: center; font: 500 10px/1 var(--mono); color: var(--ink3); }
+  .step.done .n { border-color: var(--green-dim); color: var(--green); } .step.attn .n { border-color: #ffd16680; color: var(--warn); } .step.bad .n { border-color: #ff6b6b80; color: var(--bad); } .step.live .n { border-color: var(--green); color: var(--green); box-shadow: 0 0 8px #4dff8c60; }
+  .step .t { font: 400 13.5px/1.2 var(--sans); min-width: 0; }
+  .step .t .s { display: block; margin-top: 4px; font: 400 10.5px/1.35 var(--mono); color: var(--ink3); }
+  .step.done .t .s { color: var(--green-dim); } .step.attn .t .s { color: var(--warn); } .step.bad .t .s { color: var(--bad); } .step.live .t .s { color: var(--green); }
+  .step .go { color: var(--ink4); }
+
+  /* panels */
+  .panel { padding: 12px 13px; border-radius: 13px; background: var(--panel); border: 1px solid var(--line2); margin-bottom: 10px; }
+  .panel.ok { border-color: #2f9d5c80; } .panel.bad { border-color: #ff6b6b55; } .panel.warn { border-color: #ffd16655; } .panel.live { border-color: var(--green); }
+  .panel .ph { display: flex; align-items: center; gap: 9px; font: 500 13px/1.2 var(--sans); }
+  .panel .ph .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--ink4); flex: none; }
+  .panel.ok .ph .dot { background: var(--green); box-shadow: 0 0 8px #4dff8c80; } .panel.bad .ph .dot { background: var(--bad); } .panel.warn .ph .dot { background: var(--warn); } .panel.live .ph .dot { background: var(--green); }
+  .panel p { margin: 8px 0 0; font: 400 12px/1.5 var(--sans); color: var(--ink2); }
+  .panel .kv { margin: 10px 0 0; display: grid; grid-template-columns: auto 1fr; gap: 5px 12px; font: 400 10.5px/1.4 var(--mono); }
+  .panel .kv dt { color: var(--ink4); letter-spacing: .06em; text-transform: uppercase; } .panel .kv dd { margin: 0; color: var(--ink2); word-break: break-all; }
+  .panel .kv dd.ok { color: var(--green-dim); } .panel .kv dd.bad { color: var(--bad); } .panel .kv dd.warn { color: var(--warn); }
+  .panel .acts { margin-top: 12px; display: flex; flex-wrap: wrap; gap: 8px; }
+  .hint { font: 400 11px/1.5 var(--sans); color: var(--ink3); margin: 6px 2px 0; }
+  .hint.warn { color: var(--warn); }
+  .ex { font: 400 9.5px/1.3 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--ink4); }
+  .guide { list-style: none; margin: 4px 0 0; padding: 0; counter-reset: g; }
+  .guide li { display: grid; grid-template-columns: 22px 1fr; gap: 10px; padding: 10px 2px; border-bottom: 1px solid var(--line2); font: 400 12.5px/1.45 var(--sans); }
+  .guide li::before { counter-increment: g; content: counter(g); width: 18px; height: 18px; border-radius: 50%; border: 1px solid var(--line2); display: grid; place-items: center; font: 500 9px/1 var(--mono); color: var(--ink3); margin-top: 1px; }
+  .guide li .s { display: block; font: 400 10.5px/1.4 var(--mono); color: var(--ink3); margin-top: 3px; }
+  .guide li .acts { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; }
+
+  details.tech, details.adv { margin-top: 12px; border-top: 1px solid var(--line2); }
+  details.tech summary, details.adv summary { padding: 12px 2px; font: 500 10px/1 var(--mono); letter-spacing: .18em; text-transform: uppercase; color: var(--ink3); cursor: pointer; list-style: none; display: flex; justify-content: space-between; }
+  details.tech summary::-webkit-details-marker, details.adv summary::-webkit-details-marker { display: none; }
+  details.tech summary::after, details.adv summary::after { content: "+"; } details.tech[open] summary::after, details.adv[open] summary::after { content: "–"; }
+  details.tech .kv { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; font: 400 10.5px/1.4 var(--mono); padding: 0 2px 12px; }
+  details.tech .kv dt { color: var(--ink4); text-transform: uppercase; letter-spacing: .06em; } details.tech .kv dd { margin: 0; color: var(--ink2); word-break: break-all; }
+
+  /* running */
+  .stages { list-style: none; margin: 4px 0 0; padding: 0; }
+  .stages li { display: grid; grid-template-columns: 22px 1fr auto; gap: 10px; align-items: center; padding: 9px 2px; border-bottom: 1px solid var(--line2); font: 400 13px/1.2 var(--sans); color: var(--ink3); }
+  .stages li .n { width: 18px; height: 18px; border-radius: 50%; border: 1px solid var(--line2); display: grid; place-items: center; font: 500 9px/1 var(--mono); color: var(--ink4); }
+  .stages li.done { color: var(--ink2); } .stages li.done .n { border-color: var(--green-dim); color: var(--green-dim); }
+  .stages li.active { color: var(--ink); } .stages li.active .n { border-color: var(--green); color: var(--green); box-shadow: 0 0 8px #4dff8c60; }
+  .stages li.failed { color: var(--bad); } .stages li.failed .n { border-color: var(--bad); color: var(--bad); }
+  .stages li .m { font: 400 10px/1 var(--mono); color: var(--ink3); letter-spacing: .04em; }
+  .bar { height: 6px; border-radius: 3px; background: #1c2b21; overflow: hidden; position: relative; margin-top: 14px; }
+  .bar > i { display: block; height: 100%; background: var(--green); border-radius: 3px; width: 0; transition: width .25s linear; }
+  .bar.indet > i { width: 38%; animation: slide 1.4s ease-in-out infinite; }
+  @keyframes slide { 0% { transform: translateX(-100%); } 100% { transform: translateX(290%); } }
+  .act { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-top: 10px; }
+  .act .cur { font: 400 12.5px/1.4 var(--sans); color: var(--ink2); min-width: 0; }
+  .act .el { font: 500 12px/1 var(--mono); color: var(--green); letter-spacing: .06em; flex: none; }
+  .bigstate { text-align: center; padding: 22px 10px 8px; }
+  .bigstate .mark { width: 58px; height: 58px; border-radius: 16px; margin: 0 auto; display: grid; place-items: center; border: 1px solid var(--edge); color: var(--green); position: relative; }
+  .bigstate .mark svg { width: 26px; height: 26px; }
+  .bigstate .mark.ok::after { content: ""; position: absolute; inset: -1px; border-radius: 16px; box-shadow: 0 0 30px -6px #4dff8c50; }
+  .bigstate .mark.bad { color: var(--bad); border-color: #ff6b6b55; } .bigstate .mark.warn { color: var(--warn); border-color: #ffd16655; }
+  .bigstate h2 { font: 300 22px/1.15 var(--sans); letter-spacing: -.01em; margin: 16px 0 0; }
+  .bigstate p { margin: 9px 0 0; font: 400 12.5px/1.55 var(--sans); color: var(--ink2); }
+  .checks { list-style: none; margin: 12px 0 0; padding: 0; }
+  .checks li { display: flex; gap: 10px; align-items: flex-start; padding: 8px 2px; border-bottom: 1px solid var(--line2); font: 400 12.5px/1.35 var(--sans); }
+  .checks li .ok { color: var(--green); flex: none; margin-top: 1px; } .checks li .no { color: var(--ink4); flex: none; margin-top: 1px; }
+  .checks li .s { display: block; font: 400 10px/1.35 var(--mono); color: var(--ink3); margin-top: 2px; }
+
+  /* sheets / dialogs */
+  .scrim { position: absolute; inset: 0; background: #000000a8; display: flex; align-items: flex-end; z-index: 40; }
+  .sheet { width: 100%; max-height: 88%; overflow-y: auto; background: var(--panel2); border-top: 1px solid var(--edge); border-radius: 20px 20px 0 0; padding: 14px 16px 20px; }
+  .sheet .grab { width: 36px; height: 4px; border-radius: 2px; background: var(--line2); margin: 0 auto 12px; }
+  .sheet h2 { font: 500 16px/1.2 var(--sans); margin: 0 0 4px; }
+  .sheet .sub { font: 400 10.5px/1.4 var(--mono); color: var(--ink3); margin: 0 0 10px; }
+  .sheet p { font: 400 12.5px/1.5 var(--sans); color: var(--ink2); margin: 8px 0; }
+  .sheet .acts { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
+  .sheet .acts.inline { flex-direction: row; justify-content: flex-end; }
+  .files { list-style: none; margin: 0; padding: 0; }
+  .files button { display: grid; grid-template-columns: 28px 1fr; gap: 10px; align-items: center; width: 100%; padding: 10px 4px; border-bottom: 1px solid var(--line2); }
+  .files button:hover { background: #ffffff05; }
+  .files .fi { color: var(--ink3); display: grid; place-items: center; }
+  .files .fn { font: 400 12.5px/1.2 var(--sans); word-break: break-all; }
+  .files .fm { display: block; margin-top: 3px; font: 400 10px/1.3 var(--mono); color: var(--ink3); }
+  .field { margin: 10px 0 0; }
+  .field label { display: block; font: 500 9.5px/1 var(--mono); letter-spacing: .18em; text-transform: uppercase; color: var(--ink4); margin-bottom: 6px; }
+  .field input { width: 100%; font: 400 14px/1.2 var(--sans); color: var(--ink); background: var(--bg); border: 1px solid var(--line2); border-radius: 10px; padding: 10px 12px; }
+  .field input:focus { border-color: var(--green); outline: none; }
+  .field .err { font: 400 11px/1.4 var(--sans); color: var(--bad); margin-top: 5px; }
+  .warnbox { display: flex; gap: 9px; padding: 10px 11px; border-radius: 10px; border: 1px solid #ffd16640; background: #ffd16608; font: 400 12px/1.45 var(--sans); color: var(--ink); margin-top: 10px; }
+  .warnbox svg { flex: none; color: var(--warn); margin-top: 1px; }
+  .toast { position: absolute; left: 16px; right: 16px; bottom: 18px; z-index: 50; pointer-events: none; padding: 10px 14px; border-radius: 12px; background: #0e1a12; border: 1px solid var(--edge); color: var(--ink); font: 400 12px/1.4 var(--sans); box-shadow: 0 10px 30px -10px #000; }
+  .toast .s { display: block; font: 400 10px/1.3 var(--mono); color: var(--ink3); margin-top: 2px; }
+
+  /* external app stand-in (browser, MicroG, remote, YouTube, Morphe Manager) */
+  .ext { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 0 28px; }
+  .ext .frame { width: 100%; border: 1px dashed var(--edge); border-radius: 16px; padding: 22px 16px; }
+  .ext h2 { font: 300 21px/1.15 var(--sans); margin: 14px 0 0; }
+  .ext p { margin: 9px 0 0; font: 400 12.5px/1.55 var(--sans); color: var(--ink2); }
+  .ext .url { margin-top: 10px; font: 400 10px/1.4 var(--mono); color: var(--ink3); word-break: break-all; }
+
+  svg.pic { fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; width: 18px; height: 18px; }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .bar > i { transition: none; }
+    .bar.indet > i { animation: none; width: 100%; opacity: .45; }
+    .phone * { transition: none !important; }
+  }
+</style>
+</head>
+<body>
+<!--
+  App marks. Official artwork, inlined once and referenced with <use>.
+  YouTube: the "video-youtube" symbol served by https://brand.youtube/ (24x24), filled with
+  currentColor; the play triangle stays a negative-space cutout (evenodd).
+  Reddit: the bubble path, Snoo symbol, gradients and <use> transform from
+  https://redditinc.com/hubfs/Reddit%20Inc/Content/Brand%20Page/Reddit_Lockup_Logo.svg
+  (linked from https://redditinc.com/brand), wordmark omitted, viewBox 0 0 216 216. Geometry is
+  untouched; only fills and gradient stops are mapped to the phosphor palette. The green
+  renditions are this mockup's adaptation, not an official colourway.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" style="position:absolute;width:0;height:0;overflow:hidden" aria-hidden="true">
+  <defs>
+    <radialGradient id="rd-g1" cx="370.49" cy="151.59" fx="370.49" fy="142.47" r="127.45" gradientTransform="translate(0 19.13) scale(1 .87)" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#143f25"></stop><stop offset=".4" stop-color="#143f25"></stop><stop offset=".62" stop-color="#10331e"></stop><stop offset=".8" stop-color="#0b2416"></stop><stop offset=".9" stop-color="#0c2a18"></stop>
+    </radialGradient>
+    <radialGradient id="rd-g2" cx="64.38" fx="64.38" fy="142.47" r="127.45" xlink:href="#rd-g1" href="#rd-g1"></radialGradient>
+    <radialGradient id="rd-g3" cx="220.14" cy="135.08" fx="220.14" fy="135.08" r="384.44" gradientTransform="translate(0 40.35) scale(1 .7)" xlink:href="#rd-g1" href="#rd-g1"></radialGradient>
+    <radialGradient id="rd-g4" cx="134.7" cy="240.48" fx="134.7" fy="240.48" r="32.12" gradientTransform="translate(0 -110.04) scale(1 1.46)" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#8dffb8"></stop><stop offset=".5" stop-color="#4dff8c"></stop><stop offset=".82" stop-color="#3fd676"></stop><stop offset="1" stop-color="#2f9d5c"></stop>
+    </radialGradient>
+    <radialGradient id="rd-g5" cx="6191.5" cy="240.48" fx="6191.5" fy="240.48" r="32.12" gradientTransform="translate(6489.32 -110.04) rotate(-180) scale(1 -1.46)" xlink:href="#rd-g4" href="#rd-g4"></radialGradient>
+    <radialGradient id="rd-g6" cx="215.93" cy="338.52" fx="215.93" fy="338.52" r="113.26" gradientTransform="translate(0 116.39) scale(1 .66)" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0b2416"></stop><stop offset=".73" stop-color="#061a0e"></stop><stop offset="1" stop-color="#04180d"></stop>
+    </radialGradient>
+    <radialGradient id="rd-g7" cx="315.81" cy="3.47" fx="315.81" fy="3.47" r="99.42" gradientTransform="translate(0 .06) scale(1 .98)" xlink:href="#rd-g1" href="#rd-g1"></radialGradient>
+    <radialGradient id="rd-g8" cx="274.38" cy="103.82" fx="274.38" fy="103.82" r="81.49" gradientUnits="userSpaceOnUse">
+      <stop offset=".48" stop-color="#1f5a35"></stop><stop offset=".67" stop-color="#0b2416"></stop><stop offset=".75" stop-color="#04180d"></stop><stop offset=".82" stop-color="#0b2416"></stop>
+    </radialGradient>
+    <symbol id="rd-snoo" viewBox="0 0 432.21 377.72">
+      <g>
+        <circle fill="url(#rd-g1)" cx="369.16" cy="188.55" r="63.05"></circle>
+        <circle fill="url(#rd-g2)" cx="63.05" cy="188.55" r="63.05"></circle>
+        <ellipse fill="url(#rd-g3)" cx="216.26" cy="242.72" rx="180" ry="135"></ellipse>
+        <g fill="#04180d">
+          <path d="m163.04,229.59c-1.05,22.87-16.23,31.17-33.91,31.17s-31.15-11.71-30.09-34.58c1.05-22.87,16.23-38.01,33.91-38.01s31.15,18.54,30.09,41.42Z"></path>
+          <path d="m333.48,226.18c1.05,22.87-12.42,34.58-30.09,34.58s-32.85-8.3-33.91-31.17c-1.05-22.87,12.42-41.42,30.09-41.42s32.85,15.13,33.91,38.01Z"></path>
+        </g>
+        <path fill="url(#rd-g4)" d="m163.05,231.59c-.99,21.41-15.19,29.17-31.73,29.17s-29.15-11.63-28.16-33.03c.99-21.41,15.19-35.41,31.73-35.41s29.15,17.86,28.16,39.27Z"></path>
+        <path fill="url(#rd-g5)" d="m269.47,231.59c.99,21.41,15.19,29.17,31.73,29.17,16.54,0,29.15-11.63,28.16-33.03-.99-21.41-15.19-35.41-31.73-35.41s-29.15,17.86-28.16,39.27Z"></path>
+        <ellipse fill="#dcf3e4" cx="145.19" cy="212.04" rx="7" ry="7.64"></ellipse>
+        <ellipse fill="#dcf3e4" cx="311.64" cy="212.04" rx="7" ry="7.64"></ellipse>
+        <path fill="#2f9d5c" d="m216.26,276.02c-22.32,0-43.71,1.08-63.49,3.04-3.38.34-5.52,3.78-4.21,6.86,11.08,25.97,37.22,44.21,67.7,44.21s56.62-18.24,67.7-44.21c1.31-3.08-.83-6.52-4.21-6.86-19.78-1.97-41.17-3.04-63.49-3.04Z"></path>
+        <path fill="#4dff8c" d="m216.26,280.98c-22.25,0-43.57,1.09-63.29,3.09-3.37.34-5.51,3.84-4.2,6.97,11.05,26.38,37.1,44.91,67.49,44.91s56.44-18.53,67.49-44.91c1.31-3.12-.83-6.62-4.2-6.97-19.72-2-41.04-3.09-63.29-3.09Z"></path>
+        <path fill="url(#rd-g6)" d="m216.26,278.4c-21.9,0-42.89,1.08-62.3,3.04-3.32.34-5.42,3.78-4.13,6.86,10.87,25.97,36.52,44.21,66.44,44.21s55.56-18.24,66.44-44.21c1.29-3.08-.81-6.52-4.13-6.86-19.41-1.97-40.4-3.04-62.31-3.04Z"></path>
+        <circle fill="url(#rd-g7)" cx="314.84" cy="44.68" r="44.68"></circle>
+        <path fill="url(#rd-g8)" d="m215.62,113.41c-5.35,0-9.69-2.24-9.69-5.69,0-40.03,32.56-72.59,72.59-72.59,5.35,0,9.69,4.34,9.69,9.69s-4.34,9.69-9.69,9.69c-29.34,0-53.22,23.87-53.22,53.22,0,3.45-4.34,5.69-9.69,5.69Z"></path>
+        <path fill="#4dff8c" d="m151.29,242.18c0,8.28-8.81,12-19.69,12s-19.69-3.72-19.69-12,8.81-15,19.69-15,19.69,6.72,19.69,15Z"></path>
+        <path fill="#4dff8c" d="m320.6,242.18c0,8.28-8.81,12-19.69,12s-19.69-3.72-19.69-12,8.81-15,19.69-15,19.69,6.72,19.69,15Z"></path>
+      </g>
+    </symbol>
+    <symbol id="mk-reddit" viewBox="0 0 216 216">
+      <path fill="currentColor" d="m108,0h0C48.35,0,0,48.35,0,108h0c0,29.82,12.09,56.82,31.63,76.37l-20.57,20.57c-4.08,4.08-1.19,11.06,4.58,11.06h92.36s0,0,0,0c59.65,0,108-48.35,108-108h0C216,48.35,167.65,0,108,0Z"></path>
+      <use width="432.21" height="377.72" transform="translate(21.56 31.55) scale(.4)" xlink:href="#rd-snoo" href="#rd-snoo"></use>
+    </symbol>
+    <symbol id="mk-youtube" viewBox="0 0 24 24">
+      <path fill="currentColor" fill-rule="evenodd" d="M23.74 7.1s-.23-1.65-.95-2.37c-.91-.96-1.93-.96-2.4-1.02C17.04 3.47 12 3.5 12 3.5s-5.02-.03-8.37.21c-.46.06-1.48.06-2.39 1.02C.52 5.45.28 7.1.28 7.1S.04 9.05 0 10.98V13c.04 1.94.28 3.87.28 3.87s.24 1.65.96 2.38c.91.95 2.1.92 2.64 1.02 1.88.18 7.91.22 8.12.22 0 0 5.05.01 8.4-.23.46-.06 1.48-.06 2.39-1.02.72-.72.96-2.37.96-2.37s.24-1.94.25-3.87v-2.02c-.02-1.93-.26-3.88-.26-3.88zM9.57 15.5V8.49L16 12.13 9.57 15.5z"></path>
+    </symbol>
+  </defs>
+</svg>
+
+<div class="wrap">
+
+  <section class="review" aria-label="Review controls (outside the phone simulation)">
+    <h1>Patcher phone UI — YouTube and Reddit · round 2</h1>
+    <p class="sim">Simulation · no files read, no keys, no installs, no network</p>
+    <div class="row">
+      <span class="k">App</span>
+      <button type="button" data-app="youtube" class="rv-app">YouTube</button>
+      <button type="button" data-app="reddit" class="rv-app">Reddit</button>
+    </div>
+    <div class="row">
+      <span class="k">Entry</span>
+      <button type="button" data-ctx="settings" class="rv-ctx">Patcher settings</button>
+      <button type="button" data-ctx="nexus" class="rv-ctx">Nexus request (target locked)</button>
+    </div>
+    <div class="row">
+      <span class="k">Route</span>
+      <button type="button" class="rv-route" data-route="home">Patcher home</button>
+      <button type="button" class="rv-route" data-route="yt">YouTube setup</button>
+      <button type="button" class="rv-route" data-route="glasses">Nexus · Glasses apps</button>
+      <button type="button" class="rv-route" data-route="maint">Maintenance</button>
+    </div>
+    <div class="row">
+      <span class="k">Scenario</span>
+      <select id="rv-scn" aria-label="Scenario">
+        <optgroup label="Patcher (selected app)">
+          <option value="fresh">Fresh — nothing chosen</option>
+          <option value="valid">Valid official file picked</option>
+          <option value="wrong-app">File is the other app</option>
+          <option value="wrong-version">File is the wrong version</option>
+          <option value="incomplete">Incomplete bundle (no arm64 split)</option>
+          <option value="run-success">Running job → success</option>
+          <option value="run-fail">Running job → build failure</option>
+          <option value="run-interrupt">Running job → interrupted</option>
+          <option value="done">Patched APK ready</option>
+        </optgroup>
+        <optgroup label="YouTube setup — MicroG on glasses">
+          <option value="mg-missing">MicroG missing</option>
+          <option value="mg-installed">MicroG installed (inventory confirmed)</option>
+          <option value="mg-noicon">MicroG installed but not launchable</option>
+          <option value="mg-update">MicroG update available</option>
+          <option value="mg-offline">Glasses offline</option>
+          <option value="mg-fail">MicroG install → fails</option>
+        </optgroup>
+        <optgroup label="YouTube setup — install on glasses">
+          <option value="inst-success">Install → inventory confirms</option>
+          <option value="inst-fail">Install → transfer fails</option>
+          <option value="inst-mismatch">Install → signer mismatch stop</option>
+          <option value="inst-installed">Already installed and confirmed</option>
+          <option value="signin-done">Sign-in marked done by user</option>
+          <option value="kb-blocked">Keyboard auto-open blocked by Android</option>
+          <option value="import-patched">Already patched APK import (Advanced)</option>
+        </optgroup>
+        <optgroup label="Maintenance">
+          <option value="maint">Signing key</option>
+          <option value="signer">Signer mismatch state</option>
+        </optgroup>
+      </select>
+      <button type="button" id="rv-apply">Apply</button>
+      <button type="button" id="rv-reset">Reset all state</button>
+    </div>
+    <div class="row">
+      <span class="k">Sim</span>
+      <label class="sw"><input type="checkbox" id="rv-fast" checked> Fast simulated jobs (about 12 s instead of about 2 min)</label>
+      <label class="sw"><input type="checkbox" id="rv-conn" checked> Glasses connected</label>
+    </div>
+    <p class="note">Phone simulation below. <code>Esc</code> goes Back or closes a sheet. Versions, file names, hashes, patch rows, MicroG versions and inventory results are illustrative examples, not release claims. Reduced-motion preference disables the animations.</p>
+  </section>
+
+  <div class="stage">
+    <div class="phone" id="phone" aria-label="Phone simulation">
+      <div class="sb"><span>12:40</span><span id="sb-right">NEXUS · PATCHER</span></div>
+      <div class="screen" id="screen"></div>
+    </div>
+  </div>
+
+</div>
+<script>
+(() => {
+  'use strict';
+
+  /* ---------------- fictional local data ---------------- */
+  const APPS = {
+    youtube: {
+      id: 'youtube', name: 'YouTube', preview: false,
+      summary: 'Glasses controls, sign-in through MicroG, ad filtering, optional SponsorBlock. The whole setup, from MicroG to sign-in, is guided here.',
+      required: { version: '21.04.223', code: '1550630784', kind: 'APK or .apkm bundle' },
+      stockPackage: 'com.google.android.youtube', outPackage: 'app.morphe.android.youtube',
+      bundleLabel: 'Rokid patch bundle 1.39.1-rokid.3 (example)',
+      patches: [
+        { id: 'controls', name: 'Rokid glasses controls', s: 'Touchpad and ring navigation on the glasses HUD.', on: true, required: true },
+        { id: 'signin', name: 'Sign-in support (MicroG)', s: 'Google account sign-in on the glasses. Needs MicroG installed in step 1.', on: true, warnOff: 'Sign-in on the glasses will not work without this.' },
+        { id: 'ads', name: 'Hide ads', s: 'Removes video and feed ads.', on: true, warnOff: 'Ads stay in the patched app.' },
+        { id: 'sb', name: 'SponsorBlock', s: 'Optional. Skips sponsored segments using community data.', on: false },
+      ],
+      patchTotal: 76,
+      exampleHash: '7f3a…c91e (example SHA-256, not a real pin)',
+    },
+    reddit: {
+      id: 'reddit', name: 'Reddit', preview: true,
+      summary: 'Glasses HUD controls, signature compatibility, ad filtering. No MicroG needed.',
+      required: { version: '2026.14.0', code: '2614001', kind: 'Complete .apkm bundle' },
+      stockPackage: 'com.reddit.frontpage', outPackage: 'com.reddit.frontpage',
+      bundleLabel: 'Reddit preview source 3 (example, unpublished)',
+      patches: [
+        { id: 'controls', name: 'Rokid Reddit controls', s: 'Feed, post and comment navigation on the glasses HUD.', on: true, required: true },
+        { id: 'sig', name: 'Signature compatibility', s: 'Lets the re-signed app keep working with its official package name.', on: true, required: true },
+        { id: 'ads', name: 'Hide ads', s: 'Removes promoted posts.', on: true, warnOff: 'Promoted posts stay in the patched app.' },
+      ],
+      patchTotal: 3,
+      exampleHash: 'b21d…4e07 (example SHA-256, not a real pin)',
+    },
+  };
+
+  // Fictional "Downloads" folder shown by the pickers. `patched` entries are already-patched
+  // final APKs for the Advanced import route; `signer` says which key signed them.
+  const FILES = [
+    { name: 'youtube-21.04.223.apkm', size: '142 MB', app: 'youtube', version: '21.04.223', code: '1550630784', complete: true },
+    { name: 'youtube-21.04.223-arm64.apk', size: '118 MB', app: 'youtube', version: '21.04.223', code: '1550630784', complete: true },
+    { name: 'youtube-20.12.46.apk', size: '112 MB', app: 'youtube', version: '20.12.46', code: '1548120320', complete: true },
+    { name: 'youtube-21.04.223-armeabi-v7a.apk', size: '96 MB', app: 'youtube', version: '21.04.223', code: '1550630784', complete: false },
+    { name: 'reddit-2026.14.0-2614001.apkm', size: '88 MB', app: 'reddit', version: '2026.14.0', code: '2614001', complete: true },
+    { name: 'reddit-2026.12.1-2612004.apkm', size: '86 MB', app: 'reddit', version: '2026.12.1', code: '2612004', complete: true },
+    { name: 'reddit-2026.14.0-base-only.apk', size: '41 MB', app: 'reddit', version: '2026.14.0', code: '2614001', complete: false },
+    { name: 'youtube-rokid-21.04.223-patched.apk', size: '121 MB', app: 'youtube', version: '21.04.223', code: '1550630784', complete: true, patched: true, signer: 'patcher', hud: true },
+    { name: 'youtube-morphe-21.04.223-manager.apk', size: '120 MB', app: 'youtube', version: '21.04.223', code: '1550630784', complete: true, patched: true, signer: 'other', hud: true },
+    { name: 'youtube-morphe-21.04.223-no-rokid.apk', size: '119 MB', app: 'youtube', version: '21.04.223', code: '1550630784', complete: true, patched: true, signer: 'patcher', hud: false },
+    { name: 'IMG_20260930_1142.jpg', size: '3.1 MB', app: null },
+  ];
+
+  const STAGES = ['Load', 'Patch', 'Build', 'Sign', 'Save'];
+  const MG_PHASES = ['Downloading', 'Validating', 'Transferring', 'Installing', 'Checking glasses'];
+  const IN_PHASES = ['Validating APK', 'Transferring', 'Installing', 'Checking glasses'];
+
+  /* ---------------- state ---------------- */
+  function freshApp(id) {
+    const a = APPS[id];
+    const base = {
+      file: null, validation: null,
+      toggles: Object.fromEntries(a.patches.map(p => [p.id, p.on])),
+      result: null, outcome: null, nextFail: null,
+    };
+    if (id === 'youtube') base.setup = {
+      microg: { status: 'missing', busy: null, version: null, latest: '0.3.6 (example)', fail: null },
+      install: { status: 'none', busy: null, installed: null, fail: null, source: null, message: null },
+      signin: { done: false },
+      kbAuto: false, kbBlocked: false,
+      imported: null, importValidation: null, sourceOpened: false,
+    };
+    return base;
+  }
+  function freshKey() { return { created: '2026-09-18 (example)', backups: 0, imported: false, mismatch: false }; }
+  const state = {
+    ctx: 'settings', lockedApp: null,
+    apps: { youtube: freshApp('youtube'), reddit: freshApp('reddit') },
+    glasses: { connected: true, native: [{ name: 'Camera', pkg: 'com.rokid.camera (example)' }, { name: 'Settings', pkg: 'com.android.settings' }] },
+    job: null, key: freshKey(),
+    stack: [], sheet: null, toast: null, fast: true,
+  };
+  const yts = () => state.apps.youtube.setup;
+  // A running job's target and input are immutable until it completes or is cancelled.
+  const jobLocked = id => !!(state.job && state.job.app === id);
+
+  /* ---------------- navigation ---------------- */
+  const screenEl = document.getElementById('screen');
+  function route() { return state.stack[state.stack.length - 1]; }
+  function rootRoute() {
+    if (state.ctx !== 'nexus') return { s: 'home' };
+    return state.lockedApp === 'youtube' ? { s: 'yt' } : { s: 'prepare', app: 'reddit' };
+  }
+  function go(r) { state.stack.push(r); state.sheet = null; render(); }
+  function replace(r) { state.stack[state.stack.length - 1] = r; state.sheet = null; render(); }
+  function home() { state.stack = [rootRoute()]; state.sheet = null; render(); }
+  function openPath(...rs) { state.stack = [rootRoute(), ...rs]; state.sheet = null; render(); }
+  function back() {
+    if (state.sheet) { state.sheet = null; render(); return; }
+    if (state.stack.length > 1) { state.stack.pop(); render(); return; }
+    if (state.ctx === 'nexus') { go({ s: 'handoff', app: state.lockedApp, reason: 'back' }); }
+  }
+  function openSheet(sh) { state.sheet = sh; render(); }
+  // A toast confirms a completed sheet action, so it also dismisses the sheet.
+  function toast(t, s) {
+    state.sheet = null; state.toast = { t, s }; render();
+    clearTimeout(toast.h); toast.h = setTimeout(() => { state.toast = null; render(); }, 2600);
+  }
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') { e.preventDefault(); back(); } });
+
+  /* ---------------- validation (simulated) ---------------- */
+  function validate(appId, f) {
+    const a = APPS[appId];
+    if (!f.app) return { ok: false, kind: 'not-apk', title: 'Not an Android app file', detail: 'Choose the official ' + a.name + ' APK or complete bundle you downloaded.' };
+    if (f.app !== appId) return { ok: false, kind: 'wrong-app', title: 'This is ' + APPS[f.app].name + ', not ' + a.name, detail: 'Patcher only patches the app you chose. Pick a ' + a.name + ' file, or go back and prepare ' + APPS[f.app].name + ' instead.' };
+    if (f.patched) return { ok: false, kind: 'patched', title: 'Already patched, not the official app', detail: 'This file was patched before. Choose the official ' + a.name + ' download here, or use Advanced → Already patched APK to install it directly.' };
+    if (f.version !== a.required.version) return { ok: false, kind: 'wrong-version', title: 'Wrong version: ' + f.version, detail: a.name + ' ' + a.required.version + ' is required because the glasses controls were made for it. Download that exact official version.' };
+    if (!f.complete) return { ok: false, kind: 'incomplete', title: 'Incomplete: no arm64 code', detail: 'The glasses need the arm64-v8a part of the app. Download the complete official bundle (.apkm) or an arm64 APK, not a single split or a 32-bit build.' };
+    return { ok: true, kind: 'ok', title: 'Official ' + a.name + ' ' + a.required.version, detail: 'Version, package and signer of the stock app match. Ready to review patches.' };
+  }
+  function validateImport(f) {
+    if (!f.app) return { ok: false, title: 'Not an Android app file', detail: 'Choose a patched YouTube APK.' };
+    if (f.app !== 'youtube') return { ok: false, title: 'This is ' + APPS[f.app].name + ', not YouTube', detail: 'Only a patched YouTube APK can be installed from here.' };
+    if (!f.patched) return { ok: false, title: 'This is the official, unpatched app', detail: 'Use step 2 of the setup for official downloads. This route only takes an APK that already carries the Rokid patches.' };
+    if (!f.hud) return { ok: false, title: 'No Rokid glasses controls in this APK', detail: 'It was patched without the Rokid patches. Add them in Morphe Manager (Advanced) or patch the official app here.' };
+    if (f.version !== APPS.youtube.required.version) return { ok: false, title: 'Wrong version: ' + f.version, detail: 'The glasses controls target 21.04.223.' };
+    return { ok: true, title: 'Patched YouTube ' + f.version + ' with Rokid controls', detail: f.signer === 'patcher' ? 'Signed with this phone’s Patcher key. Ready to install.' : 'Signed with another key. It can be installed, but it can only update an app that already uses that key.' };
+  }
+  function pickFile(appId, f) {
+    const as = state.apps[appId];
+    as.file = f; as.validation = validate(appId, f); as.result = null; as.outcome = null;
+    state.sheet = null; render();
+  }
+
+  /* ---------------- job engine (simulated patching) ---------------- */
+  let timer = null;
+  function startJob(appId, fail) {
+    const k = state.fast ? 1 : 10;
+    state.apps[appId].result = null; state.apps[appId].outcome = null;
+    state.job = {
+      app: appId, stage: 0, elapsed: 0, stageEl: 0, fail: fail || 'success', patchIndex: 0, saveFrac: 0,
+      loadT: 1800 * k, patchT: (appId === 'youtube' ? 80 : 2000) * k, buildT: 2400 * k, signT: 1200 * k, saveT: 1200 * k,
+      last: Date.now(),
+    };
+    clearInterval(timer); timer = setInterval(tick, 120);
+    replace({ s: 'running', app: appId });
+  }
+  function endJob(outcome, extra) {
+    const j = state.job; if (!j) return;
+    clearInterval(timer); timer = null;
+    const as = state.apps[j.app];
+    if (outcome === 'success') {
+      as.result = { version: APPS[j.app].required.version, outPackage: APPS[j.app].outPackage, elapsed: fmt(j.elapsed), when: 'just now', signer: 'Patcher key (created ' + state.key.created + ')', patches: Object.values(as.toggles).filter(Boolean).length };
+      as.outcome = null;
+      if (j.app === 'youtube') { const i = yts().install; if (i.status === 'done') i.status = 'stale'; }
+    } else {
+      as.outcome = Object.assign({ kind: outcome, stage: STAGES[j.stage], elapsed: fmt(j.elapsed) }, extra || {});
+    }
+    state.job = null;
+    const r = route();
+    if (r.s === 'running' && r.app === j.app) replace({ s: 'result', app: j.app }); else render();
+  }
+  function tick() {
+    const j = state.job; if (!j) return;
+    const now = Date.now(); const dt = now - j.last; j.last = now; j.elapsed += dt; j.stageEl += dt;
+    const a = APPS[j.app];
+    switch (j.stage) {
+      case 0: if (j.stageEl >= j.loadT) { j.stage = 1; j.stageEl = 0; } break;
+      case 1:
+        j.patchIndex = Math.min(a.patchTotal, Math.floor(j.stageEl / j.patchT));
+        if (j.fail === 'interrupt' && j.patchIndex >= Math.floor(a.patchTotal * 0.55)) { endJob('interrupted'); return; }
+        if (j.patchIndex >= a.patchTotal) { j.stage = 2; j.stageEl = 0; }
+        break;
+      case 2:
+        if (j.stageEl >= j.buildT) { if (j.fail === 'build') { endJob('failed', { message: 'Build step failed (example): resources could not be merged.' }); return; } j.stage = 3; j.stageEl = 0; }
+        break;
+      case 3: if (j.stageEl >= j.signT) { j.stage = 4; j.stageEl = 0; } break;
+      case 4: j.saveFrac = Math.min(1, j.stageEl / j.saveT); if (j.saveFrac >= 1) { endJob('success'); return; } break;
+    }
+    if (['running', 'home', 'handoff', 'yt'].includes(route().s)) render();
+  }
+  function cancelJob() { endJob('cancelled'); }
+  function fmt(ms) { const s = Math.floor(ms / 1000); return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0'); }
+
+  /* ---------------- glasses flows (simulated MicroG install and APK install) ----------------
+     A phase runner: phases advance on a timer; `outcome` decides what the final inventory check
+     reports. Download and transfer finishing never mark anything done by themselves. */
+  let flowTimer = null;
+  function runFlow(kind, phases, outcome, onEnd) {
+    const k = state.fast ? 1 : 6;
+    const sub = kind === 'microg' ? yts().microg : yts().install;
+    sub.busy = { kind, phases, i: 0, frac: 0, el: 0, phaseT: 1500 * k, outcome, last: Date.now() };
+    clearInterval(flowTimer);
+    flowTimer = setInterval(() => {
+      const b = sub.busy; if (!b) { clearInterval(flowTimer); return; }
+      const now = Date.now(); const dt = now - b.last; b.last = now; b.el += dt;
+      const known = /Downloading|Transferring/.test(b.phases[b.i]);
+      b.frac = known ? Math.min(1, b.el / b.phaseT) : 0;
+      if (b.el >= b.phaseT) {
+        if (b.outcome === 'fail-transfer' && b.phases[b.i] === 'Transferring') { clearInterval(flowTimer); sub.busy = null; onEnd('fail-transfer'); render(); return; }
+        b.i++; b.el = 0;
+        if (b.i >= b.phases.length) { clearInterval(flowTimer); sub.busy = null; onEnd(b.outcome); render(); return; }
+      }
+      render();
+    }, 120);
+    render();
+  }
+  function startMicrogInstall(outcome) {
+    const m = yts().microg;
+    if (!state.glasses.connected) { m.fail = 'offline'; render(); return; }
+    m.fail = null;
+    runFlow('microg', MG_PHASES, outcome || m.nextOutcome || 'installed', o => {
+      m.nextOutcome = null;
+      if (o === 'installed') { m.status = 'installed'; m.version = m.latest; }
+      else if (o === 'noicon') { m.status = 'noicon'; m.version = m.latest; }
+      else { m.status = m.status === 'missing' ? 'failed' : m.status; m.fail = o === 'fail-transfer' ? 'transfer' : 'install'; }
+    });
+  }
+  function startInstall(sourceKind, outcome) {
+    const i = yts().install;
+    if (!state.glasses.connected) { i.status = 'disconnected'; render(); return; }
+    i.source = sourceKind; i.fail = null; i.message = null;
+    runFlow('install', IN_PHASES, outcome || i.nextOutcome || 'done', o => {
+      i.nextOutcome = null;
+      if (o === 'done') { i.status = 'done'; i.installed = { version: APPS.youtube.required.version, code: APPS.youtube.required.code, signer: sourceKind === 'import-other' ? 'other key' : 'Patcher key', when: 'just now' }; }
+      else if (o === 'mismatch') { i.status = 'mismatch'; i.message = 'YouTube on the glasses is signed with a different key.'; }
+      else { i.status = 'failed'; i.fail = o === 'fail-transfer' ? 'transfer' : 'install'; }
+    });
+  }
+
+  /* ---------------- icons ---------------- */
+  const I = {
+    back: '<svg class="pic" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg>',
+    chev: '<svg class="pic" viewBox="0 0 24 24" style="width:14px;height:14px"><path d="M9 5l7 7-7 7"/></svg>',
+    gear: '<svg class="pic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.1-1.5 1.7 1.7 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1.1 1.7 1.7 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z"/></svg>',
+    file: '<svg class="pic" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8z"/><path d="M14 3v5h5"/></svg>',
+    img: '<svg class="pic" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><circle cx="9" cy="9" r="1.5"/><path d="M20 16l-5-5-8 8"/></svg>',
+    check: '<svg class="pic" viewBox="0 0 24 24"><path d="M5 12l4 4L19 7"/></svg>',
+    x: '<svg class="pic" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>',
+    warn: '<svg class="pic" viewBox="0 0 24 24" style="width:16px;height:16px"><path d="M12 3l10 18H2z"/><path d="M12 10v5M12 18v.5"/></svg>',
+    key: '<svg class="pic" viewBox="0 0 24 24"><circle cx="8" cy="14" r="4"/><path d="M11 11l9-9M15 7l3 3M18 4l2 2"/></svg>',
+    nexus: '<svg class="pic" viewBox="0 0 24 24"><path d="M3 12h4l3-7 4 14 3-7h4"/></svg>',
+    pause: '<svg class="pic" viewBox="0 0 24 24"><path d="M12 8v4l3 2"/><circle cx="12" cy="12" r="9"/></svg>',
+    share: '<svg class="pic" viewBox="0 0 24 24" style="width:14px;height:14px"><path d="M12 15V4M7 9l5-5 5 5"/><path d="M5 14v5a1 1 0 001 1h12a1 1 0 001-1v-5"/></svg>',
+    save: '<svg class="pic" viewBox="0 0 24 24" style="width:14px;height:14px"><path d="M12 4v11M7 10l5 5 5-5"/><path d="M5 19h14"/></svg>',
+    kb: '<svg class="pic" viewBox="0 0 24 24"><rect x="3" y="7" width="18" height="11" rx="2"/><path d="M7 11h.01M11 11h.01M15 11h.01M7 14h10"/></svg>',
+    glasses: '<svg class="pic" viewBox="0 0 24 24"><path d="M2 12l2-5h16l2 5"/><rect x="2" y="12" width="8" height="5" rx="2"/><rect x="14" y="12" width="8" height="5" rx="2"/><path d="M10 14h4"/></svg>',
+    ext: '<svg class="pic" viewBox="0 0 24 24" style="width:14px;height:14px"><path d="M14 4h6v6M20 4l-9 9"/><path d="M19 14v5a1 1 0 01-1 1H5a1 1 0 01-1-1V6a1 1 0 011-1h5"/></svg>',
+    globe: '<svg class="pic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18"/></svg>',
+    link: '<svg class="pic" viewBox="0 0 24 24"><path d="M10 14a4 4 0 005.66 0l3-3a4 4 0 00-5.66-5.66l-1 1"/><path d="M14 10a4 4 0 00-5.66 0l-3 3a4 4 0 005.66 5.66l1-1"/></svg>',
+    mg: '<svg class="pic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 4v16M4 12h16"/></svg>',
+    apps: '<svg class="pic" viewBox="0 0 24 24"><rect x="4" y="4" width="6" height="6" rx="1.5"/><rect x="14" y="4" width="6" height="6" rx="1.5"/><rect x="4" y="14" width="6" height="6" rx="1.5"/><rect x="14" y="14" width="6" height="6" rx="1.5"/></svg>',
+  };
+  const mark = id => `<svg aria-hidden="true"><use href="#mk-${id}" xlink:href="#mk-${id}"/></svg>`;
+  const tile = (a, sm) => `<span class="tile${sm ? ' sm' : ''}" aria-hidden="true">${mark(a.id)}</span>`;
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+
+  /* ---------------- shared view pieces ---------------- */
+  function topbar(title, sub, opts) {
+    opts = opts || {};
+    const canBack = state.stack.length > 1 || state.ctx === 'nexus';
+    const backLbl = state.stack.length === 1 && state.ctx === 'nexus' ? 'Return to Nexus' : 'Back';
+    return `<header class="top${opts.nexus ? ' nexus' : ''}">
+      ${canBack ? `<button class="back" type="button" data-act="back" aria-label="${backLbl}" title="${backLbl}">${I.back}</button>` : '<span style="width:6px"></span>'}
+      <div class="ttl"><div class="t">${title}</div><span class="s">${sub}</span></div>
+      ${opts.right || ''}
+    </header>`;
+  }
+  function jobBand(appId) {
+    const j = state.job; if (!j) return '';
+    const a = APPS[j.app];
+    if (appId && appId !== j.app) return `<div class="band"><span class="ic">${I.pause}</span><div class="t">${a.name} is being patched<small>Finish or cancel it before starting ${APPS[appId].name}</small></div><button class="lnk" type="button" data-act="open-job">Open</button></div>`;
+    return `<div class="band"><span class="ic">${I.pause}</span><div class="t">${a.name} · ${STAGES[j.stage]}<small>Elapsed ${fmt(j.elapsed)} · keeps running in the background</small></div><button class="lnk" type="button" data-act="open-job">Open</button></div>`;
+  }
+  function nexusBand(appId) {
+    if (state.ctx !== 'nexus') return '';
+    return `<div class="band"><span class="ic">${I.nexus}</span><div class="t">Requested by Nexus for ${APPS[appId].name}<small>App choice is fixed until you return to Nexus</small></div></div>`;
+  }
+  function offlineBand() {
+    if (state.glasses.connected) return '';
+    return `<div class="band notif"><span class="ic">${I.glasses}</span><div class="t">Glasses not connected<small>Connect them in Hi Rokid and start Nexus on them. Patching still works offline.</small></div></div>`;
+  }
+  function flowView(b) {
+    const list = b.phases.map((p, i) => `<li class="${i < b.i ? 'done' : i === b.i ? 'active' : ''}"><span class="n">${i < b.i ? '✓' : i + 1}</span><span>${p}</span><span class="m">${i < b.i ? 'done' : i === b.i ? 'now' : ''}</span></li>`).join('');
+    const known = /Downloading|Transferring/.test(b.phases[b.i]);
+    return `<ol class="stages" aria-label="Progress">${list}</ol>
+      <div class="bar ${known ? '' : 'indet'}" role="progressbar" aria-label="${b.phases[b.i]}" ${known ? `aria-valuenow="${Math.round(b.frac * 100)}" aria-valuemin="0" aria-valuemax="100"` : ''}><i style="width:${known ? Math.round(b.frac * 100) + '%' : ''}"></i></div>
+      <p class="hint">${b.phases[b.i] === 'Checking glasses' ? 'Waiting for the glasses to report what is installed. Only that report marks the step done.' : b.phases[b.i] === 'Transferring' ? 'Copying over the Rokid link. A finished transfer is not an install yet.' : ''}</p>`;
+  }
+
+  /* ---------------- YouTube setup: statuses ---------------- */
+  function mgStatus() {
+    const m = yts().microg;
+    if (m.busy) return { cls: 'live', t: m.busy.phases[m.busy.i] + '…' };
+    if (!state.glasses.connected && m.status !== 'installed') return { cls: 'attn', t: 'Glasses offline · cannot check' };
+    return ({
+      missing: { cls: '', t: 'Not installed on the glasses' },
+      installed: { cls: 'done', t: 'Done · MicroG ' + m.version + ' reported by the glasses' },
+      noicon: { cls: 'attn', t: 'Needs attention · installed but not launchable' },
+      update: { cls: 'attn', t: 'Update available · ' + m.version + ' → ' + m.latest },
+      failed: { cls: 'bad', t: 'Install failed · nothing installed' },
+    })[m.status];
+  }
+  function srcStatus() {
+    const as = state.apps.youtube, s = yts();
+    if (as.file && as.validation && as.validation.ok) return { cls: 'done', t: 'Done · ' + as.file.name };
+    if (as.file) return { cls: 'bad', t: 'File rejected · ' + as.validation.title };
+    if (s.imported && s.importValidation && s.importValidation.ok) return { cls: 'done', t: 'Skipped · already patched APK chosen' };
+    return { cls: '', t: s.sourceOpened ? 'Download opened · now choose the file' : 'Download the official app, then choose it' };
+  }
+  function instStatus() {
+    const as = state.apps.youtube, i = yts().install;
+    if (state.job && state.job.app === 'youtube') return { cls: 'live', t: 'Patching · ' + STAGES[state.job.stage] + ' · ' + fmt(state.job.elapsed) };
+    if (i.busy) return { cls: 'live', t: i.busy.phases[i.busy.i] + '…' };
+    if (i.status === 'done') return { cls: 'done', t: 'Done · ' + i.installed.version + ' confirmed on the glasses' };
+    if (i.status === 'stale') return { cls: 'attn', t: 'New APK ready · installed ' + i.installed.version + ' can be updated' };
+    if (i.status === 'mismatch') return { cls: 'bad', t: 'Stopped · signer mismatch on the glasses' };
+    if (i.status === 'failed') return { cls: 'bad', t: 'Install failed · retry' };
+    if (i.status === 'disconnected') return { cls: 'attn', t: 'Glasses offline · APK ready' };
+    if (as.result || (yts().imported && yts().importValidation.ok)) return { cls: 'attn', t: 'APK ready · install on the glasses' };
+    if (as.outcome) return { cls: 'bad', t: ({ failed: 'Last run failed', cancelled: 'Cancelled', interrupted: 'Interrupted' })[as.outcome.kind] + ' · ' + as.outcome.stage };
+    return { cls: '', t: 'Review patches, patch, then install' };
+  }
+  function signStatus() { return yts().signin.done ? { cls: 'done', t: 'Done (marked by you)' } : { cls: '', t: 'Your checklist · open MicroG, add account, open YouTube' }; }
+  function ytSummary() {
+    const m = mgStatus(), s = srcStatus(), i = instStatus(), g = signStatus();
+    if (i.cls === 'live') return { cls: 'live', t: i.t, cta: 'Open', act: 'yt' };
+    if (yts().install.status === 'done' && !yts().signin.done) return { cls: 'ok', t: 'Installed · sign-in left on your checklist', cta: 'Continue', act: 'yt' };
+    if (yts().install.status === 'done') return { cls: 'ok', t: 'Installed ' + yts().install.installed.version + ' · set up', cta: 'Open setup', act: 'yt' };
+    const steps = [m, s, i, g]; const n = steps.filter(x => x.cls === 'done').length;
+    const bad = steps.find(x => x.cls === 'bad' || x.cls === 'attn');
+    if (bad) return { cls: bad.cls === 'bad' ? 'bad' : 'warn', t: bad.t, cta: 'Continue', act: 'yt' };
+    return { cls: n ? 'ok' : '', t: n ? 'Step ' + (n + 1) + ' of 4 next' : 'Not set up yet · 4 guided steps', cta: n ? 'Continue' : 'Set up YouTube', act: 'yt' };
+  }
+
+  /* ---------------- YouTube setup: overview ---------------- */
+  function vYt() {
+    const a = APPS.youtube, as = state.apps.youtube, s = yts();
+    const steps = [
+      { r: 'yt-microg', n: 1, t: 'MicroG on the glasses', st: mgStatus() },
+      { r: 'yt-source', n: 2, t: 'Official YouTube ' + a.required.version, st: srcStatus() },
+      { r: 'yt-patch', n: 3, t: 'Patch and install', st: instStatus() },
+      { r: 'yt-signin', n: 4, t: 'Sign in and open', st: signStatus() },
+    ];
+    const canPatch = as.file && as.validation && as.validation.ok;
+    const quick = state.job && state.job.app === 'youtube' ? { l: 'Open running job', act: 'open-job' }
+      : as.result && s.install.status !== 'done' ? { l: 'Install the patched APK', act: 'yt-install' }
+      : canPatch ? { l: s.install.status === 'done' ? 'Patch an update' : 'Patch now', act: 'prepare', app: 'youtube' }
+      : null;
+    return topbar('YouTube', s.install.status === 'done' ? 'Installed <b>' + s.install.installed.version + '</b>' : 'Official <b>' + a.required.version + '</b> · example', { right: tile(a, true) }) +
+      `<div class="content">
+        ${nexusBand('youtube')}${jobBand('youtube')}${offlineBand()}
+        <p class="hint" style="margin:0 2px 6px">Four steps, in order, for a first setup. Already set up? Jump straight to patching an update: your files and choices are kept.</p>
+        ${steps.map(st => `<button class="step ${st.st.cls}" type="button" data-act="${st.r}"><span class="n">${st.st.cls === 'done' ? '✓' : st.n}</span><span class="t">${esc(st.t)}<span class="s">${esc(st.st.t)}</span></span><span class="go">${I.chev}</span></button>`).join('')}
+        <div class="lbl" style="margin-top:18px"><span>Phone keyboard</span><span class="ex">Nexus setting</span></div>
+        <button class="row btnrow" type="button" data-act="yt-keyboard"><span class="tile sm" aria-hidden="true">${I.kb}</span><span class="t">Auto-open YouTube keyboard<span class="s">${s.kbAuto ? 'On · opens for YouTube search and text fields' : 'Off · use Keyboard & remote when needed'}</span></span><span class="v">${s.kbAuto ? 'on' : 'off'}</span><span class="go">${I.chev}</span></button>
+        <details class="adv"><summary>Advanced</summary>
+          <button class="row btnrow" type="button" data-act="yt-advanced"><span class="t">Patch with Morphe Manager instead<span class="s">Add the Rokid patches to Morphe, then import the result</span></span><span class="go">${I.chev}</span></button>
+          <button class="row btnrow" type="button" data-act="yt-import"><span class="t">Already patched YouTube APK<span class="s">Validate and install a final APK you already have</span></span><span class="go">${I.chev}</span></button>
+          <button class="row btnrow" type="button" data-act="refresh-glasses"><span class="t">Refresh glasses apps<span class="s">Ask the glasses what is installed</span></span><span class="go">${I.chev}</span></button>
+          <button class="row btnrow" type="button" data-act="yt-install" ${as.result || (s.imported && s.importValidation && s.importValidation.ok) ? '' : 'disabled'}><span class="t">Reinstall or update from the ready APK<span class="s">${as.result ? 'patched-youtube-' + as.result.version + '.apk (example)' : 'No ready APK yet'}</span></span><span class="go">${I.chev}</span></button>
+          <button class="row btnrow" type="button" data-act="how-patches"><span class="t">How the Rokid patches work<span class="s">What changes in the app, in plain words</span></span><span class="go">${I.chev}</span></button>
+        </details>
+      </div>
+      ${quick ? `<div class="foot"><button class="btn pri wide" type="button" data-act="${quick.act}" ${quick.app ? 'data-app="' + quick.app + '"' : ''}>${quick.l}</button></div>` : ''}`;
+  }
+
+  /* ---------------- step 1: MicroG ---------------- */
+  function vMicrog() {
+    const m = yts().microg, st = mgStatus();
+    let panel;
+    if (m.busy) panel = `<div class="panel live"><div class="ph"><span class="dot"></span>${m.status === 'update' ? 'Updating' : 'Installing'} MicroG</div>${flowView(m.busy)}</div>`;
+    else if (!state.glasses.connected && m.status !== 'installed') panel = `<div class="panel warn"><div class="ph"><span class="dot"></span>Glasses offline</div><p>Nexus cannot check or install MicroG until the glasses are connected. Connect them in Hi Rokid, start Nexus on them, then try again.</p><div class="acts"><button class="btn pri" type="button" data-act="refresh-glasses">Check again</button></div></div>`;
+    else panel = ({
+      missing: `<div class="panel"><div class="ph"><span class="dot"></span>Not installed</div><p>MicroG lets YouTube sign in with a Google account on the glasses. Nexus downloads the official Morphe MicroG-RE release with a launcher icon, checks it, and installs it over the Rokid link. The step turns Done only when the glasses report it installed.</p><div class="acts"><button class="btn pri" type="button" data-act="mg-install">Install MicroG</button></div></div>`,
+      failed: `<div class="panel bad"><div class="ph"><span class="dot"></span>Install failed</div><p>${m.fail === 'transfer' ? 'The transfer to the glasses stopped (example). Nothing was installed.' : 'The glasses did not report MicroG after installing (example). Nothing is marked done.'}</p><div class="acts"><button class="btn pri" type="button" data-act="mg-install">Retry</button><button class="btn ghost" type="button" data-act="refresh-glasses">Check glasses</button></div></div>`,
+      installed: `<div class="panel ok"><div class="ph"><span class="dot"></span>Done · MicroG ${esc(m.version)}</div><dl class="kv"><dt>Reported by</dt><dd class="ok">glasses inventory, just now</dd><dt>Package</dt><dd>app.revanced.android.gms</dd></dl><div class="acts"><button class="btn pri" type="button" data-act="ext" data-kind="microg">Open MicroG</button><button class="btn ghost" type="button" data-act="mg-check">Check for updates</button></div></div>`,
+      noicon: `<div class="panel warn"><div class="ph"><span class="dot"></span>Needs attention · not launchable</div><p>The glasses have a MicroG build without a launcher icon, so Open MicroG cannot work and sign-in cannot start. Install the icon-enabled release offered here; it replaces the current one.</p><div class="acts"><button class="btn pri" type="button" data-act="mg-install">Install icon-enabled release</button></div></div>`,
+      update: `<div class="panel warn"><div class="ph"><span class="dot"></span>Update available · ${esc(m.version)} → ${esc(m.latest)}</div><p>A newer verified release is prepared. Updating keeps the account signed in on the glasses.</p><div class="acts"><button class="btn pri" type="button" data-act="mg-install">Update MicroG</button><button class="btn ghost" type="button" data-act="ext" data-kind="microg">Open MicroG</button></div></div>`,
+    })[m.status];
+    return topbar('1 · MicroG on the glasses', st.t.replace(/·.*/, '').trim(), { right: tile(APPS.youtube, true) }) +
+      `<div class="content">
+        ${offlineBand()}
+        ${panel}
+        <div class="lbl"><span>More</span></div>
+        <button class="row btnrow" type="button" data-act="mg-check" ${m.busy ? 'disabled' : ''}><span class="t">Check for MicroG updates<span class="s">Prepares the latest verified release</span></span><span class="go">${I.chev}</span></button>
+        <button class="row btnrow" type="button" data-act="ext" data-kind="microg-source"><span class="t">Source: MorpheApp/MicroG-RE<span class="s">github.com/MorpheApp/MicroG-RE · opens in the browser</span></span><span class="go">${I.ext}</span></button>
+        <button class="row btnrow" type="button" data-act="refresh-glasses"><span class="t">Refresh glasses apps<span class="s">Re-read what the glasses report</span></span><span class="go">${I.chev}</span></button>
+        <p class="hint">Only the glasses inventory marks this step done: a finished download or transfer does not.</p>
+        <details class="tech"><summary>Technical details</summary><dl class="kv"><dt>Release</dt><dd>MicroG-RE ${esc(m.latest)}, arm64 asset with launcher icon (example)</dd><dt>Checked</dt><dd>SHA-256 and signer before install (example)</dd><dt>Done when</dt><dd>fresh inventory lists the package with an icon</dd></dl></details>
+      </div>`;
+  }
+
+  /* ---------------- step 2: official source ---------------- */
+  function vSource() {
+    const a = APPS.youtube, as = state.apps.youtube, s = yts(), v = as.validation, lock = jobLocked('youtube');
+    const lockHint = lock ? '<p class="hint warn">Locked while YouTube is being patched: the running job keeps this file as its input. Cancel the job or wait for it to finish to change it.</p>' : '';
+    let fileBlock;
+    if (!as.file) fileBlock = `<div class="panel"><div class="ph"><span class="dot"></span>No file chosen yet</div><p>Choose the APK or complete bundle you downloaded. Opening the download page does not finish this step; choosing a valid file does.</p><div class="acts"><button class="btn ${s.sourceOpened ? 'pri' : 'sec'}" type="button" data-act="pick" ${lock ? 'disabled' : ''}>Choose APK or bundle</button></div></div>`;
+    else fileBlock = `<div class="panel ${v.ok ? 'ok' : 'bad'}"><div class="ph"><span class="dot"></span>${esc(v.title)}</div>
+        <dl class="kv"><dt>File</dt><dd>${esc(as.file.name)} · ${esc(as.file.size || '')}</dd>
+          ${as.file.app ? `<dt>App</dt><dd class="${as.file.app === 'youtube' && !as.file.patched ? 'ok' : 'bad'}">${APPS[as.file.app].name} ${esc(as.file.version)} (${esc(as.file.code)})${as.file.patched ? ' · patched' : ''}</dd>` : ''}
+          ${as.file.app ? `<dt>arm64</dt><dd class="${as.file.complete ? 'ok' : 'bad'}">${as.file.complete ? 'present' : 'missing'}</dd>` : ''}</dl>
+        <p>${esc(v.detail)}</p>
+        <div class="acts"><button class="btn ${v.ok ? 'ghost' : 'pri'}" type="button" data-act="pick" ${lock ? 'disabled' : ''}>Choose another file</button>
+          ${v.kind === 'patched' ? '<button class="btn sec" type="button" data-act="yt-import">Already patched APK</button>' : ''}
+          ${v.kind === 'wrong-app' && state.ctx !== 'nexus' ? `<button class="btn sec" type="button" data-act="switch-app" data-app="reddit" ${lock || jobLocked('reddit') ? 'disabled' : ''}>Prepare Reddit</button>` : ''}</div>${lockHint}</div>`;
+    return topbar('2 · Official YouTube', 'Needs <b>' + a.required.version + '</b> · example', { right: tile(a, true) }) +
+      `<div class="content">
+        <div class="lbl"><span>A · Download</span><span class="ex">external browser</span></div>
+        <div class="panel"><div class="ph"><span class="dot" style="background:${s.sourceOpened ? 'var(--green-dim)' : 'var(--ink4)'}"></span>${s.sourceOpened ? 'Download page opened' : 'Get the official app yourself'}</div>
+          <p>Patcher does not download YouTube. Open APKMirror in your browser, download <b>YouTube ${a.required.version}</b> (example version) as an APK with arm64 or as the complete .apkm bundle, then come back.</p>
+          <div class="acts"><button class="btn ${s.sourceOpened ? 'ghost' : 'pri'}" type="button" data-act="ext" data-kind="apkmirror">${I.ext} Open APKMirror · YouTube ${a.required.version}</button></div></div>
+        <div class="lbl"><span>B · Choose the file</span><span class="ex">${esc(a.required.kind)}</span></div>
+        ${fileBlock}
+        <p class="hint">32-bit-only builds, other versions and already patched files are refused here. Nexus never inspects your browser downloads.</p>
+      </div>
+      <div class="foot"><button class="btn pri wide" type="button" data-act="prepare" data-app="youtube" ${v && v.ok ? '' : 'disabled'}>Continue to patches</button></div>`;
+  }
+
+  /* ---------------- step 3b: install on glasses ---------------- */
+  function vInstall() {
+    const as = state.apps.youtube, s = yts(), i = s.install;
+    const fromImport = s.imported && s.importValidation && s.importValidation.ok && !as.result;
+    const apk = as.result ? { name: 'patched-youtube-' + as.result.version + '.apk (example)', version: as.result.version, signer: 'Patcher key' } : fromImport ? { name: s.imported.name, version: s.imported.version, signer: s.imported.signer === 'patcher' ? 'Patcher key' : 'another key' } : null;
+    let panel;
+    if (!apk) panel = `<div class="panel"><div class="ph"><span class="dot"></span>No APK ready</div><p>Patch the official app in step 3, or pick an already patched APK under Advanced.</p></div>`;
+    else if (i.busy) panel = `<div class="panel live"><div class="ph"><span class="dot"></span>Installing YouTube ${esc(apk.version)}</div>${flowView(i.busy)}</div>`;
+    else if (!state.glasses.connected) panel = `<div class="panel warn"><div class="ph"><span class="dot"></span>Glasses not connected</div><p>The APK is ready and stays ready. Connect the glasses in Hi Rokid, start Nexus on them, and keep both devices connected during the install.</p><div class="acts"><button class="btn pri" type="button" data-act="inst-start">Try again</button></div></div>`;
+    else if (i.status === 'done') panel = `<div class="panel ok"><div class="ph"><span class="dot"></span>Installed and confirmed</div><dl class="kv"><dt>Glasses report</dt><dd class="ok">app.morphe.android.youtube ${esc(i.installed.version)} (${esc(i.installed.code)})</dd><dt>Signer</dt><dd class="ok">${esc(i.installed.signer)}, matches</dd><dt>Checked</dt><dd>fresh inventory, ${esc(i.installed.when)}</dd></dl><p>Which patches went in cannot be proven from the package alone: check the controls and playback on the glasses in step 4.</p><div class="acts"><button class="btn pri" type="button" data-act="yt-signin">Continue to sign-in</button><button class="btn ghost" type="button" data-act="ext" data-kind="youtube">Open YouTube</button></div></div>`;
+    else if (i.status === 'mismatch') panel = `<div class="panel bad"><div class="ph"><span class="dot"></span>Stopped · signer mismatch</div><p>YouTube is already on the glasses, signed with a different key than this APK. Android refuses to update over another signer, and Nexus will not uninstall it for you.</p><p><b>Keep your data:</b> import the backup of the key that signed the installed app, then patch again.<br><b>Or start fresh:</b> uninstall YouTube on the glasses yourself (its app data is lost), then install again here.</p><div class="acts"><button class="btn pri" type="button" data-act="maint">Import key backup</button><button class="btn ghost" type="button" data-act="inst-start">Try again</button></div></div>`;
+    else if (i.status === 'failed') panel = `<div class="panel bad"><div class="ph"><span class="dot"></span>${i.fail === 'transfer' ? 'Transfer failed' : 'Install not confirmed'}</div><p>${i.fail === 'transfer' ? 'The copy to the glasses was cut off (example). Nothing changed on the glasses.' : 'The glasses did not report the new version after installing (example). The previous app, if any, is still there.'}</p><div class="acts"><button class="btn pri" type="button" data-act="inst-start">Retry install</button><button class="btn ghost" type="button" data-act="refresh-glasses">Check glasses</button></div></div>`;
+    else panel = `<div class="panel ${i.status === 'stale' ? 'warn' : 'ok'}"><div class="ph"><span class="dot"></span>${i.status === 'stale' ? 'New APK ready · update' : 'APK ready to install'}</div><dl class="kv"><dt>File</dt><dd>${esc(apk.name)}</dd><dt>Version</dt><dd>${esc(apk.version)}</dd><dt>Signed with</dt><dd class="${apk.signer === 'Patcher key' ? 'ok' : 'warn'}">${esc(apk.signer)}</dd>${i.status === 'stale' ? `<dt>On glasses</dt><dd>${esc(i.installed.version)} · same key, data kept</dd>` : ''}</dl><p>Nexus copies the APK, checks version, package, signer and the Rokid marker again, installs it over the Rokid link, then asks the glasses what is installed. Only that answer marks this done.</p><div class="acts"><button class="btn pri" type="button" data-act="inst-start">${i.status === 'stale' ? 'Update on glasses' : 'Install on glasses'}</button></div></div>`;
+    return topbar('3 · Install on the glasses', state.glasses.connected ? 'Glasses <b>connected</b>' : 'Glasses offline', { right: tile(APPS.youtube, true) }) +
+      `<div class="content">${offlineBand()}${panel}
+        <ul class="checks">
+          <li><span class="${apk ? 'ok' : 'no'}">${I.check}</span><span>Patched APK on the phone<span class="s">${apk ? esc(apk.name) : 'not yet'}</span></span></li>
+          <li><span class="${i.busy && i.busy.i > 1 || i.status === 'done' ? 'ok' : 'no'}">${I.check}</span><span>Transferred to the glasses<span class="s">a finished transfer is not an install</span></span></li>
+          <li><span class="${i.status === 'done' ? 'ok' : 'no'}">${I.check}</span><span>Glasses report the new version and signer<span class="s">this is the only confirmation that counts</span></span></li>
+        </ul>
+        <details class="tech"><summary>Technical details</summary><dl class="kv"><dt>Package</dt><dd>app.morphe.android.youtube</dd><dt>Rechecked</dt><dd>exact version, HUD marker, package, manifest, hash, glasses API, installed signer</dd><dt>Confirmation</dt><dd>fresh glasses inventory after install</dd></dl></details>
+      </div>`;
+  }
+
+  /* ---------------- step 4: sign in and open ---------------- */
+  function vSignin() {
+    const s = yts(), done = s.signin.done, mg = s.microg.status;
+    return topbar('4 · Sign in and open', done ? 'Done <b>(marked by you)</b>' : 'Your checklist', { right: tile(APPS.youtube, true) }) +
+      `<div class="content">${offlineBand()}
+        ${mg !== 'installed' ? `<div class="warnbox">${I.warn}<span>MicroG is ${mg === 'noicon' ? 'not launchable' : 'not installed'} on the glasses (step 1). Sign-in cannot start without it.</span></div>` : ''}
+        <ol class="guide">
+          <li><span>Open MicroG on the glasses and choose <b>Add account</b> there.<span class="s">The account is created inside MicroG on the glasses. Nothing is typed into Patcher or Nexus.</span><span class="acts"><button class="btn sec" type="button" data-act="ext" data-kind="microg" ${mg !== 'installed' ? 'disabled' : ''}>Open MicroG on glasses</button></span></span></li>
+          <li><span>Type the Google sign-in with the phone keyboard.<span class="s">Nexus Keyboard &amp; remote sends keystrokes to the field focused on the glasses. Password fields are marked sensitive; the phone screen turns secure.</span><span class="acts"><button class="btn sec" type="button" data-act="ext" data-kind="remote">Keyboard &amp; remote</button></span></span></li>
+          <li><span>Finish Google's verification on the glasses.<span class="s">Codes and prompts appear on the glasses only.</span></span></li>
+          <li><span>Open YouTube and check your account, the glasses controls and the Morphe or SponsorBlock settings.<span class="acts"><button class="btn sec" type="button" data-act="ext" data-kind="youtube" ${s.install.status === 'done' ? '' : 'disabled'}>Open YouTube on glasses</button></span></span></li>
+        </ol>
+        <p class="hint">Patcher and Nexus never see the account, its password or whether the sign-in worked. This step is your own checklist: mark it when you are satisfied. It is separate from the install confirmation in step 3.</p>
+      </div>
+      <div class="foot">${done ? `<button class="btn ghost wide" type="button" data-act="signin-toggle">Mark sign-in to do</button>` : `<button class="btn pri wide" type="button" data-act="signin-toggle">Done (marked by you)</button>`}</div>`;
+  }
+
+  /* ---------------- phone keyboard setting ---------------- */
+  function vKeyboard() {
+    const s = yts();
+    return topbar('Phone keyboard', 'Nexus setting · <b>YouTube</b>', { right: `<span class="tile sm" aria-hidden="true">${I.kb}</span>` }) +
+      `<div class="content">
+        <div class="row"><span class="t">Auto-open YouTube keyboard<span class="s">Off by default</span></span><button class="toggle" type="button" role="switch" aria-checked="${s.kbAuto}" aria-label="Auto-open YouTube keyboard" data-act="kb-toggle"></button></div>
+        <p class="hint" style="margin-top:10px">${s.kbAuto ? 'When YouTube on the glasses focuses its search box or another text field, the phone keyboard screen comes forward by itself and leaves when the field is done.' : 'When off, open Keyboard & remote in Nexus yourself whenever YouTube on the glasses is waiting for text.'} MicroG sign-in always uses the manual secure remote, never auto-open.</p>
+        ${s.kbBlocked ? `<div class="band notif" style="margin-top:12px"><span class="ic">${I.kb}</span><div class="t">Keyboard ready for YouTube<small>Android blocked opening it automatically · tap to open</small></div><button class="lnk" type="button" data-act="ext" data-kind="remote">Open</button></div><p class="hint">Example of the notification fallback: some Android versions refuse background activity launches, so Nexus posts this notification instead.</p>` : ''}
+        <div class="acts" style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn sec" type="button" data-act="kb-try" ${s.kbAuto ? '' : 'disabled'}>Simulate a YouTube text field</button><button class="btn ghost" type="button" data-act="ext" data-kind="remote">Keyboard &amp; remote</button></div>
+        <details class="tech"><summary>Technical details</summary><dl class="kv"><dt>Owner</dt><dd>Nexus Keyboard &amp; remote; Patcher only shows the switch here</dd><dt>Scope</dt><dd>YouTube editors on the glasses only</dd><dt>Fallback</dt><dd>notification when the automatic launch is blocked</dd></dl></details>
+      </div>`;
+  }
+
+  /* ---------------- advanced: Morphe Manager route ---------------- */
+  function vAdvanced() {
+    return topbar('Patch with Morphe Manager', 'Advanced · alternative route') +
+      `<div class="content">
+        <p class="hint" style="margin:0 2px 8px">If you prefer Morphe Manager on this phone, add the Rokid patches to it, patch the official YouTube there, then come back and import the result. The Rokid patches are what put the glasses controls in.</p>
+        <ol class="guide">
+          <li><span>Add the Rokid patch source to Morphe Manager.<span class="s">github.com/Anezium/morphe-patches</span><span class="acts"><button class="btn sec" type="button" data-act="ext" data-kind="morphe-source">${I.ext} Open patch source</button></span></span></li>
+          <li><span>Patch official YouTube ${APPS.youtube.required.version} in Morphe Manager with the Rokid patches selected.<span class="acts"><button class="btn sec" type="button" data-act="ext" data-kind="morphe">${I.ext} Open Morphe Manager</button></span></span></li>
+          <li><span>Import the patched APK here and install it from Patcher.<span class="s">Validated the same way: version, Rokid marker, signer. An app signed by Morphe Manager can only update an app that already uses that key.</span><span class="acts"><button class="btn pri" type="button" data-act="yt-import">Already patched APK</button></span></span></li>
+        </ol>
+        <button class="row btnrow" type="button" data-act="how-patches"><span class="t">How the Rokid patches work<span class="s">In plain words</span></span><span class="go">${I.chev}</span></button>
+      </div>`;
+  }
+
+  /* ---------------- advanced: already patched APK import ---------------- */
+  function vImport() {
+    const s = yts(), f = s.imported, v = s.importValidation, lock = jobLocked('youtube');
+    const lockHint = lock ? '<p class="hint warn">Locked while YouTube is being patched. Cancel the job or wait for it to finish to choose another APK.</p>' : '';
+    const block = !f ? `<div class="panel"><div class="ph"><span class="dot"></span>No patched APK chosen</div><p>Pick a final YouTube APK that already carries the Rokid patches, for example from Morphe Manager or saved from an earlier Patcher run. Official, unpatched downloads belong in step 2.</p><div class="acts"><button class="btn pri" type="button" data-act="pick-import" ${lock ? 'disabled' : ''}>Choose patched APK</button></div>${lockHint}</div>`
+      : `<div class="panel ${v.ok ? (f.signer === 'patcher' ? 'ok' : 'warn') : 'bad'}"><div class="ph"><span class="dot"></span>${esc(v.title)}</div><dl class="kv"><dt>File</dt><dd>${esc(f.name)} · ${esc(f.size)}</dd>${f.app ? `<dt>App</dt><dd>${APPS[f.app].name} ${esc(f.version)}${f.patched ? ' · patched' : ' · official'}</dd>` : ''}${f.patched ? `<dt>Rokid marker</dt><dd class="${f.hud ? 'ok' : 'bad'}">${f.hud ? 'present' : 'missing'}</dd><dt>Signer</dt><dd class="${f.signer === 'patcher' ? 'ok' : 'warn'}">${f.signer === 'patcher' ? 'Patcher key on this phone' : 'another key'}</dd>` : ''}</dl><p>${esc(v.detail)}</p><div class="acts"><button class="btn ghost" type="button" data-act="pick-import" ${lock ? 'disabled' : ''}>Choose another</button>${v.ok ? '<button class="btn pri" type="button" data-act="yt-install">Install on glasses</button>' : ''}${f.app === 'youtube' && !f.patched ? '<button class="btn sec" type="button" data-act="yt-source">Go to step 2</button>' : ''}</div>${lockHint}</div>`;
+    return topbar('Already patched APK', 'Advanced · import') +
+      `<div class="content">
+        <div class="lbl"><span>Final APK</span><span class="ex">not the official download</span></div>
+        ${block}
+        <p class="hint">Same protections as the normal route: the installed app's signer is checked before any update, and a mismatch stops with recovery options. Nothing is uninstalled automatically.</p>
+      </div>`;
+  }
+
+  /* ---------------- external stand-ins (browser, apps, remote) ---------------- */
+  function vExt(kind) {
+    const map = {
+      apkmirror: { ic: I.globe, h: 'Browser · APKMirror', p: 'Your browser opened the YouTube ' + APPS.youtube.required.version + ' download page (example). Download the arm64 APK or the complete .apkm bundle. Patcher does not see this download; it is not a step done.', url: 'apkmirror.com/… (example)', back: 'Back to Patcher' },
+      'microg-source': { ic: I.globe, h: 'Browser · MicroG-RE', p: 'The official MicroG-RE release page (example). Nexus installs the verified release for you; this is for reading.', url: 'github.com/MorpheApp/MicroG-RE', back: 'Back to Patcher' },
+      'morphe-source': { ic: I.globe, h: 'Browser · Rokid patches', p: 'The public source of the Rokid patches for Morphe (example page).', url: 'github.com/Anezium/morphe-patches', back: 'Back to Patcher' },
+      morphe: { ic: I.apps, h: 'Morphe Manager', p: 'Morphe Manager opened on this phone (stand-in). Patch official YouTube ' + APPS.youtube.required.version + ' with the Rokid patches, then come back and import the result.', url: 'app.morphe.manager (example)', back: 'Back to Patcher' },
+      microg: { ic: I.glasses, h: 'MicroG on the glasses', p: 'Nexus asked the glasses to open MicroG (stand-in). On the glasses choose Add account, then use Keyboard & remote on the phone to type. Patcher cannot see what happens there.', url: 'glasses · app.revanced.android.gms', back: 'Back to the checklist' },
+      remote: { ic: I.kb, h: 'Nexus · Keyboard & remote', p: 'The Nexus remote screen opened (stand-in): previous, next, select, back, and a keyboard that sends keystrokes to the field focused on the glasses. Password fields keep the phone screen secure and are never mirrored.', url: 'Nexus · trusted hub control', back: 'Back to Patcher' },
+      youtube: { ic: I.glasses, h: 'YouTube on the glasses', p: 'Nexus asked the glasses to open YouTube (stand-in). Check your account, the glasses controls and the Morphe or SponsorBlock settings there.', url: 'glasses · app.morphe.android.youtube', back: 'Back to the checklist' },
+    }[kind];
+    return topbar(map.h, 'Stand-in · outside Patcher', { nexus: true }) +
+      `<div class="content ext"><div class="frame"><span class="tile" aria-hidden="true" style="margin:0 auto">${map.ic}</span><h2>${esc(map.h)}</h2><p>${esc(map.p)}</p><div class="url">${esc(map.url)}</div></div></div>
+      <div class="foot"><button class="btn sec wide" type="button" data-act="back">${map.back}</button></div>`;
+  }
+
+  /* ---------------- home ---------------- */
+  function appStatus(id) {
+    const as = state.apps[id];
+    if (id === 'youtube') return ytSummary();
+    if (state.job && state.job.app === id) return { cls: 'live', t: 'Patching · ' + STAGES[state.job.stage] + ' · ' + fmt(state.job.elapsed), cta: 'Open', act: 'open-job' };
+    if (as.result) return { cls: 'ok', t: 'Patched ' + as.result.version + ' ready · ' + as.result.when, cta: 'Open result', act: 'open-result' };
+    if (as.outcome) return { cls: 'bad', t: ({ failed: 'Last run failed', cancelled: 'Last run cancelled', interrupted: 'Last run interrupted' })[as.outcome.kind] + ' · ' + as.outcome.stage, cta: 'Review', act: 'open-result' };
+    if (as.file && as.validation && as.validation.ok) return { cls: 'ok', t: 'File checked · ' + as.file.name, cta: 'Continue', act: 'prepare' };
+    if (as.file) return { cls: 'bad', t: 'File rejected · choose another', cta: 'Fix', act: 'prepare' };
+    return { cls: '', t: 'Nothing prepared yet', cta: 'Prepare ' + APPS[id].name, act: 'prepare' };
+  }
+  function vHome() {
+    const cards = ['youtube', 'reddit'].map(id => {
+      const a = APPS[id], st = appStatus(id);
+      return `<div class="appcard">
+        <div class="h">${tile(a)}<div style="min-width:0"><div class="nm">${a.name}${a.preview ? '<span class="badge preview">Preview</span>' : ''}</div>
+          <span class="meta">Needs official ${a.required.version} · ${a.preview ? 'early access' : 'supported'}</span></div></div>
+        <p class="sum">${a.summary}</p>
+        <div class="act"><span class="st ${st.cls}">${esc(st.t)}</span>
+          <button class="btn ${st.cls === '' ? 'pri' : 'sec'}" type="button" data-act="${st.act}" data-app="${id}">${st.cta}</button></div>
+      </div>`;
+    }).join('');
+    return topbar('Patcher', 'Rokid <b>Nexus</b> plugin', { right: `<button class="back" type="button" data-act="maint" aria-label="Signing key and maintenance" title="Signing key and maintenance">${I.gear}</button>` }) +
+      `<div class="content">
+        ${jobBand(null)}
+        <div class="lbl"><span>Choose an app</span><span class="c">2 apps</span></div>
+        ${cards}
+        <p class="hint">Patcher adds glasses controls to an official app you downloaded yourself, signs the result with its own key, and installs it on the glasses through Nexus.</p>
+        <div class="lbl" style="margin-top:18px"><span>Maintenance</span></div>
+        <button class="row btnrow" type="button" data-act="maint"><span class="tile sm" aria-hidden="true">${I.key}</span><span class="t">Signing key &amp; plugin<span class="s">Back up or import the key · plugin info</span></span><span class="go">${I.chev}</span></button>
+      </div>`;
+  }
+
+  /* ---------------- prepare (patch review) ---------------- */
+  function vPrepare(appId) {
+    const a = APPS[appId], as = state.apps[appId];
+    const busyOther = state.job && state.job.app !== appId;
+    const running = state.job && state.job.app === appId;
+    const v = as.validation;
+    const isYt = appId === 'youtube';
+    let fileBlock;
+    if (!as.file) {
+      fileBlock = `<div class="panel"><div class="ph"><span class="dot"></span>No file chosen</div>
+        <p>${isYt ? 'Step 2 of the setup gets the official download and checks it.' : 'Download the official ' + a.name + ' ' + a.required.version + ' yourself, from a source you trust, then choose it here. Patcher does not download apps.'}</p>
+        <div class="acts">${isYt ? '<button class="btn pri" type="button" data-act="yt-source">Go to step 2</button>' : `<button class="btn pri" type="button" data-act="pick" ${busyOther ? 'disabled' : ''}>Choose APK or bundle</button>`}</div></div>`;
+    } else {
+      fileBlock = `<div class="panel ${v.ok ? 'ok' : 'bad'}"><div class="ph"><span class="dot"></span>${esc(v.title)}</div>
+        <dl class="kv"><dt>File</dt><dd>${esc(as.file.name)} · ${esc(as.file.size || '')}</dd>
+          ${as.file.app ? `<dt>App</dt><dd class="${as.file.app === appId && !as.file.patched ? 'ok' : 'bad'}">${APPS[as.file.app].name} ${esc(as.file.version)} (${esc(as.file.code)})</dd>` : ''}
+          ${as.file.app ? `<dt>arm64</dt><dd class="${as.file.complete ? 'ok' : 'bad'}">${as.file.complete ? 'present' : 'missing'}</dd>` : ''}</dl>
+        <p>${esc(v.detail)}</p>
+        <div class="acts">
+          <button class="btn ${v.ok ? 'ghost' : 'pri'}" type="button" data-act="${isYt ? 'yt-source' : 'pick'}" ${running ? 'disabled' : ''}>Choose another file</button>
+          ${v.kind === 'wrong-app' && state.ctx !== 'nexus' ? `<button class="btn sec" type="button" data-act="switch-app" data-app="${as.file.app}" ${running || jobLocked(as.file.app) ? 'disabled' : ''}>Prepare ${APPS[as.file.app].name}</button>` : ''}
+          ${!v.ok && !isYt ? `<button class="btn ghost" type="button" data-act="how">Where to get it</button>` : ''}
+        </div></div>`;
+    }
+    const ready = as.file && v && v.ok;
+    const patchRows = a.patches.map(p => {
+      const on = as.toggles[p.id];
+      return `<div class="row"><span class="t">${esc(p.name)}<span class="s">${esc(p.s)}</span>${!on && p.warnOff ? `<span class="s" style="color:var(--warn)">${esc(p.warnOff)}</span>` : ''}</span>
+        ${p.required ? '<span class="lock">Required</span>' : ''}
+        <button class="toggle" type="button" role="switch" aria-checked="${on}" aria-label="${esc(p.name)}" data-act="toggle" data-p="${p.id}" ${p.required || !ready || running ? 'disabled' : ''}></button></div>`;
+    }).join('');
+    const warns = a.patches.filter(p => p.warnOff && !as.toggles[p.id]).map(p => p.warnOff);
+    return topbar(isYt ? '3 · Patch YouTube' : 'Prepare ' + a.name, a.preview ? 'Preview · <b>' + a.required.version + '</b> example' : 'Needs <b>' + a.required.version + '</b> · example', { right: tile(a, true) }) +
+      `<div class="content">
+        ${nexusBand(appId)}${jobBand(appId)}
+        ${a.preview ? `<div class="warnbox">${I.warn}<span><b>Preview.</b> Reddit support is early access: the patch set may change and there is no published release yet. Expect rough edges on the glasses.</span></div>` : ''}
+        <div class="lbl"><span>${isYt ? 'Official file' : '1 · Official app file'}</span><span class="ex">${esc(a.required.kind)}</span></div>
+        ${fileBlock}
+        <div class="lbl"><span>${isYt ? 'Patches' : '2 · Patches'}</span><span class="ex">example rows</span></div>
+        ${!ready ? '<p class="hint">Choose a valid file first.</p>' : ''}
+        ${patchRows}
+        ${warns.length ? `<p class="hint warn">${warns.map(esc).join(' ')}</p>` : ''}
+        <p class="hint">${isYt ? (yts().microg.status === 'installed' ? 'MicroG is on the glasses (step 1), so sign-in support will work.' : 'MicroG is not confirmed on the glasses yet (step 1). Patching still works; sign-in needs MicroG later.') : 'Reddit keeps its official package name and does not use MicroG.'}</p>
+        <details class="tech"><summary>Technical details</summary><dl class="kv">
+          <dt>Stock package</dt><dd>${a.stockPackage}</dd><dt>Output package</dt><dd>${a.outPackage}</dd>
+          <dt>Patch bundle</dt><dd>${esc(a.bundleLabel)}</dd><dt>Source SHA-256</dt><dd>${as.file ? esc(a.exampleHash) : '—'}</dd>
+          <dt>Signer</dt><dd>Patcher key, created ${esc(state.key.created)}</dd></dl></details>
+      </div>
+      <div class="foot">
+        <button class="btn pri wide" type="button" data-act="confirm" ${ready && !state.job ? '' : 'disabled'}>Start patching ${a.name}</button>
+        ${busyOther ? '<p class="hint" style="text-align:center;margin:0">Another job is running.</p>' : ''}
+      </div>`;
+  }
+
+  /* ---------------- running ---------------- */
+  function vRunning(appId) {
+    const a = APPS[appId], j = state.job;
+    if (!j || j.app !== appId) return vResult(appId);
+    const list = STAGES.map((s, i) => `<li class="${i < j.stage ? 'done' : i === j.stage ? 'active' : ''}"><span class="n">${i < j.stage ? '✓' : i + 1}</span><span>${s}</span><span class="m">${i < j.stage ? 'done' : i === j.stage ? 'now' : ''}</span></li>`).join('');
+    let known = null, cur = '';
+    switch (j.stage) {
+      case 0: cur = 'Reading the official file and checking its signer…'; break;
+      case 1: known = j.patchIndex / a.patchTotal; { const names = a.patches.filter(p => state.apps[appId].toggles[p.id]).map(p => p.name); cur = `Applying patch ${Math.min(a.patchTotal, j.patchIndex + 1)} of ${a.patchTotal} · ${names[j.patchIndex % names.length]}`; } break;
+      case 2: cur = 'Merging code and resources into one APK…'; break;
+      case 3: cur = 'Signing with the Patcher key…'; break;
+      case 4: known = j.saveFrac; cur = 'Writing the patched APK to Patcher’s private folder…'; break;
+    }
+    return topbar('Patching ' + a.name, STAGES[j.stage] + ' · step ' + (j.stage + 1) + ' of 5', { right: tile(a, true) }) +
+      `<div class="content">
+        ${nexusBand(appId)}
+        ${a.preview ? '<p class="hint" style="margin:0 0 8px"><span class="badge preview">Preview</span></p>' : ''}
+        <ol class="stages" aria-label="Stages">${list}</ol>
+        <div class="bar ${known === null ? 'indet' : ''}" role="progressbar" aria-label="${STAGES[j.stage]} progress" ${known === null ? '' : `aria-valuenow="${Math.round(known * 100)}" aria-valuemin="0" aria-valuemax="100"`}><i style="width:${known === null ? '' : Math.round(known * 100) + '%'}"></i></div>
+        <div class="act"><span class="cur">${esc(cur)}</span><span class="el" aria-label="Elapsed">${fmt(j.elapsed)}</span></div>
+        <p class="hint">Keeps going if you leave this screen or use other apps. Locking the phone slows it down a lot. No time estimate is shown because it depends on the phone.</p>
+        <p class="hint">Source file and patch choices are locked while this runs.</p>
+      </div>
+      <div class="foot"><button class="btn danger wide" type="button" data-act="cancel-ask">Cancel patching</button></div>`;
+  }
+
+  /* ---------------- result ---------------- */
+  function vResult(appId) {
+    const a = APPS[appId], as = state.apps[appId];
+    const pv = a.preview ? ' <span class="badge preview">Preview</span>' : '';
+    const isYt = appId === 'youtube';
+    if (as.result) {
+      const r = as.result;
+      const primary = isYt ? { act: 'yt-install', l: yts().install.status === 'stale' ? 'Update on the glasses' : 'Install on the glasses' } : { act: 'handoff', l: state.ctx === 'nexus' ? 'Return to Nexus' : 'Open Nexus' };
+      return topbar(a.name + ' ready', 'Patched <b>' + r.version + '</b> · ' + r.elapsed, { right: tile(a, true) }) +
+        `<div class="content">
+          ${nexusBand(appId)}
+          <div class="bigstate"><div class="mark ok">${I.check}</div><h2>Patched APK ready${pv}</h2>
+            <p>Patcher checked the result on this phone. ${isYt ? 'The install step checks it again and only the glasses confirm it.' : 'Nexus checks it again before installing on the glasses.'}</p></div>
+          <ul class="checks">
+            <li><span class="ok">${I.check}</span><span>Built from official ${a.name} ${r.version}<span class="s">${esc(as.file ? as.file.name : '')}</span></span></li>
+            <li><span class="ok">${I.check}</span><span>${r.patches} patch groups applied<span class="s">Glasses controls present in the output</span></span></li>
+            <li><span class="ok">${I.check}</span><span>Signed with the Patcher key<span class="s">Keep this key to update ${a.name} later</span></span></li>
+            <li><span class="ok">${I.check}</span><span>Saved in Patcher's private folder<span class="s">${esc(a.outPackage)} · patched-${a.id}-${r.version}.apk (example)</span></span></li>
+          </ul>
+          <p class="hint">${isYt ? 'Not installed yet. Step 3 continues with the install on the glasses.' : 'Installation on the glasses is done by Nexus. This screen does not confirm an install.'}</p>
+          <details class="tech"><summary>Technical details</summary><dl class="kv"><dt>Package</dt><dd>${a.outPackage}</dd><dt>Version</dt><dd>${r.version} (${a.required.code})</dd><dt>Output SHA-256</dt><dd>e5c0…9a17 (example)</dd><dt>Signer</dt><dd>${esc(r.signer)}</dd></dl></details>
+        </div>
+        <div class="foot">
+          <button class="btn pri wide" type="button" data-act="${primary.act}">${primary.l}</button>
+          <div class="trio">
+            <button class="btn ghost" type="button" data-act="save">${I.save} Save APK</button>
+            <button class="btn ghost" type="button" data-act="share">${I.share} Share APK</button>
+            <button class="btn ghost" type="button" data-act="again">Patch again</button>
+          </div>
+        </div>`;
+    }
+    if (as.outcome) {
+      const o = as.outcome;
+      const map = {
+        failed: { cls: 'bad', ic: I.x, h: 'Patching failed', p: (o.message || 'The job stopped at ' + o.stage + '.') + ' Nothing was installed and nothing was saved. The log is kept for the report.' },
+        cancelled: { cls: 'warn', ic: I.x, h: 'Cancelled', p: 'You stopped the job during ' + o.stage + '. Nothing was saved. Your file and patch choices are kept.' },
+        interrupted: { cls: 'warn', ic: I.warn, h: 'Patching was interrupted', p: 'The phone stopped Patcher during ' + o.stage + ' (example: low memory or the process was killed). Nothing was saved. Keep the phone unlocked and plugged in, then try again.' },
+      }[o.kind];
+      const si = STAGES.indexOf(o.stage);
+      return topbar(a.name, map.h + ' · after ' + o.elapsed, { right: tile(a, true) }) +
+        `<div class="content">
+          ${nexusBand(appId)}
+          <div class="bigstate"><div class="mark ${map.cls}">${map.ic}</div><h2>${map.h}${pv}</h2><p>${esc(map.p)}</p></div>
+          <ol class="stages" aria-label="Stages" style="margin-top:14px">${STAGES.map((s, i) => `<li class="${i < si ? 'done' : i === si ? (o.kind === 'failed' ? 'failed' : 'active') : ''}"><span class="n">${i < si ? '✓' : i + 1}</span><span>${s}</span><span class="m">${i === si ? o.kind : i < si ? 'done' : ''}</span></li>`).join('')}</ol>
+          ${o.kind === 'failed' ? '<p class="hint">If it fails again with the same file, the file may be damaged: download it again from the official source.</p>' : ''}
+        </div>
+        <div class="foot">
+          <button class="btn pri wide" type="button" data-act="retry">${o.kind === 'cancelled' ? 'Start again' : 'Try again'}</button>
+          <div class="trio" style="grid-template-columns:${o.kind === 'failed' ? '1fr 1fr' : '1fr'}">
+            <button class="btn ghost" type="button" data-act="prepare" data-app="${appId}">Change file or patches</button>
+            ${o.kind === 'failed' ? '<button class="btn ghost" type="button" data-act="report">Copy report</button>' : ''}
+          </div>
+        </div>`;
+    }
+    return vPrepare(appId);
+  }
+
+  /* ---------------- Reddit hand-off to Nexus (unchanged from round 1) ---------------- */
+  function vHandoff(appId, reason) {
+    const a = APPS[appId], as = state.apps[appId];
+    const delivered = reason === 'result';
+    return topbar('Nexus', 'Glasses apps · <b>' + a.name + '</b> setup', { nexus: true, right: `<span class="tile sm" aria-hidden="true">${I.nexus}</span>` }) +
+      `<div class="content">
+        <div class="bigstate"><div class="mark ${delivered ? 'ok' : ''}">${I.nexus}</div>
+          <h2>${delivered ? 'Handed to Nexus' : 'Back in Nexus'}</h2>
+          <p>${delivered ? 'Nexus received the patched ' + a.name + ' APK and now copies, checks and installs it on the glasses. Keep the glasses connected.' : 'This stands in for the Nexus screen that asked for ' + a.name + '. ' + (state.job ? a.name + ' is still being patched in the background; reopen Patcher to follow it.' : 'Patcher kept your choices.')}</p></div>
+        <div class="lbl" style="margin-top:20px"><span>Nexus · Reddit preview setup (simulated)</span></div>
+        <div class="row"><span class="t">${a.name} APK<span class="s">${delivered ? 'Validating ' + as.result.version + ' · then installs on glasses' : (as.result ? 'Patched ' + as.result.version + ' waiting in Patcher' : 'Not yet delivered')}</span></span><span class="v">${delivered ? 'checking…' : ''}</span></div>
+        <p class="hint">Whether the install succeeds is reported by Nexus from the glasses inventory. This mockup does not simulate that outcome for Reddit.</p>
+      </div>
+      <div class="foot">
+        <button class="btn sec wide" type="button" data-act="reopen-patcher">${state.ctx === 'nexus' ? 'Nexus asks Patcher for ' + a.name + ' again' : 'Back to Patcher'}</button>
+        ${state.ctx === 'nexus' ? `<button class="btn ghost wide" type="button" data-act="unlock">Open Patcher from its settings instead</button>` : ''}
+      </div>`;
+  }
+
+  /* ---------------- maintenance ---------------- */
+  function vMaint() {
+    const k = state.key;
+    return topbar('Signing key & plugin', 'Maintenance') +
+      `<div class="content">
+        ${jobBand(null)}
+        <div class="lbl"><span>Signing key</span><span class="ex">${k.imported ? 'imported' : 'created here'}</span></div>
+        <div class="panel ${k.mismatch ? 'bad' : 'ok'}"><div class="ph"><span class="dot"></span>${k.mismatch ? 'Installed app signed by a different key' : 'Key present on this phone'}</div>
+          <dl class="kv"><dt>Created</dt><dd>${esc(k.created)}</dd><dt>Backups</dt><dd>${k.backups ? k.backups + ' encrypted export' + (k.backups > 1 ? 's' : '') : 'none yet'}</dd><dt>Used by</dt><dd>YouTube, Reddit (Preview)</dd></dl>
+          <p>Every patched APK is signed with this key. Keeping it lets Nexus update the app on the glasses in place, with its data. If it is lost or replaced, the glasses refuse the update until the app is removed by you: Nexus never uninstalls on its own.</p>
+          ${k.mismatch ? `<p style="color:var(--bad)">YouTube on the glasses was installed with another key, so the next install would be refused.</p>
+          <div class="acts"><button class="btn pri" type="button" data-act="key-import">Import the previous key</button><button class="btn ghost" type="button" data-act="mismatch-help">What else can I do?</button></div>` :
+          `<div class="acts"><button class="btn pri" type="button" data-act="key-backup">Back up key</button><button class="btn sec" type="button" data-act="key-import">Import backup</button></div>`}
+        </div>
+        <div class="lbl"><span>Prepared files</span></div>
+        ${['youtube', 'reddit'].map(id => { const as = state.apps[id]; return `<div class="row"><span class="t">${APPS[id].name}<span class="s">${as.result ? 'Patched ' + as.result.version + ' kept' : as.file ? 'Chosen file kept' : 'Nothing kept'}</span></span><button class="btn ghost" type="button" data-act="clear-app" data-app="${id}" ${(as.result || as.file) && !(state.job && state.job.app === id) ? '' : 'disabled'}>Clear</button></div>`; }).join('')}
+        <div class="lbl"><span>Plugin</span></div>
+        <div class="row"><span class="t">Patcher<span class="s">Version 1.7.0 (example) · installed from Nexus Store</span></span><span class="v">plugin</span></div>
+        <button class="row btnrow" type="button" data-act="uninstall-ask"><span class="t" style="color:var(--bad)">Uninstall Patcher<span class="s">Removes the plugin and its key from this phone</span></span><span class="go">${I.chev}</span></button>
+        <details class="tech"><summary>Technical details</summary><dl class="kv"><dt>Key type</dt><dd>RSA 4096 (example)</dd><dt>Fingerprint</dt><dd>3C:9A:…:E1 (example)</dd><dt>Backup format</dt><dd>Encrypted portable key backup, passphrase required to import</dd><dt>Hand-off</dt><dd>Nexus launches Patcher explicitly and reads the result APK back; no bus capability</dd></dl></details>
+      </div>`;
+  }
+
+  /* ---------------- Nexus · Glasses apps (review route, no setup card) ---------------- */
+  function vGlasses() {
+    const s = yts(), inst = s.install.status === 'done' || s.install.status === 'stale';
+    const rows = [];
+    if (inst) rows.push(`<div class="row"><button class="t" type="button" data-act="app-details" data-pkg="youtube" style="display:flex;align-items:center;gap:12px">${tile(APPS.youtube, true)}<span>YouTube<span class="s">${esc(s.install.installed.version)} · patched · Patcher key</span></span></button><button class="btn sec" type="button" data-act="ext" data-kind="youtube">Open</button></div>`);
+    if (s.microg.status === 'installed' || s.microg.status === 'update' || s.microg.status === 'noicon') rows.push(`<div class="row"><button class="t" type="button" data-act="app-details" data-pkg="microg" style="display:flex;align-items:center;gap:12px"><span class="tile sm" aria-hidden="true">${I.mg}</span><span>MicroG<span class="s">${esc(s.microg.version || '')}${s.microg.status === 'noicon' ? ' · no launcher icon' : ''}</span></span></button>${s.microg.status === 'noicon' ? '<span class="v">no icon</span>' : `<button class="btn sec" type="button" data-act="ext" data-kind="microg">Open</button>`}</div>`);
+    state.glasses.native.forEach(n => rows.push(`<div class="row"><span class="tile sm" aria-hidden="true">${I.apps}</span><span class="t">${esc(n.name)}<span class="s">${esc(n.pkg)}</span></span><button class="btn sec" type="button" data-act="toast-open" data-name="${esc(n.name)}">Open</button></div>`));
+    return topbar('Glasses apps', 'Nexus · <b>installed</b> on the glasses', { nexus: true, right: `<span class="tile sm" aria-hidden="true">${I.glasses}</span>` }) +
+      `<div class="content">
+        ${offlineBand()}
+        <div class="lbl"><span>Installed</span><span class="c">${rows.length} apps</span></div>
+        ${rows.join('')}
+        ${!inst ? `<p class="hint">YouTube is not installed on the glasses. Its setup lives in Patcher → YouTube.</p>` : ''}
+        <div class="lbl" style="margin-top:18px"><span>Hub controls</span></div>
+        <button class="row btnrow" type="button" data-act="refresh-glasses"><span class="t">Refresh<span class="s">Re-read the glasses inventory</span></span><span class="go">${I.chev}</span></button>
+        <button class="row btnrow" type="button" data-act="ext" data-kind="remote"><span class="t">Keyboard &amp; remote<span class="s">Navigate and type on the glasses</span></span><span class="go">${I.chev}</span></button>
+        <p class="hint">Review note: this stands in for the Nexus phone hub screen. It lists and opens installed native apps. The YouTube setup card that used to live here moved to Patcher → YouTube.</p>
+      </div>
+      <div class="foot"><button class="btn ghost wide" type="button" data-act="route-home">Patcher home (review shortcut)</button></div>`;
+  }
+
+  /* ---------------- sheets ---------------- */
+  function vSheet() {
+    const sh = state.sheet; if (!sh) return '';
+    let body = '';
+    const close = `<button class="btn ghost" type="button" data-act="back">Close</button>`;
+    const fileList = (act, list) => `<ul class="files">${list.map(f => `<li><button type="button" data-act="${act}" data-i="${FILES.indexOf(f)}"><span class="fi">${f.app ? I.file : I.img}</span><span><span class="fn">${esc(f.name)}</span><span class="fm">${esc(f.size)}${f.app ? ' · ' + (f.patched ? 'patched apk' : f.name.endsWith('.apkm') ? 'bundle' : 'apk') : ''}</span></span></button></li>`).join('')}</ul>`;
+    switch (sh.k) {
+      case 'pick': body = `<h2>Choose ${APPS[sh.app].name} file</h2><p class="sub">Downloads · example files · nothing is read for real</p>${fileList('pick-file', FILES)}<div class="acts inline">${close}</div>`; break;
+      case 'pick-import': body = `<h2>Choose a patched YouTube APK</h2><p class="sub">Downloads · example files · nothing is read for real</p>${fileList('pick-import-file', FILES)}<div class="acts inline">${close}</div>`; break;
+      case 'how': { const a = APPS[sh.app]; body = `<h2>Where to get ${a.name} ${a.required.version}</h2><p>Download the official release of ${a.name} ${a.required.version} yourself, from a source you trust, as a complete bundle (.apkm) or an arm64 APK. Patcher does not download apps and does not accept builds for other versions.</p><div class="acts inline">${close}</div>`; break; }
+      case 'how-patches': body = `<h2>How the Rokid patches work</h2><p>They add a small layer inside YouTube that listens to the glasses touchpad and ring and moves the focus, plays, pauses and seeks accordingly, and they mark the app so Nexus can recognise a Rokid build. Sign-in support routes Google account calls to MicroG on the glasses. Hide ads and SponsorBlock are the usual Morphe patches.</p><p class="sub">Plain-words summary for the mockup; the real patch descriptions come from the bundle.</p><div class="acts inline">${close}</div>`; break;
+      case 'confirm': {
+        const a = APPS[sh.app], as = state.apps[sh.app];
+        const on = a.patches.filter(p => as.toggles[p.id]);
+        const warns = a.patches.filter(p => p.warnOff && !as.toggles[p.id]).map(p => p.warnOff);
+        body = `<h2>Start patching ${a.name}?</h2><p class="sub">${esc(as.file.name)} · ${on.length} of ${a.patches.length} patch groups</p><p>${on.map(p => esc(p.name)).join(' · ')}</p>
+          ${warns.map(w => `<div class="warnbox">${I.warn}<span>${esc(w)}</span></div>`).join('')}
+          ${a.preview ? `<div class="warnbox">${I.warn}<span>Reddit is a preview. The result may not work on the glasses as expected.</span></div>` : ''}
+          ${sh.app === 'youtube' && yts().install.status === 'done' ? `<div class="warnbox">${I.warn}<span>YouTube ${esc(yts().install.installed.version)} is installed on the glasses. The new APK is signed with the same key, so updating keeps its data.</span></div>` : ''}
+          <p>Patching takes a while and keeps running if you leave. The result is signed with the Patcher key on this phone.</p>
+          <div class="acts"><button class="btn pri wide" type="button" data-act="start">Start patching</button>${close}</div>`; break;
+      }
+      case 'cancel': body = `<h2>Cancel patching?</h2><p>The job stops now and nothing is saved. Your file and patch choices are kept.</p><div class="acts"><button class="btn danger wide" type="button" data-act="cancel-yes">Cancel patching</button><button class="btn sec" type="button" data-act="back">Keep going</button></div>`; break;
+      case 'save': case 'share': { const a = APPS[sh.app], r = state.apps[sh.app].result; body = `<h2>${sh.k === 'save' ? 'Save APK' : 'Share APK'}</h2><p class="sub">patched-${a.id}-${r.version}.apk · example</p><p>${sh.k === 'save' ? 'Android asks where to save the file (simulated).' : 'The Android share sheet opens (simulated). Share only with people you trust: the file is signed with your Patcher key.'}</p><div class="acts"><button class="btn pri wide" type="button" data-act="${sh.k}-yes">${sh.k === 'save' ? 'Save to Downloads' : 'Share…'}</button>${close}</div>`; break; }
+      case 'backup': body = `<h2>Back up signing key</h2><p class="sub">Encrypted export · example</p><p>Choose a passphrase. You will need it to import this backup on another phone or after a reinstall.</p>
+          <div class="field"><label for="f-pass">Passphrase</label><input id="f-pass" type="password" autocomplete="off" value="${esc(sh.pass || '')}"></div>
+          <div class="field"><label for="f-pass2">Repeat passphrase</label><input id="f-pass2" type="password" autocomplete="off" value="${esc(sh.pass2 || '')}">${sh.err ? `<div class="err">${esc(sh.err)}</div>` : ''}</div>
+          <div class="acts"><button class="btn pri wide" type="button" data-act="backup-yes">Export patcher-key-backup.enc</button>${close}</div>`; break;
+      case 'import': body = `<h2>Import key backup</h2><p class="sub">Replaces the key on this phone · example</p>
+          <div class="warnbox">${I.warn}<span>Apps patched with the current key can no longer be updated in place after you replace it. Back it up first if you may need it.</span></div>
+          <div class="field"><label for="f-file">Backup file</label><input id="f-file" type="text" value="${esc(sh.file === undefined ? 'patcher-key-backup.enc' : sh.file)}"></div>
+          <div class="field"><label for="f-ipass">Passphrase</label><input id="f-ipass" type="password" autocomplete="off" value="${esc(sh.pass || '')}">${sh.err ? `<div class="err">${esc(sh.err)}</div>` : ''}</div>
+          <div class="acts"><button class="btn pri wide" type="button" data-act="import-yes">Import and replace key</button>${close}</div>`; break;
+      case 'mismatch': body = `<h2>Signer mismatch</h2><p>YouTube on the glasses was signed by a different Patcher key, for example from a previous install of this plugin. Android refuses to update an app over another signer, and Nexus will not uninstall it for you.</p><p><b>Option 1.</b> Import the backup of the key that signed it, then patch again.</p><p><b>Option 2.</b> Uninstall YouTube on the glasses yourself. Its app data is lost. Then install the new patched APK from the YouTube setup.</p><div class="acts inline">${close}</div>`; break;
+      case 'uninstall': body = `<h2>Uninstall Patcher?</h2><div class="warnbox">${I.warn}<span>The signing key goes with it. Without a backup you will not be able to update patched apps on the glasses in place.</span></div><p>Android shows its own uninstall confirmation after this (simulated).</p><div class="acts"><button class="btn danger wide" type="button" data-act="uninstall-yes">Continue to Android uninstall</button><button class="btn sec" type="button" data-act="key-backup">Back up key first</button>${close}</div>`; break;
+      case 'again': body = `<h2>Patch ${APPS[sh.app].name} again?</h2><p>The saved APK stays until a new one replaces it. You can change the file or the patches before starting.</p><div class="acts"><button class="btn pri wide" type="button" data-act="again-yes">Change file or patches</button>${close}</div>`; break;
+      case 'app-details': {
+        const s = yts(); const yt = sh.pkg === 'youtube';
+        body = yt ? `<h2>YouTube</h2><p class="sub">app.morphe.android.youtube · ${esc(s.install.installed.version)} (${esc(s.install.installed.code)})</p><p>Installed on the glasses, signed with the ${esc(s.install.installed.signer)}. Ordinary app details: open it, or see what the glasses report.</p><p class="sub">Setup and updates live in Patcher → YouTube.</p><div class="acts"><button class="btn pri wide" type="button" data-act="ext" data-kind="youtube">Open on glasses</button>${close}</div>`
+          : `<h2>MicroG</h2><p class="sub">app.revanced.android.gms · ${esc(s.microg.version || '')}</p><p>Installed on the glasses. Managed from Patcher → YouTube → step 1.</p><div class="acts">${s.microg.status !== 'noicon' ? '<button class="btn pri wide" type="button" data-act="ext" data-kind="microg">Open on glasses</button>' : ''}${close}</div>`;
+        break;
+      }
+    }
+    return `<div class="scrim" data-act="scrim"><div class="sheet" role="dialog" aria-modal="true"><div class="grab"></div>${body}</div></div>`;
+  }
+
+  /* ---------------- render ---------------- */
+  function render() {
+    const r = route();
+    let html = '';
+    switch (r.s) {
+      case 'home': html = vHome(); break;
+      case 'yt': html = vYt(); break;
+      case 'yt-microg': html = vMicrog(); break;
+      case 'yt-source': html = vSource(); break;
+      case 'yt-install': html = vInstall(); break;
+      case 'yt-signin': html = vSignin(); break;
+      case 'yt-keyboard': html = vKeyboard(); break;
+      case 'yt-advanced': html = vAdvanced(); break;
+      case 'yt-import': html = vImport(); break;
+      case 'ext': html = vExt(r.kind); break;
+      case 'prepare': html = state.job && state.job.app === r.app ? vRunning(r.app) : vPrepare(r.app); break;
+      case 'running': html = vRunning(r.app); break;
+      case 'result': html = vResult(r.app); break;
+      case 'handoff': html = vHandoff(r.app, r.reason); break;
+      case 'maint': html = vMaint(); break;
+      case 'glasses': html = vGlasses(); break;
+    }
+    html += vSheet();
+    if (state.toast) html += `<div class="toast" role="status">${esc(state.toast.t)}${state.toast.s ? `<span class="s">${esc(state.toast.s)}</span>` : ''}</div>`;
+    const prev = screenEl.querySelector('.content'); const prevScroll = prev ? prev.scrollTop : 0;
+    const focusId = document.activeElement && document.activeElement.id;
+    const focusPos = document.activeElement && document.activeElement.selectionStart;
+    const openDetails = [...screenEl.querySelectorAll('details[open]')].map(d => d.className);
+    screenEl.innerHTML = html;
+    const c = screenEl.querySelector('.content'); if (c && render.last === r) c.scrollTop = prevScroll; render.last = r;
+    openDetails.forEach(cls => { const d = screenEl.querySelector('details.' + cls.split(' ')[0]); if (d) d.open = true; });
+    if (focusId) { const el = document.getElementById(focusId); if (el) { el.focus(); try { el.setSelectionRange(focusPos, focusPos); } catch (e) {} } }
+    document.getElementById('sb-right').textContent = r.s === 'glasses' || r.s === 'handoff' || r.s === 'ext' ? 'NEXUS' : state.ctx === 'nexus' ? 'NEXUS → PATCHER' : 'NEXUS · PATCHER';
+    syncReview();
+  }
+
+  /* ---------------- actions ---------------- */
+  screenEl.addEventListener('input', e => {
+    const sh = state.sheet; if (!sh) return;
+    if (e.target.id === 'f-pass') sh.pass = e.target.value;
+    if (e.target.id === 'f-pass2') sh.pass2 = e.target.value;
+    if (e.target.id === 'f-ipass') sh.pass = e.target.value;
+    if (e.target.id === 'f-file') sh.file = e.target.value;
+  });
+  screenEl.addEventListener('click', e => {
+    const b = e.target.closest('[data-act]'); if (!b) return;
+    if (b.dataset.act === 'scrim' && e.target !== b) return;
+    e.stopPropagation();
+    const act = b.dataset.act, r = route(), appId = b.dataset.app || r.app || 'youtube';
+    const sh = state.sheet, s = yts();
+    // Guard at the action boundary: a picker opened before the job started, or any late tap,
+    // must not replace the running job's input. State is left untouched.
+    const mutates = { pick: appId, 'pick-file': sh && sh.app, toggle: appId, 'switch-app': r.app === 'yt-source' ? 'youtube' : (r.app || 'youtube'), 'pick-import': 'youtube', 'pick-import-file': 'youtube', 'clear-app': appId };
+    if (act in mutates && (jobLocked(mutates[act]) || (act === 'switch-app' && jobLocked(appId)))) { toast('Locked while patching', 'The running job keeps its file and patch choices'); return; }
+    if (act === 'start' && state.job) { toast('A job is already running', 'Open it from the band, or cancel it first'); return; }
+    switch (act) {
+      case 'back': case 'scrim': back(); break;
+      case 'prepare': go({ s: 'prepare', app: appId }); break;
+      case 'yt': openPath(...(state.ctx === 'nexus' && state.lockedApp === 'youtube' ? [] : [{ s: 'yt' }])); break;
+      case 'yt-microg': case 'yt-source': case 'yt-install': case 'yt-signin': case 'yt-keyboard': case 'yt-advanced': case 'yt-import': go({ s: act }); break;
+      case 'yt-patch': go(state.apps.youtube.result && s.install.status !== 'done' ? { s: 'result', app: 'youtube' } : { s: 'prepare', app: 'youtube' }); break;
+      case 'route-home': state.ctx = 'settings'; state.lockedApp = null; home(); break;
+      case 'ext': go({ s: 'ext', kind: b.dataset.kind }); if (b.dataset.kind === 'apkmirror') s.sourceOpened = true; break;
+      case 'switch-app': { const f = state.apps[r.app === 'yt-source' ? 'youtube' : r.app].file; const from = r.app || 'youtube'; state.apps[from].file = null; state.apps[from].validation = null; state.apps[appId].file = f; state.apps[appId].validation = validate(appId, f); openPath({ s: 'prepare', app: appId }); break; }
+      case 'open-job': go({ s: 'running', app: state.job.app }); break;
+      case 'open-result': go({ s: 'result', app: appId }); break;
+      case 'maint': go({ s: 'maint' }); break;
+      case 'pick': openSheet({ k: 'pick', app: appId }); break;
+      case 'pick-file': pickFile(sh.app, FILES[+b.dataset.i]); break;
+      case 'pick-import': openSheet({ k: 'pick-import' }); break;
+      case 'pick-import-file': s.imported = FILES[+b.dataset.i]; s.importValidation = validateImport(s.imported); s.install.status = s.install.status === 'done' ? 'stale' : 'none'; state.sheet = null; render(); break;
+      case 'how': openSheet({ k: 'how', app: appId }); break;
+      case 'how-patches': openSheet({ k: 'how-patches' }); break;
+      case 'toggle': state.apps[appId].toggles[b.dataset.p] = !state.apps[appId].toggles[b.dataset.p]; render(); break;
+      case 'confirm': openSheet({ k: 'confirm', app: appId }); break;
+      case 'start': { const id = sh.app; const f = state.apps[id].nextFail; state.apps[id].nextFail = null; startJob(id, f); break; }
+      case 'cancel-ask': openSheet({ k: 'cancel' }); break;
+      case 'cancel-yes': cancelJob(); break;
+      case 'retry': { const as = state.apps[appId]; as.outcome = null; openSheet({ k: 'confirm', app: appId }); break; }
+      case 'report': toast('Report copied (simulated)', 'Stage, file name and patch list · no hashes of your data'); break;
+      case 'handoff': go({ s: 'handoff', app: appId, reason: 'result' }); break;
+      case 'reopen-patcher': if (state.job) { state.stack = [rootRoute(), { s: 'running', app: state.job.app }]; render(); } else if (state.ctx === 'nexus') { state.stack = [rootRoute()]; if (state.apps[state.lockedApp].result && state.lockedApp === 'reddit') state.stack.push({ s: 'result', app: 'reddit' }); render(); } else home(); break;
+      case 'unlock': state.ctx = 'settings'; state.lockedApp = null; home(); break;
+      case 'save': openSheet({ k: 'save', app: appId }); break;
+      case 'share': openSheet({ k: 'share', app: appId }); break;
+      case 'save-yes': toast('Saved to Downloads (simulated)', 'patched-' + appId + '-' + state.apps[appId].result.version + '.apk'); break;
+      case 'share-yes': toast('Share sheet opened (simulated)'); break;
+      case 'again': openSheet({ k: 'again', app: appId }); break;
+      case 'again-yes': replace({ s: 'prepare', app: appId }); break;
+      case 'key-backup': openSheet({ k: 'backup' }); break;
+      case 'backup-yes': if (!sh.pass || sh.pass.length < 8) { sh.err = 'Use at least 8 characters.'; render(); break; } if (sh.pass !== sh.pass2) { sh.err = 'Passphrases differ.'; render(); break; } state.key.backups++; toast('Exported patcher-key-backup.enc (simulated)', 'Keep it with the passphrase, outside this phone'); break;
+      case 'key-import': openSheet({ k: 'import' }); break;
+      case 'import-yes': if (!sh.pass) { sh.err = 'Passphrase required to decrypt the backup.'; render(); break; } if (sh.pass === 'wrong') { sh.err = 'Could not decrypt: wrong passphrase or damaged file.'; render(); break; } state.key.imported = true; state.key.mismatch = false; state.key.created = '2026-03-02 (imported, example)'; if (s.install.status === 'mismatch') { s.install.status = 'none'; s.install.message = null; } toast('Key replaced from backup (simulated)', 'Future patches are signed with the imported key'); break;
+      case 'mismatch-help': openSheet({ k: 'mismatch' }); break;
+      case 'uninstall-ask': openSheet({ k: 'uninstall' }); break;
+      case 'uninstall-yes': toast('Android uninstall dialog would open here', 'Simulation stops at this point'); break;
+      case 'clear-app': { const keep = state.apps[appId].setup; state.apps[appId] = freshApp(appId); if (keep) state.apps[appId].setup = keep; toast(APPS[appId].name + ' files cleared (simulated)'); break; }
+      // YouTube setup actions
+      case 'mg-install': startMicrogInstall(); break;
+      case 'mg-check': if (!state.glasses.connected) { toast('Glasses offline', 'Cannot check for updates now'); break; } if (s.microg.status === 'installed') { toast('MicroG is up to date (simulated)', s.microg.latest); } else if (s.microg.status === 'update') { toast('Update prepared', s.microg.latest + ' ready to install'); } else { toast('Latest release prepared (simulated)', 'MicroG-RE ' + s.microg.latest); } break;
+      case 'refresh-glasses': toast(state.glasses.connected ? 'Glasses inventory refreshed (simulated)' : 'Glasses offline', state.glasses.connected ? (s.install.status === 'done' ? 'YouTube ' + s.install.installed.version + ' · MicroG ' + (s.microg.version || 'absent') : 'MicroG ' + (s.microg.version || 'absent') + ' · YouTube absent') : 'Nothing could be read'); break;
+      case 'inst-start': startInstall(state.apps.youtube.result ? 'patcher' : (s.imported && s.imported.signer === 'patcher' ? 'import' : 'import-other')); break;
+      case 'signin-toggle': s.signin.done = !s.signin.done; render(); break;
+      case 'kb-toggle': s.kbAuto = !s.kbAuto; render(); break;
+      case 'kb-try': if (s.kbBlocked) { toast('Android blocked the automatic launch', 'A notification offers the keyboard instead'); } else { go({ s: 'ext', kind: 'remote' }); } break;
+      case 'app-details': openSheet({ k: 'app-details', pkg: b.dataset.pkg }); break;
+      case 'toast-open': toast(b.dataset.name + ' opened on the glasses (simulated)'); break;
+    }
+  });
+
+  /* ---------------- review controls ---------------- */
+  const rvApp = [...document.querySelectorAll('.rv-app')], rvCtx = [...document.querySelectorAll('.rv-ctx')];
+  let rvSelectedApp = 'youtube';
+  function syncReview() {
+    rvApp.forEach(b => b.setAttribute('aria-pressed', String(b.dataset.app === rvSelectedApp)));
+    rvCtx.forEach(b => b.setAttribute('aria-pressed', String(b.dataset.ctx === state.ctx)));
+    document.getElementById('rv-conn').checked = state.glasses.connected;
+  }
+  rvApp.forEach(b => b.addEventListener('click', () => { rvSelectedApp = b.dataset.app; if (state.ctx === 'nexus') state.lockedApp = rvSelectedApp; applyScenario(document.getElementById('rv-scn').value); }));
+  rvCtx.forEach(b => b.addEventListener('click', () => { state.ctx = b.dataset.ctx; state.lockedApp = state.ctx === 'nexus' ? rvSelectedApp : null; applyScenario(document.getElementById('rv-scn').value); }));
+  document.querySelectorAll('.rv-route').forEach(b => b.addEventListener('click', () => {
+    const r = b.dataset.route;
+    if (r === 'home') home(); else if (r === 'yt') openPath(...(state.ctx === 'nexus' && state.lockedApp === 'youtube' ? [] : [{ s: 'yt' }])); else if (r === 'glasses') { state.stack = [{ s: 'glasses' }]; state.sheet = null; render(); } else if (r === 'maint') openPath({ s: 'maint' });
+  }));
+  document.getElementById('rv-apply').addEventListener('click', () => applyScenario(document.getElementById('rv-scn').value));
+  document.getElementById('rv-reset').addEventListener('click', () => { clearInterval(timer); clearInterval(flowTimer); state.job = null; state.apps = { youtube: freshApp('youtube'), reddit: freshApp('reddit') }; state.key = freshKey(); state.glasses.connected = true; document.getElementById('rv-scn').value = 'fresh'; home(); });
+  document.getElementById('rv-fast').addEventListener('change', e => { state.fast = e.target.checked; });
+  document.getElementById('rv-conn').addEventListener('change', e => { state.glasses.connected = e.target.checked; render(); });
+
+  function applyScenario(scn) {
+    const id = rvSelectedApp, as = state.apps[id], s = yts();
+    const validFile = FILES.find(f => f.app === id && f.version === APPS[id].required.version && f.complete && !f.patched);
+    const other = id === 'youtube' ? 'reddit' : 'youtube';
+    if (state.job && state.job.app === id) { clearInterval(timer); state.job = null; }
+    clearInterval(flowTimer); s.microg.busy = null; s.install.busy = null;
+    // Scenarios only touch the selected app's state; the other app keeps its own.
+    const setFile = f => { as.file = f; as.validation = validate(id, f); as.result = null; as.outcome = null; };
+    const readyResult = () => { setFile(validFile); as.result = { version: APPS[id].required.version, outPackage: APPS[id].outPackage, elapsed: '06:41', when: '2 min ago', signer: 'Patcher key (created ' + state.key.created + ')', patches: Object.values(as.toggles).filter(Boolean).length }; };
+    const prep = (...rs) => openPath(...(id === 'youtube' && !(state.ctx === 'nexus' && state.lockedApp === 'youtube') ? [{ s: 'yt' }] : []), ...rs);
+    const ytOnly = () => { if (id !== 'youtube') { rvSelectedApp = 'youtube'; if (state.ctx === 'nexus') state.lockedApp = 'youtube'; } };
+    switch (scn) {
+      case 'fresh': state.apps[id] = freshApp(id); home(); break;
+      case 'valid': setFile(validFile); prep({ s: 'prepare', app: id }); break;
+      case 'wrong-app': setFile(FILES.find(f => f.app === other && f.complete && !f.patched && f.version === APPS[other].required.version)); prep({ s: 'prepare', app: id }); break;
+      case 'wrong-version': setFile(FILES.find(f => f.app === id && !f.patched && f.version !== APPS[id].required.version)); prep({ s: 'prepare', app: id }); break;
+      case 'incomplete': setFile(FILES.find(f => f.app === id && !f.complete)); prep({ s: 'prepare', app: id }); break;
+      case 'run-success': case 'run-fail': case 'run-interrupt': setFile(validFile); prep({ s: 'prepare', app: id }); startJob(id, scn === 'run-fail' ? 'build' : scn === 'run-interrupt' ? 'interrupt' : 'success'); break;
+      case 'done': readyResult(); prep({ s: 'result', app: id }); break;
+      case 'mg-missing': ytOnly(); yts().microg = Object.assign(yts().microg, { status: 'missing', version: null, fail: null }); prep({ s: 'yt-microg' }); break;
+      case 'mg-installed': ytOnly(); Object.assign(yts().microg, { status: 'installed', version: yts().microg.latest, fail: null }); prep({ s: 'yt-microg' }); break;
+      case 'mg-noicon': ytOnly(); Object.assign(yts().microg, { status: 'noicon', version: '0.3.4-noicon (example)', fail: null }); prep({ s: 'yt-microg' }); break;
+      case 'mg-update': ytOnly(); Object.assign(yts().microg, { status: 'update', version: '0.3.4 (example)', fail: null }); prep({ s: 'yt-microg' }); break;
+      case 'mg-offline': ytOnly(); state.glasses.connected = false; prep({ s: 'yt-microg' }); break;
+      case 'mg-fail': ytOnly(); Object.assign(yts().microg, { status: 'missing', version: null, nextOutcome: 'fail-transfer' }); prep({ s: 'yt-microg' }); startMicrogInstall('fail-transfer'); break;
+      case 'inst-success': ytOnly(); state.apps.youtube.result || (rvSelectedApp = 'youtube'); { const a2 = state.apps.youtube; a2.file = FILES[0]; a2.validation = validate('youtube', FILES[0]); a2.result = { version: '21.04.223', outPackage: APPS.youtube.outPackage, elapsed: '06:41', when: '2 min ago', signer: 'Patcher key', patches: 3 }; } yts().install.status = 'none'; prep({ s: 'yt-install' }); startInstall('patcher', 'done'); break;
+      case 'inst-fail': ytOnly(); { const a2 = state.apps.youtube; a2.file = FILES[0]; a2.validation = validate('youtube', FILES[0]); a2.result = { version: '21.04.223', outPackage: APPS.youtube.outPackage, elapsed: '06:41', when: '2 min ago', signer: 'Patcher key', patches: 3 }; } yts().install.status = 'none'; prep({ s: 'yt-install' }); startInstall('patcher', 'fail-transfer'); break;
+      case 'inst-mismatch': ytOnly(); { const a2 = state.apps.youtube; a2.file = FILES[0]; a2.validation = validate('youtube', FILES[0]); a2.result = { version: '21.04.223', outPackage: APPS.youtube.outPackage, elapsed: '06:41', when: '2 min ago', signer: 'Patcher key', patches: 3 }; } yts().install.status = 'none'; prep({ s: 'yt-install' }); startInstall('patcher', 'mismatch'); break;
+      case 'inst-installed': ytOnly(); { const a2 = state.apps.youtube; a2.file = FILES[0]; a2.validation = validate('youtube', FILES[0]); a2.result = { version: '21.04.223', outPackage: APPS.youtube.outPackage, elapsed: '06:41', when: '10 min ago', signer: 'Patcher key', patches: 3 }; } Object.assign(yts().microg, { status: 'installed', version: yts().microg.latest }); Object.assign(yts().install, { status: 'done', installed: { version: '21.04.223', code: '1550630784', signer: 'Patcher key', when: '9 min ago' } }); prep(); break;
+      case 'signin-done': ytOnly(); yts().signin.done = true; prep({ s: 'yt-signin' }); break;
+      case 'kb-blocked': ytOnly(); yts().kbAuto = true; yts().kbBlocked = true; prep({ s: 'yt-keyboard' }); break;
+      case 'import-patched': ytOnly(); yts().imported = FILES.find(f => f.patched && f.signer === 'patcher' && f.hud); yts().importValidation = validateImport(yts().imported); prep({ s: 'yt-import' }); break;
+      case 'maint': state.key.mismatch = false; openPath({ s: 'maint' }); break;
+      case 'signer': state.key.mismatch = true; openPath({ s: 'maint' }); break;
+    }
+  }
+
+  home();
+  // Exposed for the headless review script only; the UI never relies on it.
+  window.__patcherMock = { state, route, go, back, render, applyScenario, startJob, APPS, FILES };
+})();
+</script>
+</body>
+</html>

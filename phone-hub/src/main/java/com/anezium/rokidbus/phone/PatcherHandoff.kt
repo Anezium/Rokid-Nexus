@@ -84,6 +84,19 @@ internal object PatcherHandoff {
     fun acceptsResult(launchedIdentity: String?, currentIdentity: String?): Boolean =
         launchedIdentity != null && launchedIdentity == currentIdentity
 
+    internal enum class SetupEntry { OPEN, APPROVE, REFUSE }
+
+    /**
+     * [callingPackage] is Android's stamp for a `startActivityForResult` caller, null for a
+     * plain start. Only the hub-owned setups in the fixed allowlist can be reached, and
+     * only the installed Patcher; an unapproved one is sent to its own approval screen.
+     */
+    internal fun setupEntry(intent: Intent, callingPackage: String?, identity: String?): SetupEntry {
+        if (intent.action != PatcherContract.ACTION_OPEN_SETUP || callingPackage != PatcherContract.PACKAGE ||
+            intent.getStringExtra(PatcherContract.EXTRA_TARGET_ID) !in PatcherContract.SETUP_TARGETS) return SetupEntry.REFUSE
+        return if (identity == null) SetupEntry.APPROVE else SetupEntry.OPEN
+    }
+
     // Metadata is informational, not evidence. prepare() copies and inspects the APK itself.
     fun resultUri(result: Intent?, expectedTarget: String = PatcherContract.TARGET_YOUTUBE): Uri? = result?.data?.takeIf {
         it.scheme == "content" && !it.authority.isNullOrBlank() &&

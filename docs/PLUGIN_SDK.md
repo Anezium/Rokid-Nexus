@@ -55,7 +55,9 @@ does not approve it.
 
 Plugin IDs use `[a-z][a-z0-9._-]{2,63}`. Requested capabilities are `surfaces`,
 `ink_surface`, `http_proxy`, `microphone`, `stt`, `tts`, `camera`, `mediasync`,
-`assistant`, and `wireless_debugging`. `ink_surface` is distinct from `surfaces`:
+`assistant`, and `wireless_debugging`. The skills grants, `skills_provider` and
+`skills_client`, are requested through their own metadata keys instead (§3.6).
+`ink_surface` is distinct from `surfaces`:
 it grants the phone-side compiler and native glasses renderer for interactive
 Ink pages, and adding it to an existing descriptor requires re-approval. Camera paths
 are protected by the approved signer-bound grant. `microphone` is grantable from
@@ -671,6 +673,52 @@ allows at most one actual wake per five seconds globally across activities,
 notices, surfaces, and plugins. A significant update arriving while the display
 is already interactive spends no budget. Activity v1 does not include plan
 014's glance layer.
+
+#### Guidance planner
+
+A plugin that guides a route (Navigation from a navigation app's
+notifications, Transit from its own itinerary) should not decide on its own
+which step flares and which beats. `NexusGuidancePlanner` turns successive
+`NexusGuidanceStep`s into activity traffic identically for every guide: the
+first step starts the activity, a new `stepKey` (the next maneuver or leg) or
+arrival is significant, the moment a step becomes `imminent` is urgent once
+per step, other visible changes are quiet updates, and a step that changes
+nothing the wearer sees sends nothing.
+
+```kotlin
+private val planner = NexusGuidancePlanner()
+
+fun onGuidance(step: NexusGuidanceStep) {
+    val client = nexusClient ?: return
+    when (val plan = planner.plan(step)) {
+        is NexusGuidancePlan.Start ->
+            client.startActivity(plan.step.toActivity(maxDurationMs = routeMs, wakeDisplay = true))
+        is NexusGuidancePlan.Update -> client.updateActivity(
+            plan.step.toActivity(),
+            significant = plan.significant,
+            urgent = plan.urgent && client.supportsActivityExtras,
+        )
+        NexusGuidancePlan.Unchanged -> Unit
+    }
+}
+
+override fun onNexusActivityClosed(reason: String) = planner.reset()
+```
+
+Call `reset()` whenever the activity is gone (ended, closed, or lost with a
+registration), so the next step starts it again. `NexusGuidanceGlyphs` names
+the shared maneuver, vehicle, walk, and arrival glyphs, and
+`forTransitMode(mode)` maps GTFS-style mode names onto the vehicle glyphs.
+The Sample plugin's demo route runs through the planner.
+
+**Ongoing work.** An activity ends when its owner disconnects. A plugin that
+keeps guiding after its surface or skill call ends, because the wearer asked
+it to, holds its one session foreground service with
+`holdNexusOngoingWork(additionalTypes)`, which also starts the service so it
+outlives the hub's binding, and calls `releaseNexusOngoingWork()` the moment
+the process ends. This is a narrow exception to dormancy for a process the
+wearer explicitly started and follows as an activity; never hold it to poll or
+wait. Transit's journey guidance is the precedent.
 
 ### Notice bands
 
@@ -1635,6 +1683,135 @@ know the route. This is an owner-scoped direct reply; do not declare it in
 plugin remains one launcher pick away, so a plugin that offers this switch
 should also do something useful when opened with `PluginOpenTypes.OPEN` —
 Assistant listens at once.
+
+### 3.6 Skills
+
+Skills let an approved plugin publish typed operations that an approved
+caller, in practice Assistant, invokes through the phone hub. The provider
+keeps its domain logic, Android permissions, and data; the hub discovers the
+operations, asks the wearer which ones each caller may use, routes every call
+with both identities stamped from authenticated registrations, and bounds it.
+The wire contract is [Skills v1 in BUSSPEC](../BUSSPEC.md#skills-v1). Skills
+need a phone hub that announces them at registration: check
+`nexusClient?.supportsSkills` and handle `CAPABILITY_NOT_AVAILABLE`, which is
+what every skills call returns on an older hub.
+
+**Declare a catalog.** Put a JSON catalog in `res/raw` and point a dedicated
+metadata key at it. Do not add `skills_provider` to `.CAPABILITIES`: hubs that
+predate skills reject unknown capability names and would refuse the whole
+plugin, while they ignore this key.
+
+```xml
+<meta-data
+    android:name="com.anezium.rokidbus.plugin.SKILLS"
+    android:resource="@raw/nexus_skills" />
+```
+
+```json
+{
+  "version": 1,
+  "operations": [{
+    "id": "count_words",
+    "version": 1,
+    "label": "Count words",
+    "description": "Counts the words and characters in a short text.",
+    "examples": ["How many words are in this sentence?"],
+    "effect": "read",
+    "cancellable": false,
+    "deduplicates": true,
+    "requires": [],
+    "prerequisites": [],
+    "data": ["text"],
+    "input": {"type": "object", "properties": {"text": {"type": "string", "minLength": 1, "maxLength": 500}}, "required": ["text"]},
+    "output": {"type": "object", "properties": {"words": {"type": "integer", "minimum": 0, "maximum": 500}}, "required": ["words"]}
+  }]
+}
+```
+
+The hub reads the catalog from your APK without starting the plugin. A catalog
+holds at most 32 operations in 64 KiB, each description at most 2 KiB. `effect`
+is `read` or `action`; `requires` may list `surfaces` when the operation
+drives an activity; `prerequisites` names your own Android access (`network`,
+`location`, `notification_access`); `data` names what a result may return from
+a fixed vocabulary (`place_names`, `schedules`, `itinerary`, `media_metadata`,
+`playback_state`, `status`, `text`), which is what the approval screen shows.
+Schemas use a bounded JSON Schema subset: one `type` per node, objects that
+never accept unknown properties, `maxLength` on every string, `maxItems` on
+every array, `minimum` and `maximum` on every number, and no `$ref`,
+combinators, patterns, formats, or nulls. Anything outside the subset makes the
+catalog invalid; the plugin itself stays valid and Plugin access shows why.
+
+**Entity references.** Mark a string with `"nexusRef": "<type>"` to return an
+identifier of your own, such as a stop id. The hub replaces it with an opaque,
+expiring handle before the caller sees it, and swaps the handle back when a
+caller passes it into one of your operations. A caller can only return a
+reference it was given, never mint one; the hub checks session, provider,
+package revision, catalog, and type. Still validate the identifier you receive:
+the hub guarantees it came from you, not that it is still current.
+
+**Answer invocations.** Override `onNexusSkillInvoked` and answer each
+`NexusSkillInvocation` exactly once, from any thread, within `remainingMs`
+(15 seconds from acceptance, cold start included). The hub has validated the
+arguments against your input schema.
+
+```kotlin
+override fun onNexusSkillInvoked(invocation: NexusSkillInvocation) {
+    when (invocation.operationId) {
+        "count_words" -> {
+            val text = invocation.arguments.getString("text")
+            invocation.complete(JSONObject().put("words", text.trim().split(Regex("\\s+")).size))
+        }
+        else -> invocation.fail(SkillErrorCodes.UNSUPPORTED_OPERATION)
+    }
+}
+```
+
+| Answer | Use it when |
+|---|---|
+| `complete(data)` | The read finished or the postcondition was observed. An empty read is a valid completion. |
+| `accepted(data?)` | You dispatched the action but could not observe it complete. |
+| `needsInput(reason, prompt?, choices)` | Nothing happened and the wearer must choose; at most eight `SkillProviderChoice`s, each with a label and one of your references. |
+| `fail(code, dispatch)` | A known failure: a `SkillErrorCodes` value or your own domain code, and whether the effect was dispatched (`NONE`, `DISPATCHED`, `UNKNOWN`). |
+| `unknown()` | You cannot tell whether the effect happened. |
+
+A result must fit in 16 KiB and match your declared output; the SDK refuses an
+answer that does not, locally and before the hub does, and leaves the
+invocation open for a correct one. `onNexusSkillCancelled` marks the
+invocation cancelled: stop what remains and answer with what is known. Keep
+network timeouts inside `remainingMs`.
+
+An invocation does not open your plugin. If the hub started you only for the
+call, it refuses your surface, Ink, notice, pin, microphone, speech, TTS, and
+camera traffic until the call ends, and an activity unless the running
+operation lists `surfaces` in `requires`. The hub keeps you bound while the
+call runs and releases you afterwards; do not keep running on your own unless
+the operation started an ongoing process the wearer asked for (see
+`holdNexusOngoingWork` below).
+
+**Consent.** Declaring a catalog requests the separate `skills_provider`
+grant, which returns an installed plugin to Pending until the wearer approves
+it again. The wearer then allows each operation for each skills client, on
+your Plugin access screen; every operation starts off, and a change to an
+operation's contract, a new operation, or a new signing key needs a fresh
+approval. Your description is shown to the model as data about the operation:
+it never grants, approves, or routes anything.
+
+**Callers.** A caller declares
+`<meta-data android:name="com.anezium.rokidbus.plugin.SKILLS_CLIENT" android:value="true" />`,
+which requests `skills_client`. `requestSkillCatalog()` answers on
+`onNexusSkillCatalog(entries, errorCode)` with the operations approved for it,
+each under a model-facing `alias` the hub generates from the provider and
+operation identities. `invokeSkill(SkillInvokeRequest(session, requestKey,
+alias, arguments))` answers exactly once on `onNexusSkillResult`: a route
+rejection arrives there too, as a failed result. `requestKey` identifies the
+request within your session: the hub reuses the outcome of an exact duplicate
+and refuses the same key with different arguments. `cancelSkill` and
+`closeSkillSession` end work early. One invocation runs per session and at
+most four across callers; excess work fails with `busy` rather than queueing.
+
+The Sample plugin's `count_words` is the complete provider template, and
+Transit's catalog is a larger example with references, choices, and an
+operation that drives an activity.
 
 ## Pages (preview, not yet shipped)
 

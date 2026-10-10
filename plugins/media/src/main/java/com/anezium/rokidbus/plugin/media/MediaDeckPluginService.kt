@@ -6,13 +6,20 @@ import com.anezium.rokidbus.client.plugin.NexusMedia
 import com.anezium.rokidbus.client.plugin.NexusMediaAnchor
 import com.anezium.rokidbus.client.plugin.NexusPluginService
 import com.anezium.rokidbus.client.plugin.NexusSurfaceSession
+import com.anezium.rokidbus.client.plugin.NexusSkillInvocation
+import com.anezium.rokidbus.client.plugin.NexusSdkResult
 import com.anezium.rokidbus.media.MediaDeckRuntime
 import com.anezium.rokidbus.media.MediaDeckRuntimeHost
+import com.anezium.rokidbus.media.session.AndroidMediaSkillAccess
 import com.anezium.rokidbus.shared.plugin.NexusInputEvent
+import com.anezium.rokidbus.shared.skills.SkillErrorCodes
+import java.util.concurrent.Executors
 
 class MediaDeckPluginService : NexusPluginService() {
     private var surface: NexusSurfaceSession? = null
     private var runtime: MediaDeckRuntime? = null
+    private val skillWork = Executors.newSingleThreadExecutor()
+    private val skills by lazy { MediaSkills(AndroidMediaSkillAccess(applicationContext)) }
 
     private val runtimeHost = object : MediaDeckRuntimeHost {
         override fun supportsImage(): Boolean = nexusClient?.supportsImageSurface == true
@@ -66,7 +73,40 @@ class MediaDeckPluginService : NexusPluginService() {
         runtime?.imageCapabilityChanged()
     }
 
+    override fun onNexusSkillInvoked(invocation: NexusSkillInvocation) {
+        if (skillWork.isShutdown) {
+            invocation.fail(SkillErrorCodes.UNAVAILABLE)
+            return
+        }
+        skillWork.execute {
+            val outcome = try {
+                skills.run(invocation.operationId, invocation.arguments,
+                    remainingMs = { invocation.remainingMs }, cancelled = { invocation.isCancelled })
+            } catch (_: SecurityException) {
+                if (invocation.operationId == MediaSkills.PAUSE) MediaSkillOutcome.Unknown
+                else MediaSkillOutcome.Failed(SkillErrorCodes.SETUP_REQUIRED)
+            } catch (_: Exception) {
+                if (invocation.operationId == MediaSkills.PAUSE) MediaSkillOutcome.Unknown
+                else MediaSkillOutcome.Failed(SkillErrorCodes.UNAVAILABLE)
+            }
+            val sent = when (outcome) {
+                is MediaSkillOutcome.Completed -> invocation.complete(outcome.data)
+                is MediaSkillOutcome.Choice -> invocation.needsInput("ambiguous_session", "Which player?", outcome.choices)
+                is MediaSkillOutcome.Failed -> invocation.fail(outcome.code)
+                MediaSkillOutcome.Accepted -> invocation.accepted()
+                MediaSkillOutcome.Unknown -> invocation.unknown()
+            }
+            if (sent == NexusSdkResult.INVALID_PAYLOAD) {
+                if (invocation.operationId == MediaSkills.PAUSE &&
+                    outcome !is MediaSkillOutcome.Failed && outcome !is MediaSkillOutcome.Choice)
+                    invocation.unknown()
+                else invocation.fail(SkillErrorCodes.UNAVAILABLE)
+            }
+        }
+    }
+
     override fun onDestroy() {
+        skillWork.shutdownNow()
         runtime?.close()
         runtime = null
         surface = null

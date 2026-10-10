@@ -162,7 +162,14 @@ class PatchResultHandoffTest {
     private fun assertCancelled(screen: ActivityController<PatchActivity>) {
         assertTrue(screen.get().isFinishing)
         assertEquals(Activity.RESULT_CANCELED, shadowOf(screen.get()).resultCode)
-        assertNull(shadowOf(screen.get()).resultIntent)
+        // A cancelled answer may word the hub's next step but never carries a file or a grant.
+        shadowOf(screen.get()).resultIntent?.let { data ->
+            assertNull(data.data)
+            assertNull(data.clipData)
+            assertEquals(0, data.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            assertEquals(setOf(PatcherContract.EXTRA_JOB_STATE), data.extras?.keySet().orEmpty())
+            assertNotNull(PatcherContract.jobState(data.getStringExtra(PatcherContract.EXTRA_JOB_STATE)))
+        }
         assertNull(shadowOf(screen.get()).nextStartedActivity)
     }
 

@@ -58,6 +58,34 @@ class PreparedBundleTest(unittest.TestCase):
         self.assertIn('patchBundleInput', str(raised.exception))
         self.assertIn(prepare_bundle.URL, str(raised.exception))
 
+    def test_published_reddit_download_is_pinned_and_does_not_use_youtube(self):
+        digest = hashlib.sha256(self.source.read_bytes()).hexdigest()
+        config = {'unpublished': False, 'download_url': 'https://github.com/Anezium/morphe-patches/releases/download/reddit/patches.mpp', 'source_sha256': digest}
+        with mock.patch('prepare_bundle.download', side_effect=lambda url, target: target.write_bytes(self.source.read_bytes())) as download:
+            source, actual = prepare_bundle.resolve_source('', self.dir, config)
+        download.assert_called_once_with(config['download_url'], self.dir / 'source.mpp')
+        self.assertEqual(actual, digest)
+
+    def test_unpublished_reddit_never_downloads_a_fallback(self):
+        with mock.patch('prepare_bundle.download') as download:
+            with self.assertRaises(SystemExit):
+                prepare_bundle.resolve_source('', self.dir, {'unpublished': True, 'source_sha256': 'bad'})
+        download.assert_not_called()
+
+    def test_published_reddit_rejects_unpinned_download_bytes(self):
+        config = {'unpublished': False, 'download_url': 'https://github.com/Anezium/morphe-patches/releases/download/reddit/patches.mpp', 'source_sha256': '0' * 64}
+        with mock.patch('prepare_bundle.download', side_effect=lambda url, target: target.write_bytes(b'wrong bundle')):
+            with self.assertRaises(SystemExit):
+                prepare_bundle.resolve_source('', self.dir, config)
+
+    def test_local_reddit_input_still_verifies_pin_without_download(self):
+        config = {'unpublished': True, 'source_sha256': hashlib.sha256(self.source.read_bytes()).hexdigest()}
+        with mock.patch('prepare_bundle.download') as download:
+            source, digest = prepare_bundle.resolve_source(str(self.source), self.dir, config)
+        self.assertEqual(source, self.source)
+        self.assertEqual(digest, config['source_sha256'])
+        download.assert_not_called()
+
 
 if __name__ == '__main__':
     unittest.main()

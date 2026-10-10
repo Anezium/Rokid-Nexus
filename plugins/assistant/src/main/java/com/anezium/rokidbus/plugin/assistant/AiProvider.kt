@@ -30,6 +30,9 @@ data class ChatRequest(
     val model: String? = null,
     val requestId: String = UUID.randomUUID().toString(),
     val conversationId: String? = null,
+    val workspaceVersion: Pair<Long, Long>? = null,
+    val workspaceTurn: WorkspaceTurnAccess? = null,
+    val beforeSend: (() -> Unit)? = null,
 )
 
 sealed interface AiProviderEvent {

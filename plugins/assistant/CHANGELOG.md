@@ -1,5 +1,69 @@
 # Changelog
 
+## Unreleased
+
+- **Answer questions that span several Workspace files.** When the passages found
+  first cover only part of a question, or the question uses other words or another
+  language than the files, Assistant searches the Workspace once more for the
+  missing part instead of answering from an unrelated passage.
+- **Use the current GPT-6 models.** ChatGPT offers GPT-6-Luna (still the
+  fast default), GPT-6.1-Sol, and GPT-6-Astra; a GPT-5.6 or GPT-6-Sol model
+  you picked before moves to its current equivalent instead of resetting.
+  Reasoning effort is kept to what the chosen model accepts: None is preserved
+  for Luna and clamped to Low for Sol/Astra. A live ChatGPT backend check confirmed
+  Luna accepts None. The OpenAI API preset suggests the same three models and
+  uses Responses for their tool calls, including Workspace page images.
+- **Read PDFs and images in Workspace.** Index `.pdf` files page by page and
+  cite the page with the file name. Scanned pages and photos (`.jpg`, `.png`,
+  `.webp`, `.heic`) are read with on-device text recognition while indexing,
+  so asking a question never waits for it. Password-protected files and images
+  without text are reported in the folder status.
+- **Look at a page when text is not enough.** With an image-capable provider,
+  Assistant can view the one PDF page or image an excerpt cites, for charts,
+  diagrams, table layouts, or poorly recognized text. Pages that show a chart,
+  table, or picture are marked while indexing so models know to look instead
+  of guessing. Only the indexed version of a cited file is rendered, once per
+  question.
+- **Keep answering when a provider refuses a tool.** ChatGPT now retries
+  without tools after a refused declaration, as the other providers already
+  did, instead of flashing an error and staying silent.
+- **Index large folders in the background.** Slow files are read over several
+  passes that resume after the last page read, and their finished pages are
+  searchable right away. Text added this way no longer cancels an answer in
+  progress; only removed or changed passages do.
+- Uses plugin operations the wearer approves, such as Transit's departures and
+  journey guidance, with a phone hub that routes skills.
+- One shared tool loop for every structured provider: up to four rounds and
+  eight calls per turn, with no new round after 60 seconds, so a lookup can
+  lead to a dependent call while a long answer is never cut short. Built-in
+  once-per-turn guards, calendar deletion included, still hold across rounds.
+- Follow-ups such as "and the one after that?" continue from the departure
+  just mentioned; choices a plugin asks for appear as chips on the answer band.
+- **Return from stalled folder checks.** Bound provider calls and cancellation
+  attempts, release indexing on timeout, and reject late selection results.
+  Keep another folder usable while one provider ignores cancellation.
+
+- **Accept verified local document providers.** Use the selected root's local-only
+  metadata for third-party file managers, retain the system-storage fast path,
+  and reject cloud or unverifiable roots.
+
+- **Keep active questions bound to their Workspace.** Reject delayed searches
+  after folder/index changes or Off–On. Stop follow-up AI requests and retries
+  when that turn's Workspace becomes unavailable, so old excerpts are not sent
+  again after disabling it.
+
+- **Ask about documents on your phone.** Choose a local Workspace folder in
+  Assistant settings. Index Text, Markdown, and Word body text (`.txt`, `.md`,
+  `.docx`) and send relevant passages with the first question request to any
+  configured provider, including Hermes. Cite the source file when answering.
+- **Keep document context bounded.** Retrieve at most 2,500 characters of
+  passages, within the existing Memory and notes envelope. Skip unrelated
+  passages and allow one fallback search per turn on structured-tool providers.
+- **Manage the folder locally.** Recheck document metadata on Assistant open,
+  folder changes, or Re-index now; reuse unchanged files. Display indexed counts
+  and safe error reasons, and clear private cached documents when Workspace is
+  turned off or folder access is lost.
+
 ## 1.4.8
 
 - **With the assist button, typing keeps to the band.** No full Assistant card

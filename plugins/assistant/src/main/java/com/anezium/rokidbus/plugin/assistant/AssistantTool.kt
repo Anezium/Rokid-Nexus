@@ -14,6 +14,8 @@ sealed interface AssistantToolResult {
     data class Image(
         val mimeType: String,
         val base64: String,
+        // Runtime provenance sent beside the pixels; a model-supplied label never fills it.
+        val caption: String? = null,
     ) : AssistantToolResult
 
     data class Error(

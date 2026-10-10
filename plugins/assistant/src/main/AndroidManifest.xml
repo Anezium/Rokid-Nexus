@@ -122,6 +122,11 @@
             <meta-data
                 android:name="com.anezium.rokidbus.plugin.CAPABILITIES"
                 android:value="surfaces,microphone,stt,tts,assistant,camera,ink_surface" />
+            <!-- Uses the plugin operations the wearer approves on each provider. Declared here,
+                 not in CAPABILITIES, so older hubs still load Assistant. -->
+            <meta-data
+                android:name="com.anezium.rokidbus.plugin.SKILLS_CLIENT"
+                android:value="true" />
             <meta-data
                 android:name="com.anezium.rokidbus.plugin.RECEIVE_PREFIXES"
                 android:value="/plugin/assistant,/system/plugin,/stt,/tts/started,/tts/done,/camera/snapshot/result,/camera/snapshot/error" />

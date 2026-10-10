@@ -181,4 +181,34 @@ class PluginDescriptorTest {
             PluginDescriptorParser.parse(entries),
         )
     }
+
+    @Test
+    fun `skills keys request the skills grants without touching the capability list`() {
+        val metadata = validMetadata() + mapOf(
+            BusConstants.META_PLUGIN_SKILLS to "2131755008",
+            BusConstants.META_PLUGIN_SKILLS_CLIENT to "true",
+        )
+
+        val descriptor = (PluginDescriptorParser.parse(metadata) as PluginDescriptorParseResult.Valid).descriptor
+
+        assertEquals(2131755008, descriptor.skillsCatalogResId)
+        assertTrue(descriptor.skillsDeclared)
+        assertTrue(PluginCapability.SKILLS_PROVIDER in descriptor.requestedCapabilities)
+        assertTrue(PluginCapability.SKILLS_CLIENT in descriptor.requestedCapabilities)
+    }
+
+    @Test
+    fun `a malformed skills declaration never invalidates the plugin`() {
+        val metadata = validMetadata() + mapOf(
+            BusConstants.META_PLUGIN_SKILLS to "@raw/missing",
+            BusConstants.META_PLUGIN_SKILLS_CLIENT to "yes please",
+        )
+
+        val descriptor = (PluginDescriptorParser.parse(metadata) as PluginDescriptorParseResult.Valid).descriptor
+
+        assertNull(descriptor.skillsCatalogResId)
+        assertTrue(descriptor.skillsDeclared)
+        assertTrue(PluginCapability.SKILLS_PROVIDER in descriptor.requestedCapabilities)
+        assertTrue(PluginCapability.SKILLS_CLIENT !in descriptor.requestedCapabilities)
+    }
 }

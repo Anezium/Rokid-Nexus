@@ -37,6 +37,10 @@ class PatchJobStore(private val directory: File,
     private val mutable = MutableStateFlow(read())
     val state: StateFlow<PatchJobState> = mutable
     private var backwardsMilestoneId: String? = null
+    // Memory only: process death ends a key backup/import, so no lease can outlive it.
+    private var keyLease: Any? = null
+    private val keyBusy = MutableStateFlow(false)
+    val keyMaintenance: StateFlow<Boolean> = keyBusy
 
     init {
         if (mutable.value.active) update(mutable.value.copy(status = PatchJobStatus.INTERRUPTED,
@@ -54,6 +58,7 @@ class PatchJobStore(private val directory: File,
     @Synchronized fun prepare(targetId: String = state.value.targetId): PatchJobState {
         PatchTargets.require(targetId)
         check(!state.value.active) { "A patch job is already running." }
+        check(keyLease == null) { KEY_BUSY }
         return PatchJobState(UUID.randomUUID().toString(), PatchJobStatus.PREPARING,
             "Reading and validating the selected APK", System.currentTimeMillis(), targetId = targetId).also(::update)
     }
@@ -62,9 +67,21 @@ class PatchJobStore(private val directory: File,
         val current = state.value
         check(!current.active && current.stock != null) { "Choose and validate a stock APK first." }
         require(selected.isNotEmpty()) { "Select at least one patch." }
+        check(keyLease == null) { KEY_BUSY }
         return current.copy(id = UUID.randomUUID().toString(), status = PatchJobStatus.RUNNING, message = "Loading the patch bundle",
             startedAt = System.currentTimeMillis(), result = null, bundleHash = hash, selected = selected,
             progress = PatchProgress(PatchPhase.BUNDLE_LOAD), elapsedMs = 0, delivered = false).also(::update)
+    }
+
+    /** The job signs with the key, so a key export/import and a job never overlap in :patcher. */
+    @Synchronized fun beginKeyMaintenance(): Any {
+        check(!state.value.active) { "Wait for the running patch to finish, then try again." }
+        check(keyLease == null) { "The signing key is already being backed up or imported." }
+        return Any().also { keyLease = it; keyBusy.value = true }
+    }
+
+    @Synchronized fun endKeyMaintenance(lease: Any) {
+        if (keyLease === lease) { keyLease = null; keyBusy.value = false }
     }
 
     @Synchronized fun change(id: String, block: (PatchJobState) -> PatchJobState) {
@@ -156,6 +173,7 @@ class PatchJobStore(private val directory: File,
     }
 
     companion object {
+        const val KEY_BUSY = "Wait for the signing key backup or import to finish, then try again."
         @Volatile private var instance: PatchJobStore? = null
         fun get(context: Context): PatchJobStore = instance ?: synchronized(this) {
             instance ?: PatchJobStore(context.applicationContext.filesDir).also { instance = it }

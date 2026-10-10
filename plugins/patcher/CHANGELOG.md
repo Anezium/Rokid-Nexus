@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.1.0
+
+- Add Reddit preview alongside YouTube, using the official complete Reddit 2026.14.0 APKM and the existing local validation, patching and signing engine.
+- Keep both guided setups in Patcher: YouTube includes MicroG and its full tutorial; Reddit uses its own tutorial without MicroG. Update both Nexus hubs for the integrated guides.
+- Show the real app icons in Nexus green and retain the existing Nexus settings design, key backup/import and job state.
+- Add the green monochrome Reddit HUD with compact media previews, text paging, nested comments, exact reply context and the Nexus phone keyboard. Popular now loads directly after a cold launch, refreshes and paginates through native Reddit services.
+- Include app-side R08 input integration using the same ring-focus contract as YouTube. Physical ring behavior and real Reddit writes remain unverified; Reddit stays labeled Preview.
+- Fetch the published Reddit source bundle during builds and verify its SHA-256 before D8 preparation. Keep the YouTube source pin and updater unchanged.
+- Preserve stored files, job state and signing keys during the Patcher update. No app is uninstalled to bypass a certificate mismatch.
+
 ## 1.0.0
 
 - Deliver ready-notification job identity to the existing hub-attached window and

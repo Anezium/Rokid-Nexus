@@ -1,0 +1,961 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reddit on Rokid glasses: design prototype</title>
+<style>
+/* ---------- review shell (NOT glasses UI) ---------- */
+:root{
+  --paper:#f3efe7; --ink:#1b1a17; --ink2:#6d675b; --rule:#d6cfbf; --mark:#b4440c;
+  --mono:"Cascadia Mono","Cascadia Code",Consolas,"SF Mono",Menlo,monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;background:var(--paper);color:var(--ink);font:13px/1.45 var(--mono);overflow-x:hidden}
+.shell{display:grid;grid-template-columns:minmax(0,480px) minmax(240px,1fr);gap:20px;padding:14px;max-width:1120px;margin:0 auto}
+@media (max-width:719px){.shell{grid-template-columns:minmax(0,1fr)}}
+.devlabel,.lbl{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink2);margin:0 0 6px}
+.hudwrap{width:min(480px,100%);aspect-ratio:3/4;position:relative;overflow:hidden;outline:1px solid var(--rule)}
+.hud{position:absolute;left:0;top:0;width:480px;height:640px;transform-origin:0 0}
+.pad{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap}
+button,select,textarea{font:inherit}
+.pad button,.panel button{background:transparent;border:1px solid var(--ink);color:var(--ink);padding:7px 11px;cursor:pointer;border-radius:2px}
+.pad button:hover,.panel button:hover{background:#e8e2d4}
+.pad button.tap{border-width:2px}
+.pad .sp{flex:1}
+.panel h1{font-size:14px;font-weight:600;margin:0 0 2px}
+.panel .sub{color:var(--ink2);margin:0 0 14px}
+.row{display:grid;grid-template-columns:84px 1fr;gap:8px;align-items:center;margin:8px 0}
+.row select{width:100%;background:#fff;color:var(--ink);color-scheme:light;border:1px solid var(--rule);padding:6px}
+.demos{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0}
+.demos button{border-color:var(--mark);color:var(--mark)}
+.phone{border:1px dashed var(--ink2);padding:10px;margin:14px 0}
+.phone .ph{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.phone .st{color:var(--ink2);margin:6px 0}
+.phone .st.on{color:var(--mark)}
+.phone textarea{width:100%;min-height:72px;border:1px solid var(--rule);background:#fff;color:var(--ink);color-scheme:light;padding:8px;resize:vertical}
+.phone textarea:disabled{background:#ebe6da}
+.phone small{display:block;color:var(--ink2);margin-top:4px}
+.state{white-space:pre-wrap;border-top:1px solid var(--rule);padding-top:8px;margin-top:8px}
+.log{color:var(--ink2);white-space:pre-wrap;min-height:3.6em}
+.log .ig{color:var(--mark)}
+details{margin-top:8px;color:var(--ink2)}
+kbd{border:1px solid var(--rule);padding:0 4px;border-radius:2px;background:#fff}
+
+/* ---------- glasses HUD (480x640, black = see-through) ---------- */
+.hud{--k:1;background:#000;color:#fff;font-family:Bahnschrift,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  display:flex;flex-direction:column;padding:14px 18px 12px;overflow:hidden;
+  --fs-t:calc(26px*var(--k));--fs-b:calc(21px*var(--k));--fs-m:calc(17px*var(--k));--fs-h:calc(15px*var(--k));
+  --acc:#ff6a2a;--dn:#8fa8ff;--dim:rgba(255,255,255,.62);--hair:rgba(255,255,255,.22);--line:rgba(255,255,255,.5)}
+.hud.rm *{animation:none!important}
+.top{display:flex;justify-content:space-between;align-items:baseline;gap:10px;font-size:var(--fs-m);color:var(--dim);
+  border-bottom:1px solid var(--hair);padding-bottom:7px;margin-bottom:8px;min-height:30px}
+.top .crumb{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.top .pos{white-space:nowrap;color:#fff}
+.body{flex:1;min-height:0;display:flex;flex-direction:column}
+.foot{border-top:1px solid var(--hair);padding-top:7px;margin-top:8px;font-size:var(--fs-h);color:var(--dim);min-height:28px;
+  display:flex;justify-content:space-between;gap:8px}
+.foot .toast{color:#fff}
+.foot b{color:#fff;font-weight:500}
+.meta{font-size:var(--fs-m);color:var(--dim);line-height:1.25}
+.meta b{color:#fff;font-weight:500}
+.title{font-size:var(--fs-t);line-height:1.18;font-weight:600;margin:6px 0 8px;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}
+.title.sm{font-size:var(--fs-b);-webkit-line-clamp:2;font-weight:500}
+.txt{font-size:var(--fs-b);line-height:1.3}
+.snip{font-size:var(--fs-b);line-height:1.3;color:var(--dim);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.chip{display:inline-block;border:1px solid var(--line);padding:0 7px;font-size:var(--fs-h);line-height:1.6;margin-right:6px;vertical-align:middle}
+.chip.acc{border-color:var(--acc);color:var(--acc)}
+.up{color:var(--acc)} .down{color:var(--dn)}
+.stats{font-size:var(--fs-m);color:var(--dim);margin-top:auto;padding-top:8px}
+.stats b{color:#fff;font-weight:500}
+.page{flex:1;min-height:0;overflow:hidden;font-size:var(--fs-b);line-height:1.32}
+.page .ln{white-space:pre;overflow:hidden}
+.list{flex:1;min-height:0;overflow:hidden;scroll-behavior:auto}
+.rowi{position:relative;padding:8px 10px 8px 14px;border-bottom:1px solid var(--hair);font-size:var(--fs-b);line-height:1.25}
+.rowi.sel{outline:2px solid #fff;outline-offset:-2px;border-bottom-color:transparent}
+.rowi.sel::before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px;background:#fff}
+.rowi .m{font-size:var(--fs-m);color:var(--dim)}
+.rowi .m b{color:#fff;font-weight:500}
+.rowi .t{display:-webkit-box;-webkit-line-clamp:var(--cl,2);-webkit-box-orient:vertical;overflow:hidden}
+.rowi.sel .t{-webkit-line-clamp:calc(var(--cl,2) + 2)}
+.rowi.d1{margin-left:18px}.rowi.d2{margin-left:36px}.rowi.d3{margin-left:54px}.rowi.d4{margin-left:72px}
+.rowi.ghost{color:var(--dim)}
+.rowi .val{float:right;color:#fff}
+.acts{border-top:1px solid var(--line);margin-top:8px;padding-top:6px;display:flex;flex-direction:column;min-height:0;max-height:58%}
+.acts .ah{font-size:var(--fs-m);color:var(--dim);display:flex;justify-content:space-between;margin-bottom:4px}
+.acts .ah b{color:var(--acc);font-weight:500;letter-spacing:.04em}
+.act{position:relative;border:1px solid var(--line);padding:6px 12px;margin:4px 0;font-size:var(--fs-b);line-height:1.25;display:flex;justify-content:space-between;gap:8px}
+.act.sel{border:2px solid #fff;padding:5px 11px}
+.act.sel .go{display:inline}
+.act .go{display:none;color:var(--acc);font-size:var(--fs-h);align-self:center}
+.act.dis{opacity:.42}
+.act .n{color:var(--dim);font-size:var(--fs-m);align-self:center}
+.dimmed{opacity:.35}
+.ctx{border-left:2px solid var(--line);padding:2px 0 2px 10px;margin:6px 0;color:var(--dim);font-size:var(--fs-m);line-height:1.25;
+  display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.ctx b{color:#fff;font-weight:500}
+.editor{border:1px solid var(--line);min-height:calc(3.9em);padding:8px 10px;font-size:var(--fs-b);line-height:1.3;white-space:pre-wrap;word-break:break-word;flex:1;min-height:0;overflow:hidden;margin:6px 0;position:relative}
+.editor.focus{border:2px solid #fff;padding:7px 9px}
+.editor .ph{color:var(--dim)}
+.caret{display:inline-block;width:2px;height:1.1em;background:#fff;vertical-align:text-bottom;margin-left:1px;animation:bl 1s steps(1) infinite}
+@keyframes bl{50%{opacity:0}}
+.note{font-size:var(--fs-m);color:var(--dim);line-height:1.25;margin:4px 0}
+.note b{color:#fff;font-weight:500}
+.warn{color:var(--acc)}
+.center{flex:1;display:flex;flex-direction:column;justify-content:center;gap:10px}
+.big{font-size:var(--fs-t);font-weight:600;line-height:1.2}
+.media{border:1px solid var(--line);height:calc(190px*var(--k));position:relative;overflow:hidden;margin:6px 0}
+.media.tall{flex:1;min-height:0;height:auto}
+.media svg{width:100%;height:100%;display:block}
+.media .tag{position:absolute;left:8px;bottom:6px;font-size:var(--fs-m);color:#fff;background:#000;padding:0 6px}
+.media .hidden{position:absolute;inset:0;background:#000;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:6px;color:var(--dim);font-size:var(--fs-m)}
+.prog{height:2px;background:var(--hair);margin:8px 0 4px;position:relative}
+.prog i{position:absolute;left:0;top:0;bottom:0;background:#fff}
+.pulse{height:1px;background:#fff;width:40%;animation:pu 1.2s ease-in-out infinite alternate;margin-top:10px}
+@keyframes pu{to{transform:translateX(150%)}}
+.msg{padding:8px 10px;border-bottom:1px solid var(--hair);font-size:var(--fs-b);line-height:1.25;position:relative}
+.msg.you{text-align:right}
+.msg.sel{outline:2px solid #fff;outline-offset:-2px}
+.msg .m{font-size:var(--fs-m);color:var(--dim)}
+</style>
+</head>
+<body>
+<main class="shell">
+  <section class="device">
+    <p class="devlabel">Glasses HUD · 480 × 640 · black is see-through</p>
+    <div class="hudwrap"><div class="hud" id="hud" role="application" aria-label="Reddit on glasses"></div></div>
+    <div class="pad" aria-label="Review controls (not glasses UI)">
+      <button type="button" data-k="prev" title="Swipe back / ArrowLeft">◀ Prev</button>
+      <button type="button" data-k="tap" class="tap" title="Tap / Enter">● Tap</button>
+      <button type="button" data-k="next" title="Swipe forward / ArrowRight">Next ▶</button>
+      <button type="button" data-k="back" title="Back / Escape">◁ Back</button>
+      <span class="sp"></span>
+      <button type="button" data-k="pair" title="Simulates one physical swipe arriving as DPAD_RIGHT then DPAD_DOWN">⇉ paired swipe</button>
+    </div>
+    <div class="state" id="state" aria-live="polite"></div>
+    <div class="log" id="log"></div>
+  </section>
+  <aside class="panel">
+    <h1>Reddit on Rokid glasses</h1>
+    <p class="sub">Design prototype of the patched official app. Everything here is local and fictional; nothing is sent anywhere.</p>
+    <div class="row"><span class="lbl">Flow</span><select id="flow"></select></div>
+    <div class="demos">
+      <button type="button" data-j="reply-post">▶ Reply to post demo</button>
+      <button type="button" data-j="reply-comment">▶ Reply to a comment demo</button>
+    </div>
+    <div class="row"><span class="lbl">Simulate</span><select id="sim">
+      <option value="none">Nothing (happy path)</option>
+      <option value="slow">Slow loading</option>
+      <option value="offline">Offline: loads and sends fail</option>
+      <option value="sendfail">Next send fails once</option>
+      <option value="ratelimit">Posting rate limit</option>
+      <option value="expired">Login expired on send</option>
+      <option value="signedout">Signed out</option>
+      <option value="locked">Demo thread locked</option>
+      <option value="media">Media unavailable</option>
+    </select></div>
+    <div class="phone">
+      <div class="ph"><span class="lbl" style="margin:0">Phone · Keyboard &amp; remote (simulated)</span><button type="button" id="phhide">Hide keyboard</button></div>
+      <div class="st" id="phstate">No text field focused on the glasses.</div>
+      <textarea id="phin" disabled placeholder="Type here when a glasses field is focused"></textarea>
+      <small>Enter adds a line. Nothing is published from the phone: sending happens only from the glasses, via Preview → Send. Existing text is not mirrored here; typing appends on the glasses.</small>
+    </div>
+    <details><summary>Keys and conventions</summary>
+      <p><kbd>←</kbd>/<kbd>↑</kbd> previous · <kbd>→</kbd>/<kbd>↓</kbd> next · <kbd>Enter</kbd>/<kbd>Space</kbd> tap · <kbd>Esc</kbd> back. Right/down and left/up are aliases of one swipe and are debounced together for 250 ms.</p>
+      <p>Content mode: swipe moves through posts, pages or rows. Tap opens the action list; the same swipe cycles actions; tap performs; back closes actions before leaving the screen.</p>
+    </details>
+  </aside>
+</main>
+<script>
+'use strict';
+/* ================= fictional local data ================= */
+const ME = 'you_on_glasses';
+const COMMUNITIES = [
+  {name:'wearables', members:'184k', joined:true, about:'Smart glasses, watches, rings and the software around them.'},
+  {name:'astrophotos', members:'2.1m', joined:true, about:'Night sky photography from backyards to observatories.'},
+  {name:'coffee', members:'1.4m', joined:true, about:'Beans, brewing, gear and the occasional strong opinion.'},
+  {name:'hiking', members:'3.2m', joined:true, about:'Trails, gear and trip reports.'},
+  {name:'keyboardbuilds', members:'96k', joined:false, about:'Custom mechanical keyboards, from kits to hand-wired.'},
+  {name:'cityplanning', members:'410k', joined:false, about:'How cities move, grow and change.'},
+  {name:'bookclub', members:'77k', joined:false, about:'One novel a month. Spoilers tagged.'},
+  {name:'medicalhistory', members:'52k', joined:false, about:'Historical medicine. Images may be sensitive.'},
+];
+const P1_BODY = [
+"I replaced my phone's lock screen with a pair of AR glasses for three weeks. Not as a stunt: I wanted to know whether a 480 by 640 HUD could carry notifications, short replies and the occasional thread without pulling the phone out.",
+"The short version: reading works, replying works when the phone does the typing, and anything that needs a thumb on glass still needs the phone.",
+"What surprised me was how much the black background matters. Every bright panel occludes the street in front of you. After two days I turned every app that painted a grey card into a white-on-black list, and suddenly the glasses stopped feeling like a screen strapped to my face and more like captions on the world.",
+"Swiping is the other lesson. One axis, forward and back, is all you can trust while walking. Up and down gestures exist but I would not bet a reply on them.",
+"Battery held for a working day with the display at 40 percent. The temple got warm on video calls, so I stopped doing those.",
+"Would I keep going? Yes, for reading and short replies. The full phone comes out for photos, long forms and anything with a map."
+].join('\n');
+const C2_TEXT = [
+"The black-background point is underrated. I run a similar setup and the single biggest readability win was dropping every tinted surface. Text on nothing reads better than text on grey, because the grey fights with whatever is behind it.",
+"On swiping: agreed, but I would add that the action menu has to live on the same axis. The moment an app asks me to swipe down to reach a button I stop using that app on the glasses.",
+"One thing you did not mention is how you type. I assume the phone keyboard? That is the part I keep going back and forth on. Dictation would be lovely but I do not trust it in the street, and a wrong send is worse than a slow one.",
+"Anyway, good write-up. Would read the video-call part in more detail if you ever do a follow-up."
+].join('\n');
+
+const POSTS = [
+  {id:'p1', sub:'wearables', author:'lin_ostrova', age:'3h', type:'text', score:1204, vote:0, saved:false, ncom:18,
+   title:'Three weeks wearing AR glasses as my only notification screen', body:P1_BODY},
+  {id:'p2', sub:'astrophotos', author:'nightshift_jo', age:'5h', type:'image', score:4820, vote:0, saved:true, ncom:212,
+   title:'Andromeda from a balcony in a light-polluted suburb (90 min stacked)', media:'galaxy'},
+  {id:'p3', sub:'coffee', author:'burr_curious', age:'41m', type:'text', score:38, vote:0, saved:false, ncom:9,
+   title:'Do steel burrs really taste different from ceramic, or is it the grind size?', body:'Short question, long argument in the comments probably. I switched grinders and everything tastes brighter. Same beans, same water.'},
+  {id:'p4', sub:'keyboardbuilds', author:'solder_mint', age:'8h', type:'gallery', score:910, vote:0, saved:false, ncom:64,
+   title:'Hand-wired 40% with a brass plate, finished after four weekends', media:['kb1','kb2','kb3','kb4']},
+  {id:'p5', sub:'hiking', author:'ridge_runner', age:'12h', type:'video', score:2330, vote:0, saved:false, ncom:77, dur:42,
+   title:'Sunrise timelapse from the north ridge, 0:42', media:'ridge'},
+  {id:'p6', sub:'cityplanning', author:'curb_cut', age:'6h', type:'link', score:3110, vote:0, saved:false, ncom:480,
+   title:'City removes 2,000 parking spots; cycling trips up 40% in a year', domain:'example-news.test', url:'https://example-news.test/parking-cycling'},
+  {id:'p7', sub:'bookclub', author:'margin_notes', age:'1d', type:'text', score:142, vote:0, saved:false, ncom:53, spoiler:true,
+   title:'The ending of "The Glass Orchard": did anyone else see it coming? [spoilers]',
+   body:'So the orchard was never real. The sister planted the glass trees after the fire and the whole second half is her walking through a memorial she built herself.\nI reread the first chapter and the clues are all there: the frost that never melts, the birds that never land.'},
+  {id:'p8', sub:'medicalhistory', author:'archive_fox', age:'2d', type:'image', score:560, vote:0, saved:false, ncom:31, sensitive:true,
+   title:'1911 radiograph of a healed femur fracture, annotated by the surgeon', media:'xray'},
+  {id:'p9', sub:'cityplanning', author:'mod_team', age:'4h', type:'text', score:880, vote:0, saved:false, ncom:1340, locked:true,
+   title:'Megathread: transit strike, day 3. Comments locked while moderators catch up.', body:'Updates will be posted here by the moderator team. The thread is locked: you can read but not reply.'},
+  {id:'p10', sub:'astrophotos', author:'dusty_lens', age:'3d', type:'image', score:77, vote:0, saved:false, ncom:4, broken:true,
+   title:'First attempt at the Pleiades with a kit lens', media:'none'},
+  {id:'p11', sub:'wearables', author:ME, age:'1d', type:'text', score:21, vote:1, saved:false, ncom:3, own:true,
+   title:'My HUD layout for reading threads on glasses: one post per screen, actions on tap', body:'Posting the layout I ended up with after the last thread. One post per screen, swipe to move, tap for actions, back to leave. No scroll bars.'},
+  {id:'p12', sub:'hiking', author:'trail_sage', age:'2d', type:'text', score:410, vote:0, saved:true, ncom:88,
+   title:'Trip report: four days on the coastal path with a 6 kg pack', body:'Day one was wind. Day two was more wind. Days three and four made it all worth it.\nGear notes in the comments if anyone wants them.'},
+];
+const POPULAR = ['p2','p6','p5','p4','p9','p12','p1','p7'];
+const LATEST  = ['p3','p1','p9','p2','p6','p4','p12','p11'];
+
+/* comments: flat records with parent ids, per post */
+let CID = 100;
+function C(o){ return Object.assign({id:'c'+(CID++), score:1, vote:0, saved:false, age:'2h', collapsed:false}, o); }
+const COMMENTS = {
+  p1: [
+    C({id:'c1', author:'mara_kw', age:'2h', score:318, text:'The lock-screen framing is the right one. Glasses are a glance surface, not a work surface. Did you ever miss a notification because the HUD timed out?'}),
+    C({id:'c2', parent:'c1', author:'devon_r', age:'1h', score:142, text:C2_TEXT}),
+    C({id:'c3', parent:'c2', author:ME, age:'40m', score:12, own:true, text:'Phone keyboard, yes. I type on the phone and the glasses show the field. Slow, but every send is deliberate.'}),
+    C({id:'c4', parent:'c1', author:'pixel_hermit', age:'55m', score:40, text:'Timeout question seconded. Mine goes dark after five seconds and I never found a setting for it.'}),
+    C({id:'c5', author:'[removed]', removed:true, age:'2h', score:0, text:'[removed by moderators]'}),
+    C({id:'c6', parent:'c5', author:'quiet_signal', age:'1h', score:8, text:'Replying anyway: the battery number matches mine, 40 percent brightness is the sweet spot.'}),
+    C({id:'c7', author:'ferrous_wheel', age:'3h', score:96, text:'Warm temples on video calls is a known thing. The radio and the display share a thermal budget.'}),
+    C({id:'c8', parent:'c7', author:'lin_ostrova', op:true, age:'2h', score:30, text:'Makes sense. I will add that to the post.'}),
+    C({id:'c9', parent:'c7', author:'tinfoil_tess', age:'2h', score:14, text:'Also why the camera gets throttled after a minute of recording.'}),
+    C({id:'c10', parent:'c7', author:'glint', age:'1h', score:5, text:'Mine never got warm but I only do audio.'}),
+    C({id:'c11', author:'[deleted]', deleted:true, age:'3h', score:3, text:'[deleted]'}),
+    C({id:'c12', parent:'c11', author:'orbit_lamp', age:'2h', score:9, text:'Whatever the parent said, the map point stands. Maps need the phone.'}),
+  ],
+  p11: [
+    C({author:'devon_r', age:'20h', score:9, text:'This matches what I landed on too. Does the action list wrap around at the end?'}),
+    C({author:'mara_kw', age:'18h', score:4, text:'Position text instead of a scroll bar is the right call.'}),
+  ],
+  p9: [ C({author:'mod_team', age:'4h', score:200, text:'Day 3 update: lines 2 and 5 running every 20 minutes. Buses normal.'}) ],
+};
+const MORE_P1 = () => [
+  C({author:'late_arrival', age:'10m', score:2, text:'Coming to this late: which glasses?'}),
+  C({author:'bench_press_bob', age:'8m', score:1, text:'The 40 percent brightness tip alone made this worth reading.'}),
+  C({author:'ssh_into_sky', age:'5m', score:1, text:'Would love a follow-up on reading long articles. Paging or scrolling?'}),
+];
+const INBOX = [
+  {id:'n1', kind:'reply', unread:true, from:'devon_r', age:'1h', text:'replied to your comment: "Phone keyboard, yes..."', post:'p1', comment:'c2'},
+  {id:'n2', kind:'reply', unread:true, from:'pixel_hermit', age:'55m', text:'replied in your thread: "Timeout question seconded..."', post:'p1', comment:'c4'},
+  {id:'n3', kind:'mention', unread:false, from:'mara_kw', age:'3h', text:'mentioned you in r/wearables', post:'p1', comment:'c1'},
+  {id:'n4', kind:'chat', unread:true, from:'devon_r', age:'2h', text:'chat: "see you at the meetup?"', chat:'ch1'},
+  {id:'n5', kind:'milestone', unread:false, from:'reddit', age:'1d', text:'your post reached 20 upvotes', post:'p11'},
+  {id:'n6', kind:'mod', unread:false, from:'r/cityplanning', age:'2d', text:'your comment was removed: rule 3', post:'p9'},
+];
+const CHATS = [
+  {id:'ch1', with:'devon_r', age:'2h', unread:true, msgs:[
+    {from:'devon_r', age:'3h', text:'Did you end up trying the ridge trail?'},
+    {from:ME, age:'3h', text:'Not yet, waiting for the wind to drop.'},
+    {from:'devon_r', age:'2h', text:'see you at the meetup?'}]},
+  {id:'ch2', with:'mara_kw', age:'1d', unread:false, msgs:[
+    {from:'mara_kw', age:'1d', text:'Thanks for the write-up link.'},
+    {from:ME, age:'1d', text:'Any time.'}]},
+];
+const RECENT_SEARCHES = ['andromeda', 'hud timeout', 'r/keyboardbuilds'];
+const USERS = [{name:'devon_r', karma:'12.4k'},{name:'mara_kw', karma:'8.1k'},{name:'nightshift_jo', karma:'44k'}];
+
+/* ---------- safe fictional media: inline SVG generators ---------- */
+const ART = {
+  galaxy(){ let d=''; for(let i=0;i<70;i++){ const x=(i*97)%480, y=(i*53)%300; d+=`<circle cx="${x}" cy="${y}" r="${(i%3)+0.6}" fill="#fff" opacity="${0.4+(i%5)/8}"/>`; }
+    return `<svg viewBox="0 0 480 300"><rect width="480" height="300" fill="#050308"/>${d}<ellipse cx="240" cy="150" rx="150" ry="52" fill="none" stroke="#cfd6ff" stroke-width="10" opacity=".35" transform="rotate(-18 240 150)"/><ellipse cx="240" cy="150" rx="60" ry="22" fill="#ffe9c9" opacity=".8" transform="rotate(-18 240 150)"/></svg>`; },
+  kb(n){ let k=''; for(let r=0;r<4;r++) for(let c=0;c<12;c++){ k+=`<rect x="${20+c*37}" y="${60+r*52}" width="32" height="44" rx="4" fill="${(r+c+n)%5===0?'#c99a4b':'#e9e4d8'}" stroke="#222"/>`; }
+    return `<svg viewBox="0 0 480 300"><rect width="480" height="300" fill="#2a2420"/><rect x="10" y="48" width="460" height="226" rx="8" fill="#8a6b3b"/>${k}</svg>`; },
+  ridge(t){ const sun=Math.min(1,(t||0)/42); return `<svg viewBox="0 0 480 300"><rect width="480" height="300" fill="#0b1020"/><circle cx="${120+sun*240}" cy="${200-sun*120}" r="26" fill="#ffd27a"/><polygon points="0,300 90,160 160,220 250,110 330,190 410,140 480,220 480,300" fill="#1c2233"/><polygon points="0,300 120,240 240,260 360,230 480,270 480,300" fill="#0a0d16"/></svg>`; },
+  xray(){ return `<svg viewBox="0 0 480 300"><rect width="480" height="300" fill="#060a10"/><rect x="200" y="20" width="80" height="260" rx="30" fill="#c9d4e0" opacity=".85"/><rect x="190" y="130" width="100" height="18" fill="#e6eef7"/><text x="300" y="150" fill="#e6eef7" font-size="18" font-family="serif">healed, 1911</text></svg>`; },
+};
+/* ================= engine ================= */
+const S = {
+  stack: [], sim: 'none', busy: null, toast: null, pendingFocus: null,
+  user: { signedIn: true, name: ME },
+  settings: { textSize: 'M', lines: 2, blur: true, autoKb: false, autoplay: false, motion: true },
+  drafts: {}, blocked: new Set(), sentOnce: false, lastNav: 0, lastDir: null, log: [],
+  sort: { feed: 'Hot', comments: 'Best' },
+};
+const $ = (q, el) => (el || document).querySelector(q);
+const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const fmt = n => n >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 0 : 1) + 'k' : String(n);
+const post = id => POSTS.find(p => p.id === id);
+const comm = (pid, cid) => (COMMENTS[pid] || []).find(c => c.id === cid);
+const children = (pid, cid) => (COMMENTS[pid] || []).filter(c => c.parent === cid);
+const descendants = (pid, cid) => children(pid, cid).reduce((n, c) => n + 1 + descendants(pid, c.id), 0);
+const depthOf = (pid, c) => { let d = 0; while (c && c.parent) { c = comm(pid, c.parent); d++; } return d; };
+const cur = () => S.stack[S.stack.length - 1];
+const signedIn = () => S.user.signedIn && S.sim !== 'signedout';
+const isLocked = p => !!p.locked || (p.id === 'p1' && S.sim === 'locked');
+
+function screen(kind, props) { return Object.assign({ kind, sel: 0, mode: 'content', actSel: 0, page: 0 }, props || {}); }
+function push(s) { S.stack.push(s); render(); }
+function pop() { if (S.stack.length > 1) S.stack.pop(); else toast('Home: Back would leave Reddit'); render(); }
+function replaceTop(s) { S.stack[S.stack.length - 1] = s; render(); }
+function reset(list) { S.stack = list; render(); }
+function toast(msg) { S.toast = msg; clearTimeout(S._tt); S._tt = setTimeout(() => { S.toast = null; render(); }, 1800); render(); }
+function clearPages() { S.stack.forEach(s => { delete s._pg; }); }
+
+/* ----- input: one swipe axis + tap + back, paired-alias debounce ----- */
+const PAIR_MS = 250;
+function logInput(txt, ignored) { S.log.unshift({ txt, ignored }); S.log = S.log.slice(0, 3); renderShell(); }
+function nav(dir, src) {
+  const now = performance.now();
+  if (S.lastDir === dir && now - S.lastNav < PAIR_MS) { logInput(`${src}: ignored, paired alias of previous ${dir} (+${Math.round(now - S.lastNav)} ms)`, true); return; }
+  S.lastNav = now; S.lastDir = dir;
+  logInput(`${src}: ${dir}`);
+  if (S.busy) return;
+  const s = cur(), K = KINDS[s.kind];
+  if (s.mode === 'actions') { const a = acts(s); if (!a.length) return; s.actSel = (s.actSel + (dir === 'next' ? 1 : -1) + a.length) % a.length; }
+  else if (K.nav && K.nav(s, dir)) { /* handled */ }
+  else { const n = K.count ? K.count(s) : 0; const k = dir === 'next' ? 1 : -1; const nx = s.sel + k;
+    if (nx < 0 || nx >= n) { if (n > 0 && K.edge) K.edge(s, dir); } else s.sel = nx; }
+  render();
+}
+function tap(src) {
+  logInput(`${src || 'tap'}: tap`);
+  if (S.busy) { toast(S.busy); return; }
+  const s = cur(), K = KINDS[s.kind];
+  if (s.mode === 'actions') { const a = acts(s)[s.actSel]; if (!a) return; if (a.dis) { toast(a.why || 'Not available'); return; } s.mode = 'content'; a.run(s); render(); return; }
+  if (K.tap && K.tap(s) === true) { render(); return; }
+  const a = acts(s);
+  if (a.length === 1 && a[0].direct) { a[0].run(s); render(); return; }
+  if (a.length) { s.mode = 'actions'; s.actSel = 0; render(); }
+}
+function back(src) {
+  logInput(`${src || 'back'}: back`);
+  if (S.busy) { toast(S.busy); return; }
+  const s = cur(), K = KINDS[s.kind];
+  if (s.mode === 'actions') { s.mode = 'content'; render(); return; }
+  if (K.back && K.back(s) === true) { render(); return; }
+  pop();
+}
+function acts(s) { const K = KINDS[s.kind]; return K.actions ? K.actions(s).filter(Boolean) : []; }
+
+/* ----- text pagination against the measured page viewport ----- */
+const mctx = document.createElement('canvas').getContext('2d');
+function wrapLines(text, width, font) {
+  mctx.font = font; const out = [];
+  String(text).split('\n').forEach((para, i) => {
+    if (i > 0) out.push('');
+    if (!para.trim()) return;
+    let line = '';
+    para.split(/\s+/).forEach(w => { const t = line ? line + ' ' + w : w; if (!line || mctx.measureText(t).width <= width) line = t; else { out.push(line); line = w; } });
+    out.push(line);
+  });
+  return out;
+}
+function paginate(el, text) {
+  const cs = getComputedStyle(el), lh = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.32;
+  const per = Math.max(1, Math.floor(el.clientHeight / lh));
+  const lines = wrapLines(text, el.clientWidth - 2, `${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`);
+  const pages = []; let i = 0;
+  while (i < lines.length) { while (i < lines.length && lines[i] === '') i++; if (i >= lines.length) break; pages.push(lines.slice(i, i + per)); i += per; }
+  return pages.length ? pages : [['']];
+}
+function fillPages(s, el, text, key) {
+  const k = key + '|' + S.settings.textSize + '|' + el.clientWidth + 'x' + el.clientHeight;
+  if (!s._pg || s._pg.k !== k) s._pg = { k, pages: paginate(el, text) };
+  const pages = s._pg.pages; s.page = Math.min(s.page, pages.length - 1);
+  el.innerHTML = pages[s.page].map(l => `<div class="ln">${esc(l) || '&nbsp;'}</div>`).join('');
+  return pages.length;
+}
+function pageCount(s) { return s._pg ? s._pg.pages.length : 1; }
+
+/* ----- lists: keep the selected row inside the measured viewport ----- */
+function follow(list, selector) {
+  if (!list) return; const row = list.querySelector(selector || '.sel'); if (!row) { list.scrollTop = 0; return; }
+  const top = row.offsetTop - list.offsetTop, bot = top + row.offsetHeight, vh = list.clientHeight;
+  if (top < list.scrollTop) list.scrollTop = top; else if (bot > list.scrollTop + vh) list.scrollTop = bot - vh;
+}
+function rows(items, sel, cls) { return `<div class="list ${cls || ''}" role="listbox">${items.map((h, i) => `<div class="rowi ${i === sel ? 'sel' : ''}" role="option" aria-selected="${i === sel}" data-i="${i}">${h}</div>`).join('')}</div>`; }
+function actionList(s) {
+  const a = acts(s); if (s.mode !== 'actions' || !a.length) return '';
+  return `<div class="acts" aria-label="Actions"><div class="ah"><b>ACTIONS</b><span>${s.actSel + 1}/${a.length}</span></div><div class="list" id="actlist">${a.map((x, i) =>
+    `<div class="act ${i === s.actSel ? 'sel' : ''} ${x.dis ? 'dis' : ''}" role="option" aria-selected="${i === s.actSel}"><span>${esc(x.label)}</span>${x.note ? `<span class="n">${esc(x.note)}</span>` : ''}<span class="go">tap</span></div>`).join('')}</div></div>`;
+}
+
+/* ----- render ----- */
+function render() {
+  const s = cur(), K = KINDS[s.kind], hud = $('#hud');
+  const scale = { S: 0.9, M: 1, L: 1.15 }[S.settings.textSize];
+  hud.style.setProperty('--k', scale); hud.style.setProperty('--cl', S.settings.lines); hud.classList.toggle('rm', !S.settings.motion);
+  const top = K.top(s), inActs = s.mode === 'actions';
+  const foot = S.toast ? `<span class="toast">${esc(S.toast)}</span>` : (S.busy ? `<span class="toast">${esc(S.busy)}</span>` : (inActs ? 'Swipe: choose · Tap: do · Back: close actions' : (K.hint ? K.hint(s) : 'Swipe · Tap · Back')));
+  hud.innerHTML = `<div class="top"><span class="crumb">${top.crumb}</span><span class="pos" id="pos">${top.pos || ''}</span></div>
+    <div class="body ${inActs ? 'dimmed' : ''}" id="body">${K.body(s)}</div>${actionList(s)}<div class="foot"><span>${foot}</span></div>`;
+  if (K.after) K.after(s, $('#body'));
+  follow($('#body .list')); if (inActs) follow($('#actlist'));
+  if (top.posAfter) $('#pos').textContent = top.posAfter(s);
+  renderShell();
+}
+/* ================= screens: browse, post types, communities, search ================= */
+const KINDS = {};
+const hintStd = 'Swipe: move · Tap: actions · Back: leave';
+function feedIds(s) {
+  if (s.tab === 'Popular') return POPULAR; if (s.tab === 'Latest') return LATEST;
+  if (s.tab === 'Community') return POSTS.filter(p => p.sub === s.sub).map(p => p.id);
+  if (s.tab === 'Saved') return POSTS.filter(p => p.saved).map(p => p.id);
+  if (s.tab === 'Profile') return POSTS.filter(p => p.author === ME).map(p => p.id);
+  let ids = POSTS.filter(p => COMMUNITIES.find(c => c.name === p.sub && c.joined)).map(p => p.id);
+  if (S.sort.feed === 'New') ids = ids.slice().reverse(); if (S.sort.feed === 'Top') ids = ids.slice().sort((a, b) => post(b).score - post(a).score);
+  return ids;
+}
+function voteGlyph(p) { return `<b class="${p.vote > 0 ? 'up' : p.vote < 0 ? 'down' : ''}">${p.vote > 0 ? '▲' : p.vote < 0 ? '▼' : '▲'} ${fmt(p.score + p.vote)}</b>`; }
+function flags(p) { return (isLocked(p) ? '<span class="chip">Locked</span>' : '') + (p.spoiler ? '<span class="chip">Spoiler</span>' : '') + (p.sensitive ? '<span class="chip">Sensitive</span>' : '') + (p.saved ? '<span class="chip acc">Saved</span>' : '') + (p.own ? '<span class="chip">Yours</span>' : ''); }
+function mediaBox(p, idx, cls) {
+  const broken = p.broken || S.sim === 'media';
+  if (broken) return `<div class="media ${cls || ''}"><div class="hidden"><span>Media unavailable</span><span>The image host did not answer</span></div></div>`;
+  const hiddenFor = (p.spoiler && !p._revealed) ? 'Spoiler' : (p.sensitive && S.settings.blur && !p._revealed) ? 'Sensitive content' : null;
+  if (hiddenFor) return `<div class="media ${cls || ''}"><div class="hidden"><span class="big" style="font-size:var(--fs-b)">${hiddenFor}</span><span>Hidden until you choose Reveal</span></div></div>`;
+  let svg = '';
+  if (p.type === 'gallery') svg = ART.kb(idx || 0); else if (p.media === 'galaxy') svg = ART.galaxy(); else if (p.media === 'xray') svg = ART.xray(); else if (p.media === 'ridge') svg = ART.ridge(p._t);
+  const tag = p.type === 'gallery' ? `Image ${(idx || 0) + 1}/${p.media.length}` : p.type === 'video' ? `Video · ${mmss(p.dur)}` : 'Image';
+  return `<div class="media ${cls || ''}">${svg}<span class="tag">${tag}</span></div>`;
+}
+const mmss = t => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
+function needAuth(what) { if (signedIn()) return false; push(screen('signin', { why: what })); return true; }
+function voteActs(p) {
+  return [
+    { label: p.vote > 0 ? 'Remove upvote' : 'Upvote', run: () => { if (needAuth('vote')) return; p.vote = p.vote > 0 ? 0 : 1; toast(p.vote ? 'Upvoted' : 'Upvote removed'); } },
+    { label: p.vote < 0 ? 'Remove downvote' : 'Downvote', run: () => { if (needAuth('vote')) return; p.vote = p.vote < 0 ? 0 : -1; toast(p.vote ? 'Downvoted' : 'Downvote removed'); } },
+    { label: p.saved ? 'Unsave' : 'Save', run: () => { if (needAuth('save')) return; p.saved = !p.saved; toast(p.saved ? 'Saved' : 'Removed from saved'); } },
+  ];
+}
+function openPost(p) { const k = { text: 'read', image: 'image', gallery: 'gallery', video: 'video', link: 'link' }[p.type]; push(screen(k, { pid: p.id })); }
+function openThread(pid, focus) {
+  const s = screen('thread', { pid, loading: S.sim === 'slow' || S.sim === 'offline', focus });
+  push(s);
+  if (s.loading) setTimeout(() => { if (S.sim === 'offline') s.error = 'offline'; else s.loading = false; if (cur() === s) { placeFocus(s); render(); } }, 1200);
+  else placeFocus(s);
+}
+function postActs(p, fromThread) {
+  const a = [];
+  if (!fromThread) a.push({ label: 'Open', run: () => openPost(p) }, { label: 'Comments', note: fmt(p.ncom), run: () => openThread(p.id) });
+  a.push(replyAct(p, null));
+  a.push(...voteActs(p));
+  if (!fromThread) a.push({ label: 'Go to r/' + p.sub, run: () => push(screen('community', { sub: p.sub })) });
+  if (p.own) a.push({ label: 'Delete post', run: () => push(screen('confirm', { what: 'delpost', pid: p.id })) });
+  else a.push({ label: 'Report post', run: () => push(screen('report', { pid: p.id })) });
+  return a;
+}
+function replyAct(p, c) {
+  const key = c ? 'reply:' + c.id : 'reply:' + p.id, hasDraft = !!(S.drafts[key] && S.drafts[key].text);
+  if (isLocked(p)) return { label: 'Reply', dis: true, note: 'thread locked', why: 'Thread is locked: reading only' };
+  if (c && (c.removed || c.deleted)) return { label: 'Reply', dis: true, note: c.removed ? 'removed' : 'deleted', why: 'This comment is no longer available' };
+  return { label: c ? 'Reply to this comment' : 'Reply to post', note: hasDraft ? 'draft' : '', run: () => { if (needAuth('reply')) return; push(screen('compose', { pid: p.id, cid: c ? c.id : null, key })); } };
+}
+
+/* ----- feed: one post per screen ----- */
+KINDS.feed = {
+  top: s => ({ crumb: s.tab === 'Community' ? 'r/' + s.sub : s.tab === 'Home' ? 'Home · ' + S.sort.feed : s.tab, pos: feedIds(s).length ? `Post ${s.sel + 1}/${feedIds(s).length}` : '' }),
+  count: s => feedIds(s).length,
+  edge: (s, d) => toast(d === 'next' ? 'End of feed · tap for Refresh' : 'Start of feed'),
+  hint: () => 'Swipe: next post · Tap: actions · Back: home',
+  body: s => {
+    const ids = feedIds(s); if (!ids.length) return `<div class="center"><div class="big">Nothing here yet</div><div class="note">No posts match. Tap for Refresh or Back.</div></div>`;
+    const p = post(ids[s.sel]);
+    let mid = '';
+    if (p.type === 'text') mid = `<div class="snip">${esc(p.body)}</div>`;
+    else if (p.type === 'link') mid = `<div class="chip">Link</div><span class="meta">${esc(p.domain)}</span>`;
+    else mid = mediaBox(p, 0);
+    return `<div class="meta"><b>r/${p.sub}</b> · u/${esc(p.author)} · ${p.age}</div><div class="title">${esc(p.title)}</div>${mid}
+      <div class="stats">${voteGlyph(p)} · <b>${fmt(p.ncom)}</b> comments ${flags(p) ? '· ' + flags(p) : ''}</div>`;
+  },
+  actions: s => { const ids = feedIds(s); if (!ids.length) return [{ label: 'Refresh', run: () => toast('Refreshed') }];
+    const a = postActs(post(ids[s.sel]));
+    if (s.tab === 'Home') a.push({ label: 'Sort: ' + S.sort.feed, note: 'tap cycles', run: () => { S.sort.feed = { Hot: 'New', New: 'Top', Top: 'Hot' }[S.sort.feed]; s.sel = 0; toast('Sorted by ' + S.sort.feed); } });
+    if (s.tab === 'Home' || s.tab === 'Popular' || s.tab === 'Latest') a.push({ label: 'Switch feed', note: s.tab, run: () => push(screen('menu', { title: 'Feeds', items: ['Home', 'Popular', 'Latest', 'Communities', 'Search', 'Inbox', 'Profile', 'Create post', 'Chats'], go: v => goMenu(v) })) });
+    a.push({ label: 'Refresh', run: () => toast('Refreshed · nothing new') });
+    return a; },
+};
+function goMenu(v) {
+  S.stack.pop();
+  if (v === 'Home' || v === 'Popular' || v === 'Latest') reset([screen('feed', { tab: v })]);
+  else if (v === 'Communities') push(screen('communities')); else if (v === 'Search') push(screen('search'));
+  else if (v === 'Inbox') push(screen('inbox')); else if (v === 'Profile') push(screen('profile'));
+  else if (v === 'Create post') push(screen('create', { step: 0 })); else if (v === 'Chats') push(screen('chats'));
+}
+KINDS.menu = {
+  top: s => ({ crumb: s.title, pos: `${s.sel + 1}/${s.items.length}` }), count: s => s.items.length, hint: () => 'Swipe: move · Tap: open · Back: close',
+  body: s => rows(s.items.map(v => esc(v)), s.sel),
+  actions: s => [{ label: 'Open ' + s.items[s.sel], direct: true, run: () => s.go(s.items[s.sel]) }],
+};
+
+/* ----- text post, paged ----- */
+KINDS.read = {
+  top: s => { const p = post(s.pid); return { crumb: 'r/' + p.sub + ' · post', posAfter: x => `Page ${x.page + 1}/${pageCount(x)}` }; },
+  count: s => pageCount(s), nav: (s, d) => { const n = pageCount(s), k = d === 'next' ? 1 : -1; if (s.page + k < 0) { toast('First page'); return true; } if (s.page + k >= n) { toast('Last page · tap for Comments'); return true; } s.page += k; return true; },
+  hint: () => 'Swipe: page · Tap: actions · Back: feed',
+  body: s => { const p = post(s.pid); const hidden = p.spoiler && !p._revealed;
+    return `<div class="meta">u/${esc(p.author)} · ${p.age} ${flags(p)}</div><div class="title sm">${esc(p.title)}</div>${hidden ? `<div class="center"><div class="big" style="font-size:var(--fs-b)">Spoiler hidden</div><div class="note">Tap, then choose <b>Reveal spoiler</b>. Nothing opens on entry.</div></div>` : '<div class="page" id="pg"></div>'}`; },
+  after: s => { const p = post(s.pid), el = $('#pg'); if (el) fillPages(s, el, p.body, p.id); },
+  actions: s => { const p = post(s.pid); const a = [];
+    if (p.spoiler && !p._revealed) a.push({ label: 'Reveal spoiler', run: () => { p._revealed = true; } });
+    a.push({ label: 'Comments', note: fmt(p.ncom), run: () => openThread(p.id) }, ...postActs(p, true));
+    return a; },
+};
+/* ----- image / gallery ----- */
+KINDS.image = {
+  top: s => { const p = post(s.pid); return { crumb: 'r/' + p.sub + ' · image' }; }, count: () => 1, hint: () => 'Tap: actions · Back: feed',
+  body: s => { const p = post(s.pid); return `<div class="title sm">${esc(p.title)}</div>${mediaBox(p, 0, 'tall')}<div class="stats">${voteGlyph(p)} · <b>${fmt(p.ncom)}</b> comments · u/${esc(p.author)}</div>`; },
+  actions: s => { const p = post(s.pid); const a = [];
+    if ((p.sensitive && S.settings.blur && !p._revealed) || (p.spoiler && !p._revealed)) a.push({ label: 'Reveal', note: p.sensitive ? 'sensitive' : 'spoiler', run: () => { p._revealed = true; } });
+    if (p.broken || S.sim === 'media') a.push({ label: 'Retry loading image', run: () => toast(S.sim === 'media' ? 'Still unavailable' : 'Host did not answer') });
+    a.push({ label: 'Comments', note: fmt(p.ncom), run: () => openThread(p.id) }, ...postActs(p, true)); return a; },
+};
+KINDS.gallery = {
+  top: s => { const p = post(s.pid); return { crumb: 'r/' + p.sub + ' · gallery', pos: `Image ${s.sel + 1}/${p.media.length}` }; }, count: s => post(s.pid).media.length,
+  edge: (s, d) => toast(d === 'next' ? 'Last image' : 'First image'), hint: () => 'Swipe: next image · Tap: actions · Back: feed',
+  body: s => { const p = post(s.pid); return `<div class="title sm">${esc(p.title)}</div>${mediaBox(p, s.sel, 'tall')}<div class="stats">${voteGlyph(p)} · <b>${fmt(p.ncom)}</b> comments</div>`; },
+  actions: s => { const p = post(s.pid); return [{ label: 'Comments', note: fmt(p.ncom), run: () => openThread(p.id) }, ...postActs(p, true)]; },
+};
+/* ----- video: compact single-axis menu ----- */
+KINDS.video = {
+  top: s => { const p = post(s.pid); return { crumb: 'r/' + p.sub + ' · video', pos: `${mmss(p._t || 0)} / ${mmss(p.dur)}` }; }, count: () => 1,
+  hint: s => post(s.pid)._playing ? 'Tap: actions (Pause, ±10 s) · Back: feed' : 'Tap: actions (Play) · Back: feed',
+  body: s => { const p = post(s.pid); const t = p._t || 0; return `<div class="title sm">${esc(p.title)}</div>${mediaBox(p, 0, 'tall')}<div class="prog"><i style="width:${(t / p.dur) * 100}%"></i></div><div class="meta">${p._playing ? 'Playing' : t >= p.dur ? 'Ended' : 'Paused'}${p._muted ? ' · muted' : ''} · ${voteGlyph(p)}</div>`; },
+  actions: s => { const p = post(s.pid); const a = [];
+    if (p.broken || S.sim === 'media') return [{ label: 'Retry video', run: () => toast('Video unavailable') }, { label: 'Comments', run: () => openThread(p.id) }];
+    a.push({ label: p._playing ? 'Pause' : (p._t >= p.dur ? 'Replay' : 'Play'), run: () => togglePlay(p, s) },
+      { label: 'Forward 10 s', run: () => { p._t = Math.min(p.dur, (p._t || 0) + 10); } }, { label: 'Back 10 s', run: () => { p._t = Math.max(0, (p._t || 0) - 10); } },
+      { label: p._muted ? 'Unmute' : 'Mute', run: () => { p._muted = !p._muted; } },
+      { label: 'Comments', note: fmt(p.ncom), run: () => { stopPlay(p); openThread(p.id); } }, ...postActs(p, true));
+    return a; },
+  back: s => { stopPlay(post(s.pid)); return false; },
+};
+function togglePlay(p, s) { if (p._playing) return stopPlay(p); if ((p._t || 0) >= p.dur) p._t = 0; p._playing = true;
+  p._iv = setInterval(() => { p._t = (p._t || 0) + 1; if (p._t >= p.dur) stopPlay(p); if (cur() === s) render(); }, 1000); }
+function stopPlay(p) { p._playing = false; clearInterval(p._iv); }
+/* ----- link post: explained handoff ----- */
+KINDS.link = {
+  top: s => ({ crumb: 'r/' + post(s.pid).sub + ' · link' }), count: () => 1, hint: () => 'Tap: actions · Back: feed',
+  body: s => { const p = post(s.pid); return `<div class="title">${esc(p.title)}</div><div class="chip">Link</div><span class="txt">${esc(p.domain)}</span>
+    <div class="note" style="margin-top:12px"><b>Open here</b> uses Reddit's in-app browser on the glasses: stock web page, not adapted, Back returns.</div>
+    <div class="note"><b>Send to phone</b> is a proposed Nexus handoff, not yet built.</div><div class="stats">${voteGlyph(p)} · <b>${fmt(p.ncom)}</b> comments</div>`; },
+  actions: s => { const p = post(s.pid); return [{ label: 'Open here', note: 'in-app browser', run: () => push(screen('browser', { pid: p.id })) },
+    { label: 'Send to phone', note: 'proposed', run: () => toast('Proposed: not built yet') }, { label: 'Comments', note: fmt(p.ncom), run: () => openThread(p.id) }, ...postActs(p, true)]; },
+};
+KINDS.browser = {
+  top: s => ({ crumb: 'In-app browser · ' + post(s.pid).domain }), count: () => 1, hint: () => 'Stock web view · Back: return to post',
+  body: s => `<div class="note">Stock Reddit web view. Page controls here are the official app's own and are not adapted in this design.</div><div class="media tall"><div class="hidden"><span>example-news.test</span><span>(simulated page)</span></div></div>`,
+  actions: () => [{ label: 'Back to post', run: () => pop() }],
+};
+/* ----- communities ----- */
+KINDS.communities = {
+  top: s => ({ crumb: 'Communities', pos: `${s.sel + 1}/${COMMUNITIES.length}` }), count: () => COMMUNITIES.length, hint: () => hintStd,
+  body: s => rows(COMMUNITIES.map(c => `<div class="m">${c.joined ? '<b>Joined</b> · ' : ''}${c.members} members</div><div class="t">r/${c.name}</div>`), s.sel),
+  actions: s => { const c = COMMUNITIES[s.sel]; return [{ label: 'Open r/' + c.name, run: () => push(screen('community', { sub: c.name })) }, joinAct(c)]; },
+};
+function joinAct(c) { return { label: c.joined ? 'Leave r/' + c.name : 'Join r/' + c.name, run: () => { if (needAuth('join')) return; c.joined = !c.joined; toast(c.joined ? 'Joined r/' + c.name : 'Left r/' + c.name); } }; }
+KINDS.community = {
+  top: s => ({ crumb: 'r/' + s.sub }), count: () => 1, hint: () => 'Tap: actions · Back: communities',
+  body: s => { const c = COMMUNITIES.find(x => x.name === s.sub); const n = POSTS.filter(p => p.sub === s.sub).length;
+    return `<div class="title">r/${c.name}</div><div class="meta">${c.members} members · ${c.joined ? '<b>Joined</b>' : 'Not joined'} · sort <b>${s.sort || 'Hot'}</b></div><div class="txt" style="margin-top:10px">${esc(c.about)}</div><div class="stats"><b>${n}</b> posts loaded</div>`; },
+  actions: s => { const c = COMMUNITIES.find(x => x.name === s.sub); return [{ label: 'Browse posts', run: () => push(screen('feed', { tab: 'Community', sub: s.sub })) }, joinAct(c),
+    { label: 'Sort: ' + (s.sort || 'Hot'), note: 'tap cycles', run: () => { s.sort = { Hot: 'New', New: 'Top', Top: 'Hot' }[s.sort || 'Hot']; } }, { label: 'Create post here', run: () => push(screen('create', { step: 1, sub: s.sub })) }]; },
+};
+/* ----- search ----- */
+KINDS.search = {
+  top: s => ({ crumb: 'Search' }), count: () => 1 + RECENT_SEARCHES.length, hint: s => s.sel === 0 ? 'Phone keyboard types here · Tap: Search' : 'Tap: search again · Back: feed',
+  body: s => { const q = (S.drafts.search || {}).text || '';
+    return `<div class="editor ${s.sel === 0 ? 'focus' : ''}" style="flex:0 0 auto;min-height:2.6em">${q ? esc(q) : '<span class="ph">Search Reddit</span>'}${s.sel === 0 ? '<span class="caret"></span>' : ''}</div>
+      <div class="note">Type on your phone: Nexus › Keyboard &amp; remote.</div><div class="meta" style="margin-top:8px">Recent</div>${rows(RECENT_SEARCHES.map(r => esc(r)), s.sel - 1)}`; },
+  actions: s => { const q = (S.drafts.search || {}).text || '';
+    if (s.sel === 0) return [{ label: 'Search', note: q ? '"' + q + '"' : 'empty', run: () => { if (!q.trim()) { toast('Type a search first'); return; } doSearch(q.trim()); } }, { label: 'Clear', run: () => { S.drafts.search = { text: '' }; } }];
+    return [{ label: 'Search "' + RECENT_SEARCHES[s.sel - 1] + '"', direct: true, run: () => doSearch(RECENT_SEARCHES[s.sel - 1]) }]; },
+  editor: s => s.sel === 0 ? { key: 'search', label: 'Search field' } : null,
+};
+function doSearch(q) { const s = screen('results', { q, scope: 'Posts', loading: S.sim === 'slow' || S.sim === 'offline' }); push(s);
+  if (s.loading) setTimeout(() => { if (S.sim === 'offline') s.error = true; else s.loading = false; if (cur() === s) render(); }, 1100); }
+function results(s) { const q = s.q.toLowerCase().replace(/^r\//, '');
+  if (s.scope === 'Posts') return POSTS.filter(p => (p.title + ' ' + (p.body || '') + ' ' + p.sub).toLowerCase().includes(q));
+  if (s.scope === 'Communities') return COMMUNITIES.filter(c => (c.name + ' ' + c.about).toLowerCase().includes(q));
+  return USERS.filter(u => u.name.includes(q)); }
+KINDS.results = {
+  top: s => ({ crumb: `"${esc(s.q)}" · ${s.scope}`, pos: s.loading || s.error ? '' : `${Math.min(s.sel + 1, results(s).length)}/${results(s).length}` }), count: s => results(s).length,
+  hint: () => 'Swipe: move · Tap: open or change scope · Back: search',
+  body: s => { if (s.loading) return `<div class="center"><div class="txt">Searching…</div><div class="pulse"></div></div>`; if (s.error) return `<div class="center"><div class="big">Couldn't search</div><div class="note">You seem to be offline. Tap for Retry.</div></div>`;
+    const r = results(s); if (!r.length) return `<div class="center"><div class="big">No ${s.scope.toLowerCase()} found</div><div class="note">Tap to look in communities or people, or Back to edit the search.</div></div>`;
+    return rows(r.map(x => s.scope === 'Posts' ? `<div class="m">r/${x.sub} · ${fmt(x.score)} ▲</div><div class="t">${esc(x.title)}</div>` : s.scope === 'Communities' ? `<div class="m">${x.members} members${x.joined ? ' · <b>Joined</b>' : ''}</div><div class="t">r/${x.name}</div>` : `<div class="m">${x.karma} karma</div><div class="t">u/${x.name}</div>`), s.sel); },
+  actions: s => { if (s.error) return [{ label: 'Retry', run: () => { s.error = false; s.loading = true; setTimeout(() => { if (S.sim === 'offline') s.error = true; else s.loading = false; render(); }, 900); } }];
+    const r = results(s), a = []; const x = r[s.sel];
+    if (x) a.push(s.scope === 'Posts' ? { label: 'Open post', run: () => openPost(x) } : s.scope === 'Communities' ? { label: 'Open r/' + x.name, run: () => push(screen('community', { sub: x.name })) } : { label: 'Open u/' + x.name, run: () => push(screen('profile', { user: x.name })) });
+    ['Posts', 'Communities', 'People'].filter(v => v !== s.scope).forEach(v => a.push({ label: 'Show ' + v.toLowerCase(), run: () => { s.scope = v; s.sel = 0; } }));
+    a.push({ label: 'New search', run: () => pop() }); return a; },
+};
+/* ================= screens: thread, read comment, compose, preview, confirm, report, sign-in ================= */
+function siblings(pid, parent) {
+  let list = (COMMENTS[pid] || []).filter(c => (c.parent || null) === (parent || null));
+  const srt = S.sort.comments;
+  list = list.slice().sort((a, b) => (b.fresh ? 1 : 0) - (a.fresh ? 1 : 0) || (srt === 'New' ? 0 : (b.score + b.vote) - (a.score + a.vote)));
+  if (srt === 'New') list = list.slice().sort((a, b) => (b.fresh ? 1 : 0) - (a.fresh ? 1 : 0)).reverse().sort((a, b) => (b.fresh ? 1 : 0) - (a.fresh ? 1 : 0));
+  return list;
+}
+function flatten(s) {
+  const out = [{ kind: 'post' }];
+  const walk = (parent, depth) => siblings(s.pid, parent).forEach(c => { out.push({ kind: 'c', c, depth }); if (!c.collapsed) walk(c.id, depth + 1); });
+  walk(null, 0);
+  if (s.pid === 'p1' && !s.moreLoaded) out.push({ kind: 'more' });
+  return out;
+}
+function placeFocus(s) { const id = s.focus || S.pendingFocus; if (!id) return; const i = flatten(s).findIndex(x => x.c && x.c.id === id); if (i >= 0) s.sel = i; S.pendingFocus = null; s.focus = null; }
+function statusChip(c) { return c.status === 'sending' ? '<span class="chip">sending…</span>' : c.status === 'failed' ? '<span class="chip acc">failed · draft kept</span>' : c.status === 'sent' ? '<span class="chip acc">sent</span>' : (c.edited ? '<span class="chip">edited</span>' : ''); }
+function commentRow(pid, c, depth) {
+  const d = 'd' + Math.min(depth, 4);
+  if (S.blocked.has(c.author)) return { cls: d + ' ghost', html: `<div class="m">[blocked user] · ${descendants(pid, c.id)} replies below</div>` };
+  if (c.collapsed) return { cls: d + ' ghost', html: `<div class="m">[+] <b>u/${esc(c.author)}</b> · ${descendants(pid, c.id)} ${descendants(pid, c.id) === 1 ? 'reply' : 'replies'} hidden</div>` };
+  const parent = c.parent ? comm(pid, c.parent) : null;
+  const who = c.removed || c.deleted ? `<b>${esc(c.author)}</b>` : `<b>u/${esc(c.author)}</b>${c.op ? ' · OP' : ''}${c.own ? ' · you' : ''}`;
+  return { cls: d + (c.removed || c.deleted ? ' ghost' : ''), html: `<div class="m">${who} · ${c.age} · <span class="${c.vote > 0 ? 'up' : c.vote < 0 ? 'down' : ''}">▲ ${fmt(c.score + c.vote)}</span> ${statusChip(c)}</div>${parent ? `<div class="m">↳ to ${parent.removed || parent.deleted ? esc(parent.author) : 'u/' + esc(parent.author)}</div>` : ''}<div class="t">${esc(c.text)}</div>` };
+}
+KINDS.thread = {
+  top: s => { const n = flatten(s).length - 1; return { crumb: 'Comments · ' + (s.loading ? '…' : fmt(post(s.pid).ncom)) + ' · ' + S.sort.comments, pos: s.loading || s.error ? '' : (s.sel === 0 ? 'Post' : `${s.sel}/${n}`) }; },
+  count: s => s.loading || s.error ? 0 : flatten(s).length,
+  edge: (s, d) => toast(d === 'next' ? 'End of loaded comments' : 'Top of thread'),
+  hint: s => s.loading ? 'Loading · Back: leave' : s.error ? 'Tap: Retry · Back: leave' : s.sel === 0 ? 'Swipe: first comment · Tap: post actions · Back: post' : 'Swipe: next comment · Tap: actions · Back: post',
+  body: s => {
+    if (s.loading) return `<div class="center"><div class="txt">Loading comments…</div><div class="pulse"></div></div>`;
+    if (s.error) return `<div class="center"><div class="big">Couldn't load comments</div><div class="note">No connection. Tap for Retry; your drafts are kept.</div></div>`;
+    const p = post(s.pid), items = flatten(s);
+    const html = items.map(it => {
+      if (it.kind === 'post') return { cls: '', html: `<div class="m"><b>r/${p.sub}</b> · u/${esc(p.author)} ${isLocked(p) ? '<span class="chip">Locked</span>' : ''}</div><div class="t">${esc(p.title)}</div>` };
+      if (it.kind === 'more') return { cls: 'ghost', html: s.moreLoading ? `<div class="m">Loading more…</div>` : s.moreError ? `<div class="m warn">Couldn't load more · tap to retry</div>` : `<div class="m">Load 3 more comments</div>` };
+      return commentRow(s.pid, it.c, it.depth);
+    });
+    return `<div class="list" role="listbox">${html.map((r, i) => `<div class="rowi ${r.cls} ${i === s.sel ? 'sel' : ''}" role="option" aria-selected="${i === s.sel}">${r.html}</div>`).join('')}</div>`;
+  },
+  actions: s => {
+    if (s.loading) return []; if (s.error) return [{ label: 'Retry', run: () => { s.error = false; s.loading = true; setTimeout(() => { if (S.sim === 'offline') s.error = 'offline'; else s.loading = false; render(); }, 1000); } }];
+    const p = post(s.pid), it = flatten(s)[s.sel], a = [];
+    if (it.kind === 'post') { a.push(replyAct(p, null), { label: 'Open post', run: () => openPost(p) }, ...voteActs(p)); }
+    else if (it.kind === 'more') { a.push({ label: s.moreError ? 'Retry loading' : 'Load more comments', direct: true, run: () => loadMore(s) }); return a; }
+    else {
+      const c = it.c;
+      if (S.blocked.has(c.author)) return [{ label: 'Unblock u/' + c.author, run: () => { S.blocked.delete(c.author); toast('Unblocked'); } }];
+      if (c.collapsed) a.push({ label: 'Expand replies', note: String(descendants(s.pid, c.id)), run: () => { c.collapsed = false; } });
+      else {
+        if (c.status === 'failed') a.push({ label: 'Retry sending', run: () => { push(screen('preview', { pid: s.pid, cid: c.parent || null, key: 'reply:' + (c.parent || s.pid), retryOf: c.id })); } });
+        a.push(replyAct(p, c));
+        if (c.text.length > 150) a.push({ label: 'Read full comment', run: () => push(screen('cread', { pid: s.pid, cid: c.id })) });
+        if (!c.removed && !c.deleted) a.push(...voteActs(c));
+        if (children(s.pid, c.id).length) a.push({ label: 'Collapse replies', note: String(descendants(s.pid, c.id)), run: () => { c.collapsed = true; } });
+        if (c.parent) a.push({ label: 'Go to parent', run: () => { s.sel = flatten(s).findIndex(x => x.c && x.c.id === c.parent); } });
+        if (c.own && !c.deleted) a.push({ label: 'Edit your comment', run: () => push(screen('compose', { pid: s.pid, cid: c.id, key: 'edit:' + c.id, edit: true })) }, { label: 'Delete your comment', run: () => push(screen('confirm', { what: 'delcomment', pid: s.pid, cid: c.id })) });
+        else if (!c.removed && !c.deleted) a.push({ label: 'Report', run: () => push(screen('report', { pid: s.pid, cid: c.id })) }, { label: 'Block u/' + c.author, run: () => push(screen('confirm', { what: 'block', user: c.author })) });
+      }
+    }
+    a.push({ label: 'Sort: ' + S.sort.comments, note: 'tap cycles', run: () => { S.sort.comments = { Best: 'New', New: 'Top', Top: 'Best' }[S.sort.comments]; } });
+    return a;
+  },
+};
+function loadMore(s) { s.moreLoading = true; s.moreError = false; render(); setTimeout(() => { s.moreLoading = false; if (S.sim === 'offline') s.moreError = true; else { COMMENTS.p1.push(...MORE_P1()); s.moreLoaded = true; post('p1').ncom += 3; } render(); }, 1000); }
+
+KINDS.cread = {
+  top: s => ({ crumb: 'Comment · u/' + comm(s.pid, s.cid).author, posAfter: x => `Page ${x.page + 1}/${pageCount(x)}` }),
+  count: s => pageCount(s), nav: (s, d) => { const n = pageCount(s), k = d === 'next' ? 1 : -1; if (s.page + k < 0 || s.page + k >= n) { toast(k > 0 ? 'Last page' : 'First page'); return true; } s.page += k; return true; },
+  hint: () => 'Swipe: page · Tap: actions · Back: thread',
+  body: s => { const c = comm(s.pid, s.cid), parent = c.parent ? comm(s.pid, c.parent) : null; return `<div class="meta"><b>u/${esc(c.author)}</b> · ${c.age} · ▲ ${fmt(c.score + c.vote)}${parent ? ` · ↳ to u/${esc(parent.author)}` : ''}</div><div class="page" id="pg" style="margin-top:8px"></div>`; },
+  after: s => { const el = $('#pg'); if (el) fillPages(s, el, comm(s.pid, s.cid).text, s.cid); },
+  actions: s => { const c = comm(s.pid, s.cid); return [replyAct(post(s.pid), c), ...voteActs(c), { label: 'Back to thread', run: () => pop() }]; },
+};
+
+/* ----- compose: a real focused editor fed by the phone keyboard ----- */
+function draft(key) { return S.drafts[key] || (S.drafts[key] = { text: '' }); }
+function composeTarget(s) {
+  if (s.chat) { const ch = CHATS.find(x => x.id === s.chat); return { head: 'Message to u/' + ch.with, ctx: `last: ${ch.msgs[ch.msgs.length - 1].text}`, where: 'Chat · integration unverified' }; }
+  const p = post(s.pid);
+  if (s.edit) { const c = comm(s.pid, s.cid); return { head: 'Editing your comment', ctx: c.text, where: `in r/${p.sub} · ${p.title}` }; }
+  if (s.cid) { const c = comm(s.pid, s.cid); return { head: `Replying to u/${c.author}'s comment`, ctx: c.text, where: `in r/${p.sub} · ${p.title}`, depth: depthOf(s.pid, c) + 1 }; }
+  return { head: 'Replying to the post', ctx: p.title, where: `in r/${p.sub} · by u/${p.author}` };
+}
+KINDS.compose = {
+  top: s => ({ crumb: s.edit ? 'Edit comment' : s.chat ? 'New message' : 'Reply', pos: draft(s.key).text.trim() ? `${draft(s.key).text.trim().length} chars` : '' }),
+  count: () => 1, hint: () => 'Phone keyboard types here · Tap: Preview · Back: keep draft',
+  body: s => { const t = composeTarget(s), d = draft(s.key), base = s.edit ? comm(s.pid, s.cid).text : '';
+    return `<div class="meta"><b>${esc(t.head)}</b></div><div class="ctx">${esc(t.ctx)}</div><div class="meta">${esc(t.where)}</div>
+      <div class="editor focus" aria-label="Reply editor">${base ? esc(base) : ''}${d.text ? esc(d.text) : (base ? '' : '<span class="ph">Type on your phone: Nexus › Keyboard &amp; remote</span>')}<span class="caret"></span></div>
+      ${s.err ? `<div class="note warn">${esc(s.err)}</div>` : `<div class="note">Enter adds a line. Nothing is sent until you choose <b>Send</b> on the preview.</div>`}`; },
+  actions: s => [
+    { label: 'Preview', run: () => { const d = draft(s.key); const full = (s.edit ? comm(s.pid, s.cid).text : '') + d.text; if (!full.trim()) { s.err = 'Nothing to send yet: type something on the phone first.'; return; } s.err = null; push(screen('preview', Object.assign({}, s, { kind: 'preview', mode: 'content', actSel: 0, status: null, page: 0 }))); } },
+    { label: 'Discard draft', run: () => push(screen('confirm', { what: 'discard', key: s.key })) },
+    { label: 'Back, keep draft', run: () => { pop(); if (draft(s.key).text) toast('Draft kept'); } },
+  ],
+  back: s => { S.stack.pop(); if (draft(s.key).text) toast('Draft kept'); return true; },
+  editor: s => ({ key: s.key, label: composeTarget(s).head }),
+};
+KINDS.preview = {
+  top: s => ({ crumb: s.status === 'failed' ? 'Not sent' : s.status === 'sending' ? 'Sending' : 'Preview · not sent yet', posAfter: x => pageCount(x) > 1 ? `Page ${x.page + 1}/${pageCount(x)}` : '' }),
+  count: s => pageCount(s), nav: (s, d) => { const n = pageCount(s), k = d === 'next' ? 1 : -1; if (s.page + k >= 0 && s.page + k < n) s.page += k; return true; },
+  hint: s => s.status === 'sending' ? 'Sending… please wait' : s.status === 'failed' ? 'Tap: Retry or Edit · draft kept' : 'Tap: Send, Edit or Discard · Back: edit',
+  body: s => { const t = composeTarget(s), full = fullText(s);
+    const fail = { offline: 'No connection. Your draft is kept.', ratelimit: 'Reddit rate limit: try again in 9 min. Draft kept.', expired: 'Your login expired. Sign in on the glasses using the phone keyboard, then retry. Draft kept.', generic: 'Reddit did not accept the reply. Draft kept.' }[s.err];
+    return `<div class="meta"><b>${esc(s.edit ? 'Edited comment' : s.chat ? 'To u/' + CHATS.find(x => x.id === s.chat).with : 'To: ' + (s.cid ? `u/${comm(s.pid, s.cid).author}'s comment` : 'the post'))}</b>${t.depth ? ` · depth ${t.depth}` : ''}</div><div class="ctx">${esc(t.ctx)}</div>
+      ${s.status === 'failed' ? `<div class="note warn">${fail}</div>` : ''}<div class="meta">${s.edit ? 'Your edit' : 'Your reply'} · as u/${ME}</div><div class="page" id="pg"></div>`; },
+  after: s => { const el = $('#pg'); if (el) fillPages(s, el, fullText(s), 'pv' + s.key); },
+  actions: s => { if (s.status === 'sending') return [];
+    if (s.status === 'failed') return [s.err === 'expired' ? { label: 'Open sign-in', run: () => push(screen('signin', { why: 'send' })) } : { label: 'Retry send', run: () => doSend(s) }, { label: 'Edit', run: () => pop() }, { label: 'Discard draft', run: () => push(screen('confirm', { what: 'discard', key: s.key })) }];
+    return [{ label: s.edit ? 'Save edit' : 'Send', note: 'publishes', run: () => doSend(s) }, { label: 'Edit', run: () => pop() }, { label: 'Discard draft', run: () => push(screen('confirm', { what: 'discard', key: s.key })) }]; },
+  back: s => { if (s.status === 'sending') return true; return false; },
+};
+function fullText(s) { return (s.edit ? comm(s.pid, s.cid).text : '') + draft(s.key).text; }
+function doSend(s) {
+  if (S.busy || s.status === 'sending') return;
+  s.status = 'sending'; S.busy = 'Sending… please wait'; render();
+  setTimeout(() => {
+    let err = null;
+    if (S.sim === 'offline') err = 'offline'; else if (S.sim === 'ratelimit') err = 'ratelimit'; else if (S.sim === 'expired') err = 'expired'; else if (S.sim === 'sendfail' && !S.sentOnce) { S.sentOnce = true; err = 'generic'; }
+    S.busy = null;
+    if (err) { s.status = 'failed'; s.err = err; render(); return; }
+    const text = fullText(s).trim();
+    if (s.chat) { const ch = CHATS.find(x => x.id === s.chat); ch.msgs.push({ from: ME, age: 'now', text }); ch.age = 'now'; delete S.drafts[s.key]; S.stack.pop(); S.stack.pop(); const t = cur(); if (t.kind === 'chat') t.sel = ch.msgs.length - 1; toast('Sent'); render(); return; }
+    if (s.edit) { const c = comm(s.pid, s.cid); c.text = text; c.edited = true; c.age = 'now'; delete S.drafts[s.key]; S.stack.pop(); S.stack.pop(); S.pendingFocus = c.id; const t = cur(); if (t.kind === 'thread') placeFocus(t); toast('Edit saved'); render(); return; }
+    let c = s.retryOf ? comm(s.pid, s.retryOf) : null;
+    if (!c) { c = C({ parent: s.cid || null, author: ME, own: true, age: 'now', score: 1, fresh: true, text }); COMMENTS[s.pid].push(c); post(s.pid).ncom++; }
+    c.status = 'sent'; c.text = text; delete S.drafts[s.key]; S.stack.pop(); S.stack.pop();
+    const t = cur(); S.pendingFocus = c.id; if (t.kind === 'thread') placeFocus(t); toast('Sent'); render();
+  }, 1300);
+}
+
+/* ----- confirmations ----- */
+KINDS.confirm = {
+  top: () => ({ crumb: 'Confirm' }), count: () => 1, hint: () => 'Tap: choose · Back: cancel',
+  body: s => { const m = confirmText(s); return `<div class="center"><div class="big">${esc(m.q)}</div><div class="note">${esc(m.note)}</div></div>`; },
+  actions: s => { const m = confirmText(s); return [{ label: m.yes, run: () => m.go(s) }, { label: m.no || 'Cancel', run: () => pop() }]; },
+};
+function confirmText(s) {
+  switch (s.what) {
+    case 'discard': return { q: 'Discard this draft?', note: 'The text typed so far is deleted. Nothing was sent.', yes: 'Discard', no: 'Keep editing', go: () => { delete S.drafts[s.key]; S.stack.pop(); while (cur().kind === 'preview' || cur().kind === 'compose') S.stack.pop(); toast('Draft discarded'); render(); } };
+    case 'delcomment': return { q: 'Delete your comment?', note: 'Replies to it stay. This cannot be undone.', yes: 'Delete', go: () => { const c = comm(s.pid, s.cid); c.deleted = true; c.own = false; c.author = '[deleted]'; c.text = '[deleted]'; c.status = null; pop(); toast('Comment deleted'); } };
+    case 'delpost': return { q: 'Delete your post?', note: 'Comments stay visible. This cannot be undone.', yes: 'Delete', go: () => { const i = POSTS.findIndex(p => p.id === s.pid); if (i >= 0) POSTS.splice(i, 1); reset([screen('feed', { tab: 'Home' })]); toast('Post deleted'); } };
+    case 'block': return { q: `Block u/${s.user}?`, note: 'Their posts and comments are hidden from you. They are not told.', yes: 'Block', go: () => { S.blocked.add(s.user); pop(); toast('Blocked u/' + s.user); } };
+    case 'signout': return { q: 'Sign out of Reddit?', note: 'Sign back in on the glasses using the phone keyboard.', yes: 'Sign out', go: () => { S.user.signedIn = false; pop(); toast('Signed out'); } };
+    case 'report': return { q: `Report for "${s.reason}"?`, note: `Sent to the moderators of r/${post(s.pid).sub}. The author is not told.`, yes: 'Report', go: () => { S.stack.pop(); S.stack.pop(); toast('Reported · thanks'); render(); } };
+  }
+  return { q: '?', yes: 'OK', go: () => pop() };
+}
+const REASONS = ['Spam', 'Harassment', 'Misinformation', 'Breaks community rules', 'Something else'];
+KINDS.report = {
+  top: s => ({ crumb: 'Report ' + (s.cid ? 'comment' : 'post'), pos: `${s.sel + 1}/${REASONS.length}` }), count: () => REASONS.length, hint: () => 'Swipe: reason · Tap: choose · Back: cancel',
+  body: s => `<div class="meta">${s.cid ? `u/${esc(comm(s.pid, s.cid).author)}'s comment` : 'Post by u/' + esc(post(s.pid).author)}</div>${rows(REASONS.map(r => esc(r)), s.sel)}`,
+  actions: s => [{ label: 'Report: ' + REASONS[s.sel], direct: true, run: () => push(screen('confirm', { what: 'report', pid: s.pid, cid: s.cid, reason: REASONS[s.sel] })) }],
+};
+KINDS.signin = {
+  top: () => ({ crumb: 'Sign in' }), count: () => 1, hint: () => 'Tap: options · Back: not now',
+  body: s => `<div class="center"><div class="big">Sign in to ${esc(s.why || 'continue')}</div><div class="note">Open Reddit's sign-in on the <b>glasses</b>. Type using Nexus › Keyboard &amp; remote on your phone. The account stays in Reddit on the glasses.</div><div class="note">Any draft you typed is kept. This handoff is simulated here.</div></div>`,
+  actions: () => [{ label: 'Open Reddit sign-in', note: 'simulated', run: () => { S.user.signedIn = true; if (S.sim === 'signedout') { S.sim = 'none'; $('#sim').value = 'none'; } pop(); toast('Signed in as u/' + ME); } }, { label: 'Not now', run: () => pop() }],
+};
+/* ================= screens: inbox, profile, saved, settings, account, create post, chats ================= */
+KINDS.inbox = {
+  top: s => ({ crumb: 'Inbox · ' + INBOX.filter(n => n.unread).length + ' new', pos: `${s.sel + 1}/${INBOX.length}` }), count: () => INBOX.length, hint: () => hintStd,
+  body: s => rows(INBOX.map(n => `<div class="m">${n.unread ? '<b class="up">●</b> ' : ''}<b>${n.kind === 'mod' ? n.from : 'u/' + esc(n.from)}</b> · ${n.age}</div><div class="t">${esc(n.text)}</div>`), s.sel),
+  actions: s => { const n = INBOX[s.sel]; return [
+    { label: n.kind === 'chat' ? 'Open chat' : n.comment ? 'Open the reply in its thread' : 'Open post', run: () => { n.unread = false; if (n.chat) push(screen('chat', { id: n.chat })); else if (n.comment) openThread(n.post, n.comment); else openPost(post(n.post)); } },
+    n.unread ? { label: 'Mark read', run: () => { n.unread = false; } } : null,
+    { label: 'Mark all read', run: () => INBOX.forEach(x => x.unread = false) }]; },
+};
+const PROFILE_ROWS = ['Posts', 'Comments', 'Saved', 'Inbox', 'Chats', 'Settings', 'Account'];
+KINDS.profile = {
+  top: s => ({ crumb: s.user ? 'u/' + s.user : 'Profile', pos: s.user ? '' : `${s.sel + 1}/${PROFILE_ROWS.length}` }), count: s => s.user ? 1 : PROFILE_ROWS.length, hint: () => hintStd,
+  body: s => { if (s.user) { const u = USERS.find(x => x.name === s.user) || { karma: '?' }; return `<div class="title">u/${esc(s.user)}</div><div class="meta">${u.karma} karma · ${S.blocked.has(s.user) ? '<b>Blocked</b>' : 'Not blocked'}</div><div class="note" style="margin-top:12px">Their posts and comments would load here from the official app's profile data (not loaded in this prototype).</div>`; }
+    const counts = { Posts: POSTS.filter(p => p.author === ME).length, Comments: Object.values(COMMENTS).flat().filter(c => c.own).length, Saved: POSTS.filter(p => p.saved).length + Object.values(COMMENTS).flat().filter(c => c.saved).length, Inbox: INBOX.filter(n => n.unread).length + ' new', Chats: CHATS.filter(c => c.unread).length + ' new' };
+    return `<div class="meta"><b>u/${ME}</b> · 1,284 karma · ${signedIn() ? 'signed in' : '<span class="warn">signed out</span>'}</div>${rows(PROFILE_ROWS.map(r => `${esc(r)}${counts[r] != null ? `<span class="val">${counts[r]}</span>` : ''}`), s.sel)}`; },
+  actions: s => { if (s.user) return [{ label: S.blocked.has(s.user) ? 'Unblock' : 'Block u/' + s.user, run: () => { if (S.blocked.has(s.user)) { S.blocked.delete(s.user); toast('Unblocked'); } else push(screen('confirm', { what: 'block', user: s.user })); } }, { label: 'Message', note: 'chat, unverified', run: () => { let ch = CHATS.find(x => x.with === s.user); if (!ch) { ch = { id: 'ch' + (CHATS.length + 1), with: s.user, age: 'now', msgs: [] }; CHATS.push(ch); } push(screen('chat', { id: ch.id })); } }];
+    const r = PROFILE_ROWS[s.sel]; return [{ label: 'Open ' + r, direct: true, run: () => { if (r === 'Posts') push(screen('feed', { tab: 'Profile' })); else if (r === 'Comments') push(screen('ucomments')); else if (r === 'Saved') push(screen('saved')); else if (r === 'Inbox') push(screen('inbox')); else if (r === 'Chats') push(screen('chats')); else if (r === 'Settings') push(screen('settings')); else push(screen('account')); } }]; },
+};
+function ownComments() { return Object.entries(COMMENTS).flatMap(([pid, l]) => l.filter(c => c.own).map(c => ({ pid, c }))); }
+KINDS.ucomments = {
+  top: s => ({ crumb: 'Your comments', pos: ownComments().length ? `${s.sel + 1}/${ownComments().length}` : '' }), count: () => ownComments().length, hint: () => hintStd,
+  body: s => { const l = ownComments(); if (!l.length) return `<div class="center"><div class="big">No comments yet</div></div>`; return rows(l.map(x => `<div class="m">in r/${post(x.pid).sub} · ${x.c.age} · ▲ ${fmt(x.c.score + x.c.vote)} ${statusChip(x.c)}</div><div class="t">${esc(x.c.text)}</div>`), s.sel); },
+  actions: s => { const x = ownComments()[s.sel]; return x ? [{ label: 'Open in thread', run: () => openThread(x.pid, x.c.id) }, { label: 'Edit', run: () => push(screen('compose', { pid: x.pid, cid: x.c.id, key: 'edit:' + x.c.id, edit: true })) }, { label: 'Delete', run: () => push(screen('confirm', { what: 'delcomment', pid: x.pid, cid: x.c.id })) }] : []; },
+};
+function savedItems() { return [...POSTS.filter(p => p.saved).map(p => ({ p })), ...Object.entries(COMMENTS).flatMap(([pid, l]) => l.filter(c => c.saved).map(c => ({ pid, c })))]; }
+KINDS.saved = {
+  top: s => ({ crumb: 'Saved', pos: savedItems().length ? `${s.sel + 1}/${savedItems().length}` : '' }), count: () => savedItems().length, hint: () => hintStd,
+  body: s => { const l = savedItems(); if (!l.length) return `<div class="center"><div class="big">Nothing saved</div><div class="note">Save posts or comments from their actions.</div></div>`;
+    return rows(l.map(x => x.p ? `<div class="m">Post · r/${x.p.sub} · ▲ ${fmt(x.p.score)}</div><div class="t">${esc(x.p.title)}</div>` : `<div class="m">Comment · u/${esc(x.c.author)} · in r/${post(x.pid).sub}</div><div class="t">${esc(x.c.text)}</div>`), s.sel); },
+  actions: s => { const x = savedItems()[s.sel]; if (!x) return []; return x.p ? [{ label: 'Open post', run: () => openPost(x.p) }, { label: 'Unsave', run: () => { x.p.saved = false; s.sel = Math.max(0, s.sel - 1); toast('Removed from saved'); } }] : [{ label: 'Open in thread', run: () => openThread(x.pid, x.c.id) }, { label: 'Unsave', run: () => { x.c.saved = false; s.sel = Math.max(0, s.sel - 1); toast('Removed from saved'); } }]; },
+};
+const SETTINGS = [
+  { k: 'textSize', label: 'Text size', vals: ['S', 'M', 'L'], show: { S: 'Small', M: 'Medium', L: 'Large' } },
+  { k: 'lines', label: 'Comment preview lines', vals: [2, 3] },
+  { k: 'blur', label: 'Hide sensitive media until Reveal', vals: [true, false], show: { true: 'On', false: 'Off' } },
+  { k: 'autoplay', label: 'Autoplay video', vals: [false, true], show: { false: 'Off', true: 'On' } },
+  { k: 'motion', label: 'Motion', vals: [true, false], show: { true: 'Normal', false: 'Reduced' } },
+  { k: 'autoKb', label: 'Auto-open phone keyboard', note: 'proposed, not built', vals: [false, true], show: { false: 'Off', true: 'On' } },
+];
+KINDS.settings = {
+  top: s => ({ crumb: 'Settings', pos: `${s.sel + 1}/${SETTINGS.length}` }), count: () => SETTINGS.length, hint: () => 'Swipe: setting · Tap: cycles the value · Back: profile',
+  body: s => rows(SETTINGS.map(o => `<div class="m">${esc(o.label)}${o.note ? ` · <span class="warn">${o.note}</span>` : ''}</div><div class="t"><b>${o.show ? o.show[S.settings[o.k]] : S.settings[o.k]}</b></div>`), s.sel),
+  actions: s => { const o = SETTINGS[s.sel]; return [{ label: 'Change ' + o.label.toLowerCase(), direct: true, run: () => { const i = o.vals.indexOf(S.settings[o.k]); S.settings[o.k] = o.vals[(i + 1) % o.vals.length]; clearPages(); toast(o.label + ': ' + (o.show ? o.show[S.settings[o.k]] : S.settings[o.k])); } }]; },
+};
+KINDS.account = {
+  top: () => ({ crumb: 'Account' }), count: () => 1, hint: () => 'Tap: actions · Back: profile',
+  body: () => signedIn() ? `<div class="center"><div class="big">u/${ME}</div><div class="note">Signed in through Reddit on the glasses. Nexus never holds your Reddit password or token.</div></div>` : `<div class="center"><div class="big">Signed out</div><div class="note">Sign in on the glasses using the phone keyboard to vote, reply, save and post. Reading works signed out.</div></div>`,
+  actions: () => signedIn() ? [{ label: 'Sign out', run: () => push(screen('confirm', { what: 'signout' })) }] : [{ label: 'Open sign-in', run: () => push(screen('signin', { why: 'use your account' })) }],
+};
+
+/* ----- create a post: community › kind › title › body or link › review › submit ----- */
+const CSTEPS = ['Community', 'Type', 'Title', 'Body', 'Review'];
+function cdraft() { return S.drafts.create || (S.drafts.create = { sub: null, kind: 'Text' }); }
+KINDS.create = {
+  top: s => ({ crumb: 'New post · ' + CSTEPS[s.step], pos: `Step ${s.step + 1}/${CSTEPS.length}` }),
+  count: s => s.step === 0 ? COMMUNITIES.length : s.step === 1 ? 2 : 1,
+  hint: s => s.step === 2 || s.step === 3 ? 'Phone keyboard types here · Tap: Next · Back: previous step' : s.step === 4 ? 'Tap: Post or edit · Back: previous step' : 'Swipe: choose · Tap: select · Back: cancel',
+  body: s => { const d = cdraft(); if (s.sub && !d.sub) d.sub = s.sub;
+    if (s.step === 0) return `<div class="meta">Post to which community?</div>${rows(COMMUNITIES.map(c => `${c.joined ? '' : '<span class="m">not joined · </span>'}r/${c.name}`), s.sel)}`;
+    if (s.step === 1) return `<div class="meta">r/${d.sub} · what kind of post?</div>${rows(['Text post', 'Link post'], s.sel)}`;
+    if (s.step === 2) return `<div class="meta">r/${d.sub} · ${d.kind} post · title</div><div class="editor focus">${esc(draft('create:title').text) || '<span class="ph">Title (required)</span>'}<span class="caret"></span></div>${s.err ? `<div class="note warn">${esc(s.err)}</div>` : '<div class="note">Type on your phone. Enter adds a line; it does not post.</div>'}`;
+    if (s.step === 3) return `<div class="meta">${esc(draft('create:title').text)}</div><div class="editor focus">${esc(draft('create:body').text) || `<span class="ph">${d.kind === 'Link' ? 'https://… (required)' : 'Body (optional)'}</span>`}<span class="caret"></span></div>${s.err ? `<div class="note warn">${esc(s.err)}</div>` : ''}`;
+    const fail = s.err ? `<div class="note warn">${esc(s.err)}</div>` : '';
+    return `<div class="meta"><b>r/${d.sub}</b> · ${d.kind} post · as u/${ME}</div><div class="title sm">${esc(draft('create:title').text)}</div><div class="ctx">${esc(draft('create:body').text) || '(no body)'}</div>${fail}<div class="note">Nothing is posted until you choose <b>Post</b>.</div>`; },
+  actions: s => { const d = cdraft();
+    if (s.step === 0) return [{ label: 'Post to r/' + COMMUNITIES[s.sel].name, direct: true, run: () => { d.sub = COMMUNITIES[s.sel].name; push(screen('create', { step: 1 })); } }];
+    if (s.step === 1) return [{ label: s.sel === 0 ? 'Text post' : 'Link post', direct: true, run: () => { d.kind = s.sel === 0 ? 'Text' : 'Link'; push(screen('create', { step: 2 })); } }];
+    if (s.step === 2) return [{ label: 'Next: ' + (d.kind === 'Link' ? 'link' : 'body'), run: () => { if (!draft('create:title').text.trim()) { s.err = 'A title is required.'; return; } s.err = null; push(screen('create', { step: 3 })); } }, { label: 'Discard post draft', run: () => push(screen('confirm', { what: 'discard', key: 'create:title' })) }];
+    if (s.step === 3) return [{ label: 'Review', run: () => { if (d.kind === 'Link' && !/^https?:\/\/\S+\.\S+/.test(draft('create:body').text.trim())) { s.err = 'Enter a full link starting with https://'; return; } s.err = null; push(screen('create', { step: 4 })); } }, { label: 'Back to title', run: () => pop() }];
+    return [{ label: 'Post', note: 'publishes', run: () => submitPost(s) }, { label: 'Edit title', run: () => { S.stack.pop(); S.stack.pop(); } }, { label: 'Edit body', run: () => pop() }, { label: 'Discard post draft', run: () => push(screen('confirm', { what: 'discard', key: 'create:title' })) }]; },
+  editor: s => s.step === 2 ? { key: 'create:title', label: 'Post title' } : s.step === 3 ? { key: 'create:body', label: cdraft().kind === 'Link' ? 'Link URL' : 'Post body' } : null,
+};
+function submitPost(s) {
+  if (S.busy) return; S.busy = 'Posting… please wait'; render();
+  setTimeout(() => { S.busy = null; const d = cdraft();
+    if (S.sim === 'ratelimit') { s.err = 'Reddit rate limit: you posted recently. Try again in 9 min. Draft kept.'; render(); return; }
+    if (S.sim === 'offline') { s.err = 'No connection. Draft kept.'; render(); return; }
+    if (S.sim === 'expired') { s.err = 'Login expired. Sign in on the glasses using the phone keyboard. Draft kept.'; render(); return; }
+    const t = draft('create:title').text.trim(), b = draft('create:body').text.trim();
+    const p = { id: 'p' + (POSTS.length + 20), sub: d.sub, author: ME, age: 'now', type: d.kind === 'Link' ? 'link' : 'text', score: 1, vote: 1, saved: false, ncom: 0, own: true, title: t, body: b, domain: d.kind === 'Link' ? b.replace(/^https?:\/\//, '').split('/')[0] : undefined, url: b };
+    POSTS.unshift(p); COMMENTS[p.id] = []; delete S.drafts.create; delete S.drafts['create:title']; delete S.drafts['create:body'];
+    reset([screen('feed', { tab: 'Home' }), screen(p.type === 'link' ? 'link' : 'read', { pid: p.id })]); toast('Posted to r/' + p.sub); }, 1300);
+}
+
+/* ----- chats (integration unverified; design level) ----- */
+KINDS.chats = {
+  top: s => ({ crumb: 'Chats', pos: `${s.sel + 1}/${CHATS.length}` }), count: () => CHATS.length, hint: () => hintStd,
+  body: s => rows(CHATS.map(c => `<div class="m">${c.unread ? '<b class="up">●</b> ' : ''}<b>u/${esc(c.with)}</b> · ${c.age}</div><div class="t">${esc(c.msgs.length ? c.msgs[c.msgs.length - 1].text : '(no messages yet)')}</div>`), s.sel),
+  actions: s => [{ label: 'Open chat with u/' + CHATS[s.sel].with, direct: true, run: () => { CHATS[s.sel].unread = false; push(screen('chat', { id: CHATS[s.sel].id, sel: CHATS[s.sel].msgs.length - 1 })); } }],
+};
+KINDS.chat = {
+  top: s => { const ch = CHATS.find(x => x.id === s.id); return { crumb: 'Chat · u/' + ch.with, pos: ch.msgs.length ? `${s.sel + 1}/${ch.msgs.length}` : '' }; }, count: s => CHATS.find(x => x.id === s.id).msgs.length, hint: () => 'Swipe: messages · Tap: Reply · Back: chats',
+  body: s => { const ch = CHATS.find(x => x.id === s.id); if (!ch.msgs.length) return `<div class="center"><div class="note">No messages yet. Tap to write one.</div></div>`;
+    return `<div class="list" role="listbox">${ch.msgs.map((m, i) => `<div class="msg ${m.from === ME ? 'you' : ''} ${i === s.sel ? 'sel' : ''}" role="option" aria-selected="${i === s.sel}"><div class="m">${m.from === ME ? 'you' : 'u/' + esc(m.from)} · ${m.age}</div>${esc(m.text)}</div>`).join('')}</div>`; },
+  actions: s => { const ch = CHATS.find(x => x.id === s.id); const key = 'chat:' + ch.id; return [{ label: 'Reply', note: (S.drafts[key] && S.drafts[key].text) ? 'draft' : '', run: () => { if (needAuth('message')) return; push(screen('compose', { chat: ch.id, key })); } }, { label: 'Block u/' + ch.with, run: () => push(screen('confirm', { what: 'block', user: ch.with })) }]; },
+  after: () => follow($('#body .list'), '.msg.sel'),
+};
+/* ================= review shell wiring (outside the HUD) ================= */
+const FLOWS = [
+  ['Browse and discover', [['home', 'Home feed'], ['popular', 'Popular'], ['latest', 'Latest'], ['communities', 'Followed communities'], ['community', 'Community detail · join/leave/sort'], ['search', 'Search entry'], ['results', 'Search results · posts/communities/people']]],
+  ['Read posts', [['post-text', 'Text post · paged reading'], ['post-image', 'Image post'], ['gallery', 'Gallery · 4 images'], ['video', 'Video · single-axis menu'], ['link', 'Link post · handoff explained'], ['spoiler', 'Spoiler post · explicit reveal'], ['sensitive', 'Sensitive image · blurred until Reveal']]],
+  ['Comments and replies', [['thread', 'Comment thread'], ['reply-post', 'Reply to post (demo)'], ['reply-comment', 'Reply to a nested comment (demo)'], ['read-comment', 'Long comment · paged'], ['edit-own', 'Edit your own comment'], ['delete-own', 'Delete your own comment'], ['report', 'Report a comment'], ['block', 'Block a user']]],
+  ['Account', [['inbox', 'Inbox · reply notifications'], ['profile', 'Profile'], ['saved', 'Saved items'], ['settings', 'Settings · text size'], ['account', 'Account'], ['signin', 'Sign-in handoff (signed out)']]],
+  ['Create and chat', [['create', 'Create a post'], ['chats', 'Chats list'], ['chat', 'Chat conversation']]],
+  ['Non-happy paths', [['err-loading', 'Loading comments (slow)'], ['err-offline', 'Offline · load failure + retry'], ['err-empty', 'Empty search results'], ['err-sendfail', 'Send fails once · draft kept'], ['err-ratelimit', 'Rate limit on send'], ['err-expired', 'Login expired on send'], ['err-locked', 'Locked thread'], ['err-removed', 'Removed and deleted comments'], ['err-media', 'Media unavailable']]],
+];
+function setSim(v) { S.sim = v; $('#sim').value = v; }
+function threadAt(cid, actionLabel) {
+  const t = screen('thread', { pid: 'p1' }); const i = cid ? flatten(t).findIndex(x => x.c && x.c.id === cid) : 0; t.sel = Math.max(0, i);
+  if (actionLabel) { t.mode = 'actions'; const ai = acts(t).findIndex(a => a.label.startsWith(actionLabel)); t.actSel = Math.max(0, ai); }
+  return t;
+}
+function jumpTo(key) {
+  const home = screen('feed', { tab: 'Home' }); S.busy = null; S.toast = null; if (key !== 'signin') S.user.signedIn = true; if (!['err-loading', 'err-offline', 'err-sendfail', 'err-ratelimit', 'err-expired', 'err-locked', 'err-media', 'signin'].includes(key)) setSim('none');
+  const idx = id => Math.max(0, feedIds(home).indexOf(id));
+  switch (key) {
+    case 'home': return reset([home]);
+    case 'popular': case 'latest': return reset([screen('feed', { tab: key === 'popular' ? 'Popular' : 'Latest' })]);
+    case 'communities': return reset([home, screen('communities')]);
+    case 'community': return reset([home, screen('communities'), screen('community', { sub: 'wearables' })]);
+    case 'search': return reset([home, screen('search')]);
+    case 'results': S.drafts.search = { text: 'andromeda' }; return reset([home, screen('search'), screen('results', { q: 'andromeda', scope: 'Posts' })]);
+    case 'post-text': home.sel = idx('p1'); return reset([home, screen('read', { pid: 'p1' })]);
+    case 'post-image': home.sel = idx('p2'); return reset([home, screen('image', { pid: 'p2' })]);
+    case 'gallery': return reset([screen('feed', { tab: 'Popular', sel: POPULAR.indexOf('p4') }), screen('gallery', { pid: 'p4' })]);
+    case 'video': home.sel = idx('p5'); return reset([home, screen('video', { pid: 'p5' })]);
+    case 'link': return reset([screen('feed', { tab: 'Popular', sel: POPULAR.indexOf('p6') }), screen('link', { pid: 'p6' })]);
+    case 'spoiler': return reset([screen('feed', { tab: 'Popular', sel: POPULAR.indexOf('p7') }), screen('read', { pid: 'p7' })]);
+    case 'sensitive': return reset([screen('feed', { tab: 'Latest' }), screen('image', { pid: 'p8' })]);
+    case 'thread': home.sel = idx('p1'); return reset([home, screen('read', { pid: 'p1' }), threadAt('c1')]);
+    case 'reply-post': home.sel = idx('p1'); return reset([home, screen('read', { pid: 'p1' }), threadAt(null, 'Reply to post')]);
+    case 'reply-comment': home.sel = idx('p1'); return reset([home, screen('read', { pid: 'p1' }), threadAt('c2', 'Reply to this comment')]);
+    case 'read-comment': home.sel = idx('p1'); return reset([home, screen('read', { pid: 'p1' }), threadAt('c2'), screen('cread', { pid: 'p1', cid: 'c2' })]);
+    case 'edit-own': home.sel = idx('p1'); return reset([home, screen('read', { pid: 'p1' }), threadAt('c3', 'Edit your comment')]);
+    case 'delete-own': home.sel = idx('p1'); return reset([home, screen('read', { pid: 'p1' }), threadAt('c3', 'Delete your comment')]);
+    case 'report': home.sel = idx('p1'); return reset([home, screen('read', { pid: 'p1' }), threadAt('c4', 'Report')]);
+    case 'block': home.sel = idx('p1'); return reset([home, screen('read', { pid: 'p1' }), threadAt('c4', 'Block')]);
+    case 'inbox': return reset([home, screen('inbox')]);
+    case 'profile': return reset([home, screen('profile')]);
+    case 'saved': return reset([home, screen('profile', { sel: 2 }), screen('saved')]);
+    case 'settings': return reset([home, screen('profile', { sel: 5 }), screen('settings')]);
+    case 'account': return reset([home, screen('profile', { sel: 6 }), screen('account')]);
+    case 'signin': setSim('signedout'); S.user.signedIn = false; home.sel = idx('p1'); return reset([home, screen('read', { pid: 'p1' }), threadAt('c1'), screen('signin', { why: 'reply' })]);
+    case 'create': delete S.drafts.create; return reset([home, screen('create', { step: 0 })]);
+    case 'chats': return reset([home, screen('profile', { sel: 4 }), screen('chats')]);
+    case 'chat': return reset([home, screen('profile', { sel: 4 }), screen('chats'), screen('chat', { id: 'ch1', sel: 2 })]);
+    case 'err-loading': setSim('slow'); home.sel = idx('p1'); reset([home, screen('read', { pid: 'p1' })]); return openThread('p1');
+    case 'err-offline': setSim('offline'); home.sel = idx('p1'); reset([home, screen('read', { pid: 'p1' })]); return openThread('p1');
+    case 'err-empty': S.drafts.search = { text: 'zxqv' }; return reset([home, screen('search'), screen('results', { q: 'zxqv', scope: 'Posts' })]);
+    case 'err-sendfail': setSim('sendfail'); S.sentOnce = false; S.drafts['reply:c2'] = { text: 'Phone keyboard for me too. Slow, but no accidental sends.' }; home.sel = idx('p1'); return reset([home, screen('read', { pid: 'p1' }), threadAt('c2'), screen('compose', { pid: 'p1', cid: 'c2', key: 'reply:c2' }), screen('preview', { pid: 'p1', cid: 'c2', key: 'reply:c2' })]);
+    case 'err-ratelimit': setSim('ratelimit'); S.drafts['reply:p1'] = { text: 'Great write-up, saving this.' }; home.sel = idx('p1'); return reset([home, screen('read', { pid: 'p1' }), threadAt(null), screen('compose', { pid: 'p1', cid: null, key: 'reply:p1' }), screen('preview', { pid: 'p1', cid: null, key: 'reply:p1' })]);
+    case 'err-expired': setSim('expired'); S.drafts['reply:c1'] = { text: 'Missed two, both during a call.'}; home.sel = idx('p1'); return reset([home, screen('read', { pid: 'p1' }), threadAt('c1'), screen('compose', { pid: 'p1', cid: 'c1', key: 'reply:c1' }), screen('preview', { pid: 'p1', cid: 'c1', key: 'reply:c1' })]);
+    case 'err-locked': setSim('locked'); home.sel = idx('p1'); return reset([home, screen('read', { pid: 'p1' }), threadAt('c1', 'Reply')]);
+    case 'err-removed': home.sel = idx('p1'); return reset([home, screen('read', { pid: 'p1' }), threadAt('c5', 'Reply')]);
+    case 'err-media': setSim('media'); home.sel = idx('p2'); return reset([home, screen('image', { pid: 'p2' })]);
+  }
+  reset([home]);
+}
+
+/* ----- phone keyboard panel: bound to whichever glasses editor is focused ----- */
+function activeEditor() { const s = cur(), K = KINDS[s.kind]; if (S.busy || s.mode === 'actions' || !K.editor) return null; return K.editor(s); }
+function renderShell() {
+  const s = cur(), a = acts(s), ed = activeEditor(), ta = $('#phin'), st = $('#phstate');
+  const n = KINDS[s.kind].count ? KINDS[s.kind].count(s) : 0;
+  $('#state').textContent = `screen: ${s.kind}${s.pid ? ' (' + s.pid + ')' : ''} · depth ${S.stack.length} · mode: ${s.mode}` + (s.mode === 'actions' ? ` · action ${s.actSel + 1}/${a.length}: ${a[s.actSel] ? a[s.actSel].label : ''}` : n ? ` · selection ${(s._pg ? s.page : s.sel) + 1}/${n}` : '') + (S.sim !== 'none' ? ` · sim: ${S.sim}` : '') + (signedIn() ? '' : ' · signed out');
+  $('#log').innerHTML = S.log.map(l => `<div class="${l.ignored ? 'ig' : ''}">${esc(l.txt)}</div>`).join('');
+  if (ed) { st.textContent = 'Connected to glasses field: ' + ed.label; st.className = 'st on'; ta.disabled = false; const v = draft(ed.key).text; if (document.activeElement !== ta && ta.value !== v) ta.value = v; ta.dataset.key = ed.key; }
+  else { st.textContent = 'No text field focused on the glasses.'; st.className = 'st'; ta.disabled = true; if (document.activeElement !== ta) ta.value = ''; delete ta.dataset.key; }
+}
+$('#phin').addEventListener('input', e => { const k = e.target.dataset.key; if (!k) return; draft(k).text = e.target.value; const s = cur(); if (s.err) s.err = null; render(); });
+$('#phin').addEventListener('keydown', e => { if (e.key === 'Enter') { /* newline only: never publishes */ } e.stopPropagation(); });
+$('#phhide').addEventListener('click', () => { $('#phin').blur(); toast('Phone keyboard hidden · draft kept'); });
+
+/* ----- review controls and keys ----- */
+document.querySelectorAll('.pad button').forEach(b => b.addEventListener('click', () => {
+  const k = b.dataset.k; if (k === 'prev') nav('prev', 'button'); else if (k === 'next') nav('next', 'button'); else if (k === 'tap') tap('button'); else if (k === 'back') back('button');
+  else if (k === 'pair') { nav('next', 'DPAD_RIGHT'); setTimeout(() => nav('next', 'DPAD_DOWN'), 40); }
+}));
+document.querySelectorAll('[data-j]').forEach(b => b.addEventListener('click', () => { $('#flow').value = b.dataset.j; jumpTo(b.dataset.j); }));
+document.addEventListener('keydown', e => {
+  const t = e.target.tagName; if (t === 'TEXTAREA' || t === 'INPUT' || t === 'SELECT') return;
+  const m = { ArrowRight: ['next', 'ArrowRight'], ArrowDown: ['next', 'ArrowDown'], ArrowLeft: ['prev', 'ArrowLeft'], ArrowUp: ['prev', 'ArrowUp'] }[e.key];
+  if (m) { e.preventDefault(); nav(m[0], m[1]); return; }
+  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); tap(e.key === ' ' ? 'Space' : 'Enter'); return; }
+  if (e.key === 'Escape' || e.key === 'Backspace') { e.preventDefault(); back('Escape'); }
+});
+const flowSel = $('#flow');
+FLOWS.forEach(([g, items]) => { const og = document.createElement('optgroup'); og.label = g; items.forEach(([v, l]) => { const o = document.createElement('option'); o.value = v; o.textContent = l; og.appendChild(o); }); flowSel.appendChild(og); });
+flowSel.addEventListener('change', () => { jumpTo(flowSel.value); flowSel.blur(); });
+$('#sim').addEventListener('change', e => { S.sim = e.target.value; if (S.sim === 'sendfail') S.sentOnce = false; if (S.sim === 'signedout') S.user.signedIn = false; clearPages(); render(); e.target.blur(); });
+
+/* ----- scale the 480x640 HUD to the available width, never clipping its bottom ----- */
+const wrap = $('.hudwrap'), hudEl = $('#hud');
+function rescale() { const w = wrap.clientWidth; hudEl.style.transform = `scale(${w / 480})`; clearPages(); render(); }
+new ResizeObserver(() => rescale()).observe(wrap);
+reset([screen('feed', { tab: 'Home' })]);
+</script>
+</body>
+</html>

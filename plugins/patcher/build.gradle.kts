@@ -7,8 +7,8 @@ android {
         applicationId = "com.anezium.rokidbus.plugin.patcher"
         minSdk = 30
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.1.0"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -22,6 +22,11 @@ android {
     testOptions.unitTests.all {
         it.systemProperty("preparedBundle", layout.buildDirectory.file("generated/patch-assets/bundled.mpp").get().asFile.path)
         it.systemProperty("patchBundleFixture", providers.gradleProperty("patchBundleInput").orElse(layout.buildDirectory.file("patch-source/source.mpp").get().asFile.path).get())
+        it.systemProperty("redditBundleFixture", providers.gradleProperty("redditPatchBundleInput").orElse(layout.buildDirectory.file("patch-source/reddit-source.mpp").get().asFile.path).get())
+        it.systemProperty("preparedRedditBundle", layout.buildDirectory.file("generated/patch-assets/reddit.mpp").get().asFile.path)
+        it.systemProperty("redditStockApkm", providers.gradleProperty("redditStockApkm").orElse("").get())
+        it.systemProperty("redditTestOutput", providers.gradleProperty("redditTestOutput").orElse("").get())
+        if (providers.gradleProperty("redditStockApkm").isPresent) it.maxHeapSize = "3g"
     }
     testOptions.unitTests.isIncludeAndroidResources = true
 }
@@ -44,13 +49,14 @@ dependencies {
     implementation("com.google.guava:guava:33.3.1-jre")
     implementation("com.github.REAndroid:arsclib:a28c6fb2a7")
     testImplementation("junit:junit:4.13.2")
+    testImplementation("com.github.MorpheApp.smali:smali-dexlib2:d856bad65f")
     testImplementation("org.robolectric:robolectric:4.13")
 }
 // Published rokid releases are JVM JARs, not an Android bundle. Convert at build time,
 // never pretend the JVM class files can be executed by Android.
 val prepareAndroidBundle by tasks.registering(Exec::class) {
     val output = layout.buildDirectory.dir("generated/patch-assets")
-    outputs.dir(output)
+    outputs.files(output.map { it.file("bundled.mpp") }, output.map { it.file("bundled.json") })
     outputs.file(layout.buildDirectory.file("patch-source/source.mpp"))
     inputs.files(patchBundleClasspath)
     // Follow the build-tools and platform AGP uses. inputs.files tolerates a missing
@@ -81,4 +87,29 @@ val prepareAndroidBundle by tasks.registering(Exec::class) {
             "--classpath", patchBundleClasspath.files.joinToString(File.pathSeparator))
     }
 }
-tasks.named("preBuild").configure { dependsOn(prepareAndroidBundle) }
+val prepareRedditBundle by tasks.registering(Exec::class) {
+    val output = layout.buildDirectory.dir("generated/patch-assets")
+    val input = providers.gradleProperty("redditPatchBundleInput")
+    val pin = file("scripts/reddit_bundle_pin.json")
+    inputs.file(pin)
+    inputs.file("scripts/prepare_bundle.py")
+    inputs.files(patchBundleClasspath)
+    if (input.isPresent) inputs.file(input.get())
+    outputs.files(output.map { it.file("reddit.mpp") }, output.map { it.file("reddit.json") },
+        layout.buildDirectory.file("patch-source/reddit-source.mpp"))
+    val windows = System.getProperty("os.name").startsWith("Windows")
+    val sdkDirectory = androidComponents.sdkComponents.sdkDirectory.get().asFile
+    val d8Jar = File(sdkDirectory, "build-tools/${android.buildToolsVersion}/lib/d8.jar")
+    val androidJar = File(sdkDirectory, "platforms/android-${android.compileSdk}/android.jar")
+    inputs.files(d8Jar, androidJar)
+    doFirst {
+        if (!d8Jar.isFile || !androidJar.isFile) throw GradleException("Required Android SDK build tools or platform are missing in $sdkDirectory.")
+        commandLine(providers.gradleProperty("pythonExecutable").orElse(if (windows) "python" else "python3").get(),
+            file("scripts/prepare_bundle.py"), "--input", input.orNull ?: "", "--pin-file", pin,
+            "--output", output.get().asFile,
+            "--java", File(System.getProperty("java.home"), if (windows) "bin/java.exe" else "bin/java"),
+            "--d8", d8Jar, "--android", androidJar,
+            "--classpath", patchBundleClasspath.files.joinToString(File.pathSeparator))
+    }
+}
+tasks.named("preBuild").configure { dependsOn(prepareAndroidBundle, prepareRedditBundle) }

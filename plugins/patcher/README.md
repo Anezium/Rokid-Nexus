@@ -7,17 +7,35 @@ large-heap process and uses the Nexus UI kit. The phone hub may launch it with
 `PatcherContract.ACTION_PATCH` for an activity result; no Nexus capability
 is exercised by this Android hand-off.
 
+The settings screen is `PatcherHomeActivity`: equal YouTube and Reddit app cards,
+the signing-key backup/import and the uninstall card. Both tutorials are hub-owned:
+YouTube's (MicroG, official download, patch and install, sign-in, keyboard, Advanced)
+and Reddit's (official complete APKM, patch and install, sign-in and replies, keyboard;
+no MicroG). Patcher starts the hub's explicit
+`PatcherContract.HUB_SETUP_ACTIVITY` with `startActivityForResult`, so Android
+stamps the caller; the hub opens its non-exported setup only for the approved
+Patcher and only for `PatcherContract.SETUP_TARGETS`. The entry declares the setups
+it opens in `PatcherContract.META_SETUP_TARGETS`; a hub without that declaration
+predates Reddit's setup, so Patcher opens `PatchActivity` for Reddit itself and says
+to update Nexus. Opening a tutorial never selects a target or clears a held file or
+result; only a later patch request enters the guarded target switch. Patcher passes, and returns
+on cancelled hub results, an informational `EXTRA_JOB_STATE` hint (`idle`,
+`source_ready`, `running`, `ready`) that the hub uses only for wording; it never
+carries a file or grant. One job store serves both apps: a running job freezes its
+target, source and patch choices, and opening the other app while one app's file
+or result is held asks before clearing it.
+
 ## Targets and migration
 
 `PatchTarget` is data: stock package/accepted versions, trusted stock certificate
 digests and verification API range, bundle source and source SHA-256 pin, default
 selection, output package, display name/icon and warnings. `PatchTargets` currently
-contains only YouTube. Policy, preparation, bundle loading, signing, progress and
+contains YouTube and Reddit. Reddit is pinned to official 2026.14.0 (versionCode 2614001). Policy, preparation, bundle loading, signing, progress and
 the screen operate on the selected target; choices and bundles live in target-specific
 private directories. The request and result both require `PatcherContract.EXTRA_TARGET_ID`.
-Unknown targets fail closed. The phone hub still exposes only its YouTube setup.
+Unknown targets fail closed. The phone hub's YouTube and Reddit setup screens, both reached from Patcher, use the same validated transfer path. Glasses apps only lists and opens installed apps.
 
-This unpublished plugin was renamed from YouTube Patcher: module `:plugin-patcher`,
+This plugin was renamed from YouTube Patcher: module `:plugin-patcher`,
 package `com.anezium.rokidbus.plugin.patcher`, plugin id `patcher`, release prefix
 `patcher-v` and artifact `patcher-phone-release.apk`. Its new Android package has
 new private data and generates a new signing key. Existing output cannot update
@@ -37,8 +55,36 @@ The script runs with `python3`, or `python` on Windows; override it with
 ```sh
 ./gradlew :plugin-patcher:testDebugUnitTest :plugin-patcher:assembleDebug \
   -PskipCxrGlobal=true \
-  -PpatchBundleInput=/absolute/path/to/patches-1.39.1-rokid.3.mpp
+  -PpatchBundleInput=/absolute/path/to/patches-1.39.1-rokid.3.mpp \
+  -PredditPatchBundleInput=/absolute/path/to/patches-1.39.1-rokid.3-reddit-preview.25.mpp
 ```
+
+Builds download the published Reddit preview source from the URL in
+`scripts/reddit_bundle_pin.json` and verify its exact SHA-256. For offline
+builds, supply that same source through `redditPatchBundleInput`.
+The extra preparation task uses SDK D8 to create `reddit.mpp` and `reddit.json`;
+YouTube keeps the published `bundled.mpp`, its existing SHA-256 pin and updater.
+Reddit bundle updates are delivered through Patcher updates; its runtime remote
+bundle updater remains disabled.
+Do not supply a source already processed by `:patches:buildAndroid`: that task
+adds root DEX; use the JVM source from `:patches:jar`.
+
+To exercise the actual Nexus engine with the genuine complete source, add
+`-PredditStockApkm=/absolute/path/to/reddit-2026.14.0-2614001.apkm` to the test
+command. The opt-in test checks its fixed SHA-256, verifies and merges all stock
+splits, applies the three selected patches, signs the output and verifies its
+HUD marker and ARM64 libraries. An optional
+`-PredditTestOutput=/absolute/path/to/a-new-output.apk` preserves that APK for
+local inspection. It uses a temporary test signing key and is not a release APK.
+The output file must not already exist. Production Patcher uses its own retained
+signing key.
+
+Reddit selects **Rokid Reddit controls**, **Spoof signature** and **Hide ads**
+in one pass over the official complete APKM. It retains `com.reddit.frontpage`;
+MicroG is not part of its setup. Nexus rechecks the returned APK's exact version,
+HUD marker, package, manifest, hash, glasses API and installed signing key before
+transfer. It confirms installed version and signer afterwards. No plugin bus
+installer capability is added. The separate phone keyboard opt-in is off by default.
 
 Omit `patchBundleInput` to download the pinned genuine release from GitHub during
 preparation; that build needs network access (CI has it). A failed download or a
@@ -98,7 +144,10 @@ Run the host script tests and the plugin test/build commands above against the n
 fixture. Changing the patcher API also requires reviewing `build.gradle.kts`,
 `PatchPolicy.requireDex` and the observed writer/milestone contracts. Keep stock
 signer checks, read-only bundle installation and hub revalidation intact.
-This fix round does not change any bundle pin or release the fork.
+Reddit's separate source pin lives in `scripts/reddit_bundle_pin.json`
+and `PatchTargets.reddit.bundle.pinnedSourceSha256`; update both together. Its
+preview label describes hardware and server-write validation limits even when
+the patch bundle is published. The Reddit release does not alter the YouTube pin.
 
 ## Releases
 
@@ -106,12 +155,16 @@ Follows [plugins/README.md § Releases](../README.md#releases): push the tag
 `patcher-v<versionName>` (for example `patcher-v1.0.0`) after setting
 `versionName` and adding the matching `CHANGELOG.md` section. The release asset is
 `patcher-phone-release.apk`. The release build downloads the pinned bundle and
-needs the GitHub Packages credentials above.
+needs the GitHub Packages credentials above. Both source bundles have published,
+SHA-256-pinned build inputs, so release CI does not depend on a local Reddit file.
+Only patch bundles and the Patcher APK are release assets; obtain the official
+Reddit APKM yourself through its setup guide. Reddit remains Preview: app-side
+R08 transport is integrated, while physical ring and real server writes are unverified.
 
 ## Usage and safeguards
 
 - Pick a stock APK, APKM/APKS/XAPK complete split bundle. Every source APK is
-  cryptographically verified against Google's pinned YouTube signer; package,
+  cryptographically verified against the selected target's pinned stock signer; package,
   version and split version-code continuity are checked before merge. One loose
   split or split-required base is refused, including a base-only archive. Manifest
   `uses-split`, `requiredSplitTypes`/`splitTypes`, configuration owners and legacy
