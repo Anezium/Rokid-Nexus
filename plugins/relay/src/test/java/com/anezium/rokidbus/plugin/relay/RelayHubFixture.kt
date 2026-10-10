@@ -29,6 +29,7 @@ import java.util.Collections
 internal class FakeHub : IBusService.Stub() {
     val sent: MutableList<Pair<String, JSONObject>> = Collections.synchronizedList(mutableListOf())
     var callback: IBusCallback? = null
+    private val clients = mutableListOf<IBusCallback>()
     var link = LinkStateBits.CXR_CONTROL_UP or LinkStateBits.SPP_DATA_UP
     var features = BusCapabilityBits.NOTICE_SURFACE or BusCapabilityBits.EDITABLE_SURFACE
     var registrations = 0
@@ -50,6 +51,7 @@ internal class FakeHub : IBusService.Stub() {
     override fun sendBinary(path: String, id: String, meta: ByteArray, data: ByteArray) = Unit
     override fun registerPlugin(packageName: String, pluginId: String, cb: IBusCallback): Int {
         callback = cb
+        clients += cb
         registrations += 1
         // The hub's registration metadata follows its synchronous approval, as on a device.
         deliver(
@@ -72,6 +74,13 @@ internal class FakeHub : IBusService.Stub() {
     fun deliver(path: String, payload: JSONObject) {
         val target = checkNotNull(callback) { "no registered client" }
         target.onMessage(path, "hub-${nextId++}", payload.put("pluginId", "relay").toString().toByteArray(Charsets.UTF_8))
+    }
+
+    /** A hub-wide change, such as a grant edit, reaches every client the plugin registered. */
+    fun deliverToEveryClient(path: String, payload: () -> JSONObject) {
+        clients.toList().forEach { client ->
+            client.onMessage(path, "hub-${nextId++}", payload().put("pluginId", "relay").toString().toByteArray(Charsets.UTF_8))
+        }
     }
 
     fun sentTo(path: String): List<JSONObject> = synchronized(sent) { sent.filter { it.first == path }.map { it.second } }

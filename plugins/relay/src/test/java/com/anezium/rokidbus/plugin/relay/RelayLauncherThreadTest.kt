@@ -273,10 +273,9 @@ class RelayLauncherThreadTest {
         typeOnTheBand("On my way")
 
         // The surfaces grant goes: the next update of the band cannot reach the glasses.
-        hub.deliver(
-            BusPaths.PLUGIN_REGISTRATION,
-            JSONObject().put("result", PluginRegistrationResult.APPROVED).put("capabilities", "stt,tts").put("noticeInteractionVersion", 1),
-        )
+        hub.deliverToEveryClient(BusPaths.PLUGIN_REGISTRATION) {
+            JSONObject().put("result", PluginRegistrationResult.APPROVED).put("capabilities", "stt,tts").put("noticeInteractionVersion", 1)
+        }
         RelayHubFixture.idleFor(10_000)
 
         assertTrue(handoffs().isEmpty())
