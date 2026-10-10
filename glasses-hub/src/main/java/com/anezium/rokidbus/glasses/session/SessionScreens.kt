@@ -1,5 +1,8 @@
 package com.anezium.rokidbus.glasses.session
 
+import com.anezium.rokidbus.shared.ConversationMessage
+import com.anezium.rokidbus.shared.ConversationMessageStatus
+import com.anezium.rokidbus.shared.ConversationRole
 import com.anezium.rokidbus.shared.MediaPlaybackState
 import com.anezium.rokidbus.shared.PageBody
 import com.anezium.rokidbus.shared.PageSegment
@@ -128,12 +131,21 @@ internal sealed interface ScreenBlock {
         val footer: String? = null,
     ) : ScreenBlock
 
-    /** A conversation page's bubbles, oldest first; [caption] is its one capture time. */
+    /**
+     * A conversation page's bubbles, oldest first; [caption] is its one capture time. A live one
+     * is read page by page like a document: the renderer reports where its pages start (anchors
+     * naming bubble keys) through [SessionEvent.DocumentPaged] for [frame], [pageId] and
+     * [revision], and keeps [anchor] on screen. A retained (dimmed) one names no frame.
+     */
     data class Conversation(
         override val key: String,
         val caption: String?,
         val bubbles: List<Bubble>,
         val dimmed: Boolean = false,
+        val frame: FrameIdentity? = null,
+        val pageId: String? = null,
+        val revision: Long? = null,
+        val anchor: DocumentAnchor? = null,
     ) : ScreenBlock
 
     /** Now playing: what the media page says, with no controls (they are the command strip). */
@@ -159,7 +171,8 @@ internal sealed interface ScreenBlock {
 
     /**
      * Hub-rendered route geometry. [headingDeg] is the smoothed heading, null when absent or
-     * stale; [degraded] draws north-up with a dashed route and a dot without an arrow.
+     * stale; [degraded] draws north-up with a dashed route and a dot without an arrow. A compact
+     * or panel map is a card: [label] and [trail] are its caption row ("MAP · FOLLOW", "1/2").
      */
     data class Map(
         override val key: String,
@@ -169,6 +182,8 @@ internal sealed interface ScreenBlock {
         val view: MapView = MapView.FOLLOW,
         val degraded: Boolean = false,
         val selected: Boolean = false,
+        val label: String? = null,
+        val trail: String? = null,
     ) : ScreenBlock
 
     /** A transit ride's stops, with the vehicle [between] two of them. */
@@ -276,9 +291,19 @@ internal class SessionScreens(
     private val formatTime: (Long) -> String,
     /** Wall-clock time of a session-clock instant, for dating a retained snapshot. */
     private val wallTimeOf: (Long) -> Long,
+    /** Wall-clock now, for the age of a notification. */
+    private val wallClock: () -> Long = { 0L },
 ) {
-    /** [generation] is the open session's, which names its frames for the renderer's reports. */
-    fun screen(state: SessionState, status: SessionStatus?, generation: Long = 0): SessionScreen {
+    /**
+     * [generation] is the open session's, which names its frames for the renderer's reports;
+     * [facts] carries the activity collection and the commands' pending and answered states.
+     */
+    fun screen(
+        state: SessionState,
+        status: SessionStatus?,
+        generation: Long = 0,
+        facts: CommandFacts = CommandFacts(),
+    ): SessionScreen {
         val statusText = status?.let(::statusText)
         return when (state) {
             SessionState.Closed -> SessionScreen(null, emptyList(), null, statusText)
@@ -289,9 +314,9 @@ internal class SessionScreens(
                 statusText,
                 gate = true,
             )
-            is SessionState.Root -> root(state, statusText)
-            is SessionState.InPage -> page(state, statusText, generation)
-            is SessionState.Launching -> screen(state.previous, status, generation).copy(
+            is SessionState.Root -> root(state, statusText, facts)
+            is SessionState.InPage -> page(state, statusText, generation, facts)
+            is SessionState.Launching -> screen(state.previous, status, generation, facts).copy(
                 status = statusText ?: "Opening ${pluginLabel(state.pluginId) ?: state.pluginId}…",
             )
         }
@@ -307,7 +332,11 @@ internal class SessionScreens(
         else -> PageTemplateContract.namespaceOf(pageId)?.let(pluginLabel) ?: PAGE
     }
 
-    private fun root(state: SessionState.Root, statusText: String?): SessionScreen {
+    private fun root(state: SessionState.Root, statusText: String?, facts: CommandFacts): SessionScreen {
+        state.panel?.let { step ->
+            val owner = state.stops.firstOrNull { it.id == state.focus?.stopId }?.label ?: NEXUS
+            return panel(step, owner, owner, statusText)
+        }
         val blocks = state.stops.mapIndexed { index, stop ->
             val selected = index == state.selected
             when (stop.kind) {
@@ -321,40 +350,118 @@ internal class SessionScreens(
                     figure = true,
                     ended = stop.ended,
                     selected = selected,
+                    icon = stop.icon,
+                    tertiary = stop.activity?.takeUnless { stop.ended }?.let { commandLine(it, facts) },
+                    offline = stop.activity?.offline == true,
+                    commands = stop.activity?.takeUnless { stop.ended }
+                        ?.let { activity -> state.focus?.takeIf { it.stopId == stop.id }?.let { strip(activity, it) } },
                 )
-                RootStopKind.NOTICE_PREVIEW -> ScreenBlock.Card(
-                    key = stop.id,
-                    label = listOfNotNull(NOTIFICATION, stop.label?.uppercase()).joinToString(" · "),
-                    time = stop.atWallMs?.let(formatTime),
-                    primary = stop.text,
-                    secondary = null,
-                    measure = null,
-                    figure = false,
-                    ended = false,
-                    selected = selected,
-                )
+                RootStopKind.NOTICE_PREVIEW -> noticeCard(stop, selected)
                 RootStopKind.ACTIVITIES, RootStopKind.NOTIFICATIONS ->
                     ScreenBlock.Row(stop.id, stop.text, trail = (stop.count ?: 0).toString(), selected = selected)
                 RootStopKind.APPLICATIONS -> ScreenBlock.Row(stop.id, stop.text, selected = selected)
             }
         }
         val selectedStop = state.stops.getOrNull(state.selected)
-        return SessionScreen(
-            ScreenHeader(NEXUS, "back: close"),
-            blocks,
-            ScreenHint(if (selectedStop?.ended == true) "swipe next card" else "swipe next · tap open", "back close"),
-            statusText,
-            focusKey = selectedStop?.id,
-        )
+        val hint = when {
+            state.focus != null -> ScreenHint(FOCUS_HINT, FOCUS_BACK)
+            selectedStop?.ended == true -> ScreenHint("swipe next card", "back close")
+            else -> ScreenHint("swipe next · tap open", "back close")
+        }
+        return SessionScreen(ScreenHeader(NEXUS, "back: close"), blocks, hint, statusText, focusKey = selectedStop?.id)
     }
 
-    private fun page(state: SessionState.InPage, statusText: String?, generation: Long): SessionScreen {
+    /**
+     * The root's notification stop (plan 028a §6.4, §9). A conversation card says what is known of
+     * its one entry and nothing more: unanswered, handed off with delivery unconfirmed, or removed
+     * from the phone with nothing proven. An aggregate counts its owner's threads; anything else is
+     * the generic preview of the newest entry.
+     */
+    private fun noticeCard(stop: RootStop, selected: Boolean): ScreenBlock.Card {
+        val card = stop.notice
+        val removed = card?.state == HistoryState.WITHDRAWN
+        val generic = ScreenBlock.Card(
+            key = stop.id,
+            label = listOfNotNull(NOTIFICATION, stop.label?.uppercase()).joinToString(" · "),
+            time = stop.atWallMs?.let(formatTime),
+            primary = stop.text,
+            secondary = null,
+            measure = null,
+            figure = false,
+            ended = false,
+            selected = selected,
+            icon = stop.icon,
+            tertiary = REMOVED_NOTHING_PROVEN.takeIf { removed },
+            dashed = removed,
+        )
+        if (card == null) return generic
+        val source = (stop.label ?: card.ownerPluginId?.let(pluginLabel) ?: NOTIFICATION).uppercase()
+        return when (card.kind) {
+            NoticeCardKind.GENERIC -> generic
+            NoticeCardKind.CONVERSATION -> ScreenBlock.Card(
+                key = stop.id,
+                label = "$source · " + when (card.state) {
+                    HistoryState.HANDED_OFF -> REPLY_HANDED_OFF
+                    HistoryState.WITHDRAWN -> NOTIFICATION_REMOVED
+                    HistoryState.NEW, HistoryState.SEEN -> UNANSWERED
+                },
+                time = null,
+                primary = stop.text,
+                secondary = card.secondary,
+                measure = null,
+                figure = false,
+                ended = false,
+                selected = selected,
+                icon = stop.icon ?: card.ownerPluginId?.let { IconRef.Plugin(it) },
+                tertiary = when (card.state) {
+                    HistoryState.HANDED_OFF -> HANDED_OFF_UNCONFIRMED
+                    HistoryState.WITHDRAWN -> REMOVED_NOTHING_PROVEN
+                    HistoryState.NEW, HistoryState.SEEN -> stop.atWallMs?.let { "captured ${formatTime(it)}" }
+                },
+                dashed = removed,
+            )
+            NoticeCardKind.AGGREGATE -> ScreenBlock.Card(
+                key = stop.id,
+                label = source,
+                time = stop.atWallMs?.let(formatTime),
+                primary = stop.text,
+                secondary = card.secondary,
+                measure = null,
+                figure = false,
+                ended = false,
+                selected = selected,
+                icon = stop.icon ?: card.ownerPluginId?.let { IconRef.Plugin(it) },
+            )
+        }
+    }
+
+    /** An activity's commands as its card draws them in command focus. */
+    private fun strip(activity: ActivityStop, focus: CommandFocus): CommandStrip = CommandStrip(
+        ActivityCommands.slots(activity).map { CommandSlot(it.key, it.label, it.glyph, enabled = it.enabled, hub = it.hub) },
+        focus.index,
+    )
+
+    /**
+     * A card's third line: an offline entry's last-known time first, else its owner's command
+     * pending or last answered. Nothing is invented: a lost answer says it is unconfirmed.
+     */
+    private fun commandLine(activity: ActivityStop, facts: CommandFacts): String? {
+        if (activity.offline) return activity.knownAtWallMs?.let { "$OFFLINE_HINT ${formatTime(it)}" } ?: OFFLINE
+        val owner = activity.ownerPluginId ?: return null
+        facts.pending[owner]?.let { pending ->
+            val label = activity.commands.firstOrNull { it.id == pending.actionId }?.label ?: pending.actionId
+            return "$label · $PENDING"
+        }
+        return facts.outcomes[owner]?.let { outcomeText(ActionOutcome(it.actionId, it.status, it.message)) }
+    }
+
+    private fun page(state: SessionState.InPage, statusText: String?, generation: Long, facts: CommandFacts): SessionScreen {
         val frame = state.frames.last()
         val frameIndex = state.frames.size
         val parent = state.frames.getOrNull(state.frames.lastIndex - 1)?.let { titleOfFrame(it) } ?: "root"
         val title = titleOfFrame(frame)
         val back = "back $parent"
-        frame.panel?.let { return panel(frame, it, title, statusText) }
+        frame.panel?.let { return panel(it, title, titleOf(frame.pageId), statusText) }
         val outcomeText = frame.outcome?.let(::outcomeText)
         return when (val status = frame.status) {
             is FrameStatus.Loading -> {
@@ -367,8 +474,14 @@ internal class SessionScreens(
             }
             is FrameStatus.Unavailable ->
                 unavailable(frame, status, FrameIdentity(generation, frameIndex), title, parent, back, statusText)
-            is FrameStatus.Shown ->
-                shown(frame, status, FrameIdentity(generation, frameIndex), title, parent, back, statusText ?: outcomeText)
+            is FrameStatus.Shown -> when (val body = items.body(status.snapshot.page)) {
+                // A reply's outcome is its bubble or the composer's line; only a refusal or a stale page is said in words.
+                is PageBody.Conversation -> conversation(
+                    frame, status, FrameIdentity(generation, frameIndex), body, title, back,
+                    statusText ?: frame.outcome?.takeIf { it.status in SPOKEN_OUTCOMES }?.let(::outcomeText), facts.composer,
+                )
+                else -> shown(frame, status, FrameIdentity(generation, frameIndex), title, parent, back, statusText ?: outcomeText, facts)
+            }
         }
     }
 
@@ -436,8 +549,16 @@ internal class SessionScreens(
         is PageBody.Commands -> listOfNotNull(body.text?.let { ScreenBlock.Text("last:text", it, TextRole.BODY, dimmed = true) })
         is PageBody.SelectableList -> body.items.map { ScreenBlock.Row("last:row:${it.id}", it.label, it.sub, enabled = false) }
             .ifEmpty { listOf(ScreenBlock.Text("last:empty", body.emptyText ?: "Nothing here", TextRole.CAPTION, centered = true, dimmed = true)) }
-        // Placeholder until the launcher lanes draw retained conversation, media and route pages.
-        is PageBody.Conversation, is PageBody.Media, is PageBody.Route -> emptyList()
+        // What was playing, never its controls: a retained page acts on nothing.
+        is PageBody.Media -> listOfNotNull(
+            ScreenBlock.Text("last:title", body.title, TextRole.BODY, dimmed = true),
+            listOfNotNull(body.artist, body.album).joinToString(" · ").ifBlank { null }
+                ?.let { ScreenBlock.Text("last:artist", it, TextRole.CAPTION, dimmed = true) },
+        )
+        // The messages as they were, dimmed; never the composer: a retained page acts on nothing.
+        is PageBody.Conversation -> listOf(ScreenBlock.Conversation("last:conversation", body.caption, bubbles(body.messages), dimmed = true))
+        // Placeholder until the navigation lane draws retained route pages.
+        is PageBody.Route -> emptyList()
         is PageBody.Document, null -> emptyList()
     }
 
@@ -453,8 +574,15 @@ internal class SessionScreens(
         is PageBody.SelectableList -> body.items.flatMap { row ->
             listOfNotNull(PageSegment("row:${row.id}", PageSegmentKind.PROSE, row.label), row.sub?.let { PageSegment("sub:${row.id}", PageSegmentKind.ASIDE, it) })
         }
-        // Placeholder until the launcher lanes give these bodies their own reading.
-        is PageBody.Conversation, is PageBody.Media, is PageBody.Route -> emptyList()
+        is PageBody.Media -> listOfNotNull(
+            PageSegment("title", PageSegmentKind.PROSE, body.title),
+            body.artist?.let { PageSegment("artist", PageSegmentKind.ASIDE, it) },
+            body.album?.let { PageSegment("album", PageSegmentKind.ASIDE, it) },
+            body.status?.let { PageSegment("status", PageSegmentKind.ASIDE, it) },
+        )
+        is PageBody.Conversation -> body.messages.map { PageSegment("m:${it.id}", PageSegmentKind.PROSE, it.text) }
+        // Placeholder until the navigation lane gives route pages their own reading.
+        is PageBody.Route -> emptyList()
         null -> emptyList()
     }
 
@@ -466,6 +594,7 @@ internal class SessionScreens(
         parent: String,
         back: String,
         statusText: String?,
+        facts: CommandFacts,
     ): SessionScreen {
         val page = status.snapshot.page
         val body = items.body(page)
@@ -499,14 +628,43 @@ internal class SessionScreens(
                 body.facts.forEach { blocks += ScreenBlock.Fact("fact:${it.id}", it.label, it.value) }
             }
             body is PageBody.Commands -> body.text?.let { blocks += ScreenBlock.Text("text", it, TextRole.BODY) }
+            body is PageBody.Media ->
+                blocks += ScreenBlock.Media("media", body.title, body.artist, body.album, body.source, body.state, body.status)
         }
-        val rows = items.rows(page)
-        val rowBlocks = rows.mapIndexed { index, row ->
-            ScreenBlock.Row(
-                "row:${row.key}", row.label, row.sub,
-                enabled = row.enabled && row.item != PageItem.Inert,
-                selected = frame.tombstone == null && index == frame.selected,
-            )
+        val rows = items.rows(page) + listOfNotNull(frame.openApp?.let(ActivityCommands::openAppRow))
+        val controls = items.controls(page)
+        val commandFocus = frame.commandFocus
+        // A control strip shows a selection only while it holds the focus.
+        val showsSelection = controls == null || commandFocus != null
+        val pendingAction = frame.invocation?.actionId
+        val rowBlocks: MutableList<ScreenBlock> = rows.mapIndexed { index, row ->
+            val selected = showsSelection && frame.tombstone == null && index == frame.selected
+            val activity = (row.item as? PageItem.Activity)?.let { facts.activity(it.ownerPluginId) }
+            val entry = (row.item as? PageItem.Notification)?.let { facts.history.entry(it.entryId) }
+            when {
+                activity != null ->
+                    activityCard("row:${row.key}", activity, selected, commandFocus?.takeIf { it.stopId == activity.id }, facts)
+                // A Notifications row: its source's icon, its state tag and its age.
+                entry != null -> ScreenBlock.Row(
+                    "row:${row.key}", row.label, row.sub,
+                    trail = ageText(entry.notice.atWallMs),
+                    selected = selected,
+                    icon = entry.notice.icon ?: entry.notice.ownerPluginId.ifBlank { null }?.let { IconRef.Plugin(it) },
+                    tag = when (entry.state) {
+                        HistoryState.NEW -> null
+                        HistoryState.SEEN -> TAG_SEEN
+                        HistoryState.HANDED_OFF -> TAG_HANDED_OFF
+                        HistoryState.WITHDRAWN -> TAG_REMOVED
+                    },
+                )
+                else -> ScreenBlock.Row(
+                    "row:${row.key}", row.label, row.sub,
+                    enabled = row.enabled && row.item != PageItem.Inert,
+                    selected = selected,
+                    checked = row.checked,
+                    pending = pendingAction != null && row.actionId == pendingAction,
+                )
+            }
         }.toMutableList()
         frame.tombstone?.let { label ->
             rowBlocks.add(frame.selected.coerceIn(0, rowBlocks.size), ScreenBlock.Row("tombstone", label, "removed", enabled = false, selected = true, tombstone = true))
@@ -515,14 +673,25 @@ internal class SessionScreens(
         if (rows.isEmpty() && body is PageBody.SelectableList) {
             blocks += ScreenBlock.Text("empty", body.emptyText ?: "Nothing here", TextRole.CAPTION, centered = true)
         }
-        val focus = rowBlocks.firstOrNull { it.selected }?.key ?: blocks.firstOrNull()?.key
-        val selectedRow = if (frame.tombstone == null) rows.getOrNull(frame.selected) else null
-        val action = when (selectedRow?.item) {
-            null, PageItem.Inert -> if (rows.size > 1) "swipe choose" else null
-            is PageItem.OpenPage -> "tap open"
-            is PageItem.Confirm, is PageItem.Invoke -> "tap choose"
-            is PageItem.LaunchPrompt, is PageItem.Launch, is PageItem.LocalLaunch -> "tap open"
-            else -> null
+        val focus = rowBlocks.firstOrNull { it.isSelected() }?.key ?: blocks.firstOrNull()?.key
+        val selectedRow = if (frame.tombstone == null && showsSelection) rows.getOrNull(frame.selected) else null
+        val action = when {
+            commandFocus != null -> FOCUS_HINT
+            controls != null -> TAP_CONTROLS
+            else -> when (selectedRow?.item) {
+                null, PageItem.Inert -> if (rows.size > 1) "swipe choose" else null
+                is PageItem.OpenPage, is PageItem.Activity, is PageItem.Notification -> "tap open"
+                is PageItem.Confirm, is PageItem.Invoke -> "tap choose"
+                is PageItem.Quick -> "tap run"
+                is PageItem.LaunchPrompt, is PageItem.Launch, is PageItem.LocalLaunch -> "tap open"
+                else -> null
+            }
+        }
+        val backHint = when {
+            commandFocus?.stopId == CommandFocus.MEDIA -> BACK_PAGE
+            commandFocus != null -> FOCUS_BACK
+            readsFirst -> BACK_TO_TEXT
+            else -> back
         }
         val trail = if (rows.size > 1) "${(frame.selected + 1).coerceAtMost(rows.size)}/${rows.size}" else "back: $parent"
         // The text fits when it is whole on screen with the first row: the scroll that row asks for.
@@ -531,22 +700,174 @@ internal class SessionScreens(
         } else {
             null
         }
-        return SessionScreen(ScreenHeader(header, trail), blocks, ScreenHint(action, if (readsFirst) BACK_TO_TEXT else back), statusText, focus, fit = fit)
+        return SessionScreen(ScreenHeader(header, trail), blocks, ScreenHint(action, backHint), statusText, focus, fit = fit)
     }
 
-    private fun panel(frame: Frame, panel: FramePanel, title: String, statusText: String?): SessionScreen = when (panel) {
-        is FramePanel.Confirm -> SessionScreen(
-            ScreenHeader("${title.uppercase()} · CONFIRM", "back: cancel"),
-            listOf(
-                ScreenBlock.Text("question", "${panel.label}?", TextRole.TITLE, centered = true),
-                ScreenBlock.Text("explain", "${titleOf(frame.pageId)} will do this.", TextRole.CAPTION, centered = true),
-                ScreenBlock.Row("cancel", CANCEL, selected = panel.selected == FramePanel.CANCEL, centered = true),
-                ScreenBlock.Row("confirm", CONFIRM, selected = panel.selected == FramePanel.CONFIRM, centered = true),
-            ),
-            ScreenHint("swipe choose · tap confirm", "back cancel"),
-            statusText,
-            if (panel.selected == FramePanel.CANCEL) "cancel" else "confirm",
+    /** An entry of the Activities page, drawn as its root card would be, commands included. */
+    private fun activityCard(
+        key: String,
+        activity: ActivityStop,
+        selected: Boolean,
+        focus: CommandFocus?,
+        facts: CommandFacts,
+    ) = ScreenBlock.Card(
+        key = key,
+        label = (activity.ownerLabel ?: activity.ownerPluginId ?: ACTIVITY).uppercase(),
+        time = activity.updatedAtWallMs?.let(formatTime),
+        primary = activity.text,
+        secondary = activity.detail,
+        measure = activity.measure,
+        figure = true,
+        ended = false,
+        selected = selected,
+        icon = activity.icon,
+        tertiary = commandLine(activity, facts),
+        offline = activity.offline,
+        commands = focus?.let { strip(activity, it) },
+    )
+
+    /**
+     * A conversation page (plan 028a §7, §9): the thread's bubbles, then this thread's draft, the
+     * reply just handed off or the capture's live text; under them the composer's buttons or its
+     * one line. Reading pages through the renderer's measured layout, from the newest page.
+     */
+    private fun conversation(
+        frame: Frame,
+        status: FrameStatus.Shown,
+        identity: FrameIdentity,
+        body: PageBody.Conversation,
+        title: String,
+        back: String,
+        statusText: String?,
+        facts: ComposerFacts,
+    ): SessionScreen {
+        val owner = PageTemplateContract.namespaceOf(frame.pageId)
+        val composer = body.composer
+        val header = if (composer != null) {
+            "${(owner?.let(pluginLabel) ?: title).uppercase()} · ${composer.recipient.uppercase()}"
+        } else {
+            title.uppercase()
+        }
+        val capture = facts.capture
+            ?.takeIf { it.generation == identity.sessionGeneration && it.frameIndex == identity.frameIndex && it.pageId == frame.pageId }
+        val view = ComposerRules.view(owner, body, facts.draft, facts.micUnavailable, facts.pendingSend)
+        val draft = view?.threadDraft
+        val sending = facts.pendingSend?.takeIf { it.ownerPluginId == owner && it.threadKey == body.threadKey } != null
+        val drawn = bubbles(body.messages).toMutableList()
+        facts.handoff?.takeIf { it.ownerPluginId == owner && it.threadKey == body.threadKey && it.revision == status.revision }?.let {
+            drawn += Bubble(HANDOFF_BUBBLE, BubbleSide.RIGHT, it.text, meta = HANDED_TO_APP)
+        }
+        if (draft != null && capture == null) {
+            val meta = when {
+                sending -> PENDING
+                draft.state == DraftState.READY -> DRAFT_NOT_SENT
+                draft.state == DraftState.UNCONFIRMED -> UNCONFIRMED_CHECK_PHONE
+                else -> NOT_SENT_HERE
+            }
+            drawn += Bubble(DRAFT_BUBBLE, BubbleSide.RIGHT, draft.text, style = BubbleStyle.DASHED, meta = meta)
+        }
+        if (capture != null) {
+            // Completing this capture replaces another recipient's draft: say so before it does.
+            val replaced = facts.draft?.takeUnless { it.isFor(capture.ownerPluginId, capture.threadKey) }
+            drawn += Bubble(
+                LIVE_BUBBLE, BubbleSide.RIGHT, capture.liveText, style = BubbleStyle.LIVE,
+                meta = replaced?.let { "replaces the draft for ${it.recipient}" },
+            )
+        }
+        val focus = frame.composerFocus
+        val unavailable = view?.unavailable
+        val footer: InlineFooter? = when {
+            capture != null -> when (capture.kind) {
+                CaptureKind.DICTATE -> InlineFooter.StatusLine(GLASSES_MIC, LISTENING, glyph = GLYPH_MIC)
+                CaptureKind.TYPE -> InlineFooter.StatusLine(PHONE_KEYBOARD, TYPING, glyph = GLYPH_KEYBOARD)
+            }
+            view == null -> null
+            unavailable != null -> InlineFooter.StatusLine(unavailable.text, unavailable.sub, style = StatusLineStyle.OFF)
+            focus == null && facts.micUnavailable -> InlineFooter.StatusLine(MIC_UNAVAILABLE, USE_TYPE, glyph = GLYPH_MIC, style = StatusLineStyle.OFF)
+            else -> InlineFooter.Buttons(
+                view.buttons.map { key ->
+                    FooterButton(key, buttonLabel(key), buttonGlyph(key), selected = focus?.key == key, enabled = !sending)
+                },
+            )
+        }
+        val pages = frame.pageStarts.size
+        val backText = if (draft != null) "$back · $DRAFT_KEPT" else back
+        val hint = when {
+            capture?.kind == CaptureKind.DICTATE -> ScreenHint(TAP_FINISH, BACK_CANCEL_DICTATION)
+            capture?.kind == CaptureKind.TYPE -> ScreenHint(TAP_FINISH, BACK_CANCEL_TYPING)
+            focus != null && focus.key == ComposerRules.SEND && composer != null ->
+                ScreenHint("swipe choose · tap send to ${composer.recipient}", BACK_READING)
+            focus != null -> ScreenHint(FOCUS_START, BACK_READING)
+            view?.available == true && !sending -> ScreenHint(if (pages > 1) "swipe page · tap reply" else "tap reply", backText)
+            else -> ScreenHint(if (pages > 1) "swipe page" else null, backText)
+        }
+        val block = ScreenBlock.Conversation(
+            CONVERSATION_BLOCK, body.caption, drawn, dimmed = false,
+            frame = identity, pageId = frame.pageId, revision = status.revision, anchor = frame.anchor,
         )
+        // In focus the footer holds the buttons, so the microphone's state is said on the status line.
+        val micLine = "$MIC_UNAVAILABLE · $USE_TYPE".takeIf { facts.micUnavailable && focus != null && capture == null }
+        return SessionScreen(
+            ScreenHeader(header, if (pages > 1) "${frame.page + 1}/$pages" else null, owner?.let { IconRef.Plugin(it) }),
+            listOf(block),
+            hint,
+            statusText ?: micLine,
+            CONVERSATION_BLOCK,
+            footer = footer,
+        )
+    }
+
+    /** Sides come from the role alone: received left, ours right, an unknown author on neither. */
+    private fun bubbles(messages: List<ConversationMessage>): List<Bubble> = messages.mapIndexed { index, message ->
+        Bubble(
+            key = "m:${message.id}",
+            side = when (message.role) {
+                ConversationRole.RECEIVED -> BubbleSide.LEFT
+                ConversationRole.OURS -> BubbleSide.RIGHT
+                ConversationRole.UNKNOWN -> BubbleSide.NONE
+            },
+            text = message.text,
+            latest = index == messages.lastIndex,
+            style = if (message.status == ConversationMessageStatus.UNCONFIRMED) BubbleStyle.DASHED else BubbleStyle.SOLID,
+            meta = when (message.status) {
+                ConversationMessageStatus.HANDED_OFF -> HANDED_TO_APP
+                ConversationMessageStatus.UNCONFIRMED -> UNCONFIRMED_CHECK_PHONE
+                null -> null
+            },
+        )
+    }
+
+    private fun buttonLabel(key: String): String = when (key) {
+        ComposerRules.SEND -> SEND
+        ComposerRules.TYPE -> TYPE
+        else -> DICTATE
+    }
+
+    private fun buttonGlyph(key: String): String = when (key) {
+        ComposerRules.SEND -> GLYPH_SEND
+        ComposerRules.TYPE -> GLYPH_KEYBOARD
+        else -> GLYPH_MIC
+    }
+
+    /** A notification's age on the Notifications page: minutes within the hour, then hours. */
+    private fun ageText(atWallMs: Long): String {
+        val minutes = ((wallClock() - atWallMs) / 60_000L).coerceAtLeast(1)
+        return if (minutes < 60) "$minutes min" else "${minutes / 60} h"
+    }
+
+    private fun ScreenBlock.isSelected(): Boolean = when (this) {
+        is ScreenBlock.Row -> selected
+        is ScreenBlock.Card -> selected
+        else -> false
+    }
+
+    /** [owner] is who will act: the page's plugin for a page action, the activity's for a command. */
+    private fun panel(panel: FramePanel, title: String, owner: String, statusText: String?): SessionScreen = when (panel) {
+        is FramePanel.Confirm -> confirmScreen(title, panel.label, owner, panel.selected, statusText)
+        is FramePanel.ConfirmCommand -> {
+            val name = pluginLabel(panel.ownerPluginId) ?: owner
+            confirmScreen(name, panel.label, name, panel.selected, statusText)
+        }
         is FramePanel.Launch -> {
             val name = pluginLabel(panel.pluginId) ?: panel.label
             SessionScreen(
@@ -563,6 +884,19 @@ internal class SessionScreens(
             )
         }
     }
+
+    private fun confirmScreen(title: String, label: String, owner: String, selected: Int, statusText: String?) = SessionScreen(
+        ScreenHeader("${title.uppercase()} · CONFIRM", "back: cancel"),
+        listOf(
+            ScreenBlock.Text("question", "$label?", TextRole.TITLE, centered = true),
+            ScreenBlock.Text("explain", "$owner will do this.", TextRole.CAPTION, centered = true),
+            ScreenBlock.Row("cancel", CANCEL, selected = selected == FramePanel.CANCEL, centered = true),
+            ScreenBlock.Row("confirm", CONFIRM, selected = selected == FramePanel.CONFIRM, centered = true),
+        ),
+        ScreenHint("swipe choose · tap confirm", "back cancel"),
+        statusText,
+        if (selected == FramePanel.CANCEL) "cancel" else "confirm",
+    )
 
     /** A retained snapshot drawn while it is being revalidated: readable, never selectable. */
     private fun summaryOf(snapshot: Snapshot, frame: Frame, readable: Boolean): List<ScreenBlock> {
@@ -634,9 +968,59 @@ internal class SessionScreens(
         const val BACK_TO_TEXT = "back text"
         const val LAUNCH_EXPLANATION =
             "Opens the full app as an exclusive surface. It replaces what the glasses show now; BACK leaves it."
+
+        /** Command focus on a card (plan 028a §9). */
+        const val FOCUS_HINT = "swipe choose · tap run"
+        const val FOCUS_BACK = "back cards"
+        const val OFFLINE = "offline"
+        const val OFFLINE_HINT = "offline · last known"
+        const val PENDING = "waiting for the app"
+        const val TAP_CONTROLS = "tap controls"
+        const val BACK_PAGE = "back page"
         private const val ACTIVITY = "Activity"
         private const val ENDED = "ENDED"
         private const val NOTIFICATION = "NOTIFICATION"
         private const val PAGE = "Page"
+
+        // Notifications (plan 028a §9).
+        const val UNANSWERED = "UNANSWERED"
+        const val REPLY_HANDED_OFF = "REPLY HANDED OFF"
+        const val NOTIFICATION_REMOVED = "NOTIFICATION REMOVED"
+        const val HANDED_OFF_UNCONFIRMED = "handed to the app · delivery not confirmed"
+        const val REMOVED_NOTHING_PROVEN = "removed from the phone · nothing is proven"
+        const val TAG_SEEN = "SEEN IN NEXUS"
+        const val TAG_HANDED_OFF = "HANDED OFF"
+        const val TAG_REMOVED = "REMOVED"
+
+        // The composer (plan 028a §9).
+        const val DICTATE = "Dictate"
+        const val TYPE = "Type"
+        const val SEND = "Send"
+        const val HANDED_TO_APP = "handed to the app"
+        const val DRAFT_NOT_SENT = "draft · not sent yet"
+        const val DRAFT_KEPT = "draft kept"
+        const val UNCONFIRMED_CHECK_PHONE = "unconfirmed · check on the phone"
+        const val NOT_SENT_HERE = "not sent · can't be sent from here"
+        const val GLASSES_MIC = "Glasses mic"
+        const val LISTENING = "listening"
+        const val PHONE_KEYBOARD = "Phone keyboard"
+        const val TYPING = "typing"
+        const val MIC_UNAVAILABLE = "Glasses mic unavailable"
+        const val USE_TYPE = "use Type"
+        const val TAP_FINISH = "tap finish"
+        const val BACK_CANCEL_DICTATION = "back cancel dictation"
+        const val BACK_CANCEL_TYPING = "back cancel typing"
+        const val FOCUS_START = "swipe choose · tap start"
+        const val BACK_READING = "back reading"
+        const val GLYPH_MIC = "mic"
+        const val GLYPH_KEYBOARD = "keyboard"
+        const val GLYPH_SEND = "send"
+        const val CONVERSATION_BLOCK = "conversation"
+        const val DRAFT_BUBBLE = "draft"
+        const val LIVE_BUBBLE = "live"
+        const val HANDOFF_BUBBLE = "handed"
+
+        /** Outcomes of a reply said in words; the others are its bubble or the composer's line. */
+        private val SPOKEN_OUTCOMES = setOf("rejected", "stale")
     }
 }

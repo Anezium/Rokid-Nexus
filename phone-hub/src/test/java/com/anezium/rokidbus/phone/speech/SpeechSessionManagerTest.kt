@@ -204,11 +204,83 @@ class SpeechSessionManagerTest {
         return bytes
     }
 
+    @Test
+    fun glassesOnlyUtteranceAsksTheFactoryForAGlassesOnlySession() {
+        val audio = ImmediateAudioAccess()
+        val factoryCalls = mutableListOf<String>()
+        val manager = manager(audio, RecordingSession(), AtomicLong(1_000L), factoryCalls = factoryCalls)
+
+        assertEquals(
+            SpeechStartResult.OK,
+            manager.startUtterance(RecordingUtteranceListener(), glassesAudioOnly = true),
+        )
+        manager.cancel()
+        manager.close()
+
+        assertEquals(listOf("glassesAudioOnly"), factoryCalls)
+    }
+
+    @Test
+    fun ordinaryUtteranceKeepsTheOrdinaryFactoryPath() {
+        val factoryCalls = mutableListOf<String>()
+        val manager = manager(ImmediateAudioAccess(), RecordingSession(), AtomicLong(1_000L), factoryCalls = factoryCalls)
+
+        assertEquals(SpeechStartResult.OK, manager.startUtterance(RecordingUtteranceListener()))
+        manager.cancel()
+        manager.close()
+
+        assertEquals(listOf("create"), factoryCalls)
+    }
+
+    @Test
+    fun finishTranscribesWhatWasSaidWithoutWaitingForSilence() {
+        val audio = ImmediateAudioAccess()
+        val engine = RecordingSession()
+        val listener = RecordingUtteranceListener()
+        val manager = manager(audio, engine, AtomicLong(1_000L))
+
+        assertEquals(SpeechStartResult.OK, manager.startUtterance(listener))
+        assertTrue(engine.started.await(2, TimeUnit.SECONDS))
+        audio.consumer!!.onPcm(voicePcm(1_600), 0, 3_200, 0L, 1_010L)
+        assertTrue(engine.accepted.await(2, TimeUnit.SECONDS))
+        manager.finish(listener)
+
+        assertTrue(engine.finished.await(2, TimeUnit.SECONDS))
+        assertEquals(1, audio.releaseCalls.get())
+        engine.listener.onFinal("on my way")
+        assertTrue(listener.ended.await(2, TimeUnit.SECONDS))
+        assertEquals(SpeechEndReason.COMPLETED, listener.reason)
+        assertEquals(1, listener.firstAudio.get())
+        manager.close()
+    }
+
+    @Test
+    fun finishWithoutSpeechEndsAsNoSpeech() {
+        val audio = ImmediateAudioAccess()
+        val engine = RecordingSession()
+        val listener = RecordingUtteranceListener()
+        val manager = manager(audio, engine, AtomicLong(1_000L))
+
+        assertEquals(SpeechStartResult.OK, manager.startUtterance(listener))
+        audio.consumer!!.onPcm(ByteArray(3_200), 0, 3_200, 0L, 1_010L)
+        audio.consumer!!.onPcm(ByteArray(3_200), 0, 3_200, 1L, 1_110L)
+        manager.finish(RecordingUtteranceListener())
+        assertTrue(manager.isActive)
+        manager.finish(listener)
+
+        assertTrue(listener.ended.await(2, TimeUnit.SECONDS))
+        assertEquals(SpeechEndReason.NO_SPEECH, listener.reason)
+        assertEquals(0, engine.finishCalls.get())
+        assertEquals(1, listener.firstAudio.get())
+        manager.close()
+    }
+
     private fun manager(
         audio: InternalAudioAccess,
         recordingSession: RecordingSession,
         clock: AtomicLong,
         languages: MutableList<TranscriptionLanguage>? = null,
+        factoryCalls: MutableList<String>? = null,
     ): SpeechSessionManager =
         SpeechSessionManager(
             context = context,
@@ -223,6 +295,19 @@ class SpeechSessionManagerTest {
                     patience: SpeechPatience,
                     listener: SttSessionListener,
                 ): SttSession = recordingSession.apply {
+                    factoryCalls?.add("create")
+                    languages?.add(language)
+                    this.listener = listener
+                }
+
+                override fun createGlassesAudioOnly(
+                    engine: SpeechEngine,
+                    language: TranscriptionLanguage,
+                    phoneLanguageTag: String,
+                    patience: SpeechPatience,
+                    listener: SttSessionListener,
+                ): SttSession = recordingSession.apply {
+                    factoryCalls?.add("glassesAudioOnly")
                     languages?.add(language)
                     this.listener = listener
                 }
@@ -268,11 +353,15 @@ class SpeechSessionManagerTest {
 
     private class RecordingUtteranceListener : SpeechUtteranceListener {
         val ended = CountDownLatch(1)
+        val firstAudio = AtomicInteger()
         @Volatile var reason: SpeechEndReason? = null
 
         override fun onState(state: SpeechSessionState) = Unit
         override fun onPartial(text: String) = Unit
         override fun onFinal(text: String) = Unit
+        override fun onFirstAudio() {
+            firstAudio.incrementAndGet()
+        }
 
         override fun onEnded(reason: SpeechEndReason, error: SttError?) {
             this.reason = reason

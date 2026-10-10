@@ -8,12 +8,17 @@ import com.anezium.rokidbus.glasses.input.RoutedIntent.ToNotice
 import com.anezium.rokidbus.glasses.input.RoutedIntent.ToRing
 import com.anezium.rokidbus.glasses.input.RoutedIntent.ToSession
 import com.anezium.rokidbus.glasses.input.RoutedIntent.ToSurface
+import com.anezium.rokidbus.glasses.session.ActivityStop
+import com.anezium.rokidbus.glasses.session.CommandFocus
+import com.anezium.rokidbus.glasses.session.RootStop
+import com.anezium.rokidbus.glasses.session.RootStopKind
 import com.anezium.rokidbus.glasses.session.SessionEffect
 import com.anezium.rokidbus.glasses.session.SessionEvent
 import com.anezium.rokidbus.glasses.session.SessionModel
 import com.anezium.rokidbus.glasses.session.SessionReducer
 import com.anezium.rokidbus.glasses.session.SessionState
 import com.anezium.rokidbus.glasses.session.Underneath
+import com.anezium.rokidbus.shared.ActivityAction
 import com.anezium.rokidbus.shared.PageSurfaceContract
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -30,6 +35,7 @@ class InputArbiterTest {
         override var backend = LauncherBackend.SESSION
         override var editableFocused = false
         override var noticeArmed = false
+        override var captureActive = false
         override var legacyShown = false
         override var activeSurfaceId: String? = null
         override val surfaceOwnsKeys: Boolean get() = activeSurfaceId != null
@@ -241,7 +247,8 @@ class InputArbiterTest {
 
         assertTrue(down.consumed && up.consumed)
         assertEquals(
-            listOf(nativeTripleTap(1_000), SessionEvent.Contact(1_700), SessionEvent.Enter(2_500)),
+            // The tap began at its contact, which the ENTER carries as its press start.
+            listOf(nativeTripleTap(1_000), SessionEvent.Contact(1_700), SessionEvent.Enter(2_500, pressStartMs = 1_700)),
             rig.sessionEvents(),
         )
         assertTrue(rig.model.state is SessionState.Root)
@@ -263,7 +270,7 @@ class InputArbiterTest {
 
         assertEquals(
             listOf(
-                nativeTripleTap(1_000), SessionEvent.Enter(1_130), SessionEvent.Back(1_230),
+                nativeTripleTap(1_000), SessionEvent.Enter(1_130, pressStartMs = 1_100), SessionEvent.Back(1_230),
                 SessionEvent.Step(1, 1_300),
             ),
             rig.sessionEvents(),
@@ -320,6 +327,20 @@ class InputArbiterTest {
         assertNull(arbiter.nextDeadlineMs())
 
         rig.noticeArmed = false
+        tripleTap(2_000, 2_200, 2_400)
+        assertEquals(listOf(nativeTripleTap(2_400)), rig.sessionEvents())
+    }
+
+    @Test
+    fun `A4 a composer capture blocks recognition until it ends`() {
+        rig.captureActive = true
+        tripleTap(0, 200, 400)
+
+        assertTrue(rig.sessionEvents().none { it is SessionEvent.TripleTap })
+        assertTrue(rig.model.state is SessionState.Closed)
+        assertNull(arbiter.nextDeadlineMs())
+
+        rig.captureActive = false
         tripleTap(2_000, 2_200, 2_400)
         assertEquals(listOf(nativeTripleTap(2_400)), rig.sessionEvents())
     }
@@ -478,7 +499,7 @@ class InputArbiterTest {
         assertEquals(
             listOf(
                 SessionEvent.Step(1, 3_000),
-                SessionEvent.Enter(3_200 + InputArbiter.RING_TAP_DEADLINE_MS),
+                SessionEvent.Enter(3_200 + InputArbiter.RING_TAP_DEADLINE_MS, pressStartMs = 3_200),
                 SessionEvent.Back(5_340 + InputArbiter.RING_TAP_DEADLINE_MS),
             ),
             rig.sessionEvents(),
@@ -658,6 +679,55 @@ class InputArbiterTest {
             rig.sessionEvents(),
         )
         assertEquals(Underneath.NexusSurface("player:card"), rig.model.underneath)
+    }
+
+    @Test
+    fun `G1 an ENTER carries when the touchpad contact that began it went down`() {
+        openSessionRoot(at = 1_000)
+        arbiter.onKey(raw(InputKeys.NOTIFICATION, DOWN, at = 3_000))
+        arbiter.onKey(raw(InputKeys.NOTIFICATION, UP, at = 3_060, down = 3_000))
+        tap(InputKeys.ENTER, 3_200)
+
+        assertEquals(SessionEvent.Enter(3_230, pressStartMs = 3_000), rig.sessionEvents().last())
+    }
+
+    @Test
+    fun `G1 a swipe settles its contact so a later ENTER without one starts at its own down`() {
+        openSessionRoot(at = 1_000)
+        arbiter.onKey(raw(InputKeys.NOTIFICATION, DOWN, at = 3_000))
+        tap(InputKeys.DPAD_RIGHT, 3_100)
+        tap(InputKeys.ENTER, 4_000)
+
+        assertEquals(SessionEvent.Enter(4_030, pressStartMs = 4_000), rig.sessionEvents().last())
+    }
+
+    @Test
+    fun `G1 a ring tap's ENTER carries the tap's own down time`() {
+        openSessionRoot(at = 1_000)
+        ring(InputKeys.RING_TAP, 3_200)
+        arbiter.onTick(3_200 + InputArbiter.RING_TAP_DEADLINE_MS)
+
+        assertEquals(SessionEvent.Enter(3_200 + InputArbiter.RING_TAP_DEADLINE_MS, pressStartMs = 3_200), rig.sessionEvents().last())
+    }
+
+    @Test
+    fun `G1 the firmware's paired swipe moves command focus once`() {
+        openSessionRoot(at = 1_000)
+        val commands = listOf(ActivityAction("previous", "previous", "Previous"), ActivityAction("play", "play", "Play"), ActivityAction("next", "next", "Next"))
+        val stop = ActivityStop("media:activity", "nexus:activity:media", "Song", pinned = true, ownerPluginId = "media", commands = commands)
+        rig.model = rig.model.copy(
+            state = SessionState.Root(
+                listOf(RootStop(stop.id, RootStopKind.ACTIVITY, stop.pageId, stop.text, activity = stop)),
+                focus = CommandFocus(stop.id, "previous", 0),
+            ),
+        )
+
+        arbiter.onKey(raw(InputKeys.DPAD_DOWN, DOWN, at = 3_000))
+        arbiter.onKey(raw(InputKeys.DPAD_DOWN, DOWN, at = 3_040))
+        arbiter.onKey(raw(InputKeys.DPAD_DOWN, UP, at = 3_050, down = 3_000))
+        arbiter.onKey(raw(InputKeys.DPAD_DOWN, UP, at = 3_060, down = 3_040))
+
+        assertEquals(CommandFocus(stop.id, "play", 1), (rig.model.state as SessionState.Root).focus)
     }
 
     private fun nativeTripleTap(at: Long) = SessionEvent.TripleTap(at, Underneath.NativeApp)

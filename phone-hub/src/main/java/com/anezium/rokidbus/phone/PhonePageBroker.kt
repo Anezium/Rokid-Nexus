@@ -1,13 +1,20 @@
 package com.anezium.rokidbus.phone
 
 import com.anezium.rokidbus.shared.BusPaths
+import com.anezium.rokidbus.shared.ConversationComposer
+import com.anezium.rokidbus.shared.LauncherInteractiveContract
 import com.anezium.rokidbus.shared.LinkStateBits
+import com.anezium.rokidbus.shared.PageBody
 import com.anezium.rokidbus.shared.PageCorrelation
+import com.anezium.rokidbus.shared.PageSurfaceAction
 import com.anezium.rokidbus.shared.PageSurfaceContract
+import com.anezium.rokidbus.shared.PageSurfaceInvocation
 import com.anezium.rokidbus.shared.PageSurfaceRequest
 import com.anezium.rokidbus.shared.PageSurfaceResponse
 import com.anezium.rokidbus.shared.PageSurfaceValidationResult
 import com.anezium.rokidbus.shared.PageTemplateContract
+import com.anezium.rokidbus.shared.QuickActionFamily
+import com.anezium.rokidbus.shared.QuickActionPolicyContract
 import com.anezium.rokidbus.shared.plugin.PathRules
 import org.json.JSONObject
 
@@ -30,6 +37,12 @@ interface PhonePageHost {
     fun unbind(principal: PhonePluginPrincipal)
     fun scheduleTick(atMs: Long?)
     fun log(message: String)
+
+    /**
+     * The quick-action families the user approved for [principal] and it still declares, read
+     * at the moment of each check: an approval withdrawn a moment ago no longer counts.
+     */
+    fun quickFamilies(principal: PhonePluginPrincipal): Set<QuickActionFamily> = emptySet()
 }
 
 /**
@@ -44,6 +57,8 @@ interface PhonePageHost {
 class PhonePageBroker(
     private val host: PhonePageHost,
     private val localVersion: Int,
+    /** The launcher bundle version this phone runs; 0 keeps every page exactly as in v1. */
+    private val localLauncherVersion: Int = 0,
 ) {
     private data class FrameKey(val generation: Long, val frameIndex: Int)
 
@@ -58,7 +73,10 @@ class PhonePageBroker(
         var waitingRequest: JSONObject? = null,
         var shownRevision: Long? = null,
         var live: Boolean = false,
-        var actions: Set<String> = emptySet(),
+        /** The shown revision's actions with their kinds and types, so every mode is checked here. */
+        var actions: Map<String, PageSurfaceAction> = emptyMap(),
+        /** The shown revision's composer, when it is a conversation page that offers one. */
+        var composer: ConversationComposer? = null,
         /**
          * The glasses hold an accepted answer of the current request, so its advertised actions
          * may be forwarded. Separate from [shownRevision], which only ever rises.
@@ -75,6 +93,8 @@ class PhonePageBroker(
         var displayDeadline: Long? = null,
         var invocationId: String? = null,
         var invocationDeadline: Long? = null,
+        /** The family a pending quick invocation runs under; null for any other mode. */
+        var invocationQuickFamily: QuickActionFamily? = null,
     ) {
         val pending: Boolean get() = requestDeadline != null
     }
@@ -87,7 +107,8 @@ class PhonePageBroker(
     private class Candidate(
         val revision: Long,
         val live: Boolean,
-        val actions: Set<String>,
+        val actions: Map<String, PageSurfaceAction>,
+        val composer: ConversationComposer?,
         val dataPlane: Boolean,
         /** An answer to the current request, which makes its actions available. */
         val answersRequest: Boolean,
@@ -101,24 +122,52 @@ class PhonePageBroker(
     private val bound = linkedMapOf<String, PhonePluginPrincipal>()
     private var generation = -1L
     private var remoteVersion = 0
+    private var remoteLauncherVersion = 0
     private var announcedToProviders = 0
+    private var announcedLauncherToProviders = 0
 
     val negotiatedVersion: Int
         get() = synchronized(lock) { PageSurfaceContract.negotiatedSessionVersion(localVersion, remoteVersion) }
 
-    /** The glasses announced their capabilities; a restart or replacement connection resets all page work. */
-    fun onGlassesCapabilities(version: Int) = mutate {
+    /** The launcher bundle version pages run with these glasses; 0 without pages or without the bundle. */
+    val negotiatedLauncherVersion: Int
+        get() = synchronized(lock) { launcherVersion() }
+
+    /**
+     * The glasses announced their capabilities; a restart or replacement connection resets all
+     * page work. [launcherVersion] is the bundle version the glasses announced.
+     */
+    fun onGlassesCapabilities(version: Int, launcherVersion: Int = 0) = mutate {
         val previous = remoteVersion
+        val previousLauncher = remoteLauncherVersion
         remoteVersion = version
-        if (previous != version) dropAll()
+        remoteLauncherVersion = launcherVersion
+        if (previous != version || previousLauncher != launcherVersion) dropAll()
         announceIfChanged()
     }
 
     /** The glasses link went away entirely: support and every page with it. */
     fun onLinkLost() = mutate {
         remoteVersion = 0
+        remoteLauncherVersion = 0
         dropAll()
         announceIfChanged()
+    }
+
+    /**
+     * The user changed [pluginId]'s quick-action approvals. A pending quick invocation whose
+     * family is no longer approved is rejected at once: its result will not reach the glasses,
+     * which show it unconfirmed, and a queued delivery checks the policy again before it goes.
+     */
+    fun onQuickPolicyChanged(pluginId: String) = mutate {
+        val approved = host.pageProvider(pluginId)?.let(host::quickFamilies).orEmpty()
+        frames.values.filter { it.owner == pluginId }.forEach { frame ->
+            val family = frame.invocationQuickFamily ?: return@forEach
+            if (family !in approved) {
+                host.log("page quick invocation rejected plugin=$pluginId reason=POLICY_WITHDRAWN")
+                releaseInvocation(frame)
+            }
+        }
     }
 
     /**
@@ -159,7 +208,8 @@ class PhonePageBroker(
     fun onRegistered(principal: PhonePluginPrincipal) = mutate {
         if (principal.descriptor.pageSessionVersion == PageSurfaceContract.VERSION) {
             val version = PageSurfaceContract.negotiatedSessionVersion(localVersion, remoteVersion)
-            host.registrations(principal).forEach { registration -> later { deliverVersion(registration, version) } }
+            val launcher = launcherVersion()
+            host.registrations(principal).forEach { registration -> later { deliverVersion(registration, version, launcher) } }
         }
         frames.values.filter { it.owner == principal.descriptor.id && it.waitingRequest != null }.forEach { frame ->
             deliverRequest(frame, principal)
@@ -235,10 +285,7 @@ class PhonePageBroker(
             }
             frame.leaseUntil?.takeIf { now >= it }?.let { frame.leaseUntil = null }
             frame.displayDeadline?.takeIf { now >= it }?.let { frame.displayDeadline = null }
-            frame.invocationDeadline?.takeIf { now >= it }?.let {
-                frame.invocationId = null
-                frame.invocationDeadline = null
-            }
+            frame.invocationDeadline?.takeIf { now >= it }?.let { releaseInvocation(frame) }
             if (!frame.pending && frame.shownRevision == null) frames.remove(frame.key)
         }
     }
@@ -264,8 +311,7 @@ class PhonePageBroker(
         if (existing == null) frames[key]?.let { forget(it) }
         val frame = existing ?: Frame(key, correlation.pageId, owner.orEmpty(), correlation.requestId)
         frame.requestId = correlation.requestId
-        frame.invocationId = null
-        frame.invocationDeadline = null
+        releaseInvocation(frame)
         // A refresh suspends the old revision's actions until its own answer reaches the glasses.
         frame.actionable = false
         frame.floor = (payload.opt(PageSurfaceContract.FIELD_MINIMUM_REVISION) as? Number)?.toLong()
@@ -343,7 +389,8 @@ class PhonePageBroker(
                     is PageSurfaceResponse.Page -> {
                         // Below the floor the glasses would drop it as a rollback: it is no answer.
                         val rollback = frame.floor?.let { value.revision < it } == true
-                        if (rollback || !bodyAccepted(value, frame.owner)) {
+                        val body = acceptedBody(value, frame.owner)
+                        if (rollback || body == null) {
                             refuseAnswer(frame)
                             answerError(frame, PageSurfaceContract.ERROR_INVALID_PAGE)
                             return PageSurfaceContract.ERROR_INVALID_PAGE
@@ -351,11 +398,12 @@ class PhonePageBroker(
                         frame.requestDeadline = null
                         frame.displayDeadline = now + PageSurfaceContract.PAGE_TIMEOUT_MS
                         frame.reservedRevision = maxOf(frame.reservedRevision ?: value.revision, value.revision)
+                        val outgoing = forGlasses(stamped, value, frame.owner)
                         val candidate = Candidate(
-                            value.revision, value.live, value.actions.map { it.id }.toSet(),
-                            PageSurfaceContract.needsDataPlane(BusPaths.PAGE_RESPONSE, stamped), answersRequest = true,
+                            value.revision, value.live, value.actions.associateBy { it.id }, body.composer,
+                            PageSurfaceContract.needsDataPlane(BusPaths.PAGE_RESPONSE, outgoing), answersRequest = true,
                         )
-                        forwardPage(BusPaths.PAGE_RESPONSE, stamped, frame, candidate)
+                        forwardPage(BusPaths.PAGE_RESPONSE, outgoing, frame, candidate)
                     }
                 }
             }
@@ -372,13 +420,14 @@ class PhonePageBroker(
             return ERROR_PAGE_NOT_REQUESTED
         }
         if (page.revision <= frame.highestRevision()) return PageSurfaceContract.ERROR_STALE_GENERATION
-        if (!bodyAccepted(page, frame.owner)) return PageSurfaceContract.ERROR_INVALID_PAGE
+        val body = acceptedBody(page, frame.owner) ?: return PageSurfaceContract.ERROR_INVALID_PAGE
         frame.reservedRevision = page.revision
+        val outgoing = forGlasses(stamped, page, frame.owner)
         val candidate = Candidate(
-            page.revision, page.live, page.actions.map { it.id }.toSet(),
-            PageSurfaceContract.needsDataPlane(BusPaths.PAGE_RESPONSE, stamped), answersRequest = false,
+            page.revision, page.live, page.actions.associateBy { it.id }, body.composer,
+            PageSurfaceContract.needsDataPlane(BusPaths.PAGE_RESPONSE, outgoing), answersRequest = false,
         )
-        forwardPage(BusPaths.PAGE_RESPONSE, stamped, frame, candidate)
+        forwardPage(BusPaths.PAGE_RESPONSE, outgoing, frame, candidate)
         return null
     }
 
@@ -389,8 +438,7 @@ class PhonePageBroker(
             ?: return ERROR_PAGE_NOT_REQUESTED
         val now = host.nowMs()
         if (now >= (frame.invocationDeadline ?: Long.MIN_VALUE)) {
-            frame.invocationId = null
-            frame.invocationDeadline = null
+            releaseInvocation(frame)
             return ERROR_PAGE_NOT_REQUESTED
         }
         val stamped = stamped(payload, sender)
@@ -399,22 +447,26 @@ class PhonePageBroker(
             is PageSurfaceValidationResult.Valid -> validated.value
         }
         val replacement = result.replacement
+        // The result's code passes through as the provider sent it; glasses without the bundle get none.
+        val outgoing = forGlasses(stamped, replacement, frame.owner).apply {
+            if (launcherVersion() < 1) remove(FIELD_RESULT_CODE)
+        }
         val candidate = replacement?.let {
             val sameFrame = it.correlation.sessionGeneration == frame.key.generation &&
                 it.correlation.frameIndex == frame.key.frameIndex &&
                 it.correlation.pageId == frame.pageId
-            if (!sameFrame || it.revision <= frame.highestRevision() || !bodyAccepted(it, frame.owner)) {
+            val body = acceptedBody(it, frame.owner)
+            if (!sameFrame || it.revision <= frame.highestRevision() || body == null) {
                 return PageSurfaceContract.ERROR_INVALID_PAGE
             }
             frame.reservedRevision = it.revision
             Candidate(
-                it.revision, it.live, it.actions.map { action -> action.id }.toSet(),
-                PageSurfaceContract.needsDataPlane(BusPaths.PAGE_RESULT, stamped), answersRequest = false,
+                it.revision, it.live, it.actions.associateBy { action -> action.id }, body.composer,
+                PageSurfaceContract.needsDataPlane(BusPaths.PAGE_RESULT, outgoing), answersRequest = false,
             )
         }
-        frame.invocationId = null
-        frame.invocationDeadline = null
-        if (candidate != null) forwardPage(BusPaths.PAGE_RESULT, stamped, frame, candidate) else forward(BusPaths.PAGE_RESULT, stamped)
+        releaseInvocation(frame)
+        if (candidate != null) forwardPage(BusPaths.PAGE_RESULT, outgoing, frame, candidate) else forward(BusPaths.PAGE_RESULT, outgoing)
         return null
     }
 
@@ -426,16 +478,34 @@ class PhonePageBroker(
             ?.takeIf { it.pageId == action.pageId } ?: return host.log("page drop path=action reason=NO_FRAME")
         val now = host.nowMs()
         val lease = frame.leaseUntil
-        val accepted = frame.actionable && frame.shownRevision == action.revision && action.actionId in frame.actions &&
+        val declared = frame.actions[action.actionId]
+        val accepted = frame.actionable && frame.shownRevision == action.revision && declared != null &&
             frame.invocationId == null && !frame.pending && lease != null && now < lease
-        if (!accepted) return host.log("page drop path=action id=${action.invocationId} reason=NOT_ACTIONABLE")
+        if (!accepted || declared == null) return host.log("page drop path=action id=${action.invocationId} reason=NOT_ACTIONABLE")
         val principal = host.pageProvider(frame.owner) ?: return invalidate(frame)
         val registration = host.registrations(principal).singleOrNull()?.takeIf { it.epoch == frame.epoch }
             ?: return invalidate(frame)
+        modeRefusal(action, declared, frame, principal)?.let { reason ->
+            return host.log("page drop path=action id=${action.invocationId} reason=$reason")
+        }
+        val quickFamily = if (action.mode == PageSurfaceContract.MODE_QUICK) declared.typed?.family else null
         frame.invocationId = action.invocationId
         frame.invocationDeadline = now + PageSurfaceContract.PAGE_TIMEOUT_MS
-        val outgoing = stamped(payload, registration)
+        frame.invocationQuickFamily = quickFamily
+        // The provider gets the phone's own copy of the action's type, never one the glasses sent;
+        // without the bundle it gets the v1 invocation exactly.
+        val delivered = if (launcherVersion() >= 1) {
+            action.copy(typed = declared.typed)
+        } else {
+            PageSurfaceInvocation(
+                action.invocationId, action.sessionGeneration, action.frameIndex, action.pageId,
+                action.revision, action.actionId,
+            )
+        }
+        val outgoing = stamped(delivered.toPayload(), registration)
         later {
+            // A quick action runs only while the user still approves its family, checked again here.
+            val approved = quickFamily == null || quickFamily in host.quickFamilies(principal)
             // Queued is not delivered: a cover, a cancellation, the lease end or the invocation's
             // own eight seconds may have come first, with no tick in between.
             val current = synchronized(lock) {
@@ -444,12 +514,9 @@ class PhonePageBroker(
                 val now = host.nowMs()
                 val live = frames[frame.key] === frame && frame.invocationId == action.invocationId &&
                     frame.epoch == registration.epoch && frame.actionable && lease != null && now < lease &&
-                    deadline != null && now < deadline
+                    deadline != null && now < deadline && approved
                 // An invocation that never reached its provider is released; the glasses show it unconfirmed.
-                if (!live && frame.invocationId == action.invocationId) {
-                    frame.invocationId = null
-                    frame.invocationDeadline = null
-                }
+                if (!live && frame.invocationId == action.invocationId) releaseInvocation(frame)
                 live
             }
             if (current) {
@@ -470,10 +537,7 @@ class PhonePageBroker(
         frame.leaseUntil = lease?.let { host.nowMs() + it }
         frame.displayDeadline = null
         if (lease != null) host.pageProvider(frame.owner)?.let(::retainBinding)
-        if (!visibility.visible) {
-            frame.invocationId = null
-            frame.invocationDeadline = null
-        }
+        if (!visibility.visible) releaseInvocation(frame)
         val registration = currentRegistration(frame) ?: return
         val outgoing = stamped(payload, registration)
         if (lease == null) outgoing.remove(PageSurfaceContract.FIELD_LEASE_DURATION_MS)
@@ -506,7 +570,47 @@ class PhonePageBroker(
         frame.requestDeadline = null
         frame.actionable = false
         frame.live = false
-        frame.actions = emptySet()
+        frame.actions = emptyMap()
+        frame.composer = null
+    }
+
+    private fun releaseInvocation(frame: Frame) {
+        frame.invocationId = null
+        frame.invocationDeadline = null
+        frame.invocationQuickFamily = null
+    }
+
+    /**
+     * Null when [invocation] may reach [declared] the way it came, else why not. Without the
+     * bundle only a confirmed invocation exists. With it: quick only for a plugin action whose
+     * quick-eligible family the user approves now; compose only for the action the shown
+     * conversation's replyable composer names, with text within its limit; and a send never as
+     * a confirmed action. The glasses check the same, but they are never the only gate.
+     */
+    private fun modeRefusal(
+        invocation: PageSurfaceInvocation,
+        declared: PageSurfaceAction,
+        frame: Frame,
+        principal: PhonePluginPrincipal,
+    ): String? {
+        if (launcherVersion() < 1 && invocation.mode != PageSurfaceContract.MODE_CONFIRMED) return "MODE_NOT_NEGOTIATED"
+        if (!PageSurfaceContract.modeAllowedFor(invocation.mode, declared.typed)) return "MODE"
+        when (invocation.mode) {
+            PageSurfaceContract.MODE_QUICK -> {
+                if (declared.kind != PageSurfaceContract.KIND_PLUGIN) return "MODE"
+                val family = declared.typed?.family ?: return "MODE"
+                if (family !in host.quickFamilies(principal)) return "QUICK_NOT_APPROVED"
+            }
+            PageSurfaceContract.MODE_COMPOSE -> {
+                val composer = frame.composer ?: return "NO_COMPOSER"
+                if (composer.sendActionId != declared.id || !composer.replyable) return "COMPOSER"
+                val text = invocation.text ?: return "TEXT"
+                if (text.isBlank() || text.length > minOf(composer.maxChars, PageSurfaceContract.MAX_COMPOSE_TEXT_CHARS)) {
+                    return "TEXT"
+                }
+            }
+        }
+        return null
     }
 
     /** Forgets [frame] without telling anyone: the glasses already closed it. */
@@ -566,6 +670,7 @@ class PhonePageBroker(
         frame.shownRevision = maxOf(frame.shownRevision ?: candidate.revision, candidate.revision)
         frame.live = candidate.live
         frame.actions = candidate.actions
+        frame.composer = candidate.composer
         frame.dataPlane = candidate.dataPlane
         if (candidate.answersRequest) frame.actionable = true
     }
@@ -584,9 +689,44 @@ class PhonePageBroker(
             .put(PageSurfaceContract.FIELD_PLUGIN_ID, registration.pluginId)
             .put(PageSurfaceContract.FIELD_PROVIDER_REGISTRATION_ID, registration.epoch)
 
-    private fun bodyAccepted(page: PageSurfaceResponse.Page, owner: String): Boolean =
-        !PageTemplateContract.isSupported(page.template) ||
-            PageTemplateContract.decode(page, owner) is PageSurfaceValidationResult.Valid
+    /** What the broker keeps of a page's body beside its actions. */
+    private class AcceptedBody(val composer: ConversationComposer?)
+
+    /**
+     * Null when the body is invalid for its template. A template these glasses cannot draw (the
+     * bundle's bodies without the bundle, `ink` always) passes as an envelope and the glasses show
+     * that it needs a newer Nexus; with the bundle the conversation, media and route bodies are
+     * decoded typed, so a composer or a control can only ever name an action of the right type.
+     */
+    private fun acceptedBody(page: PageSurfaceResponse.Page, owner: String): AcceptedBody? {
+        val extended = launcherVersion() >= 1
+        if (!PageTemplateContract.isSupported(page.template, extended)) return AcceptedBody(null)
+        val decoded = PageTemplateContract.decode(page, owner, extended) as? PageSurfaceValidationResult.Valid
+            ?: return null
+        return AcceptedBody((decoded.value as? PageBody.Conversation)?.composer)
+    }
+
+    /**
+     * The glasses' copy of a page response or result. A provider's own `hubQuick` never survives:
+     * with the bundle the phone stamps it on the plugin actions whose quick-eligible family the
+     * user approves now; without it every bundle field is removed, so the glasses get a v1 page.
+     */
+    private fun forGlasses(stamped: JSONObject, page: PageSurfaceResponse.Page?, owner: String): JSONObject {
+        if (launcherVersion() < 1) return PageSurfaceContract.stripLauncherFields(stamped)
+        val approved = host.pageProvider(owner)?.let(host::quickFamilies).orEmpty()
+        val quickIds = page?.actions.orEmpty()
+            .filter { it.kind == PageSurfaceContract.KIND_PLUGIN && QuickActionPolicyContract.isQuick(it.typed, approved) }
+            .mapTo(linkedSetOf()) { it.id }
+        return PageSurfaceContract.withHubQuick(stamped, quickIds)
+    }
+
+    /** The launcher bundle version pages run with these glasses: never without a page session. */
+    private fun launcherVersion(): Int =
+        if (negotiated() == PageSurfaceContract.VERSION) {
+            LauncherInteractiveContract.negotiated(localLauncherVersion, remoteLauncherVersion)
+        } else {
+            0
+        }
 
     private fun currentRegistration(frame: Frame): PageRegistration? {
         val principal = host.pageProvider(frame.owner) ?: return null
@@ -608,22 +748,25 @@ class PhonePageBroker(
         )
     }.getOrNull()
 
-    private fun deliverVersion(registration: PageRegistration, version: Int) {
+    private fun deliverVersion(registration: PageRegistration, version: Int, launcher: Int) {
         host.deliver(
             registration,
             BusPaths.HUB_CAPABILITIES,
             JSONObject()
                 .put(PageSurfaceContract.FIELD_PLUGIN_ID, registration.pluginId)
-                .put(PageSurfaceContract.CAPABILITY_FIELD_PAGE_SESSION_VERSION, version),
+                .put(PageSurfaceContract.CAPABILITY_FIELD_PAGE_SESSION_VERSION, version)
+                .put(LauncherInteractiveContract.CAPABILITY_FIELD_VERSION, launcher),
         )
     }
 
-    /** Tells opted-in providers when the effective version changed. */
+    /** Tells opted-in providers when the effective page or launcher bundle version changed. */
     private fun announceIfChanged() {
         val version = negotiated()
-        if (version == announcedToProviders) return
+        val launcher = launcherVersion()
+        if (version == announcedToProviders && launcher == announcedLauncherToProviders) return
         announcedToProviders = version
-        later { host.providerRegistrations().forEach { deliverVersion(it, version) } }
+        announcedLauncherToProviders = launcher
+        later { host.providerRegistrations().forEach { deliverVersion(it, version, launcher) } }
     }
 
     /** Holds or drops the page-only binding of each owner by its current demand. */
@@ -698,6 +841,7 @@ class PhonePageBroker(
         const val ERROR_PAGE_ROUTE_DENIED = "PAGE_ROUTE_DENIED"
         const val ERROR_PAGE_NOT_REQUESTED = "PAGE_NOT_REQUESTED"
         private const val CLOSE_LINK_LOST = "link_lost"
+        private const val FIELD_RESULT_CODE = "code"
 
         fun isPagePath(path: String): Boolean = PathRules.isPagePath(path)
 

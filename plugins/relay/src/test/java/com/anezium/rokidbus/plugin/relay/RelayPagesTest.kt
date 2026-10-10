@@ -22,10 +22,10 @@ class RelayPagesTest {
     private val time: (Long) -> String = { "t$it" }
 
     private fun list(entries: List<RelayInboxEntry>, hide: Boolean = false) =
-        (RelayPages.page(RelayPages.MAIN, 1, entries, hide, time) as NexusPage.Content)
+        (RelayPages.page(RelayPages.MAIN, 1, entries, hide, formatTime = time) as NexusPage.Content)
 
     private fun thread(entries: List<RelayInboxEntry>, id: String) =
-        RelayPages.page(RelayPages.threadPageId(id), 1, entries, false, time) as NexusPage.Content
+        RelayPages.page(RelayPages.threadPageId(id), 1, entries, false, formatTime = time) as NexusPage.Content
 
     @Test
     fun `the list names each thread, its capture time and newest line, and opens its document`() {

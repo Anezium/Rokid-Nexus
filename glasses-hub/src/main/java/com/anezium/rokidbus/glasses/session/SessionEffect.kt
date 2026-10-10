@@ -1,5 +1,6 @@
 package com.anezium.rokidbus.glasses.session
 
+import com.anezium.rokidbus.shared.ActivityCommand
 import com.anezium.rokidbus.shared.PageSurfaceInvocation
 import com.anezium.rokidbus.shared.PageSurfaceRequest
 
@@ -25,6 +26,12 @@ internal sealed interface SessionEffect {
     }
 
     data class SendAction(val action: PageSurfaceInvocation) : SessionEffect
+
+    /** One activity command in its launcher-bundle shape, sent once and never replayed. */
+    data class SendActivityCommand(val command: ActivityCommand) : SessionEffect
+
+    /** One message to the phone's capture engines; it never carries a reply. */
+    data class SendCompose(val message: ComposeOutbound) : SessionEffect
 
     /**
      * [frame] names the frame for the wire, captured while it still exists; like the request's

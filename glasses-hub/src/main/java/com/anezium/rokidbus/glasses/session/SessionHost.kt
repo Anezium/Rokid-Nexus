@@ -23,6 +23,12 @@ internal interface SessionWindow {
 
     /** The full screen to draw, when the host was given a way to build it. */
     fun present(screen: SessionScreen) = Unit
+
+    /**
+     * Runs [action] once what was last presented has been drawn. A window that draws nothing of
+     * its own has nothing to wait for.
+     */
+    fun afterDraw(action: () -> Unit) = action()
 }
 
 /**
@@ -62,6 +68,11 @@ internal class SessionHost(
         if (!isAttached) return
         window.show(screenFor(state, status))
         screens?.let { window.present(it(state, status)) }
+    }
+
+    /** [action] once the latest render is drawn; never for a window that is gone. */
+    fun afterDraw(action: () -> Unit) {
+        if (isAttached) window.afterDraw(action)
     }
 
     companion object {

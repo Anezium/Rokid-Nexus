@@ -52,7 +52,7 @@ import org.robolectric.annotation.LooperMode
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class ReadingRunnerTest {
     private val context = RuntimeEnvironment.getApplication()
-    private val items = TypedPageItems(PageTemplateContract::isLocalPageId) { true }
+    private val items = TypedPageItems(PageTemplateContract::isLocalPageId, providerPageAllowed = { true })
     private val screens = SessionScreens(items, { mapOf("nav" to "Navigation", "relay" to "Relay")[it] }, { "12:24" }, { it })
     private val view = SessionScreenView(context)
     private val effects = mutableListOf<SessionEffect>()

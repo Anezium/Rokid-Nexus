@@ -400,12 +400,12 @@ class SessionPagesTest {
     }
 
     @Test
-    fun `the root counts one retained notice and keeps it after the band goes away`() {
+    fun `the root counts the history and keeps it after the band goes away`() {
         assertEquals(0, RootStops.build(emptyList(), null, RootStops.retainedNotices(null)).single { it.kind == RootStopKind.NOTIFICATIONS }.count)
         send(SessionEvent.NoticeArrived(NoticePreview(RootStops.NOTICE_PAGE_ID, "Ana: hi")))
         send(SessionEvent.NoticeArrived(NoticePreview(RootStops.NOTICE_PAGE_ID, "Bo: here")))
         openRoot()
-        assertEquals(1, root().stops.single { it.kind == RootStopKind.NOTIFICATIONS }.count)
+        assertEquals(2, root().stops.single { it.kind == RootStopKind.NOTIFICATIONS }.count)
         assertEquals("Bo: here", root().stops.single { it.kind == RootStopKind.NOTICE_PREVIEW }.text)
         assertEquals(2, model.notificationCount)
     }
@@ -473,7 +473,7 @@ class SessionPagesTest {
         send(SessionEvent.Step(1, 2_001))
         send(SessionEvent.Enter(2_100))
         val apps = LocalPages(
-            notice = { null }, activities = { emptyList() },
+            history = { NotificationHistory() }, activities = { emptyList() },
             applications = { listOf(AppEntry("app:dev.tele", "Teleprompter", AppKind.NATIVE)) },
             providerPagesReady = { false }, formatTime = { "12:00" },
         )
@@ -491,10 +491,10 @@ class SessionPagesTest {
 
     @Test
     fun `local pages are valid typed pages that never invent content`() {
-        val snapshot = NoticeSnapshot("relay", "Relay", "Ana", "on est devant", emptyList(), 1_000)
+        val snapshot = NotificationHistory().add(NoticeEntry("relay", "Relay", "Ana", "on est devant", emptyList(), 1_000))
         val ready = LocalPages({ snapshot }, { emptyList() }, { emptyList() }, { it == "relay" }, { "14:02" })
         val notReady = LocalPages({ snapshot }, { emptyList() }, { emptyList() }, { false }, { "14:02" })
-        val none = LocalPages({ null }, { emptyList() }, { emptyList() }, { true }, { "14:02" })
+        val none = LocalPages({ NotificationHistory() }, { emptyList() }, { emptyList() }, { true }, { "14:02" })
 
         fun decoded(pages: LocalPages, pageId: String, params: String? = null): Pair<PageSurfaceResponse.Page, PageBody> {
             val payload = pages.answer(PageSurfaceRequest(PageCorrelation("r", 1, 1, pageId), "open", params))
@@ -512,7 +512,7 @@ class SessionPagesTest {
         val many = (1..70).map { AppEntry("app:dev.app$it", "App $it", AppKind.NATIVE) } +
             AppEntry("plugin:nav", "Navigation", AppKind.PAGES, "nav") +
             AppEntry("plugin:lens", "Lens", AppKind.IMMERSION, "lens")
-        val catalog = LocalPages({ null }, { emptyList() }, { many }, { false }, { "" })
+        val catalog = LocalPages({ NotificationHistory() }, { emptyList() }, { many }, { false }, { "" })
         val (firstPage, first) = decoded(catalog, RootStops.APPLICATIONS_PAGE_ID)
         val rows = (first as PageBody.SelectableList).items
         assertEquals(PageTemplateContract.MAX_ITEMS, rows.size)
@@ -529,7 +529,7 @@ class SessionPagesTest {
 
     @Test
     fun `typed rows map local hub actions and keep provider ones in check`() {
-        val local = LocalPages({ null }, { emptyList() }, {
+        val local = LocalPages({ NotificationHistory() }, { emptyList() }, {
             listOf(
                 AppEntry("plugin:lens", "Lens", AppKind.IMMERSION, "lens"),
                 AppEntry("plugin:camera", "Camera", AppKind.CAMERA, "camera"),
@@ -562,7 +562,7 @@ class SessionPagesTest {
         assertEquals("retry", unavailable.focusKey)
     }
 
-    private fun local() = LocalPages({ null }, { emptyList() }, { emptyList() }, { false }, { "" })
+    private fun local() = LocalPages({ NotificationHistory() }, { emptyList() }, { emptyList() }, { false }, { "" })
 
     @Test
     fun `a page from the plugin whose surface is underneath leaves that surface alone`() {
@@ -625,7 +625,7 @@ class SessionPagesTest {
 
     private var catalog: List<AppEntry> = emptyList()
     private val localPages = LocalPages(
-        notice = { null },
+        history = { NotificationHistory() },
         activities = { emptyList() },
         applications = { catalog },
         providerPagesReady = { false },
