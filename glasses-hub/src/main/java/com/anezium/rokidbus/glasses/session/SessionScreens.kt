@@ -277,8 +277,16 @@ internal class SessionScreens(
     /** Wall-clock time of a session-clock instant, for dating a retained snapshot. */
     private val wallTimeOf: (Long) -> Long,
 ) {
-    /** [generation] is the open session's, which names its frames for the renderer's reports. */
-    fun screen(state: SessionState, status: SessionStatus?, generation: Long = 0): SessionScreen {
+    /**
+     * [generation] is the open session's, which names its frames for the renderer's reports;
+     * [facts] carries the activity collection and the commands' pending and answered states.
+     */
+    fun screen(
+        state: SessionState,
+        status: SessionStatus?,
+        generation: Long = 0,
+        facts: CommandFacts = CommandFacts(),
+    ): SessionScreen {
         val statusText = status?.let(::statusText)
         return when (state) {
             SessionState.Closed -> SessionScreen(null, emptyList(), null, statusText)
@@ -289,9 +297,9 @@ internal class SessionScreens(
                 statusText,
                 gate = true,
             )
-            is SessionState.Root -> root(state, statusText)
-            is SessionState.InPage -> page(state, statusText, generation)
-            is SessionState.Launching -> screen(state.previous, status, generation).copy(
+            is SessionState.Root -> root(state, statusText, facts)
+            is SessionState.InPage -> page(state, statusText, generation, facts)
+            is SessionState.Launching -> screen(state.previous, status, generation, facts).copy(
                 status = statusText ?: "Opening ${pluginLabel(state.pluginId) ?: state.pluginId}…",
             )
         }
@@ -307,7 +315,11 @@ internal class SessionScreens(
         else -> PageTemplateContract.namespaceOf(pageId)?.let(pluginLabel) ?: PAGE
     }
 
-    private fun root(state: SessionState.Root, statusText: String?): SessionScreen {
+    private fun root(state: SessionState.Root, statusText: String?, facts: CommandFacts): SessionScreen {
+        state.panel?.let { step ->
+            val owner = state.stops.firstOrNull { it.id == state.focus?.stopId }?.label ?: NEXUS
+            return panel(step, owner, owner, statusText)
+        }
         val blocks = state.stops.mapIndexed { index, stop ->
             val selected = index == state.selected
             when (stop.kind) {
@@ -321,6 +333,11 @@ internal class SessionScreens(
                     figure = true,
                     ended = stop.ended,
                     selected = selected,
+                    icon = stop.icon,
+                    tertiary = stop.activity?.takeUnless { stop.ended }?.let { commandLine(it, facts) },
+                    offline = stop.activity?.offline == true,
+                    commands = stop.activity?.takeUnless { stop.ended }
+                        ?.let { activity -> state.focus?.takeIf { it.stopId == stop.id }?.let { strip(activity, it) } },
                 )
                 RootStopKind.NOTICE_PREVIEW -> ScreenBlock.Card(
                     key = stop.id,
@@ -339,22 +356,41 @@ internal class SessionScreens(
             }
         }
         val selectedStop = state.stops.getOrNull(state.selected)
-        return SessionScreen(
-            ScreenHeader(NEXUS, "back: close"),
-            blocks,
-            ScreenHint(if (selectedStop?.ended == true) "swipe next card" else "swipe next · tap open", "back close"),
-            statusText,
-            focusKey = selectedStop?.id,
-        )
+        val hint = when {
+            state.focus != null -> ScreenHint(FOCUS_HINT, FOCUS_BACK)
+            selectedStop?.ended == true -> ScreenHint("swipe next card", "back close")
+            else -> ScreenHint("swipe next · tap open", "back close")
+        }
+        return SessionScreen(ScreenHeader(NEXUS, "back: close"), blocks, hint, statusText, focusKey = selectedStop?.id)
     }
 
-    private fun page(state: SessionState.InPage, statusText: String?, generation: Long): SessionScreen {
+    /** An activity's commands as its card draws them in command focus. */
+    private fun strip(activity: ActivityStop, focus: CommandFocus): CommandStrip = CommandStrip(
+        ActivityCommands.slots(activity).map { CommandSlot(it.key, it.label, it.glyph, enabled = it.enabled, hub = it.hub) },
+        focus.index,
+    )
+
+    /**
+     * A card's third line: an offline entry's last-known time first, else its owner's command
+     * pending or last answered. Nothing is invented: a lost answer says it is unconfirmed.
+     */
+    private fun commandLine(activity: ActivityStop, facts: CommandFacts): String? {
+        if (activity.offline) return activity.knownAtWallMs?.let { "$OFFLINE_HINT ${formatTime(it)}" } ?: OFFLINE
+        val owner = activity.ownerPluginId ?: return null
+        facts.pending[owner]?.let { pending ->
+            val label = activity.commands.firstOrNull { it.id == pending.actionId }?.label ?: pending.actionId
+            return "$label · $PENDING"
+        }
+        return facts.outcomes[owner]?.let { outcomeText(ActionOutcome(it.actionId, it.status, it.message)) }
+    }
+
+    private fun page(state: SessionState.InPage, statusText: String?, generation: Long, facts: CommandFacts): SessionScreen {
         val frame = state.frames.last()
         val frameIndex = state.frames.size
         val parent = state.frames.getOrNull(state.frames.lastIndex - 1)?.let { titleOfFrame(it) } ?: "root"
         val title = titleOfFrame(frame)
         val back = "back $parent"
-        frame.panel?.let { return panel(frame, it, title, statusText) }
+        frame.panel?.let { return panel(it, title, titleOf(frame.pageId), statusText) }
         val outcomeText = frame.outcome?.let(::outcomeText)
         return when (val status = frame.status) {
             is FrameStatus.Loading -> {
@@ -368,7 +404,7 @@ internal class SessionScreens(
             is FrameStatus.Unavailable ->
                 unavailable(frame, status, FrameIdentity(generation, frameIndex), title, parent, back, statusText)
             is FrameStatus.Shown ->
-                shown(frame, status, FrameIdentity(generation, frameIndex), title, parent, back, statusText ?: outcomeText)
+                shown(frame, status, FrameIdentity(generation, frameIndex), title, parent, back, statusText ?: outcomeText, facts)
         }
     }
 
@@ -436,8 +472,14 @@ internal class SessionScreens(
         is PageBody.Commands -> listOfNotNull(body.text?.let { ScreenBlock.Text("last:text", it, TextRole.BODY, dimmed = true) })
         is PageBody.SelectableList -> body.items.map { ScreenBlock.Row("last:row:${it.id}", it.label, it.sub, enabled = false) }
             .ifEmpty { listOf(ScreenBlock.Text("last:empty", body.emptyText ?: "Nothing here", TextRole.CAPTION, centered = true, dimmed = true)) }
-        // Placeholder until the launcher lanes draw retained conversation, media and route pages.
-        is PageBody.Conversation, is PageBody.Media, is PageBody.Route -> emptyList()
+        // What was playing, never its controls: a retained page acts on nothing.
+        is PageBody.Media -> listOfNotNull(
+            ScreenBlock.Text("last:title", body.title, TextRole.BODY, dimmed = true),
+            listOfNotNull(body.artist, body.album).joinToString(" · ").ifBlank { null }
+                ?.let { ScreenBlock.Text("last:artist", it, TextRole.CAPTION, dimmed = true) },
+        )
+        // Placeholder until the launcher lanes draw retained conversation and route pages.
+        is PageBody.Conversation, is PageBody.Route -> emptyList()
         is PageBody.Document, null -> emptyList()
     }
 
@@ -453,8 +495,14 @@ internal class SessionScreens(
         is PageBody.SelectableList -> body.items.flatMap { row ->
             listOfNotNull(PageSegment("row:${row.id}", PageSegmentKind.PROSE, row.label), row.sub?.let { PageSegment("sub:${row.id}", PageSegmentKind.ASIDE, it) })
         }
+        is PageBody.Media -> listOfNotNull(
+            PageSegment("title", PageSegmentKind.PROSE, body.title),
+            body.artist?.let { PageSegment("artist", PageSegmentKind.ASIDE, it) },
+            body.album?.let { PageSegment("album", PageSegmentKind.ASIDE, it) },
+            body.status?.let { PageSegment("status", PageSegmentKind.ASIDE, it) },
+        )
         // Placeholder until the launcher lanes give these bodies their own reading.
-        is PageBody.Conversation, is PageBody.Media, is PageBody.Route -> emptyList()
+        is PageBody.Conversation, is PageBody.Route -> emptyList()
         null -> emptyList()
     }
 
@@ -466,6 +514,7 @@ internal class SessionScreens(
         parent: String,
         back: String,
         statusText: String?,
+        facts: CommandFacts,
     ): SessionScreen {
         val page = status.snapshot.page
         val body = items.body(page)
@@ -499,14 +548,29 @@ internal class SessionScreens(
                 body.facts.forEach { blocks += ScreenBlock.Fact("fact:${it.id}", it.label, it.value) }
             }
             body is PageBody.Commands -> body.text?.let { blocks += ScreenBlock.Text("text", it, TextRole.BODY) }
+            body is PageBody.Media ->
+                blocks += ScreenBlock.Media("media", body.title, body.artist, body.album, body.source, body.state, body.status)
         }
-        val rows = items.rows(page)
-        val rowBlocks = rows.mapIndexed { index, row ->
-            ScreenBlock.Row(
-                "row:${row.key}", row.label, row.sub,
-                enabled = row.enabled && row.item != PageItem.Inert,
-                selected = frame.tombstone == null && index == frame.selected,
-            )
+        val rows = items.rows(page) + listOfNotNull(frame.openApp?.let(ActivityCommands::openAppRow))
+        val controls = items.controls(page)
+        val commandFocus = frame.commandFocus
+        // A control strip shows a selection only while it holds the focus.
+        val showsSelection = controls == null || commandFocus != null
+        val pendingAction = frame.invocation?.actionId
+        val rowBlocks: MutableList<ScreenBlock> = rows.mapIndexed { index, row ->
+            val selected = showsSelection && frame.tombstone == null && index == frame.selected
+            val activity = (row.item as? PageItem.Activity)?.let { facts.activity(it.ownerPluginId) }
+            if (activity != null) {
+                activityCard("row:${row.key}", activity, selected, commandFocus?.takeIf { it.stopId == activity.id }, facts)
+            } else {
+                ScreenBlock.Row(
+                    "row:${row.key}", row.label, row.sub,
+                    enabled = row.enabled && row.item != PageItem.Inert,
+                    selected = selected,
+                    checked = row.checked,
+                    pending = pendingAction != null && row.actionId == pendingAction,
+                )
+            }
         }.toMutableList()
         frame.tombstone?.let { label ->
             rowBlocks.add(frame.selected.coerceIn(0, rowBlocks.size), ScreenBlock.Row("tombstone", label, "removed", enabled = false, selected = true, tombstone = true))
@@ -515,14 +579,25 @@ internal class SessionScreens(
         if (rows.isEmpty() && body is PageBody.SelectableList) {
             blocks += ScreenBlock.Text("empty", body.emptyText ?: "Nothing here", TextRole.CAPTION, centered = true)
         }
-        val focus = rowBlocks.firstOrNull { it.selected }?.key ?: blocks.firstOrNull()?.key
-        val selectedRow = if (frame.tombstone == null) rows.getOrNull(frame.selected) else null
-        val action = when (selectedRow?.item) {
-            null, PageItem.Inert -> if (rows.size > 1) "swipe choose" else null
-            is PageItem.OpenPage -> "tap open"
-            is PageItem.Confirm, is PageItem.Invoke -> "tap choose"
-            is PageItem.LaunchPrompt, is PageItem.Launch, is PageItem.LocalLaunch -> "tap open"
-            else -> null
+        val focus = rowBlocks.firstOrNull { it.isSelected() }?.key ?: blocks.firstOrNull()?.key
+        val selectedRow = if (frame.tombstone == null && showsSelection) rows.getOrNull(frame.selected) else null
+        val action = when {
+            commandFocus != null -> FOCUS_HINT
+            controls != null -> TAP_CONTROLS
+            else -> when (selectedRow?.item) {
+                null, PageItem.Inert -> if (rows.size > 1) "swipe choose" else null
+                is PageItem.OpenPage, is PageItem.Activity -> "tap open"
+                is PageItem.Confirm, is PageItem.Invoke -> "tap choose"
+                is PageItem.Quick -> "tap run"
+                is PageItem.LaunchPrompt, is PageItem.Launch, is PageItem.LocalLaunch -> "tap open"
+                else -> null
+            }
+        }
+        val backHint = when {
+            commandFocus?.stopId == CommandFocus.MEDIA -> BACK_PAGE
+            commandFocus != null -> FOCUS_BACK
+            readsFirst -> BACK_TO_TEXT
+            else -> back
         }
         val trail = if (rows.size > 1) "${(frame.selected + 1).coerceAtMost(rows.size)}/${rows.size}" else "back: $parent"
         // The text fits when it is whole on screen with the first row: the scroll that row asks for.
@@ -531,22 +606,45 @@ internal class SessionScreens(
         } else {
             null
         }
-        return SessionScreen(ScreenHeader(header, trail), blocks, ScreenHint(action, if (readsFirst) BACK_TO_TEXT else back), statusText, focus, fit = fit)
+        return SessionScreen(ScreenHeader(header, trail), blocks, ScreenHint(action, backHint), statusText, focus, fit = fit)
     }
 
-    private fun panel(frame: Frame, panel: FramePanel, title: String, statusText: String?): SessionScreen = when (panel) {
-        is FramePanel.Confirm -> SessionScreen(
-            ScreenHeader("${title.uppercase()} · CONFIRM", "back: cancel"),
-            listOf(
-                ScreenBlock.Text("question", "${panel.label}?", TextRole.TITLE, centered = true),
-                ScreenBlock.Text("explain", "${titleOf(frame.pageId)} will do this.", TextRole.CAPTION, centered = true),
-                ScreenBlock.Row("cancel", CANCEL, selected = panel.selected == FramePanel.CANCEL, centered = true),
-                ScreenBlock.Row("confirm", CONFIRM, selected = panel.selected == FramePanel.CONFIRM, centered = true),
-            ),
-            ScreenHint("swipe choose · tap confirm", "back cancel"),
-            statusText,
-            if (panel.selected == FramePanel.CANCEL) "cancel" else "confirm",
-        )
+    /** An entry of the Activities page, drawn as its root card would be, commands included. */
+    private fun activityCard(
+        key: String,
+        activity: ActivityStop,
+        selected: Boolean,
+        focus: CommandFocus?,
+        facts: CommandFacts,
+    ) = ScreenBlock.Card(
+        key = key,
+        label = (activity.ownerLabel ?: activity.ownerPluginId ?: ACTIVITY).uppercase(),
+        time = activity.updatedAtWallMs?.let(formatTime),
+        primary = activity.text,
+        secondary = activity.detail,
+        measure = activity.measure,
+        figure = true,
+        ended = false,
+        selected = selected,
+        icon = activity.icon,
+        tertiary = commandLine(activity, facts),
+        offline = activity.offline,
+        commands = focus?.let { strip(activity, it) },
+    )
+
+    private fun ScreenBlock.isSelected(): Boolean = when (this) {
+        is ScreenBlock.Row -> selected
+        is ScreenBlock.Card -> selected
+        else -> false
+    }
+
+    /** [owner] is who will act: the page's plugin for a page action, the activity's for a command. */
+    private fun panel(panel: FramePanel, title: String, owner: String, statusText: String?): SessionScreen = when (panel) {
+        is FramePanel.Confirm -> confirmScreen(title, panel.label, owner, panel.selected, statusText)
+        is FramePanel.ConfirmCommand -> {
+            val name = pluginLabel(panel.ownerPluginId) ?: owner
+            confirmScreen(name, panel.label, name, panel.selected, statusText)
+        }
         is FramePanel.Launch -> {
             val name = pluginLabel(panel.pluginId) ?: panel.label
             SessionScreen(
@@ -563,6 +661,19 @@ internal class SessionScreens(
             )
         }
     }
+
+    private fun confirmScreen(title: String, label: String, owner: String, selected: Int, statusText: String?) = SessionScreen(
+        ScreenHeader("${title.uppercase()} · CONFIRM", "back: cancel"),
+        listOf(
+            ScreenBlock.Text("question", "$label?", TextRole.TITLE, centered = true),
+            ScreenBlock.Text("explain", "$owner will do this.", TextRole.CAPTION, centered = true),
+            ScreenBlock.Row("cancel", CANCEL, selected = selected == FramePanel.CANCEL, centered = true),
+            ScreenBlock.Row("confirm", CONFIRM, selected = selected == FramePanel.CONFIRM, centered = true),
+        ),
+        ScreenHint("swipe choose · tap confirm", "back cancel"),
+        statusText,
+        if (selected == FramePanel.CANCEL) "cancel" else "confirm",
+    )
 
     /** A retained snapshot drawn while it is being revalidated: readable, never selectable. */
     private fun summaryOf(snapshot: Snapshot, frame: Frame, readable: Boolean): List<ScreenBlock> {
@@ -634,6 +745,15 @@ internal class SessionScreens(
         const val BACK_TO_TEXT = "back text"
         const val LAUNCH_EXPLANATION =
             "Opens the full app as an exclusive surface. It replaces what the glasses show now; BACK leaves it."
+
+        /** Command focus on a card (plan 028a §9). */
+        const val FOCUS_HINT = "swipe choose · tap run"
+        const val FOCUS_BACK = "back cards"
+        const val OFFLINE = "offline"
+        const val OFFLINE_HINT = "offline · last known"
+        const val PENDING = "waiting for the app"
+        const val TAP_CONTROLS = "tap controls"
+        const val BACK_PAGE = "back page"
         private const val ACTIVITY = "Activity"
         private const val ENDED = "ENDED"
         private const val NOTIFICATION = "NOTIFICATION"

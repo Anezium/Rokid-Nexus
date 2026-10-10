@@ -116,7 +116,43 @@ internal object ActivityCommands {
         val clamped = focus.index.coerceIn(0, slots.lastIndex)
         return focus.copy(key = slots[clamped].key, index = clamped)
     }
+
+    /** The hub's final row on an activity's destination page: Open app, behind the labelled launch step. */
+    fun openAppEntry(openApp: OpenApp): PageEntry =
+        PageEntry(OPEN_APP_KEY, PageItem.LaunchPrompt(openApp.pluginId, openApp.label), OPEN_APP)
+
+    /** [openAppEntry] as the screens draw it. */
+    fun openAppRow(openApp: OpenApp): TypedRow =
+        TypedRow(OPEN_APP_KEY, OPEN_APP, null, true, PageItem.LaunchPrompt(openApp.pluginId, openApp.label))
 }
+
+/**
+ * What the screens read about activities beside the session state: the collection as last
+ * received (the Activities page draws its rows from it), and per owner the pending command and
+ * the last answer.
+ */
+internal data class CommandFacts(
+    val activities: List<ActivityStop> = emptyList(),
+    val pending: Map<String, PendingCommand> = emptyMap(),
+    val outcomes: Map<String, CommandOutcome> = emptyMap(),
+) {
+    fun activity(ownerPluginId: String): ActivityStop? = activities.firstOrNull { it.ownerPluginId == ownerPluginId }
+
+    companion object {
+        fun of(model: SessionModel) = CommandFacts(
+            activities = model.queuedActivities + model.activities.filter { member -> model.queuedActivities.none { it.id == member.id } },
+            pending = model.pendingCommands,
+            outcomes = model.commandOutcomes,
+        )
+    }
+}
+
+/** The latest known entry of an owner: a queued start or update is newer than a root member. */
+internal fun SessionModel.latestActivity(ownerPluginId: String): ActivityStop? =
+    queuedActivities.firstOrNull { it.ownerPluginId == ownerPluginId } ?: activities.firstOrNull { it.ownerPluginId == ownerPluginId }
+
+internal fun SessionModel.latestActivityById(stopId: String): ActivityStop? =
+    queuedActivities.firstOrNull { it.id == stopId } ?: activities.firstOrNull { it.id == stopId }
 
 /**
  * The fresh-contact rule (plan 028a §5.3). An Enter that would cause an effect counts only if its

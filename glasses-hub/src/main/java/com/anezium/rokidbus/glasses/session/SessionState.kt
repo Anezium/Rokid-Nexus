@@ -127,20 +127,31 @@ internal data class Frame(
     val shownAtMs: Long? = null,
     /** The message that carried the retained snapshot needed SPP, so it is lost when SPP is. */
     val dataPlane: Boolean = false,
-    /** An activity row of this frame (the Activities page) whose commands hold the wearer's focus. */
+    /**
+     * The wearer is choosing among commands on this frame: an activity row's commands on the
+     * Activities page, or a media page's controls ([CommandFocus.MEDIA]).
+     */
     val commandFocus: CommandFocus? = null,
     /**
      * The launchable owner of the activity this frame was opened from as its destination: the
      * frame then ends with the hub's own Open app row.
      */
-    val openAppOwner: String? = null,
+    val openApp: OpenApp? = null,
 )
+
+/** The hub's own Open app row at the end of a destination page, for a launchable owner. */
+internal data class OpenApp(val pluginId: String, val label: String)
 
 /**
  * The wearer is choosing among an activity card's commands: [key] names the focused slot (an
  * action id, or [ActivityCommands.OPEN_APP_KEY]) so it survives updates; [index] is where it was.
  */
-internal data class CommandFocus(val stopId: String, val key: String, val index: Int)
+internal data class CommandFocus(val stopId: String, val key: String, val index: Int) {
+    companion object {
+        /** The [stopId] of a media page's control focus; a space keeps it out of every wire id. */
+        const val MEDIA = "page media"
+    }
+}
 
 /** One activity command sent and not yet answered; one per owner at most. */
 internal data class PendingCommand(

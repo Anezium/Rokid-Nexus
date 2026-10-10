@@ -25,6 +25,12 @@ internal sealed interface PageItem {
 
     /** A hub-authored local launch (a native app, the hub camera); never a provider's target. */
     data class LocalLaunch(val key: String, val label: String) : PageItem
+
+    /**
+     * An entry of the hub's Activities page: SELECT does what tapping its card does (opens its
+     * destination, focuses its commands, or opens its summary). Only a hub-authored page has one.
+     */
+    data class Activity(val ownerPluginId: String) : PageItem
     data object Retry : PageItem
     data object Back : PageItem
     data object Inert : PageItem
@@ -53,9 +59,15 @@ internal fun interface PageItemResolver {
     /** Whether the page's typed body can be drawn here at all; checked before it is ever shown. */
     fun accepts(page: PageSurfaceResponse.Page): Boolean = true
 
-    /** The row selected when the page first opens, such as a media page's default control. */
-    fun initialIndex(page: PageSurfaceResponse.Page): Int = 0
+    /**
+     * The keys of a page's control strip (a media page's controls), in swipe order, with the one
+     * a first tap focuses; null for a page without one. Its rows come first among [entries].
+     */
+    fun controls(page: PageSurfaceResponse.Page): PageControls? = null
 }
+
+/** A page's control strip: [keys] are entry keys in swipe order, [defaultKey] is focused first. */
+internal data class PageControls(val keys: List<String>, val defaultKey: String)
 
 /** A selectable row: what SELECT does, under a key that names the row across revisions. */
 internal data class PageEntry(val key: String, val item: PageItem, val label: String = "")

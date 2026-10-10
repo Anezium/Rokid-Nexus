@@ -97,11 +97,14 @@ internal class TypedPageItems(
 
     override fun accepts(page: PageSurfaceResponse.Page): Boolean = body(page) != null
 
-    /** A media page opens on its default control. */
-    override fun initialIndex(page: PageSurfaceResponse.Page): Int {
-        val media = body(page) as? PageBody.Media ?: return 0
-        val control = media.defaultControl ?: return 0
-        return rows(page).indexOfFirst { it.actionId == control && it.key.startsWith(ACTION_KEY_PREFIX) }.coerceAtLeast(0)
+    /** A media page's controls, as appended action rows; a tap first focuses its default control. */
+    override fun controls(page: PageSurfaceResponse.Page): PageControls? {
+        val media = body(page) as? PageBody.Media ?: return null
+        val present = rows(page).map(TypedRow::key).toSet()
+        val keys = media.controls.map { ACTION_KEY_PREFIX + it }.filter { it in present }
+        if (keys.isEmpty()) return null
+        val wanted = media.defaultControl?.let { ACTION_KEY_PREFIX + it }?.takeIf { it in keys }
+        return PageControls(keys, wanted ?: keys.first())
     }
 
     /** A media page's controls come first, in their swipe order; every other action keeps its place. */
@@ -151,6 +154,7 @@ internal class TypedPageItems(
     private fun localAction(actionId: String, label: String): PageItem = when {
         actionId.startsWith(LAUNCH_PREFIX) -> PageItem.LaunchPrompt(actionId.removePrefix(LAUNCH_PREFIX), label)
         actionId.startsWith(LOCAL_PREFIX) -> PageItem.LocalLaunch(actionId.removePrefix(LOCAL_PREFIX), label)
+        actionId.startsWith(ACTIVITY_PREFIX) -> PageItem.Activity(actionId.removePrefix(ACTIVITY_PREFIX))
         else -> PageItem.Inert
     }
 
@@ -164,6 +168,9 @@ internal class TypedPageItems(
 
         /** A hub action launching a local catalog entry, by its key. */
         const val LOCAL_PREFIX = "local:"
+
+        /** A hub action standing for an entry of the Activities page, by its owner. */
+        const val ACTIVITY_PREFIX = "activity:"
         /** A space, which no wire id contains, keeps appended keys out of the row ids' namespace. */
         const val ACTION_KEY_PREFIX = "action "
         private const val CACHE_SIZE = 8
