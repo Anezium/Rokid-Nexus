@@ -430,6 +430,7 @@ data class NexusActivityAction(
     val id: String,
     val glyph: String,
     val label: String,
+    val typed: NexusActionType? = null,        // launcher bundle, media only
 )
 
 data class NexusActivityTrack(
@@ -452,10 +453,16 @@ data class NexusActivity(
     val badge: String? = null,
     val track: NexusActivityTrack? = null,
     val measure: String? = null,
+    // Launcher bundle; see "Interactive activities" below.
+    val destination: NexusPageDestination? = null,
+    val activation: NexusActivityActivation? = null,
+    val defaultActionId: String? = null,
+    val persistence: NexusActivityPersistence = NexusActivityPersistence.SESSION,
 )
 
 val supportsActivitySurface: Boolean
 val supportsActivityExtras: Boolean
+fun supportsLauncherInteractive(): Boolean
 val registrationGeneration: Int
 fun startActivity(activity: NexusActivity): NexusSdkResult
 fun updateActivity(
@@ -464,16 +471,23 @@ fun updateActivity(
     urgent: Boolean = false,
 ): NexusSdkResult
 fun endActivity(): NexusSdkResult
+fun sendActivityCommandResult(command: NexusActivityCommand, result: NexusActivityCommandResult): NexusSdkResult
+fun publishActivityGeometry(revision: Long, geometry: RouteGeometry): NexusSdkResult
+fun publishActivityHeading(deg: Double, accuracyDeg: Double? = null): NexusSdkResult
 
 interface NexusPluginCallbacks {
     fun onActivityAction(id: String) = Unit
+    fun onActivityCommand(command: NexusActivityCommand): NexusActivityCommandResult? {
+        onActivityAction(command.actionId)
+        return null
+    }
     fun onActivityClosed(reason: String) = Unit
 }
 ```
 
 `NexusPluginService` forwards those callbacks to the overridable
-`onNexusActivityAction(id)` and `onNexusActivityClosed(reason)` hooks used in
-the example below.
+`onNexusActivityAction(id)`, `onNexusActivityCommand(command)` and
+`onNexusActivityClosed(reason)` hooks used in the examples below.
 
 Check the live `supportsActivitySurface` value immediately before starting or
 updating. For a registered plugin with the `surfaces` grant, all three methods
@@ -511,7 +525,10 @@ restart or change the safety deadline. `significant` is a transient hint and is
 sent only when true. `wakeDisplay` is also start-only: when true, a later
 `significant` update may wake a dark display. Ordinary updates never wake it.
 
-A Maps-shaped route can publish the next maneuver as one object:
+A Maps-shaped route can publish the next maneuver as one object. Its one
+command states the desired result, never a toggle: the action offered is the
+one that changes the current state, so a repeated or late command cannot flip
+it back.
 
 ```kotlin
 class MapsLikePluginService : NexusPluginService() {
@@ -563,13 +580,20 @@ class MapsLikePluginService : NexusPluginService() {
         eta = "12:41",
         detail = listOf("then right on Av. de l'Opera"),
         actions = listOf(
-            NexusActivityAction(id = "mute", glyph = "pause", label = "Mute"),
+            if (muted) {
+                NexusActivityAction(id = "unmute", glyph = "play", label = "Unmute")
+            } else {
+                NexusActivityAction(id = "mute", glyph = "pause", label = "Mute")
+            },
         ),
         maxDurationMs = maxDurationMs,
     )
 
     override fun onNexusActivityAction(id: String) {
-        if (id == "mute") muted = !muted
+        when (id) {
+            "mute" -> muted = true
+            "unmute" -> muted = false
+        }
     }
 
     override fun onNexusActivityClosed(reason: String) {
@@ -644,20 +668,22 @@ By default, an idle expanded panel collapses to its chip after about 10 seconds.
 The wearer can keep the primary activity expanded from Nexus phone Settings.
 That is a platform preference; no plugin API can read, set, or override it.
 
-The platform can keep two activities and one pin in stable corners. Exactly one
-activity is primary: the most recently significant one, or the oldest started
-one when none is significant. A third start replaces the
-least-recently-updated non-primary activity, with the oldest start as the
-deterministic fallback when no non-primary candidate exists. Only the primary
-activity can show the expanded panel
-or claim its action row.
+The platform keeps at most two activity islands and one pin in stable corners.
+Exactly one activity is primary: the most recently significant one, or the
+oldest started one when none is significant. Only the primary activity shows
+the expanded panel. Without the launcher bundle the hubs hold two activities: a
+third start replaces the least-recently-updated non-primary activity, with the
+oldest start as the deterministic fallback when no non-primary candidate
+exists. With it, the collection holds eight, one per plugin, and still two
+islands; see "Interactive activities" below.
 
-With no actions, a center tap on the idle layer opens the plugin through its
-normal `onNexusOpen` path. With one to three actions, forward/backward selects
-one and center tap invokes `onNexusActivityAction(id)`. Activity input is inert
-while a surface, notice, launcher, or camera overlay owns the context; BACK is
-never claimed. `onNexusActivityClosed(reason)` reports `owner`, `replaced`,
-`disconnect`, or `max-duration`.
+Activity islands take no input: they are passive, and native apps and surfaces
+keep every key. A tap on an island neither opens your plugin nor runs an action.
+Your actions are reached only inside the wearer's Nexus session, between hubs
+that negotiated the launcher bundle, where they arrive on
+`onNexusActivityCommand` (and, through its default, `onNexusActivityAction`).
+BACK is never claimed. `onNexusActivityClosed(reason)` reports `owner`,
+`replaced`, `disconnect`, or `max-duration`.
 
 The phone hub owns canonical activity state and resends it after a glasses
 reconnect, after first clearing possible ghosts. You should still call
@@ -671,6 +697,104 @@ allows at most one actual wake per five seconds globally across activities,
 notices, surfaces, and plugins. A significant update arriving while the display
 is already interactive spends no budget. Activity v1 does not include plan
 014's glance layer.
+
+#### Interactive activities (launcher bundle)
+
+When both hubs negotiated the launcher bundle, `supportsLauncherInteractive()`
+is true and an activity becomes an entry in the wearer's activity collection:
+something to consult and control, not only to watch. Without it the SDK drops
+every field below before sending and the activity is an ordinary one, so the
+same code runs against old hubs.
+
+- `destination = NexusPageDestination(pageId, params)` — one of your own pages
+  (`<yourPluginId>:<suffix>`; another namespace is `INVALID_PAYLOAD`), with params
+  of at most 2,048 bytes. A tap on the card opens it directly inside the session,
+  with those params on `NexusPageRequest.params`: it is a page request, never an
+  `onNexusOpen`, and nothing underneath changes. You need the pages metadata.
+- `activation` — `DESTINATION` opens the destination on the first tap;
+  `COMMANDS` focuses your commands on the first tap and never runs one then.
+  Left null: the destination when there is one, else the commands when there
+  are any, else the hub's own summary of your activity. An explicit mode without
+  its destination or a command is refused by the model.
+- `defaultActionId` — the command focused first; the first action by default.
+- `persistence = ONGOING` — only while the user turned on your own "Show in
+  activities" setting. When your plugin disconnects, Nexus keeps the entry as an
+  inert offline snapshot ("last known HH:MM") with its destination still
+  openable: you hold no service for it, and it revives with your next
+  `startActivity` from a new registration. Turning the setting off means
+  `endActivity()`. See plugins/AGENTS.md for the background rules.
+- `NexusActivityAction.typed` — `MediaPrevious`, `MediaPlay`, `MediaPause` or
+  `MediaNext`, and nothing else on an activity. A typed action of a family the
+  user approved for your plugin runs on one tap (see "Actions" under Pages).
+- Using any of these fields also requires every action id to be a page-style id
+  (printable ASCII without spaces, at most 128) and ids to be unique.
+
+The user can also disable your activity (starts then return nothing and the hub
+answers `ACTIVITY_DISABLED`) or pin it on the phone. In focus the wearer steps
+along your commands and a hub `Open app` slot that opens your full app through
+the labelled launch step; that slot is the hub's, not one of your three.
+
+A command arrives on `onNexusActivityCommand(command)` with `actionId`, a fresh
+`invocationId`, the revision `seq` the wearer saw, and the `typed` you declared
+on that action. Return the outcome: `done`, `rejected` or `stale`, with an
+optional message of at most 64 characters. Return null when you cannot tell yet;
+the glasses then show the command as unconfirmed, and you may still report
+within eight seconds with `sendActivityCommandResult(command, result)`, once.
+Never invent `done` for something you did not check, never retry a command, and
+treat a revision you no longer show as `stale`. The default implementation calls
+`onNexusActivityAction(id)` and returns null, so an unchanged plugin keeps
+working and never reports an invented success.
+
+```kotlin
+class PlayerPluginService : NexusPluginService() {
+    private fun playerActivity(state: PlayerState) = NexusActivity(
+        glyph = "music",
+        primary = state.title.take(12),
+        secondary = state.artist?.take(28),
+        actions = listOf(
+            NexusActivityAction("prev", "previous", "Previous", NexusActionType.MediaPrevious),
+            // The desired state for the revision shown, never a toggle.
+            if (state.playing) {
+                NexusActivityAction("pause", "pause", "Pause", NexusActionType.MediaPause)
+            } else {
+                NexusActivityAction("play", "play", "Play", NexusActionType.MediaPlay)
+            },
+            NexusActivityAction("next", "next", "Next", NexusActionType.MediaNext),
+        ),
+        destination = NexusPageDestination("player:now"),
+        activation = NexusActivityActivation.COMMANDS,
+        defaultActionId = if (state.playing) "pause" else "play",
+        persistence = NexusActivityPersistence.ONGOING,
+    )
+
+    override fun onNexusActivityCommand(command: NexusActivityCommand): NexusActivityCommandResult? {
+        val player = currentSession() ?: return NexusActivityCommandResult.rejected("No player")
+        when (command.typed) {
+            // A desired state that already holds was decided on an older revision.
+            NexusActionType.MediaPlay -> if (player.playing) return NexusActivityCommandResult.stale() else player.play()
+            NexusActionType.MediaPause -> if (!player.playing) return NexusActivityCommandResult.stale() else player.pause()
+            NexusActionType.MediaNext -> player.next()
+            NexusActionType.MediaPrevious -> player.previous()
+            else -> return NexusActivityCommandResult.rejected()
+        }
+        return NexusActivityCommandResult.done()
+    }
+    // ...
+}
+```
+
+A navigation plugin can draw its route with the activity:
+`publishActivityGeometry(revision, geometry)` sends a `RouteGeometry`
+(`com.anezium.rokidbus.shared`; at most 24 paths, 1,024 points, 4 labels, 4
+stops, 16 KiB, coordinates 0..1,000 in a north-up frame spanning `spanMeters`)
+and `publishActivityHeading(deg, accuracyDeg)` the compass heading. Latest wins;
+neither is ever queued. Geometry needs the SPP data plane and returns
+`CAPABILITY_NOT_AVAILABLE` over the control link alone, so your text guidance
+must stand without it. The hub keeps at most five headings a second and treats
+one older than three seconds as absent. Clip your paths with Liang-Barsky to a
+window covering the rotated viewport, never by clamping vertices, and mark a
+stale or missing fix in `position.quality` rather than leaving an old position
+looking live.
 
 ### Notice bands
 
@@ -967,6 +1091,39 @@ Set `backdrop = true` only when the notice should hide everything else on the
 glasses display behind an opaque black scrim. It defaults to false, is
 serialized only when true, and is show-only; updates preserve the value chosen
 by the original show, while a replacement notice chooses its own value.
+
+#### Destinations and withdrawal (launcher bundle)
+
+With `supportsLauncherInteractive()`, a notice can lead somewhere and be taken
+back. All three fields are show-only and are dropped before sending without the
+bundle:
+
+- `destination = NexusPageDestination(pageId, params)` — one of your own pages;
+  the glasses' notification history opens it directly.
+- `eventKey` — your own opaque id for the event (printable ASCII without spaces,
+  at most 128 characters).
+- `conversation = true` — the event is a message in the thread at
+  `destination`; it needs both fields, and that thread's `conversation` page uses
+  the same value as its `threadKey`.
+
+When the event leaves the phone (its notification was removed), call
+`withdrawNotice(eventKey)`: the glasses mark it removed and stop offering a
+reply for that thread. It is not a read or delivery receipt, and it is refused
+with `CAPABILITY_NOT_AVAILABLE` without the bundle.
+
+```kotlin
+nexusClient?.showNotice(
+    NexusNotice(
+        title = "Mika",
+        body = "On se voit à 8h ?",
+        destination = NexusPageDestination("relay:thread:9f2c"),
+        eventKey = "9f2c",
+        conversation = true,
+    ),
+)
+// Later, when Android removes the notification:
+nexusClient?.withdrawNotice("9f2c")
+```
 
 ### Real image surfaces
 
@@ -1643,7 +1800,8 @@ over whatever the wearer was doing: a native app, the Rokid home, or another
 plugin's immersion. It is not an `onNexusOpen` call and never replaces the
 screen underneath. The wearer opens the session with a triple tap, picks your
 plugin's row or card, reads, and goes BACK to exactly where they were. The wire
-contract is BUSSPEC's "Session and page protocol v1".
+contract is BUSSPEC's "Session and page protocol v1", extended by its
+"Launcher bundle v1".
 
 The session is opt-in on the glasses (the default launcher backend is the
 shipped one), and both hubs must negotiate page support. An old phone or glasses
@@ -1664,6 +1822,16 @@ grant is kept.
 
 Any other value means no pages; it never makes the plugin invalid. Template
 pages need the existing `surfaces` grant.
+
+A plugin whose typed actions should be able to run on one tap also declares the
+families it offers. This lets the user approve them on the phone; it approves
+nothing by itself and is not a capability either:
+
+```xml
+<meta-data
+    android:name="rokidbus.plugin.quickActions"
+    android:value="checklist,media" />
+```
 
 ### Callbacks
 
@@ -1723,9 +1891,10 @@ envelope ids; you never write your plugin id or another owner into a page.
 
 ### Templates
 
-`NexusPage.Content(revision, title, body, actions, live)` names one of four
-typed bodies from `com.anezium.rokidbus.shared`. The hub owns layout, selection
-and one-axis navigation.
+`NexusPage.Content(revision, title, body, actions, live)` names one of the
+typed bodies from `com.anezium.rokidbus.shared`: the four below everywhere, and
+three more with the launcher bundle. The hub owns layout, selection and one-axis
+navigation.
 
 | Body | Content |
 |---|---|
@@ -1753,9 +1922,32 @@ When a page becomes unavailable, for a timeout or a lost link, the glasses keep
 its last content readable, dimmed under the failure, with Retry and Back. None
 of its rows or actions can be chosen until a Retry is answered.
 
-`conversation`, `media`, `route` and `ink` are reserved names this hub does not
-draw yet; a page using one shows as unavailable, never as an immersion. There
-is no Ink page body yet.
+Once `supportsLauncherInteractive()` is true, three more bodies are drawn;
+before that the SDK answers a page using one as `INVALID_PAGE`, so keep a base
+template as the fallback. `ink` stays reserved, and there is no Ink page body.
+
+| Body | Content |
+|---|---|
+| `PageBody.Conversation` | `threadKey` (your notices' `eventKey` for the thread); `messages` (`ConversationMessage(id, role, text, sender, status)`, at most 64, oldest first); optional `caption` (the one capture time, 64); optional `composer` |
+| `PageBody.Media` | `title` and `state` (`PLAYING`, `PAUSED`, `STOPPED`, `NONE`, `UNAVAILABLE`); optional `artist`, `album`, `source`, `status`; `controls` (up to 3 action ids in swipe order) and `defaultControl` |
+| `PageBody.Route` | `position` (`RoutePositionQuality`); optional `maneuver` (`RouteManeuver(glyph, distance, street, eta)`), `facts` (6), `follow` and `overview` `RouteGeometry`, `ribbon` (`RouteRibbon(stops, line, between, note)`), `fixAgeS` |
+
+- A message's `role` is `RECEIVED`, `OURS` or `UNKNOWN`, and it alone decides the
+  side; `status` is `HANDED_OFF` or `UNCONFIRMED`. There are no per-message
+  times and no read or delivery marks.
+- `ConversationComposer(recipient, sendActionId, maxChars, replyable, ...)`
+  offers the hub composer (Dictate, Type, Send). `sendActionId` must name one of
+  the page's actions typed `NexusActionType.ComposeSend`, and no row may target
+  that action. `maxChars` is 1..1,000. With `replyable = false` the hub keeps the
+  text but withholds Send, showing your optional `unavailableText` and
+  `unavailableSub`.
+- Media `controls` must name page actions typed `MediaPrevious`, `MediaPlay`,
+  `MediaPause` or `MediaNext`; they are the hub's command strip, not rows.
+- Route geometry follows the activity geometry rules above; the whole page
+  still fits 65,536 bytes.
+
+A row may set `checked = true/false` to draw a checkbox; it is meant for a row
+whose target is an action typed `SetChecked`.
 
 Limits: 64 rows, 16 facts, 240 segments; labels and `primary` 120 characters;
 `sub`, `secondary`, `footer`, `emptyText` and fact values 240; `text` and each
@@ -1766,21 +1958,52 @@ content page the SDK finds invalid is answered as `INVALID_PAGE` instead.
 
 ### Actions
 
-`NexusPageActionSpec(id, label, kind, confirm)` declares an action: label at
-most 24 characters, kind `PLUGIN`, `IMMERSION` or `HUB`. The glasses hub must
-confirm every plugin action with the wearer, Cancel preselected, whatever
+`NexusPageActionSpec(id, label, kind, confirm, typed)` declares an action: label
+at most 24 characters, kind `PLUGIN`, `IMMERSION` or `HUB`. The glasses hub
+confirms a plugin action with the wearer, Cancel preselected, whatever
 `confirm` says, before `onNexusPageAction` is called with a fresh `invocationId`
-and the revision the wearer saw. The SDK delivers an action only for a page it
-answered, at the revision it last sent and for an action that revision declared,
-as encoded when it was sent, while that page is visible under an unexpired
-lease; anything else never reaches your code. A refresh
-request suspends that until your answer to it has gone out, and an Unavailable,
-invalid or below-floor answer, or one that could not be sent, leaves nothing of
-the earlier revision to act on. Return `NexusPageResult.done(message, replacement)`,
+and the revision the wearer saw. There is one exception, between hubs that
+negotiated the launcher bundle: an action whose `typed` is `SetChecked(checked)`
+(family `checklist`) or a media type (family `media`), when your plugin
+declared that family in `rokidbus.plugin.quickActions` and the user approved it
+for your plugin on the phone, runs on one tap. The phone and the glasses check
+the owner, the revision and the type; nobody can check what your callback then
+does, and the user's approval is trust in your plugin, so keep a quick action
+exactly what its type says. Sends, deletes, anything with an external effect,
+untyped actions, immersions and full-app launches are always confirmed, and no
+field of yours can make an action quick. Types state the desired state, never a
+toggle: put the task and the state in the action id (`check:milk:1`) and bind it
+to the revision you sent.
+
+`NexusPageAction.mode` says how the action was reached: `CONFIRMED`, `QUICK`, or
+`COMPOSE` for the composer's Send, which also carries the wearer's `text`.
+`typed` is the type you declared, as you sent it. The SDK delivers an action
+only for a page it answered, at the revision it last sent and for an action that
+revision declared, as encoded when it was sent, in a mode that fits it (quick
+only for a quick-eligible type, compose only for the composer's send action and
+within its `maxChars`), while that page is visible under an unexpired lease;
+anything else never reaches your code. A refresh request suspends that until
+your answer to it has gone out, and an Unavailable, invalid or below-floor
+answer, or one that could not be sent, leaves nothing of the earlier revision to
+act on. Return `NexusPageResult.done(message, replacement)`,
 `.rejected(message)` or `.stale(message)`; a message is at most 64 characters
-and a replacement is the same page at a higher revision. A lost result shows as
+and a replacement is the same page at a higher revision. Each also takes an
+optional `code` (printable ASCII, at most 32); the hub acts on
+`NexusPageResult.CODE_AUTHORITY_LOST` only, for a composer whose reply authority
+is gone: it keeps the text and stops offering Send. A lost result shows as
 unconfirmed and is never resent. `IMMERSION` only opens your own full app, after
 the hub's labelled launch step; `HUB` gives you no hub control.
+
+```kotlin
+override fun onNexusPageAction(action: NexusPageAction): NexusPageResult {
+    val desired = action.typed as? NexusActionType.SetChecked ?: return NexusPageResult.rejected()
+    val taskId = action.actionId.removePrefix("check:").substringBeforeLast(':')
+    val task = tasks[taskId] ?: return NexusPageResult.stale("Task removed")
+    if (action.revision != revision) return NexusPageResult.stale()
+    task.done = desired.checked
+    return NexusPageResult.done(replacement = listPage(++revision))
+}
+```
 
 ### Visibility and live updates
 
@@ -1805,6 +2028,11 @@ changes, at most about two revisions a second; never poll. `NexusPluginClient.su
 whether pages can be served at all: approved with `surfaces`, both hubs on page
 v1 for your plugin, and a usable link (CXR control or the SPP data plane). After
 the link drops it stays false until the hub sends its next page version.
+`supportsLauncherInteractive()` adds the launcher bundle on top: the three new
+bodies, typed actions, quick actions and the composer. Without it, typed actions
+and checked rows are dropped from what you send, and a page with a
+`ComposeSend` action is answered as `INVALID_PAGE`, since a hub without the
+composer would otherwise offer your send as an ordinary confirmed action.
 
 `NexusPageClosed` arrives with `back`, `session_closed`, `timeout`,
 `link_lost`, `replaced` or `frame_limit`; drop that page's state. `link_lost`

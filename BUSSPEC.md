@@ -2900,15 +2900,25 @@ fun startActivity(activity: NexusActivity): NexusSdkResult
 fun updateActivity(
     activity: NexusActivity,
     significant: Boolean = false,
+    urgent: Boolean = false,
 ): NexusSdkResult
 fun endActivity(): NexusSdkResult
 val supportsActivitySurface: Boolean
+
+// Launcher bundle.
+fun supportsLauncherInteractive(): Boolean
+fun sendActivityCommandResult(command: NexusActivityCommand, result: NexusActivityCommandResult): NexusSdkResult
+fun publishActivityGeometry(revision: Long, geometry: RouteGeometry): NexusSdkResult
+fun publishActivityHeading(deg: Double, accuracyDeg: Double? = null): NexusSdkResult
+fun withdrawNotice(eventKey: String): NexusSdkResult
 ```
 
-`NexusPluginCallbacks` receives `onActivityAction(id: String)` and
-`onActivityClosed(reason: String)`. `NexusPluginService` exposes them as
-`onNexusActivityAction(id: String)` and
-`onNexusActivityClosed(reason: String)`.
+`NexusPluginCallbacks` receives `onActivityAction(id: String)`,
+`onActivityCommand(command: NexusActivityCommand): NexusActivityCommandResult?`
+(launcher bundle; its default calls `onActivityAction` and returns null, which
+sends no result) and `onActivityClosed(reason: String)`. `NexusPluginService`
+exposes them as `onNexusActivityAction(id: String)`,
+`onNexusActivityCommand(command)` and `onNexusActivityClosed(reason: String)`.
 
 The typed Ink wrapper is session-scoped because the phone retains compiled
 state between data patches:
