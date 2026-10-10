@@ -27,6 +27,20 @@ def verify(source, expected=EXPECTED):
     return digest
 
 
+def resolve_source(input_path, scratch, config=None):
+    source = pathlib.Path(input_path) if input_path else scratch / 'source.mpp'
+    if input_path:
+        if not source.is_file():
+            raise SystemExit(f'Patch bundle input does not exist: {source}')
+    else:
+        url = config.get('download_url') if config else URL
+        if config and (config.get('unpublished', True) or not url):
+            raise SystemExit('The Reddit preview is unpublished. Pass -PredditPatchBundleInput=/absolute/path/to/source.mpp.')
+        download(url, source)
+    digest = verify(source, config['source_sha256'] if config else EXPECTED)
+    return source, digest
+
+
 def write_prepared(source, dex_files, target):
     # Fixed metadata keeps bundled.mpp, and the hash recorded in bundled.json, identical across builds.
     with zipfile.ZipFile(source) as original, zipfile.ZipFile(target, 'w', zipfile.ZIP_DEFLATED) as prepared:
@@ -49,23 +63,15 @@ def main(argv=None):
     p.add_argument('--pin-file')
     a = p.parse_args(argv)
     config = json.loads(pathlib.Path(a.pin_file).read_text()) if a.pin_file else None
-    expected = config['source_sha256'] if config else EXPECTED
     version = config['version'] if config else VERSION
     stem = config['asset_stem'] if config else 'bundled'
     if stem not in ('bundled', 'reddit'):
         raise SystemExit('Unsupported prepared bundle asset name.')
-    if config and not a.input:
-        raise SystemExit('The Reddit preview is unpublished. Pass -PredditPatchBundleInput=/absolute/path/to/source.mpp.')
     out = pathlib.Path(a.output)
     out.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=out.parent) as scratch:
         scratch = pathlib.Path(scratch)
-        source = pathlib.Path(a.input) if a.input else scratch / 'source.mpp'
-        if a.input and not source.is_file():
-            raise SystemExit(f'patchBundleInput does not exist: {source}')
-        if not a.input:
-            download(URL, source)
-        digest = verify(source, expected)
+        source, digest = resolve_source(a.input, scratch, config)
         with zipfile.ZipFile(source) as original:
             if 'classes.dex' in original.namelist():
                 raise SystemExit('Use the JVM source bundle, before :patches:buildAndroid adds root DEX.')
@@ -91,7 +97,9 @@ def main(argv=None):
         metadata = {'version': version, 'source_sha256': digest,
             'sha256': hashlib.sha256(target.read_bytes()).hexdigest()}
         if config:
-            metadata['unpublished'] = True
+            metadata['unpublished'] = config.get('unpublished', True)
+            if config.get('download_url'):
+                metadata['download_url'] = config['download_url']
         else:
             metadata['download_url'] = URL
         (out / f'{stem}.json').write_text(json.dumps(metadata))

@@ -1,14 +1,15 @@
 # Changelog
 
-## Unreleased — Nexus Skills (plan 024)
+## 1.7.0
 
-Not released. Versions are assigned when this ships. Plugins that publish no
-skill catalog keep working unchanged, and a plugin built with the new SDK
-keeps working on older hubs: every skills call reports the hub as not
-supporting skills instead of sending.
+Update both Nexus hubs together and install Patcher 1.1.0 for the integrated YouTube and Reddit guides. Reddit remains Preview: physical R08 and real Reddit writes have not been validated. This app release does not publish an Assistant update.
+
+Plugins that publish no skill catalog keep working unchanged, and a plugin built with the new SDK keeps working on older hubs: every skills call reports the hub as not supporting skills instead of sending.
 
 ### Phone hub
 
+- Move the complete YouTube/MicroG tutorial and the Reddit tutorial into Patcher's app entries. Glasses apps keeps the installed-app inventory and opening actions, without duplicate setup cards. Keep the handoff caller authenticated and both tutorials private.
+- Add official Reddit 2026.14.0 complete-APKM verification, native installation inventory and the existing explicit auto-keyboard preference for Reddit search and replies. Credentials stay in Reddit.
 - **Skills.** A plugin can publish typed operations in a catalog the hub reads
   without starting it; an approved caller, Assistant first, invokes them
   through the hub. The hub stamps both identities, validates arguments and
@@ -37,6 +38,11 @@ supporting skills instead of sending.
   guidance-to-activity planner Navigation used, now shared.
 - `holdNexusOngoingWork` / `releaseNexusOngoingWork` for an ongoing process
   the wearer started, such as journey guidance.
+
+### Glasses hub
+
+- Preserve the launcher session stack and shared input arbiter, so Back returns through logical stops without trapping users in an app or reopening a dismissed overlay.
+- Keep native Reddit opening and inventory alongside YouTube, with the existing trusted hub-to-hub remote input path.
 
 ## 1.6.0
 

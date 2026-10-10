@@ -7,8 +7,8 @@ android {
         applicationId = "com.anezium.rokidbus.plugin.patcher"
         minSdk = 30
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.1.0"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -103,10 +103,9 @@ val prepareRedditBundle by tasks.registering(Exec::class) {
     val androidJar = File(sdkDirectory, "platforms/android-${android.compileSdk}/android.jar")
     inputs.files(d8Jar, androidJar)
     doFirst {
-        if (!input.isPresent) throw GradleException("Reddit preview is unpublished. Pass -PredditPatchBundleInput=/absolute/path/to/source.mpp; its SHA-256 must match scripts/reddit_bundle_pin.json.")
         if (!d8Jar.isFile || !androidJar.isFile) throw GradleException("Required Android SDK build tools or platform are missing in $sdkDirectory.")
         commandLine(providers.gradleProperty("pythonExecutable").orElse(if (windows) "python" else "python3").get(),
-            file("scripts/prepare_bundle.py"), "--input", input.get(), "--pin-file", pin,
+            file("scripts/prepare_bundle.py"), "--input", input.orNull ?: "", "--pin-file", pin,
             "--output", output.get().asFile,
             "--java", File(System.getProperty("java.home"), if (windows) "bin/java.exe" else "bin/java"),
             "--d8", d8Jar, "--android", androidJar,

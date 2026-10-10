@@ -33,10 +33,13 @@ class RealRedditPatchTest {
                 SigningKey(File(directory, "signing.p12")), timings) {}
             assertTrue(result.length() > 0)
             val dex = DexFileFactory.loadDexContainer(result, Opcodes.getDefault())
-            assertTrue("The patched APK must contain the cold-start Popular factory",
+            for (type in listOf(
+                "Lapp/morphe/extension/reddit/rokid/nativebridge/NativePopular;",
+                "Lapp/morphe/extension/reddit/rokid/RokidRingController;",
+            )) assertTrue("The patched APK must contain $type",
                 dex.dexEntryNames.any { name ->
                     requireNotNull(dex.getEntry(name)).dexFile.classes.any {
-                        it.type == "Lapp/morphe/extension/reddit/rokid/nativebridge/NativePopular;"
+                        it.type == type
                     }
                 })
             ZipFile(result).use { zip ->

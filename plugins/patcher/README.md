@@ -56,14 +56,16 @@ The script runs with `python3`, or `python` on Windows; override it with
 ./gradlew :plugin-patcher:testDebugUnitTest :plugin-patcher:assembleDebug \
   -PskipCxrGlobal=true \
   -PpatchBundleInput=/absolute/path/to/patches-1.39.1-rokid.3.mpp \
-  -PredditPatchBundleInput=/absolute/path/to/reddit-source-preview3.mpp
+  -PredditPatchBundleInput=/absolute/path/to/patches-1.39.1-rokid.3-reddit-preview.25.mpp
 ```
 
-The Reddit preview is unpublished. Its source must be supplied through
-`redditPatchBundleInput` and match `scripts/reddit_bundle_pin.json` exactly.
+Builds download the published Reddit preview source from the URL in
+`scripts/reddit_bundle_pin.json` and verify its exact SHA-256. For offline
+builds, supply that same source through `redditPatchBundleInput`.
 The extra preparation task uses SDK D8 to create `reddit.mpp` and `reddit.json`;
 YouTube keeps the published `bundled.mpp`, its existing SHA-256 pin and updater.
-Reddit has no remote updater until an actual prepared release is published.
+Reddit bundle updates are delivered through Patcher updates; its runtime remote
+bundle updater remains disabled.
 Do not supply a source already processed by `:patches:buildAndroid`: that task
 adds root DEX; use the JVM source from `:patches:jar`.
 
@@ -142,10 +144,10 @@ Run the host script tests and the plugin test/build commands above against the n
 fixture. Changing the patcher API also requires reviewing `build.gradle.kts`,
 `PatchPolicy.requireDex` and the observed writer/milestone contracts. Keep stock
 signer checks, read-only bundle installation and hub revalidation intact.
-Reddit's separate unpublished source pin lives in `scripts/reddit_bundle_pin.json`
+Reddit's separate source pin lives in `scripts/reddit_bundle_pin.json`
 and `PatchTargets.reddit.bundle.pinnedSourceSha256`; update both together. Its
-preview label does not represent a published Morphe release. The current preview
-does not alter the YouTube pin or publish the fork.
+preview label describes hardware and server-write validation limits even when
+the patch bundle is published. The Reddit release does not alter the YouTube pin.
 
 ## Releases
 
@@ -153,10 +155,11 @@ Follows [plugins/README.md § Releases](../README.md#releases): push the tag
 `patcher-v<versionName>` (for example `patcher-v1.0.0`) after setting
 `versionName` and adding the matching `CHANGELOG.md` section. The release asset is
 `patcher-phone-release.apk`. The release build downloads the pinned bundle and
-needs the GitHub Packages credentials above. The unpublished Reddit preview
-also requires its exact local source input; the current release workflow cannot
-fetch that preview. Publishing a real source asset and updating its build input
-is a separate release step.
+needs the GitHub Packages credentials above. Both source bundles have published,
+SHA-256-pinned build inputs, so release CI does not depend on a local Reddit file.
+Only patch bundles and the Patcher APK are release assets; obtain the official
+Reddit APKM yourself through its setup guide. Reddit remains Preview: app-side
+R08 transport is integrated, while physical ring and real server writes are unverified.
 
 ## Usage and safeguards
 

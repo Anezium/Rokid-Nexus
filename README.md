@@ -47,7 +47,7 @@ grants one at a time and can take back.
 | **[Lyrics](plugins/lyrics/)** | Time-synced lyrics for whatever is playing on the phone, from Spotify/Musixmatch/Netease/LrcLib |
 | **[Media Deck](plugins/media/)** | Universal now-playing surface with album art and transport controls |
 | **[Photos Sync](plugins/photosync/)** | Not a HUD plugin: copies the photos and videos you shoot on the glasses into the phone gallery by itself, and gives you the switches for it |
-| **[Patcher](plugins/patcher/)** | Phone-only APK patching; YouTube is its first target. Runs in the background and returns verified output to the hub for installation |
+| **[Patcher](plugins/patcher/)** | Phone-only APK patching for YouTube and Reddit (Preview), with both guided setups in Patcher. Runs locally and returns verified output to the hub for installation |
 | **[Wireless ADB](plugins/wireless-adb/)** | Enables Android's real wireless debugging service and creates a short-lived pairing command, so a trusted computer can connect to the glasses over the LAN without a cable or Settings automation |
 | **[Tasker](plugins/tasker/)** | Your named Tasker tasks on the HUD — swipe, tap, and the phone runs the automation. The glasses are the remote, Tasker does the work |
 | **[Sample](plugins/sample/)** | Minimal copyable reference plugin |
