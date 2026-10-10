@@ -1,11 +1,18 @@
 package com.anezium.rokidbus.glasses.session
 
+import com.anezium.rokidbus.shared.PageSurfaceContract
 import com.anezium.rokidbus.shared.PageSurfaceResponse
 
 /** What SELECT does on a selectable row of a frame. */
 internal sealed interface PageItem {
     data class OpenPage(val pageId: String, val paramsJson: String? = null) : PageItem
     data class Invoke(val actionId: String) : PageItem
+
+    /**
+     * A typed plugin action the user approved to run on one tap: it is invoked in quick mode,
+     * with no confirmation, once the fresh-contact rule holds. Only [QuickGate] makes one.
+     */
+    data class Quick(val actionId: String, val label: String) : PageItem
 
     /** Opens [pluginId]'s immersion at once. Only an injected resolver produces it. */
     data class Launch(val pluginId: String) : PageItem
@@ -18,6 +25,12 @@ internal sealed interface PageItem {
 
     /** A hub-authored local launch (a native app, the hub camera); never a provider's target. */
     data class LocalLaunch(val key: String, val label: String) : PageItem
+
+    /**
+     * An entry of the hub's Activities page: SELECT does what tapping its card does (opens its
+     * destination, focuses its commands, or opens its summary). Only a hub-authored page has one.
+     */
+    data class Activity(val ownerPluginId: String) : PageItem
     data object Retry : PageItem
     data object Back : PageItem
     data object Inert : PageItem
@@ -45,18 +58,28 @@ internal fun interface PageItemResolver {
 
     /** Whether the page's typed body can be drawn here at all; checked before it is ever shown. */
     fun accepts(page: PageSurfaceResponse.Page): Boolean = true
+
+    /**
+     * The keys of a page's control strip (a media page's controls), in swipe order, with the one
+     * a first tap focuses; null for a page without one. Its rows come first among [entries].
+     */
+    fun controls(page: PageSurfaceResponse.Page): PageControls? = null
 }
+
+/** A page's control strip: [keys] are entry keys in swipe order, [defaultKey] is focused first. */
+internal data class PageControls(val keys: List<String>, val defaultKey: String)
 
 /** A selectable row: what SELECT does, under a key that names the row across revisions. */
 internal data class PageEntry(val key: String, val item: PageItem, val label: String = "")
 
 /**
- * Until template rendering lands, only a `plugin` action without confirmation
- * is invokable. Confirmation, `hub` and `immersion` rows stay inert rather than
- * sending something the wearer did not confirm.
+ * The resolver a reducer gets when none is injected. Every `plugin` action is confirmed first,
+ * whatever its `confirm` flag says, exactly as the typed resolver confirms it: a reducer built
+ * without the host's resolver must never run a plugin action the wearer did not confirm. With no
+ * quick-action gate here, no action is ever quick. `hub` and `immersion` rows stay inert.
  */
 internal object DefaultPageItems : PageItemResolver {
     override fun items(page: PageSurfaceResponse.Page): List<PageItem> = page.actions.map {
-        if (it.kind == "plugin" && !it.confirm) PageItem.Invoke(it.id) else PageItem.Inert
+        if (it.kind == PageSurfaceContract.KIND_PLUGIN) PageItem.Confirm(it.id, it.label) else PageItem.Inert
     }
 }

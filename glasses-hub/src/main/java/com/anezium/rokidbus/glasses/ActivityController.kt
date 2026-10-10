@@ -12,6 +12,7 @@ import com.anezium.rokidbus.shared.ActivitySurfacePatchResult
 import com.anezium.rokidbus.shared.ActivitySurfaceValidationResult
 import com.anezium.rokidbus.shared.BusEnvelope
 import com.anezium.rokidbus.shared.BusPaths
+import com.anezium.rokidbus.shared.LauncherInteractiveContract
 import com.anezium.rokidbus.shared.PinSurfacePosition
 import java.util.concurrent.CopyOnWriteArrayList
 
@@ -38,8 +39,27 @@ internal data class ActivityRenderItem(
     val urgent: Boolean = false,
 )
 
+/**
+ * One collection entry, with or without an island: the session lists them all. [primary] marks
+ * the entry whose island is the expanded one.
+ */
+internal data class ActivityEntry(
+    val surfaceId: String,
+    val ownerPluginId: String,
+    val seq: Long,
+    val content: ActivitySurfaceContent,
+    val primary: Boolean,
+    val startedOrder: Long,
+    val lastSignificantOrder: Long?,
+)
+
+/**
+ * [items] are the corner islands: the primary and at most one other live entry. [collection] is
+ * every entry the glasses hold, offline ones included, in start order.
+ */
 internal data class ActivityRenderState(
     val items: List<ActivityRenderItem> = emptyList(),
+    val collection: List<ActivityEntry> = emptyList(),
 ) {
     val primary: ActivityRenderItem?
         get() = items.firstOrNull(ActivityRenderItem::primary)
@@ -90,10 +110,18 @@ internal class ActivityStateMachine {
     private var motionToken = 0L
     private var corners = emptyMap<String, PinSurfacePosition>()
 
+    /**
+     * How many entries the collection holds: [ActivitySurfaceContract.MAX_COLLECTION_ACTIVITIES]
+     * over a pair that negotiated the launcher bundle, else the v1 two.
+     */
+    var capacity: Int = ActivitySurfaceContract.MAX_ACTIVE_ACTIVITIES
+        private set
+
     fun surfaceIds(): Set<String> = residents.keys.toSet()
 
+    /** The expanded island's entry: offline entries never hold one. */
     fun primarySurfaceId(): String? = selectPrimaryActivity(
-        residents.values.map {
+        residents.values.filterNot { it.content.isOffline }.map {
             ActivityPrimaryCandidate(
                 activityId = it.surfaceId,
                 startedOrder = it.startedOrder,
@@ -102,6 +130,22 @@ internal class ActivityStateMachine {
         },
     )
 
+    /**
+     * A capacity drop trims the collection in eviction order. The phone, which is authoritative,
+     * trims and tells the evicted owners first; this only keeps the glasses within bounds.
+     */
+    fun setCapacity(next: Int): List<String> {
+        capacity = next.coerceAtLeast(1)
+        val evicted = mutableListOf<String>()
+        while (residents.size > capacity) {
+            val id = evictionCandidate()
+            residents.remove(id)
+            corners = corners - id
+            evicted += id
+        }
+        return evicted
+    }
+
     fun start(
         surfaceId: String,
         ownerPluginId: String,
@@ -109,13 +153,13 @@ internal class ActivityStateMachine {
         content: ActivitySurfaceContent,
         nowMs: Long,
     ): ActivityMutation {
+        // Defence in depth: a destination is only ever one of the owner's own pages.
+        if (!ActivitySurfaceContract.destinationAllowed(content, ownerPluginId)) return ActivityMutation.Ignored
         if (isStale(surfaceId, seq)) return ActivityMutation.DroppedStale
         latestSeqBySurface[surfaceId] = seq
 
         var replacedSurfaceId: String? = null
-        if (surfaceId !in residents &&
-            residents.size >= ActivitySurfaceContract.MAX_ACTIVE_ACTIVITIES
-        ) {
+        if (surfaceId !in residents && residents.size >= capacity) {
             replacedSurfaceId = evictionCandidate()
             residents.remove(replacedSurfaceId)
             corners = corners - replacedSurfaceId
@@ -159,6 +203,13 @@ internal class ActivityStateMachine {
         latestSeqBySurface[surfaceId] = seq
         val current = residents[surfaceId] ?: return ActivityMutation.Ignored
         val content = patch.applyTo(current.content)
+        // An offline entry comes back only through a fresh start, never an update.
+        if (current.content.isOffline && !content.isOffline) return ActivityMutation.Ignored
+        if (ActivitySurfaceContract.interactiveProblem(content) != null ||
+            !ActivitySurfaceContract.destinationAllowed(content, current.ownerPluginId)
+        ) {
+            return ActivityMutation.Ignored
+        }
         val selectedId = current.content.actions
             .getOrNull(current.selectedActionIndex)
             ?.id
@@ -291,14 +342,15 @@ internal class ActivityStateMachine {
         eventUrgent: Boolean = false,
     ): ActivityRenderState {
         val ordered = residents.values.sortedBy(Resident::startedOrder)
+        val primary = primarySurfaceId()
+        val islands = islandIds(primary)
         corners = allocateActivityCorners(
-            activityIdsInOrder = ordered.map(Resident::surfaceId),
-            existing = corners,
+            activityIdsInOrder = ordered.map(Resident::surfaceId).filter { it in islands },
+            existing = corners.filterKeys { it in islands },
             pinCorner = pinCorner,
         )
-        val primary = primarySurfaceId()
         return ActivityRenderState(
-            ordered.mapNotNull { resident ->
+            items = ordered.filter { it.surfaceId in islands }.mapNotNull { resident ->
                 val corner = corners[resident.surfaceId] ?: return@mapNotNull null
                 val presentation = when {
                     context == ActivityPresentationContext.CAMERA_OVERLAY ->
@@ -338,7 +390,35 @@ internal class ActivityStateMachine {
                         presentation == ActivityPresentation.FLARE,
                 )
             },
+            collection = ordered.map {
+                ActivityEntry(
+                    surfaceId = it.surfaceId,
+                    ownerPluginId = it.ownerPluginId,
+                    seq = it.seq,
+                    content = it.content,
+                    primary = it.surfaceId == primary,
+                    startedOrder = it.startedOrder,
+                    lastSignificantOrder = it.lastSignificantOrder,
+                )
+            },
         )
+    }
+
+    /**
+     * The entries that get a corner island: the primary and one other live entry, the wearer's
+     * pin first, then the latest significant update, then the earliest start. Never an offline one.
+     */
+    private fun islandIds(primary: String?): Set<String> {
+        val other = residents.values
+            .filter { !it.content.isOffline && it.surfaceId != primary }
+            .sortedWith(
+                compareByDescending<Resident> { it.content.userPinned }
+                    .thenByDescending { it.lastSignificantOrder ?: Long.MIN_VALUE }
+                    .thenBy { it.startedOrder }
+                    .thenBy { it.ownerPluginId },
+            )
+            .firstOrNull()
+        return setOfNotNull(primary, other?.surfaceId)
     }
 
     fun moveSelection(surfaceId: String, delta: Int, nowMs: Long): Boolean {
@@ -368,17 +448,22 @@ internal class ActivityStateMachine {
     private fun isStale(surfaceId: String, seq: Long): Boolean =
         seq <= globalClearSeq || seq <= (latestSeqBySurface[surfaceId] ?: Long.MIN_VALUE)
 
+    /**
+     * Who leaves when a newcomer finds the collection full (plan 028a §1.3), first match wins:
+     * the oldest offline entry, then the least recently updated unpinned live entry that is not
+     * the primary, then the unpinned primary, then the least recently updated pinned entry.
+     */
     private fun evictionCandidate(): String {
         val primary = primarySurfaceId()
-        return residents.values
-            .filter { it.surfaceId != primary }
-            .ifEmpty { residents.values.toList() }
-            .minWith(
-                compareBy<Resident> { it.lastUpdatedOrder }
-                    .thenBy { it.startedOrder }
-                    .thenBy { it.surfaceId },
-            )
-            .surfaceId
+        val recency = compareBy<Resident> { it.lastUpdatedOrder }.thenBy { it.startedOrder }.thenBy { it.surfaceId }
+        val all = residents.values.toList()
+        all.filter { it.content.isOffline }
+            .minWithOrNull(compareBy<Resident> { it.content.knownAtWallMs ?: Long.MIN_VALUE }.then(recency))
+            ?.let { return it.surfaceId }
+        val unpinned = all.filter { !it.content.userPinned }
+        unpinned.filter { it.surfaceId != primary }.minWithOrNull(recency)?.let { return it.surfaceId }
+        unpinned.firstOrNull { it.surfaceId == primary }?.let { return it.surfaceId }
+        return all.minWith(recency).surfaceId
     }
 
     private fun collapseState(
@@ -440,6 +525,7 @@ internal object ActivityController {
     private var pinUnsubscribe: (() -> Unit)? = null
     private var cameraOverlayActive = false
     private var latestRender = ActivityRenderState()
+    private var launcherVersion = 0
 
     fun onServiceConnected(context: Context) {
         runOnMain {
@@ -507,9 +593,23 @@ internal object ActivityController {
 
     fun isPresenting(): Boolean = latestRender.primary != null
 
+    /**
+     * The pair's launcher-bundle version changed: the collection takes its capacity, and the
+     * phone's stamps are read only while it is negotiated.
+     */
+    fun onLauncherNegotiated(version: Int) {
+        runOnMain {
+            if (version == launcherVersion) return@runOnMain
+            launcherVersion = version
+            val evicted = state.setCapacity(ActivitySurfaceContract.effectiveCollectionCapacity(version))
+            if (evicted.isNotEmpty()) log("activity collection trimmed count=${evicted.size}")
+            publish()
+        }
+    }
+
     private fun start(envelope: BusEnvelope) {
         val payload = envelope.payload
-        val validation = ActivitySurfaceContract.validateStart(payload)
+        val validation = ActivitySurfaceContract.validateStart(payload, hubStamps = LauncherInteractiveContract.isActive(launcherVersion))
         if (validation !is ActivitySurfaceValidationResult.Valid) {
             log("activity rejected code=${ActivitySurfaceContract.ERROR_INVALID_ACTIVITY}")
             return
@@ -542,7 +642,7 @@ internal object ActivityController {
 
     private fun update(context: Context, envelope: BusEnvelope) {
         val payload = envelope.payload
-        val validation = ActivitySurfaceContract.validateUpdate(payload)
+        val validation = ActivitySurfaceContract.validateUpdate(payload, hubStamps = LauncherInteractiveContract.isActive(launcherVersion))
         if (validation !is ActivitySurfacePatchResult.Valid) {
             log("activity update rejected code=${ActivitySurfaceContract.ERROR_INVALID_ACTIVITY}")
             return
