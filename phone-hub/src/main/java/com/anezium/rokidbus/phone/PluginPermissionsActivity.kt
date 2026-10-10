@@ -16,6 +16,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import com.anezium.rokidbus.client.ui.BusTheme
+import com.anezium.rokidbus.shared.QuickActionFamily
 import com.anezium.rokidbus.shared.plugin.PluginCapability
 
 class PluginPermissionsActivity : Activity() {
@@ -178,6 +179,12 @@ class PluginPermissionsActivity : Activity() {
                 card.addView(assistantTakeoverRow(), NexusUi.block())
                 card.addView(BusTheme.gap(this, 8))
             }
+            if (capability == PluginCapability.SURFACES && live && capability in selected) {
+                activityRows(principal).forEach { row ->
+                    card.addView(row, NexusUi.block())
+                    card.addView(BusTheme.gap(this, 8))
+                }
+            }
         }
 
         if (developerDetails) {
@@ -233,6 +240,93 @@ class PluginPermissionsActivity : Activity() {
                 NexusUi.block(),
             )
         }
+    }
+
+    /**
+     * The everyday choices under the `surfaces` grant: whether this plugin's activity shows,
+     * whether it is pinned, and which declared quick-action families run on one tap. None of
+     * them goes through [applyDecision]: that path tears the plugin down, these only re-send its
+     * activity and the glasses' quick-action policy.
+     */
+    private fun activityRows(principal: PhonePluginPrincipal): List<LinearLayout> {
+        val key = principal.grantKey()
+        val preferences = PhoneActivityPreferences.shared(applicationContext)
+        val preference = preferences.preferenceFor(key)
+        val rows = mutableListOf(
+            switchRow(
+                title = "Show its activity on the glasses",
+                note = "Off ends the activity it shows now and refuses new ones.",
+                checked = preference.enabled,
+            ) { checked ->
+                preferences.setEnabled(key, checked)
+                BusHubService.onActivityPreferencesChanged(key)
+            },
+            switchRow(
+                title = "Pin its activity",
+                note = "Kept first and never replaced by another plugin's. Stays as last known when the plugin stops.",
+                checked = preference.pinned,
+            ) { checked ->
+                preferences.setPinned(key, checked)
+                BusHubService.onActivityPreferencesChanged(key)
+            },
+        )
+        val quickPolicy = PluginQuickActionPolicyStore.shared(applicationContext)
+        val approved = quickPolicy.approvedFamilies(key)
+        principal.descriptor.quickActionFamilies.sortedBy { it.wireValue }.forEach { family ->
+            val title = when (family) {
+                QuickActionFamily.CHECKLIST -> "One-tap checklist actions"
+                QuickActionFamily.MEDIA -> "One-tap media controls"
+            }
+            rows += switchRow(
+                title = title,
+                note = QUICK_ACTION_NOTE,
+                checked = family in approved,
+            ) { checked ->
+                if (quickPolicy.setApproved(principal, family, checked)) {
+                    BusHubService.onQuickActionPolicyChanged(key)
+                }
+            }
+        }
+        return rows
+    }
+
+    private fun switchRow(
+        title: String,
+        note: String,
+        checked: Boolean,
+        onChanged: (Boolean) -> Unit,
+    ): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        addView(
+            LinearLayout(this@PluginPermissionsActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                addView(
+                    TextView(this@PluginPermissionsActivity).apply {
+                        text = title
+                        textSize = 13f
+                        setTextColor(NexusUi.INK)
+                    },
+                )
+                addView(
+                    TextView(this@PluginPermissionsActivity).apply {
+                        text = note
+                        textSize = 10f
+                        setTextColor(NexusUi.INK3)
+                    },
+                )
+            },
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+        )
+        addView(
+            NexusUi.switch(this@PluginPermissionsActivity).apply {
+                isChecked = checked
+                setOnCheckedChangeListener { _, value ->
+                    onChanged(value)
+                    render()
+                }
+            },
+        )
     }
 
     private fun applyDecision(principal: PhonePluginPrincipal, decision: () -> Unit) {
@@ -457,6 +551,9 @@ class PluginPermissionsActivity : Activity() {
         private const val EXTRA_PLUGIN_ID = "plugin_id"
         private const val PREFERENCES = "plugin_access_ui"
         private const val KEY_DEVELOPER_DETAILS = "developer_details"
+        private const val QUICK_ACTION_NOTE =
+            "One tap runs these actions without a confirmation. Nexus checks the owner, the revision " +
+                "and the action type, but cannot verify what the plugin's code does."
 
         fun intent(context: Context, target: PluginGrantTarget): Intent =
             Intent(context, PluginPermissionsActivity::class.java)

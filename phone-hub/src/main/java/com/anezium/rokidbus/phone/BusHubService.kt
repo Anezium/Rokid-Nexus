@@ -46,8 +46,12 @@ import com.anezium.rokidbus.shared.ImageSurfaceContract
 import com.anezium.rokidbus.shared.SetupNoteContract
 import com.anezium.rokidbus.shared.ImageSurfaceMetadata
 import com.anezium.rokidbus.shared.ImageSurfaceValidationResult
+import com.anezium.rokidbus.shared.LauncherInteractiveContract
 import com.anezium.rokidbus.shared.LinkStateBits
 import com.anezium.rokidbus.shared.MediaArtworkContract
+import com.anezium.rokidbus.shared.QuickActionFamily
+import com.anezium.rokidbus.shared.QuickActionPolicy
+import com.anezium.rokidbus.shared.QuickActionPolicyContract
 import com.anezium.rokidbus.shared.NativeAppContract
 import com.anezium.rokidbus.shared.PhoneHubCapabilities
 import com.anezium.rokidbus.shared.NoticeSurfaceContract
@@ -282,12 +286,47 @@ class BusHubService : Service() {
         postExpiry = { delay -> pinHandler.postDelayed(pinExpiryTick, delay) },
         cancelExpiry = { pinHandler.removeCallbacks(pinExpiryTick) },
     )
+    /** The user's per-plugin activity choices and quick approvals, read by owner id at each check. */
+    private val activityOwnerPolicy = object : PhoneActivityOwnerPolicy {
+        override fun isEnabled(ownerPluginId: String): Boolean {
+            if (!::activityPreferences.isInitialized) return true
+            val key = surfaceOwnerFor(ownerPluginId)?.grantKey() ?: return true
+            return activityPreferences.preferenceFor(key).enabled
+        }
+
+        override fun isPinned(ownerPluginId: String): Boolean {
+            if (!::activityPreferences.isInitialized) return false
+            val key = surfaceOwnerFor(ownerPluginId)?.grantKey() ?: return false
+            return activityPreferences.preferenceFor(key).pinned
+        }
+
+        override fun quickFamilies(ownerPluginId: String): Set<QuickActionFamily> {
+            if (!::quickActionPolicyStore.isInitialized) return emptySet()
+            val principal = surfaceOwnerFor(ownerPluginId) ?: return emptySet()
+            return quickActionPolicyStore.effectiveFamilies(principal)
+        }
+    }
     private val activityRouter: PhoneActivityRouter = PhoneActivityRouter(
-        state = PhoneActivityState(nowMs = { SystemClock.elapsedRealtime() }),
+        state = PhoneActivityState(
+            nowMs = { SystemClock.elapsedRealtime() },
+            launcherVersion = { remoteLauncherInteractiveVersion },
+            policy = activityOwnerPolicy,
+        ),
         sink = hudRouteSink,
         nowMs = SystemClock::elapsedRealtime,
         postExpiry = { delay -> activityHandler.postDelayed(activityExpiryTick, delay) },
         cancelExpiry = { activityHandler.removeCallbacks(activityExpiryTick) },
+        launcher = object : PhoneActivityLauncherHost {
+            override fun registrationCount(pluginId: String): Int =
+                registrations.count { it.principal?.descriptor?.id == pluginId }
+
+            override fun dataPlaneUp(): Boolean = sppSession != null
+
+            override fun sendDataPlane(envelope: BusEnvelope): String? = this@BusHubService.sendDataPlane(envelope)
+
+            override fun persistOffline(snapshots: List<Pair<String, JSONObject>>) =
+                this@BusHubService.persistOfflineActivities(snapshots)
+        },
     )
     private val surfaceRouter = PhoneSurfaceRouter(
         sink = hudRouteSink,
@@ -379,9 +418,19 @@ class BusHubService : Service() {
                 atMs?.let { pageHandler.postAtTime(pageTick, it) }
             }
             override fun log(message: String) = this@BusHubService.log(message)
+            override fun quickFamilies(principal: PhonePluginPrincipal): Set<QuickActionFamily> =
+                if (::quickActionPolicyStore.isInitialized) quickActionPolicyStore.effectiveFamilies(principal) else emptySet()
         },
         localVersion = ANNOUNCED_PAGE_SESSION_VERSION,
+        localLauncherVersion = LauncherInteractiveContract.VERSION,
     )
+    private val surfaceOwnerCache = ConcurrentHashMap<String, java.util.Optional<PhonePluginPrincipal>>()
+    private lateinit var activityPreferences: PhoneActivityPreferences
+    private lateinit var quickActionPolicyStore: PluginQuickActionPolicyStore
+    private lateinit var activitySnapshotStore: PhoneActivitySnapshotStore
+
+    /** Rises across hub restarts, so glasses never keep an older policy over a newer one. */
+    private val quickPolicyRevision = AtomicLong(System.currentTimeMillis())
     private lateinit var cameraConsumerReadiness: CameraConsumerReadiness
     private lateinit var cameraCompanionController: CameraCompanionController
     private lateinit var pluginGuardianCoordinator: PluginGuardianCoordinator
@@ -415,6 +464,12 @@ class BusHubService : Service() {
     @Volatile private var remoteNoticeSurfaceVersion = 0
     @Volatile private var remoteActivitySurfaceVersion = 0
     @Volatile private var remoteActivityExtrasVersion = 0
+
+    /**
+     * The launcher bundle version negotiated with the glasses; null until any glasses announced
+     * since the hub started. Kept across link loss like activity support.
+     */
+    @Volatile private var remoteLauncherInteractiveVersion: Int? = null
     @Volatile private var remoteInkSurfaceVersion = 0
     @Volatile private var remoteEditableSurfaceVersion = 0
     @Volatile private var remoteMaxImageBytes = 0
@@ -876,12 +931,19 @@ class BusHubService : Service() {
         pluginDiscovery = PhonePluginDiscovery(packageManager)
         pluginGrantStore = PluginGrantStore(applicationContext)
         assistantTakeoverStore = AssistantTakeoverStore(applicationContext)
+        activityPreferences = PhoneActivityPreferences.shared(applicationContext)
+        quickActionPolicyStore = PluginQuickActionPolicyStore.shared(applicationContext)
+        activitySnapshotStore = PhoneActivitySnapshotStore(applicationContext)
         registryClient = RegistryClient.create(applicationContext)
         pluginGrantReconciler = PluginGrantReconciler(
             discoverCandidates = pluginDiscovery::discover,
             reconcileGrants = pluginGrantStore::reconcile,
         )
-        executor.execute { pluginGrantReconciler.reconcile() }
+        executor.execute {
+            val reconciliation = pluginGrantReconciler.reconcile()
+            retainActivityChoices(reconciliation.validPrincipals)
+            restoreOfflineActivities(reconciliation.validPrincipals)
+        }
         pluginGuardianCoordinator = PluginGuardianCoordinator(
             context = applicationContext,
             targetProvider = ::approvedGuardianTargets,
@@ -1480,7 +1542,11 @@ class BusHubService : Service() {
         if (envelope.path == BusPaths.HUB_CAPABILITIES) {
             recordRemoteRoute(envelope, PluginBusJournal.Verdict.OK)
             updateRemoteCapabilities(envelope.payload)
-            pageBroker.onGlassesCapabilities(GlassesHubCapabilitiesContract.parse(envelope.payload).pageSessionVersion)
+            val advertised = GlassesHubCapabilitiesContract.parse(envelope.payload)
+            pageBroker.onGlassesCapabilities(
+                advertised.pageSessionVersion,
+                GlassesHubCapabilitiesContract.negotiatedLauncherInteractiveVersion(advertised),
+            )
             // The glasses re-announce on every transport-up, including after a hub restart that
             // wiped their photo-sync consent. Re-push it on the same edge.
             if (::mediaSyncCoordinator.isInitialized) {
@@ -2494,6 +2560,7 @@ class BusHubService : Service() {
 
     private fun revokePrincipal(key: PluginGrantKey) {
         pageProviderCache.clear()
+        surfaceOwnerCache.clear()
         pageBroker.onProviderUnavailable(key.pluginId)
         if (::cameraCompanionController.isInitialized) cameraCompanionController.onRevoked(key)
         if (::externalPluginController.isInitialized) externalPluginController.onRevoked(key)
@@ -2507,6 +2574,7 @@ class BusHubService : Service() {
 
     private fun authorizationChanged(key: PluginGrantKey) {
         revokePrincipal(key)
+        purgeActivityChoicesUnlessApproved(key)
         cameraConsumerReadiness.recompute()
         refreshMediaSyncConsent()
         notifyLinkState()
@@ -2541,8 +2609,10 @@ class BusHubService : Service() {
 
     private fun reconcilePluginPackage(packageName: String, action: String?, replacing: Boolean) {
         pageProviderCache.clear()
+        surfaceOwnerCache.clear()
         val reconciliation = pluginGrantReconciler.reconcile()
         val validPrincipals = reconciliation.validPrincipals
+        retainActivityChoices(validPrincipals)
         handleSideloadNotification(packageName, action, replacing, reconciliation.candidates)
         cameraConsumerReadiness.recompute()
         refreshMediaSyncConsent()
@@ -5027,6 +5097,8 @@ class BusHubService : Service() {
             hudTopInsetDp = hudPosition.hudTopInsetDp(),
             hudPositionAuto = hudPosition.hudPositionAuto(),
             pageSessionVersion = ANNOUNCED_PAGE_SESSION_VERSION,
+            launcherInteractiveVersion = LauncherInteractiveContract.VERSION,
+            launcherBackend = PhoneLauncherBackendStore(this).choice().wireValue,
         )
         if (announced == lastAnnouncedPhoneCapabilities) return
         val envelope = BusEnvelope(
@@ -5086,6 +5158,11 @@ class BusHubService : Service() {
             if (remoteActivityExtrasVersion == ActivitySurfaceContract.EXTRAS_VERSION) {
                 capabilities = capabilities or BusCapabilityBits.ACTIVITY_EXTRAS
             }
+        }
+        // Like the extras: a property of the glasses, kept across link loss, and only when both
+        // hubs negotiated the bundle, so a plugin never sends its fields to glasses that drop them.
+        if (remoteLauncherInteractiveVersion?.let(LauncherInteractiveContract::isActive) == true) {
+            capabilities = capabilities or BusCapabilityBits.LAUNCHER_INTERACTIVE
         }
         // Same reasoning as the notice gate above: a card opened to type into is a
         // live interactive moment, not state a plugin can just resend once the
@@ -5151,6 +5228,8 @@ class BusHubService : Service() {
             } else {
                 0
             }
+        // Set before the activity resend below: its stamps, capacity and trim follow this version.
+        remoteLauncherInteractiveVersion = GlassesHubCapabilitiesContract.negotiatedLauncherInteractiveVersion(advertised)
         remoteInkSurfaceVersion = acceptedInkVersion
         remoteEditableSurfaceVersion = if (editableSupported) EditableSurfaceContract.VERSION else 0
         remoteMaxImageBytes = if (imageSupported) advertised.maxImageBytes else 0
@@ -5189,12 +5268,139 @@ class BusHubService : Service() {
             "renderer capabilities image=$imageSupported pin=$pinSupported " +
                 "notice=${advertised.features and BusCapabilityBits.NOTICE_SURFACE != 0} " +
                 "activity=$activitySupported " +
+                "launcher=$remoteLauncherInteractiveVersion " +
                 "maxImageBytes=$remoteMaxImageBytes",
         )
         // Link bits may be unchanged; repeat the callback so clients refresh capabilities().
         notifyLinkState()
         if (pinSupported) pinRouter.resendIfAvailable()
         if (activitySupported) activityRouter.resendIfAvailable()
+        // The glasses keep only the latest policy they were sent; a fresh glasses session has none.
+        executor.execute { pushQuickActionPolicy() }
+    }
+
+    /**
+     * Sends the user's quick-action approvals to glasses that negotiated the launcher bundle, on
+     * their announce and on every change. Only approved `surfaces` owners and only families they
+     * still declare are listed; the glasses' check is never the only one, the phone re-checks.
+     */
+    private fun pushQuickActionPolicy() {
+        if (!::quickActionPolicyStore.isInitialized || !::pluginGrantStore.isInitialized) return
+        if (remoteLauncherInteractiveVersion?.let(LauncherInteractiveContract::isActive) != true) return
+        synchronized(quickPolicyRevision) {
+            val approvals = installedPluginPrincipals()
+                .filter { principal ->
+                    (pluginGrantStore.stateFor(principal) as? PluginGrantState.Approved)
+                        ?.capabilities?.contains(PluginCapability.SURFACES) == true
+                }
+                .associate { it.descriptor.id to quickActionPolicyStore.effectiveFamilies(it) }
+                .filterValues { it.isNotEmpty() }
+            val policy = QuickActionPolicy(quickPolicyRevision.incrementAndGet(), approvals)
+            val error = sendRemote(
+                BusEnvelope(
+                    path = BusPaths.CORE_POLICY_QUICK_ACTIONS,
+                    payload = QuickActionPolicyContract.toPayload(policy),
+                ),
+            )
+            if (error == null) {
+                log("quick-action policy sent revision=${policy.revision} plugins=${approvals.size}")
+            } else {
+                log("quick-action policy not sent code=$error")
+            }
+        }
+    }
+
+    /** Sends over SPP only: never CXR control and never queued. Route geometry and heading ride it. */
+    private fun sendDataPlane(envelope: BusEnvelope): String? {
+        if (sppSession == null || !writeSpp(envelope)) {
+            recordRemoteTransport(envelope, PluginBusJournal.Verdict.REJECTED, "NO_DATA_PLANE")
+            return "NO_DATA_PLANE"
+        }
+        recordRemoteTransport(envelope, PluginBusJournal.Verdict.OK, "SPP")
+        return null
+    }
+
+    /**
+     * The approved principal behind [pluginId] with `surfaces` granted, page provider or not.
+     * Cached until packages or grants change, like [pageProviderFor].
+     */
+    private fun surfaceOwnerFor(pluginId: String): PhonePluginPrincipal? {
+        if (!::pluginGrantStore.isInitialized || !::pluginDiscovery.isInitialized) return null
+        return surfaceOwnerCache.getOrPut(pluginId) {
+            java.util.Optional.ofNullable(
+                installedPluginPrincipals().singleOrNull { principal ->
+                    principal.descriptor.id == pluginId &&
+                        (pluginGrantStore.stateFor(principal) as? PluginGrantState.Approved)
+                            ?.capabilities?.contains(PluginCapability.SURFACES) == true
+                },
+            )
+        }.orElse(null)
+    }
+
+    /** Mirrors the activity tier's offline entries into their store, keyed by each owner's grant. */
+    private fun persistOfflineActivities(snapshots: List<Pair<String, JSONObject>>) {
+        if (!::activitySnapshotStore.isInitialized) return
+        activitySnapshotStore.write(
+            snapshots.mapNotNull { (owner, payload) ->
+                surfaceOwnerFor(owner)?.let { PhoneActivitySnapshot(it.grantKey(), payload) }
+            },
+        )
+    }
+
+    /**
+     * Brings back, at hub start, the offline activities persisted before the hub stopped: only for
+     * owners whose grant is still approved with `surfaces`, by the same signer, with activities
+     * enabled. The router rewrites the store with what it kept, which drops the rest.
+     */
+    private fun restoreOfflineActivities(principals: List<PhonePluginPrincipal>) {
+        val kept = activitySnapshotStore.load().mapNotNull { snapshot ->
+            val principal = principals.singleOrNull { it.grantKey() == snapshot.key } ?: return@mapNotNull null
+            val approved = (pluginGrantStore.stateFor(principal) as? PluginGrantState.Approved)
+                ?.capabilities?.contains(PluginCapability.SURFACES) == true
+            val enabled = activityPreferences.preferenceFor(snapshot.key).enabled
+            if (approved && enabled) snapshot.key.pluginId to snapshot.activity else null
+        }
+        activityRouter.restoreOffline(kept)
+    }
+
+    /**
+     * Keeps the user's activity choices and quick approvals only for plugins still approved:
+     * revoke, disable, uninstall and a signer change (a new grant key) purge them, so a plugin
+     * approved again starts from the defaults and nothing it declares later is grandfathered.
+     */
+    private fun retainActivityChoices(principals: List<PhonePluginPrincipal>) {
+        if (!::activityPreferences.isInitialized || !::quickActionPolicyStore.isInitialized) return
+        val approved = principals.filter { pluginGrantStore.stateFor(it) is PluginGrantState.Approved }
+        activityPreferences.retainOnly(approved.mapTo(linkedSetOf()) { it.grantKey() })
+        if (quickActionPolicyStore.retainOnly(approved)) pushQuickActionPolicy()
+    }
+
+    /** One plugin's grant changed: its choices go unless it is still approved. */
+    private fun purgeActivityChoicesUnlessApproved(key: PluginGrantKey) {
+        if (!::activityPreferences.isInitialized || !::quickActionPolicyStore.isInitialized) return
+        val principal = installedPluginPrincipals().singleOrNull { it.grantKey() == key }
+        if (principal != null && pluginGrantStore.stateFor(principal) is PluginGrantState.Approved) return
+        activityPreferences.purge(key)
+        if (quickActionPolicyStore.purge(key)) executor.execute { pushQuickActionPolicy() }
+    }
+
+    /** The user changed one plugin's activity choices on the phone; its entry is re-sent. */
+    private fun activityPreferencesChanged(key: PluginGrantKey) {
+        executor.execute { activityRouter.onPreferencesChanged(key.pluginId) }
+    }
+
+    /**
+     * The user changed one plugin's quick approvals. A withdrawn family rejects its pending quick
+     * invocations at once; the activity entry is restamped, then the glasses get the new policy.
+     */
+    private fun quickActionPolicyChanged(key: PluginGrantKey) {
+        // The store already holds the change, so every later check reads it; this settles what
+        // was in flight, off the caller's thread since it may send to the glasses.
+        executor.execute {
+            pageBroker.onQuickPolicyChanged(key.pluginId)
+            activityRouter.onQuickPolicyChanged(key.pluginId)
+            pushQuickActionPolicy()
+        }
     }
 
     private fun validateImageEnvelope(envelope: BusEnvelope): String? {
@@ -5350,6 +5556,20 @@ class BusHubService : Service() {
 
         internal fun onHudPositionPreferenceChanged() {
             activeInstance?.announcePhoneCapabilities()
+        }
+
+        internal fun onLauncherBackendChanged() {
+            activeInstance?.announcePhoneCapabilities()
+        }
+
+        /** Never the grant path: an activity choice must not tear the plugin down. */
+        internal fun onActivityPreferencesChanged(key: PluginGrantKey) {
+            activeInstance?.activityPreferencesChanged(key)
+        }
+
+        /** Never the grant path: a quick approval must not tear the plugin down. */
+        internal fun onQuickActionPolicyChanged(key: PluginGrantKey) {
+            activeInstance?.quickActionPolicyChanged(key)
         }
 
         internal fun onGlassesRepairSettingChanged() {
