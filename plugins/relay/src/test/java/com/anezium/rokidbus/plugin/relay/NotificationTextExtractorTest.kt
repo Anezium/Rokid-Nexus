@@ -148,6 +148,69 @@ class NotificationTextExtractorTest {
         assertEquals("", NotificationTextExtractor.trimFromTop("", maxChars = 8))
     }
 
+    @Test
+    fun `messaging style messages say who wrote them while the rendered string stays as it was`() {
+        val input = NotificationTextInput(
+            messages = listOf(
+                message("on est devant", "Mika", 100L),
+                ExtractedMessage(text = "j'arrive", sender = null, timestamp = 200L, fromSelf = true),
+                ExtractedMessage(text = "moi", sender = "Me", timestamp = 300L, fromSelf = true),
+            ),
+        )
+        val thread = NotificationTextExtractor.extractThread(input, messageLimit = 20)
+        assertEquals("Mika: on est devant\nj'arrive\nMe: moi", thread.rendered)
+        assertEquals(NotificationTextExtractor.extract(input, messageLimit = 20), thread.rendered)
+        assertEquals(
+            listOf(
+                RelayMessage(RelayMessageRole.RECEIVED, "on est devant", "Mika"),
+                RelayMessage(RelayMessageRole.OURS, "j'arrive"),
+                RelayMessage(RelayMessageRole.OURS, "moi"),
+            ),
+            thread.messages,
+        )
+    }
+
+    @Test
+    fun `remote input history adds our replies the thread lacks, oldest first, and only to the messages`() {
+        val input = NotificationTextInput(
+            messages = listOf(
+                message("on est devant", "Mika", 100L),
+                ExtractedMessage(text = "deja vu", sender = null, timestamp = 200L, fromSelf = true),
+            ),
+            // Newest first, as Android keeps it.
+            remoteInputHistory = listOf("second", "first", "deja vu", null, " "),
+        )
+        val thread = NotificationTextExtractor.extractThread(input, messageLimit = 20)
+        assertEquals(
+            listOf("on est devant", "deja vu", "first", "second"),
+            thread.messages.map { it.text },
+        )
+        assertTrue(thread.messages.drop(1).all { it.role == RelayMessageRole.OURS })
+        assertFalse("first" in thread.rendered)
+    }
+
+    @Test
+    fun `plain text and expanded lines name no author`() {
+        val plain = NotificationTextExtractor.extractThread(NotificationTextInput(text = "hello"), messageLimit = 20)
+        assertEquals(listOf(RelayMessage(RelayMessageRole.UNKNOWN, "hello")), plain.messages)
+        val lines = NotificationTextExtractor.extractThread(
+            NotificationTextInput(expandedLines = listOf("Mika: one", "Ana: two")),
+            messageLimit = 20,
+        )
+        assertEquals(listOf(RelayMessageRole.UNKNOWN, RelayMessageRole.UNKNOWN), lines.messages.map { it.role })
+        assertEquals(listOf("Mika: one", "Ana: two"), lines.messages.map { it.text })
+    }
+
+    @Test
+    fun `the messages keep the newest within the thread's count`() {
+        val input = NotificationTextInput(
+            messages = (1..10).map { message("m$it", "Mika", it.toLong()) },
+            remoteInputHistory = listOf("r2", "r1"),
+        )
+        val thread = NotificationTextExtractor.extractThread(input, messageLimit = 4)
+        assertEquals(listOf("m9", "m10", "r1", "r2"), thread.messages.map { it.text })
+    }
+
     private fun message(text: String?, sender: String? = null, timestamp: Long = 0L) =
         ExtractedMessage(text = text, sender = sender, timestamp = timestamp)
 }
