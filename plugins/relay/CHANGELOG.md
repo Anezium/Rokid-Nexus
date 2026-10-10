@@ -4,8 +4,20 @@
 
 - Pages for the glasses' Nexus session, on hubs that support them: the inbox's
   conversations as a list, and each conversation as a document with who said
-  what and when it was captured. Read-only: no reply, read-aloud or mark as
-  read from a page. The inbox's hidden-preview and redaction settings apply.
+  what and when it was captured. No read-aloud or mark as read from a page.
+  The inbox's hidden-preview and redaction settings apply.
+- **Conversations on the launcher.** With the launcher bundle on both hubs, a
+  conversation page shows who said what on their own sides and lets you reply
+  from the hub's composer; Relay checks the reply action is still there just
+  before sending, and says so when it is not. Notices open their own
+  conversation from the glasses history.
+- **A reply no longer removes its conversation.** What you sent stays in the
+  thread, marked as handed to the app, until the app shows its own copy.
+- **Gone means gone.** When a notification leaves the phone, the glasses are
+  told, its page keeps the text but offers no Send, and a reply still waiting
+  on the band stays there unsent instead of going out.
+- **The send countdown only runs on what you see.** A band update that fails,
+  or a lost link, stops it; Send then waits for a tap.
 - One connection to the hub instead of two: the notification band now sends
   through the plugin's own service, so a band, the inbox and a page share it,
   and ending a band no longer drops a page that is open.
