@@ -14,11 +14,17 @@ import com.anezium.rokidbus.shared.ActivityActivation
 import com.anezium.rokidbus.shared.ActivityCommand
 import com.anezium.rokidbus.shared.ActivityCommandMode
 import com.anezium.rokidbus.shared.BusPaths
+import com.anezium.rokidbus.shared.ComposeDictateStart
+import com.anezium.rokidbus.shared.ComposeDictationReason
+import com.anezium.rokidbus.shared.ComposeTypeStart
+import com.anezium.rokidbus.shared.PageBody
 import com.anezium.rokidbus.shared.PageCorrelation
+import com.anezium.rokidbus.shared.PageDestination
 import com.anezium.rokidbus.shared.PageSurfaceContract
 import com.anezium.rokidbus.shared.PageSurfaceInvocation
 import com.anezium.rokidbus.shared.PageSurfaceRequest
 import com.anezium.rokidbus.shared.PageSurfaceResponse
+import com.anezium.rokidbus.shared.PageSurfaceResult
 import com.anezium.rokidbus.shared.PageSurfaceValidationResult
 import com.anezium.rokidbus.shared.PageTemplateContract
 import org.json.JSONObject
@@ -37,8 +43,12 @@ import org.json.JSONObject
  * [quickGate] decides which activity commands one tap may run; page rows get the same answer
  * from the resolver. [launcherActive] is whether the pair negotiated the launcher bundle now:
  * only then do activity cards activate, provider pages carry the phone's quick stamps, and every
- * effect (a plugin action or activity command, quick or confirmed, an app launch) needs a fresh
- * contact, see [SessionFocus]. Without it the session keeps its v1 behaviour exactly.
+ * effect (a plugin action or activity command, quick or confirmed, an app launch, a composer
+ * capture or Send) needs a fresh contact, see [SessionFocus]. Without it the session keeps its v1
+ * behaviour exactly.
+ *
+ * [wallClock] dates the notification history only: its entries are displayed for 24 hours of wall
+ * time, which the session clock cannot measure across a deep sleep.
  */
 internal class SessionReducer(
     private val itemResolver: PageItemResolver = DefaultPageItems,
@@ -46,13 +56,17 @@ internal class SessionReducer(
     private val isLocalPage: (String) -> Boolean = { false },
     private val quickGate: QuickGate = QuickGate.NEVER,
     private val launcherActive: () -> Boolean = { false },
+    private val wallClock: () -> Long = { 0L },
 ) {
     fun reduce(model: SessionModel, event: SessionEvent): SessionTransition {
-        val transition = when (event) {
+        val reduced = when (event) {
             SessionEvent.NoticeArmed -> keep(model.copy(noticeArmed = true))
             SessionEvent.NoticeCleared -> keep(model.copy(noticeArmed = false))
             is SessionEvent.EditableFocused -> keep(model.copy(editableFocused = event.focused))
-            is SessionEvent.NoticeArrived -> onNoticeArrived(model, event.preview)
+            is SessionEvent.NoticeArrived -> onNoticeArrived(model, event)
+            is SessionEvent.NoticeWithdrawn -> onNoticeWithdrawn(model, event)
+            is SessionEvent.NoticePurged -> onNoticePurged(model, event.ownerPluginId)
+            is SessionEvent.ComposeReceived -> onCompose(model, event)
             is SessionEvent.ActivityStarted -> onActivityStarted(model, event.stop)
             is SessionEvent.ActivityUpdated -> onActivityUpdated(model, event.stop)
             is SessionEvent.ActivityEnded -> onActivityEnded(model, event.stopId)
@@ -86,6 +100,7 @@ internal class SessionReducer(
                 }
             }
         }
+        val transition = settleComposer(reduced, event)
         // An acknowledgement holds only while its target stays on screen: once something else is
         // focused, coming back to the same target needs a new one.
         val after = transition.model
@@ -134,15 +149,52 @@ internal class SessionReducer(
         else -> null
     }
 
-    /** D1: the root counts the one retained notice, while [SessionModel.notificationCount] counts arrivals. */
-    private fun onNoticeArrived(model: SessionModel, preview: NoticePreview): SessionTransition {
-        val retained = RootStops.retainedNotices(preview)
+    /**
+     * Every arrival joins the history (plan 028a §6.3); the root counts the entries it may show,
+     * while [SessionModel.notificationCount] counts arrivals. A new notice for a lost draft's exact
+     * thread lets Type reopen it.
+     */
+    private fun onNoticeArrived(model: SessionModel, event: SessionEvent.NoticeArrived): SessionTransition {
+        val now = wallClock()
+        val entry = event.entry ?: NoticeEntry.of(event.preview, now)
+        val history = model.history.add(entry)
         val updated = model.copy(
-            preview = preview,
+            preview = event.preview,
             notificationCount = model.notificationCount + 1,
-            state = model.state.mapRootStops { RootStops.withNotice(it, preview, retained) },
+            history = history,
+            draft = DraftStore.noticeArrived(model.draft, entry),
+            state = model.state.mapRootStops { RootStops.withHistory(it, history, now) },
         )
-        return rootBookkeeping(model, updated)
+        return withComposerRedraw(model, rootBookkeeping(model, updated))
+    }
+
+    /** The event left the phone: its entries say so, and a draft for its thread can no longer be sent. */
+    private fun onNoticeWithdrawn(model: SessionModel, event: SessionEvent.NoticeWithdrawn): SessionTransition {
+        val history = model.history.withdraw(event.ownerPluginId, event.eventKey)
+        val updated = model.copy(
+            history = history,
+            draft = DraftStore.authorityLost(model.draft, event.ownerPluginId, event.eventKey),
+            state = model.state.mapRootStops { RootStops.withHistory(it, history, wallClock()) },
+        )
+        return withComposerRedraw(model, rootBookkeeping(model, updated))
+    }
+
+    /** The owner was revoked, disabled, uninstalled or re-signed: its entries go, its draft loses authority. */
+    private fun onNoticePurged(model: SessionModel, owner: String): SessionTransition {
+        val history = model.history.purge(owner)
+        val updated = model.copy(
+            history = history,
+            draft = DraftStore.authorityLost(model.draft, owner),
+            state = model.state.mapRootStops { RootStops.withHistory(it, history, wallClock()) },
+        )
+        return withComposerRedraw(model, rootBookkeeping(model, updated))
+    }
+
+    /** A conversation page draws the draft, so a draft change redraws an open page. */
+    private fun withComposerRedraw(before: SessionModel, transition: SessionTransition): SessionTransition {
+        val after = transition.model
+        if (after.draft == before.draft || after.state !is SessionState.InPage || ShowFrame in transition.effects) return transition
+        return transition.copy(effects = transition.effects + ShowFrame)
     }
 
     private fun onActivityStarted(model: SessionModel, stop: ActivityStop): SessionTransition =
@@ -212,9 +264,11 @@ internal class SessionReducer(
     }
 
     private fun onClosed(model: SessionModel, event: SessionEvent): SessionTransition {
-        if (event !is SessionEvent.TripleTap || model.noticeArmed || model.editableFocused) return keep(model)
+        // The session never opens over a composer capture (plan 028a §5.4).
+        if (event !is SessionEvent.TripleTap || model.noticeArmed || model.editableFocused || model.capture != null) return keep(model)
+        val now = wallClock()
         val root = SessionState.Root(
-            RootStops.build(model.activities, model.preview, RootStops.retainedNotices(model.preview)),
+            RootStops.build(model.activities, model.history.rootPreview(now), model.history.visible(now).size),
         )
         return SessionTransition(
             model.copy(
@@ -271,10 +325,11 @@ internal class SessionReducer(
                 // An ended activity keeps its place but opens nothing.
                 else -> state.stops.getOrNull(state.selected)?.takeUnless { it.ended }?.let { stop ->
                     val activity = stop.activity
-                    if (stop.kind == RootStopKind.ACTIVITY && activity != null) {
-                        activate(model, rootSite(state), activity, state, emptyList(), stop.pageId, event.nowMs)
-                    } else {
-                        openFrame(model, state, emptyList(), stop.pageId, null, event.nowMs)
+                    when {
+                        stop.kind == RootStopKind.ACTIVITY && activity != null ->
+                            activate(model, rootSite(state), activity, state, emptyList(), stop.pageId, event.nowMs)
+                        stop.kind == RootStopKind.NOTICE_PREVIEW -> openNoticeStop(model, state, stop, event.nowMs)
+                        else -> openFrame(model, state, emptyList(), stop.pageId, null, event.nowMs)
                     }
                 } ?: keep(model)
             }
@@ -298,11 +353,16 @@ internal class SessionReducer(
             is SessionEvent.Step -> step(model, state, event.delta)
             is SessionEvent.Enter -> enter(model, state, event)
             is SessionEvent.Back -> back(model, state, event.nowMs)
-            is SessionEvent.TripleTap -> SessionTransition(
-                model.copy(state = state.root),
-                state.frames.withIndex().reversed().filter { model.canReach(it.value) }
-                    .map { closedEffect(model, it.value, it.index, CLOSE_BACK) } + ShowRoot,
-            )
+            // A capture is finished or cancelled first; triple tap is not recognised over it.
+            is SessionEvent.TripleTap -> if (model.capture != null) {
+                keep(model)
+            } else {
+                SessionTransition(
+                    model.copy(state = state.root),
+                    state.frames.withIndex().reversed().filter { model.canReach(it.value) }
+                        .map { closedEffect(model, it.value, it.index, CLOSE_BACK) } + ShowRoot,
+                )
+            }
             is SessionEvent.Tick -> tick(model, state, event.nowMs)
             is SessionEvent.PageResponse ->
                 carried(model, response(model, state, event.payload, event.nowMs), BusPaths.PAGE_RESPONSE, event.payload)
@@ -443,6 +503,7 @@ internal class SessionReducer(
         linkLost = false,
         gateContacts = emptyList(),
         underneath = Underneath.Unknown,
+        micUnavailable = false,
     )
 
     /**
@@ -463,6 +524,7 @@ internal class SessionReducer(
     private fun step(model: SessionModel, state: SessionState.InPage, delta: Int): SessionTransition {
         val top = state.frames.last()
         if (top.panel != null) return panelStep(model, frameSite(state), delta)
+        top.shownConversation()?.let { (_, body) -> return conversationStep(model, state, top, body, delta) }
         top.commandFocus?.let { focus ->
             if (focus.stopId != CommandFocus.MEDIA) {
                 return focusStep(model, frameSite(state), model.latestActivityById(focus.stopId), delta)
@@ -524,6 +586,7 @@ internal class SessionReducer(
                 top.commandFocus?.takeIf { it.stopId != CommandFocus.MEDIA }?.let { focus ->
                     return focusEnter(model, frameSite(state), model.latestActivityById(focus.stopId), event)
                 }
+                itemResolver.conversation(status.snapshot.page)?.let { return conversationEnter(model, state, top, status, it, event) }
                 if (top.invocation != null) return keep(model)
                 if (top.reading()) {
                     // SELECT on read text reaches its rows, when it has any; reading never fires one.
@@ -574,6 +637,7 @@ internal class SessionReducer(
                         listOf(ShowFrame),
                     )
                     is PageItem.LocalLaunch -> SessionTransition(model, listOf(SessionEffect.LaunchLocal(item.key, item.label)))
+                    is PageItem.Notification -> openEntry(model, state.root, state.frames, item.entryId, nowMs)
                     PageItem.Back -> pop(model, state, nowMs)
                     else -> keep(model)
                 }
@@ -620,6 +684,16 @@ internal class SessionReducer(
     /** BACK closes a panel, then leaves command focus, then the rows of read text for the text, then pops the frame. */
     private fun back(model: SessionModel, state: SessionState.InPage, nowMs: Long): SessionTransition {
         val top = state.frames.last()
+        // BACK cancels a capture (the earlier draft stays), then leaves the composer's focus.
+        model.capture?.let { capture ->
+            return SessionTransition(
+                model.copy(capture = null),
+                listOf(SessionEffect.SendCompose(ComposeClient.cancel(capture)), ShowFrame),
+            )
+        }
+        if (top.composerFocus != null) {
+            return SessionTransition(model.copy(state = state.withTop(top.copy(composerFocus = null))), listOf(ShowFrame))
+        }
         if (top.panel != null) {
             return SessionTransition(model.copy(state = state.withTop(top.copy(panel = null))), listOf(ShowFrame))
         }
@@ -707,11 +781,12 @@ internal class SessionReducer(
         actionId: String,
         nowMs: Long,
         mode: String = PageSurfaceContract.MODE_CONFIRMED,
+        text: String? = null,
     ): SessionTransition {
         val top = state.frames.last()
         val (invocationId, counted) = model.nextId("i")
         val action = PageSurfaceInvocation(
-            invocationId, model.generation, state.frames.size, top.pageId, status.revision, actionId, mode = mode,
+            invocationId, model.generation, state.frames.size, top.pageId, status.revision, actionId, mode = mode, text = text,
         )
         val frame = top.copy(invocation = PendingInvocation(invocationId, actionId, nowMs), outcome = null)
         return SessionTransition(
@@ -879,8 +954,12 @@ internal class SessionReducer(
         }
     }
 
-    /** Every frame of [owner] keeps its snapshot, inert; its requests, actions, leases and panels end. */
-    private fun invalidateOwner(model: SessionModel, owner: String): SessionTransition {
+    /**
+     * Every frame of [owner] keeps its snapshot, inert; its requests, actions, leases and panels
+     * end. Its pages are gone, so a draft for one of its threads loses its authority to be sent.
+     */
+    private fun invalidateOwner(before: SessionModel, owner: String): SessionTransition {
+        val model = before.copy(draft = DraftStore.authorityLost(before.draft, owner))
         fun invalidated(page: SessionState.InPage): SessionState.InPage = page.copy(
             frames = page.frames.map { frame ->
                 if (isLocalPage(frame.pageId) || PageTemplateContract.namespaceOf(frame.pageId) != owner) {
@@ -1030,20 +1109,50 @@ internal class SessionReducer(
         val result = (PageSurfaceContract.validateResult(payload, hubStamps(top.pageId)) as? PageSurfaceValidationResult.Valid)?.value
             ?: return keep(model)
         if (invocation.invocationId != result.invocationId || !sameEpoch(top, payload)) return keep(model)
-        val settled = top.copy(invocation = null, outcome = ActionOutcome(invocation.actionId, result.status, result.message))
+        val send = model.pendingSend?.takeIf { it.invocationId == invocation.invocationId }
+        val current = send?.let { composeSettled(model, it, result, (top.status as? FrameStatus.Shown)?.revision) } ?: model
+        // A reply's outcome is its bubble or the composer's line; only a refusal or a stale page is said in words.
+        val outcome = ActionOutcome(invocation.actionId, result.status, result.message)
+            .takeUnless { send != null && (result.status == RESULT_DONE || result.code == PageSurfaceContract.CODE_AUTHORITY_LOST) }
+        val settled = top.copy(invocation = null, outcome = outcome)
         val status = settled.status
         val replacement = result.replacement
         if (result.status == RESULT_DONE && status is FrameStatus.Shown && replacement != null &&
-            replacement.correlation.sessionGeneration == model.generation &&
+            replacement.correlation.sessionGeneration == current.generation &&
             replacement.correlation.frameIndex == state.frames.size &&
             replacement.correlation.pageId == top.pageId &&
             replacement.revision > status.revision &&
             itemResolver.accepts(replacement)
         ) {
-            return replaceTopSnapshot(model, state, settled, status, replacement, nowMs)
+            val currentState = current.state as? SessionState.InPage ?: state
+            return replaceTopSnapshot(current, currentState, settled, status, replacement, nowMs)
         }
         // A rejected or stale action keeps the page exactly as the wearer saw it.
-        return SessionTransition(model.copy(state = state.withTop(settled)), listOf(ShowFrame))
+        val currentState = current.state as? SessionState.InPage ?: state
+        return SessionTransition(current.copy(state = currentState.withTop(settled)), listOf(ShowFrame))
+    }
+
+    /**
+     * A compose send's result (plan 028a §7.2). `done`: the app took it, so the draft goes and its
+     * thread is handed off. `authority_lost`: the text stays and can never be sent as is. Anything
+     * else (stale, rejected) keeps the draft; a new Send needs a new focus on what is shown then.
+     */
+    private fun composeSettled(model: SessionModel, send: PendingSend, result: PageSurfaceResult, revision: Long?): SessionModel {
+        val base = model.copy(pendingSend = null)
+        return when {
+            result.status == RESULT_DONE -> {
+                val history = model.history.markHandedOff(send.ownerPluginId, send.threadKey)
+                base.copy(
+                    draft = DraftStore.handedOff(model.draft, send),
+                    history = history,
+                    handoff = revision?.let { Handoff(send.ownerPluginId, send.threadKey, send.text, it) },
+                    state = model.state.mapRootStops { RootStops.withHistory(it, history, wallClock()) },
+                )
+            }
+            result.code == PageSurfaceContract.CODE_AUTHORITY_LOST ->
+                base.copy(draft = DraftStore.authorityLost(model.draft, send.ownerPluginId, send.threadKey))
+            else -> base
+        }
     }
 
     private fun replaceTopSnapshot(
@@ -1107,8 +1216,15 @@ internal class SessionReducer(
         event: SessionEvent.DocumentPaged,
     ): SessionTransition {
         val top = state.frames.last()
+        // A conversation is read from its newest page, then where the wearer paged it to.
+        if (top.shownConversation() != null) {
+            if (!describesTop(model, state, event.frame, event.pageId, event.revision) || event.pageStarts.isEmpty()) return keep(model)
+            val page = if (top.anchor == null) event.pageStarts.lastIndex else event.anchorPage.coerceIn(0, event.pageStarts.lastIndex)
+            val frame = top.copy(pageStarts = event.pageStarts, page = page, anchor = top.anchor ?: event.pageStarts.last())
+            return if (frame == top) keep(model) else SessionTransition(model.copy(state = state.withTop(frame)), listOf(ShowFrame))
+        }
         // A report posted before the wearer went to the rows still describes what BACK returns to.
-        if (!top.readsFirst() || !describesTop(model, state, event.frame, event.pageId, event.revision) || event.pageStarts.isEmpty()) {
+        if (!top.readsFirst() ||!describesTop(model, state, event.frame, event.pageId, event.revision) || event.pageStarts.isEmpty()) {
             return keep(model)
         }
         val page = event.anchorPage.coerceIn(0, event.pageStarts.lastIndex)
@@ -1205,6 +1321,252 @@ internal class SessionReducer(
      */
     private fun fresh(model: SessionModel, event: SessionEvent.Enter): Boolean =
         !launcherActive() || SessionFocus.isFresh(model, event.pressStartMs)
+
+    // ---- notifications: the root's notification stop and the Notifications page -------------
+
+    /**
+     * The notification stop opens what it stands for and marks its entry seen: a conversation card
+     * its exact destination, an aggregate its owner's main page, a generic preview the hub's notice
+     * page on its entry. While the phone is away an entry is read-only: its notice page opens.
+     */
+    private fun openNoticeStop(model: SessionModel, state: SessionState.Root, stop: RootStop, nowMs: Long): SessionTransition {
+        val card = stop.notice
+        val entryId = card?.entryId
+        if (model.linkLost && card?.kind == NoticeCardKind.CONVERSATION && entryId != null) {
+            return openFrame(model, state, emptyList(), RootStops.NOTICE_PAGE_ID, NotificationHistory.entryParams(entryId), nowMs)
+        }
+        val seen = if (entryId != null && !model.linkLost) model.copy(history = model.history.markSeen(entryId)) else model
+        return openFrame(seen, state, emptyList(), stop.pageId, stop.paramsJson, nowMs)
+    }
+
+    /** A Notifications row opens its entry as the notification stop would, and marks it seen. */
+    private fun openEntry(model: SessionModel, root: SessionState.Root, below: List<Frame>, entryId: String, nowMs: Long): SessionTransition {
+        val entry = model.history.entry(entryId) ?: return keep(model)
+        val destination = entry.notice.destination?.takeIf { entry.notice.threadKey != null && !model.linkLost }
+        val seen = if (model.linkLost) model else model.copy(history = model.history.markSeen(entryId))
+        return if (destination != null) {
+            openFrame(seen, root, below, destination.pageId, destination.paramsJson, nowMs)
+        } else {
+            openFrame(seen, root, below, RootStops.NOTICE_PAGE_ID, NotificationHistory.entryParams(entryId), nowMs)
+        }
+    }
+
+    // ---- the composer: conversation pages, captures and Send ----------------------------------
+
+    /** This frame's conversation when it shows one: the page's owner and its body. */
+    private fun Frame.shownConversation(): Pair<String?, PageBody.Conversation>? {
+        val shown = status as? FrameStatus.Shown ?: return null
+        val body = itemResolver.conversation(shown.snapshot.page) ?: return null
+        return PageTemplateContract.namespaceOf(pageId) to body
+    }
+
+    private fun composerView(model: SessionModel, top: Frame, body: PageBody.Conversation): ComposerView? =
+        ComposerRules.view(PageTemplateContract.namespaceOf(top.pageId), body, model.draft, model.micUnavailable, model.pendingSend)
+
+    /**
+     * Reading pages the conversation through the renderer's measured layout; in focus, STEP walks
+     * the composer's buttons without wrapping; a capture ignores it.
+     */
+    private fun conversationStep(
+        model: SessionModel,
+        state: SessionState.InPage,
+        top: Frame,
+        body: PageBody.Conversation,
+        delta: Int,
+    ): SessionTransition {
+        if (model.capture != null) return keep(model)
+        top.composerFocus?.let { focus ->
+            val view = composerView(model, top, body) ?: return keep(model)
+            val target = (focus.index + delta).coerceIn(0, view.buttons.lastIndex)
+            if (target == focus.index) return keep(model)
+            val frame = top.copy(composerFocus = ComposerFocus(view.buttons[target], target))
+            return SessionTransition(model.copy(state = state.withTop(frame)), listOf(ShowFrame))
+        }
+        if (top.pageStarts.isEmpty()) return keep(model)
+        val target = (top.page + delta).coerceIn(0, top.pageStarts.lastIndex)
+        if (target == top.page) return keep(model)
+        return SessionTransition(model.copy(state = state.withTop(top.copy(page = target, anchor = top.pageStarts[target]))), listOf(ShowFrame))
+    }
+
+    /**
+     * Plan 028a §7.2. Reading: a tap focuses the composer's first button. Focus: a tap starts the
+     * focused capture, or sends. Capture: a tap finishes it into the draft and nothing is sent.
+     * Focusing, starting and sending each need a press begun after their screen was drawn.
+     */
+    private fun conversationEnter(
+        model: SessionModel,
+        state: SessionState.InPage,
+        top: Frame,
+        status: FrameStatus.Shown,
+        body: PageBody.Conversation,
+        event: SessionEvent.Enter,
+    ): SessionTransition {
+        model.capture?.let { capture ->
+            if (capture.finishing) return keep(model)
+            return SessionTransition(
+                model.copy(capture = capture.copy(finishing = true, deadlineMs = event.nowMs + ComposerRules.FINISH_TIMEOUT_MS)),
+                listOf(SessionEffect.SendCompose(ComposeClient.finish(capture)), ShowFrame),
+            )
+        }
+        if (top.invocation != null || model.pendingSend != null || model.linkLost) return keep(model)
+        val view = composerView(model, top, body)?.takeIf { it.available } ?: return keep(model)
+        if (!fresh(model, event)) return keep(model)
+        val focus = top.composerFocus
+            ?: return SessionTransition(
+                model.copy(state = state.withTop(top.copy(composerFocus = ComposerFocus(view.buttons[view.initialIndex], view.initialIndex)))),
+                listOf(ShowFrame),
+            )
+        if (view.buttons.getOrNull(focus.index) != focus.key) return keep(model)
+        return when (focus.key) {
+            ComposerRules.SEND -> send(model, state, top, status, body, view, event.nowMs)
+            ComposerRules.DICTATE -> startCapture(model, state, top, body, view, CaptureKind.DICTATE)
+            ComposerRules.TYPE -> startCapture(model, state, top, body, view, CaptureKind.TYPE)
+            else -> keep(model)
+        }
+    }
+
+    /** Typing opens the phone keyboard on this thread's draft; dictation listens on the glasses mic. */
+    private fun startCapture(
+        model: SessionModel,
+        state: SessionState.InPage,
+        top: Frame,
+        body: PageBody.Conversation,
+        view: ComposerView,
+        kind: CaptureKind,
+    ): SessionTransition {
+        val owner = PageTemplateContract.namespaceOf(top.pageId) ?: return keep(model)
+        val composer = body.composer ?: return keep(model)
+        val maxChars = ComposerRules.maxChars(body)
+        val initial = if (kind == CaptureKind.TYPE) view.threadDraft?.text?.take(maxChars).orEmpty() else ""
+        val captureId = ComposerRules.captureId(model.generation, model.nextId)
+        val capture = Capture(
+            captureId, kind, model.generation, state.frames.size, top.pageId, owner, body.threadKey,
+            PageDestination(top.pageId, top.paramsJson), composer.recipient, maxChars, liveText = initial,
+        )
+        val message = when (kind) {
+            CaptureKind.DICTATE -> ComposeOutbound.DictateStart(ComposeDictateStart(captureId))
+            CaptureKind.TYPE -> ComposeOutbound.TypeStart(ComposeTypeStart(captureId, initial, maxChars))
+        }
+        return SessionTransition(
+            model.copy(nextId = model.nextId + 1, capture = capture, state = state.withTop(top.copy(composerFocus = null))),
+            listOf(SessionEffect.SendCompose(message), ShowFrame),
+        )
+    }
+
+    /**
+     * Plan 028a §7.4: only this page's own ready draft, for this exact thread and owner, through
+     * the page's compose action, once. Nothing ever retries or resends it.
+     */
+    private fun send(
+        model: SessionModel,
+        state: SessionState.InPage,
+        top: Frame,
+        status: FrameStatus.Shown,
+        body: PageBody.Conversation,
+        view: ComposerView,
+        nowMs: Long,
+    ): SessionTransition {
+        val composer = body.composer ?: return keep(model)
+        val draft = view.threadDraft?.takeIf { it.state == DraftState.READY } ?: return keep(model)
+        if (!composer.replyable || draft.text.isBlank() || draft.text.length > composer.maxChars) return keep(model)
+        val cleared = state.withTop(top.copy(composerFocus = null))
+        val sent = invoke(model.copy(state = cleared), cleared, status, composer.sendActionId, nowMs, PageSurfaceContract.MODE_COMPOSE, draft.text)
+        val invocationId = (sent.model.state as? SessionState.InPage)?.frames?.last()?.invocation?.invocationId ?: return keep(model)
+        return sent.copy(model = sent.model.copy(pendingSend = PendingSend(invocationId, draft.ownerPluginId, draft.threadKey, draft.text)))
+    }
+
+    /**
+     * A capture engine's message counts only for the capture in progress, by its id; anything else
+     * is stale and dropped. A completed capture replaces the draft and returns to reading; a
+     * dictation ending any other way sends the wearer to Type; nothing here ever sends a reply.
+     */
+    private fun onCompose(model: SessionModel, event: SessionEvent.ComposeReceived): SessionTransition {
+        val capture = model.capture?.takeIf { it.captureId == event.message.captureId } ?: return keep(model)
+        val next = when (val message = event.message) {
+            is ComposeInbound.Partial ->
+                if (capture.kind == CaptureKind.DICTATE) model.copy(capture = capture.copy(liveText = message.partial.text.take(capture.maxChars))) else model
+            is ComposeInbound.Text ->
+                if (capture.kind == CaptureKind.TYPE) model.copy(capture = capture.copy(liveText = message.text.text.take(capture.maxChars))) else model
+            is ComposeInbound.Final -> {
+                val text = message.result.text
+                when {
+                    capture.kind != CaptureKind.DICTATE -> model
+                    message.result.reason == ComposeDictationReason.COMPLETED && !text.isNullOrBlank() ->
+                        model.copy(capture = null, micUnavailable = false, draft = DraftStore.completed(capture, text))
+                    // No phone microphone stands in: the wearer is offered Type.
+                    else -> model.copy(capture = null, micUnavailable = true)
+                }
+            }
+            is ComposeInbound.Done -> {
+                val text = message.done.text
+                when {
+                    capture.kind != CaptureKind.TYPE -> model
+                    !message.done.committed || text == null -> model.copy(capture = null)
+                    // An empty commit is the one explicit discard.
+                    text.isBlank() -> model.copy(capture = null, draft = DraftStore.committedEmpty(model.draft, capture))
+                    else -> model.copy(capture = null, draft = DraftStore.completed(capture, text))
+                }
+            }
+        }
+        if (next == model) return keep(model)
+        return SessionTransition(next, listOfNotNull(showEffect(next.state)))
+    }
+
+    /**
+     * The composer's invariants, after every transition. A capture lives only on its own live,
+     * replyable conversation frame with the link up, and is cancelled at the phone as soon as it
+     * does not (the earlier draft stays); a finished one whose text never came is given up. A send
+     * whose frame stopped waiting for it will never hear its result here: its draft is unconfirmed.
+     * A page saying its thread cannot be replied to takes its draft's authority. A focused button
+     * that is gone returns the frame to reading.
+     */
+    private fun settleComposer(transition: SessionTransition, event: SessionEvent): SessionTransition {
+        var after = transition.model
+        val effects = transition.effects.toMutableList()
+        after.capture?.let { capture ->
+            val expired = event is SessionEvent.Tick && capture.deadlineMs?.let { event.nowMs >= it } == true
+            if (expired || !captureHolds(after, capture)) {
+                after = after.copy(capture = null, micUnavailable = after.micUnavailable || (expired && capture.kind == CaptureKind.DICTATE))
+                effects += SessionEffect.SendCompose(ComposeClient.cancel(capture))
+            }
+        }
+        after.pendingSend?.let { send ->
+            val top = (after.state as? SessionState.InPage)?.frames?.last()
+            if (top?.invocation?.invocationId != send.invocationId) {
+                after = after.copy(pendingSend = null, draft = DraftStore.unconfirmed(after.draft, send))
+            }
+        }
+        val page = after.state as? SessionState.InPage
+        val top = page?.frames?.last()
+        val conversation = top?.shownConversation()
+        val draft = after.draft
+        if (conversation != null && draft != null) {
+            val (owner, body) = conversation
+            if (body.composer?.replyable == false && draft.isFor(owner, body.threadKey) && draft.state != DraftState.AUTHORITY_LOST) {
+                after = after.copy(draft = DraftStore.authorityLost(draft, draft.ownerPluginId, draft.threadKey))
+            }
+        }
+        val focus = top?.composerFocus
+        if (page != null && top != null && focus != null) {
+            val view = conversation?.let { (owner, body) -> ComposerRules.view(owner, body, after.draft, after.micUnavailable, after.pendingSend) }
+            val index = view?.takeIf { it.available && after.capture == null }?.buttons?.indexOf(focus.key) ?: -1
+            val next = if (index >= 0) focus.copy(index = index) else null
+            if (next != focus) after = after.copy(state = page.withTop(top.copy(composerFocus = next)))
+        }
+        if (after == transition.model) return transition
+        showEffect(after.state)?.takeIf { it !in effects }?.let { effects += it }
+        return SessionTransition(after, effects)
+    }
+
+    private fun captureHolds(model: SessionModel, capture: Capture): Boolean {
+        val page = model.state as? SessionState.InPage ?: return false
+        if (model.linkLost || model.generation != capture.generation || page.frames.size != capture.frameIndex) return false
+        val top = page.frames.last()
+        if (top.pageId != capture.pageId || top.panel != null) return false
+        val (owner, body) = top.shownConversation() ?: return false
+        if (owner != capture.ownerPluginId || body.threadKey != capture.threadKey) return false
+        return ComposerRules.view(owner, body, model.draft, model.micUnavailable, model.pendingSend)?.available == true
+    }
 
     // ---- activity cards: activation, command focus, commands --------------------------------
 

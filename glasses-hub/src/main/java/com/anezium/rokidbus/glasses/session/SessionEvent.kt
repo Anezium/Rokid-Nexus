@@ -26,7 +26,20 @@ internal sealed interface SessionEvent {
     data class Tick(val nowMs: Long) : SessionEvent
     data object NoticeArmed : SessionEvent
     data object NoticeCleared : SessionEvent
-    data class NoticeArrived(val preview: NoticePreview) : SessionEvent
+    /**
+     * A new notice instance. [entry] is what the band showed, launcher-bundle fields included when
+     * the pair negotiated them; without one, the history records [preview] as a generic entry.
+     */
+    data class NoticeArrived(val preview: NoticePreview, val entry: NoticeEntry? = null) : SessionEvent
+
+    /** `/notice/withdraw` as the phone forwarded it: the event is no longer on the phone. */
+    data class NoticeWithdrawn(val ownerPluginId: String, val eventKey: String) : SessionEvent
+
+    /** `/core/notice/purge`: every history entry of [ownerPluginId] goes. */
+    data class NoticePurged(val ownerPluginId: String) : SessionEvent
+
+    /** A capture engine's message from the phone hub, for the capture it names. */
+    data class ComposeReceived(val message: ComposeInbound, val nowMs: Long) : SessionEvent
     data class ActivityEnded(val stopId: String) : SessionEvent
     data class ActivityStarted(val stop: ActivityStop) : SessionEvent
 

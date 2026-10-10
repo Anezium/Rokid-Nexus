@@ -135,6 +135,10 @@ internal data class CommandFacts(
     val activities: List<ActivityStop> = emptyList(),
     val pending: Map<String, PendingCommand> = emptyMap(),
     val outcomes: Map<String, CommandOutcome> = emptyMap(),
+    /** The notification history, for the Notifications page's sources, tags and ages. */
+    val history: NotificationHistory = NotificationHistory(),
+    /** The draft, the capture and the send in flight, for conversation pages. */
+    val composer: ComposerFacts = ComposerFacts(),
 ) {
     fun activity(ownerPluginId: String): ActivityStop? = activities.firstOrNull { it.ownerPluginId == ownerPluginId }
 
@@ -143,6 +147,8 @@ internal data class CommandFacts(
             activities = model.queuedActivities + model.activities.filter { member -> model.queuedActivities.none { it.id == member.id } },
             pending = model.pendingCommands,
             outcomes = model.commandOutcomes,
+            history = model.history,
+            composer = ComposerFacts(model.draft, model.capture, model.micUnavailable, model.pendingSend, model.handoff),
         )
     }
 }
@@ -180,9 +186,22 @@ internal object SessionFocus {
                 }
                 "$prefix/f${state.frames.size}/${top.pageId}/$status/${top.mode}/p${top.page}" +
                     "/${top.selected}/${top.selectedKey}/${top.tombstone != null}" +
-                    focusPart(top.commandFocus) + panelPart(top.panel)
+                    focusPart(top.commandFocus) + panelPart(top.panel) + composerPart(model, top)
             }
         }
+    }
+
+    /**
+     * A composer focus, a capture, and what Send would hand off: a new draft, a new draft state
+     * or a send in flight makes a new target, so Send needs a press begun after it was drawn.
+     */
+    private fun composerPart(model: SessionModel, top: Frame): String {
+        val focus = top.composerFocus?.let { "/compose/${it.key}/${it.index}" }.orEmpty()
+        val capture = model.capture?.let { "/capture/${it.captureId}/${it.finishing}" }.orEmpty()
+        if (focus.isEmpty() && capture.isEmpty()) return ""
+        val draft = model.draft?.let { "/draft/${it.ownerPluginId}/${it.threadKey}/${it.state}/${it.reopened}/${it.text.hashCode()}" }.orEmpty()
+        val send = model.pendingSend?.let { "/sending/${it.invocationId}" }.orEmpty()
+        return focus + capture + draft + send + "/mic${model.micUnavailable}"
     }
 
     /** Whether a press that began at [pressStartMs] began after the current target was drawn. */

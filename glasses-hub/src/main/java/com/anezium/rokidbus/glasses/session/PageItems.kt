@@ -1,5 +1,6 @@
 package com.anezium.rokidbus.glasses.session
 
+import com.anezium.rokidbus.shared.PageBody
 import com.anezium.rokidbus.shared.PageSurfaceContract
 import com.anezium.rokidbus.shared.PageSurfaceResponse
 
@@ -31,6 +32,12 @@ internal sealed interface PageItem {
      * destination, focuses its commands, or opens its summary). Only a hub-authored page has one.
      */
     data class Activity(val ownerPluginId: String) : PageItem
+
+    /**
+     * An entry of the hub's Notifications page: SELECT marks it seen and opens it, a conversation
+     * at its exact destination, anything else as the hub's notice page. Only a hub page has one.
+     */
+    data class Notification(val entryId: String) : PageItem
     data object Retry : PageItem
     data object Back : PageItem
     data object Inert : PageItem
@@ -64,6 +71,9 @@ internal fun interface PageItemResolver {
      * a first tap focuses; null for a page without one. Its rows come first among [entries].
      */
     fun controls(page: PageSurfaceResponse.Page): PageControls? = null
+
+    /** The page's conversation body, which the hub composer serves; null for any other page. */
+    fun conversation(page: PageSurfaceResponse.Page): PageBody.Conversation? = null
 }
 
 /** A page's control strip: [keys] are entry keys in swipe order, [defaultKey] is focused first. */
