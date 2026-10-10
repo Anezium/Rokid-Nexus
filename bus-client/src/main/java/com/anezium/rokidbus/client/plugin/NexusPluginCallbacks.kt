@@ -66,6 +66,7 @@ interface NexusPluginCallbacks {
     fun onNoticeAction(id: String) = Unit
 
     /** The wearer fired one of this plugin's current activity actions. */
+    @Deprecated("Glasses hubs 1.7.0 and later draw activity actions but never let the wearer select them. Put a command in a notice or a surface.")
     fun onActivityAction(id: String) = Unit
 
     /**

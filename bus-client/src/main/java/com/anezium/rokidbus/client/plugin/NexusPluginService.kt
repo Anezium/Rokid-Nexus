@@ -167,6 +167,7 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
     final override fun onNoticeInput(event: NexusInputEvent) = onNexusNoticeInput(event)
     final override fun onNoticeAction(id: String) = onNexusNoticeAction(id)
     final override fun onNoticeClosed(reason: NexusNoticeCloseReason) = onNexusNoticeClosed(reason)
+    @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
     final override fun onActivityAction(id: String) = onNexusActivityAction(id)
     final override fun onActivityClosed(reason: String) = onNexusActivityClosed(reason)
     final override fun onSurfaceTextCommitted(surfaceId: String, text: String, cancelled: Boolean) =
@@ -240,6 +241,7 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
     protected open fun onNexusNoticeClosed(reason: NexusNoticeCloseReason) = Unit
 
     /** The wearer fired one of this plugin's current activity actions. */
+    @Deprecated("Glasses hubs 1.7.0 and later draw activity actions but never let the wearer select them. Put a command in a notice or a surface.")
     protected open fun onNexusActivityAction(id: String) = Unit
 
     /** This plugin's activity ended, once, whatever ended it. */

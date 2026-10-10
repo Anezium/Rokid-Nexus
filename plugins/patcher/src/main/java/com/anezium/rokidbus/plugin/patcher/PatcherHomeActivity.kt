@@ -61,7 +61,7 @@ class PatcherHomeActivity : Activity() {
         }
         setContentView(NexusUi.fixedRoot(this).apply {
             addView(NexusUi.pluginHeader(this@PatcherHomeActivity, com.anezium.rokidbus.client.R.drawable.ic_plugin_bolt,
-                "Patcher", "Phone-only · v1.0.0"), NexusUi.block())
+                "Patcher", "Phone-only · v${runCatching { packageManager.getPackageInfo(packageName, 0).versionName }.getOrNull().orEmpty()}"), NexusUi.block())
             addView(NexusUi.screen(this@PatcherHomeActivity, content), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         })
         scope.launch {

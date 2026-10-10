@@ -844,6 +844,7 @@ class NexusPluginClient internal constructor(
                 activityId == "$pluginId:${ActivitySurfaceContract.LOCAL_SURFACE_ID}" &&
                 actionId.isNotBlank()
             ) {
+                @Suppress("DEPRECATION")
                 callbacks.onActivityAction(actionId)
             }
             return

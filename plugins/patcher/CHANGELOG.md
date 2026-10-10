@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.1
+
+- Show the installed version in the Patcher header, which still said v1.0.0 in 1.1.0.
+
 ## 1.1.0
 
 - Add Reddit preview alongside YouTube, using the official complete Reddit 2026.14.0 APKM and the existing local validation, patching and signing engine.

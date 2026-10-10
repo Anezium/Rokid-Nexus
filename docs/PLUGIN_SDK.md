@@ -19,7 +19,7 @@ resolved transitively.
 repositories { maven("https://jitpack.io") }
 
 dependencies {
-    implementation("com.github.Anezium.Rokid-Nexus:bus-client:sdk-v0.22.0")
+    implementation("com.github.Anezium.Rokid-Nexus:bus-client:sdk-v0.23.0")
 }
 ```
 
@@ -428,6 +428,7 @@ sealed interface NexusActivityProgress {
     data object Indeterminate : NexusActivityProgress
 }
 
+@Deprecated("Drawn but never selectable on glasses hubs 1.7.0 and later")
 data class NexusActivityAction(
     val id: String,
     val glyph: String,
@@ -448,6 +449,7 @@ data class NexusActivity(
     val progress: NexusActivityProgress? = null,
     val eta: String? = null,
     val detail: List<String> = emptyList(),
+    @Deprecated("Drawn but never selectable on glasses hubs 1.7.0 and later")
     val actions: List<NexusActivityAction> = emptyList(),
     val maxDurationMs: Long? = null,
     val wakeDisplay: Boolean = false,
@@ -468,14 +470,16 @@ fun updateActivity(
 fun endActivity(): NexusSdkResult
 
 interface NexusPluginCallbacks {
+    @Deprecated("Drawn but never selectable on glasses hubs 1.7.0 and later")
     fun onActivityAction(id: String) = Unit
     fun onActivityClosed(reason: String) = Unit
 }
 ```
 
 `NexusPluginService` forwards those callbacks to the overridable
-`onNexusActivityAction(id)` and `onNexusActivityClosed(reason)` hooks used in
-the example below.
+`onNexusActivityAction(id)` and `onNexusActivityClosed(reason)` hooks. Activity
+actions, `NexusActivityAction`, and both action callbacks are deprecated in
+SDK 0.23.0: see input below.
 
 Check the live `supportsActivitySurface` value immediately before starting or
 updating. For a registered plugin with the `surfaces` grant, all three methods
@@ -518,7 +522,6 @@ A Maps-shaped route can publish the next maneuver as one object:
 ```kotlin
 class MapsLikePluginService : NexusPluginService() {
     private var routeActivityStarted = false
-    private var muted = false
 
     override fun onNexusOpen() = Unit
     override fun onNexusClose() = Unit // The route activity continues.
@@ -564,16 +567,8 @@ class MapsLikePluginService : NexusPluginService() {
         progress = NexusActivityProgress.Percent(percent),
         eta = "12:41",
         detail = listOf("then right on Av. de l'Opera"),
-        // Drawn but not selectable on glasses hubs 1.7.0 and later.
-        actions = listOf(
-            NexusActivityAction(id = "mute", glyph = "pause", label = "Mute"),
-        ),
         maxDurationMs = maxDurationMs,
     )
-
-    override fun onNexusActivityAction(id: String) {
-        if (id == "mute") muted = !muted
-    }
 
     override fun onNexusActivityClosed(reason: String) {
         routeActivityStarted = false
@@ -660,7 +655,8 @@ opens the plugin, and up to three actions are still drawn but cannot be
 selected, so `onNexusActivityAction(id)` is not called. A key pressed over an
 activity, even inside a native app, goes to whatever is underneath instead.
 Put anything the wearer must act on in a notice or a surface; the wearer opens
-your plugin from the launcher. Older glasses hubs still let the idle-layer
+your plugin from the launcher. SDK 0.23.0 deprecates the action API for that
+reason; it still compiles and still reaches older glasses hubs. Older glasses hubs still let the idle-layer
 primary activity take forward/backward and center tap. BACK is never claimed.
 `onNexusActivityClosed(reason)` reports `owner`, `replaced`, `disconnect`, or
 `max-duration`.

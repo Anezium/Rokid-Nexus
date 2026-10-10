@@ -963,6 +963,7 @@ sealed interface NexusActivityProgress {
  * @property label Human-readable command label. The platform owns whether and
  * where it is shown.
  */
+@Deprecated("Glasses hubs 1.7.0 and later draw activity actions but never let the wearer select them. Put a command in a notice or a surface.")
 data class NexusActivityAction(
     val id: String,
     val glyph: String,
@@ -1035,7 +1036,8 @@ data class NexusActivityTrack(
  * @property eta Optional trailing value, capped at 8 trimmed characters.
  * @property detail Up to two panel-only detail lines, each capped at 32
  * trimmed characters.
- * @property actions Up to three one-shot, platform-rendered actions.
+ * @property actions Up to three one-shot, platform-rendered actions. Glasses
+ * hubs 1.7.0 and later draw them but never select them.
  * @property maxDurationMs Optional safety deadline, clamped on start to one
  * minute through twelve hours. Null means the activity lasts until ended,
  * evicted, or disconnected.
@@ -1052,6 +1054,7 @@ data class NexusActivityTrack(
  * @property track Optional extra: stops or stages, drawn instead of the
  * progress bar. Send [progress] as well for glasses without activity extras.
  */
+@Suppress("DEPRECATION")
 data class NexusActivity(
     val glyph: String,
     val primary: String,
@@ -1059,6 +1062,7 @@ data class NexusActivity(
     val progress: NexusActivityProgress? = null,
     val eta: String? = null,
     val detail: List<String> = emptyList(),
+    @Deprecated("Glasses hubs 1.7.0 and later draw activity actions but never let the wearer select them. Put a command in a notice or a surface.")
     val actions: List<NexusActivityAction> = emptyList(),
     val maxDurationMs: Long? = null,
     val wakeDisplay: Boolean = false,
