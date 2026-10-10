@@ -802,11 +802,13 @@ internal class SessionScreens(
             CONVERSATION_BLOCK, body.caption, drawn, dimmed = false,
             frame = identity, pageId = frame.pageId, revision = status.revision, anchor = frame.anchor,
         )
+        // In focus the footer holds the buttons, so the microphone's state is said on the status line.
+        val micLine = "$MIC_UNAVAILABLE · $USE_TYPE".takeIf { facts.micUnavailable && focus != null && capture == null }
         return SessionScreen(
             ScreenHeader(header, if (pages > 1) "${frame.page + 1}/$pages" else null, owner?.let { IconRef.Plugin(it) }),
             listOf(block),
             hint,
-            statusText,
+            statusText ?: micLine,
             CONVERSATION_BLOCK,
             footer = footer,
         )

@@ -1499,8 +1499,8 @@ internal class SessionReducer(
                     capture.kind != CaptureKind.DICTATE -> model
                     message.result.reason == ComposeDictationReason.COMPLETED && !text.isNullOrBlank() ->
                         model.copy(capture = null, micUnavailable = false, draft = DraftStore.completed(capture, text, model.history))
-                    // No phone microphone stands in: the wearer is offered Type.
-                    else -> model.copy(capture = null, micUnavailable = true)
+                    // No phone microphone stands in: the wearer is offered Type, focused.
+                    else -> focusType(model.copy(capture = null, micUnavailable = true), capture)
                 }
             }
             is ComposeInbound.Done -> {
@@ -1519,6 +1519,17 @@ internal class SessionReducer(
         return SessionTransition(next, listOfNotNull(showEffect(next.state)))
     }
 
+    /** After a dictation that ended without text, its conversation frame focuses Type. */
+    private fun focusType(model: SessionModel, capture: Capture): SessionModel {
+        val state = model.state as? SessionState.InPage ?: return model
+        val top = state.frames.last()
+        if (model.generation != capture.generation || state.frames.size != capture.frameIndex || top.pageId != capture.pageId) return model
+        val (_, body) = top.shownConversation() ?: return model
+        val view = composerView(model, top, body)?.takeIf { it.available } ?: return model
+        val index = view.buttons.indexOf(ComposerRules.TYPE)
+        return model.copy(state = state.withTop(top.copy(composerFocus = ComposerFocus(ComposerRules.TYPE, index))))
+    }
+
     /**
      * The composer's invariants, after every transition. A capture lives only on its own live,
      * replyable conversation frame with the link up, and is cancelled at the phone as soon as it
@@ -1533,7 +1544,9 @@ internal class SessionReducer(
         after.capture?.let { capture ->
             val expired = event is SessionEvent.Tick && capture.deadlineMs?.let { event.nowMs >= it } == true
             if (expired || !captureHolds(after, capture)) {
-                after = after.copy(capture = null, micUnavailable = after.micUnavailable || (expired && capture.kind == CaptureKind.DICTATE))
+                val micFailed = expired && capture.kind == CaptureKind.DICTATE
+                after = after.copy(capture = null, micUnavailable = after.micUnavailable || micFailed)
+                if (micFailed) after = focusType(after, capture)
                 effects += SessionEffect.SendCompose(ComposeClient.cancel(capture))
             }
         }

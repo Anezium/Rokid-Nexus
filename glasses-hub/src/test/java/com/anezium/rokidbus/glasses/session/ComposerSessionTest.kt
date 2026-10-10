@@ -198,10 +198,17 @@ class ComposerSessionTest {
         assertTrue(model.micUnavailable)
         assertNull(model.draft)
         assertTrue(effects.none { it is SendCompose })
+        // Type is focused at once, and the microphone's state is said.
+        assertEquals(ComposerFocus(ComposerRules.TYPE, 1), top().composerFocus)
+        assertEquals("${SessionScreens.MIC_UNAVAILABLE} · ${SessionScreens.USE_TYPE}", screen().status)
+        val buttons = screen().footer as InlineFooter.Buttons
+        assertEquals(ComposerRules.TYPE, buttons.buttons.single { it.selected }.key)
+
+        // Back in reading, the composer's line says it; the next tap focuses Type again.
+        send(SessionEvent.Back(4_000))
         val footer = screen().footer as InlineFooter.StatusLine
         assertEquals(SessionScreens.MIC_UNAVAILABLE, footer.text)
         assertEquals(SessionScreens.USE_TYPE, footer.sub)
-
         focus(at = 5_000)
         assertEquals(ComposerRules.TYPE, top().composerFocus?.key)
     }
