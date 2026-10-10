@@ -286,7 +286,7 @@ class LauncherInteractiveTest {
     fun `an offline entry's commands are inert while its destination still opens`() {
         openRoot(stop(offline = true, knownAtWallMs = 5_000))
         press(2_000)
-        assertNull(root().focus)
+        assertTrue("an inert entry opens its summary instead of focusing commands", model.state is SessionState.InPage)
         assertEquals(LocalPages.activityPageId("media"), effects.filterIsInstance<RequestPage>().single().request.correlation.pageId)
 
         model = SessionModel()

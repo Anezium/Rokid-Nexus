@@ -89,9 +89,9 @@ class SessionHostTest {
     fun `the root is one row per stop with the selection marked and no activities row`() {
         val stops = RootStops.build(
             activities = listOf(
-                ActivityStop("maps", "maps:route", "300 m", pinned = true),
-                ActivityStop("transit", "transit:ride", "2 stops"),
-                ActivityStop("timer", "timer:main", "4:00"),
+                ActivityStop("maps", "maps:route", "300 m", pinned = true, startedOrder = 1),
+                ActivityStop("transit", "transit:ride", "2 stops", startedOrder = 2),
+                ActivityStop("timer", "timer:main", "4:00", startedOrder = 3),
             ),
             preview = NoticePreview("relay:thread", "Ana: hi"),
             notificationCount = 3,
