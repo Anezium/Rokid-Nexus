@@ -240,11 +240,14 @@ certificate, route prefixes, or surface ownership.
 
 Descriptor metadata keys are `com.anezium.rokidbus.plugin.ID`,
 `.DISPLAY_NAME`, `.API_VERSION`, `.CAPABILITIES`, `.RECEIVE_PREFIXES`,
-`.SETTINGS_ACTIVITY`, and `.LAUNCHABLE`. Plugin IDs match
+`.SETTINGS_ACTIVITY`, and `.LAUNCHABLE`, plus the optional `.SKILLS` and
+`.SKILLS_CLIENT` keys that request the skills grants (see *Skills v1*). Plugin IDs match
 `[a-z][a-z0-9._-]{2,63}`. Capability values are `surfaces`, `ink_surface`,
 `microphone`, `stt`, `tts`, `http_proxy`, `camera`, `mediasync`, `assistant`,
 and `wireless_debugging`; unknown values invalidate the
-descriptor. Grants are keyed by package, plugin ID, and signing digest and are
+descriptor. Current hubs also know `skills_provider` and `skills_client`,
+which plugins request through the skills keys instead, so that older hubs
+keep loading them. Grants are keyed by package, plugin ID, and signing digest and are
 never implied by installation.
 
 Phone-local Android platform access is outside this bus contract. For example,
@@ -2120,6 +2123,256 @@ else fails closed with `INVALID_REQUEST`. Plugins use
 carries `version`, the hub-stamped `pluginId`, and `enabled` — where the switch
 ended up, so a `set` doubles as a read. The switch is global: there is one
 button, and one approved assistant at a time.
+
+## Skills v1
+
+Skills let one approved plugin (the provider) publish typed operations that
+another approved plugin (the caller, in practice Assistant) invokes through the
+phone hub. The provider keeps its domain logic, Android permissions, and data;
+the hub discovers, authorizes, routes, and bounds every call. Skill traffic is
+phone-local: it never crosses CXR or SPP. Plan 024 is the design record; this
+section is the wire authority. Every limit below is a provisional constant in
+`SkillLimits` and changes there first.
+
+### Grants and declaration
+
+Two descriptor grants exist, separate from `assistant` (which remains the
+assist-button role): `skills_provider` and `skills_client`. A plugin requests
+them through dedicated metadata keys rather than `.CAPABILITIES`, because
+hubs that predate skills reject unknown capability names and would refuse the
+whole plugin:
+
+- `com.anezium.rokidbus.plugin.SKILLS` with `android:resource` pointing at a raw
+  JSON catalog requests `skills_provider`;
+- `com.anezium.rokidbus.plugin.SKILLS_CLIENT` with value `true` requests
+  `skills_client`.
+
+A current hub adds the requested grant to the descriptor's requested set, so
+declaring either key follows the existing reapproval rule: the plugin returns
+to Pending until the user approves it again. Listing `skills_provider` or
+`skills_client` in `.CAPABILITIES` is accepted by current hubs but makes the
+plugin invalid on older ones. A malformed skills declaration never invalidates
+the plugin; it disables skill exposure and shows a diagnostic.
+
+On top of both grants, the user approves each caller/provider/operation
+triple separately, on the provider's Plugin access screen. The approval is
+bound to both principals (package, plugin id, signing digest), the operation
+id, its major contract version, and the operation's digest. A changed
+operation contract, a new operation, or a new signing key starts disabled.
+Installing or approving a plugin's ordinary HUD capabilities never enables a
+skill.
+
+### Catalog
+
+The hub reads the catalog during ordinary discovery, from the provider's APK
+resources, without starting the plugin. Limits: 64 KiB UTF-8 per catalog, 32
+operations, 2 KiB UTF-8 per description, 64-character labels, three examples
+of at most 160 characters.
+
+```json
+{
+  "version": 1,
+  "operations": [{
+    "id": "get_departures",
+    "version": 1,
+    "label": "Departures at a stop",
+    "description": "Live departures at a stop returned by an earlier result.",
+    "examples": ["When is the next tram?"],
+    "effect": "read",
+    "cancellable": true,
+    "deduplicates": true,
+    "requires": [],
+    "prerequisites": ["network"],
+    "data": ["place_names", "schedules"],
+    "input": {"type": "object", "properties": {"stop": {"type": "string", "nexusRef": "stop"}}, "required": ["stop"]},
+    "output": {"type": "object", "properties": {}}
+  }]
+}
+```
+
+- `id` matches `[a-z][a-z0-9_]{1,47}`; `version` is the major contract version,
+  1 to 999. The hub supplies the provider identity.
+- `effect` is `read` or `action`. `cancellable` and `deduplicates` declare
+  whether the provider honours cancellation and duplicate suppression.
+- `requires` lists Nexus grants the operation needs from the provider's
+  ordinary grant; v1 accepts only `surfaces`.
+- `prerequisites` are plugin-owned Android access: `network`, `location`,
+  `notification_access`.
+- `data` names what a result may return, from `place_names`, `schedules`,
+  `itinerary`, `media_metadata`, `playback_state`, `status`, `text`. At least
+  one is required.
+- Unknown keys, values, or schema keywords invalidate the whole catalog.
+
+`input` and `output` use a JSON Schema subset. Each node has one `type`:
+`object` (`properties`, `required`, `additionalProperties` absent or `false`;
+unknown properties are always rejected), `string` (`maxLength` required up to
+4096, optional `minLength`, or `enum` of at most 32 values), `integer` and
+`number` (`minimum` and `maximum` required), `boolean`, or `array` (`items`,
+`maxItems` required up to 64, optional `minItems`). `description` is allowed
+on any node (300 characters). Depth is at most 6, nodes at most 128, and
+properties per object at most 24. There are no references, combinators,
+patterns, formats, or nulls. Both roots are objects.
+
+`nexusRef` is the one extension: a string property whose value is an entity
+reference of the named type (`[a-z][a-z0-9_]{1,31}`). In a result, the
+provider writes its own identifier there (at most 512 characters) and the hub
+replaces it with an opaque handle, `r_` followed by 22 URL-safe characters. In
+arguments, the caller must pass a handle that the hub issued to the same
+caller session, for the same provider, catalog revision, and entity type; the
+hub swaps it back for the provider's identifier before dispatch, and the
+provider validates that identifier again. A handle is not authorization and
+not proof of freshness. Handles expire after ten idle minutes, at most 256
+per session, and are discarded on session close, revocation, package change,
+and hub restart.
+
+### Paths
+
+| Path | Direction | Gate |
+|---|---|---|
+| `/skills/catalog/request` | caller to hub | `skills_client` |
+| `/skills/catalog/reply` | hub to caller | hub-only direct reply |
+| `/skills/invoke` | caller to hub | `skills_client` |
+| `/skills/cancel` | caller to hub | `skills_client` |
+| `/skills/session/close` | caller to hub | `skills_client` |
+| `/skills/result` | hub to caller | hub-only direct reply |
+| `/skills/provider/invoke` | hub to provider | hub-only direct delivery |
+| `/skills/provider/cancel` | hub to provider | hub-only direct delivery |
+| `/skills/provider/result` | provider to hub | `skills_provider` |
+
+`/skills` is a reserved root. Deliveries are owner-scoped, need no receive
+prefix, and carry the hub-stamped `pluginId` of their recipient. Every payload
+has `version: 1`; any other version, missing field, or unknown value fails
+closed.
+
+A phone hub that routes skills adds `skillsVersion: 1` to the
+`/system/plugin/registration` metadata. The SDK gates its skills helpers on it.
+
+### Catalog lookup
+
+`/skills/catalog/request` is `{"version":1}`. The reply, on the same envelope
+id, lists only operations approved for the authenticated caller, at most 32:
+
+```json
+{"version":1,"pluginId":"assistant","operations":[{
+  "alias":"sk_transit__get_departures","providerId":"transit","providerName":"Transit",
+  "operation":"get_departures","version":1,"label":"Departures at a stop",
+  "description":"Live departures at a stop returned by an earlier result.","examples":[],
+  "effect":"read","cancellable":true,"availability":"ready","input":{"type":"object"},"data":["schedules"]}]}
+```
+
+`alias` is the model-facing tool name, generated from the authenticated
+provider and operation ids with the reserved `sk_` prefix; no built-in tool
+may use it. `availability` is `ready`, `setup_required` (the provider lacks a
+grant listed in `requires`), or `temporarily_unavailable`; the phone UI also
+shows `absent`, `disabled`, and `incompatible`. Descriptions are the
+provider's untrusted text: they never grant, approve, or route anything.
+
+### Invocation
+
+```json
+{"version":1,"session":"conv-2f9c1a0b","requestKey":"turn-3:call_1",
+ "alias":"sk_transit__get_departures","arguments":{"stop":"r_AbCdEfGhIjKlMnOpQrStUv"}}
+```
+
+`session` is the caller's conversation session (8 to 64 of
+`[A-Za-z0-9_-]`); `requestKey` identifies this request within it for duplicate
+handling. The hub assigns the invocation id. Before dispatch the hub checks,
+in order: the caller's live registration and `skills_client` grant; the alias;
+the provider's grant, `skills_provider`, and any `requires`; the operation
+approval and digest; argument size (16 KiB) and schema; every handle; the
+duplicate ledger; and the limits. A rejection is an ordinary `/skills/result`
+with status `failed` and dispatch `none`.
+
+- One invocation may execute per caller session and at most four globally.
+  Excess work fails with `busy`; nothing is queued.
+- The deadline is 15 seconds from acceptance, cold start included.
+- An exact duplicate (`session`, `requestKey`, same arguments) reuses the
+  running or cached outcome. The same key with different arguments fails with
+  `operation_conflict`. The ledger keeps 128 entries per session. This is not
+  durable exactly-once execution; uncertain actions are never replayed.
+
+If the provider is not registered, the hub binds it through a dedicated
+invocation lease, waits up to five seconds for registration inside the
+deadline, and delivers without `/system/plugin/open`. The lease is separate
+from the foreground slot and the audio background slot: finishing a call
+never closes an open provider, interrupts its audio, or resets its surface,
+and closing the provider's surface never strands a live call. The binding is
+released when no invocation needs it. While a provider is bound only by a
+lease, the hub refuses its surface, Ink, notice, pin, microphone, speech, TTS,
+and camera traffic, and it cannot be adopted as foreground. It may start or
+update an activity only while running an operation that lists `surfaces` in
+`requires`. A bind refusal is `unavailable`.
+
+Hub to provider, `/skills/provider/invoke`:
+
+```json
+{"version":1,"pluginId":"transit","invocationId":"inv_7c2d9e41a0",
+ "operation":"get_departures","contractVersion":1,
+ "arguments":{"stop":"<provider identifier>"},"deadlineMs":14200}
+```
+
+`deadlineMs` is the time left. Provider to hub, `/skills/provider/result`,
+exactly once:
+
+```json
+{"version":1,"invocationId":"inv_7c2d9e41a0","status":"completed",
+ "observedAt":1790000000000,"data":{}}
+```
+
+The hub accepts it only from the registration of the exact provider principal
+it dispatched to, only for a live invocation id, and only within 16 KiB. Data
+must validate against the declared output schema; otherwise the caller
+receives `failed` with `invalid_result` for a read, or `unknown` for an
+action. Grants, approval, and the caller session are rechecked immediately
+before release.
+
+### Results
+
+`/skills/result` goes only to the caller's registration:
+
+```json
+{"version":1,"pluginId":"assistant","session":"conv-2f9c1a0b","requestKey":"turn-3:call_1",
+ "invocationId":"inv_7c2d9e41a0","providerId":"transit","operation":"get_departures",
+ "alias":"sk_transit__get_departures","contractVersion":1,"status":"completed",
+ "observedAt":1790000000000,"data":{}}
+```
+
+| Status | Meaning |
+|---|---|
+| `completed` | The read finished or the postcondition was observed; `data` is present. An empty read is valid. |
+| `accepted` | Dispatch known, completion not observed. Terminal in v1. |
+| `needs_input` | No effect; `input` carries `reason`, optional `prompt`, and at most eight `choices` of `{label, detail?, ref}` where `ref` is a hub handle. |
+| `failed` | `error` carries `code` and `dispatch` (`none`, `dispatched`, `unknown`). |
+| `unknown` | Execution or completion cannot be established. Never success, never proof of no effect. |
+
+Hub error codes: `permission_required`, `setup_required`,
+`unsupported_operation`, `invalid_arguments`, `busy`, `unavailable`,
+`stale_reference`, `deadline_exceeded`, `cancelled`, `operation_conflict`,
+`invalid_result`. Providers may add domain codes matching
+`[a-z][a-z0-9_]{1,47}`.
+
+### Cancellation, sessions, and revocation
+
+`/skills/cancel` is `{"version":1,"session":"…","requestKey":"…"}`. The hub
+forwards `/skills/provider/cancel`
+`{"version":1,"pluginId":"…","invocationId":"…","reason":"…"}` when the call was
+dispatched and answers the caller with `failed`/`cancelled` and the known
+dispatch state. Cancellation stops remaining work where possible and never
+claims to reverse an effect.
+
+`/skills/session/close` `{"version":1,"session":"…"}` cancels that session's
+invocations and drops its handles and ledger. Sessions also close after 30
+idle minutes, and a caller keeps at most four.
+
+Deadline expiry, caller disconnect, provider binder death, revocation of
+either side, package replacement, and hub restart all end the invocation and
+release its lease. The caller receives `failed` with `deadline_exceeded`,
+`cancelled`, or `unavailable`, and dispatch `unknown` once the call was
+delivered. Late provider results are fenced by invocation id and dropped.
+
+The hub journal records operation id, provider id, duration, status or error
+code, and dispatch state. It never records arguments, results, handles,
+prompts, or provider identifiers.
 
 ## Hub capabilities announcements
 

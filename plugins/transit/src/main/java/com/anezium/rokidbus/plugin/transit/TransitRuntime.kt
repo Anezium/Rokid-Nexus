@@ -14,6 +14,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import java.time.Instant
+import java.time.ZoneId
 import kotlin.coroutines.coroutineContext
 
 internal class TransitRuntime(
@@ -22,6 +23,7 @@ internal class TransitRuntime(
     private val refreshDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val refreshDelayMs: Long = REFRESH_MS,
     private val locationTimeoutMs: Long = LOCATION_TIMEOUT_MS,
+    private val zone: () -> ZoneId = ZoneId::systemDefault,
 ) {
     private val repository = dependencies.repository
     private val locationProvider = dependencies.location
@@ -36,15 +38,25 @@ internal class TransitRuntime(
     private var boardStops: List<TransitStop> = emptyList()
     private var boardsByStopId: Map<String, TransitBoard> = emptyMap()
     private var staleStopIds: Set<String> = emptySet()
+    private var journeyPage = 0
+    private var menuSelection = TransitJourneyCards.MenuItem.NEAR_ME
 
     fun open() {
         stopRefreshLoop()
         host.setNearMeForeground(false)
         lastSentKey = null
-        screen = Screen.CHOOSER
         selectedMode = favoritesStore.lastMode()
         activeMode = selectedMode
         clearBoardState()
+        val journey = host.journey()
+        if (journey != null) {
+            // During a journey the whole itinerary comes first; the activity shows only one step.
+            screen = Screen.JOURNEY
+            journeyPage = journey.legIndex.coerceIn(0, journey.itinerary.legs.lastIndex)
+            sendCard(TransitJourneyCards.leg(journey, journeyPage, zone()), forceShow = true)
+            return
+        }
+        screen = Screen.CHOOSER
         sendCard(TransitCards.chooser(selectedMode), forceShow = true)
     }
 
@@ -61,6 +73,57 @@ internal class TransitRuntime(
         when (screen) {
             Screen.CHOOSER -> handleChooserInput(event.keyCode)
             Screen.BOARD -> handleBoardInput(event.keyCode)
+            Screen.JOURNEY -> handleJourneyInput(event.keyCode)
+            Screen.JOURNEY_MENU -> handleJourneyMenuInput(event.keyCode)
+        }
+    }
+
+    private fun handleJourneyInput(keyCode: Int) {
+        val journey = host.journey() ?: return returnToChooser()
+        val lastPage = journey.itinerary.legs.lastIndex
+        when {
+            // Back leaves the view and Transit; the journey and its activity carry on.
+            keyCode == KeyEvent.KEYCODE_BACK -> close()
+            keyCode in FORWARD_KEYS -> {
+                journeyPage = (journeyPage + 1).coerceAtMost(lastPage)
+                sendCard(TransitJourneyCards.leg(journey, journeyPage, zone()))
+            }
+            keyCode in BACKWARD_KEYS -> {
+                journeyPage = (journeyPage - 1).coerceAtLeast(0)
+                sendCard(TransitJourneyCards.leg(journey, journeyPage, zone()))
+            }
+            keyCode in TAP_KEYS -> {
+                screen = Screen.JOURNEY_MENU
+                menuSelection = TransitJourneyCards.MenuItem.NEAR_ME
+                sendCard(TransitJourneyCards.menu(menuSelection, journey))
+            }
+        }
+    }
+
+    private fun handleJourneyMenuInput(keyCode: Int) {
+        val journey = host.journey() ?: return returnToChooser()
+        val items = TransitJourneyCards.MenuItem.values()
+        when {
+            keyCode == KeyEvent.KEYCODE_BACK -> {
+                screen = Screen.JOURNEY
+                sendCard(TransitJourneyCards.leg(journey, journeyPage, zone()))
+            }
+            keyCode in FORWARD_KEYS -> {
+                menuSelection = items[(menuSelection.ordinal + 1) % items.size]
+                sendCard(TransitJourneyCards.menu(menuSelection, journey))
+            }
+            keyCode in BACKWARD_KEYS -> {
+                menuSelection = items[(menuSelection.ordinal + items.size - 1) % items.size]
+                sendCard(TransitJourneyCards.menu(menuSelection, journey))
+            }
+            keyCode in TAP_KEYS -> when (menuSelection) {
+                TransitJourneyCards.MenuItem.NEAR_ME -> enterMode(TransitMode.NEAR_ME)
+                TransitJourneyCards.MenuItem.FAVORITES -> enterMode(TransitMode.FAVORITES)
+                TransitJourneyCards.MenuItem.STOP_GUIDANCE -> {
+                    host.stopJourney()
+                    returnToChooser()
+                }
+            }
         }
     }
 
@@ -416,6 +479,8 @@ internal class TransitRuntime(
     private enum class Screen {
         CHOOSER,
         BOARD,
+        JOURNEY,
+        JOURNEY_MENU,
     }
 
     private data class NearbySessionState(

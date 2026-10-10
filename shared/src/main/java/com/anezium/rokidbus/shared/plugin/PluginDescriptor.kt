@@ -18,6 +18,14 @@ data class PluginDescriptor(
      * plugin that declares none simply has no custom glyphs.
      */
     val glyphsResId: Int? = null,
+    /**
+     * Raw resource holding the skill catalog, resolved cross-package by the phone hub without
+     * starting the plugin. Null when the plugin declares no catalog, or declared one the hub
+     * cannot locate; see [skillsDeclared].
+     */
+    val skillsCatalogResId: Int? = null,
+    /** The plugin asked to publish skills, whether or not its catalog resource is usable. */
+    val skillsDeclared: Boolean = false,
 ) {
     companion object {
         private val idPattern = Regex("[a-z][a-z0-9._-]{2,63}")
@@ -43,6 +51,8 @@ object PluginDescriptorParser {
         BusConstants.META_PLUGIN_RECEIVE_PREFIXES,
         BusConstants.META_PLUGIN_SETTINGS_ACTIVITY,
         BusConstants.META_PLUGIN_LAUNCHABLE,
+        BusConstants.META_PLUGIN_SKILLS,
+        BusConstants.META_PLUGIN_SKILLS_CLIENT,
     )
 
     fun parse(metadata: Map<String, String?>): PluginDescriptorParseResult =
@@ -81,9 +91,23 @@ object PluginDescriptorParser {
         val capabilityResult = PluginCapability.parseList(
             values[BusConstants.META_PLUGIN_CAPABILITIES].orEmpty(),
         )
-        val capabilities = when (capabilityResult) {
+        val declaredCapabilities = when (capabilityResult) {
             is CapabilityParseResult.Valid -> capabilityResult.capabilities
             is CapabilityParseResult.Invalid -> return PluginDescriptorParseResult.Invalid(capabilityResult.reason)
+        }
+        // Skill roles ride their own keys so that hubs predating skills, which reject unknown
+        // capability names, keep loading the plugin. A malformed skills declaration never
+        // invalidates the plugin itself: the hub reports it against the catalog instead.
+        val skillsDeclared = values.containsKey(BusConstants.META_PLUGIN_SKILLS)
+        val skillsCatalogResId = values[BusConstants.META_PLUGIN_SKILLS]
+            ?.trim()
+            ?.toIntOrNull()
+            ?.takeIf { it != 0 }
+        val skillsClient = values[BusConstants.META_PLUGIN_SKILLS_CLIENT]?.trim()?.lowercase() == "true"
+        val capabilities = linkedSetOf<PluginCapability>().apply {
+            addAll(declaredCapabilities)
+            if (skillsDeclared) add(PluginCapability.SKILLS_PROVIDER)
+            if (skillsClient) add(PluginCapability.SKILLS_CLIENT)
         }
 
         val rawPrefixes = splitMetadataList(values[BusConstants.META_PLUGIN_RECEIVE_PREFIXES].orEmpty())
@@ -131,6 +155,8 @@ object PluginDescriptorParser {
                 iconKey = iconKey,
                 iconDrawableResId = iconDrawableResId,
                 glyphsResId = glyphsResId,
+                skillsCatalogResId = skillsCatalogResId,
+                skillsDeclared = skillsDeclared || PluginCapability.SKILLS_PROVIDER in declaredCapabilities,
             ),
         )
     }

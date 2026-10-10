@@ -138,4 +138,31 @@ class PhonePluginDiscoveryTest {
         )
         assertEquals(listOf("alpha", "zulu"), results.map { it.displayName.lowercase() })
     }
+
+    @Test
+    fun `a skills catalog is read into the principal without affecting the plugin`() {
+        val catalog = """{"version":1,"operations":[{"id":"echo","version":1,"label":"Echo",
+            "description":"Echo text.","effect":"read","cancellable":false,"deduplicates":true,
+            "data":["text"],"input":{"type":"object"},"output":{"type":"object"}}]}"""
+        fun evaluate(bytes: ByteArray?, error: String? = null, declared: Boolean = true) =
+            (
+                PhonePluginDiscovery.evaluate(
+                    listOf(
+                        record(
+                            extraMetadata = if (declared) listOf(BusConstants.META_PLUGIN_SKILLS to "2131755008") else emptyList(),
+                        ).copy(skillsCatalog = bytes, skillsCatalogError = error, packageRevision = 7L),
+                    ),
+                ).single() as PhonePluginCandidate.Valid
+                ).principal
+
+        val valid = evaluate(catalog.toByteArray())
+        assertEquals("echo", valid.skillCatalog?.operations?.single()?.id)
+        assertEquals(7L, valid.packageRevision)
+        assertTrue(com.anezium.rokidbus.shared.plugin.PluginCapability.SKILLS_PROVIDER in valid.descriptor.requestedCapabilities)
+
+        val invalid = evaluate("{".toByteArray())
+        assertEquals(PluginSkillsState.Invalid("CATALOG_NOT_JSON"), invalid.skills)
+        assertEquals(PluginSkillsState.Invalid("CATALOG_UNREADABLE"), evaluate(null, "CATALOG_UNREADABLE").skills)
+        assertEquals(PluginSkillsState.Absent, evaluate(null, declared = false).skills)
+    }
 }

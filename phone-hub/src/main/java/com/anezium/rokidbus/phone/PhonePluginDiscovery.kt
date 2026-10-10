@@ -9,6 +9,17 @@ import com.anezium.rokidbus.shared.BusConstants
 import com.anezium.rokidbus.shared.plugin.PluginDescriptor
 import com.anezium.rokidbus.shared.plugin.PluginDescriptorParseResult
 import com.anezium.rokidbus.shared.plugin.PluginDescriptorParser
+import com.anezium.rokidbus.shared.skills.SkillCatalog
+import com.anezium.rokidbus.shared.skills.SkillCatalogParseResult
+import com.anezium.rokidbus.shared.skills.SkillCatalogParser
+import com.anezium.rokidbus.shared.skills.SkillLimits
+
+/** What discovery found of a plugin's skill catalog. An invalid catalog never invalidates the plugin. */
+sealed interface PluginSkillsState {
+    data object Absent : PluginSkillsState
+    data class Invalid(val reason: String) : PluginSkillsState
+    data class Valid(val catalog: SkillCatalog) : PluginSkillsState
+}
 
 data class PhonePluginPrincipal(
     val packageName: String,
@@ -17,7 +28,13 @@ data class PhonePluginPrincipal(
     val signingDigestSha256: String,
     val descriptor: PluginDescriptor,
     val guardianServiceComponent: ComponentName? = null,
-)
+    val skills: PluginSkillsState = PluginSkillsState.Absent,
+    /** Changes with every install of the package; skill references and invocations are bound to it. */
+    val packageRevision: Long = 0L,
+) {
+    val skillCatalog: SkillCatalog?
+        get() = (skills as? PluginSkillsState.Valid)?.catalog
+}
 
 sealed interface PhonePluginCandidate {
     val packageName: String
@@ -44,6 +61,9 @@ class PhonePluginDiscovery(private val packageManager: PackageManager) {
         val exported: Boolean,
         val signingCertificates: List<ByteArray>,
         val metadata: List<Pair<String, String?>>,
+        val skillsCatalog: ByteArray? = null,
+        val skillsCatalogError: String? = null,
+        val packageRevision: Long = 0L,
     )
 
     fun discover(): List<PhonePluginCandidate> = evaluate(loadRecords())
@@ -92,6 +112,19 @@ class PhonePluginDiscovery(private val packageManager: PackageManager) {
                 if (bundle?.containsKey(key) == true) add(key to bundle.get(key)?.toString())
             }
         }
+        // The catalog is read from the package's resources, which never starts the plugin.
+        val catalogResId = service.metaData?.getInt(BusConstants.META_PLUGIN_SKILLS, 0) ?: 0
+        var catalogError: String? = null
+        val catalogBytes = if (catalogResId != 0) {
+            runCatching {
+                val applicationInfo = service.applicationInfo ?: error("no application info")
+                packageManager.getResourcesForApplication(applicationInfo)
+                    .openRawResource(catalogResId)
+                    .use { input -> readCapped(input, SkillLimits.MAX_CATALOG_BYTES + 1) }
+            }.onFailure { catalogError = "CATALOG_UNREADABLE" }.getOrNull()
+        } else {
+            null
+        }
         return PackageRecord(
             packageName = packageName,
             serviceClassName = service.name,
@@ -99,7 +132,21 @@ class PhonePluginDiscovery(private val packageManager: PackageManager) {
             exported = service.exported,
             signingCertificates = certificates,
             metadata = metadata,
+            skillsCatalog = catalogBytes,
+            skillsCatalogError = catalogError,
+            packageRevision = packageInfo?.lastUpdateTime ?: 0L,
         )
+    }
+
+    private fun readCapped(input: java.io.InputStream, maxBytes: Int): ByteArray {
+        val buffer = java.io.ByteArrayOutputStream()
+        val chunk = ByteArray(4096)
+        while (buffer.size() < maxBytes) {
+            val read = input.read(chunk, 0, minOf(chunk.size, maxBytes - buffer.size()))
+            if (read < 0) break
+            buffer.write(chunk, 0, read)
+        }
+        return buffer.toByteArray()
     }
 
     companion object {
@@ -115,6 +162,8 @@ class PhonePluginDiscovery(private val packageManager: PackageManager) {
             BusConstants.META_PLUGIN_SETTINGS_ACTIVITY,
             BusConstants.META_PLUGIN_LAUNCHABLE,
             BusConstants.META_PLUGIN_GUARDIAN_SERVICE,
+            BusConstants.META_PLUGIN_SKILLS,
+            BusConstants.META_PLUGIN_SKILLS_CLIENT,
         )
 
         fun evaluate(records: List<PackageRecord>): List<PhonePluginCandidate> {
@@ -183,8 +232,21 @@ class PhonePluginDiscovery(private val packageManager: PackageManager) {
                     signingDigestSha256 = digest,
                     descriptor = descriptor,
                     guardianServiceComponent = guardianServiceComponent,
+                    skills = skillsState(descriptor, record),
+                    packageRevision = record.packageRevision,
                 ),
             )
+        }
+
+        internal fun skillsState(descriptor: PluginDescriptor, record: PackageRecord): PluginSkillsState {
+            if (!descriptor.skillsDeclared) return PluginSkillsState.Absent
+            if (descriptor.skillsCatalogResId == null) return PluginSkillsState.Invalid("CATALOG_RESOURCE_MISSING")
+            record.skillsCatalogError?.let { return PluginSkillsState.Invalid(it) }
+            val bytes = record.skillsCatalog ?: return PluginSkillsState.Invalid("CATALOG_UNREADABLE")
+            return when (val parsed = SkillCatalogParser.parse(bytes)) {
+                is SkillCatalogParseResult.Valid -> PluginSkillsState.Valid(parsed.catalog)
+                is SkillCatalogParseResult.Invalid -> PluginSkillsState.Invalid(parsed.reason)
+            }
         }
 
         internal fun guardianComponent(packageName: String, declaredClassName: String): ComponentName? {

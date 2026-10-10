@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Plans its activity traffic through the SDK's shared guidance planner and
+  glyphs. No change to what the glasses show; a recorded transcript test pins
+  the traffic.
+
 ## 0.2.0
 
 - OsmAnd and OsmAnd+: the turn in words, its distance, the street and the

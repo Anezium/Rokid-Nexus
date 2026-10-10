@@ -13,14 +13,16 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.view.KeyEvent
-import com.anezium.rokidbus.client.plugin.NexusActivity
-import com.anezium.rokidbus.client.plugin.NexusActivityProgress
 import com.anezium.rokidbus.client.plugin.NexusActivityTrack
 import com.anezium.rokidbus.client.plugin.NexusAudioCallbacks
 import com.anezium.rokidbus.client.plugin.NexusAudioFormat
 import com.anezium.rokidbus.client.plugin.NexusAudioSession
 import com.anezium.rokidbus.client.plugin.NexusAudioStopReason
 import com.anezium.rokidbus.client.plugin.NexusCard
+import com.anezium.rokidbus.client.plugin.NexusGuidanceGlyphs
+import com.anezium.rokidbus.client.plugin.NexusGuidancePlan
+import com.anezium.rokidbus.client.plugin.NexusGuidancePlanner
+import com.anezium.rokidbus.client.plugin.NexusGuidanceStep
 import com.anezium.rokidbus.client.plugin.NexusImage
 import com.anezium.rokidbus.client.plugin.NexusInkCloseReason
 import com.anezium.rokidbus.client.plugin.NexusInkProblem
@@ -35,6 +37,7 @@ import com.anezium.rokidbus.client.plugin.NexusPinLine
 import com.anezium.rokidbus.client.plugin.NexusPinSize
 import com.anezium.rokidbus.client.plugin.NexusPluginService
 import com.anezium.rokidbus.client.plugin.NexusSdkResult
+import com.anezium.rokidbus.client.plugin.NexusSkillInvocation
 import com.anezium.rokidbus.client.plugin.NexusSpeechCallbacks
 import com.anezium.rokidbus.client.plugin.NexusSpeechError
 import com.anezium.rokidbus.client.plugin.NexusSpeechSession
@@ -119,9 +122,11 @@ class HelloPluginService : NexusPluginService() {
      * the fitted panel, badge, measure, track and urgent beat can be judged on
      * hardware. Steps: start, long, ride, stops, tostop, urgent, arrive, end.
      *
-     *     adb shell am start-foreground-service \
-     *       -n com.anezium.rokidbus.plugin.sample/.HelloPluginService \
-     *       -a com.anezium.rokidbus.plugin.sample.DEMO_ACTIVITY --es step ride
+     * The route goes through the SDK's shared guidance planner, as a real guide
+     * would: each step is plain guidance, and the planner decides whether it
+     * starts the activity, flares, beats urgently, or updates quietly.
+     *
+     *     adb shell am start-foreground-service      *       -n com.anezium.rokidbus.plugin.sample/.HelloPluginService      *       -a com.anezium.rokidbus.plugin.sample.DEMO_ACTIVITY --es step ride
      */
     private fun demoActivityStep(step: String?, attempt: Int = 0) {
         val client = nexusClient ?: run {
@@ -133,19 +138,30 @@ class HelloPluginService : NexusPluginService() {
             Handler(Looper.getMainLooper()).postDelayed({ demoActivityStep(step, attempt + 1) }, 250L)
             return
         }
-        val result = when (step) {
-            "start" -> client.startActivity(DEMO_ROUTE_WALK)
-            "long" -> client.updateActivity(DEMO_ROUTE_LEAVE)
-            "ride" -> client.updateActivity(DEMO_ROUTE_RIDE, significant = true)
-            "stops" -> client.updateActivity(DEMO_ROUTE_RIDE_ON)
-            "tostop" -> client.updateActivity(DEMO_ROUTE_TO_STOP)
-            "urgent" -> client.updateActivity(DEMO_ROUTE_GET_OFF, significant = true, urgent = true)
-            "arrive" -> client.updateActivity(DEMO_ROUTE_ARRIVED, significant = true)
-            "end" -> client.endActivity()
-            else -> null
+        if (step == "end") {
+            demoPlanner.reset()
+            log("demo activity step=end result=${client.endActivity()}")
+            return
+        }
+        if (step == "start") demoPlanner.reset()
+        val guidance = DEMO_ROUTE[step] ?: run {
+            log("demo activity step=$step: unknown")
+            return
+        }
+        val result = when (val plan = demoPlanner.plan(guidance)) {
+            is NexusGuidancePlan.Start ->
+                client.startActivity(plan.step.toActivity(maxDurationMs = DEMO_ROUTE_MAX_MS, wakeDisplay = true))
+            is NexusGuidancePlan.Update -> client.updateActivity(
+                plan.step.toActivity(),
+                significant = plan.significant,
+                urgent = plan.urgent && client.supportsActivityExtras,
+            )
+            NexusGuidancePlan.Unchanged -> null
         }
         log("demo activity step=$step result=$result extras=${client.supportsActivityExtras}")
     }
+
+    private val demoPlanner = NexusGuidancePlanner()
 
     private val state = HelloPluginState()
     private var surface: NexusSurfaceSession? = null
@@ -301,6 +317,23 @@ class HelloPluginService : NexusPluginService() {
         showingBackgroundAudioControl = false
         backgroundAudioFrames = 0L
         pinStep = PIN_HIDDEN
+    }
+
+    /**
+     * A skill invocation: answer it once, off the main thread when the work is slow. The plugin
+     * is not opened for it and shows nothing; Assistant presents the result in its own band.
+     */
+    override fun onNexusSkillInvoked(invocation: NexusSkillInvocation) {
+        val result = when (val answer = HelloSkills.answer(invocation.operationId, invocation.arguments)) {
+            is HelloSkills.Answer.Completed -> invocation.complete(answer.data)
+            is HelloSkills.Answer.Failed -> invocation.fail(answer.code)
+        }
+        log("skill ${invocation.operationId} answered result=$result")
+    }
+
+    // Whatever ended the demo activity, the next step has to start it again.
+    override fun onNexusActivityClosed(reason: String) {
+        demoPlanner.reset()
     }
 
     override fun onNexusInput(event: NexusInputEvent) {
@@ -632,67 +665,84 @@ class HelloPluginService : NexusPluginService() {
         const val DEMO_NOTIFICATION_ID = 7302
         const val DEMO_REGISTRATION_ATTEMPTS = 20
 
-        val DEMO_ROUTE_WALK = NexusActivity(
-            glyph = "turn-right",
+        const val DEMO_ROUTE_MAX_MS = 30 * 60 * 1000L
+
+        private val DEMO_ROUTE_WALK = NexusGuidanceStep(
+            glyph = NexusGuidanceGlyphs.TURN_RIGHT,
             primary = "120 m",
             secondary = "Rue de Rivoli",
-            progress = NexusActivityProgress.Percent(8),
+            progressPercent = 8,
             eta = "12:24",
             detail = listOf("then the Chatelet stop"),
-            maxDurationMs = 30 * 60 * 1000L,
-            wakeDisplay = true,
+            stepKey = "street",
         )
 
-        // Twelve characters next to an ETA: fitted, never "Dep...".
-        val DEMO_ROUTE_LEAVE = DEMO_ROUTE_WALK.copy(
-            glyph = "walk",
+        // Twelve characters next to an ETA: fitted, never "Dep...". Same step, so quiet.
+        private val DEMO_ROUTE_LEAVE = DEMO_ROUTE_WALK.copy(
+            glyph = NexusGuidanceGlyphs.WALK,
             primary = "Depart 3 min",
             secondary = "Bus 38 at 12:09",
-            progress = null,
+            progressPercent = null,
             detail = listOf("4 min on foot to Chatelet"),
         )
 
-        // Progress stays alongside the track for glasses without extras.
-        val DEMO_ROUTE_RIDE = DEMO_ROUTE_WALK.copy(
-            glyph = "bus",
+        // A new step, so it flares. Progress stays alongside the track for glasses without extras.
+        private val DEMO_ROUTE_RIDE = DEMO_ROUTE_WALK.copy(
+            glyph = NexusGuidanceGlyphs.BUS,
             badge = "38",
             primary = "3 stops",
             secondary = "Get off at Luxembourg",
-            progress = NexusActivityProgress.Percent(55),
+            progressPercent = 55,
             track = NexusActivityTrack(count = 5, at = 2, target = 4, label = "Luxembourg"),
             detail = listOf("towards Porte d'Orleans"),
+            stepKey = "ride",
         )
 
-        // A quiet update: the panel, not a flare, with the badge and the track.
         /** A walk to the stop, timed and measured: "3 min - 250 m", folded "250 m" under "3 min". */
-        val DEMO_ROUTE_TO_STOP = DEMO_ROUTE_WALK.copy(
-            glyph = "walk",
+        private val DEMO_ROUTE_TO_STOP = DEMO_ROUTE_WALK.copy(
+            glyph = NexusGuidanceGlyphs.WALK,
             primary = "3 min",
             measure = "250 m",
             secondary = "Porte d'Orleans - Leclerc",
-            progress = null,
+            progressPercent = null,
             detail = listOf("Departs at 12:09"),
+            stepKey = "to-stop",
         )
 
-        val DEMO_ROUTE_RIDE_ON = DEMO_ROUTE_RIDE.copy(
+        // The same ride with one stop fewer: the panel, not a flare, with the badge and the track.
+        private val DEMO_ROUTE_RIDE_ON = DEMO_ROUTE_RIDE.copy(
             primary = "2 stops",
-            progress = NexusActivityProgress.Percent(68),
+            progressPercent = 68,
             track = NexusActivityTrack(count = 5, at = 3, target = 4, label = "Luxembourg"),
         )
 
-        val DEMO_ROUTE_GET_OFF = DEMO_ROUTE_RIDE.copy(
+        // The ride becoming imminent: the planner makes it urgent, once.
+        private val DEMO_ROUTE_GET_OFF = DEMO_ROUTE_RIDE.copy(
             primary = "Get off",
             secondary = "Next stop: Luxembourg",
-            progress = NexusActivityProgress.Percent(80),
+            progressPercent = 80,
             track = NexusActivityTrack(count = 5, at = 3, target = 4, label = "Luxembourg"),
+            imminent = true,
         )
 
-        val DEMO_ROUTE_ARRIVED = DEMO_ROUTE_WALK.copy(
-            glyph = "arrive",
+        private val DEMO_ROUTE_ARRIVED = DEMO_ROUTE_WALK.copy(
+            glyph = NexusGuidanceGlyphs.ARRIVE,
             primary = "Arrived",
             secondary = "Pantheon",
-            progress = NexusActivityProgress.Percent(100),
+            progressPercent = 100,
             detail = emptyList(),
+            stepKey = "arrived",
+            arrived = true,
+        )
+
+        val DEMO_ROUTE = mapOf(
+            "start" to DEMO_ROUTE_WALK,
+            "long" to DEMO_ROUTE_LEAVE,
+            "ride" to DEMO_ROUTE_RIDE,
+            "stops" to DEMO_ROUTE_RIDE_ON,
+            "tostop" to DEMO_ROUTE_TO_STOP,
+            "urgent" to DEMO_ROUTE_GET_OFF,
+            "arrive" to DEMO_ROUTE_ARRIVED,
         )
         const val SURFACE_ID = "main"
         const val INK_SURFACE_ID = "ink-demo"

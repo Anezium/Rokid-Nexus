@@ -2,6 +2,9 @@ package com.anezium.rokidbus.client.plugin
 
 import com.anezium.rokidbus.shared.plugin.NexusInputEvent
 import com.anezium.rokidbus.shared.plugin.PluginOpenTypes
+import com.anezium.rokidbus.shared.skills.SkillCatalogEntry
+import com.anezium.rokidbus.shared.skills.SkillErrorCodes
+import com.anezium.rokidbus.shared.skills.SkillResultEnvelope
 import org.json.JSONObject
 
 interface NexusPluginCallbacks {
@@ -95,6 +98,27 @@ interface NexusPluginCallbacks {
 
     /** The hub rejected an assist-button request; [code] is the stable bus error code. */
     fun onAssistantTakeoverError(code: String) = Unit
+    /**
+     * Provider side: the hub delivered one invocation of an operation this plugin declared.
+     * Answer it exactly once through [NexusSkillInvocation]. The default refuses it, so a plugin
+     * that declares a catalog but never handles a call still lets the caller move on at once.
+     */
+    fun onSkillInvoked(invocation: NexusSkillInvocation) {
+        invocation.fail(SkillErrorCodes.UNSUPPORTED_OPERATION)
+    }
+
+    /** Provider side: the hub cancelled [invocation]; stop what remains and answer anyway. */
+    fun onSkillCancelled(invocation: NexusSkillInvocation) = Unit
+
+    /**
+     * Caller side: the operations approved for this caller, or an empty list with the hub's
+     * [errorCode] when the lookup was refused.
+     */
+    fun onSkillCatalog(entries: List<SkillCatalogEntry>, errorCode: String?) = Unit
+
+    /** Caller side: the one result of an invocation this plugin made. */
+    fun onSkillResult(result: SkillResultEnvelope) = Unit
+
     fun onMessage(path: String, id: String, payload: JSONObject) = Unit
     fun onBinary(path: String, id: String, payload: JSONObject, data: ByteArray) = Unit
 }

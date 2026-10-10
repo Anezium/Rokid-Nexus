@@ -1,5 +1,33 @@
 # Changelog — Transit
 
+## Unreleased
+
+- Explicit bus, metro, tram, and RER selectors now constrain the transport mode.
+  An ambiguous board no longer supplies a departure anchor for a follow-up.
+  Without a named line, destinations such as Orly list all matching directions.
+- After this skill catalog update, re-approve "Departures at a stop" for Assistant
+  in Nexus plugin access. Contract fingerprints include descriptions and schemas;
+  existing approvals are intentionally invalidated when those change.
+
+- Skills for an approved assistant: favorite stops, stop search, and
+  departures with their observation time and realtime quality, including "the
+  one after that" by trip identity rather than row position.
+- **Lines and directions as you say them.** Asking for departures accepts
+  "ligne 14", "M14", or "RER C" for a line and "vers Orly" or "aéroport" for
+  Aéroport d'Orly, matching whole words only. When a name fits several lines
+  or directions the answer lists them, and when nothing fits it lists the
+  lines and directions the stop actually has instead of reporting no
+  departure.
+- **Journey guidance.** "Take me home" plans a public transport journey to a
+  saved home and guides it step by step in Transit's own activity on the
+  glasses: walk, board, ride with the stops left, get off at the next stop,
+  transfer, arrive. A missed departure replans once, and boarding a later
+  vehicle is still noticed. The journey survives a restart, and opening
+  Transit during it shows every leg.
+- Home setting, chosen from the geocoder. Only its name ever reaches an
+  assistant; its location and yours stay in Transit.
+- Requests identify Transit with its version and a contact.
+
 ## 1.0.4
 
 - Add realtime ETAs for Hong Kong KMB, Citybus, and green-minibus stops, with automatic fallback to Transitous schedules.

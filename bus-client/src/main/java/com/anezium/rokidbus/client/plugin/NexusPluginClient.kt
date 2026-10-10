@@ -22,6 +22,18 @@ import com.anezium.rokidbus.shared.plugin.CapabilityParseResult
 import com.anezium.rokidbus.shared.plugin.PluginCloseTypes
 import com.anezium.rokidbus.shared.plugin.PluginCapability
 import com.anezium.rokidbus.shared.plugin.PluginOpenTypes
+import com.anezium.rokidbus.shared.skills.SkillCatalog
+import com.anezium.rokidbus.shared.skills.SkillDispatch
+import com.anezium.rokidbus.shared.skills.SkillError
+import com.anezium.rokidbus.shared.skills.SkillErrorCodes
+import com.anezium.rokidbus.shared.skills.SkillInvokeRequest
+import com.anezium.rokidbus.shared.skills.SkillLimits
+import com.anezium.rokidbus.shared.skills.SkillProviderResult
+import com.anezium.rokidbus.shared.skills.SkillResultEnvelope
+import com.anezium.rokidbus.shared.skills.SkillSchemaValidator
+import com.anezium.rokidbus.shared.skills.SkillStatus
+import com.anezium.rokidbus.shared.skills.SkillValidation
+import com.anezium.rokidbus.shared.skills.SkillsContract
 import org.json.JSONObject
 import java.util.ArrayDeque
 import java.util.UUID
@@ -30,6 +42,7 @@ class NexusPluginClient internal constructor(
     private val pluginId: String,
     private val callbacks: NexusPluginCallbacks,
     private val transport: NexusPluginTransport,
+    private val monotonicClockMs: () -> Long = { System.nanoTime() / 1_000_000L },
 ) : NexusPluginTransport.Listener, AutoCloseable {
     private val seenEventIds = ArrayDeque<String>()
     private val seenEventIdSet = linkedSetOf<String>()
@@ -59,6 +72,16 @@ class NexusPluginClient internal constructor(
     private var snapshotSessionApiUsed = false
     @Volatile private var currentLinkState = 0
     @Volatile private var hubCapabilities = 0
+    @Volatile private var skillsVersion = 0
+    private val skillLock = Any()
+    private val liveInvocations = linkedMapOf<String, NexusSkillInvocation>()
+
+    /**
+     * This provider's own parsed catalog, when it declares one. Answers are checked against it
+     * locally so a contract mistake fails in the provider's process, not only at the hub.
+     */
+    @Volatile
+    internal var ownSkillCatalog: SkillCatalog? = null
 
     val isApproved: Boolean
         get() = registrationState == PluginRegistrationResult.APPROVED
@@ -227,6 +250,174 @@ class NexusPluginClient internal constructor(
     val supportsTts: Boolean
         get() = currentLinkState and (LinkStateBits.CXR_CONTROL_UP or LinkStateBits.SPP_DATA_UP) != 0 &&
             hubCapabilities and BusCapabilityBits.TTS != 0
+
+    /**
+     * Whether the phone hub routes skills (it announced skills v1 at registration). Every
+     * skills call returns [NexusSdkResult.CAPABILITY_NOT_AVAILABLE] without sending when false,
+     * so a plugin built with this SDK keeps working with an older hub.
+     */
+    val supportsSkills: Boolean
+        get() = isApproved && skillsVersion >= SkillsContract.VERSION
+
+    /**
+     * Asks the hub for the skill operations the wearer approved for this caller; the answer
+     * arrives on [NexusPluginCallbacks.onSkillCatalog]. Needs the `skills_client` grant.
+     */
+    fun requestSkillCatalog(): NexusSdkResult {
+        skillsClientPreflight()?.let { return it }
+        val id = UUID.randomUUID().toString()
+        watchForSurfaceError(id) { code -> callbacks.onSkillCatalog(emptyList(), code) }
+        return sendOrForget(id, BusPaths.SKILLS_CATALOG_REQUEST, SkillsContract.catalogRequest())
+    }
+
+    /**
+     * Invokes an approved operation by its hub alias. Exactly one
+     * [NexusPluginCallbacks.onSkillResult] follows for [SkillInvokeRequest.requestKey], including
+     * when the hub refuses the call: a route rejection arrives as a failed result too.
+     */
+    fun invokeSkill(request: SkillInvokeRequest): NexusSdkResult {
+        skillsClientPreflight()?.let { return it }
+        val payload = SkillsContract.invokeRequest(request)
+        if (SkillsContract.parseInvokeRequest(payload) == null ||
+            SkillsContract.utf8Size(request.arguments) > SkillLimits.MAX_ARGUMENTS_BYTES
+        ) {
+            return NexusSdkResult.INVALID_PAYLOAD
+        }
+        val id = UUID.randomUUID().toString()
+        watchForSurfaceError(id) { code ->
+            callbacks.onSkillResult(
+                SkillResultEnvelope(
+                    session = request.session,
+                    requestKey = request.requestKey,
+                    invocationId = LOCAL_INVOCATION_ID,
+                    providerId = "",
+                    operationId = "",
+                    alias = request.alias,
+                    contractVersion = 0,
+                    status = SkillStatus.FAILED,
+                    error = SkillError(routeErrorCode(code), SkillDispatch.NONE),
+                    observedAtMs = System.currentTimeMillis(),
+                ),
+            )
+        }
+        return sendOrForget(id, BusPaths.SKILLS_INVOKE, payload)
+    }
+
+    /** Cancels a pending invocation; its result still arrives, as `cancelled` with its dispatch state. */
+    fun cancelSkill(session: String, requestKey: String): NexusSdkResult {
+        skillsClientPreflight()?.let { return it }
+        val payload = SkillsContract.cancelRequest(session, requestKey)
+        if (SkillsContract.parseCancelRequest(payload) == null) return NexusSdkResult.INVALID_PAYLOAD
+        return sendOrForget(UUID.randomUUID().toString(), BusPaths.SKILLS_CANCEL, payload)
+    }
+
+    /** Ends a caller session: its invocations are cancelled and its references and ledger dropped. */
+    fun closeSkillSession(session: String): NexusSdkResult {
+        skillsClientPreflight()?.let { return it }
+        val payload = SkillsContract.sessionClose(session)
+        if (SkillsContract.parseSessionClose(payload) == null) return NexusSdkResult.INVALID_PAYLOAD
+        return sendOrForget(UUID.randomUUID().toString(), BusPaths.SKILLS_SESSION_CLOSE, payload)
+    }
+
+    private fun sendOrForget(id: String, path: String, payload: JSONObject): NexusSdkResult =
+        if (send(path, id, payload)) {
+            NexusSdkResult.SENT
+        } else {
+            pendingSurfaceErrors.remove(id)
+            NexusSdkResult.NOT_REGISTERED
+        }
+
+    private fun skillsClientPreflight(): NexusSdkResult? = when {
+        !isApproved -> NexusSdkResult.NOT_REGISTERED
+        !hasCapability(PluginCapability.SKILLS_CLIENT) -> NexusSdkResult.CAPABILITY_NOT_GRANTED
+        skillsVersion < SkillsContract.VERSION -> NexusSdkResult.CAPABILITY_NOT_AVAILABLE
+        else -> null
+    }
+
+    private fun routeErrorCode(code: String): String = when {
+        code.startsWith("CAPABILITY_REQUIRED") || code == "REVOKED" || code == "PENDING_APPROVAL" ->
+            SkillErrorCodes.PERMISSION_REQUIRED
+        else -> SkillErrorCodes.UNAVAILABLE
+    }
+
+    /**
+     * Sends a provider's one answer. Refused locally, with the invocation left open for a
+     * correct answer, when the result breaks the status rules, the size limit, or the
+     * operation's declared output schema.
+     */
+    internal fun sendSkillResult(invocation: NexusSkillInvocation, result: SkillProviderResult): NexusSdkResult {
+        if (closed || !isApproved) return NexusSdkResult.NOT_REGISTERED
+        if (!hasCapability(PluginCapability.SKILLS_PROVIDER)) return NexusSdkResult.CAPABILITY_NOT_GRANTED
+        val payload = SkillsContract.providerResult(result)
+        if (SkillsContract.parseProviderResult(payload) == null ||
+            SkillsContract.utf8Size(payload) > SkillLimits.MAX_RESULT_BYTES
+        ) {
+            return NexusSdkResult.INVALID_PAYLOAD
+        }
+        val operation = ownSkillCatalog?.operation(invocation.operationId)
+        val data = result.data
+        if (operation != null && data != null &&
+            SkillSchemaValidator.validate(data, operation.output) is SkillValidation.Invalid
+        ) {
+            return NexusSdkResult.INVALID_PAYLOAD
+        }
+        synchronized(skillLock) {
+            if (liveInvocations[invocation.invocationId] !== invocation) return NexusSdkResult.INVALID_PAYLOAD
+            liveInvocations.remove(invocation.invocationId)
+        }
+        return if (transport.send(BusPaths.SKILLS_PROVIDER_RESULT, UUID.randomUUID().toString(), payload)) {
+            NexusSdkResult.SENT
+        } else {
+            NexusSdkResult.NOT_REGISTERED
+        }
+    }
+
+    private fun routeSkillMessage(path: String, payload: JSONObject): Boolean {
+        when (path) {
+            BusPaths.SKILLS_PROVIDER_INVOKE -> {
+                if (!isApproved || !hasCapability(PluginCapability.SKILLS_PROVIDER)) return true
+                val parsed = SkillsContract.parseProviderInvoke(payload) ?: return true
+                val invocation = NexusSkillInvocation(
+                    client = this,
+                    invocationId = parsed.invocationId,
+                    operationId = parsed.operationId,
+                    contractVersion = parsed.contractVersion,
+                    arguments = parsed.arguments,
+                    deadlineAtMs = monotonicClockMs() + parsed.deadlineMs,
+                    clock = monotonicClockMs,
+                )
+                synchronized(skillLock) {
+                    if (liveInvocations.containsKey(parsed.invocationId)) return true
+                    liveInvocations[parsed.invocationId] = invocation
+                    while (liveInvocations.size > MAX_LIVE_PROVIDER_INVOCATIONS) {
+                        liveInvocations.remove(liveInvocations.keys.first())
+                    }
+                }
+                callbacks.onSkillInvoked(invocation)
+            }
+            BusPaths.SKILLS_PROVIDER_CANCEL -> {
+                val invocationId = SkillsContract.parseProviderCancel(payload) ?: return true
+                val invocation = synchronized(skillLock) { liveInvocations[invocationId] } ?: return true
+                invocation.isCancelled = true
+                callbacks.onSkillCancelled(invocation)
+            }
+            BusPaths.SKILLS_RESULT -> if (isApproved) {
+                SkillsContract.parseResult(payload)?.let(callbacks::onSkillResult)
+            }
+            BusPaths.SKILLS_CATALOG_REPLY -> if (isApproved) {
+                SkillsContract.parseCatalogReply(payload)?.let { callbacks.onSkillCatalog(it, null) }
+            }
+            else -> return false
+        }
+        return true
+    }
+
+    private fun cancelLiveInvocations() {
+        val cancelled = synchronized(skillLock) {
+            liveInvocations.values.toList().also { liveInvocations.clear() }
+        }
+        cancelled.forEach { it.isCancelled = true }
+    }
 
     fun startActivity(activity: NexusActivity): NexusSdkResult {
         activityPreflight()?.let { return it }
@@ -521,6 +712,8 @@ class NexusPluginClient internal constructor(
         }
         if (result != PluginRegistrationResult.APPROVED) {
             approvedCapabilities = emptySet()
+            skillsVersion = 0
+            cancelLiveInvocations()
             clearNoticeContext()
             terminateAudioSession(
                 reason = NexusAudioStopReason.ERROR,
@@ -588,6 +781,7 @@ class NexusPluginClient internal constructor(
             return
         }
         if (payload.optString("pluginId") != pluginId || !rememberEvent(id)) return
+        if (routeSkillMessage(path, payload)) return
         if (routeSnapshotMessage(path, id, payload)) return
         if (routeSpeechMessage(path, payload)) return
         if (routeAudioMessage(path, payload)) return
@@ -714,6 +908,7 @@ class NexusPluginClient internal constructor(
                 if (!noticeApprovalAwaitingMetadata) clearNoticeContext()
                 noticeApprovalAwaitingMetadata = false
                 noticeInteractionVersion = payload.optInt("noticeInteractionVersion", 0)
+                skillsVersion = payload.optInt(SkillsContract.REGISTRATION_FIELD, 0)
                 // A fresh registration means the hub has no open session with us (it just
                 // (re)accepted this client), so a stale `opened` from a previous hub life
                 // must not swallow the next PLUGIN_OPEN.
@@ -799,6 +994,7 @@ class NexusPluginClient internal constructor(
             stopCurrent = false,
         )
         terminateSnapshotSession(NexusSnapshotError.ERROR)
+        cancelLiveInvocations()
         if (opened || backgrounded) {
             opened = false
             backgrounded = false
@@ -1038,6 +1234,10 @@ class NexusPluginClient internal constructor(
 
     companion object {
         private const val MAX_SEEN_EVENTS = 128
+        private const val MAX_LIVE_PROVIDER_INVOCATIONS = 2 * SkillLimits.MAX_LIVE_INVOCATIONS
+
+        /** Stands in for the hub's invocation id on a result the SDK builds from a route rejection. */
+        const val LOCAL_INVOCATION_ID = "local-rejected"
 
         fun create(
             context: Context,

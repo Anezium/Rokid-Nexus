@@ -36,7 +36,76 @@ data class TransitDeparture(
     val departure: Instant,
     val scheduledDeparture: Instant?,
     val cancelled: Boolean,
+    /** The feed's own statement: true for a live prediction, false for the timetable, null when silent. */
+    val realTime: Boolean? = null,
+    /** The feed's trip identity, when it publishes one; the only stable way to follow a departure. */
+    val tripId: String? = null,
 )
+
+/** A saved home: the label the wearer chose and where it is. The position never leaves Transit. */
+data class TransitHome(
+    val label: String,
+    val lat: Double,
+    val lon: Double,
+) {
+    val coordinate: TransitCoordinate
+        get() = TransitCoordinate(lat, lon)
+}
+
+/** A geocoder result offered when choosing a home. */
+data class TransitPlaceMatch(
+    val name: String,
+    val area: String,
+    val lat: Double,
+    val lon: Double,
+)
+
+/** One point of an itinerary. [stopId] is null for the origin and destination of a journey. */
+data class TransitPlace(
+    val name: String,
+    val lat: Double,
+    val lon: Double,
+    val stopId: String? = null,
+    val arrival: Instant? = null,
+    val departure: Instant? = null,
+) {
+    val coordinate: TransitCoordinate
+        get() = TransitCoordinate(lat, lon)
+}
+
+/** One leg of an itinerary, with absolute instants and the feed's realtime flag kept as given. */
+data class TransitLeg(
+    val mode: String,
+    val line: String?,
+    val headsign: String?,
+    val from: TransitPlace,
+    val to: TransitPlace,
+    val start: Instant,
+    val end: Instant,
+    val scheduledStart: Instant?,
+    val scheduledEnd: Instant?,
+    val realTime: Boolean,
+    val tripId: String?,
+    val intermediateStops: List<TransitPlace> = emptyList(),
+    val distanceMeters: Int? = null,
+) {
+    val isWalk: Boolean
+        get() = mode.equals("WALK", ignoreCase = true)
+
+    /** Boarding stop, every stop passed, and the alighting stop, in order. */
+    val stops: List<TransitPlace>
+        get() = listOf(from) + intermediateStops + to
+}
+
+data class TransitItinerary(
+    val start: Instant,
+    val end: Instant,
+    val transfers: Int,
+    val legs: List<TransitLeg>,
+) {
+    val rideLegs: List<TransitLeg>
+        get() = legs.filterNot(TransitLeg::isWalk)
+}
 
 data class TransitBoard(
     val stop: TransitStop,

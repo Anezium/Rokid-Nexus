@@ -1,5 +1,6 @@
 package com.anezium.rokidbus.plugin.assistant
 
+import com.anezium.rokidbus.shared.skills.SkillLimits
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -161,7 +162,7 @@ class AssistantToolRegistryTest {
     }
 
     @Test
-    fun `phase executes at most three calls`() = runTest {
+    fun `phase executes at most the turn's call budget`() = runTest {
         var executions = 0
         val progress = mutableListOf<String>()
         val tool = TestAssistantTool(
@@ -177,18 +178,20 @@ class AssistantToolRegistryTest {
             progressReporter = progress::add,
         ).newExecutionPhase(TOOLS_WITHOUT_VISION)
 
-        val results = (1..4).map { index ->
+        val budget = SkillLimits.ASSISTANT_MAX_EXECUTED_CALLS
+        val results = (1..budget + 1).map { index ->
             phase.execute(AssistantToolCall("call-$index", tool.name, "{}"))
         }
 
-        assertEquals(3, executions)
+        assertEquals(budget, executions)
         assertEquals(
             AssistantToolResult.Error(TOOL_ERROR_ALREADY_USED),
             results.last(),
         )
+        assertTrue(phase.budgetExhausted)
         assertEquals("Thinking…", progress.last())
-        assertEquals(3, progress.count { it == "Reading your notes…" })
-        assertEquals(4, progress.count { it == "Thinking…" })
+        assertEquals(budget, progress.count { it == "Reading your notes…" })
+        assertEquals(budget + 1, progress.count { it == "Thinking…" })
     }
 
     @Test
@@ -286,6 +289,27 @@ class AssistantToolRegistryTest {
         val result = phase.execute(AssistantToolCall("call-1", tool.name, "{}"))
 
         assertEquals(AssistantToolResult.Error("lookup_note_failed"), result)
+    }
+
+    @Test
+    fun `withdrawn Workspace evidence blocks tool execution while unrelated turns continue`() = runTest {
+        for (hasEvidence in listOf(false, true)) {
+            var executed = 0
+            val turn = FakeWorkspaceTurn().apply { evidence = hasEvidence }
+            val tool = TestAssistantTool(name = "save_note", sideEffecting = true,
+                executor = { _, _ -> executed++; AssistantToolResult.Json("{}") })
+            val phase = AssistantToolRegistry(listOf(tool)).newExecutionPhase(TOOLS_WITHOUT_VISION,
+                workspaceVersion = turn.version, workspaceTurn = turn)
+            turn.withdraw(WORKSPACE_SOURCE_CHANGED)
+            val failure = runCatching { phase.execute(AssistantToolCall("save", tool.name, "{}")) }.exceptionOrNull()
+            if (hasEvidence) {
+                assertEquals(WORKSPACE_CHANGED_MESSAGE, failure?.message)
+                assertEquals(0, executed)
+            } else {
+                assertEquals(null, failure)
+                assertEquals(1, executed)
+            }
+        }
     }
 
     @Test

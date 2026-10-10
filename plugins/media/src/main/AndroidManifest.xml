@@ -66,6 +66,9 @@
                 android:name="com.anezium.rokidbus.plugin.SETTINGS_ACTIVITY"
                 android:value="com.anezium.rokidbus.plugin.media.MediaDeckSettingsActivity" />
             <meta-data
+                android:name="com.anezium.rokidbus.plugin.SKILLS"
+                android:resource="@raw/nexus_skills" />
+            <meta-data
                 android:name="com.anezium.rokidbus.plugin.LAUNCHABLE"
                 android:value="true" />
         </service>

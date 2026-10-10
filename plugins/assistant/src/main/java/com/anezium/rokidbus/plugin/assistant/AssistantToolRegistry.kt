@@ -1,11 +1,14 @@
 package com.anezium.rokidbus.plugin.assistant
 
+import com.anezium.rokidbus.shared.skills.SkillLimits
+import com.anezium.rokidbus.shared.skills.SkillsContract
 import kotlinx.coroutines.CancellationException
 import org.json.JSONObject
 
 internal data class AssistantProviderFeatures(
     val supportsTools: Boolean,
     val supportsVision: Boolean,
+    val supportsWorkspaceSearch: Boolean = true,
 )
 
 internal data class AssistantToolSessionContext(
@@ -28,6 +31,31 @@ internal data class AssistantToolJsonSchema(
     }
 
     fun toJsonObject(): JSONObject = JSONObject(text)
+
+    /**
+     * Whether strict function calling accepts this schema: every object lists all of its
+     * properties as required and closes additional properties; optional values must be nullable.
+     */
+    fun isStrictCompatible(): Boolean = toJsonObject().isStrictObject()
+
+    private fun JSONObject.isStrictObject(): Boolean {
+        val properties = optJSONObject("properties") ?: JSONObject()
+        val required = optJSONArray("required")?.let { array -> List(array.length()) { array.optString(it) } }.orEmpty()
+        if (opt("additionalProperties") != false || properties.keys().asSequence().toSet() != required.toSet()) {
+            return false
+        }
+        return properties.keys().asSequence().all { key -> properties.optJSONObject(key)?.isStrictValue() != false }
+    }
+
+    private fun JSONObject.isStrictValue(): Boolean {
+        val types = when (val type = opt("type")) {
+            is String -> setOf(type)
+            is org.json.JSONArray -> List(type.length()) { type.optString(it) }.toSet()
+            else -> emptySet()
+        }
+        if ("object" in types && !isStrictObject()) return false
+        return optJSONObject("items")?.isStrictValue() != false
+    }
 }
 
 internal sealed interface AssistantToolValidation {
@@ -44,13 +72,28 @@ internal interface AssistantToolDefinition {
     val description: String
     val parametersSchema: AssistantToolJsonSchema
     val sideEffecting: Boolean
+    val maxExecutionsPerTurn: Int
+        get() = Int.MAX_VALUE
     val progressLabel: String?
     val retiresProgressOnSuccess: Boolean
         get() = false
     val executionFailureCode: String
         get() = "${name}_failed"
 
+    /**
+     * Whether a side-effecting tool may run only once per turn. Built-in tools keep that guard;
+     * plugin operations carry their own invocation identity and the hub's duplicate policy.
+     */
+    val oncePerTurn: Boolean
+        get() = sideEffecting
+
+    /** Whether the declared schema is complete enough for a provider's strict schema mode. */
+    val strictSchema: Boolean
+        get() = true
+
     fun isAvailable(context: AssistantToolAvailabilityContext): Boolean
+
+    fun bindToTurn(workspaceVersion: Pair<Long, Long>?, workspaceTurn: WorkspaceTurnAccess?): AssistantToolDefinition = this
 
     fun validate(argumentsJson: String): AssistantToolValidation
 
@@ -66,6 +109,8 @@ internal class AssistantToolRegistry(
         AssistantToolSessionContext(active = true)
     },
     private val progressReporter: (String) -> Unit = {},
+    /** Plugin operations for the current turn, named by hub aliases under the reserved prefix. */
+    private val dynamicDefinitions: () -> List<AssistantToolDefinition> = { emptyList() },
 ) {
     private val definitionsByName = definitions.associateBy(AssistantToolDefinition::name)
 
@@ -74,8 +119,12 @@ internal class AssistantToolRegistry(
             "Assistant tool names must be unique."
         }
         definitions.forEach { definition ->
+            require(definition.maxExecutionsPerTurn > 0)
             require(TOOL_NAME.matches(definition.name)) {
                 "Assistant tool names must be stable lowercase identifiers."
+            }
+            require(!definition.name.startsWith(SkillsContract.ALIAS_PREFIX)) {
+                "The ${SkillsContract.ALIAS_PREFIX} prefix is reserved for plugin operations."
             }
             require(definition.description.isNotBlank()) {
                 "Assistant tool descriptions must not be blank."
@@ -89,16 +138,24 @@ internal class AssistantToolRegistry(
         }
     }
 
-    fun availableDefinitions(features: AssistantProviderFeatures): List<AssistantToolDefinition> {
+    fun availableDefinitions(features: AssistantProviderFeatures,
+        workspaceVersion: Pair<Long, Long>? = null,
+        workspaceTurn: WorkspaceTurnAccess? = null): List<AssistantToolDefinition> {
         if (!features.supportsTools) return emptyList()
         val context = AssistantToolAvailabilityContext(features, sessionContext())
-        return definitionsByName.values.filter { definition ->
+        val plugin = runCatching(dynamicDefinitions).getOrDefault(emptyList())
+            .filter { it.name.startsWith(SkillsContract.ALIAS_PREFIX) && TOOL_NAME.matches(it.name) }
+            .distinctBy(AssistantToolDefinition::name)
+        return (definitionsByName.values.map { it.bindToTurn(workspaceVersion, workspaceTurn) } + plugin).filter { definition ->
             runCatching { definition.isAvailable(context) }.getOrDefault(false)
         }
     }
 
-    fun newExecutionPhase(features: AssistantProviderFeatures): AssistantToolExecutionPhase =
-        AssistantToolExecutionPhase(availableDefinitions(features), progressReporter)
+    fun newExecutionPhase(features: AssistantProviderFeatures,
+        workspaceVersion: Pair<Long, Long>? = null,
+        workspaceTurn: WorkspaceTurnAccess? = null): AssistantToolExecutionPhase =
+        AssistantToolExecutionPhase(availableDefinitions(features, workspaceVersion, workspaceTurn), progressReporter,
+            beforeExecution = { workspaceTurn?.beforeSend(false) })
 
     companion object {
         private val TOOL_NAME = Regex("[a-z][a-z0-9_]{0,63}")
@@ -109,13 +166,20 @@ internal class AssistantToolRegistry(
 internal class AssistantToolExecutionPhase(
     val availableDefinitions: List<AssistantToolDefinition>,
     private val progressReporter: (String) -> Unit,
+    private val beforeExecution: () -> Unit = {},
 ) {
     private val definitionsByName = availableDefinitions.associateBy(AssistantToolDefinition::name)
     private val resultsByCallId = mutableMapOf<String, AssistantToolResult>()
     private val executedSideEffectingTools = mutableSetOf<String>()
+    private val executionsByName = mutableMapOf<String, Int>()
     private var executedCalls = 0
 
+    /** No further call can execute this turn; the runner stops offering tools. */
+    val budgetExhausted: Boolean
+        get() = executedCalls >= MAX_EXECUTED_CALLS
+
     suspend fun execute(call: AssistantToolCall): AssistantToolResult {
+        beforeExecution()
         var restoreProgress = true
         try {
             val result = executeCall(call)
@@ -142,15 +206,18 @@ internal class AssistantToolExecutionPhase(
         }
         validation as AssistantToolValidation.Valid
 
+        val guarded = definition.sideEffecting && definition.oncePerTurn
         if (
             executedCalls >= MAX_EXECUTED_CALLS ||
-            definition.sideEffecting && definition.name in executedSideEffectingTools
+            (executionsByName[definition.name] ?: 0) >= definition.maxExecutionsPerTurn ||
+            guarded && definition.name in executedSideEffectingTools
         ) {
             return memoize(call, AssistantToolResult.Error(TOOL_ERROR_ALREADY_USED))
         }
 
         executedCalls += 1
-        if (definition.sideEffecting) executedSideEffectingTools += definition.name
+        executionsByName[definition.name] = (executionsByName[definition.name] ?: 0) + 1
+        if (guarded) executedSideEffectingTools += definition.name
         val result = try {
             definition.progressLabel?.let(::reportProgress)
             definition.execute(call, validation.arguments)
@@ -175,6 +242,6 @@ internal class AssistantToolExecutionPhase(
     }
 
     private companion object {
-        const val MAX_EXECUTED_CALLS = 3
+        const val MAX_EXECUTED_CALLS = SkillLimits.ASSISTANT_MAX_EXECUTED_CALLS
     }
 }

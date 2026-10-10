@@ -24,6 +24,7 @@ internal data class OpenAiCompatChatRequest(
     val messages: JSONArray,
     val toolDefinitions: List<AssistantToolDefinition>,
     val requestId: String = request.requestId,
+    val responseReasoning: Map<String, List<JSONObject>> = emptyMap(),
 )
 
 internal interface OpenAiCompatChatClient {
@@ -38,10 +39,12 @@ internal class OpenAiCompatApiClient(
     private val baseUrlProvider: () -> String = { preset.defaultBaseUrl },
     private val effortProvider: () -> String = { "" },
     private val backendProvider: () -> ProviderBackend = { preset.backend },
+    private val responsesOverride: Boolean? = null,
 ) : OpenAiCompatChatClient {
     private val activeConnections = ConcurrentHashMap<String, HttpURLConnection>()
 
     override fun streamChat(request: OpenAiCompatChatRequest): Flow<OpenAiChatSseEvent> = flow {
+        request.request.beforeSend?.invoke()
         val connection = openConnection(request).apply {
             doOutput = true
             setRequestProperty("Accept", "text/event-stream")
@@ -59,17 +62,19 @@ internal class OpenAiCompatApiClient(
                         "${preset.displayName} chat failed ($status): ${connection.safeErrorBody()}",
                 )
             }
-            readSse(connection) { event ->
+            var completed = false
+            readSse(connection, if (usesResponses(request.modelId)) OpenAiResponsesAdapter::event else OpenAiChatSseParser::parseData) { event ->
                 when (event) {
                     is OpenAiChatSseEvent.Delta -> {
                         emit(event)
                         true
                     }
                     is OpenAiChatSseEvent.Error -> throw IllegalStateException(event.message)
-                    OpenAiChatSseEvent.Done -> false
+                    OpenAiChatSseEvent.Done -> { completed = true; false }
                     OpenAiChatSseEvent.Ignored -> true
                 }
             }
+            check(!usesResponses(request.modelId) || completed) { "OpenAI response stream ended before completion." }
         } finally {
             activeConnections.remove(request.requestId, connection)
             connection.disconnect()
@@ -80,14 +85,17 @@ internal class OpenAiCompatApiClient(
         activeConnections.remove(requestId)?.disconnect()
     }
 
-    internal fun endpointUrl(): String {
+    internal fun endpointUrl(modelId: String = ""): String {
         val baseUrl = baseUrlProvider().trim().trimEnd('/')
         check(baseUrl.isNotEmpty()) { "${preset.displayName} base URL is not configured." }
-        return "$baseUrl/chat/completions"
+        return "$baseUrl/" + if (usesResponses(modelId)) "responses" else "chat/completions"
     }
 
+    private fun usesResponses(modelId: String): Boolean = preset.id == "openai" && modelId.startsWith("gpt-6") &&
+        (responsesOverride ?: (baseUrlProvider().trim().trimEnd('/') == preset.defaultBaseUrl))
+
     internal fun requestBody(request: OpenAiCompatChatRequest): JSONObject =
-        JSONObject()
+        if (usesResponses(request.modelId)) OpenAiResponsesAdapter.body(request, effortProvider().trim()) else JSONObject()
             .put("model", request.modelId)
             .put("stream", true)
             .put("messages", request.messages)
@@ -148,7 +156,7 @@ internal class OpenAiCompatApiClient(
     }
 
     private fun openConnection(request: OpenAiCompatChatRequest): HttpURLConnection =
-        (URL(endpointUrl()).openConnection() as HttpURLConnection).apply {
+        (URL(endpointUrl(request.modelId)).openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
             connectTimeout = 20_000
             readTimeout = 120_000
@@ -164,6 +172,7 @@ internal class OpenAiCompatApiClient(
 
     private suspend fun readSse(
         connection: HttpURLConnection,
+        parse: (String) -> OpenAiChatSseEvent,
         consume: suspend (OpenAiChatSseEvent) -> Boolean,
     ) {
         BufferedReader(InputStreamReader(connection.inputStream, Charsets.UTF_8)).use { reader ->
@@ -174,7 +183,7 @@ internal class OpenAiCompatApiClient(
                 when {
                     line.isBlank() -> {
                         if (data.isNotEmpty()) {
-                            val keepReading = consume(OpenAiChatSseParser.parseData(data.toString()))
+                            val keepReading = consume(parse(data.toString()))
                             data.clear()
                             if (!keepReading) return
                         }
@@ -185,7 +194,7 @@ internal class OpenAiCompatApiClient(
                     }
                 }
             }
-            if (data.isNotEmpty()) consume(OpenAiChatSseParser.parseData(data.toString()))
+            if (data.isNotEmpty()) consume(parse(data.toString()))
         }
     }
 
@@ -299,17 +308,18 @@ internal class OpenAiCompatProvider(
                 AssistantProviderFeatures(
                     supportsTools = true,
                     supportsVision = visionSupported,
+                    supportsWorkspaceSearch = !useTextToolBridge,
                 ),
+                request.workspaceVersion,
+                request.workspaceTurn,
             )
-            val textToolDefinitions = toolPhase.availableDefinitions.filter { definition ->
-                definition.name in HERMES_TEXT_TOOL_NAMES
-            }
-            val textToolNames = textToolDefinitions.mapTo(mutableSetOf()) { definition ->
-                definition.name
-            }
+            val textToolNames = toolPhase.availableDefinitions
+                .filter { definition -> definition.name in HERMES_TEXT_TOOL_NAMES }
+                .mapTo(mutableSetOf()) { definition -> definition.name }
             val effectiveRequest = request.forVisionSupport(visionSupported)
             val modelId = request.model ?: modelProvider()
-            val originalMessages = effectiveRequest.toChatCompletionMessages()
+            var messages = effectiveRequest.toChatCompletionMessages()
+            val responseReasoning = mutableMapOf<String, List<JSONObject>>()
 
             suspend fun streamPass(
                 messages: JSONArray,
@@ -317,6 +327,7 @@ internal class OpenAiCompatProvider(
             ): OpenAiCompatPassResult {
                 val response = StringBuilder()
                 val toolCalls = OpenAiToolCallAccumulator()
+                val pendingReasoning = mutableListOf<JSONObject>()
                 val thinkTagFilter = ThinkTagStreamFilter()
                 val textToolFilter = if (useTextToolBridge) {
                     ControlLineStreamFilter(COMPAT_TEXT_TOOL_REQUEST_TOKEN)
@@ -331,6 +342,7 @@ internal class OpenAiCompatProvider(
                     emit(AiProviderEvent.TextDelta(messageId, visible))
                 }
 
+                effectiveRequest.beforeSend?.invoke()
                 apiClient.streamChat(
                     OpenAiCompatChatRequest(
                         request = effectiveRequest,
@@ -338,10 +350,20 @@ internal class OpenAiCompatProvider(
                         messages = messages,
                         toolDefinitions = toolDefinitions,
                         requestId = request.requestId,
+                        responseReasoning = responseReasoning.toMap(),
                     ),
                 ).collect { event ->
                     when (event) {
                         is OpenAiChatSseEvent.Delta -> {
+                            event.responseItem?.let { item ->
+                                when (item.optString("type")) {
+                                    "reasoning" -> pendingReasoning += item
+                                    "function_call" -> {
+                                        responseReasoning[item.getString("call_id")] = pendingReasoning.toList()
+                                        pendingReasoning.clear()
+                                    }
+                                }
+                            }
                             toolCalls.append(event.toolCalls)
                             val content = event.content.orEmpty()
                             if (content.isEmpty()) return@collect
@@ -371,102 +393,86 @@ internal class OpenAiCompatProvider(
                 )
             }
 
-            val firstPassToolDefinitions = if (useTextToolBridge) {
-                emptyList()
-            } else {
-                toolPhase.availableDefinitions
-            }
-            val firstPass = try {
-                streamPass(originalMessages, toolDefinitions = firstPassToolDefinitions)
-            } catch (error: OpenAiCompatHttpException) {
-                if (
-                    firstPassToolDefinitions.isEmpty() ||
-                    error.statusCode !in 400..499
-                ) {
-                    throw error
-                }
-                streamPass(originalMessages, toolDefinitions = emptyList())
-            }
-            currentCoroutineContext().ensureActive()
+            val adapter = object : AssistantLoopAdapter {
+                // A text bridge completes one exchange: the results ride back as prose, and a
+                // backend without structured calls cannot be trusted to chain further.
+                override val maxToolRounds: Int = if (useTextToolBridge) 1 else Int.MAX_VALUE
 
-            val finalText = if (!useTextToolBridge && firstPass.toolCalls.isNotEmpty()) {
-                emit(AiProviderEvent.TextReset(messageId))
-                val replayMessages = originalMessages.copyJsonArray()
-                replayMessages.put(assistantToolCallMessage(firstPass.text, firstPass.toolCalls))
-                var capturedPhoto: PhotoAttachment? = null
-                firstPass.toolCalls.forEach { call ->
-                    val result = toolPhase.execute(call)
-                    currentCoroutineContext().ensureActive()
-                    if (result is AssistantToolResult.Image) {
-                        capturedPhoto = PhotoAttachment(result.mimeType, result.base64)
+                override suspend fun pass(tools: List<AssistantToolDefinition>, round: Int): AssistantLoopPass {
+                    if (useTextToolBridge) {
+                        val result = streamPass(messages, toolDefinitions = emptyList())
+                        val payload = result.textToolPayload ?: return AssistantLoopPass(result.text)
+                        if (tools.isEmpty()) return AssistantLoopPass(TEXT_TOOL_RESULT_COULD_NOT_BE_USED_MESSAGE)
+                        val calls = parseTextToolCalls(payload, textToolNames)
+                            ?: return AssistantLoopPass(text = "", malformedToolRequest = true)
+                        return AssistantLoopPass(result.text, calls)
                     }
-                    replayMessages.put(toolResultMessage(call, result))
-                }
-                capturedPhoto?.let { photo ->
-                    replayMessages.put(
-                        JSONObject()
-                            .put("role", "user")
-                            .put(
-                                "content",
-                                chatCompletionContent(
-                                    PHOTO_TAKEN_MESSAGE,
-                                    listOf(photo),
-                                ),
-                            ),
-                    )
-                }
-                streamPass(replayMessages, toolDefinitions = emptyList()).text
-            } else if (useTextToolBridge && firstPass.textToolPayload != null) {
-                emit(AiProviderEvent.TextReset(messageId))
-                val replayMessages = originalMessages.copyJsonArray()
-                val calls = parseTextToolCalls(firstPass.textToolPayload, textToolNames)
-                if (calls == null) {
-                    replayMessages.put(
-                        JSONObject()
-                            .put("role", "user")
-                            .put("content", TEXT_TOOL_CALL_MALFORMED_MESSAGE),
-                    )
-                } else {
-                    // A backend without structured tool calls has no reason to accept the
-                    // structured transcript either, so the results ride back as plain text.
-                    var capturedPhoto: PhotoAttachment? = null
-                    val results = StringBuilder(TEXT_TOOL_RESULTS_MESSAGE)
-                    calls.forEach { call ->
-                        val result = toolPhase.execute(call)
-                        currentCoroutineContext().ensureActive()
-                        if (result is AssistantToolResult.Image) {
-                            capturedPhoto = PhotoAttachment(result.mimeType, result.base64)
+                    val result = if (round == 0 && tools.isNotEmpty()) {
+                        try {
+                            streamPass(messages, toolDefinitions = tools)
+                        } catch (error: OpenAiCompatHttpException) {
+                            if (error.statusCode !in 400..499) throw error
+                            streamPass(messages, toolDefinitions = emptyList())
                         }
-                        results.append("\n- ").append(textToolResultLine(call, result))
+                    } else {
+                        streamPass(messages, toolDefinitions = tools)
                     }
-                    replayMessages.put(
-                        JSONObject()
-                            .put("role", "user")
-                            .put("content", results.toString()),
-                    )
+                    return AssistantLoopPass(result.text, result.toolCalls)
+                }
+
+                override fun appendToolResults(
+                    pass: AssistantLoopPass,
+                    results: List<Pair<AssistantToolCall, AssistantToolResult>>,
+                ) {
+                    val replayMessages = messages.copyJsonArray()
+                    var capturedPhoto: PhotoAttachment? = null
+                    var photoCaption: String? = null
+                    if (useTextToolBridge) {
+                        // A backend without structured tool calls has no reason to accept the
+                        // structured transcript either, so the results ride back as plain text.
+                        val text = StringBuilder(TEXT_TOOL_RESULTS_MESSAGE)
+                        results.forEach { (call, result) ->
+                            if (result is AssistantToolResult.Image) {
+                                capturedPhoto = PhotoAttachment(result.mimeType, result.base64)
+                                photoCaption = result.caption
+                            }
+                            text.append("\n- ").append(textToolResultLine(call, result))
+                        }
+                        replayMessages.put(JSONObject().put("role", "user").put("content", text.toString()))
+                    } else {
+                        replayMessages.put(assistantToolCallMessage(pass.text, pass.toolCalls))
+                        results.forEach { (call, result) ->
+                            if (result is AssistantToolResult.Image) {
+                                capturedPhoto = PhotoAttachment(result.mimeType, result.base64)
+                                photoCaption = result.caption
+                            }
+                            replayMessages.put(toolResultMessage(call, result))
+                        }
+                    }
                     capturedPhoto?.let { photo ->
                         replayMessages.put(
                             JSONObject()
                                 .put("role", "user")
-                                .put(
-                                    "content",
-                                    chatCompletionContent(
-                                        PHOTO_TAKEN_MESSAGE,
-                                        listOf(photo),
-                                    ),
-                                ),
+                                .put("content", chatCompletionContent(photoCaption ?: PHOTO_TAKEN_MESSAGE, listOf(photo))),
                         )
                     }
+                    messages = replayMessages
                 }
-                val finalPass = streamPass(replayMessages, toolDefinitions = emptyList())
-                if (finalPass.textToolPayload != null) {
-                    TEXT_TOOL_RESULT_COULD_NOT_BE_USED_MESSAGE
-                } else {
-                    finalPass.text
+
+                override fun appendMalformedToolRequest() {
+                    messages = messages.copyJsonArray().put(
+                        JSONObject()
+                            .put("role", "user")
+                            .put("content", TEXT_TOOL_CALL_MALFORMED_MESSAGE),
+                    )
                 }
-            } else {
-                firstPass.text
+
+                override suspend fun resetVisibleText() {
+                    emit(AiProviderEvent.TextReset(messageId))
+                }
             }
+
+            val finalText = AssistantToolLoop(toolPhase).run(adapter)
 
             emit(
                 AiProviderEvent.MessageDone(
@@ -564,7 +570,12 @@ private fun toolResultMessage(
     val content = when (result) {
         is AssistantToolResult.Json -> result.text
         is AssistantToolResult.Image ->
-            JSONObject()
+            result.caption?.let { caption ->
+                JSONObject()
+                    .put("status", "attached")
+                    .put("source", caption)
+                    .put("note", "The image is attached to the next user message.")
+            } ?: JSONObject()
                 .put("status", "captured")
                 .put("note", "The photo is attached to the next user message.")
         is AssistantToolResult.Error ->
