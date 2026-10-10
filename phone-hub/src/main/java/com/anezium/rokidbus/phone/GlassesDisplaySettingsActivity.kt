@@ -8,6 +8,8 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.LinearLayout
+import android.widget.RadioButton
+import android.widget.RadioGroup
 import android.widget.ScrollView
 import android.widget.Switch
 import android.widget.TextView
@@ -65,6 +67,8 @@ class GlassesDisplaySettingsActivity : Activity() {
                 },
                 NexusUi.block(),
             )
+            addView(BusTheme.gap(this@GlassesDisplaySettingsActivity, 10))
+            addView(launcherCard(), NexusUi.block())
         }
 
         val scroll = ScrollView(this).apply {
@@ -148,6 +152,68 @@ class GlassesDisplaySettingsActivity : Activity() {
             addView(BusTheme.gap(this@GlassesDisplaySettingsActivity, 8))
             addView(
                 preview,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ),
+            )
+        }
+
+    /**
+     * Which launcher the glasses run. Default leaves it to the glasses' own setting, so nobody's
+     * existing choice is reset; Classic stays the rollback when the new launcher misbehaves.
+     */
+    private fun launcherCard(): LinearLayout =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = NexusUi.bordered(this@GlassesDisplaySettingsActivity, NexusUi.PANEL, NexusUi.LINE, 15)
+            setPadding(
+                NexusUi.dp(this@GlassesDisplaySettingsActivity, 15),
+                NexusUi.dp(this@GlassesDisplaySettingsActivity, 10),
+                NexusUi.dp(this@GlassesDisplaySettingsActivity, 15),
+                NexusUi.dp(this@GlassesDisplaySettingsActivity, 10),
+            )
+            addView(NexusUi.rowTitle(this@GlassesDisplaySettingsActivity, "Glasses launcher"))
+            addView(BusTheme.gap(this@GlassesDisplaySettingsActivity, 3))
+            addView(
+                NexusUi.rowSub(
+                    this@GlassesDisplaySettingsActivity,
+                    "Default keeps what the glasses chose. Classic is always there to go back to.",
+                ),
+            )
+            addView(BusTheme.gap(this@GlassesDisplaySettingsActivity, 6))
+            val store = PhoneLauncherBackendStore(this@GlassesDisplaySettingsActivity)
+            val current = store.choice()
+            val options = listOf(
+                PhoneLauncherBackendChoice.DEFAULT to "Default",
+                PhoneLauncherBackendChoice.SESSION to "New launcher",
+                PhoneLauncherBackendChoice.LEGACY to "Classic launcher",
+            )
+            addView(
+                RadioGroup(this@GlassesDisplaySettingsActivity).apply {
+                    orientation = RadioGroup.VERTICAL
+                    options.forEach { (choice, label) ->
+                        addView(
+                            RadioButton(this@GlassesDisplaySettingsActivity).apply {
+                                id = View.generateViewId()
+                                text = label
+                                textSize = 13f
+                                setTextColor(NexusUi.INK)
+                                buttonTintList = ColorStateList(
+                                    arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
+                                    intArrayOf(NexusUi.GREEN, NexusUi.INK3),
+                                )
+                                isChecked = choice == current
+                                setOnCheckedChangeListener { _, checked ->
+                                    if (checked && store.choice() != choice) {
+                                        store.setChoice(choice)
+                                        BusHubService.onLauncherBackendChanged()
+                                    }
+                                }
+                            },
+                        )
+                    }
+                },
                 LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT,

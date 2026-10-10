@@ -5386,7 +5386,7 @@ class BusHubService : Service() {
 
     /** The user changed one plugin's activity choices on the phone; its entry is re-sent. */
     private fun activityPreferencesChanged(key: PluginGrantKey) {
-        activityRouter.onPreferencesChanged(key.pluginId)
+        executor.execute { activityRouter.onPreferencesChanged(key.pluginId) }
     }
 
     /**
@@ -5394,9 +5394,13 @@ class BusHubService : Service() {
      * invocations at once; the activity entry is restamped, then the glasses get the new policy.
      */
     private fun quickActionPolicyChanged(key: PluginGrantKey) {
-        pageBroker.onQuickPolicyChanged(key.pluginId)
-        activityRouter.onQuickPolicyChanged(key.pluginId)
-        executor.execute { pushQuickActionPolicy() }
+        // The store already holds the change, so every later check reads it; this settles what
+        // was in flight, off the caller's thread since it may send to the glasses.
+        executor.execute {
+            pageBroker.onQuickPolicyChanged(key.pluginId)
+            activityRouter.onQuickPolicyChanged(key.pluginId)
+            pushQuickActionPolicy()
+        }
     }
 
     private fun validateImageEnvelope(envelope: BusEnvelope): String? {
