@@ -12,6 +12,7 @@ import com.anezium.rokidbus.client.plugin.NexusNoticeCloseReason
 import com.anezium.rokidbus.client.plugin.NexusNoticeImage
 import com.anezium.rokidbus.client.plugin.NexusNoticeUpdate
 import com.anezium.rokidbus.client.plugin.NexusCard
+import com.anezium.rokidbus.client.plugin.NexusPageDestination
 import com.anezium.rokidbus.client.plugin.NexusPluginCallbacks
 import com.anezium.rokidbus.client.plugin.NexusPluginClient
 import com.anezium.rokidbus.client.plugin.NexusSdkResult
@@ -28,6 +29,7 @@ import com.anezium.rokidbus.client.plugin.speechSession
 import com.anezium.rokidbus.client.plugin.surfaceSession
 import com.anezium.rokidbus.client.plugin.ttsSession
 import com.anezium.rokidbus.shared.EditableSurfaceField
+import com.anezium.rokidbus.shared.LinkStateBits
 import com.anezium.rokidbus.shared.NoticeSurfaceContract
 import com.anezium.rokidbus.shared.plugin.NexusInputEvent
 import com.anezium.rokidbus.shared.plugin.PluginCapability
@@ -51,7 +53,12 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
 
     init {
         // A band waiting for the service's client goes up as soon as there is one.
-        RelayBus.setOnClientReady { onMain { tryShowPending() } }
+        RelayBus.setOnClientReady {
+            onMain {
+                tryShowPending()
+                flushWithdrawals()
+            }
+        }
     }
     private var typingSurface: NexusSurfaceSession? = null
     private var pendingShow: ReplyRepository.PendingReply? = null
@@ -80,6 +87,24 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
     private var typingAttemptCounter = 0
     private var currentTypingAttempt: Int? = null
     private var deferredShow: ReplyRepository.PendingReply? = null
+
+    /**
+     * The current reply's notification left the phone: whatever the wearer says or typed stays
+     * on the band, and nothing is sent. Reset only by the next reply.
+     */
+    private var authorityLost = false
+
+    /**
+     * Whether the band's last message reached the hub. The send countdown runs only on what the
+     * wearer can see: one failed update, or a lost link, stops it for good.
+     */
+    private var lastBandMessageSent = false
+
+    /** Threads whose notice carried this plugin's event key, so the glasses can be told they left. */
+    private val announcedEventKeys = LinkedHashSet<String>()
+    private val pendingWithdrawals = LinkedHashSet<String>()
+    private var withdrawalHold = false
+    private var withdrawalWindowGeneration = 0
 
     fun show(reply: ReplyRepository.PendingReply) = onMain {
         // The inbox owns the bus while it is open, and it is already showing
@@ -118,6 +143,7 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
         pendingPartial = null
         currentReply = reply
         currentTranscript = null
+        authorityLost = false
         pendingShow = reply
         pendingShowStartedAtMs = nowMs
         pendingShowWasBlocked = false
@@ -159,11 +185,19 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
     val ownsReplyCard: Boolean
         get() = activeNotice && typingSurface != null
 
-    override fun onLinkState(state: Int) = onMain { tryShowPending() }
+    override fun onLinkState(state: Int) = onMain {
+        // A band needs the data plane; without it the wearer sees no countdown, so none runs.
+        if (state and LinkStateBits.SPP_DATA_UP == 0) stopUnseenCountdown()
+        tryShowPending()
+        flushWithdrawals()
+    }
 
     override fun onRegistrationState(result: Int) = onMain {
         when {
-            result == PluginRegistrationResult.APPROVED -> tryShowPending()
+            result == PluginRegistrationResult.APPROVED -> {
+                tryShowPending()
+                flushWithdrawals()
+            }
             isTerminalRegistrationResult(result) -> {
                 Log.w(TAG, "registration terminal result=$result")
                 closeClient()
@@ -253,6 +287,10 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
         }
         currentTranscript = reviewed
         pendingPartial = null
+        if (authorityLost) {
+            queueReplyUnavailable()
+            return@onMain
+        }
         queueEssential(
             NexusNoticeUpdate(
                 body = reviewed,
@@ -304,6 +342,9 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
             )
         }
         val shownCharacterCount = lines.sumOf { it.length }
+        // Where both hubs run the launcher bundle, the notice names its exact thread: the glasses
+        // history opens that conversation, and a later removal withdraws it by the same key.
+        val launcher = currentClient.supportsLauncherInteractive()
         val notice = NexusNotice(
             title = reply.content.title,
             // The extractor already separates messages with newlines; sending them
@@ -317,6 +358,9 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
             wakeDisplay = true,
             backdrop = settings.noticeBackdrop(),
             ttlMs = noticeTtlMs(settings.noticeDisplaySeconds(), settings.noticeScalesWithLength(), shownCharacterCount),
+            destination = if (launcher) NexusPageDestination(RelayPages.threadPageId(reply.id)) else null,
+            eventKey = if (launcher) reply.id else null,
+            conversation = launcher,
         )
         val result = if (notice.image != null && preview != null) {
             currentClient.showNotice(notice, preview.bytes)
@@ -335,6 +379,8 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
             pendingShowStartedAtMs = 0L
             pendingShowWasBlocked = false
             activeNotice = true
+            lastBandMessageSent = true
+            if (launcher) rememberAnnounced(reply.id)
             lastNoticeMessageAtMs = SystemClock.uptimeMillis()
             if (wasBlocked) Log.i(TAG, "showReplayed generation=$showGeneration delayMs=$delayMs")
             readNoticeAloud(reply)
@@ -493,6 +539,10 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
                 )
                 currentTranscript = reviewed
                 pendingPartial = null
+                if (authorityLost) {
+                    queueReplyUnavailable()
+                    return@onMain
+                }
                 queueEssential(
                     NexusNoticeUpdate(
                         body = reviewed,
