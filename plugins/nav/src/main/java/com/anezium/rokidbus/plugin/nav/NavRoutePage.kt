@@ -123,16 +123,20 @@ internal object NavRoutePage {
 
     /**
      * The ride as the app counted it: [NavTrack.count] stops, the vehicle past [NavTrack.at], the
-     * wearer getting off at [NavTrack.target], the only one with a name. Where the vehicle is
-     * between two stops is not known, so it is placed halfway and the note says so.
+     * wearer getting off at [NavTrack.target], the only one with a name. A ride longer than the
+     * ribbon shows its last stops up to the one to get off at. Where the vehicle is between two
+     * stops is not known, so it is placed halfway and the note says so.
      */
     internal fun ribbon(track: NavTrack, guidance: NavGuidance): RouteRibbon? {
-        if (track.count !in 2..PageTemplateContract.MAX_RIBBON_STOPS) return null
+        if (track.count < 2) return null
         val target = track.target.coerceIn(0, track.count - 1)
         val at = track.at.coerceIn(0, track.count - 1)
+        val first = (target - PageTemplateContract.MAX_RIBBON_STOPS + 1).coerceAtLeast(0)
+        val last = (first + PageTemplateContract.MAX_RIBBON_STOPS - 1).coerceAtMost(track.count - 1)
+        if (last - first < 1) return null
         val alightName = (track.label ?: guidance.secondary)?.let { fit(it, PageTemplateContract.MAX_STOP_NAME_CHARS) }
             ?.takeIf(String::isNotBlank) ?: UNNAMED_STOP
-        val stops = (0 until track.count).map { index ->
+        val stops = (first..last).map { index ->
             RouteRibbonStop(
                 name = if (index == target) alightName else UNNAMED_STOP,
                 state = when {
@@ -142,11 +146,12 @@ internal object NavRoutePage {
                 },
             )
         }
-        val riding = at < target
+        // Only a vehicle inside the shown stretch is placed, and only before the stop to get off at.
+        val riding = at < target && at >= first
         return RouteRibbon(
             stops = stops,
             line = guidance.badge?.let { fit(it, PageTemplateContract.MAX_LINE_CHARS) },
-            between = if (riding) RouteRibbonBetween(at, BETWEEN_ESTIMATE) else null,
+            between = if (riding) RouteRibbonBetween(at - first, BETWEEN_ESTIMATE) else null,
             note = if (riding) ESTIMATE_NOTE else null,
         )
     }

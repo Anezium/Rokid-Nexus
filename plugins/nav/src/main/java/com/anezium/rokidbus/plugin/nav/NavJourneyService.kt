@@ -74,14 +74,15 @@ class NavJourneyService : Service(), LocationListener {
             return START_NOT_STICKY
         }
         // One journey at a time; anything else that reaches this service starts nothing.
-        if (intent?.action != ACTION_START || destination != null || stopping) {
+        val request = intent?.takeIf { it.action == ACTION_START }
+        if (request == null || destination != null || stopping) {
             if (destination == null) stopSelf(startId)
             return START_NOT_STICKY
         }
         val selected = runCatching {
             NavDestination(
-                intent.getStringExtra(EXTRA_NAME)!!.trim().take(MAX_NAME_CHARS).ifBlank { error("unnamed") },
-                GeoPoint(intent.getDoubleExtra(EXTRA_LAT, Double.NaN), intent.getDoubleExtra(EXTRA_LON, Double.NaN)),
+                request.getStringExtra(EXTRA_NAME)!!.trim().take(MAX_NAME_CHARS).ifBlank { error("unnamed") },
+                GeoPoint(request.getDoubleExtra(EXTRA_LAT, Double.NaN), request.getDoubleExtra(EXTRA_LON, Double.NaN)),
             )
         }.getOrNull()
         if (selected == null) {
@@ -225,10 +226,13 @@ class NavJourneyService : Service(), LocationListener {
         main.removeCallbacks(tick)
         runCatching { getSystemService(LocationManager::class.java).removeUpdates(this) }
         if (NavControl.owns(runtime)) {
-            runtime.shutdown()
+            // The service stays bound through the hand-back: a route another app is still guiding
+            // resumes on the same registration, and only with nothing to show is it let go.
+            runtime.shutdown(releaseBus = false)
             NavState.journey = null
             NavState.journeyDestination = null
             NavControl.detachJourney(runtime)
+            if (NavState.guidance == null) NavControl.releaseBus(applicationContext)
         }
     }
 
