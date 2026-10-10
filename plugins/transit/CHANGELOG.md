@@ -1,6 +1,10 @@
 # Changelog — Transit
 
-## Unreleased
+## 1.0.5
+
+- Skills require Nexus hubs 1.7.0 and explicit approval for each operation.
+  Favorite-stop and departure reads were exercised on devices while stationary;
+  journey guidance during a real trip remains unverified.
 
 - Explicit bus, metro, tram, and RER selectors now constrain the transport mode.
   An ambiguous board no longer supplies a departure anchor for a follow-up.

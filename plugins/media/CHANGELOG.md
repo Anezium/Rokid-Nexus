@@ -1,5 +1,14 @@
 # Changelog — Media Deck
 
+## 1.0.3
+
+- Expose approved now-playing and playback operations to Assistant through
+  Nexus Skills. Requires Nexus hubs 1.7.0, notification access, and operation
+  approvals; a call does not open the plugin's HUD.
+- Keep media references tied to the observed session and reject stale targets.
+- Device tests covered now-playing and pause with an Android test player.
+  Compatibility with real music players remains unverified.
+
 ## 1.0.2
 
 - Android 11 support: the plugin now installs on Android 11 (API 30) phones.
