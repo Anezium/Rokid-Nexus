@@ -30,26 +30,40 @@ import java.util.concurrent.Executor
 import java.util.concurrent.TimeUnit
 import kotlin.math.roundToInt
 
-/** [visualPages] holds indexes into [pages] whose page shows a chart, table, drawing, or picture. */
+/** One page a read reached, with what was observed on it; an image is page 1. */
+internal data class WorkspaceReadPage(val page: Int, val text: String, val state: WorkspacePageState)
+
+/**
+ * The pages one read reached, in order. [pageCount] is the document's actual total; [complete] means
+ * the read reached the last page within the page cap rather than stopping early.
+ */
 internal data class WorkspacePagedText(
-    val pages: List<String>,
+    val pages: List<WorkspaceReadPage>,
+    val pageCount: Int?,
     val complete: Boolean,
-    val visualPages: Set<Int> = emptySet(),
 )
+
+/** What inspection observed without extracting any page text. */
+internal data class WorkspacePageInfo(val pageCount: Int)
 
 internal interface WorkspacePageReader {
     /**
-     * Returns the text of each page from [firstPage] (1-based) in order; an image is a single page.
-     * [shouldStop] is asked before every page with the characters read so far in this call; stopping,
-     * or a document longer than the page cap, leaves the result incomplete. A password-protected
-     * document throws [WorkspaceReadException] with PROTECTED.
+     * Reads each page from [firstPage] (1-based) in order. [skip] is asked first and a skipped page is
+     * neither extracted nor reported; [shouldStop] is then asked with the characters read so far, and
+     * stopping leaves the page unattempted. A failed, empty, or too dense page is still reported with
+     * its state, so a cursor moves past it. A password-protected document throws
+     * [WorkspaceReadException] with PROTECTED.
      */
     fun read(
         type: WorkspaceFileType,
         bytes: ByteArray,
         firstPage: Int,
         shouldStop: (characters: Int) -> Boolean,
+        skip: (page: Int) -> Boolean = { false },
     ): WorkspacePagedText
+
+    /** The actual page count, without text extraction, recognition, or rendering. */
+    fun inspect(type: WorkspaceFileType, bytes: ByteArray): WorkspacePageInfo
 
     /** A JPEG of one page (1-based) small enough to send to a vision model, or null when it cannot render. */
     fun render(type: WorkspaceFileType, bytes: ByteArray, page: Int): ByteArray?
@@ -72,14 +86,29 @@ internal class AndroidWorkspacePageReader(context: Context) : WorkspacePageReade
         bytes: ByteArray,
         firstPage: Int,
         shouldStop: (characters: Int) -> Boolean,
-    ): WorkspacePagedText = try {
+        skip: (page: Int) -> Boolean,
+    ): WorkspacePagedText = guarded {
         when (type) {
-            WorkspaceFileType.PDF -> readPdf(bytes, firstPage, shouldStop)
-            WorkspaceFileType.IMAGE ->
-                if (shouldStop(0)) WorkspacePagedText(emptyList(), complete = false)
-                else WorkspacePagedText(listOf(recognizeImage(bytes)), complete = true, visualPages = setOf(0))
+            WorkspaceFileType.PDF -> readPdf(bytes, firstPage, shouldStop, skip)
+            WorkspaceFileType.IMAGE -> when {
+                firstPage > 1 || skip(1) -> WorkspacePagedText(emptyList(), 1, complete = true)
+                shouldStop(0) -> WorkspacePagedText(emptyList(), 1, complete = false)
+                else -> WorkspacePagedText(listOf(recognized(1, decodeImage(bytes, RECOGNITION_EDGE))), 1, complete = true)
+            }
             else -> throw IllegalArgumentException("$type is not read page by page")
         }
+    }
+
+    override fun inspect(type: WorkspaceFileType, bytes: ByteArray): WorkspacePageInfo = guarded {
+        when (type) {
+            WorkspaceFileType.PDF -> loadPdf(bytes).use { WorkspacePageInfo(it.numberOfPages.coerceAtLeast(1)) }
+            WorkspaceFileType.IMAGE -> WorkspacePageInfo(1)
+            else -> throw IllegalArgumentException("$type has no pages")
+        }
+    }
+
+    private fun <T> guarded(block: () -> T): T = try {
+        block()
     } catch (_: StackOverflowError) {
         // Deeply nested forms in a malformed file must not take the indexing thread down.
         throw WorkspaceReadException(WorkspaceDocumentStatus.UNREADABLE)
@@ -88,50 +117,84 @@ internal class AndroidWorkspacePageReader(context: Context) : WorkspacePageReade
         throw WorkspaceReadException(WorkspaceDocumentStatus.TOO_LARGE)
     }
 
-    private fun readPdf(bytes: ByteArray, firstPage: Int, shouldStop: (characters: Int) -> Boolean): WorkspacePagedText {
-        val document = try {
-            PDDocument.load(bytes, "", null, null, MemoryUsageSetting.setupMainMemoryOnly(MAX_SCRATCH_BYTES))
-        } catch (_: InvalidPasswordException) {
-            throw WorkspaceReadException(WorkspaceDocumentStatus.PROTECTED)
-        } catch (_: LinkageError) {
-            // Certificate-encrypted PDFs need the BouncyCastle classes this build leaves out.
-            throw WorkspaceReadException(WorkspaceDocumentStatus.PROTECTED)
-        }
+    private fun loadPdf(bytes: ByteArray): PDDocument = try {
+        PDDocument.load(bytes, "", null, null, MemoryUsageSetting.setupMainMemoryOnly(MAX_SCRATCH_BYTES))
+    } catch (_: InvalidPasswordException) {
+        throw WorkspaceReadException(WorkspaceDocumentStatus.PROTECTED)
+    } catch (_: LinkageError) {
+        // Certificate-encrypted PDFs need the BouncyCastle classes this build leaves out.
+        throw WorkspaceReadException(WorkspaceDocumentStatus.PROTECTED)
+    }
+
+    private fun readPdf(
+        bytes: ByteArray,
+        firstPage: Int,
+        shouldStop: (characters: Int) -> Boolean,
+        skip: (page: Int) -> Boolean,
+    ): WorkspacePagedText {
+        val document = loadPdf(bytes)
         var scanner: PdfPageScanner? = null
         try {
             document.use {
                 val stripper = BoundedTextStripper().apply { paragraphEnd = lineSeparator }
                 val pageCount = it.numberOfPages
                 val lastPage = minOf(pageCount, WorkspaceLimits.MAX_PDF_PAGES)
-                val pages = mutableListOf<String>()
-                val visual = mutableSetOf<Int>()
+                val pages = mutableListOf<WorkspaceReadPage>()
                 var characters = 0
                 for (page in firstPage..lastPage) {
                     if (Thread.currentThread().isInterrupted) throw IOException("cancelled")
-                    if (shouldStop(characters)) return WorkspacePagedText(pages, complete = false, visual)
+                    if (skip(page)) continue
+                    if (shouldStop(characters)) return WorkspacePagedText(pages, pageCount, complete = false)
                     stripper.startPage = page
                     stripper.endPage = page
                     stripper.glyphs = 0
                     val layer = try {
                         stripper.getText(it)
                     } catch (_: PageTooDenseException) {
-                        return WorkspacePagedText(pages, complete = false, visual)
+                        // Marked and passed, so later pages still read; this page's text is lost.
+                        pages += WorkspaceReadPage(page, "", WorkspacePageState(WorkspaceTextState.TRUNCATED))
+                        continue
                     }
-                    val text = if (layer.isNotBlank()) {
-                        if (hasVisual(it.getPage(page - 1))) visual += pages.size
-                        layer
+                    val read = if (layer.isNotBlank()) {
+                        val visual = if (hasVisual(it.getPage(page - 1))) WorkspaceVisualState.PRESENT
+                        else WorkspaceVisualState.ABSENT
+                        WorkspaceReadPage(page, layer, WorkspacePageState(WorkspaceTextState.NATIVE, visual))
                     } else {
                         // A scanned page is a picture: its recognized text may miss what it shows.
-                        (scanner ?: openScanner(bytes).also { opened -> scanner = opened })
-                            .recognize(page - 1).also { recognized -> if (recognized.isNotBlank()) visual += pages.size }
+                        (scanner ?: openScanner(bytes).also { opened -> scanner = opened }).recognize(page)
                     }
-                    pages += text
-                    characters += text.length
+                    pages += read
+                    characters += read.text.length
                 }
-                return WorkspacePagedText(pages, complete = lastPage == pageCount, visual)
+                return WorkspacePagedText(pages, pageCount, complete = true)
             }
         } finally {
             scanner?.close()
+        }
+    }
+
+    /**
+     * A renderer that never produced the page is FAILED and unavailable; a rendered page whose
+     * recognition failed or timed out is FAILED but renderable; a blank result is EMPTY. None of
+     * them passes for successful empty recognition.
+     */
+    private fun recognized(page: Int, bitmap: Bitmap?): WorkspaceReadPage {
+        bitmap ?: return WorkspaceReadPage(page, "",
+            WorkspacePageState(WorkspaceTextState.FAILED, render = WorkspaceRenderState.UNAVAILABLE))
+        val text = try {
+            recognize(bitmap)
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+            throw IOException("cancelled")
+        } catch (_: Exception) {
+            return WorkspaceReadPage(page, "",
+                WorkspacePageState(WorkspaceTextState.FAILED, render = WorkspaceRenderState.AVAILABLE))
+        }
+        return if (text.isBlank()) {
+            WorkspaceReadPage(page, "", WorkspacePageState(WorkspaceTextState.EMPTY, render = WorkspaceRenderState.AVAILABLE))
+        } else {
+            WorkspaceReadPage(page, text, WorkspacePageState(WorkspaceTextState.OCR, WorkspaceVisualState.PRESENT,
+                WorkspaceRenderState.AVAILABLE))
         }
     }
 
@@ -223,8 +286,6 @@ internal class AndroidWorkspacePageReader(context: Context) : WorkspacePageReade
         return shapes
     }
 
-    private fun recognizeImage(bytes: ByteArray): String = recognize(decodeImage(bytes, RECOGNITION_EDGE))
-
     private fun decodeImage(bytes: ByteArray, maxEdge: Int): Bitmap =
         ImageDecoder.decodeBitmap(ImageDecoder.createSource(ByteBuffer.wrap(bytes))) { decoder, info, _ ->
             decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
@@ -258,7 +319,11 @@ internal class AndroidWorkspacePageReader(context: Context) : WorkspacePageReade
         private val descriptor: ParcelFileDescriptor,
         private val renderer: PdfRenderer?,
     ) : Closeable {
-        fun recognize(index: Int): String = render(index, RECOGNITION_EDGE)?.let(::recognize).orEmpty()
+        fun recognize(page: Int): WorkspaceReadPage = recognized(page, try {
+            render(page - 1, RECOGNITION_EDGE)
+        } catch (_: Exception) {
+            null
+        })
 
         fun render(index: Int, edge: Int): Bitmap? {
             val renderer = renderer?.takeIf { index in 0 until it.pageCount } ?: return null

@@ -271,7 +271,12 @@ internal class FakeWorkspaceGateway : WorkspaceDocumentGateway {
         return childrenByParent[documentId]?.map { entries.getValue(it) }
             ?: if (documentId == "root") entries.values.toList() else emptyList()
     }
-    override suspend fun metadata(treeUri: String, documentId: String) = entries.getValue(documentId)
+    // Source-document metadata calls; root() never adds to it, as the real gateway's own root lookup is separate.
+    var metadataCalls = 0
+    override suspend fun metadata(treeUri: String, documentId: String): WorkspaceEntry {
+        metadataCalls++
+        return entries.getValue(documentId)
+    }
     override suspend fun open(treeUri: String, documentId: String): InputStream {
         opens[documentId] = (opens[documentId] ?: 0) + 1
         onOpen?.invoke()

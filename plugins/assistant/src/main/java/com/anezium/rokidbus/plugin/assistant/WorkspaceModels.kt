@@ -23,6 +23,13 @@ internal object WorkspaceLimits {
     const val CHECK_TIMEOUT_MS = 15_000L
     const val ACCESS_TIMEOUT_MS = 150L
     const val MAX_PERSONAL_CONTEXT_CHARS = 10_002
+    const val MAX_PAGE_RUNS_PER_DOCUMENT = 500
+    const val MAX_PAGE_RUNS = 50_000
+    // Catalog and framing share the 8 MiB file; text, then the optional posting cache, use the rest.
+    const val MAX_CATALOG_BYTES = 2 * 1_024 * 1_024
+    const val MAX_TOOL_RESULT_CHARS = 2_500
+    const val MAX_TOOL_RESULT_BYTES = 12 * 1_024
+    const val MAX_CHOICES = 5
 }
 
 internal enum class WorkspaceFileType {
@@ -84,27 +91,61 @@ internal data class WorkspaceDocument(
     val entry: WorkspaceEntry,
     val chunks: List<WorkspaceChunk>,
     val status: WorkspaceDocumentStatus = WorkspaceDocumentStatus.INDEXED,
-    // Pages already read while the document is PENDING; the next pass resumes after them.
-    val pagesRead: Int = 0,
-)
+    // The 1-based page the next pass reads; set only while the document is PENDING. Coverage is
+    // [pageRuns], so a page that failed or was empty still moves this cursor past it.
+    val nextPage: Int? = null,
+    // The actual total page count the reader observed; null when it was never observed.
+    val pageCount: Int? = null,
+    val pageRuns: List<WorkspacePageRun> = emptyList(),
+    // SHA-256 of the bytes extraction or inspection actually read; null for an index that predates it.
+    val sourceDigest: String? = null,
+    // The display labels are lossless, so a spoken or written name can match them; legacy and
+    // shortened labels stay false.
+    val lookupSafe: Boolean = false,
+    // Every page or unit within the declared limits has a known extraction state.
+    val coverageKnown: Boolean = false,
+) {
+    val pagesRead: Int get() = (nextPage ?: 1) - 1
+
+    fun pageState(page: Int): WorkspacePageState = WorkspacePageCatalog.stateOf(pageRuns, page)
+
+    /** The catalog page a chunk belongs to; an image is page 1, a text document has none. */
+    fun catalogPage(chunk: WorkspaceChunk): Int = when (entry.type) {
+        WorkspaceFileType.IMAGE -> 1
+        WorkspaceFileType.PDF -> chunk.page
+        else -> 0
+    }
+}
+
+internal enum class WorkspaceInventoryLimit { FILE_CAP }
 
 internal data class WorkspaceIndex(
     val generation: Long,
     val documents: List<WorkspaceDocument>,
     val indexedAtMs: Long,
     val skippedFiles: Int = 0,
+    // Supported files beyond the 100-document catalog cap; they are counted, never cataloged.
+    val omittedFiles: Int = 0,
+    val extractionVersion: Int = WORKSPACE_EXTRACTION_VERSION,
 ) {
     val fileCount: Int get() = documents.count { it.chunks.isNotEmpty() }
     val chunkCount: Int get() = documents.sumOf { it.chunks.size }
     val characterCount: Int get() = documents.sumOf { document -> document.chunks.sumOf { it.text.length } }
     val truncatedFiles: Int get() = documents.count { it.status == WorkspaceDocumentStatus.TRUNCATED }
+    val inventoryComplete: Boolean get() = omittedFiles == 0
+    val inventoryLimit: WorkspaceInventoryLimit? get() = if (omittedFiles > 0) WorkspaceInventoryLimit.FILE_CAP else null
 }
+
+/** Raised when extraction itself changes; an older index keeps its catalog and re-reads within budgets. */
+internal const val WORKSPACE_EXTRACTION_VERSION = 1
 
 internal data class WorkspaceSettings(
     val enabled: Boolean = false,
     val treeUri: String = "",
     val folderName: String = "",
     val generation: Long = 0L,
+    // An explicit verification survives owner detach and process restart; a restart rechecks files.
+    val verificationRequested: Boolean = false,
 )
 
 internal enum class WorkspaceProblem(val label: String) {

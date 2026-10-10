@@ -82,15 +82,22 @@ class WorkspaceRetrieverTest {
     }
 
     @Test
-    fun `compound questions retrieve each topic in French and English within the shared budget`() {
+    fun `and or et no longer split a question, while semicolon parts are each retrieved within the budget`() {
         val retriever = WorkspaceRetriever(listOf(
             document("vega.txt", "Vega launch code is VELA-5836. " + "Detail ".repeat(400)),
             document("aurora.md", "Aurora stock quantity is 47 green spools. " + "Inventory ".repeat(400)),
             document("recipe.txt", "Bake potatoes for twenty minutes."),
         ))
+        // One larger group under the unchanged half-terms rule: no separate-part guarantee remains.
+        val english = retriever.search("What is the Vega launch code and the Aurora stock quantity?")
+        assertTrue(english.matchCount >= 1)
+        assertFalse(english.excerpts.contains("recipe.txt"))
+        // The documented recall loss: the French wording matches only two of six terms per English
+        // passage, so the joined question now prefetches nothing and relies on a semicolon search.
+        assertEquals(0, retriever.search("Quel code pour le lancement Vega et quelle quantite du stock Aurora ?").matchCount)
         for (query in listOf(
-            "What is the Vega launch code and the Aurora stock quantity?",
-            "Quel code pour le lancement Vega et quelle quantite du stock Aurora ?",
+            "What is the Vega launch code; the Aurora stock quantity?",
+            "Quel code pour le lancement Vega ; quelle quantite du stock Aurora ?",
         )) {
             val result = retriever.search(query)
             assertEquals(2, result.matchCount)
@@ -99,6 +106,28 @@ class WorkspaceRetrieverTest {
             assertFalse(result.excerpts.contains("recipe.txt"))
             assertTrue(result.excerpts.length <= WorkspaceLimits.MAX_EXCERPT_CHARS)
         }
+    }
+
+    @Test
+    fun `private constrained search needs every keyword of a part in one body`() {
+        val retriever = WorkspaceRetriever(listOf(
+            document("martin.txt", "Jean Martin badge code is 1188."),
+            document("dupont.txt", "Jean et Marie Dupont share locker 77."),
+            document("vega.txt", "Vega code is VELA-5836."),
+            document("aurora.txt", "Aurora horaire : départ à 7 h."),
+            document("first.txt", "Jean will call later."),
+        ))
+        val names = retriever.search("Jean et Marie Dupont", mode = WorkspaceQueryMode.CONSTRAINED)
+        assertTrue(names.excerpts.contains("locker 77"))
+        assertFalse(names.excerpts.contains("1188"))
+        assertFalse(names.excerpts.contains("call later"))
+        val groups = retriever.search("code de Vega; horaire d'Aurora", mode = WorkspaceQueryMode.CONSTRAINED)
+        assertTrue(groups.excerpts.contains("VELA-5836"))
+        assertTrue(groups.excerpts.contains("départ à 7 h"))
+        assertFalse(groups.excerpts.contains("1188"))
+        assertEquals(WorkspaceSearchResult(), retriever.search("Jean Dupont code", mode = WorkspaceQueryMode.CONSTRAINED))
+        assertEquals(WorkspaceSearchResult(), retriever.search(";?;", mode = WorkspaceQueryMode.CONSTRAINED))
+        assertEquals(WorkspaceSearchResult(), retriever.search("the and et", mode = WorkspaceQueryMode.CONSTRAINED))
     }
 
     @Test

@@ -21,7 +21,6 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.FileNotFoundException
-import java.util.concurrent.atomic.AtomicBoolean
 
 internal data class WorkspaceUiState(val workspace: WorkspaceState, val checking: Boolean = false,
     val promptSpaceEmpty: Boolean = false)
@@ -30,17 +29,12 @@ internal enum class WorkspaceFolderResult {
     SELECTED, LOCAL_FOLDER_REQUIRED, NO_READ_GRANT, UNAVAILABLE, CHECK_FAILED, STORE_FAILED;
 }
 
+/**
+ * What the question's first request carries. [turn] is the one access object the whole turn uses;
+ * [carriesEvidence] is true only when [excerpts] holds document text, not scope or file metadata.
+ */
 internal data class WorkspacePromptContext(val generation: Long, val enabled: Boolean, val excerpts: String = "",
-    val revision: Long = -1)
-
-internal interface WorkspaceSearchAccess {
-    fun isSearchAvailable(): Boolean
-    fun searchVersion(): Pair<Long, Long> = 0L to 0L
-    suspend fun search(query: String): WorkspaceSearchResult?
-    fun hasViewablePages(): Boolean = false
-    /** A JPEG of [page] (PDFs) or of the whole image, for a file cited by its Workspace path. */
-    suspend fun viewPage(file: String, page: Int?): ByteArray? = null
-}
+    val revision: Long = -1, val turn: WorkspaceTurn? = null, val carriesEvidence: Boolean = false)
 
 internal class WorkspaceController(
     private val store: WorkspaceStore,
@@ -49,21 +43,31 @@ internal class WorkspaceController(
     private val checkTimeoutMs: Long = WorkspaceLimits.CHECK_TIMEOUT_MS,
     private val pageReader: WorkspacePageReader? = null,
     private val viewTimeoutMs: Long = VIEW_TIMEOUT_MS,
-) : WorkspaceSearchAccess {
+    private val debounceMs: Long = CHANGE_DEBOUNCE_MS,
+    private val elapsed: () -> Long = { System.nanoTime() / 1_000_000 },
+) : WorkspaceTurnHost {
     private val lock = Any()
     private val owners = mutableSetOf<Any>()
     private val checkMutex = Mutex()
+    private val gate = WorkspaceHeavyGate()
     private var checkJob: Job? = null
     private var changeJob: Job? = null
     private var selectionJob: Job? = null
     private var selectionRevision = 0L
     private var observer: AutoCloseable? = null
+    // Set when a pass is requested while one runs, so a change notification is never lost.
+    private var rerun = false
+    private var verification: WorkspaceVerification? = null
     @Volatile private var suppressed = false
-    // Pages the current question's excerpts showed the model; only these may be viewed.
-    @Volatile private var turnCitations = emptySet<WorkspaceCitation>()
-    private val renderBusy = AtomicBoolean(false)
+    // A change notification arrived and its metadata reconciliation has not committed yet.
+    @Volatile private var dirty = false
+    private var dirtySequence = 0L
+    @Volatile private var activeTurn: WorkspaceTurn? = null
+    private var turnSequence = 0L
     private val mutableState = MutableStateFlow(WorkspaceUiState(store.snapshot().state))
     val state: StateFlow<WorkspaceUiState> = mutableState
+
+    override val canRender: Boolean get() = pageReader != null
 
     fun attach(owner: Any) = synchronized(lock) {
         if (owners.add(owner)) {
@@ -78,32 +82,49 @@ internal class WorkspaceController(
             cancelWorkers()
             observer?.close()
             observer = null
+            rerun = false
+            // A cancelled pass may have advanced its in-memory verifier before publication.
+            verification = null
         }
+    }
+
+    /** An explicit Re-index: one pass sequence that also hashes unchanged files and retries failed pages once. */
+    fun reindexNow() = synchronized(lock) {
+        val snapshot = store.snapshot()
+        if (!snapshot.state.settings.enabled) return@synchronized
+        try {
+            store.requestVerification(snapshot.state.settings.generation, true)
+        } catch (_: Exception) {
+            store.failed(snapshot.state.settings.generation, WorkspaceProblem.STORE_FAILED)
+            emit(checking = false)
+            return@synchronized
+        }
+        val documents = snapshot.state.index?.documents.orEmpty().map { it.entry.documentId }
+        verification = WorkspaceVerification(documents)
+        refresh()
     }
 
     fun refresh() = synchronized(lock) {
         val settings = store.snapshot().state.settings
-        if (owners.isEmpty() || !settings.enabled || settings.treeUri.isEmpty() || checkJob?.isActive == true) return@synchronized
+        if (owners.isEmpty() || !settings.enabled || settings.treeUri.isEmpty()) return@synchronized
+        if (verification == null && settings.verificationRequested) {
+            verification = WorkspaceVerification(store.snapshot().state.index?.documents.orEmpty().map { it.entry.documentId })
+        }
+        if (checkJob?.isActive == true) {
+            rerun = true
+            return@synchronized
+        }
         checkJob = scope.launch {
             checkMutex.withLock {
                 emit(checking = true)
                 try {
-                    // Each pass reads at least one page of a PENDING file, so passes continue only
-                    // while they make progress and stop once nothing is left to read.
-                    var progress = -1L
-                    while (true) {
-                        WorkspaceIndexer(store, gateway, checkTimeoutMs = checkTimeoutMs, pageReader = pageReader).refresh()
-                        val state = store.snapshot().state
-                        val documents = state.index?.takeIf { state.problem == null && it.generation == settings.generation }
-                            ?.documents.orEmpty()
-                        if (documents.none { it.status == WorkspaceDocumentStatus.PENDING }) break
-                        val reached = documents.sumOf {
-                            if (it.status == WorkspaceDocumentStatus.PENDING) it.pagesRead.toLong()
-                            else WorkspaceLimits.MAX_PDF_PAGES + 1L
+                    do {
+                        val sequence = synchronized(lock) {
+                            rerun = false
+                            dirtySequence
                         }
-                        if (reached <= progress) break
-                        progress = reached
-                    }
+                        passes(settings, sequence)
+                    } while (synchronized(lock) { rerun })
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (_: Exception) {
@@ -115,13 +136,60 @@ internal class WorkspaceController(
         }
     }
 
+    /**
+     * Each pass makes progress on the remaining work (a pending page, a missing digest, a page an
+     * older index never recorded, or a requested verification), so passes continue only while that
+     * work shrinks and stop once nothing is left.
+     */
+    private suspend fun passes(settings: WorkspaceSettings, sequence: Long) {
+        var remaining = Long.MAX_VALUE
+        while (true) {
+            val requested = synchronized(lock) { verification }
+            WorkspaceIndexer(store, gateway, checkTimeoutMs = checkTimeoutMs, pageReader = pageReader, gate = gate,
+                verification = requested, onReconciled = { reconciled(sequence) }).refresh()
+            val state = store.snapshot().state
+            val index = state.index?.takeIf { state.problem == null && it.generation == settings.generation } ?: break
+            val work = remainingWork(index) + (requested?.size ?: 0)
+            if (requested != null && requested.size == 0) synchronized(lock) {
+                if (verification === requested) {
+                    store.requestVerification(settings.generation, false)
+                    verification = null
+                }
+            }
+            if (work == 0L || work >= remaining) break
+            remaining = work
+        }
+    }
+
+    private fun remainingWork(index: WorkspaceIndex): Long = index.documents.sumOf { document ->
+        val pending = if (document.status == WorkspaceDocumentStatus.PENDING) {
+            WorkspaceLimits.MAX_PDF_PAGES + 1L - document.pagesRead
+        } else 0L
+        val digest = if (document.sourceDigest == null && document.status != WorkspaceDocumentStatus.PENDING &&
+            (document.chunks.isNotEmpty() || document.status == WorkspaceDocumentStatus.NO_TEXT) &&
+            (document.entry.type?.paged != true || pageReader != null)) 1L else 0L
+        val unknown = if (pageReader != null && document.sourceDigest != null && document.pageCount != null &&
+            document.status != WorkspaceDocumentStatus.PENDING &&
+            document.chunks.sumOf { it.text.length } < WorkspaceLimits.MAX_FILE_CHARS
+        ) WorkspacePageCatalog.counts(document)[WorkspaceTextState.LEGACY_UNKNOWN]?.toLong() ?: 0L else 0L
+        pending + digest + unknown
+    }
+
+    private fun reconciled(sequence: Long) = synchronized(lock) {
+        if (dirtySequence == sequence) dirty = false
+    }
+
     suspend fun setEnabled(enabled: Boolean) {
-        if (!enabled) suppressed = true
+        if (!enabled) {
+            suppressed = true
+            withdrawTurn("disabled")
+        }
         withContext(Dispatchers.IO) {
             synchronized(lock) {
                 selectionJob?.cancel()
                 selectionRevision++
                 cancelWorkers()
+                verification = null
             }
             try {
                 synchronized(lock) { store.setEnabled(enabled) }
@@ -171,9 +239,12 @@ internal class WorkspaceController(
                         return@withContext WorkspaceFolderResult.CHECK_FAILED
                     }
                     cancelWorkers()
+                    withdrawTurn("folder_changed")
                     store.selectTree(uri, root.name, enable)
+                    verification = null
                     if (previous.treeUri.isNotEmpty() && previous.treeUri != uri) gateway.releaseReadGrant(previous.treeUri)
                     suppressed = !enable
+                    dirty = false
                     restartObserver()
                 }
                 emit(checking = false)
@@ -211,51 +282,81 @@ internal class WorkspaceController(
         WorkspaceFolderResult.CHECK_FAILED
     }
 
-    override fun isSearchAvailable(): Boolean {
-        val snapshot = store.snapshot().state
-        return !suppressed && snapshot.settings.enabled && snapshot.validated &&
-            (snapshot.index?.chunkCount ?: 0) > 0 && runCatching {
-                gateway.hasReadGrant(snapshot.settings.treeUri)
-            }.getOrDefault(false)
+    private fun indexVersion(): Pair<Long, Long> = store.snapshot().let { it.state.settings.generation to it.revision }
+
+    fun isCurrent(context: WorkspacePromptContext): Boolean = context.turn?.isUsable() == true
+
+    /**
+     * Prepares the question's Workspace turn: the one root check, file resolution before the first
+     * model request, and excerpts within [existingContext]'s remaining allowance. A question never
+     * opens, hashes, extracts, or recognizes a document.
+     */
+    suspend fun contextForQuestion(query: String, existingContext: String): WorkspacePromptContext {
+        val started = elapsed()
+        withdrawTurn("superseded")
+        val budget = workspacePromptBudget(existingContext)
+        mutableState.value = mutableState.value.copy(promptSpaceEmpty = budget <= WorkspaceRetriever.SOURCE_RULE.length + 40)
+        val snapshot = if (dirty) null else validatedSnapshot()
+        val rootMs = elapsed() - started
+        val settings = store.snapshot().state.settings
+        val turn = snapshot?.takeIf { it.retriever != null && it.state.index != null }?.let {
+            WorkspaceTurn(synchronized(lock) { ++turnSequence }, it,
+                WorkspaceFileResolver.resolve(query, it.state.index!!.documents), this, elapsed)
+        }
+        if (turn != null) synchronized(lock) { if (!dirty) activeTurn = turn }
+        val prefetch = turn?.takeIf { activeTurn === it }?.prefetch(query, budget) ?: WorkspacePrefetch("", false)
+        WorkspaceDiagnostics.event("workspace_prefetch", "available" to (turn != null), "dirty" to dirty,
+            "root_ms" to rootMs, "ms" to elapsed() - started, "budget" to budget,
+            "resolution" to (turn?.resolution?.state?.name?.lowercase() ?: "none"),
+            "chars" to prefetch.excerpts.length, "evidence" to prefetch.carriesEvidence,
+            "searchable" to (turn?.hasSearchableText() == true), "viewable" to (turn?.hasViewablePages() == true))
+        return WorkspacePromptContext(snapshot?.state?.settings?.generation ?: settings.generation,
+            settings.enabled && !suppressed, prefetch.excerpts, snapshot?.epoch ?: -1,
+            turn?.takeIf { activeTurn === it }, prefetch.carriesEvidence)
     }
 
-    override fun searchVersion(): Pair<Long, Long> = store.snapshot().let { it.state.settings.generation to it.epoch }
+    override fun isLive(turn: WorkspaceTurn): Boolean {
+        if (suppressed || dirty || activeTurn !== turn) return false
+        val snapshot = store.snapshot()
+        val settings = snapshot.state.settings
+        return store.isCurrent(turn.version.first) && snapshot.epoch == turn.version.second &&
+            snapshot.state.validated && runCatching { gateway.hasReadGrant(settings.treeUri) }.getOrDefault(false)
+    }
 
-    override fun hasViewablePages(): Boolean = pageReader != null &&
-        store.snapshot().state.index?.documents?.any { it.viewable() } == true
+    override suspend fun revalidate(turn: WorkspaceTurn): Boolean = validatedSnapshot() != null && isLive(turn)
 
-    override suspend fun viewPage(file: String, page: Int?): ByteArray? {
+    /**
+     * Reads the file once, checks its current metadata, compares a known digest with the indexed
+     * one, and renders those same bytes; a mismatch marks the folder changed. An older index whose
+     * digest is unknown keeps metadata-only verification for its cited pages.
+     */
+    override suspend fun render(turn: WorkspaceTurn, document: WorkspaceDocument, page: Int): ByteArray? {
         val reader = pageReader ?: return null
-        // A render still running would refuse this one anyway; skip reading the file for nothing.
-        if (renderBusy.get()) return null
-        val snapshot = validatedSnapshot() ?: return null
-        val documents = snapshot.state.index?.documents.orEmpty().filter { it.viewable() }
-        // Models sometimes copy the whole citation, page and visual mark included; the exact name wins
-        // first because a file name may itself contain " › ".
-        val decorated = file.trim()
-        val unmarked = decorated.removeSuffix(WorkspaceRetriever.VISUAL_MARK).trim()
-        val document = listOf(decorated, unmarked, unmarked.replace(CITED_PAGE, "").trim()).distinct()
-            .firstNotNullOfOrNull { cited ->
-                documents.firstOrNull { it.entry.relativePath == cited }
-                    ?: documents.filter { it.entry.name.equals(cited, ignoreCase = true) }.singleOrNull()
-            } ?: return null
+        val treeUri = turn.snapshot.state.settings.treeUri
         val type = document.entry.type!!
-        val pageNumber = if (type == WorkspaceFileType.PDF) page ?: return null else 1
-        val citation = WorkspaceCitation(document.entry.documentId, if (type == WorkspaceFileType.PDF) pageNumber else 0)
-        if (citation !in turnCitations) return null
-        val treeUri = snapshot.state.settings.treeUri
         val maxBytes = if (type == WorkspaceFileType.PDF) WorkspaceLimits.MAX_PDF_BYTES else WorkspaceLimits.MAX_IMAGE_BYTES
         return try {
             withTimeout(viewTimeoutMs) {
-                val bytes = gateway.open(treeUri, document.entry.documentId).use {
-                    runInterruptible(Dispatchers.IO) { readWorkspaceBytes(it, maxBytes).data!! }
+                gate.acquireForView()
+                var handedOff = false
+                try {
+                    val bytes = gateway.open(treeUri, document.entry.documentId).use {
+                        runInterruptible(Dispatchers.IO) { readWorkspaceBytes(it, maxBytes).data!! }
+                    }
+                    val current = gateway.metadata(treeUri, document.entry.documentId)
+                    val digestChanged = document.sourceDigest != null &&
+                        WorkspaceIndexer.sha256(bytes) != document.sourceDigest
+                    if (!document.entry.hasSameContent(current) || digestChanged) {
+                        sourceChanged()
+                        return@withTimeout null
+                    }
+                    if (!isLive(turn)) return@withTimeout null
+                    handedOff = true
+                    renderDetached { reader.render(type, bytes, page) }
+                } finally {
+                    if (!handedOff) gate.release()
                 }
-                // Only the version that was indexed may leave the phone.
-                if (!document.entry.hasSameContent(gateway.metadata(treeUri, document.entry.documentId))) {
-                    return@withTimeout null
-                }
-                renderDetached { reader.render(type, bytes, pageNumber) }
-            }?.takeIf { store.isCurrent(snapshot.state.settings.generation) && store.snapshot().epoch == snapshot.epoch }
+            }?.takeIf { isLive(turn) }
         } catch (cancelled: CancellationException) {
             if (cancelled is TimeoutCancellationException) null else throw cancelled
         } catch (_: Exception) {
@@ -266,54 +367,25 @@ internal class WorkspaceController(
     /**
      * Renders on a thread the question never joins. A native page render can neither be interrupted
      * nor stop waiting for the platform renderer's process-wide lock, so the question stops waiting at
-     * its deadline and a late page is dropped. One render at a time; a busy slot refuses at once.
+     * its deadline and a late page is dropped. The thread owns the heavy slot until it actually ends.
      */
     private suspend fun renderDetached(render: () -> ByteArray?): ByteArray? {
-        if (!renderBusy.compareAndSet(false, true)) return null
-        val result: CompletableDeferred<ByteArray?>
+        val result = CompletableDeferred<ByteArray?>()
         try {
-            result = CompletableDeferred()
             Thread({
                 try {
                     result.complete(render())
                 } catch (_: Throwable) {
                     result.complete(null)
                 } finally {
-                    renderBusy.set(false)
+                    gate.release()
                 }
             }, "workspace-view-render").apply { isDaemon = true }.start()
         } catch (error: Throwable) {
-            renderBusy.set(false)
+            gate.release()
             throw error
         }
         return result.await()
-    }
-
-    private fun WorkspaceDocument.viewable(): Boolean = entry.type?.paged == true && status in VIEWABLE
-
-    private fun indexVersion(): Pair<Long, Long> = store.snapshot().let { it.state.settings.generation to it.revision }
-
-    fun isCurrent(context: WorkspacePromptContext): Boolean = !suppressed &&
-        store.isCurrent(context.generation) && store.snapshot().epoch == context.revision && isSearchAvailable()
-
-    suspend fun contextForQuestion(query: String, existingContext: String): WorkspacePromptContext {
-        val budget = workspacePromptBudget(existingContext)
-        mutableState.value = mutableState.value.copy(promptSpaceEmpty = budget <= WorkspaceRetriever.SOURCE_RULE.length + 40)
-        val snapshot = validatedSnapshot()
-        val settings = store.snapshot().state.settings
-        val result = if (snapshot != null && budget > 0) snapshot.retriever?.search(query, budget) else null
-        turnCitations = result?.citations.orEmpty()
-        val excerpts = result?.excerpts.orEmpty()
-        return WorkspacePromptContext(snapshot?.state?.settings?.generation ?: settings.generation,
-            settings.enabled && !suppressed, excerpts, snapshot?.epoch ?: -1)
-    }
-
-    override suspend fun search(query: String): WorkspaceSearchResult? {
-        val snapshot = validatedSnapshot() ?: return null
-        val result = snapshot.retriever?.search(query) ?: return null
-        return result.takeIf { store.isCurrent(snapshot.state.settings.generation) &&
-            store.snapshot().epoch == snapshot.epoch && !suppressed }
-            ?.also { turnCitations = turnCitations + it.citations }
     }
 
     private suspend fun validatedSnapshot(): WorkspaceSnapshot? {
@@ -321,6 +393,7 @@ internal class WorkspaceController(
         val settings = snapshot.state.settings
         if (suppressed || !settings.enabled || settings.treeUri.isEmpty()) return null
         if (!runCatching { gateway.hasReadGrant(settings.treeUri) }.getOrDefault(false)) {
+            withdrawTurn("grant_lost")
             withContext(Dispatchers.IO) { store.folderUnavailable(settings.generation) }
             emit()
             return null
@@ -343,10 +416,12 @@ internal class WorkspaceController(
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: SecurityException) {
+            withdrawTurn("grant_lost")
             withContext(Dispatchers.IO) { store.folderUnavailable(settings.generation) }
             emit()
             return null
         } catch (_: FileNotFoundException) {
+            withdrawTurn("folder_missing")
             withContext(Dispatchers.IO) { store.folderUnavailable(settings.generation) }
             emit()
             return null
@@ -357,6 +432,28 @@ internal class WorkspaceController(
         } finally {
             access.cancel()
         }
+    }
+
+    /**
+     * An unknown change: the snapshot is dirty at once, so the active turn loses Workspace before
+     * the debounce, and a reconciliation pass follows. A pass already running reruns afterwards.
+     */
+    fun sourceChanged() = synchronized(lock) {
+        dirty = true
+        dirtySequence++
+        withdrawTurn(WORKSPACE_SOURCE_CHANGED)
+        WorkspaceDiagnostics.event("workspace_dirty", "attached" to owners.isNotEmpty())
+        if (owners.isEmpty()) return@synchronized
+        changeJob?.cancel()
+        changeJob = scope.launch {
+            delay(debounceMs)
+            refresh()
+        }
+    }
+
+    private fun withdrawTurn(reason: String) {
+        activeTurn?.withdraw(reason)
+        activeTurn = null
     }
 
     private fun cancelWorkers() {
@@ -372,15 +469,7 @@ internal class WorkspaceController(
         val settings = store.snapshot().state.settings
         if (owners.isNotEmpty() && settings.enabled && settings.treeUri.isNotEmpty()) {
             observer = gateway.observe(settings.treeUri) {
-                synchronized(lock) {
-                    if (owners.isNotEmpty() && store.isCurrent(settings.generation)) {
-                        changeJob?.cancel()
-                        changeJob = scope.launch {
-                            delay(250)
-                            refresh()
-                        }
-                    }
-                }
+                if (store.isCurrent(settings.generation)) sourceChanged()
             }
         }
     }
@@ -391,9 +480,7 @@ internal class WorkspaceController(
 
     companion object {
         private const val VIEW_TIMEOUT_MS = 8_000L
-        private val CITED_PAGE = Regex(" › page \\d+$")
-        private val VIEWABLE = setOf(WorkspaceDocumentStatus.INDEXED, WorkspaceDocumentStatus.TRUNCATED,
-            WorkspaceDocumentStatus.PENDING, WorkspaceDocumentStatus.NO_TEXT)
+        private const val CHANGE_DEBOUNCE_MS = 250L
         const val READ_GRANT = 1
     }
 }

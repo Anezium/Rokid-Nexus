@@ -22,6 +22,34 @@ class WorkspaceControllerTest {
     @get:Rule val temporary = TemporaryFolder()
 
     @Test
+    fun `a failed verification request keeps the index and reports the storage error`() = runBlocking {
+        val directory = temporary.newFolder()
+        var fail = false
+        val operations = object : AssistantAtomicFileOperations {
+            override fun atomicReplace(source: java.io.File, target: java.io.File) {
+                if (fail) throw java.io.IOException("fixture write failure")
+                NioAssistantAtomicFileOperations.atomicReplace(source, target)
+            }
+            override fun replace(source: java.io.File, target: java.io.File) = error("Unexpected fallback")
+        }
+        val store = WorkspaceStore(directory, operations)
+        store.selectTree(WorkspaceStoreTest.TREE, "Documents", enable = true)
+        val gateway = FakeWorkspaceGateway().apply { put("notice", "notice.txt", "Notice is two months.") }
+        WorkspaceIndexer(store, gateway).refresh()
+        val before = store.snapshot().state.index
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        try {
+            fail = true
+            val controller = WorkspaceController(store, gateway, scope)
+            controller.reindexNow()
+            assertEquals(before, store.snapshot().state.index)
+            assertEquals(WorkspaceProblem.STORE_FAILED, controller.state.value.workspace.problem)
+            assertFalse(store.snapshot().state.settings.verificationRequested)
+            assertEquals(WorkspaceStoreTest.TREE, WorkspaceStore(directory).snapshot().state.settings.treeUri)
+        } finally { scope.cancel() }
+    }
+
+    @Test
     fun `folder selection persists only read flags and replacement releases the old grant`() = runBlocking {
         val fixture = fixture()
         try {
@@ -143,12 +171,13 @@ class WorkspaceControllerTest {
     fun `search validates root and grants without opening source content`() = runBlocking {
         val fixture = fixture(seed = true)
         try {
-            val context = fixture.controller.contextForQuestion("notice", "Memory stays unchanged.")
+            val context = fixture.controller.contextForQuestion("how many months", "Memory stays unchanged.")
             assertTrue(context.excerpts.contains("two months"))
             assertTrue(fixture.controller.isCurrent(context))
             assertTrue(fixture.gateway.opens.isEmpty())
             fixture.gateway.granted = false
-            assertNull(fixture.controller.search("notice"))
+            assertTrue(context.turn!!.search("notice", null) is WorkspaceToolOutcome.Failure)
+            assertNull(fixture.controller.contextForQuestion("notice", "").turn)
             assertNull(fixture.store.snapshot().state.index)
             assertEquals(WorkspaceProblem.FOLDER_UNAVAILABLE, fixture.controller.state.value.workspace.problem)
         } finally { fixture.scope.cancel() }
@@ -165,7 +194,7 @@ class WorkspaceControllerTest {
                     "slow" -> fixture.gateway.rootDelayMs = 250
                     else -> fixture.controller.setEnabled(false)
                 }
-                assertNull(failure, fixture.controller.search("notice"))
+                assertTrue(failure, context.turn!!.search("notice", null) is WorkspaceToolOutcome.Failure)
                 assertFalse(failure, fixture.controller.isCurrent(context))
                 if (failure == "slow") {
                     assertEquals(WorkspaceProblem.CHECK_FAILED, fixture.store.snapshot().state.problem)

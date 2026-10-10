@@ -121,8 +121,8 @@ class AssistantPluginService : NexusPluginService() {
                 TakePhotoTool(createTakePhotoToolCapabilities()),
                 RenderTemplateTool(inkPageToolRuntime, inkTemplateLoader),
                 RenderInkPageTool(inkPageToolRuntime),
-                SearchWorkspaceTool { workspaceController.takeIf { isNexusSessionOpen } },
-                ViewWorkspacePageTool { workspaceController.takeIf { isNexusSessionOpen } },
+                SearchWorkspaceTool { isNexusSessionOpen },
+                ViewWorkspacePageTool { isNexusSessionOpen },
             ) +
                 assistantProductivityTools(
                     noteStore = noteStore,
@@ -881,6 +881,7 @@ class AssistantPluginService : NexusPluginService() {
         val personalContext = authStore.combinedAssistantContextForPrompt()
         val workspaceContext = workspaceController?.contextForQuestion(transcript, personalContext)
         val workspaceVersion = workspaceContext?.let { it.generation to it.revision }
+        val workspaceTurn = workspaceContext?.turn
         val conversationContext = withContext(Dispatchers.IO) {
             if (!keepPhotosInConversations && threadStore.hasStoredPhotos()) {
                 threadStore.deleteAllPhotos()
@@ -908,7 +909,7 @@ class AssistantPluginService : NexusPluginService() {
             }
         }
         val availableToolDefinitions = assistantToolRegistry
-            .availableDefinitions(assistantProviderFeatures(providerId), workspaceVersion)
+            .availableDefinitions(assistantProviderFeatures(providerId), workspaceVersion, workspaceTurn)
         val promptToolDefinitions = if (hermesTextToolBackend) {
             availableToolDefinitions.filter { definition ->
                 definition.name in HERMES_TEXT_TOOL_NAMES
@@ -918,7 +919,7 @@ class AssistantPluginService : NexusPluginService() {
         }
         fun prompt(includeWorkspace: Boolean): String {
             val definitions = if (includeWorkspace) promptToolDefinitions
-            else promptToolDefinitions.filterNot { it.name == SEARCH_WORKSPACE_TOOL_NAME }
+            else promptToolDefinitions.filterNot { it.name in WORKSPACE_TOOL_NAMES }
             return NexusAgentPolicy.buildSystemPrompt(
                 customPrompt = authStore.customSystemPrompt(),
                 noticeBand = noticeBandMode,
@@ -938,8 +939,9 @@ class AssistantPluginService : NexusPluginService() {
             systemPrompt = prompt(includeWorkspace = true),
             workspaceVersion = workspaceVersion.takeIf {
                 workspaceContext?.excerpts?.isNotEmpty() == true ||
-                    promptToolDefinitions.any { it.name == SEARCH_WORKSPACE_TOOL_NAME }
+                    promptToolDefinitions.any { it.name in WORKSPACE_TOOL_NAMES }
             },
+            workspaceTurn = workspaceTurn,
             history = conversationContext.history,
             model = when (providerId) {
                 ChatGptCodexProvider.ID -> authStore.chatGptModel()
@@ -957,8 +959,16 @@ class AssistantPluginService : NexusPluginService() {
         var completed = false
         var failed = false
         var finalAnswer: String? = null
+        var withheld = false
+        // Withdrawn Workspace access suppresses what this answer would publish only when the turn
+        // already supplied Workspace text or pixels; an unrelated answer still publishes.
+        fun workspaceEffectsAllowed(): Boolean = (workspaceTurn?.finalEffectsAllowed() != false).also {
+            if (!it) withheld = true
+        }
         try {
-            val dispatchRequest = request.forCurrentWorkspace(workspaceController) { prompt(includeWorkspace = false) }
+            val dispatchRequest = request.forCurrentWorkspace(workspaceContext?.carriesEvidence == true) {
+                prompt(includeWorkspace = false)
+            }
             providerRouter.providerFor(providerId).streamEvents(dispatchRequest).collect { event ->
                 when (event) {
                     is AiProviderEvent.Started -> Unit
@@ -970,7 +980,9 @@ class AssistantPluginService : NexusPluginService() {
                     is AiProviderEvent.TextDelta -> {
                         answer.append(event.delta)
                         val now = SystemClock.elapsedRealtime()
-                        if (now - lastHudUpdateMs >= HUD_UPDATE_INTERVAL_MS) {
+                        if (now - lastHudUpdateMs >= HUD_UPDATE_INTERVAL_MS &&
+                            workspaceEffectsAllowed()
+                        ) {
                             showAnswer(answer.toString())
                             lastHudUpdateMs = now
                         }
@@ -980,6 +992,8 @@ class AssistantPluginService : NexusPluginService() {
                         val finalText = event.message.content.ifBlank { answer.toString() }
                         if (finalText.isBlank()) {
                             uiController.showError("No answer received. Try again.")
+                        } else if (!workspaceEffectsAllowed()) {
+                            failed = true
                         } else {
                             finalAnswer = stripCitationMarkup(finalText)
                             showAnswer(finalText)
@@ -998,10 +1012,17 @@ class AssistantPluginService : NexusPluginService() {
             if (!completed) {
                 if (answer.isBlank()) {
                     uiController.showError("No answer received. Try again.")
+                } else if (!workspaceEffectsAllowed()) {
+                    failed = true
                 } else {
                     finalAnswer = stripCitationMarkup(answer.toString())
                     showAnswer(finalAnswer.orEmpty())
                 }
+            }
+            if (!failed && !workspaceEffectsAllowed()) failed = true
+            if (withheld) {
+                Log.w(TAG, "Assistant answer withheld: reason=workspace_source_changed")
+                showError(WORKSPACE_CHANGED_MESSAGE)
             }
             if (!failed) {
                 currentCoroutineContext().ensureActive()
@@ -1018,8 +1039,8 @@ class AssistantPluginService : NexusPluginService() {
                         },
                     )
                 }
-                answerSpeaker.speakCompletedAnswer(stripHudMarkdown(finalAnswer.orEmpty()))
-                try {
+                if (workspaceEffectsAllowed()) answerSpeaker.speakCompletedAnswer(stripHudMarkdown(finalAnswer.orEmpty()))
+                if (workspaceEffectsAllowed()) try {
                     val keepPhotosAtCompletion = authStore.keepPhotosInConversations()
                     withContext(Dispatchers.IO) {
                         if (!keepPhotosAtCompletion && threadStore.hasStoredPhotos()) {

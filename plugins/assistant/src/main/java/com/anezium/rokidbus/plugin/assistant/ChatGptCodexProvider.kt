@@ -544,7 +544,8 @@ internal class ChatGptCodexProvider(
         }
 
         try {
-            val toolPhase = toolRegistry.newExecutionPhase(CODEX_PROVIDER_FEATURES, request.workspaceVersion)
+            val toolPhase = toolRegistry.newExecutionPhase(CODEX_PROVIDER_FEATURES, request.workspaceVersion,
+                request.workspaceTurn)
             val originalInput = request.toCodexResponsesInput()
             val modelId = request.model ?: modelProvider()
             val reasoningEffort = reasoningEffortProvider()
@@ -676,15 +677,20 @@ internal fun functionCallOutput(
     val output = when (result) {
         is AssistantToolResult.Json -> result.text
         is AssistantToolResult.Image ->
-            JSONArray().put(
-                JSONObject()
-                    .put("type", "input_image")
-                    .put(
-                        "image_url",
-                        "data:${result.mimeType};base64,${result.base64}",
-                    )
-                    .put("detail", "high"),
-            )
+            JSONArray().apply {
+                result.caption?.let { caption ->
+                    put(JSONObject().put("type", "input_text").put("text", caption))
+                }
+                put(
+                    JSONObject()
+                        .put("type", "input_image")
+                        .put(
+                            "image_url",
+                            "data:${result.mimeType};base64,${result.base64}",
+                        )
+                        .put("detail", "high"),
+                )
+            }
         is AssistantToolResult.Error ->
             assistantToolErrorJson(result)
     }

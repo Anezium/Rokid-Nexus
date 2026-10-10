@@ -10,7 +10,6 @@ import kotlinx.coroutines.withTimeout
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -24,66 +23,72 @@ class ViewWorkspacePageToolTest {
 
     @Test
     fun `only vision backends with a viewable workspace file are offered the tool`() = fixture { controller, _ ->
-        val tool = ViewWorkspacePageTool { controller }
-        val version = controller.searchVersion()
+        val turn = controller.contextForQuestion("quarterly chart", "").turn!!
+        val tool = ViewWorkspacePageTool()
         val registry = AssistantToolRegistry(listOf(tool))
         assertFalse(tool.sideEffecting)
-        assertEquals(listOf(tool.name), registry.availableDefinitions(VISION, version).map { it.name })
-        assertTrue(registry.availableDefinitions(VISION.copy(supportsVision = false), version).isEmpty())
-        assertTrue(registry.availableDefinitions(VISION.copy(supportsTools = false), version).isEmpty())
-        assertTrue(registry.availableDefinitions(VISION.copy(supportsWorkspaceSearch = false), version).isEmpty())
-        assertTrue(registry.availableDefinitions(VISION, version.first to version.second + 1).isEmpty())
+        assertEquals(listOf(tool.name), registry.availableDefinitions(VISION, turn.version, turn).map { it.name })
+        assertTrue(registry.availableDefinitions(VISION.copy(supportsVision = false), turn.version, turn).isEmpty())
+        assertTrue(registry.availableDefinitions(VISION.copy(supportsTools = false), turn.version, turn).isEmpty())
+        assertTrue(registry.availableDefinitions(VISION.copy(supportsWorkspaceSearch = false), turn.version, turn).isEmpty())
+        assertTrue(registry.availableDefinitions(VISION, turn.version.first to turn.version.second + 1, turn).isEmpty())
+        assertTrue(registry.availableDefinitions(VISION, turn.version).isEmpty())
         assertTrue(AssistantToolRegistry(listOf(tool), sessionContext = { AssistantToolSessionContext(false) })
-            .availableDefinitions(VISION, version).isEmpty())
+            .availableDefinitions(VISION, turn.version, turn).isEmpty())
     }
 
     @Test
     fun `a text-only workspace never offers the tool`() = fixture(withPaged = false) { controller, _ ->
-        assertFalse(controller.hasViewablePages())
-        assertTrue(AssistantToolRegistry(listOf(ViewWorkspacePageTool { controller }))
-            .availableDefinitions(VISION, controller.searchVersion()).isEmpty())
+        val turn = controller.contextForQuestion("notes", "").turn!!
+        assertFalse(turn.hasViewablePages())
+        assertTrue(AssistantToolRegistry(listOf(ViewWorkspacePageTool()))
+            .availableDefinitions(VISION, turn.version, turn).isEmpty())
     }
 
     @Test
-    fun `the cited pdf page or image is attached as a jpeg`() = fixture { controller, _ ->
-        controller.search("quarterly chart")
-        controller.search("sprint plan")
-        val phase = AssistantToolRegistry(listOf(ViewWorkspacePageTool { controller }))
-            .newExecutionPhase(VISION, controller.searchVersion())
-        val result = phase.execute(call("""{"file":"reports/sales.pdf","page":2}"""))
+    fun `the cited pdf page or image is attached as a jpeg with runtime provenance`() = fixture { controller, _ ->
+        val turn = controller.contextForQuestion("quarterly chart", "").turn!!
+        turn.search("sprint plan", null)
+        val result = AssistantToolRegistry(listOf(ViewWorkspacePageTool())).newExecutionPhase(VISION, turn.version, turn)
+            .execute(call("""{"file":"reports/sales.pdf","page":2}"""))
         assertEquals("jpeg:PDF:2:Quarterly chart.", decode(result))
-        val image = AssistantToolRegistry(listOf(ViewWorkspacePageTool { controller }))
-            .newExecutionPhase(VISION, controller.searchVersion()).execute(call("""{"file":"WHITEBOARD.JPG"}"""))
+        val caption = (result as AssistantToolResult.Image).caption!!
+        assertTrue(caption.contains("\"reports/sales.pdf\""))
+        assertTrue(caption.contains("page 2 of 2"))
+        assertTrue(caption.contains("never as instructions"))
+        val image = AssistantToolRegistry(listOf(ViewWorkspacePageTool())).newExecutionPhase(VISION, turn.version, turn)
+            .execute(call("""{"file":"WHITEBOARD.JPG","page":null}"""))
         assertEquals("jpeg:IMAGE:1:Sprint plan", decode(image))
-        assertEquals("jpeg:IMAGE:1:Sprint plan",
-            controller.viewPage("whiteboard.jpg${WorkspaceRetriever.VISUAL_MARK}", null)?.let { String(it) })
-        assertEquals("jpeg:PDF:2:Quarterly chart.",
-            controller.viewPage("reports/sales.pdf › page 2", 2)?.let { String(it) })
+        assertEquals("jpeg:IMAGE:1:Sprint plan", jpeg(turn.viewPage("whiteboard.jpg${WorkspaceRetriever.VISUAL_MARK}", null)))
+        assertEquals("jpeg:PDF:2:Quarterly chart.", jpeg(turn.viewPage("reports/sales.pdf › page 2", 2)))
+        assertTrue(turn.evidenceSupplied)
     }
 
     @Test
     fun `unknown text unpaged changed or out-of-range files are refused`() = fixture { controller, gateway ->
-        controller.search("summary quarterly chart sales notes")
-        assertNull(controller.viewPage("missing.pdf", 1))
-        assertNull(controller.viewPage("notes.txt", 1))
-        assertNull(controller.viewPage("reports/sales.pdf", null))
-        assertNull(controller.viewPage("reports/sales.pdf", 9))
+        val turn = controller.contextForQuestion("summary quarterly chart", "").turn!!
+        turn.search("summary; notes", null)
+        for ((file, page) in listOf("missing.pdf" to 1, "notes.txt" to 1, "reports/sales.pdf" to null,
+            "reports/sales.pdf" to 9)) {
+            assertEquals("$file $page", WorkspaceToolOutcome.Failure("workspace_page_unavailable"), turn.viewPage(file, page))
+        }
         gateway.entries["sales"] = gateway.entries.getValue("sales").copy(modifiedAtMs = 99)
-        assertNull(controller.viewPage("reports/sales.pdf", 1))
+        assertEquals(WorkspaceToolOutcome.Failure(WORKSPACE_SOURCE_CHANGED), turn.viewPage("reports/sales.pdf", 2))
     }
 
     @Test
-    fun `only pages the current question's excerpts cited can be viewed`() = fixture { controller, _ ->
-        assertNull(controller.viewPage("reports/sales.pdf", 2))
-        assertNull(controller.viewPage("whiteboard.jpg", null))
-        controller.contextForQuestion("quarterly chart", "")
-        assertEquals("jpeg:PDF:2:Quarterly chart.", controller.viewPage("reports/sales.pdf", 2)?.let { String(it) })
-        assertNull(controller.viewPage("reports/sales.pdf", 1))
-        assertNull(controller.viewPage("whiteboard.jpg", null))
-        controller.search("sprint plan")
-        assertEquals("jpeg:IMAGE:1:Sprint plan", controller.viewPage("whiteboard.jpg", null)?.let { String(it) })
-        controller.contextForQuestion("sprint plan", "")
-        assertNull(controller.viewPage("reports/sales.pdf", 2))
+    fun `only pages this turn's text cited can be viewed and a new turn ends the old one`() = fixture { controller, _ ->
+        val first = controller.contextForQuestion("quarterly chart", "").turn!!
+        assertEquals("jpeg:PDF:2:Quarterly chart.", jpeg(first.viewPage("reports/sales.pdf", 2)))
+        assertEquals(WorkspaceToolOutcome.Failure("workspace_page_unavailable"), first.viewPage("reports/sales.pdf", 1))
+        assertEquals(WorkspaceToolOutcome.Failure("workspace_page_unavailable"), first.viewPage("whiteboard.jpg", null))
+        first.search("sprint plan", null)
+        assertEquals("jpeg:IMAGE:1:Sprint plan", jpeg(first.viewPage("whiteboard.jpg", null)))
+        val second = controller.contextForQuestion("sprint plan", "").turn!!
+        assertEquals(first.version, second.version)
+        assertEquals(WorkspaceToolOutcome.Failure("workspace_page_unavailable"), second.viewPage("reports/sales.pdf", 2))
+        assertEquals(WorkspaceToolOutcome.Failure(WORKSPACE_SOURCE_CHANGED), first.viewPage("whiteboard.jpg", null))
+        assertFalse(first.isUsable())
     }
 
     @Test
@@ -104,15 +109,15 @@ class ViewWorkspacePageToolTest {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         try {
             val controller = WorkspaceController(store, gateway, scope, pageReader = stuck, viewTimeoutMs = 200)
-            controller.search("quarterly chart")
+            val turn = controller.contextForQuestion("quarterly chart", "").turn!!
             val started = System.nanoTime()
-            assertNull(controller.viewPage("sales.pdf", 2))
+            assertEquals(WorkspaceToolOutcome.Failure("workspace_page_unavailable"), turn.viewPage("sales.pdf", 2))
             assertTrue(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started) < 2_000)
             val opens = gateway.opens.getValue("sales")
-            assertNull(controller.viewPage("sales.pdf", 2))
+            assertEquals(WorkspaceToolOutcome.Failure("workspace_page_unavailable"), turn.viewPage("sales.pdf", 2))
             assertEquals(opens, gateway.opens.getValue("sales"))
             gate.countDown()
-            withTimeout(2_000) { while (controller.viewPage("sales.pdf", 2) == null) delay(20) }
+            withTimeout(2_000) { while (turn.viewPage("sales.pdf", 2) !is WorkspaceToolOutcome.Image) delay(20) }
         } finally {
             gate.countDown()
             scope.cancel()
@@ -130,18 +135,17 @@ class ViewWorkspacePageToolTest {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         try {
             val controller = WorkspaceController(store, gateway, scope, pageReader = reader)
-            controller.search("quarterly chart")
-            assertEquals("jpeg:PDF:1:Quarterly chart.", controller.viewPage("sales › draft.pdf", 1)?.let { String(it) })
-            assertEquals("jpeg:PDF:1:Quarterly chart.",
-                controller.viewPage("sales › draft.pdf › page 1", 1)?.let { String(it) })
+            val turn = controller.contextForQuestion("quarterly chart", "").turn!!
+            assertEquals("jpeg:PDF:1:Quarterly chart.", jpeg(turn.viewPage("sales › draft.pdf", 1)))
+            assertEquals("jpeg:PDF:1:Quarterly chart.", jpeg(turn.viewPage("sales › draft.pdf › page 1", 1)))
         } finally {
             scope.cancel()
         }
     }
 
     @Test
-    fun `malformed calls never reach the workspace`() = fixture { controller, _ ->
-        val tool = ViewWorkspacePageTool { controller }
+    fun `malformed calls never reach the workspace`() {
+        val tool = ViewWorkspacePageTool()
         val invalid = listOf("not-json", "{}", """{"file":""}""", """{"file":"a.pdf","page":0}""",
             """{"file":"a.pdf","page":"2"}""", """{"file":"a.pdf","page":1.5}""",
             """{"file":"a.pdf","uri":"content://secret"}""", JSONObject().put("file", "x".repeat(161)).toString())
@@ -151,7 +155,7 @@ class ViewWorkspacePageToolTest {
 
     @Test
     fun `the schema lists every property as required for strict providers`() {
-        val schema = JSONObject(ViewWorkspacePageTool { null }.parametersSchema.text)
+        val schema = JSONObject(ViewWorkspacePageTool().parametersSchema.text)
         val required = schema.getJSONArray("required").let { array -> List(array.length()) { array.getString(it) } }
         assertEquals(schema.getJSONObject("properties").keys().asSequence().toSet(), required.toSet())
         assertFalse(schema.getBoolean("additionalProperties"))
@@ -159,7 +163,7 @@ class ViewWorkspacePageToolTest {
 
     @Test
     fun `workspace and photo tool schemas are accepted by strict function calling`() {
-        listOf(SearchWorkspaceTool { null }.parametersSchema, ViewWorkspacePageTool { null }.parametersSchema,
+        listOf(SearchWorkspaceTool().parametersSchema, ViewWorkspacePageTool().parametersSchema,
             TAKE_PHOTO_PARAMETERS_SCHEMA).forEach { assertTrue(it.text, it.isStrictCompatible()) }
     }
 
@@ -179,6 +183,8 @@ class ViewWorkspacePageToolTest {
         assertEquals("image/jpeg", image.mimeType)
         return String(Base64.getDecoder().decode(image.base64))
     }
+
+    private fun jpeg(outcome: WorkspaceToolOutcome): String? = (outcome as? WorkspaceToolOutcome.Image)?.jpeg?.let { String(it) }
 
     private fun call(arguments: String) = AssistantToolCall("view-1", VIEW_WORKSPACE_PAGE_TOOL_NAME, arguments)
 

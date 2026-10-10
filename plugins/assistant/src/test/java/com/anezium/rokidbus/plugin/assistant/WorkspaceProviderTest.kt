@@ -18,16 +18,16 @@ class WorkspaceProviderTest {
         for ((preset, backend) in ProviderCatalog.presets.map { it to it.backend } +
             (ProviderCatalog.custom to ProviderBackend.HERMES)
         ) {
-            val access = FakeWorkspaceSearchAccess()
-            val tool = SearchWorkspaceTool { access }
+            val access = FakeWorkspaceTurn()
+            val tool = SearchWorkspaceTool()
             val registry = AssistantToolRegistry(listOf(tool))
             val features = SearchWorkspaceToolTest.FEATURES.copy(supportsWorkspaceSearch = backend != ProviderBackend.HERMES)
-            val available = registry.availableDefinitions(features, access.searchVersion())
+            val available = registry.availableDefinitions(features, access.version, access)
             val prompt = prompt(available.map { it.name })
             val client = RecordingClient()
             val provider = OpenAiCompatProvider(preset, client, { true }, registry,
                 supportsVision = { false }, backendProvider = { backend })
-            provider.streamEvents(ChatRequest(userText = "What is the notice period?", systemPrompt = prompt, workspaceVersion = access.searchVersion())).toList()
+            provider.streamEvents(ChatRequest(userText = "What is the notice period?", systemPrompt = prompt, workspaceVersion = access.version, workspaceTurn = access)).toList()
             assertEquals(preset.id, 1, client.requests.size)
             assertEquals(prompt, client.requests.single().messages.getJSONObject(0).getString("content"))
             assertTrue(client.requests.single().request.systemPrompt!!.endsWith("$MEMORY\n\n$EXCERPTS"))
@@ -42,11 +42,11 @@ class WorkspaceProviderTest {
 
     @Test
     fun `Codex OAuth carries bounded memory and excerpts in its first instructions request`() = runTest {
-        val access = FakeWorkspaceSearchAccess()
+        val access = FakeWorkspaceTurn()
         val transport = RecordingCodexTransport(listOf(textResponse()))
         val provider = codex(transport, access)
         val prompt = prompt(listOf(SEARCH_WORKSPACE_TOOL_NAME))
-        provider.streamEvents(ChatRequest(userText = "What is the notice period?", systemPrompt = prompt, workspaceVersion = access.searchVersion())).toList()
+        provider.streamEvents(ChatRequest(userText = "What is the notice period?", systemPrompt = prompt, workspaceVersion = access.version, workspaceTurn = access)).toList()
         assertEquals(1, transport.requests.size)
         assertEquals(prompt, JSONObject(transport.requests.single().body).getString("instructions"))
         assertEquals(0, access.executions)
@@ -54,13 +54,13 @@ class WorkspaceProviderTest {
     }
 
     @Test
-    fun `two model-requested searches consume one execution within the shared tool loop`() = runTest {
-        val access = FakeWorkspaceSearchAccess().apply { result = WorkspaceSearchResult(EXCERPTS, 1) }
+    fun `two identical model-requested searches execute once within the shared tool loop`() = runTest {
+        val access = FakeWorkspaceTurn().apply { result = WorkspaceSearchResult(EXCERPTS, 1) }
         val calls = listOf("one", "two").map { id -> JSONObject().put("type", "response.output_item.done")
             .put("item", JSONObject().put("type", "function_call").put("call_id", id)
                 .put("name", SEARCH_WORKSPACE_TOOL_NAME).put("arguments", "{\"query\":\"notice\"}")).toString() }
         val transport = RecordingCodexTransport(listOf(calls + COMPLETED, textResponse()))
-        codex(transport, access).streamEvents(ChatRequest(userText = "What does it say?", systemPrompt = prompt(listOf(SEARCH_WORKSPACE_TOOL_NAME)), workspaceVersion = access.searchVersion())).toList()
+        codex(transport, access).streamEvents(ChatRequest(userText = "What does it say?", systemPrompt = prompt(listOf(SEARCH_WORKSPACE_TOOL_NAME)), workspaceVersion = access.version, workspaceTurn = access)).toList()
         assertEquals(1, access.executions)
         assertEquals(2, transport.requests.size)
         val replay = JSONObject(transport.requests[1].body)
@@ -73,7 +73,8 @@ class WorkspaceProviderTest {
             .filter { it.optString("type") == "function_call_output" }
         assertEquals(2, results.size)
         assertEquals(EXCERPTS, JSONObject(results[0].getString("output")).getString("excerpts"))
-        assertEquals(TOOL_ERROR_ALREADY_USED, JSONObject(results[1].getString("output")).getString("code"))
+        // An identical retry returns the first result instead of searching again.
+        assertEquals(results[0].getString("output"), results[1].getString("output"))
     }
 
     @Test
@@ -99,7 +100,7 @@ class WorkspaceProviderTest {
         for ((preset, backend) in listOf(ProviderCatalog.openAi to ProviderBackend.OPENAI_COMPAT,
             ProviderCatalog.hermes to ProviderBackend.HERMES, ProviderCatalog.custom to ProviderBackend.HERMES)
         ) {
-            val access = FakeWorkspaceSearchAccess()
+            val access = FakeWorkspaceTurn()
             val started = CompletableDeferred<Unit>()
             val finish = CompletableDeferred<Unit>()
             val tool = TestAssistantTool(LIST_NOTES_TOOL_NAME, executor = { _, _ ->
@@ -128,7 +129,7 @@ class WorkspaceProviderTest {
 
     @Test
     fun `Off while a Codex phone tool waits prevents the final request`() = runTest {
-        val access = FakeWorkspaceSearchAccess()
+        val access = FakeWorkspaceTurn()
         val started = CompletableDeferred<Unit>()
         val finish = CompletableDeferred<Unit>()
         val tool = TestAssistantTool(LIST_NOTES_TOOL_NAME, executor = { _, _ ->
@@ -153,13 +154,13 @@ class WorkspaceProviderTest {
 
     @Test
     fun `a changed workspace blocks the compat retry without tool declarations`() = runTest {
-        val access = FakeWorkspaceSearchAccess()
+        val access = FakeWorkspaceTurn()
         val client = ScriptedClient {
             access.generation++
             throw OpenAiCompatHttpException(400, "Tools rejected")
         }
         val provider = OpenAiCompatProvider(ProviderCatalog.openAi, client, { true },
-            AssistantToolRegistry(listOf(SearchWorkspaceTool { access })), supportsVision = { false })
+            AssistantToolRegistry(listOf(SearchWorkspaceTool())), supportsVision = { false })
         assertWorkspaceRevoked(provider.streamEvents(guardedRequest(access)).toList())
         assertEquals(1, client.requests.size)
     }
@@ -167,7 +168,7 @@ class WorkspaceProviderTest {
     @Test
     fun `Off prevents Codex unauthorized and transient stream retries`() = runTest {
         for (unauthorized in listOf(true, false)) {
-            val access = FakeWorkspaceSearchAccess()
+            val access = FakeWorkspaceTurn()
             val events = if (unauthorized) emptyList() else listOf(
                 "{\"type\":\"response.failed\",\"response\":{\"error\":{\"type\":\"server_error\",\"message\":\"Retry\"}}}")
             val transport = RecordingCodexTransport(listOf(events), listOf(if (unauthorized) 401 else 200)) {
@@ -181,19 +182,20 @@ class WorkspaceProviderTest {
         }
     }
 
-    private fun guardedRequest(access: WorkspaceSearchAccess, names: List<String> = listOf(SEARCH_WORKSPACE_TOOL_NAME)): ChatRequest {
-        val version = access.searchVersion()
-        return ChatRequest(userText = "What is the notice period?", systemPrompt = prompt(names),
-            workspaceVersion = version, beforeSend = workspaceTurnGuard(access, version))
-    }
+    private fun guardedRequest(access: FakeWorkspaceTurn, names: List<String> = listOf(SEARCH_WORKSPACE_TOOL_NAME),
+        carriesEvidence: Boolean = true): ChatRequest =
+        ChatRequest(userText = "What is the notice period?", systemPrompt = prompt(names),
+            workspaceVersion = access.version, workspaceTurn = access).forCurrentWorkspace(carriesEvidence) {
+            error("A usable turn keeps its prompt")
+        }
 
     private fun assertWorkspaceRevoked(events: List<AiProviderEvent>) {
         assertTrue(events.filterIsInstance<AiProviderEvent.Failed>().single().message.contains("Workspace changed"))
         assertTrue(events.none { it is AiProviderEvent.MessageDone })
     }
 
-    private fun codex(transport: RecordingCodexTransport, access: WorkspaceSearchAccess,
-        tools: List<AssistantToolDefinition> = listOf(SearchWorkspaceTool { access }),
+    private fun codex(transport: RecordingCodexTransport, @Suppress("UNUSED_PARAMETER") access: FakeWorkspaceTurn,
+        tools: List<AssistantToolDefinition> = listOf(SearchWorkspaceTool()),
         refreshTokens: suspend () -> CodexChatGptOAuthTokenBundle = { error("Unexpected token refresh") },
     ) = ChatGptCodexProvider(
         ChatGptCodexApiClient(tokenProvider = { tokens() },

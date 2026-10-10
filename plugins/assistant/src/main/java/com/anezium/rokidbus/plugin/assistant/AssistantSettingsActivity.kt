@@ -1843,7 +1843,7 @@ class AssistantSettingsActivity : Activity() {
             workspaceRefreshButton = NexusUi.textButton(this@AssistantSettingsActivity, "Re-index now").apply {
                 setOnClickListener {
                     workspaceFolderMessage = null
-                    workspaceController?.refresh()
+                    workspaceController?.reindexNow()
                     renderWorkspace()
                 }
             }
@@ -1903,7 +1903,7 @@ class AssistantSettingsActivity : Activity() {
         workspaceNames.forEach { (value, name) -> name.setTextColor(if (value == enabled) NexusUi.INK else NexusUi.INK2) }
         val index = state?.index
         workspaceFolderStatus.text = if (settings?.treeUri.isNullOrEmpty()) "No folder selected" else
-            "${settings?.folderName} · ${index?.fileCount ?: 0} files · ${index?.chunkCount ?: 0} excerpts" +
+            "${settings?.folderName} · ${WorkspaceStatusText.state(index, ui?.checking == true)}" +
                 (index?.let { " · indexed ${relativeTime(it.indexedAtMs)}" } ?: "")
         workspaceChooseButton.isEnabled = ui != null
         workspaceRefreshButton.isEnabled = enabled && !settings?.treeUri.isNullOrEmpty() && ui?.checking != true
@@ -1916,13 +1916,12 @@ class AssistantSettingsActivity : Activity() {
             state?.problem == WorkspaceProblem.FOLDER_UNAVAILABLE ->
                 "Folder access is unavailable. Choose the folder again and tap Allow. See Folder help."
             state?.problem != null -> "${state.problem.label} See Folder help."
-            ui.checking -> "Indexing…"
             settings?.treeUri.isNullOrEmpty() -> "Choose a folder to get started."
-            index == null -> "Not indexed yet"
+            index == null -> WorkspaceStatusText.state(null, ui.checking)
             workspacePromptBudget(authStore.combinedAssistantContextForPrompt()) <= WorkspaceRetriever.SOURCE_RULE.length + 40 ->
                 "No prompt space left after Memory and notes"
-            index.fileCount == 0 -> "No supported readable documents · ${index.skippedFiles} skipped"
-            else -> "${index.skippedFiles} files skipped · ${index.truncatedFiles} truncated" +
+            index.documents.isEmpty() -> "No supported readable documents · ${index.skippedFiles} skipped"
+            else -> "Search by words · ${WorkspaceStatusText.summary(index)} · ${index.skippedFiles} skipped" +
                 if (index.documents.any { it.status == WorkspaceDocumentStatus.METADATA_UNAVAILABLE })
                     " · Some files have no reliable modification time or size." else
                     if (index.documents.any { it.status in setOf(WorkspaceDocumentStatus.INVALID_TEXT,

@@ -311,6 +311,7 @@ internal class OpenAiCompatProvider(
                     supportsWorkspaceSearch = !useTextToolBridge,
                 ),
                 request.workspaceVersion,
+                request.workspaceTurn,
             )
             val textToolNames = toolPhase.availableDefinitions
                 .filter { definition -> definition.name in HERMES_TEXT_TOOL_NAMES }
@@ -425,6 +426,7 @@ internal class OpenAiCompatProvider(
                 ) {
                     val replayMessages = messages.copyJsonArray()
                     var capturedPhoto: PhotoAttachment? = null
+                    var photoCaption: String? = null
                     if (useTextToolBridge) {
                         // A backend without structured tool calls has no reason to accept the
                         // structured transcript either, so the results ride back as plain text.
@@ -432,6 +434,7 @@ internal class OpenAiCompatProvider(
                         results.forEach { (call, result) ->
                             if (result is AssistantToolResult.Image) {
                                 capturedPhoto = PhotoAttachment(result.mimeType, result.base64)
+                                photoCaption = result.caption
                             }
                             text.append("\n- ").append(textToolResultLine(call, result))
                         }
@@ -441,6 +444,7 @@ internal class OpenAiCompatProvider(
                         results.forEach { (call, result) ->
                             if (result is AssistantToolResult.Image) {
                                 capturedPhoto = PhotoAttachment(result.mimeType, result.base64)
+                                photoCaption = result.caption
                             }
                             replayMessages.put(toolResultMessage(call, result))
                         }
@@ -449,7 +453,7 @@ internal class OpenAiCompatProvider(
                         replayMessages.put(
                             JSONObject()
                                 .put("role", "user")
-                                .put("content", chatCompletionContent(PHOTO_TAKEN_MESSAGE, listOf(photo))),
+                                .put("content", chatCompletionContent(photoCaption ?: PHOTO_TAKEN_MESSAGE, listOf(photo))),
                         )
                     }
                     messages = replayMessages
@@ -566,7 +570,12 @@ private fun toolResultMessage(
     val content = when (result) {
         is AssistantToolResult.Json -> result.text
         is AssistantToolResult.Image ->
-            JSONObject()
+            result.caption?.let { caption ->
+                JSONObject()
+                    .put("status", "attached")
+                    .put("source", caption)
+                    .put("note", "The image is attached to the next user message.")
+            } ?: JSONObject()
                 .put("status", "captured")
                 .put("note", "The photo is attached to the next user message.")
         is AssistantToolResult.Error ->

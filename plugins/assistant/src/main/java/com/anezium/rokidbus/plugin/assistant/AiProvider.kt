@@ -31,6 +31,7 @@ data class ChatRequest(
     val requestId: String = UUID.randomUUID().toString(),
     val conversationId: String? = null,
     val workspaceVersion: Pair<Long, Long>? = null,
+    val workspaceTurn: WorkspaceTurnAccess? = null,
     val beforeSend: (() -> Unit)? = null,
 )
 

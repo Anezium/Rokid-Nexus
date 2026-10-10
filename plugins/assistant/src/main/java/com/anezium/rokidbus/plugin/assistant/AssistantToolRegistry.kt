@@ -93,7 +93,7 @@ internal interface AssistantToolDefinition {
 
     fun isAvailable(context: AssistantToolAvailabilityContext): Boolean
 
-    fun bindToTurn(workspaceVersion: Pair<Long, Long>?): AssistantToolDefinition = this
+    fun bindToTurn(workspaceVersion: Pair<Long, Long>?, workspaceTurn: WorkspaceTurnAccess?): AssistantToolDefinition = this
 
     fun validate(argumentsJson: String): AssistantToolValidation
 
@@ -139,20 +139,23 @@ internal class AssistantToolRegistry(
     }
 
     fun availableDefinitions(features: AssistantProviderFeatures,
-        workspaceVersion: Pair<Long, Long>? = null): List<AssistantToolDefinition> {
+        workspaceVersion: Pair<Long, Long>? = null,
+        workspaceTurn: WorkspaceTurnAccess? = null): List<AssistantToolDefinition> {
         if (!features.supportsTools) return emptyList()
         val context = AssistantToolAvailabilityContext(features, sessionContext())
         val plugin = runCatching(dynamicDefinitions).getOrDefault(emptyList())
             .filter { it.name.startsWith(SkillsContract.ALIAS_PREFIX) && TOOL_NAME.matches(it.name) }
             .distinctBy(AssistantToolDefinition::name)
-        return (definitionsByName.values.map { it.bindToTurn(workspaceVersion) } + plugin).filter { definition ->
+        return (definitionsByName.values.map { it.bindToTurn(workspaceVersion, workspaceTurn) } + plugin).filter { definition ->
             runCatching { definition.isAvailable(context) }.getOrDefault(false)
         }
     }
 
     fun newExecutionPhase(features: AssistantProviderFeatures,
-        workspaceVersion: Pair<Long, Long>? = null): AssistantToolExecutionPhase =
-        AssistantToolExecutionPhase(availableDefinitions(features, workspaceVersion), progressReporter)
+        workspaceVersion: Pair<Long, Long>? = null,
+        workspaceTurn: WorkspaceTurnAccess? = null): AssistantToolExecutionPhase =
+        AssistantToolExecutionPhase(availableDefinitions(features, workspaceVersion, workspaceTurn), progressReporter,
+            beforeExecution = { workspaceTurn?.beforeSend(false) })
 
     companion object {
         private val TOOL_NAME = Regex("[a-z][a-z0-9_]{0,63}")
@@ -163,6 +166,7 @@ internal class AssistantToolRegistry(
 internal class AssistantToolExecutionPhase(
     val availableDefinitions: List<AssistantToolDefinition>,
     private val progressReporter: (String) -> Unit,
+    private val beforeExecution: () -> Unit = {},
 ) {
     private val definitionsByName = availableDefinitions.associateBy(AssistantToolDefinition::name)
     private val resultsByCallId = mutableMapOf<String, AssistantToolResult>()
@@ -175,6 +179,7 @@ internal class AssistantToolExecutionPhase(
         get() = executedCalls >= MAX_EXECUTED_CALLS
 
     suspend fun execute(call: AssistantToolCall): AssistantToolResult {
+        beforeExecution()
         var restoreProgress = true
         try {
             val result = executeCall(call)

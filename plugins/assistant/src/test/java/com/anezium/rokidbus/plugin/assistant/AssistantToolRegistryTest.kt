@@ -292,6 +292,27 @@ class AssistantToolRegistryTest {
     }
 
     @Test
+    fun `withdrawn Workspace evidence blocks tool execution while unrelated turns continue`() = runTest {
+        for (hasEvidence in listOf(false, true)) {
+            var executed = 0
+            val turn = FakeWorkspaceTurn().apply { evidence = hasEvidence }
+            val tool = TestAssistantTool(name = "save_note", sideEffecting = true,
+                executor = { _, _ -> executed++; AssistantToolResult.Json("{}") })
+            val phase = AssistantToolRegistry(listOf(tool)).newExecutionPhase(TOOLS_WITHOUT_VISION,
+                workspaceVersion = turn.version, workspaceTurn = turn)
+            turn.withdraw(WORKSPACE_SOURCE_CHANGED)
+            val failure = runCatching { phase.execute(AssistantToolCall("save", tool.name, "{}")) }.exceptionOrNull()
+            if (hasEvidence) {
+                assertEquals(WORKSPACE_CHANGED_MESSAGE, failure?.message)
+                assertEquals(0, executed)
+            } else {
+                assertEquals(null, failure)
+                assertEquals(1, executed)
+            }
+        }
+    }
+
+    @Test
     fun `take photo exception keeps capture failed wire code`() = runTest {
         val phase = testToolRegistry(
             executor = { error("camera failed") },
