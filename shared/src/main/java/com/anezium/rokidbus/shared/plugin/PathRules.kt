@@ -102,11 +102,26 @@ object PathRules {
         else -> matchesPrefix(path, "/system/plugin")
     }
 
+    /**
+     * The launcher bundle's plugin-to-phone paths. Like `/activity/start` they carry the local
+     * `surfaceId` and the phone stamps the authenticated owner; no plugin ever receives them.
+     */
+    fun isLauncherOwnerPath(path: String): Boolean = normalizeAbsolute(path)?.let { it in launcherOwnerPaths } == true
+
+    private val launcherOwnerPaths = setOf(
+        BusPaths.ACTIVITY_RESULT,
+        BusPaths.ACTIVITY_GEOMETRY,
+        BusPaths.ACTIVITY_HEADING,
+        BusPaths.NOTICE_WITHDRAW,
+    )
+
     fun requiredCapability(path: String): PluginCapability? = when (normalizeAbsolute(path)) {
         "/surface/show", "/surface/update", "/surface/hide",
         BusPaths.PIN_SHOW, BusPaths.PIN_HIDE,
         BusPaths.NOTICE_SHOW, BusPaths.NOTICE_UPDATE, BusPaths.NOTICE_HIDE,
         BusPaths.ACTIVITY_START, BusPaths.ACTIVITY_UPDATE, BusPaths.ACTIVITY_END,
+        BusPaths.ACTIVITY_RESULT, BusPaths.ACTIVITY_GEOMETRY, BusPaths.ACTIVITY_HEADING,
+        BusPaths.NOTICE_WITHDRAW,
         -> PluginCapability.SURFACES
         BusPaths.INK_SHOW, BusPaths.INK_UPDATE, BusPaths.INK_HIDE ->
             PluginCapability.INK_SURFACE

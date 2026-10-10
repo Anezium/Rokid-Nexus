@@ -1,5 +1,6 @@
 package com.anezium.rokidbus.shared
 
+import com.anezium.rokidbus.shared.plugin.PluginDescriptor
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -62,6 +63,15 @@ data class NoticeSurfaceContent(
     val lines: List<String> = emptyList(),
     /** Whether the notice should hide the rest of the glasses display. */
     val backdrop: Boolean = false,
+    /** Launcher bundle: one of the owner's own pages the event leads to. Show-only. */
+    val destination: PageDestination? = null,
+    /** Launcher bundle: the owner's opaque id for this event, for a later withdraw. Show-only. */
+    val eventKey: String? = null,
+    /**
+     * Launcher bundle: the event is a message in the thread at [destination], whose conversation
+     * `threadKey` equals [eventKey]. Show-only.
+     */
+    val conversation: Boolean = false,
 ) {
     /**
      * Whether the band expects a gesture at all. Actions are an interaction by
@@ -126,6 +136,9 @@ sealed interface NoticeSurfacePatchResult {
     data class Valid(val patch: NoticeSurfacePatch) : NoticeSurfacePatchResult
     data class Invalid(val reason: String) : NoticeSurfacePatchResult
 }
+
+/** A withdrawn event as the glasses receive it: the owner the phone authenticated, and its key. */
+data class NoticeWithdrawal(val ownerPluginId: String, val eventKey: String)
 
 /** Pure notice-surface validation and normalization with no Android dependencies. */
 object NoticeSurfaceContract {
@@ -224,6 +237,63 @@ object NoticeSurfaceContract {
     const val ERROR_NOTICE_RATE_LIMITED = "NOTICE_RATE_LIMITED"
     const val ERROR_CAPABILITY_NOT_AVAILABLE = "CAPABILITY_NOT_AVAILABLE"
 
+    // Launcher bundle fields; see [LauncherInteractiveContract].
+    const val FIELD_DESTINATION = "destination"
+    const val FIELD_EVENT_KEY = "eventKey"
+    const val FIELD_CONVERSATION = "conversation"
+
+    /** Glasses notification history: entries kept in memory, newest first. */
+    const val MAX_HISTORY_ENTRIES = 30
+
+    /** How long a history entry is displayed; a display bound, never a reply lease. */
+    const val MAX_HISTORY_AGE_MS = 24L * 60 * 60 * 1000
+
+    private val launcherFields = listOf(FIELD_DESTINATION, FIELD_EVENT_KEY, FIELD_CONVERSATION)
+
+    /** An event key: the safe-id rule of page ids, printable ASCII without spaces, 1..128. */
+    fun isValidEventKey(value: String): Boolean = PageSurfaceContract.isValidId(value)
+
+    /** Whether [content]'s destination, if any, is one of [ownerPluginId]'s own pages. */
+    fun destinationAllowed(content: NoticeSurfaceContent, ownerPluginId: String): Boolean =
+        content.destination?.let { PageTemplateContract.isDestinationOf(it, ownerPluginId) } ?: true
+
+    /** A copy without the launcher bundle's fields, for glasses that did not negotiate it. */
+    fun stripLauncherFields(payload: JSONObject): JSONObject =
+        JSONObject(payload.toString()).apply { launcherFields.forEach { remove(it) } }
+
+    /**
+     * `/notice/withdraw` as a plugin sends it. The local `surfaceId` lets the phone stamp the
+     * owner exactly as it does for a show; the event key is all the plugin says.
+     */
+    fun withdrawPayload(eventKey: String): JSONObject {
+        require(isValidEventKey(eventKey)) { "Invalid event key" }
+        return JSONObject().put("surfaceId", LOCAL_SURFACE_ID).put(FIELD_EVENT_KEY, eventKey)
+    }
+
+    /** The event key of a plugin's withdraw, or null when it is malformed. */
+    fun parseWithdraw(payload: JSONObject): String? =
+        (payload.opt(FIELD_EVENT_KEY) as? String)?.takeIf(::isValidEventKey)
+
+    /** `/notice/withdraw` as the phone forwards it to the glasses, with the owner it authenticated. */
+    fun glassesWithdrawPayload(withdrawal: NoticeWithdrawal): JSONObject = JSONObject()
+        .put("ownerPluginId", withdrawal.ownerPluginId)
+        .put(FIELD_EVENT_KEY, withdrawal.eventKey)
+
+    fun parseGlassesWithdraw(payload: JSONObject): NoticeWithdrawal? {
+        val owner = (payload.opt("ownerPluginId") as? String)?.takeIf(PluginDescriptor::isValidId) ?: return null
+        val eventKey = parseWithdraw(payload) ?: return null
+        return NoticeWithdrawal(owner, eventKey)
+    }
+
+    /** `/core/notice/purge`: the phone tells the glasses to forget every entry of one owner. */
+    fun purgePayload(ownerPluginId: String): JSONObject {
+        require(PluginDescriptor.isValidId(ownerPluginId)) { "Invalid plugin id" }
+        return JSONObject().put("ownerPluginId", ownerPluginId)
+    }
+
+    fun parsePurge(payload: JSONObject): String? =
+        (payload.opt("ownerPluginId") as? String)?.takeIf(PluginDescriptor::isValidId)
+
     fun validateShow(
         payload: JSONObject,
         binary: ByteArray? = null,
@@ -304,6 +374,30 @@ object NoticeSurfaceContract {
             null
         }
 
+        val destination = if (payload.has(FIELD_DESTINATION) && payload.opt(FIELD_DESTINATION) != JSONObject.NULL) {
+            when (val result = PageTemplateContract.readDestination(payload.opt(FIELD_DESTINATION))) {
+                is PageSurfaceValidationResult.Valid -> result.value
+                is PageSurfaceValidationResult.Invalid -> return invalid(result.reason)
+            }
+        } else {
+            null
+        }
+        val eventKey = if (payload.has(FIELD_EVENT_KEY) && payload.opt(FIELD_EVENT_KEY) != JSONObject.NULL) {
+            (payload.opt(FIELD_EVENT_KEY) as? String)?.takeIf(::isValidEventKey)
+                ?: return invalid("eventKey must be a safe id")
+        } else {
+            null
+        }
+        val conversation = when (val value = payload.opt(FIELD_CONVERSATION)) {
+            null -> false
+            is Boolean -> value
+            else -> return invalid("conversation must be a boolean")
+        }
+        // A message names its thread twice: the page it opens, and the key it can be withdrawn by.
+        if (conversation && (destination == null || eventKey == null)) {
+            return invalid("a conversation event needs a destination and an eventKey")
+        }
+
         return NoticeSurfaceValidationResult.Valid(
             NoticeSurfaceContent(
                 title = title?.takeIf { it.isNotEmpty() },
@@ -316,6 +410,9 @@ object NoticeSurfaceContract {
                 image = image,
                 wakeDisplay = wakeDisplay,
                 backdrop = backdrop,
+                destination = destination,
+                eventKey = eventKey,
+                conversation = conversation,
             ),
         )
     }
@@ -340,6 +437,7 @@ object NoticeSurfaceContract {
         if (payload.has("backdrop")) {
             return patchInvalid("backdrop is show-only")
         }
+        launcherFields.firstOrNull(payload::has)?.let { return patchInvalid("$it is show-only") }
         if (payload.has("body") && payload.has("lines")) {
             return patchInvalid("body and lines are mutually exclusive")
         }
@@ -432,6 +530,10 @@ object NoticeSurfaceContract {
             // for byte the way it did. An activity always sends its array; a
             // notice cannot, because its payload is the compatibility surface.
             if (content.actions.isNotEmpty()) put("actions", actionsJson(content.actions))
+            // Launcher fields only when used, for the same byte-for-byte reason.
+            content.destination?.let { put(FIELD_DESTINATION, PageTemplateContract.encodeDestination(it)) }
+            content.eventKey?.let { put(FIELD_EVENT_KEY, it) }
+            if (content.conversation) put(FIELD_CONVERSATION, true)
             content.image?.let { image ->
                 put("imageVersion", ImageSurfaceContract.VERSION)
                 put("contentKey", image.contentKey)
