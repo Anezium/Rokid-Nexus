@@ -278,6 +278,7 @@ class BusHubService : Service() {
     private val noticeRouter = PhoneNoticeRouter(
         state = PhoneNoticeState(nowMs = { SystemClock.elapsedRealtime() }),
         sink = hudRouteSink,
+        launcherVersion = { remoteLauncherInteractiveVersion },
     )
     private val pinRouter: PhonePinRouter = PhonePinRouter(
         state = PhonePinState(nowMs = { SystemClock.elapsedRealtime() }),
@@ -2574,6 +2575,8 @@ class BusHubService : Service() {
 
     private fun authorizationChanged(key: PluginGrantKey) {
         revokePrincipal(key)
+        // revokePrincipal cleared the owner cache, so this reads the grant as it is now.
+        if (surfaceOwnerFor(key.pluginId) == null) noticeRouter.purgeOwner(key.pluginId, "authorizationChanged")
         purgeActivityChoicesUnlessApproved(key)
         cameraConsumerReadiness.recompute()
         refreshMediaSyncConsent()
@@ -2634,6 +2637,11 @@ class BusHubService : Service() {
                         ?.contains(PluginCapability.SURFACES) == true
             }
             if (!stillGranted) activityRouter.clearForRevokedOwner(owner, "ownerUnavailable")
+        }
+        // Uninstall, a signer change (the new signer starts unapproved) and an id change all leave
+        // the old owner without a surfaces grant; its glasses history goes with it.
+        noticeRouter.historyOwnerIds().forEach { owner ->
+            if (surfaceOwnerFor(owner) == null) noticeRouter.purgeOwner(owner, "ownerUnavailable")
         }
         val available = validPrincipals.any { principal ->
             principal.packageName == packageName &&
@@ -5277,6 +5285,7 @@ class BusHubService : Service() {
         if (activitySupported) activityRouter.resendIfAvailable()
         // The glasses keep only the latest policy they were sent; a fresh glasses session has none.
         executor.execute { pushQuickActionPolicy() }
+        executor.execute { noticeRouter.onGlassesAnnounced() }
     }
 
     /**
