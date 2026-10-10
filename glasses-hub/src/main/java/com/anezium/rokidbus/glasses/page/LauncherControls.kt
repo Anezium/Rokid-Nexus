@@ -296,7 +296,7 @@ internal class InlineFooterView(context: Context, private val icons: SessionIcon
                 val glyphOnly = footer.buttons.size > MAX_LABELLED
                 footer.buttons.forEachIndexed { index, button ->
                     val view = button(button, glyphOnly)
-                    addView(view, LayoutParams(0, LayoutParams.MATCH_PARENT, 1f).apply { if (index > 0) marginStart = PageStyle.FOOTER_BUTTON_GAP_PX })
+                    addView(view, LayoutParams(0, LayoutParams.MATCH_PARENT, 1f).apply { if (index > 0) leftMargin = PageStyle.FOOTER_BUTTON_GAP_PX })
                     buttonViews += view
                 }
             }
@@ -331,7 +331,7 @@ internal class InlineFooterView(context: Context, private val icons: SessionIcon
         }
         if (!glyphOnly || button.glyph == null) {
             val label = PageStyle.text(context, button.label, PageStyle.BODY_PX, color, PageStyle.sans, maxLines = 1)
-            addView(label, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply { if (childCount > 0) marginStart = PageStyle.FOOTER_BUTTON_GAP_PX })
+            addView(label, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply { if (childCount > 0) leftMargin = PageStyle.FOOTER_BUTTON_GAP_PX })
         }
     }
 
@@ -345,7 +345,7 @@ internal class InlineFooterView(context: Context, private val icons: SessionIcon
         // An unavailable line names what is missing in words; a glyph would read as an affordance.
         line.glyph?.takeIf { capture }?.let { name ->
             glyphDrawable(context, icons, name, PageStyle.phosphor)?.let { drawable ->
-                addView(ImageView(context).apply { setImageDrawable(drawable) }, LayoutParams(PageStyle.FOOTER_GLYPH_PX, PageStyle.FOOTER_GLYPH_PX).apply { marginEnd = STATUS_GAP_PX })
+                addView(ImageView(context).apply { setImageDrawable(drawable) }, LayoutParams(PageStyle.FOOTER_GLYPH_PX, PageStyle.FOOTER_GLYPH_PX).apply { rightMargin = STATUS_GAP_PX })
             }
         }
         addView(

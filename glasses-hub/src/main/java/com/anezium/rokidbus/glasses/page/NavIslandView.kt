@@ -144,7 +144,7 @@ internal class NavIslandView(context: Context, private val icons: SessionIconSou
             orientation = HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             glyphDrawable(context, icons, content.glyph, if (content.approximate) PageStyle.muted else PageStyle.phosphor)?.let { drawable ->
-                addView(ImageView(context).apply { setImageDrawable(drawable) }, LayoutParams(glyphPx, glyphPx).apply { marginEnd = 12 })
+                addView(ImageView(context).apply { setImageDrawable(drawable) }, LayoutParams(glyphPx, glyphPx).apply { rightMargin = 12 })
             }
             addView(
                 LinearLayout(context).apply {
@@ -166,7 +166,7 @@ internal class NavIslandView(context: Context, private val icons: SessionIconSou
                 content.time?.let {
                     addView(
                         PageStyle.text(context, it, PageStyle.BODY_PX, PageStyle.muted, PageStyle.sans, 1),
-                        LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply { gravity = Gravity.TOP; marginStart = 10 },
+                        LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply { gravity = Gravity.TOP; leftMargin = 10 },
                     )
                 }
             }
@@ -262,7 +262,7 @@ internal class NavIslandView(context: Context, private val icons: SessionIconSou
         orientation = HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
         setPadding(14, 6, 14, 10)
-        foot.badge?.let { addView(LauncherBlocks.badge(context, it, PageStyle.CAPTION_PX), LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply { marginEnd = 6 }) }
+        foot.badge?.let { addView(LauncherBlocks.badge(context, it, PageStyle.CAPTION_PX), LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply { rightMargin = 6 }) }
         addView(PageStyle.text(context, strong(foot.left, foot.strong), PageStyle.CAPTION_PX, PageStyle.muted, PageStyle.sans, 1), LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
         foot.right?.let { addView(PageStyle.text(context, it, PageStyle.CAPTION_PX, PageStyle.muted, PageStyle.sans, 1).apply { setPadding(10, 0, 0, 0) }) }
     }

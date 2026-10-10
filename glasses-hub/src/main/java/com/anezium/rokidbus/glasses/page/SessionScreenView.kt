@@ -41,7 +41,7 @@ internal class SessionScreenView(
         orientation = HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
         setPadding(PageStyle.TEXT_SIDE_PX, 0, PageStyle.TEXT_SIDE_PX, 0)
-        addView(headerIcon, LayoutParams(PageStyle.HEADER_ICON_PX, PageStyle.HEADER_ICON_PX).apply { marginEnd = PageStyle.HEADER_ICON_GAP_PX })
+        addView(headerIcon, LayoutParams(PageStyle.HEADER_ICON_PX, PageStyle.HEADER_ICON_PX).apply { rightMargin = PageStyle.HEADER_ICON_GAP_PX })
         addView(headerTitle, LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
         addView(headerTrail, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT))
     }
@@ -236,7 +236,7 @@ internal class SessionScreenView(
                 orientation = HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
                 iconView(context, icons, block.icon, tone, PageStyle.CARD_ICON_PX)?.let {
-                    addView(it, LayoutParams(PageStyle.CARD_ICON_PX, PageStyle.CARD_ICON_PX).apply { marginEnd = PageStyle.CARD_ICON_GAP_PX })
+                    addView(it, LayoutParams(PageStyle.CARD_ICON_PX, PageStyle.CARD_ICON_PX).apply { rightMargin = PageStyle.CARD_ICON_GAP_PX })
                 }
                 addView(PageStyle.text(context, block.label, PageStyle.CAPTION_PX, PageStyle.muted, PageStyle.mono, 1, 0.14f), LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
                 block.time?.let { addView(PageStyle.text(context, it, PageStyle.CAPTION_PX, PageStyle.muted, PageStyle.mono, 1).apply { setPadding(10, 0, 0, 0) }) }
@@ -291,11 +291,11 @@ internal class SessionScreenView(
         block.checked?.let { checked ->
             addView(
                 CheckboxMarkView(context).apply { bind(checked, block.pending, block.selected, !inert) },
-                LayoutParams(CheckboxMarkView.SIZE_PX, CheckboxMarkView.SIZE_PX).apply { marginEnd = PageStyle.ROW_ICON_GAP_PX },
+                LayoutParams(CheckboxMarkView.SIZE_PX, CheckboxMarkView.SIZE_PX).apply { rightMargin = PageStyle.ROW_ICON_GAP_PX },
             )
         }
         iconView(context, icons, block.icon, if (block.selected && !inert) IconTone.BRIGHT else IconTone.REST, PageStyle.ROW_ICON_PX)?.let {
-            addView(it, LayoutParams(PageStyle.ROW_ICON_PX, PageStyle.ROW_ICON_PX).apply { marginEnd = PageStyle.ROW_ICON_GAP_PX })
+            addView(it, LayoutParams(PageStyle.ROW_ICON_PX, PageStyle.ROW_ICON_PX).apply { rightMargin = PageStyle.ROW_ICON_GAP_PX })
         }
         val texts = LinearLayout(context).apply {
             orientation = VERTICAL
@@ -308,7 +308,7 @@ internal class SessionScreenView(
         if (block.pending && block.checked == null) {
             addView(
                 PendingMarkView(context, if (block.selected) PageStyle.phosphor else PageStyle.muted),
-                LayoutParams(PendingMarkView.SIZE_PX, PendingMarkView.SIZE_PX).apply { marginStart = 10 },
+                LayoutParams(PendingMarkView.SIZE_PX, PendingMarkView.SIZE_PX).apply { leftMargin = 10 },
             )
         }
         block.tag?.let { addView(PageStyle.text(context, it, PageStyle.CAPTION_PX, PageStyle.muted, PageStyle.mono, 1, 0.06f).apply { setPadding(10, 0, 0, 0) }) }

@@ -55,7 +55,7 @@ internal object LauncherBlocks {
                                     setImageDrawable(drawable)
                                     tag = MediaStateTag(block.state)
                                 },
-                                LinearLayout.LayoutParams(MEDIA_STATE_PX, MEDIA_STATE_PX).apply { marginStart = 10 },
+                                LinearLayout.LayoutParams(MEDIA_STATE_PX, MEDIA_STATE_PX).apply { leftMargin = 10 },
                             )
                         }
                     }
@@ -90,7 +90,7 @@ internal object LauncherBlocks {
         glyphDrawable(context, icons, block.glyph, if (block.approximate) PageStyle.muted else PageStyle.phosphor)?.let { drawable ->
             addView(
                 ImageView(context).apply { setImageDrawable(drawable) },
-                LinearLayout.LayoutParams(scale.glyphPx, scale.glyphPx).apply { marginEnd = MANEUVER_GAP_PX },
+                LinearLayout.LayoutParams(scale.glyphPx, scale.glyphPx).apply { rightMargin = MANEUVER_GAP_PX },
             )
         }
         val distance = if (block.approximate && !block.distance.startsWith(APPROXIMATE)) "$APPROXIMATE${block.distance}" else block.distance
