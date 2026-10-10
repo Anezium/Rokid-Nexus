@@ -131,7 +131,7 @@ internal class SessionScreenView(
         screen.blocks.forEach { block ->
             // The full map is the backdrop; its place in the column is an empty mark that keeps its key.
             val view = if (block === full) View(context) else viewFor(block, chromeless)
-            viewport.addView(view, paramsFor(block))
+            viewport.addView(view, if (block === full) SessionViewport.Params() else paramsFor(block))
             blockViews[block.key] = view
         }
         viewport.focus = screen.focusKey?.let(blockViews::get)
