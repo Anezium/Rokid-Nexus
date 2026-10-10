@@ -84,6 +84,12 @@ class PluginQuickActionPolicyStore(private val storage: PluginGrantStorage) {
     }
 
     companion object {
+        @Volatile private var instance: PluginQuickActionPolicyStore? = null
+
+        /** The process's one instance, so the hub and the plugin page never read stale caches. */
+        fun shared(context: Context): PluginQuickActionPolicyStore =
+            instance ?: synchronized(this) { instance ?: PluginQuickActionPolicyStore(context).also { instance = it } }
+
         private const val PREFERENCES_NAME = "nexus_quick_action_policy"
         private const val KEY_ENTRIES = "approvals_v1"
         private const val VERSION = 1

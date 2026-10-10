@@ -122,8 +122,15 @@ internal sealed interface PhoneActivityCommandResult {
 internal sealed interface PhoneActivityPreferenceOutcome {
     data class Ended(val cleared: PhoneActivityClearResult.Cleared) : PhoneActivityPreferenceOutcome
 
-    /** The entry stays; [payload] is a full update carrying its new stamps and a new `seq`. */
-    data class Restamped(val ownerPluginId: String, val payload: JSONObject) : PhoneActivityPreferenceOutcome
+    /**
+     * The entry stays; [payload] carries its new stamps and a new `seq`: a full update for a live
+     * entry, a start for an offline one ([asStart]), which only ever arrives whole.
+     */
+    data class Restamped(
+        val ownerPluginId: String,
+        val payload: JSONObject,
+        val asStart: Boolean = false,
+    ) : PhoneActivityPreferenceOutcome
     data object Unchanged : PhoneActivityPreferenceOutcome
 }
 
@@ -692,6 +699,13 @@ internal class PhoneActivityState(
         val order = sequence.incrementAndGet()
         val advanced = current.copy(payload = normalizedStart(current.ownerPluginId, current.content, order))
         residents[current.ownerPluginId] = advanced
+        if (advanced.offline) {
+            return PhoneActivityPreferenceOutcome.Restamped(
+                current.ownerPluginId,
+                wireForm(advanced, JSONObject(advanced.payload.toString())),
+                asStart = true,
+            )
+        }
         val update = withIdentity(
             current.ownerPluginId,
             ActivitySurfaceContract.toUpdatePayload(activityId(current.ownerPluginId), current.content, significant = false),

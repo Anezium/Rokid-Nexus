@@ -74,6 +74,12 @@ class PhoneActivityPreferences(private val storage: PluginGrantStorage) {
     }
 
     companion object {
+        @Volatile private var instance: PhoneActivityPreferences? = null
+
+        /** The process's one instance, so the hub and the plugin page never read stale caches. */
+        fun shared(context: Context): PhoneActivityPreferences =
+            instance ?: synchronized(this) { instance ?: PhoneActivityPreferences(context).also { instance = it } }
+
         private const val PREFERENCES_NAME = "nexus_activity_preferences"
         private const val KEY_ENTRIES = "preferences_v1"
         private const val VERSION = 1

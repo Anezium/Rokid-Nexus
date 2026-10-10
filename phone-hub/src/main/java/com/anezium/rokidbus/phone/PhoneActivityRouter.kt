@@ -505,7 +505,8 @@ internal class PhoneActivityRouter(
     /** New stamps only mean something to glasses that read them; v1 glasses keep what they have. */
     private fun sendRestamp(outcome: PhoneActivityPreferenceOutcome.Restamped) {
         if (!state.bundleNegotiated() || !sink.pinLinkUp()) return
-        sink.sendRemote(BusEnvelope(path = BusPaths.ACTIVITY_UPDATE, payload = outcome.payload))?.let {
+        val path = if (outcome.asStart) BusPaths.ACTIVITY_START else BusPaths.ACTIVITY_UPDATE
+        sink.sendRemote(BusEnvelope(path = path, payload = outcome.payload))?.let {
             sink.log("activity restamp failed owner=${outcome.ownerPluginId} code=$it")
         }
     }
