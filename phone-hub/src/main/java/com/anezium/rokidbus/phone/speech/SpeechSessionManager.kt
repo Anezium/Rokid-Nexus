@@ -40,6 +40,9 @@ interface SpeechUtteranceListener {
     fun onPartial(text: String)
     fun onFinal(text: String)
     fun onEnded(reason: SpeechEndReason, error: SttError?)
+
+    /** The glasses microphone delivered its first bytes for this utterance; called at most once. */
+    fun onFirstAudio() = Unit
 }
 
 enum class InternalAudioAcquireResult {
@@ -131,9 +134,15 @@ class SpeechSessionManager internal constructor(
             active?.takeIf { !it.ended.get() }?.engine?.usesRealtime
         }
 
+    /**
+     * Audio always comes from the glasses through [internalAudio]. [glassesAudioOnly] also rules
+     * out any engine that could ignore that audio and open the phone microphone instead, for a
+     * caller that must never hear the phone (the hub composer).
+     */
     fun startUtterance(
         listener: SpeechUtteranceListener,
         language: TranscriptionLanguage? = null,
+        glassesAudioOnly: Boolean = false,
     ): SpeechStartResult {
         val engine: SpeechEngine
         val sessionLanguage: TranscriptionLanguage
@@ -157,13 +166,23 @@ class SpeechSessionManager internal constructor(
         )
         run.vad.reset(elapsedRealtime())
         val stt = runCatching {
-            sessionFactory.create(
-                engine = engine,
-                language = sessionLanguage,
-                phoneLanguageTag = Locale.getDefault().toLanguageTag(),
-                patience = patience,
-                listener = EngineListener(run),
-            )
+            if (glassesAudioOnly) {
+                sessionFactory.createGlassesAudioOnly(
+                    engine = engine,
+                    language = sessionLanguage,
+                    phoneLanguageTag = Locale.getDefault().toLanguageTag(),
+                    patience = patience,
+                    listener = EngineListener(run),
+                )
+            } else {
+                sessionFactory.create(
+                    engine = engine,
+                    language = sessionLanguage,
+                    phoneLanguageTag = Locale.getDefault().toLanguageTag(),
+                    patience = patience,
+                    listener = EngineListener(run),
+                )
+            }
         }.getOrNull() ?: return SpeechStartResult.START_FAILED
         run.sttSession = stt
 
@@ -233,6 +252,18 @@ class SpeechSessionManager internal constructor(
         cancelActive(expectedListener = listener)
     }
 
+    /**
+     * Stops listening now, as if the voice detector had closed the utterance: what was said is
+     * transcribed and ends COMPLETED, and an utterance with no speech ends NO_SPEECH.
+     */
+    internal fun finish(listener: SpeechUtteranceListener) {
+        val run = synchronized(lock) {
+            active?.takeIf { it.listener === listener }
+        } ?: return
+        if (run.cancelRequested.get()) return
+        executeAudio(run) { closeEndpoint(run, "requested") }
+    }
+
     private fun cancelActive(expectedListener: SpeechUtteranceListener?) {
         val run = synchronized(lock) {
             active?.takeIf { expectedListener == null || it.listener === expectedListener }
@@ -274,6 +305,9 @@ class SpeechSessionManager internal constructor(
             val safeOffset = offset.coerceIn(0, data.size)
             val safeLength = length.coerceAtMost(data.size - safeOffset)
             if (safeLength <= 0) return
+            if (run.firstAudioSeen.compareAndSet(false, true)) {
+                mainPoster.post { run.listener.onFirstAudio() }
+            }
             val copy = data.copyOfRange(safeOffset, safeOffset + safeLength)
             executeAudio(run) {
                 acceptAudio(run, copy, seq, elapsedRealtimeMs)
@@ -449,6 +483,11 @@ class SpeechSessionManager internal constructor(
     private fun checkVadEndpoint(run: ActiveUtterance) {
         if (run.ended.get() || run.cancelRequested.get() || run.endpointReached) return
         val closeReason = run.vad.closeReason(elapsedRealtime()) ?: return
+        closeEndpoint(run, closeReason)
+    }
+
+    private fun closeEndpoint(run: ActiveUtterance, closeReason: String) {
+        if (run.ended.get() || run.cancelRequested.get() || run.endpointReached) return
         run.endpointReached = true
         run.vadTick?.cancel(false)
         run.vadTick = null
@@ -548,6 +587,7 @@ class SpeechSessionManager internal constructor(
         val cancelRequested = AtomicBoolean(false)
         val leaseAcquired = AtomicBoolean(false)
         val leaseReleased = AtomicBoolean(false)
+        val firstAudioSeen = AtomicBoolean(false)
         val ended = AtomicBoolean(false)
         var sttSession: SttSession? = null
         var vadTick: ScheduledFuture<*>? = null
