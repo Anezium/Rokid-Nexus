@@ -176,7 +176,7 @@ internal class ConversationView(context: Context) : View(context) {
             val current = pages.lastOrNull()
             val needed = (if (current.isNullOrEmpty()) 0 else GAP_PX) + unit.height
             if (current == null || used + needed > height) {
-                pages += mutableListOf(unit)
+                pages.add(mutableListOf(unit))
                 used = unit.height
             } else {
                 current.add(0, unit)
