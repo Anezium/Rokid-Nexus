@@ -1,6 +1,9 @@
 # Changelog — Sample
 
-## Unreleased
+## 1.0.5
+
+- The Hello Nexus Skills demonstration requires Nexus hubs 1.7.0 and explicit
+  approval of its operation. Word/character counting was exercised on devices.
 
 - A copyable skill operation, `count_words`, with its catalog and handler.
 - The demo route runs through the SDK's shared guidance planner.

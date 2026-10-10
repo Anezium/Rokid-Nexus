@@ -1,6 +1,17 @@
 # Changelog
 
-## Unreleased
+## 1.5.0
+
+- Requires both Nexus hubs 1.7.0 for the published Skills flow. Enable
+  Assistant's Skills access and approve each provider operation in Nexus.
+- Workspace keeps its local index across sessions and opens a named PDF page
+  when asked what it shows, including pages without extracted text.
+- Device qualification covers written questions, cited PDF answers, visual
+  pages, approved Skills, restart recovery, and Workspace withdrawal. Voice,
+  real moving journeys, and real music players remain unverified. Workspace
+  retrieval is lexical; large-folder and semantic-search qualification is pending.
+- Relevant Workspace passages and requested page images can reach the chosen
+  AI provider. Disabling Workspace clears its derived local cache.
 
 - **Answer questions that span several Workspace files.** When the passages found
   first cover only part of a question, or the question uses other words or another
