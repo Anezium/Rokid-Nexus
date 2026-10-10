@@ -394,7 +394,7 @@ class LauncherInteractiveTest {
     @Test
     fun `the Activities page lists every entry and a row acts like its card`() {
         val local = LocalPages(
-            notice = { null },
+            history = { NotificationHistory() },
             activities = { model.queuedActivities + model.activities },
             applications = { emptyList() },
             providerPagesReady = { false },

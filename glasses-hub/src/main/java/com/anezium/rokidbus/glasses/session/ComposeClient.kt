@@ -60,10 +60,10 @@ internal sealed interface ComposeOutbound {
 internal object ComposeClient {
     /** A phone-to-glasses message, or null when it is not one or does not hold to the contract. */
     fun inbound(path: String, payload: JSONObject): ComposeInbound? = when (path) {
-        ComposeContract.DICTATE_PARTIAL_PATH -> ComposeContract.parseDictatePartial(payload)?.let(ComposeInbound::Partial)
-        ComposeContract.DICTATE_FINAL_PATH -> ComposeContract.parseDictateFinal(payload)?.let(ComposeInbound::Final)
-        ComposeContract.TYPE_TEXT_PATH -> ComposeContract.parseTypeText(payload)?.let(ComposeInbound::Text)
-        ComposeContract.TYPE_DONE_PATH -> ComposeContract.parseTypeDone(payload)?.let(ComposeInbound::Done)
+        ComposeContract.DICTATE_PARTIAL_PATH -> ComposeContract.parseDictatePartial(payload)?.let { ComposeInbound.Partial(it) }
+        ComposeContract.DICTATE_FINAL_PATH -> ComposeContract.parseDictateFinal(payload)?.let { ComposeInbound.Final(it) }
+        ComposeContract.TYPE_TEXT_PATH -> ComposeContract.parseTypeText(payload)?.let { ComposeInbound.Text(it) }
+        ComposeContract.TYPE_DONE_PATH -> ComposeContract.parseTypeDone(payload)?.let { ComposeInbound.Done(it) }
         else -> null
     }
 

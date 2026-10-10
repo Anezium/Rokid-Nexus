@@ -217,8 +217,8 @@ class SessionReducerTest {
         assertEquals(1, root().selected)
         val preview = root().stops.single { it.kind == RootStopKind.NOTICE_PREVIEW }
         assertEquals("Bo: on my way", preview.text)
-        // D1: the counter shows the one retained readable notice, replaced in place, not arrivals.
-        assertEquals(1, root().stops.single { it.kind == RootStopKind.NOTIFICATIONS }.count)
+        // The counter shows the history the wearer may read, both notices, updated in place.
+        assertEquals(2, root().stops.single { it.kind == RootStopKind.NOTIFICATIONS }.count)
         assertEquals(listOf(ShowRoot), effects)
 
         send(Back(4_000))

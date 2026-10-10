@@ -1498,10 +1498,11 @@ internal class SessionReducer(
                 }
             }
             is ComposeInbound.Done -> {
-                val text = message.done.text
+                val text = message.done.text?.takeIf { message.done.committed }
                 when {
                     capture.kind != CaptureKind.TYPE -> model
-                    !message.done.committed || text == null -> model.copy(capture = null)
+                    // Dismissed at the phone: nothing changes.
+                    text == null -> model.copy(capture = null)
                     // An empty commit is the one explicit discard.
                     text.isBlank() -> model.copy(capture = null, draft = DraftStore.committedEmpty(model.draft, capture))
                     else -> model.copy(capture = null, draft = DraftStore.completed(capture, text))
