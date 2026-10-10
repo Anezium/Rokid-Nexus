@@ -171,7 +171,8 @@ internal sealed interface ScreenBlock {
 
     /**
      * Hub-rendered route geometry. [headingDeg] is the smoothed heading, null when absent or
-     * stale; [degraded] draws north-up with a dashed route and a dot without an arrow.
+     * stale; [degraded] draws north-up with a dashed route and a dot without an arrow. A compact
+     * or panel map is a card: [label] and [trail] are its caption row ("MAP · FOLLOW", "1/2").
      */
     data class Map(
         override val key: String,
@@ -181,6 +182,8 @@ internal sealed interface ScreenBlock {
         val view: MapView = MapView.FOLLOW,
         val degraded: Boolean = false,
         val selected: Boolean = false,
+        val label: String? = null,
+        val trail: String? = null,
     ) : ScreenBlock
 
     /** A transit ride's stops, with the vehicle [between] two of them. */

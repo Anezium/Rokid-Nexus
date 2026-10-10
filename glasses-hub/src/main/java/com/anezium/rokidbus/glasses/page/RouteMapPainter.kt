@@ -323,9 +323,17 @@ internal class RouteMapPainter {
  */
 internal class RouteMapView(context: Context) : View(context) {
     private val painter = RouteMapPainter()
+    private val clip = Path()
 
     var input: MapInput? = null
         private set
+
+    /** Rounds the map's corners to sit inside an outline of this radius; 0 draws it square. */
+    var cornerRadius = 0f
+        set(value) {
+            field = value
+            invalidate()
+        }
 
     /** The plan of the last draw at the current size; recomputed on any change. */
     var plan: MapPlan? = null
@@ -365,6 +373,13 @@ internal class RouteMapView(context: Context) : View(context) {
     override fun onDraw(canvas: Canvas) {
         val current = input ?: return
         val plan = planNow() ?: return
+        val saved = canvas.save()
+        if (cornerRadius > 0f) {
+            clip.reset()
+            clip.addRoundRect(0f, 0f, width.toFloat(), height.toFloat(), cornerRadius, cornerRadius, Path.Direction.CW)
+            canvas.clipPath(clip)
+        }
         painter.draw(canvas, current, plan, width.toFloat(), height.toFloat())
+        canvas.restoreToCount(saved)
     }
 }
