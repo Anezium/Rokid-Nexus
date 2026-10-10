@@ -15,6 +15,8 @@ import android.widget.Switch
 import android.widget.TextView
 import com.anezium.rokidbus.client.ui.BusTheme
 import com.anezium.rokidbus.client.ui.NexusUi
+import com.anezium.rokidbus.shared.AmbientSize
+import com.anezium.rokidbus.shared.plugin.PluginCapability
 
 /**
  * Everything about what the glasses screen shows and where: the Nexus surface position, the
@@ -69,6 +71,8 @@ class GlassesDisplaySettingsActivity : Activity() {
             )
             addView(BusTheme.gap(this@GlassesDisplaySettingsActivity, 10))
             addView(launcherCard(), NexusUi.block())
+            addView(BusTheme.gap(this@GlassesDisplaySettingsActivity, 10))
+            addView(islandSizeCard(), NexusUi.block())
         }
 
         val scroll = ScrollView(this).apply {
@@ -220,6 +224,71 @@ class GlassesDisplaySettingsActivity : Activity() {
                 ),
             )
         }
+
+    /**
+     * How large each plugin's island is drawn on the glasses. Automatic leaves it to the glasses;
+     * the same choice can be made on the glasses, and the phone keeps the last one either way.
+     */
+    private fun islandSizeCard(): LinearLayout =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = NexusUi.bordered(this@GlassesDisplaySettingsActivity, NexusUi.PANEL, NexusUi.LINE, 15)
+            setPadding(
+                NexusUi.dp(this@GlassesDisplaySettingsActivity, 15),
+                NexusUi.dp(this@GlassesDisplaySettingsActivity, 10),
+                NexusUi.dp(this@GlassesDisplaySettingsActivity, 15),
+                NexusUi.dp(this@GlassesDisplaySettingsActivity, 10),
+            )
+            addView(NexusUi.rowTitle(this@GlassesDisplaySettingsActivity, "Island size"))
+            addView(BusTheme.gap(this@GlassesDisplaySettingsActivity, 3))
+            addView(
+                NexusUi.rowSub(
+                    this@GlassesDisplaySettingsActivity,
+                    "How much room each plugin's island takes on the glasses. Automatic lets the glasses choose.",
+                ),
+            )
+            val owners = islandOwners()
+            if (owners.isEmpty()) {
+                addView(BusTheme.gap(this@GlassesDisplaySettingsActivity, 8))
+                addView(
+                    NexusUi.rowSub(
+                        this@GlassesDisplaySettingsActivity,
+                        "No approved plugin can show an island yet.",
+                    ),
+                )
+                return@apply
+            }
+            val store = PhoneAmbientPreferencesStore.shared(this@GlassesDisplaySettingsActivity)
+            val options = listOf(
+                null to "Automatic",
+                AmbientSize.TEXT to "Text",
+                AmbientSize.MINIMAP to "Map",
+                AmbientSize.PANEL to "Panel",
+            )
+            owners.forEach { (pluginId, name) ->
+                addView(BusTheme.gap(this@GlassesDisplaySettingsActivity, 10))
+                addView(NexusUi.rowLabel(this@GlassesDisplaySettingsActivity, name))
+                addView(
+                    ambientChoiceRow(this@GlassesDisplaySettingsActivity, options, store.sizeFor(pluginId)) { size ->
+                        if (store.setSize(pluginId, size)) BusHubService.onAmbientSizesChanged()
+                    },
+                )
+            }
+        }
+
+    /** Approved plugins with the surfaces grant, the only ones that can show an island. */
+    private fun islandOwners(): List<Pair<String, String>> {
+        val grants = PluginGrantStore(applicationContext)
+        return PhonePluginDiscovery(packageManager).discover()
+            .mapNotNull { (it as? PhonePluginCandidate.Valid)?.principal }
+            .filter { principal ->
+                (grants.stateFor(principal) as? PluginGrantState.Approved)
+                    ?.capabilities?.contains(PluginCapability.SURFACES) == true
+            }
+            .map { it.descriptor.id to it.descriptor.displayName }
+            .distinctBy { it.first }
+            .sortedBy { it.second.lowercase() }
+    }
 
     private fun switchRow(
         title: String,
