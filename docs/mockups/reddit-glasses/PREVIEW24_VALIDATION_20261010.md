@@ -60,7 +60,7 @@ All artifacts and raw logs are under `build/outputs/reddit-popular-preview24-202
 | `reddit-source-preview24.mpp` | `bddd6341f7069897902a072db8ba434af47d2c30cc8d56d6db58e70563a80a01` | Both Nexus Reddit source pins |
 | `reddit-android-preview24.mpp` | `bd00e94139abf51bf00afcedebdb582f269f784f38587d487290dd02b22c7ca7` | Prepared Android bundle |
 | `reddit-glasses-preview24.apk` | `69e93a62ca71a9d20a82aa19e64aae4d3e4ea6988ceb9a95dfdf1238c55ba4bc` | Installed and hash verified |
-| `nexus-patcher-preview24-release.apk` | `73f2b9d2a90eb1f451f50ae6116b73c89935583afa0c7f8489e078b2463de412` | Built and signed; **not installed** |
+| `nexus-patcher-preview24-release.apk` | `73f2b9d2a90eb1f451f50ae6116b73c89935583afa0c7f8489e078b2463de412` | Installed on the phone after Skills tests ended; hash verified |
 | `youtube-source-pinned.mpp` | `d2b7de48fe7d58b04027754ad7bbd79f0cdff5b2b61364d652b2f4684185adf7` | Unchanged input |
 
 Reddit signer SHA-256: `b6e8f6fa0421f79bcfb20aaae8ccb56e13086f55ddcb8fb5c89b0c4a93867ac5`.
@@ -83,8 +83,16 @@ The local `device/checks.jsonl` contains the pass ledger and screenshot hashes. 
 
 Nine actual 480x640 captures are retained: `popular-cold-first.png`, `popular-post.png`, `popular-comments.png`, `popular-returned.png`, `popular-refreshed.png`, `popular-paginated.png`, `popular-cold-repeat.png`, `home-regression.png`, and `latest-regression.png`. All were visually inspected. They contain public post/comment content; no credentials, private account/settings screens or device identifiers are included. The screenshots ZIP preserves originals with a SHA-256 manifest.
 
-## Limits and phone Patcher update
+## Phone Patcher update after explicit authorization
 
-Automatic approval rejected installing the newly built Patcher APK on the phone because that additional APK replacement lacked explicit authorization. It was not executed or retried. The installed phone Patcher therefore still contains the previous Reddit bundle, even though the glasses now run preview24. Explicit authorization is required before updating that phone APK.
+Automatic approval initially rejected installing the newly built Patcher APK on the phone because that additional APK replacement lacked explicit authorization. That attempt did not execute. The user then explicitly authorized the update, conditional on thread `847cd5a6-e515-40c8-8fed-ecc634ad020c` finishing its device tests. A proposed temporary scheduler was rejected and never created; the parent waited directly without accessing either device during the active tests.
+
+At 2026-10-10 11:23 UTC, the Skills thread reached `completed`, with no active run or pending requests. Its final report recorded successful device tests, cleanup, preserved hubs/Reddit and local commit `240577df`. Only then was the phone accessed, initially at its neutral stock launcher with no active Patcher job.
+
+The installed and new Patcher APKs were both cryptographically verified against the existing certificate before a single `adb install -r` update. The installed APK then matched the preview24 artifact SHA-256 exactly. The native Patcher screen displayed both `SET UP YOUTUBE` and `SET UP REDDIT`. Its actual screenshot was captured and visually inspected: `build/outputs/reddit-popular-preview24-20261010/phone-update/patcher-preview24-installed.png`, SHA-256 `2336ae2fcf728e2c60bed590dac016fee632e272fac93c00dc2c5c61acd7522c`.
+
+All nine assertions in `phone-update/checks.jsonl` passed. Hashes captured immediately before this update confirmed the installed phone hub, glasses hub, Reddit and YouTube APKs remained unchanged. No hub or Assistant APK was replaced, no data reset or key replacement occurred, and no patch job or Reddit write was triggered. The phone returned to its original stock launcher. The installed phone Patcher now includes the verified preview24 Reddit bundle.
+
+## Remaining limits
 
 This pass does not revalidate full-screen image/GIF/gallery/video playback, editors, sending, create-post, moderation or physical R08 input. The successful feed/comment checks use ADB compatibility input and native services; they do not establish physical-control or optical performance. No build environment repair, hub update, source APKM replacement, public release, push or merge occurred.
