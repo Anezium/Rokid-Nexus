@@ -32,12 +32,15 @@ import com.anezium.rokidbus.glasses.session.AppEntry
 import com.anezium.rokidbus.glasses.session.AppKind
 import com.anezium.rokidbus.glasses.session.FrameStatus
 import com.anezium.rokidbus.glasses.session.LocalPages
-import com.anezium.rokidbus.glasses.session.NoticeSnapshot
+import com.anezium.rokidbus.glasses.session.ComposeClient
+import com.anezium.rokidbus.glasses.session.NoticeEntry
+import com.anezium.rokidbus.glasses.session.NotificationHistory
 import com.anezium.rokidbus.glasses.session.RootStops
 import com.anezium.rokidbus.glasses.session.SessionScreen
 import com.anezium.rokidbus.glasses.session.SessionScreens
 import com.anezium.rokidbus.glasses.session.SessionWire
 import com.anezium.rokidbus.glasses.session.TypedPageItems
+import com.anezium.rokidbus.shared.NoticeSurfaceContract
 import com.anezium.rokidbus.shared.PageCorrelation
 import com.anezium.rokidbus.shared.PageSurfaceContract
 import com.anezium.rokidbus.shared.PageSurfaceRequest
@@ -1344,8 +1347,8 @@ internal object NexusSession {
     private var phoneLinked: Boolean? = null
     private var launcherEntries: List<GlassesHub.LauncherEntry> = emptyList()
 
-    /** D1: the one readable notice kept in memory, replaced by the next one, never persisted. */
-    private var retainedNotice: NoticeSnapshot? = null
+    /** The history the open local page was last answered from, so a change refreshes it. */
+    private var renderedHistory: NotificationHistory? = null
     private val timeFormat = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
 
     /** The user's quick-action approvals as the phone last sent them; none until it does. */
@@ -1381,17 +1384,20 @@ internal object NexusSession {
         extended = GlassesHub::launcherInteractiveActive,
     )
     private val localPages = LocalPages(
-        notice = { retainedNotice },
+        history = { runner.model.history },
         activities = activityFeed::current,
         applications = ::applications,
         providerPagesReady = ::providerPagesReady,
         formatTime = ::formatTime,
+        wallClock = System::currentTimeMillis,
+        linkLost = { runner.model.linkLost },
     )
     private val screens = SessionScreens(
         items = items,
         pluginLabel = ::pluginLabel,
         formatTime = ::formatTime,
         wallTimeOf = { sessionMs -> System.currentTimeMillis() - (SystemClock.uptimeMillis() - sessionMs) },
+        wallClock = System::currentTimeMillis,
     )
     private val runner = SessionRunner(
         reducer = SessionReducer(
@@ -1399,6 +1405,7 @@ internal object NexusSession {
             isLocalPage = PageTemplateContract::isLocalPageId,
             quickGate = quickGate,
             launcherActive = GlassesHub::launcherInteractiveActive,
+            wallClock = System::currentTimeMillis,
         ),
         clock = SystemClock::uptimeMillis,
         timer = HandlerSessionTimer(main),
@@ -1408,6 +1415,9 @@ internal object NexusSession {
 
     val state: SessionState get() = runner.state
     val generation: Long get() = runner.model.generation
+
+    /** A composer capture runs: triple tap is not recognised over it (plan 028a §5.4). */
+    val captureActive: Boolean get() = runner.model.capture != null
 
     fun onServiceConnected(service: AccessibilityService) {
         runOnMain {
@@ -1504,6 +1514,56 @@ internal object NexusSession {
                 return@runOnMain
             }
             runner.dispatch(SessionEvent.ActivityResult(result, SystemClock.uptimeMillis()))
+        }
+    }
+
+    /**
+     * `/notice/withdraw` as the phone forwards it, with the owner it authenticated: the event left
+     * the phone. Read only over the launcher bundle; the armed band is left exactly as it is.
+     */
+    fun onNoticeWithdraw(payload: JSONObject) {
+        runOnMain {
+            if (!GlassesHub.launcherInteractiveActive()) {
+                log("notice withdraw dropped reason=NOT_NEGOTIATED")
+                return@runOnMain
+            }
+            val withdrawal = NoticeSurfaceContract.parseGlassesWithdraw(payload)
+            if (withdrawal == null) {
+                log("notice withdraw dropped reason=MALFORMED")
+                return@runOnMain
+            }
+            runner.dispatch(SessionEvent.NoticeWithdrawn(withdrawal.ownerPluginId, withdrawal.eventKey))
+        }
+    }
+
+    /** `/core/notice/purge`: the phone revoked, disabled, removed or re-signed an owner. */
+    fun onNoticePurge(payload: JSONObject) {
+        runOnMain {
+            val owner = NoticeSurfaceContract.parsePurge(payload)
+            if (owner == null) {
+                log("notice purge dropped reason=MALFORMED")
+                return@runOnMain
+            }
+            runner.dispatch(SessionEvent.NoticePurged(owner))
+        }
+    }
+
+    /**
+     * The phone's capture engines, `/core/compose/...`: they reach the composer only over the
+     * launcher bundle, and only for the capture they name.
+     */
+    fun onCompose(path: String, payload: JSONObject) {
+        runOnMain {
+            if (!GlassesHub.launcherInteractiveActive()) {
+                log("compose message dropped path=$path reason=NOT_NEGOTIATED")
+                return@runOnMain
+            }
+            val message = ComposeClient.inbound(path, payload)
+            if (message == null) {
+                log("compose message dropped path=$path reason=MALFORMED")
+                return@runOnMain
+            }
+            runner.dispatch(SessionEvent.ComposeReceived(message, SystemClock.uptimeMillis()))
         }
     }
 
@@ -1634,12 +1694,30 @@ internal object NexusSession {
             val owner = active.ownerPluginId
             val label = pluginLabel(owner) ?: owner.ifBlank { LocalPages.TITLE_NOTIFICATION }
             val at = System.currentTimeMillis()
+            val content = active.content
+            // The launcher-bundle fields count only over a pair that negotiated them, and a
+            // destination only inside its owner's own namespace.
+            val bundle = GlassesHub.launcherInteractiveActive() && owner.isNotBlank() &&
+                NoticeSurfaceContract.destinationAllowed(content, owner)
             // The band already carries what the owner's redaction and hide policy let through.
-            retainedNotice = NoticeSnapshot(owner, label, active.content.title, active.content.body, active.content.lines, at)
-            runner.dispatch(
-                arrival.copy(preview = arrival.preview.copy(pageId = RootStops.NOTICE_PAGE_ID, sourceLabel = label, atWallMs = at)),
+            val entry = NoticeEntry(
+                ownerPluginId = owner,
+                sourceLabel = label,
+                title = content.title,
+                body = content.body,
+                lines = content.lines,
+                atWallMs = at,
+                destination = content.destination.takeIf { bundle },
+                eventKey = content.eventKey.takeIf { bundle },
+                conversation = bundle && content.conversation,
+                icon = owner.ifBlank { null }?.let { id -> IconRef.Plugin(id, launcherEntries.firstOrNull { it.id == id }?.iconKey) },
             )
-            refreshLocalPage { it == RootStops.NOTICE_PAGE_ID || it == RootStops.NOTIFICATIONS_PAGE_ID }
+            runner.dispatch(
+                arrival.copy(
+                    preview = arrival.preview.copy(pageId = RootStops.NOTICE_PAGE_ID, sourceLabel = label, atWallMs = at),
+                    entry = entry,
+                ),
+            )
         }
     }
 
@@ -1704,6 +1782,8 @@ internal object NexusSession {
                 // Sent once: a lost one is shown unconfirmed at its deadline, never sent again.
                 is SessionEffect.SendActivityCommand ->
                     send(BusPaths.ACTIVITY_ACTION, ActivitySurfaceContract.commandPayload(effect.command))
+                // Never queued for a link that is down: a capture lost with the link is cancelled here.
+                is SessionEffect.SendCompose -> ComposeClient.outbound(effect.message).let { (path, payload) -> send(path, payload) }
                 is SessionEffect.SendLauncherOpen -> openPlugin(effect)
                 is SessionEffect.CloseSurface -> SurfaceController.closeUnseen(effect.surfaceId)
                 is SessionEffect.LaunchLocal -> launchLocal(effect)
@@ -1731,6 +1811,11 @@ internal object NexusSession {
             renderedState = model.state
             host?.render(model.state, status)
             acknowledgeFocus(model)
+            // The hub's notification pages follow the history live: arrivals, seen, withdrawn.
+            if (model.history != renderedHistory) {
+                renderedHistory = model.history
+                refreshLocalPage { it == RootStops.NOTICE_PAGE_ID || it == RootStops.NOTIFICATIONS_PAGE_ID }
+            }
         }
 
         /**
@@ -2042,6 +2127,7 @@ internal object NexusInput {
         // The plan's armed notice: interactive, action-bearing, paged or backdrop. It reads false
         // while the camera overlay or an open session suppresses the band.
         override val noticeArmed: Boolean get() = NoticeController.ownsRingInput()
+        override val captureActive: Boolean get() = NexusSession.captureActive
         override val legacyShown: Boolean get() = LauncherOverlayRenderer.isShown()
         override val surfaceOwnsKeys: Boolean get() = SurfaceController.activeSurface() != null
         override val activeSurfaceId: String? get() = SurfaceController.activeSurface()?.surfaceId

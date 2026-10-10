@@ -35,6 +35,7 @@ class InputArbiterTest {
         override var backend = LauncherBackend.SESSION
         override var editableFocused = false
         override var noticeArmed = false
+        override var captureActive = false
         override var legacyShown = false
         override var activeSurfaceId: String? = null
         override val surfaceOwnsKeys: Boolean get() = activeSurfaceId != null
@@ -326,6 +327,20 @@ class InputArbiterTest {
         assertNull(arbiter.nextDeadlineMs())
 
         rig.noticeArmed = false
+        tripleTap(2_000, 2_200, 2_400)
+        assertEquals(listOf(nativeTripleTap(2_400)), rig.sessionEvents())
+    }
+
+    @Test
+    fun `A4 a composer capture blocks recognition until it ends`() {
+        rig.captureActive = true
+        tripleTap(0, 200, 400)
+
+        assertTrue(rig.sessionEvents().none { it is SessionEvent.TripleTap })
+        assertTrue(rig.model.state is SessionState.Closed)
+        assertNull(arbiter.nextDeadlineMs())
+
+        rig.captureActive = false
         tripleTap(2_000, 2_200, 2_400)
         assertEquals(listOf(nativeTripleTap(2_400)), rig.sessionEvents())
     }

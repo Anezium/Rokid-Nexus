@@ -107,6 +107,8 @@ internal class TypedPageItems(
         return PageControls(keys, wanted ?: keys.first())
     }
 
+    override fun conversation(page: PageSurfaceResponse.Page): PageBody.Conversation? = body(page) as? PageBody.Conversation
+
     /** A media page's controls come first, in their swipe order; every other action keeps its place. */
     private fun appendedActions(body: PageBody, actions: List<PageSurfaceAction>): List<PageSurfaceAction> {
         val controls = (body as? PageBody.Media)?.controls ?: return actions
@@ -155,6 +157,7 @@ internal class TypedPageItems(
         actionId.startsWith(LAUNCH_PREFIX) -> PageItem.LaunchPrompt(actionId.removePrefix(LAUNCH_PREFIX), label)
         actionId.startsWith(LOCAL_PREFIX) -> PageItem.LocalLaunch(actionId.removePrefix(LOCAL_PREFIX), label)
         actionId.startsWith(ACTIVITY_PREFIX) -> PageItem.Activity(actionId.removePrefix(ACTIVITY_PREFIX))
+        actionId.startsWith(NOTICE_PREFIX) -> PageItem.Notification(actionId.removePrefix(NOTICE_PREFIX))
         else -> PageItem.Inert
     }
 
@@ -171,6 +174,9 @@ internal class TypedPageItems(
 
         /** A hub action standing for an entry of the Activities page, by its owner. */
         const val ACTIVITY_PREFIX = "activity:"
+
+        /** A hub action standing for an entry of the Notifications page, by its history id. */
+        const val NOTICE_PREFIX = "notice:"
         /** A space, which no wire id contains, keeps appended keys out of the row ids' namespace. */
         const val ACTION_KEY_PREFIX = "action "
         private const val CACHE_SIZE = 8

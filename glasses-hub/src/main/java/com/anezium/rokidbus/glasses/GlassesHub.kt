@@ -22,6 +22,7 @@ import com.anezium.rokidbus.shared.BusCapabilityBits
 import com.anezium.rokidbus.shared.BusConstants
 import com.anezium.rokidbus.shared.BusEnvelope
 import com.anezium.rokidbus.shared.BusPaths
+import com.anezium.rokidbus.shared.ComposeContract
 import com.anezium.rokidbus.shared.EditableSurfaceContract
 import com.anezium.rokidbus.shared.FrameProtocol
 import com.anezium.rokidbus.shared.SppKeyProvisioning
@@ -319,6 +320,19 @@ object GlassesHub {
                 envelope.binary != null -> log("launcher bundle message dropped path=${envelope.path}")
                 envelope.path == BusPaths.ACTIVITY_RESULT -> NexusSession.onActivityResult(envelope.payload)
                 else -> NexusSession.onQuickActionPolicy(envelope.payload)
+            }
+            return
+        }
+        // Notification history and composer traffic: the session alone. The phone stamped the
+        // withdraw's owner; the purge and the capture engines are trusted hub-to-hub routes.
+        if (envelope.path == BusPaths.NOTICE_WITHDRAW || envelope.path == BusPaths.CORE_NOTICE_PURGE ||
+            envelope.path in ComposeContract.phoneToGlassesPaths
+        ) {
+            when {
+                envelope.binary != null -> log("launcher bundle message dropped path=${envelope.path}")
+                envelope.path == BusPaths.NOTICE_WITHDRAW -> NexusSession.onNoticeWithdraw(envelope.payload)
+                envelope.path == BusPaths.CORE_NOTICE_PURGE -> NexusSession.onNoticePurge(envelope.payload)
+                else -> NexusSession.onCompose(envelope.path, envelope.payload)
             }
             return
         }

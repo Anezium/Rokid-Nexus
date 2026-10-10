@@ -1,5 +1,8 @@
 package com.anezium.rokidbus.glasses.session
 
+import com.anezium.rokidbus.shared.ConversationMessage
+import com.anezium.rokidbus.shared.ConversationMessageStatus
+import com.anezium.rokidbus.shared.ConversationRole
 import com.anezium.rokidbus.shared.MediaPlaybackState
 import com.anezium.rokidbus.shared.PageBody
 import com.anezium.rokidbus.shared.PageSegment
@@ -128,12 +131,21 @@ internal sealed interface ScreenBlock {
         val footer: String? = null,
     ) : ScreenBlock
 
-    /** A conversation page's bubbles, oldest first; [caption] is its one capture time. */
+    /**
+     * A conversation page's bubbles, oldest first; [caption] is its one capture time. A live one
+     * is read page by page like a document: the renderer reports where its pages start (anchors
+     * naming bubble keys) through [SessionEvent.DocumentPaged] for [frame], [pageId] and
+     * [revision], and keeps [anchor] on screen. A retained (dimmed) one names no frame.
+     */
     data class Conversation(
         override val key: String,
         val caption: String?,
         val bubbles: List<Bubble>,
         val dimmed: Boolean = false,
+        val frame: FrameIdentity? = null,
+        val pageId: String? = null,
+        val revision: Long? = null,
+        val anchor: DocumentAnchor? = null,
     ) : ScreenBlock
 
     /** Now playing: what the media page says, with no controls (they are the command strip). */
@@ -276,6 +288,8 @@ internal class SessionScreens(
     private val formatTime: (Long) -> String,
     /** Wall-clock time of a session-clock instant, for dating a retained snapshot. */
     private val wallTimeOf: (Long) -> Long,
+    /** Wall-clock now, for the age of a notification. */
+    private val wallClock: () -> Long = { 0L },
 ) {
     /**
      * [generation] is the open session's, which names its frames for the renderer's reports;
@@ -339,17 +353,7 @@ internal class SessionScreens(
                     commands = stop.activity?.takeUnless { stop.ended }
                         ?.let { activity -> state.focus?.takeIf { it.stopId == stop.id }?.let { strip(activity, it) } },
                 )
-                RootStopKind.NOTICE_PREVIEW -> ScreenBlock.Card(
-                    key = stop.id,
-                    label = listOfNotNull(NOTIFICATION, stop.label?.uppercase()).joinToString(" · "),
-                    time = stop.atWallMs?.let(formatTime),
-                    primary = stop.text,
-                    secondary = null,
-                    measure = null,
-                    figure = false,
-                    ended = false,
-                    selected = selected,
-                )
+                RootStopKind.NOTICE_PREVIEW -> noticeCard(stop, selected)
                 RootStopKind.ACTIVITIES, RootStopKind.NOTIFICATIONS ->
                     ScreenBlock.Row(stop.id, stop.text, trail = (stop.count ?: 0).toString(), selected = selected)
                 RootStopKind.APPLICATIONS -> ScreenBlock.Row(stop.id, stop.text, selected = selected)
@@ -362,6 +366,70 @@ internal class SessionScreens(
             else -> ScreenHint("swipe next · tap open", "back close")
         }
         return SessionScreen(ScreenHeader(NEXUS, "back: close"), blocks, hint, statusText, focusKey = selectedStop?.id)
+    }
+
+    /**
+     * The root's notification stop (plan 028a §6.4, §9). A conversation card says what is known of
+     * its one entry and nothing more: unanswered, handed off with delivery unconfirmed, or removed
+     * from the phone with nothing proven. An aggregate counts its owner's threads; anything else is
+     * the generic preview of the newest entry.
+     */
+    private fun noticeCard(stop: RootStop, selected: Boolean): ScreenBlock.Card {
+        val card = stop.notice
+        val removed = card?.state == HistoryState.WITHDRAWN
+        val generic = ScreenBlock.Card(
+            key = stop.id,
+            label = listOfNotNull(NOTIFICATION, stop.label?.uppercase()).joinToString(" · "),
+            time = stop.atWallMs?.let(formatTime),
+            primary = stop.text,
+            secondary = null,
+            measure = null,
+            figure = false,
+            ended = false,
+            selected = selected,
+            icon = stop.icon,
+            tertiary = REMOVED_NOTHING_PROVEN.takeIf { removed },
+            dashed = removed,
+        )
+        if (card == null) return generic
+        val source = (stop.label ?: card.ownerPluginId?.let(pluginLabel) ?: NOTIFICATION).uppercase()
+        return when (card.kind) {
+            NoticeCardKind.GENERIC -> generic
+            NoticeCardKind.CONVERSATION -> ScreenBlock.Card(
+                key = stop.id,
+                label = "$source · " + when (card.state) {
+                    HistoryState.HANDED_OFF -> REPLY_HANDED_OFF
+                    HistoryState.WITHDRAWN -> NOTIFICATION_REMOVED
+                    HistoryState.NEW, HistoryState.SEEN -> UNANSWERED
+                },
+                time = null,
+                primary = stop.text,
+                secondary = card.secondary,
+                measure = null,
+                figure = false,
+                ended = false,
+                selected = selected,
+                icon = stop.icon ?: card.ownerPluginId?.let { IconRef.Plugin(it) },
+                tertiary = when (card.state) {
+                    HistoryState.HANDED_OFF -> HANDED_OFF_UNCONFIRMED
+                    HistoryState.WITHDRAWN -> REMOVED_NOTHING_PROVEN
+                    HistoryState.NEW, HistoryState.SEEN -> stop.atWallMs?.let { "captured ${formatTime(it)}" }
+                },
+                dashed = removed,
+            )
+            NoticeCardKind.AGGREGATE -> ScreenBlock.Card(
+                key = stop.id,
+                label = source,
+                time = stop.atWallMs?.let(formatTime),
+                primary = stop.text,
+                secondary = card.secondary,
+                measure = null,
+                figure = false,
+                ended = false,
+                selected = selected,
+                icon = stop.icon ?: card.ownerPluginId?.let { IconRef.Plugin(it) },
+            )
+        }
     }
 
     /** An activity's commands as its card draws them in command focus. */
@@ -403,8 +471,14 @@ internal class SessionScreens(
             }
             is FrameStatus.Unavailable ->
                 unavailable(frame, status, FrameIdentity(generation, frameIndex), title, parent, back, statusText)
-            is FrameStatus.Shown ->
-                shown(frame, status, FrameIdentity(generation, frameIndex), title, parent, back, statusText ?: outcomeText, facts)
+            is FrameStatus.Shown -> when (val body = items.body(status.snapshot.page)) {
+                // A reply's outcome is its bubble or the composer's line; only a refusal or a stale page is said in words.
+                is PageBody.Conversation -> conversation(
+                    frame, status, FrameIdentity(generation, frameIndex), body, title, back,
+                    statusText ?: frame.outcome?.takeIf { it.status in SPOKEN_OUTCOMES }?.let(::outcomeText), facts.composer,
+                )
+                else -> shown(frame, status, FrameIdentity(generation, frameIndex), title, parent, back, statusText ?: outcomeText, facts)
+            }
         }
     }
 
@@ -478,8 +552,10 @@ internal class SessionScreens(
             listOfNotNull(body.artist, body.album).joinToString(" · ").ifBlank { null }
                 ?.let { ScreenBlock.Text("last:artist", it, TextRole.CAPTION, dimmed = true) },
         )
-        // Placeholder until the launcher lanes draw retained conversation and route pages.
-        is PageBody.Conversation, is PageBody.Route -> emptyList()
+        // The messages as they were, dimmed; never the composer: a retained page acts on nothing.
+        is PageBody.Conversation -> listOf(ScreenBlock.Conversation("last:conversation", body.caption, bubbles(body.messages), dimmed = true))
+        // Placeholder until the navigation lane draws retained route pages.
+        is PageBody.Route -> emptyList()
         is PageBody.Document, null -> emptyList()
     }
 
@@ -501,8 +577,9 @@ internal class SessionScreens(
             body.album?.let { PageSegment("album", PageSegmentKind.ASIDE, it) },
             body.status?.let { PageSegment("status", PageSegmentKind.ASIDE, it) },
         )
-        // Placeholder until the launcher lanes give these bodies their own reading.
-        is PageBody.Conversation, is PageBody.Route -> emptyList()
+        is PageBody.Conversation -> body.messages.map { PageSegment("m:${it.id}", PageSegmentKind.PROSE, it.text) }
+        // Placeholder until the navigation lane gives route pages their own reading.
+        is PageBody.Route -> emptyList()
         null -> emptyList()
     }
 
@@ -560,10 +637,24 @@ internal class SessionScreens(
         val rowBlocks: MutableList<ScreenBlock> = rows.mapIndexed { index, row ->
             val selected = showsSelection && frame.tombstone == null && index == frame.selected
             val activity = (row.item as? PageItem.Activity)?.let { facts.activity(it.ownerPluginId) }
-            if (activity != null) {
-                activityCard("row:${row.key}", activity, selected, commandFocus?.takeIf { it.stopId == activity.id }, facts)
-            } else {
-                ScreenBlock.Row(
+            val entry = (row.item as? PageItem.Notification)?.let { facts.history.entry(it.entryId) }
+            when {
+                activity != null ->
+                    activityCard("row:${row.key}", activity, selected, commandFocus?.takeIf { it.stopId == activity.id }, facts)
+                // A Notifications row: its source's icon, its state tag and its age.
+                entry != null -> ScreenBlock.Row(
+                    "row:${row.key}", row.label, row.sub,
+                    trail = ageText(entry.notice.atWallMs),
+                    selected = selected,
+                    icon = entry.notice.icon ?: entry.notice.ownerPluginId.ifBlank { null }?.let { IconRef.Plugin(it) },
+                    tag = when (entry.state) {
+                        HistoryState.NEW -> null
+                        HistoryState.SEEN -> TAG_SEEN
+                        HistoryState.HANDED_OFF -> TAG_HANDED_OFF
+                        HistoryState.WITHDRAWN -> TAG_REMOVED
+                    },
+                )
+                else -> ScreenBlock.Row(
                     "row:${row.key}", row.label, row.sub,
                     enabled = row.enabled && row.item != PageItem.Inert,
                     selected = selected,
@@ -586,7 +677,7 @@ internal class SessionScreens(
             controls != null -> TAP_CONTROLS
             else -> when (selectedRow?.item) {
                 null, PageItem.Inert -> if (rows.size > 1) "swipe choose" else null
-                is PageItem.OpenPage, is PageItem.Activity -> "tap open"
+                is PageItem.OpenPage, is PageItem.Activity, is PageItem.Notification -> "tap open"
                 is PageItem.Confirm, is PageItem.Invoke -> "tap choose"
                 is PageItem.Quick -> "tap run"
                 is PageItem.LaunchPrompt, is PageItem.Launch, is PageItem.LocalLaunch -> "tap open"
@@ -631,6 +722,135 @@ internal class SessionScreens(
         offline = activity.offline,
         commands = focus?.let { strip(activity, it) },
     )
+
+    /**
+     * A conversation page (plan 028a §7, §9): the thread's bubbles, then this thread's draft, the
+     * reply just handed off or the capture's live text; under them the composer's buttons or its
+     * one line. Reading pages through the renderer's measured layout, from the newest page.
+     */
+    private fun conversation(
+        frame: Frame,
+        status: FrameStatus.Shown,
+        identity: FrameIdentity,
+        body: PageBody.Conversation,
+        title: String,
+        back: String,
+        statusText: String?,
+        facts: ComposerFacts,
+    ): SessionScreen {
+        val owner = PageTemplateContract.namespaceOf(frame.pageId)
+        val composer = body.composer
+        val header = if (composer != null) {
+            "${(owner?.let(pluginLabel) ?: title).uppercase()} · ${composer.recipient.uppercase()}"
+        } else {
+            title.uppercase()
+        }
+        val capture = facts.capture
+            ?.takeIf { it.generation == identity.sessionGeneration && it.frameIndex == identity.frameIndex && it.pageId == frame.pageId }
+        val view = ComposerRules.view(owner, body, facts.draft, facts.micUnavailable, facts.pendingSend)
+        val draft = view?.threadDraft
+        val sending = facts.pendingSend?.takeIf { it.ownerPluginId == owner && it.threadKey == body.threadKey } != null
+        val drawn = bubbles(body.messages).toMutableList()
+        facts.handoff?.takeIf { it.ownerPluginId == owner && it.threadKey == body.threadKey && it.revision == status.revision }?.let {
+            drawn += Bubble(HANDOFF_BUBBLE, BubbleSide.RIGHT, it.text, meta = HANDED_TO_APP)
+        }
+        if (draft != null && capture == null) {
+            val meta = when {
+                sending -> PENDING
+                draft.state == DraftState.READY -> DRAFT_NOT_SENT
+                draft.state == DraftState.UNCONFIRMED -> UNCONFIRMED_CHECK_PHONE
+                else -> NOT_SENT_HERE
+            }
+            drawn += Bubble(DRAFT_BUBBLE, BubbleSide.RIGHT, draft.text, style = BubbleStyle.DASHED, meta = meta)
+        }
+        if (capture != null) {
+            // Completing this capture replaces another recipient's draft: say so before it does.
+            val replaced = facts.draft?.takeUnless { it.isFor(capture.ownerPluginId, capture.threadKey) }
+            drawn += Bubble(
+                LIVE_BUBBLE, BubbleSide.RIGHT, capture.liveText, style = BubbleStyle.LIVE,
+                meta = replaced?.let { "replaces the draft for ${it.recipient}" },
+            )
+        }
+        val focus = frame.composerFocus
+        val unavailable = view?.unavailable
+        val footer: InlineFooter? = when {
+            capture != null -> when (capture.kind) {
+                CaptureKind.DICTATE -> InlineFooter.StatusLine(GLASSES_MIC, LISTENING, glyph = GLYPH_MIC)
+                CaptureKind.TYPE -> InlineFooter.StatusLine(PHONE_KEYBOARD, TYPING, glyph = GLYPH_KEYBOARD)
+            }
+            view == null -> null
+            unavailable != null -> InlineFooter.StatusLine(unavailable.text, unavailable.sub, style = StatusLineStyle.OFF)
+            focus == null && facts.micUnavailable -> InlineFooter.StatusLine(MIC_UNAVAILABLE, USE_TYPE, glyph = GLYPH_MIC, style = StatusLineStyle.OFF)
+            else -> InlineFooter.Buttons(
+                view.buttons.map { key ->
+                    FooterButton(key, buttonLabel(key), buttonGlyph(key), selected = focus?.key == key, enabled = !sending)
+                },
+            )
+        }
+        val pages = frame.pageStarts.size
+        val backText = if (draft != null) "$back · $DRAFT_KEPT" else back
+        val hint = when {
+            capture?.kind == CaptureKind.DICTATE -> ScreenHint(TAP_FINISH, BACK_CANCEL_DICTATION)
+            capture?.kind == CaptureKind.TYPE -> ScreenHint(TAP_FINISH, BACK_CANCEL_TYPING)
+            focus != null && focus.key == ComposerRules.SEND && composer != null ->
+                ScreenHint("swipe choose · tap send to ${composer.recipient}", BACK_READING)
+            focus != null -> ScreenHint(FOCUS_START, BACK_READING)
+            view?.available == true && !sending -> ScreenHint(if (pages > 1) "swipe page · tap reply" else "tap reply", backText)
+            else -> ScreenHint(if (pages > 1) "swipe page" else null, backText)
+        }
+        val block = ScreenBlock.Conversation(
+            CONVERSATION_BLOCK, body.caption, drawn, dimmed = false,
+            frame = identity, pageId = frame.pageId, revision = status.revision, anchor = frame.anchor,
+        )
+        // In focus the footer holds the buttons, so the microphone's state is said on the status line.
+        val micLine = "$MIC_UNAVAILABLE · $USE_TYPE".takeIf { facts.micUnavailable && focus != null && capture == null }
+        return SessionScreen(
+            ScreenHeader(header, if (pages > 1) "${frame.page + 1}/$pages" else null, owner?.let { IconRef.Plugin(it) }),
+            listOf(block),
+            hint,
+            statusText ?: micLine,
+            CONVERSATION_BLOCK,
+            footer = footer,
+        )
+    }
+
+    /** Sides come from the role alone: received left, ours right, an unknown author on neither. */
+    private fun bubbles(messages: List<ConversationMessage>): List<Bubble> = messages.mapIndexed { index, message ->
+        Bubble(
+            key = "m:${message.id}",
+            side = when (message.role) {
+                ConversationRole.RECEIVED -> BubbleSide.LEFT
+                ConversationRole.OURS -> BubbleSide.RIGHT
+                ConversationRole.UNKNOWN -> BubbleSide.NONE
+            },
+            text = message.text,
+            latest = index == messages.lastIndex,
+            style = if (message.status == ConversationMessageStatus.UNCONFIRMED) BubbleStyle.DASHED else BubbleStyle.SOLID,
+            meta = when (message.status) {
+                ConversationMessageStatus.HANDED_OFF -> HANDED_TO_APP
+                ConversationMessageStatus.UNCONFIRMED -> UNCONFIRMED_CHECK_PHONE
+                null -> null
+            },
+        )
+    }
+
+    private fun buttonLabel(key: String): String = when (key) {
+        ComposerRules.SEND -> SEND
+        ComposerRules.TYPE -> TYPE
+        else -> DICTATE
+    }
+
+    private fun buttonGlyph(key: String): String = when (key) {
+        ComposerRules.SEND -> GLYPH_SEND
+        ComposerRules.TYPE -> GLYPH_KEYBOARD
+        else -> GLYPH_MIC
+    }
+
+    /** A notification's age on the Notifications page: minutes within the hour, then hours. */
+    private fun ageText(atWallMs: Long): String {
+        val minutes = ((wallClock() - atWallMs) / 60_000L).coerceAtLeast(1)
+        return if (minutes < 60) "$minutes min" else "${minutes / 60} h"
+    }
 
     private fun ScreenBlock.isSelected(): Boolean = when (this) {
         is ScreenBlock.Row -> selected
@@ -758,5 +978,46 @@ internal class SessionScreens(
         private const val ENDED = "ENDED"
         private const val NOTIFICATION = "NOTIFICATION"
         private const val PAGE = "Page"
+
+        // Notifications (plan 028a §9).
+        const val UNANSWERED = "UNANSWERED"
+        const val REPLY_HANDED_OFF = "REPLY HANDED OFF"
+        const val NOTIFICATION_REMOVED = "NOTIFICATION REMOVED"
+        const val HANDED_OFF_UNCONFIRMED = "handed to the app · delivery not confirmed"
+        const val REMOVED_NOTHING_PROVEN = "removed from the phone · nothing is proven"
+        const val TAG_SEEN = "SEEN IN NEXUS"
+        const val TAG_HANDED_OFF = "HANDED OFF"
+        const val TAG_REMOVED = "REMOVED"
+
+        // The composer (plan 028a §9).
+        const val DICTATE = "Dictate"
+        const val TYPE = "Type"
+        const val SEND = "Send"
+        const val HANDED_TO_APP = "handed to the app"
+        const val DRAFT_NOT_SENT = "draft · not sent yet"
+        const val DRAFT_KEPT = "draft kept"
+        const val UNCONFIRMED_CHECK_PHONE = "unconfirmed · check on the phone"
+        const val NOT_SENT_HERE = "not sent · can't be sent from here"
+        const val GLASSES_MIC = "Glasses mic"
+        const val LISTENING = "listening"
+        const val PHONE_KEYBOARD = "Phone keyboard"
+        const val TYPING = "typing"
+        const val MIC_UNAVAILABLE = "Glasses mic unavailable"
+        const val USE_TYPE = "use Type"
+        const val TAP_FINISH = "tap finish"
+        const val BACK_CANCEL_DICTATION = "back cancel dictation"
+        const val BACK_CANCEL_TYPING = "back cancel typing"
+        const val FOCUS_START = "swipe choose · tap start"
+        const val BACK_READING = "back reading"
+        const val GLYPH_MIC = "mic"
+        const val GLYPH_KEYBOARD = "keyboard"
+        const val GLYPH_SEND = "send"
+        const val CONVERSATION_BLOCK = "conversation"
+        const val DRAFT_BUBBLE = "draft"
+        const val LIVE_BUBBLE = "live"
+        const val HANDOFF_BUBBLE = "handed"
+
+        /** Outcomes of a reply said in words; the others are its bubble or the composer's line. */
+        private val SPOKEN_OUTCOMES = setOf("rejected", "stale")
     }
 }

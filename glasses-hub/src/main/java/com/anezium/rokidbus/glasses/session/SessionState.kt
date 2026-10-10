@@ -137,6 +137,8 @@ internal data class Frame(
      * frame then ends with the hub's own Open app row.
      */
     val openApp: OpenApp? = null,
+    /** A conversation frame's focused composer button; null while the wearer reads. */
+    val composerFocus: ComposerFocus? = null,
 )
 
 /** The hub's own Open app row at the end of a destination page, for a launchable owner. */
@@ -238,9 +240,9 @@ internal data class SessionModel(
     val state: SessionState = SessionState.Closed,
     val activities: List<ActivityStop> = emptyList(),
     val queuedActivities: List<ActivityStop> = emptyList(),
-    /** The one readable notice retained in memory, the current one or the last one shown. */
+    /** The latest arrival's preview, as it was reported. */
     val preview: NoticePreview? = null,
-    /** Notice instances that ever arrived; the root counts only the retained one. */
+    /** Notice instances that ever arrived; the root counts the [history] entries it may show. */
     val notificationCount: Int = 0,
     val noticeArmed: Boolean = false,
     val editableFocused: Boolean = false,
@@ -270,6 +272,18 @@ internal data class SessionModel(
      * confirmed target into a quick one, so it is part of the focus identity.
      */
     val factsEpoch: Long = 0,
+    /** Every notice the band showed, as it showed it; in memory only (plan 028a §6.3). */
+    val history: NotificationHistory = NotificationHistory(),
+    /** The one composer draft; it outlives root, Back and the session (plan 028a §7.1). */
+    val draft: Draft? = null,
+    /** The composer capture in progress, on the conversation frame it was started from. */
+    val capture: Capture? = null,
+    /** The last dictation ended without text: Type is focused first until the session closes. */
+    val micUnavailable: Boolean = false,
+    /** A compose send awaiting its result; never sent twice, never resent on reconnect. */
+    val pendingSend: PendingSend? = null,
+    /** The latest reply handed to its app, shown on its thread until a newer revision. */
+    val handoff: Handoff? = null,
 ) {
     /**
      * The one time the runner's timer is set for: the state's own deadline and, while a session
@@ -281,6 +295,7 @@ internal data class SessionModel(
             state.nextDeadlineMs(),
             cancelledOpen.values.minOrNull(),
             pendingCommands.values.minOfOrNull(PendingCommand::deadlineMs),
+            capture?.deadlineMs,
         ).minOrNull()
     }
 }

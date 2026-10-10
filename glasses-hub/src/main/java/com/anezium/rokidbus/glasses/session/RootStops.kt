@@ -43,12 +43,18 @@ internal data class ActivityStop(
     val significantOrder: Long? = null,
 )
 
-/** The latest notification, kept as an unarmed preview; it can never answer. */
+/**
+ * The root's notification stop, unarmed: it can never answer. [card] says what it stands for (a
+ * history entry, or an owner's threads) and [paramsJson] goes with [pageId] when it opens.
+ */
 internal data class NoticePreview(
     val pageId: String,
     val text: String,
     val sourceLabel: String? = null,
     val atWallMs: Long? = null,
+    val paramsJson: String? = null,
+    val card: NoticeCard? = null,
+    val icon: IconRef? = null,
 )
 
 internal enum class RootStopKind { ACTIVITY, NOTICE_PREVIEW, ACTIVITIES, NOTIFICATIONS, APPLICATIONS }
@@ -68,6 +74,10 @@ internal data class RootStop(
     /** The whole entry behind an activity card, as last received; null for every other kind. */
     val activity: ActivityStop? = null,
     val icon: IconRef? = null,
+    /** Opened with [pageId]: a conversation's exact destination params, or a history entry. */
+    val paramsJson: String? = null,
+    /** What the notification stop stands for; its identity is kept for the whole session. */
+    val notice: NoticeCard? = null,
 )
 
 /**
@@ -82,7 +92,7 @@ internal object RootStops {
     const val NOTIFICATIONS_PAGE_ID = "nexus:notifications"
     const val APPLICATIONS_PAGE_ID = "nexus:applications"
 
-    /** The local page of the one retained notice, opened from its preview card. */
+    /** The local page of one history entry (its params name it), opened from a preview or a row. */
     const val NOTICE_PAGE_ID = "nexus:notice"
 
     private const val VISIBLE_ACTIVITY_STOPS = 2
@@ -107,14 +117,7 @@ internal object RootStops {
         val ordered = activities.sortedWith(ORDER)
         val stops = buildList {
             ordered.take(VISIBLE_ACTIVITY_STOPS).forEach { add(activityStop(it)) }
-            preview?.let {
-                add(
-                    RootStop(
-                        PREVIEW_STOP_ID, RootStopKind.NOTICE_PREVIEW, it.pageId, it.text,
-                        label = it.sourceLabel, atWallMs = it.atWallMs,
-                    ),
-                )
-            }
+            preview?.let { add(applyPreview(RootStop(PREVIEW_STOP_ID, RootStopKind.NOTICE_PREVIEW, it.pageId, it.text), it)) }
             if (ordered.size > VISIBLE_ACTIVITY_STOPS) {
                 add(RootStop(ACTIVITIES_PAGE_ID, RootStopKind.ACTIVITIES, ACTIVITIES_PAGE_ID, "Activities", ordered.size))
             }
@@ -134,20 +137,48 @@ internal object RootStops {
         return stops.take(PageSurfaceContract.MAX_ROOT_STOPS)
     }
 
-    /** How many readable notices the hub retains: the current one, or the last one, or none. */
+    /** A single-preview count, for callers that build a root from one preview and no history. */
     fun retainedNotices(preview: NoticePreview?): Int = if (preview == null) 0 else 1
 
-    /** Arrivals inside a session change text and counters only, never order or membership. */
-    fun withNotice(stops: List<RootStop>, preview: NoticePreview, notificationCount: Int): List<RootStop> =
-        stops.map {
+    /**
+     * Notification changes inside a session change text, states and counters only, never order or
+     * membership (plan 028a §6.4). A conversation card keeps its entry and only resolves in place
+     * (handed off, removed); an aggregate keeps its owner; a generic preview follows the newest entry.
+     */
+    fun withHistory(stops: List<RootStop>, history: NotificationHistory, nowWallMs: Long): List<RootStop> {
+        val count = history.visible(nowWallMs).size
+        return stops.map {
             when (it.kind) {
-                RootStopKind.NOTICE_PREVIEW -> it.copy(
-                    pageId = preview.pageId, text = preview.text, label = preview.sourceLabel, atWallMs = preview.atWallMs,
-                )
-                RootStopKind.NOTIFICATIONS -> it.copy(count = notificationCount)
+                RootStopKind.NOTICE_PREVIEW -> refreshNotice(it, history, nowWallMs)
+                RootStopKind.NOTIFICATIONS -> it.copy(count = count)
                 else -> it
             }
         }
+    }
+
+    private fun refreshNotice(stop: RootStop, history: NotificationHistory, nowWallMs: Long): RootStop {
+        val card = stop.notice
+        if (card != null && card.kind == NoticeCardKind.CONVERSATION) {
+            // A purged entry is gone from the phone as surely as a withdrawn one.
+            val state = card.entryId?.let(history::entry)?.state ?: HistoryState.WITHDRAWN
+            return stop.copy(notice = card.copy(state = state))
+        }
+        if (card != null && card.kind == NoticeCardKind.AGGREGATE) {
+            return history.aggregateFor(card.ownerPluginId, nowWallMs)?.let { applyPreview(stop, it) } ?: stop
+        }
+        return history.visible(nowWallMs).firstOrNull()?.let { applyPreview(stop, history.generic(it)) }
+            ?: stop.copy(notice = card?.copy(state = HistoryState.WITHDRAWN))
+    }
+
+    private fun applyPreview(stop: RootStop, preview: NoticePreview): RootStop = stop.copy(
+        pageId = preview.pageId,
+        text = preview.text,
+        label = preview.sourceLabel,
+        atWallMs = preview.atWallMs,
+        paramsJson = preview.paramsJson,
+        notice = preview.card,
+        icon = preview.icon,
+    )
 
     fun withEnded(stops: List<RootStop>, activityId: String): List<RootStop> =
         stops.map { if (it.kind == RootStopKind.ACTIVITY && it.id == activityId) it.copy(ended = true) else it }

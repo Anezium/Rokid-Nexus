@@ -30,6 +30,9 @@ internal sealed interface SessionEffect {
     /** One activity command in its launcher-bundle shape, sent once and never replayed. */
     data class SendActivityCommand(val command: ActivityCommand) : SessionEffect
 
+    /** One message to the phone's capture engines; it never carries a reply. */
+    data class SendCompose(val message: ComposeOutbound) : SessionEffect
+
     /**
      * [frame] names the frame for the wire, captured while it still exists; like the request's
      * deadline it is carried, not compared. Without one, nothing is sent.
