@@ -52,6 +52,8 @@ internal sealed interface IslandContent {
         val thenStrong: String? = null,
         val map: MapInput? = null,
         val foot: IslandFoot? = null,
+        /** A shorter map than the form's own, as the home's three-resident cap draws it (r17 1.4: 150). */
+        val mapHeightPx: Int? = null,
     ) : IslandContent
 
     /** Waiting at a stop (r17 6.2): no map, the line, its direction and platform, the next departures. */
@@ -201,7 +203,7 @@ internal class NavIslandView(context: Context, private val icons: SessionIconSou
             addView(rule(), LayoutParams(LayoutParams.MATCH_PARENT, 1).apply { topMargin = if (panel) 10 else 8 })
             val view = RouteMapView(context).apply { bind(map.copy(form = if (panel) MapForm.PANEL else MapForm.MINIMAP)) }
             mapView = view
-            addView(view, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+            addView(view, LayoutParams(LayoutParams.MATCH_PARENT, content.mapHeightPx ?: LayoutParams.WRAP_CONTENT))
         }
         content.foot?.takeIf { form != IslandForm.TEXT }?.let { addView(foot(it), LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT)) }
         if (form != IslandForm.TEXT && map == null && content.foot == null) {
