@@ -358,8 +358,8 @@ internal class SessionScreens(
                 )
                 RootStopKind.NOTICE_PREVIEW -> noticeCard(stop, selected)
                 RootStopKind.ACTIVITIES, RootStopKind.NOTIFICATIONS ->
-                    ScreenBlock.Row(stop.id, stop.text, trail = (stop.count ?: 0).toString(), selected = selected)
-                RootStopKind.APPLICATIONS -> ScreenBlock.Row(stop.id, stop.text, selected = selected)
+                    ScreenBlock.Row(stop.id, stop.text, trail = (stop.count ?: 0).toString(), selected = selected, icon = stop.icon)
+                RootStopKind.APPLICATIONS -> ScreenBlock.Row(stop.id, stop.text, selected = selected, icon = stop.icon)
             }
         }
         val selectedStop = state.stops.getOrNull(state.selected)
