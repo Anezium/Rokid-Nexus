@@ -1,6 +1,8 @@
 package com.anezium.rokidbus.plugin.patcher
 
 import app.morphe.patcher.patch.loadPatchesFromJar
+import com.android.tools.smali.dexlib2.DexFileFactory
+import com.android.tools.smali.dexlib2.Opcodes
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
 import org.junit.Assume.assumeTrue
@@ -30,6 +32,13 @@ class RealRedditPatchTest {
             val result = PatchRuntime(target).patch(prepared, patches, work,
                 SigningKey(File(directory, "signing.p12")), timings) {}
             assertTrue(result.length() > 0)
+            val dex = DexFileFactory.loadDexContainer(result, Opcodes.getDefault())
+            assertTrue("The patched APK must contain the cold-start Popular factory",
+                dex.dexEntryNames.any { name ->
+                    requireNotNull(dex.getEntry(name)).dexFile.classes.any {
+                        it.type == "Lapp/morphe/extension/reddit/rokid/nativebridge/NativePopular;"
+                    }
+                })
             ZipFile(result).use { zip ->
                 val marker = zip.getEntry("assets/rokid/reddit.json")
                 assertNotNull(marker)

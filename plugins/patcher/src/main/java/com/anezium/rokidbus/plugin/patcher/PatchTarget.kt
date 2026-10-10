@@ -87,7 +87,7 @@ object PatchTargets {
         minVerificationApi = 30, maxVerificationApi = 32,
         bundle = PatchBundleSource(
             metadataUrl = "", downloadPrefix = "",
-            pinnedSourceSha256 = "92b8fcf4d176ce9ca3ca518483eecb214ac34441ce899c538213da1948642f30",
+            pinnedSourceSha256 = "bddd6341f7069897902a072db8ba434af47d2c30cc8d56d6db58e70563a80a01",
             projectUrl = "https://github.com/Anezium/morphe-patches",
             asset = "reddit.mpp", assetMetadata = "reddit.json", updatesEnabled = false,
         ),

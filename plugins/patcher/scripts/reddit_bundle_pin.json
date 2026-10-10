@@ -1,6 +1,6 @@
 {
-  "version": "1.39.1-rokid.3-reddit-preview.23",
-  "source_sha256": "92b8fcf4d176ce9ca3ca518483eecb214ac34441ce899c538213da1948642f30",
+  "version": "1.39.1-rokid.3-reddit-preview.24",
+  "source_sha256": "bddd6341f7069897902a072db8ba434af47d2c30cc8d56d6db58e70563a80a01",
   "asset_stem": "reddit",
   "unpublished": true,
   "baseline": "c06102d4b"

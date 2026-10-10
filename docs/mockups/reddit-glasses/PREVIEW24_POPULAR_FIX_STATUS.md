@@ -1,4 +1,8 @@
-# Popular cold-start source fix: build blocked
+# Popular cold-start source fix: installed and verified
+
+**Resolved on 2026-10-10:** preview24 was built, signed with the existing identities and installed in place on the glasses. Popular loaded as the first feed after two cold launches; refresh, pagination, comments, Home, Latest and root Back passed. See [PREVIEW24_VALIDATION_20261010.md](PREVIEW24_VALIDATION_20261010.md) for the observed results and remaining limits. The sections below preserve the initial build blocker and earlier retries as historical evidence.
+
+## Initial build blocker (resolved)
 
 Date: 2026-10-09. Intended next preview: 24. No preview24 bundle or APK has been produced or installed.
 

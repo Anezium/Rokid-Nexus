@@ -49,6 +49,7 @@ dependencies {
     implementation("com.google.guava:guava:33.3.1-jre")
     implementation("com.github.REAndroid:arsclib:a28c6fb2a7")
     testImplementation("junit:junit:4.13.2")
+    testImplementation("com.github.MorpheApp.smali:smali-dexlib2:d856bad65f")
     testImplementation("org.robolectric:robolectric:4.13")
 }
 // Published rokid releases are JVM JARs, not an Android bundle. Convert at build time,
