@@ -147,6 +147,12 @@
             android:parentActivityName=".MainActivity" />
 
         <activity
+            android:name=".ComposeKeyboardActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:windowSoftInputMode="adjustResize|stateAlwaysVisible" />
+
+        <activity
             android:name=".NativeAppsActivity"
             android:exported="false"
             android:parentActivityName=".MainActivity" />

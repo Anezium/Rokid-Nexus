@@ -37,6 +37,9 @@ import com.anezium.rokidbus.shared.BusEnvelope
 import com.anezium.rokidbus.shared.AssistantTakeoverAction
 import com.anezium.rokidbus.shared.AssistantTakeoverContract
 import com.anezium.rokidbus.shared.BusPaths
+import com.anezium.rokidbus.shared.AmbientPreferencesContract
+import com.anezium.rokidbus.shared.ComposeContract
+import com.anezium.rokidbus.shared.ComposeTypeStart
 import com.anezium.rokidbus.shared.FrameProtocol
 import com.anezium.rokidbus.shared.ForegroundSurfacePathPolicy
 import com.anezium.rokidbus.shared.GlassesHubCapabilitiesContract
@@ -91,6 +94,7 @@ import com.anezium.rokidbus.phone.speech.SpeechStartResult
 import com.anezium.rokidbus.phone.speech.SpeechUtteranceListener
 import com.anezium.rokidbus.phone.speech.SttError
 import com.anezium.rokidbus.phone.speech.SttErrorKind
+import com.anezium.rokidbus.phone.speech.TranscriptionLanguage
 import com.example.cxrglobal.CXRLink
 import com.example.cxrglobal.CxrDefs
 import com.example.cxrglobal.GlassInfo
@@ -349,6 +353,55 @@ class BusHubService : Service() {
     private val audioLeaseArbitrator = SingleAudioLeaseArbitrator<AudioLease>()
     private val speechBusLock = Any()
     private var activeSpeechBusSession: SpeechBusSession? = null
+
+    /** Serializes the composer's glasses messages and its sends, so a final never overtakes a partial. */
+    private val composeExecutor = SerialExecutor(executor)
+    private val composeHandler = Handler(Looper.getMainLooper())
+
+    /** Applies glasses size edits in the order they were made, and sends each answer in order. */
+    private val ambientExecutor = SerialExecutor(executor)
+    private val composeRouter = PhoneComposeRouter(
+        host = object : PhoneComposeHost {
+            override fun startUtterance(
+                listener: SpeechUtteranceListener,
+                language: TranscriptionLanguage?,
+                glassesAudioOnly: Boolean,
+            ): SpeechStartResult {
+                if (!::speechSessionManager.isInitialized) return SpeechStartResult.NOT_READY
+                return speechSessionManager.startUtterance(listener, language, glassesAudioOnly)
+            }
+
+            override fun finishUtterance(listener: SpeechUtteranceListener) {
+                if (::speechSessionManager.isInitialized) speechSessionManager.finish(listener)
+            }
+
+            override fun cancelUtterance(listener: SpeechUtteranceListener) {
+                if (::speechSessionManager.isInitialized) speechSessionManager.cancel(listener)
+            }
+
+            override fun pluginSpeechActive(): Boolean =
+                synchronized(speechBusLock) { activeSpeechBusSession?.ended?.get() == false }
+
+            override fun openKeyboard(request: ComposeTypeStart) =
+                ComposeKeyboardPrompt.open(applicationContext, request)
+
+            override fun closeKeyboard(captureId: String) =
+                ComposeKeyboardPrompt.close(applicationContext, captureId)
+
+            override fun sendToGlasses(path: String, payload: JSONObject): String? {
+                composeExecutor.execute { sendRemote(BusEnvelope(path = path, payload = payload)) }
+                return null
+            }
+
+            override fun schedule(delayMs: Long, task: () -> Unit): ComposeTimer {
+                val runnable = Runnable { composeExecutor.execute(task) }
+                composeHandler.postDelayed(runnable, delayMs)
+                return ComposeTimer { composeHandler.removeCallbacks(runnable) }
+            }
+
+            override fun log(message: String) = this@BusHubService.log(message)
+        },
+    )
     private val glassesAppOperationLock = Any()
     private val glassesAppStateLock = Any()
     private val glassesAppReleaseLock = Any()
@@ -428,6 +481,7 @@ class BusHubService : Service() {
     private val surfaceOwnerCache = ConcurrentHashMap<String, java.util.Optional<PhonePluginPrincipal>>()
     private lateinit var activityPreferences: PhoneActivityPreferences
     private lateinit var quickActionPolicyStore: PluginQuickActionPolicyStore
+    private lateinit var ambientSync: PhoneAmbientSync
     private lateinit var activitySnapshotStore: PhoneActivitySnapshotStore
 
     /** Rises across hub restarts, so glasses never keep an older policy over a newer one. */
@@ -934,6 +988,19 @@ class BusHubService : Service() {
         assistantTakeoverStore = AssistantTakeoverStore(applicationContext)
         activityPreferences = PhoneActivityPreferences.shared(applicationContext)
         quickActionPolicyStore = PluginQuickActionPolicyStore.shared(applicationContext)
+        ambientSync = PhoneAmbientSync(
+            store = PhoneAmbientPreferencesStore.shared(applicationContext),
+            send = { path, payload -> sendRemote(BusEnvelope(path = path, payload = payload)) },
+            launcherActive = { remoteLauncherInteractiveVersion?.let(LauncherInteractiveContract::isActive) == true },
+            log = ::log,
+        )
+        ComposeKeyboardPrompt.sink = object : ComposeKeyboardSink {
+            override fun onText(captureId: String, text: String) =
+                composeExecutor.execute { composeRouter.onPhoneText(captureId, text) }
+
+            override fun onDone(captureId: String, commit: Boolean, text: String) =
+                composeExecutor.execute { composeRouter.onPhoneDone(captureId, commit, text) }
+        }
         activitySnapshotStore = PhoneActivitySnapshotStore(applicationContext)
         registryClient = RegistryClient.create(applicationContext)
         pluginGrantReconciler = PluginGrantReconciler(
@@ -1208,6 +1275,9 @@ class BusHubService : Service() {
         inkResultHandler.removeCallbacksAndMessages(null)
         activityHandler.removeCallbacks(activityExpiryTick)
         activityRouter.clearAllForHubStop()
+        composeHandler.removeCallbacksAndMessages(null)
+        composeRouter.onLinkLost()
+        ComposeKeyboardPrompt.sink = null
         sppLoopStop = true
         sppBackoff.reset()
         sppCxrIdentity.onConnectionChanged(false)
@@ -1562,6 +1632,23 @@ class BusHubService : Service() {
         if (isPagePath(envelope.path)) {
             pageBroker.onGlasses(PathRules.normalizeAbsolute(envelope.path) ?: envelope.path, envelope.payload)
             recordRemoteRoute(envelope, PluginBusJournal.Verdict.OK)
+            return
+        }
+        // The composer's capture engines and the ambient choices are hub-to-hub controls of the
+        // launcher bundle: never delivered to a plugin, and ignored from glasses that lack it.
+        if (envelope.path in ComposeContract.glassesToPhonePaths ||
+            envelope.path == AmbientPreferencesContract.SIZES_SET_PATH
+        ) {
+            if (remoteLauncherInteractiveVersion?.let(LauncherInteractiveContract::isActive) != true) {
+                recordRemoteRoute(envelope, PluginBusJournal.Verdict.REJECTED, "LAUNCHER_NOT_NEGOTIATED")
+                return
+            }
+            recordRemoteRoute(envelope, PluginBusJournal.Verdict.OK)
+            if (envelope.path == AmbientPreferencesContract.SIZES_SET_PATH) {
+                ambientExecutor.execute { if (::ambientSync.isInitialized) ambientSync.handleSizeSet(envelope.payload) }
+            } else {
+                composeExecutor.execute { composeRouter.handleGlasses(envelope.path, envelope.payload) }
+            }
             return
         }
         if (envelope.path == RemoteInputContract.SESSION_PATH ||
@@ -5039,6 +5126,7 @@ class BusHubService : Service() {
         }
         if (previousTransportState and transportBits != 0 && state and transportBits == 0) {
             inkRouter.clearForLinkLoss()
+            composeExecutor.execute { composeRouter.onLinkLost() }
         }
         if (::cameraCompanionController.isInitialized &&
             ((previousTransportState and transportBits) and state.inv()) != 0
@@ -5286,6 +5374,7 @@ class BusHubService : Service() {
         // The glasses keep only the latest policy they were sent; a fresh glasses session has none.
         executor.execute { pushQuickActionPolicy() }
         executor.execute { noticeRouter.onGlassesAnnounced() }
+        ambientExecutor.execute { if (::ambientSync.isInitialized) ambientSync.onGlassesAnnounced() }
     }
 
     /**
@@ -5317,6 +5406,11 @@ class BusHubService : Service() {
                 log("quick-action policy not sent code=$error")
             }
         }
+    }
+
+    private fun pushAmbient(sizes: Boolean) {
+        if (!::ambientSync.isInitialized) return
+        if (sizes) ambientSync.pushSizes() else ambientSync.pushPolicy()
     }
 
     /** Sends over SPP only: never CXR control and never queued. Route geometry and heading ride it. */
@@ -5569,6 +5663,16 @@ class BusHubService : Service() {
 
         internal fun onLauncherBackendChanged() {
             activeInstance?.announcePhoneCapabilities()
+        }
+
+        /** The user changed an island size on the phone; the glasses get the full map again. */
+        internal fun onAmbientSizesChanged() {
+            activeInstance?.let { hub -> hub.ambientExecutor.execute { hub.pushAmbient(sizes = true) } }
+        }
+
+        /** The user changed an app's ambient mode on the phone; the glasses get the full policy again. */
+        internal fun onAmbientPolicyChanged() {
+            activeInstance?.let { hub -> hub.ambientExecutor.execute { hub.pushAmbient(sizes = false) } }
         }
 
         /** Never the grant path: an activity choice must not tear the plugin down. */
