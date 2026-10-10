@@ -31,6 +31,15 @@ user copy action may place the generated command on the Android clipboard, and a
 screen displaying it must use `FLAG_SECURE`. Changes normally require the shared,
 plugin, and both hub test/build suites.
 
+Skills cross `:shared`, `:bus-client`, `:phone-hub`, Assistant as the caller,
+and the providers (Transit, Media Deck, Sample). `BUSSPEC.md#skills-v1` is the
+wire authority and `SkillLimits` holds every limit. Skill traffic is
+phone-local; the phone hub, never a plugin, stamps both identities, and each
+caller/provider/operation approval is bound to the operation's digest, so a
+changed contract starts disabled. Plugins request the grants only through the
+`SKILLS` and `SKILLS_CLIENT` metadata keys, never `.CAPABILITIES`, or older
+hubs refuse the whole plugin.
+
 ## Building
 
 This is the verified way to build and test a module:

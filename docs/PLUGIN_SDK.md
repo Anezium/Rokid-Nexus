@@ -23,6 +23,10 @@ dependencies {
 }
 ```
 
+Skills (§3.6), the guidance planner, and `holdNexusOngoingWork` came after
+`sdk-v0.21.0` and ship with the next `sdk-v*` tag; until then, use the local
+snapshot below to build against them.
+
 For local development against a checkout, publish a snapshot instead:
 `.\gradlew.bat :shared:publishToMavenLocal :bus-client:publishToMavenLocal
 '-PversionName=0.1.0-SNAPSHOT'` and consume it from `mavenLocal()`.

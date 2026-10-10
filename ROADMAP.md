@@ -1,6 +1,6 @@
 # Rokid Nexus — Roadmap
 
-Status: 2026-09-26. This file is the public roadmap and the source the
+Status: 2026-10-10. This file is the public roadmap and the source the
 [project site](https://rokid-nexus.anezium.me) renders. The founding product
 argument lives in [VISION.md](VISION.md); what actually shipped in each release
 lives in [CHANGELOG.md](CHANGELOG.md).
@@ -185,8 +185,12 @@ behaves the same in the Rokid launcher and in any third-party app, and Nexus
 draws its own cursor only when that path is unavailable (1.4.2). The four
 versioned `/core/*` protocol families are hub-only and replay-safe; no plugin
 grant reaches them. Sensitive editors secure the phone window, and existing
-field contents never cross back to the phone. Installing native APKs is not
-part of this slice.
+field contents never cross back to the phone. Glasses apps itself never installs
+anything; the one exception is the guided setup below.
+
+Since 1.6.0 the same apps sit in the triple-tap launcher on the glasses, after
+the plugins and with their own icons, so the wearer opens them without the
+phone. Nexus still launches them and nothing more.
 
 ### Typed input for plugins
 
@@ -253,10 +257,33 @@ checked on a phone and glasses. Bitmap-only maneuvers keep a neutral glyph.
 maps.me is read as well, but maps.me stops updating its own notification in
 the background on Android 11 and later, so Organic Maps is the one to use.
 
-### Twelve plugins, none of them built in
+### Skills: plugins that work for each other
+
+A plugin can publish typed operations — Transit's departures, Media Deck's
+pause — and an approved caller, Assistant first, invokes them through the
+phone hub (1.7.0, Assistant 1.5.0). The provider keeps its own logic,
+permissions and data and is never opened for the call; the hub stamps both
+identities, validates arguments and results against a bounded schema, hands out
+opaque references instead of the provider's identifiers, and ends every call
+within 15 seconds. The wearer allows each operation for each caller, all off by
+default, and a changed operation needs allowing again. Checked on hardware from
+typed questions; asking by voice, a real moving journey and real music players
+have not been.
+
+### YouTube and Reddit on the glasses
+
+Patcher, a phone-only plugin, patches YouTube on the phone so it answers the
+glasses' touchpad and the R08 ring, and Nexus installs it over the Rokid link
+with Morphe MicroG-RE, which holds the Google sign-in (1.6.0). Nexus checks the result's
+bytes and signer before installing, refuses a signer change, and never reads
+Google accounts. Reddit followed in 1.7.0 as a Preview: it runs on the glasses,
+but the R08 ring and real posting have not been checked. Both setups live in
+Patcher's settings.
+
+### Thirteen plugins, none of them built in
 
 Relay · Assistant · Navigation · Lens · Feeds · Transit · Lyrics · Media Deck
-· Photos Sync · Wireless ADB · Tasker · Sample
+· Photos Sync · Patcher · Wireless ADB · Tasker · Sample
 
 ---
 
@@ -295,20 +322,13 @@ slice. It is deferred until a consumer needs it.
 
 Committed, not started, in this order.
 
-1. **Skills for Assistant.** A hub-mediated registry so Assistant can pause
-   music or ask Transit without binding another plugin or reimplementing it.
-   The phone-typed ask that shared this item shipped in Assistant 1.4.7.
-2. **Native apps in the glasses menu.** The phone-side catalogue and launch
-   path now exist. Phase two puts that catalogue behind the same triple-tap that
-   lists plugins, with a back path that lands where the wearer started. Nexus
-   still does not port, wrap, or install those apps.
-3. **A `nav` surface kind.** Maneuver glyph, distance, street, ETA, drawn by
+1. **A `nav` surface kind.** Maneuver glyph, distance, street, ETA, drawn by
    the platform — once Navigation's routes on real trips have shown which of
    its fields are stable. Activity extras carry it until then.
-4. **Maven Central.** JitPack builds the SDK from tags and is fine for early
+2. **Maven Central.** JitPack builds the SDK from tags and is fine for early
    adopters, but it is not something a serious app should depend on. Central
    goes out once the AIDL surface is a promise rather than a snapshot.
-5. **A control-plane acknowledgement.** MediaSync already acks photo chunks.
+3. **A control-plane acknowledgement.** MediaSync already acks photo chunks.
    Glasses→phone CXR still reports success for frames the third-party client
    never sees, which is why outbound traffic prefers SPP. Another flip of
    running order is not the fix.
@@ -329,12 +349,14 @@ Next below, shipped in 0.1.0.
 | Plugin | Still owed |
 |---|---|
 | Relay | Notifications from ordinary apps, not just messengers · an app picker, so the wearer chooses which apps may reach the eye. Typed replies shipped in 1.2.2, typed inside the notice in 1.2.4 |
-| Assistant | More tools that act — control the music, ask Transit — through hub-mediated skills, not by becoming those plugins. Providers beyond ChatGPT shipped in 1.1.0 — MiniMax, DeepSeek, GLM, OpenRouter, or any OpenAI-compatible server; reminders, timers and notes shipped in 1.3.0, on every provider; phone-calendar creation, listing, and safe deletion in 1.4.0; Hermes, which runs its agent on its own side, in 1.4.1, with the phone tools bridged to it in plain text in 1.4.2; typed notes in 1.4.4; the question itself typed instead of spoken in 1.4.7; assist-button questions kept to the band, and a choice of how answers are drawn, in 1.4.8 |
+| Assistant | Plugin operations asked by voice and on a real moving journey · Workspace on large folders, and found by meaning rather than by the words in the files. Providers beyond ChatGPT shipped in 1.1.0 — MiniMax, DeepSeek, GLM, OpenRouter, or any OpenAI-compatible server; reminders, timers and notes shipped in 1.3.0, on every provider; phone-calendar creation, listing, and safe deletion in 1.4.0; Hermes, which runs its agent on its own side, in 1.4.1, with the phone tools bridged to it in plain text in 1.4.2; typed notes in 1.4.4; the question itself typed instead of spoken in 1.4.7; assist-button questions kept to the band, and a choice of how answers are drawn, in 1.4.8; plugin operations through Skills, and a Workspace of the phone's own documents, PDFs and images included, in 1.5.0 |
 | Navigation | Bus, tram and RER rides checked on real trips, beyond the walks and boardings already seen · Google Maps and Citymapper set to a language other than English, French or Korean, whose wording it does not read yet · Korean checked on a real trip in Korea · OsmAnd walking and cycling checked on real trips · Yandex Maps walking, cycling and transit once usable notifications have been captured |
 | Feeds | Posting and replying by voice · sources beyond Bluesky and X · video in the timeline |
-| Media Deck | Voice control — "next" and "pause" said instead of tapped |
+| Media Deck | "Next" asked of Assistant, which no operation offers yet · pause asked by voice, with real music players. Now playing and pause for Assistant shipped in 1.0.3 and have run with a test player, from typed questions |
 | Photos Sync | A Wi-Fi-only rule · a video's location tag, which Android strips on the way out. Capture-type filters shipped in 1.1.0; optional deletion after sync already shipped in 1.0.0 |
-| Lens · Transit · Lyrics | Complete as they stand |
+| Transit | "Take me home" guidance checked on a real trip. Skills and journey guidance shipped in 1.0.5; departures have run on hardware, the guidance not yet on a moving trip |
+| Patcher | Reddit out of Preview: the R08 ring and real posting checked on hardware |
+| Lens · Lyrics | Complete as they stand |
 
 Navigation is deliberately not a Transit feature: it reads other apps' live
 guidance rather than timetables, so it got a plugin of its own.

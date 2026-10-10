@@ -54,8 +54,9 @@ Interruption rules:
   gesture Nexus claims; single/double taps and swipes pass through to the OS untouched.
 - The glasses menu is **the single plugin entry point**: plugins first
   (user-ordered, favorites pinned, plain text rows — icons can come later, text
-  is king on a monochrome HUD). The phone already lists and launches installed
-  native glasses apps; a glasses-side Apps section remains phase 2.
+  is king on a monochrome HUD). Installed native glasses apps follow the
+  plugins in the same menu, with their own icons (1.6.0); the phone lists and
+  launches them too.
 - The Rokid launcher and its widgets stay in place; Nexus lives above them, not instead
   of them.
 - When the phone is unreachable, Nexus stays silent until asked: triple-tap shows
@@ -72,18 +73,19 @@ Public release makes this non-negotiable:
   pattern: request, then explicit user grant.
 - **Granular consent** approved separately per plugin. The current vocabulary is
   `surfaces`, `ink_surface`, `microphone`, `stt`, `tts`, `http_proxy`, `camera`,
-  `mediasync`, `assistant`, and `wireless_debugging`. A richer layout does not
-  ride the ordinary surface grant: compiled Ink pages require their own visible
-  `ink_surface` approval. Every grant is signer-bound and revocable.
+  `mediasync`, `assistant`, `wireless_debugging`, `skills_provider`, and
+  `skills_client`. A richer layout does not ride the ordinary surface grant:
+  compiled Ink pages require their own visible `ink_surface` approval, and a
+  skill operation needs its own approval per caller on top of both skills
+  grants. Every grant is signer-bound and revocable.
 - Protocol hygiene: an unknown surface `kind` (old glasses hub, newer plugin) is
   ignored and answered with a "update required" toast — graceful degradation is a spec
   rule, not a courtesy.
 
-## 5. Where the platform stands (2026-08-10)
+## 5. Where the platform stands (2026-10-10)
 
-Every gate through the current shipped release has been cleared and validated on
-real hardware. Ink and the trusted phone controls described below are implemented
-for the next release; their remaining device gates are explicit in TESTPLAN.md.
+Everything below has run on real hardware in a public release; where part of a
+feature has not, the roadmap names it.
 
 - **The public beta gate is passed.** A stranger sets up Nexus with nothing but
   their phone: seven onboarding steps on the phone, glasses app installed over
@@ -97,9 +99,15 @@ for the next release; their remaining device gates are explicit in TESTPLAN.md.
   and install from the in-app Store with SHA-256 and signer pinning. Installed
   plugins surface update badges; the apps themselves self-update (phone from
   GitHub releases, glasses over CXR).
-- **Twelve plugins ship**: Assistant, Relay, Navigation, Lens, Feeds, Transit,
-  Lyrics, Media Deck, Photos Sync, Wireless ADB, Tasker, and the copyable
-  Sample. All are external headless APKs; the hubs contain no built-ins.
+- **Thirteen plugins ship**: Assistant, Relay, Navigation, Lens, Feeds, Transit,
+  Lyrics, Media Deck, Photos Sync, Patcher, Wireless ADB, Tasker, and the
+  copyable Sample. All are external headless APKs; the hubs contain no built-ins.
+- **Plugins work for each other without knowing each other.** With Skills, a
+  provider publishes typed operations and an approved caller, Assistant first,
+  invokes them through the phone hub, which stamps both identities, bounds every
+  call, and never opens the provider for it. Transit's departures and Media
+  Deck's pause reach Assistant this way instead of Assistant reimplementing
+  them.
 - **Surfaces grew past text.** The image surface (v1) puts real photos on the
   HUD over the SPP binary path — Feeds renders tweet and Bluesky photos
   full-screen. The optics are green-mono; photos land as green luminance, and
@@ -115,7 +123,9 @@ for the next release; their remaining device gates are explicit in TESTPLAN.md.
   launchable native APKs, move accessibility focus with previous/next/select/back,
   and provide an ephemeral keyboard to the focused glasses editor. Those
   versioned `/core/*` paths are hub-only. Password state is signalled without
-  mirroring field contents, and native APK installation is deliberately absent.
+  mirroring field contents. Nexus installs no native APK of the wearer's
+  choosing; the only installs are the guided YouTube and Reddit setups, whose
+  bytes and signer the phone verifies first.
 - **Lens shipped as the flagship — with a better architecture than §8 of the
   original vision imagined.** Instead of ~1 fps JPEG over SPP, the platform
   grew a generic `camera` capability: the glasses stream live H.264 over a
@@ -145,16 +155,13 @@ Ordered by the problem it solves, not by ambition:
 1. **Display arbitration** — the toast layer and a real `actionable` class
    (§2's vocabulary is in the protocol; v1 still renders `actionable` as
    `toast`). This is the first problem two chatty plugins will create.
-2. **Native-apps section in the glasses menu** — phase 2 of §3. The trusted
-   phone screen already lists and launches installed apps; this remaining step
-   puts the same catalogue under the triple-tap launcher.
-3. **Continuous speech** — short STT takes and real consumers ship; held leases,
+2. **Continuous speech** — short STT takes and real consumers ship; held leases,
    long-running partials, and a caption presentation still do not.
-4. **Relay breadth** — notification listener + direct reply ship for supported
+3. **Relay breadth** — notification listener + direct reply ship for supported
    messengers; ordinary-app selection and broader extraction remain.
-5. **`nav` surface kind** — real navigation HUD (GMaps degrades to a text card
-   until then).
-6. **Maven Central** — once the AIDL surface is stable; JitPack carries the
+4. **`nav` surface kind** — a platform-drawn navigation HUD (Navigation rides
+   on activity extras until then).
+5. **Maven Central** — once the AIDL surface is stable; JitPack carries the
    SDK until then.
 
 Future app families, by capability tier: live captions/translation and voice

@@ -24,7 +24,9 @@ Answers come from the provider the wearer picks in Settings: a ChatGPT plan
 (OAuth, no key to paste), or an API key for OpenAI, OpenRouter, MiniMax,
 DeepSeek, GLM (Z.ai), Hermes, or any OpenAI-compatible server. Every API preset
 speaks the same chat-completions SSE dialect through one generic client
-(`OpenAiCompatProvider`); the preset catalog lives in `ProviderCatalog.kt`.
+(`OpenAiCompatProvider`), except GPT-6 models on the OpenAI preset's own endpoint,
+which go through the Responses API (`OpenAiResponsesAdapter`); the preset
+catalog lives in `ProviderCatalog.kt`.
 Each provider keeps its own encrypted key, model, and endpoint.
 
 Tools go through `AssistantToolRegistry`, and every structured provider runs
@@ -56,6 +58,19 @@ and the departure just mentioned, so "and the one after that?" continues from
 it. When a result needs the wearer to choose, up to three choices appear as
 chips on the answer band; a chip starts a new turn and cannot be imitated by
 text. Plugin operations are not offered through the Hermes text bridge.
+
+**Workspace.** A local folder picked in Settings becomes something to ask
+about. Assistant indexes Text, Markdown, Word, PDF, and image files there, up
+to 100 files, reading scanned pages and photos with on-device text recognition
+while indexing so a question never waits for it. Each question carries at
+most 2,500 characters of relevant passages, with any provider including
+Hermes, and the answer cites the file, and the page for a PDF. On structured-tool providers
+`search_workspace` looks once more for what those passages missed, and with an
+image-capable model `view_workspace_page` shows it the one cited page or
+image. Retrieval is lexical. The index persists across sessions; turning
+Workspace off or losing folder access clears it, and cloud or unverifiable
+document providers are refused. Passages and viewed pages do reach the chosen
+AI provider.
 
 A Hermes backend runs its tools server-side and never returns a client tool
 call, so the same twelve phone tools are described in the system prompt and

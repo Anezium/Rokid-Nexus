@@ -62,14 +62,14 @@
         on the glasses again.
       </p>
       <ul class="hero__facts hero__facts--lead reveal" style="--i:3">
-        <li><b>20</b> plugins in the Store</li>
+        <li><b>22</b> plugins in the Store</li>
         <li><b>1</b> gesture claimed</li>
         <li><b>0</b> cables, PCs, or ADB</li>
       </ul>
       <div class="hero__actions reveal" style="--i:4">
         <a class="btn btn--solid" href="https://github.com/Anezium/Rokid-Nexus/releases">
           Download for Android
-          <span class="btn__meta">v1.5.0 · APK</span>
+          <span class="btn__meta">v1.7.0 · APK</span>
         </a>
         <a class="btn btn--ghost" href="#roadmap">Read the roadmap</a>
       </div>
@@ -90,11 +90,12 @@
 <!-- ─────────────────────────  LATEST  ───────────────────────── -->
 <div class="latest">
   <div class="latest__in">
-    <span class="latest__tag">v1.5.0</span>
+    <span class="latest__tag">v1.7.0</span>
     <p>
-      Navigation keeps your Google Maps, Citymapper, OsmAnd, Organic Maps or Yandex Maps route on the glasses ·
-      activities move as one shape · typing in a band leaves the app behind in
-      view · update both hubs together ·
+      Assistant asks Transit and Media Deck through Skills, one approved
+      operation at a time · Assistant 1.5.0 answers from your own documents,
+      PDFs included · YouTube, and Reddit in Preview, on the glasses through
+      Patcher · update both hubs together ·
       SDK <code>sdk-v0.21.0</code> on JitPack · Apache-2.0
     </p>
     <a href="https://github.com/Anezium/Rokid-Nexus/blob/main/CHANGELOG.md">What changed →</a>
@@ -105,7 +106,7 @@
 <div class="boardwrap">
   <div class="board reveal">
     <a class="board__cell" href="#shipped" data-state="shipped">
-      <b>16</b><span>shipped</span>
+      <b>19</b><span>shipped</span>
       <i>on hardware, in a public release</i>
     </a>
     <a class="board__cell" href="#deferred" data-state="exploring">
@@ -113,7 +114,7 @@
       <i>display policies · continuous speech</i>
     </a>
     <a class="board__cell" href="#next" data-state="next">
-      <b>5</b><span>next</span>
+      <b>3</b><span>next</span>
       <i>committed, not started</i>
     </a>
     <a class="board__cell" href="#coming" data-state="exploring">
@@ -144,6 +145,54 @@
       </div>
       <ul class="ship">
         <li class="ship__card ship__card--new">
+          <span class="ship__v">1.7.0</span>
+          <h3>Skills: plugins that work for each other</h3>
+          <p>
+            Ask Assistant when the next metro leaves or to pause the music, and
+            it asks Transit or Media Deck for you, through the hub, without
+            either plugin opening. Each operation is switched on by you, for
+            each assistant, and all of them start off.
+          </p>
+          <details>
+            <summary>Under the hood</summary>
+            <p>
+              A plugin publishes typed operations in a catalog the hub reads
+              without starting it. The hub stamps both identities, validates
+              arguments and results against a bounded schema, hands out opaque
+              references instead of the provider's identifiers, and ends every
+              call within 15 seconds; a changed operation needs approving again.
+              Checked on hardware from typed questions — voice, a moving journey
+              and real music players are not yet.
+            </p>
+          </details>
+        </li>
+        <li class="ship__card">
+          <span class="ship__v">1.6.0</span>
+          <h3>YouTube and Reddit on the glasses</h3>
+          <p>
+            Patcher patches YouTube on your phone for the touchpad and the R08
+            ring, and Nexus installs it on the glasses with MicroG for the
+            Google sign-in. Reddit followed in 1.7.0, as a Preview.
+          </p>
+          <details>
+            <summary>Under the hood</summary>
+            <p>
+              Nexus checks the result's bytes and signer before installing,
+              refuses a signer change, and never reads Google accounts. Reddit's
+              R08 ring and real posting have not been checked on hardware.
+            </p>
+          </details>
+        </li>
+        <li class="ship__card">
+          <span class="ship__v">1.6.0</span>
+          <h3>Native apps in the Nexus menu</h3>
+          <p>
+            The apps installed on the glasses sit under the same triple-tap as
+            the plugins, after them and with their own icons. Nexus launches
+            them; it does not port them or wrap them.
+          </p>
+        </li>
+        <li class="ship__card">
           <span class="ship__v">1.5.0</span>
           <h3>Navigation, from the apps you already use</h3>
           <p>
@@ -480,23 +529,6 @@
       </div>
       <ul class="road__items">
         <li>
-          <h3>Skills for Assistant</h3>
-          <p>
-            A hub-mediated registry so Assistant can pause music or ask Transit
-            without binding another plugin or reimplementing it. The
-            phone-typed ask that shared this row shipped in Assistant 1.4.7.
-          </p>
-        </li>
-        <li>
-          <h3>Native apps in the Nexus menu</h3>
-          <p>
-            The phone already lists and opens the apps on the glasses. Phase
-            two puts them behind the same triple-tap that lists plugins, with a
-            back that lands where you started. Nexus does not port them and
-            does not wrap them.
-          </p>
-        </li>
-        <li>
           <h3>A <code>nav</code> surface kind</h3>
           <p>
             Maneuver glyph, distance, street, ETA, drawn by the platform — once
@@ -684,7 +716,7 @@
   <div class="section__head section__head--rail">
     <div>
       <span class="tick" aria-hidden="true"></span>
-      <h2>Twelve plugins, none of them built in</h2>
+      <h2>Thirteen plugins, none of them built in</h2>
       <p class="section__sub">
         Every one is an ordinary phone APK installed from the in-app Store,
         pinned by hash and signer before it installs. The hub itself ships
@@ -716,7 +748,7 @@
     </figure>
     <figure class="slide">
       <img src="assets/shot-transit.png" alt="The Transit plugin showing nearby stops and live departure countdowns" loading="lazy" />
-      <figcaption><b>Transit</b><span>Nearby stops and live departures, with the ones you actually take kept on top.</span></figcaption>
+      <figcaption><b>Transit</b><span>Nearby stops and live departures, with the ones you actually take kept on top — and Assistant can ask it for you.</span></figcaption>
     </figure>
     <figure class="slide">
       <img src="assets/shot-feeds.png" alt="The Feeds plugin showing a timeline post on the glasses HUD" loading="lazy" />
@@ -741,7 +773,7 @@
       <figcaption>
         <span class="slide__tag">talks back</span>
         <b>Assistant</b>
-        <span>Ask out loud, hear the answer through your phone's own voice — and the model can look through the camera when the question needs eyes. It remembers too: reminders, timers and notes, set by voice. Your ChatGPT plan, or any AI you bring a key for.</span>
+        <span>Ask out loud, hear the answer through your phone's own voice — and the model can look through the camera when the question needs eyes. It remembers too: reminders, timers and notes, set by voice. It answers from a folder of your documents, PDFs included, and asks Transit or Media Deck when you let it. Your ChatGPT plan, or any AI you bring a key for.</span>
       </figcaption>
     </figure>
     <figure class="slide slide--card">
@@ -773,6 +805,20 @@
         <span class="slide__tag">no HUD surface</span>
         <b>Photos Sync</b>
         <span>Not a HUD plugin at all. It copies the photos and videos you shoot on the glasses into your phone gallery by itself, and hands you the switches for it.</span>
+      </figcaption>
+    </figure>
+    <figure class="slide slide--card">
+      <div class="slide__mark" aria-hidden="true">
+        <svg viewBox="0 0 72 72" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="18" y="6" width="36" height="60" rx="5" />
+          <path d="M31 30l12 6-12 6z" />
+          <path d="M28 56h16" opacity=".55" />
+        </svg>
+      </div>
+      <figcaption>
+        <span class="slide__tag">runs on the phone</span>
+        <b>Patcher</b>
+        <span>Patches YouTube, and Reddit in Preview, on your phone for the touchpad and the R08 ring, then hands the result to Nexus to check and install on the glasses.</span>
       </figcaption>
     </figure>
     <figure class="slide slide--card">
@@ -825,8 +871,9 @@
   <p class="grid__foot reveal">
     Installation alone grants nothing. <b>Surfaces</b>, <b>Ink</b>,
     <b>microphone</b>, <b>speech to text</b>, <b>text to speech</b>,
-    <b>camera</b>, <b>photos</b>, <b>HTTP proxy</b>, the <b>assistant</b> slot
-    and <b>wireless debugging</b> are approved one by one, per plugin, keyed to its
+    <b>camera</b>, <b>photos</b>, <b>HTTP proxy</b>, the <b>assistant</b> slot,
+    <b>skills</b> — down to each operation — and <b>wireless debugging</b> are
+    approved one by one, per plugin, keyed to its
     package, its plugin id, and its signing certificate — and checked at the hub
     on every message, not at install time.
   </p>
@@ -836,7 +883,7 @@
       <span class="chip chip--shipped">Community</span>
       <p>
         Ten more in the Store, by four other authors. They install, are
-        granted, and run exactly like the eleven above — nothing here is
+        granted, and run exactly like the twelve above — nothing here is
         reserved for first-party code.
       </p>
     </div>
@@ -863,10 +910,12 @@
       </div>
       <ul class="road__items road__items--compact">
         <li><h3>Relay</h3><p>ordinary apps, not just messengers · an app picker for what may reach the eye</p></li>
-        <li><h3>Assistant</h3><p>music and Transit through hub skills, not by becoming those plugins</p></li>
+        <li><h3>Assistant</h3><p>plugin operations asked by voice and on a moving journey · Workspace on large folders, found by meaning rather than by words</p></li>
         <li><h3>Navigation</h3><p>OsmAnd walking and cycling checked on real trips · bus, tram and RER rides checked on real trips · Google Maps and Citymapper in languages beyond English, French and Korean · Korean checked on a real trip</p></li>
         <li><h3>Feeds</h3><p>posting and replying by voice · more sources · video in the timeline</p></li>
-        <li><h3>Media Deck</h3><p>voice control — “next” and “pause” said instead of tapped</p></li>
+        <li><h3>Transit</h3><p>“take me home” guidance checked on a real trip</p></li>
+        <li><h3>Media Deck</h3><p>“next” asked of Assistant · pause by voice, with real music players</p></li>
+        <li><h3>Patcher</h3><p>Reddit out of Preview: the R08 ring and real posting checked</p></li>
         <li><h3>Photos Sync</h3><p>a Wi-Fi-only rule · the location tag Android strips from videos</p></li>
       </ul>
     </div>

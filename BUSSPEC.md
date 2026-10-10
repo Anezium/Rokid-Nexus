@@ -2641,10 +2641,15 @@ signers never authorize an update. This bounded inventory includes installed app
 without launcher icons and fits in 2,000 UTF-8 bytes. It contains no account state.
 Older hubs do not support this request; the phone times out with an update prompt.
 
-The phone's private YouTube setup screen downloads/imports and verifies APKs locally,
-then uses the existing CXR upload/install API. Installation adds no bus route or
-plugin capability. The phone hub may receive a patched APK from the Patcher
-plugin with the explicit YouTube target id as an Android activity-result content URI;
+Reddit setup (1.7.0) uses the same shape as `reddit_setup_request` and
+`reddit_setup_result`, with exactly one app, `com.reddit.frontpage`, under the
+same entry rules.
+
+The phone's private YouTube and Reddit setup screens download or import and verify
+APKs locally, then use the existing CXR upload/install API. Installation adds no bus
+route or plugin capability. The phone hub may receive a patched APK from the Patcher
+plugin with the explicit `youtube` or `reddit` target id as an Android activity-result
+content URI;
 it copies and validates the bytes
 through the same private import path, without trusting result metadata. A fresh inventory is required before upload and after the SDK
 reports success; Nexus never uninstalls an app to resolve a signature conflict.
