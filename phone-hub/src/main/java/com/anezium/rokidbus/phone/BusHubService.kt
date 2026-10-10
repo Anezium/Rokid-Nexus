@@ -368,7 +368,8 @@ class BusHubService : Service() {
                 glassesAudioOnly: Boolean,
             ): SpeechStartResult {
                 if (!::speechSessionManager.isInitialized) return SpeechStartResult.NOT_READY
-                return speechSessionManager.startUtterance(listener, language, glassesAudioOnly)
+                // Pinned here as well: whatever the router asks, the composer never hears the phone.
+                return speechSessionManager.startUtterance(listener, language, glassesAudioOnly = true)
             }
 
             override fun finishUtterance(listener: SpeechUtteranceListener) {
