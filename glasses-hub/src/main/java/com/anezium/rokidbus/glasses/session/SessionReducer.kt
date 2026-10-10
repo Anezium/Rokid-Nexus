@@ -10,6 +10,10 @@ import com.anezium.rokidbus.glasses.session.SessionEffect.SendClosed
 import com.anezium.rokidbus.glasses.session.SessionEffect.SendVisibility
 import com.anezium.rokidbus.glasses.session.SessionEffect.ShowFrame
 import com.anezium.rokidbus.glasses.session.SessionEffect.ShowRoot
+import com.anezium.rokidbus.shared.ActivityActivation
+import com.anezium.rokidbus.shared.ActivityAction
+import com.anezium.rokidbus.shared.ActivityCommand
+import com.anezium.rokidbus.shared.ActivityCommandMode
 import com.anezium.rokidbus.shared.BusPaths
 import com.anezium.rokidbus.shared.PageCorrelation
 import com.anezium.rokidbus.shared.PageSurfaceContract
@@ -30,11 +34,16 @@ import org.json.JSONObject
  *
  * [isLocalPage] names the pages the glasses hub answers itself: they need no phone, so link loss
  * and provider invalidation never touch them, while provider frames keep every loss rule.
+ *
+ * [quickGate] decides which activity commands one tap may run; page rows get the same answer
+ * from the resolver. Every effect (a plugin action or activity command, quick or confirmed, an
+ * app launch) also needs a fresh contact: see [SessionFocus].
  */
 internal class SessionReducer(
     private val itemResolver: PageItemResolver = DefaultPageItems,
     private val maxSnapshotTotalBytes: Int = PageSurfaceContract.MAX_SNAPSHOT_TOTAL_BYTES,
     private val isLocalPage: (String) -> Boolean = { false },
+    private val quickGate: QuickGate = QuickGate.NEVER,
 ) {
     fun reduce(model: SessionModel, event: SessionEvent): SessionTransition {
         val transition = when (event) {
@@ -52,10 +61,14 @@ internal class SessionReducer(
             // Unsupported negotiation leaves every provider page inert, with no replay.
             SessionEvent.PageSupportLost -> inertProviderFrames(model, PageSurfaceContract.ERROR_PAGE_UNAVAILABLE) { true }
             SessionEvent.Abort -> abort(model)
+            is SessionEvent.FocusShown -> onFocusShown(model, event)
+            is SessionEvent.ActivityResult -> onActivityResult(model, event)
+            SessionEvent.LauncherFactsChanged -> redraw(model, model.copy(factsEpoch = model.factsEpoch + 1))
             else -> {
                 // Rule 17: a cancelled open is remembered only until its own deadline.
-                val current = if (event is SessionEvent.Tick) model.expireCancelledOpens(event.nowMs) else model
-                when (val state = current.state) {
+                val ticked = (event as? SessionEvent.Tick)?.let { model.expireCancelledOpens(it.nowMs).expireCommands(it.nowMs) }
+                val current = ticked ?: model
+                val transition = when (val state = current.state) {
                     SessionState.Closed -> onClosed(current, event)
                     is SessionState.Opening -> onOpening(current, state, event)
                     is SessionState.Root -> absorbGateClassification(current, event) ?: onRoot(current, state, event)
@@ -63,9 +76,54 @@ internal class SessionReducer(
                     is SessionState.Launching ->
                         absorbGateClassification(current, event) ?: onLaunching(current, state, event)
                 }
+                // A command that expired on this tick is now shown as unconfirmed.
+                if (ticked != null && ticked.commandOutcomes != model.commandOutcomes) {
+                    transition.copy(effects = (transition.effects + listOfNotNull(showEffect(transition.model.state))).distinct())
+                } else {
+                    transition
+                }
             }
         }
         return transition.copy(effects = transition.effects.ifEmpty { listOf(SessionEffect.None) })
+    }
+
+    /** Only an acknowledgement of the target on screen now counts, and only its first one. */
+    private fun onFocusShown(model: SessionModel, event: SessionEvent.FocusShown): SessionTransition {
+        val token = SessionFocus.tokenOf(model) ?: return keep(model)
+        if (event.token != token || model.shownFocus?.token == token) return keep(model)
+        return keep(model.copy(shownFocus = ShownFocus(token, event.atMs)))
+    }
+
+    /**
+     * An owner's answer settles its pending command by invocation id. A late answer (at or past
+     * the glasses' deadline) is unconfirmed like a lost one, and an unknown one is dropped.
+     */
+    private fun onActivityResult(model: SessionModel, event: SessionEvent.ActivityResult): SessionTransition {
+        val result = event.result
+        val pending = model.pendingCommands.values.firstOrNull { it.invocationId == result.invocationId }
+            ?: return keep(model)
+        val outcome = if (event.nowMs >= pending.deadlineMs) {
+            CommandOutcome(pending.actionId, PageSurfaceContract.ERROR_UNCONFIRMED_ACTION)
+        } else {
+            CommandOutcome(pending.actionId, result.status.wireValue, result.message)
+        }
+        return redraw(
+            model,
+            model.copy(
+                pendingCommands = model.pendingCommands - pending.ownerPluginId,
+                commandOutcomes = model.commandOutcomes + (pending.ownerPluginId to outcome),
+            ),
+        )
+    }
+
+    /** [after] with the redraw its open screen needs; nothing is drawn for a closed session. */
+    private fun redraw(before: SessionModel, after: SessionModel): SessionTransition =
+        SessionTransition(after, listOfNotNull(showEffect(after.state).takeIf { after != before }))
+
+    private fun showEffect(state: SessionState): SessionEffect? = when (state) {
+        is SessionState.Root -> ShowRoot
+        is SessionState.InPage -> ShowFrame
+        else -> null
     }
 
     /** D1: the root counts the one retained notice, while [SessionModel.notificationCount] counts arrivals. */

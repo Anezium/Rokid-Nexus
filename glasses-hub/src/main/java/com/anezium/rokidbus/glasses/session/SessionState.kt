@@ -73,6 +73,19 @@ internal sealed interface FramePanel {
     /** The labelled step before an exclusive immersion replaces the screen. Open is row 0 and preselected. */
     data class Launch(val pluginId: String, val label: String, override val selected: Int = OPEN) : FramePanel
 
+    /**
+     * An activity command waiting for the wearer, bound to the activity revision ([seq]) the
+     * card showed. Cancel is row 0 and preselected; Confirm is row 1.
+     */
+    data class ConfirmCommand(
+        val stopId: String,
+        val ownerPluginId: String,
+        val actionId: String,
+        val label: String,
+        val seq: Long,
+        override val selected: Int = CANCEL,
+    ) : FramePanel
+
     companion object {
         const val CANCEL = 0
         const val CONFIRM = 1
@@ -114,7 +127,42 @@ internal data class Frame(
     val shownAtMs: Long? = null,
     /** The message that carried the retained snapshot needed SPP, so it is lost when SPP is. */
     val dataPlane: Boolean = false,
+    /** An activity row of this frame (the Activities page) whose commands hold the wearer's focus. */
+    val commandFocus: CommandFocus? = null,
+    /**
+     * The launchable owner of the activity this frame was opened from as its destination: the
+     * frame then ends with the hub's own Open app row.
+     */
+    val openAppOwner: String? = null,
 )
+
+/**
+ * The wearer is choosing among an activity card's commands: [key] names the focused slot (an
+ * action id, or [ActivityCommands.OPEN_APP_KEY]) so it survives updates; [index] is where it was.
+ */
+internal data class CommandFocus(val stopId: String, val key: String, val index: Int)
+
+/** One activity command sent and not yet answered; one per owner at most. */
+internal data class PendingCommand(
+    val invocationId: String,
+    val ownerPluginId: String,
+    val activityId: String,
+    val actionId: String,
+    val seq: Long,
+    val sinceMs: Long,
+) {
+    /** Past the phone's own deadline, with a margin for the hop back: unconfirmed from then on. */
+    val deadlineMs: Long get() = sinceMs + ActivityCommands.RESULT_DEADLINE_MS
+}
+
+/** The last answer shown for an owner's command: `done`, `rejected`, `stale`, or `UNCONFIRMED_ACTION`. */
+internal data class CommandOutcome(val actionId: String, val status: String, val message: String? = null)
+
+/**
+ * The host's acknowledgement that the frame showing the focused target [token] was drawn at
+ * [atMs]. An effect needs a press that began strictly after it.
+ */
+internal data class ShownFocus(val token: String, val atMs: Long)
 
 internal sealed interface SessionState {
     data object Closed : SessionState
@@ -122,7 +170,16 @@ internal sealed interface SessionState {
     /** [root] is frozen when the triple tap is accepted, before the gate ends. */
     data class Opening(val sinceMs: Long, val root: Root) : SessionState
 
-    data class Root(val stops: List<RootStop>, val selected: Int = 0) : SessionState
+    /**
+     * [focus] is an activity card's command focus; [panel] the confirmation or launch step taken
+     * from it. Both belong to the card at [selected].
+     */
+    data class Root(
+        val stops: List<RootStop>,
+        val selected: Int = 0,
+        val focus: CommandFocus? = null,
+        val panel: FramePanel? = null,
+    ) : SessionState
 
     /** [frames] excludes the root; `frames[i]` is wire frame index `i + 1`. */
     data class InPage(val frames: List<Frame>, val root: Root) : SessionState
@@ -188,14 +245,32 @@ internal data class SessionModel(
      * plugin shows before it is closed unseen. It outlives the session that recorded it.
      */
     val cancelledOpen: Map<String, Long> = emptyMap(),
+    /**
+     * Activity commands awaiting their owner's result, by owner. They outlive a session that
+     * closes, so a reopened card still shows the command as pending and never sends a second.
+     */
+    val pendingCommands: Map<String, PendingCommand> = emptyMap(),
+    /** The last command answer per owner, shown on its card until the next command or session. */
+    val commandOutcomes: Map<String, CommandOutcome> = emptyMap(),
+    /** The latest draw acknowledgement of the focused target; see [SessionFocus]. */
+    val shownFocus: ShownFocus? = null,
+    /**
+     * Counts changes of the launcher facts (negotiation, quick-action policy). A change can turn a
+     * confirmed target into a quick one, so it is part of the focus identity.
+     */
+    val factsEpoch: Long = 0,
 ) {
     /**
      * The one time the runner's timer is set for: the state's own deadline and, while a session
-     * is open, the expiry of a cancelled open. Never anything while closed.
+     * is open, the expiry of a cancelled open or of a pending command. Never anything while closed.
      */
     fun nextDeadlineMs(): Long? {
         if (state == SessionState.Closed) return null
-        return listOfNotNull(state.nextDeadlineMs(), cancelledOpen.values.minOrNull()).minOrNull()
+        return listOfNotNull(
+            state.nextDeadlineMs(),
+            cancelledOpen.values.minOrNull(),
+            pendingCommands.values.minOfOrNull(PendingCommand::deadlineMs),
+        ).minOrNull()
     }
 }
 
