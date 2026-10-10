@@ -394,7 +394,7 @@ class BusHubService : Service() {
             }
 
             override fun schedule(delayMs: Long, task: () -> Unit): ComposeTimer {
-                val runnable = Runnable { composeExecutor.execute(task) }
+                val runnable = Runnable { composeExecutor.execute { task() } }
                 composeHandler.postDelayed(runnable, delayMs)
                 return ComposeTimer { composeHandler.removeCallbacks(runnable) }
             }

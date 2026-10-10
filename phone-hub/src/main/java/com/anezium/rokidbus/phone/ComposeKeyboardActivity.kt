@@ -24,7 +24,7 @@ import com.anezium.rokidbus.shared.ComposeTypeStart
  * Done hands the text to the glasses' draft and Cancel leaves the draft as it was. Nothing is sent
  * to anyone from here: sending stays a deliberate step on the glasses.
  */
-class ComposeKeyboardActivity : Activity(), ComposeKeyboardScreen {
+internal class ComposeKeyboardActivity : Activity(), ComposeKeyboardScreen {
     private lateinit var editor: EditText
     private lateinit var counter: TextView
     private var request: ComposeTypeStart? = null

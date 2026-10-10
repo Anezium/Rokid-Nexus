@@ -115,10 +115,12 @@ class PhoneNoticeLauncherTest {
 
     @Test
     fun `withdraw passes the local gate only with a valid key and no binary`() {
-        assertNull(router.invalidLocalReason(withdraw("relay", "9f2c")))
+        // The gate runs on the plugin's own envelope, before the hub stamps the owner.
+        val fromSdk = BusEnvelope(path = BusPaths.NOTICE_WITHDRAW, payload = NoticeSurfaceContract.withdrawPayload("9f2c"))
+        assertNull(router.invalidLocalReason(fromSdk))
         assertEquals(
             NoticeSurfaceContract.ERROR_INVALID_NOTICE,
-            router.invalidLocalReason(withdraw("relay", "9f2c").copy(binary = byteArrayOf(1))),
+            router.invalidLocalReason(fromSdk.copy(binary = byteArrayOf(1))),
         )
         assertEquals(
             NoticeSurfaceContract.ERROR_INVALID_NOTICE,
@@ -272,12 +274,9 @@ class PhoneNoticeLauncherTest {
             .put("conversation", true),
     )
 
+    /** A withdraw as the hub stamps it for [pluginId]; the router itself trusts only the sender. */
     private fun withdraw(pluginId: String, eventKey: String) = BusEnvelope(
         path = BusPaths.NOTICE_WITHDRAW,
-        payload = NoticeSurfaceContract.withdrawPayload(eventKey).also {
-            // The SDK's local surfaceId lets the hub stamp the owner like a show.
-            assertEquals(NoticeSurfaceContract.LOCAL_SURFACE_ID, it.getString("surfaceId"))
-            assertTrue(pluginId.isNotEmpty())
-        },
+        payload = PluginRoutePolicy.injectSurfaceOwner(pluginId, NoticeSurfaceContract.withdrawPayload(eventKey))!!,
     )
 }
