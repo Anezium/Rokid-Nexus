@@ -84,7 +84,7 @@ internal class CommandStripView(context: Context, private val icons: SessionIcon
             return
         }
         val hubAt = items.indexOfFirst { it.hub }.takeIf { it > 0 }
-        val gaps = (items.size - 1) * GAP_PX + if (hubAt != null) SEPARATOR_PX + 2 * SEPARATOR_GAP_PX - GAP_PX else 0
+        val gaps = (items.size - 1) * GAP_PX + if (hubAt != null) SEPARATOR_PX + 2 * SEPARATOR_GAP_PX - GAP_PX else 0f
         val available = width - gaps
         val share = available / items.size
         val natural = items.map { naturalWidth(it, withLabel = true) }
