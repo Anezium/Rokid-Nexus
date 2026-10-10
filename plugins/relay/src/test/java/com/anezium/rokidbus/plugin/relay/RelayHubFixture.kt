@@ -69,7 +69,10 @@ internal class FakeHub : IBusService.Stub() {
         return PluginRegistrationResult.APPROVED
     }
     override fun capabilities(): Int = features
-    override fun approvedCapabilities(pluginId: String): String = CAPABILITIES
+    /** What the hub answers when a client asks for its grants on approval. */
+    var granted: String = CAPABILITIES
+
+    override fun approvedCapabilities(pluginId: String): String = granted
 
     fun deliver(path: String, payload: JSONObject) {
         val target = checkNotNull(callback) { "no registered client" }

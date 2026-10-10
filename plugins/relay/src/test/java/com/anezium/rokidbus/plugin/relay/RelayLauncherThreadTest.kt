@@ -273,6 +273,7 @@ class RelayLauncherThreadTest {
         typeOnTheBand("On my way")
 
         // The surfaces grant goes: the next update of the band cannot reach the glasses.
+        hub.granted = "stt,tts"
         hub.deliverToEveryClient(BusPaths.PLUGIN_REGISTRATION) {
             JSONObject().put("result", PluginRegistrationResult.APPROVED).put("capabilities", "stt,tts").put("noticeInteractionVersion", 1)
         }
