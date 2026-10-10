@@ -5,31 +5,39 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Rokid Nexus — l'accueil lunettes, mockup complet (plan 027)</title>
 <style>
-  :root{--ph:#71FF97;--ink:#c8d6cc;--mute:#7E9585;--dim:#2f6b45;--hair:#1d3a28;--page:#0a0d0b;--card:#111614;--line:#1e2a23;--txt:#d7ded9;--txt2:#9aa69e;
+  /* HUD palette: the glasses' fixed additive colours, used only inside .frame. */
+  :root{--ph:#71FF97;--ink:#c8d6cc;--mute:#7E9585;--dim:#2f6b45;--hair:#1d3a28;
     --mono:ui-monospace,"Cascadia Mono","JetBrains Mono",Consolas,monospace;--sans:system-ui,"Segoe UI",Inter,sans-serif;--scale:.75}
+  /* Review-chrome palette, outside the HUD only. It follows the T3 thread theme variables when they
+     are injected; light-dark() follows the root color-scheme that T3 sets, and resolves to the light
+     value in a standalone browser, whose canvas behind the transparent page is white. */
+  :root{--o-fg:var(--foreground,#27272a);--o-fg2:var(--muted-foreground,#5f5f69);--o-line:var(--input,#d4d4d8);
+    --o-surf:var(--card,#ffffff);--o-surf2:var(--muted,#f7f7f8);
+    --o-acc:light-dark(#1d7a3c,#71FF97);--o-warn:light-dark(#8a5d00,#e0b54a);--o-no:light-dark(#b3261e,#e06666);--o-ok:light-dark(#1d7a3c,#66cc66)}
   *{box-sizing:border-box}
-  html,body{background:var(--page);color:var(--txt);font-family:var(--sans);margin:0;line-height:1.5}
-  header{position:sticky;top:0;z-index:10;background:rgba(10,13,11,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line);padding:12px 28px;display:flex;align-items:center;gap:18px;flex-wrap:wrap}
-  header h1{font-family:var(--mono);font-size:14px;letter-spacing:.14em;text-transform:uppercase;color:var(--ph);margin:0 18px 0 0}
-  header nav a{color:var(--txt2);text-decoration:none;font-size:13px;margin-right:14px}
-  header nav a:hover{color:var(--txt)}
-  .scale{margin-left:auto;font-family:var(--mono);font-size:12px;color:var(--txt2);display:flex;gap:6px;align-items:center}
-  .scale button{background:transparent;border:1px solid var(--line);color:var(--txt2);border-radius:6px;padding:3px 9px;font:inherit;cursor:pointer}
-  .scale button.on{color:var(--ph);border-color:var(--dim)}
-  main{max-width:1560px;margin:0 auto;padding:28px}
-  h2{font-family:var(--mono);font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:var(--txt2);margin:44px 0 8px;display:flex;align-items:baseline;gap:14px}
-  h2 small{font-size:12px;letter-spacing:0;text-transform:none;color:var(--mute)}
-  p.lead{margin:0 0 16px;font-size:14.5px;color:var(--txt2);max-width:86ch}
-  p.lead b{color:var(--txt)}
+  /* Published inline on the thread: transparent page, fluid width, no outer padding or title banner. */
+  html,body{background:transparent;color:var(--o-fg);font-family:var(--sans);margin:0;line-height:1.5}
+  .bar{display:flex;align-items:center;gap:10px 18px;flex-wrap:wrap;padding:0 0 12px;border-bottom:1px solid var(--o-line)}
+  .bar nav{display:flex;flex-wrap:wrap;gap:2px 14px;max-width:100%}
+  .bar nav a{color:var(--o-fg2);text-decoration:none;font-size:13px}
+  .bar nav a:hover{color:var(--o-fg)}
+  .scale{margin-left:auto;font-family:var(--mono);font-size:12px;color:var(--o-fg2);display:flex;gap:6px;align-items:center}
+  .scale button{background:transparent;border:1px solid var(--o-line);color:var(--o-fg2);border-radius:6px;padding:3px 9px;font:inherit;cursor:pointer}
+  .scale button.on{color:var(--o-acc);border-color:currentColor}
+  main{max-width:1560px;margin:0 auto;padding:12px 0 28px}
+  h2{font-family:var(--mono);font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:var(--o-fg);margin:44px 0 8px;display:flex;align-items:baseline;gap:14px}
+  h2 small{font-size:12px;letter-spacing:0;text-transform:none;color:var(--o-fg2)}
+  p.lead{margin:0 0 16px;font-size:14.5px;color:var(--o-fg2);max-width:86ch}
+  p.lead b{color:var(--o-fg)}
   .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(calc(480px * var(--scale) + 2px),1fr));gap:22px 18px}
-  .shot .tag{display:inline-block;font-family:var(--mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;padding:1px 7px;border:1px solid var(--line);border-radius:4px;color:var(--txt2);margin-bottom:8px}
-  .shot .tag.d{color:var(--ph);border-color:var(--dim)}
-  .shot .cap{font-size:12.5px;color:var(--txt2);margin-top:8px;max-width:calc(480px * var(--scale) + 2px)}
-  .shot .cap b{color:var(--txt);font-weight:600}
-  .ok,.lim,.no{display:inline-block;font-family:var(--mono);font-size:12px;padding:0 5px;border-radius:4px;margin-right:4px;border:1px solid}
-  .ok{color:#6c6;border-color:#3a6a3a}.lim{color:#db5;border-color:#6a5a2a}.no{color:#d66;border-color:#6a3a3a}
+  .shot .tag{display:inline-block;font-family:var(--mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;padding:1px 7px;border:1px solid var(--o-line);border-radius:4px;color:var(--o-fg2);margin-bottom:8px}
+  .shot .tag.d{color:var(--o-acc);border-color:color-mix(in srgb,currentColor 45%,transparent)}
+  .shot .cap{font-size:12.5px;color:var(--o-fg2);margin-top:8px;max-width:calc(480px * var(--scale) + 2px)}
+  .shot .cap b{color:var(--o-fg);font-weight:600}
+  .ok,.lim,.no{display:inline-block;font-family:var(--mono);font-size:12px;padding:0 5px;border-radius:4px;margin-right:4px;border:1px solid color-mix(in srgb,currentColor 45%,transparent)}
+  .ok{color:var(--o-ok)}.lim{color:var(--o-warn)}.no{color:var(--o-no)}
   .wrap{width:calc(480px * var(--scale) + 2px);height:calc(640px * var(--scale) + 2px);position:relative;overflow:hidden;border-radius:12px;background:#000;border:1px solid #1c2a21}
-  .frame{position:absolute;left:1px;top:1px;width:480px;height:640px;transform-origin:0 0;transform:scale(var(--scale));background:#000;color:var(--ph);font-family:var(--mono);overflow:hidden}
+  .frame{position:absolute;left:0;top:0;width:480px;height:640px;transform-origin:0 0;transform:scale(var(--scale));background:#000;color:var(--ph);font-family:var(--mono);overflow:hidden}
   .frame svg text{font-family:var(--mono)}
   .abs{position:absolute}
   /* backgrounds */
@@ -83,26 +91,157 @@
   .doc .me{color:var(--mute);text-align:right}
   .doc .ts{font-family:var(--mono);font-size:12px;color:var(--mute);margin:10px 0 2px}
   table{border-collapse:collapse;width:100%;font-size:13px;margin-top:8px;max-width:1100px}
-  th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);vertical-align:top}
-  th{font-family:var(--mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--txt2);font-weight:500}
-  td.chg{color:#db5}
+  th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--o-line);vertical-align:top}
+  th{font-family:var(--mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--o-fg2);font-weight:500}
+  td.chg{color:var(--o-warn)}
   .rules{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px;margin:14px 0 4px;max-width:1300px}
-  .rule{border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-size:12.5px;background:var(--card)}
-  .rule b{display:block;font-family:var(--mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--ph);margin-bottom:4px}
-  .rule.taken b{color:#d66}
-  footer{margin:60px 0 20px;font-size:12px;color:var(--mute);font-family:var(--mono)}
+  .rule{border:1px solid var(--o-line);border-radius:10px;padding:10px 12px;font-size:12.5px;background:var(--o-surf)}
+  .rule b{display:block;font-family:var(--mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--o-acc);margin-bottom:4px}
+  .rule.taken b{color:var(--o-no)}
+  footer{margin:60px 0 20px;font-size:12px;color:var(--o-fg2);font-family:var(--mono)}
+  /* ---------- review chrome (outside the HUD) ---------- */
+  :root{--lscale:.5;--pa:light-dark(#1d7a3c,#71FF97);--paA:light-dark(#8a5d00,#e0b54a);--pb:light-dark(#0f6b80,#6cc6d9);--p4:light-dark(#7140b0,#c49cf0);--p5:light-dark(#a8431c,#e88f6a);--pid:light-dark(#4b5563,#b9c4bd)}
+  .grid{grid-template-columns:repeat(auto-fill,minmax(min(100%,calc(480px * var(--scale) + 2px)),1fr))}
+  /* No internal scrolling: applyScale() clamps every frame to the width its cell really has. */
+  .shot{min-width:0;scroll-margin-top:12px}
+  .shot.hide,section.hide{display:none}
+  .meta{display:flex;flex-wrap:wrap;gap:5px;align-items:center;margin-bottom:6px;font-family:var(--mono);font-size:12px}
+  .meta .num{color:var(--o-fg2)}
+  .ph{display:inline-block;padding:0 6px;border:1px solid color-mix(in srgb,currentColor 45%,transparent);border-radius:4px;line-height:1.55;white-space:nowrap}
+  .ph.a{color:var(--pa)}.ph.aA{color:var(--paA);border-style:dashed}
+  .ph.b{color:var(--pb)}.ph.p4{color:var(--p4)}.ph.p5{color:var(--p5)}
+  .ph.sim{color:var(--o-fg2);border-color:var(--o-line)}.ph.fic{color:var(--o-warn)}
+  .ph.ill{color:var(--o-fg2);border-color:var(--o-line);border-style:dashed}.ph.prop{color:var(--o-fg2);border-color:var(--o-line);border-style:dotted}
+  .status{border:1px dashed color-mix(in srgb,var(--o-warn) 55%,transparent);border-radius:10px;padding:10px 14px;margin:0 0 18px;font-size:13.5px;color:var(--o-fg);max-width:110ch;background:color-mix(in srgb,var(--o-warn) 7%,transparent)}
+  .status b{color:var(--o-warn)}.status .ph{color:var(--o-fg)}.status a{color:var(--o-acc)}
+  .legend{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,250px),1fr));gap:10px;margin:14px 0 4px;max-width:1300px}
+  .legend div{border:1px solid var(--o-line);border-radius:10px;padding:10px 12px;font-size:12.5px;background:var(--o-surf)}
+  .legend .ph{margin-bottom:6px}
+  .ctl{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-family:var(--mono);font-size:12px;color:var(--o-fg2)}
+  .ctl button,.ctl select{background:transparent;border:1px solid var(--o-line);color:var(--o-fg2);border-radius:6px;padding:3px 9px;font:inherit;cursor:pointer}
+  .ctl select{max-width:100%;width:340px;background:var(--o-surf);color:var(--o-fg)}
+  .ctl{max-width:100%}
+  .ctl button.on{color:var(--o-acc);border-color:currentColor}
+  .scale{margin-left:0}
+  .lanes{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,calc(480px * var(--lscale) + 30px)),1fr));gap:22px 18px;max-width:1300px}
+  .lane{border:1px solid var(--o-line);border-radius:12px;padding:12px;background:var(--o-surf2);min-width:0}
+  .lane h3{font-family:var(--mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--o-fg);margin:0 0 10px;font-weight:500}
+  .lane .shot{--scale:var(--lscale)}
+  .lane .step{font-family:var(--mono);font-size:12px;color:var(--o-fg2);margin:6px 0 10px}
+  .lane .step.alt{color:var(--o-warn);border-top:1px dashed color-mix(in srgb,var(--o-warn) 55%,transparent);padding-top:8px;margin-top:14px}
+  .tbl{overflow-x:auto;max-width:100%}
+  /* ---------- flow-laid HUD screens (mirror SessionScreenView metrics) ---------- */
+  .vp{position:absolute;left:18px;right:18px;top:71px;bottom:41px;display:flex;flex-direction:column;gap:8px;overflow:hidden}
+  .vc{flex:none;border:2px solid var(--hair);border-radius:12px;padding:10px 14px 12px}
+  .vc.sel{border-color:var(--ph)}.vc.end{border-style:dashed}
+  .vc .l{display:flex;justify-content:space-between;gap:10px;font-size:12px;letter-spacing:.14em;color:var(--mute);white-space:nowrap}
+  .vc .l span:first-child{overflow:hidden;text-overflow:ellipsis}
+  .vc .p{display:flex;align-items:flex-end;gap:10px;padding-top:6px}
+  .vc .p b{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:30px;line-height:1.2;font-weight:700;color:var(--ph)}
+  .vc .p b.bd{font:400 17px/1.35 var(--sans);color:var(--ink)}
+  .vc .p small{font-size:12px;color:var(--mute);white-space:nowrap}
+  .vc .s{font:17px/1.35 var(--sans);color:var(--ink);padding-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .vc .u{font:12px/1.4 var(--sans);color:var(--mute);padding-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .vc.end .p b,.vc.end .s,.vc.end .p b.bd{color:var(--mute)}
+  .vr{flex:none;min-height:46px;border:2px solid var(--hair);border-radius:12px;padding:8px 16px;display:flex;align-items:center;gap:12px;font-family:var(--sans)}
+  .vr .t{flex:1;min-width:0}.vr .t>div:first-child{font-size:17px;line-height:1.3;color:var(--ink)}
+  .vr .t>div+div{font-size:12px;color:var(--mute);padding-top:2px;line-height:1.35}
+  .vr .tr{font:12px var(--mono);color:var(--mute);white-space:nowrap}
+  .vr.sel{border-color:var(--ph)}.vr.sel .t>div:first-child{color:var(--ph)}
+  .vr.dis .t>div:first-child{color:var(--mute)}.vr.tomb{border-style:dashed}
+  .vr.ctr{justify-content:center;text-align:center}.vr.ctr .t{flex:none}
+  .vt{flex:none;margin:0 4px;line-height:1.25;font-family:var(--sans)}
+  .vt.fig{font:700 30px/1.2 var(--mono);color:var(--ph)}.vt.tit{font-size:20px;color:var(--ink)}.vt.bod{font-size:17px;color:var(--ink)}
+  .vt.vcap{font-size:12px;color:var(--mute)}.vt.vsec{font:12px var(--mono);letter-spacing:.14em;color:var(--mute)}
+  .vt.c{text-align:center}.vt.dim{color:var(--mute)}
+  .vf{flex:none;margin:0 4px;display:flex;align-items:center;gap:12px}
+  .vf span{flex:1;font:12px var(--mono);letter-spacing:.1em;color:var(--mute);text-transform:none}
+  .vf b{font:400 17px var(--sans);color:var(--ink);text-align:right}.vf.dim b{color:var(--mute)}
+  .vd{flex:none;margin:0 4px;display:flex;flex-direction:column;gap:10px;font-family:var(--sans)}
+  .vd .H{font:12px var(--mono);color:var(--mute);letter-spacing:.06em}.vd .P{font-size:17px;line-height:1.4;color:var(--ink)}
+  .vd .A{font-size:13px;color:var(--mute)}.vd.dim .P{color:var(--mute)}
+  .vg{flex:none;height:3px;background:#163020;border-radius:2px;margin:0 100px}.vg>div{height:3px;background:var(--ph);border-radius:2px}
+  /* App identity marks (target and proposal panels only): the plugin's own 24-unit stroke mark.
+     Grey at rest, bright on the selected card or row, grey on an ended card, bright in a page header. */
+  .am{flex:none;display:block;color:var(--mute)}
+  .hdr .id,.vc .l .id,.lbl .id{display:flex;align-items:center;min-width:0}
+  .hdr .id{gap:10px}.vc .l .id,.lbl .id{gap:8px}
+  .hdr .id>span,.vc .l .id>span,.lbl .id>span{overflow:hidden;text-overflow:ellipsis}
+  .hdr .am{color:var(--ph)}
+  .vc.sel .am,.card.sel .am,.vr.sel .am,.item.sel .am{color:var(--ph)}
+  .vc.end .am,.card.dead .am{color:var(--mute)}
+  /* Hub-place glyphs on the target root access rows: they say where the row leads, not who speaks,
+     so they are not app marks and never count as one. Same stroke, size and brightness rule. */
+  .hg{flex:none;display:block;color:var(--mute)}
+  .vr.sel .hg,.item.sel .hg{color:var(--ph)}
+  /* Target conversation (not the delivered document renderer): received on the left, our replies on
+     the right. Outlines and spacing only, never a filled bubble; 17 px text, no per-message time. */
+  .vch{flex:none;display:flex;flex-direction:column;gap:8px;margin:0 2px;font-family:var(--sans)}
+  .vch .ct{font:12px var(--mono);letter-spacing:.06em;color:var(--mute);text-align:center;margin-bottom:2px}
+  .cm{max-width:80%;font-size:17px;line-height:1.35;color:var(--ink);border:1.5px solid var(--hair);padding:7px 13px;overflow-wrap:anywhere}
+  .cm.them{align-self:flex-start;border-radius:14px 14px 14px 4px}
+  .cm.me{align-self:flex-end;border-color:var(--dim);border-radius:14px 14px 4px 14px}
+  .cm.new{color:var(--ph)}
+  .vch.dim .cm{color:var(--mute)}
+  /* Target Relay conversation (r15): the chat above, the reply footer below, on one screen. Footer
+     controls are outlines only: dim at rest, the selected one bright; nothing is filled. A dashed
+     bubble on our side is a draft that has not been handed to the app. The page sits on the footer, like a
+     chat: the newest message, or our draft, is the one closest to Type and Dictate. */
+  .rc{position:absolute;left:18px;right:18px;top:71px;bottom:112px;overflow:hidden;display:flex;flex-direction:column;justify-content:flex-end}
+  .rf{position:absolute;left:18px;right:18px;bottom:48px;height:56px;display:flex;gap:10px}
+  .rf .b{flex:1;min-width:0;display:flex;align-items:center;justify-content:center;gap:10px;border:2px solid var(--dim);border-radius:12px;font:17px var(--sans);color:var(--ink);white-space:nowrap}
+  .rf .b.sel{border-color:var(--ph);color:var(--ph)}
+  .rf .s{flex:1;min-width:0;display:flex;align-items:center;gap:14px;border:2px solid var(--ph);border-radius:12px;padding:0 16px;color:var(--ph);font-family:var(--sans)}
+  .rf .s.off{border:2px dashed var(--hair);color:var(--mute)}
+  .rf .s b{display:block;font-weight:400;font-size:17px;line-height:1.25;color:var(--ink)}
+  .rf .s.off b{color:var(--mute)}
+  .rf .s small{display:block;font:12px/1.35 var(--mono);color:var(--mute)}
+  .rf svg{flex:none}
+  .cm.dr{border-style:dashed;border-color:var(--ph)}
+  .cmeta{align-self:flex-end;font:12px var(--mono);color:var(--mute);margin-top:-4px}
+  .crt{display:inline-block;width:2px;height:1.05em;background:var(--ph);margin-left:3px;vertical-align:-2px}
+  /* Identity sheet, outside the HUD: black tiles like .wrap, theme-aware text around them. */
+  .ph.id{color:var(--pid);border-style:dashed}
+  .ids{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,270px),1fr));gap:10px;margin:14px 0 4px;max-width:1300px}
+  .ids>div{display:flex;gap:12px;align-items:flex-start;border:1px solid var(--o-line);border-radius:10px;padding:10px 12px;font-size:12.5px;background:var(--o-surf);color:var(--o-fg2);min-width:0}
+  .ids>div>div:last-child{min-width:0}
+  .ids .sw{flex:none;display:flex;align-items:center;gap:8px;background:#000;border:1px solid #1c2a21;border-radius:8px;padding:8px 10px}
+  .ids b{color:var(--o-fg)}
+  .ids code{font-family:var(--mono);font-size:12px;color:var(--o-fg2);overflow-wrap:anywhere}
+  .ph.cv,.ph.ty{color:var(--pid);border-style:dotted}
+  /* Gallery view: target first, delivered-code references on request. Folded review notes. */
+  .keys.hide,.refnote.hide{display:none}
+  .refnote{font-family:var(--mono);font-size:12px;color:var(--o-fg2);margin:0 0 12px}
+  .refnote button{background:transparent;border:1px solid var(--o-line);color:var(--o-fg2);border-radius:6px;padding:1px 8px;font:inherit;cursor:pointer;margin-left:6px}
+  details.fold{margin:6px 0 4px}
+  details.fold>summary{cursor:pointer;font-family:var(--mono);font-size:12px;color:var(--o-fg2);margin:4px 0}
+  .status details.fold>summary{color:var(--o-fg)}
+  .shot .cap a.back{color:var(--o-acc)}
+  @media (max-width:700px){
+    h2{flex-wrap:wrap;gap:4px 12px}
+  }
 </style>
 </head>
 <body>
-<header>
-  <h1>Rokid Nexus · accueil lunettes</h1>
-  <nav><a href="#p">Principes</a><a href="#amb">Ambiant</a><a href="#stack">La pile</a><a href="#nav">Navigation</a><a href="#relay">Relay &amp; notifs</a><a href="#states">États</a><a href="#transit">Transports</a><a href="#gram">Grammaire</a></nav>
-  <div class="scale">échelle <button data-s=".5">½</button><button data-s=".75" class="on">¾</button><button data-s="1">1:1</button></div>
-</header>
 <main>
+<div class="bar">
+  <nav><a href="#keys">Écrans clés</a><a href="#p">Principes</a><a href="#ident">Identité</a><a href="#amb">Ambiant</a><a href="#stack">La pile</a><a href="#nav">Navigation</a><a href="#relay">Relay &amp; notifs</a><a href="#d2">D2</a><a href="#states">États</a><a href="#transit">Transports</a><a href="#gram">Grammaire</a></nav>
+  <div class="ctl" id="modes" aria-label="Choisir la vue">vue <button data-m="t" class="on">Cible</button><button data-m="c">Code livré · références</button><button data-m="">Tout</button></div>
+  <div class="ctl" id="phases" aria-label="Filtrer par phase">phase <button data-p="" class="on">Tout</button><button data-p="a">PR3a</button><button data-p="aA">PR3a-A</button><button data-p="b">PR3b</button><button data-p="p4">PR4</button><button data-p="p5">PR5</button><button data-p="id">Marques</button><button data-p="cv">Conversation</button><button data-p="ty">Reply + Type</button></div>
+  <div class="ctl scale">échelle <button data-s="auto" class="on">auto</button><button data-s=".5">½</button><button data-s=".75">¾</button><button data-s="1">1:1</button></div>
+  <div class="ctl"><select id="jump" aria-label="Aller au panneau"><option value="">Aller au panneau…</option></select></div>
+</div>
+
+<div class="status"><b>Brouillon, non validé. r17 du 2026-10-10 : la conversation Relay est simplifiée à la demande du propriétaire (r15), corrigée d'après la revue indépendante R6 (r16), puis Dictate passe avant Type (r17).</b> Le fil s'ouvre directement en conversation, sur sa page la plus récente ; le swipe tourne les pages ; deux gros boutons <b>Dictate</b> et <b>Type</b> restent en bas du même écran ; la saisie et le brouillon restent dans le fil (4.8 à 4.13, 4.19 à 4.22). Plus de page de détail, de choix du mode ni de relecture. Fable 5.1, consultée par API, a conseillé ce parcours ; sa réponse est partielle (coupée en cours de liste) et n'est pas une revue. La revue indépendante R6 a examiné r15 : demande du propriétaire tenue, simplification juste, mais pas prête avant deux corrections de texte obligatoires (le triple tap pendant une saisie, la règle d'un brouillon devenu indisponible). r16 applique ces deux corrections et deux conseillées (une exigence non testée dite comme telle en 4.13, le titre MIKA de 4b.7), avec les vérifications bornées de l'auteur que R6 autorise ; aucune nouvelle revue complète n'a examiné r16 ; le parent l'a vérifié dans ces limites puis publié. Le propriétaire accepte ce parcours à une retouche près : Dictate en premier, puisque la dictée est le défaut. r17 ne fait que cela (voir l'historique) ; seule la vérification bornée de l'auteur couvre r17, celle du parent reste à faire. La galerie s'ouvre sur la vue <b>Cible</b>. Les simulations du code livré (texte seul, libellés anglais du code) sont dans la vue <b>Code livré · références</b> : elles montrent ce que rend le code aujourd'hui, pas la cible là où elle diffère ; les états PR3a-A (5.1, 5.3–5.7) restent aussi le comportement voulu, 5.2 montre l'état d'avant A, remplacé. La retouche r13 a rendu leur glyphe de lieu à Notifications (cloche) et Applications (grille) sur toutes les racines cibles, remet le fil Relay cible en conversation (messages reçus à gauche, nos réponses à droite) et ajoute la bande Reply + Type voulue quand la saisie est activée (1.11, 1.12). Aucune de ces trois cibles n'est implémentée ni attribuée à une phase. La revue indépendante R5 a examiné r13 : prête pour la revue visuelle provisoire du propriétaire, aucune correction obligatoire, deux corrections de texte conseillées. r14 applique ces deux corrections, hors HUD, avec les vérifications bornées demandées par R5 ; R5 n'a pas revu r14. Revue formelle de Fable, test sur appareil et sur l'optique, et validation visuelle du propriétaire restent en attente : rien ici n'approuve le mockup. Le défaut livré reste le lanceur <b>LEGACY</b> ; le backend <b>SESSION</b> de PR3a est opt-in pour validation.
+<details class="fold"><summary>Historique des revues et lecture des badges</summary><b>r17, Dictate en premier.</b> Le propriétaire accepte le parcours simplifié de r16 et demande seulement Dictate en premier, puisque la dictée est le défaut. Dans la conversation cible, les boutons se lisent Dictate puis Type, et Envoyer, Dictate, Type quand un brouillon existe ; les légendes, la grammaire et les écrans clés suivent cet ordre. Quand le focus descend sur les boutons sans brouillon, Dictate est présélectionné (4.9). Deux exceptions voulues gardent le focus sur Type : micro des lunettes indisponible (4.11, jamais de repli sur le micro du téléphone) et transmission non confirmée (4.21, Type rouvre le texte gardé). La saisie au clavier (4.10) reste un écran Type. Envoyer, le brouillon et sa règle de contact ne changent pas. La bande de notice (Reply + Type), les simulations du code et les marques sont inchangées. Aucune revue complète, aucun test sur appareil, aucune approbation de Fable ne couvre r17. <b>r16, corrections R6.</b> La revue indépendante R6 a examiné r15 exactement : pas prête avant deux corrections obligatoires, toutes deux du texte hors HUD. Dans la grammaire, le triple tap pendant une saisie n'est plus présenté comme « termine puis racine » : il n'est pas reconnu, comme pour tout champ focalisé aujourd'hui, et tap termine ou back annule d'abord. La règle d'un brouillon devenu indisponible est la même en 4.22, en 4b.10 et dans la grammaire : perte de l'autorisation de répondre, le texte reste mais ne part plus tel quel ; perte de liaison seule, brouillon inchangé, envoyable seulement par un nouvel Envoyer revérifié ; nouvelle notification répondable du même fil, Type rouvre l'ancien texte comme une nouvelle saisie. r16 applique aussi deux corrections conseillées : en 4.13, « deux taps rapides ne peuvent pas envoyer » devient une exigence pour le runtime, non testée ; 4b.7 prend le titre MIKA, comme 4b.10. C'est le seul changement dans un HUD. Mesures du parent sur r15 dans l'onglet natif T3, bandeau d'état seulement (texte régulier et gras représentatifs) : contraste 13,20 / 5,11 en clair, 16,57 / 9,36 en sombre. Ce n'est ni un audit de toute la page ni une preuve sur l'optique ; le 1,41 approximatif de l'auteur pour r15 n'était pas une mesure réelle. Aucune nouvelle revue complète n'a examiné r16. <b>r15, conversation Relay simplifiée.</b> Le propriétaire a trouvé Relay trop compliqué : trop de menus et d'options pour peu de chose. Avant (r14) : carte → détail (Lire le fil / Répondre) → fil → commandes → choix du mode → relecture (Modifier / Transmettre / Effacer). Après : carte, fil de la liste ou fil exact d'une notice → la conversation ; tap → Type ou Dictate (r15 ; Dictate passe en premier en r17) ; la saisie s'écrit dans une bulle en pointillé ; tap pour finir ; tap puis tap sur Envoyer. Les panneaux 4.8 à 4.13 et 4.19 sont redessinés à leurs numéros, 4.20 à 4.22 sont ajoutés, 4b.7 reprend le même écran ; r14 reste lisible dans la copie de référence. Fable 5.1 a été consultée par API à la demande du propriétaire : réponse partielle, conseil seulement, pas une revue. Aucune revue n'avait examiné r15 à ce stade ; R6 l'a examiné ensuite (voir r16). Les 28 simulations du code sont inchangées. <b>Retouche « marques d'app » (r10 à r12).</b> Le propriétaire a relevé que certains écrans montrent des icônes d'app et d'autres non. Cette retouche applique une seule règle de marque d'app aux panneaux cibles (section <a href="#ident">Identité des apps</a>) et ajoute trois contreparties proposées, 2.18, 4.17 et 4.18 ; les simulations du code restent en texte seul, comme le rendu livré. La revue indépendante Opus du mockup (tour 4) a examiné la première version de cette retouche (r10) et demandé des corrections limitées (marque de Navigation, source de Vivo Promo, libellés des apps Rokid et du travail futur). Opus les a appliquées (r11), puis le parent a fait la vérification légère et bornée que le tour 4 autorisait : les quatre points sont résolus. r12 n'a changé que ce bandeau et le pied de page. Le propriétaire n'a pas validé r12 et a demandé la retouche r13. La revue indépendante R5 a examiné r13 exactement : aucune correction obligatoire, deux corrections de texte conseillées, ce bandeau (il disait à tort que les simulations du code ne sont jamais la cible) et la légende de 4.19 (elle ne bornait pas l'historique). r14 les applique et rafraîchit ce bandeau et le pied de page ; R5 n'a pas revu r14, et ni le tour 4 (r10) ni le tour 3 (r9) ne couvrent r13 ou r14. L'approbation existante du code source par la revue Opus R4 est inchangée. Le badge <span class="ph id">marques d'app · proposition non planifiée</span> signale chaque panneau qui dessine une marque d'app ; <span class="ph cv">fil en conversation · cible non planifiée</span> chaque panneau qui dessine le fil Relay en conversation ; <span class="ph ty">Reply + Type · cible non planifiée</span> la bande voulue quand la saisie est activée. Ces présentations ne sont attribuées à aucune phase : la phase d'un panneau décrit son contenu, pas ces présentations. Les badges de phase et de provenance sont hors du HUD : rien de technique n'est dessiné dans l'écran produit. Seul le badge <span class="ph sim">simulation · libellés du code</span> affirme un rendu tiré du code Kotlin (simulation, pas une capture de l'appareil) ; <span class="ph ill">comportement livré · illustration</span> décrit un comportement existant avec un dessin approximatif ; <span class="ph prop">libellés proposés</span> marque un texte à valider ; les panneaux sans ces badges sont des cibles. La vue Cible montre tout panneau sans le badge de simulation du code ; la vue Code livré montre exactement ces simulations ; chaque section dit combien de références elle masque.</details></div>
+
+<section class="keys" id="s-keys">
+<h2 id="keys">Écrans clés de la cible <small>copies des panneaux de la galerie · racine, applications, conversation Relay avec Dictate et Type, bande Reply + Type</small></h2>
+<div class="grid" id="g-keys"></div>
+</section>
 
 <h2 id="p">0 · Principes <small>plan 027 · 480×640 · optique verte additive</small></h2>
-<p class="lead"><b>L'ambiant est la porte pour voir, la pile est la porte pour agir.</b> Les notices, les îles d'activité et les pins se posent par-dessus le home Rokid et les apps. Une notice garde exactement les gestes qu'elle réclame aujourd'hui : tap = la réponse présélectionnée, swipe = une autre réponse ou la page suivante, double tap = fermer. Tant qu'elle est armée, le triple tap n'est pas reconnu. Les îles d'activité et les pins sont passifs partout : aujourd'hui l'île vole le tap du home (il ouvre le plugin) et ses swipes bloquent la navigation des tuiles ; la pile remplace ça. Le triple tap ouvre la session Nexus par-dessus n'importe quoi ; elle possède alors tous les gestes jusqu'au Back. Dedans, une pile courte de cartes, et des pages dessinées par le hub à partir des données des plugins. On n'« ouvre » plus un plugin pour consulter.</p>
+<p class="lead"><b>L'ambiant est la porte pour voir, la pile est la porte pour agir.</b> Les notices, les îles d'activité et les pins se posent par-dessus le home Rokid et les apps. Une notice garde exactement les gestes qu'elle réclame aujourd'hui : tap = la réponse présélectionnée, swipe = une autre réponse ou la page suivante, double tap = fermer. Tant qu'elle est armée, le triple tap n'est pas reconnu. Les îles d'activité et les pins sont passifs partout, livré depuis PR2 (avant, l'île volait le tap du home pour ouvrir le plugin et ses swipes bloquaient les tuiles) ; la pile prend le relais pour agir. Le triple tap ouvre la session Nexus par-dessus n'importe quoi ; elle possède alors tous les gestes jusqu'au Back. Dedans, une pile courte de cartes, et des pages dessinées par le hub à partir des données des plugins. On n'« ouvre » plus un plugin pour consulter.</p>
 <div class="rules">
   <div class="rule taken"><b>tap</b>l'app devant · la notice armée</div>
   <div class="rule taken"><b>double tap</b>Back, système</div>
@@ -114,56 +253,118 @@
 <div class="rules">
   <div class="rule"><b>Hiérarchie = luminosité</b>Vif pour ce qui compte maintenant, pâle pour les noms, sombre pour le contexte. Jamais d'aplat clair : il occulte le monde.</div>
   <div class="rule"><b>Un axe, quatre primitives</b>STEP ±, SELECT, BACK, GLOBAL. Rien n'exige un deuxième axe, un pointage, un maintien, une bague.</div>
-  <div class="rule"><b>Ordre gelé en session</b>La pertinence réordonne entre deux ouvertures, jamais sous le doigt. Une carte terminée reste en place.</div>
+  <div class="rule"><b>Ordre gelé en session</b>La pertinence réordonne entre deux ouvertures, jamais sous le doigt. Une carte terminée ou résolue reste en place, inerte, jusqu'à la fermeture de la session.</div>
   <div class="rule"><b>Pages tirées, pas plugins ouverts</b>Le hub demande la page au tap, la dessine avec ses modèles, Back dépile. L'app dessous n'est jamais fermée.</div>
   <div class="rule"><b>Immersion = exception</b>Caméra, lecture continue, saisie, jeu. Toujours nommée par sa fonction, jamais déguisée en détail.</div>
   <div class="rule"><b>Tailles mini</b>Chiffre principal ≥ 30 px, nom ≥ 17 px, tertiaire ≥ 12 px. Deux noms de rue max par carte, zéro dans le chip.</div>
 </div>
+<h2 id="legend">Jalons <small>chaque panneau porte sa phase au-dessus du cadre · combinaisons possibles</small></h2>
+<details class="fold"><summary>Lire les jalons, les badges et les règles de la carte Relay</summary>
+<div class="legend">
+  <div><span class="ph a">PR3a · livré</span><br>Ce que rend le code aujourd'hui, backend SESSION opt-in. Racine réelle dont l'ordre et l'appartenance sont gelés jusqu'à la fermeture : ≤ 2 activités dans l'ordre primaire courant, dernière notice, <i>Activities · n</i> si besoin, <i>Notifications</i> 0/1, <i>Applications</i> sans compteur, ≤ 6 arrêts. L'aperçu de notice, lui, reste vivant : une notice plus récente remplace en place son texte, sa source et son heure. Quatre gabarits texte : summary, selectableList, document, commands. Libellés HUD en anglais, comme le code.</div>
+  <div><span class="ph aA">PR3a-A · en attente</span><br>Corrections approuvées par le propriétaire, implémentées en <code>ed083a99</code>, puis corrigées après revue jusqu'à <code>5a05b50d</code> ; 2368 tests observés (dont 881 côté lunettes), zéro échec, erreur ou test ignoré. Revue de code indépendante Opus (4e tour) : prête à fusionner, sans point bloquant. Revue Fable, test sur l'appareil et validation visuelle du propriétaire en attente. Un texte trop long se lit page par page (swipe = page, tap = commandes, Back = retour au texte puis dépile) ; une page indisponible garde son contenu lisible, grisé, daté, seuls Retry et Back agissent.</div>
+  <div><span class="ph b">PR3b</span><br>Résolveur de premier plan, modes ambiants par app, budgets, bascule du défaut, destination de Back nommée. Texte de contrat du résumé racine (runtime en PR4) et référence authentifiée notice → fil exact (D2), négociée et revue à part.</div>
+  <div><span class="ph p4">PR4</span><br>Centre de notifications : carte Relay promue conditionnelle à la racine, historique borné (politique à fixer), états locaux honnêtes, réponse dans la conversation (Dictate, Type, brouillon gardé) et transmission revalidée.</div>
+  <div><span class="ph p5">PR5</span><br>Cartes, médias et vecteurs, préférences d'affichage et tailles ambiantes, filtres de groupes. Les cartes ne zooment pas : on change de vue et on passe en plein écran, avec le seul axe de swipe, tap et Back. <span class="ph fic">illustration · rues fictives</span> : géométrie, rues et virages inventés, jamais des données livrées.</div>
+  <div><span class="ph id">marques d'app · proposition non planifiée</span><br>Le panneau dessine la marque d'une app (voir Identité des apps). Proposition de présentation du hub, rattachée à aucune phase : sa propre phase décrit le contenu, pas les marques. Le rendu livré n'en dessine aucune.</div>
+  <div><span class="ph cv">fil en conversation · cible non planifiée</span><br>Le panneau dessine un fil Relay en conversation : messages reçus à gauche, nos réponses à droite, contours seulement ; depuis r15, avec les boutons Dictate et Type sur le même écran. Cible voulue par le propriétaire, rattachée à aucune phase. Le rendu livré lit le fil comme un document, sans côté (voir 4.6 en vue Code livré).</div>
+  <div><span class="ph ty">Reply + Type · cible non planifiée</span><br>La bande de notice avec deux actions, Reply et Type, quand la saisie est activée. Cible voulue par le propriétaire, rattachée à aucune phase. Aujourd'hui Relay n'envoie que Reply (ou Show + Reply), voir 1.8.</div>
+</div>
+<div class="rules">
+  <div class="rule"><b>Carte Relay promue (PR4)</b>Éligible tant qu'une notification répondable existe avec un jeton de réponse vivant, sans transmission de réponse par Nexus et sans historique RemoteInput. Pas d'expiration à 24 h.</div>
+  <div class="rule"><b>Ce qui la retire</b>Retrait de la notification, Relay désactivé, accès révoqué, reconstruction du listener. Une réponse faite dans l'app du téléphone ne la retire que si cette app met à jour ou retire sa notification.</div>
+  <div class="rule"><b>Qui la fournit</b>Le résumé vient de la boîte Relay du téléphone ; le centre de notifications le place. Jamais une activité Relay, jamais déduit du seul historique des notices du hub.</div>
+  <div class="rule"><b>Où elle se met</b>Sous les activités réelles, à la place de l'aperçu générique, jamais en septième arrêt. Notifications et Applications toujours réservés. Plusieurs conversations = un seul agrégat.</div>
+</div>
+</details>
 
+<h2 id="ident">Identité des apps <small>une marque dit qui parle, un glyphe dit ce qui se passe · proposition non planifiée</small></h2>
+<details class="fold"><summary>Lire la règle, les sources des marques et les exceptions</summary>
+<p class="lead"><b>Une seule règle, partout où une app est identifiée.</b> La marque est celle que les hubs dessinent déjà pour ce plugin, résolue depuis son manifeste. Sur le téléphone, une clé <code>ICON</code> du jeu intégré au hub l'emporte, puis <code>ICON_DRAWABLE</code>, puis l'ancienne table par identifiant de plugin, puis la grille ; dans le lanceur livré des lunettes, la clé intégrée, puis l'entrée <code>nexus_glyphs</code> du plugin nommée par <code>ICON</code>, puis l'ancienne table, puis la grille. Trait seul de 1,7 sur 24, jamais remplie : sur l'optique additive un aplat devient une pastille verte. Elle se pose à gauche de l'étiquette des cartes de racine (18 px), du titre des pages d'une app (20 px), des entrées d'Applications et de la source dans Notifications (24 px). Grise au repos, vive sur la carte ou la ligne sélectionnée et dans l'en-tête, grise sur une carte terminée. Le texte ne rétrécit pas pour lui faire place, et les hauteurs d'en-tête (54 px) et de hint (40 px) ne changent pas. <b>Les simulations du code restent en texte seul</b> : SessionScreenView ne dessine aujourd'hui que du texte.</p>
+<div class="ids" id="g-ident"></div>
+<div class="rules">
+  <div class="rule"><b>Marque d'app</b>Cartes d'activité et carte Relay de la racine, aperçu de notice (marque de sa source), titre des pages d'une app, entrées d'Applications, source de chaque notification dans la collection.</div>
+  <div class="rule"><b>Pas de marque</b>Les lieux du hub (NEXUS, Activités, Notifications, Applications), les personnes (Mika, Alan : ni logo, ni avatar inventé), les commandes (Commandes, Retry, Back, Garder ; Dictate, Type et Envoyer portent un glyphe d'action, clavier, micro ou flèche, jamais une marque d'app), les vues de carte. Une liste qui n'appartient qu'à une app porte la marque une fois, au titre.</div>
+  <div class="rule"><b>Glyphe de lieu</b>Sur chaque racine cible, Notifications porte la cloche et Applications la grille : un glyphe qui dit où mène la ligne, pas une marque d'app. Même trait de 1,7, 24 px, gris au repos, vif sélectionné. Cloche : <code>bus-client/…/ic_plugin_bell.xml</code> ; grille : <code>ic_plugin_grid.xml</code>, le même tracé que le repli générique, parce que les deux disent « des apps ». Activités · n n'a pas de glyphe existant : question ouverte, rien d'inventé.</div>
+  <div class="rule"><b>Glyphes d'état, inchangés</b>Flèche de manœuvre, train, marche, GPS perdu, coche d'arrivée, batterie, clavier, micro : ils disent ce qui se passe, jamais qui parle. Le tracé « route » de Navigation est son glyphe de guidage quand la manœuvre est inconnue ; ce n'est pas sa marque, qui reste l'épingle que les deux hubs affichent déjà.</div>
+  <div class="rule"><b>Repli, placeholder, système</b>Source non identifiée (Vivo Promo) ou sans plugin identifié (Agenda) : la grille générique du hub, son repli existant pour un plugin sans icône. Apps Rokid (Teleprompter, Caméra) : la même grille, mais comme placeholder, car le mockup n'a pas de copie de leur icône ; le lanceur livré dessine déjà l'icône propre de l'app. Système des lunettes : c'est le hub lui-même, pas un plugin, donc pas de marque d'app ; la batterie dit ce qui se passe. Jamais une marque inventée, jamais un logo de Google Maps ou d'une autre app tierce. Le nom à côté dit de quelle app il s'agit.</div>
+  <div class="rule"><b>Exceptions voulues</b>Carte plein écran : rien ne couvre la carte, pas de marque. Couloirs D2 (4b) : les panneaux livrés restent en texte seul ; les pages cibles du couloir « fil exact » (4b.6 à 4b.10) portent la marque de Relay au titre et montrent le fil en conversation ; 4b.7 est le même écran que 4.8. Îles ambiantes : la flèche de manœuvre ou le train parle, une marque n'ajouterait que du bruit ; seul le chip Media Deck, qui n'a pas de glyphe d'état, garde la marque de son app (1.4).</div>
+  <div class="rule"><b>Travail futur, hors HUD</b>Le lanceur livré des lunettes résout déjà ces marques (GlassesHub.launcherDrawable, depuis l'iconKey reçu : ressources intégrées, puis PluginGlyphCache) et dessine l'icône propre des apps Rokid. Le travail restant est une plomberie interne : faire passer ces marques jusqu'au rendu de session (SessionScreenView : ScreenHeader, Card, Row) et les dessiner avec le style unique de GlyphDrawable ; à vérifier au moment de le faire. Aucune nouvelle capacité du SDK, aucune nouvelle ressource publique, aucune phase attribuée.</div>
+</div>
+</details>
+
+<section data-s="1">
 <h2 id="amb">1 · La couche ambiante <small>sur le home Rokid et dans les apps · notice armée, îles passives · budget 3 / 2 / 0</small></h2>
-<p class="lead">Ce que le porteur voit sans rien faire. Une seule fenêtre armée, inchangée : la notice avec réponses pendant sa durée. Les îles et les pins ne prennent aucun geste, sur le home comme dans une app : le triple tap est la porte, l'île est la tête de pile. Sur le home : au plus une activité à sa taille préférée, une seconde en chip, un pin. Dans une app : texte seul et un pin court. Pendant la pile : rien.</p>
+<p class="lead">Ce que le porteur voit sans rien faire. Une seule fenêtre armée, inchangée : la notice avec réponses pendant sa durée. Les îles et les pins ne prennent aucun geste, sur le home comme dans une app (livré depuis PR2) : le triple tap est la porte. Budgets, modes par app et tailles préférées sont des cibles : sur le home, au plus une activité à sa taille préférée, une seconde en chip, un pin ; dans une app, texte seul et un pin court ; pendant la pile, rien.</p>
 <div class="grid" id="g-amb"></div>
+</section>
 
+<section data-s="2">
 <h2 id="stack">2 · La pile <small>triple tap depuis n'importe où · racine ≤ 6 arrêts</small></h2>
-<p class="lead">Le sas de 800 ms est visible. La racine s'ouvre sur l'activité épinglée. Swipe = carte suivante, tap = ouvrir, Back = rendre la couche dessous.</p>
+<p class="lead">Le sas de 800 ms est visible. <b>PR3a</b> : la racine suit l'ordre primaire courant des activités (pas encore de préférence d'épinglage), l'en-tête dit <i>back: close</i>, l'aperçu montre la dernière notice. <b>Cible</b> : Back nommé (PR3b) et, en PR4, une carte Relay conditionnelle sous les activités qui remplace l'aperçu générique. Swipe = carte suivante, tap = ouvrir, Back = rendre la couche dessous. La racine est gelée jusqu'à la fermeture : une carte terminée ou résolue reste en place, inerte, et disparaît seulement à l'ouverture suivante.</p>
 <div class="grid" id="g-stack"></div>
+</section>
 
-<h2 id="nav">3 · Navigation dans la pile <small>aperçu → commandes → affichage</small></h2>
-<p class="lead">Trois représentations d'une seule activité : l'île, la carte de racine, l'aperçu du tracé. Les commandes du hub d'abord, celles du plugin ensuite, confirmées.</p>
+<section data-s="3">
+<h2 id="nav">3 · Navigation dans la pile <small>PR3a : résumé texte → une seule commande · cible PR5 : carte compacte → plein écran, vues au lieu du zoom</small></h2>
+<p class="lead"><b>PR3a</b> : un résumé texte de la notification de guidage réelle (manœuvre, rue, arrivée si l'app la donne, source, heure de réception) et une page Commands qui ne contient qu'« Open the full app », une immersion annoncée. Aucune carte, aucun arrêt de trajet, aucun réglage d'affichage. <b>Cible PR5</b>, cartes fictives : <b>pas de zoom</b>. La page Navigation montre une carte compacte dans la vue choisie ; tap la met en plein écran ; en plein écran, le même swipe passe d'une vue à l'autre (Suivi ↔ Trajet entier) et tap ouvre les commandes, où l'on peut aussi choisir la vue ; Back revient à la page compacte, puis à la carte de racine. Un seul axe de swipe, aucun geste à part pour la carte. Les commandes du hub d'abord, celles du plugin ensuite, confirmées.</p>
 <div class="grid" id="g-nav"></div>
+</section>
 
-<h2 id="relay">4 · Relay et notifications <small>lire avant d'agir · une réponse validée</small></h2>
-<p class="lead">La notice ambiante est un signal. Le détail, le fil et la réponse sont des pages fournies par Relay et dessinées par le hub. Dans la pile, aucune action armée par défaut, un envoi volontaire ; la bande ambiante garde ses réponses armées.</p>
+<section data-s="4">
+<h2 id="relay">4 · Relay et notifications <small>lire avant d'agir · PR3a lecture seule · PR4 réponse transmise</small></h2>
+<p class="lead">La notice ambiante est un signal. <b>PR3a</b> : la pile garde au plus une notice en mémoire ; son détail mène à « Read Relay threads », puis à la liste de Relay, puis au fil choisi, en lecture seule, daté de la capture. <b>PR4</b> : historique borné, carte Relay promue, réponse. <b>Cible du propriétaire</b>, non planifiée, simplifiée en r15 : <b>un seul écran</b>. La conversation (reçus à gauche, nos réponses à droite) s'ouvre directement sur sa page la plus récente, le swipe tourne les pages, deux gros boutons <b>Dictate</b> et <b>Type</b> restent en bas ; un tap passe aux boutons, la saisie et le brouillon restent dans le fil, Envoyer demande un geste neuf (4.8 à 4.13, 4.19 à 4.22 ; tous les gestes en <a href="#gram-relay">7 · Grammaire</a>). Plus de page de détail, de choix du mode ni de relecture. Dans la pile, aucune action armée par défaut, un envoi volontaire ; la bande ambiante garde ses réponses armées. « Transmise à l'app » ne veut jamais dire lue, remise ou répondue chez le destinataire.</p>
 <div class="grid" id="g-relay"></div>
+</section>
 
-<h2 id="states">5 · États honnêtes <small>chargement, indisponible, terminée, immersion</small></h2>
+<section data-s="d2">
+<h2 id="d2">4b · D2 : de la notice au bon fil <small>livré : via la liste · cible PR3b : fil exact par référence authentifiée</small></h2>
+<p class="lead">Aujourd'hui la notice ne nomme aucun fil : le hub propose la liste de Relay, jamais un destinataire deviné. Cible : une référence de fil authentifiée, négociée entre les hubs, ouvre directement ce fil. Les trois autres cas sont des branches alternatives, pas des étapes : référence absente ou non négociée (la liste est proposée), référence périmée (Relay le dit), téléphone déconnecté (le fil demandé reste, Retry / Back seulement). Jamais un autre fil, jamais un destinataire deviné. Applications → Relay ouvre toujours la liste.</p>
+<div class="lanes" id="g-d2"></div>
+</section>
+
+<section data-s="5">
+<h2 id="states">5 · États honnêtes <small>chargement, indisponible, texte long, immersion</small></h2>
+<p class="lead">Les états PR3a-A, chargement, indisponible et texte long (5.1, 5.3–5.7 ; 5.2 est l'état d'avant A, remplacé), sont des simulations du code livré, donc masqués dans la vue Cible, mais ils restent aussi le comportement voulu : le propriétaire a choisi A. Pour les voir : « tout afficher » ci-dessous, ou la vue Code livré · références.</p>
 <div class="grid" id="g-states"></div>
+</section>
 
-<h2 id="transit">6 · Transports <small>ruban, pas carte, sous terre</small></h2>
+<section data-s="6">
+<h2 id="transit">6 · Transports <small>ruban, pas carte, sous terre · cible PR5, illustrations fictives</small></h2>
 <div class="grid" id="g-transit"></div>
+</section>
 
-<h2 id="gram">7 · Grammaire des gestes</h2>
-<table>
+<h2 id="gram">7 · Grammaire des gestes <small>en jaune : ce qui change par rapport au lanceur LEGACY</small></h2>
+<div class="tbl"><table>
 <tr><th>Contexte</th><th>tap</th><th>swipe</th><th>back (double tap)</th><th>triple tap</th></tr>
 <tr><td>App native / immersion Nexus, pile fermée</td><td>dessous</td><td>dessous</td><td>dessous</td><td>ouvre la racine</td></tr>
-<tr><td>Home Rokid avec île d'activité, pile fermée</td><td class="chg">dessous (aujourd'hui : ouvre le plugin)</td><td class="chg">dessous (aujourd'hui : boucle sur les actions de l'île)</td><td>dessous</td><td>ouvre la racine, île sélectionnée</td></tr>
-<tr><td>Notice armée (selon les règles du NoticeController : actions, interactive, pagée, backdrop)</td><td>la réponse présélectionnée, inchangé</td><td>autre réponse, ou page si une seule action, inchangé</td><td>ferme la bande, inchangé</td><td class="chg">non reconnu : double tap d'abord, puis triple tap</td></tr>
+<tr><td>Home Rokid avec île d'activité, pile fermée</td><td class="chg">dessous (avant PR2 : ouvrait le plugin)</td><td class="chg">dessous (avant PR2 : bouclait sur les actions de l'île)</td><td>dessous</td><td>ouvre la racine, île sélectionnée</td></tr>
+<tr><td>Notice armée (selon les règles du NoticeController : actions, interactive, pagée, backdrop)</td><td>la réponse présélectionnée, inchangé</td><td>autre réponse, ou page si une seule action (Relay aujourd'hui : Reply seul), inchangé ; <span style="color:var(--o-warn)">cible saisie activée : Reply + Type, le swipe choisit et la bande ne tourne plus de pages</span></td><td>ferme la bande, inchangé</td><td class="chg">non reconnu : double tap d'abord, puis triple tap</td></tr>
 <tr><td class="chg">Notice fenêtre passée, ou notice sans action</td><td class="chg">dessous</td><td class="chg">dessous</td><td class="chg">dessous</td><td class="chg">ouvre la racine, la notice y est consultable</td></tr>
 <tr><td class="chg">Sas après triple tap (≈ 800 ms)</td><td class="chg">absorbé</td><td class="chg">absorbé</td><td class="chg">absorbé</td><td class="chg">absorbé</td></tr>
 <tr><td class="chg">Racine</td><td class="chg">ouvre la carte sélectionnée</td><td class="chg">carte suivante / précédente, sans boucle</td><td class="chg">ferme, rend la couche dessous</td><td class="chg">reste à la racine</td></tr>
-<tr><td class="chg">Page liste / document / commandes</td><td class="chg">active l'élément ou descend d'un niveau</td><td class="chg">sélection / page suivante / valeur bornée</td><td class="chg">dépile un cran</td><td class="chg">racine, même session</td></tr>
-<tr><td class="chg">Composeur de réponse</td><td class="chg">pause → relecture</td><td class="chg">consommé</td><td class="chg">choix du mode, brouillon gardé</td><td class="chg">suspend le brouillon, racine</td></tr>
+<tr><td class="chg">Page liste / commandes</td><td class="chg">active l'élément ou descend d'un niveau</td><td class="chg">sélection suivante / précédente</td><td class="chg">dépile un cran</td><td class="chg">racine, même session</td></tr>
+<tr><td class="chg">Page document, ou texte trop long (PR3a-A) en lecture</td><td class="chg">entre dans les commandes s'il y en a</td><td class="chg">page suivante / précédente</td><td class="chg">dépile un cran</td><td class="chg">racine, même session</td></tr>
+<tr><td class="chg">Commandes sous un texte lu (PR3a-A)</td><td class="chg">active l'élément</td><td class="chg">sélection</td><td class="chg">revient au texte, puis dépile au Back suivant</td><td class="chg">racine, même session</td></tr>
+<tr><td class="chg">Page indisponible (PR3a-A)</td><td class="chg">Retry ou Back seulement ; le contenu gardé est inerte</td><td class="chg">page du texte gardé, ou Retry ↔ Back</td><td class="chg">dépile (ou revient au texte gardé)</td><td class="chg">racine, même session</td></tr>
+<tr><td class="chg">Page Navigation avec carte compacte (PR5)</td><td class="chg">carte : plein écran · Commandes : les ouvrir</td><td class="chg">carte ↔ Commandes</td><td class="chg">racine, carte Navigation sélectionnée</td><td class="chg">racine, même session</td></tr>
+<tr><td class="chg">Carte plein écran (PR5)</td><td class="chg">commandes (vues, taille, actions)</td><td class="chg">vue suivante / précédente, jamais un zoom</td><td class="chg">revient à la page compacte, carte sélectionnée</td><td class="chg">racine, même session</td></tr>
+<tr id="gram-relay"><td class="chg">Conversation Relay · lecture, cible (4.8, 4.12, 4.19 à 4.21)</td><td class="chg">focus sur les boutons du bas : Dictate présélectionné (la dictée est le défaut), ou Envoyer s'il y a un brouillon (Type après une transmission non confirmée)</td><td class="chg">page précédente / suivante du fil capturé, sans boucle</td><td class="chg">revient d'où l'on vient (racine, liste Relay, notice) ; le brouillon reste</td><td class="chg">racine, même session ; le brouillon reste</td></tr>
+<tr><td class="chg">Conversation · boutons en focus (4.9, 4.13)</td><td class="chg">Dictate : micro des lunettes · Type : clavier du téléphone · Envoyer : vérifie le fil exact, puis confie la réponse à l'app</td><td class="chg">bouton suivant / précédent, sans boucle ; plus de pages</td><td class="chg">revient à la lecture, rien n'est perdu</td><td class="chg">racine ; le brouillon reste</td></tr>
+<tr><td class="chg">Conversation · saisie en cours (4.10 Type, 4.11 Dictate)</td><td class="chg">termine : le texte devient le brouillon, retour à la lecture ; jamais un envoi</td><td class="chg">sans effet</td><td class="chg">annule cette saisie, c'est écrit dans le hint ; le brouillon d'avant, s'il y en a un, revient intact</td><td class="chg">non reconnu pendant la saisie (comme tout champ focalisé aujourd'hui) : tap termine ou back annule d'abord</td></tr>
+<tr><td class="chg">Conversation · réponse indisponible (4.22)</td><td class="chg">rien</td><td class="chg">page du fil</td><td class="chg">revient d'où l'on vient ; un brouillon non transmis reste lisible</td><td class="chg">racine, même session</td></tr>
+<tr><td class="chg" colspan="5">Un seul brouillon à la fois, lié à son destinataire authentifié, gardé au passage par la racine et par Back. Type sur un brouillon le rouvre au clavier avec son texte ; vider le texte puis OK le supprime. Dictate sur un brouillon en dicte un nouveau, qui ne le remplace qu'à la fin. Dans un autre fil, le hint d'un bouton dit « remplace le brouillon pour Mika » et le remplacement n'a lieu qu'à la fin de la nouvelle saisie ; Back pendant cette saisie garde celui de Mika. Réponse indisponible (4.22) : si l'autorisation de répondre est perdue (notification retirée ou expirée, accès révoqué, ce fil exact n'accepte plus de réponse), le brouillon garde son texte mais ne peut plus partir tel quel ; si seule la liaison avec le téléphone manque, il reste inchangé et ne part qu'après un nouvel Envoyer volontaire, revérifié sur le fil exact, jamais tout seul à la reconnexion ; si ce même fil reçoit une nouvelle notification répondable, Type rouvre le clavier avec l'ancien texte comme une nouvelle saisie, qui ne part qu'après OK puis un nouvel Envoyer revérifié, et Dictate en dicte une nouvelle. Aucun autre fil ni destinataire deviné, aucun texte jeté en silence. Aucun appui long, triple tap armé, toucher ni second axe.</td></tr>
 <tr><td>Champ éditable d'une immersion</td><td>le champ</td><td>le champ</td><td>le champ</td><td>désactivé (clavier BT), inchangé</td></tr>
-</table>
-<table>
+</table></div>
+<div class="tbl"><table>
 <tr><th>Contexte ambiant</th><th>Plafond simultané</th></tr>
 <tr><td>Home Rokid reconnu</td><td>3 résidents : activité principale à sa taille préférée, seconde activité en chip, pin compact. Une seule présentation développée.</td></tr>
 <tr><td>App native ou immersion Nexus devant</td><td>Mode par app : <b>Résidents</b> = 2 compacts (activité principale en texte, pin court) ; <b>Signaux seulement</b> = 0 résident, flares uniquement ; <b>Rien</b>. Défauts : texte → Résidents ; caméra, vidéo, jeux, inconnues → Signaux.</td></tr>
 <tr><td>Bande notice ou flare</td><td>1 signal temporaire dans la zone de bande ; il remplace l'île qu'il concerne, ne la double pas. Une notice armée garde ses gestes pendant sa durée, comme aujourd'hui.</td></tr>
 <tr><td>Pile ouverte</td><td>0 overlay ambiant ; une notice qui arrive alimente les pages et un compteur du shell, garde son échéance, et ne peut ni répondre ni se fermer en caché.</td></tr>
-</table>
+</table></div>
 
-<footer>plan 027 · mockup statique · géométrie de rues fictive, noms génériques · E:\Tools\Rokid\RokidNexus\docs\mockups\glasses-home\index.html</footer>
+<footer>plan 027 · mockup statique, brouillon d'amendement du 2026-10-09, retouche marques d'app du 2026-10-10 (corrections du tour 4 appliquées en r11 et vérifiées par le parent), retouche « cible restaurée » r13 du 2026-10-10 (revue indépendante R5 : prête pour la revue visuelle provisoire du propriétaire, aucune correction obligatoire), r14 du 2026-10-10 avec ses deux corrections de texte (non revue par R5), r15 du 2026-10-10 : conversation Relay simplifiée (revue indépendante R6 : simplification juste, deux corrections de texte obligatoires), r16 du 2026-10-10 avec ces deux corrections et deux conseillées, vérifiées par l'auteur dans les limites autorisées par R6 puis par le parent, sans nouvelle revue complète, r17 du 2026-10-10 : Dictate avant Type à la demande du propriétaire, vérifié par l'auteur seulement (revue formelle de Fable, test sur appareil et sur l'optique, et validation du propriétaire en attente) · marques d'app copiées des ressources des plugins et de bus-client · géométrie de rues fictive, noms et messages inventés · panneaux PR3a simulés d'après SessionScreens.kt, LocalPages.kt, RootStops.kt, NavPages.kt, RelayPages.kt · docs/mockups/glasses-home/index.html</footer>
 </main>
 
 <script>
@@ -201,139 +402,455 @@ function ribbon(stops,w,h,pb){const x=36,top=28,step=(h-56)/(stops.length-1);con
 const arrow=sz=>`<svg width="${sz}" height="${sz}" viewBox="0 0 46 46" fill="none" stroke="${PH}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"><path d="M10 42 V22 Q10 14 18 14 H34"/><path d="M26 6 L34 14 L26 22"/></svg>`;
 const ico=(d,c=PH,sz=24)=>`<svg width="${sz}" height="${sz}" viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
 const I={eye:ico('<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>'),term:ico('<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3M12 15h5"/>'),msg:ico('<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1.1-4.6A8 8 0 1 1 21 12z"/>'),cal:ico('<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>'),music:ico('<path d="M9 18V6l11-2v12"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/>'),grid:ico('<rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/>'),bell:ico('<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10 21h4"/>'),star:ico('<path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z"/>'),bat:ico('<rect x="2" y="7" width="18" height="10" rx="2"/><path d="M22 10v4"/>',MUTE),cam:ico('<path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/>'),kb:ico('<rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/>'),mic:ico('<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>')};
+/* App identity marks, copied path for path from the assets each plugin's manifest declares (sources in
+   MK_SRC and CHANGES.md). Stroke only at 1.7 on the 24-unit viewport, like GlyphDrawable. 'app' is the
+   hub's existing fallback for a plugin without an icon, used here for any app with no mark available. */
+const MK={
+  nav:'<path d="M12,21 c-4,-5 -6,-8 -6,-11 a6,6 0 0,1 12,0 c0,3 -2,6 -6,11 Z M12,7.8 a2.2,2.2 0 1,0 0,4.4 a2.2,2.2 0 1,0 0,-4.4"/>',
+  relay:'<path d="M9.6,11.8 L8.4,11.8 L5.4,15.2 L5.4,11.8 L4.4,11.8 A2,2 0 0 1 2.4,9.8 L2.4,4.4 A2,2 0 0 1 4.4,2.4 L13.6,2.4 A2,2 0 0 1 15.6,4.4 L15.6,9.6"/><path d="M12.6,10.6 L19.6,10.6 A2,2 0 0 1 21.6,12.6 L21.6,16.6 A2,2 0 0 1 19.6,18.6 L19.6,21.8 L16.4,18.6 L12.6,18.6 A2,2 0 0 1 10.6,16.6 L10.6,12.6 A2,2 0 0 1 12.6,10.6 Z"/>',
+  assistant:'<path d="M6.3,8.6 a3.3,3.3 0 1,0 6.6,0 a3.3,3.3 0 1,0 -6.6,0"/><path d="M3.0,20.6 A6.6,6.6 0 0 1 16.2,20.6"/><path d="M18.8,1.0 Q19.25,5.15 23.4,5.6 Q19.25,6.05 18.8,10.2 Q18.35,6.05 14.2,5.6 Q18.35,5.15 18.8,1.0 Z"/>',
+  lens:'<path d="M2,12 C2,12 5.5,5.5 12,5.5 C18.5,5.5 22,12 22,12 C22,12 18.5,18.5 12,18.5 C5.5,18.5 2,12 2,12 Z"/><path d="M9,12 a3,3 0 1,0 6,0 a3,3 0 1,0 -6,0"/>',
+  media:'<path d="M3,12 a9,9 0 1,0 18,0 a9,9 0 1,0 -18,0 M9.5,12 a2.5,2.5 0 1,0 5,0 a2.5,2.5 0 1,0 -5,0"/>',
+  agents:'<path d="M5,5 h14 a2,2 0 0,1 2,2 v10 a2,2 0 0,1 -2,2 h-14 a2,2 0 0,1 -2,-2 v-10 a2,2 0 0,1 2,-2 Z M7,10 l3,3 -3,3 M13,16 h4"/>',
+  feeds:'<path d="M22,2 L11,13 M22,2 L15,22 L11,13 L2,9 L22,2 Z"/>',
+  app:'<path d="M5,4 h5 a1,1 0 0,1 1,1 v5 a1,1 0 0,1 -1,1 h-5 a1,1 0 0,1 -1,-1 v-5 a1,1 0 0,1 1,-1 Z M14,4 h5 a1,1 0 0,1 1,1 v5 a1,1 0 0,1 -1,1 h-5 a1,1 0 0,1 -1,-1 v-5 a1,1 0 0,1 1,-1 Z M5,13 h5 a1,1 0 0,1 1,1 v5 a1,1 0 0,1 -1,1 h-5 a1,1 0 0,1 -1,-1 v-5 a1,1 0 0,1 1,-1 Z M14,13 h5 a1,1 0 0,1 1,1 v5 a1,1 0 0,1 -1,1 h-5 a1,1 0 0,1 -1,-1 v-5 a1,1 0 0,1 1,-1 Z"/>',
+};
+const MK_SRC={
+  nav:['Navigation','bus-client/src/main/res/drawable/ic_plugin_map.xml','ICON = map, clé intégrée : affichée aujourd\'hui par les deux hubs, avant ICON_DRAWABLE (nexus_glyph_route, qui reste le glyphe de manœuvre inconnue)'],
+  relay:['Relay','plugins/relay/src/main/res/drawable/nexus_glyph_relay.xml','ICON = relay, non intégrée : ICON_DRAWABLE au téléphone, entrée nexus_glyphs aux lunettes ; même tracé dans res/values/nexus_glyphs.xml (relay). Pas l\'icône téléphone remplie'],
+  assistant:['Assistant','plugins/assistant/src/main/res/drawable/nexus_glyph_assistant.xml','ICON = assistant, non intégrée : ICON_DRAWABLE au téléphone, entrée nexus_glyphs aux lunettes ; même tracé dans res/values/nexus_glyphs.xml. Pas l\'icône téléphone à éclat rempli'],
+  lens:['Lens','bus-client/src/main/res/drawable/ic_plugin_lens.xml','ICON = lens ; même tracé que plugins/lens/…/ic_launcher_foreground.xml'],
+  media:['Media Deck','bus-client/src/main/res/drawable/ic_plugin_disc.xml','ICON = disc ; même tracé que plugins/media/…/ic_launcher_foreground.xml'],
+  agents:['Agents','bus-client/src/main/res/drawable/ic_plugin_terminal.xml','ICON = terminal (plugins/agents/src/main/AndroidManifest.xml)'],
+  feeds:['Feeds','bus-client/src/main/res/drawable/ic_plugin_send.xml','ICON = send (plugin-feeds/src/main/AndroidManifest.xml)'],
+  app:['Repli générique','bus-client/src/main/res/drawable/ic_plugin_grid.xml','repli existant de NexusPluginIcons ; ici pour une source non identifiée (Vivo Promo) ou sans plugin identifié (Agenda), et comme placeholder des apps Rokid (Teleprompter, Caméra), dont le lanceur livré dessine l\'icône propre. Pas une marque d\'app'],
+};
+const mark=(k,sz,st='')=>`<svg class="am" width="${sz}" height="${sz}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"${st?` style="${st}"`:''}>${MK[k]}</svg>`;
+/* Hub-place glyphs for the target root access rows, copied from the hub's built-in set: ic_plugin_bell for
+   Notifications, ic_plugin_grid for Applications. They say where a row leads, so class hg, never am. */
+const HG={bell:'<path d="M6,16 l1.5,-2.5 v-3.5 a4.5,4.5 0 0,1 9,0 v3.5 l1.5,2.5 Z M10,19 a2,2 0 0,0 4,0"/>',grid:MK.app};
+const hglyph=(k,sz)=>`<svg class="hg" width="${sz}" height="${sz}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${HG[k]}</svg>`;
 const train=sz=>`<svg width="${sz}" height="${sz}" viewBox="0 0 40 40" fill="none" stroke="${PH}" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="4" width="22" height="26" rx="6"/><path d="M9 20 H31 M15 36 L12 30 M25 36 L28 30"/><circle cx="15" cy="25" r="1.6" fill="${PH}"/><circle cx="25" cy="25" r="1.6" fill="${PH}"/></svg>`;
 const walk=sz=>`<svg width="${sz}" height="${sz}" viewBox="0 0 40 40" fill="none" stroke="${PH}" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="22" cy="6" r="3.5"/><path d="M20 12 L14 20 L8 24 M14 20 L18 28 L12 38 M18 28 L26 32 L30 38 M20 12 L27 16 L32 14"/></svg>`;
 const gps=sz=>`<svg width="${sz}" height="${sz}" viewBox="0 0 46 46" fill="none" stroke="${MUTE}" stroke-width="4" stroke-linecap="round" stroke-dasharray="5 5"><circle cx="23" cy="23" r="16"/><circle cx="23" cy="23" r="4" fill="${MUTE}" stroke="none"/></svg>`;
 const native=`<div class="native"><div class="t">TELEPROMPTER</div>${[0,1,2,3,4,5,6,7,8,9].map(i=>`<div class="line" style="top:${90+i*52}px;width:${[82,64,90,58,76,88,50,70,84,60][i]}%"></div>`).join('')}</div>`;
 const home=`<div class="home"><div class="t">ROKID HOME</div>${['Phone','Camera','Teleprompter','Settings'].map((n,i)=>`<div class="tile${i==0?' sel':''}" style="top:${150+i*74}px">${n}</div>`).join('')}</div>`;
 const hdr=(t,r)=>`<div class="hdr"><span>${t}</span><span class="r">${r}</span></div>`;
+/* Target page header of one app: same 54 px header, the app's mark before the title. */
+const hdrM=(k,t,r)=>`<div class="hdr"><span class="id">${mark(k,20)}<span>${t}</span></span><span class="r">${r}</span></div>`;
 const hint=(l,r)=>`<div class="hint"><span>${l}</span><span>${r}</span></div>`;
 const chipHead=(glyph,dist,street,measure)=>`<div class="row" style="padding:12px 14px 0">${glyph}<div style="min-width:0"><div class="dist" style="font-size:30px">${dist}${measure?` <span style="font-size:17px;font-weight:400;color:${INK}">${measure}</span>`:''}</div><div class="street" style="font-size:17px">${street}</div></div></div>`;
-const F=(tag,html,cap,d)=>({tag,html,cap,d});
+/* The armed Relay band of 1.8, reused by the appended owner targets 1.11 and 1.12: first action preselected. */
+const noticeBand=(text,acts)=>`<div class="nband"><div class="row" style="justify-content:space-between"><span style="font-size:12px;letter-spacing:.14em;color:${MUTE}">RELAY · MIKA</span><span style="font-size:12px;color:${MUTE}">à l'instant</span></div><div style="font-size:18px;color:${INK};margin-top:6px;font-family:var(--sans)">${text}</div><div class="row" style="gap:8px;margin-top:10px">${acts.map((a,i)=>`<span class="achip${i?'':' sel'}">${a}</span>`).join('')}</div><div class="cd"><div style="width:62%"></div></div></div>`;
+/* ph: phase keys shown outside the HUD (a, aA, b, p4, p5, plus the unphased owner target 'ty'); shot() adds
+   'id' to any panel that draws an app mark and 'cv' to any panel that draws the target conversation.
+   pv: explicit per-panel provenance, never inferred from the phase. 'code' = simulated from the Kotlin
+   labels and blocks; 'ill' = existing behaviour, approximate drawing; 'prop' = proposed wording;
+   'fic' (or true) = fictional map geometry. Space-separated keys combine. */
+const F=(tag,html,cap,d,ph=[],pv='')=>({tag,html,cap,d,ph,pv:(pv===true?'fic':pv||'').split(' ').filter(Boolean)});
+
+/* ---------- flow-laid screens: the SessionScreenView block model ---------- */
+const esc=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;');
+const V={
+  /* A root card: label row, primary (30 px figure or 17 px body), a reserved second line for figures. */
+  /* o.mk (target and proposal panels only) puts an app mark before the label; without it the output is
+     byte-identical to the text-only card the PR3a simulations use. */
+  card:o=>`<div class="vc${o.sel?' sel':''}${o.end?' end':''}"><div class="l">${o.mk?`<span class="id">${mark(o.mk,18)}<span>${o.l}</span></span>`:`<span>${o.l}</span>`}${o.t?`<span>${o.t}</span>`:''}</div><div class="p"><b${o.fig?'':' class="bd"'}>${o.p}</b>${o.m?`<small>${o.m}</small>`:''}</div>${o.fig?`<div class="s">${o.s||'&nbsp;'}</div>`:''}${o.u?`<div class="u">${o.u}</div>`:''}</div>`,
+  row:(l,o={})=>`<div class="vr${o.sel?' sel':''}${o.dis?' dis':''}${o.tomb?' tomb':''}${o.c?' ctr':''}">${o.mk?mark(o.mk,24):''}${o.hg?hglyph(o.hg,24):''}<div class="t"><div>${l}</div>${o.sub?`<div>${o.sub}</div>`:''}</div>${o.tr!=null?`<span class="tr">${o.tr}</span>`:''}</div>`,
+  text:(t,role,o={})=>`<div class="vt ${role}${o.c?' c':''}${o.dim?' dim':''}">${t}</div>`,
+  fact:(l,v,o={})=>`<div class="vf${o.dim?' dim':''}"><span>${l}</span><b>${v}</b></div>`,
+  /* Document segments: H = header (caption), P = prose (body), A = aside. */
+  doc:(segs,o={})=>`<div class="vd${o.dim?' dim':''}">${segs.map(([k,t])=>`<div class="${k}">${t}</div>`).join('')}</div>`,
+  prog:f=>`<div class="vg"><div style="width:${f*100}%"></div></div>`,
+  /* Target conversation (never used by a code simulation): o.ct is the single capture caption. Each
+     message carries an explicit role from the mock data, 'them' on the left and 'me' on the right;
+     'new' brightens the latest received message. No per-message time, no read or delivery mark. */
+  /* r15: m.draft draws our unsent reply dashed, m.live adds the caret of a capture in progress, m.meta
+     puts one 12 px line under the bubble. Messages without them render exactly as before. */
+  chat:(msgs,o={})=>`<div class="vch${o.dim?' dim':''}">${o.ct?`<div class="ct">${o.ct}</div>`:''}${msgs.map(m=>`<div class="cm ${m.who}${m.new?' new':''}${m.draft?' dr':''}">${m.t}${m.live?'<span class="crt"></span>':''}</div>${m.meta?`<div class="cmeta">${m.meta}</div>`:''}`).join('')}</div>`,
+};
+/* Target conversation samples, roles explicit in the mock data (Mika = them, Moi = me). */
+const CH={
+  mika:[{who:'them',t:'on est devant le cinéma'},{who:'me',t:'j\'arrive, 10 min'},{who:'them',t:'tu arrives quand ? on est devant',new:1}],
+  /* The last page of a longer thread: the same conversation with earlier messages above. */
+  mikaLong:[{who:'them',t:'on a pris les places du milieu, rang G'},{who:'me',t:'top, je suis dans le métro'},{who:'them',t:'la séance commence à 20 h 15, pense aux billets'},{who:'me',t:'j\'arrive, 10 min'},{who:'them',t:'on est devant le cinéma'},{who:'them',t:'tu arrives quand ? on est devant',new:1}],
+};
+const S=(title,trail,blocks,act,back)=>hdr(title,trail||'')+`<div class="vp">${blocks.join('')}</div>`+hint(act||'',back||'');
+/* The same flow-laid page with the app's mark in its header: target and proposal panels only. */
+const TS=(k,title,trail,blocks,act,back)=>hdrM(k,title,trail||'')+`<div class="vp">${blocks.join('')}</div>`+hint(act||'',back||'');
+/* Target Relay conversation (r15, owner target, unplanned): ONE screen for reading and replying. Every
+   panel 4.8-4.13, 4.19-4.22 and 4b.7 is a state of this same screen, never a separate page. The footer
+   holds big outline buttons (Dictate, Type, plus Envoyer once a draft exists) or one status line.
+   Dictate comes first because dictation is the default way to reply (r17).
+   Action glyphs say what happens (keyboard, glasses microphone, hand over); they are never app marks. */
+const RG={type:'<rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/>',dictate:'<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>',send:'<path d="M4 12h15M13 6l6 6-6 6"/>'};
+const RL={type:'Type',dictate:'Dictate',send:'Envoyer'};
+const rgl=k=>`<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${RG[k]}</svg>`;
+/* f.btns: footer buttons; f.sel: the focused one (absent while reading, so nothing is selected).
+   f.line: one status line instead of buttons (capture in progress, or f.off for an inert line). */
+const rfoot=f=>f.line?`<div class="rf"><div class="s${f.off?' off':''}">${f.k?rgl(f.k):''}<div><b>${f.line}</b>${f.r?`<small>${f.r}</small>`:''}</div></div></div>`
+  :`<div class="rf">${f.btns.map(k=>`<div class="b${f.sel===k?' sel':''}">${rgl(k)}<span>${RL[k]}</span></div>`).join('')}</div>`;
+const RC=o=>hdrM('relay',o.title||'RELAY · MIKA',o.tr||'1/1')+`<div class="rc">${V.chat(o.msgs||CH.mika,{ct:'Messages · capturé 14:11'})}</div>`+rfoot(o.foot)+hint(o.act||'',o.back||'');
+/* Our reply in its successive states; the text is invented sample data. */
+const DR_T='J\'arrive dans 5 minutes, je suis rue de Rivoli.';
+const DR={
+  typing:{who:'me',draft:1,live:1,t:'J\'arrive dans 5 min, je suis'},
+  dictating:{who:'me',draft:1,live:1,t:'j\'arrive dans 5 minutes je suis rue de'},
+  ready:{who:'me',draft:1,t:DR_T,meta:'brouillon · pas encore envoyé'},
+  sent:{who:'me',t:DR_T,meta:'transmise à l\'app'},
+  unconfirmed:{who:'me',draft:1,t:DR_T,meta:'non confirmée · vérifie sur le téléphone'},
+  stale:{who:'me',draft:1,t:DR_T,meta:'non transmis · plus envoyable ici'},
+};
+const RD=['dictate','type'], RS=['send','dictate','type'];
+
+/* ---------- PR3a: what the shipped code draws (English HUD text, from the Kotlin sources) ---------- */
+const A={
+  nav:sel=>V.card({l:'NAVIGATION',t:'14:09',p:'120 m',m:'1.2 km',s:'Rue de Rivoli',fig:1,sel}),
+  media:sel=>V.card({l:'MEDIA DECK',t:'14:08',p:'Reptilia',s:'The Strokes',fig:1,sel}),
+  /* NoticeArrivals takes the first non-blank of title, body, first line; Relay's title is the sender. */
+  notice:sel=>V.card({l:'NOTIFICATION · RELAY',t:'14:11',p:'Mika',sel}),
+  notifs:(n,sel)=>V.row('Notifications',{tr:String(n),sel}),
+  apps:sel=>V.row('Applications',{sel}),
+  root:(blocks,ended)=>S('NEXUS','back: close',blocks,ended?'swipe next card':'swipe next · tap open','back close'),
+  noticeDoc:[['H','Relay · 14:11'],['P','Mika'],['P','tu arrives quand ? on est devant']],
+  thread:[['H','Messages · captured 14:11'],['P','on est devant le cinéma'],['P','tu arrives quand ? on est devant']],
+  list:sel=>[V.row('Mika',{sub:'14:11 · tu arrives quand ? on est devant',sel}),V.row('Alan',{sub:'13:02 · ok pour ce soir'})],
+};
+/* ---------- target root pieces (French, PR3b/PR4) ---------- */
+const T={
+  nav:sel=>V.card({l:'NAVIGATION',t:'14:09',p:'120 m',m:'1.2 km',s:'Rue de Rivoli',fig:1,sel,mk:'nav'}),
+  media:sel=>V.card({l:'MEDIA DECK',t:'14:08',p:'Reptilia',s:'The Strokes',fig:1,sel,mk:'media'}),
+  relay:(sel,o={})=>V.card({l:o.l||'RELAY · NON RÉPONDU',t:o.t||'14:11',p:o.p||'Mika',u:o.u||'1 message · capturé 14:11',end:o.end,sel,mk:'relay'}),
+  /* The agenda source has no mark Nexus can show: the hub's generic fallback, never a calendar app's logo. */
+  notice:sel=>V.card({l:'NOTIFICATION · AGENDA',t:'14:20',p:'Standup · 14:30',sel,mk:'app'}),
+  acts:(n,sel)=>V.row('Activités',{tr:String(n),sel}),
+  notifs:(n,sel)=>V.row('Notifications',{tr:String(n),sel,hg:'bell'}),
+  apps:sel=>V.row('Applications',{sel,hg:'grid'}),
+  root:(blocks,act)=>S('NEXUS','back: Teleprompter',blocks,act||'<b>swipe</b> carte suivante · <b>tap</b> ouvrir','<b>back</b> Teleprompter'),
+};
 
 /* ---------- 1. ambient ---------- */
 const amb=[
 F('home · île texte (préférence Texte)',home+`<div class="island" style="width:232px;padding-bottom:12px">${chipHead(arrow(40),'120 m','Rue de Rivoli')}</div><div class="pin"><small>PIN · TRANSIT</small>RER B · 3 min</div>`,
- '<b>Le minimum.</b> Flèche, distance, rue. Un pin compact à droite. Rien n\'est pour l\'île : le home garde tap et swipe. Aujourd\'hui le tap ouvrirait le plugin à la place de la tuile ; ça disparaît.'),
+ '<b>Le minimum.</b> Flèche, distance, rue. Un pin compact à droite. Rien n\'est pour l\'île : le home garde tap et swipe. Depuis PR2, l\'île ne capte plus le tap : il revient à la tuile. Le pin « RER B » est un exemple de contenu. Dessin approximatif de l\'île existante, pas une simulation du code.',false,['a'],'ill'),
 F('home · île minimap (préférence Minimap)',home+`<div class="island" style="width:262px">${chipHead(arrow(40),'120 m','Rue de Rivoli')}<div style="margin-top:8px" class="divider">${map({w:259,h:190,scale:.42,marks:[{kind:'turn',at:[230,310]}],scaleBar:[42,'50 m']})}</div><div class="foot"><span><b>12:24</b> arrival</span><span>1.2 km</span></div></div>`,
- '<b>Cap vers le haut, toi au tiers bas</b>, rues en contexte, prochain virage cerclé, échelle. Pas de nom de rue à cette taille.'),
+ '<b>Cap vers le haut, toi au tiers bas</b>, rues en contexte, prochain virage cerclé, échelle. Pas de nom de rue à cette taille.',false,['p5'],true),
 F('home · île panel (préférence Panel)',home+`<div class="island" style="width:374px"><div style="padding:14px 16px 0"><div class="row">${arrow(44)}<div style="min-width:0"><div class="dist" style="font-size:34px">120 m</div><div class="street" style="font-size:19px">Rue de Rivoli</div></div><div style="margin-left:auto;align-self:flex-start;font-size:17px;color:${MUTE}">12:24</div></div><div class="then">then <b style="color:${INK};font-weight:500">Châtelet</b> on your left · 1.2 km</div></div><div style="margin-top:10px" class="divider">${map({w:371,h:300,scale:.62,anchorY:.68,marks:[{kind:'turn',at:[230,310]}],labels:[{text:'Rue de Rivoli',at:[330,292],rot:HD-3},{text:'Bd Sébastopol',at:[275,480],rot:HD+86}],scaleBar:[62,'50 m']})}</div></div>`,
- '<b>La plus grande taille ambiante.</b> Deux noms de rue, l\'étape d\'après. C\'est une préférence, pas un état gagné par un geste. Toujours passif.'),
+ '<b>La plus grande taille ambiante.</b> Deux noms de rue, l\'étape d\'après. C\'est une préférence, pas un état gagné par un geste. Toujours passif.',false,['p5'],true),
 F('home · 3 résidents',home+`<div class="island" style="width:262px">${chipHead(arrow(40),'120 m','Rue de Rivoli')}<div style="margin-top:8px" class="divider">${map({w:259,h:150,scale:.42,anchorY:.7,marks:[{kind:'turn',at:[230,310]}]})}</div><div class="foot"><span><b>12:24</b></span><span>1.2 km</span></div></div>
- <div class="island" style="left:18px;top:304px;width:232px;padding:10px 14px"><div class="row">${I.music}<div style="min-width:0"><div style="font-size:17px;color:${INK};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Reptilia</div><div style="font-size:12px;color:${MUTE}">The Strokes · 2:15</div></div></div></div>
+ <div class="island" style="left:18px;top:304px;width:232px;padding:10px 14px"><div class="row">${mark('media',24)}<div style="min-width:0"><div style="font-size:17px;color:${INK};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Reptilia</div><div style="font-size:12px;color:${MUTE}">The Strokes · 2:15</div></div></div></div>
  <div class="pin"><small>PIN · TRANSIT</small>RER B · 3 min</div>`,
- '<b>Le plafond sur le home.</b> Activité principale à sa taille, seconde activité en chip, un pin. Jamais plus. Les coins sont fixes, rien ne saute à chaque GPS.'),
+ '<b>Le plafond sur le home.</b> Activité principale à sa taille, seconde activité en chip, un pin. Jamais plus. Les coins sont fixes, rien ne saute à chaque GPS. Budget en PR3b, minimap en PR5.',false,['b','p5'],true),
 F('app native · 2 compacts',native+`<div class="island" style="width:232px;padding-bottom:12px">${chipHead(arrow(40),'120 m','Rue de Rivoli')}</div><div class="pin"><small>PIN</small>RER B · 3 min</div>`,
- '<b>Dans Teleprompter, mode « Résidents ».</b> Texte seul plus un pin court, passifs. Mode réglé par app depuis la page Apps natives du téléphone ; défaut Résidents pour les apps de texte.'),
+ '<b>Dans Teleprompter, mode « Résidents ».</b> Texte seul plus un pin court, passifs. Mode réglé par app depuis la page Apps natives du téléphone ; défaut Résidents pour les apps de texte. Le réglage téléphone arrive en PR5.',false,['b','p5']),
 F('app native · mode « Signaux seulement »',`<div class="native"><div class="t">VIDEO</div><div class="abs" style="left:40px;right:40px;top:150px;bottom:150px;border:1.5px solid #1b3a26;border-radius:8px"></div><div class="abs" style="left:0;right:0;top:300px;text-align:center;color:#1b3a26;font-size:40px">▶</div></div><div class="band" style="border-color:var(--hair)">${arrow(44)}<div style="min-width:0"><div class="dist" style="font-size:32px">300 m</div><div class="street" style="font-size:17px">à droite · Rue de Rivoli</div></div></div>`,
- '<b>Pas de résident, que des signaux.</b> Défaut pour caméra, vidéo, jeux et apps inconnues : l\'île ne s\'affiche pas, l\'activité ne parle que par ses flares, ≈ 3,5 s chacun, puis rien. « 300 m à droite », « 2 arrêts restants ». Tout l\'état reste à un triple tap.'),
+ '<b>Pas de résident, que des signaux.</b> Défaut pour caméra, vidéo, jeux et apps inconnues : l\'île ne s\'affiche pas, l\'activité ne parle que par ses flares, ≈ 3,5 s chacun, puis rien. « 300 m à droite », « 2 arrêts restants ». Tout l\'état reste à un triple tap.',false,['b']),
 F('flare · virage imminent',home+`<div class="band">${arrow(56)}<div style="min-width:0"><div class="dist" style="font-size:44px">30 m</div><div class="street" style="font-size:20px">Rue de Rivoli</div></div><div style="margin-left:auto;font-size:14px;color:${MUTE};align-self:flex-end">then ↑ 400 m</div></div><div class="pin"><small>PIN · TRANSIT</small>RER B · 3 min</div>`,
- '<b>Un seul signal à la fois.</b> Le flare remplace l\'île qu\'il concerne pendant ≈ 3,5 s, bordure vive, puis se replie. Le pin garde sa place en bas à droite : les résidents ne bougent jamais pendant un signal. Aucun bouton armé, aucun geste capté.'),
-F('notice · signal ambiant',native+`<div class="nband"><div class="row" style="justify-content:space-between"><span style="font-size:12px;letter-spacing:.14em;color:${MUTE}">RELAY · MIKA</span><span style="font-size:12px;color:${MUTE}">à l\'instant</span></div><div style="font-size:18px;color:${INK};margin-top:6px;font-family:var(--sans)">tu arrives quand ? on est devant</div><div class="row" style="gap:8px;margin-top:10px"><span class="achip sel">Répondre</span><span class="achip">👍</span><span class="achip">Plus tard</span><span style="margin-left:auto;font-size:12px;color:${MUTE}">••• Nexus</span></div><div class="cd"><div style="width:62%"></div></div></div>`,
- '<b>Inchangé : la fenêtre armée.</b> Pendant la durée de la notice, tap = la réponse présélectionnée, swipe = une autre, double tap = fermer. Les plugins n\'ont rien à changer. Le triple tap n\'est pas reconnu tant que la bande est armée : ses deux premiers taps seraient des réponses. Double tap pour fermer, puis triple tap.'),
-F('notice · fenêtre passée',native+`<div class="nband" style="border-color:var(--dim)"><div class="row" style="justify-content:space-between"><span style="font-size:12px;letter-spacing:.14em;color:${MUTE}">RELAY · MIKA</span><span style="font-size:12px;color:${MUTE}">il y a 8 s</span></div><div style="font-size:18px;color:${MUTE};margin-top:6px;font-family:var(--sans)">tu arrives quand ? on est devant</div><div style="font-size:12px;color:${MUTE};margin-top:8px">••• Nexus · dans la pile</div></div>`,
- '<b>Après la fenêtre.</b> La bande s\'éteint en moins d\'une seconde, elle ne devient pas une fenêtre passive : tap et swipe reviennent à l\'app. La pile garde un instantané borné (aperçu, puis Notifications · n) avec une réponse revalidée par le plugin.'),
+ '<b>Un seul signal à la fois.</b> Le flare remplace l\'île qu\'il concerne pendant ≈ 3,5 s, bordure vive, puis se replie. Le pin garde sa place en bas à droite : les résidents ne bougent jamais pendant un signal. Aucun bouton armé, aucun geste capté. Mécanisme de flare livré, dessiné ici approximativement ; la position fixe des résidents est un budget PR3b.',false,['a','b'],'ill'),
+F('notice · signal ambiant',native+`<div class="nband"><div class="row" style="justify-content:space-between"><span style="font-size:12px;letter-spacing:.14em;color:${MUTE}">RELAY · MIKA</span><span style="font-size:12px;color:${MUTE}">à l\'instant</span></div><div style="font-size:18px;color:${INK};margin-top:6px;font-family:var(--sans)">tu arrives quand ? on est devant</div><div class="row" style="gap:8px;margin-top:10px"><span class="achip sel">Reply</span></div><div class="cd"><div style="width:62%"></div></div></div>`,
+ '<b>Inchangé : la fenêtre armée, telle que le code l\'envoie aujourd\'hui.</b> Aujourd\'hui Relay n\'envoie qu\'une action initiale, <b>Reply</b> (ou <b>Show</b> + <b>Reply</b> quand le texte est masqué). Le réglage « répondre en tapant » change seulement ce que fait Reply (il ouvre le champ au lieu d\'écouter) ; il n\'ajoute pas de seconde action. Pendant une dictée, une action <b>Type</b> apparaît après 1,2 s pour passer au champ. Avec une seule action, tap = Reply et swipe tourne les pages de la bande ; avec Show + Reply, swipe passe de l\'une à l\'autre. Double tap = fermer. Le triple tap n\'est pas reconnu tant que la bande est armée : ses deux premiers taps seraient des réponses. Double tap pour fermer, puis triple tap ; rien dans la bande ne le suggère. C\'est aussi la cible quand la saisie est désactivée ; saisie activée, la cible est Reply + Type (1.11). Dessin approximatif de la bande, libellé d\'action tiré du code.',false,['a'],'ill'),
+F('notice · fenêtre passée',native+`<div class="nband" style="border-color:var(--dim)"><div class="row" style="justify-content:space-between"><span style="font-size:12px;letter-spacing:.14em;color:${MUTE}">RELAY · MIKA</span><span style="font-size:12px;color:${MUTE}">il y a 8 s</span></div><div style="font-size:18px;color:${MUTE};margin-top:6px;font-family:var(--sans)">tu arrives quand ? on est devant</div></div>`,
+ '<b>Après la fenêtre.</b> La bande s\'éteint en moins d\'une seconde, elle ne devient pas une fenêtre passive : tap et swipe reviennent à l\'app. PR3a garde en mémoire un seul instantané lisible (l\'aperçu de racine et Notifications · 1), sans réponse possible. L\'historique borné et une réponse revalidée par le plugin viennent en PR4. Dessin approximatif.',false,['a'],'ill'),
 F('home · activité terminée',home+`<div class="island dead" style="width:232px;padding-bottom:12px"><div class="row" style="padding:12px 14px 0">${ico('<circle cx="12" cy="12" r="9"/><path d="M8 12l3 3 5-6"/>',MUTE,40)}<div><div class="dist" style="font-size:30px;color:${MUTE}">Arrived</div><div class="street" style="font-size:17px;color:${MUTE}">Châtelet · exit 3</div></div></div></div>`,
- '<b>Fin de trajet.</b> L\'île s\'éteint en pointillé quelques secondes puis disparaît. Dans la pile, la carte reste « Terminée » jusqu\'à ce que tu bouges.'),
+ '<b>Fin de trajet.</b> L\'île s\'éteint en pointillé quelques secondes puis disparaît (présentation ambiante cible). Dans la pile, la carte reste terminée, en place et inerte, jusqu\'à la fermeture de la session ; elle n\'est plus là à l\'ouverture suivante.',false,['b']),
+/* Owner target, appended: the band with Reply and Type when typing is enabled. Not shipped behaviour. */
+F('notice · Reply + Type (saisie activée)',native+noticeBand('tu arrives quand ? on est devant',['Reply','Type']),
+ '<b>Cible du propriétaire, pas le code livré.</b> Quand « répondre en tapant » est activé, la bande arrive avec deux actions côte à côte : <b>Reply</b>, présélectionnée (la première, comme toute bande), et <b>Type</b>. Tap = l\'action sélectionnée, swipe = passer de l\'une à l\'autre, double tap = fermer ; le triple tap reste non reconnu tant que la bande est armée. Avec deux actions, le seul axe de swipe sert au choix : <b>la bande ne tourne plus de pages</b>. Le message doit donc tenir sur une page, comme ici ; plus long, il serait coupé, ce qui a justement fait passer le code à une seule action (commentaire de RelayNoticeRuntime.INITIAL_ACTIONS), et il se lit en entier dans la pile après le double tap. Saisie désactivée : Reply seul et ses pages (1.8). Lecture de la demande, à confirmer : Reply dicte et Type ouvre le champ ; aujourd\'hui, le réglage fait ouvrir le champ par Reply lui-même. Rien n\'est implémenté ni attribué à une phase.',false,['ty']),
+F('notice · texte masqué, saisie activée',native+noticeBand('New message',['Show','Reply','Type']),
+ '<b>Texte masqué et saisie activée, cible.</b> Aujourd\'hui le texte masqué donne Show + Reply, et Show est présélectionné : la bande part de la première action (NoticeController, index 0). La bande garde l\'expéditeur et remplace le texte par « New message ». La cible ajoute Type : Show, Reply, Type, dans cet ordre, Show toujours présélectionné, pour lire avant de répondre. Swipe passe d\'une action à l\'autre, Show révèle le texte, double tap ferme. Ce que la bande propose après Show (Reply + Type, comme 1.11) est à confirmer. Saisie désactivée : Show + Reply, comme aujourd\'hui. Rien n\'est implémenté ni attribué à une phase.',false,['ty']),
 ];
 
 /* ---------- 2. stack ---------- */
-const navCard=(sel,top=66)=>`<div class="card${sel?' sel':''}" style="top:${top}px"><div class="lbl"><span>NAVIGATION · EN COURS</span><span>12:24</span></div><div class="row" style="padding:6px 14px 0">${arrow(34)}<div style="min-width:0"><div class="dist">120 m</div><div class="street">Rue de Rivoli</div></div><div style="margin-left:auto;align-self:flex-end;font-size:12px;color:${MUTE}">1.2 km</div></div><div style="margin-top:8px" class="divider">${map({w:441,h:108,scale:.4,anchorY:.72})}</div></div>`;
-const relayCard=(sel,top=290)=>`<div class="card${sel?' sel':''}" style="top:${top}px"><div class="lbl"><span>RELAY · CONVERSATION</span><span>2 min</span></div><div class="row" style="padding:4px 14px 12px">${I.msg}<div><div style="font-size:17px;color:${INK}">Mika</div><div style="font-size:13px;color:${MUTE}">réponse attendue</div></div></div></div>`;
-const notifCard=(sel,top=393)=>`<div class="card${sel?' sel':''}" style="top:${top}px"><div class="lbl"><span>NOTIFICATION · IL Y A 2 MIN</span></div><div class="row" style="padding:4px 14px 12px">${I.cal}<div style="font-size:17px;color:${INK}">Standup · 14:00</div></div></div>`;
-const accessRows=(sel)=>`<div class="item${sel==='n'?' sel':''}" style="top:477px">${I.bell}Notifications<small>6</small></div><div class="item${sel==='a'?' sel':''}" style="top:535px">${I.grid}Applications<small>37</small></div>`;
+const navCard=(sel,top=66)=>`<div class="card${sel?' sel':''}" style="top:${top}px"><div class="lbl"><span class="id">${mark('nav',18)}<span>NAVIGATION · EN COURS</span></span><span>12:24</span></div><div class="row" style="padding:6px 14px 0">${arrow(34)}<div style="min-width:0"><div class="dist">120 m</div><div class="street">Rue de Rivoli</div></div><div style="margin-left:auto;align-self:flex-end;font-size:12px;color:${MUTE}">1.2 km</div></div><div style="margin-top:8px" class="divider">${map({w:441,h:108,scale:.4,anchorY:.72})}</div></div>`;
+/* Target PR4: Relay's conditional root summary. It is never an activity and takes the generic preview's slot.
+   Drawn with the same label / 17 px name / 12 px line as T.relay so every Relay card reads alike. */
+const relayCard=(sel,top=290)=>`<div class="card${sel?' sel':''}" style="top:${top}px"><div class="lbl"><span class="id">${mark('relay',18)}<span>RELAY · NON RÉPONDU</span></span><span>14:11</span></div><div style="padding:6px 14px 12px"><div style="font:17px/1.35 var(--sans);color:${INK}">Mika</div><div style="font:12px/1.4 var(--sans);color:${MUTE};padding-top:2px">1 message · capturé 14:11</div></div></div>`;
+/* Hub places, not apps: no app mark, but the hub-place glyph (bell, grid), the same as the T.root rows. */
+const accessRows=(sel,top=394)=>`<div class="item${sel==='n'?' sel':''}" style="top:${top}px">${hglyph('bell',24)}Notifications<small>6</small></div><div class="item${sel==='a'?' sel':''}" style="top:${top+58}px">${hglyph('grid',24)}Applications</div>`;
 const stack=[
-F('sas · 800 ms après le triple tap',`<div class="hdr"><span>NEXUS</span><span class="r">ouverture…</span></div><div class="abs" style="left:0;right:0;top:280px;text-align:center;color:${MUTE};font-size:14px">Ouverture…</div><div class="abs" style="left:120px;right:120px;top:312px;height:3px;background:#163020;border-radius:2px"><div style="width:60%;height:3px;background:${PH};border-radius:2px"></div></div>${hint('les gestes sont absorbés','')}`,
- '<b>Le sas est visible.</b> Les classifications résiduelles du triple tap et les contacts commencés dedans sont absorbés. Rien n\'est sélectionnable tant qu\'il n\'est pas fini.',true),
-F('racine · Navigation sélectionnée',hdr('NEXUS','back: Teleprompter')+navCard(true)+relayCard(false)+notifCard(false)+accessRows()+hint('<b>swipe</b> carte suivante · <b>tap</b> ouvrir','<b>back</b> Teleprompter'),
- '<b>Six arrêts au plus.</b> L\'activité épinglée en tête, la seconde activité, la dernière notification, deux accès. Aucune commande à la racine.',true),
-F('racine · swipe → Relay',hdr('NEXUS','back: Teleprompter')+navCard(false)+relayCard(true)+notifCard(false)+accessRows()+hint('<b>swipe</b> carte suivante · <b>tap</b> ouvrir','<b>back</b> Teleprompter'),
- '<b>Un swipe = une carte.</b> Pas de boucle aux extrémités. Les valeurs vivent, l\'ordre et les tailles ne bougent pas.',true),
-F('racine · swipe → Notifications',hdr('NEXUS','back: Teleprompter')+navCard(false)+relayCard(false)+notifCard(false)+accessRows('n')+hint('<b>tap</b> ouvrir la collection','<b>back</b> Teleprompter'),
- '<b>Les accès sont toujours à distance bornée</b> : cinq swipes max de la tête à Applications, quel que soit l\'historique.',true),
-F('racine · sans trajet',hdr('NEXUS','back: Teleprompter')+`<div class="card sel" style="top:66px"><div class="lbl"><span>NOTIFICATION · IL Y A 2 MIN</span></div><div class="row" style="padding:4px 14px 12px">${I.cal}<div style="font-size:17px;color:${INK}">Standup · 14:00</div></div></div><div class="item" style="top:150px">${I.bell}Notifications<small>6</small></div><div class="item" style="top:208px">${I.grid}Applications<small>37</small></div>`+hint('<b>swipe</b> choisir · <b>tap</b> ouvrir','<b>back</b> Teleprompter'),
- '<b>Rien en cours.</b> La racine commence par l\'aperçu de notification, puis les accès. Aucune horloge artificielle pour remplir la tête.',true),
-F('racine · activité terminée en place',hdr('NEXUS','back: Teleprompter')+`<div class="card sel dead" style="top:66px;height:212px"><div class="lbl"><span>NAVIGATION · TERMINÉE</span><span>12:24</span></div><div class="row" style="padding:6px 14px 14px">${ico('<circle cx="12" cy="12" r="9"/><path d="M8 12l3 3 5-6"/>',MUTE,34)}<div><div class="dist" style="color:${MUTE}">Arrived</div><div class="street" style="color:${MUTE}">Châtelet · exit 3</div></div></div></div>`+relayCard(false)+notifCard(false)+`<div class="item" style="top:477px">${I.bell}Notifications<small>6</small></div><div class="item" style="top:535px">${I.grid}Applications<small>37</small></div>`+hint('<b>swipe</b> carte suivante','<b>back</b> Teleprompter'),
- '<b>La carte ne saute pas.</b> Terminée pendant que tu la regardais : elle garde sa taille et sa place, inerte, jusqu\'à ton prochain mouvement. Les cartes dessous ne bougent pas. Le tap en cours n\'agit jamais sur la voisine.',true),
+F('sas · 800 ms après le triple tap',S('NEXUS','opening…',[V.text('Opening…','vcap',{c:true})],'gestures are absorbed',''),
+ '<b>Le sas est visible.</b> Les classifications résiduelles du triple tap et les contacts commencés dedans sont absorbés. Rien n\'est sélectionnable tant qu\'il n\'est pas fini. Le code dessine l\'en-tête « NEXUS / opening… », une seule légende centrée « Opening… » et le hint « gestures are absorbed », sans barre de progression.',true,['a'],'code'),
+F('racine livrée · Navigation + Media + notice',A.root([A.nav(true),A.media(),A.notice(),A.notifs(1),A.apps()]),
+ '<b>Ce que dessine le code.</b> Deux activités dans l\'ordre primaire courant (pas de préférence d\'épinglage), la dernière notice en aperçu non armé, Notifications · 1 (une seule notice gardée en mémoire), Applications sans compteur. En-tête « back: close ». Cinq arrêts ici, six au plus avec Activities · n. L\'aperçu montre le premier texte non vide de la notice, le titre, donc l\'expéditeur pour Relay : « Mika ». L\'ordre et l\'appartenance sont gelés jusqu\'à la fermeture, mais pas le contenu de l\'aperçu : une notice plus récente y remplace en place texte, source et heure, même sous le focus. La cible PR4 fait l\'inverse pour la carte Relay (identité stable). Texte seul, comme le rendu livré ; la même racine avec les marques d\'app proposées est en 2.18.',true,['a'],'code'),
+F('racine livrée · terminée en place',A.root([V.card({l:'NAVIGATION · ENDED',t:'14:24',p:'Arrived',s:'Châtelet',fig:1,end:1,sel:1}),A.media(),A.notice(),A.notifs(1),A.apps()],true),
+ '<b>ENDED, même taille, même place.</b> La carte garde ce qu\'elle montrait, en pointillé et inerte, jusqu\'à la fermeture de la session ; le hint devient « swipe next card » et un tap ne touche jamais la voisine. À l\'ouverture suivante, elle n\'est plus là.',true,['a'],'code'),
+F('racine livrée · rien du tout',A.root([A.notifs(0,true),A.apps()]),
+ '<b>Rien en cours, aucune notice gardée.</b> Notifications · 0 puis Applications. Pas d\'horloge ni de remplissage.',true,['a'],'code'),
+F('racine · Navigation + Relay en attente',hdr('NEXUS','back: Teleprompter')+navCard(true)+relayCard(false)+accessRows()+hint('<b>swipe</b> carte suivante · <b>tap</b> ouvrir','<b>back</b> Teleprompter'),
+ '<b>Cible.</b> Les activités réelles en tête, puis la carte Relay conditionnelle à la place de l\'aperçu générique (la dernière notice reste comptée dans Notifications), puis les deux accès réservés. Aucune commande à la racine. Back nommé en PR3b, carte Relay en PR4, minimap en PR5. Les deux cartes portent la marque de leur app. Notifications et Applications sont des lieux du hub, pas des apps : pas de marque d\'app, mais leur glyphe de lieu, la cloche et la grille, sur toutes les racines cibles.',true,['b','p4','p5'],true),
+F('racine · swipe → Relay',hdr('NEXUS','back: Teleprompter')+navCard(false)+relayCard(true)+accessRows()+hint('<b>swipe</b> carte suivante · <b>tap</b> ouvrir','<b>back</b> Teleprompter'),
+ '<b>Un swipe = une carte.</b> Pas de boucle aux extrémités. Les valeurs vivent, l\'ordre et les tailles ne bougent pas. Tap ouvre directement la conversation de Mika, sur sa page la plus récente, avec Dictate et Type en bas (4.8) : le fil exact par son identité authentifiée, jamais un fil deviné, sans page de détail entre les deux. Une carte résolue est inerte.',true,['b','p4','p5'],true),
+F('racine · swipe → Notifications',hdr('NEXUS','back: Teleprompter')+navCard(false)+relayCard(false)+accessRows('n')+hint('<b>tap</b> ouvrir la collection','<b>back</b> Teleprompter'),
+ '<b>Les accès sont toujours à distance bornée</b> : cinq swipes max de la tête à Applications, quel que soit l\'historique. Notifications · 6 = historique borné de PR4.',true,['b','p4','p5'],true),
+F('racine · Relay seul',T.root([T.relay(true),T.notifs(6),T.apps()]),
+ '<b>Aucune activité.</b> La carte Relay devient le premier et seul contenu ; les deux accès restent.',true,['b','p4']),
+F('racine · rien en attente',T.root([T.notice(true),T.notifs(6),T.apps()]),
+ '<b>Rien en cours, rien de répondable.</b> L\'aperçu générique de la dernière notification reprend sa place, puis les accès. Aucune horloge artificielle pour remplir la tête.',true,['b','p4']),
+F('racine · réponse transmise, en place',T.root([T.nav(),T.relay(true,{l:'RELAY · RÉPONSE TRANSMISE',t:'14:13',u:'transmise à l\'app · remise non confirmée',end:true}),T.notifs(6),T.apps()],'<b>swipe</b> carte suivante'),
+ '<b>Réponse confiée à l\'app pendant la session.</b> La carte devient inerte, pointillée, même taille, même place, jusqu\'à la fermeture. « Transmise » ne veut dire ni lue, ni remise, ni répondue chez Mika.',true,['p4']),
+F('racine · notification retirée, en place',T.root([T.nav(),T.relay(true,{l:'RELAY · NOTIFICATION RETIRÉE',t:'14:15',u:'retirée du téléphone · rien n\'est prouvé',end:true}),T.notifs(6),T.apps()],'<b>swipe</b> carte suivante'),
+ '<b>Distinct de « transmise ».</b> La notification a disparu du téléphone : réponse dans l\'app, balayage, ouverture, on ne sait pas. Le retrait seul ne prouve ni réponse, ni lecture, ni remise ; la carte le dit sans conclure.',true,['p4']),
+F('racine · ouverture suivante',T.root([T.nav(true),T.notice(),T.notifs(6),T.apps()]),
+ '<b>Session fermée puis rouverte.</b> La carte résolue n\'est plus là ; ici, une notification plus récente (agenda) reprend l\'aperçu générique. <b>Question PR4 ouverte</b> : si la dernière notice gardée est justement le message Relay résolu, que montre l\'aperçu ? Aujourd\'hui, PR3a afficherait « NOTIFICATION · RELAY / Mika ». Aucune règle de dédoublonnage ni de rétention n\'est décidée ici.',true,['p4']),
+F('racine · plusieurs conversations',T.root([T.nav(),T.relay(true,{p:'3 conversations',u:'Mika · Famille · Alan'}),T.notifs(6),T.apps()]),
+ '<b>Un seul agrégat</b>, jamais une carte par conversation. Tap ouvre la liste de Relay, pas un fil deviné. Une carte individuelle « Mika » ne devient jamais « Famille » sous le focus : une autre conversation attend l\'ouverture suivante.',true,['p4']),
+F('racine · 6 arrêts, débordement',T.root([T.nav(true),T.media(),T.relay(),T.acts(3),T.notifs(6),T.apps()]),
+ '<b>Le plafond.</b> ≤ 2 cartes d\'activité + 1 carte Relay + Activités · n + Notifications + Applications = 6. La troisième activité est dans Activités ; Notifications et Applications ne sont jamais coupés, la carte Relay n\'est jamais un septième arrêt.',true,['p4']),
+F('racine · aperçu masqué',T.root([T.nav(),T.relay(true,{u:'aperçu masqué'}),T.notifs(6),T.apps()]),
+ '<b>Aperçu masqué (réglage Relay).</b> Comme aujourd\'hui dans la liste et la bande de Relay : l\'expéditeur reste, seul le texte est remplacé (« New message » dans la liste livrée). Le message n\'apparaît qu\'après un tap volontaire.',true,['p4']),
+F('racine · notification sensible rédigée',T.root([T.nav(),T.relay(true,{p:'Message',u:'contenu masqué par Android'}),T.notifs(6),T.apps()]),
+ '<b>État distinct de l\'aperçu masqué.</b> Quand Android rédige une notification sensible, Relay remplace déjà son texte (« Hidden by Android — read it on your phone »). Proposition PR4 pour la carte : afficher « Message » à la place du titre. À trancher ; ce n\'est pas le comportement de l\'aperçu masqué.',true,['p4'],'prop'),
+F('racine · activité terminée en place',hdr('NEXUS','back: Teleprompter')+`<div class="card sel dead" style="top:66px;height:212px"><div class="lbl"><span class="id">${mark('nav',18)}<span>NAVIGATION · TERMINÉE</span></span><span>12:24</span></div><div class="row" style="padding:6px 14px 14px">${ico('<circle cx="12" cy="12" r="9"/><path d="M8 12l3 3 5-6"/>',MUTE,34)}<div><div class="dist" style="color:${MUTE}">Arrived</div><div class="street" style="color:${MUTE}">Châtelet · exit 3</div></div></div></div>`+relayCard(false)+accessRows()+hint('<b>swipe</b> carte suivante','<b>back</b> Teleprompter'),
+ '<b>La carte ne saute pas.</b> Terminée pendant que tu la regardais : elle garde sa taille et sa place, inerte, jusqu\'à la fermeture de la session, même si tu passes aux cartes suivantes. Les cartes dessous ne bougent pas. Le tap en cours n\'agit jamais sur la voisine.',true,['b','p4']),
+/* Proposal counterpart of 2.2: identical data and English code labels; only the app marks are added. */
+F('proposition · racine livrée avec marques',S('NEXUS','back: close',[V.card({l:'NAVIGATION',t:'14:09',p:'120 m',m:'1.2 km',s:'Rue de Rivoli',fig:1,sel:true,mk:'nav'}),V.card({l:'MEDIA DECK',t:'14:08',p:'Reptilia',s:'The Strokes',fig:1,mk:'media'}),V.card({l:'NOTIFICATION · RELAY',t:'14:11',p:'Mika',mk:'relay'}),V.row('Notifications',{tr:'1',hg:'bell'}),V.row('Applications',{hg:'grid'})],'swipe next · tap open','back close'),
+ '<b>Contrepartie de 2.2, pas un rendu livré.</b> Mêmes données, même ordre, mêmes libellés anglais du code ; seuls les marques d\'app et les deux glyphes de lieu sont ajoutés : l\'épingle de Navigation, le disque de Media Deck, et pour l\'aperçu de notice la marque de sa source, Relay. Mika reste un nom, sans avatar. Notifications et Applications n\'ont pas de marque d\'app mais leur glyphe de lieu, la cloche et la grille, comme sur les racines cibles. Mêmes hauteurs de carte : la marque de 18 px tient dans la ligne d\'étiquette.',true,[]),
 ];
 
 /* ---------- 3. navigation pages ---------- */
 const nav=[
-F('aperçu du tracé · suivi',`${map({w:480,h:640,scale:.95,anchorY:.64,marks:[{kind:'turn',at:[230,310]}],labels:[{text:'Rue de Rivoli',at:[330,292],rot:HD-3,bright:true,size:14},{text:'Bd Sébastopol',at:[275,470],rot:HD+86}],scaleBar:[76,'50 m']})}<div class="hdr" style="background:transparent;border:0"><span style="text-shadow:0 0 8px #000">NAVIGATION · APERÇU</span><span class="r" style="text-shadow:0 0 8px #000">suivi · zoom 2/4</span></div><div class="abs" style="left:18px;top:60px;display:flex;align-items:center;gap:14px;text-shadow:0 0 10px #000">${arrow(50)}<div><div style="font-size:40px;font-weight:700;line-height:1">120 m</div><div style="font-size:18px;color:${INK};margin-top:4px">Rue de Rivoli</div></div></div>${hint('<b>swipe</b> zoom · <b>tap</b> commandes','<b>back</b> racine')}`,
- '<b>Triple tap puis tap.</b> La carte occupe tout, dessinée par le hub. Le zoom est borné et annoncé. Back revient exactement sur la carte de racine.',true),
-F('aperçu du tracé · trajet entier',`${map({w:480,h:640,cx:570,cy:640,heading:0,scale:.36,anchorY:.5,posHeading:HD,marks:[{kind:'turn',at:[230,310]},{kind:'dest',at:[880,270]}],labels:[{text:'Châtelet',at:[880,330],bright:true,size:14},{text:'Rue de Rivoli',at:[470,340]}],scaleBar:[72,'200 m']})}<div class="hdr" style="background:transparent;border:0"><span style="text-shadow:0 0 8px #000">NAVIGATION · APERÇU</span><span class="r" style="text-shadow:0 0 8px #000">trajet entier · nord ↑</span></div><div class="abs" style="left:18px;top:60px;display:flex;align-items:baseline;gap:14px;text-shadow:0 0 8px #000"><span style="font-size:36px;font-weight:700">15 min</span><span style="font-size:17px;color:${INK}">1.2 km · arrive <b style="color:${PH}">12:24</b></span></div>${hint('<b>swipe</b> zoom · <b>tap</b> commandes','<b>back</b> racine')}`,
- '<b>Nord en haut, tout le tracé</b>, départ, arrivée. Choisi dans les commandes, mémorisé pour la session.',true),
-F('commandes',hdr('NAVIGATION · COMMANDES','back: aperçu')+[
- {n:'Suivi',d:'carte centrée sur toi',sel:true,r:'actuel',cur:true},{n:'Trajet entier',d:'tout le tracé, nord en haut'},{n:'Affichage · Minimap',d:'taille de l\'île pendant le trajet',r:'›'},
-].map((o,i)=>`<div class="rowitem${o.sel?' sel':''}${o.cur?' cur':''}" style="top:${72+i*72}px"><div><div class="n">${o.n}</div><div class="d">${o.d}</div></div>${o.r?`<div class="r">${o.r}</div>`:''}</div>`).join('')+`<div class="sec" style="top:300px">ACTIONS DU PLUGIN</div><div class="rowitem" style="top:320px"><div><div class="n" style="color:${MUTE}">Terminer le trajet</div><div class="d">demande une confirmation</div></div></div><div class="sec" style="top:400px">IMMERSION</div><div class="rowitem" style="top:420px"><div><div class="n" style="color:${MUTE}">Ouvrir l\'application complète</div><div class="d">surface exclusive · remplace l\'autre plugin Nexus</div></div><div class="r">↗</div></div>`+hint('<b>swipe</b> choisir · <b>tap</b> exécuter','<b>back</b> aperçu'),
- '<b>Hub d\'abord, plugin ensuite.</b> Suivi, trajet, taille de l\'île ; puis les actions du plugin, confirmées ; l\'immersion tout en bas, nommée pour ce qu\'elle fait.',true),
-F('affichage · taille de l\'île',hdr('NAVIGATION · AFFICHAGE','back: commandes')+`<div class="sec" style="top:66px">TAILLE AMBIANTE · PENDANT LE TRAJET</div>`+[
+F('résumé livré · nav:main',S('NAVIGATION','back: root',[V.text('120 m','fig'),V.text('Rue de Rivoli','bod'),V.text('Tournez à droite','bod'),V.fact('Arrival','14:24'),V.fact('Source','Google Maps'),V.fact('Received','14:09'),V.row('Commands',{sel:true})],'tap open','back root'),
+ '<b>Le résumé de la vraie notification de guidage.</b> Distance, rue, consigne telle que l\'app l\'écrit, arrivée si l\'app la donne, source et heure de réception. Une valeur absente est omise, jamais estimée. Mise à jour en direct, deux révisions par seconde au plus.',true,['a'],'code'),
+F('commandes livrées · nav:commands',S('COMMANDS','back: Navigation',[V.row('Open the full app',{sub:'exclusive surface',sel:true})],'tap open','back Navigation'),
+ '<b>Une seule commande.</b> L\'app complète, nommée, derrière une étape de lancement. Ni fin de trajet, ni carte, ni réglage d\'affichage.',true,['a'],'code'),
+F('étape d\'immersion livrée',S('NAVIGATION','back: cancel',[V.text('Navigation','tit',{c:true}),V.text('Opens the full app as an exclusive surface. It replaces what the glasses show now; BACK leaves it.','vcap',{c:true}),V.row('Open',{c:true,sel:true}),V.row('Cancel',{c:true})],'swipe choose · tap open','back cancel'),
+ '<b>L\'immersion est une étape à part, annoncée.</b> Le texte est générique dans PR3a ; Back annule sans rien lancer.',true,['a'],'code'),
+F('page Navigation · carte compacte, vue Suivi',hdrM('nav','NAVIGATION','back: racine')+`<div class="abs" style="left:22px;right:22px;top:66px;display:flex;align-items:center;gap:14px">${arrow(40)}<div style="min-width:0;flex:1"><div class="dist">120 m</div><div class="street">Rue de Rivoli</div></div><div style="align-self:flex-start;font-size:13px;color:${MUTE};white-space:nowrap">arrivée 12:24</div></div><div class="card sel" style="top:140px;height:300px"><div class="lbl"><span>CARTE · VUE SUIVI</span><span>1/2</span></div><div style="margin-top:8px" class="divider">${map({w:441,h:262,scale:.55,anchorY:.66,marks:[{kind:'turn',at:[230,310]}],scaleBar:[55,'50 m']})}</div></div><div class="item" style="top:452px">Commandes<small>vues · taille · actions</small></div>`+hint('<b>swipe</b> carte ↔ Commandes · <b>tap</b> plein écran','<b>back</b> racine'),
+ '<b>Triple tap, puis tap sur la carte Navigation.</b> La page garde la manœuvre en texte et montre la carte compacte dans la vue choisie. Le swipe déplace la sélection entre la carte et Commandes, rien d\'autre ; tap sur la carte la met en plein écran. Pas de zoom. Back revient à la racine, carte Navigation sélectionnée. La marque de Navigation est au titre ; la flèche reste le glyphe de la manœuvre, et Commandes, une commande, n\'a pas de marque.',true,['p5'],true),
+F('carte plein écran · vue Suivi',`${map({w:480,h:640,scale:.95,anchorY:.64,marks:[{kind:'turn',at:[230,310]}],labels:[{text:'Rue de Rivoli',at:[330,292],rot:HD-3,bright:true,size:14},{text:'Bd Sébastopol',at:[275,470],rot:HD+86}],scaleBar:[76,'50 m']})}<div class="hdr" style="background:transparent;border:0"><span style="text-shadow:0 0 8px #000">NAVIGATION · APERÇU</span><span class="r" style="text-shadow:0 0 8px #000">vue Suivi · 1/2</span></div><div class="abs" style="left:18px;top:60px;display:flex;align-items:center;gap:14px;text-shadow:0 0 10px #000">${arrow(50)}<div><div style="font-size:40px;font-weight:700;line-height:1">120 m</div><div style="font-size:18px;color:${INK};margin-top:4px">Rue de Rivoli</div></div></div>${hint('<b>swipe</b> vue suivante · <b>tap</b> commandes','<b>back</b> page')}`,
+ '<b>Tap sur la carte compacte.</b> La carte occupe tout l\'écran, dessinée par le hub, centrée sur toi, cap vers le haut. Le même axe de swipe passe à la vue suivante au lieu de zoomer ; tap ouvre les commandes ; Back revient à la page compacte, carte sélectionnée. Pas de marque d\'app ici : rien ne se pose sur la carte plein écran.',true,['p5'],true),
+F('carte plein écran · vue Trajet entier',`${map({w:480,h:640,cx:570,cy:640,heading:0,scale:.36,anchorY:.5,posHeading:HD,marks:[{kind:'turn',at:[230,310]},{kind:'dest',at:[880,270]}],labels:[{text:'Châtelet',at:[880,330],bright:true,size:14},{text:'Rue de Rivoli',at:[470,340]}],scaleBar:[72,'200 m']})}<div class="hdr" style="background:transparent;border:0"><span style="text-shadow:0 0 8px #000">NAVIGATION · APERÇU</span><span class="r" style="text-shadow:0 0 8px #000">vue Trajet entier · 2/2</span></div><div class="abs" style="left:18px;top:60px;display:flex;align-items:baseline;gap:14px;text-shadow:0 0 8px #000"><span style="font-size:36px;font-weight:700">15 min</span><span style="font-size:17px;color:${INK}">1.2 km · arrive <b style="color:${PH}">12:24</b></span></div>${hint('<b>swipe</b> vue précédente · <b>tap</b> commandes','<b>back</b> page')}`,
+ '<b>Un swipe depuis la vue Suivi : on change de carte, pas d\'échelle.</b> Nord en haut, tout le tracé, départ, arrivée. Deux vues, sans boucle. La vue choisie est mémorisée pour la session et reprise par la carte compacte. Comme en 3.5, pas de marque d\'app : rien ne se pose sur la carte plein écran.',true,['p5'],true),
+F('commandes · choisir la vue',hdrM('nav','NAVIGATION · COMMANDES','back: carte')+[
+ {n:'Vue · Suivi',d:'centrée sur toi, cap vers le haut',r:'actuelle',cur:true},{n:'Vue · Trajet entier',d:'tout le tracé, nord en haut',sel:true},{n:'Plein écran',d:'la carte occupe tout l\'écran'},{n:'Affichage · Minimap',d:'taille de l\'île pendant le trajet',r:'›'},
+].map((o,i)=>`<div class="rowitem${o.sel?' sel':''}${o.cur?' cur':''}" style="top:${72+i*72}px"><div><div class="n">${o.n}</div><div class="d">${o.d}</div></div>${o.r?`<div class="r">${o.r}</div>`:''}</div>`).join('')+`<div class="sec" style="top:368px">ACTIONS DU PLUGIN</div><div class="rowitem" style="top:388px"><div><div class="n" style="color:${MUTE}">Terminer le trajet</div><div class="d">demande une confirmation</div></div></div><div class="sec" style="top:462px">IMMERSION</div><div class="rowitem" style="top:482px"><div><div class="n" style="color:${MUTE}">Ouvrir l\'application complète</div><div class="d">surface exclusive · remplace l\'autre plugin</div></div><div class="r">↗</div></div>`+hint('<b>swipe</b> choisir · <b>tap</b> exécuter','<b>back</b> carte'),
+ '<b>Les vues se choisissent aussi ici.</b> Tap sur une vue la met en plein écran dans cette vue ; Plein écran agrandit la vue actuelle ; Back revient là où tu étais (carte plein écran ou page compacte). Hub d\'abord, plugin ensuite ; l\'immersion tout en bas, nommée pour ce qu\'elle fait. « Terminer le trajet » n\'existe pas aujourd\'hui : action de plugin illustrative.',true,['p5']),
+F('affichage · taille de l\'île',hdrM('nav','NAVIGATION · AFFICHAGE','back: commandes')+`<div class="sec" style="top:66px">TAILLE AMBIANTE · PENDANT LE TRAJET</div>`+[
  {n:'Texte',d:'flèche, distance, rue'},{n:'Minimap',d:'texte + carte cap vers le haut',r:'actuel',cur:true},{n:'Panel',d:'carte large, noms de rue',sel:true},
 ].map((o,i)=>`<div class="rowitem${o.sel?' sel':''}${o.cur?' cur':''}" style="top:${90+i*76}px;height:64px"><div><div class="n">${o.n}</div><div class="d">${o.d}</div></div>${o.r?`<div class="r">${o.r}</div>`:''}</div>`).join('')+`<div class="abs" style="left:22px;right:22px;top:330px;font-size:12px;color:${MUTE};line-height:1.5">Choix provisoire au swipe, enregistré au tap. Dans une app, le hub plafonne à Texte. Back annule.</div>`+hint('<b>swipe</b> choisir · <b>tap</b> enregistrer','<b>back</b> commandes'),
- '<b>Trois tailles, pas quatre.</b> La carte est une commande, pas une taille. Préférence par plugin, miroir sur le téléphone.',true),
-F('confirmation · action du plugin',hdr('NAVIGATION · CONFIRMER','back: commandes')+`<div class="abs" style="left:22px;right:22px;top:120px;text-align:center"><div style="font-size:22px;color:${INK};font-family:var(--sans)">Terminer le trajet ?</div><div style="font-size:13px;color:${MUTE};margin-top:8px">Navigation arrêtera le guidage sur le téléphone.</div></div><div class="rowitem sel" style="top:260px;justify-content:center"><div class="n">Annuler</div></div><div class="rowitem" style="top:332px;justify-content:center"><div class="n">Confirmer</div></div>`+hint('<b>swipe</b> choisir · <b>tap</b> valider','<b>back</b> annuler'),
- '<b>Annuler est présélectionné.</b> Toute action qui a un effet dehors passe par là. Un swipe en marchant ne termine jamais un trajet.',true),
+ '<b>Trois tailles, pas quatre.</b> La carte est une commande, pas une taille. Préférence par plugin, miroir sur le téléphone.',true,['p5']),
+F('confirmation · action du plugin',hdrM('nav','NAVIGATION · CONFIRMER','back: commandes')+`<div class="abs" style="left:22px;right:22px;top:120px;text-align:center"><div style="font-size:22px;color:${INK};font-family:var(--sans)">Terminer le trajet ?</div><div style="font-size:13px;color:${MUTE};margin-top:8px">Navigation arrêtera le guidage sur le téléphone.</div></div><div class="rowitem sel" style="top:260px;justify-content:center"><div class="n">Annuler</div></div><div class="rowitem" style="top:332px;justify-content:center"><div class="n">Confirmer</div></div>`+hint('<b>swipe</b> choisir · <b>tap</b> valider','<b>back</b> annuler'),
+ '<b>Annuler est présélectionné.</b> Toute action qui a un effet dehors passe par là (mécanisme livré : « Cancel » présélectionné). Un swipe en marchant ne termine jamais un trajet.',true,['p5']),
 ];
 
 /* ---------- 4. relay & notifications ---------- */
 const relay=[
-F('détail · conversation',hdr('RELAY · CONVERSATION','back: racine')+`<div class="card" style="top:66px;padding:12px 14px"><div class="row">${I.msg}<div><div style="font-size:19px;color:${INK}">Mika</div><div style="font-size:12px;color:${MUTE}">réponse attendue · il y a 2 min</div></div></div><div style="margin-top:12px;font-size:17px;color:${INK};line-height:1.4;font-family:var(--sans)">« tu arrives quand ? on est devant »</div><div style="margin-top:6px;font-size:12px;color:${MUTE}">3 messages dans ce fil</div></div>`+[
- {n:'Lire le fil',d:'3 messages, pages au swipe',sel:true},{n:'Répondre',d:'clavier téléphone ou dicter · relecture avant envoi'},{n:'Marquer comme lu',d:'local, sans envoi'},
-].map((o,i)=>`<div class="rowitem${o.sel?' sel':''}" style="top:${232+i*72}px"><div><div class="n">${o.n}</div><div class="d">${o.d}</div></div></div>`).join('')+hint('<b>swipe</b> choisir · <b>tap</b> ouvrir','<b>back</b> racine'),
- '<b>Page fournie par Relay, dessinée par le hub.</b> Lire avant d\'agir. Plus de « Ouvrir Relay » : tout ce qu\'il faut est là.',true),
-F('lire le fil · document',hdr('RELAY · MIKA','back: détail')+`<div class="doc"><div class="ts">14:02 · Mika</div><div>on est devant le cinéma</div><div class="ts" style="text-align:right">14:05 · toi</div><div class="me">j\'arrive, 10 min</div><div class="ts">14:11 · Mika</div><div style="color:${PH}">tu arrives quand ? on est devant</div></div><div class="abs" style="right:22px;top:66px;font-size:12px;color:${MUTE}">1/1</div>`+hint('<b>swipe</b> page · <b>tap</b> répondre','<b>back</b> détail'),
- '<b>Modèle « conversation » du hub.</b> Relay envoie trois messages et des horodatages, le hub met en page. Le swipe tourne les pages si le fil déborde.',true),
-F('répondre · choix du mode',hdr('RELAY · RÉPONDRE','back: détail')+`<div class="abs" style="left:22px;right:22px;top:70px;font-size:13px;color:${MUTE};font-family:var(--sans)">À Mika · « tu arrives quand ? on est devant »</div>`+[
- {i:I.kb,n:'Clavier du téléphone',d:'le texte s\'affiche ici pendant la saisie',sel:true},{i:I.mic,n:'Dicter',d:'micro des lunettes · relecture avant envoi'},
-].map((o,i)=>`<div class="rowitem${o.sel?' sel':''}" style="top:${120+i*76}px;height:64px">${o.i}<div><div class="n">${o.n}</div><div class="d">${o.d}</div></div></div>`).join('')+`<div class="abs" style="left:22px;right:22px;top:300px;font-size:12px;color:${MUTE};line-height:1.5">Avec le seul touchpad on choisit et on confirme, on ne tape pas. Sans téléphone ni dictée : « Répondre sur le téléphone ».</div>`+hint('<b>tap</b> choisir','<b>back</b> détail'),
- '<b>Le composeur appartient au hub.</b> Pas une surface Relay. Le brouillon survit à un passage par la racine ; une seule réponse en cours à la fois.',true),
-F('répondre · relecture',hdr('RELAY · RELECTURE','back: mode')+`<div class="card" style="top:66px;padding:14px"><div style="font-size:12px;letter-spacing:.14em;color:${MUTE}">BROUILLON · À MIKA</div><div style="font-size:19px;color:${INK};margin-top:8px;line-height:1.4;font-family:var(--sans)">J\'arrive dans 5 minutes, je suis rue de Rivoli.</div></div>`+[
- {n:'Modifier',d:'rouvre le clavier ou la dictée',sel:true},{n:'Envoyer',d:'une seule tentative · acquitté « Envoyé »'},{n:'Effacer',d:'demande une confirmation'},
-].map((o,i)=>`<div class="rowitem${o.sel?' sel':''}" style="top:${200+i*72}px"><div><div class="n">${o.n}</div><div class="d">${o.d}</div></div></div>`).join('')+hint('<b>swipe</b> choisir · <b>tap</b> valider','<b>back</b> mode'),
- '<b>Modifier est présélectionné</b>, pas Envoyer. L\'envoi est un tap volontaire sur un élément choisi. Résultat ambigu = « Envoi non confirmé », jamais de renvoi automatique.',true),
+F('notifications livrées · 0',S('NOTIFICATIONS','back: root',[V.text('No notifications','vcap',{c:true})],'','back root'),
+ '<b>Aucune notice gardée.</b> La collection de PR3a est vide ou contient une seule entrée : la notice courante ou la dernière, en mémoire seulement.',true,['a'],'code'),
+F('notifications livrées · 1',S('NOTIFICATIONS','back: root',[V.row('Relay',{sub:'14:11 · Mika',sel:true})],'tap open','back root'),
+ '<b>Une entrée, non armée.</b> Libellé = source, sous-titre = heure de capture et premier texte non vide parmi titre, texte et première ligne ; pour Relay le titre est l\'expéditeur, d\'où « Mika ». Le contenu est déjà filtré par la rédaction du plugin.',true,['a'],'code'),
+F('notice livrée · lecture',S('RELAY','1/1',[V.doc(A.noticeDoc)],'tap commands','back Notifications'),
+ '<b>Le détail est un document.</b> Source et heure, titre, texte. Tap entre dans les commandes, swipe tourne les pages si le texte déborde.',true,['a'],'code'),
+F('notice · commandes',S('RELAY','back: Notifications',[V.text('COMMANDS','vsec'),V.row('Read Relay threads',{sel:true})],'tap open','back text'),
+ '<b>La notice ne nomme aucun fil (D2).</b> Le hub propose la liste de Relay, jamais un fil deviné. Hint « back text » : implémenté par PR3a-A (avant : « back Notifications »), revu par Opus ; Fable et appareil en attente.',true,['a','aA'],'code'),
+F('liste Relay livrée',S('RELAY','1/2',A.list(true),'tap open','back Relay'),
+ '<b>La boîte de Relay telle quelle.</b> Expéditeur, heure de capture, aperçu selon le réglage de masquage (masqué : l\'expéditeur reste, le texte devient « New message »). Elle peut garder en lecture seule des conversations dont la notification a disparu (Alan ici) : ce n\'est pas la règle « non répondu » de PR4.',true,['a'],'code'),
+F('fil livré · lecture seule',S('MIKA','1/1',[V.doc(A.thread)],'','back Relay'),
+ '<b>Document en lecture seule.</b> En-tête = app et heure de capture ; pas d\'heure par message, pas d\'alignement envoyé / reçu, aucune commande de réponse ni de lecture. Les noms ne s\'affichent que si plusieurs personnes parlent.',true,['a'],'code'),
+F('applications livrées',S('APPLICATIONS','1/6',[V.row('Navigation',{sel:true}),V.row('Relay'),V.row('Lens',{sub:'Open the full app · exclusive surface'}),V.row('Assistant',{sub:'Open the full app · exclusive surface'}),V.row('Teleprompter'),V.row('Camera')],'tap open','back root'),
+ '<b>Liste figée à l\'entrée.</b> Un plugin à pages ouvre sa page principale (Relay → la liste), un autre plugin propose l\'app complète derrière l\'étape de lancement, les apps Rokid s\'ouvrent localement. Pas de compteur à la racine. Texte seul, comme le rendu livré ; la même liste avec les marques d\'app proposées est en 4.17.',true,['a'],'code'),
+/* r15: the target conversation, one screen. 4.8-4.13 keep their numbers; each is a state of RC, not a page. */
+F('conversation · lecture',RC({foot:{btns:RD},act:'<b>tap</b> répondre',back:'<b>back</b> racine'}),
+ '<b>Un seul écran pour lire et répondre.</b> Tap sur la carte Relay promue (PR4), sur un fil de la liste Relay, ou plus tard sur le fil exact d\'une notice (4b.7) ouvre directement cette conversation, sur sa page la plus récente. Messages reçus de Mika à gauche, nos réponses à droite, contours seulement, 17 px ; une seule heure, celle de la capture, ni heure par message ni coche de lecture. Les deux gros boutons <b>Dictate</b> et <b>Type</b> sont toujours visibles en bas, au repos : aucun n\'est sélectionné et le swipe tourne les pages (une seule page ici, donc le hint ne propose pas de swipe ; voir 4.19). Tap met le focus sur les boutons (4.9), Back revient d\'où l\'on vient. Plus de page de détail, de choix du mode ni de relecture. Le côté de chaque message vient d\'un rôle explicite dans les données du mockup ; pour le vrai fil, Relay devrait fournir l\'auteur de chaque message : à vérifier, non planifié. Un message sans auteur connu ne reçoit pas de côté deviné. Le rendu livré lit le fil comme un document sans côté (4.6, vue Code livré).',true,['p4']),
+F('conversation · boutons en focus',RC({foot:{btns:RD,sel:'dictate'},act:'<b>swipe</b> Dictate ⇄ Type · <b>tap</b> commencer',back:'<b>back</b> lecture'}),
+ '<b>Tap : le focus descend sur les boutons, sur le même écran.</b> Dictate, le premier bouton, est présélectionné (contour vif) : la dictée est le mode par défaut. Le swipe ne tourne plus les pages : il passe de Dictate à Type et revient. Un seul sens à la fois, et le hint le dit. Tap commence la saisie choisie ; Back revient à la lecture sans rien perdre. Le fil n\'est pas grisé : seul le bouton sélectionné change, il reste lisible. Dictate écoute avec le micro des lunettes (4.11), jamais celui du téléphone ; Type ouvre le clavier du téléphone (4.10).',true,['p4']),
+F('Type · clavier du téléphone',RC({msgs:[...CH.mika,DR.typing],foot:{k:'type',line:'Clavier du téléphone',r:'saisie en cours'},act:'<b>tap</b> terminer',back:'<b>back</b> annuler la saisie'}),
+ '<b>On tape sur le téléphone, on lit sur les lunettes.</b> Le clavier s\'ouvre sur le téléphone ; le texte s\'écrit en direct dans une bulle en pointillé, à droite, là où sera notre réponse. Pointillé = pas envoyé. Le swipe est sans effet pendant la saisie. « OK » sur le clavier, ou un tap sur les lunettes, termine : le texte devient le brouillon et l\'écran revient à la lecture (4.12). Back, écrit dans le hint, abandonne cette saisie ; si un brouillon existait déjà (Type le rouvre alors au clavier avec son texte), il revient intact. La fin d\'une saisie n\'envoie jamais rien.',true,['p4']),
+F('Dictate · micro des lunettes',RC({msgs:[...CH.mika,DR.dictating],foot:{k:'dictate',line:'Micro des lunettes',r:'écoute'},act:'<b>tap</b> terminer',back:'<b>back</b> annuler la dictée'}),
+ '<b>Dictée avec le micro des lunettes, dit tel quel.</b> La transcription s\'écrit dans la même bulle en pointillé. Tap arrête le micro et garde le texte en brouillon (4.12) ; Back, écrit dans le hint, arrête le micro et abandonne cette dictée. Si le micro des lunettes n\'est pas disponible, cette ligne le dit et le focus revient sur Type, exception voulue au défaut Dictate : jamais de repli silencieux sur le micro du téléphone. Dictate sur un brouillon existant en dicte un nouveau, qui ne remplace l\'ancien qu\'à la fin de la dictée ; Back garde l\'ancien. La fin d\'une dictée n\'envoie jamais rien.',true,['p4']),
+F('brouillon gardé · lecture',RC({msgs:[...CH.mika,DR.ready],foot:{btns:RS},act:'<b>tap</b> répondre',back:'<b>back</b> racine · brouillon gardé'}),
+ '<b>Le brouillon vit dans la conversation.</b> Après une saisie, l\'écran revient à la lecture : notre texte en bas à droite, en pointillé, « brouillon · pas encore envoyé ». Le swipe tourne les pages comme avant. Un troisième bouton, <b>Envoyer</b>, rejoint Dictate et Type. Un seul brouillon à la fois, lié à son destinataire authentifié (Mika) ; il reste au passage par la racine et par Back : en revenant ici, il est toujours là. Type le rouvre au clavier avec son texte ; vider le texte puis OK le supprime : c\'est la seule façon de le jeter, et elle est explicite. Dans un autre fil, le hint d\'un bouton dit « remplace le brouillon pour Mika », et le remplacement n\'a lieu qu\'à la fin de la nouvelle saisie. Jamais envoyé à quelqu\'un d\'autre.',true,['p4']),
+F('brouillon · Envoyer en focus',RC({msgs:[...CH.mika,DR.ready],foot:{btns:RS,sel:'send'},act:'<b>swipe</b> choisir · <b>tap</b> envoyer à Mika',back:'<b>back</b> lecture'}),
+ '<b>Envoyer demande un geste neuf.</b> Une saisie se termine toujours en lecture (4.12). Il faut un nouveau tap pour mettre le focus ; Envoyer est alors présélectionné et le hint dit à qui ; puis un second tap, volontaire, envoie. Fable proposait de présélectionner Envoyer dès la fin de la saisie : écarté, un tap résiduel suffirait alors à envoyer. Exigence pour le runtime, à garantir et non testée : Envoyer n\'agit que sur un tap dont le contact commence après l\'affichage du focus Envoyer ; un Enter dont le contact précède cette transition, comme le tap qui termine la saisie ou un contact qui traîne, est ignoré. Les horodatages de contact de la session rendent cela réalisable ; rien n\'est implémenté ni mesuré sur l\'appareil. Juste avant de confier la réponse, Relay revérifie que la notification de ce fil exact accepte encore une réponse ; sinon rien ne part (4.22). Swipe passe à Dictate (redicter) puis à Type (modifier au clavier). Back revient à la lecture, brouillon gardé. Pas de confirmation de plus ni d\'écran de relecture : la bulle est la relecture.',true,['p4']),
 F('notifications · collection',hdr('NOTIFICATIONS · 6','back: racine')+[
- {i:I.cal,n:'Standup · 14:00',t:'2 min',sel:true},{i:I.msg,n:'Mika · tu arrives quand ?',t:'2 min',st:'LU'},{i:I.msg,n:'Vivo Promo · image',t:'50 min'},{i:I.star,n:'Feeds · 7 nouveaux',t:'1 h'},{i:I.bat,n:'Lunettes · 20 %',t:'2 h',st:'EXPIRÉ',dim:true},{i:I.msg,n:'Alan · ok pour ce soir',t:'3 h',st:'RÉPONDU'},
-].map((o,i)=>`<div class="item${o.sel?' sel':''}" style="top:${68+i*56}px;height:48px;${o.dim?'color:'+MUTE:''}">${o.i}<span style="font-size:17px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${o.n}</span>${o.st?`<span class="st">${o.st}</span>`:''}<small>${o.t}</small></div>`).join('')+`<div class="abs" style="left:22px;right:22px;top:414px;font-size:12px;color:${MUTE};line-height:1.5">Reçu ≠ lu. Une action n\'est proposée que si elle est encore valide. Historique : 30 entrées ou 24 h, désactivable.</div>`+hint('<b>swipe</b> choisir · <b>tap</b> lire','<b>back</b> racine'),
- '<b>Récence, états lu / répondu / expiré.</b> Rien n\'est armé par défaut. Une entrée stockée ne ressuscite jamais un jeton de réponse expiré.',true),
-F('notification · détail expiré',hdr('NOTIFICATION · LUNETTES','back: collection')+`<div class="card" style="top:66px;padding:14px"><div class="row">${I.bat}<div><div style="font-size:18px;color:${INK}">Batterie des lunettes à 20 %</div><div style="font-size:12px;color:${MUTE}">il y a 2 h · système</div></div></div><div style="margin-top:12px;font-size:17px;color:${INK};font-family:var(--sans)">Branchez les lunettes avant le trajet retour.</div></div><div class="rowitem" style="top:200px"><div><div class="n" style="color:${MUTE}">Rappeler dans 30 min</div><div class="d">action expirée</div></div><div class="r">EXPIRÉ</div></div><div class="rowitem sel" style="top:272px"><div><div class="n">Retirer de l\'historique</div><div class="d">local</div></div></div>`+hint('<b>swipe</b> choisir · <b>tap</b> valider','<b>back</b> collection'),
- '<b>Lisible, pas armé.</b> L\'action de la bande d\'origine est expirée et le dit. Seule l\'opération locale reste.',true),
-F('applications',hdr('APPLICATIONS','1/37 · back: racine')+[
- {i:I.eye,n:'Lens',sel:true},{i:I.term,n:'Agents'},{i:I.star,n:'Assistant'},{i:I.star,n:'Feeds'},{i:I.music,n:'Media Deck',t:'playing'},{i:I.grid,n:'Teleprompter',t:'app Rokid'},{i:I.cam,n:'Caméra',t:'app Rokid'},
-].map((o,i)=>`<div class="item${o.sel?' sel':''}" style="top:${68+i*56}px;height:48px">${o.i}<span>${o.n}</span>${o.t?`<small>${o.t}</small>`:''}</div>`).join('')+hint('<b>swipe</b> choisir · <b>tap</b> ouvrir','<b>back</b> racine'),
- '<b>Liste simple, apps Rokid comprises.</b> Un plugin adapté s\'ouvre en page ; un plugin tiers inchangé s\'ouvre en immersion, annoncée.',true),
+ {k:'app',n:'Standup · 14:30',t:'2 min',sel:true},{k:'relay',n:'Mika · tu arrives quand ?',t:'9 min',st:'VU DANS NEXUS'},{k:'app',n:'Vivo Promo · image',t:'50 min'},{k:'feeds',n:'Feeds · 7 nouveaux',t:'1 h'},{i:I.bat,n:'Lunettes · 20 %',t:'2 h',st:'ACTION EXPIRÉE',dim:true},{k:'relay',n:'Alan · ok pour ce soir',t:'3 h',st:'TRANSMISE'},
+].map((o,i)=>`<div class="item${o.sel?' sel':''}" style="top:${68+i*56}px;height:48px;${o.dim?'color:'+MUTE:''}">${o.i||mark(o.k,24)}<span style="font-size:17px;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${o.n}</span>${o.st?`<span class="st" style="white-space:nowrap">${o.st}</span>`:''}<small style="white-space:nowrap">${o.t}</small></div>`).join('')+`<div class="abs" style="left:22px;right:22px;top:414px;font-size:12px;color:${MUTE};line-height:1.5">« Vu dans Nexus » est local : rien n\'est marqué lu sur le téléphone. « Transmise » = confiée à l\'app, pas remise. Une action n\'est proposée que si elle est encore valide. Historique borné, politique fixée en PR4, désactivable.</div>`+hint('<b>swipe</b> choisir · <b>tap</b> lire','<b>back</b> racine'),
+ '<b>Récence et états locaux</b> : vu dans Nexus, réponse transmise à l\'app, action expirée. Rien n\'est armé par défaut. Une entrée stockée ne ressuscite jamais un jeton de réponse expiré. Aucune durée de rétention n\'est décidée ici. Chaque ligne porte la marque de sa source, parce que la collection les mélange : Relay pour Mika et Alan, Feeds. La source de Vivo Promo n\'est pas identifiée dans cet exemple, et aucun plugin n\'est identifié derrière Agenda : repli générique, aucune source devinée. La notification des lunettes vient du hub lui-même, pas d\'un plugin : pas de marque d\'app, la batterie reste le glyphe de ce qui se passe. L\'en-tête, lieu du hub, n\'en a pas.',true,['p4']),
+F('notification · détail expiré',hdr('NOTIFICATION · LUNETTES','back: collection')+`<div class="card" style="top:66px;padding:14px"><div class="row">${I.bat}<div><div style="font-size:18px;color:${INK}">Batterie des lunettes à 20 %</div><div style="font-size:12px;color:${MUTE}">il y a 2 h · système</div></div></div><div style="margin-top:12px;font-size:17px;color:${INK};font-family:var(--sans)">Branchez les lunettes avant le trajet retour.</div></div><div class="rowitem" style="top:200px"><div><div class="n" style="color:${MUTE}">Rappeler dans 30 min</div><div class="d">action expirée</div></div><div class="r">EXPIRÉ</div></div><div class="rowitem sel" style="top:272px"><div><div class="n">Garder</div><div class="d">ne change rien</div></div></div><div class="rowitem" style="top:344px"><div><div class="n">Retirer de l\'historique</div><div class="d">local · demande une confirmation</div></div></div>`+hint('<b>swipe</b> choisir · <b>tap</b> valider','<b>back</b> collection'),
+ '<b>Lisible, pas armé.</b> L\'action de la bande d\'origine est expirée et le dit. Seule l\'opération locale reste, et c\'est « Garder », non destructif, qui est présélectionné. Pas de marque au titre : le système des lunettes est le hub lui-même, pas un plugin ; la batterie, dans la carte, reste le glyphe de ce qui se passe.',true,['p4']),
+F('applications',hdr('APPLICATIONS','1/7')+[
+ {k:'lens',n:'Lens',sel:true},{k:'agents',n:'Agents'},{k:'assistant',n:'Assistant'},{k:'feeds',n:'Feeds'},{k:'media',n:'Media Deck',t:'playing'},{k:'app',n:'Teleprompter',t:'app Rokid'},{k:'app',n:'Caméra',t:'app Rokid'},
+].map((o,i)=>`<div class="item${o.sel?' sel':''}" style="top:${68+i*56}px;height:48px">${mark(o.k,24)}<span>${o.n}</span>${o.t?`<small>${o.t}</small>`:''}</div>`).join('')+hint('<b>swipe</b> choisir · <b>tap</b> ouvrir','<b>back</b> racine'),
+ '<b>Liste simple, apps Rokid comprises.</b> Un plugin adapté s\'ouvre en page ; un plugin tiers inchangé s\'ouvre en immersion, annoncée. Les sous-titres « playing » et « app Rokid » sont une idée de présentation, non planifiée ; la version livrée est 4.7, dans la vue Code livré, et sa contrepartie avec marques est 4.17. Chaque plugin a sa marque déclarée (avant : œil, étoile et note génériques, Assistant et Feeds avec la même étoile) ; Pour Teleprompter et Caméra, la grille est un placeholder : le mockup n\'a pas de copie de leur icône ; le lanceur livré dessine l\'icône propre de l\'app.',true,['p5']),
+/* Proposal counterpart of 4.7: identical rows and English code labels; only the app marks are added. */
+F('proposition · applications livrées avec marques',S('APPLICATIONS','1/6',[V.row('Navigation',{sel:true,mk:'nav'}),V.row('Relay',{mk:'relay'}),V.row('Lens',{sub:'Open the full app · exclusive surface',mk:'lens'}),V.row('Assistant',{sub:'Open the full app · exclusive surface',mk:'assistant'}),V.row('Teleprompter',{mk:'app'}),V.row('Camera',{mk:'app'})],'tap open','back root'),
+ '<b>Contrepartie de 4.7, pas un rendu livré.</b> Mêmes six entrées, même ordre, mêmes libellés anglais du code ; seule une marque de 24 px précède chaque nom, grise au repos, vive sur la ligne sélectionnée. Teleprompter et Camera sont des apps Rokid : la grille est un placeholder, car le mockup n\'a pas de copie de leur icône ; le lanceur livré dessine déjà l\'icône propre de l\'app. Question ouverte : l\'icône propre en couleur, comme le lanceur LEGACY, ou un substitut monochrome sur le HUD additif ? Jamais une icône d\'appareil photo ou un logo deviné.',true,[]),
+/* Proposal counterpart of 4.5: the app mark once, in the title; the rows are people and stay unmarked. */
+F('proposition · liste Relay, marque au titre',TS('relay','RELAY','1/2',A.list(true),'tap open','back Relay'),
+ '<b>Contrepartie de 4.5, pas un rendu livré.</b> La liste n\'appartient qu\'à Relay : sa marque apparaît une fois, au titre. Mika et Alan sont des personnes : aucune marque répétée sur chaque ligne, aucun avatar inventé. Mêmes lignes, mêmes libellés du code.',true,[]),
+/* Owner target, appended: a thread longer than one screen, read in conversation on the same single axis. */
+/* Owner target: a thread longer than one screen, the same conversation screen on its newest page. */
+F('fil long · conversation, dernière page',RC({tr:'2/2',msgs:CH.mikaLong,foot:{btns:RD},act:'<b>swipe</b> page · <b>tap</b> répondre',back:'<b>back</b> racine'}),
+ '<b>Un fil plus long que l\'écran se lit par pages</b>, sur le même écran que 4.8 et avec le seul axe de swipe : page suivante ou précédente, jamais un défilement libre ni un second axe. Les boutons Dictate et Type restent en bas sur chaque page. Les messages reçus restent à gauche et nos réponses à droite d\'une page à l\'autre ; deux messages reçus à la suite restent deux contours distincts. Tap passe aux boutons, Back revient d\'où l\'on vient. Le fil s\'ouvre sur sa dernière page, celle du message qui a fait venir le porteur ; swipe arrière remonte vers les messages plus anciens, dans la limite des derniers messages capturés par Relay (réglage messages par fil) ; rien d\'antérieur n\'est disponible. Toujours une seule heure de capture, aucune heure par message ni coche.',true,['p4']),
+/* r15, appended: the result states of Envoyer, on the same screen. */
+F('transmise à l\'app',RC({msgs:[...CH.mika,DR.sent],foot:{btns:RD},act:'<b>tap</b> répondre',back:'<b>back</b> racine'}),
+ '<b>Seule une transmission réussie le dit.</b> Relay a confié la réponse à l\'app du téléphone : la bulle passe en contour plein, avec « transmise à l\'app » en 12 px. Ni « envoyée », ni « remise », ni « lue » : Nexus ne le sait pas. Le brouillon est consommé, les boutons redeviennent Dictate et Type, l\'écran reste en lecture. Cette bulle est affichée par Nexus d\'après ce qu\'il a transmis, sans heure ; si l\'app met à jour sa notification, la capture suivante la montre à sa place. La carte Relay de la racine se résout en place (2.10).',true,['p4']),
+F('transmission non confirmée',RC({msgs:[...CH.mika,DR.unconfirmed],foot:{btns:RS},act:'<b>tap</b> répondre',back:'<b>back</b> racine · brouillon gardé'}),
+ '<b>Résultat ambigu dit tel quel, dans le fil.</b> L\'app du téléphone n\'a pas acquitté : la bulle reste en pointillé, « non confirmée · vérifie sur le téléphone ». Rien n\'est renvoyé automatiquement et le brouillon reste. Envoyer reste possible, mais au focus suivant c\'est Type qui est présélectionné, ni Envoyer ni Dictate, exception voulue au défaut : Type rouvre le texte gardé ; l\'app a peut-être déjà reçu la réponse, un double envoi ne doit pas tenir à deux taps.',true,['p4']),
+F('réponse indisponible',RC({msgs:[...CH.mika,DR.stale],foot:{line:'Réponse indisponible ici',r:'réponds depuis le téléphone',off:1},act:'',back:'<b>back</b> racine'}),
+ '<b>On lit toujours, on ne répond plus ici.</b> Quand la notification de ce fil n\'accepte plus de réponse (retirée, expirée, accès révoqué), quand la vérification juste avant Envoyer échoue, ou pour un fil gardé en lecture seule dans la liste (Alan en 4.5), les boutons laissent la place à une ligne inerte : « Réponse indisponible ici · réponds depuis le téléphone ». Tap ne fait rien ; le fil capturé reste lisible et pagé. Un brouillon déjà écrit reste visible, texte intact, « non transmis ». Si l\'autorisation de répondre est perdue (notification retirée ou expirée, accès révoqué, ce fil exact n\'accepte plus de réponse), ce brouillon ne peut plus partir tel quel ; il ne prend jamais l\'autorisation d\'une autre notification et ne part jamais vers un autre destinataire. Si seule la liaison avec le téléphone manque, il reste inchangé et ne part qu\'après un nouvel Envoyer volontaire, revérifié sur le fil exact, jamais tout seul à la reconnexion (4b.10). Si ce même fil reçoit plus tard une nouvelle notification répondable, Dictate et Type reviennent : Dictate en dicte une nouvelle, qui remplace ce brouillon à la fin de sa saisie, et le hint le dit ; Type rouvre le clavier avec l\'ancien texte, comme une nouvelle saisie qui ne part qu\'après OK puis un nouvel Envoyer revérifié. Aucun autre fil ni destinataire deviné, aucun texte jeté en silence.',true,['p4']),
 ];
 
 /* ---------- 5. states ---------- */
 const states=[
-F('page · chargement',hdr('MEDIA DECK','back: racine')+`<div class="card" style="top:66px;padding:14px"><div class="row">${I.music}<div><div style="font-size:17px;color:${INK}">Reptilia</div><div style="font-size:12px;color:${MUTE}">The Strokes · résumé connu · 12:21</div></div></div></div><div class="abs" style="left:0;right:0;top:300px;text-align:center;color:${MUTE};font-size:14px">Chargement…</div><div class="abs" style="left:140px;right:140px;top:332px;height:3px;background:#163020;border-radius:2px"><div style="width:35%;height:3px;background:${PH};border-radius:2px"></div></div>`+hint('','<b>back</b> racine'),
- '<b>Cadre local immédiat</b>, titre authentifié, le résumé déjà connu, Back disponible. Aucune action métier présélectionnée pendant l\'attente.',true),
-F('page · détail indisponible',hdr('MEDIA DECK','back: racine')+`<div class="card" style="top:66px;padding:14px"><div class="row">${I.music}<div><div style="font-size:17px;color:${INK}">Reptilia</div><div style="font-size:12px;color:${MUTE}">dernier état connu · 12:21</div></div></div></div><div class="abs" style="left:22px;right:22px;top:200px;text-align:center"><div style="font-size:20px;color:${INK};font-family:var(--sans)">Détail indisponible</div><div style="font-size:13px;color:${MUTE};margin-top:6px">Le plugin n\'a pas répondu en 8 s.</div></div><div class="rowitem sel" style="top:290px;justify-content:center"><div class="n">Réessayer</div></div>`+hint('<b>tap</b> réessayer','<b>back</b> racine'),
- '<b>Pas de repli automatique vers l\'immersion.</b> Le dernier état connu reste lisible et daté. Réessayer crée une nouvelle requête ; l\'ancienne réponse est rejetée.',true),
-F('immersion · ouverture annoncée',hdr('LENS','back: applications')+`<div class="abs" style="left:22px;right:22px;top:110px;text-align:center">${ico('<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',PH,64)}<div style="font-size:22px;color:${INK};margin-top:14px;font-family:var(--sans)">Traduire en direct</div><div style="font-size:13px;color:${MUTE};margin-top:8px;line-height:1.5">Expérience exclusive : caméra des lunettes, remplace l\'autre plugin Nexus au premier plan. Back la quitte.</div></div><div class="rowitem sel" style="top:300px;justify-content:center"><div class="n">Ouvrir</div></div><div class="rowitem" style="top:372px;justify-content:center"><div class="n">Annuler</div></div>`+hint('<b>tap</b> valider','<b>back</b> applications'),
- '<b>L\'immersion est nommée par sa fonction</b> et dit ce qu\'elle coûte. Caméra, lecture continue, saisie riche, jeu : les seuls cas.',true),
-F('lien perdu pendant une page',hdr('RELAY · MIKA','back: détail')+`<div class="doc" style="opacity:.5"><div class="ts">14:02 · Mika</div><div>on est devant le cinéma</div><div class="ts" style="text-align:right">14:05 · toi</div><div class="me">j\'arrive, 10 min</div></div><div class="abs" style="left:22px;right:22px;top:300px;text-align:center"><div style="font-size:18px;color:${INK};font-family:var(--sans)">Téléphone déconnecté</div><div style="font-size:13px;color:${MUTE};margin-top:6px">La page reste lisible. Aucune action ne sera rejouée à la reconnexion.</div></div>`+hint('','<b>back</b> détail'),
- '<b>La pile ne se ferme jamais toute seule.</b> La page devient inerte, Back dépile localement, rien n\'est renvoyé au retour du lien.',true),
+F('page · chargement',S('NAVIGATION','back: root',[V.text('Navigation','bod'),V.text('120 m','vcap'),V.text('Known · 14:12','vcap'),V.text('Loading…','vcap',{c:true}),V.prog(.25)],'','back root'),
+ '<b>Cadre local immédiat</b> : titre authentifié, première ligne de l\'instantané déjà connu, « Known · heure », puis « Loading… » et une barre au quart. Rien n\'est sélectionnable, seul Back agit (« back root »). Sans instantané connu, seuls « Loading… » et la barre restent. À 2 s : « Still loading… », barre à 0,6. Inchangé par A.',true,['a'],'code'),
+F('indisponible · avant A',S('NAVIGATION','back: root',[V.text('Navigation','bod'),V.text('Last known · 14:12','vcap'),V.text('Detail unavailable','tit',{c:true}),V.text('The plugin did not respond.','vcap',{c:true}),V.row('Retry',{c:true,sel:true}),V.row('Back',{c:true})],'tap retry','back root'),
+ '<b>Base f37d379d.</b> Pas de repli automatique vers l\'immersion, Retry et Back seulement, mais du contenu gardé il ne restait que le titre et la date. Remplacé par la correction A ci-dessous.',true,['a'],'code'),
+F('texte long · lecture',S('NAVIGATION','1/2',[V.doc([['P','120 m'],['P','Rue de Rivoli'],['P','Tournez à droite sur Rue de Rivoli, puis restez sur la voie de gauche.'],['P','Dans 400 m, prenez Boulevard de Sébastopol en direction de Châtelet – Les Halles.'],['P','Voie réservée aux bus et aux vélos sur la droite après le carrefour.'],['P','Travaux signalés sur 200 m : circulation alternée, prévoyez un léger détour.'],['P','Au rond-point, prenez la deuxième sortie vers la place du Châtelet.'],['P','Continuez tout droit jusqu\'à la station, entrée côté fontaine.'],['P','Votre destination se trouve sur la gauche, après le passage piéton.']])],'swipe page · tap commands','back root'),
+ '<b>Un résumé trop haut se lit comme un document.</b> Le texte mesuré plus grand que l\'écran est découpé en pages : swipe tourne, tap rejoint les commandes. En lecture, la valeur principale est à taille de texte (17 px), pas de chiffre. Les faits (Also, Arrival, Source, Received) suivent en page 2 ; un fait trop long pour sa ligne fait aussi passer en lecture, où chaque fait est une ligne entière. Un texte qui déborde passe en lecture dès que la ligne sélectionnée est la première et qu\'aucune ligne retirée n\'est en place, y compris quand il ne déborde que plus tard (révision live, rafraîchissement, marge d\'affichage). Une fois le texte jugé trop long, il reste lu en premier jusqu\'à la prochaine ouverture ou relance, même si une révision live redevient courte. Implémenté (5a05b50d), revu par Opus ; Fable et validation appareil en attente.',true,['aA'],'code'),
+F('texte long · commandes',S('NAVIGATION','back: root',[V.text('COMMANDS','vsec'),V.row('Commands',{sel:true})],'tap open','back text'),
+ '<b>Tap → les lignes, Back → le texte.</b> Depuis les commandes d\'un texte lu, Back revient au texte, puis le Back suivant dépile. Si une ligne plus bas est tenue sélectionnée, ou si la ligne sélectionnée a été retirée, un débordement ne déplace pas le porteur : la page reste en lignes sur cette ligne et le texte est derrière Back. Limites acceptées : tap depuis le texte revient toujours à la première ligne ; à l\'ouverture, les lignes peuvent apparaître le temps d\'une passe de mise en page avant la lecture ; une perte de liaison pendant que la page est tenue en lignes ne force pas la lecture, Back mène alors au texte gardé. Implémenté (5a05b50d), revu par Opus ; Fable et validation appareil en attente.',true,['aA'],'code'),
+F('indisponible · contenu court gardé',S('NAVIGATION','back: root',[V.text('Detail unavailable','tit',{c:true}),V.text('Phone disconnected. The page stays readable; nothing is replayed.','vcap',{c:true}),V.text('Last known · 14:12','vcap',{c:true}),V.text('120 m','fig',{dim:true}),V.text('Rue de Rivoli','bod',{dim:true}),V.text('Tournez à droite','bod',{dim:true}),V.fact('Arrival','14:24',{dim:true}),V.fact('Source','Google Maps',{dim:true}),V.fact('Received','14:09',{dim:true}),V.row('Retry',{c:true,sel:true}),V.row('Back',{c:true})],'tap retry','back root'),
+ '<b>L\'échec d\'abord, daté, puis ce que la page montrait, grisé et inerte</b> (texte et faits, jamais ses actions). Seuls Retry et Back sont atteignables. Implémenté (5a05b50d), revu par Opus ; Fable et validation appareil en attente.',true,['aA'],'code'),
+F('indisponible · fil long en lecture',S('MIKA','1/3',[V.text('Detail unavailable','tit',{c:true}),V.text('The plugin did not respond.','vcap',{c:true}),V.text('Last known · 14:12','vcap',{c:true}),V.doc([['H','Messages · captured 14:11'],['P','on est devant le cinéma, la file avance vite'],['P','on a pris les places du milieu, rang G'],['P','tu arrives quand ? on est devant']],{dim:true})],'swipe page · tap retry','back Relay'),
+ '<b>Un document gardé se lit encore, grisé.</b> Swipe tourne ses pages depuis la page atteinte, tap mène à Retry / Back seulement. Limite antérieure à A et hors de son périmètre : après Retry, la lecture repart à la page 1. 2178911f conserve les débuts de page mesurés quand Retry renvoie le même instantané, pas la position de lecture ; cela n\'a pas changé. Implémenté (5a05b50d), revu par Opus ; Fable et validation appareil en attente.',true,['aA'],'code'),
+F('indisponible · Retry / Back',S('MIKA','back: Relay',[V.text('Detail unavailable','tit',{c:true}),V.text('The plugin did not respond.','vcap',{c:true}),V.text('Last known · 14:12','vcap',{c:true}),V.row('Retry',{c:true,sel:true}),V.row('Back',{c:true})],'tap retry','back text'),
+ '<b>Après le tap.</b> Retry crée une nouvelle requête, l\'ancienne réponse est rejetée ; Back revient au texte gardé, puis dépile. Rien n\'est rejoué à la reconnexion. Implémenté (5a05b50d), revu par Opus ; Fable et validation appareil en attente.',true,['aA'],'code'),
+F('immersion · ouverture annoncée',hdrM('lens','LENS','back: applications')+`<div class="abs" style="left:22px;right:22px;top:110px;text-align:center">${mark('lens',64,`display:inline-block;color:${PH}`)}<div style="font-size:22px;color:${INK};margin-top:14px;font-family:var(--sans)">Traduire en direct</div><div style="font-size:13px;color:${MUTE};margin-top:8px;line-height:1.5">Expérience exclusive : caméra des lunettes, remplace l\'autre plugin Nexus au premier plan. Back la quitte.</div></div><div class="rowitem sel" style="top:300px;justify-content:center"><div class="n">Ouvrir</div></div><div class="rowitem" style="top:372px;justify-content:center"><div class="n">Annuler</div></div>`+hint('<b>tap</b> valider','<b>back</b> applications'),
+ '<b>L\'immersion est nommée par sa fonction</b> et dit ce qu\'elle coûte. Caméra, lecture continue, saisie riche, jeu : les seuls cas. PR3a montre le texte générique (voir 3 · étape d\'immersion livrée). La marque de Lens, au titre et en grand, est celle que Lens déclare (avant : un œil générique voisin).',true,['p5']),
 F('GPS perdu · île',home+`<div class="island" style="width:262px">${chipHead(gps(40),'<span style="color:'+MUTE+'">~120 m</span>','Rue de Rivoli')}<div style="margin-top:8px" class="divider">${map({w:259,h:190,heading:0,scale:.42,anchorY:.6,lost:true,marks:[{kind:'turn',at:[230,310]}],scaleBar:[42,'50 m']})}</div><div class="foot"><span style="color:${MUTE}">GPS lost · last fix 40 s</span><span>12:24</span></div></div>`,
- '<b>On le dit, on ne devine pas.</b> Nord en haut, point sans flèche, tracé en pointillé, distance en « ~ ». Le texte de Maps reste vrai, la carte avoue.'),
+ '<b>On le dit, on ne devine pas.</b> Nord en haut, point sans flèche, tracé en pointillé, distance en « ~ ». Le texte de Maps reste vrai, la carte avoue.',false,['p5'],true),
 F('Maps guide · pas de tracé',home+`<div class="island" style="width:262px">${chipHead(arrow(40),'120 m','Rue de Rivoli')}<div style="margin-top:8px" class="divider">${map({w:259,h:190,scale:.42,route:null,scaleBar:[42,'50 m']})}</div><div class="foot"><span><b>12:24</b> arrival</span><span>Google Maps</span></div></div>`,
- '<b>Le cas Google Maps / Citymapper.</b> Pas de géométrie d\'itinéraire, donc rues + toi + cap, et la manœuvre lue dans la notif. La source est dite en pied.'),
+ '<b>Le cas Google Maps / Citymapper.</b> Pas de géométrie d\'itinéraire, donc rues + toi + cap, et la manœuvre lue dans la notif. La source est dite en pied.',false,['p5'],true),
 ];
 
 /* ---------- 6. transit ---------- */
 const transit=[
 F('marcher vers l\'arrêt · île',home+`<div class="island" style="width:262px">${chipHead(walk(40),'4 min','Gare du Nord','250 m')}<div style="margin-top:8px" class="divider">${map({w:259,h:190,scale:.36,anchorY:.7,route:[[255,640],[230,310],[500,300]],marks:[{kind:'stop',at:[500,300],text:'B'}],compass:false,scaleBar:[36,'50 m']})}</div><div class="foot"><span><span class="badge" style="font-size:12px;padding:0 6px">RER B</span> departs <b>12:36</b></span><span>12:51</span></div></div>`,
- '<b>Minutes + mètres empilés</b>, l\'arrêt sur la carte avec la lettre de la ligne, le départ visé en pied.'),
+ '<b>Minutes + mètres empilés</b>, l\'arrêt sur la carte avec la lettre de la ligne, le départ visé en pied.',false,['p5'],true),
 F('attendre à l\'arrêt · panel',home+`<div class="island" style="width:374px;padding:14px 16px 12px"><div class="row"><span class="badge" style="font-size:20px">RER B</span><span style="font-size:17px;color:${INK}">→ Robinson</span><span style="margin-left:auto;font-size:14px;color:${MUTE}">Platform 2</span></div><div class="row" style="margin-top:12px;align-items:baseline;gap:18px"><span class="dist" style="font-size:44px">3 min</span><span style="font-size:17px;color:${MUTE}">then 11 · 18</span></div><div class="then" style="margin-top:12px">Get off at <b style="color:${INK};font-weight:500">Luxembourg</b> · 3 stops · 7 min</div></div>`,
- '<b>Pas de carte debout à l\'arrêt.</b> Ligne, direction, quai, prochains départs, et déjà où descendre.'),
-F('à bord · ruban (page)',hdr('NAVIGATION · RER B','back: racine')+`<div class="row" style="position:absolute;left:22px;top:66px;right:22px">${train(36)}<div><div class="dist" style="font-size:30px">3 stops</div><div style="font-size:13px;color:${MUTE}">to <b style="color:${INK};font-weight:500">Luxembourg</b> · 7 min</div></div><span class="badge" style="margin-left:auto">RER B</span></div><div style="position:absolute;left:18px;right:18px;top:130px">${ribbon([{name:'Gare du Nord',right:'12:40'},{name:'Châtelet–Les Halles',right:'12:44'},{name:'Saint-Michel',right:'12:46'},{name:'Luxembourg',right:'12:48',off:true},{name:'Port-Royal'}],444,330,[0,1,.4])}</div><div class="abs" style="left:22px;right:22px;top:480px;font-size:12px;color:${MUTE}">exit <b style="color:${INK}">Jardin</b> · then walk 3 min · sous terre : position estimée entre deux arrêts</div>`+hint('<b>tap</b> commandes','<b>back</b> racine'),
- '<b>Le ruban remplace la carte sous terre.</b> Arrêts passés sombres, à venir pâles, descente en vif. Le train est posé entre deux arrêts : on ne sait pas mieux et on ne fait pas semblant.',true),
+ '<b>Pas de carte debout à l\'arrêt.</b> Ligne, direction, quai, prochains départs, et déjà où descendre.',false,['p5']),
+F('à bord · ruban (page)',hdrM('nav','NAVIGATION · RER B','back: racine')+`<div class="row" style="position:absolute;left:22px;top:66px;right:22px">${train(36)}<div><div class="dist" style="font-size:30px">3 stops</div><div style="font-size:13px;color:${MUTE}">to <b style="color:${INK};font-weight:500">Luxembourg</b> · 7 min</div></div><span class="badge" style="margin-left:auto">RER B</span></div><div style="position:absolute;left:18px;right:18px;top:130px">${ribbon([{name:'Gare du Nord',right:'12:40'},{name:'Châtelet–Les Halles',right:'12:44'},{name:'Saint-Michel',right:'12:46'},{name:'Luxembourg',right:'12:48',off:true},{name:'Port-Royal'}],444,330,[0,1,.4])}</div><div class="abs" style="left:22px;right:22px;top:480px;font-size:12px;color:${MUTE}">exit <b style="color:${INK}">Jardin</b> · then walk 3 min · sous terre : position estimée entre deux arrêts</div>`+hint('<b>tap</b> commandes','<b>back</b> racine'),
+ '<b>Le ruban remplace la carte sous terre.</b> Arrêts passés sombres, à venir pâles, descente en vif. Le train est posé entre deux arrêts : on ne sait pas mieux et on ne fait pas semblant.',true,['p5']),
 F('descendre · flare',home+`<div class="band">${train(52)}<div style="min-width:0"><div class="dist" style="font-size:40px">Next stop</div><div class="street" style="font-size:20px">Luxembourg · get off</div></div><span class="badge" style="margin-left:auto">RER B</span></div>`,
- '<b>Urgent transit.</b> Même bande que le virage, déclenchée par « 1 arrêt » ou l\'heure prévue selon la source.'),
+ '<b>Urgent transit.</b> Même bande que le virage, déclenchée par « 1 arrêt » ou l\'heure prévue selon la source. Demande une émission de seuils côté plugin.',false,['p5']),
 ];
 
-function fill(id,frames){const g=document.getElementById(id);for(const f of frames){const el=document.createElement('div');el.className='shot';el.innerHTML=`<span class="tag${f.d?' d':''}">${f.tag}</span><div class="wrap"><div class="frame">${f.html}</div></div><div class="cap">${f.cap}</div>`;g.appendChild(el)}}
-fill('g-amb',amb);fill('g-stack',stack);fill('g-nav',nav);fill('g-relay',relay);fill('g-states',states);fill('g-transit',transit);
-document.querySelectorAll('.scale button').forEach(b=>b.addEventListener('click',()=>{document.documentElement.style.setProperty('--scale',b.dataset.s);document.querySelectorAll('.scale button').forEach(x=>x.classList.toggle('on',x===b));}));
+/* ---------- 4b. D2 lanes: the delivered list path beside the exact-thread target ---------- */
+const exactCmds=TS('relay','RELAY','1/2',[V.text('COMMANDS','vsec'),V.row('Read this conversation',{sub:'Mika',sel:true}),V.row('Read Relay threads')],'tap open','back text');
+/* steps: a panel, '↓ …' for the next screen of the same path, or '⎇ …' to open an alternative branch. */
+const d2=[
+ {h:'Livré PR3a · via la liste',steps:[
+  F('racine · aperçu de notice',A.root([A.nav(),A.media(),A.notice(true),A.notifs(1),A.apps()]),'<b>L\'aperçu non armé</b> de la dernière notice, sélectionné : « Mika », l\'expéditeur, comme titre.',true,['a'],'code'),'↓ tap',
+  F('notice · lecture',S('RELAY','1/1',[V.doc(A.noticeDoc)],'tap commands','back root'),'Le document de la notice gardée.',true,['a'],'code'),'↓ tap',
+  F('notice · commandes',S('RELAY','back: root',[V.text('COMMANDS','vsec'),V.row('Read Relay threads',{sel:true})],'tap open','back text'),'<b>Seule issue : la liste.</b> La notice ne porte aucune référence de fil. « back text » vient de PR3a-A.',true,['a','aA'],'code'),'↓ tap',
+  F('liste Relay',S('RELAY','1/2',A.list(true),'tap open','back Relay'),'Le porteur choisit lui-même Mika.',true,['a'],'code'),'↓ tap',
+  F('fil · lecture seule',S('MIKA','1/1',[V.doc(A.thread)],'','back Relay'),'Back revient à la liste, puis à la notice.',true,['a'],'code'),
+ ]},
+ {h:'Cible PR3b · fil exact par référence',steps:[
+  F('notice · commandes avec référence',exactCmds,'<b>Référence authentifiée et négociée.</b> Le fil exact d\'abord, la liste reste en second.',true,['b'],'prop'),'↓ tap',
+  F('fil exact',RC({title:'MIKA',foot:{btns:RD},act:'<b>tap</b> répondre',back:'<b>back</b> notice'}),'<b>Le bon fil, directement, sur le même écran que 4.8.</b> Back revient à la notice, pas à une liste jamais ouverte. La référence de fil authentifiée est PR3b ; la conversation et ses boutons Dictate / Type sont la cible non planifiée de 4.8, et la réponse elle-même vient en PR4 : avant PR4, ce fil se lit sans boutons. Sans référence, référence périmée ou téléphone déconnecté : les branches ci-dessous, jamais un fil deviné.',true,['b','p4']),
+  '⎇ autre cas : la notice n\'a pas de référence',
+  F('référence absente',TS('relay','RELAY','back: root',[V.text('COMMANDS','vsec'),V.row('Read Relay threads',{sel:true})],'tap open','back text'),'<b>Peer ancien, non négocié ou notice sans référence</b> : la liste est proposée explicitement, exactement le chemin livré. Aucun destinataire deviné par le nom ou le texte.',true,['b']),
+  '⎇ autre cas : la référence est périmée',
+  F('référence périmée',TS('relay','RELAY','1/1',[V.doc([['A','This conversation is no longer on the phone.']])],'','back Relay'),'<b>Relay le dit</b> avec son texte existant ; aucun autre fil n\'est ouvert à la place. Back revient à la notice, d\'où la liste reste à un tap.',true,['b']),
+  '⎇ autre cas : le téléphone est déconnecté',
+  F('téléphone déconnecté',TS('relay','MIKA','1/1',[V.text('Detail unavailable','tit',{c:true}),V.text('Phone disconnected. The page stays readable; nothing is replayed.','vcap',{c:true}),V.text('Last known · 14:12','vcap',{c:true}),V.chat(CH.mika,{ct:'Messages · captured 14:11',dim:true})],'tap retry','back Relay'),'<b>Le fil exact reste celui demandé.</b> Le contenu gardé de ce même fil se lit d\'abord, grisé et inerte, sans ligne d\'action à l\'écran. Tap mène à Retry / Back, comme en 5.7 : Retry reprend la même référence, et Back y revient au texte, puis le Back suivant revient à Relay. Sans contenu gardé, l\'échec s\'affiche directement avec Retry / Back. Aucun repli vers un autre fil ni vers un destinataire deviné. Cible PR3b qui réutilise le comportement indisponible de PR3a-A ; le fil gardé y est dessiné en conversation, grisé, comme la cible non planifiée de 4.8. Téléphone déconnecté : aucune réponse n\'est proposée, ni Dictate ni Type, comme en 4.22. Une simple perte de liaison ne condamne pas le brouillon gardé : il reste inchangé, n\'est jamais envoyé tout seul à la reconnexion, et ne part qu\'après un nouvel Envoyer volontaire, revérifié sur ce fil exact. Si l\'autorisation de répondre est perdue entre-temps, la règle de 4.22 s\'applique.',true,['b']),
+ ]},
+ {h:'Applications → Relay · toujours la liste',steps:[
+  F('applications · Relay',S('APPLICATIONS','2/6',[V.row('Navigation'),V.row('Relay',{sel:true}),V.row('Lens',{sub:'Open the full app · exclusive surface'}),V.row('Assistant',{sub:'Open the full app · exclusive surface'}),V.row('Teleprompter'),V.row('Camera')],'tap open','back root'),'<b>Entrée générale</b> : pas de fil visé, donc la page principale de Relay.',true,['a'],'code'),'↓ tap',
+  F('liste Relay',S('RELAY','1/2',A.list(true),'tap open','back Applications'),'<b>Même liste qu\'aujourd\'hui</b>, dans toutes les phases. En PR4, la carte Relay promue ouvre directement la conversation de Mika (4.8) ; un agrégat de plusieurs conversations ouvre cette liste. Cible : un fil choisi ici s\'ouvre sur ce même écran de conversation, avec « back Relay ».',true,['a','p4'],'code'),
+ ]},
+];
+
+/* ---------- rendering, phase badges outside the HUD, filters, scale, jump list ---------- */
+const PH_LABEL={a:'PR3a · livré',aA:'PR3a-A · en attente',b:'PR3b',p4:'PR4',p5:'PR5',id:'marques d\'app · proposition non planifiée',cv:'fil en conversation · cible non planifiée',ty:'Reply + Type · cible non planifiée'};
+const PV_LABEL={code:['sim','simulation · libellés du code'],ill:['ill','comportement livré · illustration'],prop:['prop','libellés proposés'],fic:['fic','illustration · rues fictives']};
+function shot(f,num){
+  /* The marks badge follows what the panel really draws. A code simulation must never draw a mark. */
+  if(f.html.includes('class="am"')){
+    if(f.pv.includes('code'))console.error(`app mark drawn on code simulation ${num}`);
+    if(!f.ph.includes('id'))f.ph=[...f.ph,'id'];
+  }
+  /* The same for the target conversation, which the delivered renderer does not draw. */
+  if(f.html.includes('class="cm ')){
+    if(f.pv.includes('code'))console.error(`conversation drawn on code simulation ${num}`);
+    if(!f.ph.includes('cv'))f.ph=[...f.ph,'cv'];
+  }
+  const el=document.createElement('div');el.className='shot';el.id='f'+num.replace(/\W/g,'-');el.dataset.ph=f.ph.join(' ');el.dataset.pv=f.pv.join(' ');
+  const pv=f.pv.map(k=>`<span class="ph ${PV_LABEL[k][0]}">${PV_LABEL[k][1]}</span>`).join('');
+  el.innerHTML=`<div class="meta"><span class="num">${num}</span>${f.ph.map(p=>`<span class="ph ${p}">${PH_LABEL[p]}</span>`).join('')}${pv}</div><span class="tag${f.d?' d':''}">${f.tag}</span><div class="wrap"><div class="frame">${f.html}</div></div><div class="cap">${f.cap}</div>`;
+  el.dataset.label=`${num} · ${f.tag} · ${f.ph.map(p=>PH_LABEL[p]).join(' + ')}`;
+  return el;
+}
+const REG={};
+function fill(id,sec,frames){const g=document.getElementById(id);frames.forEach((f,i)=>{const n=`${sec}.${i+1}`;REG[n]=f;g.appendChild(shot(f,n))})}
+document.getElementById('g-ident').innerHTML=Object.entries(MK_SRC).map(([k,[name,path,how]])=>`<div><div class="sw">${mark(k,24,'color:'+PH)}${mark(k,18,'color:'+MUTE)}</div><div><b>${name}</b><br><code>${path}</code><br>${how}</div></div>`).join('');
+fill('g-amb','1',amb);fill('g-stack','2',stack);fill('g-nav','3',nav);fill('g-relay','4',relay);fill('g-states','5',states);fill('g-transit','6',transit);
+(()=>{const g=document.getElementById('g-d2');let n=0;
+  for(const lane of d2){const box=document.createElement('div');box.className='lane';box.innerHTML=`<h3>${lane.h}</h3>`;
+    for(const st of lane.steps){
+      if(typeof st!=='string'){REG[`4b.${++n}`]=st;box.appendChild(shot(st,`4b.${n}`));continue}
+      const s=document.createElement('div');s.className='step'+(st.startsWith('⎇')?' alt':'');s.textContent=st;box.appendChild(s)}
+    g.appendChild(box)}})();
+
+/* Key screens: copies of gallery panels, shown first in the target view, each linking back to its panel. */
+const KEYS=['2.5','4.17','4.8','1.11'];
+KEYS.forEach(n=>{const el=shot(REG[n],n),id='f'+n.replace(/\W/g,'-');el.id='k'+id;el.classList.add('key');
+  el.querySelector('.cap').insertAdjacentHTML('beforeend',` <a class="back" href="#${id}">→ ${n} dans la galerie</a>`);
+  document.getElementById('g-keys').appendChild(el)});
+
+const jump=document.getElementById('jump');
+document.querySelectorAll('.shot:not(.key)').forEach(s=>{const o=document.createElement('option');o.value=s.id;o.textContent=s.dataset.label+(s.dataset.pv.split(' ').includes('code')?' · code livré':'');jump.appendChild(o)});
+
+/* View mode: 't' = target (every panel without the code-simulation badge), 'c' = delivered-code
+   references (exactly the code simulations), '' = everything. The phase filter combines with it.
+   Each section says how many panels the current view hides, with a one-tap way back to everything. */
+let mode='t',phase='';
+const isRef=s=>s.dataset.pv.split(' ').includes('code');
+const inView=s=>mode===''||(mode==='c')===isRef(s);
+document.querySelectorAll('section[data-s]').forEach(sec=>{const p=document.createElement('p');p.className='refnote';
+  sec.querySelector('.grid,.lanes').before(p)});
+function applyFilters(){
+  document.querySelectorAll('.shot:not(.key)').forEach(s=>s.classList.toggle('hide',!inView(s)||(!!phase&&!s.dataset.ph.split(' ').includes(phase))));
+  document.querySelectorAll('.lane').forEach(l=>l.style.display=l.querySelector('.shot:not(.hide)')?'':'none');
+  document.querySelectorAll('section[data-s]').forEach(sec=>{
+    sec.classList.toggle('hide',!sec.querySelector('.shot:not(.hide)'));
+    const out=[...sec.querySelectorAll('.shot')].filter(s=>!inView(s)).length,note=sec.querySelector('.refnote');
+    note.classList.toggle('hide',!out);
+    note.innerHTML=!out?'':(mode==='t'?`${out} simulation${out>1?'s':''} du code livré masquée${out>1?'s':''} dans la vue Cible`:`${out} panneau${out>1?'x':''} cible${out>1?'s':''} masqué${out>1?'s':''} dans la vue Code livré`)+'<button type="button">tout afficher</button>';
+    const b=note.querySelector('button');if(b)b.onclick=()=>{mode='';applyFilters()}});
+  document.getElementById('s-keys').classList.toggle('hide',mode==='c'||!!phase);
+  document.querySelectorAll('#phases button').forEach(b=>b.classList.toggle('on',b.dataset.p===phase));
+  document.querySelectorAll('#modes button').forEach(b=>b.classList.toggle('on',b.dataset.m===mode));
+}
+document.querySelectorAll('#phases button').forEach(b=>b.addEventListener('click',()=>{phase=b.dataset.p;applyFilters()}));
+document.querySelectorAll('#modes button').forEach(b=>b.addEventListener('click',()=>{mode=b.dataset.m;applyFilters()}));
+/* A panel hidden by the view or the phase filter (its panel, lane or section) is revealed by resetting
+   only what hides it, then scrolled to. Used by the jump list and the key-screen links. */
+function reveal(t){
+  if(t.getClientRects().length===0){
+    if(phase&&!t.dataset.ph.split(' ').includes(phase))phase='';
+    if(!inView(t))mode='';
+    applyFilters();
+  }
+  t.scrollIntoView({block:'start'});
+}
+jump.addEventListener('change',()=>{const t=document.getElementById(jump.value);if(t)reveal(t)});
+document.addEventListener('click',e=>{const a=e.target.closest('a[href^="#"]');if(!a)return;
+  const t=document.getElementById(a.getAttribute('href').slice(1));if(!t)return;
+  if(t.classList.contains('shot')){e.preventDefault();reveal(t);return}
+  /* A section link whose section the view hides shows everything again. */
+  if(t.getClientRects().length===0){mode='';phase='';applyFilters()}});
+applyFilters();
+
+/* The requested mode is kept apart from the effective scale: every mode, 1:1 included, is clamped to
+   the width a cell really has, and a wider viewport restores the requested size on resize. */
+let scaleMode='auto';
+function applyScale(){
+  const main=document.querySelector('main'),cs=getComputedStyle(main);
+  const avail=main.clientWidth-parseFloat(cs.paddingLeft)-parseFloat(cs.paddingRight);
+  const fitGrid=(avail-2)/482, fitLane=(avail-28)/482; /* lane: 12 px padding + 1 px border per side */
+  const want=scaleMode==='auto'?.75:+scaleMode, wantLane=scaleMode==='auto'?.5:+scaleMode;
+  const s=Math.max(.3,Math.min(want,fitGrid)), ls=Math.max(.3,Math.min(wantLane,fitLane));
+  const root=document.documentElement.style;
+  root.setProperty('--scale',s);
+  root.setProperty('--lscale',ls);
+  document.documentElement.dataset.scale=`${scaleMode}:${s.toFixed(3)}:${ls.toFixed(3)}`;
+}
+document.querySelectorAll('.scale button').forEach(b=>b.addEventListener('click',()=>{scaleMode=b.dataset.s;document.querySelectorAll('.scale button').forEach(x=>x.classList.toggle('on',x===b));applyScale();}));
+addEventListener('resize',applyScale);applyScale();
 </script>
 </body>
 </html>
