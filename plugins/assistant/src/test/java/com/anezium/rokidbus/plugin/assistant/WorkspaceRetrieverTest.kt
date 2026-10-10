@@ -182,4 +182,27 @@ class WorkspaceRetrieverTest {
         assertFalse(mixed.excerpts.contains("nebuleuse.txt"))
         assertFalse(mixed.excerpts.contains("code.txt"))
     }
+
+    @Test
+    fun `Orion full question retrieves the annex while the names-only fallback misses it`() {
+        val retriever = WorkspaceRetriever(listOf(WorkspaceDocument(
+            WorkspaceEntry("orion-id", "orion.pdf"),
+            listOf(
+                WorkspaceChunk(0, "Projet Orion. Calendrier général.", page = 1),
+                WorkspaceChunk(1, "Le code du casier Orion-47 est 3912.", page = 2),
+                WorkspaceChunk(2,
+                    "Annexe. La réunion de lancement aura lieu à Lyon, salle Bellecour.", page = 3),
+            ),
+        )))
+        val question = "dans orion pdf ou a lieu la reunion de lancement"
+        val initial = retriever.search(question)
+        assertTrue(initial.excerpts.contains("Bellecour"))
+        assertTrue(WorkspaceCitation("orion-id", 3) in initial.citations)
+        assertEquals(WorkspaceSearchResult(), retriever.search(question, maxChars = 0))
+
+        val fallback = retriever.search("Orion")
+        assertTrue(fallback.excerpts.contains("3912"))
+        assertFalse(fallback.excerpts.contains("Bellecour"))
+        assertFalse(WorkspaceCitation("orion-id", 3) in fallback.citations)
+    }
 }
