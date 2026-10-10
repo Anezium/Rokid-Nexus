@@ -86,7 +86,12 @@ internal class SessionReducer(
                 }
             }
         }
-        return transition.copy(effects = transition.effects.ifEmpty { listOf(SessionEffect.None) })
+        // An acknowledgement holds only while its target stays on screen: once something else is
+        // focused, coming back to the same target needs a new one.
+        val after = transition.model
+        val settled = after.shownFocus?.takeIf { it.token != SessionFocus.tokenOf(after) }
+            ?.let { after.copy(shownFocus = null) } ?: after
+        return SessionTransition(settled, transition.effects.ifEmpty { listOf(SessionEffect.None) })
     }
 
     /** Only an acknowledgement of the target on screen now counts, and only its first one. */

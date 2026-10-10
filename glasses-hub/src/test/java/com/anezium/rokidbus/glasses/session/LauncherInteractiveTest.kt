@@ -140,6 +140,20 @@ class LauncherInteractiveTest {
     }
 
     @Test
+    fun `coming back to a target that was drawn before needs a new acknowledgement`() {
+        focusOnPlay()
+        send(SessionEvent.Step(1, 2_600))
+        send(SessionEvent.Step(-1, 2_700))
+        assertEquals("play", root().focus?.key)
+
+        press(2_800)
+        assertTrue(effects.none { it is SendActivityCommand })
+        shown(2_900)
+        press(3_000)
+        assertEquals(1, effects.filterIsInstance<SendActivityCommand>().size)
+    }
+
+    @Test
     fun `a new revision of the card is a new target that needs a new fresh press`() {
         focusOnPlay()
         send(SessionEvent.ActivityUpdated(stop(seq = 8)))

@@ -1357,6 +1357,7 @@ internal object NexusSession {
 
     /** The last focus identity the window was asked to acknowledge, so each is acknowledged once. */
     private var acknowledgedFocus: String? = null
+    private var launcherWasActive = false
 
     private val activityFeed = ActivityFeed(
         ownerLabel = ::pluginLabel,
@@ -1467,9 +1468,16 @@ internal object NexusSession {
         }
     }
 
-    /** The pair's launcher bundle changed: cards, quick actions and page bodies follow it. */
+    /**
+     * The pair's launcher bundle changed: cards, quick actions and page bodies follow it. Losing
+     * it with the link still up leaves provider pages inert, as their bodies and stamps were read
+     * under it; nothing is replayed, and the wearer's Retry asks again.
+     */
     fun onLauncherNegotiated() {
         runOnMain {
+            val active = GlassesHub.launcherInteractiveActive()
+            if (launcherWasActive && !active && GlassesHub.isPhoneConnected()) runner.dispatch(SessionEvent.PageSupportLost)
+            launcherWasActive = active
             runner.dispatch(SessionEvent.LauncherFactsChanged)
             onActivities(latestActivities)
         }
