@@ -31,6 +31,7 @@ import com.anezium.rokidbus.shared.GlassesKeyboardContract
 import com.anezium.rokidbus.shared.GlassesKeyboardReply
 import com.anezium.rokidbus.shared.GlassesRepairContract
 import com.anezium.rokidbus.shared.GlyphContract
+import com.anezium.rokidbus.shared.LauncherInteractiveContract
 import com.anezium.rokidbus.shared.ImageSurfaceContract
 import com.anezium.rokidbus.ink.InkWire
 import com.anezium.rokidbus.shared.LinkStateBits
@@ -307,6 +308,18 @@ object GlassesHub {
         }
         if (envelope.path == BusPaths.HUB_CAPABILITIES) {
             updateRemotePhoneCapabilities(envelope.payload)
+            return
+        }
+        // Launcher-bundle traffic from the phone reaches the session alone, never anyone else. A
+        // policy may arrive before the phone's capabilities do, so it is kept either way: the
+        // quick gate itself requires the negotiated bundle, and a result matches only a command
+        // these glasses sent, which they send only over the bundle.
+        if (envelope.path == BusPaths.CORE_POLICY_QUICK_ACTIONS || envelope.path == BusPaths.ACTIVITY_RESULT) {
+            when {
+                envelope.binary != null -> log("launcher bundle message dropped path=${envelope.path}")
+                envelope.path == BusPaths.ACTIVITY_RESULT -> NexusSession.onActivityResult(envelope.payload)
+                else -> NexusSession.onQuickActionPolicy(envelope.payload)
+            }
             return
         }
         if (envelope.path == BusPaths.GLASSES_SELFARM_MANUAL) {
@@ -693,6 +706,7 @@ object GlassesHub {
                 BusCapabilityBits.ACTIVITY_EXTRAS or
                 BusCapabilityBits.INK_SURFACE or
                 BusCapabilityBits.EDITABLE_SURFACE or
+                BusCapabilityBits.LAUNCHER_INTERACTIVE or
                 (if (ttsAvailable) BusCapabilityBits.TTS else 0),
             imageSurfaceVersion = ImageSurfaceContract.VERSION,
             pinSurfaceVersion = PinSurfaceContract.VERSION,
@@ -718,6 +732,7 @@ object GlassesHub {
             maintenanceReady = onboarding.maintenanceReady,
             ttsVersion = if (ttsAvailable) TtsContract.VERSION else 0,
             pageSessionVersion = GLASSES_PAGE_SESSION_VERSION,
+            launcherInteractiveVersion = LauncherInteractiveContract.VERSION,
         )
         val error = sendRemote(
             BusEnvelope(
@@ -1286,6 +1301,15 @@ object GlassesHub {
 
     internal fun isPhoneConnected(): Boolean = phoneConnected
 
+    /**
+     * The launcher-bundle version both hubs run over the current link, 0 when either lacks it or
+     * the link is down; a disconnect resets the phone's side. Nothing of the bundle acts below 1.
+     */
+    internal fun launcherInteractiveVersion(): Int =
+        if (phoneConnected) PhoneHubCapabilitiesContract.negotiatedLauncherInteractiveVersion(remotePhoneCapabilities) else 0
+
+    internal fun launcherInteractiveActive(): Boolean = LauncherInteractiveContract.isActive(launcherInteractiveVersion())
+
     /** Both hubs on session/page v1 over the current link; a disconnect resets the phone's side. */
     internal fun pageSessionSupported(): Boolean =
         phoneConnected &&
@@ -1356,6 +1380,8 @@ object GlassesHub {
             hudTopInsetDp = advertised.hudTopInsetDp,
             hudPositionAuto = advertised.hudPositionAuto,
             pageSessionVersion = advertised.pageSessionVersion,
+            launcherInteractiveVersion = advertised.launcherInteractiveVersion,
+            launcherBackend = advertised.launcherBackend,
         )
         appContext?.let {
             ActivityController.setAlwaysExpanded(it, next.activityAlwaysExpanded)
@@ -1374,6 +1400,7 @@ object GlassesHub {
                 " phoneAssistedSetup=${supportsPhoneAssistedSetup(next.features)}",
         )
         if (next.features != previous.features) notifyLinkState()
+        if (next.launcherInteractiveVersion != previous.launcherInteractiveVersion) onLauncherNegotiation()
         if (next.pageSessionVersion != previous.pageSessionVersion) {
             // A version-only change: the session and the catalog follow it, and nothing replays.
             NexusSession.onPageSupport(pageSessionSupported())
@@ -1408,6 +1435,15 @@ object GlassesHub {
         val previous = remotePhoneCapabilities
         remotePhoneCapabilities = PhoneHubCapabilities(0, null)
         if (cameraLauncherEntry(previous) != null) notifyLauncherEntries()
+        if (previous.launcherInteractiveVersion != 0) onLauncherNegotiation()
+    }
+
+    /** The activity tier and the session follow the negotiated launcher bundle as it changes. */
+    private fun onLauncherNegotiation() {
+        val version = launcherInteractiveVersion()
+        log("launcher bundle negotiated version=$version")
+        ActivityController.onLauncherNegotiated(version)
+        NexusSession.onLauncherNegotiated()
     }
 
     private fun errorEnvelope(id: String, code: String): BusEnvelope =

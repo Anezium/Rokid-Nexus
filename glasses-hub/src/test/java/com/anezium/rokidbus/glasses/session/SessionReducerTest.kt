@@ -691,7 +691,7 @@ class SessionReducerTest {
     }
 
     @Test
-    fun `rule 11 the default resolver keeps confirmation hub and immersion rows inert`() {
+    fun `rule 11 the default resolver confirms every plugin action and keeps hub and immersion rows inert`() {
         val defaults = SessionReducer()
         openRoot(using = defaults)
         send(Enter(4_000), defaults)
@@ -705,12 +705,21 @@ class SessionReducerTest {
             using = defaults,
         )
 
-        repeat(3) { index ->
-            send(Enter(5_000L + index * 100), defaults)
-            assertEquals(listOf(SessionEffect.None), effects)
+        // A plugin action asks first whatever its own confirm flag says: Cancel is preselected.
+        send(Enter(5_000), defaults)
+        assertEquals(FramePanel.Confirm("delete", "delete", 1, null), top().panel)
+        send(Back(5_010), defaults)
+        repeat(2) { index ->
             send(Step(1, 5_050L + index * 100), defaults)
+            send(Enter(5_100L + index * 100), defaults)
+            assertEquals(listOf(SessionEffect.None), effects)
         }
-        send(Enter(6_000), defaults)
+        send(Step(1, 6_000), defaults)
+        send(Enter(6_010), defaults)
+        assertEquals(FramePanel.Confirm("mute", "mute", 1, null), top().panel)
+        assertTrue(effects.none { it is SendAction })
+        send(Step(1, 6_020), defaults)
+        send(Enter(6_030), defaults)
         assertEquals("mute", effects.filterIsInstance<SendAction>().single().action.actionId)
     }
 

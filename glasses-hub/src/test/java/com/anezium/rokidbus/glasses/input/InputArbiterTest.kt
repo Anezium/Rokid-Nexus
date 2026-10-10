@@ -241,7 +241,8 @@ class InputArbiterTest {
 
         assertTrue(down.consumed && up.consumed)
         assertEquals(
-            listOf(nativeTripleTap(1_000), SessionEvent.Contact(1_700), SessionEvent.Enter(2_500)),
+            // The tap began at its contact, which the ENTER carries as its press start.
+            listOf(nativeTripleTap(1_000), SessionEvent.Contact(1_700), SessionEvent.Enter(2_500, pressStartMs = 1_700)),
             rig.sessionEvents(),
         )
         assertTrue(rig.model.state is SessionState.Root)
@@ -263,7 +264,7 @@ class InputArbiterTest {
 
         assertEquals(
             listOf(
-                nativeTripleTap(1_000), SessionEvent.Enter(1_130), SessionEvent.Back(1_230),
+                nativeTripleTap(1_000), SessionEvent.Enter(1_130, pressStartMs = 1_100), SessionEvent.Back(1_230),
                 SessionEvent.Step(1, 1_300),
             ),
             rig.sessionEvents(),
@@ -478,7 +479,7 @@ class InputArbiterTest {
         assertEquals(
             listOf(
                 SessionEvent.Step(1, 3_000),
-                SessionEvent.Enter(3_200 + InputArbiter.RING_TAP_DEADLINE_MS),
+                SessionEvent.Enter(3_200 + InputArbiter.RING_TAP_DEADLINE_MS, pressStartMs = 3_200),
                 SessionEvent.Back(5_340 + InputArbiter.RING_TAP_DEADLINE_MS),
             ),
             rig.sessionEvents(),

@@ -110,16 +110,24 @@ internal class LocalPages(
         return LocalPage(clip(current.sourceLabel, PageSurfaceContract.MAX_TITLE_CHARS), PageBody.Document(segments, rows))
     }
 
+    /**
+     * Every collection entry, live and offline, in the root's order. A row does what its card
+     * does: it stands for its owner's entry through a hub action, never for a guessed page.
+     */
     private fun activityList(): LocalPage {
-        val rows = activities().take(PageTemplateContract.MAX_ITEMS).map { activity ->
+        val actions = mutableListOf<Pair<String, String>>()
+        val rows = activities().sortedWith(RootStops.ORDER).take(PageTemplateContract.MAX_ITEMS).map { activity ->
+            val label = clip(activity.ownerLabel ?: activity.ownerPluginId ?: activity.id, PageTemplateContract.MAX_LABEL_CHARS)
+            val actionId = activity.ownerPluginId?.let { TypedPageItems.ACTIVITY_PREFIX + it }?.takeIf(PageSurfaceContract::isValidId)
+            actionId?.let { actions += it to label }
             PageRow(
                 id = rowId(activity.id),
-                label = clip(activity.ownerLabel ?: activity.ownerPluginId ?: activity.id, PageTemplateContract.MAX_LABEL_CHARS),
+                label = label,
                 sub = clip(listOfNotNull(activity.text, activity.detail).joinToString(" · "), PageTemplateContract.MAX_DETAIL_CHARS),
-                target = PageTarget.Page(activity.pageId),
+                target = actionId?.let { PageTarget.Action(it) } ?: PageTarget.Page(activity.pageId),
             )
         }
-        return LocalPage(TITLE_ACTIVITIES, PageBody.SelectableList(rows, emptyText = "No activity"))
+        return LocalPage(TITLE_ACTIVITIES, PageBody.SelectableList(rows, emptyText = "No activity"), actions)
     }
 
     /** A hub summary of an activity whose owner provides no page; never an automatic launch. */
