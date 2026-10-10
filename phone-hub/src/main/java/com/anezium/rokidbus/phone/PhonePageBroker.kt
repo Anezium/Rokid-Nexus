@@ -448,7 +448,9 @@ class PhonePageBroker(
         }
         val replacement = result.replacement
         // The result's code passes through as the provider sent it; glasses without the bundle get none.
-        val outgoing = forGlasses(stamped, replacement, frame.owner)
+        val outgoing = forGlasses(stamped, replacement, frame.owner).apply {
+            if (launcherVersion() < 1) remove(FIELD_RESULT_CODE)
+        }
         val candidate = replacement?.let {
             val sameFrame = it.correlation.sessionGeneration == frame.key.generation &&
                 it.correlation.frameIndex == frame.key.frameIndex &&
@@ -668,6 +670,7 @@ class PhonePageBroker(
         frame.shownRevision = maxOf(frame.shownRevision ?: candidate.revision, candidate.revision)
         frame.live = candidate.live
         frame.actions = candidate.actions
+        frame.composer = candidate.composer
         frame.dataPlane = candidate.dataPlane
         if (candidate.answersRequest) frame.actionable = true
     }
@@ -686,9 +689,44 @@ class PhonePageBroker(
             .put(PageSurfaceContract.FIELD_PLUGIN_ID, registration.pluginId)
             .put(PageSurfaceContract.FIELD_PROVIDER_REGISTRATION_ID, registration.epoch)
 
-    private fun bodyAccepted(page: PageSurfaceResponse.Page, owner: String): Boolean =
-        !PageTemplateContract.isSupported(page.template) ||
-            PageTemplateContract.decode(page, owner) is PageSurfaceValidationResult.Valid
+    /** What the broker keeps of a page's body beside its actions. */
+    private class AcceptedBody(val composer: ConversationComposer?)
+
+    /**
+     * Null when the body is invalid for its template. A template these glasses cannot draw (the
+     * bundle's bodies without the bundle, `ink` always) passes as an envelope and the glasses show
+     * that it needs a newer Nexus; with the bundle the conversation, media and route bodies are
+     * decoded typed, so a composer or a control can only ever name an action of the right type.
+     */
+    private fun acceptedBody(page: PageSurfaceResponse.Page, owner: String): AcceptedBody? {
+        val extended = launcherVersion() >= 1
+        if (!PageTemplateContract.isSupported(page.template, extended)) return AcceptedBody(null)
+        val decoded = PageTemplateContract.decode(page, owner, extended) as? PageSurfaceValidationResult.Valid
+            ?: return null
+        return AcceptedBody((decoded.value as? PageBody.Conversation)?.composer)
+    }
+
+    /**
+     * The glasses' copy of a page response or result. A provider's own `hubQuick` never survives:
+     * with the bundle the phone stamps it on the plugin actions whose quick-eligible family the
+     * user approves now; without it every bundle field is removed, so the glasses get a v1 page.
+     */
+    private fun forGlasses(stamped: JSONObject, page: PageSurfaceResponse.Page?, owner: String): JSONObject {
+        if (launcherVersion() < 1) return PageSurfaceContract.stripLauncherFields(stamped)
+        val approved = host.pageProvider(owner)?.let(host::quickFamilies).orEmpty()
+        val quickIds = page?.actions.orEmpty()
+            .filter { it.kind == PageSurfaceContract.KIND_PLUGIN && QuickActionPolicyContract.isQuick(it.typed, approved) }
+            .mapTo(linkedSetOf()) { it.id }
+        return PageSurfaceContract.withHubQuick(stamped, quickIds)
+    }
+
+    /** The launcher bundle version pages run with these glasses: never without a page session. */
+    private fun launcherVersion(): Int =
+        if (negotiated() == PageSurfaceContract.VERSION) {
+            LauncherInteractiveContract.negotiated(localLauncherVersion, remoteLauncherVersion)
+        } else {
+            0
+        }
 
     private fun currentRegistration(frame: Frame): PageRegistration? {
         val principal = host.pageProvider(frame.owner) ?: return null
@@ -710,22 +748,25 @@ class PhonePageBroker(
         )
     }.getOrNull()
 
-    private fun deliverVersion(registration: PageRegistration, version: Int) {
+    private fun deliverVersion(registration: PageRegistration, version: Int, launcher: Int) {
         host.deliver(
             registration,
             BusPaths.HUB_CAPABILITIES,
             JSONObject()
                 .put(PageSurfaceContract.FIELD_PLUGIN_ID, registration.pluginId)
-                .put(PageSurfaceContract.CAPABILITY_FIELD_PAGE_SESSION_VERSION, version),
+                .put(PageSurfaceContract.CAPABILITY_FIELD_PAGE_SESSION_VERSION, version)
+                .put(LauncherInteractiveContract.CAPABILITY_FIELD_VERSION, launcher),
         )
     }
 
-    /** Tells opted-in providers when the effective version changed. */
+    /** Tells opted-in providers when the effective page or launcher bundle version changed. */
     private fun announceIfChanged() {
         val version = negotiated()
-        if (version == announcedToProviders) return
+        val launcher = launcherVersion()
+        if (version == announcedToProviders && launcher == announcedLauncherToProviders) return
         announcedToProviders = version
-        later { host.providerRegistrations().forEach { deliverVersion(it, version) } }
+        announcedLauncherToProviders = launcher
+        later { host.providerRegistrations().forEach { deliverVersion(it, version, launcher) } }
     }
 
     /** Holds or drops the page-only binding of each owner by its current demand. */
@@ -800,6 +841,7 @@ class PhonePageBroker(
         const val ERROR_PAGE_ROUTE_DENIED = "PAGE_ROUTE_DENIED"
         const val ERROR_PAGE_NOT_REQUESTED = "PAGE_NOT_REQUESTED"
         private const val CLOSE_LINK_LOST = "link_lost"
+        private const val FIELD_RESULT_CODE = "code"
 
         fun isPagePath(path: String): Boolean = PathRules.isPagePath(path)
 

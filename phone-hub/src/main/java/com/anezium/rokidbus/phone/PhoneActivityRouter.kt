@@ -434,7 +434,9 @@ internal class PhoneActivityRouter(
         val drop = when {
             !state.isLive(pluginId) -> "ACTIVITY_HEADING_IGNORED_NO_SESSION"
             !admitHeading(pluginId) -> "ACTIVITY_HEADING_RATE_LIMITED"
-            !sink.pinLinkUp() -> "ACTIVITY_HEADING_LINK_DOWN"
+            // Heading only turns the map that geometry draws, so it rides the same data plane
+            // and never adds a stream of samples to the narrow control link.
+            !launcher.dataPlaneUp() -> "ACTIVITY_HEADING_NO_DATA_PLANE"
             else -> null
         }
         if (drop != null) {
@@ -447,7 +449,7 @@ internal class PhoneActivityRouter(
             payload = withOwner(pluginId, ActivitySurfaceContract.headingPayload(heading)),
         )
         sink.recordLocalRoute(outgoing, sender.uid, pluginId, PluginBusJournal.Verdict.OK)
-        sink.sendRemote(outgoing)?.let { sink.log("activity heading dropped owner=$pluginId code=$it") }
+        launcher.sendDataPlane(outgoing)?.let { sink.log("activity heading dropped owner=$pluginId code=$it") }
     }
 
     /** At most [ActivitySurfaceContract.MAX_HEADINGS_PER_SECOND] per owner in a sliding second. */
