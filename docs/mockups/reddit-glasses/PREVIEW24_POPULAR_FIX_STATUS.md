@@ -52,3 +52,17 @@ Exact previous source backup (33 files) and fixed source snapshot (five files pl
 No device was used in this fix turn. No account login, Reddit send/post/comment/vote/save, APK installation, hub replacement or public release occurred. Skills/Workspace remains active; device QA must wait for it to release the devices.
 
 After normal build credential configuration is available: run Morphe tests/bundle build, freeze the new bundle and update both Reddit pins, exercise the real complete APKM through Nexus' engine, build/sign with existing identities, then verify Popular **as the first feed after a cold launch**, Retry/refresh/pagination and Home/Latest regressions on free glasses. Only actual successful results can close the prior Popular defect.
+
+## 2026-10-10 retry: glasses-only installation requested
+
+The user authorized direct glasses installation/testing and reserved their phone for personal use. All five applied source SHA-256 values still match the reviewed snapshot. One normal build retry used the same command above and again failed before compilation:
+
+```text
+An exception occurred applying plugin request [id: 'app.morphe.patches', version: '1.3.3']
+> Failed to apply plugin 'app.morphe.patches'.
+   > java.lang.IllegalArgumentException (no error message)
+
+BUILD FAILED in 21s
+```
+
+No new APK, bundle, tests or screenshots were produced. Neither device received ADB commands; no installation or account/settings change occurred. The environment stop rule still applies. Existing preview23 remains installed. This retry does not supersede the prior unresolved Popular runtime result.
