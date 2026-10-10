@@ -16,6 +16,14 @@ internal data class NavPageState(
     val enabled: Boolean,
     /** When the guidance last changed, already formatted, or null when nothing was received. */
     val updatedAt: String?,
+    /** A walking journey the wearer started runs; it owns the route whatever access or switches say. */
+    val journeyActive: Boolean = false,
+    /** That journey's last state, once its route is planned. */
+    val journey: NavRouteSnapshot? = null,
+    val journeyDestination: String? = null,
+    val journeyMessage: String? = null,
+    /** Both hubs negotiated the launcher bundle, so `nav:main` is a route page. */
+    val extended: Boolean = false,
 )
 
 /** The plugin's own words for the states without a route. */
@@ -27,10 +35,11 @@ internal data class NavPageText(
 )
 
 /**
- * Navigation's two read-only pages. `nav:main` is a summary of the current guidance: the
- * manoeuvre, its quantity, the street, the ETA when the app gave one, the source and when it was
- * received. A value the app did not post is left out, never estimated. `nav:commands` holds only
- * the labelled full app until there are real commands; it never offers map or route controls.
+ * Navigation's pages. Without the launcher bundle `nav:main` is a summary of the current guidance:
+ * the manoeuvre, its quantity, the street, the ETA when the app gave one, the source and when it
+ * was received. A value the app did not post is left out, never estimated. `nav:commands` holds
+ * only the labelled full app; it never offers map or route controls. With the bundle `nav:main`
+ * is a route page instead ([NavRoutePage]), whose views and sizes are the hub's own commands.
  */
 internal object NavPages {
     const val MAIN = "nav:main"
@@ -43,7 +52,11 @@ internal object NavPages {
     private const val MAX_TEXT = 4_096
 
     fun page(pageId: String, revision: Long, state: NavPageState, text: NavPageText): NexusPage = when (pageId) {
-        MAIN -> NexusPage.Content(revision, TITLE, main(state, text), live = true)
+        MAIN -> if (state.extended) {
+            NavRoutePage.content(revision, state, text)
+        } else {
+            NexusPage.Content(revision, TITLE, main(state, text), live = true)
+        }
         COMMANDS -> NexusPage.Content(
             revision,
             "Commands",
@@ -57,9 +70,19 @@ internal object NavPages {
 
     private fun main(state: NavPageState, text: NavPageText): PageBody.Summary {
         val commands = listOf(PageRow("commands", "Commands", target = PageTarget.Page(COMMANDS)))
-        // Checked first: without the listener the last route is not current.
-        if (!state.listenerConnected) return PageBody.Summary(primary = "No notification access", text = fit(text.noAccess, MAX_TEXT), items = commands)
-        if (!state.enabled) return PageBody.Summary(primary = "Navigation is off", text = fit(text.off, MAX_TEXT), items = commands)
+        if (state.journeyActive) {
+            // The wearer's own journey needs neither notification access nor the app switches.
+            state.guidance ?: return PageBody.Summary(
+                primary = "Walking route",
+                secondary = state.journeyDestination?.let { fit(it, MAX_DETAIL) },
+                text = fit(state.journeyMessage ?: RouteQuality.WAITING.message, MAX_TEXT),
+                items = commands,
+            )
+        } else {
+            // Checked first: without the listener the last route is not current.
+            if (!state.listenerConnected) return PageBody.Summary(primary = "No notification access", text = fit(text.noAccess, MAX_TEXT), items = commands)
+            if (!state.enabled) return PageBody.Summary(primary = "Navigation is off", text = fit(text.off, MAX_TEXT), items = commands)
+        }
         val guidance = state.guidance
             ?: return PageBody.Summary(primary = "No active route", text = fit(text.idle, MAX_TEXT), items = commands)
         val facts = listOfNotNull(

@@ -24,6 +24,8 @@ internal data class NavSwitches(
         NavSource.OSMAND -> osmand
         NavSource.YANDEX_MAPS -> yandexMaps
         NavSource.MAPS_ME -> mapsMe
+        // A journey is started by the wearer, never read from a notification.
+        NavSource.NEXUS -> false
     }
 }
 
@@ -51,6 +53,7 @@ internal class NavSettings(context: Context) {
             NavSource.OSMAND -> KEY_OSMAND
             NavSource.YANDEX_MAPS -> KEY_YANDEX_MAPS
             NavSource.MAPS_ME -> KEY_MAPS_ME
+            NavSource.NEXUS -> error("Walking journeys are started explicitly, not switched as a notification source")
         },
         value,
     ).apply()
@@ -78,6 +81,10 @@ internal class NavSettings(context: Context) {
  * registration: while guidance is live the runtime keeps that service bound
  * ([holdBus]), and the service hands its client and its hub callbacks over
  * here.
+ *
+ * A walking journey the wearer started owns the route while it runs: its runtime replaces the
+ * notification runtime as the one the hub callbacks reach and the only one allowed to publish,
+ * and notification guidance resumes from what is posted at that moment once the journey ends.
  */
 internal object NavControl {
     @Volatile
@@ -85,6 +92,45 @@ internal object NavControl {
 
     @Volatile
     private var runtime: NavRuntime? = null
+
+    @Volatile
+    private var journeyRuntime: NavRuntime? = null
+
+    private val activeRuntime: NavRuntime? get() = journeyRuntime ?: runtime
+
+    /** A walking journey the wearer started is running and owns the route. */
+    val journeyActive: Boolean get() = journeyRuntime != null
+
+    /** Whether [candidate] is the runtime allowed to publish and end the route right now. */
+    fun owns(candidate: NavRuntime): Boolean = activeRuntime === candidate
+
+    /** Ends the running journey from another surface (the glasses' route page); set by the journey. */
+    @Volatile
+    private var journeyStop: ((String) -> Unit)? = null
+
+    /** The journey takes the route over: the notification route ends before the journey's starts. */
+    fun attachJourney(candidate: NavRuntime, stop: (String) -> Unit) {
+        // The service stays bound: the journey's activity goes through the same registration.
+        activeRuntime?.takeIf { it !== candidate }?.shutdown(releaseBus = false)
+        journeyRuntime = candidate
+        journeyStop = stop
+        guidanceChanged()
+    }
+
+    fun detachJourney(candidate: NavRuntime) {
+        if (journeyRuntime !== candidate) return
+        journeyRuntime = null
+        journeyStop = null
+        listener?.resumeNotifications()
+        guidanceChanged()
+    }
+
+    /** Stops the running journey with [message]; false when none runs. */
+    fun stopJourney(message: String): Boolean {
+        val stop = journeyStop ?: return false
+        stop(message)
+        return true
+    }
 
     /** The plugin service's client while the service exists. */
     @Volatile
@@ -125,26 +171,27 @@ internal object NavControl {
 
     fun serviceCreated(client: NexusPluginClient) {
         serviceClient = client
-        runtime?.onBusReady()
+        activeRuntime?.onBusReady()
     }
 
     fun serviceDestroyed(client: NexusPluginClient) {
         if (serviceClient !== client) return
         serviceClient = null
         cardOpen = false
-        runtime?.onBusLost()
+        activeRuntime?.onBusLost()
     }
 
     fun registrationState(result: Int) {
-        runtime?.onRegistrationState(result)
+        NavState.registration = result
+        activeRuntime?.onRegistrationState(result)
     }
 
     fun linkState(state: Int) {
-        runtime?.onLinkState(state)
+        activeRuntime?.onLinkState(state)
     }
 
     fun activityClosed(reason: String) {
-        runtime?.onActivityClosed(reason)
+        activeRuntime?.onActivityClosed(reason)
     }
 
     /** Keeps the plugin service, and so its registration, alive for the route. */

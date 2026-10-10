@@ -103,7 +103,8 @@ internal object NavMapProjection {
         val routePosition = if (quality == RoutePositionQuality.NONE || position == null) {
             RoutePosition(RoutePositionQuality.NONE, null)
         } else {
-            RoutePosition(quality, position, snapshot.fixAgeS)
+            // The age matters only once the fix is no longer current; a live one would churn every second.
+            RoutePosition(quality, position, snapshot.fixAgeS.takeIf { quality == RoutePositionQuality.STALE })
         }
         val step = snapshot.nextStep
         val turnMeters = if (step.direction == "ARRIVE" || snapshot.quality == RouteQuality.ARRIVED) null else line.metersAt(step.atMeters)
