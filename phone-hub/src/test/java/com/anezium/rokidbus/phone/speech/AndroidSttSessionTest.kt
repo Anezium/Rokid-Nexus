@@ -323,6 +323,98 @@ class AndroidSttSessionTest {
         }
     }
 
+    @Test
+    fun glassesOnlySessionNeverOpensARecognizerThatMayIgnoreInjectedAudio() {
+        val unproven = mutableListOf<RecordingRecognizer>()
+        val google = RecordingRecognizer()
+        val session = AndroidSttSession(
+            context = context,
+            language = TranscriptionLanguage.AUTO,
+            listener = RecordingListener(),
+            environment = ReadyEnvironment(
+                listOf(
+                    AndroidRecognizerTarget(
+                        id = "default",
+                        reportName = "default:com.example.vendor/.Recognizer",
+                        segmentedSession = false,
+                        stopListeningOnInputClose = true,
+                        honorsInjectedAudio = false,
+                        create = { RecordingRecognizer().also(unproven::add) },
+                    ),
+                    AndroidRecognizerTarget(
+                        id = "component:google",
+                        reportName = "google:com.google.android.tts/.Recognizer",
+                        create = { google },
+                    ),
+                ),
+            ),
+            pipeFactory = AndroidAudioPipeFactory { TrackingPipe() },
+            mainThread = ManualMainThread(),
+            foregroundController = RecordingForeground(),
+            injectedAudioOnly = true,
+        )
+
+        assertTrue(session.start())
+
+        assertTrue(unproven.isEmpty())
+        val intent = requireNotNull(google.intent)
+        assertTrue(intent.hasExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE))
+        session.cancel()
+    }
+
+    @Test
+    fun glassesOnlySessionWithOnlyUnprovenRecognizersFailsWithoutOpeningAny() {
+        val opened = mutableListOf<RecordingRecognizer>()
+        val foreground = RecordingForeground()
+        val session = AndroidSttSession(
+            context = context,
+            language = TranscriptionLanguage.AUTO,
+            listener = RecordingListener(),
+            environment = ReadyEnvironment(
+                listOf(
+                    AndroidRecognizerTarget(
+                        id = "on-device",
+                        reportName = "on-device:system",
+                        honorsInjectedAudio = false,
+                        create = { RecordingRecognizer().also(opened::add) },
+                    ),
+                ),
+            ),
+            pipeFactory = AndroidAudioPipeFactory { TrackingPipe() },
+            mainThread = ManualMainThread(),
+            foregroundController = foreground,
+            injectedAudioOnly = true,
+        )
+
+        assertFalse(session.start())
+
+        assertTrue(opened.isEmpty())
+        assertEquals(0, foreground.acquireCalls)
+        assertEquals(SttErrorKind.SOURCE_UNAVAILABLE, session.startFailure?.kind)
+    }
+
+    @Test
+    fun ordinarySessionStillUsesTheSystemDefaultRecognizer() {
+        val opened = mutableListOf<RecordingRecognizer>()
+        val session = sessionWithTargets(
+            targets = listOf(
+                AndroidRecognizerTarget(
+                    id = "default",
+                    reportName = "default:com.example.vendor/.Recognizer",
+                    segmentedSession = false,
+                    stopListeningOnInputClose = true,
+                    honorsInjectedAudio = false,
+                    create = { RecordingRecognizer().also(opened::add) },
+                ),
+            ),
+            listener = RecordingListener(),
+        )
+
+        assertTrue(session.start())
+        assertEquals(1, opened.size)
+        session.cancel()
+    }
+
     private fun session(
         recognizer: RecordingRecognizer,
         pipeFactory: AndroidAudioPipeFactory,

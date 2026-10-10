@@ -1,5 +1,6 @@
 package com.anezium.rokidbus.glasses.session
 
+import com.anezium.rokidbus.shared.ActivityCommandResult
 import org.json.JSONObject
 
 /** Facts fed by the host. Gestures are already classified; time is the host clock. */
@@ -7,7 +8,13 @@ internal sealed interface SessionEvent {
     /** [underneath] is what the triple tap was made over; a session records it when it opens. */
     data class TripleTap(val nowMs: Long, val underneath: Underneath = Underneath.Unknown) : SessionEvent
     data class Contact(val nowMs: Long) : SessionEvent
-    data class Enter(val nowMs: Long) : SessionEvent
+
+    /**
+     * [pressStartMs] is when the physical press began: the touchpad contact-down the firmware
+     * classified as this tap, or the ring tap's own down time. The input arbiter always supplies
+     * it; the default, the classification itself, is for hub-internal callers and tests.
+     */
+    data class Enter(val nowMs: Long, val pressStartMs: Long = nowMs) : SessionEvent
     data class Back(val nowMs: Long) : SessionEvent
 
     data class Step(val delta: Int, val nowMs: Long) : SessionEvent {
@@ -19,7 +26,20 @@ internal sealed interface SessionEvent {
     data class Tick(val nowMs: Long) : SessionEvent
     data object NoticeArmed : SessionEvent
     data object NoticeCleared : SessionEvent
-    data class NoticeArrived(val preview: NoticePreview) : SessionEvent
+    /**
+     * A new notice instance. [entry] is what the band showed, launcher-bundle fields included when
+     * the pair negotiated them; without one, the history records [preview] as a generic entry.
+     */
+    data class NoticeArrived(val preview: NoticePreview, val entry: NoticeEntry? = null) : SessionEvent
+
+    /** `/notice/withdraw` as the phone forwarded it: the event is no longer on the phone. */
+    data class NoticeWithdrawn(val ownerPluginId: String, val eventKey: String) : SessionEvent
+
+    /** `/core/notice/purge`: every history entry of [ownerPluginId] goes. */
+    data class NoticePurged(val ownerPluginId: String) : SessionEvent
+
+    /** A capture engine's message from the phone hub, for the capture it names. */
+    data class ComposeReceived(val message: ComposeInbound, val nowMs: Long) : SessionEvent
     data class ActivityEnded(val stopId: String) : SessionEvent
     data class ActivityStarted(val stop: ActivityStop) : SessionEvent
 
@@ -77,6 +97,21 @@ internal sealed interface SessionEvent {
 
     /** A [SessionEffect.LaunchLocal] ran: [launched] closes the session, a failure keeps it open. */
     data class LocalLaunchFinished(val key: String, val label: String, val launched: Boolean) : SessionEvent
+
+    /**
+     * The host drew the frame whose focused target is [token] (see [SessionFocus.tokenOf]) at
+     * [atMs], on the session clock. Only an acknowledgement of the current target counts.
+     */
+    data class FocusShown(val token: String, val atMs: Long) : SessionEvent
+
+    /** An owner's `/activity/result`, as the phone forwarded it for a command these glasses sent. */
+    data class ActivityResult(val result: ActivityCommandResult, val nowMs: Long) : SessionEvent
+
+    /**
+     * The launcher bundle's negotiation or the user's quick-action policy changed: what one tap
+     * does may differ now, so the focused target is a new one and the screen is redrawn.
+     */
+    data object LauncherFactsChanged : SessionEvent
 }
 
 internal enum class OpenFailure { SEND_FAILED, REJECTED, TIMEOUT }

@@ -36,6 +36,11 @@ internal data class AndroidRecognizerTarget(
     val reportName: String,
     val segmentedSession: Boolean = true,
     val stopListeningOnInputClose: Boolean = false,
+    /**
+     * Whether this recognizer is known to listen to the audio it is handed. One that is not may
+     * ignore it and open the phone's own microphone instead.
+     */
+    val honorsInjectedAudio: Boolean = true,
     val create: () -> AndroidSpeechRecognizer,
 )
 
@@ -76,14 +81,22 @@ internal class AndroidSttSession(
     private val language: TranscriptionLanguage,
     private val patience: SpeechPatience = SpeechPatience.NORMAL,
     private val listener: SttSessionListener,
-    private val environment: AndroidRecognizerEnvironment =
+    environment: AndroidRecognizerEnvironment =
         PlatformAndroidRecognizerEnvironment(context.applicationContext),
     private val pipeFactory: AndroidAudioPipeFactory =
         AndroidAudioPipeFactory { ParcelDescriptorAudioPipe.create() },
     private val mainThread: AndroidMainThread = HandlerAndroidMainThread(),
     private val foregroundController: AndroidSttForegroundController =
         HubAndroidSttForegroundController,
+    /**
+     * For a caller that must hear the glasses microphone only: every recognizer not known to
+     * honor injected audio is left out, so none of them can fall back to the phone microphone.
+     * With nothing left the session fails to start, as when no recognizer is installed.
+     */
+    injectedAudioOnly: Boolean = false,
 ) : SttSession, SttStartFailureSource {
+    private val environment: AndroidRecognizerEnvironment =
+        if (injectedAudioOnly) InjectedAudioOnlyEnvironment(environment) else environment
     private val lock = Any()
     private val segmentTranscripts = mutableListOf<String>()
 
@@ -863,6 +876,14 @@ private fun longestSuffixPrefixOverlap(left: List<String>, right: List<String>):
     return 0
 }
 
+/** [delegate] with only the recognizers known to read the audio they are handed. */
+private class InjectedAudioOnlyEnvironment(
+    private val delegate: AndroidRecognizerEnvironment,
+) : AndroidRecognizerEnvironment by delegate {
+    override fun recognitionTargets(): List<AndroidRecognizerTarget> =
+        delegate.recognitionTargets().filter { it.honorsInjectedAudio }
+}
+
 private class PlatformAndroidRecognizerEnvironment(
     private val context: Context,
 ) : AndroidRecognizerEnvironment {
@@ -892,6 +913,7 @@ private class PlatformAndroidRecognizerEnvironment(
                     "default:${defaultComponent?.flattenToShortString() ?: DEFAULT_COMPONENT_LABEL}",
                 segmentedSession = false,
                 stopListeningOnInputClose = true,
+                honorsInjectedAudio = defaultComponent?.packageName?.startsWith(GOOGLE_PACKAGE_PREFIX) == true,
                 create = {
                     if (defaultComponent?.packageName?.startsWith(GOOGLE_PACKAGE_PREFIX) != true) {
                         Log.w(TAG, "System-default recognizer may ignore injected audio")
@@ -928,6 +950,9 @@ private class PlatformAndroidRecognizerEnvironment(
                 AndroidRecognizerTarget(
                     id = ON_DEVICE_TARGET_ID,
                     reportName = "on-device:$ON_DEVICE_COMPONENT_LABEL",
+                    // Whose service this is depends on the phone maker; nothing here proves it
+                    // reads the audio it is given.
+                    honorsInjectedAudio = false,
                     create = {
                         PlatformAndroidSpeechRecognizer(
                             SpeechRecognizer.createOnDeviceSpeechRecognizer(context),

@@ -34,6 +34,33 @@ class RoutingSttSessionFactoryTest {
     }
 
     @Test
+    fun glassesOnlyRequestsReachTheDelegatesGlassesOnlyPath() {
+        val cloud = RecordingFactory()
+        val android = RecordingFactory()
+        val routing = RoutingSttSessionFactory(cloud, android)
+
+        routing.createGlassesAudioOnly(
+            SpeechEngine.ANDROID_RECOGNIZER,
+            TranscriptionLanguage.AUTO,
+            "fr-FR",
+            SpeechPatience.NORMAL,
+            RecordingListener(),
+        )
+        routing.createGlassesAudioOnly(
+            SpeechEngine.OPENAI_GPT_4O_TRANSCRIBE,
+            TranscriptionLanguage.AUTO,
+            "fr-FR",
+            SpeechPatience.NORMAL,
+            RecordingListener(),
+        )
+
+        // The Android delegate never sees an ordinary create for a glasses-only request.
+        assertEquals(listOf(SpeechEngine.ANDROID_RECOGNIZER), android.glassesOnlyEngines)
+        assertEquals(emptyList<SpeechEngine>(), android.engines)
+        assertEquals(listOf(SpeechEngine.OPENAI_GPT_4O_TRANSCRIBE), cloud.glassesOnlyEngines)
+    }
+
+    @Test
     fun closeAlwaysClosesBothDelegates() {
         val cloud = RecordingFactory(closeFailure = IllegalStateException("cloud close"))
         val android = RecordingFactory()
@@ -49,6 +76,7 @@ class RoutingSttSessionFactoryTest {
         private val closeFailure: Throwable? = null,
     ) : SpeechSttSessionFactory {
         val engines = mutableListOf<SpeechEngine>()
+        val glassesOnlyEngines = mutableListOf<SpeechEngine>()
         val session = NoOpSession()
         var closeCalls = 0
 
@@ -60,6 +88,17 @@ class RoutingSttSessionFactoryTest {
             listener: SttSessionListener,
         ): SttSession {
             engines += engine
+            return session
+        }
+
+        override fun createGlassesAudioOnly(
+            engine: SpeechEngine,
+            language: TranscriptionLanguage,
+            phoneLanguageTag: String,
+            patience: SpeechPatience,
+            listener: SttSessionListener,
+        ): SttSession {
+            glassesOnlyEngines += engine
             return session
         }
 
