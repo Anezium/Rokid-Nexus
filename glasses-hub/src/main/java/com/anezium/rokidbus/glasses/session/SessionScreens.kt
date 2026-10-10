@@ -750,9 +750,9 @@ internal class SessionScreens(
         val view = ComposerRules.view(owner, body, facts.draft, facts.micUnavailable, facts.pendingSend)
         val draft = view?.threadDraft
         val sending = facts.pendingSend?.takeIf { it.ownerPluginId == owner && it.threadKey == body.threadKey } != null
-        val bubbles = bubbles(body.messages).toMutableList()
+        val drawn = bubbles(body.messages).toMutableList()
         facts.handoff?.takeIf { it.ownerPluginId == owner && it.threadKey == body.threadKey && it.revision == status.revision }?.let {
-            bubbles += Bubble(HANDOFF_BUBBLE, BubbleSide.RIGHT, it.text, meta = HANDED_TO_APP)
+            drawn += Bubble(HANDOFF_BUBBLE, BubbleSide.RIGHT, it.text, meta = HANDED_TO_APP)
         }
         if (draft != null && capture == null) {
             val meta = when {
@@ -761,12 +761,12 @@ internal class SessionScreens(
                 draft.state == DraftState.UNCONFIRMED -> UNCONFIRMED_CHECK_PHONE
                 else -> NOT_SENT_HERE
             }
-            bubbles += Bubble(DRAFT_BUBBLE, BubbleSide.RIGHT, draft.text, style = BubbleStyle.DASHED, meta = meta)
+            drawn += Bubble(DRAFT_BUBBLE, BubbleSide.RIGHT, draft.text, style = BubbleStyle.DASHED, meta = meta)
         }
         if (capture != null) {
             // Completing this capture replaces another recipient's draft: say so before it does.
             val replaced = facts.draft?.takeUnless { it.isFor(capture.ownerPluginId, capture.threadKey) }
-            bubbles += Bubble(
+            drawn += Bubble(
                 LIVE_BUBBLE, BubbleSide.RIGHT, capture.liveText, style = BubbleStyle.LIVE,
                 meta = replaced?.let { "replaces the draft for ${it.recipient}" },
             )
@@ -799,7 +799,7 @@ internal class SessionScreens(
             else -> ScreenHint(if (pages > 1) "swipe page" else null, backText)
         }
         val block = ScreenBlock.Conversation(
-            CONVERSATION_BLOCK, body.caption, bubbles, dimmed = false,
+            CONVERSATION_BLOCK, body.caption, drawn, dimmed = false,
             frame = identity, pageId = frame.pageId, revision = status.revision, anchor = frame.anchor,
         )
         return SessionScreen(

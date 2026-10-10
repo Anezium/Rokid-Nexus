@@ -353,6 +353,33 @@ class ComposerSessionTest {
     }
 
     @Test
+    fun `a capture completing after its thread was withdrawn cannot be sent as is`() {
+        openThread("t1", at = 1_000)
+        startCapture(CaptureKind.DICTATE, at = 3_000)
+        val id = model.capture!!.captureId
+        send(SessionEvent.NoticeWithdrawn("relay", "t1"))
+        compose(ComposeInbound.Final(ComposeDictateFinal(id, ComposeDictationReason.COMPLETED, "late")))
+        assertEquals("late", model.draft?.text)
+        assertEquals(DraftState.AUTHORITY_LOST, model.draft?.state)
+        shown(5_000)
+        press(5_010)
+        assertNull(top().composerFocus)
+    }
+
+    @Test
+    fun `a purge ends the owner's capture and its draft's authority`() {
+        openThread("t1", at = 1_000)
+        dictate("see you", at = 3_000)
+        startCapture(CaptureKind.DICTATE, at = 6_000, steps = 1)
+        val id = model.capture!!.captureId
+        send(SessionEvent.NoticePurged("relay"))
+        assertNull(model.capture)
+        assertTrue(effects.contains(SendCompose(ComposeOutbound.DictateStop(com.anezium.rokidbus.shared.ComposeDictateStop(id, cancel = true)))))
+        assertEquals(DraftState.AUTHORITY_LOST, model.draft?.state)
+        assertTrue(model.history.entries.isEmpty())
+    }
+
+    @Test
     fun `authority_lost or a page that cannot reply keeps the text and withholds Send`() {
         openThread("t1", at = 1_000)
         dictate("see you", at = 3_000)

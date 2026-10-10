@@ -101,6 +101,10 @@ internal data class NotificationHistory(
     fun purge(ownerPluginId: String): NotificationHistory =
         copy(entries = entries.filterNot { it.notice.ownerPluginId == ownerPluginId })
 
+    /** The newest event of this exact thread left the phone, and no newer one came since. */
+    fun threadWithdrawn(ownerPluginId: String, threadKey: String): Boolean =
+        entries.firstOrNull { it.notice.ownerPluginId == ownerPluginId && it.notice.threadKey == threadKey }?.state == HistoryState.WITHDRAWN
+
     /** Opened in Nexus. A later state (handed off, withdrawn) is never rolled back to seen. */
     fun markSeen(id: String): NotificationHistory = map { if (it.id == id && it.state == HistoryState.NEW) it.copy(state = HistoryState.SEEN) else it }
 

@@ -182,12 +182,18 @@ internal class SessionReducer(
     /** The owner was revoked, disabled, uninstalled or re-signed: its entries go, its draft loses authority. */
     private fun onNoticePurged(model: SessionModel, owner: String): SessionTransition {
         val history = model.history.purge(owner)
+        // A capture for the owner ends with it; nothing it would have produced may be sent.
+        val capture = model.capture?.takeIf { it.ownerPluginId == owner }
         val updated = model.copy(
             history = history,
             draft = DraftStore.authorityLost(model.draft, owner),
+            capture = if (capture != null) null else model.capture,
             state = model.state.mapRootStops { RootStops.withHistory(it, history, wallClock()) },
         )
-        return withComposerRedraw(model, rootBookkeeping(model, updated))
+        val transition = withComposerRedraw(model, rootBookkeeping(model, updated))
+        if (capture == null) return transition
+        val effects = transition.effects + SessionEffect.SendCompose(ComposeClient.cancel(capture))
+        return transition.copy(effects = if (ShowFrame in effects) effects else effects + ShowFrame)
     }
 
     /** A conversation page draws the draft, so a draft change redraws an open page. */
@@ -1492,7 +1498,7 @@ internal class SessionReducer(
                 when {
                     capture.kind != CaptureKind.DICTATE -> model
                     message.result.reason == ComposeDictationReason.COMPLETED && !text.isNullOrBlank() ->
-                        model.copy(capture = null, micUnavailable = false, draft = DraftStore.completed(capture, text))
+                        model.copy(capture = null, micUnavailable = false, draft = DraftStore.completed(capture, text, model.history))
                     // No phone microphone stands in: the wearer is offered Type.
                     else -> model.copy(capture = null, micUnavailable = true)
                 }
@@ -1505,7 +1511,7 @@ internal class SessionReducer(
                     text == null -> model.copy(capture = null)
                     // An empty commit is the one explicit discard.
                     text.isBlank() -> model.copy(capture = null, draft = DraftStore.committedEmpty(model.draft, capture))
-                    else -> model.copy(capture = null, draft = DraftStore.completed(capture, text))
+                    else -> model.copy(capture = null, draft = DraftStore.completed(capture, text, model.history))
                 }
             }
         }

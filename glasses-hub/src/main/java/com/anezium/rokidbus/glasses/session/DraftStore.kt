@@ -47,13 +47,17 @@ internal data class Handoff(val ownerPluginId: String, val threadKey: String, va
  * one explicit discard; lost authority keeps the text but never lets it be sent as is.
  */
 internal object DraftStore {
-    /** A completed capture for [capture]'s thread: the new draft, whoever the old one was for. */
-    fun completed(capture: Capture, text: String): Draft = Draft(
+    /**
+     * A completed capture for [capture]'s thread: the new draft, whoever the old one was for. A
+     * thread whose newest event was withdrawn meanwhile gets a draft that cannot be sent as is.
+     */
+    fun completed(capture: Capture, text: String, history: NotificationHistory = NotificationHistory()): Draft = Draft(
         ownerPluginId = capture.ownerPluginId,
         threadKey = capture.threadKey,
         destination = capture.destination,
         recipient = capture.recipient,
         text = text.take(capture.maxChars),
+        state = if (history.threadWithdrawn(capture.ownerPluginId, capture.threadKey)) DraftState.AUTHORITY_LOST else DraftState.READY,
     )
 
     /**
