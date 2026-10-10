@@ -729,8 +729,8 @@ same code runs against old hubs.
 - Using any of these fields also requires every action id to be a page-style id
   (printable ASCII without spaces, at most 128) and ids to be unique.
 
-The user can also disable your activity (starts then return nothing and the hub
-answers `ACTIVITY_DISABLED`) or pin it on the phone. In focus the wearer steps
+The user can also disable your activity on the phone (the hub then ends it and
+refuses your starts with an `ACTIVITY_DISABLED` error on `/error`) or pin it. In focus the wearer steps
 along your commands and a hub `Open app` slot that opens your full app through
 the labelled launch step; that slot is the hub's, not one of your three.
 
