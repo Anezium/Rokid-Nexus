@@ -1,6 +1,10 @@
 package com.anezium.rokidbus.client.plugin
 
 import com.anezium.rokidbus.shared.BusPaths
+import com.anezium.rokidbus.shared.ConversationComposer
+import com.anezium.rokidbus.shared.LauncherInteractiveContract
+import com.anezium.rokidbus.shared.PageActionType
+import com.anezium.rokidbus.shared.PageActionTypeContract
 import com.anezium.rokidbus.shared.PageBody
 import com.anezium.rokidbus.shared.PageCorrelation
 import com.anezium.rokidbus.shared.PageSurfaceContract
@@ -51,19 +55,27 @@ enum class NexusPageActionKind(val wireValue: String) {
     IMMERSION("immersion"),
 }
 
-/** An action a page offers. The hub confirms every plugin action with the wearer first. */
+/**
+ * An action a page offers. The hub confirms every plugin action with the wearer first, except a
+ * [typed] action of a family the user approved for this plugin on the phone (checklist or media),
+ * which runs on one tap. [typed] needs [NexusPluginClient.supportsLauncherInteractive]; without
+ * it the hub drops it. A `ComposeSend` action is reached only through a conversation's composer.
+ */
 data class NexusPageActionSpec(
     val id: String,
     val label: String,
     val kind: NexusPageActionKind = NexusPageActionKind.PLUGIN,
     val confirm: Boolean = true,
+    val typed: NexusActionType? = null,
 )
 
 /** A page answer: drawn content, or an honest refusal the glasses show as unavailable. */
 sealed class NexusPage {
     /**
-     * [body] is one of the four typed templates. [live] promises revisions while the page is
-     * visible under its lease, published through [NexusPluginClient.publishPage].
+     * [body] is one of the four base templates, or, once [NexusPluginClient.supportsLauncherInteractive]
+     * is true, a `Conversation`, `Media` or `Route` body; otherwise those answer as invalid, so fall
+     * back to the base four. [live] promises revisions while the page is visible under its lease,
+     * published through [NexusPluginClient.publishPage].
      */
     data class Content(
         val revision: Long,
@@ -76,7 +88,23 @@ sealed class NexusPage {
     data object Unavailable : NexusPage()
 }
 
-/** The wearer confirmed one of a page's actions on the revision they were shown. */
+/** How the wearer reached a page action. */
+enum class NexusPageActionMode(val wireValue: String) {
+    /** Through the hub's confirmation, or as a hub-confirmed page action. */
+    CONFIRMED(PageSurfaceContract.MODE_CONFIRMED),
+
+    /** On one tap: a typed action of a family the user approved for this plugin. */
+    QUICK(PageSurfaceContract.MODE_QUICK),
+
+    /** The hub composer's Send on a conversation page, with [NexusPageAction.text]. */
+    COMPOSE(PageSurfaceContract.MODE_COMPOSE),
+}
+
+/**
+ * The wearer invoked one of a page's actions on the revision they were shown. [typed] is the type
+ * this plugin declared on the action, as it was sent; [text] is the composer's text, present
+ * exactly when [mode] is [NexusPageActionMode.COMPOSE].
+ */
 class NexusPageAction internal constructor(
     val invocationId: String,
     val sessionGeneration: Long,
@@ -85,6 +113,9 @@ class NexusPageAction internal constructor(
     val revision: Long,
     val actionId: String,
     internal val registrationId: String,
+    val mode: NexusPageActionMode = NexusPageActionMode.CONFIRMED,
+    val text: String? = null,
+    val typed: NexusActionType? = null,
 )
 
 enum class NexusPageResultStatus(val wireValue: String) {
@@ -93,19 +124,33 @@ enum class NexusPageResultStatus(val wireValue: String) {
     STALE("stale"),
 }
 
-/** The outcome of an action; a [replacement] must be the same page at a higher revision. */
+/**
+ * The outcome of an action; a [replacement] must be the same page at a higher revision. [code] is
+ * a short machine-readable refinement (printable ASCII, at most 32); the hub acts on
+ * [CODE_AUTHORITY_LOST] only.
+ */
 class NexusPageResult private constructor(
     val status: NexusPageResultStatus,
     val message: String?,
     val replacement: NexusPage.Content?,
+    val code: String? = null,
 ) {
+    init {
+        require(code == null || PageSurfaceContract.isValidResultCode(code)) { "code must be 1..32 printable ASCII characters" }
+    }
+
     companion object {
-        fun done(message: String? = null, replacement: NexusPage.Content? = null) =
-            NexusPageResult(NexusPageResultStatus.DONE, message, replacement)
+        /** A conversation's reply authority is gone: the composer keeps the text and stops offering Send. */
+        const val CODE_AUTHORITY_LOST = PageSurfaceContract.CODE_AUTHORITY_LOST
 
-        fun rejected(message: String? = null) = NexusPageResult(NexusPageResultStatus.REJECTED, message, null)
+        fun done(message: String? = null, replacement: NexusPage.Content? = null, code: String? = null) =
+            NexusPageResult(NexusPageResultStatus.DONE, message, replacement, code)
 
-        fun stale(message: String? = null) = NexusPageResult(NexusPageResultStatus.STALE, message, null)
+        fun rejected(message: String? = null, code: String? = null) =
+            NexusPageResult(NexusPageResultStatus.REJECTED, message, null, code)
+
+        fun stale(message: String? = null, code: String? = null) =
+            NexusPageResult(NexusPageResultStatus.STALE, message, null, code)
     }
 }
 
@@ -161,9 +206,11 @@ internal class NexusPageChannel(
         var actionable: Boolean = false,
         /** Highest revision ever sent or reserved for this frame; never goes down. */
         var highestRevision: Long? = null,
-        /** The revision the glasses were last sent, and the actions it advertised. */
+        /** The revision the glasses were last sent, and the actions it advertised with their types. */
         var shownRevision: Long? = null,
-        var shownActions: Set<String> = emptySet(),
+        var shownActions: Map<String, PageActionType?> = emptyMap(),
+        /** The composer of that revision, when it was a conversation page that offered one. */
+        var shownComposer: ConversationComposer? = null,
         var visible: Boolean = false,
         var leaseExpiresAt: Long? = null,
     )
@@ -179,13 +226,22 @@ internal class NexusPageChannel(
     @Volatile var sessionVersion = 0
         private set
 
+    /** The launcher bundle version both hubs run for this plugin, from the same message; 0 is none. */
+    @Volatile var launcherInteractiveVersion = 0
+        private set
+
     /** The hub's effective negotiated page version for this plugin, from `/system/hub/capabilities`. */
     fun onCapabilities(payload: JSONObject) {
         val version = PageSurfaceContract.parseSessionVersion(
             payload.opt(PageSurfaceContract.CAPABILITY_FIELD_PAGE_SESSION_VERSION),
         )
+        val launcher = LauncherInteractiveContract.negotiated(
+            LauncherInteractiveContract.VERSION,
+            LauncherInteractiveContract.parseVersion(payload.opt(LauncherInteractiveContract.CAPABILITY_FIELD_VERSION)),
+        )
         synchronized(lock) {
             sessionVersion = if (version == PageSurfaceContract.VERSION) version else 0
+            launcherInteractiveVersion = if (sessionVersion == 0) 0 else launcher
             if (sessionVersion == 0) frames.clear()
         }
     }
@@ -193,6 +249,7 @@ internal class NexusPageChannel(
     /** A new registration, a revoked one, or a closed client: every frame, publisher and the epoch are void. */
     fun onRegistrationReset() = synchronized(lock) {
         sessionVersion = 0
+        launcherInteractiveVersion = 0
         epoch = null
         frames.clear()
         seenRequests.clear()
@@ -205,6 +262,7 @@ internal class NexusPageChannel(
      */
     fun onLinkUnusable() = synchronized(lock) {
         sessionVersion = 0
+        launcherInteractiveVersion = 0
         frames.clear()
     }
 
@@ -250,7 +308,8 @@ internal class NexusPageChannel(
         val parsed = (PageSurfaceContract.validateAction(payload) as? PageSurfaceValidationResult.Valid)?.value ?: return
         val registrationId = registrationOf(payload) ?: return
         val key = FrameKey(parsed.sessionGeneration, parsed.frameIndex)
-        val requestId = synchronized(lock) {
+        val mode = NexusPageActionMode.entries.firstOrNull { it.wireValue == parsed.mode } ?: return
+        val (requestId, typed) = synchronized(lock) {
             // Only an action on an accepted page of this registration, at the revision the
             // glasses were sent and naming an action that revision advertised, reaches the plugin.
             if (registrationId != epoch) return
@@ -260,12 +319,24 @@ internal class NexusPageChannel(
             val expires = context.leaseExpiresAt
             if (!context.visible || expires == null || clock() >= expires) return
             if (context.shownRevision != parsed.revision || parsed.actionId !in context.shownActions) return
+            // The way it was reached must fit this plugin's own declaration: quick only for a
+            // quick-eligible type, a send only from the composer of the page shown, within its limit.
+            val declared = context.shownActions[parsed.actionId]
+            if (!PageSurfaceContract.modeAllowedFor(parsed.mode, declared)) return
+            if (mode == NexusPageActionMode.QUICK && launcherInteractiveVersion == 0) return
+            if (mode == NexusPageActionMode.COMPOSE) {
+                val composer = context.shownComposer ?: return
+                if (composer.sendActionId != parsed.actionId || (parsed.text?.length ?: 0) > composer.maxChars) return
+            }
             if (!remember(seenInvocations, parsed.invocationId)) return
-            context.requestId
+            context.requestId to declared
         }
         val action = NexusPageAction(
             parsed.invocationId, parsed.sessionGeneration, parsed.frameIndex, parsed.pageId,
             parsed.revision, parsed.actionId, registrationId,
+            mode = mode,
+            text = parsed.text,
+            typed = typed?.toNexus(),
         )
         val result = runCatching { callbacks.onPageAction(action) }.getOrElse { NexusPageResult.rejected() }
         val correlation = PageCorrelation(requestId, parsed.sessionGeneration, parsed.frameIndex, parsed.pageId)
@@ -286,7 +357,7 @@ internal class NexusPageChannel(
                 context.highestRevision = replacement.revision
                 if (send(BusPaths.PAGE_RESULT, UUID.randomUUID().toString(), outgoing)) {
                     context.shownRevision = replacement.revision
-                    context.shownActions = actionIdsOf(sentReplacement)
+                    recordShown(context, sentReplacement)
                     // The replacement is now the page: whether it is live decides publishing, as for an answer.
                     context.publishable = sentReplacement.optBoolean("live")
                 }
@@ -351,7 +422,7 @@ internal class NexusPageChannel(
             context.highestRevision = content.revision
             if (!send(BusPaths.PAGE_RESPONSE, UUID.randomUUID().toString(), payload)) return NexusSdkResult.NOT_REGISTERED
             context.shownRevision = content.revision
-            context.shownActions = actionIdsOf(payload)
+            recordShown(context, payload)
             return NexusSdkResult.SENT
         }
     }
@@ -372,14 +443,15 @@ internal class NexusPageChannel(
             context.publishable = false
             // A refusal, an invalid answer or a failed send leaves nothing of the old revision actionable.
             context.actionable = false
-            context.shownActions = emptySet()
+            context.shownActions = emptyMap()
+            context.shownComposer = null
             if (answer != null && content != null) {
                 context.highestRevision = maxOf(context.highestRevision ?: content.revision, content.revision)
             }
             if (!send(BusPaths.PAGE_RESPONSE, UUID.randomUUID().toString(), payload)) return
             if (answer == null || content == null) return
             context.shownRevision = content.revision
-            context.shownActions = actionIdsOf(answer)
+            recordShown(context, answer)
             context.actionable = true
             context.publishable = answer.optBoolean("live")
         }
@@ -387,7 +459,11 @@ internal class NexusPageChannel(
 
     /** The full response for [content], or null when it would not pass the hub's own validation. */
     private fun contentPayload(correlation: PageCorrelation, content: NexusPage.Content): JSONObject? {
-        val payload = runCatching {
+        // The launcher bundle's bodies, types and rows exist only where both hubs negotiated it.
+        val extended = LauncherInteractiveContract.isActive(launcherInteractiveVersion)
+        // A hub without the bundle would offer a send as an ordinary confirmed action, with no text.
+        if (!extended && content.actions.any { it.typed == NexusActionType.ComposeSend }) return null
+        val built = runCatching {
             PageSurfaceContract.correlationPayload(correlation)
                 .put("revision", content.revision)
                 .put("template", content.body.template)
@@ -399,24 +475,37 @@ internal class NexusPageChannel(
                         content.actions.forEach {
                             put(
                                 JSONObject().put("id", it.id).put("label", it.label)
-                                    .put("kind", it.kind.wireValue).put("confirm", it.confirm),
+                                    .put("kind", it.kind.wireValue).put("confirm", it.confirm)
+                                    .apply {
+                                        it.typed?.let { type ->
+                                            put(PageActionTypeContract.FIELD_TYPED, PageActionTypeContract.encode(type.toContract()))
+                                        }
+                                    },
                             )
                         }
                     },
                 )
                 .put("live", content.live)
         }.getOrNull() ?: return null
+        val launcherFields = content.actions.any { it.typed != null } || content.body.items.any { it.checked != null }
+        val payload = if (extended || !launcherFields) built else PageSurfaceContract.stripLauncherFields(built)
         val pending = PageSurfaceRequest(correlation, NexusPageRequestReason.OPEN.wireValue)
         val page = (PageSurfaceContract.validateResponse(payload, pending) as? PageSurfaceValidationResult.Valid)
             ?.value as? PageSurfaceResponse.Page ?: return null
-        if (PageTemplateContract.decode(page, pluginId) !is PageSurfaceValidationResult.Valid) return null
+        if (PageTemplateContract.decode(page, pluginId, extended) !is PageSurfaceValidationResult.Valid) return null
         return payload
     }
 
-    /** The action ids of a payload as it was sent, never re-read from the caller's model. */
-    private fun actionIdsOf(payload: JSONObject): Set<String> {
-        val actions = payload.optJSONArray("actions") ?: return emptySet()
-        return (0 until actions.length()).mapNotNullTo(linkedSetOf()) { actions.optJSONObject(it)?.optString("id") }
+    /**
+     * Remembers the actions of a payload as it was sent, with their types, and its composer, never
+     * re-read from the caller's model.
+     */
+    private fun recordShown(context: FrameContext, payload: JSONObject) {
+        val page = (PageSurfaceContract.validateResponse(payload) as? PageSurfaceValidationResult.Valid)?.value as? PageSurfaceResponse.Page
+        context.shownActions = page?.actions?.associate { it.id to it.typed }.orEmpty()
+        val extended = LauncherInteractiveContract.isActive(launcherInteractiveVersion)
+        val body = page?.let { (PageTemplateContract.decode(it, pluginId, extended) as? PageSurfaceValidationResult.Valid)?.value }
+        context.shownComposer = (body as? PageBody.Conversation)?.composer
     }
 
     private fun errorPayload(correlation: PageCorrelation, code: String): JSONObject =
@@ -425,6 +514,7 @@ internal class NexusPageChannel(
     private fun resultPayload(invocationId: String, result: NexusPageResult, correlation: PageCorrelation): JSONObject? {
         val payload = JSONObject().put("invocationId", invocationId).put("status", result.status.wireValue)
         result.message?.let { payload.put("message", it) }
+        result.code?.let { payload.put("code", it) }
         result.replacement?.let { replacement ->
             payload.put("replacement", contentPayload(correlation, replacement) ?: return null)
         }

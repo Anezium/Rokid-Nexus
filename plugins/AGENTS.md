@@ -21,7 +21,7 @@ Plugins are **normally dormant unless open**: the hub initiates everything. Your
 only between `PLUGIN_OPEN` and a final `PLUGIN_CLOSE`. Do not register yourself at boot, do
 not poll in the background, do not post notifications. The SDK holds a
 foreground-service session while you are open and drops it on close; the
-user-facing notification that names the live plugin belongs to the hub. Five
+user-facing notification that names the live plugin belongs to the hub. Eight
 sanctioned exceptions:
 
 1. A capability that Android forces into its own foreground service *while your
@@ -60,6 +60,30 @@ sanctioned exceptions:
    Answer from memory on the main thread; no foreground service, notification,
    polling or background refresh is permitted for pages, and live revisions are
    sent only on real changes while the page is visible.
+
+6. **User-enabled ongoing activities** (launcher bundle): a plugin may publish an
+   activity with `persistence = ONGOING` only while the user has turned on its own
+   "Show in activities" setting, and only from events it already receives (its
+   own data changing, an alarm the user set) — never by polling. Turning the
+   setting off, a revoke, or the plugin being disabled ends it (`endActivity()`).
+   When the plugin disconnects, the hub keeps an inert offline snapshot on its own;
+   no service, foreground service or wake lock may be held to keep the entry
+   alive, and the entry revives only through a fresh start from a new
+   registration.
+
+7. **Media Deck activity monitoring**: while the user has enabled Media Deck's
+   activity and granted it notification access, Media Deck may keep observing the
+   active media sessions through its notification listener and publish the
+   now-playing activity, even with its surface closed. Closing the surface does not
+   stop it; disabling the activity, revoking notification access or the grant, or
+   disabling the plugin stops it at once. No polling, no foreground service, no
+   automatic command retry after a reconnect.
+
+8. **Navigation walking journeys**: Navigation may run one explicit, user-started
+   walking journey in a foreground service of type `location`, with its own
+   notification carrying Stop. It requests location only while that journey runs
+   and stops on arrival, on Stop, or as soon as location permission is lost. No
+   boot start, background location, or journey the user did not start.
 
 A phone plugin may also call an Android platform API directly under permissions
 declared in its own manifest. Those runtime permissions are separate from Nexus
@@ -106,7 +130,10 @@ Copy `plugins/sample` as the canonical template. The hard rules:
    session FGS runs fine with its notification suppressed on Android 13+. The
    exceptions are phone patching (§1, progress/completion only) and scheduled delivery: a plugin that delivers user-created
    reminders may declare `POST_NOTIFICATIONS`, `SCHEDULE_EXACT_ALARM`, and
-   `RECEIVE_BOOT_COMPLETED`, strictly for those deliveries.
+   `RECEIVE_BOOT_COMPLETED`, strictly for those deliveries. Navigation's walking
+   journey (§1, exception 8) may also declare `POST_NOTIFICATIONS`,
+   `FOREGROUND_SERVICE_LOCATION` and the location permissions, strictly for that
+   journey.
 6. `REQUEST_DELETE_PACKAGES` — required for the in-app Uninstall row
    (`NexusUi.uninstallCard`) to open the system uninstall dialog. Without it the
    `ACTION_DELETE` intent is silently rejected.
@@ -122,6 +149,7 @@ Copy `plugins/sample` as the canonical template. The hard rules:
 | Receive prefixes | non-empty, normalized, within your authorized namespace `/plugin/<id>/…` |
 | Signer | exactly one current signing certificate |
 | UID | not shared with another discovered plugin |
+| Optional metadata | `rokidbus.plugin.pages` = `1` opts into pages; `rokidbus.plugin.quickActions` lists quick-action families (`checklist`, `media`, comma-separated, unknown ignored). Neither is a capability, neither can invalidate the plugin, and quick actions still need the user's approval on the phone |
 
 Any violation makes the plugin an *invalid candidate*: it appears in Plugin access
 with the concrete reason visible when Developer details is enabled.
@@ -141,7 +169,8 @@ pages (opted-in plugins, session backend, once both hubs announce page v1):
   wearer selects a page → hub uses your live registration or binds you cold
   (registration within the 8 s page budget) → /page/request → your answer on
   /page/response → /page/visibility (lease) → optional live revisions and
-  confirmed /page/action → /page/closed → page-only binding released
+  confirmed (or user-approved quick, or composer) /page/action → /page/closed
+  → page-only binding released
 ```
 
 Facts you must build around:
@@ -190,6 +219,7 @@ Paths a plugin can **send to** (gated by capability):
 | `/mediasync/settings`, `/mediasync/now` | `mediasync` | Photo sync control: partial settings updates (`autoSyncOnCharge`, `deleteAfterSync`; an empty request is a refresh) and a manual "sync now". `/mediasync/status` is **receive-only** (declare it in RECEIVE_PREFIXES); every other `/mediasync/…` path is hub-to-hub and rejected if you send it |
 | `/debug/adb/request` → `/debug/adb/reply` | `wireless_debugging` | High-risk wireless ADB control. Actions are `status`, `enable`, `start_pairing`, `cancel_pairing`, and `disable`. Replies are owner-scoped direct replies and need no receive prefix. The phone hub stamps the authenticated plugin id; plugins must not add or trust one themselves. Pairing codes expire after two minutes and must not be persisted or logged; code-bearing windows use `FLAG_SECURE`, and only an explicit user action may copy a sensitive-marked command to the Android clipboard. |
 | `/page/response`, `/page/result` | `surfaces` | Answers to the page requests and confirmed actions the hub recorded for you, sent by the SDK from your page callbacks and `publishPage`. Needs `rokidbus.plugin.pages`; the hub stamps your identity and refuses unsolicited or cross-owner pages. |
+| `/activity/result`, `/activity/geometry`, `/activity/heading`, `/notice/withdraw` | `surfaces` | Launcher bundle only (`supportsLauncherInteractive()`): the answer to an activity command, your activity's route geometry and compass heading (never queued; geometry needs the SPP data plane), and "this event is no longer on the phone". Use the SDK calls; the hub stamps your identity, and an older hub refuses these paths. |
 | `/plugin/<yourId>/…` | — | Your private namespace (must match your declared receive prefixes) |
 
 Wireless ADB requires both phone and glasses hubs 1.3.0 or newer and the
@@ -212,8 +242,10 @@ Reserved sender roots you can never use: `/launcher`, `/surface/input`, `/ink/ev
 answers above. Rejections and undeliverable traffic
 come back on `/error` as `{code, forId, pluginId}` (hubs before 1.4.6 omitted
 `pluginId`, and the SDK dropped those errors unseen). `/core/native-apps/*`, `/core/remote-input/*`,
-`/core/navigation/*`, and `/core/pointer/*` are trusted phone-hub/glasses-hub
-controls, never plugin APIs.
+`/core/navigation/*`, `/core/pointer/*`, `/core/compose/*`, `/core/ambient/*`,
+`/core/policy/quick-actions` and `/core/notice/purge` are trusted
+phone-hub/glasses-hub controls, never plugin APIs: the hub composer, ambient
+sizes and quick-action approvals belong to the hubs and the user.
 
 Every approved, live registration receives glasses hardware signals without an
 additional capability grant. `onNexusLinkState` includes

@@ -113,6 +113,24 @@ internal class SessionScreenView(context: Context) : LinearLayout(context) {
         is ScreenBlock.Fact -> fact(block)
         is ScreenBlock.Progress -> progress(block)
         is ScreenBlock.Document -> documentView(block)
+        is ScreenBlock.Conversation, is ScreenBlock.Media, is ScreenBlock.Maneuver, is ScreenBlock.Map, is ScreenBlock.Ribbon ->
+            launcherPlaceholder(block)
+    }
+
+    /**
+     * TEMPORARY, for lane GR to replace: the launcher blocks exist in the screen model before their
+     * renderers do. This keeps the exhaustive dispatch compiling with one plain, honest line each.
+     */
+    private fun launcherPlaceholder(block: ScreenBlock): TextView {
+        val line = when (block) {
+            is ScreenBlock.Conversation -> block.bubbles.lastOrNull()?.text ?: block.caption.orEmpty()
+            is ScreenBlock.Media -> listOfNotNull(block.title, block.artist).joinToString(" · ")
+            is ScreenBlock.Maneuver -> listOfNotNull(if (block.approximate) "~${block.distance}" else block.distance, block.street).joinToString(" · ")
+            is ScreenBlock.Map -> "Map"
+            is ScreenBlock.Ribbon -> block.stops.lastOrNull()?.name.orEmpty()
+            else -> ""
+        }
+        return PageStyle.text(context, line, PageStyle.BODY_PX, PageStyle.ink, PageStyle.sans, maxLines = 2)
     }
 
     /** A root card keeps its lines whatever the values: three rows, each one line, ellipsized. */

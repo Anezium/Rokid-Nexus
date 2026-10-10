@@ -1,13 +1,37 @@
 package com.anezium.rokidbus.glasses.session
 
+import com.anezium.rokidbus.shared.MediaPlaybackState
 import com.anezium.rokidbus.shared.PageBody
 import com.anezium.rokidbus.shared.PageSegment
 import com.anezium.rokidbus.shared.PageSegmentKind
 import com.anezium.rokidbus.shared.PageSurfaceContract
 import com.anezium.rokidbus.shared.PageTemplateContract
+import com.anezium.rokidbus.shared.RouteGeometry
+import com.anezium.rokidbus.shared.RouteRibbonBetween
+import com.anezium.rokidbus.shared.RouteRibbonStop
 
-/** The fixed chrome above the viewport: a title and a short trail on its right. */
-internal data class ScreenHeader(val title: String, val trail: String? = null)
+/**
+ * A canonical icon the renderer resolves: a plugin's own mark, a hub place, a native app's
+ * launcher icon, or a named glyph. The screen model names it; the renderer owns pixels.
+ */
+internal sealed interface IconRef {
+    /** A plugin's icon; [iconKey] is its descriptor icon key, null for its default mark. */
+    data class Plugin(val pluginId: String, val iconKey: String? = null) : IconRef
+
+    /** A hub place: the notifications bell or the applications grid. */
+    data class Place(val place: IconPlace) : IconRef
+
+    /** A native Android app on the glasses, by package. */
+    data class Native(val packageName: String) : IconRef
+
+    /** A glyph from the shared glyph set (or a plugin glyph by its qualified name). */
+    data class Glyph(val name: String) : IconRef
+}
+
+internal enum class IconPlace { BELL, GRID }
+
+/** The fixed chrome above the viewport: a title, a short trail on its right, and an optional icon. */
+internal data class ScreenHeader(val title: String, val trail: String? = null, val icon: IconRef? = null)
 
 /** The fixed chrome under the viewport: what tap does, and where BACK goes. */
 internal data class ScreenHint(val action: String?, val back: String?)
@@ -33,7 +57,12 @@ internal enum class TextRole {
 internal sealed interface ScreenBlock {
     val key: String
 
-    /** A root card: fixed lines, fixed size, whatever its values become. */
+    /**
+     * A root card: fixed lines, fixed size, whatever its values become. [tertiary] is a third,
+     * quieter line (a capture time, a handoff state); [offline] draws the last-known treatment;
+     * [dashed] outlines it dashed; [commands] is the inline command strip of an activity in
+     * command focus.
+     */
     data class Card(
         override val key: String,
         val label: String,
@@ -44,8 +73,17 @@ internal sealed interface ScreenBlock {
         val figure: Boolean,
         val ended: Boolean,
         val selected: Boolean,
+        val icon: IconRef? = null,
+        val tertiary: String? = null,
+        val offline: Boolean = false,
+        val dashed: Boolean = false,
+        val commands: CommandStrip? = null,
     ) : ScreenBlock
 
+    /**
+     * [checked] draws a checkbox mark (null: none); [tag] is a short state tag on the right
+     * ("SEEN IN NEXUS", "HANDED OFF"); [pending] marks an invocation awaiting its result.
+     */
     data class Row(
         override val key: String,
         val label: String,
@@ -55,6 +93,10 @@ internal sealed interface ScreenBlock {
         val selected: Boolean = false,
         val tombstone: Boolean = false,
         val centered: Boolean = false,
+        val icon: IconRef? = null,
+        val checked: Boolean? = null,
+        val tag: String? = null,
+        val pending: Boolean = false,
     ) : ScreenBlock
 
     /** [dimmed] is retained content of an unavailable page: readable, drawn as inert. */
@@ -85,6 +127,118 @@ internal sealed interface ScreenBlock {
         /** The document's own footer, drawn after its text. */
         val footer: String? = null,
     ) : ScreenBlock
+
+    /** A conversation page's bubbles, oldest first; [caption] is its one capture time. */
+    data class Conversation(
+        override val key: String,
+        val caption: String?,
+        val bubbles: List<Bubble>,
+        val dimmed: Boolean = false,
+    ) : ScreenBlock
+
+    /** Now playing: what the media page says, with no controls (they are the command strip). */
+    data class Media(
+        override val key: String,
+        val title: String,
+        val artist: String? = null,
+        val album: String? = null,
+        val source: String? = null,
+        val state: MediaPlaybackState,
+        val status: String? = null,
+    ) : ScreenBlock
+
+    /** The next manoeuvre; [approximate] prefixes the distance with "~" for a degraded position. */
+    data class Maneuver(
+        override val key: String,
+        val glyph: String,
+        val distance: String,
+        val street: String? = null,
+        val eta: String? = null,
+        val approximate: Boolean = false,
+    ) : ScreenBlock
+
+    /**
+     * Hub-rendered route geometry. [headingDeg] is the smoothed heading, null when absent or
+     * stale; [degraded] draws north-up with a dashed route and a dot without an arrow.
+     */
+    data class Map(
+        override val key: String,
+        val geometry: RouteGeometry,
+        val headingDeg: Float? = null,
+        val size: MapSize = MapSize.COMPACT,
+        val view: MapView = MapView.FOLLOW,
+        val degraded: Boolean = false,
+        val selected: Boolean = false,
+    ) : ScreenBlock
+
+    /** A transit ride's stops, with the vehicle [between] two of them. */
+    data class Ribbon(
+        override val key: String,
+        val line: String?,
+        val stops: List<RouteRibbonStop>,
+        val between: RouteRibbonBetween? = null,
+        val note: String? = null,
+    ) : ScreenBlock
+}
+
+/** One plugin or hub command in an activity card's inline strip. [hub] marks the hub's own Open app. */
+internal data class CommandSlot(
+    val key: String,
+    val label: String,
+    val glyph: String,
+    val enabled: Boolean = true,
+    val hub: Boolean = false,
+)
+
+/** The commands of a card in command focus; [focusedIndex] is the outlined one. */
+internal data class CommandStrip(val items: List<CommandSlot>, val focusedIndex: Int)
+
+internal enum class BubbleSide { LEFT, RIGHT, NONE }
+
+/** SOLID is a captured message, DASHED a draft or unconfirmed one, LIVE text being captured. */
+internal enum class BubbleStyle { SOLID, DASHED, LIVE }
+
+internal data class Bubble(
+    val key: String,
+    val side: BubbleSide,
+    val text: String,
+    val latest: Boolean = false,
+    val style: BubbleStyle = BubbleStyle.SOLID,
+    /** A short line under it: "handed to the app", "draft · not sent yet". */
+    val meta: String? = null,
+)
+
+internal enum class MapSize { COMPACT, PANEL, FULL }
+
+internal enum class MapView { FOLLOW, OVERVIEW }
+
+/** One inline button of a footer: Dictate, Type, Send, a map view. */
+internal data class FooterButton(
+    val key: String,
+    val label: String,
+    val glyph: String? = null,
+    val selected: Boolean = false,
+    val enabled: Boolean = true,
+)
+
+internal enum class StatusLineStyle {
+    /** A capture is running: the glasses mic or the phone keyboard. */
+    CAPTURE,
+
+    /** Something is unavailable: the mic, or replying from here. */
+    OFF,
+}
+
+/** The inline footer under the viewport, above the hint: buttons, or one status line. */
+internal sealed interface InlineFooter {
+    data class Buttons(val buttons: List<FooterButton>) : InlineFooter
+
+    data class StatusLine(
+        val text: String,
+        val sub: String? = null,
+        val glyph: String? = null,
+        val style: StatusLineStyle = StatusLineStyle.CAPTURE,
+    ) : InlineFooter
 }
 
 internal data class SessionScreen(
@@ -98,6 +252,10 @@ internal data class SessionScreen(
     val gate: Boolean = false,
     /** Present while the renderer must tell whether this content fits the viewport. */
     val fit: FitCheck? = null,
+    /** The composer's buttons or capture line, drawn between the viewport and the hint. */
+    val footer: InlineFooter? = null,
+    /** The full-map excursion: no header, no hint, the viewport is the whole HUD. */
+    val chromeless: Boolean = false,
 )
 
 /**
@@ -278,6 +436,8 @@ internal class SessionScreens(
         is PageBody.Commands -> listOfNotNull(body.text?.let { ScreenBlock.Text("last:text", it, TextRole.BODY, dimmed = true) })
         is PageBody.SelectableList -> body.items.map { ScreenBlock.Row("last:row:${it.id}", it.label, it.sub, enabled = false) }
             .ifEmpty { listOf(ScreenBlock.Text("last:empty", body.emptyText ?: "Nothing here", TextRole.CAPTION, centered = true, dimmed = true)) }
+        // Placeholder until the launcher lanes draw retained conversation, media and route pages.
+        is PageBody.Conversation, is PageBody.Media, is PageBody.Route -> emptyList()
         is PageBody.Document, null -> emptyList()
     }
 
@@ -293,6 +453,8 @@ internal class SessionScreens(
         is PageBody.SelectableList -> body.items.flatMap { row ->
             listOfNotNull(PageSegment("row:${row.id}", PageSegmentKind.PROSE, row.label), row.sub?.let { PageSegment("sub:${row.id}", PageSegmentKind.ASIDE, it) })
         }
+        // Placeholder until the launcher lanes give these bodies their own reading.
+        is PageBody.Conversation, is PageBody.Media, is PageBody.Route -> emptyList()
         null -> emptyList()
     }
 
@@ -410,6 +572,9 @@ internal class SessionScreens(
             is PageBody.Document -> body.segments.firstOrNull()?.text
             is PageBody.Commands -> body.text ?: body.items.firstOrNull()?.label
             is PageBody.SelectableList -> body.items.firstOrNull()?.label
+            is PageBody.Conversation -> body.messages.lastOrNull()?.text
+            is PageBody.Media -> body.title
+            is PageBody.Route -> body.maneuver?.distance
         }
         return listOfNotNull(
             ScreenBlock.Text("retained", snapshot.page.title, TextRole.BODY),

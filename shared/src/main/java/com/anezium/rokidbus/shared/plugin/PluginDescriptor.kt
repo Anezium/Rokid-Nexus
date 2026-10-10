@@ -2,6 +2,8 @@ package com.anezium.rokidbus.shared.plugin
 
 import com.anezium.rokidbus.shared.BusConstants
 import com.anezium.rokidbus.shared.PageSurfaceContract
+import com.anezium.rokidbus.shared.QuickActionFamily
+import com.anezium.rokidbus.shared.QuickActionPolicyContract
 
 data class PluginDescriptor(
     val id: String,
@@ -24,6 +26,11 @@ data class PluginDescriptor(
      * provides no pages. Additive metadata: it is not a capability and needs no approval.
      */
     val pageSessionVersion: Int = 0,
+    /**
+     * The quick-action families this plugin offers, from `rokidbus.plugin.quickActions`. Additive
+     * metadata, never a capability: it lets the user approve them, it approves nothing itself.
+     */
+    val quickActionFamilies: Set<QuickActionFamily> = emptySet(),
 ) {
     companion object {
         private val idPattern = Regex("[a-z][a-z0-9._-]{2,63}")
@@ -126,6 +133,15 @@ object PluginDescriptorParser {
             .map { it.second?.trim() }
             .toSet()
         val pageSessionVersion = if (pageValues == setOf(PAGES_VALUE_V1)) PageSurfaceContract.VERSION else 0
+        // Likewise for quick actions, fail-closed: conflicting entries declare no family at all.
+        val quickValues = metadata.filter { it.first == QuickActionPolicyContract.META_PLUGIN_QUICK_ACTIONS }
+            .map { it.second?.trim() }
+            .toSet()
+        val quickActionFamilies = if (quickValues.size == 1) {
+            QuickActionPolicyContract.parseDeclaredFamilies(quickValues.single())
+        } else {
+            emptySet()
+        }
         val launchable = when (values[BusConstants.META_PLUGIN_LAUNCHABLE]?.trim()?.lowercase()) {
             null, "", "true" -> true
             "false" -> false
@@ -144,6 +160,7 @@ object PluginDescriptorParser {
                 iconDrawableResId = iconDrawableResId,
                 glyphsResId = glyphsResId,
                 pageSessionVersion = pageSessionVersion,
+                quickActionFamilies = quickActionFamilies,
             ),
         )
     }

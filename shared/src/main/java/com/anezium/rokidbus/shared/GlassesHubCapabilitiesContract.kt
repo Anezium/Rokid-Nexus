@@ -31,6 +31,8 @@ data class GlassesHubCapabilities(
     val ttsVersion: Int = 0,
     /** Session/page protocol version; only [PageSurfaceContract.VERSION] on both hubs enables pages. */
     val pageSessionVersion: Int = 0,
+    /** The launcher bundle version; see [LauncherInteractiveContract]. Absent reads as 0. */
+    val launcherInteractiveVersion: Int = 0,
 )
 
 /** Additive glasses-to-phone hub capabilities payload. Unknown fields remain ignorable. */
@@ -66,6 +68,7 @@ object GlassesHubCapabilitiesContract {
         maintenanceReady: Boolean = false,
         ttsVersion: Int = 0,
         pageSessionVersion: Int = 0,
+        launcherInteractiveVersion: Int = 0,
     ): GlassesHubCapabilities = GlassesHubCapabilities(
         protocolVersion = VERSION,
         features = features,
@@ -91,6 +94,7 @@ object GlassesHubCapabilitiesContract {
         maintenanceReady = maintenanceReady,
         ttsVersion = ttsVersion,
         pageSessionVersion = PageSurfaceContract.sanitizeSessionVersion(pageSessionVersion),
+        launcherInteractiveVersion = LauncherInteractiveContract.sanitizeVersion(launcherInteractiveVersion),
     )
 
     fun toJson(capabilities: GlassesHubCapabilities): JSONObject = JSONObject()
@@ -122,6 +126,10 @@ object GlassesHubCapabilitiesContract {
         .put(
             PageSurfaceContract.CAPABILITY_FIELD_PAGE_SESSION_VERSION,
             PageSurfaceContract.sanitizeSessionVersion(capabilities.pageSessionVersion),
+        )
+        .put(
+            LauncherInteractiveContract.CAPABILITY_FIELD_VERSION,
+            LauncherInteractiveContract.sanitizeVersion(capabilities.launcherInteractiveVersion),
         )
         .also { payload ->
             capabilities.versionName?.let { payload.put("versionName", it) }
@@ -158,6 +166,9 @@ object GlassesHubCapabilitiesContract {
         pageSessionVersion = PageSurfaceContract.parseSessionVersion(
             payload.opt(PageSurfaceContract.CAPABILITY_FIELD_PAGE_SESSION_VERSION),
         ),
+        launcherInteractiveVersion = LauncherInteractiveContract.parseVersion(
+            payload.opt(LauncherInteractiveContract.CAPABILITY_FIELD_VERSION),
+        ),
     )
 
     fun supportsInkSurface(capabilities: GlassesHubCapabilities): Boolean =
@@ -180,6 +191,26 @@ object GlassesHubCapabilitiesContract {
             capabilities.activitySurfaceVersion == ActivitySurfaceContract.VERSION &&
             capabilities.features and BusCapabilityBits.ACTIVITY_EXTRAS != 0 &&
             capabilities.activityExtrasVersion == ActivitySurfaceContract.EXTRAS_VERSION
+
+    /**
+     * The launcher bundle version these glasses run with a hub of [localVersion]: their bit and a
+     * version of at least 1, then the lower of the two. 0 means none of the bundle is active.
+     */
+    fun negotiatedLauncherInteractiveVersion(
+        capabilities: GlassesHubCapabilities,
+        localVersion: Int = LauncherInteractiveContract.VERSION,
+    ): Int =
+        if (
+            capabilities.protocolVersion == VERSION &&
+            capabilities.features and BusCapabilityBits.LAUNCHER_INTERACTIVE != 0
+        ) {
+            LauncherInteractiveContract.negotiated(localVersion, capabilities.launcherInteractiveVersion)
+        } else {
+            0
+        }
+
+    fun supportsLauncherInteractive(capabilities: GlassesHubCapabilities): Boolean =
+        LauncherInteractiveContract.isActive(negotiatedLauncherInteractiveVersion(capabilities))
 
     fun effectiveStage(capabilities: GlassesHubCapabilities): String =
         SetupStage.normalize(capabilities.setupStage).ifBlank {
