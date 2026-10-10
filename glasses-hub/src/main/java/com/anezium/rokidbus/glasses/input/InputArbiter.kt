@@ -53,6 +53,12 @@ internal interface InputContext {
      */
     val noticeArmed: Boolean
 
+    /**
+     * A composer capture (dictation or typing) runs in the session: a new triple tap is not
+     * recognised until it is finished or cancelled (plan 028a §5.4).
+     */
+    val captureActive: Boolean get() = false
+
     val legacyShown: Boolean
     val surfaceOwnsKeys: Boolean
     val activeSurfaceId: String?
@@ -317,9 +323,12 @@ internal class InputArbiter(private val context: InputContext) {
         return own(event, Owner.PASSED, consumed = false, out, viaWindow)
     }
 
-    /** A4's guard on new recognition: none from the ring, in a focused field, or under an armed notice. */
+    /**
+     * A4's guard on new recognition: none from the ring, in a focused field, under an armed notice,
+     * or over a composer capture.
+     */
     private fun recognises(event: RawKeyEvent): Boolean =
-        event.deviceClass == DeviceClass.TOUCHPAD && !context.editableFocused && !context.noticeArmed
+        event.deviceClass == DeviceClass.TOUCHPAD && !context.editableFocused && !context.noticeArmed && !context.captureActive
 
     private fun trigger(event: RawKeyEvent, session: Boolean, out: MutableList<RoutedIntent>): InputDecision {
         contactAt = null
