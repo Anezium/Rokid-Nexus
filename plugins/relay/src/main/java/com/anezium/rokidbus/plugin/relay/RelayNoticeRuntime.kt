@@ -843,6 +843,7 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
             if (countdownUnseen || authorityLost || client?.supportsNoticeSurface != true) return stopUnseenCountdown()
             val remaining = deadline - SystemClock.uptimeMillis()
             if (remaining <= 0L) {
+                Log.i(TAG, "send countdown fired")
                 cancelSendCountdown()
                 sendConfirmedReply()
                 return
