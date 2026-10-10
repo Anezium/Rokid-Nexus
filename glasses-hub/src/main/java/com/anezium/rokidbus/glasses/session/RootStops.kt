@@ -158,16 +158,16 @@ internal object RootStops {
 
     private fun refreshNotice(stop: RootStop, history: NotificationHistory, nowWallMs: Long): RootStop {
         val card = stop.notice
-        return when (card?.kind) {
-            NoticeCardKind.CONVERSATION -> {
-                // A purged entry is gone from the phone as surely as a withdrawn one.
-                val state = card.entryId?.let(history::entry)?.state ?: HistoryState.WITHDRAWN
-                stop.copy(notice = card.copy(state = state))
-            }
-            NoticeCardKind.AGGREGATE -> history.aggregateFor(card.ownerPluginId, nowWallMs)?.let { applyPreview(stop, it) } ?: stop
-            else -> history.visible(nowWallMs).firstOrNull()?.let { applyPreview(stop, history.generic(it)) }
-                ?: stop.copy(notice = card?.copy(state = HistoryState.WITHDRAWN))
+        if (card != null && card.kind == NoticeCardKind.CONVERSATION) {
+            // A purged entry is gone from the phone as surely as a withdrawn one.
+            val state = card.entryId?.let(history::entry)?.state ?: HistoryState.WITHDRAWN
+            return stop.copy(notice = card.copy(state = state))
         }
+        if (card != null && card.kind == NoticeCardKind.AGGREGATE) {
+            return history.aggregateFor(card.ownerPluginId, nowWallMs)?.let { applyPreview(stop, it) } ?: stop
+        }
+        return history.visible(nowWallMs).firstOrNull()?.let { applyPreview(stop, history.generic(it)) }
+            ?: stop.copy(notice = card?.copy(state = HistoryState.WITHDRAWN))
     }
 
     private fun applyPreview(stop: RootStop, preview: NoticePreview): RootStop = stop.copy(
