@@ -165,5 +165,13 @@
             </intent-filter>
         </receiver>
 
+        <receiver
+            android:name=".SetLauncherBackendReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.anezium.rokidbus.glasses.action.SET_LAUNCHER_BACKEND" />
+            </intent-filter>
+        </receiver>
+
     </application>
 </manifest>

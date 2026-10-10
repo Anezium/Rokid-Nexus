@@ -4,3 +4,28 @@ Copyright 2026 Anezium
 This product includes software developed by Anezium (https://github.com/Anezium).
 
 Licensed under the Apache License, Version 2.0.
+
+This product includes software adapted from the Rokid-Nexus fork by alvarosw
+(https://github.com/alvarosw/Rokid-Nexus), licensed under the Apache License,
+Version 2.0. The glasses hub's input arbiter, session runner, session host,
+the plugin open handoff and the record of what a session covers were rewritten
+from that fork's HudInput, HudKeyEventAdapter, HudRunner, HudHost and
+HudStateMachine. Each adapted file says so at its top, or at the adapted class
+where only part of a file comes from the fork:
+
+  glasses-hub/src/main/java/com/anezium/rokidbus/glasses/input/InputArbiter.kt
+  glasses-hub/src/main/java/com/anezium/rokidbus/glasses/input/KeyEventAdapter.kt
+  glasses-hub/src/main/java/com/anezium/rokidbus/glasses/input/RawKeyEvent.kt
+  glasses-hub/src/main/java/com/anezium/rokidbus/glasses/RokidBusAccessibilityService.kt
+    (SessionOverlayWindow only)
+  glasses-hub/src/main/java/com/anezium/rokidbus/glasses/session/SessionHost.kt
+  glasses-hub/src/main/java/com/anezium/rokidbus/glasses/session/SessionReducer.kt
+    (the plugin open handoff only)
+  glasses-hub/src/main/java/com/anezium/rokidbus/glasses/session/SessionRunner.kt
+  glasses-hub/src/main/java/com/anezium/rokidbus/glasses/session/Underneath.kt
+  glasses-hub/src/test/java/com/anezium/rokidbus/glasses/input/InputArbiterTest.kt
+  glasses-hub/src/test/java/com/anezium/rokidbus/glasses/session/SessionHostTest.kt
+  glasses-hub/src/test/java/com/anezium/rokidbus/glasses/session/SessionOpenHandoffPropertyTest.kt
+  glasses-hub/src/test/java/com/anezium/rokidbus/glasses/session/SessionReducerTest.kt
+    (the open handoff cases only)
+  glasses-hub/src/test/java/com/anezium/rokidbus/glasses/session/SessionRunnerTest.kt

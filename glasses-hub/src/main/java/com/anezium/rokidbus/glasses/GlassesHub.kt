@@ -227,6 +227,7 @@ object GlassesHub {
 
     fun onSppConnected(connected: Boolean) {
         phoneConnected = connected || CxrBusBridge.isUp()
+        NexusSession.onPhoneLink(phoneConnected)
         if (!phoneConnected) {
             clearRemotePhoneCapabilities()
             AssistantDisplayEpisode.end(DisplayHoldReleaseReason.LINK_LOSS)
@@ -245,6 +246,7 @@ object GlassesHub {
     fun onCxrState(connected: Boolean) {
         cxrUp = connected
         phoneConnected = connected || SppServerManager.isConnected()
+        NexusSession.onPhoneLink(phoneConnected)
         if (!phoneConnected) {
             clearRemotePhoneCapabilities()
             AssistantDisplayEpisode.end(DisplayHoldReleaseReason.LINK_LOSS)
@@ -1265,6 +1267,8 @@ object GlassesHub {
     ): Boolean = sendRemote(BusEnvelope(path = path, payload = payload, binary = binary)) == null
 
     internal fun isCameraSessionActive(): Boolean = cameraSessionTracker.isActive()
+
+    internal fun isPhoneConnected(): Boolean = phoneConnected
 
     internal fun isWifiHubOwned(): Boolean {
         val context = appContext ?: return wifiOwnership?.isHubOwned() == true
