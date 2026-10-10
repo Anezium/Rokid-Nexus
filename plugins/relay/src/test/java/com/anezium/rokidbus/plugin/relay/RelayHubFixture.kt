@@ -19,6 +19,7 @@ import com.anezium.rokidbus.client.PluginRegistrationResult
 import com.anezium.rokidbus.shared.BusCapabilityBits
 import com.anezium.rokidbus.shared.BusConstants
 import com.anezium.rokidbus.shared.BusPaths
+import com.anezium.rokidbus.shared.LauncherInteractiveContract
 import com.anezium.rokidbus.shared.LinkStateBits
 import org.json.JSONObject
 import org.robolectric.Shadows.shadowOf
@@ -34,6 +35,9 @@ internal class FakeHub : IBusService.Stub() {
 
     /** The effective page version the hub announces to this client, or none. */
     var pageVersion: Int? = null
+
+    /** The launcher bundle version announced with the page version, or none. */
+    var launcherVersion: Int? = null
     private var nextId = 0
 
     override fun apiVersion(): Int = 3
@@ -55,7 +59,11 @@ internal class FakeHub : IBusService.Stub() {
                 .put("capabilities", CAPABILITIES)
                 .put("noticeInteractionVersion", 1),
         )
-        pageVersion?.let { deliver(BusPaths.HUB_CAPABILITIES, JSONObject().put("pageSessionVersion", it)) }
+        pageVersion?.let { version ->
+            val capabilities = JSONObject().put("pageSessionVersion", version)
+            launcherVersion?.let { capabilities.put(LauncherInteractiveContract.CAPABILITY_FIELD_VERSION, it) }
+            deliver(BusPaths.HUB_CAPABILITIES, capabilities)
+        }
         return PluginRegistrationResult.APPROVED
     }
     override fun capabilities(): Int = features
