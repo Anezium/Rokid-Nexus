@@ -54,8 +54,9 @@ internal object HubIconSource : SessionIconSource {
 
 /**
  * Glyph names as the session HUD draws them. The hub's own marks come first (the Open app slot,
- * the composer's hand-over arrow); then the shared vocabulary; then, for a name qualified as
- * `owner:glyph`, the glyph that owner registered; anything else is the `dot` fallback.
+ * the composer's hand-over arrow, the lost-position ring); then the shared vocabulary; then the
+ * hub's place marks; then, for a name qualified as `owner:glyph`, the glyph that owner
+ * registered; anything else is the `dot` fallback.
  */
 internal object HudGlyphs {
     /** The hub's Open app slot: a box with an arrow leaving it. */
@@ -78,14 +79,14 @@ internal object HudGlyphs {
      */
     private val aliases = mapOf("send" to HAND_OVER)
 
-    fun isHubGlyph(name: String): Boolean = name in paths || name in aliases || name == GPS_LOST
-
     fun drawable(context: Context, name: String, ownerGlyph: (owner: String, glyph: String) -> Drawable): Drawable {
         val trimmed = name.trim()
         val hub = aliases[trimmed] ?: trimmed
         if (hub == GPS_LOST) return GpsLostDrawable()
         paths[hub]?.let { return GlyphDrawable(it) }
         if (NexusGlyphs.isBuiltIn(trimmed)) return requireNotNull(context.getDrawable(NexusGlyphs.drawableFor(trimmed)))
+        // The hub's place marks (`bell`, `grid`) are named like glyphs by the screens that lead to them.
+        NexusPluginIcons.drawableForBuiltIn(trimmed)?.let { return requireNotNull(context.getDrawable(it)) }
         val separator = trimmed.indexOf(':')
         if (separator > 0 && separator < trimmed.lastIndex) {
             return ownerGlyph(trimmed.substring(0, separator), trimmed.substring(separator + 1))

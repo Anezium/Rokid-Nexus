@@ -3,10 +3,7 @@ package com.anezium.rokidbus.glasses.page
 import android.content.Context
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
-import android.text.SpannableString
-import android.text.Spanned
 import android.text.TextUtils
-import android.text.style.ForegroundColorSpan
 import android.util.TypedValue
 import android.widget.TextView
 import com.anezium.rokidbus.client.ui.BusTheme
@@ -115,30 +112,9 @@ internal object PageStyle {
     /** A dashed outline that stays bright when selected, unlike [outlined]'s inert dashed line. */
     fun dashedPhosphor(selected: Boolean): GradientDrawable = stroked(if (selected) phosphor else muted, dashed = true)
 
-    /**
-     * The hint's gesture verbs read a step brighter than the rest, as in the accepted mockup; the
-     * words themselves come from the screen, unchanged.
-     */
-    fun hint(value: String): CharSequence {
-        if (value.isEmpty()) return value
-        val spannable = SpannableString(value)
-        var start = 0
-        while (start < value.length) {
-            val end = value.indexOf(HINT_SEPARATOR, start).let { if (it < 0) value.length else it }
-            val segment = value.substring(start, end)
-            val trimmed = segment.trimStart()
-            val leading = segment.length - trimmed.length
-            val verb = GESTURE_VERBS.firstOrNull { trimmed == it || trimmed.startsWith("$it ") }
-            if (verb != null) {
-                spannable.setSpan(ForegroundColorSpan(ink), start + leading, start + leading + verb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-            }
-            start = end + HINT_SEPARATOR.length
-        }
-        return spannable
-    }
+    /** The bubbles' and islands' finer line, drawn on a canvas where a fractional width is kept. */
+    const val HAIR_STROKE_PX = 1.5f
 
     const val DASH_PX = 8f
     const val DASH_GAP_PX = 6f
-    private const val HINT_SEPARATOR = " · "
-    private val GESTURE_VERBS = listOf("swipe", "tap", "back")
 }
