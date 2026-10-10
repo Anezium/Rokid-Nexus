@@ -2,6 +2,11 @@
 
 Date: 2026-10-10. Branch: `qa/skills-workspace-typed-160`.
 
+A [subsequent USB written-mode recheck](persistent-workspace-index-device-recheck-20261010.md)
+found and corrected a visual tool-selection refusal, and exercised a combined
+Bluetooth/process/session restart and withdrawal at the request-send guard.
+The observations below describe the earlier pass.
+
 Delivery A is implemented and the focused device smoke tests below passed.
 Retrieval remains lexical. Delivery B (qualified local semantic encoder and
 measured hybrid retrieval), the full frozen 40 answerable + 20 negative model

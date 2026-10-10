@@ -145,6 +145,11 @@ internal object NexusAgentPolicy {
                     "unavailable, say so and do not answer from other files.")
                 append(" Never infer what a chart, figure, table, or image shows from the text around it.")
                 if (VIEW_WORKSPACE_PAGE_TOOL_NAME in availableToolNames) {
+                    append(" When the wearer asks what a specific page of a named file shows, call " +
+                        "view_workspace_page for that file and page before answering or saying you cannot " +
+                        "confirm it. This also applies when that page has no supplied excerpt, empty OCR, " +
+                        "or no indexed text, even without a visual marker. Missing text is not missing " +
+                        "page pixels. If the page view fails, say so; never use another page or file instead.")
                     append(" If a relevant excerpt is marked" + WorkspaceRetriever.VISUAL_MARK + " and its text " +
                         "does not state the answer (values, comparisons, rankings, labels, trends), you must call " +
                         "view_workspace_page with that file and page before answering; answering, guessing, or " +
