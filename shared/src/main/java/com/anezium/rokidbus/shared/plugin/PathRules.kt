@@ -13,8 +13,15 @@ object PathRules {
         "/error",
         // Page traffic is brokered by the hubs; a provider's two answers are intercepted earlier.
         PAGE_ROOT,
+        "/skills",
     )
-    private val hubOnlyPaths = setOf(BusPaths.TTS_CANCEL)
+    private val hubOnlyPaths = setOf(
+        BusPaths.TTS_CANCEL,
+        BusPaths.SKILLS_CATALOG_REPLY,
+        BusPaths.SKILLS_RESULT,
+        BusPaths.SKILLS_PROVIDER_INVOKE,
+        BusPaths.SKILLS_PROVIDER_CANCEL,
+    )
     private val lifecyclePrefixes = setOf("/system/plugin")
     private val httpReplyPrefixes = setOf("/http/request/reply")
     private val audioReplyPrefixes = setOf(
@@ -86,6 +93,8 @@ object PathRules {
         BusPaths.WIRELESS_ADB_REPLY,
         BusPaths.ASSISTANT_TAKEOVER_REPLY,
         BusPaths.INK_EVENT,
+        BusPaths.SKILLS_CATALOG_REPLY, BusPaths.SKILLS_RESULT,
+        BusPaths.SKILLS_PROVIDER_INVOKE, BusPaths.SKILLS_PROVIDER_CANCEL,
         -> true
         else -> false
     }
@@ -98,6 +107,8 @@ object PathRules {
         BusPaths.WIRELESS_ADB_REPLY,
         BusPaths.ASSISTANT_TAKEOVER_REPLY,
         BusPaths.INK_EVENT,
+        BusPaths.SKILLS_CATALOG_REPLY, BusPaths.SKILLS_RESULT,
+        BusPaths.SKILLS_PROVIDER_INVOKE, BusPaths.SKILLS_PROVIDER_CANCEL,
         -> true
         else -> matchesPrefix(path, "/system/plugin")
     }
@@ -139,6 +150,12 @@ object PathRules {
         -> PluginCapability.MEDIA_SYNC
         BusPaths.WIRELESS_ADB_REQUEST -> PluginCapability.WIRELESS_DEBUGGING
         BusPaths.ASSISTANT_TAKEOVER_REQUEST -> PluginCapability.ASSISTANT
+        BusPaths.SKILLS_CATALOG_REQUEST,
+        BusPaths.SKILLS_INVOKE,
+        BusPaths.SKILLS_CANCEL,
+        BusPaths.SKILLS_SESSION_CLOSE,
+        -> PluginCapability.SKILLS_CLIENT
+        BusPaths.SKILLS_PROVIDER_RESULT -> PluginCapability.SKILLS_PROVIDER
         else -> null
     }
 
