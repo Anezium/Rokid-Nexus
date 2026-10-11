@@ -134,7 +134,7 @@ class RouteNavigationTest {
     @Test
     fun `a view row picks the view and the session forgets it when it closes`() {
         openRoute(routeBody())
-        send(SessionEvent.Step(2, 3_000))
+        repeat(2) { send(SessionEvent.Step(1, 3_000)) }
         assertEquals(TypedPageItems.VIEW_OVERVIEW_KEY, top().selectedKey)
         press(3_100)
         assertEquals(MapView.OVERVIEW, model.mapViews[OWNER])
@@ -296,7 +296,9 @@ class RouteNavigationTest {
 
     private fun selectKey(key: String) {
         val index = rows().indexOfFirst { it.key == key }
-        send(SessionEvent.Step(index - top().selected, 3_900))
+        // The reducer takes one detent per step, as the arbiter delivers them.
+        val delta = index - top().selected
+        repeat(kotlin.math.abs(delta)) { send(SessionEvent.Step(if (delta > 0) 1 else -1, 3_900)) }
         assertEquals(key, top().selectedKey)
     }
 
