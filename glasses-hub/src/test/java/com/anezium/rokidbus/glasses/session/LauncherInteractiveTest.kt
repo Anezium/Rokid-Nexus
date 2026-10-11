@@ -298,6 +298,34 @@ class LauncherInteractiveTest {
     }
 
     @Test
+    fun `a live entry held through a link loss is drawn last known, its commands inert, until its next update`() {
+        openRoot(stop())
+        // The activity tier marks the entry while the phone link is down; nothing is dropped.
+        send(SessionEvent.ActivityUpdated(stop().copy(stale = true, knownAtWallMs = 5_000)))
+        val screens = SessionScreens(items, pluginLabel = { null }, formatTime = { "t$it" }, wallTimeOf = { it })
+        fun card() = screens.screen(model.state, null, model.generation, CommandFacts.of(model))
+            .blocks.filterIsInstance<ScreenBlock.Card>().single { it.key == "media:activity" }
+        assertTrue(card().offline)
+        assertEquals("offline · last known t5000", card().tertiary)
+
+        // Its commands no longer take the focus: the tap opens its summary and runs nothing.
+        shown(1_900)
+        press(2_000)
+        assertTrue(effects.none { it is SendActivityCommand })
+        assertEquals(LocalPages.activityPageId("media"), effects.filterIsInstance<RequestPage>().single().request.correlation.pageId)
+        send(SessionEvent.Back(2_100))
+        assertTrue(model.state is SessionState.Root)
+
+        // Its own next update, after the link is back, restores it.
+        send(SessionEvent.ActivityUpdated(stop()))
+        assertFalse(card().offline)
+        assertNull(card().tertiary)
+        shown(2_200)
+        press(2_300)
+        assertEquals(CommandFocus("media:activity", "play", 1), root().focus)
+    }
+
+    @Test
     fun `an old phone keeps the v1 card and confirms every page action`() {
         negotiated = false
         openRoot(stop(activation = ActivityActivation.DESTINATION, destination = PageDestination("media:now"), pageId = "media:main"))

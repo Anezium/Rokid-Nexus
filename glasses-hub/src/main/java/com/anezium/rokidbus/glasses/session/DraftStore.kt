@@ -11,8 +11,10 @@ internal enum class DraftState { READY, UNCONFIRMED, AUTHORITY_LOST }
 /**
  * The one composer draft in glasses hub memory (plan 028a §7.1), bound to one exact recipient:
  * an owner, a thread and the page it was written on. It is never persisted. [reopened] marks an
- * [DraftState.AUTHORITY_LOST] draft whose thread received a new replyable notice: Type may then
- * reopen it prefilled, as a new capture, and only that capture's completion makes it ready.
+ * [DraftState.AUTHORITY_LOST] draft whose thread received a new replyable notice, or showed a
+ * newer replyable revision of its page ([pageReopened]): Type may then reopen it prefilled, as a
+ * new capture, and only that capture's completion makes it ready. [lostRevision] is the newest
+ * revision of the thread's page shown when the authority was lost, when one was.
  */
 internal data class Draft(
     val ownerPluginId: String,
@@ -22,6 +24,8 @@ internal data class Draft(
     val text: String,
     val state: DraftState = DraftState.READY,
     val reopened: Boolean = false,
+    val lostRevision: Long? = null,
+    val pageReopened: Boolean = false,
 ) {
     fun isFor(ownerPluginId: String?, threadKey: String?): Boolean =
         this.ownerPluginId == ownerPluginId && this.threadKey == threadKey
@@ -49,16 +53,27 @@ internal data class Handoff(val ownerPluginId: String, val threadKey: String, va
 internal object DraftStore {
     /**
      * A completed capture for [capture]'s thread: the new draft, whoever the old one was for. A
-     * thread whose newest event was withdrawn meanwhile gets a draft that cannot be sent as is.
+     * thread whose newest event was withdrawn meanwhile gets a draft that cannot be sent as is,
+     * unless its page itself, in a newer revision, said it can reply again ([previous] reopened
+     * by the page) and nothing withdrew it since.
      */
-    fun completed(capture: Capture, text: String, history: NotificationHistory = NotificationHistory()): Draft = Draft(
-        ownerPluginId = capture.ownerPluginId,
-        threadKey = capture.threadKey,
-        destination = capture.destination,
-        recipient = capture.recipient,
-        text = text.take(capture.maxChars),
-        state = if (history.threadWithdrawn(capture.ownerPluginId, capture.threadKey)) DraftState.AUTHORITY_LOST else DraftState.READY,
-    )
+    fun completed(
+        capture: Capture,
+        text: String,
+        history: NotificationHistory = NotificationHistory(),
+        previous: Draft? = null,
+    ): Draft {
+        val pageSaysReplyable = previous != null && previous.isFor(capture.ownerPluginId, capture.threadKey) && previous.pageReopened
+        val withdrawn = history.threadWithdrawn(capture.ownerPluginId, capture.threadKey) && !pageSaysReplyable
+        return Draft(
+            ownerPluginId = capture.ownerPluginId,
+            threadKey = capture.threadKey,
+            destination = capture.destination,
+            recipient = capture.recipient,
+            text = text.take(capture.maxChars),
+            state = if (withdrawn) DraftState.AUTHORITY_LOST else DraftState.READY,
+        )
+    }
 
     /**
      * An empty commit discards the draft it was prefilled with, its own thread's. Another
@@ -67,11 +82,26 @@ internal object DraftStore {
     fun committedEmpty(draft: Draft?, capture: Capture): Draft? =
         draft?.takeUnless { it.isFor(capture.ownerPluginId, capture.threadKey) }
 
-    /** Authority over [ownerPluginId]'s thread [threadKey] (or every thread, when null) is gone. */
-    fun authorityLost(draft: Draft?, ownerPluginId: String, threadKey: String? = null): Draft? {
+    /**
+     * Authority over [ownerPluginId]'s thread [threadKey] (or every thread, when null) is gone.
+     * [revision] is the newest revision of the draft's thread page on screen then, if any: only
+     * a newer one may reopen it.
+     */
+    fun authorityLost(draft: Draft?, ownerPluginId: String, threadKey: String? = null, revision: Long? = null): Draft? {
         draft ?: return null
         if (draft.ownerPluginId != ownerPluginId || (threadKey != null && draft.threadKey != threadKey)) return draft
-        return draft.copy(state = DraftState.AUTHORITY_LOST, reopened = false)
+        return draft.copy(state = DraftState.AUTHORITY_LOST, reopened = false, pageReopened = false, lostRevision = revision)
+    }
+
+    /**
+     * The draft's exact thread page, in a revision newer than the one its authority was lost on,
+     * says it can reply again: like a new notice for the thread, Type may reopen it prefilled.
+     */
+    fun pageReplyable(draft: Draft?, ownerPluginId: String?, threadKey: String?, revision: Long): Draft? {
+        draft ?: return null
+        if (draft.state != DraftState.AUTHORITY_LOST || draft.reopened || !draft.isFor(ownerPluginId, threadKey)) return draft
+        if (draft.lostRevision != null && revision <= draft.lostRevision) return draft
+        return draft.copy(reopened = true, pageReopened = true)
     }
 
     /** A new replyable notice for the draft's exact thread lets Type reopen a lost draft. */

@@ -57,6 +57,11 @@ internal class SessionReducer(
     private val quickGate: QuickGate = QuickGate.NEVER,
     private val launcherActive: () -> Boolean = { false },
     private val wallClock: () -> Long = { 0L },
+    /**
+     * The hub's Open app for an owner whose full app is a launchable, non-native entry of the
+     * Applications catalog; null for any other owner.
+     */
+    private val ownerApp: (String) -> OpenApp? = { null },
 ) {
     fun reduce(model: SessionModel, event: SessionEvent): SessionTransition {
         val reduced = when (event) {
@@ -173,7 +178,9 @@ internal class SessionReducer(
         val history = model.history.withdraw(event.ownerPluginId, event.eventKey)
         val updated = model.copy(
             history = history,
-            draft = DraftStore.authorityLost(model.draft, event.ownerPluginId, event.eventKey),
+            draft = DraftStore.authorityLost(
+                model.draft, event.ownerPluginId, event.eventKey, threadRevision(model, event.ownerPluginId, event.eventKey),
+            ),
             state = model.state.mapRootStops { RootStops.withHistory(it, history, wallClock()) },
         )
         return withComposerRedraw(model, rootBookkeeping(model, updated))
@@ -186,7 +193,7 @@ internal class SessionReducer(
         val capture = model.capture?.takeIf { it.ownerPluginId == owner }
         val updated = model.copy(
             history = history,
-            draft = DraftStore.authorityLost(model.draft, owner),
+            draft = DraftStore.authorityLost(model.draft, owner, revision = threadRevision(model, owner, model.draft?.threadKey)),
             capture = if (capture != null) null else model.capture,
             state = model.state.mapRootStops { RootStops.withHistory(it, history, wallClock()) },
         )
@@ -244,7 +251,7 @@ internal class SessionReducer(
             val next = if (stop == null) null else ActivityCommands.reconcile(focus, slots)
             val kept = when (panel) {
                 is FramePanel.ConfirmCommand ->
-                    panel.takeIf { next != null && stop != null && !stop.offline && stop.seq == panel.seq && stop.commands.any { it.id == panel.actionId } }
+                    panel.takeIf { next != null && stop != null && !stop.lastKnown && stop.seq == panel.seq && stop.commands.any { it.id == panel.actionId } }
                 else -> panel.takeIf { next != null }
             }
             return next to kept
@@ -533,6 +540,7 @@ internal class SessionReducer(
         (top.panel as? FramePanel.Display)?.let { return displayStep(model, state, top, it, delta) }
         if (top.panel != null) return panelStep(model, frameSite(state), delta)
         top.fullMapMode()?.let { mode -> return fullMapStep(model, state, top, mode, delta) }
+        top.routeCommandsIndex()?.let { commands -> return routePageStep(model, state, top, commands, delta) }
         top.shownConversation()?.let { (_, body) -> return conversationStep(model, state, top, body, delta) }
         top.commandFocus?.let { focus ->
             if (focus.stopId != CommandFocus.MEDIA) {
@@ -621,7 +629,8 @@ internal class SessionReducer(
                     }
                 }
                 when (val item = entriesOf(top).getOrNull(top.selected)?.item) {
-                    is PageItem.OpenPage -> openFrame(model, state.root, state.frames, item.pageId, item.paramsJson, nowMs)
+                    is PageItem.OpenPage ->
+                        openFrame(model, state.root, state.frames, item.pageId, item.paramsJson, nowMs, applicationOpenApp(top, item.pageId))
                     is PageItem.Invoke -> if (fresh(model, event)) invoke(model, state, status, item.actionId, nowMs) else keep(model)
                     // One tap runs it, only as the gate allowed when the row was resolved and only for a fresh press.
                     is PageItem.Quick ->
@@ -715,9 +724,14 @@ internal class SessionReducer(
         if (top.commandFocus != null) {
             return SessionTransition(model.copy(state = state.withTop(top.copy(commandFocus = null))), listOf(ShowFrame))
         }
-        // The full map's commands go back to the map, the map to its page with the map selected.
+        // The command list goes back where it was opened: the full map, or the page with Commands
+        // selected; the full map goes back to its page with the map selected.
         when (top.fullMapMode()) {
-            FullMapMode.COMMANDS -> return SessionTransition(model.copy(state = state.withTop(top.onMap(FullMapMode.MAP))), listOf(ShowFrame))
+            FullMapMode.COMMANDS -> {
+                val back = if (top.routeMapIndex() != null) top.onMap(FullMapMode.MAP) else top.onCommandsRow()
+                return SessionTransition(model.copy(state = state.withTop(back)), listOf(ShowFrame))
+            }
+            FullMapMode.PAGE_COMMANDS -> return SessionTransition(model.copy(state = state.withTop(top.onCommandsRow())), listOf(ShowFrame))
             FullMapMode.MAP -> return SessionTransition(model.copy(state = state.withTop(top.onMap(null))), listOf(ShowFrame))
             // No map left to show (a revision without geometry): the page is what is drawn.
             null -> Unit
@@ -981,7 +995,9 @@ internal class SessionReducer(
      * end. Its pages are gone, so a draft for one of its threads loses its authority to be sent.
      */
     private fun invalidateOwner(before: SessionModel, owner: String): SessionTransition {
-        val model = before.copy(draft = DraftStore.authorityLost(before.draft, owner))
+        val model = before.copy(
+            draft = DraftStore.authorityLost(before.draft, owner, revision = threadRevision(before, owner, before.draft?.threadKey)),
+        )
         fun invalidated(page: SessionState.InPage): SessionState.InPage = page.copy(
             frames = page.frames.map { frame ->
                 if (isLocalPage(frame.pageId) || PageTemplateContract.namespaceOf(frame.pageId) != owner) {
@@ -1172,7 +1188,7 @@ internal class SessionReducer(
                 )
             }
             result.code == PageSurfaceContract.CODE_AUTHORITY_LOST ->
-                base.copy(draft = DraftStore.authorityLost(model.draft, send.ownerPluginId, send.threadKey))
+                base.copy(draft = DraftStore.authorityLost(model.draft, send.ownerPluginId, send.threadKey, revision))
             // Any other refusal of a send may come after the app already took the text (a provider
             // that cannot tell): it is unconfirmed, Type comes first, and it is never resent as is.
             result.status == RESULT_REJECTED -> base.copy(draft = DraftStore.unconfirmed(model.draft, send))
@@ -1323,9 +1339,19 @@ internal class SessionReducer(
         is FrameStatus.Unavailable -> UNAVAILABLE_ITEMS.mapIndexed { index, item -> PageEntry("#$index", item) }
     }
 
-    /** The page's own rows, then the hub's Open app row of an activity's destination page. */
+    /** The page's own rows, then the hub's Open app row of a page opened for a launchable owner. */
     private fun entriesFor(page: PageSurfaceResponse.Page, openApp: OpenApp?): List<PageEntry> =
-        itemResolver.entries(page) + listOfNotNull(openApp?.let(ActivityCommands::openAppEntry))
+        ActivityCommands.withOpenApp(itemResolver.entries(page), openApp)
+
+    /**
+     * A provider page entered from Applications, over the launcher bundle, ends with the hub's
+     * Open app when its owner's full app is launchable: the same row an activity's destination
+     * page gets, so a page-capable plugin keeps its full app one labelled step away.
+     */
+    private fun applicationOpenApp(from: Frame, pageId: String): OpenApp? {
+        if (!launcherActive() || from.pageId != RootStops.APPLICATIONS_PAGE_ID || isLocalPage(pageId)) return null
+        return PageTemplateContract.namespaceOf(pageId)?.let(ownerApp)
+    }
 
     private fun controlsOf(frame: Frame): PageControls? =
         (frame.status as? FrameStatus.Shown)?.let { itemResolver.controls(it.snapshot.page) }
@@ -1338,8 +1364,21 @@ internal class SessionReducer(
         return entriesOf(this).indexOfFirst { it.item == PageItem.RouteMap }.takeIf { it >= 0 }
     }
 
-    /** The full-map mode in force: only on a shown frame that still has a map to draw. */
-    private fun Frame.fullMapMode(): FullMapMode? = fullMap?.takeIf { routeMapIndex() != null }
+    /**
+     * The index of a shown route frame's Commands entry, or null for any other frame. The page
+     * selects only what comes up to it (the map, Commands); the command list is what follows it.
+     */
+    private fun Frame.routeCommandsIndex(): Int? {
+        if (status !is FrameStatus.Shown) return null
+        return entriesOf(this).indexOfFirst { it.item == PageItem.RouteCommands }.takeIf { it >= 0 }
+    }
+
+    /** The mode in force: the full map only while there is a map to draw, a command list while there is one. */
+    private fun Frame.fullMapMode(): FullMapMode? = when (val mode = fullMap) {
+        null -> null
+        FullMapMode.MAP -> mode.takeIf { routeMapIndex() != null }
+        FullMapMode.COMMANDS, FullMapMode.PAGE_COMMANDS -> mode.takeIf { routeCommandsIndex() != null }
+    }
 
     /** [mode] on this frame, with the map selected: where the map's own Back and its commands' land. */
     private fun Frame.onMap(mode: FullMapMode?): Frame {
@@ -1347,9 +1386,39 @@ internal class SessionReducer(
         return copy(fullMap = mode, selected = index, selectedKey = entriesOf(this).getOrNull(index)?.key, tombstone = null)
     }
 
+    /** The page itself with Commands selected: where a command list opened from it goes back to. */
+    private fun Frame.onCommandsRow(): Frame {
+        val index = routeCommandsIndex() ?: 0
+        return copy(fullMap = null, selected = index, selectedKey = entriesOf(this).getOrNull(index)?.key, tombstone = null)
+    }
+
+    /** The command list over this frame, on its first command; null when there is none. */
+    private fun Frame.onCommands(mode: FullMapMode): Frame? {
+        val first = (routeCommandsIndex() ?: return null) + 1
+        val entry = entriesOf(this).getOrNull(first) ?: return null
+        return copy(fullMap = mode, selected = first, selectedKey = entry.key, tombstone = null)
+    }
+
+    /**
+     * Step on a route page moves between the map and Commands, nothing else (r17 3.4); the ends
+     * hold. Off a removed row it lands on the row on that side, as on any page.
+     */
+    private fun routePageStep(model: SessionModel, state: SessionState.InPage, top: Frame, commands: Int, delta: Int): SessionTransition {
+        val entries = entriesOf(top)
+        val target = if (top.tombstone != null) {
+            (if (delta > 0) top.selected else top.selected - 1).takeIf { it in 0..commands }
+        } else {
+            (top.selected + delta).coerceIn(0, commands).takeIf { it != top.selected }
+        }
+        if (target == null || target !in entries.indices) return keep(model)
+        val frame = top.copy(selected = target, selectedKey = entries[target].key, tombstone = null)
+        return SessionTransition(model.copy(state = state.withTop(frame)), listOf(ShowFrame))
+    }
+
     /**
      * Step on the full map switches between its two views, without wrapping; the view is kept per
-     * owner for the session. Step among the full map's commands walks them, never onto the map.
+     * owner for the session. Step in a command list walks its commands, never back onto the map
+     * or Commands.
      */
     private fun fullMapStep(model: SessionModel, state: SessionState.InPage, top: Frame, mode: FullMapMode, delta: Int): SessionTransition =
         when (mode) {
@@ -1363,9 +1432,9 @@ internal class SessionReducer(
                     SessionTransition(model.copy(mapViews = model.mapViews + (owner to next)), listOf(ShowFrame))
                 }
             }
-            FullMapMode.COMMANDS -> {
+            FullMapMode.COMMANDS, FullMapMode.PAGE_COMMANDS -> {
                 val entries = entriesOf(top)
-                val first = (top.routeMapIndex() ?: -1) + 1
+                val first = (top.routeCommandsIndex() ?: -1) + 1
                 val target = (top.selected + delta).coerceIn(first, entries.lastIndex.coerceAtLeast(first))
                 if (target == top.selected || target !in entries.indices) {
                     keep(model)
@@ -1384,20 +1453,23 @@ internal class SessionReducer(
         val mode = top.fullMapMode()
         val entries = entriesOf(top)
         if (mode == FullMapMode.MAP) {
-            // Enter on the full map opens the hub's commands, on the first of them.
-            val first = (top.routeMapIndex() ?: return null) + 1
-            val entry = entries.getOrNull(first) ?: return keep(model)
-            val frame = top.copy(fullMap = FullMapMode.COMMANDS, selected = first, selectedKey = entry.key, tombstone = null)
+            // Enter on the full map opens the command list, on the first command.
+            if (top.routeCommandsIndex() == null) return null
+            val frame = top.onCommands(FullMapMode.COMMANDS) ?: return keep(model)
             return SessionTransition(model.copy(state = state.withTop(frame)), listOf(ShowFrame))
         }
         if (top.tombstone != null) return null
         return when (val item = entries.getOrNull(top.selected)?.item) {
             PageItem.RouteMap, PageItem.RouteFullScreen ->
                 SessionTransition(model.copy(state = state.withTop(top.onMap(FullMapMode.MAP))), listOf(ShowFrame))
+            PageItem.RouteCommands -> {
+                val frame = top.onCommands(FullMapMode.PAGE_COMMANDS) ?: return keep(model)
+                SessionTransition(model.copy(state = state.withTop(frame)), listOf(ShowFrame))
+            }
             is PageItem.RouteView -> {
                 val owner = PageTemplateContract.namespaceOf(top.pageId) ?: return keep(model)
-                // Chosen among the full map's commands, the view is shown on the full map.
-                val next = if (mode == FullMapMode.COMMANDS) state.withTop(top.onMap(FullMapMode.MAP)) else state
+                // A view chosen in the command list is shown on the full map (r17 3.7).
+                val next = if (top.routeMapIndex() != null) state.withTop(top.onMap(FullMapMode.MAP)) else state
                 SessionTransition(model.copy(state = next, mapViews = model.mapViews + (owner to item.view)), listOf(ShowFrame))
             }
             is PageItem.RouteDisplay -> {
@@ -1473,6 +1545,24 @@ internal class SessionReducer(
     // ---- the composer: conversation pages, captures and Send ----------------------------------
 
     /** This frame's conversation when it shows one: the page's owner and its body. */
+    /**
+     * The newest revision of [owner]'s thread [threadKey] page shown in the open session, if any:
+     * the revision a lost authority is bound to, so only a newer one may reopen the draft.
+     */
+    private fun threadRevision(model: SessionModel, owner: String, threadKey: String?): Long? {
+        threadKey ?: return null
+        val frames = when (val state = model.state) {
+            is SessionState.InPage -> state.frames
+            is SessionState.Launching -> (state.previous as? SessionState.InPage)?.frames.orEmpty()
+            else -> emptyList()
+        }
+        return frames.mapNotNull { frame ->
+            val shown = frame.status as? FrameStatus.Shown ?: return@mapNotNull null
+            val (frameOwner, body) = frame.shownConversation() ?: return@mapNotNull null
+            shown.revision.takeIf { frameOwner == owner && body.threadKey == threadKey }
+        }.maxOrNull()
+    }
+
     private fun Frame.shownConversation(): Pair<String?, PageBody.Conversation>? {
         val shown = status as? FrameStatus.Shown ?: return null
         val body = itemResolver.conversation(shown.snapshot.page) ?: return null
@@ -1611,7 +1701,7 @@ internal class SessionReducer(
                 when {
                     capture.kind != CaptureKind.DICTATE -> model
                     message.result.reason == ComposeDictationReason.COMPLETED && !text.isNullOrBlank() ->
-                        model.copy(capture = null, micUnavailable = false, draft = DraftStore.completed(capture, text, model.history))
+                        model.copy(capture = null, micUnavailable = false, draft = DraftStore.completed(capture, text, model.history, model.draft))
                     // No phone microphone stands in: the wearer is offered Type, focused.
                     else -> focusType(model.copy(capture = null, micUnavailable = true), capture)
                 }
@@ -1624,7 +1714,7 @@ internal class SessionReducer(
                     text == null -> model.copy(capture = null)
                     // An empty commit is the one explicit discard.
                     text.isBlank() -> model.copy(capture = null, draft = DraftStore.committedEmpty(model.draft, capture))
-                    else -> model.copy(capture = null, draft = DraftStore.completed(capture, text, model.history))
+                    else -> model.copy(capture = null, draft = DraftStore.completed(capture, text, model.history, model.draft))
                 }
             }
         }
@@ -1675,8 +1765,13 @@ internal class SessionReducer(
         val draft = after.draft
         if (conversation != null && draft != null) {
             val (owner, body) = conversation
-            if (body.composer?.replyable == false && draft.isFor(owner, body.threadKey) && draft.state != DraftState.AUTHORITY_LOST) {
-                after = after.copy(draft = DraftStore.authorityLost(draft, draft.ownerPluginId, draft.threadKey))
+            val revision = (top?.status as? FrameStatus.Shown)?.revision
+            val lostAsIs = draft.state == DraftState.AUTHORITY_LOST && !draft.reopened
+            if (body.composer?.replyable == false && draft.isFor(owner, body.threadKey) && !lostAsIs) {
+                after = after.copy(draft = DraftStore.authorityLost(draft, draft.ownerPluginId, draft.threadKey, revision))
+            } else if (body.composer?.replyable == true && revision != null) {
+                // A newer replyable revision of the draft's own thread reopens it like a new notice.
+                after = after.copy(draft = DraftStore.pageReplyable(draft, owner, body.threadKey, revision))
             }
         }
         val focus = top?.composerFocus
@@ -1744,7 +1839,7 @@ internal class SessionReducer(
         return when {
             activity.activation == ActivityActivation.DESTINATION && destination != null ->
                 openFrame(model, root, below, destination.pageId, destination.paramsJson, nowMs, openAppOf(activity))
-            activity.activation == ActivityActivation.COMMANDS && !activity.offline && activity.commands.isNotEmpty() -> {
+            activity.activation == ActivityActivation.COMMANDS && !activity.lastKnown && activity.commands.isNotEmpty() -> {
                 val slots = ActivityCommands.slots(activity)
                 val index = ActivityCommands.initialIndex(activity, slots)
                 val focus = CommandFocus(activity.id, slots[index].key, index)
@@ -1785,7 +1880,7 @@ internal class SessionReducer(
                 model.copy(state = site.place(focus, FramePanel.Launch(owner, activity.ownerLabel ?: owner))),
                 listOf(site.show),
             )
-        if (!slot.enabled || activity.offline || owner in model.pendingCommands) return keep(model)
+        if (!slot.enabled || activity.lastKnown || owner in model.pendingCommands) return keep(model)
         if (quickGate.allows(owner, action.typed, action.hubQuick)) {
             if (!fresh(model, event)) return keep(model)
             if (model.linkLost) return SessionTransition(model, listOf(SessionEffect.ShowStatus(SessionStatus.NotAvailable)))
@@ -1830,7 +1925,7 @@ internal class SessionReducer(
                 if (!fresh(model, event)) return keep(model)
                 val action = activity?.commands?.firstOrNull { it.id == panel.actionId }
                 // The confirmation is for the revision the wearer saw; anything newer withdraws it.
-                if (activity == null || action == null || activity.offline || activity.seq != panel.seq ||
+                if (activity == null || action == null || activity.lastKnown || activity.seq != panel.seq ||
                     activity.ownerPluginId != panel.ownerPluginId || panel.ownerPluginId in model.pendingCommands
                 ) {
                     return cleared

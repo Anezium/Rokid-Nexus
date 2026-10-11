@@ -35,10 +35,21 @@ internal class ConversationView(context: Context) : View(context) {
         val caption: Boolean,
         val meta: Boolean,
         val height: Int,
+        /** The bubble's sender line leads this piece: its first lines, of a received bubble that names one. */
+        val sender: Boolean = false,
     )
 
     /** What a drawn bubble slice covers on the current page, for tests and accessibility. */
-    data class DrawnBubble(val key: String, val side: BubbleSide, val style: BubbleStyle, val rect: RectF, val textColor: Int, val outlineColor: Int)
+    data class DrawnBubble(
+        val key: String,
+        val side: BubbleSide,
+        val style: BubbleStyle,
+        val rect: RectF,
+        val textColor: Int,
+        val outlineColor: Int,
+        /** The sender line drawn above it, a group thread's received message only. */
+        val sender: String? = null,
+    )
 
     var onPaged: ((starts: List<DocumentAnchor>, anchorPage: Int) -> Unit)? = null
 
@@ -148,10 +159,13 @@ internal class ConversationView(context: Context) : View(context) {
         bubbles.forEachIndexed { index, bubble ->
             val layout = layouts[index]
             val metaHeight = if (bubble.meta.isNullOrBlank()) 0 else META_GAP_PX + metaLineHeight()
+            val senderHeight = if (bubble.sender.isNullOrBlank()) 0 else metaLineHeight() + SENDER_GAP_PX
             var first = 0
             while (first < layout.lineCount) {
-                // The caption shares the first page with the first message, so its room is kept there.
-                val budget = height - 2 * PAD_V_PX - if (index == 0 && first == 0) captionHeight else 0
+                // The caption shares the first page with the first message, so its room is kept there;
+                // a sender line stays with its bubble's first line.
+                val leadsSender = first == 0 && senderHeight > 0
+                val budget = height - 2 * PAD_V_PX - (if (index == 0 && first == 0) captionHeight else 0) - if (leadsSender) senderHeight else 0
                 var last = first + 1
                 while (last < layout.lineCount && layout.getLineBottom(last) - layout.getLineTop(first) <= budget) last++
                 val ends = last == layout.lineCount
@@ -160,7 +174,12 @@ internal class ConversationView(context: Context) : View(context) {
                 val lines = layout.getLineBottom(last - 1) - layout.getLineTop(first)
                 val withMeta = last == layout.lineCount && metaHeight > 0
                 val leading = index == 0 && first == 0 && caption != null
-                result += Piece(index, first, last, caption = false, meta = withMeta, height = lines + 2 * PAD_V_PX + (if (withMeta) metaHeight else 0) + if (leading) captionHeight else 0)
+                result += Piece(
+                    index, first, last, caption = false, meta = withMeta,
+                    height = lines + 2 * PAD_V_PX + (if (withMeta) metaHeight else 0) + (if (leading) captionHeight else 0) +
+                        if (leadsSender) senderHeight else 0,
+                    sender = leadsSender,
+                )
                 first = last
             }
         }
@@ -228,9 +247,16 @@ internal class ConversationView(context: Context) : View(context) {
         small.letterSpacing = 0f
     }
 
-    private fun drawSlice(canvas: Canvas, unit: Piece, top: Float, contentWidth: Float): DrawnBubble {
+    private fun drawSlice(canvas: Canvas, unit: Piece, sliceTop: Float, contentWidth: Float): DrawnBubble {
         val bubble = bubbles[unit.bubble]
         val layout = layouts[unit.bubble]
+        // A group thread's received message names its sender above it, small and muted; never guessed.
+        val sender = bubble.sender?.takeIf { unit.sender }
+        if (sender != null) {
+            small.textAlign = Paint.Align.LEFT
+            canvas.drawText(sender, paddingLeft.toFloat(), sliceTop - small.ascent(), small)
+        }
+        val top = if (sender != null) sliceTop + metaLineHeight() + SENDER_GAP_PX else sliceTop
         val linesHeight = layout.getLineBottom(unit.last - 1) - layout.getLineTop(unit.first)
         val live = bubble.style == BubbleStyle.LIVE
         val caretRoom = if (live) CARET_GAP_PX + CARET_WIDTH_PX else 0f
@@ -301,7 +327,7 @@ internal class ConversationView(context: Context) : View(context) {
                 canvas.drawText(text, paddingLeft + contentWidth, baseline, small)
             }
         }
-        return DrawnBubble(bubble.key, bubble.side, bubble.style, RectF(rect), textColor, outlineColor)
+        return DrawnBubble(bubble.key, bubble.side, bubble.style, RectF(rect), textColor, outlineColor, sender)
     }
 
     private fun layoutFor(bubble: Bubble, width: Int): StaticLayout {
@@ -330,6 +356,7 @@ internal class ConversationView(context: Context) : View(context) {
         const val PAD_H_PX = 13f
         const val GAP_PX = 8
         const val META_GAP_PX = 4
+        const val SENDER_GAP_PX = 3
         const val CAPTION_GAP_PX = 10
         const val BUBBLE_RADIUS_PX = 14f
         const val TAIL_RADIUS_PX = 4f

@@ -188,7 +188,13 @@ internal object ActivityOverlayRenderer {
 
     private fun guidanceOf(item: ActivityRenderItem): GuidanceIsland? {
         val owner = item.activity.ownerPluginId
-        return GuidanceIslands.of(item, RouteLive.geometry(owner), RouteLive.heading(owner))
+        val residents = latestState.items.count { it.presentation != ActivityPresentation.HIDDEN } +
+            if (PinController.activePin() != null) 1 else 0
+        return GuidanceIslands.of(
+            item, RouteLive.geometry(owner), RouteLive.heading(owner),
+            sourceLabel = GlassesHub.launcherDisplayName(owner),
+            crowded = residents >= 3,
+        )
     }
 
     /** A live route moved: its owner's guidance island redraws its map, nothing else does. */
@@ -349,7 +355,8 @@ internal object ActivityOverlayRenderer {
         fun render(item: ActivityRenderItem, guidance: GuidanceIsland?) {
             guided = guidance != null
             if (guidance != null) renderGuidance(guidance) else renderedGuidance = null
-            val content = item.activity.content
+            // While the phone link is down the island says it is last known and offers no action.
+            val content = GuidanceIslands.lastKnown(item)
             val owner = item.activity.ownerPluginId
             update(chip, listOf(content.primary, content.measure, content.secondary, content.glyph)) {
                 chip.render(

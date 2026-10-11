@@ -46,6 +46,7 @@ import com.anezium.rokidbus.shared.PageSurfaceContract
 import com.anezium.rokidbus.shared.PageSurfaceRequest
 import com.anezium.rokidbus.shared.PageTemplateContract
 import com.anezium.rokidbus.glasses.session.NoticeArrivals
+import com.anezium.rokidbus.glasses.session.OpenApp
 import com.anezium.rokidbus.glasses.session.OpenFailure
 import com.anezium.rokidbus.glasses.session.SessionEffect
 import com.anezium.rokidbus.glasses.session.SessionEffectSink
@@ -1387,7 +1388,7 @@ internal object NexusSession {
         },
         wallClock = System::currentTimeMillis,
         launchable = ::ownerLaunchable,
-        iconOf = { owner -> IconRef.Plugin(owner, launcherEntries.firstOrNull { it.id == owner }?.iconKey) },
+        iconOf = ::pluginIcon,
     )
     private val items = TypedPageItems(
         isLocalPage = PageTemplateContract::isLocalPageId,
@@ -1413,6 +1414,8 @@ internal object NexusSession {
         wallTimeOf = { sessionMs -> System.currentTimeMillis() - (SystemClock.uptimeMillis() - sessionMs) },
         wallClock = System::currentTimeMillis,
         liveRoute = { owner -> LiveRoute(RouteLive.geometry(owner), RouteLive.heading(owner)) },
+        pluginIcon = ::pluginIcon,
+        localIcon = localPages::iconOf,
     )
     private val runner = SessionRunner(
         reducer = SessionReducer(
@@ -1421,6 +1424,7 @@ internal object NexusSession {
             quickGate = quickGate,
             launcherActive = GlassesHub::launcherInteractiveActive,
             wallClock = System::currentTimeMillis,
+            ownerApp = { owner -> if (ownerLaunchable(owner)) OpenApp(owner, pluginLabel(owner) ?: owner) else null },
         ),
         clock = SystemClock::uptimeMillis,
         timer = HandlerSessionTimer(main),
@@ -1626,6 +1630,10 @@ internal object NexusSession {
 
     private fun pluginLabel(pluginId: String): String? = launcherEntries.firstOrNull { it.id == pluginId }?.displayName
 
+    /** A plugin's mark as the launcher catalog draws it: its own icon key, else its default mark. */
+    private fun pluginIcon(pluginId: String): IconRef =
+        IconRef.Plugin(pluginId, launcherEntries.firstOrNull { it.id == pluginId }?.iconKey)
+
     private fun formatTime(wallMs: Long): String = timeFormat.format(java.util.Date(wallMs))
 
     /** G6: Nexus plugins then native apps, as the shipped launcher merges them, each with a stable key. */
@@ -1641,9 +1649,11 @@ internal object NexusSession {
                         providerPagesReady(id) -> AppKind.PAGES
                         else -> AppKind.IMMERSION
                     }
-                    AppEntry(entry.stableId, entry.displayName, kind, id)
+                    // The camera is the hub's own catalog entry: its catalog mark, as the launcher draws it.
+                    AppEntry(entry.stableId, entry.displayName, kind, id, IconRef.Plugin(id, entry.entry.iconKey))
                 }
-                is LauncherMenuEntry.NativeApp -> AppEntry(entry.stableId, entry.displayName, AppKind.NATIVE)
+                is LauncherMenuEntry.NativeApp ->
+                    AppEntry(entry.stableId, entry.displayName, AppKind.NATIVE, icon = IconRef.Native(entry.entry.packageName))
             }
         }
     }
@@ -1677,6 +1687,9 @@ internal object NexusSession {
                 measure = content.eta ?: content.measure,
                 startedOrder = entry.startedOrder,
                 significantOrder = entry.lastSignificantOrder,
+                // The link is the hub's own fact: a v1 card shows its last-known state too.
+                stale = entry.stale,
+                knownAtWallMs = entry.knownAtWallMs.takeIf { entry.stale },
             )
             if (!interactive) {
                 base
@@ -1684,7 +1697,7 @@ internal object NexusSession {
                 base.copy(
                     userPinned = content.userPinned,
                     offline = content.isOffline,
-                    knownAtWallMs = content.knownAtWallMs,
+                    knownAtWallMs = content.knownAtWallMs ?: base.knownAtWallMs,
                     seq = entry.seq,
                     destination = content.destination,
                     activation = content.effectiveActivation,

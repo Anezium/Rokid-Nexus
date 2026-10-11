@@ -87,24 +87,28 @@ internal class TypedPageItems(
             val row = PageRow(action.id, action.label, target = PageTarget.Action(action.id))
             TypedRow(ACTION_KEY_PREFIX + action.id, row.label, null, true, itemFor(row, local, owner, actions), actionId = action.id)
         }
-        val hub = (body as? PageBody.Route)?.takeUnless { local }?.let { routeRows(it, owner) }.orEmpty()
-        return hub + rows + extra
+        val route = (body as? PageBody.Route)?.takeUnless { local } ?: return rows + extra
+        // The command list reads hub, then plugin actions, then the full app (r17 3.7).
+        return routeRows(route, owner) + (rows + extra).sortedBy { it.item is PageItem.LaunchPrompt }
     }
 
     /**
-     * A route page's hub rows, ahead of the provider's actions (plan 028a §5.5): the compact map,
-     * its two views and Full screen when there is a map to draw, then Display. The map entry is
-     * always first, so the full map's Back lands on index 0.
+     * A route page's hub rows, ahead of the provider's actions (plan 028a §5.5, r17 3.4/3.7): the
+     * compact map when there is one to draw, then Commands; the page itself selects only those
+     * two. Behind Commands come the two views and Full screen (with a map), then Display, then
+     * the provider's actions: the command list.
      */
     private fun routeRows(body: PageBody.Route, owner: String): List<TypedRow> = buildList {
-        if (RoutePresentation.hasMap(body, liveGeometry(owner))) {
-            add(TypedRow(MAP_KEY, RoutePresentation.MAP_FOLLOW, null, true, PageItem.RouteMap))
-            add(TypedRow(VIEW_FOLLOW_KEY, RoutePresentation.VIEW_FOLLOW, null, true, PageItem.RouteView(MapView.FOLLOW)))
-            add(TypedRow(VIEW_OVERVIEW_KEY, RoutePresentation.VIEW_OVERVIEW, null, true, PageItem.RouteView(MapView.OVERVIEW)))
-            add(TypedRow(FULL_SCREEN_KEY, RoutePresentation.FULL_SCREEN, null, true, PageItem.RouteFullScreen))
+        val map = RoutePresentation.hasMap(body, liveGeometry(owner))
+        if (map) add(TypedRow(MAP_KEY, RoutePresentation.MAP_FOLLOW, null, true, PageItem.RouteMap))
+        add(TypedRow(COMMANDS_KEY, RoutePresentation.COMMANDS, RoutePresentation.COMMANDS_SUB, true, PageItem.RouteCommands))
+        if (map) {
+            add(TypedRow(VIEW_FOLLOW_KEY, RoutePresentation.VIEW_FOLLOW, RoutePresentation.VIEW_FOLLOW_SUB, true, PageItem.RouteView(MapView.FOLLOW)))
+            add(TypedRow(VIEW_OVERVIEW_KEY, RoutePresentation.VIEW_OVERVIEW, RoutePresentation.VIEW_OVERVIEW_SUB, true, PageItem.RouteView(MapView.OVERVIEW)))
+            add(TypedRow(FULL_SCREEN_KEY, RoutePresentation.FULL_SCREEN, RoutePresentation.FULL_SCREEN_SUB, true, PageItem.RouteFullScreen))
         }
         val size = ambientSize(owner)
-        add(TypedRow(DISPLAY_KEY, RoutePresentation.displayLabel(size), null, true, PageItem.RouteDisplay(owner, size)))
+        add(TypedRow(DISPLAY_KEY, RoutePresentation.displayLabel(size), RoutePresentation.DISPLAY_SUB, true, PageItem.RouteDisplay(owner, size)))
     }
 
     override fun items(page: PageSurfaceResponse.Page): List<PageItem> = rows(page).map(TypedRow::item)
@@ -205,6 +209,7 @@ internal class TypedPageItems(
 
         /** A route page's hub rows; the space keeps them out of every wire id as well. */
         const val MAP_KEY = "route map"
+        const val COMMANDS_KEY = "route commands"
         const val VIEW_FOLLOW_KEY = "route view-follow"
         const val VIEW_OVERVIEW_KEY = "route view-overview"
         const val FULL_SCREEN_KEY = "route full-screen"

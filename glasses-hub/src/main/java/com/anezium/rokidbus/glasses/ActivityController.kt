@@ -41,6 +41,10 @@ internal data class ActivityRenderItem(
     val urgent: Boolean = false,
     /** The owner's explicit ambient size as drawn here (capped over an app); null while automatic. */
     val size: AmbientSize? = null,
+    /** A live entry held while the phone link is down: last known, see [LinkStaleness]. */
+    val stale: Boolean = false,
+    /** When a [stale] entry was last confirmed, wall clock; null when it never was here. */
+    val knownAtWallMs: Long? = null,
 )
 
 /**
@@ -55,7 +59,53 @@ internal data class ActivityEntry(
     val primary: Boolean,
     val startedOrder: Long,
     val lastSignificantOrder: Long?,
+    /** A live entry held while the phone link is down: last known, see [LinkStaleness]. */
+    val stale: Boolean = false,
+    /** When a [stale] entry was last confirmed, wall clock; null when it never was here. */
+    val knownAtWallMs: Long? = null,
 )
+
+/**
+ * Which live entries the glasses hold only as last known (plan 028a §6, §8). While the phone link
+ * is down nothing confirms an entry, so every live one is marked with the time it was last
+ * confirmed; each stays marked until its own next start or update, which comes after the link is
+ * back. Entries are kept, never dropped, and an offline entry keeps its own phone-stamped state.
+ * Pure: the clock is passed in.
+ */
+internal class LinkStaleness {
+    private val confirmedAt = mutableMapOf<String, Long>()
+    private val stale = mutableMapOf<String, Long?>()
+
+    /** [surfaceId]'s content was just confirmed by a start or an update from the phone. */
+    fun confirmed(surfaceId: String, wallMs: Long) {
+        confirmedAt[surfaceId] = wallMs
+        stale.remove(surfaceId)
+    }
+
+    /** The phone link went down: every [live] entry is last known from now on. */
+    fun linkLost(live: Collection<String>) {
+        live.forEach { id -> if (id !in stale) stale[id] = confirmedAt[id] }
+    }
+
+    fun isStale(surfaceId: String): Boolean = surfaceId in stale
+
+    /** [state] with its stale entries marked; entries no longer held are forgotten. */
+    fun apply(state: ActivityRenderState): ActivityRenderState {
+        val present = state.collection.mapTo(mutableSetOf()) { it.surfaceId }
+        confirmedAt.keys.retainAll(present)
+        stale.keys.retainAll(present)
+        if (stale.isEmpty()) return state
+        return state.copy(
+            items = state.items.map { item ->
+                val id = item.activity.surfaceId
+                if (id in stale) item.copy(stale = true, knownAtWallMs = stale[id]) else item
+            },
+            collection = state.collection.map { entry ->
+                if (entry.surfaceId in stale) entry.copy(stale = true, knownAtWallMs = stale[entry.surfaceId]) else entry
+            },
+        )
+    }
+}
 
 /**
  * [items] are the corner islands: the primary and at most one other live entry. [collection] is
@@ -568,6 +618,21 @@ internal object ActivityController {
     /** The bundle version the collection capacity was last sized for, from a phone announcement. */
     private var capacityVersion = 0
 
+    /** Live entries held as last known while the phone link is down. */
+    private val staleness = LinkStaleness()
+
+    /**
+     * The phone link changed. Down, every live entry is drawn as last known, on its card and its
+     * island, until its own next update; up, nothing changes until those updates arrive.
+     */
+    fun onPhoneLink(connected: Boolean) {
+        runOnMain {
+            if (connected) return@runOnMain
+            staleness.linkLost(latestRender.collection.filterNot { it.content.isOffline }.map { it.surfaceId })
+            publish()
+        }
+    }
+
     fun onServiceConnected(context: Context) {
         runOnMain {
             this.context = context.applicationContext
@@ -681,6 +746,7 @@ internal object ActivityController {
             )
         ) {
             is ActivityMutation.Applied -> {
+                staleness.confirmed(result.surfaceId, System.currentTimeMillis())
                 result.replacedSurfaceId?.let {
                     reportClosed(it, ActivityCloseReason.REPLACED)
                 }
@@ -713,6 +779,7 @@ internal object ActivityController {
             )
         ) {
             is ActivityMutation.Applied -> {
+                staleness.confirmed(result.surfaceId, System.currentTimeMillis())
                 DisplayWakePolicy.requestWake(
                     context,
                     DisplayWakeKind.ACTIVITY,
@@ -777,7 +844,7 @@ internal object ActivityController {
         eventUrgent: Boolean = false,
         nowMs: Long = SystemClock.elapsedRealtime(),
     ) {
-        latestRender = state.snapshot(
+        latestRender = staleness.apply(state.snapshot(
             nowMs = nowMs,
             context = presentationContext(),
             pinCorner = PinController.activePin()?.content?.position,
@@ -787,7 +854,7 @@ internal object ActivityController {
             eventUrgent = eventUrgent,
             sizeOf = AmbientPreferences::effectiveSize,
             mode = AmbientForeground.mode(),
-        )
+        ))
         // A route lives as long as its activity: ended or offline, its geometry and heading go.
         RouteLive.retain(
             live = latestRender.collection.filterNot { it.content.isOffline }.mapTo(mutableSetOf()) { it.ownerPluginId },

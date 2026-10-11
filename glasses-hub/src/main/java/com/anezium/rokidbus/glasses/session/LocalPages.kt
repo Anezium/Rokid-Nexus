@@ -25,8 +25,17 @@ internal enum class AppKind {
     CAMERA,
 }
 
-/** One Applications row, frozen with a stable key when the page is answered. */
-internal data class AppEntry(val key: String, val label: String, val kind: AppKind, val pluginId: String? = null)
+/**
+ * One Applications row, frozen with a stable key when the page is answered. [icon] is its mark as
+ * the launcher catalog gives it; null when the catalog names none, which draws the generic grid.
+ */
+internal data class AppEntry(
+    val key: String,
+    val label: String,
+    val kind: AppKind,
+    val pluginId: String? = null,
+    val icon: IconRef? = null,
+)
 
 /**
  * The pages the glasses hub authors itself, under `nexus:`. They are answered in-process through
@@ -49,6 +58,17 @@ internal class LocalPages(
     private var enteredApplications: List<AppEntry>? = null
 
     fun isLocal(pageId: String): Boolean = PageTemplateContract.isLocalPageId(pageId)
+
+    /**
+     * The mark of an Applications row, by its row id, as the entry was frozen: its catalog mark,
+     * or the generic grid when the catalog names none, never a guessed one. Null for any other
+     * page or row ("More applications").
+     */
+    fun iconOf(pageId: String, rowKey: String): IconRef? {
+        if (pageId != RootStops.APPLICATIONS_PAGE_ID) return null
+        val entry = enteredApplications?.firstOrNull { rowId(it.key) == rowKey } ?: return null
+        return entry.icon ?: IconRef.Place(IconPlace.GRID)
+    }
 
     /** The response payload for [request], always correlated: a page, or an honest error. */
     fun answer(request: PageSurfaceRequest, live: Boolean = false): JSONObject {

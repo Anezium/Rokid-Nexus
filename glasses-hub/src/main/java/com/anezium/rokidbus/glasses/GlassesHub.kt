@@ -235,6 +235,7 @@ object GlassesHub {
     fun onSppConnected(connected: Boolean) {
         phoneConnected = connected || CxrBusBridge.isUp()
         NexusSession.onPhoneLink(phoneConnected)
+        ActivityController.onPhoneLink(phoneConnected)
         // CXR stayed: only the pages that needed SPP are lost.
         if (!connected && phoneConnected) {
             NexusSession.onDataPlaneLost()
@@ -263,6 +264,7 @@ object GlassesHub {
         cxrUp = connected
         phoneConnected = connected || SppServerManager.isConnected()
         NexusSession.onPhoneLink(phoneConnected)
+        ActivityController.onPhoneLink(phoneConnected)
         if (!phoneConnected) {
             clearRemotePhoneCapabilities()
             AssistantDisplayEpisode.end(DisplayHoldReleaseReason.LINK_LOSS)
@@ -636,6 +638,10 @@ object GlassesHub {
     }
 
     internal fun launcherEntryOpensSurface(pluginId: String): Boolean = pluginId != CAMERA_LAUNCHER_ID
+
+    /** A plugin's catalog name, or null when it is not in the launcher catalog. */
+    internal fun launcherDisplayName(pluginId: String): String? =
+        allLauncherEntries().firstOrNull { it.id == pluginId }?.displayName
 
     fun launcherDrawable(context: Context, entry: LauncherEntry): Drawable {
         NexusPluginIcons.drawableForBuiltIn(entry.iconKey)?.let { resourceId ->
