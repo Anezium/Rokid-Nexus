@@ -3,9 +3,11 @@ package com.anezium.rokidbus.media
 import com.anezium.rokidbus.client.plugin.NexusActivity
 import com.anezium.rokidbus.client.plugin.NexusActivityAction
 import com.anezium.rokidbus.client.plugin.NexusActivityActivation
+import com.anezium.rokidbus.client.plugin.NexusActivityCommandResult
 import com.anezium.rokidbus.client.plugin.NexusActivityPersistence
 import com.anezium.rokidbus.client.plugin.NexusPageDestination
 import com.anezium.rokidbus.media.session.MediaDeckCommand
+import com.anezium.rokidbus.media.session.MediaDeckControlOutcome
 import com.anezium.rokidbus.media.session.MediaDeckState
 import com.anezium.rokidbus.shared.ActivitySurfaceContract
 
@@ -143,4 +145,11 @@ internal object MediaDeckActivityModel {
         MediaDeckActivityStatus.OWNER_GONE -> "On · waiting for Nexus"
         MediaDeckActivityStatus.SUSPENDED -> "On · stopped by Nexus until Media Deck opens"
     }
+}
+
+/** The answer an activity command carries for an outcome; never a success it did not check. */
+internal fun MediaDeckControlOutcome.toActivityResult(): NexusActivityCommandResult = when (status) {
+    MediaDeckControlOutcome.Status.DONE -> NexusActivityCommandResult.done(message)
+    MediaDeckControlOutcome.Status.STALE -> NexusActivityCommandResult.stale(message)
+    MediaDeckControlOutcome.Status.REJECTED -> NexusActivityCommandResult.rejected(message)
 }

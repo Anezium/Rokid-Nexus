@@ -68,6 +68,12 @@
             <meta-data
                 android:name="com.anezium.rokidbus.plugin.LAUNCHABLE"
                 android:value="true" />
+            <meta-data
+                android:name="rokidbus.plugin.pages"
+                android:value="1" />
+            <meta-data
+                android:name="rokidbus.plugin.quickActions"
+                android:value="media" />
         </service>
     </application>
 </manifest>
