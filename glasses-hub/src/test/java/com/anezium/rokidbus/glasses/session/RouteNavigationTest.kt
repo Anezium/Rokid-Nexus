@@ -46,12 +46,12 @@ class RouteNavigationTest {
     private val allEffects = mutableListOf<SessionEffect>()
 
     @Test
-    fun `a route page lists the map, its views, full screen and display before the actions and Open app`() {
+    fun `a route page is the manoeuvre, the compact map and one Commands row, its facts under them`() {
         openRoute(routeBody())
 
         assertEquals(
             listOf(
-                TypedPageItems.MAP_KEY, TypedPageItems.VIEW_FOLLOW_KEY, TypedPageItems.VIEW_OVERVIEW_KEY,
+                TypedPageItems.MAP_KEY, TypedPageItems.COMMANDS_KEY, TypedPageItems.VIEW_FOLLOW_KEY, TypedPageItems.VIEW_OVERVIEW_KEY,
                 TypedPageItems.FULL_SCREEN_KEY, TypedPageItems.DISPLAY_KEY, TypedPageItems.ACTION_KEY_PREFIX + "reroute",
                 ActivityCommands.OPEN_APP_KEY,
             ),
@@ -63,18 +63,72 @@ class RouteNavigationTest {
         assertEquals(MapSize.COMPACT, map.size)
         assertEquals("MAP · FOLLOW", map.label)
         assertTrue(map.selected)
-        assertEquals(listOf("Maneuver", "Map", "Fact"), screen.blocks.take(3).map { it::class.simpleName })
-        assertEquals("Display", screen.blocks.filterIsInstance<ScreenBlock.Row>().single { it.key == "row:${TypedPageItems.DISPLAY_KEY}" }.label)
+        assertEquals(listOf("Maneuver", "Map", "Row", "Fact"), screen.blocks.map { it::class.simpleName })
+        val commands = screen.blocks.filterIsInstance<ScreenBlock.Row>().single()
+        assertEquals("Commands", commands.label)
+        assertEquals("views · size · actions", commands.sub)
+        // Commands, a command, has no mark; the page's header has its owner's.
+        assertNull(commands.icon)
+        assertEquals(IconRef.Plugin(OWNER), screen.header?.icon)
+        assertEquals("back: root", screen.header?.trail)
+        assertEquals(ScreenHint("swipe map ↔ Commands · tap full screen", "back root"), screen.hint)
+
+        // The page selects the map and Commands, nothing else.
+        send(SessionEvent.Step(1, 3_000))
+        assertEquals(TypedPageItems.COMMANDS_KEY, top().selectedKey)
+        assertTrue(screen().blocks.filterIsInstance<ScreenBlock.Row>().single().selected)
+        send(SessionEvent.Step(1, 3_100))
+        assertEquals(listOf(SessionEffect.None), effects)
+        assertEquals(TypedPageItems.COMMANDS_KEY, top().selectedKey)
+        send(SessionEvent.Step(-1, 3_200))
+        assertEquals(TypedPageItems.MAP_KEY, top().selectedKey)
     }
 
     @Test
-    fun `Enter on the map opens the chrome-less full map and Step switches two views without wrapping`() {
+    fun `Commands opens the command list in sections and Back returns to the page with Commands selected`() {
+        openRoute(routeBody())
+        send(SessionEvent.Step(1, 3_000))
+        press(3_100)
+        assertEquals(FullMapMode.PAGE_COMMANDS, top().fullMap)
+        assertEquals(TypedPageItems.VIEW_FOLLOW_KEY, top().selectedKey)
+        val list = screen()
+        assertEquals("ROUTE · COMMANDS", list.header?.title)
+        assertEquals(IconRef.Plugin(OWNER), list.header?.icon)
+        assertEquals("back page", list.hint?.back)
+        assertTrue(list.blocks.none { it is ScreenBlock.Map || it is ScreenBlock.Maneuver })
+        assertEquals(
+            listOf(
+                "View · Follow", "View · Whole route", "Full screen", "Display",
+                RoutePresentation.PLUGIN_ACTIONS, "Reroute", RoutePresentation.IMMERSION, ActivityCommands.OPEN_APP,
+            ),
+            list.blocks.map { (it as? ScreenBlock.Row)?.label ?: (it as ScreenBlock.Text).text },
+        )
+        val subs = list.blocks.filterIsInstance<ScreenBlock.Row>().associate { it.label to it.sub }
+        assertEquals("centred on you, heading up", subs["View · Follow"])
+        assertEquals("island size during the trip", subs["Display"])
+        assertEquals("asks for confirmation", subs["Reroute"])
+        assertEquals("exclusive surface", subs[ActivityCommands.OPEN_APP])
+
+        // The list never steps back onto Commands or the map.
+        send(SessionEvent.Step(-1, 3_200))
+        assertEquals(TypedPageItems.VIEW_FOLLOW_KEY, top().selectedKey)
+
+        send(SessionEvent.Back(3_300))
+        assertNull(top().fullMap)
+        assertEquals(TypedPageItems.COMMANDS_KEY, top().selectedKey)
+        send(SessionEvent.Back(3_400))
+        assertTrue(model.state is SessionState.Root)
+    }
+
+    @Test
+    fun `Enter on the map opens the full map under a floating header and Step switches two views without wrapping`() {
         openRoute(routeBody())
         press(3_000)
         assertEquals(FullMapMode.MAP, top().fullMap)
         val full = screen()
         assertTrue(full.chromeless)
-        assertNull(full.header)
+        assertEquals(ScreenHeader("ROUTE · FOLLOW", "view · 1/2"), full.header)
+        assertEquals(ScreenHint("swipe next view · tap commands", "back page"), full.hint)
         assertEquals(MapSize.FULL, full.blocks.filterIsInstance<ScreenBlock.Map>().single().size)
 
         send(SessionEvent.Step(-1, 3_100))
@@ -83,8 +137,11 @@ class RouteNavigationTest {
 
         send(SessionEvent.Step(1, 3_200))
         assertEquals(MapView.OVERVIEW, model.mapViews[OWNER])
-        val overview = screen().blocks.filterIsInstance<ScreenBlock.Map>().single()
+        val overviewScreen = screen()
+        val overview = overviewScreen.blocks.filterIsInstance<ScreenBlock.Map>().single()
         assertEquals("MAP · WHOLE ROUTE", overview.label)
+        assertEquals(ScreenHeader("ROUTE · WHOLE ROUTE", "view · 2/2"), overviewScreen.header)
+        assertEquals("swipe previous view · tap commands", overviewScreen.hint?.action)
         // Whole route is north-up.
         assertNull(overview.headingDeg)
 
@@ -106,7 +163,8 @@ class RouteNavigationTest {
         assertEquals(FullMapMode.COMMANDS, top().fullMap)
         assertEquals(TypedPageItems.VIEW_FOLLOW_KEY, top().selectedKey)
         val commands = screen()
-        assertEquals("COMMANDS", commands.header?.title)
+        assertEquals("ROUTE · COMMANDS", commands.header?.title)
+        assertEquals("back map", commands.hint?.back)
         assertTrue(commands.blocks.none { it is ScreenBlock.Map })
 
         // The commands never step onto the map.
@@ -132,17 +190,46 @@ class RouteNavigationTest {
     }
 
     @Test
-    fun `a view row picks the view and the session forgets it when it closes`() {
-        openRoute(routeBody())
-        repeat(2) { send(SessionEvent.Step(1, 3_000)) }
+    fun `a view row shows the full map in that view and the session forgets it when it closes`() {
+        openCommands()
+        send(SessionEvent.Step(1, 3_200))
         assertEquals(TypedPageItems.VIEW_OVERVIEW_KEY, top().selectedKey)
-        press(3_100)
+        press(3_300)
         assertEquals(MapView.OVERVIEW, model.mapViews[OWNER])
+        assertEquals(FullMapMode.MAP, top().fullMap)
+        assertEquals("ROUTE · WHOLE ROUTE", screen().header?.title)
+
+        // Back from the full map is the page, with the chosen view on its compact card.
+        send(SessionEvent.Back(3_400))
         assertNull(top().fullMap)
+        assertEquals("MAP · WHOLE ROUTE", screen().blocks.filterIsInstance<ScreenBlock.Map>().single().label)
+        send(SessionEvent.Step(1, 3_500))
+        press(3_600)
         assertEquals(true, screen().blocks.filterIsInstance<ScreenBlock.Row>().single { it.key == "row:${TypedPageItems.VIEW_OVERVIEW_KEY}" }.checked)
 
         send(SessionEvent.Abort)
         assertEquals(emptyMap<String, MapView>(), model.mapViews)
+    }
+
+    @Test
+    fun `the real Navigation page shape lists one full-app row under the hub's commands`() {
+        // Navigation's own page: a confirmed plugin action and its own immersion row.
+        openRoute(
+            routeBody(),
+            actions = JSONArray()
+                .put(JSONObject().put("id", "open-app").put("label", "Open full app").put("kind", "immersion").put("confirm", false))
+                .put(JSONObject().put("id", "end-journey").put("label", "End the journey").put("kind", "plugin").put("confirm", true)),
+        )
+        openCommandsFromPage()
+        val rows = screen().blocks.filterIsInstance<ScreenBlock.Row>().map { it.label }
+        assertEquals(listOf("View · Follow", "View · Whole route", "Full screen", "Display", "End the journey", ActivityCommands.OPEN_APP), rows)
+        assertTrue(rows.none { it == "Open full app" })
+
+        // The one full-app row is the hub's, behind the labelled launch step.
+        repeat(5) { send(SessionEvent.Step(1, 3_300L + it)) }
+        assertEquals(ActivityCommands.OPEN_APP_KEY, top().selectedKey)
+        press(3_400)
+        assertEquals(FramePanel.Launch(OWNER, "Maps"), top().panel)
     }
 
     @Test
@@ -163,11 +250,19 @@ class RouteNavigationTest {
     @Test
     fun `the display page previews on swipe, saves on tap and Back cancels`() {
         saved = AmbientSize.MINIMAP
-        openRoute(routeBody())
+        openCommands()
         selectKey(TypedPageItems.DISPLAY_KEY)
         press(4_000)
         assertEquals(FramePanel.Display(OWNER, AmbientSize.MINIMAP, selected = 1), top().panel)
         assertEquals("Display · Minimap", rows().single { it.key == TypedPageItems.DISPLAY_KEY }.label)
+        val display = screen()
+        assertEquals("AMBIENT SIZE · DURING THE TRIP", (display.blocks.first() as ScreenBlock.Text).text)
+        assertEquals(
+            listOf("arrow, distance, street", "text + heading-up map", "wide map, street names"),
+            display.blocks.filterIsInstance<ScreenBlock.Row>().map { it.sub },
+        )
+        // The wearer choosing Panel is told the hub caps islands at Text inside an app.
+        assertEquals(RoutePresentation.DISPLAY_NOTE, (display.blocks.last() as ScreenBlock.Text).text)
 
         send(SessionEvent.Step(1, 4_100))
         val swiped = top().panel as FramePanel.Display
@@ -185,11 +280,13 @@ class RouteNavigationTest {
         press(4_600)
         assertEquals(SessionEffect.SaveAmbientSize(OWNER, AmbientSize.TEXT), effects.filterIsInstance<SessionEffect.SaveAmbientSize>().single())
         assertNull(top().panel)
+        // Saved, the wearer is back in the command list it was opened from.
+        assertEquals(FullMapMode.PAGE_COMMANDS, top().fullMap)
     }
 
     @Test
     fun `a live revision keeps the display page open but cancels a confirmation`() {
-        openRoute(routeBody())
+        openCommands()
         selectKey(TypedPageItems.DISPLAY_KEY)
         press(4_000)
         respond(request, routeBody(distance = "80 m"), revision = 2, now = 4_100)
@@ -199,8 +296,16 @@ class RouteNavigationTest {
     @Test
     fun `a page without geometry draws the owner's live geometry and has no map without it`() {
         openRoute(routeBody(follow = null, overview = null))
-        assertEquals(TypedPageItems.DISPLAY_KEY, rows().first().key)
-        assertTrue(screen().blocks.none { it is ScreenBlock.Map })
+        assertEquals(TypedPageItems.COMMANDS_KEY, rows().first().key)
+        val textOnly = screen()
+        assertTrue(textOnly.blocks.none { it is ScreenBlock.Map })
+        assertEquals("tap open", textOnly.hint?.action)
+        // Without a map the command list has no views and no full screen.
+        press(3_000)
+        assertEquals(FullMapMode.PAGE_COMMANDS, top().fullMap)
+        assertEquals(TypedPageItems.DISPLAY_KEY, top().selectedKey)
+        send(SessionEvent.Back(3_100))
+        assertNull(top().fullMap)
 
         live = geometry()
         assertEquals(TypedPageItems.MAP_KEY, rows().first().key)
@@ -261,7 +366,25 @@ class RouteNavigationTest {
 
     private lateinit var request: PageSurfaceRequest
 
-    private fun openRoute(body: PageBody.Route) {
+    /** The route page open, then its command list opened from the page's Commands row. */
+    private fun openCommands() {
+        openRoute(routeBody())
+        openCommandsFromPage()
+    }
+
+    private fun openCommandsFromPage() {
+        if (top().selectedKey != TypedPageItems.COMMANDS_KEY) send(SessionEvent.Step(1, 3_000))
+        assertEquals(TypedPageItems.COMMANDS_KEY, top().selectedKey)
+        press(3_100)
+        assertEquals(FullMapMode.PAGE_COMMANDS, top().fullMap)
+    }
+
+    private var actions: JSONArray = JSONArray().put(
+        JSONObject().put("id", "reroute").put("label", "Reroute").put("kind", "plugin").put("confirm", true),
+    )
+
+    private fun openRoute(body: PageBody.Route, actions: JSONArray = this.actions) {
+        this.actions = actions
         val stop = ActivityStop(
             id = "$OWNER:activity",
             pageId = LocalPages.activityPageId(OWNER),
@@ -284,9 +407,6 @@ class RouteNavigationTest {
     }
 
     private fun respond(request: PageSurfaceRequest, body: PageBody, revision: Long, now: Long) {
-        val actions = JSONArray().put(
-            JSONObject().put("id", "reroute").put("label", "Reroute").put("kind", "plugin").put("confirm", true),
-        )
         val payload = PageSurfaceContract.correlationPayload(request.correlation)
             .put("revision", revision).put("template", body.template).put("title", "Route")
             .put("body", PageTemplateContract.encode(body)).put("actions", actions).put("live", true)
@@ -323,8 +443,7 @@ class RouteNavigationTest {
         position = RoutePosition(RoutePositionQuality.LIVE, RoutePoint(x, 500)),
     )
 
-    private fun rows() = items.rows((top().status as FrameStatus.Shown).snapshot.page) +
-        listOfNotNull(top().openApp?.let(ActivityCommands::openAppRow))
+    private fun rows() = ActivityCommands.withOpenAppRows(items.rows((top().status as FrameStatus.Shown).snapshot.page), top().openApp)
 
     private fun screen() = screens.screen(model.state, null, model.generation, CommandFacts.of(model))
 

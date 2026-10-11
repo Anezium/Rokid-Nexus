@@ -538,6 +538,7 @@ internal class SessionReducer(
         (top.panel as? FramePanel.Display)?.let { return displayStep(model, state, top, it, delta) }
         if (top.panel != null) return panelStep(model, frameSite(state), delta)
         top.fullMapMode()?.let { mode -> return fullMapStep(model, state, top, mode, delta) }
+        top.routeCommandsIndex()?.let { commands -> return routePageStep(model, state, top, commands, delta) }
         top.shownConversation()?.let { (_, body) -> return conversationStep(model, state, top, body, delta) }
         top.commandFocus?.let { focus ->
             if (focus.stopId != CommandFocus.MEDIA) {
@@ -721,9 +722,14 @@ internal class SessionReducer(
         if (top.commandFocus != null) {
             return SessionTransition(model.copy(state = state.withTop(top.copy(commandFocus = null))), listOf(ShowFrame))
         }
-        // The full map's commands go back to the map, the map to its page with the map selected.
+        // The command list goes back where it was opened: the full map, or the page with Commands
+        // selected; the full map goes back to its page with the map selected.
         when (top.fullMapMode()) {
-            FullMapMode.COMMANDS -> return SessionTransition(model.copy(state = state.withTop(top.onMap(FullMapMode.MAP))), listOf(ShowFrame))
+            FullMapMode.COMMANDS -> {
+                val back = if (top.routeMapIndex() != null) top.onMap(FullMapMode.MAP) else top.onCommandsRow()
+                return SessionTransition(model.copy(state = state.withTop(back)), listOf(ShowFrame))
+            }
+            FullMapMode.PAGE_COMMANDS -> return SessionTransition(model.copy(state = state.withTop(top.onCommandsRow())), listOf(ShowFrame))
             FullMapMode.MAP -> return SessionTransition(model.copy(state = state.withTop(top.onMap(null))), listOf(ShowFrame))
             // No map left to show (a revision without geometry): the page is what is drawn.
             null -> Unit
@@ -1354,8 +1360,21 @@ internal class SessionReducer(
         return entriesOf(this).indexOfFirst { it.item == PageItem.RouteMap }.takeIf { it >= 0 }
     }
 
-    /** The full-map mode in force: only on a shown frame that still has a map to draw. */
-    private fun Frame.fullMapMode(): FullMapMode? = fullMap?.takeIf { routeMapIndex() != null }
+    /**
+     * The index of a shown route frame's Commands entry, or null for any other frame. The page
+     * selects only what comes up to it (the map, Commands); the command list is what follows it.
+     */
+    private fun Frame.routeCommandsIndex(): Int? {
+        if (status !is FrameStatus.Shown) return null
+        return entriesOf(this).indexOfFirst { it.item == PageItem.RouteCommands }.takeIf { it >= 0 }
+    }
+
+    /** The mode in force: the full map only while there is a map to draw, a command list while there is one. */
+    private fun Frame.fullMapMode(): FullMapMode? = when (val mode = fullMap) {
+        null -> null
+        FullMapMode.MAP -> mode.takeIf { routeMapIndex() != null }
+        FullMapMode.COMMANDS, FullMapMode.PAGE_COMMANDS -> mode.takeIf { routeCommandsIndex() != null }
+    }
 
     /** [mode] on this frame, with the map selected: where the map's own Back and its commands' land. */
     private fun Frame.onMap(mode: FullMapMode?): Frame {
@@ -1363,9 +1382,39 @@ internal class SessionReducer(
         return copy(fullMap = mode, selected = index, selectedKey = entriesOf(this).getOrNull(index)?.key, tombstone = null)
     }
 
+    /** The page itself with Commands selected: where a command list opened from it goes back to. */
+    private fun Frame.onCommandsRow(): Frame {
+        val index = routeCommandsIndex() ?: 0
+        return copy(fullMap = null, selected = index, selectedKey = entriesOf(this).getOrNull(index)?.key, tombstone = null)
+    }
+
+    /** The command list over this frame, on its first command; null when there is none. */
+    private fun Frame.onCommands(mode: FullMapMode): Frame? {
+        val first = (routeCommandsIndex() ?: return null) + 1
+        val entry = entriesOf(this).getOrNull(first) ?: return null
+        return copy(fullMap = mode, selected = first, selectedKey = entry.key, tombstone = null)
+    }
+
+    /**
+     * Step on a route page moves between the map and Commands, nothing else (r17 3.4); the ends
+     * hold. Off a removed row it lands on the row on that side, as on any page.
+     */
+    private fun routePageStep(model: SessionModel, state: SessionState.InPage, top: Frame, commands: Int, delta: Int): SessionTransition {
+        val entries = entriesOf(top)
+        val target = if (top.tombstone != null) {
+            (if (delta > 0) top.selected else top.selected - 1).takeIf { it in 0..commands }
+        } else {
+            (top.selected + delta).coerceIn(0, commands).takeIf { it != top.selected }
+        }
+        if (target == null || target !in entries.indices) return keep(model)
+        val frame = top.copy(selected = target, selectedKey = entries[target].key, tombstone = null)
+        return SessionTransition(model.copy(state = state.withTop(frame)), listOf(ShowFrame))
+    }
+
     /**
      * Step on the full map switches between its two views, without wrapping; the view is kept per
-     * owner for the session. Step among the full map's commands walks them, never onto the map.
+     * owner for the session. Step in a command list walks its commands, never back onto the map
+     * or Commands.
      */
     private fun fullMapStep(model: SessionModel, state: SessionState.InPage, top: Frame, mode: FullMapMode, delta: Int): SessionTransition =
         when (mode) {
@@ -1379,9 +1428,9 @@ internal class SessionReducer(
                     SessionTransition(model.copy(mapViews = model.mapViews + (owner to next)), listOf(ShowFrame))
                 }
             }
-            FullMapMode.COMMANDS -> {
+            FullMapMode.COMMANDS, FullMapMode.PAGE_COMMANDS -> {
                 val entries = entriesOf(top)
-                val first = (top.routeMapIndex() ?: -1) + 1
+                val first = (top.routeCommandsIndex() ?: -1) + 1
                 val target = (top.selected + delta).coerceIn(first, entries.lastIndex.coerceAtLeast(first))
                 if (target == top.selected || target !in entries.indices) {
                     keep(model)
@@ -1400,20 +1449,23 @@ internal class SessionReducer(
         val mode = top.fullMapMode()
         val entries = entriesOf(top)
         if (mode == FullMapMode.MAP) {
-            // Enter on the full map opens the hub's commands, on the first of them.
-            val first = (top.routeMapIndex() ?: return null) + 1
-            val entry = entries.getOrNull(first) ?: return keep(model)
-            val frame = top.copy(fullMap = FullMapMode.COMMANDS, selected = first, selectedKey = entry.key, tombstone = null)
+            // Enter on the full map opens the command list, on the first command.
+            if (top.routeCommandsIndex() == null) return null
+            val frame = top.onCommands(FullMapMode.COMMANDS) ?: return keep(model)
             return SessionTransition(model.copy(state = state.withTop(frame)), listOf(ShowFrame))
         }
         if (top.tombstone != null) return null
         return when (val item = entries.getOrNull(top.selected)?.item) {
             PageItem.RouteMap, PageItem.RouteFullScreen ->
                 SessionTransition(model.copy(state = state.withTop(top.onMap(FullMapMode.MAP))), listOf(ShowFrame))
+            PageItem.RouteCommands -> {
+                val frame = top.onCommands(FullMapMode.PAGE_COMMANDS) ?: return keep(model)
+                SessionTransition(model.copy(state = state.withTop(frame)), listOf(ShowFrame))
+            }
             is PageItem.RouteView -> {
                 val owner = PageTemplateContract.namespaceOf(top.pageId) ?: return keep(model)
-                // Chosen among the full map's commands, the view is shown on the full map.
-                val next = if (mode == FullMapMode.COMMANDS) state.withTop(top.onMap(FullMapMode.MAP)) else state
+                // A view chosen in the command list is shown on the full map (r17 3.7).
+                val next = if (top.routeMapIndex() != null) state.withTop(top.onMap(FullMapMode.MAP)) else state
                 SessionTransition(model.copy(state = next, mapViews = model.mapViews + (owner to item.view)), listOf(ShowFrame))
             }
             is PageItem.RouteDisplay -> {

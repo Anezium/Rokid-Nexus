@@ -10,10 +10,12 @@ import com.anezium.rokidbus.shared.RoutePositionQuality
 internal data class LiveRoute(val geometry: RouteGeometry? = null, val headingDeg: Float? = null)
 
 /**
- * The full-map excursion of a route frame (plan 028a §5.5): [MAP] is the chrome-less map, where
- * Step switches the view; [COMMANDS] is the hub's command list Enter opened over it.
+ * A route frame away from its glance page (plan 028a §5.5, r17 3.5-3.7): [MAP] is the chrome-less
+ * full map, where Step switches the view; [COMMANDS] is the page's command list opened from the
+ * full map, whose Back returns to the map; [PAGE_COMMANDS] is the same list opened from the page's
+ * Commands row, whose Back returns to the page with Commands selected.
  */
-internal enum class FullMapMode { MAP, COMMANDS }
+internal enum class FullMapMode { MAP, COMMANDS, PAGE_COMMANDS }
 
 /**
  * Pure decisions for route pages and guidance islands (plan 028a §2.1, §4, §5.5).
@@ -35,6 +37,23 @@ internal object RoutePresentation {
     const val FULL_SCREEN = "Full screen"
     const val DISPLAY = "Display"
     const val GPS_LOST = "GPS lost"
+
+    // r17 3.4-3.8 in the contract's English.
+    const val COMMANDS_SUB = "views · size · actions"
+    const val VIEW_FOLLOW_SUB = "centred on you, heading up"
+    const val VIEW_OVERVIEW_SUB = "the whole route, north up"
+    const val FULL_SCREEN_SUB = "the map fills the screen"
+    const val DISPLAY_SUB = "island size during the trip"
+    const val CONFIRM_SUB = "asks for confirmation"
+    const val IMMERSION_SUB = "exclusive surface"
+    const val PLUGIN_ACTIONS = "PLUGIN ACTIONS"
+    const val IMMERSION = "IMMERSION"
+    const val AMBIENT_SECTION = "AMBIENT SIZE · DURING THE TRIP"
+    const val DISPLAY_NOTE = "Provisional on swipe, saved on tap. In an app the hub caps islands at Text. Back cancels."
+    const val MAP_HINT = "swipe map ↔ Commands · tap full screen"
+    const val COMMANDS_HINT = "swipe map ↔ Commands · tap open"
+    const val FULL_NEXT_HINT = "swipe next view · tap commands"
+    const val FULL_PREVIOUS_HINT = "swipe previous view · tap commands"
 
     /** The display page's sizes, in swipe order. */
     val SIZES = listOf(AmbientSize.TEXT, AmbientSize.MINIMAP, AmbientSize.PANEL)
@@ -76,6 +95,19 @@ internal object RoutePresentation {
     fun mapLabel(view: MapView): String = if (view == MapView.FOLLOW) MAP_FOLLOW else MAP_OVERVIEW
 
     fun mapTrail(view: MapView): String = "${VIEWS.indexOf(view) + 1}/${VIEWS.size}"
+
+    /** The view's name on the full map's floating header: `FOLLOW`, `WHOLE ROUTE`. */
+    fun viewName(view: MapView): String = if (view == MapView.FOLLOW) "FOLLOW" else "WHOLE ROUTE"
+
+    /** The full map's hint: Step goes the one way it can, toward the other view. */
+    fun fullMapHint(view: MapView): String = if (VIEWS.indexOf(view) < VIEWS.lastIndex) FULL_NEXT_HINT else FULL_PREVIOUS_HINT
+
+    /** What each size draws, under its name on the display page. */
+    fun sizeSub(size: AmbientSize): String = when (size) {
+        AmbientSize.TEXT -> "arrow, distance, street"
+        AmbientSize.MINIMAP -> "text + heading-up map"
+        AmbientSize.PANEL -> "wide map, street names"
+    }
 
     fun sizeLabel(size: AmbientSize): String = when (size) {
         AmbientSize.TEXT -> "Text"

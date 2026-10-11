@@ -42,11 +42,12 @@ internal sealed interface PageItem {
 
     /**
      * A route page's hub-owned rows (plan 028a §5.5); no provider produces one. SELECT on the
-     * compact map or on Full screen opens the chrome-less full map; a view row picks the view kept
-     * for the session; Display opens the hub's display page for [ownerPluginId]'s ambient size,
-     * starting from [current] (null: automatic).
+     * compact map or on Full screen opens the chrome-less full map; Commands opens the page's
+     * command list; a view row picks the view kept for the session; Display opens the hub's
+     * display page for [ownerPluginId]'s ambient size, starting from [current] (null: automatic).
      */
     data object RouteMap : PageItem
+    data object RouteCommands : PageItem
     data class RouteView(val view: MapView) : PageItem
     data object RouteFullScreen : PageItem
     data class RouteDisplay(val ownerPluginId: String, val current: AmbientSize?) : PageItem
