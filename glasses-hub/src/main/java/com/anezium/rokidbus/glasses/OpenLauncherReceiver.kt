@@ -22,9 +22,9 @@ class OpenLauncherReceiver : BroadcastReceiver() {
 }
 
 /**
- * Switches the launcher between the legacy overlay and the Nexus session, for testing until
- * the phone carries the preference. Exposed like [OpenLauncherReceiver]: it only changes a
- * local, reversible UI backend, and it must stay reachable from `adb shell am broadcast`.
+ * Stores the glasses' own launcher backend choice; the phone's explicit one still outranks it
+ * (plan 028a §8.3). Exposed like [OpenLauncherReceiver], behind `android.permission.DUMP`, which
+ * `adb shell am broadcast` holds and no app does.
  */
 class SetLauncherBackendReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {

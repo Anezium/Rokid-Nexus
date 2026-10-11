@@ -2083,8 +2083,29 @@ internal object NexusInput {
 
     fun onServiceConnected(service: AccessibilityService) {
         this.service = service
-        backend = LauncherBackend.parse(ActivityPresentationSettings.launcherBackend(service)) ?: LauncherBackend.DEFAULT
+        backend = resolveBackend(service)
         log("Launcher backend=${backend.name}")
+    }
+
+    /** Plan 028a §8.3: phone explicit, then the glasses' stored choice, then the default. */
+    private fun resolveBackend(context: Context): LauncherBackend = LauncherBackend.resolve(
+        phone = ActivityPresentationSettings.phoneLauncherBackend(context),
+        stored = ActivityPresentationSettings.launcherBackend(context),
+        bundleNegotiated = GlassesHub.launcherInteractiveActive(),
+    )
+
+    /**
+     * The phone announced its capabilities: [value] is its explicit backend, null for no opinion.
+     * It is recorded apart from the glasses' own choice, which it outranks without erasing.
+     */
+    fun onPhoneBackend(context: Context, value: String?) {
+        ActivityPresentationSettings.setPhoneLauncherBackend(context.applicationContext, LauncherBackend.fromPhone(value)?.name)
+        switchTo(resolveBackend(context.applicationContext))
+    }
+
+    /** The bundle was negotiated or lost: only the default can follow it, never a choice. */
+    fun onLauncherNegotiated(context: Context) {
+        switchTo(resolveBackend(context.applicationContext))
     }
 
     fun onServiceDestroyed() {
@@ -2100,12 +2121,19 @@ internal object NexusInput {
     /** A key delivered to a Nexus window: only a press the filter never routed is decided here. */
     fun onWindowKey(event: KeyEvent): Boolean = decide(event) { arbiter.onWindowKey(it) }
 
-    /**
-     * Switches the launcher backend. The active one closes first, so at most one launcher ever
-     * has a window and only the new one receives the global gesture.
-     */
+    /** The glasses' own explicit choice: stored as `launcher.backend`, applied unless the phone's outranks it. */
     fun setBackend(context: Context, next: LauncherBackend) {
         ActivityPresentationSettings.setLauncherBackend(context.applicationContext, next.name)
+        val effective = resolveBackend(context.applicationContext)
+        if (effective != next) log("Launcher backend ${next.name} stored; the phone's explicit ${effective.name} applies")
+        switchTo(effective)
+    }
+
+    /**
+     * Switches the launcher backend. The active one closes first, so at most one launcher ever
+     * has a window and only the new one receives the global gesture. No setting is touched.
+     */
+    private fun switchTo(next: LauncherBackend) {
         runOnMain {
             if (next == backend) return@runOnMain
             when (backend) {

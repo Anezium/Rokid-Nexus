@@ -1424,6 +1424,8 @@ object GlassesHub {
                 manualDp = next.hudTopInsetDp,
                 auto = next.hudPositionAuto,
             )
+            // Every announcement states the phone's backend choice, absent meaning no opinion.
+            NexusInput.onPhoneBackend(it, next.launcherBackend)
         }
         val previous = remotePhoneCapabilities
         if (next == previous) return
@@ -1478,6 +1480,7 @@ object GlassesHub {
         log("launcher bundle negotiated version=$version")
         ActivityController.onLauncherNegotiated(version)
         NexusSession.onLauncherNegotiated()
+        appContext?.let(NexusInput::onLauncherNegotiated)
     }
 
     private fun errorEnvelope(id: String, code: String): BusEnvelope =

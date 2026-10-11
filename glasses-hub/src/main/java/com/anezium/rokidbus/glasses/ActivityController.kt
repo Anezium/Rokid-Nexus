@@ -504,6 +504,7 @@ internal object ActivityPresentationSettings {
     private const val PREFS = "activity_presentation"
     private const val ALWAYS_EXPANDED = "always_expanded"
     private const val LAUNCHER_BACKEND = "launcher.backend"
+    private const val PHONE_LAUNCHER_BACKEND = "launcher.backend.phone"
 
     fun alwaysExpanded(context: Context): Boolean =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -528,6 +529,23 @@ internal object ActivityPresentationSettings {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit()
             .putString(LAUNCHER_BACKEND, value)
+            .apply()
+    }
+
+    /**
+     * The phone's explicit backend as last announced, kept apart from the glasses' own choice so
+     * neither ever overwrites the other, and across a link loss so the launcher does not flip when
+     * the phone goes away. A phone announcing no opinion clears it.
+     */
+    fun phoneLauncherBackend(context: Context): String? =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getString(PHONE_LAUNCHER_BACKEND, null)
+
+    fun setPhoneLauncherBackend(context: Context, value: String?) {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        if (prefs.getString(PHONE_LAUNCHER_BACKEND, null) == value) return
+        prefs.edit()
+            .apply { if (value == null) remove(PHONE_LAUNCHER_BACKEND) else putString(PHONE_LAUNCHER_BACKEND, value) }
             .apply()
     }
 }
