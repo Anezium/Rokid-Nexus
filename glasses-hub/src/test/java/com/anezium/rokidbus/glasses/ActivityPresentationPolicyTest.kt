@@ -27,6 +27,9 @@ class ActivityPresentationPolicyTest {
                                 ActivityPresentation.PULSE
                             collapseState == ActivityCollapseState.ELAPSED ->
                                 ActivityPresentation.CHIP
+                            // Capped at text over a native app (plan 028a §8.2).
+                            context == ActivityPresentationContext.NATIVE_APP ->
+                                ActivityPresentation.CHIP
                             else ->
                                 ActivityPresentation.PANEL
                         }
