@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The todo activity's mark: a checklist of two ticks, each beside a line.
+  Stroke only, like every plugin glyph, on the 24-unit box.
+-->
+<resources>
+    <string-array name="nexus_glyphs">
+        <item>checklist|M3,7 L5.5,9.5 L10,4.5 M13,7 L21,7 M3,17 L5.5,19.5 L10,14.5 M13,17 L21,17</item>
+    </string-array>
+</resources>

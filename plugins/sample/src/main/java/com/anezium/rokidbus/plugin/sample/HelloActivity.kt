@@ -23,10 +23,21 @@ class HelloActivity : Activity() {
     private val main = Handler(Looper.getMainLooper())
     private var status: TextView? = null
     private var pushClient: NexusPluginClient? = null
+    private val todo by lazy { TodoSection(this) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         buildUi()
+    }
+
+    override fun onStart() {
+        super.onStart()
+        todo.start()
+    }
+
+    override fun onStop() {
+        todo.stop()
+        super.onStop()
     }
 
     override fun onDestroy() {
@@ -53,6 +64,8 @@ class HelloActivity : Activity() {
             addView(backgroundPinCard(), NexusUi.block())
             addView(BusTheme.gap(this@HelloActivity, 8))
             addView(statusLine(), NexusUi.block())
+            addView(BusTheme.gap(this@HelloActivity, 24))
+            todo.addTo(this)
             addView(BusTheme.gap(this@HelloActivity, 24))
             addView(NexusUi.sectionRow(this@HelloActivity, "Plugin"), NexusUi.block())
             addView(BusTheme.gap(this@HelloActivity, 10))

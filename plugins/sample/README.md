@@ -31,6 +31,42 @@ is otherwise awake. Its five-second TTL is renewed every two seconds while audio
 frames arrive, so a crashed plugin or stalled stream cannot leave a stale listening
 indicator. Normal stops hide it immediately.
 
+## Todo example
+
+A small checklist shows the launcher bundle through the public SDK only: pages,
+typed `setChecked` actions and an ongoing activity, with no glasses app and
+without opening the plugin. Edit the list in the settings screen.
+
+- **Pages.** The service declares `rokidbus.plugin.pages=1`, so the session's
+  Applications row opens `hello:main`: the list's progress and a labelled
+  **Open the demos** row (an `IMMERSION` action) for everything above.
+  `hello:todo` is the list: one row per task, its id the task's stable id, with
+  `checked` drawing the box. Each row targets an action whose id names the task
+  and the state it should end up in (`set:t3:1`) and whose type is
+  `SetChecked(desired)`, never a toggle. The page's revision is the list's.
+- **Actions.** `onNexusPageAction` applies that explicit state only on the
+  revision the wearer saw: a task removed since, or any change to the list since,
+  answers `stale` and changes nothing; anything else that does not fit is
+  `rejected`. Success is reported only after the store took it, with the list at
+  its new revision as the replacement. An invocation is handled once; a repeat is
+  rejected and never applied again. The service declares
+  `rokidbus.plugin.quickActions=checklist`, so the user may approve the family
+  in Rokid Nexus and check a task with one tap; without approval every check is
+  confirmed.
+- **Without the launcher bundle** the same page uses plain rows that spell out
+  the state ("to do · tap to check") and untyped, confirmed actions.
+- **Show in activities.** The switch in the settings screen publishes the list
+  as an activity: "4 left" over the list's name, a tap opens `hello:todo`
+  (`activation = DESTINATION`), and `persistence = ONGOING`. Every change of the
+  list updates it; turning the switch off ends it. Nothing is held for it: when
+  the service is asleep, the settings screen binds it just long enough to send
+  the change through the plugin's one registration, and Nexus keeps the entry as
+  an offline snapshot. A new registration publishes it afresh. It needs both hubs
+  on the launcher bundle; otherwise the screen says so and nothing is sent.
+
+The code is in the `Todo*.kt` files; `HelloPluginService` and `HelloActivity`
+only forward to them.
+
 ## Dictation
 
 The Dictation menu entry demonstrates a typed `NexusSpeechSession`, including live
