@@ -123,8 +123,11 @@ internal class NavPageProvider<R : Any>(
     private val now: () -> Long,
     private val schedule: (delayMs: Long, task: () -> Unit) -> Unit,
     private val cancelScheduled: () -> Unit,
+    /** The running journey's epoch, or null; recorded with each revision of the main page. */
+    private val journey: () -> Long? = { null },
 ) {
     private var revision = 0L
+    private val shownJourneys = LinkedHashMap<Long, Long?>()
     private var current: R? = null
     private var visible = false
     private var lastPublishAt: Long? = null
@@ -136,6 +139,7 @@ internal class NavPageProvider<R : Any>(
         if (pageId == NavPages.MAIN) {
             current = request
             dirty = false
+            (page as? NexusPage.Content)?.let { remember(it.revision) }
         }
         return page
     }
@@ -168,10 +172,12 @@ internal class NavPageProvider<R : Any>(
             return
         }
         val request = current ?: return
-        when (publish(request, NavPages.page(NavPages.MAIN, nextRevision(null), state(), text()))) {
+        val page = NavPages.page(NavPages.MAIN, nextRevision(null), state(), text())
+        when (publish(request, page)) {
             NexusSdkResult.SENT -> {
                 dirty = false
                 lastPublishAt = now()
+                (page as? NexusPage.Content)?.let { remember(it.revision) }
             }
             // Refused: the page is covered, closed or out of lease; the next request answers afresh.
             else -> Unit
@@ -186,6 +192,20 @@ internal class NavPageProvider<R : Any>(
         dirty = false
     }
 
+    /**
+     * Whether the main page the wearer confirmed on, at [revision], showed the journey that runs
+     * now. An unknown revision, a page without a journey, or an earlier journey is not.
+     */
+    fun showedCurrentJourney(revision: Long): Boolean {
+        val shown = shownJourneys[revision] ?: return false
+        return shown == journey()
+    }
+
+    private fun remember(revision: Long) {
+        shownJourneys[revision] = journey()
+        while (shownJourneys.size > MAX_REMEMBERED_REVISIONS) shownJourneys.remove(shownJourneys.keys.first())
+    }
+
     private fun nextRevision(floor: Long?): Long {
         // An equal revision would keep the glasses' old body; only identical content may reuse it.
         revision = maxOf(revision + 1, (floor ?: -1) + 1)
@@ -194,5 +214,8 @@ internal class NavPageProvider<R : Any>(
 
     companion object {
         const val MIN_INTERVAL_MS = 500L
+
+        /** Enough revisions for a confirmation in flight; older ones read as stale. */
+        const val MAX_REMEMBERED_REVISIONS = 16
     }
 }

@@ -101,6 +101,13 @@ internal object NavControl {
     /** A walking journey the wearer started is running and owns the route. */
     val journeyActive: Boolean get() = journeyRuntime != null
 
+    private var journeyCount = 0L
+
+    /** Names the running journey, so an action confirmed on a page of an earlier one goes stale. */
+    @Volatile
+    var journeyEpoch: Long? = null
+        private set
+
     /** Whether [candidate] is the runtime allowed to publish and end the route right now. */
     fun owns(candidate: NavRuntime): Boolean = activeRuntime === candidate
 
@@ -114,6 +121,7 @@ internal object NavControl {
         activeRuntime?.takeIf { it !== candidate }?.shutdown(releaseBus = false)
         journeyRuntime = candidate
         journeyStop = stop
+        journeyEpoch = ++journeyCount
         guidanceChanged()
     }
 
@@ -121,6 +129,7 @@ internal object NavControl {
         if (journeyRuntime !== candidate) return
         journeyRuntime = null
         journeyStop = null
+        journeyEpoch = null
         listener?.resumeNotifications()
         guidanceChanged()
     }

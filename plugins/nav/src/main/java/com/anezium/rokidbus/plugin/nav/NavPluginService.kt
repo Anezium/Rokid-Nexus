@@ -60,6 +60,7 @@ class NavPluginService : NexusPluginService() {
                 idle = getString(R.string.nav_card_idle),
             )
         },
+        journey = { NavControl.journeyEpoch },
         now = SystemClock::elapsedRealtime,
         schedule = { delayMs, task ->
             val runnable = Runnable { scheduled = null; task() }
@@ -90,6 +91,8 @@ class NavPluginService : NexusPluginService() {
     override fun onNexusPageAction(action: NexusPageAction): NexusPageResult {
         if (action.pageId != NavPages.MAIN || action.actionId != NavRoutePage.END_JOURNEY) return NexusPageResult.rejected()
         if (action.mode != NexusPageActionMode.CONFIRMED) return NexusPageResult.rejected()
+        // The wearer confirmed on a page of one journey; a journey started since is not theirs to end.
+        if (!pages.showedCurrentJourney(action.revision)) return NexusPageResult.stale("The journey changed")
         return if (NavControl.stopJourney(JOURNEY_ENDED_FROM_GLASSES)) {
             NexusPageResult.done("Journey ended")
         } else {

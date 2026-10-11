@@ -104,6 +104,7 @@ class NavPagesTest {
         val published = mutableListOf<Long>()
         var scheduled: Pair<Long, () -> Unit>? = null
         var accept = NexusSdkResult.SENT
+        var journey: Long? = null
         val provider = NavPageProvider<Request>(
             pageIdOf = Request::pageId,
             floorOf = Request::floor,
@@ -116,6 +117,7 @@ class NavPagesTest {
             now = { clock },
             schedule = { delay, task -> scheduled = delay to task },
             cancelScheduled = { scheduled = null },
+            journey = { journey },
         )
 
         fun runScheduled() {
@@ -124,6 +126,23 @@ class NavPagesTest {
             clock += delay
             task()
         }
+    }
+
+    @Test
+    fun `an end confirmed on a page of an earlier journey is not the current journey's`() {
+        val harness = Harness()
+        harness.journey = 1L
+        val first = harness.provider.onRequest(Harness.Request(NavPages.MAIN)) as NexusPage.Content
+        assertTrue(harness.provider.showedCurrentJourney(first.revision))
+
+        // The wearer starts another journey on the phone while the old confirmation is open.
+        harness.journey = 2L
+        assertFalse(harness.provider.showedCurrentJourney(first.revision))
+        assertFalse(harness.provider.showedCurrentJourney(first.revision + 50))
+
+        harness.journey = null
+        val idle = harness.provider.onRequest(Harness.Request(NavPages.MAIN)) as NexusPage.Content
+        assertFalse(harness.provider.showedCurrentJourney(idle.revision))
     }
 
     @Test
