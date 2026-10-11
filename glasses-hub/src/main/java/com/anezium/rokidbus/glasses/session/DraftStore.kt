@@ -62,6 +62,7 @@ internal object DraftStore {
         text: String,
         history: NotificationHistory = NotificationHistory(),
         previous: Draft? = null,
+        revision: Long? = null,
     ): Draft {
         val pageSaysReplyable = previous != null && previous.isFor(capture.ownerPluginId, capture.threadKey) && previous.pageReopened
         val withdrawn = history.threadWithdrawn(capture.ownerPluginId, capture.threadKey) && !pageSaysReplyable
@@ -72,6 +73,8 @@ internal object DraftStore {
             recipient = capture.recipient,
             text = text.take(capture.maxChars),
             state = if (withdrawn) DraftState.AUTHORITY_LOST else DraftState.READY,
+            // Lost on the revision on screen at completion: only a newer one may reopen it.
+            lostRevision = if (withdrawn) revision else null,
         )
     }
 

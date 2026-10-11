@@ -1701,7 +1701,7 @@ internal class SessionReducer(
                 when {
                     capture.kind != CaptureKind.DICTATE -> model
                     message.result.reason == ComposeDictationReason.COMPLETED && !text.isNullOrBlank() ->
-                        model.copy(capture = null, micUnavailable = false, draft = DraftStore.completed(capture, text, model.history, model.draft))
+                        model.copy(capture = null, micUnavailable = false, draft = DraftStore.completed(capture, text, model.history, model.draft, threadRevision(model, capture.ownerPluginId, capture.threadKey)))
                     // No phone microphone stands in: the wearer is offered Type, focused.
                     else -> focusType(model.copy(capture = null, micUnavailable = true), capture)
                 }
@@ -1714,7 +1714,7 @@ internal class SessionReducer(
                     text == null -> model.copy(capture = null)
                     // An empty commit is the one explicit discard.
                     text.isBlank() -> model.copy(capture = null, draft = DraftStore.committedEmpty(model.draft, capture))
-                    else -> model.copy(capture = null, draft = DraftStore.completed(capture, text, model.history, model.draft))
+                    else -> model.copy(capture = null, draft = DraftStore.completed(capture, text, model.history, model.draft, threadRevision(model, capture.ownerPluginId, capture.threadKey)))
                 }
             }
         }
