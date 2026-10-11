@@ -178,7 +178,9 @@ internal class SessionReducer(
         val history = model.history.withdraw(event.ownerPluginId, event.eventKey)
         val updated = model.copy(
             history = history,
-            draft = DraftStore.authorityLost(model.draft, event.ownerPluginId, event.eventKey),
+            draft = DraftStore.authorityLost(
+                model.draft, event.ownerPluginId, event.eventKey, threadRevision(model, event.ownerPluginId, event.eventKey),
+            ),
             state = model.state.mapRootStops { RootStops.withHistory(it, history, wallClock()) },
         )
         return withComposerRedraw(model, rootBookkeeping(model, updated))
@@ -191,7 +193,7 @@ internal class SessionReducer(
         val capture = model.capture?.takeIf { it.ownerPluginId == owner }
         val updated = model.copy(
             history = history,
-            draft = DraftStore.authorityLost(model.draft, owner),
+            draft = DraftStore.authorityLost(model.draft, owner, revision = threadRevision(model, owner, model.draft?.threadKey)),
             capture = if (capture != null) null else model.capture,
             state = model.state.mapRootStops { RootStops.withHistory(it, history, wallClock()) },
         )
@@ -993,7 +995,9 @@ internal class SessionReducer(
      * end. Its pages are gone, so a draft for one of its threads loses its authority to be sent.
      */
     private fun invalidateOwner(before: SessionModel, owner: String): SessionTransition {
-        val model = before.copy(draft = DraftStore.authorityLost(before.draft, owner))
+        val model = before.copy(
+            draft = DraftStore.authorityLost(before.draft, owner, revision = threadRevision(before, owner, before.draft?.threadKey)),
+        )
         fun invalidated(page: SessionState.InPage): SessionState.InPage = page.copy(
             frames = page.frames.map { frame ->
                 if (isLocalPage(frame.pageId) || PageTemplateContract.namespaceOf(frame.pageId) != owner) {
@@ -1184,7 +1188,7 @@ internal class SessionReducer(
                 )
             }
             result.code == PageSurfaceContract.CODE_AUTHORITY_LOST ->
-                base.copy(draft = DraftStore.authorityLost(model.draft, send.ownerPluginId, send.threadKey))
+                base.copy(draft = DraftStore.authorityLost(model.draft, send.ownerPluginId, send.threadKey, revision))
             // Any other refusal of a send may come after the app already took the text (a provider
             // that cannot tell): it is unconfirmed, Type comes first, and it is never resent as is.
             result.status == RESULT_REJECTED -> base.copy(draft = DraftStore.unconfirmed(model.draft, send))
@@ -1541,6 +1545,24 @@ internal class SessionReducer(
     // ---- the composer: conversation pages, captures and Send ----------------------------------
 
     /** This frame's conversation when it shows one: the page's owner and its body. */
+    /**
+     * The newest revision of [owner]'s thread [threadKey] page shown in the open session, if any:
+     * the revision a lost authority is bound to, so only a newer one may reopen the draft.
+     */
+    private fun threadRevision(model: SessionModel, owner: String, threadKey: String?): Long? {
+        threadKey ?: return null
+        val frames = when (val state = model.state) {
+            is SessionState.InPage -> state.frames
+            is SessionState.Launching -> (state.previous as? SessionState.InPage)?.frames.orEmpty()
+            else -> emptyList()
+        }
+        return frames.mapNotNull { frame ->
+            val shown = frame.status as? FrameStatus.Shown ?: return@mapNotNull null
+            val (frameOwner, body) = frame.shownConversation() ?: return@mapNotNull null
+            shown.revision.takeIf { frameOwner == owner && body.threadKey == threadKey }
+        }.maxOrNull()
+    }
+
     private fun Frame.shownConversation(): Pair<String?, PageBody.Conversation>? {
         val shown = status as? FrameStatus.Shown ?: return null
         val body = itemResolver.conversation(shown.snapshot.page) ?: return null
@@ -1679,7 +1701,7 @@ internal class SessionReducer(
                 when {
                     capture.kind != CaptureKind.DICTATE -> model
                     message.result.reason == ComposeDictationReason.COMPLETED && !text.isNullOrBlank() ->
-                        model.copy(capture = null, micUnavailable = false, draft = DraftStore.completed(capture, text, model.history))
+                        model.copy(capture = null, micUnavailable = false, draft = DraftStore.completed(capture, text, model.history, model.draft))
                     // No phone microphone stands in: the wearer is offered Type, focused.
                     else -> focusType(model.copy(capture = null, micUnavailable = true), capture)
                 }
@@ -1692,7 +1714,7 @@ internal class SessionReducer(
                     text == null -> model.copy(capture = null)
                     // An empty commit is the one explicit discard.
                     text.isBlank() -> model.copy(capture = null, draft = DraftStore.committedEmpty(model.draft, capture))
-                    else -> model.copy(capture = null, draft = DraftStore.completed(capture, text, model.history))
+                    else -> model.copy(capture = null, draft = DraftStore.completed(capture, text, model.history, model.draft))
                 }
             }
         }
@@ -1743,8 +1765,13 @@ internal class SessionReducer(
         val draft = after.draft
         if (conversation != null && draft != null) {
             val (owner, body) = conversation
-            if (body.composer?.replyable == false && draft.isFor(owner, body.threadKey) && draft.state != DraftState.AUTHORITY_LOST) {
-                after = after.copy(draft = DraftStore.authorityLost(draft, draft.ownerPluginId, draft.threadKey))
+            val revision = (top?.status as? FrameStatus.Shown)?.revision
+            val lostAsIs = draft.state == DraftState.AUTHORITY_LOST && !draft.reopened
+            if (body.composer?.replyable == false && draft.isFor(owner, body.threadKey) && !lostAsIs) {
+                after = after.copy(draft = DraftStore.authorityLost(draft, draft.ownerPluginId, draft.threadKey, revision))
+            } else if (body.composer?.replyable == true && revision != null) {
+                // A newer replyable revision of the draft's own thread reopens it like a new notice.
+                after = after.copy(draft = DraftStore.pageReplyable(draft, owner, body.threadKey, revision))
             }
         }
         val focus = top?.composerFocus

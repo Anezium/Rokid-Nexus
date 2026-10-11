@@ -804,6 +804,19 @@ class SessionPagesTest {
         assertEquals(PageItem.LaunchPrompt("relay", "Open full app"), items.entries((top().status as FrameStatus.Shown).snapshot.page).last().item)
     }
 
+    @Test
+    fun `the Notifications row says it opens the collection, which says what its tags and bounds mean`() {
+        val screens = SessionScreens(items, { null }, { "12:00" }, { it })
+        openRoot()
+        assertEquals(RootStops.NOTIFICATIONS_PAGE_ID, root().stops[root().selected].id)
+        assertEquals(ScreenHint("swipe next · tap open the collection", "back close"), screens.screen(model.state, null, model.generation).hint)
+        send(SessionEvent.Enter(2_000))
+        answerLocal(2_010)
+        val footnote = screens.screen(model.state, null, model.generation).blocks.last() as ScreenBlock.Text
+        assertEquals(SessionScreens.NOTIFICATIONS_FOOTNOTE, footnote.text)
+        assertTrue("Seen in Nexus" in footnote.text && "30 entries, 24 h" in footnote.text)
+    }
+
     /** The host's draw acknowledgement of what is focused now. */
     private fun acknowledge(atMs: Long) {
         send(SessionEvent.FocusShown(SessionFocus.tokenOf(model) ?: error("nothing focused"), atMs))

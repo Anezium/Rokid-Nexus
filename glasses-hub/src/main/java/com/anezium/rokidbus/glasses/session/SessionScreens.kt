@@ -4,6 +4,7 @@ import com.anezium.rokidbus.shared.ConversationMessage
 import com.anezium.rokidbus.shared.ConversationMessageStatus
 import com.anezium.rokidbus.shared.ConversationRole
 import com.anezium.rokidbus.shared.MediaPlaybackState
+import com.anezium.rokidbus.shared.NoticeSurfaceContract
 import com.anezium.rokidbus.shared.PageBody
 import com.anezium.rokidbus.shared.PageSegment
 import com.anezium.rokidbus.shared.PageSegmentKind
@@ -221,6 +222,8 @@ internal data class Bubble(
     val style: BubbleStyle = BubbleStyle.SOLID,
     /** A short line under it: "handed to the app", "draft · not sent yet". */
     val meta: String? = null,
+    /** Who sent a received message, as its provider names it in a group thread; never guessed. */
+    val sender: String? = null,
 )
 
 internal enum class MapSize { COMPACT, PANEL, FULL }
@@ -372,6 +375,7 @@ internal class SessionScreens(
         val hint = when {
             state.focus != null -> ScreenHint(FOCUS_HINT, FOCUS_BACK)
             selectedStop?.ended == true -> ScreenHint("swipe next card", "back close")
+            selectedStop?.kind == RootStopKind.NOTIFICATIONS -> ScreenHint(NOTIFICATIONS_HINT, "back close")
             else -> ScreenHint("swipe next · tap open", "back close")
         }
         return SessionScreen(ScreenHeader(NEXUS, "back: close"), blocks, hint, statusText, focusKey = selectedStop?.id)
@@ -411,7 +415,8 @@ internal class SessionScreens(
                     HistoryState.WITHDRAWN -> NOTIFICATION_REMOVED
                     HistoryState.NEW, HistoryState.SEEN -> UNANSWERED
                 },
-                time = null,
+                // The arrival time is known in every state, so it is said in every state.
+                time = stop.atWallMs?.let(formatTime),
                 primary = stop.text,
                 secondary = card.secondary,
                 measure = null,
@@ -689,6 +694,8 @@ internal class SessionScreens(
         if (rows.isEmpty() && body is PageBody.SelectableList) {
             blocks += ScreenBlock.Text("empty", body.emptyText ?: "Nothing here", TextRole.CAPTION, centered = true)
         }
+        // The collection says what its tags and bounds mean (r17 4.14).
+        if (frame.pageId == RootStops.NOTIFICATIONS_PAGE_ID) blocks += ScreenBlock.Text("footnote", NOTIFICATIONS_FOOTNOTE, TextRole.CAPTION)
         val focus = rowBlocks.firstOrNull { it.isSelected() }?.key ?: blocks.firstOrNull()?.key
         val selectedRow = if (frame.tombstone == null && showsSelection) rows.getOrNull(frame.selected) else null
         val action = when {
@@ -918,9 +925,12 @@ internal class SessionScreens(
             val replaced = facts.draft?.takeUnless { it.isFor(capture.ownerPluginId, capture.threadKey) }
             drawn += Bubble(
                 LIVE_BUBBLE, BubbleSide.RIGHT, capture.liveText, style = BubbleStyle.LIVE,
-                meta = replaced?.let { "replaces the draft for ${it.recipient}" },
+                meta = replaced?.let { "$REPLACES_DRAFT ${it.recipient}" },
             )
         }
+        // Another recipient's draft is replaced by a capture started here: the focused Dictate or
+        // Type says so before it starts (r17 4.12).
+        val replacing = facts.draft?.takeUnless { it.isFor(owner, body.threadKey) }
         val focus = frame.composerFocus
         val unavailable = view?.unavailable
         val footer: InlineFooter? = when {
@@ -944,6 +954,8 @@ internal class SessionScreens(
             capture?.kind == CaptureKind.TYPE -> ScreenHint(TAP_FINISH, BACK_CANCEL_TYPING)
             focus != null && focus.key == ComposerRules.SEND && composer != null ->
                 ScreenHint("swipe choose · tap send to ${composer.recipient}", BACK_READING)
+            focus != null && focus.key != ComposerRules.SEND && replacing != null ->
+                ScreenHint("tap start · $REPLACES_DRAFT ${replacing.recipient}", BACK_READING)
             focus != null -> ScreenHint(FOCUS_START, BACK_READING)
             view?.available == true && !sending -> ScreenHint(if (pages > 1) "swipe page · tap reply" else "tap reply", backText)
             else -> ScreenHint(if (pages > 1) "swipe page" else null, backText)
@@ -974,6 +986,7 @@ internal class SessionScreens(
                 ConversationRole.UNKNOWN -> BubbleSide.NONE
             },
             text = message.text,
+            sender = message.sender?.takeIf { message.role == ConversationRole.RECEIVED && it.isNotBlank() },
             latest = index == messages.lastIndex,
             style = if (message.status == ConversationMessageStatus.UNCONFIRMED) BubbleStyle.DASHED else BubbleStyle.SOLID,
             meta = when (message.status) {
@@ -1164,6 +1177,10 @@ internal class SessionScreens(
         const val TAG_SEEN = "SEEN IN NEXUS"
         const val TAG_HANDED_OFF = "HANDED OFF"
         const val TAG_REMOVED = "REMOVED"
+        const val NOTIFICATIONS_HINT = "swipe next · tap open the collection"
+        val NOTIFICATIONS_FOOTNOTE =
+            "“Seen in Nexus” is local to Nexus: the phone is not told. The history is bounded: " +
+                "${NoticeSurfaceContract.MAX_HISTORY_ENTRIES} entries, ${NoticeSurfaceContract.MAX_HISTORY_AGE_MS / 3_600_000} h."
 
         // The composer (plan 028a §9).
         const val DICTATE = "Dictate"
@@ -1184,6 +1201,7 @@ internal class SessionScreens(
         const val BACK_CANCEL_DICTATION = "back cancel dictation"
         const val BACK_CANCEL_TYPING = "back cancel typing"
         const val FOCUS_START = "swipe choose · tap start"
+        const val REPLACES_DRAFT = "replaces the draft for"
         const val BACK_READING = "back reading"
         const val GLYPH_MIC = "mic"
         const val GLYPH_KEYBOARD = "keyboard"

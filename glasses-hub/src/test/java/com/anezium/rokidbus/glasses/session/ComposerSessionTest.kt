@@ -416,6 +416,93 @@ class ComposerSessionTest {
     }
 
     @Test
+    fun `a newer replyable revision of the draft's own thread reopens Type like a new notice, never Send as is`() {
+        openThread("t1", at = 1_000)
+        dictate("see you", at = 3_000)
+        // The app reposts its notification without the reply action: the event is withdrawn.
+        send(SessionEvent.NoticeWithdrawn("relay", "t1"))
+        assertEquals(DraftState.AUTHORITY_LOST, model.draft?.state)
+        val request = requestOf()
+
+        // The revision the authority was lost on proves nothing, whatever it says.
+        respond(request, conversation("t1"), revision = 1, now = 4_000, expectShown = false)
+        assertFalse(model.draft!!.reopened)
+        assertTrue(screen().footer is InlineFooter.StatusLine)
+
+        // It reposts with the reply action and no new message: only the page says it can reply.
+        respond(request, conversation("t1"), revision = 2, now = 5_000)
+        assertTrue(model.draft!!.reopened)
+        assertEquals(DraftState.AUTHORITY_LOST, model.draft?.state)
+        assertTrue(screen().footer is InlineFooter.Buttons)
+        focus(at = 6_000)
+        assertEquals(ComposerRules.TYPE, top().composerFocus?.key)
+        assertTrue(effects.none { it is SendAction })
+
+        // Type reopens it prefilled as a new capture; only its OK makes it ready, then a new Send.
+        shown(6_100)
+        press(6_110)
+        val start = effects.filterIsInstance<SendCompose>().single().message as ComposeOutbound.TypeStart
+        assertEquals("see you", start.start.initialText)
+        compose(ComposeInbound.Done(ComposeTypeDone(start.captureId, committed = true, text = "see you")))
+        assertEquals(DraftState.READY, model.draft?.state)
+        assertTrue(effects.none { it is SendAction })
+        focus(at = 7_000)
+        assertEquals(ComposerRules.SEND, top().composerFocus?.key)
+
+        // A later revision that cannot reply takes it back.
+        respond(request, conversation("t1", replyable = false), revision = 3, now = 8_000)
+        assertEquals(DraftState.AUTHORITY_LOST, model.draft?.state)
+        assertFalse(model.draft!!.reopened)
+    }
+
+    @Test
+    fun `another thread's draft is named on the focused Dictate and Type before a capture starts`() {
+        openThread("t1", at = 1_000)
+        // With no draft anywhere, focus names nothing.
+        focus(at = 2_000)
+        assertEquals(ScreenHint(SessionScreens.FOCUS_START, SessionScreens.BACK_READING), screen().hint)
+        send(SessionEvent.Back(2_100))
+        assertNull(top().composerFocus)
+        dictate("for Ana", at = 3_000)
+
+        openThread("t2", at = 10_000, owner = "chat", recipient = "Bo")
+        focus(at = 12_000)
+        assertEquals(ComposerRules.DICTATE, top().composerFocus?.key)
+        assertEquals(ScreenHint("tap start · replaces the draft for Ana", SessionScreens.BACK_READING), screen().hint)
+        send(SessionEvent.Step(1, 12_100))
+        assertEquals(ComposerRules.TYPE, top().composerFocus?.key)
+        assertEquals("tap start · replaces the draft for Ana", screen().hint?.action)
+        // Nothing is replaced yet.
+        assertEquals("for Ana", model.draft?.text)
+    }
+
+    @Test
+    fun `a group thread's received bubbles carry their sender's name, and only those`() {
+        openThread("t1", at = 1_000)
+        val group = conversation("t1").copy(
+            messages = listOf(
+                ConversationMessage("m1", ConversationRole.RECEIVED, "on est devant", sender = "Mika"),
+                ConversationMessage("m2", ConversationRole.RECEIVED, "moi aussi", sender = "Alan"),
+                ConversationMessage("m3", ConversationRole.OURS, "j'arrive", sender = "Me"),
+                ConversationMessage("m4", ConversationRole.RECEIVED, "ok"),
+            ),
+        )
+        respond(requestOf(), group, revision = 2, now = 2_000)
+        assertEquals(listOf("Mika", "Alan", null, null), conversationBlock().bubbles.map { it.sender })
+    }
+
+    @Test
+    fun `the root's conversation card says its arrival time in every state`() {
+        arrive(conversationNotice("t1", "Ana", "on est devant"))
+        openRoot(at = 1_000)
+        fun card() = screen().blocks.first() as ScreenBlock.Card
+        assertEquals("14:02", card().time)
+        send(SessionEvent.NoticeWithdrawn("relay", "t1"))
+        assertEquals("RELAY · ${SessionScreens.NOTIFICATION_REMOVED}", card().label)
+        assertEquals("14:02", card().time)
+    }
+
+    @Test
     fun `a refused send without authority_lost is unconfirmed and offers Type first`() {
         openThread("t1", at = 1_000)
         dictate("see you", at = 3_000)

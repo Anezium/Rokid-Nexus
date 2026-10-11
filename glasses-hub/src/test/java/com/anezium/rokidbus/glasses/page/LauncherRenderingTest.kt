@@ -205,6 +205,27 @@ class LauncherRenderingTest {
     }
 
     @Test
+    fun `a group thread names the sender above a received bubble and leaves room for the line`() {
+        val bubbles = listOf(
+            Bubble("m:1", BubbleSide.LEFT, "on est devant", sender = "Mika"),
+            Bubble("m:2", BubbleSide.LEFT, "moi aussi", sender = "Alan", latest = true),
+        )
+        render(conversationScreen(bubbles))
+        val conversation = view.blockViews.getValue("conversation") as ConversationView
+        draw(conversation)
+        val drawn = conversation.drawn.associateBy { it.key }
+        assertEquals("Mika", drawn.getValue("m:1").sender)
+        assertEquals("Alan", drawn.getValue("m:2").sender)
+        // The sender line sits between the two bubbles: they are further apart than the bare gap.
+        val gap = drawn.getValue("m:2").rect.top - drawn.getValue("m:1").rect.bottom
+        assertTrue(gap >= ConversationView.GAP_PX + ConversationView.SENDER_GAP_PX)
+
+        render(conversationScreen(listOf(Bubble("m:1", BubbleSide.LEFT, "ok", latest = true))))
+        draw(view.blockViews.getValue("conversation") as ConversationView)
+        assertNull((view.blockViews.getValue("conversation") as ConversationView).drawn.single().sender)
+    }
+
+    @Test
     fun `a long conversation pages by bubble keys and opens on its newest page`() {
         val bubbles = (1..12).map {
             Bubble("m:$it", if (it % 2 == 0) BubbleSide.RIGHT else BubbleSide.LEFT, "Message $it " + "lorem ipsum dolor sit amet ".repeat(4), latest = it == 12)
