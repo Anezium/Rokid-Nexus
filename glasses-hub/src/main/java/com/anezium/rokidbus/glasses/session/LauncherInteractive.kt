@@ -139,6 +139,8 @@ internal data class CommandFacts(
     val history: NotificationHistory = NotificationHistory(),
     /** The draft, the capture and the send in flight, for conversation pages. */
     val composer: ComposerFacts = ComposerFacts(),
+    /** The map view chosen per route owner for this session. */
+    val mapViews: Map<String, MapView> = emptyMap(),
 ) {
     fun activity(ownerPluginId: String): ActivityStop? = activities.firstOrNull { it.ownerPluginId == ownerPluginId }
 
@@ -149,6 +151,7 @@ internal data class CommandFacts(
             outcomes = model.commandOutcomes,
             history = model.history,
             composer = ComposerFacts(model.draft, model.capture, model.micUnavailable, model.pendingSend, model.handoff),
+            mapViews = model.mapViews,
         )
     }
 }
@@ -186,7 +189,8 @@ internal object SessionFocus {
                 }
                 "$prefix/f${state.frames.size}/${top.pageId}/$status/${top.mode}/p${top.page}" +
                     "/${top.selected}/${top.selectedKey}/${top.tombstone != null}" +
-                    focusPart(top.commandFocus) + panelPart(top.panel) + composerPart(model, top)
+                    focusPart(top.commandFocus) + panelPart(top.panel) + composerPart(model, top) +
+                    top.fullMap?.let { "/map/$it" }.orEmpty()
             }
         }
     }
@@ -217,5 +221,6 @@ internal object SessionFocus {
         is FramePanel.Confirm -> "/confirm/${panel.actionId}/r${panel.revision}/${panel.providerEpoch}/${panel.selected}"
         is FramePanel.Launch -> "/launch/${panel.pluginId}/${panel.selected}"
         is FramePanel.ConfirmCommand -> "/confirm-command/${panel.stopId}/${panel.actionId}/s${panel.seq}/${panel.selected}"
+        is FramePanel.Display -> "/display/${panel.ownerPluginId}/${panel.selected}"
     }
 }

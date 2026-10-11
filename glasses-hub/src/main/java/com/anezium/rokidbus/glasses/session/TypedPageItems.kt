@@ -1,5 +1,6 @@
 package com.anezium.rokidbus.glasses.session
 
+import com.anezium.rokidbus.shared.AmbientSize
 import com.anezium.rokidbus.shared.PageActionType
 import com.anezium.rokidbus.shared.PageBody
 import com.anezium.rokidbus.shared.PageRow
@@ -9,6 +10,7 @@ import com.anezium.rokidbus.shared.PageSurfaceResponse
 import com.anezium.rokidbus.shared.PageSurfaceValidationResult
 import com.anezium.rokidbus.shared.PageTarget
 import com.anezium.rokidbus.shared.PageTemplateContract
+import com.anezium.rokidbus.shared.RouteGeometry
 
 /**
  * One selectable row as drawn and as acted on: the same list feeds both. [actionId] is the
@@ -46,6 +48,10 @@ internal class TypedPageItems(
     private val providerPageAllowed: (String) -> Boolean,
     private val quickGate: QuickGate = QuickGate.NEVER,
     private val extended: () -> Boolean = { false },
+    /** An owner's live `/activity/geometry`, which feeds the map of a route page carrying none. */
+    private val liveGeometry: (String) -> RouteGeometry? = { null },
+    /** An owner's saved ambient size, for the route page's Display row; null while automatic. */
+    private val ambientSize: (String) -> AmbientSize? = { null },
 ) : PageItemResolver {
     private data class Decoded(val page: PageSurfaceResponse.Page, val extended: Boolean, val body: PageBody?)
 
@@ -81,7 +87,24 @@ internal class TypedPageItems(
             val row = PageRow(action.id, action.label, target = PageTarget.Action(action.id))
             TypedRow(ACTION_KEY_PREFIX + action.id, row.label, null, true, itemFor(row, local, owner, actions), actionId = action.id)
         }
-        return rows + extra
+        val hub = (body as? PageBody.Route)?.takeUnless { local }?.let { routeRows(it, owner) }.orEmpty()
+        return hub + rows + extra
+    }
+
+    /**
+     * A route page's hub rows, ahead of the provider's actions (plan 028a §5.5): the compact map,
+     * its two views and Full screen when there is a map to draw, then Display. The map entry is
+     * always first, so the full map's Back lands on index 0.
+     */
+    private fun routeRows(body: PageBody.Route, owner: String): List<TypedRow> = buildList {
+        if (RoutePresentation.hasMap(body, liveGeometry(owner))) {
+            add(TypedRow(MAP_KEY, RoutePresentation.MAP_FOLLOW, null, true, PageItem.RouteMap))
+            add(TypedRow(VIEW_FOLLOW_KEY, RoutePresentation.VIEW_FOLLOW, null, true, PageItem.RouteView(MapView.FOLLOW)))
+            add(TypedRow(VIEW_OVERVIEW_KEY, RoutePresentation.VIEW_OVERVIEW, null, true, PageItem.RouteView(MapView.OVERVIEW)))
+            add(TypedRow(FULL_SCREEN_KEY, RoutePresentation.FULL_SCREEN, null, true, PageItem.RouteFullScreen))
+        }
+        val size = ambientSize(owner)
+        add(TypedRow(DISPLAY_KEY, RoutePresentation.displayLabel(size), null, true, PageItem.RouteDisplay(owner, size)))
     }
 
     override fun items(page: PageSurfaceResponse.Page): List<PageItem> = rows(page).map(TypedRow::item)
@@ -179,6 +202,13 @@ internal class TypedPageItems(
         const val NOTICE_PREFIX = "notice:"
         /** A space, which no wire id contains, keeps appended keys out of the row ids' namespace. */
         const val ACTION_KEY_PREFIX = "action "
+
+        /** A route page's hub rows; the space keeps them out of every wire id as well. */
+        const val MAP_KEY = "route map"
+        const val VIEW_FOLLOW_KEY = "route view-follow"
+        const val VIEW_OVERVIEW_KEY = "route view-overview"
+        const val FULL_SCREEN_KEY = "route full-screen"
+        const val DISPLAY_KEY = "route display"
         private const val CACHE_SIZE = 8
     }
 }
