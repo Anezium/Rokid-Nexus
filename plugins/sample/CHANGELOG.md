@@ -1,5 +1,18 @@
 # Changelog — Sample
 
+## Unreleased
+
+- A todo example for the launcher bundle, through the public SDK only: the
+  `hello:main` and `hello:todo` pages, a checklist whose rows carry `checked`
+  and whose actions are typed `SetChecked` with the explicit desired state,
+  answered done with a replacement, stale or rejected, never optimistically and
+  never twice for one invocation, with a base-template fallback.
+- A "Show in activities" switch publishes the list as an ongoing activity that
+  opens `hello:todo`; no service is held for it.
+- Declares `rokidbus.plugin.pages`, `rokidbus.plugin.quickActions=checklist`
+  and a `checklist` glyph; no capability changes. The Applications row now opens
+  `hello:main`, whose **Open the demos** row leads to the existing demos.
+
 ## 1.0.4
 
 - Demonstrate activity extras with SDK 0.21.0 and Nexus hubs 1.5.0: a
