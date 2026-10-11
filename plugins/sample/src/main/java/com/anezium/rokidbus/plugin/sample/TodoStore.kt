@@ -124,6 +124,10 @@ internal class TodoStore(private val storage: TodoStorage, private val wallClock
 
         fun cleanTitle(title: String): String? =
             title.replace(Regex("\\s+"), " ").trim().take(MAX_TITLE_CHARS).trim().takeIf(String::isNotEmpty)
+
+        /** The number in a task id this store handed out, or null for anything else. */
+        fun idNumber(taskId: String): Long? =
+            taskId.takeIf { it.startsWith(ID_PREFIX) }?.removePrefix(ID_PREFIX)?.toLongOrNull()?.takeIf { it > 0 }
     }
 }
 
@@ -148,9 +152,13 @@ internal object TodoCodec {
             val entry = array.getJSONObject(index)
             TodoTask(entry.getString("id"), entry.getString("title"), entry.getBoolean("checked"))
         }
+        val nextId = json.getLong("nextId")
         require(tasks.map(TodoTask::id).toSet().size == tasks.size)
         require(tasks.size <= TodoStore.MAX_TASKS)
-        TodoState(json.getLong("revision"), json.getLong("nextId"), tasks)
+        require(tasks.all { TodoStore.cleanTitle(it.title) == it.title })
+        // An id at or above nextId would be handed out again to a new task.
+        require(tasks.all { (TodoStore.idNumber(it.id) ?: Long.MAX_VALUE) < nextId })
+        TodoState(json.getLong("revision"), nextId, tasks)
     }.getOrNull()
 }
 

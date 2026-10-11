@@ -71,7 +71,8 @@ internal object TodoPages {
             val desired = !task.checked
             NexusPageActionSpec(
                 id = actionId(task.id, desired),
-                label = if (desired) "Check" else "Uncheck",
+                // The confirmation names the task and the state it will end up in.
+                label = clip("${if (desired) "Check" else "Uncheck"} ${task.title}", MAX_ACTION_LABEL),
                 kind = NexusPageActionKind.PLUGIN,
                 typed = if (extended) NexusActionType.SetChecked(desired) else null,
             )
@@ -97,6 +98,11 @@ internal object TodoPages {
         list.remaining == 0 -> "all done"
         else -> "${list.remaining} of ${list.tasks.size} left"
     }
+
+    private const val MAX_ACTION_LABEL = 24
+
+    private fun clip(value: String, limit: Int): String =
+        if (value.length <= limit) value else value.take(limit - 1).trimEnd() + "…"
 }
 
 /** A page frame of the one glasses session. */

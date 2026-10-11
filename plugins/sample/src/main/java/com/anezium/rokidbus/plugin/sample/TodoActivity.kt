@@ -14,7 +14,7 @@ import com.anezium.rokidbus.shared.ActivityCloseReason
  * what the store holds.
  */
 internal object TodoActivitySummary {
-    /** Registered by the manifest's `GLYPHS`; older glasses draw their fallback dot. */
+    /** Registered by the manifest's `GLYPHS`; glasses that do not know it draw their fallback dot. */
     const val GLYPH = "checklist"
 
     private const val MAX_PRIMARY = 12
@@ -50,13 +50,16 @@ internal object TodoActivitySummary {
 internal enum class TodoActivityStatus {
     OFF,
 
-    /** On, and waiting for an approved registration with activities over a live link. */
+    /** On, and waiting for this plugin's registration to come through. */
     WAITING,
 
     NOT_APPROVED,
 
     /** Handed to Nexus, which keeps it while this plugin sleeps. */
     SHOWN,
+
+    /** No activity surface: the glasses never announced one, or `surfaces` is not granted. */
+    UNAVAILABLE,
 
     /** The hubs did not negotiate the launcher bundle, so nothing could outlive this plugin. */
     NEEDS_NEWER_NEXUS,
@@ -75,10 +78,10 @@ internal enum class TodoActivityStatus {
 internal enum class TodoFlush {
     SENT,
 
-    /** Nothing to send: already current, off, or not possible on these hubs. */
+    /** Nothing to send: already current, off, or not possible on this registration. */
     IDLE,
 
-    /** Could not send yet; the next registration or link change tries again. */
+    /** Could not send yet; the next registration tries again. */
     WAITING,
 
     /** Sent too recently; a later flush is scheduled. */
@@ -87,6 +90,8 @@ internal enum class TodoFlush {
 
 /** The plugin's registration, as far as publishing the activity needs it. */
 internal interface TodoActivitySink {
+    /** The hub answered at least one registration of this client, whatever it said. */
+    val registered: Boolean
     val approved: Boolean
     val activitiesAvailable: Boolean
     val launcherInteractive: Boolean
@@ -110,13 +115,17 @@ internal interface TodoActivityPrefs {
 /**
  * Publishes the list as an ongoing activity while the user has "Show in activities" on, and
  * ends it once when they turn it off. It only reacts: a change of the list or the setting, a
- * new registration, a link change. A new registration starts the entry afresh, since that is the
- * only way Nexus revives an offline one; within a registration, only a different summary is
- * sent, at most a few times a second.
+ * new registration. A new registration starts the entry afresh, since that is the only way
+ * Nexus revives an offline one; within a registration, only a different summary is sent, at
+ * most a few times a second.
  *
  * It never needs the plugin to stay alive: once published, Nexus keeps the entry as an offline
  * snapshot when the plugin goes away. Without the launcher bundle nothing is published, since
  * an ordinary activity would vanish the moment the plugin went back to sleep.
+ *
+ * When Nexus refuses the entry (the user turned it off there) or evicts it for another plugin's,
+ * this registration leaves it at that; a change of the list, the user turning the setting on
+ * again, or the next registration offers it again.
  *
  * Main thread only.
  */
@@ -130,6 +139,7 @@ internal class TodoActivityPublisher(
 ) {
     private var startedGeneration: Int? = null
     private var refusedGeneration: Int? = null
+    private var yieldedGeneration: Int? = null
     private var lastSent: NexusActivity? = null
     private var lastSentAt: Long? = null
     private var deferred = false
@@ -147,16 +157,27 @@ internal class TodoActivityPublisher(
 
     fun flush(): TodoFlush = flushNow().also(flushed)
 
-    /** The entry this registration started is gone: ended, evicted, refused, or a new service. */
-    fun reset() {
-        startedGeneration = null
-        lastSent = null
+    /** A new client: its registrations hold nothing, and count their generations afresh. */
+    fun newClient() {
+        reset()
+        refusedGeneration = null
+        yieldedGeneration = null
+    }
+
+    /** The list changed: an entry Nexus evicted for another plugin's is worth offering again. */
+    fun listChanged() {
+        yieldedGeneration = null
+    }
+
+    /** The user turned "Show in activities" on: an earlier refusal or eviction no longer stands. */
+    fun enabledAgain() {
+        refusedGeneration = null
+        yieldedGeneration = null
     }
 
     /**
-     * The hub refused the start: the user turned this plugin's activities off in Nexus. This
-     * registration does not ask again on its own; the next one, or the user turning the setting
-     * on here, does.
+     * The hub refused a start with `ACTIVITY_DISABLED`: the user turned this plugin's activities
+     * off in Nexus, and the hub ended whatever entry stood.
      */
     fun refused() {
         reset()
@@ -165,18 +186,19 @@ internal class TodoActivityPublisher(
         status = TodoActivityStatus.DISABLED_IN_NEXUS
     }
 
-    /** The user turned "Show in activities" on again: a refusal no longer stands. */
-    fun retryAfterRefusal() {
-        refusedGeneration = null
-    }
-
-    /** The hub closed the entry; a replacement waits for the next change or registration. */
+    /** The hub closed the entry; whatever this registration sent is gone. */
     fun closed(reason: String) {
         reset()
         if (reason == ActivityCloseReason.REPLACED.wireValue) {
+            yieldedGeneration = sink()?.registrationGeneration
             prefs.publishedRevision = null
             if (prefs.showInActivities) status = TodoActivityStatus.REPLACED
         }
+    }
+
+    private fun reset() {
+        startedGeneration = null
+        lastSent = null
     }
 
     private fun flushNow(): TodoFlush {
@@ -191,15 +213,24 @@ internal class TodoActivityPublisher(
         }
         val snapshot = list()
         val current = sink()
-        if (current == null || !current.approved || !current.activitiesAvailable) {
+        if (current == null || !current.registered) {
             status = when {
                 !enabled -> TodoActivityStatus.OFF
-                current != null && !current.approved -> TodoActivityStatus.NOT_APPROVED
                 // Nexus keeps what was handed over while this plugin sleeps.
                 prefs.publishedRevision == snapshot.revision -> TodoActivityStatus.SHOWN
                 else -> TodoActivityStatus.WAITING
             }
             return TodoFlush.WAITING
+        }
+        // Neither changes while this registration stands; an end still owed waits for one that
+        // can carry it.
+        if (!current.approved) {
+            status = if (enabled) TodoActivityStatus.NOT_APPROVED else TodoActivityStatus.OFF
+            return TodoFlush.IDLE
+        }
+        if (!current.activitiesAvailable) {
+            status = if (enabled) TodoActivityStatus.UNAVAILABLE else TodoActivityStatus.OFF
+            return TodoFlush.IDLE
         }
         if (!enabled) {
             if (throttled()) return TodoFlush.DEFERRED
@@ -216,9 +247,14 @@ internal class TodoActivityPublisher(
             status = TodoActivityStatus.NEEDS_NEWER_NEXUS
             return TodoFlush.IDLE
         }
-        val fresh = startedGeneration != current.registrationGeneration
-        if (fresh && refusedGeneration == current.registrationGeneration) {
+        val generation = current.registrationGeneration
+        val fresh = startedGeneration != generation
+        if (fresh && refusedGeneration == generation) {
             status = TodoActivityStatus.DISABLED_IN_NEXUS
+            return TodoFlush.IDLE
+        }
+        if (fresh && yieldedGeneration == generation) {
+            status = TodoActivityStatus.REPLACED
             return TodoFlush.IDLE
         }
         val activity = TodoActivitySummary.build(snapshot)
@@ -229,7 +265,6 @@ internal class TodoActivityPublisher(
             return TodoFlush.IDLE
         }
         if (throttled()) return TodoFlush.DEFERRED
-        val generation = current.registrationGeneration
         val result = if (fresh) current.start(activity) else current.update(activity)
         lastSentAt = now()
         if (result != NexusSdkResult.SENT) {

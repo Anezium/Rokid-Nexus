@@ -50,22 +50,22 @@ internal class TodoSettings(context: Context) : TodoActivityPrefs {
  *
  * The activity always goes out through [HelloPluginService]'s own client, the plugin's one
  * registration: a second client would be a second registration of `hello`, and the hub runs a
- * plugin's commands and pages only while it has exactly one. When the list or the setting changes
- * while that service is asleep, the settings screen binds it just long enough to publish, then
- * lets it go; Nexus keeps the published entry as an offline snapshot on its own.
+ * plugin's pages and commands only while it has exactly one. When the list or the setting
+ * changes while that service is asleep, this binds it just long enough to publish, then lets it
+ * go; Nexus keeps the published entry as an offline snapshot on its own.
+ *
+ * Main thread; calls from elsewhere are posted to it.
  */
 internal object TodoControl {
     private val main = Handler(Looper.getMainLooper())
     private var runtime: Runtime? = null
     private val listeners = linkedSetOf<() -> Unit>()
-
-    @Volatile
     private var serviceClient: NexusPluginClient? = null
+
+    /** The service's pages, told when the list changed so a visible one can follow it. */
+    private var pagesChanged: (() -> Unit)? = null
     private var busBinding: ServiceConnection? = null
     private val releaseIdle = Runnable { runtime?.let { releaseBus(it.context) } }
-
-    /** Told when the list changed, so a visible page can follow it; set by the plugin service. */
-    var pageListener: (() -> Unit)? = null
 
     private class Runtime(val context: Context) {
         val store = TodoStore(PrefsTodoStorage(context), System::currentTimeMillis)
@@ -75,7 +75,7 @@ internal object TodoControl {
             list = store::list,
             sink = { TodoControl.serviceClient?.let(::ClientSink) },
             now = SystemClock::elapsedRealtime,
-            schedule = { delayMs, task -> TodoControl.main.postDelayed(Runnable { task() }, delayMs) },
+            schedule = { delayMs, task -> TodoControl.main.postDelayed({ task() }, delayMs) },
             flushed = { result -> TodoControl.onFlushed(result) },
         )
     }
@@ -98,36 +98,39 @@ internal object TodoControl {
     /** The list changed, here on the phone or through a page. */
     fun changed(context: Context) = onMain {
         val current = runtime(context)
-        pageListener?.invoke()
+        pagesChanged?.invoke()
+        current.publisher.listChanged()
         publish(current)
     }
 
     fun setShowInActivities(context: Context, enabled: Boolean) = onMain {
         val current = runtime(context)
         current.settings.setShowInActivities(enabled)
-        if (enabled) current.publisher.retryAfterRefusal()
+        if (enabled) current.publisher.enabledAgain()
         publish(current)
     }
 
     /** Recomputes the status for a screen that just opened; sends only what is still owed. */
     fun refresh(context: Context) = onMain { runtime(context).publisher.flush() }
 
-    fun serviceCreated(context: Context, client: NexusPluginClient) = onMain {
+    fun serviceCreated(context: Context, client: NexusPluginClient, pages: () -> Unit) = onMain {
         val current = runtime(context)
         serviceClient = client
+        pagesChanged = pages
         // A new client holds no entry yet: whatever it publishes is a start.
-        current.publisher.reset()
+        current.publisher.newClient()
         current.publisher.flush()
     }
 
     fun serviceDestroyed(client: NexusPluginClient) = onMain {
         if (serviceClient !== client) return@onMain
         serviceClient = null
-        runtime?.publisher?.reset()
+        pagesChanged = null
+        runtime?.publisher?.newClient()
         notifyListeners()
     }
 
-    /** A registration or link change: a fresh approved registration publishes the entry again. */
+    /** Every registration report: a fresh approved one publishes the entry again. */
     fun registrationChanged(context: Context) = onMain { runtime(context).publisher.flush() }
 
     fun activityClosed(context: Context, reason: String) = onMain {
@@ -145,7 +148,7 @@ internal object TodoControl {
     fun pauseForDemo(context: Context, paused: Boolean) = onMain {
         val current = runtime(context)
         current.publisher.pausedForDemo = paused
-        if (!paused) current.publisher.flush()
+        current.publisher.flush()
     }
 
     private fun publish(current: Runtime) {
@@ -178,7 +181,10 @@ internal object TodoControl {
             val bound = runCatching {
                 context.bindService(Intent(context, HelloPluginService::class.java), connection, Context.BIND_AUTO_CREATE)
             }.getOrDefault(false)
-            if (!bound) return
+            if (!bound) {
+                runCatching { context.unbindService(connection) }
+                return
+            }
             busBinding = connection
         }
         main.removeCallbacks(releaseIdle)
@@ -200,10 +206,11 @@ internal object TodoControl {
         runtime ?: Runtime(context.applicationContext).also { runtime = it }
 
     private fun onMain(block: () -> Unit) {
-        if (Looper.myLooper() == Looper.getMainLooper()) block() else main.post(block)
+        if (Looper.myLooper() == Looper.getMainLooper()) block() else main.post { block() }
     }
 
     private class ClientSink(private val client: NexusPluginClient) : TodoActivitySink {
+        override val registered: Boolean get() = client.registrationGeneration > 0
         override val approved: Boolean get() = client.isApproved
         override val activitiesAvailable: Boolean
             get() = client.hasCapability(PluginCapability.SURFACES) && client.supportsActivitySurface

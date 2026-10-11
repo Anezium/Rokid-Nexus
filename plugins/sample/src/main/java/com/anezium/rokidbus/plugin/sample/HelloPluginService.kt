@@ -29,6 +29,12 @@ import com.anezium.rokidbus.client.plugin.NexusNotice
 import com.anezium.rokidbus.client.plugin.NexusNoticeAction
 import com.anezium.rokidbus.client.plugin.NexusNoticeImage
 import com.anezium.rokidbus.client.plugin.NexusNoticeUpdate
+import com.anezium.rokidbus.client.plugin.NexusPage
+import com.anezium.rokidbus.client.plugin.NexusPageAction
+import com.anezium.rokidbus.client.plugin.NexusPageClosed
+import com.anezium.rokidbus.client.plugin.NexusPageRequest
+import com.anezium.rokidbus.client.plugin.NexusPageResult
+import com.anezium.rokidbus.client.plugin.NexusPageVisibility
 import com.anezium.rokidbus.client.plugin.NexusPin
 import com.anezium.rokidbus.client.plugin.NexusPinEmphasis
 import com.anezium.rokidbus.client.plugin.NexusPinLine
@@ -81,6 +87,8 @@ class HelloPluginService : NexusPluginService() {
             // only a few seconds.
             if (step == "end") releaseDemoForeground() else holdDemoForeground()
             demoActivityStep(step)
+            // The route borrows this plugin's one activity; the todo's comes back when it ends.
+            TodoControl.pauseForDemo(this, step != "end")
         }
         return super.onStartCommand(intent, flags, startId)
     }
@@ -236,6 +244,33 @@ class HelloPluginService : NexusPluginService() {
             }
         }
     }
+
+    // The todo example (TodoServiceHooks): its pages, and this service's side of its activity.
+    private val todo = TodoServiceHooks(this) { nexusClient }
+
+    override fun onCreate() {
+        super.onCreate()
+        todo.created()
+    }
+
+    override fun onDestroy() {
+        todo.destroyed()
+        super.onDestroy()
+    }
+
+    override fun onNexusPageRequest(request: NexusPageRequest): NexusPage = todo.pageRequest(request)
+
+    override fun onNexusPageAction(action: NexusPageAction): NexusPageResult = todo.pageAction(action)
+
+    override fun onNexusPageVisibility(visibility: NexusPageVisibility) = todo.pageVisibility(visibility)
+
+    override fun onNexusPageClosed(closed: NexusPageClosed) = todo.pageClosed(closed)
+
+    override fun onNexusRegistrationState(result: Int) = todo.registrationState(result)
+
+    override fun onNexusActivityClosed(reason: String) = todo.activityClosed(reason)
+
+    override fun onNexusMessage(path: String, id: String, payload: JSONObject) = todo.message(path, payload)
 
     override fun onNexusOpen() {
         openDemoSurface()
