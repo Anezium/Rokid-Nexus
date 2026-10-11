@@ -19,16 +19,17 @@ internal interface AmbientPreferencesStorage {
     fun save(snapshot: AmbientPreferencesSnapshot)
 
     companion object {
-        /** Nothing survives: what a test or a hub without a context gets. */
-        val MEMORY = object : AmbientPreferencesStorage {
-            private var held = AmbientPreferencesSnapshot()
+        /** Nothing survives the process: what a test or a hub without a context gets. */
+        fun memory(initial: AmbientPreferencesSnapshot = AmbientPreferencesSnapshot()): AmbientPreferencesStorage =
+            object : AmbientPreferencesStorage {
+                private var held = initial
 
-            override fun load(): AmbientPreferencesSnapshot = held
+                override fun load(): AmbientPreferencesSnapshot = held
 
-            override fun save(snapshot: AmbientPreferencesSnapshot) {
-                held = snapshot
+                override fun save(snapshot: AmbientPreferencesSnapshot) {
+                    held = snapshot
+                }
             }
-        }
     }
 }
 
@@ -177,7 +178,7 @@ internal class SharedPreferencesAmbientStorage(context: Context) : AmbientPrefer
 internal object AmbientPreferences {
     private val main = Handler(Looper.getMainLooper())
     private val listeners = CopyOnWriteArrayList<() -> Unit>()
-    private var mirror = AmbientPreferencesMirror(AmbientPreferencesStorage.MEMORY, ::sendEdit)
+    private var mirror = AmbientPreferencesMirror(AmbientPreferencesStorage.memory(), ::sendEdit)
     private var started = false
 
     fun start(context: Context) {

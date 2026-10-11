@@ -18,6 +18,7 @@ import com.anezium.rokidbus.client.PluginRegistrationResult
 import com.anezium.rokidbus.client.ui.NexusGlyphs
 import com.anezium.rokidbus.client.ui.NexusPluginIcons
 import com.anezium.rokidbus.shared.ActivitySurfaceContract
+import com.anezium.rokidbus.shared.AmbientPreferencesContract
 import com.anezium.rokidbus.shared.BusCapabilityBits
 import com.anezium.rokidbus.shared.BusConstants
 import com.anezium.rokidbus.shared.BusEnvelope
@@ -195,6 +196,7 @@ object GlassesHub {
         val applicationContext = context.applicationContext
         appContext = applicationContext
         GlassesKeyboardKeeper.start(applicationContext)
+        AmbientPreferences.start(applicationContext)
         RemoteInputHubBridge.initialize { path, payload ->
             sendRemote(BusEnvelope(path = path, payload = payload)) == null
         }
@@ -241,6 +243,8 @@ object GlassesHub {
             RemotePointerHubBridge.onLinkLost()
             SurfaceController.onPhoneLinkLost()
             NoticeController.onPhoneLinkLost()
+            RouteLive.clear()
+            AmbientPreferences.onLinkLost()
         }
         notifyLinkState()
         if (connected) {
@@ -260,6 +264,8 @@ object GlassesHub {
             RemotePointerHubBridge.onLinkLost()
             SurfaceController.onPhoneLinkLost()
             NoticeController.onPhoneLinkLost()
+            RouteLive.clear()
+            AmbientPreferences.onLinkLost()
         }
         notifyLinkState()
         if (connected) {
@@ -320,6 +326,20 @@ object GlassesHub {
                 envelope.binary != null -> log("launcher bundle message dropped path=${envelope.path}")
                 envelope.path == BusPaths.ACTIVITY_RESULT -> NexusSession.onActivityResult(envelope.payload)
                 else -> NexusSession.onQuickActionPolicy(envelope.payload)
+            }
+            return
+        }
+        // Navigation geometry and heading (owner stamped by the phone) and the ambient preferences
+        // (trusted hub-to-hub): each has one consumer here, and each gates on the bundle itself.
+        if (envelope.path == BusPaths.ACTIVITY_GEOMETRY || envelope.path == BusPaths.ACTIVITY_HEADING ||
+            envelope.path == AmbientPreferencesContract.SIZES_PATH || envelope.path == AmbientPreferencesContract.POLICY_PATH
+        ) {
+            when {
+                envelope.binary != null -> log("launcher bundle message dropped path=${envelope.path}")
+                envelope.path == BusPaths.ACTIVITY_GEOMETRY -> RouteLive.onGeometry(envelope.payload)
+                envelope.path == BusPaths.ACTIVITY_HEADING -> RouteLive.onHeading(envelope.payload)
+                envelope.path == AmbientPreferencesContract.SIZES_PATH -> AmbientPreferences.onSizes(envelope.payload)
+                else -> AmbientPreferences.onPolicy(envelope.payload)
             }
             return
         }
