@@ -1023,9 +1023,12 @@ class BusHubService : Service() {
             discoverCandidates = pluginDiscovery::discover,
             reconcileGrants = pluginGrantStore::reconcile,
         )
+        // Before the startup reconcile below reads it.
+        skillGrantStore = SkillGrantStore(applicationContext)
         executor.execute {
             val reconciliation = pluginGrantReconciler.reconcile()
             retainActivityChoices(reconciliation.validPrincipals)
+            retainSkillApprovals(reconciliation.validPrincipals)
             restoreOfflineActivities(reconciliation.validPrincipals)
         }
         pluginGuardianCoordinator = PluginGuardianCoordinator(
@@ -1103,7 +1106,6 @@ class BusHubService : Service() {
             resolveApprovedConsumer = cameraConsumerReadiness::resolveApproved,
             logger = ::log,
         )
-        skillGrantStore = SkillGrantStore(applicationContext)
         skillLeaseRuntime = AndroidSkillLeaseRuntime(
             context = applicationContext,
             bindingDied = { principal -> skillsExecutor.execute { skillsCoordinator.onLeaseBindingDied(principal) } },
@@ -5630,6 +5632,14 @@ class BusHubService : Service() {
         val approved = principals.filter { pluginGrantStore.stateFor(it) is PluginGrantState.Approved }
         activityPreferences.retainOnly(approved.mapTo(linkedSetOf()) { it.grantKey() })
         if (quickActionPolicyStore.retainOnly(approved)) pushQuickActionPolicy()
+    }
+
+    /**
+     * Like the activity choices, a skill approval goes with the ordinary grant it sits on,
+     * including a grant lost while the hub was not running.
+     */
+    private fun retainSkillApprovals(principals: List<PhonePluginPrincipal>) {
+        skillGrantStore.reconcile(principals.filter { pluginGrantStore.stateFor(it) is PluginGrantState.Approved })
     }
 
     /** One plugin's grant changed: its choices go unless it is still approved. */
