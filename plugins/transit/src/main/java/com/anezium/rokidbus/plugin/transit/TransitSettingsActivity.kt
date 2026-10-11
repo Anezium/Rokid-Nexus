@@ -29,7 +29,12 @@ class TransitSettingsActivity : Activity() {
     private lateinit var searchStatus: TextView
     private lateinit var resultsList: LinearLayout
     private lateinit var favoritesList: LinearLayout
+    private lateinit var homeStatus: TextView
+    private lateinit var homeInput: EditText
+    private lateinit var homeResults: LinearLayout
+    private lateinit var homeClear: TextView
     private val favoritesStore by lazy { TransitFavoritesStore(applicationContext) }
+    private val homeStore by lazy { TransitHomeStore(applicationContext) }
     private val repository = TransitRepository()
     private val searchExecutor = Executors.newSingleThreadExecutor()
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -69,6 +74,26 @@ class TransitSettingsActivity : Activity() {
         searchStatus = NexusUi.cardBody(this, "")
         favoritesList = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         resultsList = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        homeStatus = NexusUi.cardBody(this, "")
+        homeResults = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        homeClear = NexusUi.textButton(this, "Clear home", danger = true).apply {
+            setOnClickListener {
+                homeStore.clear()
+                homeResults.removeAllViews()
+                renderHome()
+            }
+        }
+        homeInput = NexusUi.field(this, "Search for your home address").apply {
+            imeOptions = EditorInfo.IME_ACTION_SEARCH
+            setOnEditorActionListener { _, actionId, event ->
+                if (actionId == EditorInfo.IME_ACTION_SEARCH || event?.keyCode == KeyEvent.KEYCODE_ENTER) {
+                    searchHome()
+                    true
+                } else {
+                    false
+                }
+            }
+        }
         searchInput = NexusUi.field(this, "Search for a stop").apply {
             imeOptions = EditorInfo.IME_ACTION_SEARCH
             setOnEditorActionListener { _, actionId, event ->
@@ -110,6 +135,28 @@ class TransitSettingsActivity : Activity() {
             addView(NexusUi.sectionRow(this@TransitSettingsActivity, "Saved stops"), NexusUi.block())
             addView(BusTheme.gap(this@TransitSettingsActivity, 10))
             addView(favoritesList, NexusUi.block())
+            addView(BusTheme.gap(this@TransitSettingsActivity, 24))
+            addView(NexusUi.sectionRow(this@TransitSettingsActivity, "Home"), NexusUi.block())
+            addView(BusTheme.gap(this@TransitSettingsActivity, 10))
+            addView(
+                NexusUi.card(this@TransitSettingsActivity).apply {
+                    addView(homeStatus)
+                    addView(BusTheme.gap(this@TransitSettingsActivity, 8))
+                    addView(homeClear)
+                },
+                NexusUi.block(),
+            )
+            addView(BusTheme.gap(this@TransitSettingsActivity, 10))
+            addView(homeInput, NexusUi.block())
+            addView(BusTheme.gap(this@TransitSettingsActivity, 10))
+            addView(
+                NexusUi.pillButton(this@TransitSettingsActivity, "Find").apply {
+                    setOnClickListener { searchHome() }
+                },
+                NexusUi.block(),
+            )
+            addView(BusTheme.gap(this@TransitSettingsActivity, 10))
+            addView(homeResults, NexusUi.block())
             addView(BusTheme.gap(this@TransitSettingsActivity, 24))
             addView(NexusUi.sectionRow(this@TransitSettingsActivity, "Add a stop"), NexusUi.block())
             addView(BusTheme.gap(this@TransitSettingsActivity, 10))
@@ -158,10 +205,59 @@ class TransitSettingsActivity : Activity() {
                 "Allow location all the time so the glasses can request that one position while the phone screen is off. " +
                     "Transit stops location immediately after the fix."
             TransitLocationAccess.READY ->
-                "Location ready. Near Me takes one precise fix per opening, then refreshes departures without tracking you."
+                "Location ready. Near Me takes one precise fix per opening, then refreshes departures without tracking you. " +
+                    "During a journey you ask for, Transit follows your position until you arrive or stop the guidance."
         }
         permissionAction.visibility = if (access == TransitLocationAccess.READY) View.GONE else View.VISIBLE
         renderFavorites()
+        renderHome()
+    }
+
+    private fun renderHome() {
+        val home = homeStore.home()
+        homeStatus.text = if (home == null) {
+            "No home saved. \"Take me home\" needs one: search your address below and pick it. " +
+                "Its location stays in Transit; an assistant only ever sees its name."
+        } else {
+            "Home: ${home.label}. An assistant only ever sees this name, never the location."
+        }
+        homeClear.visibility = if (home == null) View.GONE else View.VISIBLE
+    }
+
+    private fun searchHome() {
+        val query = homeInput.text.toString().trim()
+        homeResults.removeAllViews()
+        if (query.isBlank()) {
+            homeStatus.text = "Enter an address or place."
+            return
+        }
+        val manager = getSystemService(INPUT_METHOD_SERVICE) as? InputMethodManager
+        manager?.hideSoftInputFromWindow(homeInput.windowToken, 0)
+        homeStatus.text = "Searching..."
+        searchExecutor.execute {
+            val result = runCatching { repository.geocodePlaces(query) }
+            mainHandler.post {
+                if (isDestroyed) return@post
+                result.onSuccess { places ->
+                    renderHome()
+                    if (places.isEmpty()) homeStatus.text = "No place found. Try the street and town."
+                    places.forEachIndexed { index, place ->
+                        if (index > 0) homeResults.addView(BusTheme.gap(this, 8))
+                        homeResults.addView(
+                            stopRow(place.name, place.area.ifBlank { "Address" }, "Set as home") {
+                                homeStore.save(TransitHome(place.name, place.lat, place.lon))
+                                homeResults.removeAllViews()
+                                homeInput.setText("")
+                                renderHome()
+                            },
+                            NexusUi.block(),
+                        )
+                    }
+                }.onFailure {
+                    homeStatus.text = "Search failed. Check the phone network connection."
+                }
+            }
+        }
     }
 
     private fun maybeRequestPreciseLocationOnFirstOpen() {

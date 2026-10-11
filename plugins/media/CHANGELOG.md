@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Assistant operations.** Approved now-playing and pause operations for Assistant
+  through Nexus Skills. They need a phone hub that announces skills v1, notification
+  access, and operation approvals; a call does not open the plugin's HUD. Media
+  references stay tied to the observed session and stale targets are rejected. A
+  "Which player?" choice reaches only that player for that call and leaves the
+  surface, the activity and the page as they were.
 - **Show in activities.** A new setting, available once notification access is on, keeps
   what plays among the glasses' activities even with Media Deck closed: title, artist,
   Previous, Play or Pause, and Next. A tap on the card focuses Play/Pause; nothing plays on

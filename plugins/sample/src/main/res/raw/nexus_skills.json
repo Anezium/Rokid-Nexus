@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "operations": [
+    {
+      "id": "count_words",
+      "version": 1,
+      "label": "Count words",
+      "description": "Counts the words and characters in a short text the wearer gives. A template operation: copy this catalog and the handler in HelloSkills to publish your own.",
+      "examples": ["How many words are in this sentence?"],
+      "effect": "read",
+      "cancellable": false,
+      "deduplicates": true,
+      "requires": [],
+      "prerequisites": [],
+      "data": ["text"],
+      "input": {
+        "type": "object",
+        "properties": {
+          "text": {"type": "string", "minLength": 1, "maxLength": 500, "description": "The text to count."}
+        },
+        "required": ["text"]
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "words": {"type": "integer", "minimum": 0, "maximum": 500},
+          "characters": {"type": "integer", "minimum": 0, "maximum": 500}
+        },
+        "required": ["words", "characters"]
+      }
+    }
+  ]
+}

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- A copyable skill operation, `count_words`, with its catalog and handler. It
+  needs a phone hub that announces skills v1 and explicit approval of the
+  operation; the call never opens the plugin.
 - A todo example for the launcher bundle, through the public SDK only: the
   `hello:main` and `hello:todo` pages, a checklist whose rows carry `checked`
   and whose actions are typed `SetChecked` with the explicit desired state,

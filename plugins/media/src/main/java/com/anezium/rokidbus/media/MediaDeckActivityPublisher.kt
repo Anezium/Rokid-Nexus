@@ -189,8 +189,20 @@ internal class MediaDeckActivityPublisher(
         syncWatch()
     }
 
-    /** The phone refused the activity because the user turned it off there. */
+    /**
+     * The phone refused activity traffic: because the user turned the activity off there, or
+     * because only a skill call keeps this plugin bound and that call may not draw.
+     */
     fun onError(code: String) {
+        if (code == SKILL_LEASE_DENIED) {
+            // Whatever was sent did not land. Forget it so the next change starts the activity
+            // whole, and count the entry as possibly on the hub, since a refused end left it there.
+            // No retry and no suspension: a send now would be refused the same way, and the
+            // user's switch still stands once the call is over.
+            forgetPublication()
+            markOnHub(true)
+            return
+        }
         if (code != ActivitySurfaceContract.ERROR_ACTIVITY_DISABLED) return
         forgetPublication()
         // The phone ended the entry when the user turned it off there.
@@ -351,6 +363,9 @@ internal class MediaDeckActivityPublisher(
         const val MIN_UPDATE_INTERVAL_MS = 300L
         const val RELEASE_AFTER_END_MS = 3_000L
         const val REASON_NOT_APPROVED = "not_approved"
+
+        /** The phone hub's refusal while only a skill call keeps the plugin bound (BUSSPEC skills v1). */
+        const val SKILL_LEASE_DENIED = "SKILL_LEASE_DENIED"
         private const val NO_GENERATION = -1
         private const val MAX_SHOWN_REVISIONS = 8
         private const val MAX_HANDLED_INVOCATIONS = 64

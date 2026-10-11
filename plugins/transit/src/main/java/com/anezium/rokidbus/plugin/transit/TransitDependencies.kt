@@ -31,4 +31,10 @@ internal interface TransitRuntimeHost {
     fun post(action: () -> Unit)
     fun log(message: String)
     fun setNearMeForeground(active: Boolean): Boolean
+
+    /** The journey being guided, if any; opening Transit during one shows it first. */
+    fun journey(): JourneyState? = null
+
+    /** Ends guidance, from the journey view's explicit "Stop guidance". */
+    fun stopJourney() = Unit
 }

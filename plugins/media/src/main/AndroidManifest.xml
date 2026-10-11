@@ -65,6 +65,11 @@
             <meta-data
                 android:name="com.anezium.rokidbus.plugin.SETTINGS_ACTIVITY"
                 android:value="com.anezium.rokidbus.plugin.media.MediaDeckSettingsActivity" />
+            <!-- Skills: now playing and pause for an approved assistant. Its own key, not
+                 CAPABILITIES, so hubs that predate skills still load Media Deck. -->
+            <meta-data
+                android:name="com.anezium.rokidbus.plugin.SKILLS"
+                android:resource="@raw/nexus_skills" />
             <meta-data
                 android:name="com.anezium.rokidbus.plugin.LAUNCHABLE"
                 android:value="true" />
