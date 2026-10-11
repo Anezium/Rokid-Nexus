@@ -1,0 +1,322 @@
+{
+  "version": 1,
+  "operations": [
+    {
+      "id": "list_favorites",
+      "version": 1,
+      "label": "List favorite stops",
+      "description": "Lists the stops the wearer saved as favorites in Transit, in their order, twenty per page. The order does not say which stop the wearer uses most: with several candidates, ask the wearer. Pass a returned next_cursor to read the next page; a changed list invalidates it.",
+      "examples": ["When is the next tram at my favorite stop?"],
+      "effect": "read",
+      "cancellable": true,
+      "deduplicates": true,
+      "requires": [],
+      "prerequisites": [],
+      "data": ["place_names"],
+      "input": {
+        "type": "object",
+        "properties": {
+          "filter": {"type": "string", "minLength": 1, "maxLength": 60, "description": "Optional part of a stop name to keep."},
+          "cursor": {"type": "string", "minLength": 1, "maxLength": 64, "description": "next_cursor from the previous page."}
+        }
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "stops": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {
+              "type": "object",
+              "properties": {
+                "stop": {"type": "string", "nexusRef": "stop"},
+                "name": {"type": "string", "maxLength": 80}
+              },
+              "required": ["stop", "name"]
+            }
+          },
+          "total": {"type": "integer", "minimum": 0, "maximum": 1000},
+          "next_cursor": {"type": "string", "maxLength": 64}
+        },
+        "required": ["stops", "total"]
+      }
+    },
+    {
+      "id": "search_stops",
+      "version": 1,
+      "label": "Search stops by name",
+      "description": "Finds public transport stops by name. Returns at most eight; when truncated is true, ask the wearer for a more precise name instead of guessing.",
+      "examples": ["Departures from Central Station"],
+      "effect": "read",
+      "cancellable": true,
+      "deduplicates": true,
+      "requires": [],
+      "prerequisites": ["network"],
+      "data": ["place_names"],
+      "input": {
+        "type": "object",
+        "properties": {
+          "query": {"type": "string", "minLength": 1, "maxLength": 120, "description": "Stop name as the wearer said it."}
+        },
+        "required": ["query"]
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "stops": {
+            "type": "array",
+            "maxItems": 8,
+            "items": {
+              "type": "object",
+              "properties": {
+                "stop": {"type": "string", "nexusRef": "stop"},
+                "name": {"type": "string", "maxLength": 80},
+                "city": {"type": "string", "maxLength": 80}
+              },
+              "required": ["stop", "name"]
+            }
+          },
+          "truncated": {"type": "boolean"}
+        },
+        "required": ["stops", "truncated"]
+      }
+    },
+    {
+      "id": "get_departures",
+      "version": 1,
+      "label": "Departures at a stop",
+      "description": "Upcoming departures at a stop returned by an earlier result, at most twelve, with the time the board was observed. Filter with a line or direction as the wearer says it or as an earlier board named it. For the one after a departure already mentioned, pass it as after: the answer follows that departure in its own line and direction. Times are absolute and in the phone's local time; realtime says whether each is a live prediction, the timetable, or unknown. Walking time to the stop is not known.",
+      "examples": ["And the one after that?"],
+      "effect": "read",
+      "cancellable": true,
+      "deduplicates": true,
+      "requires": [],
+      "prerequisites": ["network"],
+      "data": ["place_names", "schedules"],
+      "input": {
+        "type": "object",
+        "properties": {
+          "stop": {"type": "string", "nexusRef": "stop"},
+          "line": {"type": "string", "minLength": 1, "maxLength": 80, "description": "A line or candidate as an earlier board named it, or as the wearer says it, such as 14, ligne 14, M14, RER C, coach 1, or ferry 1. Explicit mode words constrain the transport; a literal M-prefixed board label is preserved."},
+          "direction": {"type": "string", "minLength": 1, "maxLength": 80, "description": "A direction as an earlier board named it, or whole words of it as the wearer says them, such as Orly or vers Orly for Aéroport d'Orly."},
+          "after": {"type": "string", "nexusRef": "departure"}
+        },
+        "required": ["stop"]
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "stop_name": {"type": "string", "maxLength": 80},
+          "observed_at": {"type": "string", "maxLength": 40},
+          "observed_local": {"type": "string", "maxLength": 8},
+          "freshness": {"type": "string", "enum": ["live", "cached"]},
+          "match": {"type": "string", "enum": ["all", "filtered", "no_matching_line", "ambiguous_direction", "after_anchor", "anchor_departed", "board_changed", "no_matching_direction", "ambiguous_line"]},
+          "departures": {
+            "type": "array",
+            "maxItems": 12,
+            "items": {
+              "type": "object",
+              "properties": {
+                "departure": {"type": "string", "nexusRef": "departure"},
+                "line": {"type": "string", "maxLength": 16},
+                "direction": {"type": "string", "maxLength": 80},
+                "mode": {"type": "string", "maxLength": 24},
+                "time": {"type": "string", "maxLength": 40},
+                "time_local": {"type": "string", "maxLength": 8},
+                "minutes": {"type": "integer", "minimum": -5, "maximum": 2880},
+                "scheduled_time": {"type": "string", "maxLength": 40},
+                "scheduled_local": {"type": "string", "maxLength": 8},
+                "realtime": {"type": "string", "enum": ["live", "scheduled", "unknown"]},
+                "cancelled": {"type": "boolean"}
+              },
+              "required": ["departure", "direction", "mode", "time", "time_local", "minutes", "realtime", "cancelled"]
+            }
+          },
+          "lines": {"type": "array", "maxItems": 12, "description": "Lines the board has; after no_matching_line, offer these.", "items": {"type": "string", "maxLength": 16}},
+          "directions": {"type": "array", "maxItems": 12, "description": "Directions the board has, only the selected line's when a line was named; after no_matching_direction, offer these.", "items": {"type": "string", "maxLength": 80}},
+          "candidates": {"type": "array", "maxItems": 12, "description": "After ambiguous_line or ambiguous_direction: the lines or directions the selector could mean, to ask which one.", "items": {"type": "string", "maxLength": 80}},
+          "focus": {
+            "type": "object",
+            "description": "The stop, line, direction, and departure this answer is about, for a follow-up.",
+            "properties": {
+              "kind": {"type": "string", "enum": ["transit_departure_focus"]},
+              "stop": {"type": "string", "nexusRef": "stop"},
+              "stop_name": {"type": "string", "maxLength": 80},
+              "line": {"type": "string", "maxLength": 16},
+              "direction": {"type": "string", "maxLength": 80},
+              "departure": {"type": "string", "nexusRef": "departure"},
+              "groups": {
+                "type": "array", "maxItems": 12,
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "line": {"type": "string", "maxLength": 16},
+                    "direction": {"type": "string", "maxLength": 80},
+                    "mode": {"type": "string", "maxLength": 24}
+                  },
+                  "required": ["direction"]
+                }
+              },
+              "observed_at": {"type": "string", "maxLength": 40}
+            },
+            "required": ["kind", "stop", "stop_name", "observed_at"]
+          }
+        },
+        "required": ["stop_name", "observed_at", "observed_local", "freshness", "match", "departures"]
+      }
+    },
+    {
+      "id": "start_journey",
+      "version": 1,
+      "label": "Guide a journey by public transport",
+      "description": "Plans a public transport journey from the wearer's current position to their saved home, or to a stop returned by an earlier result, and starts step-by-step guidance on the glasses in Transit's own live activity. The result summarizes the guided itinerary and counts the alternatives; the position and the home's location are never returned. Home unset returns needs_input.",
+      "examples": ["Take me home", "Give me the way home"],
+      "effect": "action",
+      "cancellable": false,
+      "deduplicates": true,
+      "requires": ["surfaces"],
+      "prerequisites": ["location", "network"],
+      "data": ["itinerary", "place_names", "schedules"],
+      "input": {
+        "type": "object",
+        "properties": {
+          "destination": {"type": "string", "enum": ["home", "stop"]},
+          "stop": {"type": "string", "nexusRef": "stop"},
+          "depart_at": {"type": "string", "minLength": 20, "maxLength": 40, "description": "Optional absolute departure instant, ISO-8601 with offset or Z."}
+        },
+        "required": ["destination"]
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "journey": {"type": "string", "nexusRef": "journey"},
+          "destination": {"type": "string", "maxLength": 80},
+          "first_departure": {"type": "string", "maxLength": 40},
+          "first_departure_local": {"type": "string", "maxLength": 8},
+          "arrival": {"type": "string", "maxLength": 40},
+          "arrival_local": {"type": "string", "maxLength": 8},
+          "duration_minutes": {"type": "integer", "minimum": 0, "maximum": 2880},
+          "transfers": {"type": "integer", "minimum": 0, "maximum": 20},
+          "alternatives": {"type": "integer", "minimum": 0, "maximum": 5},
+          "legs": {
+            "type": "array",
+            "maxItems": 12,
+            "items": {
+              "type": "object",
+              "properties": {
+                "mode": {"type": "string", "maxLength": 24},
+                "line": {"type": "string", "maxLength": 16},
+                "direction": {"type": "string", "maxLength": 80},
+                "from": {"type": "string", "maxLength": 80},
+                "to": {"type": "string", "maxLength": 80},
+                "departure_local": {"type": "string", "maxLength": 8},
+                "arrival_local": {"type": "string", "maxLength": 8},
+                "realtime": {"type": "boolean"},
+                "stops": {"type": "integer", "minimum": 0, "maximum": 300},
+                "minutes": {"type": "integer", "minimum": 0, "maximum": 2880}
+              },
+              "required": ["mode", "from", "to", "departure_local", "arrival_local", "realtime", "minutes"]
+            }
+          },
+          "focus": {
+            "type": "object",
+            "properties": {
+              "kind": {"type": "string", "enum": ["transit_journey_focus"]},
+              "active": {"type": "boolean"},
+              "journey": {"type": "string", "nexusRef": "journey"},
+              "destination": {"type": "string", "maxLength": 80}
+            },
+            "required": ["kind", "active"]
+          }
+        },
+        "required": ["journey", "destination", "arrival", "arrival_local", "duration_minutes", "transfers", "alternatives", "legs", "focus"]
+      }
+    },
+    {
+      "id": "journey_status",
+      "version": 1,
+      "label": "Journey progress",
+      "description": "Where the guided journey stands: the current leg, the next boarding or alighting, and the arrival estimate. Without a journey reference it describes the active journey. No active journey is a valid answer.",
+      "examples": ["When do I get off?"],
+      "effect": "read",
+      "cancellable": true,
+      "deduplicates": true,
+      "requires": [],
+      "prerequisites": [],
+      "data": ["itinerary", "place_names", "schedules"],
+      "input": {
+        "type": "object",
+        "properties": {
+          "journey": {"type": "string", "nexusRef": "journey"}
+        }
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "active": {"type": "boolean"},
+          "journey": {"type": "string", "nexusRef": "journey"},
+          "destination": {"type": "string", "maxLength": 80},
+          "phase": {"type": "string", "enum": ["walk", "board", "ride", "missed", "arrived"]},
+          "leg": {"type": "integer", "minimum": 1, "maximum": 12},
+          "legs": {"type": "integer", "minimum": 1, "maximum": 12},
+          "line": {"type": "string", "maxLength": 16},
+          "direction": {"type": "string", "maxLength": 80},
+          "next_stop": {"type": "string", "maxLength": 80},
+          "next_time_local": {"type": "string", "maxLength": 8},
+          "stops_remaining": {"type": "integer", "minimum": 0, "maximum": 300},
+          "arrival_local": {"type": "string", "maxLength": 8},
+          "replanned": {"type": "boolean"},
+          "focus": {
+            "type": "object",
+            "properties": {
+              "kind": {"type": "string", "enum": ["transit_journey_focus"]},
+              "active": {"type": "boolean"},
+              "journey": {"type": "string", "nexusRef": "journey"},
+              "destination": {"type": "string", "maxLength": 80}
+            },
+            "required": ["kind", "active"]
+          }
+        },
+        "required": ["active", "focus"]
+      }
+    },
+    {
+      "id": "stop_journey",
+      "version": 1,
+      "label": "Stop journey guidance",
+      "description": "Ends journey guidance and closes Transit's activity on the glasses. A journey that already ended stays ended.",
+      "examples": ["Stop the guidance"],
+      "effect": "action",
+      "cancellable": false,
+      "deduplicates": true,
+      "requires": ["surfaces"],
+      "prerequisites": [],
+      "data": ["status"],
+      "input": {
+        "type": "object",
+        "properties": {
+          "journey": {"type": "string", "nexusRef": "journey"}
+        },
+        "required": ["journey"]
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "ended": {"type": "boolean"},
+          "was_active": {"type": "boolean"},
+          "focus": {
+            "type": "object",
+            "properties": {
+              "kind": {"type": "string", "enum": ["transit_journey_focus"]},
+              "active": {"type": "boolean"},
+              "journey": {"type": "string", "nexusRef": "journey"},
+              "destination": {"type": "string", "maxLength": 80}
+            },
+            "required": ["kind", "active"]
+          }
+        },
+        "required": ["ended", "was_active", "focus"]
+      }
+    }
+  ]
+}

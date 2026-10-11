@@ -250,4 +250,60 @@ class TransitRepositoryTest {
                "mode":"BUS","routeShortName":"S1","headsign":"Scheduled destination","cancelled":false}
             ]}
         """.trimIndent()
+
+    @Test
+    fun parseDepartures_keepsTheFeedsRealtimeFlagAndTripIdentity() {
+        val departures = TransitRepository.parseDepartures(
+            """
+                {"stopTimes": [
+                  {"place": {"departure": "2026-07-08T14:00:00Z"}, "mode": "TRAM", "headsign": "A",
+                   "realTime": true, "tripId": "trip-1"},
+                  {"place": {"departure": "2026-07-08T14:05:00Z"}, "mode": "TRAM", "headsign": "A",
+                   "realTime": false},
+                  {"place": {"departure": "2026-07-08T14:10:00Z"}, "mode": "TRAM", "headsign": "A"}
+                ]}
+            """.trimIndent(),
+        )
+
+        assertEquals(listOf(true, false, null), departures.map { it.realTime })
+        assertEquals(listOf("trip-1", null, null), departures.map { it.tripId })
+    }
+
+    @Test
+    fun parsePlaceMatches_offersAddressesWithTheirArea() {
+        val places = TransitRepository.parsePlaceMatches(
+            """
+                [
+                  {"type":"ADDRESS","name":"Rue de Rivoli","houseNumber":"12","street":"Rue de Rivoli",
+                   "lat":48.8566,"lon":2.3522,"areas":[{"name":"Paris","default":true}]},
+                  {"type":"PLACE","name":"Louvre","lat":48.8606,"lon":2.3376},
+                  {"type":"ADDRESS","name":"No position"}
+                ]
+            """.trimIndent(),
+        )
+
+        assertEquals(2, places.size)
+        assertEquals("Rue de Rivoli, 12 Rue de Rivoli", places[0].name)
+        assertEquals("Paris", places[0].area)
+        assertEquals("Louvre", places[1].name)
+    }
+
+    @Test
+    fun searchStopsUpTo_asksForOneMoreThanItShows() {
+        val json = (1..9).joinToString(",", "[", "]") {
+            """{"type":"STOP","name":"S$it","id":"s$it","lat":48.0,"lon":2.0}"""
+        }
+        val repository = TransitRepository(http = { json })
+
+        assertEquals(9, repository.searchStopsUpTo("S", 9).size)
+        assertEquals(8, repository.searchStops("S").size)
+    }
+
+    @Test
+    fun userAgent_identifiesTransitWithItsVersionAndContact() {
+        assertEquals(
+            "RokidNexus-Transit/1.1.0 (+https://github.com/Anezium)",
+            TransitRepository.userAgentFor("1.1.0"),
+        )
+    }
 }
