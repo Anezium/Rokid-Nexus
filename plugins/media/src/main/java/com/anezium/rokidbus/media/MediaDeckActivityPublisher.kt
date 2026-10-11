@@ -139,17 +139,13 @@ internal class MediaDeckActivityPublisher(
         rearm()
     }
 
-    /** The plugin service went away; its registration took the live activity with it. */
+    /**
+     * The plugin service went away; its registration took the live activity with it. A binding
+     * this publisher still holds stays: it brings the service back, which reports [onBusReady].
+     */
     fun onBusLost() {
         forgetPublication()
         currentGeneration = NO_GENERATION
-        // The binding this publisher held went with the service; nothing is left to release.
-        cancelRelease?.invoke()
-        cancelRelease = null
-        if (holding) {
-            holding = false
-            port.release()
-        }
     }
 
     fun onRegistration(approved: Boolean, generation: Int) {

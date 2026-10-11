@@ -55,7 +55,7 @@ internal object MediaDeckActivityControl {
     private var appContext: Context? = null
     private var client: NexusPluginClient? = null
     private var connection: ServiceConnection? = null
-    private var publisher: MediaDeckActivityPublisher? = null
+    private var instance: MediaDeckActivityPublisher? = null
 
     private val port = object : MediaDeckActivityPort {
         override val approved: Boolean
@@ -74,7 +74,7 @@ internal object MediaDeckActivityControl {
         override fun release() = unbind()
     }
 
-    fun publisher(context: Context): MediaDeckActivityPublisher = publisher ?: run {
+    fun publisher(context: Context): MediaDeckActivityPublisher = instance ?: run {
         val app = context.applicationContext
         appContext = app
         val preferences = MediaDeckPreferences(app)
@@ -89,7 +89,7 @@ internal object MediaDeckActivityControl {
             },
             onHubAtStart = preferences.activityOnHub,
             rememberOnHub = { preferences.activityOnHub = it },
-        ).also { publisher = it }
+        ).also { instance = it }
     }
 
     /** Applies the stored switch and tries again whatever Nexus stopped. */
@@ -118,34 +118,34 @@ internal object MediaDeckActivityControl {
     fun serviceDestroyed(destroyed: NexusPluginClient) {
         if (client !== destroyed) return
         client = null
-        publisher?.onBusLost()
+        instance?.onBusLost()
     }
 
     fun registrationState(result: Int) {
         val current = client ?: return
-        publisher?.onRegistration(result == PluginRegistrationResult.APPROVED, current.registrationGeneration)
+        instance?.onRegistration(result == PluginRegistrationResult.APPROVED, current.registrationGeneration)
     }
 
     fun linkState(state: Int) {
-        publisher?.onLinkState(state and (LinkStateBits.CXR_CONTROL_UP or LinkStateBits.SPP_DATA_UP) != 0)
+        instance?.onLinkState(state and (LinkStateBits.CXR_CONTROL_UP or LinkStateBits.SPP_DATA_UP) != 0)
     }
 
     fun activityClosed(reason: String) {
-        publisher?.onActivityClosed(reason)
+        instance?.onActivityClosed(reason)
     }
 
     fun error(code: String) {
-        publisher?.onError(code)
+        instance?.onError(code)
     }
 
     /** A launcher-bundle command; null for one already answered, so nothing is sent twice. */
     fun command(command: NexusActivityCommand): NexusActivityCommandResult? {
-        val current = publisher ?: return NexusActivityCommandResult.rejected(NOT_SHOWN)
+        val current = instance ?: return NexusActivityCommandResult.rejected(NOT_SHOWN)
         return current.onCommand(command.invocationId, command.actionId, command.typed)?.toActivityResult()
     }
 
     fun legacyAction(actionId: String) {
-        publisher?.onLegacyAction(actionId)
+        instance?.onLegacyAction(actionId)
     }
 
     private fun bind(): Boolean {
