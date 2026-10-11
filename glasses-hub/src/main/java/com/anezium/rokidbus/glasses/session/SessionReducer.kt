@@ -57,6 +57,11 @@ internal class SessionReducer(
     private val quickGate: QuickGate = QuickGate.NEVER,
     private val launcherActive: () -> Boolean = { false },
     private val wallClock: () -> Long = { 0L },
+    /**
+     * The hub's Open app for an owner whose full app is a launchable, non-native entry of the
+     * Applications catalog; null for any other owner.
+     */
+    private val ownerApp: (String) -> OpenApp? = { null },
 ) {
     fun reduce(model: SessionModel, event: SessionEvent): SessionTransition {
         val reduced = when (event) {
@@ -621,7 +626,8 @@ internal class SessionReducer(
                     }
                 }
                 when (val item = entriesOf(top).getOrNull(top.selected)?.item) {
-                    is PageItem.OpenPage -> openFrame(model, state.root, state.frames, item.pageId, item.paramsJson, nowMs)
+                    is PageItem.OpenPage ->
+                        openFrame(model, state.root, state.frames, item.pageId, item.paramsJson, nowMs, applicationOpenApp(top, item.pageId))
                     is PageItem.Invoke -> if (fresh(model, event)) invoke(model, state, status, item.actionId, nowMs) else keep(model)
                     // One tap runs it, only as the gate allowed when the row was resolved and only for a fresh press.
                     is PageItem.Quick ->
@@ -1323,9 +1329,19 @@ internal class SessionReducer(
         is FrameStatus.Unavailable -> UNAVAILABLE_ITEMS.mapIndexed { index, item -> PageEntry("#$index", item) }
     }
 
-    /** The page's own rows, then the hub's Open app row of an activity's destination page. */
+    /** The page's own rows, then the hub's Open app row of a page opened for a launchable owner. */
     private fun entriesFor(page: PageSurfaceResponse.Page, openApp: OpenApp?): List<PageEntry> =
-        itemResolver.entries(page) + listOfNotNull(openApp?.let(ActivityCommands::openAppEntry))
+        ActivityCommands.withOpenApp(itemResolver.entries(page), openApp)
+
+    /**
+     * A provider page entered from Applications, over the launcher bundle, ends with the hub's
+     * Open app when its owner's full app is launchable: the same row an activity's destination
+     * page gets, so a page-capable plugin keeps its full app one labelled step away.
+     */
+    private fun applicationOpenApp(from: Frame, pageId: String): OpenApp? {
+        if (!launcherActive() || from.pageId != RootStops.APPLICATIONS_PAGE_ID || isLocalPage(pageId)) return null
+        return PageTemplateContract.namespaceOf(pageId)?.let(ownerApp)
+    }
 
     private fun controlsOf(frame: Frame): PageControls? =
         (frame.status as? FrameStatus.Shown)?.let { itemResolver.controls(it.snapshot.page) }

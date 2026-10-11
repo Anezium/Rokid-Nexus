@@ -124,6 +124,21 @@ internal object ActivityCommands {
     /** [openAppEntry] as the screens draw it. */
     fun openAppRow(openApp: OpenApp): TypedRow =
         TypedRow(OPEN_APP_KEY, OPEN_APP, null, true, PageItem.LaunchPrompt(openApp.pluginId, openApp.label))
+
+    /**
+     * One hub rule for a page opened for a launchable owner: it ends with the hub's Open app, and
+     * the owner's own immersion rows go, so its full app is one row behind one launch step. Without
+     * [openApp] the page keeps the provider's rows as they are. The reducer and the screens both
+     * read the page through this, so SELECT and the outline agree.
+     */
+    fun withOpenApp(entries: List<PageEntry>, openApp: OpenApp?): List<PageEntry> =
+        if (openApp == null) entries else entries.filterNot { it.item.launches(openApp) } + openAppEntry(openApp)
+
+    /** [withOpenApp] for the rows the screens draw. */
+    fun withOpenAppRows(rows: List<TypedRow>, openApp: OpenApp?): List<TypedRow> =
+        if (openApp == null) rows else rows.filterNot { it.item.launches(openApp) } + openAppRow(openApp)
+
+    private fun PageItem.launches(openApp: OpenApp): Boolean = this is PageItem.LaunchPrompt && pluginId == openApp.pluginId
 }
 
 /**

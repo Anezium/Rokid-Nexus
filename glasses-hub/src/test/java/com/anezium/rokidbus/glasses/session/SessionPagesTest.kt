@@ -29,7 +29,7 @@ class SessionPagesTest {
         isLocalPage = PageTemplateContract::isLocalPageId,
         providerPageAllowed = { it.startsWith("relay:") || it.startsWith("nav:") },
     )
-    private val reducer = SessionReducer(items, isLocalPage = PageTemplateContract::isLocalPageId)
+    private var reducer = SessionReducer(items, isLocalPage = PageTemplateContract::isLocalPageId)
     private var model = SessionModel()
     private var effects: List<SessionEffect> = emptyList()
 
@@ -720,6 +720,93 @@ class SessionPagesTest {
         assertEquals("k0", first.first())
         assertEquals("k1", first[1])
         assertEquals(room + 1, first.size)
+    }
+
+    @Test
+    fun `Applications rows carry their catalog marks, an unknown one the grid, and the place itself none`() {
+        catalog = listOf(
+            AppEntry("plugin:nav", "Navigation", AppKind.PAGES, "nav", IconRef.Plugin("nav", "nav")),
+            AppEntry("plugin:camera", "Camera", AppKind.CAMERA, "camera", IconRef.Plugin("camera", "lens")),
+            AppEntry("app:dev.tele", "Teleprompter", AppKind.NATIVE, icon = IconRef.Native("dev.tele")),
+            AppEntry("app:dev.mystery", "Mystery", AppKind.NATIVE),
+        )
+        val screens = SessionScreens(
+            items, { if (it == "nav") "Navigation" else null }, { "12:00" }, { it },
+            pluginIcon = { IconRef.Plugin(it, "key-$it") },
+            localIcon = localPages::iconOf,
+        )
+        enterApplications()
+        val applications = screens.screen(model.state, null, model.generation)
+        assertNull(applications.header?.icon)
+        assertEquals(
+            listOf(IconRef.Plugin("nav", "nav"), IconRef.Plugin("camera", "lens"), IconRef.Native("dev.tele"), IconRef.Place(IconPlace.GRID)),
+            applications.blocks.filterIsInstance<ScreenBlock.Row>().map { it.icon },
+        )
+
+        // The provider page it opens names its owner by its mark in the header.
+        send(SessionEvent.Enter(2_100))
+        assertEquals("nav:main", requested().request.correlation.pageId)
+        respond(requested().request, 2_200, epoch = "e1")
+        val page = screens.screen(model.state, null, model.generation)
+        assertEquals(IconRef.Plugin("nav", "key-nav"), page.header?.icon)
+        // Its rows are the plugin's own: no app mark is guessed for them.
+        assertTrue(page.blocks.filterIsInstance<ScreenBlock.Row>().all { it.icon == null })
+    }
+
+    @Test
+    fun `a pages plugin entered from Applications ends with one hub Open app that takes the labelled launch step`() {
+        reducer = SessionReducer(
+            items,
+            isLocalPage = PageTemplateContract::isLocalPageId,
+            launcherActive = { true },
+            ownerApp = { owner -> OpenApp(owner, "Relay").takeIf { owner == "relay" } },
+        )
+        catalog = listOf(AppEntry("plugin:relay", "Relay", AppKind.PAGES, "relay"))
+        enterApplications()
+        send(SessionEvent.Enter(2_100))
+        assertEquals("relay:main", requested().request.correlation.pageId)
+        // The plugin offers its own full-app row too: the hub's replaces it, so there is one.
+        respond(
+            requested().request, 2_200, epoch = "e1",
+            actions = JSONArray().put(action("mark", "plugin", "Mark read")).put(action("open-full", "immersion", "Open full app")),
+        )
+        val labels = items.entries((top().status as FrameStatus.Shown).snapshot.page).map { it.label }
+        assertEquals(listOf("Ana", "Bo", "Mark read", "Open full app"), labels)
+        val screens = SessionScreens(items, { "Relay" }, { "12:00" }, { it })
+        val rows = screens.screen(model.state, null, model.generation).blocks.filterIsInstance<ScreenBlock.Row>()
+        assertEquals(listOf("Ana", "Bo", "Mark read", ActivityCommands.OPEN_APP), rows.map { it.label })
+
+        repeat(3) { send(SessionEvent.Step(1, 2_300L + it)) }
+        assertEquals(ActivityCommands.OPEN_APP_KEY, top().selectedKey)
+        acknowledge(2_400)
+        send(SessionEvent.Enter(2_460, pressStartMs = 2_420))
+        assertEquals(FramePanel.Launch("relay", "Relay"), top().panel)
+        assertTrue(effects.none { it is SessionEffect.SendLauncherOpen })
+        acknowledge(2_500)
+        send(SessionEvent.Enter(2_560, pressStartMs = 2_520))
+        assertEquals("relay", effects.filterIsInstance<SessionEffect.SendLauncherOpen>().single().pluginId)
+    }
+
+    @Test
+    fun `a page opened from a provider's own row, or for an owner with no full app, gets no hub Open app`() {
+        reducer = SessionReducer(
+            items,
+            isLocalPage = PageTemplateContract::isLocalPageId,
+            launcherActive = { true },
+            ownerApp = { null },
+        )
+        catalog = listOf(AppEntry("plugin:relay", "Relay", AppKind.PAGES, "relay"))
+        enterApplications()
+        send(SessionEvent.Enter(2_100))
+        respond(requested().request, 2_200, epoch = "e1", actions = JSONArray().put(action("open-full", "immersion", "Open full app")))
+        assertNull(top().openApp)
+        // The provider's own row is then the way to its full app, behind the same launch step.
+        assertEquals(PageItem.LaunchPrompt("relay", "Open full app"), items.entries((top().status as FrameStatus.Shown).snapshot.page).last().item)
+    }
+
+    /** The host's draw acknowledgement of what is focused now. */
+    private fun acknowledge(atMs: Long) {
+        send(SessionEvent.FocusShown(SessionFocus.tokenOf(model) ?: error("nothing focused"), atMs))
     }
 
     private fun errorFor(requestId: String, generation: Long, frameIndex: Int, pageId: String, owner: String) =

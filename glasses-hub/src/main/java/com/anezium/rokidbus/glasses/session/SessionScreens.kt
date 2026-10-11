@@ -295,6 +295,10 @@ internal class SessionScreens(
     private val wallClock: () -> Long = { 0L },
     /** An owner's live geometry and smoothed heading, for its route page's map. */
     private val liveRoute: (String) -> LiveRoute = { LiveRoute() },
+    /** A plugin's mark as the launcher catalog names it, for its pages' headers. */
+    private val pluginIcon: (String) -> IconRef = { IconRef.Plugin(it) },
+    /** The mark of a row of a hub page, by page and row key: an Applications entry's. */
+    private val localIcon: (String, String) -> IconRef? = { _, _ -> null },
 ) {
     /**
      * [generation] is the open session's, which names its frames for the renderer's reports;
@@ -472,7 +476,7 @@ internal class SessionScreens(
                     add(ScreenBlock.Text("loading", if (status.stillLoading) STILL_LOADING else LOADING, TextRole.CAPTION, centered = true))
                     add(ScreenBlock.Progress("progress", if (status.stillLoading) 0.6f else 0.25f))
                 }
-                SessionScreen(ScreenHeader(title.uppercase(), "back: $parent"), blocks, ScreenHint(null, back), statusText, "loading")
+                SessionScreen(ScreenHeader(title.uppercase(), "back: $parent", pageIcon(frame.pageId)), blocks, ScreenHint(null, back), statusText, "loading")
             }
             is FrameStatus.Unavailable ->
                 unavailable(frame, status, FrameIdentity(generation, frameIndex), title, parent, back, statusText)
@@ -519,7 +523,7 @@ internal class SessionScreens(
             )
             val pages = frame.pageStarts.size
             return SessionScreen(
-                ScreenHeader(title.uppercase(), if (pages > 0) "${frame.page + 1}/$pages" else "back: $parent"),
+                ScreenHeader(title.uppercase(), if (pages > 0) "${frame.page + 1}/$pages" else "back: $parent", pageIcon(frame.pageId)),
                 failure + document,
                 ScreenHint(listOfNotNull("swipe page".takeIf { pages > 1 }, "tap retry").joinToString(" · "), back),
                 statusText,
@@ -533,7 +537,7 @@ internal class SessionScreens(
         )
         val focus = if (frame.selected == 0) "retry" else "back"
         return SessionScreen(
-            ScreenHeader(title.uppercase(), "back: $parent"),
+            ScreenHeader(title.uppercase(), "back: $parent", pageIcon(frame.pageId)),
             blocks,
             ScreenHint("tap $focus", if (readsFirst) BACK_TO_TEXT else back),
             statusText,
@@ -619,7 +623,7 @@ internal class SessionScreens(
             val trail = if (pages > 0) "${frame.page + 1}/$pages" else null
             val hasRows = items.rows(page).isNotEmpty()
             return SessionScreen(
-                ScreenHeader(header, trail),
+                ScreenHeader(header, trail, pageIcon(frame.pageId)),
                 listOf(document),
                 ScreenHint(listOfNotNull("swipe page".takeIf { pages > 1 }, "tap commands".takeIf { hasRows }).joinToString(" · ").ifBlank { null }, back),
                 statusText,
@@ -639,7 +643,7 @@ internal class SessionScreens(
             body is PageBody.Media ->
                 blocks += ScreenBlock.Media("media", body.title, body.artist, body.album, body.source, body.state, body.status)
         }
-        val rows = items.rows(page) + listOfNotNull(frame.openApp?.let(ActivityCommands::openAppRow))
+        val rows = ActivityCommands.withOpenAppRows(items.rows(page), frame.openApp)
         val controls = items.controls(page)
         val commandFocus = frame.commandFocus
         // A control strip shows a selection only while it holds the focus.
@@ -669,6 +673,7 @@ internal class SessionScreens(
                     "row:${row.key}", row.label, row.sub,
                     enabled = row.enabled && row.item != PageItem.Inert,
                     selected = selected,
+                    icon = localIcon(frame.pageId, row.key),
                     checked = row.checked,
                     pending = pendingAction != null && row.actionId == pendingAction,
                 )
@@ -708,7 +713,7 @@ internal class SessionScreens(
         } else {
             null
         }
-        return SessionScreen(ScreenHeader(header, trail), blocks, ScreenHint(action, backHint), statusText, focus, fit = fit)
+        return SessionScreen(ScreenHeader(header, trail, pageIcon(frame.pageId)), blocks, ScreenHint(action, backHint), statusText, focus, fit = fit)
     }
 
     /**
@@ -738,7 +743,7 @@ internal class SessionScreens(
                 approximate = degraded,
             )
         }
-        val rows = items.rows(status.snapshot.page) + listOfNotNull(frame.openApp?.let(ActivityCommands::openAppRow))
+        val rows = ActivityCommands.withOpenAppRows(items.rows(status.snapshot.page), frame.openApp)
         val mode = frame.fullMap?.takeIf { geometry != null && rows.any { it.item == PageItem.RouteMap } }
         if (mode == FullMapMode.MAP && geometry != null) {
             val map = ScreenBlock.Map(
@@ -906,7 +911,7 @@ internal class SessionScreens(
         // In focus the footer holds the buttons, so the microphone's state is said on the status line.
         val micLine = "$MIC_UNAVAILABLE · $USE_TYPE".takeIf { facts.micUnavailable && focus != null && capture == null }
         return SessionScreen(
-            ScreenHeader(header, if (pages > 1) "${frame.page + 1}/$pages" else null, owner?.let { IconRef.Plugin(it) }),
+            ScreenHeader(header, if (pages > 1) "${frame.page + 1}/$pages" else null, pageIcon(frame.pageId)),
             listOf(block),
             hint,
             statusText ?: micLine,
@@ -1031,6 +1036,10 @@ internal class SessionScreens(
             frame.shownAtMs?.let { ScreenBlock.Text("retained-time", "Known · ${formatTime(wallTimeOf(it))}", TextRole.CAPTION) },
         )
     }
+
+    /** A provider page's header carries its owner's mark; the hub's own places carry none. */
+    private fun pageIcon(pageId: String): IconRef? =
+        if (PageTemplateContract.isLocalPageId(pageId)) null else PageTemplateContract.namespaceOf(pageId)?.let(pluginIcon)
 
     private fun titleOfFrame(frame: Frame): String {
         val retained = when (val status = frame.status) {
