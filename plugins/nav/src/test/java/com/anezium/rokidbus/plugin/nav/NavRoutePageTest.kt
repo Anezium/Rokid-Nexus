@@ -87,7 +87,13 @@ class NavRoutePageTest {
         assertEquals(RoutePositionQuality.NONE, noneBody.follow!!.position!!.quality)
         assertNull(noneBody.follow!!.position!!.point)
         assertEquals("Waiting GPS", noneBody.maneuver!!.distance)
+        assertNull(noneBody.maneuver!!.eta)
         assertValid(none)
+
+        // Only vague fixes so far: no distance is measured from a start nobody reached.
+        val vague = content(journey(NavRouteSnapshot(route, quality = RouteQuality.INACCURATE, atMs = 5_000))).body as PageBody.Route
+        assertEquals(RoutePositionQuality.NONE, vague.position)
+        assertEquals("Low accuracy", vague.maneuver!!.distance)
     }
 
     @Test

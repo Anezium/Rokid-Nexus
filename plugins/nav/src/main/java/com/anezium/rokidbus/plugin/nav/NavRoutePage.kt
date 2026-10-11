@@ -69,10 +69,13 @@ internal object NavRoutePage {
         val step = snapshot.nextStep
         val toDestination = step.direction == "ARRIVE"
         val street = (if (toDestination) destination else step.street.ifBlank { step.instruction })?.let { fit(it, PageTemplateContract.MAX_STREET_CHARS) }
-        val maneuver = when (snapshot.quality) {
-            RouteQuality.ARRIVED -> RouteManeuver("arrive", fit(text.arrived, MAX_DISTANCE), street = destination?.let { fit(it, PageTemplateContract.MAX_STREET_CHARS) })
-            RouteQuality.OFF_ROUTE -> RouteManeuver(NavText.ROUTE_GLYPH, "Off route", street = destination?.let { fit(it, PageTemplateContract.MAX_STREET_CHARS) })
-            RouteQuality.WAITING -> RouteManeuver(NavText.ROUTE_GLYPH, "Waiting GPS", street = destination?.let { fit(it, PageTemplateContract.MAX_STREET_CHARS) })
+        val destinationStreet = destination?.let { fit(it, PageTemplateContract.MAX_STREET_CHARS) }
+        val maneuver = when {
+            snapshot.quality == RouteQuality.ARRIVED -> RouteManeuver("arrive", fit(text.arrived, MAX_DISTANCE), street = destinationStreet)
+            snapshot.quality == RouteQuality.OFF_ROUTE -> RouteManeuver(NavText.ROUTE_GLYPH, "Off route", street = destinationStreet)
+            // Before any trusted fix there is no progress to measure a distance from, only what is wrong.
+            snapshot.position == null ->
+                RouteManeuver(NavText.ROUTE_GLYPH, fit(snapshot.guidance().primary, MAX_DISTANCE), street = destinationStreet)
             // From the confirmed progress; with a degraded position the hub marks the distance approximate.
             else -> RouteManeuver(
                 glyph = if (toDestination) NavText.ROUTE_GLYPH else step.glyph,
