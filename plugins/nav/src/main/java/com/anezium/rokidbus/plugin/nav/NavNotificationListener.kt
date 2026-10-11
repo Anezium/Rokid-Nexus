@@ -29,20 +29,22 @@ class NavNotificationListener : NotificationListenerService() {
         NavControl.guidanceChanged()
     }
 
+    // The runtime ends its route while it is still the attached one; detached first, it would no
+    // longer own the activity it has to end.
     override fun onListenerDisconnected() {
+        runtime.shutdown()
         NavControl.detach(this)
         NavState.listenerConnected = false
         guidanceKeys.clear()
         activeSource = null
         citymapper.reset()
-        runtime.shutdown()
         super.onListenerDisconnected()
     }
 
     override fun onDestroy() {
+        runtime.shutdown()
         NavControl.detach(this)
         NavState.listenerConnected = false
-        runtime.shutdown()
         super.onDestroy()
     }
 
@@ -68,6 +70,17 @@ class NavNotificationListener : NotificationListenerService() {
         scanActive()
     }
 
+    /**
+     * A walking journey ended: nothing read before or during it is current, so the route is
+     * picked up again from what the enabled apps have posted now.
+     */
+    internal fun resumeNotifications() {
+        guidanceKeys.clear()
+        activeSource = null
+        citymapper.reset()
+        scanActive()
+    }
+
     private fun endRoute(source: NavSource, rescan: Boolean = true) {
         guidanceKeys.remove(source)
         if (source == NavSource.CITYMAPPER) citymapper.reset()
@@ -86,6 +99,8 @@ class NavNotificationListener : NotificationListenerService() {
     }
 
     private fun ingest(sbn: StatusBarNotification) {
+        // A journey the wearer started owns the route; other apps' guidance waits for its end.
+        if (NavControl.journeyActive) return
         val source = NavSource.of(sbn.packageName) ?: return
         if (!NavSettings(this).switches().allows(source)) return
         val active = activeSource
@@ -106,6 +121,7 @@ class NavNotificationListener : NotificationListenerService() {
             NavSource.OSMAND -> OsmAndParser.parse(notification)
             NavSource.YANDEX_MAPS -> YandexMapsParser.parse(notification)
             NavSource.MAPS_ME -> MapsMeParser.parse(notification)
+            NavSource.NEXUS -> null
         }
         if (guidance == null) {
             Log.i(TAG, "unreadable source=$source category=${notification.category} channel=${notification.channelId}")

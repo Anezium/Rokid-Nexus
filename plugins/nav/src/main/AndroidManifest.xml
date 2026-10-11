@@ -4,6 +4,13 @@
     <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- Walking journeys only (plugins/AGENTS.md, exception 8): the wearer starts one from the
+         settings screen; it plans once through Transitous and reads location while it runs. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <queries>
         <intent>
@@ -22,6 +29,12 @@
         <activity
             android:name=".NavSettingsActivity"
             android:exported="true" />
+
+        <!-- One walking journey the wearer started; never exported, never started at boot. -->
+        <service
+            android:name=".NavJourneyService"
+            android:exported="false"
+            android:foregroundServiceType="location" />
 
         <!-- The system binds this while Notification Access is granted. It is
              idle until a navigation app posts guidance, and it is the process

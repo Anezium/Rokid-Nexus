@@ -8,11 +8,14 @@ internal enum class NavSource(val packageName: String, val label: String, vararg
     OSMAND("net.osmand", "OsmAnd", "net.osmand.plus"),
     YANDEX_MAPS("ru.yandex.yandexmaps", "Yandex Maps"),
     MAPS_ME("com.mapswithme.maps.pro", "maps.me"),
+
+    /** A walking journey the wearer started in Navigation itself; never a notification's source. */
+    NEXUS("com.anezium.rokidbus.plugin.nav", "Walking route"),
     ;
 
     companion object {
         fun of(packageName: String): NavSource? = values().firstOrNull {
-            it.packageName == packageName || packageName in it.aliases
+            it != NEXUS && (it.packageName == packageName || packageName in it.aliases)
         }
     }
 }
