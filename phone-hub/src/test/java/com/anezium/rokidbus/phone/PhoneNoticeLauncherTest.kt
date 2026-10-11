@@ -158,6 +158,18 @@ class PhoneNoticeLauncherTest {
     }
 
     @Test
+    fun `a newer notice for the same event drops the withdrawal queued before it`() {
+        sink.linkUp = false
+        router.handleLocal(withdraw("relay", "9f2c"), hudSender("relay"))
+
+        sink.linkUp = true
+        router.handleLocal(conversationShow("relay"), hudSender("relay"))
+        router.onGlassesAnnounced()
+
+        assertEquals(listOf(BusPaths.NOTICE_SHOW), sink.remote.map { it.path })
+    }
+
+    @Test
     fun `withdraw shares the notice rate budget`() {
         repeat(NoticeSurfaceContract.MAX_MESSAGES_PER_SECOND) { index ->
             router.handleLocal(withdraw("relay", "key-$index"), hudSender("relay"))

@@ -1543,14 +1543,12 @@ internal object NexusSession {
 
     /**
      * `/notice/withdraw` as the phone forwards it, with the owner it authenticated: the event left
-     * the phone. Read only over the launcher bundle; the armed band is left exactly as it is.
+     * the phone. Accepted before the phone's capabilities arrive, like a purge: the phone flushes
+     * withdrawals queued during a link loss right after reconnecting, and a withdrawal only takes
+     * authority away. The armed band is left exactly as it is.
      */
     fun onNoticeWithdraw(payload: JSONObject) {
         runOnMain {
-            if (!GlassesHub.launcherInteractiveActive()) {
-                log("notice withdraw dropped reason=NOT_NEGOTIATED")
-                return@runOnMain
-            }
             val withdrawal = NoticeSurfaceContract.parseGlassesWithdraw(payload)
             if (withdrawal == null) {
                 log("notice withdraw dropped reason=MALFORMED")

@@ -93,7 +93,17 @@ internal class PhoneNoticeRouter(
                     is PhoneNoticeShowResult.Rejected ->
                         reject(envelope, sender, result.code)
                     is PhoneNoticeShowResult.Accepted -> {
-                        if (launcherBundle) synchronized(historyLock) { historyOwners += pluginId }
+                        if (launcherBundle) {
+                            val eventKey = result.notice.payload.optString(NoticeSurfaceContract.FIELD_EVENT_KEY)
+                            synchronized(historyLock) {
+                                historyOwners += pluginId
+                                // A withdrawal queued while the link was down is older than this
+                                // event; flushed after it, it would mark the new notice removed.
+                                if (eventKey.isNotEmpty()) {
+                                    pendingWithdrawals.removeAll { it.ownerPluginId == pluginId && it.eventKey == eventKey }
+                                }
+                            }
+                        }
                         result.replacedOwnerPluginId?.let { previous ->
                             sink.log("notice replaced owner=$previous by=$pluginId")
                             result.replacedNotice?.let { replaced ->
