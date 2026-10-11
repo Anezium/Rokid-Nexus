@@ -134,6 +134,7 @@ class RokidBusAccessibilityService : AccessibilityService() {
         )
         SurfaceOverlayRenderer.onServiceConnected(this)
         PinOverlayRenderer.onServiceConnected(this)
+        AmbientForeground.onServiceConnected(applicationContext)
         ActivityController.onServiceConnected(applicationContext)
         NoticeController.onServiceConnected(applicationContext) {
             performGlobalAction(GLOBAL_ACTION_LOCK_SCREEN)
@@ -193,6 +194,7 @@ class RokidBusAccessibilityService : AccessibilityService() {
         wirelessDebuggingAutomator?.onAccessibilityEvent(event)
         developerOptionsEnabler?.onAccessibilityEvent(event)
         StatusBadgeOverlayRenderer.onAccessibilityEvent(event)
+        if (event?.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) AmbientForeground.onWindowState(event.packageName)
         if (event != null && isNativeAssistantDismissArmed()) {
             val packageName = event.packageName?.toString().orEmpty()
             if (packageName in NATIVE_ASSISTANT_PACKAGES) {
@@ -265,6 +267,7 @@ class RokidBusAccessibilityService : AccessibilityService() {
         PinOverlayRenderer.onServiceDestroyed(this)
         ActivityOverlayRenderer.onServiceDestroyed(this)
         ActivityController.onServiceDestroyed()
+        AmbientForeground.onServiceDestroyed()
         NoticeController.onServiceDestroyed()
         SurfaceOverlayRenderer.onServiceDestroyed(this)
         NoticeOverlayRenderer.onServiceDestroyed(this)
@@ -1938,9 +1941,12 @@ internal object NexusSession {
             appContext?.let { RingFocusBroadcastCoordinator.setLauncherShown(it, shown = true) }
             // A new session starts linked; tell it if the phone is already gone.
             if (!GlassesHub.isPhoneConnected()) dispatch(SessionEvent.LinkLost)
+            // The activity tier presents in the session's context while it is up, explicitly.
+            ActivityController.setSessionOpen(true)
         }
 
         private fun detach() {
+            ActivityController.setSessionOpen(false)
             host?.detach()
             NoticeController.setSessionOverlayActive(false)
             appContext?.let { RingFocusBroadcastCoordinator.setLauncherShown(it, shown = false) }

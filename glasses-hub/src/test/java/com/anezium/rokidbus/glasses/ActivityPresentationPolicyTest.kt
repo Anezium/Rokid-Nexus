@@ -53,7 +53,7 @@ class ActivityPresentationPolicyTest {
         assertEquals(
             ActivityPresentation.PULSE,
             selectActivityPresentation(
-                ActivityPresentationContext.IDLE_OR_NATIVE_HOME,
+                ActivityPresentationContext.IDLE_HOME,
                 significant = true,
                 flareBudgetAvailable = false,
                 collapseState = ActivityCollapseState.RUNNING,
@@ -75,7 +75,7 @@ class ActivityPresentationPolicyTest {
         assertEquals(
             ActivityPresentation.PANEL,
             selectActivityPresentation(
-                ActivityPresentationContext.IDLE_OR_NATIVE_HOME,
+                ActivityPresentationContext.IDLE_HOME,
                 significant = false,
                 flareBudgetAvailable = false,
                 collapseState = ActivityCollapseState.ALWAYS_EXPANDED,
