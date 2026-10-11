@@ -227,7 +227,6 @@ internal object AmbientPreferences {
 
     fun onSizes(payload: JSONObject) {
         runOnMain {
-            if (!GlassesHub.launcherInteractiveActive()) return@runOnMain log("ambient sizes dropped reason=NOT_NEGOTIATED")
             val sizes = AmbientPreferencesContract.parseSizes(payload) ?: return@runOnMain log("ambient sizes dropped reason=MALFORMED")
             if (mirror.onSizes(sizes)) notifyChanged()
         }
@@ -235,7 +234,6 @@ internal object AmbientPreferences {
 
     fun onPolicy(payload: JSONObject) {
         runOnMain {
-            if (!GlassesHub.launcherInteractiveActive()) return@runOnMain log("ambient policy dropped reason=NOT_NEGOTIATED")
             val policy = AmbientPreferencesContract.parsePolicy(payload) ?: return@runOnMain log("ambient policy dropped reason=MALFORMED")
             if (mirror.onPolicy(policy)) notifyChanged()
         }

@@ -194,7 +194,9 @@ class RokidBusAccessibilityService : AccessibilityService() {
         wirelessDebuggingAutomator?.onAccessibilityEvent(event)
         developerOptionsEnabler?.onAccessibilityEvent(event)
         StatusBadgeOverlayRenderer.onAccessibilityEvent(event)
-        if (event?.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) AmbientForeground.onWindowState(event.packageName)
+        if (event != null && event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            AmbientForeground.onWindowState(event.packageName)
+        }
         if (event != null && isNativeAssistantDismissArmed()) {
             val packageName = event.packageName?.toString().orEmpty()
             if (packageName in NATIVE_ASSISTANT_PACKAGES) {
