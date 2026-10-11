@@ -358,7 +358,7 @@ internal class SessionScreens(
                     selected = selected,
                     icon = stop.icon,
                     tertiary = stop.activity?.takeUnless { stop.ended }?.let { commandLine(it, facts) },
-                    offline = stop.activity?.offline == true,
+                    offline = stop.activity?.lastKnown == true,
                     commands = stop.activity?.takeUnless { stop.ended }
                         ?.let { activity -> state.focus?.takeIf { it.stopId == stop.id }?.let { strip(activity, it) } },
                 )
@@ -452,7 +452,10 @@ internal class SessionScreens(
      * pending or last answered. Nothing is invented: a lost answer says it is unconfirmed.
      */
     private fun commandLine(activity: ActivityStop, facts: CommandFacts): String? {
-        if (activity.offline) return activity.knownAtWallMs?.let { "$OFFLINE_HINT ${formatTime(it)}" } ?: OFFLINE
+        if (activity.lastKnown) {
+            val knownAt = activity.knownAtWallMs ?: activity.updatedAtWallMs.takeIf { activity.stale }
+            return knownAt?.let { "$OFFLINE_HINT ${formatTime(it)}" } ?: OFFLINE
+        }
         val owner = activity.ownerPluginId ?: return null
         facts.pending[owner]?.let { pending ->
             val label = activity.commands.firstOrNull { it.id == pending.actionId }?.label ?: pending.actionId
@@ -866,7 +869,7 @@ internal class SessionScreens(
         selected = selected,
         icon = activity.icon,
         tertiary = commandLine(activity, facts),
-        offline = activity.offline,
+        offline = activity.lastKnown,
         commands = focus?.let { strip(activity, it) },
     )
 

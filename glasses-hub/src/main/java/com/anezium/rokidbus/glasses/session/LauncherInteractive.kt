@@ -96,7 +96,7 @@ internal object ActivityCommands {
      * the Applications catalog. An offline entry's commands are inert.
      */
     fun slots(stop: ActivityStop): List<CommandSlotModel> = buildList {
-        stop.commands.forEach { add(CommandSlotModel(it.id, it.label, it.glyph, it, enabled = !stop.offline)) }
+        stop.commands.forEach { add(CommandSlotModel(it.id, it.label, it.glyph, it, enabled = !stop.lastKnown)) }
         if (stop.launchable && stop.ownerPluginId != null) {
             add(CommandSlotModel(OPEN_APP_KEY, OPEN_APP, OPEN_APP_GLYPH, null, enabled = true))
         }

@@ -27,8 +27,10 @@ internal data class ActivityStop(
     val updatedAtWallMs: Long? = null,
     val userPinned: Boolean = false,
     val offline: Boolean = false,
-    /** When an offline entry was last confirmed live, for its "last known" hint. */
+    /** When an offline or [stale] entry was last confirmed live, for its "last known" hint. */
     val knownAtWallMs: Long? = null,
+    /** A live entry held while the phone link is down: drawn as last known, its commands inert. */
+    val stale: Boolean = false,
     val seq: Long = 0,
     val destination: PageDestination? = null,
     val activation: ActivityActivation? = null,
@@ -41,7 +43,13 @@ internal data class ActivityStop(
     /** The activity tier's start order and latest significant update, for the deterministic order. */
     val startedOrder: Long = 0,
     val significantOrder: Long? = null,
-)
+) {
+    /**
+     * Drawn as last known, its commands inert: offline on the phone, or [stale] while the link is
+     * down. Only the phone's own offline state orders the root; a link loss reorders nothing.
+     */
+    val lastKnown: Boolean get() = offline || stale
+}
 
 /**
  * The root's notification stop, unarmed: it can never answer. [card] says what it stands for (a

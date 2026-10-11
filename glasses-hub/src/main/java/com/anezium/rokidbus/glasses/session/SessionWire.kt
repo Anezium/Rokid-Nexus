@@ -105,6 +105,8 @@ internal data class ActivitySource(
     val defaultActionId: String? = null,
     val startedOrder: Long = 0,
     val significantOrder: Long? = null,
+    /** Held while the phone link is down; see [ActivityStop.stale]. */
+    val stale: Boolean = false,
 )
 
 /**
@@ -143,6 +145,7 @@ internal class ActivityFeed(
                 userPinned = source.userPinned,
                 offline = source.offline,
                 knownAtWallMs = source.knownAtWallMs,
+                stale = source.stale,
                 seq = source.seq,
                 destination = source.destination,
                 activation = source.activation,

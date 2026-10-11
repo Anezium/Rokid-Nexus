@@ -1,13 +1,17 @@
 package com.anezium.rokidbus.glasses
 
 import com.anezium.rokidbus.glasses.page.IslandContent
+import com.anezium.rokidbus.glasses.page.IslandFoot
 import com.anezium.rokidbus.glasses.page.IslandForm
 import com.anezium.rokidbus.glasses.page.MapForm
 import com.anezium.rokidbus.glasses.page.MapInput
 import com.anezium.rokidbus.glasses.session.MapView
 import com.anezium.rokidbus.glasses.session.RoutePresentation
+import com.anezium.rokidbus.glasses.session.SessionScreens
+import com.anezium.rokidbus.shared.ActivitySurfaceContent
 import com.anezium.rokidbus.shared.AmbientSize
 import com.anezium.rokidbus.shared.RouteGeometry
+import com.anezium.rokidbus.shared.RoutePathRole
 
 /** A guidance island as decided, before any view: its ambient form and what it says. */
 internal data class GuidanceIsland(val form: IslandForm, val content: IslandContent.Guidance)
@@ -20,12 +24,27 @@ internal data class GuidanceIsland(val form: IslandForm, val content: IslandCont
  * capped it at text over an app); an automatic one is its minimap while expanded and its text
  * form while folded, so the ten-second collapse still applies to it. The map is heading-up
  * (Follow); a position that is not live draws the lost glyph, "~" figures and a degraded map.
+ *
+ * The foot under a minimap or panel (r17 1.2-1.4, 5.9, 5.10) says only what is known: the
+ * arrival time and the remaining measure on a minimap; `GPS lost · last fix <n> s` for a lost
+ * position; the last-known time while the phone link is down; and, for a source that draws no
+ * route, the name of the plugin that sent it, never a guessed app.
  */
 internal object GuidanceIslands {
+    const val ARRIVAL = "arrival"
+
+    /** r17 1.4: with three residents at home, the minimap's map is shorter. */
+    const val CROWDED_MAP_HEIGHT_PX = 150
+
     fun of(
         item: ActivityRenderItem,
         geometry: RouteGeometry?,
         headingDeg: Float?,
+        /** The owner's catalog name, said under a map that draws no route. */
+        sourceLabel: String? = null,
+        /** Three residents share the home: the minimap keeps a shorter map. */
+        crowded: Boolean = false,
+        clock: (Long) -> String = ::clockOf,
     ): GuidanceIsland? {
         val size = item.size
         if (size == null && geometry == null) return null
@@ -46,18 +65,57 @@ internal object GuidanceIslands {
                 degraded = degraded,
             )
         }
+        val minimap = form == IslandForm.MINIMAP
+        val noRoute = geometry != null && geometry.paths.none { it.role == RoutePathRole.ROUTE }
+        val arrival = content.eta?.let { "$it $ARRIVAL" }
+        val left = when {
+            item.stale -> item.knownAtWallMs?.let { "${SessionScreens.OFFLINE_HINT} ${clock(it)}" } ?: SessionScreens.OFFLINE
+            degraded -> geometry?.position?.fixAgeS?.let { "${RoutePresentation.GPS_LOST} · last fix $it s" } ?: RoutePresentation.GPS_LOST
+            minimap || noRoute -> arrival
+            else -> null
+        }
+        // On a minimap the remaining measure sits in the foot, not beside the figure (r17 1.2).
+        val footMeasure = content.measure.takeIf { minimap && !noRoute }
+        val right = if (noRoute) sourceLabel else footMeasure
+        val foot = if (left == null && right == null) {
+            null
+        } else {
+            IslandFoot(left = left.orEmpty(), right = right, strong = content.eta?.takeIf { left == arrival })
+        }
         return GuidanceIsland(
             form,
             IslandContent.Guidance(
                 glyph = RoutePresentation.glyph(content.glyph, degraded),
                 figure = content.primary,
-                measure = content.measure,
+                measure = content.measure.takeUnless { foot != null && footMeasure != null },
                 street = content.secondary,
-                approximate = degraded,
+                // A figure the phone no longer confirms is drawn as approximate, muted.
+                approximate = degraded || item.stale,
                 time = content.eta,
                 then = content.detail.firstOrNull(),
                 map = map,
+                foot = foot,
+                mapHeightPx = CROWDED_MAP_HEIGHT_PX.takeIf { crowded && minimap && map != null },
             ),
         )
     }
+
+    /**
+     * What a non-guidance island draws for [item]: its content as received, or, while the phone
+     * link is down, the same content saying it is last known (`offline · last known HH:MM` on its
+     * second line, the street moved into its details) with no action offered.
+     */
+    fun lastKnown(item: ActivityRenderItem, clock: (Long) -> String = ::clockOf): ActivitySurfaceContent {
+        val content = item.activity.content
+        if (!item.stale) return content
+        val line = item.knownAtWallMs?.let { "${SessionScreens.OFFLINE_HINT} ${clock(it)}" } ?: SessionScreens.OFFLINE
+        return content.copy(
+            secondary = line,
+            detail = (listOfNotNull(content.secondary) + content.detail).take(2),
+            actions = emptyList(),
+        )
+    }
+
+    private fun clockOf(wallMs: Long): String =
+        java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(java.util.Date(wallMs))
 }

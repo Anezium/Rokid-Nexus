@@ -1687,6 +1687,9 @@ internal object NexusSession {
                 measure = content.eta ?: content.measure,
                 startedOrder = entry.startedOrder,
                 significantOrder = entry.lastSignificantOrder,
+                // The link is the hub's own fact: a v1 card shows its last-known state too.
+                stale = entry.stale,
+                knownAtWallMs = entry.knownAtWallMs.takeIf { entry.stale },
             )
             if (!interactive) {
                 base
@@ -1694,7 +1697,7 @@ internal object NexusSession {
                 base.copy(
                     userPinned = content.userPinned,
                     offline = content.isOffline,
-                    knownAtWallMs = content.knownAtWallMs,
+                    knownAtWallMs = content.knownAtWallMs ?: base.knownAtWallMs,
                     seq = entry.seq,
                     destination = content.destination,
                     activation = content.effectiveActivation,

@@ -249,7 +249,7 @@ internal class SessionReducer(
             val next = if (stop == null) null else ActivityCommands.reconcile(focus, slots)
             val kept = when (panel) {
                 is FramePanel.ConfirmCommand ->
-                    panel.takeIf { next != null && stop != null && !stop.offline && stop.seq == panel.seq && stop.commands.any { it.id == panel.actionId } }
+                    panel.takeIf { next != null && stop != null && !stop.lastKnown && stop.seq == panel.seq && stop.commands.any { it.id == panel.actionId } }
                 else -> panel.takeIf { next != null }
             }
             return next to kept
@@ -1812,7 +1812,7 @@ internal class SessionReducer(
         return when {
             activity.activation == ActivityActivation.DESTINATION && destination != null ->
                 openFrame(model, root, below, destination.pageId, destination.paramsJson, nowMs, openAppOf(activity))
-            activity.activation == ActivityActivation.COMMANDS && !activity.offline && activity.commands.isNotEmpty() -> {
+            activity.activation == ActivityActivation.COMMANDS && !activity.lastKnown && activity.commands.isNotEmpty() -> {
                 val slots = ActivityCommands.slots(activity)
                 val index = ActivityCommands.initialIndex(activity, slots)
                 val focus = CommandFocus(activity.id, slots[index].key, index)
@@ -1853,7 +1853,7 @@ internal class SessionReducer(
                 model.copy(state = site.place(focus, FramePanel.Launch(owner, activity.ownerLabel ?: owner))),
                 listOf(site.show),
             )
-        if (!slot.enabled || activity.offline || owner in model.pendingCommands) return keep(model)
+        if (!slot.enabled || activity.lastKnown || owner in model.pendingCommands) return keep(model)
         if (quickGate.allows(owner, action.typed, action.hubQuick)) {
             if (!fresh(model, event)) return keep(model)
             if (model.linkLost) return SessionTransition(model, listOf(SessionEffect.ShowStatus(SessionStatus.NotAvailable)))
@@ -1898,7 +1898,7 @@ internal class SessionReducer(
                 if (!fresh(model, event)) return keep(model)
                 val action = activity?.commands?.firstOrNull { it.id == panel.actionId }
                 // The confirmation is for the revision the wearer saw; anything newer withdraws it.
-                if (activity == null || action == null || activity.offline || activity.seq != panel.seq ||
+                if (activity == null || action == null || activity.lastKnown || activity.seq != panel.seq ||
                     activity.ownerPluginId != panel.ownerPluginId || panel.ownerPluginId in model.pendingCommands
                 ) {
                     return cleared
