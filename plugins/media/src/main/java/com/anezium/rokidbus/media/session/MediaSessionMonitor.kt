@@ -12,38 +12,44 @@ import android.os.Looper
 import android.os.SystemClock
 import android.provider.Settings
 
+/** One look at the observed session, with what only the full surface needs: position and artwork. */
 internal data class MediaDeckSnapshot(
-    val packageName: String,
-    val sourceLabel: String,
-    val mediaId: String,
-    val title: String,
-    val artist: String,
-    val album: String,
-    val durationMs: Long?,
+    val identity: MediaSessionIdentity,
+    val track: MediaTrack,
+    val phase: MediaPlaybackPhase,
     val positionMs: Long,
-    val isPlaying: Boolean,
+    /** Whether the position moves by itself; see [MediaPlayback.advances]. */
+    val advancing: Boolean,
     val playbackSpeed: Float,
     val artwork: Bitmap?,
     val artworkUri: String,
-)
+) {
+    val isPlaying: Boolean get() = phase == MediaPlaybackPhase.PLAYING
+    val packageName: String get() = track.packageName
+    val sourceLabel: String get() = track.sourceLabel
+    val title: String get() = track.title
+    val artist: String get() = track.artist
+    val album: String get() = track.album
+    val durationMs: Long? get() = track.durationMs
 
-internal enum class MediaDeckMonitorStatus {
-    STARTING,
-    ACCESS_REQUIRED,
-    NO_SESSION,
-    UNAVAILABLE,
+    val observation: MediaDeckObservation.Session get() = MediaDeckObservation.Session(identity, track, phase)
 }
 
+/**
+ * Watches the active media sessions through Media Deck's notification listener. Nothing polls:
+ * the session list and the observed controller call back, and a command schedules one look once
+ * the player has had a moment to act on it.
+ */
 internal class MediaSessionMonitor(
     context: Context,
-    private val onSnapshot: (MediaDeckSnapshot?) -> Unit,
-    private val onStatus: (MediaDeckMonitorStatus) -> Unit,
-) {
+    private val listener: MediaDeckMonitorListener,
+) : MediaDeckMonitor {
     private val appContext = context.applicationContext
     private val mediaSessionManager = appContext.getSystemService(MediaSessionManager::class.java)
     private val listenerComponent =
         ComponentName(appContext, MediaDeckNotificationListenerService::class.java)
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val identities = MediaSessionIdentities()
 
     private var currentController: MediaController? = null
     private var sessionsListenerRegistered = false
@@ -63,18 +69,17 @@ internal class MediaSessionMonitor(
 
     private val refreshAfterControl = Runnable { refreshOnMain() }
 
-    fun start() = runOnMain {
+    override fun start() = runOnMain {
         if (started) {
             refreshOnMain()
             return@runOnMain
         }
         started = true
-        onStatus(MediaDeckMonitorStatus.STARTING)
         accessSubscription = MediaDeckAccessSignal.subscribe { refresh() }
         refreshOnMain()
     }
 
-    fun stop() = runOnMain {
+    override fun stop() = runOnMain {
         if (!started) return@runOnMain
         started = false
         mainHandler.removeCallbacks(refreshAfterControl)
@@ -85,27 +90,39 @@ internal class MediaSessionMonitor(
         currentController = null
     }
 
-    fun refresh() = runOnMain { refreshOnMain() }
+    override fun refresh() = runOnMain { refreshOnMain() }
 
-    fun togglePlayback() = runOnMain {
-        val controller = resolveControllerForControl() ?: return@runOnMain
-        val isPlaying = controller.playbackState?.state in PLAYING_STATES
-        runCatching {
-            if (isPlaying) controller.transportControls.pause() else controller.transportControls.play()
-        }.onSuccess { scheduleRefresh() }.onFailure {
-            onStatus(MediaDeckMonitorStatus.UNAVAILABLE)
+    override fun send(expected: MediaDeckObservation.Session, command: MediaDeckCommand): MediaDeckSendResult {
+        if (!started) return MediaDeckSendResult.MOVED
+        if (!isNotificationAccessEnabled()) {
+            refreshOnMain()
+            return MediaDeckSendResult.ACCESS_REQUIRED
         }
-    }
-
-    fun skipToNext() = sendTransportCommand { skipToNext() }
-
-    fun skipToPrevious() = sendTransportCommand { skipToPrevious() }
-
-    private fun sendTransportCommand(command: MediaController.TransportControls.() -> Unit) = runOnMain {
-        val controller = resolveControllerForControl() ?: return@runOnMain
-        runCatching { controller.transportControls.command() }
-            .onSuccess { scheduleRefresh() }
-            .onFailure { onStatus(MediaDeckMonitorStatus.UNAVAILABLE) }
+        // Only the session the wearer saw, never another active one picked now.
+        val controller = currentController
+        val live = controller?.let { runCatching { buildSnapshot(it) }.getOrNull() }
+        if (controller == null || live == null || live.observation != expected) {
+            mainHandler.post { refreshOnMain() }
+            return MediaDeckSendResult.MOVED
+        }
+        return runCatching {
+            val controls = controller.transportControls
+            when (command) {
+                MediaDeckCommand.PREVIOUS -> controls.skipToPrevious()
+                MediaDeckCommand.PLAY -> controls.play()
+                MediaDeckCommand.PAUSE -> controls.pause()
+                MediaDeckCommand.NEXT -> controls.skipToNext()
+            }
+        }.fold(
+            onSuccess = {
+                scheduleRefresh()
+                MediaDeckSendResult.SENT
+            },
+            onFailure = { failure ->
+                mainHandler.post { refreshOnMain() }
+                if (failure is SecurityException) MediaDeckSendResult.ACCESS_REQUIRED else MediaDeckSendResult.FAILED
+            },
+        )
     }
 
     private fun refreshOnMain() {
@@ -113,8 +130,7 @@ internal class MediaSessionMonitor(
         if (!isNotificationAccessEnabled()) {
             detachController()
             removeSessionsListener()
-            onStatus(MediaDeckMonitorStatus.ACCESS_REQUIRED)
-            onSnapshot(null)
+            listener.onObserved(MediaDeckObservation.AccessRequired, null)
             return
         }
         ensureSessionsListener()
@@ -123,13 +139,11 @@ internal class MediaSessionMonitor(
         } catch (_: SecurityException) {
             detachController()
             removeSessionsListener()
-            onStatus(MediaDeckMonitorStatus.ACCESS_REQUIRED)
-            onSnapshot(null)
+            listener.onObserved(MediaDeckObservation.AccessRequired, null)
             return
         } catch (_: RuntimeException) {
             detachController()
-            onStatus(MediaDeckMonitorStatus.UNAVAILABLE)
-            onSnapshot(null)
+            listener.onObserved(MediaDeckObservation.Unavailable, null)
             return
         }
         attachToController(selectController(controllers))
@@ -137,6 +151,7 @@ internal class MediaSessionMonitor(
 
     private fun ensureSessionsListener() {
         if (!started || sessionsListenerRegistered) return
+        // A failure is retried on the next look; the controller callbacks still report meanwhile.
         runCatching {
             mediaSessionManager?.addOnActiveSessionsChangedListener(
                 sessionsChangedListener,
@@ -145,8 +160,6 @@ internal class MediaSessionMonitor(
             )
         }.onSuccess {
             sessionsListenerRegistered = true
-        }.onFailure {
-            onStatus(MediaDeckMonitorStatus.UNAVAILABLE)
         }
     }
 
@@ -176,35 +189,25 @@ internal class MediaSessionMonitor(
 
     private fun emitCurrentState() {
         if (!started) return
-        val snapshot = buildSnapshot(currentController)
+        val snapshot = currentController?.let { controller ->
+            try {
+                buildSnapshot(controller)
+            } catch (_: RuntimeException) {
+                // A controller that cannot be read is not shown as if nothing played.
+                detachController()
+                listener.onObserved(MediaDeckObservation.Unavailable, null)
+                return
+            }
+        }
         if (snapshot == null) {
-            onStatus(MediaDeckMonitorStatus.NO_SESSION)
-            onSnapshot(null)
-            return
+            listener.onObserved(MediaDeckObservation.NoSession, null)
+        } else {
+            listener.onObserved(snapshot.observation, snapshot)
         }
-        onSnapshot(snapshot)
-    }
-
-    private fun resolveControllerForControl(): MediaController? {
-        currentController?.let { return it }
-        if (!isNotificationAccessEnabled()) {
-            onStatus(MediaDeckMonitorStatus.ACCESS_REQUIRED)
-            return null
-        }
-        val controller = runCatching {
-            selectController(mediaSessionManager?.getActiveSessions(listenerComponent).orEmpty())
-        }.getOrNull()
-        if (controller == null) {
-            onStatus(MediaDeckMonitorStatus.NO_SESSION)
-            return null
-        }
-        attachToController(controller)
-        return controller
     }
 
     @Suppress("DEPRECATION")
-    private fun buildSnapshot(controller: MediaController?): MediaDeckSnapshot? {
-        controller ?: return null
+    private fun buildSnapshot(controller: MediaController): MediaDeckSnapshot? {
         val metadata = controller.metadata ?: return null
         val title = metadata.getString(MediaMetadata.METADATA_KEY_TITLE).orEmpty().trim()
             .ifBlank { metadata.getString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE).orEmpty().trim() }
@@ -220,18 +223,21 @@ internal class MediaSessionMonitor(
         val artwork = metadata.getBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART)
             ?: metadata.getBitmap(MediaMetadata.METADATA_KEY_ART)
             ?: metadata.getBitmap(MediaMetadata.METADATA_KEY_DISPLAY_ICON)
+        val packageName = controller.packageName
         return MediaDeckSnapshot(
-            packageName = controller.packageName,
-            sourceLabel = sourceLabel(controller.packageName),
-            mediaId = metadata.getString(MediaMetadata.METADATA_KEY_MEDIA_ID).orEmpty(),
-            title = title,
-            artist = artist,
-            album = metadata.getString(MediaMetadata.METADATA_KEY_ALBUM).orEmpty().trim(),
-            durationMs = duration,
+            identity = identities.identityOf(packageName, controller.sessionToken),
+            track = MediaTrack(
+                packageName = packageName,
+                sourceLabel = sourceLabel(packageName),
+                mediaId = metadata.getString(MediaMetadata.METADATA_KEY_MEDIA_ID).orEmpty(),
+                title = title,
+                artist = artist,
+                album = metadata.getString(MediaMetadata.METADATA_KEY_ALBUM).orEmpty().trim(),
+                durationMs = duration,
+            ),
+            phase = MediaPlayback.phaseOf(state?.state),
             positionMs = position,
-            isPlaying = state?.let {
-                it.state == PlaybackState.STATE_PLAYING && it.playbackSpeed > 0f
-            } == true,
+            advancing = MediaPlayback.advances(state?.state, state?.playbackSpeed ?: 0f),
             playbackSpeed = state?.playbackSpeed?.takeIf { it > 0f } ?: 1f,
             artwork = artwork,
             artworkUri = metadata.getString(MediaMetadata.METADATA_KEY_ALBUM_ART_URI).orEmpty()
@@ -269,15 +275,7 @@ internal class MediaSessionMonitor(
         appContext.packageManager.getApplicationLabel(info).toString().trim()
     }.getOrDefault(packageName.substringAfterLast('.').replaceFirstChar { it.uppercase() })
 
-    private fun isNotificationAccessEnabled(): Boolean {
-        val enabled = Settings.Secure.getString(
-            appContext.contentResolver,
-            "enabled_notification_listeners",
-        ).orEmpty()
-        return enabled.split(':').any { flattened ->
-            ComponentName.unflattenFromString(flattened) == listenerComponent
-        }
-    }
+    private fun isNotificationAccessEnabled(): Boolean = isMediaDeckListenerEnabled(appContext)
 
     private fun scheduleRefresh() {
         mainHandler.removeCallbacks(refreshAfterControl)
@@ -291,22 +289,17 @@ internal class MediaSessionMonitor(
     private companion object {
         const val CONTROL_REFRESH_MS = 350L
 
-        val PLAYING_STATES = setOf(
-            PlaybackState.STATE_PLAYING,
-            PlaybackState.STATE_FAST_FORWARDING,
-            PlaybackState.STATE_REWINDING,
-            PlaybackState.STATE_BUFFERING,
-        )
-
-        fun playbackPriority(state: Int?): Int = when (state) {
-            PlaybackState.STATE_PLAYING,
-            PlaybackState.STATE_FAST_FORWARDING,
-            PlaybackState.STATE_REWINDING,
-            PlaybackState.STATE_BUFFERING,
-            -> 3
-            PlaybackState.STATE_PAUSED -> 2
-            PlaybackState.STATE_CONNECTING -> 1
-            else -> 0
+        fun playbackPriority(state: Int?): Int = when (MediaPlayback.phaseOf(state)) {
+            MediaPlaybackPhase.PLAYING -> 2
+            MediaPlaybackPhase.PAUSED -> 1
+            MediaPlaybackPhase.STOPPED -> 0
         }
     }
+}
+
+/** Whether Media Deck's notification listener is enabled: what every session read requires. */
+internal fun isMediaDeckListenerEnabled(context: Context): Boolean {
+    val target = ComponentName(context, MediaDeckNotificationListenerService::class.java)
+    val enabled = Settings.Secure.getString(context.contentResolver, "enabled_notification_listeners").orEmpty()
+    return enabled.split(':').any { flattened -> ComponentName.unflattenFromString(flattened) == target }
 }

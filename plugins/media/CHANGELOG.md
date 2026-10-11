@@ -1,5 +1,24 @@
 # Changelog — Media Deck
 
+## Unreleased
+
+- **Show in activities.** A new setting, available once notification access is on, keeps
+  what plays among the glasses' activities even with Media Deck closed: title, artist,
+  Previous, Play or Pause, and Next. A tap on the card focuses Play/Pause; nothing plays on
+  that first tap. The activity follows only real changes (the player, the track, playing or
+  paused), never the position, and nothing polls. Turning the setting off, nothing playing or
+  revoking notification access ends it; the setting itself is kept.
+- **Controls only reach the player you saw.** Every command, from the activity, its page or
+  the full surface, is checked against that exact media session and its state: if another
+  player took over or the state moved, it is refused as stale instead of reaching another app.
+  Play and pause are sent as what you asked for, never as a toggle, and nothing is retried.
+- A Media Deck page for the launcher: what plays with Previous, Play/Pause and Next, which
+  you can allow to run on one tap in Nexus; older launchers get a summary with the same
+  controls and a row to open the full app.
+- The full surface shows "Nothing is playing" or the access message again whenever the
+  session goes away, instead of keeping the last track; buffering now shows as playing with
+  the clock held, as a tap would pause it.
+
 ## 1.0.2
 
 - Android 11 support: the plugin now installs on Android 11 (API 30) phones.

@@ -3,7 +3,6 @@ package com.anezium.rokidbus.plugin.media
 import com.anezium.rokidbus.client.ui.NexusPluginIcons
 import com.anezium.rokidbus.client.ui.NexusUi
 import android.app.Activity
-import android.content.ComponentName
 import android.content.Intent
 import android.graphics.Color
 import android.net.Uri
@@ -16,10 +15,15 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import com.anezium.rokidbus.client.ui.BusTheme
-import com.anezium.rokidbus.media.session.MediaDeckNotificationListenerService
+import com.anezium.rokidbus.media.MediaDeckActivityControl
+import com.anezium.rokidbus.media.MediaDeckActivityModel
+import com.anezium.rokidbus.media.MediaDeckPreferences
+import com.anezium.rokidbus.media.session.isMediaDeckListenerEnabled
 
 class MediaDeckSettingsActivity : Activity() {
     private lateinit var accessValue: TextView
+    private lateinit var activityValue: TextView
+    private lateinit var activitySub: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -28,6 +32,8 @@ class MediaDeckSettingsActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        // Opening the settings applies the stored switch, which also resumes after a revoke.
+        MediaDeckActivityControl.resume(this)
         renderAccessState()
     }
 
@@ -36,16 +42,27 @@ class MediaDeckSettingsActivity : Activity() {
         window.navigationBarColor = NexusUi.BG
 
         accessValue = valueText("Enable")
+        activityValue = valueText("Off")
+        activitySub = NexusUi.rowSub(this, "")
         val content = NexusUi.contentColumn(this).apply {
             addView(NexusUi.sectionRow(this@MediaDeckSettingsActivity, "Settings"), NexusUi.block())
             addView(BusTheme.gap(this@MediaDeckSettingsActivity, 12))
             addView(
                 settingRow(
                     title = "Media access",
-                    subtitle = "Follows what plays on your phone",
+                    subtitle = NexusUi.rowSub(this@MediaDeckSettingsActivity, "Follows what plays on your phone"),
                     value = accessValue,
                     danger = false,
-                ) { startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) },
+                ) { openAccessSettings() },
+                NexusUi.block(),
+            )
+            addView(
+                settingRow(
+                    title = "Show in activities",
+                    subtitle = activitySub,
+                    value = activityValue,
+                    danger = false,
+                ) { toggleActivity() },
                 NexusUi.block(),
             )
             addView(BusTheme.gap(this@MediaDeckSettingsActivity, 22))
@@ -96,7 +113,7 @@ class MediaDeckSettingsActivity : Activity() {
 
     private fun settingRow(
         title: String,
-        subtitle: String?,
+        subtitle: TextView?,
         value: View,
         danger: Boolean,
         onClick: () -> Unit,
@@ -128,7 +145,7 @@ class MediaDeckSettingsActivity : Activity() {
                             )
                             if (subtitle != null) {
                                 addView(BusTheme.gap(this@MediaDeckSettingsActivity, 5))
-                                addView(NexusUi.rowSub(this@MediaDeckSettingsActivity, subtitle))
+                                addView(subtitle)
                             }
                         },
                         LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
@@ -156,17 +173,36 @@ class MediaDeckSettingsActivity : Activity() {
             letterSpacing = 0.04f
         }
 
-    private fun renderAccessState() {
-        val enabled = isMediaListenerEnabled()
-        accessValue.text = if (enabled) "ENABLED ›" else "ENABLE ›"
-        accessValue.setTextColor(if (enabled) NexusUi.GREEN else NexusUi.INK2)
+    /**
+     * The activity needs notification access to be turned on; turning it off never does, so a
+     * switch left on through a revoke can still be turned off.
+     */
+    private fun toggleActivity() {
+        val enabled = MediaDeckPreferences(this).showInActivities
+        if (!enabled && !isMediaDeckListenerEnabled(this)) {
+            openAccessSettings()
+            return
+        }
+        MediaDeckActivityControl.setEnabled(this, !enabled)
+        renderAccessState()
     }
 
-    private fun isMediaListenerEnabled(): Boolean {
-        val target = ComponentName(this, MediaDeckNotificationListenerService::class.java)
-        val enabled = Settings.Secure.getString(contentResolver, "enabled_notification_listeners").orEmpty()
-        return enabled.split(':').any { flattened ->
-            ComponentName.unflattenFromString(flattened) == target
+    private fun openAccessSettings() {
+        startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+    }
+
+    private fun renderAccessState() {
+        val access = isMediaDeckListenerEnabled(this)
+        accessValue.text = if (access) "ENABLED ›" else "ENABLE ›"
+        accessValue.setTextColor(if (access) NexusUi.GREEN else NexusUi.INK2)
+
+        val shown = MediaDeckPreferences(this).showInActivities
+        activityValue.text = if (shown) "ON ›" else "OFF ›"
+        activityValue.setTextColor(if (shown) NexusUi.GREEN else NexusUi.INK2)
+        activitySub.text = when {
+            shown -> MediaDeckActivityModel.summaryOf(MediaDeckActivityControl.status(this))
+            access -> "Keep what plays among your glasses' activities"
+            else -> "Needs media access first"
         }
     }
 }

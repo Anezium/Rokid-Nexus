@@ -8,11 +8,15 @@ import com.anezium.rokidbus.client.plugin.NexusMedia
 import com.anezium.rokidbus.client.plugin.NexusMediaAnchor
 import com.anezium.rokidbus.client.plugin.NexusMediaImageArtwork
 import com.anezium.rokidbus.client.plugin.NexusMonoArtwork
-import com.anezium.rokidbus.media.session.MediaDeckMonitorStatus
+import com.anezium.rokidbus.media.session.MediaDeckCommand
+import com.anezium.rokidbus.media.session.MediaDeckControlOutcome
+import com.anezium.rokidbus.media.session.MediaDeckMonitorHub
 import com.anezium.rokidbus.media.session.MediaDeckSnapshot
-import com.anezium.rokidbus.media.session.MediaSessionMonitor
+import com.anezium.rokidbus.media.session.MediaDeckState
+import com.anezium.rokidbus.media.session.MediaDeckStateListener
+import com.anezium.rokidbus.media.session.MediaDeckSubscriber
+import com.anezium.rokidbus.media.session.MediaDeckTarget
 import com.anezium.rokidbus.shared.plugin.NexusInputEvent
-import java.security.MessageDigest
 import kotlin.math.abs
 
 internal interface MediaDeckRuntimeHost {
@@ -21,23 +25,28 @@ internal interface MediaDeckRuntimeHost {
     fun sendMedia(media: NexusMedia, imageBytes: ByteArray?, show: Boolean)
     fun updateMediaAnchor(contentKey: String, anchor: NexusMediaAnchor)
     fun hideSurface()
-    fun post(action: () -> Unit)
 }
 
+/**
+ * The full surface: the immersion subscriber of the shared monitor. It watches only while the
+ * surface is open; closing it leaves the monitor to whoever else still needs it (an enabled
+ * activity). Everything it draws is the hub's state, so the status card shows whenever there is no
+ * session to draw, and every control goes to the session drawn, at the revision drawn.
+ * Main thread only.
+ */
 internal class MediaDeckRuntime(
     context: Context,
     private val host: MediaDeckRuntimeHost,
+    private val hub: MediaDeckMonitorHub,
 ) {
     private val appContext = context.applicationContext
-    private val monitor = MediaSessionMonitor(
-        context = appContext,
-        onSnapshot = { snapshot -> host.post { handleSnapshot(snapshot) } },
-        onStatus = { status -> host.post { handleStatus(status) } },
-    )
+    private val listener = MediaDeckStateListener { state, snapshot, _ -> render(state, snapshot) }
     private var active = false
     private var surfaceShown = false
     private var latestSnapshot: MediaDeckSnapshot? = null
-    private var monitorStatus = MediaDeckMonitorStatus.STARTING
+
+    /** The state on the surface now; what a tap or a swipe acts on. */
+    private var shownState: MediaDeckState? = null
     private var lastRenderedKey: String? = null
     private var lastSentMedia: SentMedia? = null
     private var cachedArtworkTrackKey: String? = null
@@ -45,20 +54,26 @@ internal class MediaDeckRuntime(
     private var cachedArtwork: EncodedMediaArtwork? = null
     private var cachedArtworkUriAttempt: String? = null
 
+    val isOpen: Boolean get() = active
+
     fun open() {
         active = true
         surfaceShown = false
         lastRenderedKey = null
         lastSentMedia = null
-        monitorStatus = MediaDeckMonitorStatus.STARTING
-        showStatus(force = true)
-        monitor.start()
+        shownState = null
+        showStatus(MediaDeckState.Unknown(0), force = true)
+        // Hears the current state at once; a surface opened again just looks again.
+        hub.subscribe(MediaDeckSubscriber.IMMERSION, listener)
     }
 
     fun close() {
+        if (!active) return
         active = false
-        monitor.stop()
+        // Only this surface's interest ends; an enabled activity keeps the monitor running.
+        hub.unsubscribe(MediaDeckSubscriber.IMMERSION)
         latestSnapshot = null
+        shownState = null
         lastSentMedia = null
         lastRenderedKey = null
         cachedArtworkTrackKey = null
@@ -73,63 +88,73 @@ internal class MediaDeckRuntime(
 
     fun input(event: NexusInputEvent) {
         if (!active || event.action != KeyEvent.ACTION_DOWN) return
-        when (event.keyCode) {
-            KeyEvent.KEYCODE_BACK -> close()
+        val command = when (event.keyCode) {
+            KeyEvent.KEYCODE_BACK -> {
+                close()
+                return
+            }
             KeyEvent.KEYCODE_ENTER,
             KeyEvent.KEYCODE_DPAD_CENTER,
             KeyEvent.KEYCODE_SPACE,
             KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
             KeyEvent.KEYCODE_HEADSETHOOK,
-            -> monitor.togglePlayback()
+            -> (shownState as? MediaDeckState.Active)?.let { MediaDeckCommand.desiredFor(it.phase) } ?: return
             KeyEvent.KEYCODE_DPAD_RIGHT,
             KeyEvent.KEYCODE_DPAD_DOWN,
             KeyEvent.KEYCODE_MEDIA_NEXT,
-            -> monitor.skipToNext()
+            -> MediaDeckCommand.NEXT
             KeyEvent.KEYCODE_DPAD_LEFT,
             KeyEvent.KEYCODE_DPAD_UP,
             KeyEvent.KEYCODE_MEDIA_PREVIOUS,
-            -> monitor.skipToPrevious()
+            -> MediaDeckCommand.PREVIOUS
+            else -> return
         }
+        control(command)
     }
+
+    /**
+     * One command on the session drawn, at the revision drawn: never another session, never
+     * retried. What follows is drawn from the state observed afterwards.
+     */
+    fun control(command: MediaDeckCommand): MediaDeckControlOutcome =
+        hub.control(shownState?.let { MediaDeckTarget.of(it) }, command)
 
     fun imageCapabilityChanged() {
         if (!active || cachedArtworkMode == artworkModeFor(host.supportsImage())) return
         latestSnapshot?.let { pushSnapshot(it, force = true) }
     }
 
-    private fun handleStatus(status: MediaDeckMonitorStatus) {
-        monitorStatus = status
-        if (active && latestSnapshot == null) showStatus(force = false)
-    }
-
-    private fun handleSnapshot(snapshot: MediaDeckSnapshot?) {
+    private fun render(state: MediaDeckState, snapshot: MediaDeckSnapshot?) {
         if (!active) return
-        latestSnapshot = snapshot
-        if (snapshot == null) {
-            showStatus(force = false)
-        } else {
+        shownState = state
+        if (state is MediaDeckState.Active && snapshot != null) {
+            latestSnapshot = snapshot
             pushSnapshot(snapshot, force = false)
+        } else {
+            // Whatever is not a session to draw is said, even right after one was drawn.
+            latestSnapshot = null
+            showStatus(state, force = false)
         }
     }
 
-    private fun showStatus(force: Boolean) {
+    private fun showStatus(state: MediaDeckState, force: Boolean) {
         if (!active) return
-        val (key, lines) = when (monitorStatus) {
-            MediaDeckMonitorStatus.STARTING -> "checking" to listOf(
+        val (key, lines) = when (state) {
+            is MediaDeckState.Unknown -> "checking" to listOf(
                 "Checking active media...",
                 "Playback stays on your phone.",
             )
-            MediaDeckMonitorStatus.ACCESS_REQUIRED -> "access" to listOf(
-                "Media access is required.",
+            is MediaDeckState.AccessRequired -> "access" to listOf(
+                if (state.revoked) "Media access was turned off." else "Media access is required.",
                 "Open Media Deck on the phone",
                 "and enable notification access.",
             )
-            MediaDeckMonitorStatus.NO_SESSION -> "idle" to listOf(
+            is MediaDeckState.NoSession, is MediaDeckState.Active -> "idle" to listOf(
                 "Nothing is playing.",
                 "Start Spotify, VLC, a podcast,",
                 "or another media app on the phone.",
             )
-            MediaDeckMonitorStatus.UNAVAILABLE -> "unavailable" to listOf(
+            is MediaDeckState.Unavailable -> "unavailable" to listOf(
                 "Media control is unavailable.",
                 "Check Media Deck access on the phone.",
             )
@@ -153,16 +178,18 @@ internal class MediaDeckRuntime(
 
     private fun pushSnapshot(snapshot: MediaDeckSnapshot, force: Boolean) {
         val now = SystemClock.elapsedRealtime()
-        val contentKey = trackKey(snapshot)
+        val contentKey = snapshot.track.key
         val artworkMode = artworkModeFor(host.supportsImage())
         val artworkWasMissing = cachedArtworkTrackKey == contentKey &&
             cachedArtworkMode == artworkMode && cachedArtwork == null
         val artwork = artworkFor(contentKey, snapshot, artworkMode)
         val artworkArrived = artworkWasMissing && artwork != null
         val previous = lastSentMedia
+        val speed = clockSpeed(snapshot)
         val contentChanged = previous == null || previous.contentKey != contentKey
         val anchorChanged = previous == null ||
             previous.playing != snapshot.isPlaying ||
+            previous.playbackSpeed != speed ||
             previous.durationMs != snapshot.durationMs ||
             abs(snapshot.positionMs - previous.predictedPosition(now)) >= SEEK_RESYNC_MS
         if (!force && !contentChanged && !artworkArrived && !anchorChanged) return
@@ -186,7 +213,7 @@ internal class MediaDeckRuntime(
             positionMs = snapshot.positionMs,
             durationMs = snapshot.durationMs,
             playing = snapshot.isPlaying,
-            playbackSpeed = snapshot.playbackSpeed,
+            playbackSpeed = speed,
             sentAtElapsedRealtime = now,
         )
     }
@@ -199,10 +226,10 @@ internal class MediaDeckRuntime(
     ): NexusMedia = NexusMedia(
         title = "MEDIA DECK",
         contentKey = contentKey,
-        subtitle = clipped(snapshot.sourceLabel, SOURCE_LIMIT).uppercase().takeIf(String::isNotBlank),
-        mediaTitle = clipped(snapshot.title, TITLE_LIMIT),
-        mediaArtist = clipped(snapshot.artist, ARTIST_LIMIT).takeIf(String::isNotBlank),
-        mediaAlbum = clipped(snapshot.album, ALBUM_LIMIT).takeIf(String::isNotBlank),
+        subtitle = MediaText.clip(snapshot.sourceLabel, SOURCE_LIMIT).uppercase().takeIf(String::isNotBlank),
+        mediaTitle = MediaText.clip(snapshot.title, TITLE_LIMIT),
+        mediaArtist = MediaText.clip(snapshot.artist, ARTIST_LIMIT).takeIf(String::isNotBlank),
+        mediaAlbum = MediaText.clip(snapshot.album, ALBUM_LIMIT).takeIf(String::isNotBlank),
         footer = "SWIPE: TRACK  TAP: PLAY/PAUSE",
         anchor = anchor,
         artwork = (artwork as? EncodedMonoArtwork)?.let {
@@ -222,13 +249,21 @@ internal class MediaDeckRuntime(
         },
     )
 
+    /**
+     * The glasses draw play or pause from [MediaDeckSnapshot.isPlaying], the same phase a tap acts
+     * on; the clock moves only while the position really advances, so a buffering session shows
+     * as playing on a standing clock.
+     */
     private fun anchor(snapshot: MediaDeckSnapshot, now: Long): NexusMediaAnchor = NexusMediaAnchor(
         positionMs = snapshot.positionMs.coerceAtLeast(0L),
         playing = snapshot.isPlaying,
-        playbackSpeed = snapshot.playbackSpeed.coerceAtLeast(0f),
+        playbackSpeed = clockSpeed(snapshot),
         sentAtElapsedRealtime = now,
         durationMs = snapshot.durationMs,
     )
+
+    private fun clockSpeed(snapshot: MediaDeckSnapshot): Float =
+        if (snapshot.advancing) snapshot.playbackSpeed.coerceAtLeast(0f) else 0f
 
     private fun artworkFor(
         contentKey: String,
@@ -268,32 +303,6 @@ internal class MediaDeckRuntime(
                 snapshot.artworkUri,
             )
         }
-
-    private fun trackKey(snapshot: MediaDeckSnapshot): String = shortHash(
-        listOf(
-            snapshot.packageName,
-            snapshot.mediaId,
-            snapshot.title,
-            snapshot.artist,
-            snapshot.album,
-            snapshot.durationMs?.toString().orEmpty(),
-        ).joinToString("\u0000"),
-    )
-
-    private fun shortHash(value: String): String {
-        val digest = MessageDigest.getInstance("SHA-256").digest(value.toByteArray(Charsets.UTF_8))
-        val hex = "0123456789abcdef"
-        return buildString(16) {
-            for (index in 0 until 8) {
-                val byte = digest[index].toInt() and 0xff
-                append(hex[byte ushr 4])
-                append(hex[byte and 0x0f])
-            }
-        }
-    }
-
-    private fun clipped(value: String, limit: Int): String =
-        value.replace('\n', ' ').replace('\r', ' ').trim().take(limit)
 
     private data class SentMedia(
         val contentKey: String,
