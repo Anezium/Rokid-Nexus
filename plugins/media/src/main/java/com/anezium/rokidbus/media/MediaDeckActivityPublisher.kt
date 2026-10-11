@@ -33,6 +33,11 @@ internal interface MediaDeckActivityPort {
  * activity and lets the service go when there is not (no session, no access, sessions that cannot
  * be read), and never polls: it publishes on a new revision only, which position never makes.
  *
+ * Nexus can stop it too: a registration that is not approved (pending, revoked, plugin disabled),
+ * the user turning the activity off in Nexus, or the hub replacing it. It then ends what it
+ * published, lets the service go and stops watching, while the user's switch stays on; a new
+ * registration, or [rearm] on an event the plugin already receives, tries once more.
+ *
  * A command is bound to the revision it was published at (see [MediaDeckActionIds]) and is run at
  * most once, against that exact session; it is never retried, here or after a reconnect.
  * Main thread only.
@@ -42,19 +47,22 @@ internal class MediaDeckActivityPublisher(
     private val port: MediaDeckActivityPort,
     private val now: () -> Long,
     private val schedule: (delayMs: Long, task: () -> Unit) -> () -> Unit,
+    onHubAtStart: Boolean = false,
+    private val rememberOnHub: (Boolean) -> Unit = {},
 ) {
     private data class Published(val revision: Long, val identity: MediaSessionIdentity, val trackKey: String)
 
     var enabled = false
         private set
 
-    /** Why the activity stays off although enabled, until a new registration or the user's switch. */
+    /** Why Nexus stopped the activity although enabled, until a new registration or [rearm]. */
     var suspendedBy: String? = null
         private set
 
     private var suspendedGeneration = NO_GENERATION
     private var linkUsable = true
     private var started = false
+    private var watching = false
 
     /** The approved registration the publication belongs to; another one holds nothing yet. */
     private var currentGeneration = NO_GENERATION
@@ -68,9 +76,23 @@ internal class MediaDeckActivityPublisher(
     private val listener = MediaDeckStateListener { _, _, changed -> if (changed) plan() }
 
     val status: MediaDeckActivityStatus
-        get() = MediaDeckActivityModel.status(enabled, hub.state, bus)
+        get() = MediaDeckActivityModel.status(enabled, suspendedBy != null, hub.state, bus)
 
     val isHolding: Boolean get() = holding
+
+    /** Whether this subscriber keeps the shared monitor running. */
+    val isWatching: Boolean get() = watching
+
+    /** Whether an activity is live on the hub as far as this publisher knows. */
+    val isStarted: Boolean get() = started
+
+    /**
+     * Whether an entry of this plugin may still be on the hub, live or as the offline snapshot an
+     * earlier process left. Remembered across processes, so turning the activity off, or finding
+     * nothing playing, ends that snapshot too instead of leaving it there for good.
+     */
+    var mayBeOnHub: Boolean = onHubAtStart
+        private set
 
     private val bus: MediaDeckBus
         get() = when {
@@ -88,12 +110,24 @@ internal class MediaDeckActivityPublisher(
         enabled = value
         suspendedBy = null
         if (value) {
-            hub.subscribe(MediaDeckSubscriber.ACTIVITY, listener)
+            syncWatch()
             plan()
         } else {
             plan()
-            hub.unsubscribe(MediaDeckSubscriber.ACTIVITY)
+            syncWatch()
         }
+    }
+
+    /**
+     * Something the plugin already receives (its listener connecting, its settings opening, the
+     * service starting) says to look again: whatever Nexus stopped is tried once more.
+     */
+    fun rearm() {
+        if (enabled) {
+            suspendedBy = null
+            syncWatch()
+        }
+        plan()
     }
 
     /** The plugin service exists again, with a client that holds nothing on the hub yet. */
@@ -102,23 +136,31 @@ internal class MediaDeckActivityPublisher(
         // A new client counts its registrations from scratch.
         currentGeneration = NO_GENERATION
         suspendedGeneration = NO_GENERATION
-        plan()
+        rearm()
     }
 
     /** The plugin service went away; its registration took the live activity with it. */
     fun onBusLost() {
         forgetPublication()
         currentGeneration = NO_GENERATION
+        // The binding this publisher held went with the service; nothing is left to release.
+        cancelRelease?.invoke()
+        cancelRelease = null
+        if (holding) {
+            holding = false
+            port.release()
+        }
     }
 
     fun onRegistration(approved: Boolean, generation: Int) {
         if (!approved) {
-            // Pending, denied or revoked: nothing can be published, so nothing is held for it.
-            // The hub binds the plugin again when the user opens it; that registration resumes.
+            // Pending, denied, revoked or disabled: nothing can be published, so nothing is held or
+            // watched for it. The next registration (the hub binding the plugin again) resumes.
             forgetPublication()
             currentGeneration = NO_GENERATION
             if (enabled) suspend(REASON_NOT_APPROVED)
             stopPublishing(releaseNow = true)
+            syncWatch()
             return
         }
         if (generation != currentGeneration) {
@@ -129,6 +171,7 @@ internal class MediaDeckActivityPublisher(
         // A new registration may try again what an older one gave up; a repeated report may not.
         if (suspendedBy == REASON_NOT_APPROVED || (suspendedBy != null && generation != suspendedGeneration)) {
             suspendedBy = null
+            syncWatch()
         }
         plan()
     }
@@ -142,18 +185,23 @@ internal class MediaDeckActivityPublisher(
     /** The hub ended the activity. Only the user brings back one the hub replaced or refused. */
     fun onActivityClosed(reason: String) {
         forgetPublication()
+        markOnHub(false)
         if (reason == ActivityCloseReason.OWNER.wireValue) return
         // Starting again on the next change would evict whichever entry took this one's place.
         suspend(reason)
         stopPublishing(releaseNow = false)
+        syncWatch()
     }
 
     /** The phone refused the activity because the user turned it off there. */
     fun onError(code: String) {
         if (code != ActivitySurfaceContract.ERROR_ACTIVITY_DISABLED) return
         forgetPublication()
+        // The phone ended the entry when the user turned it off there.
+        markOnHub(false)
         suspend(code)
         stopPublishing(releaseNow = false)
+        syncWatch()
     }
 
     /**
@@ -164,12 +212,34 @@ internal class MediaDeckActivityPublisher(
         if (invocationId in handledInvocations) return null
         handledInvocations.addLast(invocationId)
         while (handledInvocations.size > MAX_HANDLED_INVOCATIONS) handledInvocations.removeFirst()
+        return control(actionId, typed)
+    }
+
+    /**
+     * An action from glasses without the launcher bundle: no invocation and no answer, but the
+     * same check, so it too reaches only the session and revision it was shown for.
+     */
+    fun onLegacyAction(actionId: String): MediaDeckControlOutcome = control(actionId, typed = null)
+
+    private fun control(actionId: String, typed: NexusActionType?): MediaDeckControlOutcome {
         val (command, revision) = MediaDeckActionIds.parse(actionId) ?: return MediaDeckControlOutcome.NOT_OFFERED
         // The hub's copy of the declared type must say the same thing as the id.
         if (typed != null && MediaDeckCommand.of(typed) != command) return MediaDeckControlOutcome.NOT_OFFERED
-        if (!enabled) return MediaDeckControlOutcome.NOT_OFFERED
-        val target = shownTargets[revision] ?: return MediaDeckControlOutcome.STALE_REVISION
-        return hub.control(target, command)
+        if (!enabled || suspendedBy != null) return MediaDeckControlOutcome.NOT_OFFERED
+        // A revision no longer held binds to nothing: stale while a session plays, else the
+        // reason there is none (nothing playing, no access).
+        return hub.control(shownTargets[revision], command)
+    }
+
+    private fun syncWatch() {
+        val wanted = enabled && suspendedBy == null
+        if (wanted == watching) return
+        watching = wanted
+        if (wanted) {
+            hub.subscribe(MediaDeckSubscriber.ACTIVITY, listener)
+        } else {
+            hub.unsubscribe(MediaDeckSubscriber.ACTIVITY)
+        }
     }
 
     private fun plan() {
@@ -178,10 +248,14 @@ internal class MediaDeckActivityPublisher(
             stopPublishing(releaseNow = false)
             return
         }
+        keepHolding()
+        flush()
+    }
+
+    private fun keepHolding() {
         cancelRelease?.invoke()
         cancelRelease = null
         if (!holding) holding = port.hold()
-        flush()
     }
 
     private fun flush() {
@@ -207,12 +281,14 @@ internal class MediaDeckActivityPublisher(
         val result = if (started) port.update(activity, significant) else port.start(activity)
         lastSentAt = now()
         if (result != NexusSdkResult.SENT) {
-            // Whatever did not arrive is sent whole at the next chance.
+            // Whatever did not arrive is sent whole at the next chance: approval with its
+            // capabilities, a link coming back, or the next change.
             started = false
             published = null
             return
         }
         started = true
+        markOnHub(true)
         published = Published(state.revision, state.identity, state.track.key)
         shownTargets[state.revision] = MediaDeckTarget(state.identity, state.revision)
         while (shownTargets.size > MAX_SHOWN_REVISIONS) shownTargets.remove(shownTargets.keys.first())
@@ -221,9 +297,20 @@ internal class MediaDeckActivityPublisher(
     private fun stopPublishing(releaseNow: Boolean) {
         cancelFlush?.invoke()
         cancelFlush = null
-        if (started) port.end()
+        val wasStarted = started
         started = false
         published = null
+        shownTargets.clear()
+        if (wasStarted || mayBeOnHub) {
+            if (port.approved) {
+                // Without activity support the hub holds nothing of ours; only a lost send leaves doubt.
+                if (port.end() != NexusSdkResult.NOT_REGISTERED) markOnHub(false)
+            } else if (!releaseNow && suspendedBy != REASON_NOT_APPROVED) {
+                // Only an approved registration can end it: hold the service until approval arrives.
+                keepHolding()
+                if (holding) return
+            }
+        }
         if (!holding) return
         if (releaseNow) {
             cancelRelease?.invoke()
@@ -249,6 +336,14 @@ internal class MediaDeckActivityPublisher(
         cancelFlush = null
         started = false
         published = null
+        // Nothing published on a registration that is gone can be acted on any more.
+        shownTargets.clear()
+    }
+
+    private fun markOnHub(value: Boolean) {
+        if (mayBeOnHub == value) return
+        mayBeOnHub = value
+        rememberOnHub(value)
     }
 
     private fun suspend(reason: String) {

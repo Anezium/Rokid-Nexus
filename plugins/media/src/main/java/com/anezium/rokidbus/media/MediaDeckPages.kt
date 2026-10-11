@@ -196,6 +196,7 @@ internal class MediaDeckPageProvider<R : Any>(
     private var answering = false
     private var dirty = false
     private var shownKey: String? = null
+    private var shownRevision: Long? = null
     private var lastPublishAt: Long? = null
     private var cancelPublish: (() -> Unit)? = null
     private var cancelLease: (() -> Unit)? = null
@@ -215,6 +216,14 @@ internal class MediaDeckPageProvider<R : Any>(
             watch()
         } finally {
             answering = false
+        }
+        if (!visible) {
+            // Watched until the page's visibility says otherwise, or for one lease if it never comes.
+            cancelLease?.invoke()
+            cancelLease = schedule(PENDING_LEASE_MS) {
+                cancelLease = null
+                if (!visible) unwatch()
+            }
         }
         return show(nextRevision(floorOf(request)))
     }
@@ -262,13 +271,19 @@ internal class MediaDeckPageProvider<R : Any>(
         visible = false
         dirty = false
         shownKey = null
+        shownRevision = null
         unwatch()
     }
 
     private fun stateChanged() {
         if (answering) return
         val request = current ?: return
-        if (MediaDeckPages.contentKey(hub.state) == shownKey) return
+        if (MediaDeckPages.contentKey(hub.state) == shownKey) {
+            // The same session, item and phase under a new state revision (the monitor restarted):
+            // what the wearer sees is still true, so its actions now bind to the new revision.
+            shownRevision?.let { shown -> shownTargets[shown] = MediaDeckTarget.of(hub.state) }
+            return
+        }
         dirty = true
         if (!visible) return
         val last = lastPublishAt
@@ -301,6 +316,7 @@ internal class MediaDeckPageProvider<R : Any>(
 
     private fun remember(pageRevision: Long, state: MediaDeckState) {
         shownKey = MediaDeckPages.contentKey(state)
+        shownRevision = pageRevision
         shownTargets[pageRevision] = MediaDeckTarget.of(state)
         while (shownTargets.size > MAX_SHOWN_REVISIONS) shownTargets.remove(shownTargets.keys.first())
     }
@@ -325,6 +341,9 @@ internal class MediaDeckPageProvider<R : Any>(
 
     companion object {
         const val MIN_INTERVAL_MS = 500L
+
+        /** The hub's own page lease: a page whose visibility never came is not watched longer. */
+        const val PENDING_LEASE_MS = 120_000L
         private const val MAX_SHOWN_REVISIONS = 16
     }
 }

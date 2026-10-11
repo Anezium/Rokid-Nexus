@@ -66,7 +66,12 @@ internal enum class MediaDeckControlOutcome(val status: Status) {
         }
 }
 
-/** Whether a command decided on [target] may go to the session observed in the current state. */
+/**
+ * Whether a command decided on [target] may go to the session observed in the current state. Every
+ * caller that controls playback (the immersion, the activity, the page, and any later one) goes
+ * through this one rule: a command reaches only the session it was decided on, at the revision it
+ * was decided on, and never "whichever session is active now".
+ */
 internal object MediaDeckCommandPolicy {
     sealed interface Decision {
         data class Send(val session: MediaDeckState.Active) : Decision
@@ -83,9 +88,9 @@ internal object MediaDeckCommandPolicy {
             target == null -> Decision.Refuse(MediaDeckControlOutcome.STALE_REVISION)
             target.identity != state.identity -> Decision.Refuse(MediaDeckControlOutcome.STALE_SESSION)
             target.revision != state.revision -> Decision.Refuse(MediaDeckControlOutcome.STALE_REVISION)
-            // A desired state that already holds was decided on something else.
-            command == MediaDeckCommand.PLAY && state.playing -> Decision.Refuse(MediaDeckControlOutcome.STALE_REVISION)
-            command == MediaDeckCommand.PAUSE && !state.playing -> Decision.Refuse(MediaDeckControlOutcome.STALE_REVISION)
+            // The same revision offered the other one of play and pause.
+            command == MediaDeckCommand.PLAY && state.playing -> Decision.Refuse(MediaDeckControlOutcome.NOT_OFFERED)
+            command == MediaDeckCommand.PAUSE && !state.playing -> Decision.Refuse(MediaDeckControlOutcome.NOT_OFFERED)
             else -> Decision.Send(state)
         }
     }

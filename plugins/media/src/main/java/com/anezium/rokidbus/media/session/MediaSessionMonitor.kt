@@ -290,8 +290,8 @@ internal class MediaSessionMonitor(
         const val CONTROL_REFRESH_MS = 350L
 
         fun playbackPriority(state: Int?): Int = when (MediaPlayback.phaseOf(state)) {
-            MediaPlaybackPhase.PLAYING -> 3
-            MediaPlaybackPhase.PAUSED -> if (state == PlaybackState.STATE_PAUSED) 2 else 1
+            MediaPlaybackPhase.PLAYING -> 2
+            MediaPlaybackPhase.PAUSED -> 1
             MediaPlaybackPhase.STOPPED -> 0
         }
     }

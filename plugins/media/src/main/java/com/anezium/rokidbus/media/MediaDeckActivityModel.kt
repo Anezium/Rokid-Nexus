@@ -32,6 +32,9 @@ internal enum class MediaDeckActivityStatus {
     UNAVAILABLE,
     LINK_LOST,
     OWNER_GONE,
+
+    /** Nexus ended or refused it (replaced, or turned off there); retried on a new registration. */
+    SUSPENDED,
 }
 
 /**
@@ -66,8 +69,9 @@ internal object MediaDeckActivityModel {
     const val GLYPH_PLAYING = "play"
     const val GLYPH_PAUSED = "pause"
 
-    fun status(enabled: Boolean, state: MediaDeckState, bus: MediaDeckBus): MediaDeckActivityStatus = when {
+    fun status(enabled: Boolean, suspended: Boolean, state: MediaDeckState, bus: MediaDeckBus): MediaDeckActivityStatus = when {
         !enabled -> MediaDeckActivityStatus.DISABLED
+        suspended -> MediaDeckActivityStatus.SUSPENDED
         state is MediaDeckState.AccessRequired ->
             if (state.revoked) MediaDeckActivityStatus.REVOKED else MediaDeckActivityStatus.ACCESS_REQUIRED
         state is MediaDeckState.Unknown || state is MediaDeckState.NoSession -> MediaDeckActivityStatus.NO_SESSION
@@ -95,10 +99,12 @@ internal object MediaDeckActivityModel {
                 typed = command.typed,
             )
         }
+        // A podcast or a video often has no artist; the app it plays in is still true.
+        val byline = active.track.artist.ifBlank { active.track.sourceLabel }
         return NexusActivity(
             glyph = if (active.playing) GLYPH_PLAYING else GLYPH_PAUSED,
             primary = MediaText.ellipsize(active.track.title, ActivitySurfaceContract.MAX_PRIMARY_CHARS),
-            secondary = MediaText.ellipsize(active.track.artist, ActivitySurfaceContract.MAX_SECONDARY_CHARS)
+            secondary = MediaText.ellipsize(byline, ActivitySurfaceContract.MAX_SECONDARY_CHARS)
                 .takeIf(String::isNotBlank),
             actions = actions,
             destination = NexusPageDestination(MediaDeckPages.MAIN),
@@ -120,5 +126,21 @@ internal object MediaDeckActivityModel {
         MediaDeckCommand.PLAY -> "Play"
         MediaDeckCommand.PAUSE -> "Pause"
         MediaDeckCommand.NEXT -> "Next"
+    }
+
+    /** What the phone settings say about the activity; never a track title (user data). */
+    fun summaryOf(status: MediaDeckActivityStatus): String = when (status) {
+        MediaDeckActivityStatus.DISABLED -> "Off"
+        MediaDeckActivityStatus.ACCESS_REQUIRED -> "On · needs media access"
+        MediaDeckActivityStatus.REVOKED -> "On · media access was turned off"
+        MediaDeckActivityStatus.NO_SESSION -> "On · nothing playing"
+        MediaDeckActivityStatus.PLAYING,
+        MediaDeckActivityStatus.PAUSED,
+        MediaDeckActivityStatus.SESSION_CHANGED,
+        -> "On · showing what plays"
+        MediaDeckActivityStatus.UNAVAILABLE -> "On · media control unavailable"
+        MediaDeckActivityStatus.LINK_LOST -> "On · glasses not connected"
+        MediaDeckActivityStatus.OWNER_GONE -> "On · waiting for Nexus"
+        MediaDeckActivityStatus.SUSPENDED -> "On · stopped by Nexus until Media Deck opens"
     }
 }
