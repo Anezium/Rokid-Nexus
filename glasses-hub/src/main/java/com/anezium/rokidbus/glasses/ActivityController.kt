@@ -565,6 +565,9 @@ internal object ActivityController {
     private var latestRender = ActivityRenderState()
     private var launcherVersion = 0
 
+    /** The bundle version the collection capacity was last sized for, from a phone announcement. */
+    private var capacityVersion = 0
+
     fun onServiceConnected(context: Context) {
         runOnMain {
             this.context = context.applicationContext
@@ -643,10 +646,13 @@ internal object ActivityController {
      * The pair's launcher-bundle version changed: the collection takes its capacity, and the
      * phone's stamps are read only while it is negotiated.
      */
-    fun onLauncherNegotiated(version: Int) {
+    fun onLauncherNegotiated(version: Int, linkLost: Boolean = false) {
         runOnMain {
-            if (version == launcherVersion) return@runOnMain
             launcherVersion = version
+            // A link loss is not a downgrade: the phone keeps its collection until it announces
+            // again, and trimming here would drop offline entries the phone still holds.
+            if (linkLost || version == capacityVersion) return@runOnMain
+            capacityVersion = version
             val evicted = state.setCapacity(ActivitySurfaceContract.effectiveCollectionCapacity(version))
             if (evicted.isNotEmpty()) log("activity collection trimmed count=${evicted.size}")
             publish()

@@ -1441,7 +1441,12 @@ object GlassesHub {
                 " phoneAssistedSetup=${supportsPhoneAssistedSetup(next.features)}",
         )
         if (next.features != previous.features) notifyLinkState()
-        if (next.launcherInteractiveVersion != previous.launcherInteractiveVersion) onLauncherNegotiation()
+        if (next.launcherInteractiveVersion != previous.launcherInteractiveVersion) {
+            onLauncherNegotiation()
+        } else {
+            // A reconnect to the same or an older phone re-sizes a collection a link loss kept.
+            ActivityController.onLauncherNegotiated(launcherInteractiveVersion())
+        }
         if (next.pageSessionVersion != previous.pageSessionVersion) {
             // A version-only change: the session and the catalog follow it, and nothing replays.
             NexusSession.onPageSupport(pageSessionSupported())
@@ -1476,14 +1481,14 @@ object GlassesHub {
         val previous = remotePhoneCapabilities
         remotePhoneCapabilities = PhoneHubCapabilities(0, null)
         if (cameraLauncherEntry(previous) != null) notifyLauncherEntries()
-        if (previous.launcherInteractiveVersion != 0) onLauncherNegotiation()
+        if (previous.launcherInteractiveVersion != 0) onLauncherNegotiation(linkLost = true)
     }
 
     /** The activity tier and the session follow the negotiated launcher bundle as it changes. */
-    private fun onLauncherNegotiation() {
+    private fun onLauncherNegotiation(linkLost: Boolean = false) {
         val version = launcherInteractiveVersion()
         log("launcher bundle negotiated version=$version")
-        ActivityController.onLauncherNegotiated(version)
+        ActivityController.onLauncherNegotiated(version, linkLost)
         NexusSession.onLauncherNegotiated()
         appContext?.let(NexusInput::onLauncherNegotiated)
     }
