@@ -66,3 +66,24 @@ The page watches the sessions only while it is shown.
 
 Media titles and artwork are user data. They may be rendered on the requested HUD but
 must not be included in production logs.
+
+## Assistant operations
+
+On hubs advertising Skills v1, separately approved `get_now_playing` and `pause`
+operations work without opening the media HUD. Notification access is required.
+Reads return metadata for a unique playing session or bounded player choices.
+Pause can run with its control operation alone and returns no title or artist.
+It sends explicit pause to the exact session, observes its playback callback, and
+reports accepted if dispatch was confirmed but the paused state was not observed.
+Several possible players require a choice; a destroyed reference is never
+redirected. References are bounded, expire after ten idle minutes, and become
+invalid when the provider process restarts. Skill calls fetch no artwork and
+leave the HUD monitor's listener lifecycle independent.
+
+A skill call has its own read of the sessions and its own opaque references. Answering
+"Which player?" authorizes only that reference for that one call: it never changes the
+player the surface, the activity or the page follow, never turns on Show in activities,
+never starts the session watcher, and never makes a command the activity offered reach
+another session. While only a skill call keeps Media Deck bound, the phone refuses its
+activity traffic; Media Deck then forgets what it sent, without retrying, and publishes the
+activity whole on the next change once the call is over.

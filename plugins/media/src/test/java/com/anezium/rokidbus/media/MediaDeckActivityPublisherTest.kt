@@ -397,4 +397,46 @@ class MediaDeckActivityPublisherTest {
         assertTrue(fake.monitor.sent.isEmpty())
         assertTrue(hub.state is MediaDeckState.Active)
     }
+
+    @Test
+    fun `a start refused under a skill lease is forgotten, not retried, and sent whole on the next change`() {
+        val publisher = live()
+        val pause = actionId(port.activities.last(), NexusActionType.MediaPause)
+
+        publisher.onError(MediaDeckActivityPublisher.SKILL_LEASE_DENIED)
+        assertFalse(publisher.isStarted)
+        assertTrue(publisher.enabled)
+        assertTrue(publisher.isWatching)
+        assertNull(publisher.suspendedBy)
+        assertTrue(publisher.status != MediaDeckActivityStatus.SUSPENDED)
+        assertTrue(publisher.mayBeOnHub)
+        // No retry now or later: a send during the call would be refused the same way.
+        advance(60_000L)
+        assertEquals(listOf("start"), port.calls)
+        // The refused revision binds to nothing on the glasses.
+        assertTrue(publisher.onCommand("inv-1", pause, NexusActionType.MediaPause) != MediaDeckControlOutcome.DONE)
+        assertTrue(fake.monitor.sent.isEmpty())
+
+        fake.monitor.emit(observed(phase = MediaPlaybackPhase.PAUSED))
+        assertEquals(listOf("start", "start"), port.calls)
+        assertTrue(publisher.isStarted)
+    }
+
+    @Test
+    fun `an end refused under a skill lease keeps the entry counted on the hub until it is ended`() {
+        val publisher = live()
+        publisher.setEnabled(false)
+        assertEquals(listOf("start", "end"), port.calls)
+        assertFalse(publisher.mayBeOnHub)
+
+        publisher.onError(MediaDeckActivityPublisher.SKILL_LEASE_DENIED)
+        assertTrue(publisher.mayBeOnHub)
+        assertEquals(listOf(true, false, true), remembered)
+        assertEquals(listOf("start", "end"), port.calls)
+
+        // The next event the plugin already receives ends it again.
+        publisher.rearm()
+        assertEquals(listOf("start", "end", "end"), port.calls)
+        assertFalse(publisher.mayBeOnHub)
+    }
 }
