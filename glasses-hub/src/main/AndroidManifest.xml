@@ -163,8 +163,7 @@
 
         <receiver
             android:name=".OpenLauncherReceiver"
-            android:exported="true"
-            android:permission="android.permission.DUMP">
+            android:exported="true">
             <intent-filter>
                 <action android:name="com.anezium.rokidbus.glasses.action.OPEN_LAUNCHER" />
             </intent-filter>
