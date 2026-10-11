@@ -228,6 +228,11 @@ class ProductivityToolsTest {
         .newExecutionPhase(NO_VISION)
         .execute(AssistantToolCall("call", tool.name, arguments))
 
+    @Test
+    fun `every productivity tool schema is accepted by strict function calling`() {
+        tools().forEach { assertTrue(it.name, it.parametersSchema.isStrictCompatible()) }
+    }
+
     private fun tools(): List<AssistantToolDefinition> = assistantProductivityTools(
         noteStore = noteStore(),
         reminderStore = reminderStore(),

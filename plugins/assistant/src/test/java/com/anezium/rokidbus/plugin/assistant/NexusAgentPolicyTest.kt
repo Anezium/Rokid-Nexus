@@ -8,6 +8,21 @@ import java.time.ZonedDateTime
 
 class NexusAgentPolicyTest {
     @Test
+    fun `workspace search is asked for the parts the excerpts miss only when the tool exists`() {
+        val withSearch = NexusAgentPolicy.buildSystemPrompt(workspace = "excerpts", workspaceEnabled = true,
+            availableToolNames = listOf(SEARCH_WORKSPACE_TOOL_NAME))
+        assertTrue(withSearch.contains("call search_workspace once before answering"))
+        assertTrue(withSearch.contains("Never answer one part from an excerpt about something else."))
+        assertTrue(withSearch.contains("Unrelated questions can be answered normally without searching Workspace."))
+        assertTrue(withSearch.contains("For questions requiring workspace documents, if the excerpts miss a part"))
+        assertTrue(withSearch.contains("proper names alone, never mixed with generic attributes"))
+        assertTrue(withSearch.indexOf("call search_workspace") < withSearch.indexOf("say no relevant workspace excerpt"))
+        val withoutSearch = NexusAgentPolicy.buildSystemPrompt(workspace = "excerpts", workspaceEnabled = true,
+            availableToolNames = emptyList())
+        assertFalse(withoutSearch.contains("search_workspace"))
+    }
+
+    @Test
     fun `blank memory leaves the existing prompt byte identical`() {
         val existingPrompt = NexusAgentPolicy.buildSystemPrompt(
             customPrompt = "Custom assistant.",

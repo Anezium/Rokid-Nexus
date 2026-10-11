@@ -677,6 +677,13 @@ class CalendarToolsTest {
         val deleteRecurringSeries: Boolean,
     )
 
+    @Test
+    fun `every calendar tool schema is accepted by strict function calling`() {
+        assistantCalendarTools(FakeCalendarGateway()).forEach {
+            assertTrue(it.name, it.parametersSchema.isStrictCompatible())
+        }
+    }
+
     private class FakeCalendarGateway(
         private val readAllowed: Boolean = true,
         private val writeAllowed: Boolean = true,

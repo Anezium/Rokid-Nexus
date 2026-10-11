@@ -282,13 +282,14 @@ internal class ChatGptCodexApiClient(
             val httpRequest = buildHttpRequest(
                 request = request,
                 modelId = supportedModel(modelId),
-                reasoningEffort = supportedReasoningEffort(reasoningEffort),
+                reasoningEffort = supportedReasoningEffort(modelId, reasoningEffort),
                 input = input,
                 toolDefinitions = toolDefinitions,
                 tokens = tokens,
             )
             val response = try {
                 withContext(Dispatchers.IO) {
+                    request.beforeSend?.invoke()
                     transport.execute(requestId, httpRequest) { payload ->
                         when (val event = ChatGptCodexSseParser.parseData(payload)) {
                             is ChatGptCodexSseEvent.TextDelta -> {
@@ -355,7 +356,7 @@ internal class ChatGptCodexApiClient(
             }
 
             if (response.statusCode !in 200..299) {
-                throw IllegalStateException(httpFailureMessage(response))
+                throw ChatGptCodexHttpException(response.statusCode, httpFailureMessage(response))
             }
 
             streamError?.let { error ->
@@ -453,36 +454,72 @@ internal class ChatGptCodexApiClient(
             .put("name", definition.name)
             .put("description", definition.description)
             .put("parameters", definition.parametersSchema.toJsonObject())
-            .put("strict", true)
+            // Strict mode rejects the whole request over one incomplete schema; send that one loose.
+            .put("strict", definition.strictSchema && definition.parametersSchema.isStrictCompatible())
 
     companion object {
         const val DEFAULT_ENDPOINT = "https://chatgpt.com/backend-api/codex/responses"
-        const val FAST_MODEL_ID = "gpt-5.6-luna"
-        const val BALANCED_MODEL_ID = "gpt-5.6-terra"
-        const val DEEP_MODEL_ID = "gpt-5.6-sol"
+        const val FAST_MODEL_ID = "gpt-6-luna"
+        const val BALANCED_MODEL_ID = "gpt-6.1-sol"
+        const val DEEP_MODEL_ID = "gpt-6-astra"
 
         // Luna leads: the glasses are a voice surface where the answer has to land
-        // before the wearer gives up on it. Measured against the same question with
-        // web search, luna answers in ~3.4 s where sol takes ~5.3 s. Sol is one tap
-        // away in settings when a question deserves the wait.
+        // before the wearer gives up on it. The deeper tiers are one tap away in
+        // settings when a question deserves the wait.
         const val DEFAULT_MODEL_ID = FAST_MODEL_ID
 
-        // Measured against the private backend: these three ids are the whole GPT-5.6
-        // family a ChatGPT account may use. Everything else -- older gpt-5 ids, mini or
-        // max variants, codex-mini-latest -- comes back "not supported when using Codex
-        // with a ChatGPT account".
+        // The current ChatGPT model trio. Older ids are still served but marked older,
+        // and anything else comes back "not supported when using Codex with a ChatGPT
+        // account".
         val SUPPORTED_MODEL_IDS = listOf(FAST_MODEL_ID, BALANCED_MODEL_ID, DEEP_MODEL_ID)
-        // "none" measured ~2x faster than "low" on web-searched questions
-        // (8.6s vs 14.4s end to end) and answer quality holds for voice Q&A.
+
+        // A selection saved by an earlier release keeps its tier rather than falling
+        // back to the default.
+        private val LEGACY_MODEL_ALIASES = mapOf(
+            "gpt-5.6-luna" to FAST_MODEL_ID,
+            "gpt-5.6-terra" to BALANCED_MODEL_ID,
+            "gpt-5.6-sol" to DEEP_MODEL_ID,
+            "gpt-6-sol" to BALANCED_MODEL_ID,
+        )
+
+        // The catalog's listed caps differ; a live backend probe also accepts none for Luna.
+        private val REASONING_EFFORTS_BY_MODEL = mapOf(
+            FAST_MODEL_ID to setOf("none", "low", "medium", "high", "xhigh", "max"),
+            BALANCED_MODEL_ID to setOf("low", "medium", "high", "xhigh", "ultra"),
+            DEEP_MODEL_ID to setOf("low", "medium", "high", "xhigh", "ultra"),
+        )
+
+        // Luna accepted none in a live Codex backend probe on 2026-10-09; deeper models clamp it to low.
         const val DEFAULT_REASONING_EFFORT = "none"
+
+        // Stored choices are clamped against the selected model at the request boundary.
         val SUPPORTED_REASONING_EFFORTS = setOf("none", "low", "medium", "high", "xhigh")
 
-        fun supportedModel(modelId: String): String =
-            modelId.trim().takeIf(SUPPORTED_MODEL_IDS::contains) ?: DEFAULT_MODEL_ID
+        fun supportedModel(modelId: String): String {
+            val trimmed = modelId.trim()
+            return trimmed.takeIf(SUPPORTED_MODEL_IDS::contains)
+                ?: LEGACY_MODEL_ALIASES[trimmed]
+                ?: DEFAULT_MODEL_ID
+        }
 
         fun supportedReasoningEffort(reasoningEffort: String): String =
             reasoningEffort.takeIf(SUPPORTED_REASONING_EFFORTS::contains)
                 ?: DEFAULT_REASONING_EFFORT
+
+        fun reasoningEffortsFor(modelId: String): Set<String> =
+            REASONING_EFFORTS_BY_MODEL.getValue(supportedModel(modelId))
+
+        /** The effort actually sent for [modelId]: always one that model accepts. */
+        fun supportedReasoningEffort(modelId: String, reasoningEffort: String): String {
+            val allowed = reasoningEffortsFor(modelId)
+            val requested = reasoningEffort.trim()
+            return when {
+                requested in allowed -> requested
+                requested == "ultra" && "max" in allowed -> "max"
+                requested == "max" && "ultra" in allowed -> "ultra"
+                else -> if ("none" in allowed) "none" else "low"
+            }
+        }
     }
 }
 
@@ -507,7 +544,8 @@ internal class ChatGptCodexProvider(
         }
 
         try {
-            val toolPhase = toolRegistry.newExecutionPhase(CODEX_PROVIDER_FEATURES)
+            val toolPhase = toolRegistry.newExecutionPhase(CODEX_PROVIDER_FEATURES, request.workspaceVersion,
+                request.workspaceTurn)
             val originalInput = request.toCodexResponsesInput()
             val modelId = request.model ?: modelProvider()
             val reasoningEffort = reasoningEffortProvider()
@@ -533,50 +571,63 @@ internal class ChatGptCodexProvider(
                 )
             }
 
-            val firstResponse = apiClient.executeResponses(
-                request = request,
-                modelId = modelId,
-                reasoningEffort = reasoningEffort,
-                input = originalInput,
-                toolDefinitions = toolPhase.availableDefinitions,
-                requestId = request.requestId,
-                onTextDelta = ::streamDelta,
-                onStreamRestart = ::resetStreamedText,
-                onWebSearchStateChanged = ::streamWebSearchState,
-            )
-            currentCoroutineContext().ensureActive()
+            var input = originalInput
+            val adapter = object : AssistantLoopAdapter {
+                override val maxToolRounds: Int = Int.MAX_VALUE
 
-            val functionCalls = firstResponse.outputItems
-                .mapNotNull(::parseFunctionCall)
-            if (functionCalls.isNotEmpty()) {
-                resetStreamedText()
-                val replayInput = JSONArray()
-                originalInput.forEachJsonValue(replayInput::put)
-                functionCalls.forEach { call ->
-                    val result = toolPhase.execute(call)
-                    currentCoroutineContext().ensureActive()
-                    replayInput.put(functionCallReplay(call))
-                    replayInput.put(functionCallOutput(call, result))
+                override suspend fun pass(tools: List<AssistantToolDefinition>, round: Int): AssistantLoopPass {
+                    suspend fun execute(offered: List<AssistantToolDefinition>) = apiClient.executeResponses(
+                        request = request,
+                        modelId = modelId,
+                        reasoningEffort = reasoningEffort,
+                        input = input,
+                        toolDefinitions = offered,
+                        requestId = request.requestId,
+                        onTextDelta = ::streamDelta,
+                        onStreamRestart = ::resetStreamedText,
+                        onWebSearchStateChanged = ::streamWebSearchState,
+                    )
+                    // A tool declaration the backend refuses must cost the tools, not the answer,
+                    // as on the OpenAI-compatible providers.
+                    val result = if (round == 0 && tools.isNotEmpty()) {
+                        try {
+                            execute(tools)
+                        } catch (error: ChatGptCodexHttpException) {
+                            if (error.statusCode != HTTP_BAD_REQUEST && error.statusCode != HTTP_UNPROCESSABLE) throw error
+                            execute(emptyList())
+                        }
+                    } else {
+                        execute(tools)
+                    }
+                    return AssistantLoopPass(
+                        text = response.toString(),
+                        toolCalls = result.outputItems.mapNotNull(::parseFunctionCall),
+                    )
                 }
-                apiClient.executeResponses(
-                    request = request,
-                    modelId = modelId,
-                    reasoningEffort = reasoningEffort,
-                    input = replayInput,
-                    toolDefinitions = emptyList(),
-                    requestId = request.requestId,
-                    onTextDelta = ::streamDelta,
-                    onStreamRestart = ::resetStreamedText,
-                    onWebSearchStateChanged = ::streamWebSearchState,
-                )
+
+                override fun appendToolResults(
+                    pass: AssistantLoopPass,
+                    results: List<Pair<AssistantToolCall, AssistantToolResult>>,
+                ) {
+                    val replayInput = JSONArray()
+                    input.forEachJsonValue(replayInput::put)
+                    results.forEach { (call, result) ->
+                        replayInput.put(functionCallReplay(call))
+                        replayInput.put(functionCallOutput(call, result))
+                    }
+                    input = replayInput
+                }
+
+                override suspend fun resetVisibleText() = resetStreamedText()
             }
+            val finalText = AssistantToolLoop(toolPhase).run(adapter)
 
             send(
                 AiProviderEvent.MessageDone(
                     ChatMessage(
                         id = messageId,
                         role = "assistant",
-                        content = response.toString(),
+                        content = finalText,
                     ),
                 ),
             )
@@ -626,15 +677,20 @@ internal fun functionCallOutput(
     val output = when (result) {
         is AssistantToolResult.Json -> result.text
         is AssistantToolResult.Image ->
-            JSONArray().put(
-                JSONObject()
-                    .put("type", "input_image")
-                    .put(
-                        "image_url",
-                        "data:${result.mimeType};base64,${result.base64}",
-                    )
-                    .put("detail", "high"),
-            )
+            JSONArray().apply {
+                result.caption?.let { caption ->
+                    put(JSONObject().put("type", "input_text").put("text", caption))
+                }
+                put(
+                    JSONObject()
+                        .put("type", "input_image")
+                        .put(
+                            "image_url",
+                            "data:${result.mimeType};base64,${result.base64}",
+                        )
+                        .put("detail", "high"),
+                )
+            }
         is AssistantToolResult.Error ->
             assistantToolErrorJson(result)
     }
@@ -738,3 +794,11 @@ private fun JSONObject.itemId(): String? = optString("id").takeIf(String::isNotB
 private inline fun JSONArray.forEachJsonValue(block: (Any) -> Unit) {
     for (index in 0 until length()) block(get(index))
 }
+
+internal class ChatGptCodexHttpException(
+    val statusCode: Int,
+    message: String,
+) : IllegalStateException(message)
+
+private const val HTTP_BAD_REQUEST = 400
+private const val HTTP_UNPROCESSABLE = 422

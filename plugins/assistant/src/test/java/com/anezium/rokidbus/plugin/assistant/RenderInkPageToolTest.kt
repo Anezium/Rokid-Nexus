@@ -41,6 +41,14 @@ class RenderInkPageToolTest {
     }
 
     @Test
+    fun `ink tool schemas are accepted by strict function calling`() {
+        val runtime = InkPageToolRuntime(FakeInkPageToolCapabilities()) { AssistantVisualAnswers.FREE_PAGES }
+        listOf(RenderTemplateTool(runtime, InkTemplateLoader { "" }), RenderInkPageTool(runtime)).forEach {
+            assertTrue(it.name, it.parametersSchema.isStrictCompatible())
+        }
+    }
+
+    @Test
     fun `the Visual answers setting decides which Ink tools the model is offered`() {
         var mode = AssistantVisualAnswers.DEFAULT
         val runtime = InkPageToolRuntime(FakeInkPageToolCapabilities()) { mode }

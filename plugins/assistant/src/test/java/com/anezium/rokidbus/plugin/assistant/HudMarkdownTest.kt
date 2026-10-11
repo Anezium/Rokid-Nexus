@@ -37,4 +37,13 @@ class HudMarkdownTest {
         assertEquals("2 * 3", stripHudMarkdown("2 * 3"))
         assertEquals("half **open", stripHudMarkdown("half **open"))
     }
+
+    @Test
+    fun `chatgpt citation tokens keep a cited file and never reach the HUD`() {
+        assertEquals("2 regions exceed North. (sales.pdf)",
+            stripCitationMarkup("2 regions exceed North. citesales.pdf"))
+        assertEquals("Paris is sunny.", stripCitationMarkup("Paris is sunny. citeturn0search1"))
+        assertEquals("Still streaming", stripCitationMarkup("Still streaming citesal"))
+        assertEquals("Plain answer.", stripCitationMarkup("Plain answer."))
+    }
 }

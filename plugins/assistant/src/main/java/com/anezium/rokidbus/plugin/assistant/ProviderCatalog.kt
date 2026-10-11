@@ -22,6 +22,8 @@ data class ProviderPreset(
     val extraHeaders: Map<String, String>,
     val keyHint: String,
     val backend: ProviderBackend = ProviderBackend.OPENAI_COMPAT,
+    // Models no longer suggested that a saved setting may still name; they keep their photo support.
+    val retiredVisionModels: Set<String> = emptySet(),
 )
 
 object ProviderCatalog {
@@ -29,24 +31,31 @@ object ProviderCatalog {
         id = "openai",
         displayName = "OpenAI",
         defaultBaseUrl = "https://api.openai.com/v1",
-        defaultModel = "gpt-4o-mini",
+        defaultModel = "gpt-6-luna",
         suggestedModels = listOf(
             SuggestedModel(
-                id = "gpt-4o-mini",
-                title = "GPT-4o mini",
-                caption = "Faster, and cheaper to run",
+                id = "gpt-6-luna",
+                title = "GPT-6-Luna",
+                caption = "Fastest, and cheapest to run",
                 vision = true,
             ),
             SuggestedModel(
-                id = "gpt-4o",
-                title = "GPT-4o",
-                caption = "Smarter, costs more per question",
+                id = "gpt-6.1-sol",
+                title = "GPT-6.1-Sol",
+                caption = "Everyday workhorse for most questions",
+                vision = true,
+            ),
+            SuggestedModel(
+                id = "gpt-6-astra",
+                title = "GPT-6-Astra",
+                caption = "Smartest, costs the most per question",
                 vision = true,
             ),
         ),
         supportedEfforts = emptyList(),
         extraHeaders = emptyMap(),
         keyHint = "sk-...",
+        retiredVisionModels = setOf("gpt-4o-mini", "gpt-4o"),
     )
 
     val openRouter = ProviderPreset(
@@ -183,5 +192,6 @@ object ProviderCatalog {
         ?: preset.suggestedModels
             .firstOrNull { suggested -> suggested.id == model.trim() }
             ?.vision
+        ?: model.trim().takeIf { it in preset.retiredVisionModels }?.let { true }
         ?: (backend == ProviderBackend.HERMES)
 }

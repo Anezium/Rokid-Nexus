@@ -24,11 +24,18 @@ Answers come from the provider the wearer picks in Settings: a ChatGPT plan
 (OAuth, no key to paste), or an API key for OpenAI, OpenRouter, MiniMax,
 DeepSeek, GLM (Z.ai), Hermes, or any OpenAI-compatible server. Every API preset
 speaks the same chat-completions SSE dialect through one generic client
-(`OpenAiCompatProvider`); the preset catalog lives in `ProviderCatalog.kt`.
+(`OpenAiCompatProvider`), except GPT-6 models on the OpenAI preset's own endpoint,
+which go through the Responses API (`OpenAiResponsesAdapter`); the preset
+catalog lives in `ProviderCatalog.kt`.
 Each provider keeps its own encrypted key, model, and endpoint.
 
-Tools go through `AssistantToolRegistry`: every provider declares the tools it
-can run, one client-managed tool phase per request, then the final reply. The
+Tools go through `AssistantToolRegistry`, and every structured provider runs
+them through one shared loop (`AssistantToolLoop`): up to four tool rounds and
+eight executed calls per turn, one at a time, with no new round once 60 seconds
+have passed, and a tool-free final reply only once the budget is spent. A pass
+in progress is never cut, so a long answer streams to its end. One execution
+phase spans the turn, so the once-per-turn guards on built-in actions,
+calendar deletion among them, hold across rounds. The
 text tools (notes, reminders, timers, calendar) are offered to every provider;
 only `take_photo` additionally requires a model that can see, and photos are
 stripped gracefully for models that cannot. `render_ink_page` and
@@ -38,6 +45,32 @@ layouts. The *Visual answers* setting decides which of the two the model is
 offered: *Templates only* by default, *Free pages* for both, or *Off* for none,
 which keeps every answer as text in the band. A server that rejects tools
 outright is retried once without them.
+
+**Plugin operations.** With a phone hub that routes skills, Assistant asks
+each turn which plugin operations the wearer approved for it (the
+`skills_client` grant, requested through its own metadata key) and offers them
+under their hub aliases (`sk_…`). The provider's description reaches the model
+as data, never as instructions. Results come back with their status spelled
+out, so a failed, uncertain, or merely accepted call is never read as done,
+and references stay opaque hub handles. The conversation keeps each
+provider's latest focus, such as Transit's stop, line, direction, board time,
+and the departure just mentioned, so "and the one after that?" continues from
+it. When a result needs the wearer to choose, up to three choices appear as
+chips on the answer band; a chip starts a new turn and cannot be imitated by
+text. Plugin operations are not offered through the Hermes text bridge.
+
+**Workspace.** A local folder picked in Settings becomes something to ask
+about. Assistant indexes Text, Markdown, Word, PDF, and image files there, up
+to 100 files, reading scanned pages and photos with on-device text recognition
+while indexing so a question never waits for it. Each question carries at
+most 2,500 characters of relevant passages, with any provider including
+Hermes, and the answer cites the file, and the page for a PDF. On structured-tool providers
+`search_workspace` looks once more for what those passages missed, and with an
+image-capable model `view_workspace_page` shows it the one cited page or
+image. Retrieval is lexical. The index persists across sessions; turning
+Workspace off or losing folder access clears it, and cloud or unverifiable
+document providers are refused. Passages and viewed pages do reach the chosen
+AI provider.
 
 A Hermes backend runs its tools server-side and never returns a client tool
 call, so the same twelve phone tools are described in the system prompt and

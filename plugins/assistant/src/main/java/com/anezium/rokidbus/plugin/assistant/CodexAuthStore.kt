@@ -417,7 +417,7 @@ class CodexAuthStore internal constructor(
 
     fun saveApiKey(
         apiKey: String,
-        model: String = OpenAiApiClient.DEFAULT_MODEL_ID,
+        model: String = ProviderCatalog.openAi.defaultModel,
     ) {
         val trimmed = apiKey.trim()
         require(trimmed.isNotBlank()) { "API key is blank." }

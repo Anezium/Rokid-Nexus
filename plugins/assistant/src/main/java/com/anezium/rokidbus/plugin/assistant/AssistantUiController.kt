@@ -124,6 +124,9 @@ internal class AssistantUiController(
      * SDK never sends an empty action row — so leaving a state that had them is a fresh show.
      */
     private var bandActions: List<NexusNoticeAction> = emptyList()
+
+    /** Choice chips an answer carries while a plugin result waits on the wearer's pick. */
+    private var answerChoices: List<NexusNoticeAction> = emptyList()
     private var bandFooter: String? = null
 
     /** A Type tap is being served: from the quiet band's show until the field is retired. */
@@ -694,11 +697,13 @@ internal class AssistantUiController(
     fun showAnswer(
         body: String,
         legacyCardLines: List<String>,
+        choices: List<NexusNoticeAction> = emptyList(),
     ) {
         if (inkOwnsAnswer) return
         cancelLauncherHint()
         stopKeepalive()
         startNewState()
+        answerChoices = choices
         if (useNoticeBand()) {
             spokenAnswerBody = body
             showOrUpdateAnswerNotice(body, ttlMs = answerTtlMs(body))
@@ -1010,7 +1015,9 @@ internal class AssistantUiController(
         val modeUpdate = AssistantNoticeMode.ENGAGED.takeIf {
             !noticeShown || noticeMode != AssistantNoticeMode.ENGAGED
         }
-        val result = if (noticeShown && !needsFreshShow(emptyList())) {
+        val choices = answerChoices
+        val freshRow = choices.isNotEmpty() && bandActions != choices
+        val result = if (noticeShown && !freshRow && !needsFreshShow(choices)) {
             notices.update(
                 NexusNoticeUpdate(
                     interactive = modeUpdate?.let { true },
@@ -1022,9 +1029,10 @@ internal class AssistantUiController(
             notices.show(
                 NexusNotice(
                     title = NOTICE_TITLE,
-                    interactive = true,
+                    interactive = choices.isEmpty(),
                     body = truncatedBody,
                     ttlMs = ttlMs,
+                    actions = choices,
                 ),
             )
         }
@@ -1032,6 +1040,7 @@ internal class AssistantUiController(
             noticeShown = true
             noticeMode = AssistantNoticeMode.ENGAGED
             clearBandDecorations()
+            bandActions = choices
             return true
         }
         noticeShown = false
@@ -1123,6 +1132,7 @@ internal class AssistantUiController(
         noticeStateVersion += 1
         noticeHideJob?.cancel()
         noticeHideJob = null
+        answerChoices = emptyList()
         // Whatever the voice was reading belongs to the state we are leaving. Callers that own an
         // answer claim it again right after; everyone else gets a clean slate, so a late utterance
         // cannot hold open a band that has moved on.

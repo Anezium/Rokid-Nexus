@@ -7,6 +7,14 @@ import org.junit.Test
 
 class ProviderCatalogTest {
     @Test
+    fun retiredOpenAiModelsKeepPhotoSupport() {
+        assertTrue(ProviderCatalog.supportsVision(ProviderCatalog.openAi, "gpt-4o-mini", null))
+        assertTrue(ProviderCatalog.supportsVision(ProviderCatalog.openAi, " gpt-4o ", null))
+        assertFalse(ProviderCatalog.supportsVision(ProviderCatalog.openAi, "gpt-4o-mini", false))
+        assertFalse(ProviderCatalog.supportsVision(ProviderCatalog.openRouter, "gpt-4o-mini", null))
+    }
+
+    @Test
     fun presetIdsAreUnique() {
         val ids = ProviderCatalog.presets.map(ProviderPreset::id)
 
@@ -18,11 +26,31 @@ class ProviderCatalogTest {
     }
 
     @Test
+    fun providerCatalogOpenAiSuggestsTheGpt6Trio() {
+        val openAi = ProviderCatalog.openAi
+
+        assertEquals("gpt-6-luna", openAi.defaultModel)
+        assertEquals(
+            listOf("gpt-6-luna", "gpt-6.1-sol", "gpt-6-astra"),
+            openAi.suggestedModels.map(SuggestedModel::id),
+        )
+        assertTrue(openAi.suggestedModels.all(SuggestedModel::vision))
+        assertTrue(openAi.suggestedModels.none { it.id.startsWith("gpt-4o") })
+        assertEquals(emptyList<String>(), openAi.supportedEfforts)
+        listOf("gpt-6-luna", "gpt-6.1-sol", "gpt-6-astra").forEach { model ->
+            assertTrue(
+                model,
+                ProviderCatalog.supportsVision(openAi, model, visionOverride = null),
+            )
+        }
+    }
+
+    @Test
     fun visionUsesSuggestionUntilExplicitlyOverridden() {
         assertTrue(
             ProviderCatalog.supportsVision(
                 preset = ProviderCatalog.openAi,
-                model = "gpt-4o-mini",
+                model = "gpt-6-luna",
                 visionOverride = null,
             ),
         )

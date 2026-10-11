@@ -21,6 +21,7 @@ internal sealed interface OpenAiChatSseEvent {
         val content: String? = null,
         val toolCalls: List<OpenAiChatToolCallDelta> = emptyList(),
         val finishReason: String? = null,
+        val responseItem: JSONObject? = null,
     ) : OpenAiChatSseEvent
     data class Error(val message: String) : OpenAiChatSseEvent
     data object Done : OpenAiChatSseEvent
