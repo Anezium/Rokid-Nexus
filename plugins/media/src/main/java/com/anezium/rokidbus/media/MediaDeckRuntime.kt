@@ -117,7 +117,7 @@ internal class MediaDeckRuntime(
      * retried. What follows is drawn from the state observed afterwards.
      */
     fun control(command: MediaDeckCommand): MediaDeckControlOutcome =
-        hub.control(shownState?.let(MediaDeckTarget::of), command)
+        hub.control(shownState?.let { MediaDeckTarget.of(it) }, command)
 
     fun imageCapabilityChanged() {
         if (!active || cachedArtworkMode == artworkModeFor(host.supportsImage())) return
