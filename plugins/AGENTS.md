@@ -83,7 +83,11 @@ sanctioned exceptions:
    walking journey in a foreground service of type `location`, with its own
    notification carrying Stop. It requests location only while that journey runs
    and stops on arrival, on Stop, or as soon as location permission is lost. No
-   boot start, background location, or journey the user did not start.
+   boot start, background location, or journey the user did not start. Planning
+   the route sends the first accurate position and the chosen destination to
+   Transitous (a third-party, OpenStreetMap-based planner) once per journey, with
+   `INTERNET` declared for that request only; the phone screen says so before
+   the journey starts, and nothing else leaves the phone.
 
 A phone plugin may also call an Android platform API directly under permissions
 declared in its own manifest. Those runtime permissions are separate from Nexus

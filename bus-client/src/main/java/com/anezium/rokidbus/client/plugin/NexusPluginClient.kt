@@ -377,7 +377,8 @@ class NexusPluginClient internal constructor(
     fun publishActivityHeading(deg: Double, accuracyDeg: Double? = null): NexusSdkResult {
         activityPreflight()?.let { return it }
         if (!supportsLauncherInteractive()) return NexusSdkResult.CAPABILITY_NOT_AVAILABLE
-        if (!hasUsableLink(currentLinkState)) return NexusSdkResult.CAPABILITY_NOT_AVAILABLE
+        // Like geometry, a heading travels over the data plane only; the phone drops it otherwise.
+        if (currentLinkState and LinkStateBits.SPP_DATA_UP == 0) return NexusSdkResult.CAPABILITY_NOT_AVAILABLE
         val payload = runCatching {
             ActivitySurfaceContract.headingPayload(ActivityHeading(deg, System.currentTimeMillis(), accuracyDeg))
         }.getOrNull() ?: return NexusSdkResult.INVALID_PAYLOAD

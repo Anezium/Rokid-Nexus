@@ -291,7 +291,8 @@ class NexusLauncherInteractiveTest {
 
         val (controlOnly, _) = client(LegacyCallbacks(), link = LinkStateBits.CXR_CONTROL_UP)
         assertEquals(NexusSdkResult.CAPABILITY_NOT_AVAILABLE, controlOnly.publishActivityGeometry(1, geometry))
-        assertEquals(NexusSdkResult.SENT, controlOnly.publishActivityHeading(90.0, accuracyDeg = 10.0))
+        // The phone forwards a heading over the data plane only, so control alone cannot carry it.
+        assertEquals(NexusSdkResult.CAPABILITY_NOT_AVAILABLE, controlOnly.publishActivityHeading(90.0, accuracyDeg = 10.0))
 
         val (old, _) = client(LegacyCallbacks(), featureBits = BusCapabilityBits.ACTIVITY_SURFACE)
         assertEquals(NexusSdkResult.CAPABILITY_NOT_AVAILABLE, old.publishActivityGeometry(1, geometry))

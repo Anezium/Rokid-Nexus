@@ -49,6 +49,11 @@ HUD surface, and forwards only play/pause/previous/next transport commands.
   an explicit play or pause, and never retried. The answer is `done` (handed to that session;
   what the player then does is observed), `stale` (another session took over, or the state
   moved) or `rejected` (no session, no access, the player refused).
+- Activity command ids carry the state revision they were published at (`pause@12`), so a
+  command is tied to what the wearer saw even while a newer update is still on its way; the
+  hub keeps the focus on the same slot when an id changes. The page's middle control instead
+  keeps one id, `playpause`, whose typed value is the explicit Play or Pause at the shown
+  revision.
 
 ## Pages
 
