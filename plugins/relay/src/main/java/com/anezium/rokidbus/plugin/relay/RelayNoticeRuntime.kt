@@ -202,6 +202,18 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
         }
     }
 
+    /**
+     * The app reposted the thread's notification without a reply action: the event is still on
+     * the phone, so nothing is withdrawn, but the band's reply is gone like on a removal. The
+     * countdown stops for good and kept words say they cannot be sent from here.
+     */
+    fun onReplyAuthorityLost(id: String) = onMain {
+        if (currentReply?.id != id || !activeNotice) return@onMain
+        authorityLost = true
+        cancelSendCountdown()
+        if (!currentTranscript.isNullOrBlank()) queueReplyUnavailable()
+    }
+
     override fun onOpen() = Unit
 
     override fun onClose() = onMain {

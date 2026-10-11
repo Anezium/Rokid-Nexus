@@ -289,6 +289,29 @@ class RelayLauncherThreadTest {
     }
 
     @Test
+    fun `a repost without its reply action stops the band countdown for good`() {
+        start(launcher = true)
+        typeOnTheBand("On my way")
+        val read = android.app.Notification.Builder(app, "chat")
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setContentTitle("Mika")
+            .setContentText("on est devant")
+            .build()
+        listener.get().onNotificationPosted(
+            StatusBarNotification(chat.packageName, chat.opPkg, chat.id, chat.tag, chat.uid, 0, 0, read, chat.user, System.currentTimeMillis()),
+        )
+        // Updates already queued before the repost drain first.
+        RelayHubFixture.idleFor(500)
+        val mark = hub.sentTo(BusPaths.NOTICE_UPDATE).size
+        RelayHubFixture.idleFor(10_000)
+
+        assertTrue(handoffs().isEmpty())
+        // No countdown label ticks on after the reply is gone.
+        val later = hub.sentTo(BusPaths.NOTICE_UPDATE).drop(mark)
+        assertTrue(later.none { it.toString().contains("Sending") })
+    }
+
+    @Test
     fun `a countdown never sends after a band update failed`() {
         start(launcher = true)
         typeOnTheBand("On my way")

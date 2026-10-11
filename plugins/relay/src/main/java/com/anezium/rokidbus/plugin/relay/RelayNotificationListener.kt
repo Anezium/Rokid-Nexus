@@ -137,7 +137,11 @@ class RelayNotificationListener : NotificationListenerService() {
         val action = sbn.notification.findRepliableAction()
         if (action == null) {
             // Its page stops offering Send; the event is still on the phone, so nothing is withdrawn.
-            if (ReplyRepository.dropAuthority(sbn)) NotificationControl.notifyCaptured(ReplyRepository.stableId(sbn.key))
+            if (ReplyRepository.dropAuthority(sbn)) {
+                val id = ReplyRepository.stableId(sbn.key)
+                runtime.onReplyAuthorityLost(id)
+                NotificationControl.notifyCaptured(id)
+            }
             return finish("no_action", accepted = false)
         }
         if (!settings.admits()) return finish("no_action", accepted = true)
