@@ -13,6 +13,8 @@ import com.anezium.rokidbus.shared.ActivitySurfaceValidationResult
 import com.anezium.rokidbus.shared.BusEnvelope
 import com.anezium.rokidbus.shared.BusPaths
 import com.anezium.rokidbus.shared.LauncherInteractiveContract
+import com.anezium.rokidbus.shared.AmbientSize
+import com.anezium.rokidbus.shared.ForegroundAmbientMode
 import com.anezium.rokidbus.shared.PinSurfacePosition
 import java.util.concurrent.CopyOnWriteArrayList
 
@@ -37,6 +39,8 @@ internal data class ActivityRenderItem(
     val presentation: ActivityPresentation,
     /** True only on the event item whose flare was admitted as urgent. */
     val urgent: Boolean = false,
+    /** The owner's explicit ambient size as drawn here (capped over an app); null while automatic. */
+    val size: AmbientSize? = null,
 )
 
 /**
@@ -302,25 +306,30 @@ internal class ActivityStateMachine {
         urgent: Boolean,
         nowMs: Long,
         alwaysExpanded: Boolean,
+        sizeOf: (String) -> AmbientSize? = { null },
+        mode: ForegroundAmbientMode = ForegroundAmbientMode.RESIDENTS,
     ): ActivityEventPresentation {
         val resident = residents[surfaceId]
             ?: return ActivityEventPresentation(ActivityPresentation.HIDDEN)
-        if (context == ActivityPresentationContext.CAMERA_OVERLAY) {
+        if (context == ActivityPresentationContext.CAMERA_OVERLAY || mode == ForegroundAmbientMode.NOTHING) {
             return ActivityEventPresentation(ActivityPresentation.HIDDEN)
         }
         if (surfaceId != primarySurfaceId()) {
-            return ActivityEventPresentation(ActivityPresentation.PULSE)
+            return ActivityEventPresentation(applyForegroundMode(ActivityPresentation.PULSE, mode))
         }
         val flareAvailable = resident.lastFlareAtMs
             ?.let { nowMs - it >= FLARE_INTERVAL_MS }
             ?: true
         val urgentAdmitted = significant &&
             urgentFlareAdmitted(urgent, resident.lastUrgentAtMs, nowMs)
-        val selected = selectActivityPresentation(
-            context = context,
-            significant = significant,
-            flareBudgetAvailable = flareAvailable || urgentAdmitted,
-            collapseState = collapseState(resident, nowMs, alwaysExpanded),
+        val selected = applyForegroundMode(
+            selectActivityPresentation(
+                context = context,
+                significant = significant,
+                flareBudgetAvailable = flareAvailable || urgentAdmitted,
+                collapseState = collapseState(resident, nowMs, alwaysExpanded || sizeOf(resident.ownerPluginId) != null),
+            ),
+            mode,
         )
         val urgentFlare = urgentAdmitted && selected == ActivityPresentation.FLARE
         if (selected == ActivityPresentation.FLARE) {
@@ -340,6 +349,8 @@ internal class ActivityStateMachine {
         eventSurfaceId: String? = null,
         eventPresentation: ActivityPresentation? = null,
         eventUrgent: Boolean = false,
+        sizeOf: (String) -> AmbientSize? = { null },
+        mode: ForegroundAmbientMode = ForegroundAmbientMode.RESIDENTS,
     ): ActivityRenderState {
         val ordered = residents.values.sortedBy(Resident::startedOrder)
         val primary = primarySurfaceId()
@@ -352,19 +363,24 @@ internal class ActivityStateMachine {
         return ActivityRenderState(
             items = ordered.filter { it.surfaceId in islands }.mapNotNull { resident ->
                 val corner = corners[resident.surfaceId] ?: return@mapNotNull null
+                val preferred = sizeOf(resident.ownerPluginId)
                 val presentation = when {
                     context == ActivityPresentationContext.CAMERA_OVERLAY ->
                         ActivityPresentation.HIDDEN
                     resident.surfaceId == eventSurfaceId && eventPresentation != null ->
                         eventPresentation
                     resident.surfaceId != primary ->
-                        ActivityPresentation.CHIP
+                        applyForegroundMode(ActivityPresentation.CHIP, mode)
                     else ->
-                        selectActivityPresentation(
-                            context = context,
-                            significant = false,
-                            flareBudgetAvailable = false,
-                            collapseState = collapseState(resident, nowMs, alwaysExpanded),
+                        applyForegroundMode(
+                            selectActivityPresentation(
+                                context = context,
+                                significant = false,
+                                flareBudgetAvailable = false,
+                                // An explicit size replaces the ten-second collapse.
+                                collapseState = collapseState(resident, nowMs, alwaysExpanded || preferred != null),
+                            ),
+                            mode,
                         )
                 }
                 ActivityRenderItem(
@@ -388,6 +404,7 @@ internal class ActivityStateMachine {
                     urgent = eventUrgent &&
                         resident.surfaceId == eventSurfaceId &&
                         presentation == ActivityPresentation.FLARE,
+                    size = ambientIslandSize(preferred, context),
                 )
             },
             collection = ordered.map {
@@ -487,6 +504,7 @@ internal object ActivityPresentationSettings {
     private const val PREFS = "activity_presentation"
     private const val ALWAYS_EXPANDED = "always_expanded"
     private const val LAUNCHER_BACKEND = "launcher.backend"
+    private const val PHONE_LAUNCHER_BACKEND = "launcher.backend.phone"
 
     fun alwaysExpanded(context: Context): Boolean =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -513,6 +531,23 @@ internal object ActivityPresentationSettings {
             .putString(LAUNCHER_BACKEND, value)
             .apply()
     }
+
+    /**
+     * The phone's explicit backend as last announced, kept apart from the glasses' own choice so
+     * neither ever overwrites the other, and across a link loss so the launcher does not flip when
+     * the phone goes away. A phone announcing no opinion clears it.
+     */
+    fun phoneLauncherBackend(context: Context): String? =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getString(PHONE_LAUNCHER_BACKEND, null)
+
+    fun setPhoneLauncherBackend(context: Context, value: String?) {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        if (prefs.getString(PHONE_LAUNCHER_BACKEND, null) == value) return
+        prefs.edit()
+            .apply { if (value == null) remove(PHONE_LAUNCHER_BACKEND) else putString(PHONE_LAUNCHER_BACKEND, value) }
+            .apply()
+    }
 }
 
 internal object ActivityController {
@@ -523,7 +558,10 @@ internal object ActivityController {
     private var context: Context? = null
     private var surfaceUnsubscribe: (() -> Unit)? = null
     private var pinUnsubscribe: (() -> Unit)? = null
+    private var ambientUnsubscribe: (() -> Unit)? = null
+    private var foregroundUnsubscribe: (() -> Unit)? = null
     private var cameraOverlayActive = false
+    private var sessionOpen = false
     private var latestRender = ActivityRenderState()
     private var launcherVersion = 0
 
@@ -534,6 +572,10 @@ internal object ActivityController {
             pinUnsubscribe?.invoke()
             surfaceUnsubscribe = SurfaceController.observe { contextChanged() }
             pinUnsubscribe = PinController.observe { contextChanged() }
+            ambientUnsubscribe?.invoke()
+            ambientUnsubscribe = AmbientPreferences.observe { runOnMain(::contextChanged) }
+            foregroundUnsubscribe?.invoke()
+            foregroundUnsubscribe = AmbientForeground.observe { runOnMain(::contextChanged) }
             publish()
         }
     }
@@ -544,6 +586,10 @@ internal object ActivityController {
             surfaceUnsubscribe = null
             pinUnsubscribe?.invoke()
             pinUnsubscribe = null
+            ambientUnsubscribe?.invoke()
+            ambientUnsubscribe = null
+            foregroundUnsubscribe?.invoke()
+            foregroundUnsubscribe = null
             cancelDeadline()
             context = null
         }
@@ -702,6 +748,8 @@ internal object ActivityController {
             urgent = result.urgent,
             nowMs = nowMs,
             alwaysExpanded = alwaysExpanded(),
+            sizeOf = AmbientPreferences::effectiveSize,
+            mode = AmbientForeground.mode(),
         )
         if (result.significant && event.presentation == ActivityPresentation.PULSE) {
             log("activity flare throttled id=${result.surfaceId}")
@@ -731,6 +779,13 @@ internal object ActivityController {
             eventSurfaceId = eventSurfaceId,
             eventPresentation = eventPresentation,
             eventUrgent = eventUrgent,
+            sizeOf = AmbientPreferences::effectiveSize,
+            mode = AmbientForeground.mode(),
+        )
+        // A route lives as long as its activity: ended or offline, its geometry and heading go.
+        RouteLive.retain(
+            live = latestRender.collection.filterNot { it.content.isOffline }.mapTo(mutableSetOf()) { it.ownerPluginId },
+            offline = latestRender.collection.filter { it.content.isOffline }.mapTo(mutableSetOf()) { it.ownerPluginId },
         )
         listeners.forEach { listener -> runCatching { listener(latestRender) } }
         scheduleDeadline(nowMs)
@@ -740,11 +795,25 @@ internal object ActivityController {
         publish()
     }
 
+    /**
+     * The open Nexus session counts as the launcher, explicitly, whichever backend drew it; under
+     * Nexus's own windows the foreground resolver tells the home from a native app.
+     */
     private fun presentationContext(): ActivityPresentationContext = when {
         cameraOverlayActive -> ActivityPresentationContext.CAMERA_OVERLAY
         SurfaceController.activeSurface() != null -> ActivityPresentationContext.ACTIVE_SURFACE
-        LauncherOverlayRenderer.isShown() -> ActivityPresentationContext.NEXUS_LAUNCHER
-        else -> ActivityPresentationContext.IDLE_OR_NATIVE_HOME
+        LauncherOverlayRenderer.isShown() || sessionOpen -> ActivityPresentationContext.NEXUS_LAUNCHER
+        AmbientForeground.homeInFront -> ActivityPresentationContext.IDLE_HOME
+        else -> ActivityPresentationContext.NATIVE_APP
+    }
+
+    /** The Nexus session opened or closed; told by the session host, on the main thread. */
+    fun setSessionOpen(open: Boolean) {
+        runOnMain {
+            if (sessionOpen == open) return@runOnMain
+            sessionOpen = open
+            contextChanged()
+        }
     }
 
     private fun alwaysExpanded(): Boolean =

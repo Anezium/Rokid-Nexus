@@ -1,5 +1,6 @@
 package com.anezium.rokidbus.glasses.session
 
+import com.anezium.rokidbus.shared.AmbientSize
 import com.anezium.rokidbus.shared.PageSurfaceContract
 import com.anezium.rokidbus.shared.PageSurfaceResponse
 
@@ -86,6 +87,20 @@ internal sealed interface FramePanel {
         override val selected: Int = CANCEL,
     ) : FramePanel
 
+    /**
+     * The hub's display page for [ownerPluginId]'s ambient size: Text, Minimap, Panel in
+     * [RoutePresentation.SIZES] order, opened on [current] (the first while automatic). Once the
+     * wearer swipes ([moved]) the island previews the selected size; a tap saves it, BACK cancels.
+     */
+    data class Display(
+        val ownerPluginId: String,
+        val current: AmbientSize?,
+        override val selected: Int,
+        val moved: Boolean = false,
+    ) : FramePanel {
+        val size: AmbientSize get() = RoutePresentation.SIZES[selected]
+    }
+
     companion object {
         const val CANCEL = 0
         const val CONFIRM = 1
@@ -139,6 +154,8 @@ internal data class Frame(
     val openApp: OpenApp? = null,
     /** A conversation frame's focused composer button; null while the wearer reads. */
     val composerFocus: ComposerFocus? = null,
+    /** A route frame's full-map excursion; null on the page itself. */
+    val fullMap: FullMapMode? = null,
 )
 
 /** The hub's own Open app row at the end of a destination page, for a launchable owner. */
@@ -284,6 +301,11 @@ internal data class SessionModel(
     val pendingSend: PendingSend? = null,
     /** The latest reply handed to its app, shown on its thread until a newer revision. */
     val handoff: Handoff? = null,
+    /**
+     * The map view the wearer chose per route owner, kept for the session only and never written
+     * to the ambient size preference (plan 028a §5.5).
+     */
+    val mapViews: Map<String, MapView> = emptyMap(),
 ) {
     /**
      * The one time the runner's timer is set for: the state's own deadline and, while a session

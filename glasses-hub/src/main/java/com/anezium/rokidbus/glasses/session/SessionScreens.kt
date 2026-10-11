@@ -293,6 +293,8 @@ internal class SessionScreens(
     private val wallTimeOf: (Long) -> Long,
     /** Wall-clock now, for the age of a notification. */
     private val wallClock: () -> Long = { 0L },
+    /** An owner's live geometry and smoothed heading, for its route page's map. */
+    private val liveRoute: (String) -> LiveRoute = { LiveRoute() },
 ) {
     /**
      * [generation] is the open session's, which names its frames for the renderer's reports;
@@ -358,8 +360,8 @@ internal class SessionScreens(
                 )
                 RootStopKind.NOTICE_PREVIEW -> noticeCard(stop, selected)
                 RootStopKind.ACTIVITIES, RootStopKind.NOTIFICATIONS ->
-                    ScreenBlock.Row(stop.id, stop.text, trail = (stop.count ?: 0).toString(), selected = selected)
-                RootStopKind.APPLICATIONS -> ScreenBlock.Row(stop.id, stop.text, selected = selected)
+                    ScreenBlock.Row(stop.id, stop.text, trail = (stop.count ?: 0).toString(), selected = selected, icon = stop.icon)
+                RootStopKind.APPLICATIONS -> ScreenBlock.Row(stop.id, stop.text, selected = selected, icon = stop.icon)
             }
         }
         val selectedStop = state.stops.getOrNull(state.selected)
@@ -480,6 +482,7 @@ internal class SessionScreens(
                     frame, status, FrameIdentity(generation, frameIndex), body, title, back,
                     statusText ?: frame.outcome?.takeIf { it.status in SPOKEN_OUTCOMES }?.let(::outcomeText), facts.composer,
                 )
+                is PageBody.Route -> route(frame, status, body, title, back, statusText ?: outcomeText, facts)
                 else -> shown(frame, status, FrameIdentity(generation, frameIndex), title, parent, back, statusText ?: outcomeText, facts)
             }
         }
@@ -557,8 +560,11 @@ internal class SessionScreens(
         )
         // The messages as they were, dimmed; never the composer: a retained page acts on nothing.
         is PageBody.Conversation -> listOf(ScreenBlock.Conversation("last:conversation", body.caption, bubbles(body.messages), dimmed = true))
-        // Placeholder until the navigation lane draws retained route pages.
-        is PageBody.Route -> emptyList()
+        // The guidance as it was, dimmed; never its map: a retained position is no position.
+        is PageBody.Route -> listOfNotNull(
+            body.maneuver?.let { ScreenBlock.Text("last:distance", "~${it.distance.removePrefix("~")}", TextRole.FIGURE, dimmed = true) },
+            body.maneuver?.street?.let { ScreenBlock.Text("last:street", it, TextRole.BODY, dimmed = true) },
+        ) + body.facts.map { ScreenBlock.Fact("last:fact:${it.id}", it.label, it.value, dimmed = true) }
         is PageBody.Document, null -> emptyList()
     }
 
@@ -581,8 +587,10 @@ internal class SessionScreens(
             body.status?.let { PageSegment("status", PageSegmentKind.ASIDE, it) },
         )
         is PageBody.Conversation -> body.messages.map { PageSegment("m:${it.id}", PageSegmentKind.PROSE, it.text) }
-        // Placeholder until the navigation lane gives route pages their own reading.
-        is PageBody.Route -> emptyList()
+        is PageBody.Route -> listOfNotNull(
+            body.maneuver?.let { PageSegment("maneuver", PageSegmentKind.PROSE, listOfNotNull(it.distance, it.street).joinToString(" · ")) },
+        ) + body.facts.map { PageSegment("fact:${it.id}", PageSegmentKind.PROSE, "${it.label} · ${it.value}") } +
+            listOfNotNull(body.ribbon?.note?.let { PageSegment("note", PageSegmentKind.ASIDE, it) })
         null -> emptyList()
     }
 
@@ -701,6 +709,96 @@ internal class SessionScreens(
             null
         }
         return SessionScreen(ScreenHeader(header, trail), blocks, ScreenHint(action, backHint), statusText, focus, fit = fit)
+    }
+
+    /**
+     * A route page (plan 028a §2.1, §5.5): the manoeuvre, the compact map card in the chosen view,
+     * the facts and the transit ribbon, then the hub's rows and the provider's actions. On the
+     * full map it is the map alone, chrome-less, with the manoeuvre over it; Enter there lists the
+     * same rows as the hub's commands. See [RoutePresentation] for the geometry and degraded rules.
+     */
+    private fun route(
+        frame: Frame,
+        status: FrameStatus.Shown,
+        body: PageBody.Route,
+        title: String,
+        back: String,
+        statusText: String?,
+        facts: CommandFacts,
+    ): SessionScreen {
+        val owner = PageTemplateContract.namespaceOf(frame.pageId).orEmpty()
+        val live = liveRoute(owner)
+        val view = facts.mapViews[owner] ?: MapView.FOLLOW
+        val geometry = RoutePresentation.geometry(body, view, live.geometry)
+        val degraded = RoutePresentation.degraded(body, geometry)
+        val heading = RoutePresentation.heading(view, degraded, live.headingDeg)
+        val maneuver = body.maneuver?.let {
+            ScreenBlock.Maneuver(
+                "maneuver", RoutePresentation.glyph(it.glyph, degraded), it.distance.removePrefix("~"), it.street, it.eta,
+                approximate = degraded,
+            )
+        }
+        val rows = items.rows(status.snapshot.page) + listOfNotNull(frame.openApp?.let(ActivityCommands::openAppRow))
+        val mode = frame.fullMap?.takeIf { geometry != null && rows.any { it.item == PageItem.RouteMap } }
+        if (mode == FullMapMode.MAP && geometry != null) {
+            val map = ScreenBlock.Map(
+                "map", geometry, heading, MapSize.FULL, view, degraded,
+                label = RoutePresentation.mapLabel(view), trail = RoutePresentation.mapTrail(view),
+            )
+            return SessionScreen(null, listOfNotNull(map, maneuver), null, statusText, "map", chromeless = true)
+        }
+        val pendingAction = frame.invocation?.actionId
+        fun rowBlock(index: Int, row: TypedRow): ScreenBlock = ScreenBlock.Row(
+            "row:${row.key}", row.label, row.sub,
+            enabled = row.enabled && row.item != PageItem.Inert,
+            selected = frame.tombstone == null && index == frame.selected,
+            checked = (row.item as? PageItem.RouteView)?.let { it.view == view } ?: row.checked,
+            pending = pendingAction != null && row.actionId == pendingAction,
+        )
+        val selectedRow = if (frame.tombstone == null) rows.getOrNull(frame.selected) else null
+        val action = when (selectedRow?.item) {
+            null, PageItem.Inert -> if (rows.size > 1) "swipe choose" else null
+            PageItem.RouteMap, PageItem.RouteFullScreen, is PageItem.RouteDisplay -> "tap open"
+            is PageItem.RouteView, is PageItem.Confirm, is PageItem.Invoke -> "tap choose"
+            is PageItem.Quick -> "tap run"
+            is PageItem.LaunchPrompt, is PageItem.Launch -> "tap open"
+            else -> null
+        }
+        if (mode == FullMapMode.COMMANDS) {
+            val commands = rows.withIndex().filter { it.value.item != PageItem.RouteMap }
+            val blocks = commands.map { (index, row) -> rowBlock(index, row) }
+            val position = commands.indexOfFirst { it.index == frame.selected } + 1
+            return SessionScreen(
+                ScreenHeader(RoutePresentation.COMMANDS.uppercase(), if (commands.size > 1 && position > 0) "$position/${commands.size}" else null),
+                blocks,
+                ScreenHint(action, BACK_MAP),
+                statusText,
+                blocks.firstOrNull { it.isSelected() }?.key,
+            )
+        }
+        val blocks = mutableListOf<ScreenBlock>()
+        maneuver?.let(blocks::add)
+        RoutePresentation.gpsLost(body, geometry)?.let { blocks += ScreenBlock.Text("gps", it, TextRole.CAPTION) }
+        rows.forEachIndexed { index, row ->
+            if (row.item == PageItem.RouteMap && geometry != null) {
+                blocks += ScreenBlock.Map(
+                    "row:${row.key}", geometry, heading, MapSize.COMPACT, view, degraded,
+                    selected = frame.tombstone == null && index == frame.selected,
+                    label = RoutePresentation.mapLabel(view), trail = RoutePresentation.mapTrail(view),
+                )
+            }
+        }
+        body.facts.forEach { blocks += ScreenBlock.Fact("fact:${it.id}", it.label, it.value) }
+        body.ribbon?.let { blocks += ScreenBlock.Ribbon("ribbon", it.line, it.stops, it.between, it.note) }
+        val rowBlocks = rows.withIndex().filter { it.value.item != PageItem.RouteMap }.map { (index, row) -> rowBlock(index, row) }.toMutableList()
+        frame.tombstone?.let { label ->
+            val at = rows.take(frame.selected).count { it.item != PageItem.RouteMap }
+            rowBlocks.add(at.coerceIn(0, rowBlocks.size), ScreenBlock.Row("tombstone", label, "removed", enabled = false, selected = true, tombstone = true))
+        }
+        blocks += rowBlocks
+        val focus = blocks.firstOrNull { it.isSelected() }?.key ?: blocks.firstOrNull()?.key
+        val trail = if (rows.size > 1) "${(frame.selected + 1).coerceAtMost(rows.size)}/${rows.size}" else null
+        return SessionScreen(ScreenHeader(title.uppercase(), trail), blocks, ScreenHint(action, back), statusText, focus)
     }
 
     /** An entry of the Activities page, drawn as its root card would be, commands included. */
@@ -858,6 +956,7 @@ internal class SessionScreens(
     private fun ScreenBlock.isSelected(): Boolean = when (this) {
         is ScreenBlock.Row -> selected
         is ScreenBlock.Card -> selected
+        is ScreenBlock.Map -> selected
         else -> false
     }
 
@@ -881,6 +980,22 @@ internal class SessionScreens(
                 ScreenHint("swipe choose · tap open", "back cancel"),
                 statusText,
                 if (panel.selected == FramePanel.OPEN) "open" else "dismiss",
+            )
+        }
+        // The hub's display page: the owner's island size, previewed on swipe, saved on tap.
+        is FramePanel.Display -> {
+            val name = pluginLabel(panel.ownerPluginId) ?: owner
+            SessionScreen(
+                ScreenHeader("${name.uppercase()} · ${RoutePresentation.DISPLAY.uppercase()}", "back: cancel"),
+                RoutePresentation.SIZES.mapIndexed { index, size ->
+                    ScreenBlock.Row(
+                        "size:${size.wireValue}", RoutePresentation.sizeLabel(size),
+                        selected = index == panel.selected, checked = size == panel.current,
+                    )
+                },
+                ScreenHint("swipe choose · tap save", "back cancel"),
+                statusText,
+                "size:${panel.size.wireValue}",
             )
         }
     }
@@ -977,6 +1092,9 @@ internal class SessionScreens(
         const val PENDING = "waiting for the app"
         const val TAP_CONTROLS = "tap controls"
         const val BACK_PAGE = "back page"
+
+        /** BACK from the full map's commands returns to the map. */
+        const val BACK_MAP = "back map"
         private const val ACTIVITY = "Activity"
         private const val ENDED = "ENDED"
         private const val NOTIFICATION = "NOTIFICATION"

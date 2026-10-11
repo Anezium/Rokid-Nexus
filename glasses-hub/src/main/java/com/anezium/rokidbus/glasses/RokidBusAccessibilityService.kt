@@ -63,6 +63,8 @@ import com.anezium.rokidbus.glasses.session.IconRef
 import com.anezium.rokidbus.glasses.session.LauncherQuickGate
 import com.anezium.rokidbus.glasses.session.QuickPolicyState
 import com.anezium.rokidbus.glasses.session.SessionFocus
+import com.anezium.rokidbus.glasses.session.FramePanel
+import com.anezium.rokidbus.glasses.session.LiveRoute
 import com.anezium.rokidbus.shared.ActivitySurfaceContract
 import com.anezium.rokidbus.shared.BusPaths
 import com.anezium.rokidbus.shared.QuickActionPolicyContract
@@ -132,6 +134,7 @@ class RokidBusAccessibilityService : AccessibilityService() {
         )
         SurfaceOverlayRenderer.onServiceConnected(this)
         PinOverlayRenderer.onServiceConnected(this)
+        AmbientForeground.onServiceConnected(applicationContext)
         ActivityController.onServiceConnected(applicationContext)
         NoticeController.onServiceConnected(applicationContext) {
             performGlobalAction(GLOBAL_ACTION_LOCK_SCREEN)
@@ -191,6 +194,9 @@ class RokidBusAccessibilityService : AccessibilityService() {
         wirelessDebuggingAutomator?.onAccessibilityEvent(event)
         developerOptionsEnabler?.onAccessibilityEvent(event)
         StatusBadgeOverlayRenderer.onAccessibilityEvent(event)
+        if (event != null && event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            AmbientForeground.onWindowState(event.packageName)
+        }
         if (event != null && isNativeAssistantDismissArmed()) {
             val packageName = event.packageName?.toString().orEmpty()
             if (packageName in NATIVE_ASSISTANT_PACKAGES) {
@@ -263,6 +269,7 @@ class RokidBusAccessibilityService : AccessibilityService() {
         PinOverlayRenderer.onServiceDestroyed(this)
         ActivityOverlayRenderer.onServiceDestroyed(this)
         ActivityController.onServiceDestroyed()
+        AmbientForeground.onServiceDestroyed()
         NoticeController.onServiceDestroyed()
         SurfaceOverlayRenderer.onServiceDestroyed(this)
         NoticeOverlayRenderer.onServiceDestroyed(this)
@@ -1340,6 +1347,11 @@ internal object NexusSession {
     private var surfaceUnsubscribe: (() -> Unit)? = null
     private var activityUnsubscribe: (() -> Unit)? = null
     private var launcherUnsubscribe: (() -> Unit)? = null
+    private var routeUnsubscribe: (() -> Unit)? = null
+    private var ambientUnsubscribe: (() -> Unit)? = null
+
+    /** Owners whose live geometry the route pages' rows were last built with. */
+    private val liveMapOwners = mutableSetOf<String>()
     private var noticeArmed: Boolean? = null
     private val noticeArrivals = NoticeArrivals()
     private var editableFocused: Boolean? = null
@@ -1382,6 +1394,8 @@ internal object NexusSession {
         providerPageAllowed = { pageId -> PageTemplateContract.namespaceOf(pageId)?.let(::providerPagesReady) == true },
         quickGate = quickGate,
         extended = GlassesHub::launcherInteractiveActive,
+        liveGeometry = RouteLive::geometry,
+        ambientSize = AmbientPreferences::size,
     )
     private val localPages = LocalPages(
         history = { runner.model.history },
@@ -1398,6 +1412,7 @@ internal object NexusSession {
         formatTime = ::formatTime,
         wallTimeOf = { sessionMs -> System.currentTimeMillis() - (SystemClock.uptimeMillis() - sessionMs) },
         wallClock = System::currentTimeMillis,
+        liveRoute = { owner -> LiveRoute(RouteLive.geometry(owner), RouteLive.heading(owner)) },
     )
     private val runner = SessionRunner(
         reducer = SessionReducer(
@@ -1438,6 +1453,10 @@ internal object NexusSession {
             launcherUnsubscribe = GlassesHub.observeLauncher { entries -> runOnMain { onLauncherEntries(entries) } }
             activityUnsubscribe?.invoke()
             activityUnsubscribe = ActivityController.observe { render -> runOnMain { onActivities(render) } }
+            routeUnsubscribe?.invoke()
+            routeUnsubscribe = RouteLive.observe { owner -> runOnMain { onRouteLive(owner) } }
+            ambientUnsubscribe?.invoke()
+            ambientUnsubscribe = AmbientPreferences.observe { runOnMain(::redrawRoutePage) }
             // Ahead of every observer, so a surface the session closes unseen reaches no renderer;
             // installing it also reconciles the surface already active.
             if (!SurfaceController.setPresentationGate(::onSurfacePresented)) {
@@ -1459,6 +1478,11 @@ internal object NexusSession {
             launcherUnsubscribe = null
             activityUnsubscribe?.invoke()
             activityUnsubscribe = null
+            routeUnsubscribe?.invoke()
+            routeUnsubscribe = null
+            ambientUnsubscribe?.invoke()
+            ambientUnsubscribe = null
+            AmbientPreferences.preview(null)
             SurfaceController.setPresentationGate(null)
             // Whatever is presented while the service is away is reconciled afresh on reconnect.
             surfaceShownId = null
@@ -1738,6 +1762,26 @@ internal object NexusSession {
         runner.dispatch(SessionEvent.PageResponse(localPages.answer(request, live = true), SystemClock.uptimeMillis()))
     }
 
+    /**
+     * An owner's live geometry or heading moved. A map appearing or leaving changes a route page's
+     * rows, which is a new focus target; anything else only redraws the open page of that owner.
+     */
+    private fun onRouteLive(owner: String) {
+        val present = RouteLive.geometry(owner) != null
+        val changed = if (present) liveMapOwners.add(owner) else liveMapOwners.remove(owner)
+        if (changed) {
+            runner.dispatch(SessionEvent.LauncherFactsChanged)
+            return
+        }
+        val top = (runner.state as? SessionState.InPage)?.frames?.lastOrNull() ?: return
+        if (PageTemplateContract.namespaceOf(top.pageId) == owner) host?.render(runner.state, status)
+    }
+
+    /** An ambient size changed: an open route page's Display row says it. Nothing else moves. */
+    private fun redrawRoutePage() {
+        if (runner.state is SessionState.InPage) host?.render(runner.state, status)
+    }
+
     private fun onSurfaceChanged(surface: NexusSurface?) {
         val editable = SurfaceController.hasFocusedEditableSurface()
         if (editable != editableFocused) {
@@ -1787,6 +1831,7 @@ internal object NexusSession {
                 is SessionEffect.SendLauncherOpen -> openPlugin(effect)
                 is SessionEffect.CloseSurface -> SurfaceController.closeUnseen(effect.surfaceId)
                 is SessionEffect.LaunchLocal -> launchLocal(effect)
+                is SessionEffect.SaveAmbientSize -> AmbientPreferences.edit(effect.ownerPluginId, effect.size)
                 is SessionEffect.ShowStatus -> {
                     status = effect.status
                     statusFresh = true
@@ -1811,6 +1856,11 @@ internal object NexusSession {
             renderedState = model.state
             host?.render(model.state, status)
             acknowledgeFocus(model)
+            // The display page's swiped size is previewed on the island while it is open, and
+            // only then: saving, Back, a pop or the session closing all end the preview.
+            val display = ((model.state as? SessionState.InPage)?.frames?.lastOrNull()?.panel as? FramePanel.Display)
+                ?.takeIf { it.moved }
+            AmbientPreferences.preview(display?.let { it.ownerPluginId to it.size })
             // The hub's notification pages follow the history live: arrivals, seen, withdrawn.
             if (model.history != renderedHistory) {
                 renderedHistory = model.history
@@ -1893,9 +1943,12 @@ internal object NexusSession {
             appContext?.let { RingFocusBroadcastCoordinator.setLauncherShown(it, shown = true) }
             // A new session starts linked; tell it if the phone is already gone.
             if (!GlassesHub.isPhoneConnected()) dispatch(SessionEvent.LinkLost)
+            // The activity tier presents in the session's context while it is up, explicitly.
+            ActivityController.setSessionOpen(true)
         }
 
         private fun detach() {
+            ActivityController.setSessionOpen(false)
             host?.detach()
             NoticeController.setSessionOverlayActive(false)
             appContext?.let { RingFocusBroadcastCoordinator.setLauncherShown(it, shown = false) }
@@ -2032,8 +2085,29 @@ internal object NexusInput {
 
     fun onServiceConnected(service: AccessibilityService) {
         this.service = service
-        backend = LauncherBackend.parse(ActivityPresentationSettings.launcherBackend(service)) ?: LauncherBackend.DEFAULT
+        backend = resolveBackend(service)
         log("Launcher backend=${backend.name}")
+    }
+
+    /** Plan 028a §8.3: phone explicit, then the glasses' stored choice, then the default. */
+    private fun resolveBackend(context: Context): LauncherBackend = LauncherBackend.resolve(
+        phone = ActivityPresentationSettings.phoneLauncherBackend(context),
+        stored = ActivityPresentationSettings.launcherBackend(context),
+        bundleNegotiated = GlassesHub.launcherInteractiveActive(),
+    )
+
+    /**
+     * The phone announced its capabilities: [value] is its explicit backend, null for no opinion.
+     * It is recorded apart from the glasses' own choice, which it outranks without erasing.
+     */
+    fun onPhoneBackend(context: Context, value: String?) {
+        ActivityPresentationSettings.setPhoneLauncherBackend(context.applicationContext, LauncherBackend.fromPhone(value)?.name)
+        switchTo(resolveBackend(context.applicationContext))
+    }
+
+    /** The bundle was negotiated or lost: only the default can follow it, never a choice. */
+    fun onLauncherNegotiated(context: Context) {
+        switchTo(resolveBackend(context.applicationContext))
     }
 
     fun onServiceDestroyed() {
@@ -2049,12 +2123,19 @@ internal object NexusInput {
     /** A key delivered to a Nexus window: only a press the filter never routed is decided here. */
     fun onWindowKey(event: KeyEvent): Boolean = decide(event) { arbiter.onWindowKey(it) }
 
-    /**
-     * Switches the launcher backend. The active one closes first, so at most one launcher ever
-     * has a window and only the new one receives the global gesture.
-     */
+    /** The glasses' own explicit choice: stored as `launcher.backend`, applied unless the phone's outranks it. */
     fun setBackend(context: Context, next: LauncherBackend) {
         ActivityPresentationSettings.setLauncherBackend(context.applicationContext, next.name)
+        val effective = resolveBackend(context.applicationContext)
+        if (effective != next) log("Launcher backend ${next.name} stored; the phone's explicit ${effective.name} applies")
+        switchTo(effective)
+    }
+
+    /**
+     * Switches the launcher backend. The active one closes first, so at most one launcher ever
+     * has a window and only the new one receives the global gesture. No setting is touched.
+     */
+    private fun switchTo(next: LauncherBackend) {
         runOnMain {
             if (next == backend) return@runOnMain
             when (backend) {

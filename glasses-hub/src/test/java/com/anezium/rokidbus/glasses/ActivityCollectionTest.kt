@@ -96,7 +96,7 @@ class ActivityCollectionTest {
 
     private fun snapshot(machine: ActivityStateMachine) = machine.snapshot(
         now,
-        ActivityPresentationContext.IDLE_OR_NATIVE_HOME,
+        ActivityPresentationContext.IDLE_HOME,
         pinCorner = null,
         alwaysExpanded = false,
     )

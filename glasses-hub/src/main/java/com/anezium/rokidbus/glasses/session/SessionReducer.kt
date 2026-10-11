@@ -510,6 +510,7 @@ internal class SessionReducer(
         gateContacts = emptyList(),
         underneath = Underneath.Unknown,
         micUnavailable = false,
+        mapViews = emptyMap(),
     )
 
     /**
@@ -529,7 +530,9 @@ internal class SessionReducer(
 
     private fun step(model: SessionModel, state: SessionState.InPage, delta: Int): SessionTransition {
         val top = state.frames.last()
+        (top.panel as? FramePanel.Display)?.let { return displayStep(model, state, top, it, delta) }
         if (top.panel != null) return panelStep(model, frameSite(state), delta)
+        top.fullMapMode()?.let { mode -> return fullMapStep(model, state, top, mode, delta) }
         top.shownConversation()?.let { (_, body) -> return conversationStep(model, state, top, body, delta) }
         top.commandFocus?.let { focus ->
             if (focus.stopId != CommandFocus.MEDIA) {
@@ -593,6 +596,7 @@ internal class SessionReducer(
                     return focusEnter(model, frameSite(state), model.latestActivityById(focus.stopId), event)
                 }
                 itemResolver.conversation(status.snapshot.page)?.let { return conversationEnter(model, state, top, status, it, event) }
+                routeEnter(model, state, top)?.let { return it }
                 if (top.invocation != null) return keep(model)
                 if (top.reading()) {
                     // SELECT on read text reaches its rows, when it has any; reading never fires one.
@@ -684,6 +688,11 @@ internal class SessionReducer(
                 }
             is FramePanel.ConfirmCommand ->
                 commandPanelEnter(model, frameSite(state), model.latestActivityById(panel.stopId), event)
+            // The display page saves what is selected; it changes a hub preference, nothing on the plugin.
+            is FramePanel.Display -> SessionTransition(
+                model.copy(state = cleared),
+                listOf(SessionEffect.SaveAmbientSize(panel.ownerPluginId, panel.size), ShowFrame),
+            )
         }
     }
 
@@ -705,6 +714,13 @@ internal class SessionReducer(
         }
         if (top.commandFocus != null) {
             return SessionTransition(model.copy(state = state.withTop(top.copy(commandFocus = null))), listOf(ShowFrame))
+        }
+        // The full map's commands go back to the map, the map to its page with the map selected.
+        when (top.fullMapMode()) {
+            FullMapMode.COMMANDS -> return SessionTransition(model.copy(state = state.withTop(top.onMap(FullMapMode.MAP))), listOf(ShowFrame))
+            FullMapMode.MAP -> return SessionTransition(model.copy(state = state.withTop(top.onMap(null))), listOf(ShowFrame))
+            // No map left to show (a revision without geometry): the page is what is drawn.
+            null -> Unit
         }
         if (top.mode == FrameMode.ROWS && top.readsFirst()) {
             return SessionTransition(model.copy(state = state.withTop(top.copy(mode = FrameMode.READING))), listOf(ShowFrame))
@@ -1173,8 +1189,9 @@ internal class SessionReducer(
             status = status.copy(snapshot = Snapshot(page), revision = page.revision),
             revisionFloor = page.revision,
             shownAtMs = nowMs,
-            // A confirmation was for the revision the wearer saw; a new one cancels it.
-            panel = null,
+            // A confirmation was for the revision the wearer saw; a new one cancels it. The display
+            // page is the hub's own preference, bound to no revision: guidance updates keep it.
+            panel = top.panel as? FramePanel.Display,
         )
         val frame = reselect(replaced, top, page)
             .let { if (it.mode == FrameMode.READING && !it.readsFirst()) it.copy(mode = FrameMode.ROWS) else it }
@@ -1309,6 +1326,99 @@ internal class SessionReducer(
 
     private fun controlsOf(frame: Frame): PageControls? =
         (frame.status as? FrameStatus.Shown)?.let { itemResolver.controls(it.snapshot.page) }
+
+    // ---- navigation: route pages, the full map and the display page (plan 028a §5.5, §8.1) ----
+
+    /** The index of a shown route frame's compact map among its entries, or null without one. */
+    private fun Frame.routeMapIndex(): Int? {
+        if (status !is FrameStatus.Shown) return null
+        return entriesOf(this).indexOfFirst { it.item == PageItem.RouteMap }.takeIf { it >= 0 }
+    }
+
+    /** The full-map mode in force: only on a shown frame that still has a map to draw. */
+    private fun Frame.fullMapMode(): FullMapMode? = fullMap?.takeIf { routeMapIndex() != null }
+
+    /** [mode] on this frame, with the map selected: where the map's own Back and its commands' land. */
+    private fun Frame.onMap(mode: FullMapMode?): Frame {
+        val index = routeMapIndex() ?: 0
+        return copy(fullMap = mode, selected = index, selectedKey = entriesOf(this).getOrNull(index)?.key, tombstone = null)
+    }
+
+    /**
+     * Step on the full map switches between its two views, without wrapping; the view is kept per
+     * owner for the session. Step among the full map's commands walks them, never onto the map.
+     */
+    private fun fullMapStep(model: SessionModel, state: SessionState.InPage, top: Frame, mode: FullMapMode, delta: Int): SessionTransition =
+        when (mode) {
+            FullMapMode.MAP -> {
+                val owner = PageTemplateContract.namespaceOf(top.pageId)
+                val view = owner?.let { model.mapViews[it] } ?: MapView.FOLLOW
+                val next = RoutePresentation.stepView(view, delta)
+                if (owner == null || next == view) {
+                    keep(model)
+                } else {
+                    SessionTransition(model.copy(mapViews = model.mapViews + (owner to next)), listOf(ShowFrame))
+                }
+            }
+            FullMapMode.COMMANDS -> {
+                val entries = entriesOf(top)
+                val first = (top.routeMapIndex() ?: -1) + 1
+                val target = (top.selected + delta).coerceIn(first, entries.lastIndex.coerceAtLeast(first))
+                if (target == top.selected || target !in entries.indices) {
+                    keep(model)
+                } else {
+                    val frame = top.copy(selected = target, selectedKey = entries[target].key, tombstone = null)
+                    SessionTransition(model.copy(state = state.withTop(frame)), listOf(ShowFrame))
+                }
+            }
+        }
+
+    /**
+     * Enter on the full map, and on a route page's hub rows; null for anything else, which the
+     * page's own rows answer. None of these reaches the plugin, so none waits for a fresh press.
+     */
+    private fun routeEnter(model: SessionModel, state: SessionState.InPage, top: Frame): SessionTransition? {
+        val mode = top.fullMapMode()
+        val entries = entriesOf(top)
+        if (mode == FullMapMode.MAP) {
+            // Enter on the full map opens the hub's commands, on the first of them.
+            val first = (top.routeMapIndex() ?: return null) + 1
+            val entry = entries.getOrNull(first) ?: return keep(model)
+            val frame = top.copy(fullMap = FullMapMode.COMMANDS, selected = first, selectedKey = entry.key, tombstone = null)
+            return SessionTransition(model.copy(state = state.withTop(frame)), listOf(ShowFrame))
+        }
+        if (top.tombstone != null) return null
+        return when (val item = entries.getOrNull(top.selected)?.item) {
+            PageItem.RouteMap, PageItem.RouteFullScreen ->
+                SessionTransition(model.copy(state = state.withTop(top.onMap(FullMapMode.MAP))), listOf(ShowFrame))
+            is PageItem.RouteView -> {
+                val owner = PageTemplateContract.namespaceOf(top.pageId) ?: return keep(model)
+                // Chosen among the full map's commands, the view is shown on the full map.
+                val next = if (mode == FullMapMode.COMMANDS) state.withTop(top.onMap(FullMapMode.MAP)) else state
+                SessionTransition(model.copy(state = next, mapViews = model.mapViews + (owner to item.view)), listOf(ShowFrame))
+            }
+            is PageItem.RouteDisplay -> {
+                val selected = item.current?.let(RoutePresentation.SIZES::indexOf)?.takeIf { it >= 0 } ?: 0
+                val panel = FramePanel.Display(item.ownerPluginId, item.current, selected)
+                SessionTransition(model.copy(state = state.withTop(top.copy(panel = panel))), listOf(ShowFrame))
+            }
+            else -> null
+        }
+    }
+
+    /** The display page walks Text, Minimap and Panel without wrapping; the island previews the choice. */
+    private fun displayStep(
+        model: SessionModel,
+        state: SessionState.InPage,
+        top: Frame,
+        panel: FramePanel.Display,
+        delta: Int,
+    ): SessionTransition {
+        val target = (panel.selected + delta).coerceIn(0, RoutePresentation.SIZES.lastIndex)
+        if (target == panel.selected) return keep(model)
+        val frame = top.copy(panel = panel.copy(selected = target, moved = true))
+        return SessionTransition(model.copy(state = state.withTop(frame)), listOf(ShowFrame))
+    }
 
     /** A media page's focus follows its control into new content, and ends with it. */
     private fun Frame.refocused(): Frame {
@@ -1690,6 +1800,8 @@ internal class SessionReducer(
             is FramePanel.Confirm -> panel.copy(selected = target)
             is FramePanel.Launch -> panel.copy(selected = target)
             is FramePanel.ConfirmCommand -> panel.copy(selected = target)
+            // Walked by displayStep; never reached from a command site.
+            is FramePanel.Display -> return keep(model)
         }
         return SessionTransition(model.copy(state = site.place(site.focus, next)), listOf(site.show))
     }
@@ -1723,8 +1835,8 @@ internal class SessionReducer(
                 if (model.linkLost) return cleared.copy(effects = cleared.effects + SessionEffect.ShowStatus(SessionStatus.NotAvailable))
                 sendCommand(model.copy(state = placed), activity, panel.ownerPluginId, action.id, ActivityCommandMode.CONFIRMED, event.nowMs, site.show)
             }
-            // A page action's confirmation never reaches a command site.
-            is FramePanel.Confirm -> cleared
+            // A page action's confirmation and the display page never reach a command site.
+            is FramePanel.Confirm, is FramePanel.Display -> cleared
         }
     }
 

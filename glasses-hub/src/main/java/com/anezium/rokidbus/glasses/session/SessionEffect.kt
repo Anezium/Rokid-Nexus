@@ -1,6 +1,7 @@
 package com.anezium.rokidbus.glasses.session
 
 import com.anezium.rokidbus.shared.ActivityCommand
+import com.anezium.rokidbus.shared.AmbientSize
 import com.anezium.rokidbus.shared.PageSurfaceInvocation
 import com.anezium.rokidbus.shared.PageSurfaceRequest
 
@@ -80,6 +81,12 @@ internal sealed interface SessionEffect {
     data class CloseSurface(val surfaceId: String, val reason: String) : SessionEffect
 
     data class ShowStatus(val status: SessionStatus) : SessionEffect
+
+    /**
+     * The wearer saved [size] on the display page for [ownerPluginId]: the hub applies it and
+     * sends it to the phone, or queues it. Only the display page writes the ambient size.
+     */
+    data class SaveAmbientSize(val ownerPluginId: String, val size: AmbientSize) : SessionEffect
 
     /** Informational for the runner, which keeps one timer at [SessionModel.nextDeadlineMs]. */
     data class ScheduleDeadline(val atMs: Long) : SessionEffect

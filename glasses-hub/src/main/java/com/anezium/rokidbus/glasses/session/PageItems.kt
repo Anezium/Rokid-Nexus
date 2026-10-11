@@ -1,5 +1,6 @@
 package com.anezium.rokidbus.glasses.session
 
+import com.anezium.rokidbus.shared.AmbientSize
 import com.anezium.rokidbus.shared.PageBody
 import com.anezium.rokidbus.shared.PageSurfaceContract
 import com.anezium.rokidbus.shared.PageSurfaceResponse
@@ -38,6 +39,17 @@ internal sealed interface PageItem {
      * at its exact destination, anything else as the hub's notice page. Only a hub page has one.
      */
     data class Notification(val entryId: String) : PageItem
+
+    /**
+     * A route page's hub-owned rows (plan 028a §5.5); no provider produces one. SELECT on the
+     * compact map or on Full screen opens the chrome-less full map; a view row picks the view kept
+     * for the session; Display opens the hub's display page for [ownerPluginId]'s ambient size,
+     * starting from [current] (null: automatic).
+     */
+    data object RouteMap : PageItem
+    data class RouteView(val view: MapView) : PageItem
+    data object RouteFullScreen : PageItem
+    data class RouteDisplay(val ownerPluginId: String, val current: AmbientSize?) : PageItem
     data object Retry : PageItem
     data object Back : PageItem
     data object Inert : PageItem
