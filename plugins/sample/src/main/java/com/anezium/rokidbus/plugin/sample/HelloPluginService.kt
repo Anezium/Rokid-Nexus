@@ -41,6 +41,7 @@ import com.anezium.rokidbus.client.plugin.NexusPinLine
 import com.anezium.rokidbus.client.plugin.NexusPinSize
 import com.anezium.rokidbus.client.plugin.NexusPluginService
 import com.anezium.rokidbus.client.plugin.NexusSdkResult
+import com.anezium.rokidbus.client.plugin.NexusSkillInvocation
 import com.anezium.rokidbus.client.plugin.NexusSpeechCallbacks
 import com.anezium.rokidbus.client.plugin.NexusSpeechError
 import com.anezium.rokidbus.client.plugin.NexusSpeechSession
@@ -269,6 +270,18 @@ class HelloPluginService : NexusPluginService() {
     override fun onNexusRegistrationState(result: Int) = todo.registrationState(result)
 
     override fun onNexusActivityClosed(reason: String) = todo.activityClosed(reason)
+
+    /**
+     * A skill invocation: answer it once, off the main thread when the work is slow. The plugin
+     * is not opened for it and shows nothing; Assistant presents the result in its own band.
+     */
+    override fun onNexusSkillInvoked(invocation: NexusSkillInvocation) {
+        val result = when (val answer = HelloSkills.answer(invocation.operationId, invocation.arguments)) {
+            is HelloSkills.Answer.Completed -> invocation.complete(answer.data)
+            is HelloSkills.Answer.Failed -> invocation.fail(answer.code)
+        }
+        log("skill ${invocation.operationId} answered result=$result")
+    }
 
     override fun onNexusMessage(path: String, id: String, payload: JSONObject) = todo.message(path, payload)
 
