@@ -268,6 +268,27 @@ class RelayLauncherThreadTest {
     }
 
     @Test
+    fun `an update without its reply action takes the reply authority away`() {
+        start(launcher = true)
+        assertTrue(ReplyRepository.hasReplyAuthority(threadId))
+
+        val read = android.app.Notification.Builder(app, "chat")
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setContentTitle("Mika")
+            .setContentText("on est devant")
+            .build()
+        val updated = StatusBarNotification(
+            chat.packageName, chat.opPkg, chat.id, chat.tag, chat.uid, 0, 0, read, chat.user, System.currentTimeMillis(),
+        )
+        listener.get().onNotificationPosted(updated)
+        RelayHubFixture.idle()
+
+        assertFalse(ReplyRepository.hasReplyAuthority(threadId))
+        // The thread itself stays readable; only Send goes.
+        assertTrue(ReplyRepository.inboxEntries().any { it.id == threadId })
+    }
+
+    @Test
     fun `a countdown never sends after a band update failed`() {
         start(launcher = true)
         typeOnTheBand("On my way")

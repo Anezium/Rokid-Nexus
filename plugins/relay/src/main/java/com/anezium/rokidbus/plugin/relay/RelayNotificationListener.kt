@@ -135,7 +135,11 @@ class RelayNotificationListener : NotificationListenerService() {
         // Carrying a free-form reply action is the whole admission test: it passes
         // only notifications a human is waiting on an answer to.
         val action = sbn.notification.findRepliableAction()
-            ?: return finish("no_action", accepted = false)
+        if (action == null) {
+            // Its page stops offering Send; the event is still on the phone, so nothing is withdrawn.
+            if (ReplyRepository.dropAuthority(sbn)) NotificationControl.notifyCaptured(ReplyRepository.stableId(sbn.key))
+            return finish("no_action", accepted = false)
+        }
         if (!settings.admits()) return finish("no_action", accepted = true)
 
         val capture = ReplyRepository.capture(this, sbn, action)

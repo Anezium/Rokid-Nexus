@@ -233,6 +233,14 @@ internal object ReplyRepository {
     }
 
     /**
+     * The app reposted the notification without a reply action: the captured action may still
+     * fire, but it is no longer what the app offers, so it stops being a reply authority. The
+     * readable thread stays. Returns whether an authority was dropped.
+     */
+    @Synchronized
+    fun dropAuthority(sbn: StatusBarNotification): Boolean = pending.remove(stableId(sbn.key)) != null
+
+    /**
      * The just-in-time check before a send: the thread still has a live reply action under the
      * notification it was captured from, and that action still takes free-form text.
      */
