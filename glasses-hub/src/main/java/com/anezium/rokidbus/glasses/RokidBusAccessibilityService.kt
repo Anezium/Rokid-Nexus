@@ -63,6 +63,8 @@ import com.anezium.rokidbus.glasses.session.IconRef
 import com.anezium.rokidbus.glasses.session.LauncherQuickGate
 import com.anezium.rokidbus.glasses.session.QuickPolicyState
 import com.anezium.rokidbus.glasses.session.SessionFocus
+import com.anezium.rokidbus.glasses.session.FramePanel
+import com.anezium.rokidbus.glasses.session.LiveRoute
 import com.anezium.rokidbus.shared.ActivitySurfaceContract
 import com.anezium.rokidbus.shared.BusPaths
 import com.anezium.rokidbus.shared.QuickActionPolicyContract
@@ -1340,6 +1342,11 @@ internal object NexusSession {
     private var surfaceUnsubscribe: (() -> Unit)? = null
     private var activityUnsubscribe: (() -> Unit)? = null
     private var launcherUnsubscribe: (() -> Unit)? = null
+    private var routeUnsubscribe: (() -> Unit)? = null
+    private var ambientUnsubscribe: (() -> Unit)? = null
+
+    /** Owners whose live geometry the route pages' rows were last built with. */
+    private val liveMapOwners = mutableSetOf<String>()
     private var noticeArmed: Boolean? = null
     private val noticeArrivals = NoticeArrivals()
     private var editableFocused: Boolean? = null
@@ -1382,6 +1389,8 @@ internal object NexusSession {
         providerPageAllowed = { pageId -> PageTemplateContract.namespaceOf(pageId)?.let(::providerPagesReady) == true },
         quickGate = quickGate,
         extended = GlassesHub::launcherInteractiveActive,
+        liveGeometry = RouteLive::geometry,
+        ambientSize = AmbientPreferences::size,
     )
     private val localPages = LocalPages(
         history = { runner.model.history },
@@ -1398,6 +1407,7 @@ internal object NexusSession {
         formatTime = ::formatTime,
         wallTimeOf = { sessionMs -> System.currentTimeMillis() - (SystemClock.uptimeMillis() - sessionMs) },
         wallClock = System::currentTimeMillis,
+        liveRoute = { owner -> LiveRoute(RouteLive.geometry(owner), RouteLive.heading(owner)) },
     )
     private val runner = SessionRunner(
         reducer = SessionReducer(
@@ -1438,6 +1448,10 @@ internal object NexusSession {
             launcherUnsubscribe = GlassesHub.observeLauncher { entries -> runOnMain { onLauncherEntries(entries) } }
             activityUnsubscribe?.invoke()
             activityUnsubscribe = ActivityController.observe { render -> runOnMain { onActivities(render) } }
+            routeUnsubscribe?.invoke()
+            routeUnsubscribe = RouteLive.observe { owner -> runOnMain { onRouteLive(owner) } }
+            ambientUnsubscribe?.invoke()
+            ambientUnsubscribe = AmbientPreferences.observe { runOnMain(::redrawRoutePage) }
             // Ahead of every observer, so a surface the session closes unseen reaches no renderer;
             // installing it also reconciles the surface already active.
             if (!SurfaceController.setPresentationGate(::onSurfacePresented)) {
@@ -1459,6 +1473,11 @@ internal object NexusSession {
             launcherUnsubscribe = null
             activityUnsubscribe?.invoke()
             activityUnsubscribe = null
+            routeUnsubscribe?.invoke()
+            routeUnsubscribe = null
+            ambientUnsubscribe?.invoke()
+            ambientUnsubscribe = null
+            AmbientPreferences.preview(null)
             SurfaceController.setPresentationGate(null)
             // Whatever is presented while the service is away is reconciled afresh on reconnect.
             surfaceShownId = null
@@ -1738,6 +1757,26 @@ internal object NexusSession {
         runner.dispatch(SessionEvent.PageResponse(localPages.answer(request, live = true), SystemClock.uptimeMillis()))
     }
 
+    /**
+     * An owner's live geometry or heading moved. A map appearing or leaving changes a route page's
+     * rows, which is a new focus target; anything else only redraws the open page of that owner.
+     */
+    private fun onRouteLive(owner: String) {
+        val present = RouteLive.geometry(owner) != null
+        val changed = if (present) liveMapOwners.add(owner) else liveMapOwners.remove(owner)
+        if (changed) {
+            runner.dispatch(SessionEvent.LauncherFactsChanged)
+            return
+        }
+        val top = (runner.state as? SessionState.InPage)?.frames?.lastOrNull() ?: return
+        if (PageTemplateContract.namespaceOf(top.pageId) == owner) host?.render(runner.state, status)
+    }
+
+    /** An ambient size changed: an open route page's Display row says it. Nothing else moves. */
+    private fun redrawRoutePage() {
+        if (runner.state is SessionState.InPage) host?.render(runner.state, status)
+    }
+
     private fun onSurfaceChanged(surface: NexusSurface?) {
         val editable = SurfaceController.hasFocusedEditableSurface()
         if (editable != editableFocused) {
@@ -1787,6 +1826,7 @@ internal object NexusSession {
                 is SessionEffect.SendLauncherOpen -> openPlugin(effect)
                 is SessionEffect.CloseSurface -> SurfaceController.closeUnseen(effect.surfaceId)
                 is SessionEffect.LaunchLocal -> launchLocal(effect)
+                is SessionEffect.SaveAmbientSize -> AmbientPreferences.edit(effect.ownerPluginId, effect.size)
                 is SessionEffect.ShowStatus -> {
                     status = effect.status
                     statusFresh = true
@@ -1811,6 +1851,11 @@ internal object NexusSession {
             renderedState = model.state
             host?.render(model.state, status)
             acknowledgeFocus(model)
+            // The display page's swiped size is previewed on the island while it is open, and
+            // only then: saving, Back, a pop or the session closing all end the preview.
+            val display = ((model.state as? SessionState.InPage)?.frames?.lastOrNull()?.panel as? FramePanel.Display)
+                ?.takeIf { it.moved }
+            AmbientPreferences.preview(display?.let { it.ownerPluginId to it.size })
             // The hub's notification pages follow the history live: arrivals, seen, withdrawn.
             if (model.history != renderedHistory) {
                 renderedHistory = model.history

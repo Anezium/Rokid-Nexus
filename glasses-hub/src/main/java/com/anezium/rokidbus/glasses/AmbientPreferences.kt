@@ -180,6 +180,7 @@ internal object AmbientPreferences {
     private val listeners = CopyOnWriteArrayList<() -> Unit>()
     private var mirror = AmbientPreferencesMirror(AmbientPreferencesStorage.memory(), ::sendEdit)
     private var started = false
+    private var preview: Pair<String, AmbientSize>? = null
 
     fun start(context: Context) {
         runOnMain {
@@ -195,7 +196,23 @@ internal object AmbientPreferences {
         return { listeners.remove(listener) }
     }
 
+    /** [owner]'s saved size, null while automatic. The display page's preview never shows here. */
     fun size(owner: String): AmbientSize? = mirror.size(owner)
+
+    /** The size [owner]'s island is drawn at: the display page's preview over the saved size. */
+    fun effectiveSize(owner: String): AmbientSize? = preview?.takeIf { it.first == owner }?.second ?: mirror.size(owner)
+
+    /**
+     * The display page's provisional size, or null when no display page previews one. It is never
+     * stored nor sent: only [edit] writes the preference.
+     */
+    fun preview(next: Pair<String, AmbientSize>?) {
+        runOnMain {
+            if (next == preview) return@runOnMain
+            preview = next
+            notifyChanged()
+        }
+    }
 
     fun modeFor(packageName: String?, isHome: Boolean): ForegroundAmbientMode = mirror.modeFor(packageName, isHome)
 
