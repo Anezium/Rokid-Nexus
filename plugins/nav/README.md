@@ -6,10 +6,13 @@ the distance or the stops left, the street or the stop, and the arrival time.
 A new step flares; the moment a turn is a few metres away, or the stop to get
 off at is next, is urgent. When the app stops guiding, the activity ends.
 
-Navigation reads notifications and nothing else. It needs Notification Access,
+Navigation reads notifications and nothing else for those apps. It needs Notification Access,
 and ignores unknown packages and disabled sources before reading their text.
 Each parser also checks its navigation channel/category and ongoing state.
 Guidance lives in process memory only; nothing is stored.
+
+It can also guide a walking route of its own, which the wearer starts on the
+phone (see [Walking routes](#walking-routes)).
 
 ## What it reads
 
@@ -77,6 +80,30 @@ Guidance lives in process memory only; nothing is stored.
 Anything that does not read as guidance is dropped: no value is estimated or
 invented between two notifications.
 
+## Walking routes
+
+On the plugin screen, search a place (Transitous geocoding), pick it and tap
+Start walking. Precise location is asked for at that tap, never before. The
+first accurate fix and the destination go to Transitous once, for one walking
+itinerary; transit legs are never turned into walking guidance, and a failed
+plan ends the journey instead of retrying. Then a foreground service of type
+`location`, with its own notification carrying Stop, reads location only
+while the journey runs.
+
+Progress only comes from recent, accurate fixes near the route and only moves
+forward. When the signal is lost the last trusted position is kept with its
+age (stale) instead of being moved; before any trusted fix there is no
+position at all. The compass heading is only the bearing of a fresh fix taken
+while walking, never carried over to an older one.
+
+The journey ends on arrival, on Stop (its notification, the phone screen, or
+End on the glasses' route page), as soon as location permission is removed,
+when no route was planned within two minutes, after ten minutes without GPS
+and after twelve hours. It is never started at boot or restarted by the
+system, and nothing about it is stored. While it runs it owns the route:
+other apps' guidance is ignored, and picked up again from what they post when
+it ends. Route data: Transitous and OpenStreetMap contributors.
+
 ## Pages
 
 With the glasses' Nexus session and hubs that both support pages, the
@@ -88,6 +115,20 @@ is no route or no Notification Access. Its Commands row opens `nav:commands`,
 which only offers the full app, behind the hub's labelled launch step. Pages are
 read-only and leave the card and the activity as they are.
 
+When both hubs negotiated the launcher bundle, the activity opens `nav:main`
+directly and it is a route page instead. A walking route carries the next
+turn, its distance, street and time left, facts, and two maps the hub draws
+(follow, heading-up; whole route, north-up) from the planned route and the
+street names the planner returned, with the position live, stale with its
+age, or none. The map (at most once a second) and the heading (at most five a
+second) follow the activity over the data plane only; with only the control
+link up they are dropped, never queued, and the text guidance is unchanged.
+The page's End the journey action stops it after the hub's confirmation.
+Guidance read from another app has no geometry behind it, so its route page
+is text only, with no position and no street drawn. A Citymapper ride shows
+a stop ribbon from the stops it counted: only the stop to get off at is
+named, and a vehicle placed between two stops is flagged as an estimate.
+
 ## Settings
 
 The plugin screen on the phone (Rokid Nexus, Navigation) has a main switch and
@@ -96,6 +137,8 @@ app's live route on the glasses at once and ignores its guidance until it is
 switched back on, so nobody has to uninstall the plugin to keep one app off
 the HUD. Switched back on, a route already running is picked up straight away.
 The screen also asks for Notification Access and shows the route it sees.
+Above the switches it plans and starts walking routes, and shows the running
+one with its Stop. The app switches never affect a walking route.
 
 ## Requirements
 
@@ -105,7 +148,9 @@ The screen also asks for Notification Access and shows the route it sees.
 - Google Maps or Citymapper set to English, French or Korean, the wordings the
   plugin reads. Korean is read from the apps' own Korean strings and has not
   yet been checked on a real trip in Korea.
-- Notification Access for Navigation (Settings button in the plugin screen).
+- Notification Access for Navigation (Settings button in the plugin screen),
+  to follow other apps. Walking routes need precise location instead, asked
+  for when one is started, and the internet for the one Transitous request.
 
 See [validation evidence and device checklist](VALIDATION.md) for observed
 formats, mode limits and the remaining phone/glasses checks.

@@ -40,7 +40,7 @@ class ActivityStateMachineTest {
             "250 m",
             state.snapshot(
                 now,
-                ActivityPresentationContext.IDLE_OR_NATIVE_HOME,
+                ActivityPresentationContext.IDLE_HOME,
                 pinCorner = null,
                 alwaysExpanded = false,
             ).primary?.activity?.content?.primary,
@@ -103,7 +103,7 @@ class ActivityStateMachineTest {
             ActivityPresentation.FLARE,
             state.presentationForEvent(
                 "ride:activity",
-                ActivityPresentationContext.IDLE_OR_NATIVE_HOME,
+                ActivityPresentationContext.IDLE_HOME,
                 significant = true,
                 nowMs = now,
                 alwaysExpanded = false,
@@ -115,7 +115,7 @@ class ActivityStateMachineTest {
             ActivityPresentation.PULSE,
             state.presentationForEvent(
                 "ride:activity",
-                ActivityPresentationContext.IDLE_OR_NATIVE_HOME,
+                ActivityPresentationContext.IDLE_HOME,
                 significant = true,
                 nowMs = now,
                 alwaysExpanded = false,
@@ -133,7 +133,7 @@ class ActivityStateMachineTest {
             ActivityPresentation.FLARE,
             state.presentationForEvent(
                 "maps:activity",
-                ActivityPresentationContext.IDLE_OR_NATIVE_HOME,
+                ActivityPresentationContext.IDLE_HOME,
                 significant = true,
                 nowMs = now,
                 alwaysExpanded = false,
@@ -151,7 +151,7 @@ class ActivityStateMachineTest {
             ActivityPresentation.FLARE,
             state.presentationForEvent(
                 "ride:activity",
-                ActivityPresentationContext.IDLE_OR_NATIVE_HOME,
+                ActivityPresentationContext.IDLE_HOME,
                 significant = true,
                 nowMs = now,
                 alwaysExpanded = false,
@@ -181,7 +181,7 @@ class ActivityStateMachineTest {
 
         val restored = state.snapshot(
             nowMs = now,
-            context = ActivityPresentationContext.IDLE_OR_NATIVE_HOME,
+            context = ActivityPresentationContext.IDLE_HOME,
             pinCorner = null,
             alwaysExpanded = false,
         ).primary
@@ -193,7 +193,7 @@ class ActivityStateMachineTest {
             ActivityPresentation.FLARE,
             state.presentationForEvent(
                 "maps:activity",
-                ActivityPresentationContext.IDLE_OR_NATIVE_HOME,
+                ActivityPresentationContext.IDLE_HOME,
                 significant = true,
                 nowMs = now,
                 alwaysExpanded = false,
@@ -241,7 +241,7 @@ class ActivityStateMachineTest {
         state.start("ride:activity", "ride", 2, content("4 min"), now)
         val first = state.snapshot(
             now,
-            ActivityPresentationContext.IDLE_OR_NATIVE_HOME,
+            ActivityPresentationContext.IDLE_HOME,
             pinCorner = PinSurfacePosition.TOP_RIGHT,
             alwaysExpanded = false,
         )
@@ -255,7 +255,7 @@ class ActivityStateMachineTest {
 
         val pinMoved = state.snapshot(
             now,
-            ActivityPresentationContext.IDLE_OR_NATIVE_HOME,
+            ActivityPresentationContext.IDLE_HOME,
             pinCorner = PinSurfacePosition.BOTTOM_RIGHT,
             alwaysExpanded = false,
         )
@@ -398,7 +398,7 @@ class ActivityStateMachineTest {
         assertTrue(urgent.urgent)
         val rendered = state.snapshot(
             nowMs = now,
-            context = ActivityPresentationContext.IDLE_OR_NATIVE_HOME,
+            context = ActivityPresentationContext.IDLE_HOME,
             pinCorner = null,
             alwaysExpanded = false,
             eventSurfaceId = "nav:activity",
@@ -445,7 +445,7 @@ class ActivityStateMachineTest {
             ActivityEventPresentation(ActivityPresentation.PULSE),
             state.presentEvent(
                 "nav:activity",
-                ActivityPresentationContext.IDLE_OR_NATIVE_HOME,
+                ActivityPresentationContext.IDLE_HOME,
                 significant = true,
                 urgent = true,
                 nowMs = now + 60_000L,
@@ -456,7 +456,7 @@ class ActivityStateMachineTest {
 
     private fun urgentEvent(urgent: Boolean) = state.presentEvent(
         "nav:activity",
-        ActivityPresentationContext.IDLE_OR_NATIVE_HOME,
+        ActivityPresentationContext.IDLE_HOME,
         significant = true,
         urgent = urgent,
         nowMs = now,
@@ -466,7 +466,7 @@ class ActivityStateMachineTest {
     private fun snapshotPrimaryPresentation(alwaysExpanded: Boolean) =
         state.snapshot(
             nowMs = now,
-            context = ActivityPresentationContext.IDLE_OR_NATIVE_HOME,
+            context = ActivityPresentationContext.IDLE_HOME,
             pinCorner = null,
             alwaysExpanded = alwaysExpanded,
         ).primary?.presentation

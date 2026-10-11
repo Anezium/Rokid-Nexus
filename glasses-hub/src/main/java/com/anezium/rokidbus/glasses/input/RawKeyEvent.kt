@@ -1,6 +1,8 @@
 // Adapted from the Rokid-Nexus fork by alvarosw (https://github.com/alvarosw/Rokid-Nexus), Apache-2.0.
 package com.anezium.rokidbus.glasses.input
 
+import com.anezium.rokidbus.shared.LauncherInteractiveContract
+
 /** Which physical source a key came from; classified once, by device name. */
 internal enum class DeviceClass {
     R08,
@@ -66,5 +68,27 @@ internal enum class LauncherBackend {
         val DEFAULT = LEGACY
 
         fun parse(value: String?): LauncherBackend? = entries.firstOrNull { it.name == value }
+
+        /**
+         * The backend nobody chose. It stays [DEFAULT] whether or not the pair negotiated the
+         * launcher bundle; plan 028a §8.3 turns it to SESSION over the bundle only in the final
+         * acceptance commit, and LEGACY stays the rollback and old phones' fallback.
+         */
+        @Suppress("UNUSED_PARAMETER")
+        fun defaultFor(bundleNegotiated: Boolean): LauncherBackend = DEFAULT
+
+        /** The phone's `launcherBackend` capability value, or null for no opinion. */
+        fun fromPhone(value: String?): LauncherBackend? = when (value) {
+            LauncherInteractiveContract.BACKEND_SESSION -> SESSION
+            LauncherInteractiveContract.BACKEND_LEGACY -> LEGACY
+            else -> null
+        }
+
+        /**
+         * Plan 028a §8.3: the phone's explicit choice, then the glasses' stored `launcher.backend`,
+         * then the default. Each choice keeps its own record, so switching never erases another.
+         */
+        fun resolve(phone: String?, stored: String?, bundleNegotiated: Boolean): LauncherBackend =
+            fromPhone(phone) ?: parse(stored) ?: defaultFor(bundleNegotiated)
     }
 }

@@ -1,23 +1,42 @@
 package com.anezium.rokidbus.plugin.relay
 
+import com.anezium.rokidbus.client.plugin.NexusActionType
 import com.anezium.rokidbus.client.plugin.NexusPage
+import com.anezium.rokidbus.client.plugin.NexusPageActionSpec
 import com.anezium.rokidbus.client.plugin.NexusSdkResult
+import com.anezium.rokidbus.shared.ConversationComposer
+import com.anezium.rokidbus.shared.ConversationMessage
+import com.anezium.rokidbus.shared.ConversationMessageStatus
+import com.anezium.rokidbus.shared.ConversationRole
 import com.anezium.rokidbus.shared.PageBody
 import com.anezium.rokidbus.shared.PageRow
 import com.anezium.rokidbus.shared.PageSegment
 import com.anezium.rokidbus.shared.PageSegmentKind
+import com.anezium.rokidbus.shared.PageSurfaceContract
 import com.anezium.rokidbus.shared.PageTarget
+import com.anezium.rokidbus.shared.PageTemplateContract
 import java.security.MessageDigest
 
 /**
- * Relay's read-only pages: `relay:main` lists the inbox's threads, and each thread is a document
- * of its messages as the inbox reads them. Nothing here replies, speaks, marks read or touches a
- * notification. Thread ids are opaque digests of the inbox id, so two threads never share a key.
- * Times are the capture time the inbox keeps; there is no per-message time to show.
+ * Relay's pages: `relay:main` lists the inbox's threads, and each thread reads as a document of
+ * its messages, or, where both hubs run the launcher bundle, as a conversation with the hub's
+ * composer. Pages themselves never speak, mark read or touch a notification; the conversation's
+ * one action is the composer's Send, revalidated when it arrives. Thread page ids are opaque
+ * digests of the inbox id, so two threads never share a key. Times are the capture time the
+ * inbox keeps; there is no per-message time to show.
  */
 internal object RelayPages {
     const val MAIN = "relay:main"
     const val THREAD_PREFIX = "relay:thread:"
+
+    /** The conversation's one action: the hub composer's Send, typed `compose.send`. */
+    const val SEND_ACTION_ID = "send"
+    const val SEND_LABEL = "Send"
+    const val UNAVAILABLE_TEXT = "Reply unavailable here"
+    const val UNAVAILABLE_SUB = "reply from the phone"
+
+    /** The UTF-8 bytes a conversation's messages may take, with the same margin as a document's segments. */
+    const val MESSAGE_BUDGET_BYTES = 60_000
 
     const val TITLE_CHARS = 48
     private const val LABEL_CHARS = 120
@@ -39,17 +58,98 @@ internal object RelayPages {
 
     fun threadPageId(entryId: String): String = THREAD_PREFIX + digest(entryId)
 
+    /** [conversation] is whether both hubs draw the launcher bundle's conversation body. */
     fun page(
         pageId: String,
         revision: Long,
         entries: List<RelayInboxEntry>,
         hidePreviews: Boolean,
+        conversation: Boolean = false,
         formatTime: (Long) -> String,
     ): NexusPage = when {
         pageId == MAIN -> NexusPage.Content(revision, "Relay", list(entries, hidePreviews, formatTime), live = true)
+        pageId.startsWith(THREAD_PREFIX) && conversation -> conversationPage(pageId, revision, entries, formatTime)
         pageId.startsWith(THREAD_PREFIX) -> thread(pageId, revision, entries, formatTime)
         else -> NexusPage.Unavailable
     }
+
+    /**
+     * One exact thread as a chat: what was captured, with Relay's handoffs after the message they
+     * answered, newest last. Received and ours take their sides from the notification alone. The
+     * composer is replyable only while the thread holds a live reply action; its `threadKey` is the
+     * inbox id, which is also the event key of this thread's notices.
+     */
+    private fun conversationPage(pageId: String, revision: Long, entries: List<RelayInboxEntry>, formatTime: (Long) -> String): NexusPage {
+        val entry = entries.firstOrNull { threadPageId(it.id) == pageId } ?: return missing(revision)
+        val snapshot = entry.snapshot
+        val title = senderOf(snapshot)
+        val transcript = RelayTranscript.merge(snapshot.messages, snapshot.handoffs)
+        // One-to-one, the title already names the other person; in a group each message needs its sender.
+        val group = transcript.any { it.role == RelayMessageRole.RECEIVED && it.sender != null && !it.sender.equals(title, ignoreCase = true) }
+        val messages = transcript.map { item ->
+            ConversationMessage(
+                id = item.id,
+                role = when (item.role) {
+                    RelayMessageRole.RECEIVED -> ConversationRole.RECEIVED
+                    RelayMessageRole.OURS -> ConversationRole.OURS
+                    RelayMessageRole.UNKNOWN -> ConversationRole.UNKNOWN
+                },
+                text = clip(item.text, PageTemplateContract.MAX_MESSAGE_TEXT_CHARS),
+                sender = item.sender?.takeIf { group }?.let { clip(it, PageTemplateContract.MAX_SENDER_CHARS) },
+                status = when (item.status) {
+                    RelayHandoffStatus.HANDED_OFF -> ConversationMessageStatus.HANDED_OFF
+                    RelayHandoffStatus.UNCONFIRMED -> ConversationMessageStatus.UNCONFIRMED
+                    null -> null
+                },
+            )
+        }
+        val replyable = entry.availability == RelayReplyAvailability.REPLIABLE
+        return NexusPage.Content(
+            revision = revision,
+            title = clip(title, TITLE_CHARS),
+            body = PageBody.Conversation(
+                threadKey = snapshot.id,
+                messages = newestWithinBudget(messages),
+                caption = clip("Messages · captured ${formatTime(snapshot.capturedAtMs)}", PageTemplateContract.MAX_CAPTION_CHARS),
+                composer = ConversationComposer(
+                    recipient = clip(title, PageTemplateContract.MAX_RECIPIENT_CHARS),
+                    sendActionId = SEND_ACTION_ID,
+                    maxChars = PageSurfaceContract.MAX_COMPOSE_TEXT_CHARS,
+                    replyable = replyable,
+                    unavailableText = UNAVAILABLE_TEXT.takeUnless { replyable },
+                    unavailableSub = UNAVAILABLE_SUB.takeUnless { replyable },
+                ),
+            ),
+            actions = listOf(NexusPageActionSpec(SEND_ACTION_ID, SEND_LABEL, typed = NexusActionType.ComposeSend)),
+            live = true,
+        )
+    }
+
+    /** The newest messages that fit the body's count and the page's bytes; older ones go first. */
+    private fun newestWithinBudget(messages: List<ConversationMessage>): List<ConversationMessage> {
+        val kept = ArrayDeque<ConversationMessage>()
+        var budget = MESSAGE_BUDGET_BYTES
+        for (message in messages.asReversed()) {
+            val cost = messageBytesOf(message)
+            if (kept.size == PageTemplateContract.MAX_MESSAGES || cost > budget) break
+            kept.addFirst(message)
+            budget -= cost
+        }
+        return kept.toList()
+    }
+
+    /** An upper bound on a message's serialized UTF-8 bytes. */
+    fun messageBytesOf(message: ConversationMessage): Int =
+        MESSAGE_OVERHEAD + message.id.length + message.role.wire.length + jsonBytes(message.text) +
+            (message.sender?.let { SENDER_OVERHEAD + jsonBytes(it) } ?: 0) +
+            (message.status?.let { STATUS_OVERHEAD + it.wire.length } ?: 0)
+
+    private fun missing(revision: Long): NexusPage = NexusPage.Content(
+        revision,
+        "Relay",
+        PageBody.Document(listOf(PageSegment("missing", PageSegmentKind.ASIDE, MISSING_TEXT))),
+        live = true,
+    )
 
     /** The list follows the inbox's hidden-preview setting; a sensitive body is already redacted. */
     private fun list(entries: List<RelayInboxEntry>, hidePreviews: Boolean, formatTime: (Long) -> String): PageBody {
@@ -71,15 +171,9 @@ internal object RelayPages {
      * oldest whole messages go first and the page says so; the newest are always kept.
      */
     private fun thread(pageId: String, revision: Long, entries: List<RelayInboxEntry>, formatTime: (Long) -> String): NexusPage {
-        val entry = entries.firstOrNull { threadPageId(it.id) == pageId }
-            ?: return NexusPage.Content(
-                revision,
-                "Relay",
-                PageBody.Document(listOf(PageSegment("missing", PageSegmentKind.ASIDE, MISSING_TEXT))),
-                live = true,
-            )
+        val entry = entries.firstOrNull { threadPageId(it.id) == pageId } ?: return missing(revision)
         val snapshot = entry.snapshot
-        val header = PageSegment("captured", PageSegmentKind.HEADER, clip("${snapshot.appLabel.trim().ifBlank { "Relay" }} · captured ${formatTime(snapshot.capturedAtMs)}", SEGMENT_CHARS))
+        val header =PageSegment("captured", PageSegmentKind.HEADER, clip("${snapshot.appLabel.trim().ifBlank { "Relay" }} · captured ${formatTime(snapshot.capturedAtMs)}", SEGMENT_CHARS))
         val title = senderOf(snapshot)
         val messages = RelayInboxCatalog.threadMessages(snapshot.renderedText)
         val solo = messages.all { it.speaker.isBlank() || it.speaker.equals(title, ignoreCase = true) }
@@ -174,6 +268,11 @@ internal object RelayPages {
 
     // {"id":"","kind":"","text":""} plus the separating comma.
     private const val SEGMENT_OVERHEAD = 30
+
+    // {"id":"","role":"","text":""} plus the separating comma, and each optional field's key.
+    private const val MESSAGE_OVERHEAD = 30
+    private const val SENDER_OVERHEAD = 12
+    private const val STATUS_OVERHEAD = 12
 }
 
 /**

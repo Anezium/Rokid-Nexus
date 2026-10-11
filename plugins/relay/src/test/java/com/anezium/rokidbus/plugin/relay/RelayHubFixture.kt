@@ -19,6 +19,7 @@ import com.anezium.rokidbus.client.PluginRegistrationResult
 import com.anezium.rokidbus.shared.BusCapabilityBits
 import com.anezium.rokidbus.shared.BusConstants
 import com.anezium.rokidbus.shared.BusPaths
+import com.anezium.rokidbus.shared.LauncherInteractiveContract
 import com.anezium.rokidbus.shared.LinkStateBits
 import org.json.JSONObject
 import org.robolectric.Shadows.shadowOf
@@ -28,12 +29,16 @@ import java.util.Collections
 internal class FakeHub : IBusService.Stub() {
     val sent: MutableList<Pair<String, JSONObject>> = Collections.synchronizedList(mutableListOf())
     var callback: IBusCallback? = null
+    private val clients = mutableListOf<IBusCallback>()
     var link = LinkStateBits.CXR_CONTROL_UP or LinkStateBits.SPP_DATA_UP
     var features = BusCapabilityBits.NOTICE_SURFACE or BusCapabilityBits.EDITABLE_SURFACE
     var registrations = 0
 
     /** The effective page version the hub announces to this client, or none. */
     var pageVersion: Int? = null
+
+    /** The launcher bundle version announced with the page version, or none. */
+    var launcherVersion: Int? = null
     private var nextId = 0
 
     override fun apiVersion(): Int = 3
@@ -46,6 +51,7 @@ internal class FakeHub : IBusService.Stub() {
     override fun sendBinary(path: String, id: String, meta: ByteArray, data: ByteArray) = Unit
     override fun registerPlugin(packageName: String, pluginId: String, cb: IBusCallback): Int {
         callback = cb
+        clients += cb
         registrations += 1
         // The hub's registration metadata follows its synchronous approval, as on a device.
         deliver(
@@ -55,15 +61,29 @@ internal class FakeHub : IBusService.Stub() {
                 .put("capabilities", CAPABILITIES)
                 .put("noticeInteractionVersion", 1),
         )
-        pageVersion?.let { deliver(BusPaths.HUB_CAPABILITIES, JSONObject().put("pageSessionVersion", it)) }
+        pageVersion?.let { version ->
+            val capabilities = JSONObject().put("pageSessionVersion", version)
+            launcherVersion?.let { capabilities.put(LauncherInteractiveContract.CAPABILITY_FIELD_VERSION, it) }
+            deliver(BusPaths.HUB_CAPABILITIES, capabilities)
+        }
         return PluginRegistrationResult.APPROVED
     }
     override fun capabilities(): Int = features
-    override fun approvedCapabilities(pluginId: String): String = CAPABILITIES
+    /** What the hub answers when a client asks for its grants on approval. */
+    var granted: String = CAPABILITIES
+
+    override fun approvedCapabilities(pluginId: String): String = granted
 
     fun deliver(path: String, payload: JSONObject) {
         val target = checkNotNull(callback) { "no registered client" }
         target.onMessage(path, "hub-${nextId++}", payload.put("pluginId", "relay").toString().toByteArray(Charsets.UTF_8))
+    }
+
+    /** A hub-wide change, such as a grant edit, reaches every client the plugin registered. */
+    fun deliverToEveryClient(path: String, payload: () -> JSONObject) {
+        clients.toList().forEach { client ->
+            client.onMessage(path, "hub-${nextId++}", payload().put("pluginId", "relay").toString().toByteArray(Charsets.UTF_8))
+        }
     }
 
     fun sentTo(path: String): List<JSONObject> = synchronized(sent) { sent.filter { it.first == path }.map { it.second } }

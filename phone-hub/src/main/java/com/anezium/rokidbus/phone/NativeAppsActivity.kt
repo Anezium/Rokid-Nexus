@@ -16,6 +16,8 @@ import android.widget.TextView
 import androidx.core.content.ContextCompat
 import com.anezium.rokidbus.client.ui.BusTheme
 import com.anezium.rokidbus.client.ui.NexusUi
+import com.anezium.rokidbus.shared.AmbientPreferencesContract
+import com.anezium.rokidbus.shared.ForegroundAmbientMode
 import java.util.UUID
 
 /** Phone-side shell for discovering and controlling ordinary Android apps on the glasses. */
@@ -179,6 +181,27 @@ class NativeAppsActivity : Activity() {
             },
             NexusUi.block(),
         )
+        addView(BusTheme.gap(this@NativeAppsActivity, 10))
+        addView(NexusUi.rowSub(this@NativeAppsActivity, "Over this app, the glasses show"))
+        addView(ambientModeRow(app))
+    }
+
+    /**
+     * What ambient islands may show while this app is in front on the glasses. An app never set
+     * shows signals only, so choosing that stores nothing.
+     */
+    private fun ambientModeRow(app: NativeGlassesApp): View {
+        val store = PhoneAmbientPreferencesStore.shared(this)
+        val options = listOf(
+            ForegroundAmbientMode.RESIDENTS to "Residents",
+            ForegroundAmbientMode.SIGNALS to "Signals only",
+            ForegroundAmbientMode.NOTHING to "Nothing",
+        )
+        val current = store.modeFor(app.id) ?: AmbientPreferencesContract.defaultMode(isHome = false)
+        return ambientChoiceRow(this, options, current) { mode ->
+            val stored = mode.takeUnless { it == AmbientPreferencesContract.defaultMode(isHome = false) }
+            if (store.setMode(app.id, stored)) BusHubService.onAmbientPolicyChanged()
+        }
     }
 
     private fun actionButton(app: NativeGlassesApp) = when (app.action) {

@@ -30,9 +30,15 @@ internal class RelayClientOwner<C : Any>(
     var noticeHeld = false
         private set
 
+    /** Held while a removed thread's withdrawal still has to reach the hub with no band up. */
+    var withdrawalHeld = false
+        private set
+
+    private var bound = false
+
     /** The notice band needs the client: hold the service bound, once, and return the client if it is there. */
     fun holdForNotice(): C? {
-        if (!noticeHeld) noticeHeld = bind()
+        if (!noticeHeld) noticeHeld = hold()
         return client
     }
 
@@ -40,6 +46,29 @@ internal class RelayClientOwner<C : Any>(
     fun releaseNotice() {
         if (!noticeHeld) return
         noticeHeld = false
+        releaseIfUnheld()
+    }
+
+    /** A withdrawal must reach the hub: the same one binding as the band's, never a second client. */
+    fun holdForWithdrawal(): C? {
+        if (!withdrawalHeld) withdrawalHeld = hold()
+        return client
+    }
+
+    fun releaseWithdrawal() {
+        if (!withdrawalHeld) return
+        withdrawalHeld = false
+        releaseIfUnheld()
+    }
+
+    private fun hold(): Boolean {
+        if (!bound) bound = bind()
+        return bound
+    }
+
+    private fun releaseIfUnheld() {
+        if (!bound || noticeHeld || withdrawalHeld) return
+        bound = false
         unbind()
     }
 
@@ -78,6 +107,13 @@ internal object RelayBus {
     }
 
     fun releaseNotice() = owner.releaseNotice()
+
+    fun holdForWithdrawal(context: Context): NexusPluginClient? {
+        this.context = context.applicationContext
+        return owner.holdForWithdrawal()
+    }
+
+    fun releaseWithdrawal() = owner.releaseWithdrawal()
 
     fun serviceCreated(client: NexusPluginClient) = owner.serviceCreated(client)
 

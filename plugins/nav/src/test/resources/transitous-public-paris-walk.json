@@ -1,0 +1,325 @@
+{
+  "direct": [
+    {
+      "legs": [
+        {
+          "mode": "WALK",
+          "duration": 514,
+          "legGeometry": {
+            "points": "_swd|AabmnCmFpV??m@_@??]bB??Kb@??wDtQa@dB??a@]??w@\\oCiBwAaAoA{@sA{@oA}@oA{@sA{@mAy@iBoAgAu@wBuAiAu@aC_ByB{A??_@n@??i@a@??]W??YU??YS??i@Amb@qX??MsA??UQ??cA{@??qAeA??SQ??w@V??_@Y??sh@e]??mAmE??a@`A??a@`A??[v@??g@jA??{@s@??mC}B??kB}A??~M}d@??UI??c@Q??eAc@WMIC??s@[Oj@S^]PUBSGmHcDNeAmCgAZqBEC@IQGOGAHEAYnBcEoBIh@SIWjBIh@KRKTOJSFS@UCgCkA_Bu@wAo@_F}Bs@]",
+            "precision": 6,
+            "length": 118
+          },
+          "steps": [
+            {
+              "relativeDirection": "CONTINUE",
+              "streetName": "",
+              "polyline": {
+                "points": "_swd|AabmnCmFpV",
+                "precision": 6,
+                "length": 2
+              }
+            },
+            {
+              "relativeDirection": "CONTINUE",
+              "streetName": "",
+              "polyline": {
+                "points": "mzwd|AojlnCm@_@",
+                "precision": 6,
+                "length": 2
+              }
+            },
+            {
+              "relativeDirection": "CONTINUE",
+              "streetName": "Rue du Clo\u00c3\u00aetre Notre-Dame",
+              "polyline": {
+                "points": "{{wd|AoklnC]bB",
+                "precision": 6,
+                "length": 2
+              }
+            },
+            {
+              "relativeDirection": "CONTINUE",
+              "streetName": "Rue du Clo\u00c3\u00aetre Notre-Dame",
+              "polyline": {
+                "points": "y|wd|AkhlnCKb@",
+                "precision": 6,
+                "length": 2
+              }
+            },
+            {
+              "relativeDirection": "CONTINUE",
+              "streetName": "Rue du Clo\u00c3\u00aetre Notre-Dame",
+              "polyline": {
+                "points": "e}wd|AgglnCwDtQa@dB",
+                "precision": 6,
+                "length": 3
+              }
+            },
+            {
+              "relativeDirection": "CONTINUE",
+              "streetName": "",
+              "polyline": {
+                "points": "_dxd|AkqknCa@]",
+                "precision": 6,
+                "length": 2
+              }
+            },
+            {
+              "relativeDirection": "CONTINUE",
+              "streetName": "",
+              "polyline": {
+                "points": "aexd|AirknCw@\\oCiBwAaAoA{@sA{@oA}@oA{@sA{@mAy@iBoAgAu@wBuAiAu@aC_ByB{A",
+                "precision": 6,
+                "length": 16
+              }
+            },
+            {
+              "relativeDirection": "CONTINUE",
+              "streetName": "",
+              "polyline": {
+                "points": "wpyd|AmplnC_@n@",
+                "precision": 6,
+                "length": 2
+              }
+            },
+            {
+              "relativeDirection": "CONTINUE",
+              "streetName": "",
+              "polyline": {
+                "points": "wqyd|A}nlnCi@a@",
+                "precision": 6,
+                "length": 2
+              }
+            },
+            {
+              "relativeDirection": "CONTINUE",
+              "streetName": "",
+              "polyline": {
+                "points": "asyd|A_plnC]W",
+                "precision": 6,
+                "length": 2
+              }
+            },
+            {
+              "relativeDirection": "CONTINUE",
+              "streetName": "",
+              "polyline": {
+                "points": "_tyd|AwplnCYU",
+                "precision": 6,
+                "length": 2
+              }
+            },
+            {
+              "relativeDirection": "CONTINUE",
+              "streetName": "",
+              "polyline": {
+                "points": "ytyd|AmqlnCYS",
+                "precision": 6,
+                "length": 2
+              }
+            },
+            {
+              "relativeDirection": "CONTINUE",
+              "streetName": "",
+              "polyline": {
+                "points": "suyd|AarlnCi@Amb@qX",
+                "precision": 6,
+                "length": 3
+              }
+            },
+            {
+              "relativeDirection": "CONTINUE",
+              "streetName": "",
+              "polyline": {
+                "points": "kzzd|AukmnCMsA",
+                "precision": 6,
+                "length": 2
+              }
+            },
+            {
+              "relativeDirection": "CONTINUE",
+              "streetName": "",
+              "polyline": {
+                "points": "yzzd|AinmnCUQ",
+                "precision": 6,
+                "length": 2
+              }
+            },
+            {
+              "relativeDirection": "CONTINUE",
+              "streetName": "",
+              "polyline": {
+                "points": "o{zd|A{nmnCcA{@",
+                "precision": 6,
+                "length": 2
+              }
+            },
+            {
+              "relativeDirection": "CONTINUE",
+              "streetName": "",
+              "polyline": {
+                "points": "s}zd|AwpmnCqAeA",
+                "precision": 6,
+                "length": 2
+              }
+            },
+            {
+              "relativeDirection": "CONTINUE",
+              "streetName": "",
+              "polyline": {
+                "points": "e`{d|A}rmnCSQ",
+                "precision": 6,
+                "length": 2
+              }
+            },
+            {
+              "relativeDirection": "CONTINUE",
+              "streetName": "",
+              "polyline": {
+                "points": "y`{d|AosmnCw@V",
+                "precision": 6,
+                "length": 2
+              }
+            },
+            {
+              "relativeDirection": "CONTINUE",
+              "streetName": "",
+              "polyline": {
+                "points": "qb{d|AwrmnC_@Y",
+                "precision": 6,
+                "length": 2
+              }
+            },
+            {
+              "relativeDirection": "CONTINUE",
+              "streetName": "",
+              "polyline": {
+                "points": "qc{d|AqsmnCsh@e]",
+                "precision": 6,
+                "length": 2
+              }
+            },
+            {
+              "relativeDirection": "CONTINUE",
+              "streetName": "",
+              "polyline": {
+                "points": "em|d|AwqnnCmAmE",
+                "precision": 6,
+                "length": 2
+              }
+            },
+            {
+              "relativeDirection": "CONTINUE",
+              "streetName": "",
+              "polyline": {
+                "points": "so|d|AexnnCa@`A",
+                "precision": 6,
+                "length": 2
+              }
+            },
+            {
+              "relativeDirection": "CONTINUE",
+              "streetName": "",
+              "polyline": {
+                "points": "up|d|AcvnnCa@`A",
+                "precision": 6,
+                "length": 2
+              }
+            },
+            {
+              "relativeDirection": "CONTINUE",
+              "streetName": "",
+              "polyline": {
+                "points": "wq|d|AatnnC[v@",
+                "precision": 6,
+                "length": 2
+              }
+            },
+            {
+              "relativeDirection": "CONTINUE",
+              "streetName": "",
+              "polyline": {
+                "points": "sr|d|AirnnCg@jA",
+                "precision": 6,
+                "length": 2
+              }
+            },
+            {
+              "relativeDirection": "CONTINUE",
+              "streetName": "",
+              "polyline": {
+                "points": "{s|d|A}onnC{@s@",
+                "precision": 6,
+                "length": 2
+              }
+            },
+            {
+              "relativeDirection": "CONTINUE",
+              "streetName": "",
+              "polyline": {
+                "points": "wu|d|AqqnnCmC}B",
+                "precision": 6,
+                "length": 2
+              }
+            },
+            {
+              "relativeDirection": "CONTINUE",
+              "streetName": "",
+              "polyline": {
+                "points": "ez|d|AounnCkB}A",
+                "precision": 6,
+                "length": 2
+              }
+            },
+            {
+              "relativeDirection": "CONTINUE",
+              "streetName": "",
+              "polyline": {
+                "points": "q}|d|AmxnnC~M}d@",
+                "precision": 6,
+                "length": 2
+              }
+            },
+            {
+              "relativeDirection": "CONTINUE",
+              "streetName": "",
+              "polyline": {
+                "points": "qn|d|Ak~onCUI",
+                "precision": 6,
+                "length": 2
+              }
+            },
+            {
+              "relativeDirection": "CONTINUE",
+              "streetName": "",
+              "polyline": {
+                "points": "go|d|Au~onCc@Q",
+                "precision": 6,
+                "length": 2
+              }
+            },
+            {
+              "relativeDirection": "CONTINUE",
+              "streetName": "",
+              "polyline": {
+                "points": "kp|d|Ag_pnCeAc@WMIC",
+                "precision": 6,
+                "length": 4
+              }
+            },
+            {
+              "relativeDirection": "CONTINUE",
+              "streetName": "",
+              "polyline": {
+                "points": "ss|d|A}`pnCs@[Oj@S^]PUBSGmHcDNeAmCgAZqBEC@IQGOGAHEAYnBcEoBIh@SIWjBIh@KRKTOJSFS@UCgCkA_Bu@wAo@_F}Bs@]",
+                "precision": 6,
+                "length": 34
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

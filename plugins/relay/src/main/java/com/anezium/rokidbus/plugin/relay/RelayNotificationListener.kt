@@ -32,12 +32,19 @@ class RelayNotificationListener : NotificationListenerService() {
         ingest(sbn, mayShow = true)
     }
 
+    /**
+     * The notification left the phone, for whatever reason: answered or read there, swiped, or
+     * cleared by Relay itself after a reply. That ends its reply authority, and nothing more is
+     * concluded from it. The band stops offering to send, the glasses are told the event is gone,
+     * and a visible thread page follows with its reply withdrawn but its text still readable.
+     */
     override fun onNotificationRemoved(sbn: StatusBarNotification?) {
         sbn ?: return
-        ReplyRepository.forget(sbn)
+        val id = ReplyRepository.stableId(sbn.key)
+        if (ReplyRepository.forget(sbn)) runtime.onRemoved(id)
         // Answering on the phone empties the row here too, while the wearer is
         // looking straight at it.
-        NotificationControl.notifyCaptured(ReplyRepository.stableId(sbn.key))
+        NotificationControl.notifyCaptured(id)
     }
 
     /**

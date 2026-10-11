@@ -6,6 +6,8 @@ import android.content.ComponentName
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import android.view.ViewGroup
 import android.widget.LinearLayout
@@ -16,20 +18,35 @@ import com.anezium.rokidbus.client.ui.BusTheme
 import com.anezium.rokidbus.client.ui.NexusUi
 
 /**
- * Navigation's switches (all of it, or one app at a time) and the one thing it
- * needs from the wearer: Notification Access, so it can read the guidance
- * the enabled apps already post.
+ * Starts the wearer's own walking journeys, and holds the switches for following other apps'
+ * guidance (all of it, or one app at a time) with the one thing that needs: Notification Access.
+ * Each asks for its Android permission only at the moment it is used.
  */
 class NavSettingsActivity : Activity() {
     private lateinit var accessStatus: TextView
     private lateinit var routeStatus: TextView
     private val sourceSwitches = mutableMapOf<NavSource, Switch>()
+    private lateinit var journeyPanel: NavJourneyPanel
+    private val main = Handler(Looper.getMainLooper())
+
+    // Only while the screen is in front: the journey reports through the shared state.
+    private val refresh = object : Runnable {
+        override fun run() {
+            journeyPanel.refresh()
+            refreshRoute()
+            main.postDelayed(this, REFRESH_MS)
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.statusBarColor = NexusUi.BG
         window.navigationBarColor = NexusUi.BG
         val content = NexusUi.contentColumn(this).apply {
+            addView(NexusUi.sectionRow(this@NavSettingsActivity, getString(R.string.nav_settings_walk)), NexusUi.block())
+            addView(BusTheme.gap(this@NavSettingsActivity, 10))
+            addView(NavJourneyPanel(this@NavSettingsActivity).also { journeyPanel = it }, NexusUi.block())
+            addView(BusTheme.gap(this@NavSettingsActivity, 24))
             addView(NexusUi.sectionRow(this@NavSettingsActivity, getString(R.string.nav_settings_glasses)), NexusUi.block())
             addView(BusTheme.gap(this@NavSettingsActivity, 10))
             addView(switchesCard(), NexusUi.block())
@@ -82,12 +99,30 @@ class NavSettingsActivity : Activity() {
             if (accessGranted()) R.string.nav_settings_access_on else R.string.nav_settings_access_off,
         )
         refreshRoute()
+        main.removeCallbacks(refresh)
+        main.post(refresh)
+    }
+
+    override fun onPause() {
+        main.removeCallbacks(refresh)
+        super.onPause()
+    }
+
+    override fun onDestroy() {
+        main.removeCallbacks(refresh)
+        journeyPanel.close()
+        super.onDestroy()
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == NavJourneyPanel.LOCATION_REQUEST) journeyPanel.permissionResult()
     }
 
     private fun refreshRoute() {
         val guidance = NavState.guidance
         routeStatus.text = when {
-            !NavSettings(this).switches().enabled -> getString(R.string.nav_settings_route_off)
+            !NavControl.journeyActive && !NavSettings(this).switches().enabled -> getString(R.string.nav_settings_route_off)
             guidance != null -> getString(
                 R.string.nav_settings_route_live,
                 guidance.source.label,
@@ -165,5 +200,9 @@ class NavSettingsActivity : Activity() {
             .putExtra(Settings.EXTRA_NOTIFICATION_LISTENER_COMPONENT_NAME, component)
         runCatching { startActivity(detail) }
             .onFailure { startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) }
+    }
+
+    private companion object {
+        const val REFRESH_MS = 1_000L
     }
 }

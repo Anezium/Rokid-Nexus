@@ -12,6 +12,7 @@ import com.anezium.rokidbus.client.plugin.NexusNoticeCloseReason
 import com.anezium.rokidbus.client.plugin.NexusNoticeImage
 import com.anezium.rokidbus.client.plugin.NexusNoticeUpdate
 import com.anezium.rokidbus.client.plugin.NexusCard
+import com.anezium.rokidbus.client.plugin.NexusPageDestination
 import com.anezium.rokidbus.client.plugin.NexusPluginCallbacks
 import com.anezium.rokidbus.client.plugin.NexusPluginClient
 import com.anezium.rokidbus.client.plugin.NexusSdkResult
@@ -28,6 +29,7 @@ import com.anezium.rokidbus.client.plugin.speechSession
 import com.anezium.rokidbus.client.plugin.surfaceSession
 import com.anezium.rokidbus.client.plugin.ttsSession
 import com.anezium.rokidbus.shared.EditableSurfaceField
+import com.anezium.rokidbus.shared.LinkStateBits
 import com.anezium.rokidbus.shared.NoticeSurfaceContract
 import com.anezium.rokidbus.shared.plugin.NexusInputEvent
 import com.anezium.rokidbus.shared.plugin.PluginCapability
@@ -51,7 +53,12 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
 
     init {
         // A band waiting for the service's client goes up as soon as there is one.
-        RelayBus.setOnClientReady { onMain { tryShowPending() } }
+        RelayBus.setOnClientReady {
+            onMain {
+                tryShowPending()
+                flushWithdrawals()
+            }
+        }
     }
     private var typingSurface: NexusSurfaceSession? = null
     private var pendingShow: ReplyRepository.PendingReply? = null
@@ -80,6 +87,25 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
     private var typingAttemptCounter = 0
     private var currentTypingAttempt: Int? = null
     private var deferredShow: ReplyRepository.PendingReply? = null
+
+    /**
+     * The current reply's notification left the phone: whatever the wearer says or typed stays
+     * on the band, and nothing is sent. Reset only by the next reply.
+     */
+    private var authorityLost = false
+
+    /**
+     * A band update failed, or the link dropped, while the send countdown ran: the wearer may not
+     * be seeing it, so it stops for good and Send waits for a tap. Reset by the next countdown.
+     */
+    private var countdownUnseen = false
+
+    /** Threads whose notice carried their event key, so the glasses can be told when they leave. */
+    private val announcedEventKeys = LinkedHashSet<String>()
+
+    /** Withdrawals still owed to the hub, oldest first; a thread captured again is dropped from it. */
+    private val pendingWithdrawals = LinkedHashSet<String>()
+    private var withdrawalWindowGeneration = 0
 
     fun show(reply: ReplyRepository.PendingReply) = onMain {
         // The inbox owns the bus while it is open, and it is already showing
@@ -118,6 +144,8 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
         pendingPartial = null
         currentReply = reply
         currentTranscript = null
+        authorityLost = false
+        countdownUnseen = false
         pendingShow = reply
         pendingShowStartedAtMs = nowMs
         pendingShowWasBlocked = false
@@ -145,6 +173,35 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
         closeClient()
     }
 
+    /**
+     * The thread's notification left the phone, so its reply authority is gone. The glasses are
+     * told the event is no longer there; a band for it stops counting and never sends, and what
+     * the wearer already said or typed stays on it, plainly not sent. A band only being read goes.
+     */
+    fun onRemoved(id: String) = onMain {
+        if (announcedEventKeys.remove(id)) {
+            pendingWithdrawals.remove(id)
+            pendingWithdrawals.add(id)
+            while (pendingWithdrawals.size > MAX_EVENT_KEYS) pendingWithdrawals.remove(pendingWithdrawals.first())
+            flushWithdrawals(holdIfUnbound = true)
+        }
+        if (deferredShow?.id == id) deferredShow = null
+        if (currentReply?.id != id) return@onMain
+        if (!activeNotice) {
+            // Not up yet, and now never: the notification it would announce is gone.
+            if (pendingShow?.id == id) closeClient()
+            return@onMain
+        }
+        authorityLost = true
+        cancelSendCountdown()
+        when {
+            !currentTranscript.isNullOrBlank() -> queueReplyUnavailable()
+            // Dictation or typing still under way ends on the band, kept and unsent.
+            speech != null || typingOpenedAtShowGeneration != null -> Unit
+            else -> dismissNotice()
+        }
+    }
+
     override fun onOpen() = Unit
 
     override fun onClose() = onMain {
@@ -159,11 +216,19 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
     val ownsReplyCard: Boolean
         get() = activeNotice && typingSurface != null
 
-    override fun onLinkState(state: Int) = onMain { tryShowPending() }
+    override fun onLinkState(state: Int) = onMain {
+        // A band needs the data plane; without it the wearer sees no countdown, so none runs.
+        if (state and LinkStateBits.SPP_DATA_UP == 0) stopUnseenCountdown()
+        tryShowPending()
+        flushWithdrawals()
+    }
 
     override fun onRegistrationState(result: Int) = onMain {
         when {
-            result == PluginRegistrationResult.APPROVED -> tryShowPending()
+            result == PluginRegistrationResult.APPROVED -> {
+                tryShowPending()
+                flushWithdrawals()
+            }
             isTerminalRegistrationResult(result) -> {
                 Log.w(TAG, "registration terminal result=$result")
                 closeClient()
@@ -181,7 +246,12 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
         stopReadAloud()
         when (id) {
             ACTION_SHOW -> revealNotice()
-            ACTION_REPLY, ACTION_RETRY -> if (settings.replyByTyping()) startTyping() else startListening()
+            // A capture that could never be sent is not started.
+            ACTION_REPLY, ACTION_RETRY -> when {
+                authorityLost -> queueReplyUnavailable()
+                settings.replyByTyping() -> startTyping()
+                else -> startListening()
+            }
             ACTION_TYPE -> startTyping()
             ACTION_SEND -> sendConfirmedReply()
             ACTION_DISMISS, ACTION_CANCEL -> dismissNotice()
@@ -232,6 +302,11 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
         }
         stopInputKeepalive()
         hideTypingSurface()
+        if (cancelled && authorityLost) {
+            // Nothing typed is kept, and the band has nothing left to offer.
+            dismissNotice()
+            return@onMain
+        }
         if (cancelled) {
             applyDeferredShowOrElse {
                 queueEssential(
@@ -253,6 +328,10 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
         }
         currentTranscript = reviewed
         pendingPartial = null
+        if (authorityLost) {
+            queueReplyUnavailable()
+            return@onMain
+        }
         queueEssential(
             NexusNoticeUpdate(
                 body = reviewed,
@@ -304,6 +383,9 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
             )
         }
         val shownCharacterCount = lines.sumOf { it.length }
+        // Where both hubs run the launcher bundle, the notice names its exact thread: the glasses
+        // history opens that conversation, and a later removal withdraws it by the same key.
+        val launcher = currentClient.supportsLauncherInteractive()
         val notice = NexusNotice(
             title = reply.content.title,
             // The extractor already separates messages with newlines; sending them
@@ -317,6 +399,9 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
             wakeDisplay = true,
             backdrop = settings.noticeBackdrop(),
             ttlMs = noticeTtlMs(settings.noticeDisplaySeconds(), settings.noticeScalesWithLength(), shownCharacterCount),
+            destination = if (launcher) NexusPageDestination(RelayPages.threadPageId(reply.id)) else null,
+            eventKey = if (launcher) reply.id else null,
+            conversation = launcher,
         )
         val result = if (notice.image != null && preview != null) {
             currentClient.showNotice(notice, preview.bytes)
@@ -335,6 +420,7 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
             pendingShowStartedAtMs = 0L
             pendingShowWasBlocked = false
             activeNotice = true
+            if (launcher) rememberAnnounced(reply.id)
             lastNoticeMessageAtMs = SystemClock.uptimeMillis()
             if (wasBlocked) Log.i(TAG, "showReplayed generation=$showGeneration delayMs=$delayMs")
             readNoticeAloud(reply)
@@ -493,6 +579,10 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
                 )
                 currentTranscript = reviewed
                 pendingPartial = null
+                if (authorityLost) {
+                    queueReplyUnavailable()
+                    return@onMain
+                }
                 queueEssential(
                     NexusNoticeUpdate(
                         body = reviewed,
@@ -658,6 +748,10 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
             queueSpeechFailure("Didn't catch that")
             return
         }
+        if (authorityLost) {
+            queueReplyUnavailable()
+            return
+        }
         when (val result = ReplyRepository.sendReply(appContext, reply.id, transcript)) {
             ReplySendResult.Sent -> {
                 currentTranscript = null
@@ -686,11 +780,35 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
                     SENT_LINGER_MS,
                 )
             }
-            ReplySendResult.Missing -> queueSendFailure("Notification gone")
+            // The reply can no longer go: keep the wearer's words and offer nothing that would retry.
+            ReplySendResult.Missing,
+            ReplySendResult.NoFreeFormInput,
+            -> queueReplyUnavailable()
             ReplySendResult.Blank -> queueSendFailure("Empty reply")
-            ReplySendResult.NoFreeFormInput -> queueSendFailure("Reply unavailable")
-            is ReplySendResult.Failed -> queueSendFailure(result.causeClass)
+            is ReplySendResult.Failed -> if (result.authorityLost) {
+                queueReplyUnavailable()
+            } else {
+                queueSendFailure(result.causeClass)
+            }
         }
+    }
+
+    /** The reply can no longer go: the wearer's words stay on the band, plainly not sent, with nothing to send them. */
+    private fun queueReplyUnavailable() {
+        authorityLost = true
+        cancelSendCountdown()
+        stopInputKeepalive()
+        cancelTypeChip()
+        queueEssential(
+            NexusNoticeUpdate(
+                body = currentTranscript?.takeIf(String::isNotBlank),
+                footer = REPLY_UNAVAILABLE_FOOTER,
+                interactive = true,
+                actions = UNAVAILABLE_ACTIONS,
+                ttlMs = DECISION_TTL_MS,
+            ),
+            dropPartial = true,
+        )
     }
 
     /**
@@ -704,6 +822,7 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
      */
     private fun startSendCountdown(text: String): Int {
         cancelSendCountdown()
+        countdownUnseen = false
         val words = text.trim().split(WHITESPACE).count(String::isNotBlank)
         val span = (SEND_BASE_MS + words * SEND_MS_PER_WORD).coerceIn(SEND_MIN_MS, SEND_MAX_MS)
         sendDeadlineMs = SystemClock.uptimeMillis() + span
@@ -720,8 +839,11 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
         override fun run() {
             val deadline = sendDeadlineMs ?: return
             if (!activeNotice || currentTranscript.isNullOrBlank()) return cancelSendCountdown()
+            // Only what the wearer can see counts down: never after a failed update or on a lost link.
+            if (countdownUnseen || authorityLost || client?.supportsNoticeSurface != true) return stopUnseenCountdown()
             val remaining = deadline - SystemClock.uptimeMillis()
             if (remaining <= 0L) {
+                Log.i(TAG, "send countdown fired")
                 cancelSendCountdown()
                 sendConfirmedReply()
                 return
@@ -737,6 +859,65 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
             )
             main.postDelayed(this, SEND_TICK_MS)
         }
+    }
+
+    /**
+     * The countdown can no longer be trusted to be on the glasses, so it never fires. Send stays
+     * on the band for a deliberate tap, and the label says so if the update gets through.
+     */
+    private fun stopUnseenCountdown() {
+        if (sendDeadlineMs == null) return
+        countdownUnseen = true
+        cancelSendCountdown()
+        Log.i(TAG, "send countdown stopped: band not confirmed on the glasses")
+        if (!authorityLost) {
+            queueEssential(NexusNoticeUpdate(actions = confirmActions(null), ttlMs = DECISION_TTL_MS), dropPartial = false)
+        }
+    }
+
+    private fun rememberAnnounced(eventKey: String) {
+        pendingWithdrawals.remove(eventKey)
+        announcedEventKeys.remove(eventKey)
+        announcedEventKeys.add(eventKey)
+        while (announcedEventKeys.size > MAX_EVENT_KEYS) announcedEventKeys.remove(announcedEventKeys.first())
+    }
+
+    /**
+     * Sends the withdrawals still owed. With no client, a fresh removal holds the service bound for
+     * a short window to get one; what is still owed after it waits for the next client. A thread
+     * captured again since is live, so its withdrawal is dropped rather than sent.
+     */
+    private fun flushWithdrawals(holdIfUnbound: Boolean = false) {
+        pendingWithdrawals.removeAll { ReplyRepository.contains(it) }
+        if (pendingWithdrawals.isEmpty()) return releaseWithdrawalHold()
+        val currentClient = client ?: if (holdIfUnbound) holdForWithdrawals() else null
+        if (currentClient == null || !currentClient.isApproved) return
+        val iterator = pendingWithdrawals.iterator()
+        while (iterator.hasNext()) {
+            val result = currentClient.withdrawNotice(iterator.next())
+            Log.i(TAG, "notice withdraw result=$result")
+            when (result) {
+                NexusSdkResult.SENT,
+                NexusSdkResult.INVALID_PAYLOAD,
+                -> iterator.remove()
+                // Not yet: registration, grants or the link are still on their way.
+                else -> return
+            }
+        }
+        releaseWithdrawalHold()
+    }
+
+    private fun holdForWithdrawals(): NexusPluginClient? {
+        val generation = ++withdrawalWindowGeneration
+        main.postDelayed({
+            if (withdrawalWindowGeneration == generation) RelayBus.releaseWithdrawal()
+        }, WITHDRAWAL_WINDOW_MS)
+        return RelayBus.holdForWithdrawal(appContext)
+    }
+
+    private fun releaseWithdrawalHold() {
+        withdrawalWindowGeneration += 1
+        RelayBus.releaseWithdrawal()
     }
 
     private fun queueSendFailure(cause: String) {
@@ -895,7 +1076,11 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
         } ?: return
         val result = client?.updateNotice(update)
         lastNoticeMessageAtMs = SystemClock.uptimeMillis()
-        if (result != NexusSdkResult.SENT) Log.i(TAG, "notice update result=$result")
+        if (result != NexusSdkResult.SENT) {
+            Log.i(TAG, "notice update result=$result")
+            // What the glasses show is no longer what the band says; a countdown must not fire on it.
+            stopUnseenCountdown()
+        }
         if (essentialUpdates.isNotEmpty() || pendingPartial != null) scheduleUpdateDrain()
     }
 
@@ -915,6 +1100,8 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
         pendingShowWasBlocked = false
         currentReply = null
         currentTranscript = null
+        authorityLost = false
+        countdownUnseen = false
         activeNotice = false
         // Only the band's own hold: an inbox or a page on the same client keeps it.
         RelayBus.releaseNotice()
@@ -1050,6 +1237,17 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
 
         /** Deliberately handled by nothing: the chip says a thing, it is not one. */
         const val ACTION_SENT = "sent"
+
+        /** Handled by nothing either: the reply's notification is gone, so nothing can send it. */
+        const val ACTION_UNAVAILABLE = "unavailable"
+        const val REPLY_UNAVAILABLE_FOOTER = "Reply unavailable here"
+        val UNAVAILABLE_ACTIONS = listOf(NexusNoticeAction(ACTION_UNAVAILABLE, "send", "Not sent"))
+
+        /** As many threads as the inbox keeps; the glasses history keeps fewer. */
+        const val MAX_EVENT_KEYS = RelayInboxCatalog.MAX_ENTRIES
+
+        /** How long a removal with no band up keeps the service bound to deliver its withdrawal. */
+        const val WITHDRAWAL_WINDOW_MS = 15_000L
 
         /**
          * The countdown chip, once there is nothing left to count.

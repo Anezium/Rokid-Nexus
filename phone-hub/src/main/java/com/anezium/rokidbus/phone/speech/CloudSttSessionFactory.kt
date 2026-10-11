@@ -14,6 +14,19 @@ internal interface SpeechSttSessionFactory : AutoCloseable {
         listener: SttSessionListener,
     ): SttSession
 
+    /**
+     * Like [create], for a caller that must hear the glasses microphone and nothing else. A cloud
+     * engine only ever gets the bytes it is handed, so this is [create]; a factory whose engine
+     * could open a microphone of its own overrides it to rule that out.
+     */
+    fun createGlassesAudioOnly(
+        engine: SpeechEngine,
+        language: TranscriptionLanguage,
+        phoneLanguageTag: String,
+        patience: SpeechPatience,
+        listener: SttSessionListener,
+    ): SttSession = create(engine, language, phoneLanguageTag, patience, listener)
+
     override fun close() = Unit
 }
 
