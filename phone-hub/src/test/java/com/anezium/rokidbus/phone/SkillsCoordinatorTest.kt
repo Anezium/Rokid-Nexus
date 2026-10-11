@@ -569,6 +569,37 @@ class SkillsCoordinatorTest {
     }
 
     @Test
+    fun `the launcher's owner paths and page answers obey the same lease restriction`() {
+        setUp(providerRegistered = false)
+        invoke("sk_transit__search_stops", JSONObject().put("query", "Central"))
+        host.registered += transit.grantKey()
+        coordinator.onRegistered(transit)
+
+        listOf(BusPaths.ACTIVITY_RESULT, BusPaths.ACTIVITY_GEOMETRY, BusPaths.ACTIVITY_HEADING).forEach { path ->
+            assertEquals(path, SkillsCoordinator.ERROR_LEASE_DENIED, coordinator.leaseRestriction(transit, path))
+        }
+        assertEquals(SkillsCoordinator.ERROR_LEASE_DENIED, coordinator.leaseRestriction(transit, BusPaths.NOTICE_WITHDRAW))
+        assertEquals(SkillsCoordinator.ERROR_LEASE_DENIED, coordinator.leaseRestriction(transit, BusPaths.PAGE_RESPONSE))
+
+        // A page the wearer asked for is a display session: its answer goes through.
+        host.displaySessions += transit.grantKey()
+        assertNull(coordinator.leaseRestriction(transit, BusPaths.PAGE_RESPONSE))
+    }
+
+    @Test
+    fun `a journey operation may drive the launcher's activity paths during a lease`() {
+        setUp(providerRegistered = false)
+        invoke("sk_transit__start_journey", JSONObject())
+        host.registered += transit.grantKey()
+        coordinator.onRegistered(transit)
+
+        assertNull(coordinator.leaseRestriction(transit, BusPaths.ACTIVITY_RESULT))
+        assertNull(coordinator.leaseRestriction(transit, BusPaths.ACTIVITY_GEOMETRY))
+        assertNull(coordinator.leaseRestriction(transit, BusPaths.ACTIVITY_HEADING))
+        assertEquals(SkillsCoordinator.ERROR_LEASE_DENIED, coordinator.leaseRestriction(transit, BusPaths.NOTICE_WITHDRAW))
+    }
+
+    @Test
     fun `a journey operation may start its activity during a lease`() {
         setUp(providerRegistered = false)
         invoke("sk_transit__start_journey", JSONObject())

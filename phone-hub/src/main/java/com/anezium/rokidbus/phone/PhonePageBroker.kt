@@ -228,6 +228,9 @@ class PhonePageBroker(
         bound.remove(pluginId)?.let { principal -> later { host.unbind(principal) } }
     }
 
+    /** Whether the broker holds [pluginId]'s page-only binding because the glasses want its pages. */
+    fun holdsProviderBinding(pluginId: String): Boolean = synchronized(lock) { bound.containsKey(pluginId) }
+
     /** Re-checks every owner against the catalog after packages or grants change. */
     fun onCatalogChanged() {
         val owners = synchronized(lock) { frames.values.map { it.owner }.toSet() }

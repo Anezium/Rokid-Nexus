@@ -778,7 +778,17 @@ class SkillsCoordinator(
         private const val INVOCATION_TOKEN_CHARS = 20
         private const val ENVELOPE_TOKEN_CHARS = 24
 
-        private val ACTIVITY_PATHS = setOf(BusPaths.ACTIVITY_START, BusPaths.ACTIVITY_UPDATE, BusPaths.ACTIVITY_END)
+        // The launcher's owner-stamped activity paths drive the same activity, so they share its
+        // exception; /notice/withdraw falls under /notice, and /page answers are covered too,
+        // with a page the wearer asked for counting as a display session.
+        private val ACTIVITY_PATHS = setOf(
+            BusPaths.ACTIVITY_START,
+            BusPaths.ACTIVITY_UPDATE,
+            BusPaths.ACTIVITY_END,
+            BusPaths.ACTIVITY_RESULT,
+            BusPaths.ACTIVITY_GEOMETRY,
+            BusPaths.ACTIVITY_HEADING,
+        )
         private val LEASE_DENIED_PATHS = listOf(
             "/surface",
             "/ink",
@@ -788,6 +798,7 @@ class SkillsCoordinator(
             "/stt",
             "/tts",
             "/camera",
+            "/page",
         )
     }
 }
