@@ -20,6 +20,7 @@ import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
 import com.anezium.rokidbus.client.ui.BusTheme
+import com.anezium.rokidbus.glasses.page.NavIslandView
 import com.anezium.rokidbus.shared.ActivityProgress
 import com.anezium.rokidbus.shared.ActivitySurfaceContent
 import com.anezium.rokidbus.shared.PinSurfaceLine
@@ -44,6 +45,7 @@ internal object ActivityOverlayRenderer {
     private var windowManager: WindowManager? = null
     private var root: FrameLayout? = null
     private var unsubscribe: (() -> Unit)? = null
+    private var routeUnsubscribe: (() -> Unit)? = null
     private var insetUnsubscribe: (() -> Unit)? = null
     private val nodes = linkedMapOf<String, ActivityIsland>()
     private val processedMotionTokens = mutableMapOf<String, Long>()
@@ -60,12 +62,16 @@ internal object ActivityOverlayRenderer {
         insetUnsubscribe = HudTopInset.observe(service, ::applyHudTopInset)
         unsubscribe?.invoke()
         unsubscribe = ActivityController.observe(::render)
+        routeUnsubscribe?.invoke()
+        routeUnsubscribe = RouteLive.observe(::onRouteLive)
     }
 
     fun onServiceDestroyed(service: AccessibilityService) {
         if (this.service !== service) return
         unsubscribe?.invoke()
         unsubscribe = null
+        routeUnsubscribe?.invoke()
+        routeUnsubscribe = null
         insetUnsubscribe?.invoke()
         insetUnsubscribe = null
         teardown()
@@ -136,7 +142,7 @@ internal object ActivityOverlayRenderer {
             val previousToken = processedMotionTokens[item.activity.surfaceId] ?: Long.MIN_VALUE
             val newMotion = item.activity.motionToken > previousToken
             island.place(item.activity.corner, hudTopInsetDp)
-            island.render(item)
+            island.render(item, guidanceOf(item))
             island.visibility = View.VISIBLE
             // A running flare holds its form; the steady form returns when it folds.
             if (!flareInProgress) island.showSteady(item.presentation)
@@ -178,6 +184,26 @@ internal object ActivityOverlayRenderer {
     private fun applyHudTopInset(value: Int) {
         hudTopInsetDp = HudTopInset.sanitize(value)
         nodes.values.forEach { island -> island.place(island.corner, hudTopInsetDp) }
+    }
+
+    private fun guidanceOf(item: ActivityRenderItem): GuidanceIsland? {
+        val owner = item.activity.ownerPluginId
+        return GuidanceIslands.of(item, RouteLive.geometry(owner), RouteLive.heading(owner))
+    }
+
+    /** A live route moved: its owner's guidance island redraws its map, nothing else does. */
+    private fun onRouteLive(owner: String) {
+        val item = latestState.items.firstOrNull { it.activity.ownerPluginId == owner } ?: return
+        if (item.presentation == ActivityPresentation.HIDDEN) return
+        val island = nodes[item.activity.surfaceId] ?: return
+        val guidance = guidanceOf(item)
+        // A map arriving or leaving changes which island the owner gets; a new glyph or form
+        // changes its size: the whole state is drawn again, steady forms included.
+        if (guidance == null) {
+            if (island.guided) render(latestState)
+            return
+        }
+        if (!island.guided || island.renderGuidance(guidance)) render(latestState)
     }
 
     private fun startFlare(item: ActivityRenderItem, island: ActivityIsland) {
@@ -271,6 +297,14 @@ internal object ActivityOverlayRenderer {
         private val chip = PinOverlayRenderer.PinPanelView(context).apply { dropChrome() }
         private val panel = ActivityPanelView(context)
         private val flare = NoticeOverlayRenderer.NoticeBandView(context, chromeless = true)
+
+        /** The guidance island form; this island draws the one outline round it. */
+        private val nav = NavIslandView(context).apply { outlined = false }
+        private var renderedGuidance: GuidanceIsland? = null
+
+        /** Drawn as a guidance island: its steady form is [nav], whatever the presentation. */
+        var guided = false
+            private set
         private val renderedKeys = mutableMapOf<View, Any?>()
         var corner = PinSurfacePosition.TOP_LEFT
             private set
@@ -280,6 +314,7 @@ internal object ActivityOverlayRenderer {
             val width = resources.displayMetrics.widthPixels
             addForm(chip, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT))
             addForm(panel, LayoutParams((width * PANEL_WIDTH_FRACTION).toInt(), LayoutParams.WRAP_CONTENT))
+            addForm(nav, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT))
             addForm(
                 flare,
                 LayoutParams((width * BAND_WIDTH_FRACTION).toInt(), LayoutParams.WRAP_CONTENT).apply {
@@ -301,7 +336,7 @@ internal object ActivityOverlayRenderer {
                 PinSurfacePosition.BOTTOM_LEFT -> Gravity.BOTTOM or Gravity.START
                 PinSurfacePosition.BOTTOM_RIGHT -> Gravity.BOTTOM or Gravity.END
             }
-            listOf(chip, panel).forEach { form ->
+            listOf(chip, panel, nav).forEach { form ->
                 form.layoutParams = (form.layoutParams as LayoutParams).apply {
                     this.gravity = gravity
                     setMargins(edge, if (top) topEdge else edge, edge, edge)
@@ -311,7 +346,9 @@ internal object ActivityOverlayRenderer {
             flare.layoutParams = (flare.layoutParams as LayoutParams).apply { topMargin = topEdge }
         }
 
-        fun render(item: ActivityRenderItem) {
+        fun render(item: ActivityRenderItem, guidance: GuidanceIsland?) {
+            guided = guidance != null
+            if (guidance != null) renderGuidance(guidance) else renderedGuidance = null
             val content = item.activity.content
             val owner = item.activity.ownerPluginId
             update(chip, listOf(content.primary, content.measure, content.secondary, content.glyph)) {
@@ -349,10 +386,36 @@ internal object ActivityOverlayRenderer {
             }
         }
 
+        /**
+         * Only the map redraws in place when nothing but the heading or the geometry moved, so a
+         * five-a-second heading never rebuilds the island; anything else binds it afresh.
+         */
+        fun renderGuidance(guidance: GuidanceIsland): Boolean {
+            val previous = renderedGuidance
+            renderedGuidance = guidance
+            if (previous == guidance) return false
+            val map = guidance.content.map
+            val mapView = nav.mapView
+            if (previous != null && map != null && mapView != null && previous.form == guidance.form &&
+                previous.content.copy(map = null) == guidance.content.copy(map = null)
+            ) {
+                mapView.bind(map)
+                return false
+            }
+            nav.bind(guidance.form, guidance.content)
+            return true
+        }
+
         fun showSteady(presentation: ActivityPresentation) {
             removeCallbacks(urgentBeat)
             setOutline(BusTheme.hairline, dp(context, 1).toFloat())
-            show(if (presentation == ActivityPresentation.PANEL) panel else chip)
+            show(
+                when {
+                    guided -> nav
+                    presentation == ActivityPresentation.PANEL -> panel
+                    else -> chip
+                },
+            )
         }
 
         /**

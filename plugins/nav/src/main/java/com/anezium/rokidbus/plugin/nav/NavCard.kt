@@ -12,10 +12,20 @@ internal object NavCard {
 
     fun build(context: Context): NexusCard {
         val guidance = NavState.guidance
+        val journey = NavControl.journeyActive
         return when {
-            // Checked first: without the listener the last route is not current.
-            !NavState.listenerConnected -> message(context, R.string.nav_card_no_access, "nav-no-access")
-            !NavSettings(context).switches().enabled -> message(context, R.string.nav_card_off, "nav-off")
+            journey && guidance == null -> NexusCard(
+                title = context.getString(R.string.nav_card_journey),
+                lines = listOfNotNull(
+                    NavState.journeyDestination?.let { NavText.fit(it, MAX_LINE_CHARS) },
+                    NavState.journeyMessage ?: RouteQuality.WAITING.message,
+                ),
+                contentKey = "nav-planning",
+            )
+            // Checked first: without the listener the last route is not current. A journey the
+            // wearer started needs neither the listener nor the app switches.
+            !journey && !NavState.listenerConnected -> message(context, R.string.nav_card_no_access, "nav-no-access")
+            !journey && !NavSettings(context).switches().enabled -> message(context, R.string.nav_card_off, "nav-off")
             guidance != null -> NexusCard(
                 title = NavText.fit(guidance.instruction ?: guidance.primary, MAX_TITLE_CHARS),
                 subtitle = guidance.source.label,

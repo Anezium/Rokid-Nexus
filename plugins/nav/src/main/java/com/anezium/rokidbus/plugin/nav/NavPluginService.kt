@@ -6,8 +6,11 @@ import android.os.SystemClock
 import android.view.KeyEvent
 import com.anezium.rokidbus.client.PluginRegistrationResult
 import com.anezium.rokidbus.client.plugin.NexusPage
+import com.anezium.rokidbus.client.plugin.NexusPageAction
+import com.anezium.rokidbus.client.plugin.NexusPageActionMode
 import com.anezium.rokidbus.client.plugin.NexusPageClosed
 import com.anezium.rokidbus.client.plugin.NexusPageRequest
+import com.anezium.rokidbus.client.plugin.NexusPageResult
 import com.anezium.rokidbus.client.plugin.NexusPageVisibility
 import com.anezium.rokidbus.client.plugin.NexusPluginService
 import com.anezium.rokidbus.client.plugin.NexusSdkResult
@@ -43,6 +46,11 @@ class NavPluginService : NexusPluginService() {
                 listenerConnected = NavState.listenerConnected,
                 enabled = NavSettings(this).switches().enabled,
                 updatedAt = NavState.updatedAtMs?.let { timeFormat.format(Date(it)) },
+                journeyActive = NavControl.journeyActive,
+                journey = NavState.journey,
+                journeyDestination = NavState.journeyDestination,
+                journeyMessage = NavState.journeyMessage,
+                extended = nexusClient?.supportsLauncherInteractive() == true,
             )
         },
         text = {
@@ -77,6 +85,17 @@ class NavPluginService : NexusPluginService() {
         pages.onVisibility(visibility.pageId, visibility.visible)
 
     override fun onNexusPageClosed(closed: NexusPageClosed) = pages.onClosed(closed.pageId)
+
+    // The route page's one plugin action; the hub confirmed it with the wearer on the revision shown.
+    override fun onNexusPageAction(action: NexusPageAction): NexusPageResult {
+        if (action.pageId != NavPages.MAIN || action.actionId != NavRoutePage.END_JOURNEY) return NexusPageResult.rejected()
+        if (action.mode != NexusPageActionMode.CONFIRMED) return NexusPageResult.rejected()
+        return if (NavControl.stopJourney(JOURNEY_ENDED_FROM_GLASSES)) {
+            NexusPageResult.done("Journey ended")
+        } else {
+            NexusPageResult.stale("No journey is running")
+        }
+    }
 
     override fun onNexusOpen() {
         NavControl.cardOpen = true
@@ -119,5 +138,9 @@ class NavPluginService : NexusPluginService() {
         pages.forget()
         nexusClient?.let(NavControl::serviceDestroyed)
         super.onDestroy()
+    }
+
+    private companion object {
+        const val JOURNEY_ENDED_FROM_GLASSES = "Journey ended from the glasses"
     }
 }

@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- Walking routes. Search a place on Navigation's phone screen and tap Start:
+  your position and the destination go to Transitous once to plan a walking
+  route, and the glasses guide you turn by turn. Location is asked for at
+  that tap and read only while the journey runs, in a location foreground
+  service whose notification carries Stop. The journey ends on arrival, on
+  Stop (notification, phone screen or the glasses' route page), when location
+  permission is removed, when no route could be planned (never retried),
+  after ten minutes without GPS and after twelve hours. While it runs,
+  other apps' guidance waits; it resumes from what they post when it ends.
+- With hubs that both negotiated the launcher bundle, the route activity
+  opens `nav:main` as a route page. A walking route shows the next turn, its
+  distance and street, the time left, and two maps (follow, whole route) with
+  your position live, stale with the age of the last fix, or absent. Its map
+  and compass heading follow the activity over the data plane only; the text
+  never waits for them. Another app's guidance stays text only there, with no
+  position and no street drawn; a Citymapper ride shows its stops, naming only
+  the one to get off at, and says when the vehicle's place between two stops
+  is an estimate. Older hubs keep the summary page.
 - Pages for the glasses' Nexus session, on hubs that support them: the
   current guidance as a page (the turn, its distance, the street, the arrival
   time when the app gives one, the source and when it was received), kept

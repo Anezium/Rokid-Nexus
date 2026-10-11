@@ -27,6 +27,9 @@ class ActivityPresentationPolicyTest {
                                 ActivityPresentation.PULSE
                             collapseState == ActivityCollapseState.ELAPSED ->
                                 ActivityPresentation.CHIP
+                            // Capped at text over a native app (plan 028a §8.2).
+                            context == ActivityPresentationContext.NATIVE_APP ->
+                                ActivityPresentation.CHIP
                             else ->
                                 ActivityPresentation.PANEL
                         }
@@ -53,7 +56,7 @@ class ActivityPresentationPolicyTest {
         assertEquals(
             ActivityPresentation.PULSE,
             selectActivityPresentation(
-                ActivityPresentationContext.IDLE_OR_NATIVE_HOME,
+                ActivityPresentationContext.IDLE_HOME,
                 significant = true,
                 flareBudgetAvailable = false,
                 collapseState = ActivityCollapseState.RUNNING,
@@ -75,7 +78,7 @@ class ActivityPresentationPolicyTest {
         assertEquals(
             ActivityPresentation.PANEL,
             selectActivityPresentation(
-                ActivityPresentationContext.IDLE_OR_NATIVE_HOME,
+                ActivityPresentationContext.IDLE_HOME,
                 significant = false,
                 flareBudgetAvailable = false,
                 collapseState = ActivityCollapseState.ALWAYS_EXPANDED,

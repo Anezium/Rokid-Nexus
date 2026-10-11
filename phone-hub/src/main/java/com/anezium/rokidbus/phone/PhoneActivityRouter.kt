@@ -10,7 +10,31 @@ import com.anezium.rokidbus.shared.BusPaths
 import org.json.JSONObject
 
 /**
- * Activity-tier routing: local start/update/end, TTL expiry, revoke, and reconnect resend.
+ * What the activity tier needs from the hub for the launcher bundle, beyond [PhoneHudRouteSink].
+ * The defaults describe a hub without the bundle's transport: nothing can go over the data plane.
+ */
+internal interface PhoneActivityLauncherHost {
+    /** Live registrations of [pluginId]; a command needs exactly one. */
+    fun registrationCount(pluginId: String): Int = 0
+
+    /** Whether the SPP data plane is up, which route geometry requires. */
+    fun dataPlaneUp(): Boolean = false
+
+    /** Sends over the data plane only, never over CXR control and never queued. */
+    fun sendDataPlane(envelope: BusEnvelope): String? = "NO_DATA_PLANE"
+
+    /** Replaces the persisted offline snapshots with these `(owner, offline start)` pairs. */
+    fun persistOffline(snapshots: List<Pair<String, JSONObject>>) = Unit
+
+    companion object {
+        val NONE: PhoneActivityLauncherHost = object : PhoneActivityLauncherHost {}
+    }
+}
+
+/**
+ * Activity-tier routing: local start/update/end, TTL expiry, revoke, and reconnect resend; with
+ * the launcher bundle also commands and their results, route geometry and heading, offline
+ * snapshots, the user's activity choices and quick-action approvals.
  *
  * Canonical state stays in [PhoneActivityState]. The wire lock, transport, and
  * timers are owned here so [BusHubService] can keep the Binder and the glasses link.
@@ -21,14 +45,23 @@ internal class PhoneActivityRouter(
     private val nowMs: () -> Long,
     private val postExpiry: (delayMs: Long) -> Unit,
     private val cancelExpiry: () -> Unit,
+    private val launcher: PhoneActivityLauncherHost = PhoneActivityLauncherHost.NONE,
 ) {
     /** Serializes canonical mutation with its wire send, including reconnect batches. */
     private val wireLock = Any()
 
+    /** Highest route geometry revision forwarded per owner; geometry is latest-wins. */
+    private val geometryRevisions = mutableMapOf<String, Long>()
+    private val headingWindows = mutableMapOf<String, ArrayDeque<Long>>()
+    private var persistedOfflineRevision = state.offlineRevision()
+
     fun matches(path: String): Boolean =
         path == BusPaths.ACTIVITY_START ||
             path == BusPaths.ACTIVITY_UPDATE ||
-            path == BusPaths.ACTIVITY_END
+            path == BusPaths.ACTIVITY_END ||
+            path == BusPaths.ACTIVITY_RESULT ||
+            path == BusPaths.ACTIVITY_GEOMETRY ||
+            path == BusPaths.ACTIVITY_HEADING
 
     fun ownerPluginIds(): Set<String> = state.ownerPluginIds()
 
@@ -40,6 +73,9 @@ internal class PhoneActivityRouter(
                     ActivitySurfaceContract.validateStart(envelope.payload) !is ActivitySurfaceValidationResult.Valid
                 BusPaths.ACTIVITY_UPDATE ->
                     ActivitySurfaceContract.validateUpdate(envelope.payload) !is ActivitySurfacePatchResult.Valid
+                BusPaths.ACTIVITY_RESULT -> ActivitySurfaceContract.parseResult(envelope.payload) == null
+                BusPaths.ACTIVITY_GEOMETRY -> ActivitySurfaceContract.parseGeometry(envelope.payload) == null
+                BusPaths.ACTIVITY_HEADING -> ActivitySurfaceContract.parseHeading(envelope.payload) == null
                 else -> false
             }
         return if (invalid) ActivitySurfaceContract.ERROR_INVALID_ACTIVITY else null
@@ -67,14 +103,22 @@ internal class PhoneActivityRouter(
         when (envelope.path) {
             BusPaths.ACTIVITY_START ->
                 when (val result = state.start(pluginId, envelope.payload)) {
-                    is PhoneActivityStartResult.Rejected ->
+                    is PhoneActivityStartResult.Rejected -> {
+                        result.ended?.let { ended ->
+                            sink.log("activity ended owner=$pluginId reason=disabled")
+                            afterCleared(ended, "disabled")
+                        }
                         reject(envelope, sender, result.code)
+                    }
                     is PhoneActivityStartResult.Accepted -> {
                         result.replaced?.let { replaced ->
                             sink.log("activity replaced owner=${replaced.ownerPluginId} by=$pluginId")
-                            sendEndIfReachable(replaced, "replaced")
-                            deliverClosed(replaced.ownerPluginId, replaced.reason)
+                            afterCleared(replaced, "replaced")
                         }
+                        // A new session of this owner: whatever geometry it drew before is gone.
+                        clearTransient(pluginId)
+                        if (result.revived) sink.log("activity revived owner=$pluginId")
+                        persistIfChanged()
                         scheduleExpiry()
                         forward(envelope, result.payload, sender)
                     }
@@ -97,15 +141,10 @@ internal class PhoneActivityRouter(
                 }
             BusPaths.ACTIVITY_END ->
                 when (val result = state.end(pluginId)) {
-                    PhoneActivityClearResult.Ignored -> sink.recordLocalRoute(
-                        envelope,
-                        sender.uid,
-                        pluginId,
-                        PluginBusJournal.Verdict.OK,
-                        "ACTIVITY_END_IGNORED_NO_SESSION",
-                    )
                     is PhoneActivityClearResult.Cleared -> {
                         scheduleExpiry()
+                        clearTransient(pluginId)
+                        persistIfChanged()
                         val forwarded = envelope.copy(payload = result.payload)
                         sink.recordLocalRoute(
                             forwarded,
@@ -122,11 +161,29 @@ internal class PhoneActivityRouter(
                         }
                         deliverClosed(result.ownerPluginId, result.reason)
                     }
+                    else -> sink.recordLocalRoute(
+                        envelope,
+                        sender.uid,
+                        pluginId,
+                        PluginBusJournal.Verdict.OK,
+                        "ACTIVITY_END_IGNORED_NO_SESSION",
+                    )
                 }
+            BusPaths.ACTIVITY_RESULT -> launcherOnly(envelope, sender) { handleResult(envelope, sender, pluginId) }
+            BusPaths.ACTIVITY_GEOMETRY -> launcherOnly(envelope, sender) { handleGeometry(envelope, sender, pluginId) }
+            BusPaths.ACTIVITY_HEADING -> launcherOnly(envelope, sender) { handleHeading(envelope, sender, pluginId) }
         }
     }
 
+    /**
+     * `/activity/action` from the glasses. With the bundle it must be a command bound to the
+     * visible `seq`; without it the v1 `{activityId, id}` is delivered as it always was.
+     */
     fun handleGlassesAction(envelope: BusEnvelope): Unit = synchronized(wireLock) {
+        if (state.bundleNegotiated()) {
+            handleGlassesCommand(envelope)
+            return
+        }
         val activityId = envelope.payload.optString("activityId")
         val actionId = envelope.payload.optString("id")
         val owner = state.ownerForAction(activityId, actionId)
@@ -137,7 +194,7 @@ internal class PhoneActivityRouter(
             )
             return
         }
-        val payload = JSONObject(envelope.payload.toString()).put("pluginId", owner)
+        val payload = ActivitySurfaceContract.actionPayload(activityId, actionId).put("pluginId", owner)
         if (!sink.deliverLocal(envelope.copy(payload = payload))) {
             sink.log("activity action undelivered owner=$owner; no live registration")
         }
@@ -151,60 +208,97 @@ internal class PhoneActivityRouter(
             return
         }
         when (val result = state.closedByGlasses(activityId, reason)) {
-            PhoneActivityClearResult.Ignored ->
+            is PhoneActivityClearResult.Cleared -> {
+                scheduleExpiry()
+                clearTransient(result.ownerPluginId)
+                persistIfChanged()
+                sink.log("activity closed owner=${result.ownerPluginId} reason=${reason.wireValue}")
+                if (!result.offline) deliverClosed(result.ownerPluginId, result.reason)
+            }
+            else ->
                 sink.log(
                     "activity close ignored id=${activityId.take(80)} " +
                         "reason=${reason.wireValue}",
                 )
-            is PhoneActivityClearResult.Cleared -> {
-                scheduleExpiry()
-                sink.log("activity closed owner=${result.ownerPluginId} reason=${reason.wireValue}")
-                deliverClosed(result.ownerPluginId, result.reason)
-            }
         }
     }
 
     fun expireCanonical(): Unit = synchronized(wireLock) {
         state.expireIfDue().forEach { expired ->
             sink.log("activity expired owner=${expired.ownerPluginId}")
+            clearTransient(expired.ownerPluginId)
             sendEndIfReachable(expired, "max_duration")
             deliverClosed(expired.ownerPluginId, expired.reason)
         }
         scheduleExpiry()
     }
 
+    /**
+     * The owner's last registration left. An ongoing or pinned entry stays as an offline
+     * snapshot the glasses are told about; any other entry ends.
+     */
     fun clearForDisconnectedOwner(pluginId: String, reason: String): Unit = synchronized(wireLock) {
-        val result = state.ownerDisconnected(pluginId)
-        if (result !is PhoneActivityClearResult.Cleared) return
-        scheduleExpiry()
-        sink.log("activity cleared owner=$pluginId reason=$reason")
-        sendEndIfReachable(result, "disconnect")
+        when (val result = state.ownerDisconnected(pluginId)) {
+            is PhoneActivityClearResult.Cleared -> {
+                scheduleExpiry()
+                clearTransient(pluginId)
+                persistIfChanged()
+                sink.log("activity cleared owner=$pluginId reason=$reason")
+                sendEndIfReachable(result, "disconnect")
+            }
+            is PhoneActivityClearResult.WentOffline -> {
+                scheduleExpiry()
+                clearTransient(pluginId)
+                persistIfChanged()
+                sink.log("activity offline owner=$pluginId reason=$reason")
+                sendOffline(result)
+            }
+            PhoneActivityClearResult.Ignored -> Unit
+        }
     }
 
+    /** Revoke, disable, uninstall or a signer change: the entry goes, its snapshot with it. */
     fun clearForRevokedOwner(pluginId: String, reason: String): Unit = synchronized(wireLock) {
         val result = state.ownerLostAccess(pluginId)
         if (result !is PhoneActivityClearResult.Cleared) return
         scheduleExpiry()
+        clearTransient(pluginId)
+        persistIfChanged()
         sink.log("activity cleared owner=$pluginId reason=$reason")
         sendEndIfReachable(result, "access_lost")
     }
 
     fun clearAllForHubStop(): Unit = synchronized(wireLock) {
-        val cleared = state.disconnectAll()
-        if (cleared.isEmpty()) return@synchronized
+        val (cleared, offline) = state.hubStopped()
+        if (cleared.isEmpty() && offline.isEmpty()) return@synchronized
         cancelExpiry()
-        cleared.forEach { result ->
-            deliverClosed(result.ownerPluginId, result.reason)
+        (cleared.map { it.ownerPluginId } + offline).forEach { owner ->
+            clearTransient(owner)
+            deliverClosed(owner, ActivityCloseReason.DISCONNECT)
         }
+        persistIfChanged()
         if (sink.pinLinkUp()) {
             val sentinel = state.emptySlotAssertPayload()
             sink.sendRemote(BusEnvelope(path = BusPaths.ACTIVITY_END, payload = sentinel))
         }
-        sink.log("activity tier cleared reason=hub_stopped count=${cleared.size}")
+        sink.log("activity tier cleared reason=hub_stopped count=${cleared.size} offline=${offline.size}")
     }
 
+    /**
+     * After a glasses announce: commands the previous connection held are void, a capacity drop
+     * trims the collection (evicted live owners hear `replaced` first), then the whole tier is
+     * cleared and every entry resent with a new `seq`.
+     */
     fun resendIfAvailable(): Unit = synchronized(wireLock) {
         if (sink.capabilities() and BusCapabilityBits.ACTIVITY_SURFACE == 0) return
+        state.dropPendingCommands()
+        val trimmed = state.trimToCapacity()
+        trimmed.forEach { evicted ->
+            sink.log("activity trimmed owner=${evicted.ownerPluginId} capacity=${state.capacity()}")
+            clearTransient(evicted.ownerPluginId)
+            if (!evicted.offline) deliverClosed(evicted.ownerPluginId, evicted.reason)
+        }
+        if (trimmed.isNotEmpty()) persistIfChanged()
         expireCanonical()
 
         // A phone-hub restart may leave several owner IDs rendered on the glasses.
@@ -231,6 +325,197 @@ internal class PhoneActivityRouter(
                 )
             }
         }
+    }
+
+    /** Restores the persisted offline snapshots at hub start, then persists what was kept. */
+    fun restoreOffline(snapshots: List<Pair<String, JSONObject>>): Unit = synchronized(wireLock) {
+        val restored = snapshots.count { (owner, payload) -> state.restoreOffline(owner, payload) }
+        persistedOfflineRevision = -1L
+        persistIfChanged()
+        if (snapshots.isNotEmpty()) sink.log("activity snapshots restored=$restored of=${snapshots.size}")
+    }
+
+    /**
+     * The user changed [pluginId]'s activity choices on the phone. Disabling ends its entry;
+     * unpinning a non-ongoing offline entry removes it; anything else resends its stamps.
+     */
+    fun onPreferencesChanged(pluginId: String): Unit = synchronized(wireLock) {
+        when (val outcome = state.preferencesChanged(pluginId)) {
+            is PhoneActivityPreferenceOutcome.Ended -> {
+                sink.log("activity ended owner=$pluginId reason=user_preference")
+                afterCleared(outcome.cleared, "user_preference")
+            }
+            is PhoneActivityPreferenceOutcome.Restamped -> sendRestamp(outcome)
+            PhoneActivityPreferenceOutcome.Unchanged -> Unit
+        }
+    }
+
+    /**
+     * The user changed [pluginId]'s quick-action approvals. A withdrawn family rejects its
+     * pending quick command at once; the entry is restamped so `hubQuick` follows the policy.
+     */
+    fun onQuickPolicyChanged(pluginId: String): Unit = synchronized(wireLock) {
+        if (state.rejectUnapprovedQuickCommands(pluginId)) {
+            sink.log("activity command rejected owner=$pluginId reason=quick_policy_withdrawn")
+        }
+        val outcome = state.quickPolicyChanged(pluginId)
+        if (outcome is PhoneActivityPreferenceOutcome.Restamped) sendRestamp(outcome)
+    }
+
+    private fun handleGlassesCommand(envelope: BusEnvelope) {
+        val command = ActivitySurfaceContract.parseCommand(envelope.payload, requireMode = true)
+        if (command == null) {
+            sink.log("activity command ignored reason=malformed")
+            return
+        }
+        when (val result = state.beginCommand(command, launcher::registrationCount)) {
+            is PhoneActivityCommandResult.Rejected ->
+                sink.log("activity command ignored id=${command.activityId.take(80)} reason=${result.reason}")
+            is PhoneActivityCommandResult.Accepted -> {
+                val delivered = sink.deliverLocal(BusEnvelope(path = BusPaths.ACTIVITY_ACTION, payload = result.payload))
+                if (!delivered) {
+                    state.commandUndelivered(result.ownerPluginId, result.invocationId)
+                    sink.log("activity command undelivered owner=${result.ownerPluginId}; no live registration")
+                }
+            }
+        }
+    }
+
+    private fun handleResult(envelope: BusEnvelope, sender: PhoneHudRouteSender, pluginId: String) {
+        val result = ActivitySurfaceContract.parseResult(envelope.payload)
+            ?: return reject(envelope, sender, ActivitySurfaceContract.ERROR_INVALID_ACTIVITY)
+        val forwarded = state.completeCommand(pluginId, result)
+        if (forwarded == null) {
+            // Late, unknown or already answered: the glasses already show it unconfirmed.
+            sink.recordLocalRoute(envelope, sender.uid, pluginId, PluginBusJournal.Verdict.OK, "ACTIVITY_RESULT_DROPPED")
+            return
+        }
+        val outgoing = BusEnvelope(path = BusPaths.ACTIVITY_RESULT, id = envelope.id, payload = forwarded)
+        sink.recordLocalRoute(outgoing, sender.uid, pluginId, PluginBusJournal.Verdict.OK)
+        if (!sink.pinLinkUp()) {
+            sink.log("activity result dropped owner=$pluginId reason=link_down")
+            return
+        }
+        sink.sendRemote(outgoing)?.let { sink.log("activity result failed owner=$pluginId code=$it") }
+    }
+
+    private fun handleGeometry(envelope: BusEnvelope, sender: PhoneHudRouteSender, pluginId: String) {
+        val update = ActivitySurfaceContract.parseGeometry(envelope.payload)
+            ?: return reject(envelope, sender, ActivitySurfaceContract.ERROR_INVALID_ACTIVITY)
+        val drop = when {
+            !state.isLive(pluginId) -> "ACTIVITY_GEOMETRY_IGNORED_NO_SESSION"
+            geometryRevisions[pluginId]?.let { update.revision <= it } == true -> "ACTIVITY_GEOMETRY_STALE"
+            // Route geometry rides the data plane only; with CXR control alone it is dropped,
+            // never queued, so text guidance never waits on it.
+            !launcher.dataPlaneUp() -> "ACTIVITY_GEOMETRY_NO_DATA_PLANE"
+            else -> null
+        }
+        if (drop != null) {
+            sink.recordLocalRoute(envelope, sender.uid, pluginId, PluginBusJournal.Verdict.OK, drop)
+            return
+        }
+        val outgoing = BusEnvelope(
+            path = BusPaths.ACTIVITY_GEOMETRY,
+            id = envelope.id,
+            payload = withOwner(pluginId, ActivitySurfaceContract.geometryPayload(update)),
+        )
+        sink.recordLocalRoute(outgoing, sender.uid, pluginId, PluginBusJournal.Verdict.OK)
+        val error = launcher.sendDataPlane(outgoing)
+        if (error == null) {
+            geometryRevisions[pluginId] = update.revision
+        } else {
+            sink.log("activity geometry dropped owner=$pluginId code=$error")
+        }
+    }
+
+    private fun handleHeading(envelope: BusEnvelope, sender: PhoneHudRouteSender, pluginId: String) {
+        val heading = ActivitySurfaceContract.parseHeading(envelope.payload)
+            ?: return reject(envelope, sender, ActivitySurfaceContract.ERROR_INVALID_ACTIVITY)
+        val drop = when {
+            !state.isLive(pluginId) -> "ACTIVITY_HEADING_IGNORED_NO_SESSION"
+            !admitHeading(pluginId) -> "ACTIVITY_HEADING_RATE_LIMITED"
+            // Heading only turns the map that geometry draws, so it rides the same data plane
+            // and never adds a stream of samples to the narrow control link.
+            !launcher.dataPlaneUp() -> "ACTIVITY_HEADING_NO_DATA_PLANE"
+            else -> null
+        }
+        if (drop != null) {
+            sink.recordLocalRoute(envelope, sender.uid, pluginId, PluginBusJournal.Verdict.OK, drop)
+            return
+        }
+        val outgoing = BusEnvelope(
+            path = BusPaths.ACTIVITY_HEADING,
+            id = envelope.id,
+            payload = withOwner(pluginId, ActivitySurfaceContract.headingPayload(heading)),
+        )
+        sink.recordLocalRoute(outgoing, sender.uid, pluginId, PluginBusJournal.Verdict.OK)
+        launcher.sendDataPlane(outgoing)?.let { sink.log("activity heading dropped owner=$pluginId code=$it") }
+    }
+
+    /** At most [ActivitySurfaceContract.MAX_HEADINGS_PER_SECOND] per owner in a sliding second. */
+    private fun admitHeading(pluginId: String): Boolean {
+        val now = nowMs()
+        val window = headingWindows.getOrPut(pluginId) { ArrayDeque() }
+        while (window.isNotEmpty() && now - window.first() >= HEADING_WINDOW_MS) window.removeFirst()
+        if (window.size >= ActivitySurfaceContract.MAX_HEADINGS_PER_SECOND) return false
+        window.addLast(now)
+        return true
+    }
+
+    /** The launcher bundle's plugin paths exist only between hubs that negotiated it. */
+    private inline fun launcherOnly(envelope: BusEnvelope, sender: PhoneHudRouteSender, handle: () -> Unit) {
+        if (!state.bundleNegotiated()) {
+            reject(envelope, sender, ActivitySurfaceContract.ERROR_CAPABILITY_NOT_AVAILABLE)
+            return
+        }
+        handle()
+    }
+
+    private fun withOwner(pluginId: String, payload: JSONObject): JSONObject = payload
+        .put("surfaceId", "$pluginId:${ActivitySurfaceContract.LOCAL_SURFACE_ID}")
+        .put("localSurfaceId", ActivitySurfaceContract.LOCAL_SURFACE_ID)
+        .put("ownerPluginId", pluginId)
+
+    /** Geometry and heading belong to one live session; an end or an offline entry drops them. */
+    private fun clearTransient(pluginId: String) {
+        geometryRevisions.remove(pluginId)
+        headingWindows.remove(pluginId)
+    }
+
+    /** An entry the hub removed: the glasses hear the end, a live owner hears why. */
+    private fun afterCleared(cleared: PhoneActivityClearResult.Cleared, cause: String) {
+        scheduleExpiry()
+        clearTransient(cleared.ownerPluginId)
+        persistIfChanged()
+        sendEndIfReachable(cleared, cause)
+        if (!cleared.offline) deliverClosed(cleared.ownerPluginId, cleared.reason)
+    }
+
+    private fun sendOffline(result: PhoneActivityClearResult.WentOffline) {
+        // Glasses not yet known to run the bundle get the offline entry with the next announce.
+        if (!state.bundleNegotiated() || !sink.pinLinkUp()) {
+            sink.log("activity offline held owner=${result.ownerPluginId} reason=link_or_bundle")
+            return
+        }
+        sink.sendRemote(BusEnvelope(path = BusPaths.ACTIVITY_START, payload = result.payload))?.let {
+            sink.log("activity offline failed owner=${result.ownerPluginId} code=$it")
+        }
+    }
+
+    /** New stamps only mean something to glasses that read them; v1 glasses keep what they have. */
+    private fun sendRestamp(outcome: PhoneActivityPreferenceOutcome.Restamped) {
+        if (!state.bundleNegotiated() || !sink.pinLinkUp()) return
+        val path = if (outcome.asStart) BusPaths.ACTIVITY_START else BusPaths.ACTIVITY_UPDATE
+        sink.sendRemote(BusEnvelope(path = path, payload = outcome.payload))?.let {
+            sink.log("activity restamp failed owner=${outcome.ownerPluginId} code=$it")
+        }
+    }
+
+    private fun persistIfChanged() {
+        val (revision, snapshots) = state.offlineSnapshots()
+        if (revision == persistedOfflineRevision) return
+        persistedOfflineRevision = revision
+        launcher.persistOffline(snapshots)
     }
 
     private fun forward(
@@ -292,5 +577,9 @@ internal class PhoneActivityRouter(
         cancelExpiry()
         val deadline = state.nextExpiryDeadlineMs() ?: return
         postExpiry((deadline - nowMs()).coerceAtLeast(0L))
+    }
+
+    private companion object {
+        const val HEADING_WINDOW_MS = 1_000L
     }
 }

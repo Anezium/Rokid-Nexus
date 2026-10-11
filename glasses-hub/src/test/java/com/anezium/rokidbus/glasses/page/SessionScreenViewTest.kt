@@ -52,7 +52,7 @@ import org.robolectric.annotation.LooperMode
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class SessionScreenViewTest {
     private val context = RuntimeEnvironment.getApplication()
-    private val items = TypedPageItems(PageTemplateContract::isLocalPageId) { true }
+    private val items = TypedPageItems(PageTemplateContract::isLocalPageId, providerPageAllowed = { true })
     private val screens = SessionScreens(items, { if (it == "nav") "Navigation" else if (it == "relay") "Relay" else null }, { "12:24" }, { it })
     private val view = SessionScreenView(context)
     private val paged = mutableListOf<SessionEvent.DocumentPaged>()

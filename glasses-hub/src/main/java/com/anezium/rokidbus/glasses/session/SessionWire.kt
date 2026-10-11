@@ -1,5 +1,10 @@
 package com.anezium.rokidbus.glasses.session
 
+import com.anezium.rokidbus.shared.ActivityAction
+import com.anezium.rokidbus.shared.ActivityActivation
+import com.anezium.rokidbus.shared.ActivityCommandResult
+import com.anezium.rokidbus.shared.ActivitySurfaceContract
+import com.anezium.rokidbus.shared.PageDestination
 import com.anezium.rokidbus.shared.PageSurfaceContract
 import com.anezium.rokidbus.shared.PageTemplateContract
 import org.json.JSONObject
@@ -58,6 +63,18 @@ internal object SessionWire {
         return !isLocal(pageId) && PageTemplateContract.isProviderPageId(pageId, owner)
     }
 
+    /**
+     * An owner's `/activity/result` as the phone forwarded it: well formed, and, when the phone
+     * stamped an owner, for that owner's own activity. The reducer still matches it to a pending
+     * command by invocation; anything else is dropped there.
+     */
+    fun activityResult(payload: JSONObject): ActivityCommandResult? {
+        val result = ActivitySurfaceContract.parseResult(payload) ?: return null
+        val owner = payload.opt("ownerPluginId") as? String
+        if (owner != null && result.activityId != "$owner:${ActivitySurfaceContract.LOCAL_SURFACE_ID}") return null
+        return result
+    }
+
     /** A result names no page; it must come from the owner of the page that holds the invocation. */
     fun acceptsResult(payload: JSONObject, topPageId: String?): Boolean {
         val owner = payload.opt(PageSurfaceContract.FIELD_PLUGIN_ID) as? String ?: return false
@@ -66,7 +83,11 @@ internal object SessionWire {
     }
 }
 
-/** One live activity as the glasses' activity tier holds it. */
+/**
+ * One collection entry as the glasses' activity tier holds it. The launcher-bundle fields are
+ * empty unless the pair negotiated it: [activation] is the effective one, [commands] the plugin's
+ * actions with the phone's quick stamps, [seq] the revision a command binds to.
+ */
 internal data class ActivitySource(
     val surfaceId: String,
     val ownerPluginId: String,
@@ -74,17 +95,30 @@ internal data class ActivitySource(
     val text: String,
     val detail: String?,
     val measure: String?,
+    val userPinned: Boolean = false,
+    val offline: Boolean = false,
+    val knownAtWallMs: Long? = null,
+    val seq: Long = 0,
+    val destination: PageDestination? = null,
+    val activation: ActivityActivation? = null,
+    val commands: List<ActivityAction> = emptyList(),
+    val defaultActionId: String? = null,
+    val startedOrder: Long = 0,
+    val significantOrder: Long? = null,
 )
 
 /**
  * Turns the activity tier's snapshots into session events: a newcomer starts, a change of value
- * updates, a disappearance ends. Each card carries its owner's catalog name and the wall time of
- * its latest content.
+ * updates, a disappearance ends. Each card carries its owner's catalog name, icon and whether its
+ * full app can be opened, and the wall time of its latest content.
  */
 internal class ActivityFeed(
     private val ownerLabel: (String) -> String?,
     private val pageIdFor: (String) -> String,
     private val wallClock: () -> Long,
+    /** The owner's full app is in the Applications catalog, and is not a native app. */
+    private val launchable: (String) -> Boolean = { false },
+    private val iconOf: (String) -> IconRef? = { null },
 ) {
     private val known = linkedMapOf<String, ActivityStop>()
 
@@ -106,6 +140,18 @@ internal class ActivityFeed(
                 detail = source.detail,
                 measure = source.measure,
                 updatedAtWallMs = if (contentChanged) wallClock() else previous?.updatedAtWallMs,
+                userPinned = source.userPinned,
+                offline = source.offline,
+                knownAtWallMs = source.knownAtWallMs,
+                seq = source.seq,
+                destination = source.destination,
+                activation = source.activation,
+                commands = source.commands,
+                defaultActionId = source.defaultActionId,
+                launchable = launchable(source.ownerPluginId),
+                icon = iconOf(source.ownerPluginId),
+                startedOrder = source.startedOrder,
+                significantOrder = source.significantOrder,
             )
             if (stop == previous) return@forEach
             known[source.surfaceId] = stop
