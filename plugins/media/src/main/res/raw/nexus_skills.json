@@ -1,0 +1,73 @@
+{
+  "version": 1,
+  "operations": [
+    {
+      "id": "get_now_playing",
+      "version": 1,
+      "label": "What is playing",
+      "description": "Reads the phone's media sessions without opening Media Deck. Returns a unique playing session, an empty result, or player choices when ambiguous. Pass the selected session reference to read that exact player. A destroyed session reference must be fetched again.",
+      "examples": ["What is playing?"],
+      "effect": "read", "cancellable": true, "deduplicates": true,
+      "requires": [], "prerequisites": ["notification_access"],
+      "data": ["media_metadata", "playback_state"],
+      "input": {
+        "type": "object",
+        "properties": {"session": {"type": "string", "nexusRef": "media_session"}}
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "state": {"type": "string", "enum": ["playing", "paused", "stopped", "no_session"]},
+          "session": {"type": "string", "nexusRef": "media_session"},
+          "player": {"type": "string", "maxLength": 80},
+          "title": {"type": "string", "maxLength": 240},
+          "artist": {"type": "string", "maxLength": 160},
+          "focus": {
+            "type": "object",
+            "properties": {
+              "kind": {"type": "string", "enum": ["media_session_focus"]},
+              "state": {"type": "string", "enum": ["playing", "paused", "stopped", "no_session"]},
+              "session": {"type": "string", "nexusRef": "media_session"},
+              "player": {"type": "string", "maxLength": 80}
+            },
+            "required": ["kind", "state"]
+          }
+        },
+        "required": ["state", "focus"]
+      }
+    },
+    {
+      "id": "pause",
+      "version": 1,
+      "label": "Pause playback",
+      "description": "Sends explicit pause to the referenced media session, or the uniquely identifiable playing session. With multiple possible players, asks which one. Does not return title or artist. Completed means paused was observed; accepted means the command was sent without confirmation. Never toggles or silently redirects a destroyed reference.",
+      "examples": ["Pause it", "Pause the music"],
+      "effect": "action", "cancellable": false, "deduplicates": true,
+      "requires": [], "prerequisites": ["notification_access"],
+      "data": ["playback_state", "status"],
+      "input": {
+        "type": "object",
+        "properties": {"session": {"type": "string", "nexusRef": "media_session"}}
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "state": {"type": "string", "enum": ["paused"]},
+          "already_paused": {"type": "boolean"},
+          "session": {"type": "string", "nexusRef": "media_session"},
+          "focus": {
+            "type": "object",
+            "properties": {
+              "kind": {"type": "string", "enum": ["media_session_focus"]},
+              "state": {"type": "string", "enum": ["paused"]},
+              "session": {"type": "string", "nexusRef": "media_session"},
+              "player": {"type": "string", "maxLength": 80}
+            },
+            "required": ["kind", "state", "session", "player"]
+          }
+        },
+        "required": ["state", "already_paused", "session", "focus"]
+      }
+    }
+  ]
+}
