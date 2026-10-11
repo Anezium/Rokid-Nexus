@@ -42,8 +42,8 @@ class MediaDeckPagesTest {
         assertEquals("Mezzanine", body.album)
         assertEquals("Player", body.source)
         assertEquals(MediaPlaybackState.PLAYING, body.state)
-        assertEquals(listOf("previous", "pause", "next"), body.controls)
-        assertEquals("pause", body.defaultControl)
+        assertEquals(listOf("previous", MediaDeckPages.PLAY_PAUSE, "next"), body.controls)
+        assertEquals(MediaDeckPages.PLAY_PAUSE, body.defaultControl)
         assertEquals(body.controls, page.actions.map { it.id })
         assertEquals(
             listOf(NexusActionType.MediaPrevious, NexusActionType.MediaPause, NexusActionType.MediaNext),
@@ -57,8 +57,9 @@ class MediaDeckPagesTest {
         val body = content(stateOf(observed(phase = MediaPlaybackPhase.PAUSED)), extended = true).body as PageBody.Media
 
         assertEquals(MediaPlaybackState.PAUSED, body.state)
-        assertEquals(listOf("previous", "play", "next"), body.controls)
-        assertEquals("play", body.defaultControl)
+        // The same control id in both states: only its typed desired state changes.
+        assertEquals(listOf("previous", MediaDeckPages.PLAY_PAUSE, "next"), body.controls)
+        assertEquals(MediaDeckPages.PLAY_PAUSE, body.defaultControl)
     }
 
     @Test
@@ -122,9 +123,23 @@ class MediaDeckPagesTest {
         val page = provider.onRequest(Request(MediaDeckPages.MAIN, floor = 11)) as NexusPage.Content
         assertEquals(12L, page.revision)
 
-        val result = provider.onAction(MediaDeckPages.MAIN, page.revision, "pause", NexusActionType.MediaPause)
+        val result = provider.onAction(MediaDeckPages.MAIN, page.revision, MediaDeckPages.PLAY_PAUSE, NexusActionType.MediaPause)
         assertEquals(NexusPageResultStatus.DONE, result.status)
         assertEquals(listOf(observed() to MediaDeckCommand.PAUSE), fake.monitor.sent)
+    }
+
+    @Test
+    fun `the shared play-pause control never runs without its typed desired state`() {
+        fake.monitor.live = observed()
+        val provider = provider()
+        val page = provider.onRequest(Request(MediaDeckPages.MAIN, floor = null)) as NexusPage.Content
+
+        assertEquals(NexusPageResultStatus.REJECTED, provider.onAction(MediaDeckPages.MAIN, page.revision, MediaDeckPages.PLAY_PAUSE, null).status)
+        assertEquals(
+            NexusPageResultStatus.REJECTED,
+            provider.onAction(MediaDeckPages.MAIN, page.revision, MediaDeckPages.PLAY_PAUSE, NexusActionType.MediaNext).status,
+        )
+        assertTrue(fake.monitor.sent.isEmpty())
     }
 
     @Test
@@ -134,7 +149,7 @@ class MediaDeckPagesTest {
         val page = provider.onRequest(Request(MediaDeckPages.MAIN, floor = null)) as NexusPage.Content
         provider.onVisibility(MediaDeckPages.MAIN, isVisible = true, leaseMs = 120_000L)
 
-        assertEquals(NexusPageResultStatus.STALE, provider.onAction(MediaDeckPages.MAIN, 99, "pause", null).status)
+        assertEquals(NexusPageResultStatus.STALE, provider.onAction(MediaDeckPages.MAIN, 99, "next", null).status)
 
         fake.monitor.emit(observed(identity = SESSION_B))
         val next = published.last() as NexusPage.Content
@@ -150,7 +165,7 @@ class MediaDeckPagesTest {
         val provider = provider()
         val page = provider.onRequest(Request(MediaDeckPages.MAIN, floor = null)) as NexusPage.Content
 
-        val result = provider.onAction(MediaDeckPages.MAIN, page.revision, "play", NexusActionType.MediaPlay)
+        val result = provider.onAction(MediaDeckPages.MAIN, page.revision, MediaDeckPages.PLAY_PAUSE, NexusActionType.MediaPlay)
         assertEquals(NexusPageResultStatus.REJECTED, result.status)
         assertTrue(fake.monitor.sent.isEmpty())
     }

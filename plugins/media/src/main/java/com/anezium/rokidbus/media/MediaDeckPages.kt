@@ -33,6 +33,13 @@ internal object MediaDeckPages {
     const val TITLE = "Media Deck"
     const val OPEN_APP = "open-app"
 
+    /**
+     * The media body's middle control. One id for Play and Pause keeps the hub's selection on the
+     * control when the state flips; the explicit desired state is its typed value at the revision
+     * the wearer saw, never a toggle.
+     */
+    const val PLAY_PAUSE = "playpause"
+
     fun actionIdOf(command: MediaDeckCommand): String = when (command) {
         MediaDeckCommand.PREVIOUS -> "previous"
         MediaDeckCommand.PLAY -> "play"
@@ -41,6 +48,12 @@ internal object MediaDeckPages {
     }
 
     fun commandOf(actionId: String): MediaDeckCommand? = MediaDeckCommand.entries.firstOrNull { actionIdOf(it) == actionId }
+
+    /** A control id on the launcher's media body: Play and Pause share [PLAY_PAUSE]. */
+    fun controlIdOf(command: MediaDeckCommand): String = when (command) {
+        MediaDeckCommand.PLAY, MediaDeckCommand.PAUSE -> PLAY_PAUSE
+        else -> actionIdOf(command)
+    }
 
     fun page(pageId: String, revision: Long, state: MediaDeckState, extended: Boolean): NexusPage = when {
         pageId != MAIN -> NexusPage.Unavailable
@@ -84,10 +97,10 @@ internal object MediaDeckPages {
                 artist = optional(track.artist, PageTemplateContract.MAX_MEDIA_TEXT_CHARS),
                 album = optional(track.album, PageTemplateContract.MAX_MEDIA_TEXT_CHARS),
                 source = optional(track.sourceLabel, PageTemplateContract.MAX_SOURCE_CHARS),
-                controls = commands.map(::actionIdOf),
-                defaultControl = actionIdOf(MediaDeckCommand.desiredFor(active.phase)),
+                controls = commands.map(::controlIdOf),
+                defaultControl = PLAY_PAUSE,
             ),
-            actions = commands.map(::actionSpec),
+            actions = commands.map { actionSpec(it, controlIdOf(it)) },
             live = true,
         )
     }
@@ -125,13 +138,13 @@ internal object MediaDeckPages {
                 facts = facts,
                 items = rows,
             ),
-            actions = commands.map(::actionSpec) + openAppAction,
+            actions = commands.map { actionSpec(it, actionIdOf(it)) } + openAppAction,
             live = true,
         )
     }
 
-    private fun actionSpec(command: MediaDeckCommand) = NexusPageActionSpec(
-        id = actionIdOf(command),
+    private fun actionSpec(command: MediaDeckCommand, id: String) = NexusPageActionSpec(
+        id = id,
         label = MediaDeckActivityModel.labelOf(command),
         kind = NexusPageActionKind.PLUGIN,
         typed = command.typed,
@@ -230,7 +243,13 @@ internal class MediaDeckPageProvider<R : Any>(
 
     fun onAction(pageId: String, revision: Long, actionId: String, typed: NexusActionType?): NexusPageResult {
         if (pageId != MediaDeckPages.MAIN) return MediaDeckControlOutcome.NOT_OFFERED.toPageResult()
-        val command = MediaDeckPages.commandOf(actionId) ?: return MediaDeckControlOutcome.NOT_OFFERED.toPageResult()
+        val command = if (actionId == MediaDeckPages.PLAY_PAUSE) {
+            // Only the typed value says which of the two the wearer saw; without it nothing runs.
+            typed?.let(MediaDeckCommand::of)?.takeIf { it == MediaDeckCommand.PLAY || it == MediaDeckCommand.PAUSE }
+                ?: return MediaDeckControlOutcome.NOT_OFFERED.toPageResult()
+        } else {
+            MediaDeckPages.commandOf(actionId) ?: return MediaDeckControlOutcome.NOT_OFFERED.toPageResult()
+        }
         if (typed != null && MediaDeckCommand.of(typed) != command) return MediaDeckControlOutcome.NOT_OFFERED.toPageResult()
         if (!shownTargets.containsKey(revision)) return MediaDeckControlOutcome.STALE_REVISION.toPageResult()
         return hub.control(shownTargets[revision], command).toPageResult()
