@@ -58,6 +58,7 @@ internal class NavMapPublisher(
     /** The link changed: what the data plane missed is the current journey, sent again whole. */
     fun linkChanged() {
         sentGeometry = null
+        sentGeometryAtMs = null
         flush()
     }
 
@@ -71,10 +72,10 @@ internal class NavMapPublisher(
         val current = snapshot ?: return
         if (!activityLive || !supported()) return
         val at = now()
-        val geometry = geometryOf(current)
         val last = sentGeometryAtMs
-        if (geometry != sentGeometry && (last == null || at - last >= MIN_GEOMETRY_INTERVAL_MS)) {
-            if (sendGeometry(nextRevision(), geometry) == NexusSdkResult.SENT) {
+        if (last == null || at - last >= MIN_GEOMETRY_INTERVAL_MS) {
+            val geometry = geometryOf(current)
+            if (geometry != sentGeometry && sendGeometry(nextRevision(), geometry) == NexusSdkResult.SENT) {
                 sentGeometry = geometry
                 sentGeometryAtMs = at
             }

@@ -157,16 +157,20 @@ class NavJourneyService : Service(), LocationListener {
                 bearingAccuracyDeg = location.bearingAccuracyDegrees.toDouble().takeIf { moving && location.hasBearingAccuracy() },
             )
         }.getOrNull() ?: return
-        if (lastFix?.elapsedMs?.let { fix.elapsedMs <= it } == true) return
+        val previous = lastFix
+        if (previous != null && fix.elapsedMs <= previous.elapsedMs) return
+        // GPS and network fixes interleave: a vague one does not displace a trusted one still recent,
+        // or the position would flicker between live and stale every second.
+        if (previous != null && !trusted(fix) && trusted(previous) && fix.elapsedMs - previous.elapsedMs < PREFER_TRUSTED_FIX_MS) return
         lastFix = fix
         val now = SystemClock.elapsedRealtime()
-        if (tracker == null && planner == null && now - fix.elapsedMs in 0..NavRouteTracker.STALE_AFTER_MS &&
-            fix.accuracyMeters in 0.0..NavRouteTracker.MAX_ACCURACY_METERS
-        ) {
+        if (tracker == null && planner == null && now - fix.elapsedMs in 0..NavRouteTracker.STALE_AFTER_MS && trusted(fix)) {
             plan(fix)
         }
         publish(now)
     }
+
+    private fun trusted(fix: NavFix) = fix.accuracyMeters in 0.0..NavRouteTracker.MAX_ACCURACY_METERS
 
     /** The one planning request, from the first recent accurate fix; a failure ends the journey. */
     private fun plan(fix: NavFix) {
@@ -295,6 +299,7 @@ class NavJourneyService : Service(), LocationListener {
         private const val FIX_INTERVAL_MS = 1_000L
         private const val FIX_DISTANCE_M = 2f
         private const val MIN_BEARING_SPEED = 0.5f
+        private const val PREFER_TRUSTED_FIX_MS = 10_000L
 
         /** Builds the planner each journey uses; tests swap in canned responses. */
         @Volatile
