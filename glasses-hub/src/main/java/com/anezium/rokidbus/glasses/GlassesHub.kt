@@ -236,7 +236,12 @@ object GlassesHub {
         phoneConnected = connected || CxrBusBridge.isUp()
         NexusSession.onPhoneLink(phoneConnected)
         // CXR stayed: only the pages that needed SPP are lost.
-        if (!connected && phoneConnected) NexusSession.onDataPlaneLost()
+        if (!connected && phoneConnected) {
+            NexusSession.onDataPlaneLost()
+            // Geometry and heading only travel over SPP: a map frozen at its last fix would keep
+            // claiming a live position while the text guidance moves on.
+            RouteLive.clear()
+        }
         if (!phoneConnected) {
             clearRemotePhoneCapabilities()
             AssistantDisplayEpisode.end(DisplayHoldReleaseReason.LINK_LOSS)
