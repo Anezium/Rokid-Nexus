@@ -14,6 +14,7 @@ class PluginBusJournal(
         BINARY,
         TRANSPORT,
         LAUNCHER,
+        SKILL,
     }
 
     enum class Direction {

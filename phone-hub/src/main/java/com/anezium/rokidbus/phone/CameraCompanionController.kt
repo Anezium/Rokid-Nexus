@@ -128,6 +128,9 @@ class CameraCompanionController(
     @Synchronized
     fun activeSessionId(): String? = active?.sessionId
 
+    @Synchronized
+    fun activePrincipalKey(): PluginGrantKey? = active?.principal?.grantKey()
+
     private fun handleSessionState(envelope: BusEnvelope) {
         val sessionId = envelope.payload.optString("sessionId")
         if (sessionId.isBlank()) return

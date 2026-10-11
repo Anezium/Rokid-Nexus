@@ -104,6 +104,8 @@ import com.example.cxrglobal.callbacks.ICustomCmdCbk
 import com.example.cxrglobal.callbacks.IGlassAppCbk
 import com.rokid.cxr.Caps
 import com.anezium.rokidbus.phone.mediasync.MediaSyncCoordinator
+import com.anezium.rokidbus.shared.skills.SkillStatus
+import com.anezium.rokidbus.shared.skills.SkillsContract
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -118,6 +120,7 @@ import java.io.File
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
+import java.security.SecureRandom
 import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
@@ -489,6 +492,15 @@ class BusHubService : Service() {
     private val quickPolicyRevision = AtomicLong(System.currentTimeMillis())
     private lateinit var cameraConsumerReadiness: CameraConsumerReadiness
     private lateinit var cameraCompanionController: CameraCompanionController
+    private lateinit var skillGrantStore: SkillGrantStore
+    private lateinit var skillLeaseRuntime: AndroidSkillLeaseRuntime
+    private lateinit var skillsCoordinator: SkillsCoordinator
+
+    // Skill calls must run in arrival order: a cancel must not overtake its invoke.
+    private val skillsExecutor = Executors.newSingleThreadExecutor { runnable -> Thread(runnable, "nexus-skills") }
+    private val skillScheduler = MainThreadExternalPluginScheduler()
+    private val skillRandom = SecureRandom()
+    @Volatile private var skillPrincipalsCache: List<PhonePluginPrincipal>? = null
     private lateinit var pluginGuardianCoordinator: PluginGuardianCoordinator
     private lateinit var mediaSyncCoordinator: MediaSyncCoordinator
     private lateinit var coreRemoteBridge: PhoneCoreRemoteBridge
@@ -716,6 +728,9 @@ class BusHubService : Service() {
                         }
                         if (::cameraCompanionController.isInitialized) {
                             cameraCompanionController.onRegistered(principal)
+                        }
+                        if (::skillsCoordinator.isInitialized) {
+                            skillsExecutor.execute { skillsCoordinator.onRegistered(principal) }
                         }
                         log("plugin registered package=$packageName plugin=$pluginId status=approved")
                         pluginRegistrationResult(pluginId, PluginRegistrationResult.APPROVED)
@@ -1008,9 +1023,12 @@ class BusHubService : Service() {
             discoverCandidates = pluginDiscovery::discover,
             reconcileGrants = pluginGrantStore::reconcile,
         )
+        // Before the startup reconcile below reads it.
+        skillGrantStore = SkillGrantStore(applicationContext)
         executor.execute {
             val reconciliation = pluginGrantReconciler.reconcile()
             retainActivityChoices(reconciliation.validPrincipals)
+            retainSkillApprovals(reconciliation.validPrincipals)
             restoreOfflineActivities(reconciliation.validPrincipals)
         }
         pluginGuardianCoordinator = PluginGuardianCoordinator(
@@ -1088,6 +1106,11 @@ class BusHubService : Service() {
             resolveApprovedConsumer = cameraConsumerReadiness::resolveApproved,
             logger = ::log,
         )
+        skillLeaseRuntime = AndroidSkillLeaseRuntime(
+            context = applicationContext,
+            bindingDied = { principal -> skillsExecutor.execute { skillsCoordinator.onLeaseBindingDied(principal) } },
+        )
+        skillsCoordinator = SkillsCoordinator(skillsHost, skillGrantStore)
         pluginRegistry = PhonePluginRegistry(
             context = applicationContext,
             plugins = emptyList(),
@@ -1311,6 +1334,7 @@ class BusHubService : Service() {
         if (::pluginRegistry.isInitialized) pluginRegistry.close()
         inkRouter.close()
         if (::cameraCompanionController.isInitialized) cameraCompanionController.close()
+        skillsExecutor.shutdown()
         if (::mediaSyncCoordinator.isInitialized) mediaSyncCoordinator.close()
         synchronized(phoneAssistedPairingLock) { activePhoneAssistedPairing = null }
         manualPairingEngineSubscription?.close()
@@ -1356,6 +1380,12 @@ class BusHubService : Service() {
         if (decision is PluginRouteDecision.Denied) {
             recordLocalRoute(envelope, senderUid, sender, PluginBusJournal.Verdict.REJECTED, decision.code)
             deliverError(sender.replyBinder, envelope.id, decision.code)
+            return
+        }
+        val leaseDenial = skillLeaseDenial(sender, envelope.path)
+        if (leaseDenial != null) {
+            recordLocalRoute(envelope, senderUid, sender, PluginBusJournal.Verdict.REJECTED, leaseDenial)
+            deliverError(sender.replyBinder, envelope.id, leaseDenial)
             return
         }
         if (envelope.path == BusPaths.TTS_SPEAK || envelope.path == BusPaths.TTS_STOP) {
@@ -1550,6 +1580,11 @@ class BusHubService : Service() {
      */
     private fun routeLocalPage(envelope: BusEnvelope, senderUid: Int, sender: AuthorizedSender) {
         val path = PathRules.normalizeAbsolute(envelope.path) ?: envelope.path
+        skillLeaseDenial(sender, path)?.let { denial ->
+            recordLocalRoute(envelope, senderUid, sender, PluginBusJournal.Verdict.REJECTED, denial)
+            deliverError(sender.replyBinder, envelope.id, denial)
+            return
+        }
         val registration = registrations.filter { it.uid == senderUid && it.principal != null }.singleOrNull()
         val plugin = sender.caller as? PluginRouteCaller.Plugin
         val pageSender = registration?.takeIf {
@@ -1569,6 +1604,16 @@ class BusHubService : Service() {
 
     private fun isPagePath(path: String): Boolean =
         PathRules.isPagePath(PathRules.normalizeAbsolute(path) ?: path)
+
+    /**
+     * Why [path] from [sender] is refused because only a skill lease keeps that provider running,
+     * or null. One check for every plugin-originated route, the page short-circuit included, so a
+     * lease-started provider cannot reach the HUD through a path that bypasses the route policy.
+     */
+    private fun skillLeaseDenial(sender: AuthorizedSender, path: String): String? =
+        sender.principal
+            ?.takeIf { ::skillsCoordinator.isInitialized }
+            ?.let { principal -> skillsCoordinator.leaseRestriction(principal, path) }
 
     private fun pageRegistrationOf(registration: Registration): PageRegistration {
         val principal = requireNotNull(registration.principal)
@@ -1606,6 +1651,11 @@ class BusHubService : Service() {
 
     private fun routeRemote(envelope: BusEnvelope) {
         if (SppKeyProvisioning.isReserved(envelope.path)) return
+        // Skills are phone-local: nothing arriving over CXR or SPP may enter that family.
+        if (PathRules.matchesPrefix(envelope.path, SKILLS_ROOT)) {
+            recordRemoteRoute(envelope, PluginBusJournal.Verdict.REJECTED)
+            return
+        }
         if (envelope.path == "/hub/probe") {
             recordRemoteRoute(envelope, PluginBusJournal.Verdict.OK)
             log("hub probe received from glasses")
@@ -1968,6 +2018,16 @@ class BusHubService : Service() {
                 if (replyRemote || principal == null) return false
                 handleAssistantTakeoverRequest(envelope, principal, replyBinder)
             }
+            BusPaths.SKILLS_CATALOG_REQUEST,
+            BusPaths.SKILLS_INVOKE,
+            BusPaths.SKILLS_CANCEL,
+            BusPaths.SKILLS_SESSION_CLOSE,
+            BusPaths.SKILLS_PROVIDER_RESULT,
+            -> {
+                // Skill traffic is phone-local and only ever comes from an authenticated plugin.
+                if (replyRemote || principal == null || envelope.binary != null) return true
+                skillsExecutor.execute { handleSkillRequest(envelope, principal) }
+            }
             SttWireProtocol.SESSION_START_PATH -> speechBusExecutor.execute {
                 handleSpeechSessionStart(envelope, replyRemote, replyBinder, principal)
             }
@@ -1977,6 +2037,83 @@ class BusHubService : Service() {
             else -> return false
         }
         return true
+    }
+
+    private fun handleSkillRequest(envelope: BusEnvelope, principal: PhonePluginPrincipal) {
+        when (envelope.path) {
+            BusPaths.SKILLS_CATALOG_REQUEST -> skillsCoordinator.catalogRequest(principal, envelope.id)
+            BusPaths.SKILLS_INVOKE -> skillsCoordinator.invoke(principal, envelope.id, envelope.payload)
+            BusPaths.SKILLS_CANCEL -> skillsCoordinator.cancel(principal, envelope.payload)
+            BusPaths.SKILLS_SESSION_CLOSE -> skillsCoordinator.closeSession(principal, envelope.payload)
+            BusPaths.SKILLS_PROVIDER_RESULT -> skillsCoordinator.providerResult(principal, envelope.payload)
+        }
+    }
+
+    private val skillsHost = object : SkillsHost {
+        override fun installedPrincipals(): List<PhonePluginPrincipal> =
+            skillPrincipalsCache ?: installedPluginPrincipals().also { skillPrincipalsCache = it }
+
+        override fun grantedCapabilities(principal: PhonePluginPrincipal): Set<PluginCapability>? =
+            (pluginGrantStore.stateFor(principal) as? PluginGrantState.Approved)?.capabilities
+
+        override fun isRegistered(principal: PhonePluginPrincipal): Boolean = isExternalPrincipalRegistered(principal)
+
+        override fun deliver(principal: PhonePluginPrincipal, path: String, id: String, payload: JSONObject): Boolean =
+            deliverExternalLifecycle(principal, path, id, payload)
+
+        override fun deliverError(principal: PhonePluginPrincipal, forId: String, code: String) {
+            val binder = registrations.firstOrNull { it.principal?.grantKey() == principal.grantKey() }?.callbackBinder
+            this@BusHubService.deliverError(binder, forId, code)
+        }
+
+        override fun bindLease(principal: PhonePluginPrincipal): Boolean = skillLeaseRuntime.bind(principal)
+
+        override fun unbindLease(principal: PhonePluginPrincipal) = skillLeaseRuntime.unbind(principal)
+
+        override fun holdsDisplaySession(principal: PhonePluginPrincipal): Boolean {
+            val id = principal.descriptor.id
+            if (::externalPluginController.isInitialized &&
+                (externalPluginController.activeId() == id || externalPluginController.backgroundId() == id)
+            ) return true
+            // A page the wearer asked for on the glasses is a display session of its own: the
+            // broker binds its provider for exactly that demand, so its answers stay allowed.
+            if (pageBroker.holdsProviderBinding(id)) return true
+            return ::cameraCompanionController.isInitialized &&
+                cameraCompanionController.activePrincipalKey() == principal.grantKey()
+        }
+
+        override fun schedule(key: String, delayMs: Long, action: () -> Unit) =
+            skillScheduler.schedule(key, delayMs) { skillsExecutor.execute(action) }
+
+        override fun cancel(key: String) = skillScheduler.cancel(key)
+
+        override fun elapsedMs(): Long = SystemClock.elapsedRealtime()
+
+        override fun wallMs(): Long = System.currentTimeMillis()
+
+        override fun randomToken(length: Int): String = buildString(length) {
+            repeat(length) { append(SKILL_TOKEN_ALPHABET[skillRandom.nextInt(SKILL_TOKEN_ALPHABET.length)]) }
+        }
+
+        override fun record(entry: SkillJournalEntry) {
+            if (!pluginBusJournal.enabled.get()) return
+            val delivered = entry.status == SkillStatus.COMPLETED ||
+                entry.status == SkillStatus.ACCEPTED ||
+                entry.status == SkillStatus.NEEDS_INPUT
+            pluginBusJournal.record(
+                pluginId = entry.providerId.ifBlank { null },
+                category = PluginBusJournal.Category.SKILL,
+                direction = PluginBusJournal.Direction.HUB_TO_PLUGIN,
+                verdict = if (delivered) PluginBusJournal.Verdict.OK else PluginBusJournal.Verdict.REJECTED,
+                reason = buildString {
+                    append("op=").append(entry.operationId.ifBlank { "?" })
+                    append(" status=").append(entry.status.wireValue)
+                    entry.errorCode?.let { append(" error=").append(it) }
+                    entry.dispatch?.let { append(" dispatch=").append(it.wireValue) }
+                    append(" ms=").append(entry.durationMs)
+                },
+            )
+        }
     }
 
     private fun handleWirelessAdbRequest(
@@ -2593,6 +2730,7 @@ class BusHubService : Service() {
             .put("result", PluginRegistrationResult.APPROVED)
             .put("capabilities", serialize(capabilities))
             .put("noticeInteractionVersion", NoticeSurfaceContract.INTERACTION_VERSION)
+            .put(SkillsContract.REGISTRATION_FIELD, SkillsContract.VERSION)
             .toString()
             .toByteArray(Charsets.UTF_8)
         runCatching { callback.onMessage(BusPaths.PLUGIN_REGISTRATION, eventId, payload) }
@@ -2628,6 +2766,11 @@ class BusHubService : Service() {
                 reason != "authorizationChanged"
             ) {
                 activityRouter.clearForDisconnectedOwner(pluginId, reason)
+            }
+            if (!ownerStillConnected && reason != "replace" && ::skillsCoordinator.isInitialized) {
+                registration.principal?.let { principal ->
+                    skillsExecutor.execute { skillsCoordinator.onRegistrationRemoved(principal) }
+                }
             }
         }
         // A registration going away is normal: the hub unbinds dormant plugins, and a
@@ -2666,6 +2809,15 @@ class BusHubService : Service() {
         // revokePrincipal cleared the owner cache, so this reads the grant as it is now.
         noticeRouter.purgeOwnersWithoutAccess({ surfaceOwnerFor(it) != null }, "authorizationChanged", key.pluginId)
         purgeActivityChoicesUnlessApproved(key)
+        if (::skillsCoordinator.isInitialized) {
+            // A skill approval never outlives the ordinary grant it sits on: re-approving the
+            // plugin later must not silently bring its operations back.
+            val approved = installedPluginPrincipals().any { principal ->
+                principal.grantKey() == key && pluginGrantStore.stateFor(principal) is PluginGrantState.Approved
+            }
+            if (!approved) skillGrantStore.revokeAll(key)
+            skillsExecutor.execute { skillsCoordinator.onAuthorizationChanged(key) }
+        }
         cameraConsumerReadiness.recompute()
         refreshMediaSyncConsent()
         notifyLinkState()
@@ -2704,6 +2856,11 @@ class BusHubService : Service() {
         val reconciliation = pluginGrantReconciler.reconcile()
         val validPrincipals = reconciliation.validPrincipals
         retainActivityChoices(validPrincipals)
+        skillPrincipalsCache = null
+        if (::skillsCoordinator.isInitialized) {
+            skillGrantStore.reconcile(validPrincipals)
+            skillsExecutor.execute { skillsCoordinator.onPackageChanged(packageName) }
+        }
         handleSideloadNotification(packageName, action, replacing, reconciliation.candidates)
         cameraConsumerReadiness.recompute()
         refreshMediaSyncConsent()
@@ -5477,6 +5634,14 @@ class BusHubService : Service() {
         if (quickActionPolicyStore.retainOnly(approved)) pushQuickActionPolicy()
     }
 
+    /**
+     * Like the activity choices, a skill approval goes with the ordinary grant it sits on,
+     * including a grant lost while the hub was not running.
+     */
+    private fun retainSkillApprovals(principals: List<PhonePluginPrincipal>) {
+        skillGrantStore.reconcile(principals.filter { pluginGrantStore.stateFor(it) is PluginGrantState.Approved })
+    }
+
     /** One plugin's grant changed: its choices go unless it is still approved. */
     private fun purgeActivityChoicesUnlessApproved(key: PluginGrantKey) {
         if (!::activityPreferences.isInitialized || !::quickActionPolicyStore.isInitialized) return
@@ -5651,6 +5816,19 @@ class BusHubService : Service() {
             PhoneClientSupervisor.onPrincipalRevoked(context.applicationContext, key)
             activeInstance?.authorizationChanged(key)
         }
+
+        /** The wearer changed a per-operation skill approval on the Plugin access screen. */
+        fun onSkillGrantsChanged() {
+            activeInstance?.let { service ->
+                if (service::skillsCoordinator.isInitialized) {
+                    service.skillsExecutor.execute { service.skillsCoordinator.onSkillGrantsChanged() }
+                }
+            }
+        }
+
+        private const val SKILLS_ROOT = "/skills"
+        private const val SKILL_TOKEN_ALPHABET =
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
 
         internal fun onActivityPresentationPreferenceChanged() {
             activeInstance?.announcePhoneCapabilities()
