@@ -1173,6 +1173,9 @@ internal class SessionReducer(
             }
             result.code == PageSurfaceContract.CODE_AUTHORITY_LOST ->
                 base.copy(draft = DraftStore.authorityLost(model.draft, send.ownerPluginId, send.threadKey))
+            // Any other refusal of a send may come after the app already took the text (a provider
+            // that cannot tell): it is unconfirmed, Type comes first, and it is never resent as is.
+            result.status == RESULT_REJECTED -> base.copy(draft = DraftStore.unconfirmed(model.draft, send))
             else -> base
         }
     }
@@ -1943,6 +1946,7 @@ internal class SessionReducer(
         const val CLOSE_SESSION_CLOSED = "session_closed"
         const val CLOSE_FRAME_LIMIT = "frame_limit"
         const val RESULT_DONE = "done"
+        const val RESULT_REJECTED = "rejected"
         const val UNAVAILABLE_LINK_LOST = "link_lost"
 
         /** SPP went away with CXR still up, and this page needed SPP. */

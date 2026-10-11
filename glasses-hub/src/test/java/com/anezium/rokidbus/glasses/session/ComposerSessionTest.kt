@@ -416,6 +416,24 @@ class ComposerSessionTest {
     }
 
     @Test
+    fun `a refused send without authority_lost is unconfirmed and offers Type first`() {
+        openThread("t1", at = 1_000)
+        dictate("see you", at = 3_000)
+        val action = sendDraft(at = 5_000)
+        send(
+            SessionEvent.PageResult(
+                JSONObject().put("invocationId", action.invocationId).put("status", "rejected").put("message", "unconfirmed · check on the phone"),
+                5_500,
+            ),
+        )
+        assertEquals(DraftState.UNCONFIRMED, model.draft?.state)
+        assertNull(model.pendingSend)
+        focus(at = 6_000)
+        assertEquals(ComposerRules.TYPE, top().composerFocus?.key)
+        assertTrue(effects.none { it is SendAction })
+    }
+
+    @Test
     fun `a stale send keeps the draft for a new Send on the new revision`() {
         openThread("t1", at = 1_000)
         dictate("see you", at = 3_000)
