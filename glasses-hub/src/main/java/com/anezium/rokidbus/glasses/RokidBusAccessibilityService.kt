@@ -2120,8 +2120,8 @@ internal object NexusInput {
         }
 
     /**
-     * For tests: the state of a new process whose bundle default is [default], so the host can be
-     * driven under a default that has not shipped. Nothing is resolved until the service connects.
+     * For tests: the state of a new process whose bundle default is [default], so an offline boot
+     * can be driven through the host. Nothing is resolved until the service connects.
      */
     internal fun restartProcess(default: LauncherBackend) {
         synchronized(this) {

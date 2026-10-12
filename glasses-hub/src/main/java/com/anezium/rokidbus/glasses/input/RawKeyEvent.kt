@@ -68,11 +68,11 @@ internal enum class LauncherBackend {
         val DEFAULT = LEGACY
 
         /**
-         * The default once the phone has announced the launcher bundle. It stays LEGACY until the
-         * acceptance commit of plan 028a §8.3 changes this one value to SESSION; LEGACY remains the
-         * rollback and the fallback before any announcement and for older phones.
+         * The default once the phone's last announcement negotiated the launcher bundle (plan 028a
+         * §8.3). LEGACY remains the rollback, through either explicit choice, and the fallback
+         * before any announcement and for older phones.
          */
-        val BUNDLE_DEFAULT = LEGACY
+        val BUNDLE_DEFAULT = SESSION
 
         fun parse(value: String?): LauncherBackend? = entries.firstOrNull { it.name == value }
 

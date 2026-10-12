@@ -159,12 +159,17 @@ class GuidanceIslandTest {
     }
 
     @Test
-    fun `nobody's choice keeps the legacy default until the acceptance flip, announced or not`() {
+    fun `nobody's choice is the new launcher over an announced bundle and legacy otherwise`() {
         assertEquals(LauncherBackend.LEGACY, LauncherBackend.DEFAULT)
-        assertEquals(LauncherBackend.LEGACY, LauncherBackend.BUNDLE_DEFAULT)
-        assertEquals(LauncherBackend.LEGACY, LauncherBackend.resolve(phone = null, stored = null, announcedBundleVersion = 1))
+        assertEquals(LauncherBackend.SESSION, LauncherBackend.BUNDLE_DEFAULT)
+        assertEquals(LauncherBackend.SESSION, LauncherBackend.resolve(phone = null, stored = null, announcedBundleVersion = 1))
+        assertEquals(LauncherBackend.SESSION, LauncherBackend.resolve(phone = null, stored = "garbage", announcedBundleVersion = 1))
+        // No announcement yet, or an older phone's: legacy.
         assertEquals(LauncherBackend.LEGACY, LauncherBackend.resolve(phone = null, stored = null, announcedBundleVersion = null))
-        assertEquals(LauncherBackend.LEGACY, LauncherBackend.resolve(phone = null, stored = "garbage", announcedBundleVersion = 1))
+        assertEquals(LauncherBackend.LEGACY, LauncherBackend.resolve(phone = null, stored = null, announcedBundleVersion = 0))
+        // Either explicit choice of legacy is the rollback, whatever was announced.
+        assertEquals(LauncherBackend.LEGACY, LauncherBackend.resolve(phone = null, stored = "LEGACY", announcedBundleVersion = 1))
+        assertEquals(LauncherBackend.LEGACY, LauncherBackend.resolve(phone = "legacy", stored = null, announcedBundleVersion = 1))
         assertNull(LauncherBackend.fromPhone(null))
     }
 

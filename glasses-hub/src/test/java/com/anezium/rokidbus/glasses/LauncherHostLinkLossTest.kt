@@ -100,7 +100,7 @@ import java.util.concurrent.atomic.AtomicLong
  * The launcher backend and the open session across a real phone outage, through the host itself:
  * the accessibility runtime's NexusInput and NexusSession, GlassesHub's capability ingress and link
  * callbacks, an authenticated SPP session that really closes, and CXR's state callback. Run under
- * the prospective SESSION bundle default, the one the acceptance flip ships.
+ * the shipped bundle default, SESSION.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [32])
@@ -149,7 +149,8 @@ class LauncherHostLinkLossTest {
         staticField(GlassesHub::class.java, "appContext").set(null, app)
         service = Robolectric.setupService(OverlayService::class.java)
         freshSessionModel()
-        NexusInput.restartProcess(LauncherBackend.SESSION)
+        NexusInput.restartProcess(LauncherBackend.BUNDLE_DEFAULT)
+        assertEquals(LauncherBackend.SESSION, LauncherBackend.BUNDLE_DEFAULT)
         // The accessibility service's own order: the session, the activity tier, then the input.
         NexusSession.onServiceConnected(service)
         ActivityController.onServiceConnected(app)
@@ -463,7 +464,7 @@ class LauncherHostLinkLossTest {
 
     @Test
     fun `an offline boot keeps the announced launcher and an older phone's fresh announcement returns to legacy`() {
-        // Nothing announced yet: the prospective default is never assumed.
+        // Nothing announced yet: the bundle's default is never assumed.
         assertEquals(LauncherBackend.LEGACY, NexusInput.backend)
         linkUp()
         assertEquals(LauncherBackend.SESSION, NexusInput.backend)
@@ -473,7 +474,7 @@ class LauncherHostLinkLossTest {
         // A new process with no phone: the persisted announcement decides before any link.
         NexusSession.onServiceDestroyed()
         NexusInput.onServiceDestroyed()
-        NexusInput.restartProcess(LauncherBackend.SESSION)
+        NexusInput.restartProcess(LauncherBackend.BUNDLE_DEFAULT)
         assertEquals(LauncherBackend.LEGACY, NexusInput.backend)
         NexusSession.onServiceConnected(service)
         NexusInput.onServiceConnected(service)

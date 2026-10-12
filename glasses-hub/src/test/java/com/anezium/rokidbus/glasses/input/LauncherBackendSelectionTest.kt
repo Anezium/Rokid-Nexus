@@ -8,8 +8,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Plan 028a §8.3 with the prospective SESSION default (the acceptance flip) injected, so the
- * selection that ships with LEGACY is proven to hold once the default changes.
+ * Plan 028a §8.3 with the SESSION bundle default injected, so precedence and persistence are
+ * proven apart from the shipped value, which the last test checks.
  */
 class LauncherBackendSelectionTest {
     private class MemoryStore : LauncherBackendSelection.Store {
@@ -98,9 +98,13 @@ class LauncherBackendSelectionTest {
     }
 
     @Test
-    fun `the shipped default stays legacy even after a bundle announcement`() {
+    fun `the shipped selection is the new launcher after a bundle announcement and legacy after an older phone's`() {
         val shipped = LauncherBackendSelection(store, { switches += it })
-        shipped.onPhoneAnnounced(null, negotiated(bundlePhone()))
         assertEquals(LauncherBackend.LEGACY, shipped.current())
+        shipped.onPhoneAnnounced(null, negotiated(bundlePhone()))
+        assertEquals(LauncherBackend.SESSION, shipped.current())
+        shipped.onPhoneAnnounced(null, negotiated(JSONObject().put("features", 0)))
+        assertEquals(LauncherBackend.LEGACY, shipped.current())
+        assertEquals(listOf(LauncherBackend.SESSION, LauncherBackend.LEGACY), switches)
     }
 }
