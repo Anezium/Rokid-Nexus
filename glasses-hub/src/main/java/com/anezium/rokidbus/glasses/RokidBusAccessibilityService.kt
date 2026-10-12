@@ -2098,12 +2098,28 @@ internal object NexusInput {
     @Volatile
     private var selection: LauncherBackendSelection? = null
 
+    /** What a negotiated bundle selects when nobody chose; fixed for the life of the process. */
+    @Volatile
+    private var bundleDefault = LauncherBackend.BUNDLE_DEFAULT
+
     /** Plan 028a §8.3 over the persisted choices and last announced bundle, never the live link. */
     private fun selection(context: Context): LauncherBackendSelection =
         selection ?: synchronized(this) {
-            selection ?: LauncherBackendSelection(ActivityPresentationSettings.backendStore(context), ::switchTo)
+            selection ?: LauncherBackendSelection(ActivityPresentationSettings.backendStore(context), ::switchTo, bundleDefault)
                 .also { selection = it }
         }
+
+    /**
+     * For tests: the state of a new process whose bundle default is [default], so the host can be
+     * driven under a default that has not shipped. Nothing is resolved until the service connects.
+     */
+    internal fun restartProcess(default: LauncherBackend) {
+        synchronized(this) {
+            bundleDefault = default
+            selection = null
+            backend = LauncherBackend.DEFAULT
+        }
+    }
 
     fun onServiceConnected(service: AccessibilityService) {
         this.service = service
