@@ -313,7 +313,11 @@ class LauncherHostLinkLossTest {
         linkUp()
         assertTrue(top().status is FrameStatus.Unavailable)
         assertTrue(outbound(logs().drop(from)).none { it in REPLAYABLE })
-        // The wearer's tap is the only thing that asks the phone again.
+        // A tap on the text reaches Retry, asking nothing; the wearer's Retry is what asks again.
+        freshPress()
+        assertEquals(FrameMode.ROWS, top().mode)
+        assertEquals(0, top().selected)
+        assertTrue(outbound(logs().drop(from)).none { it in REPLAYABLE })
         freshPress()
         assertTrue("${top().status}", top().status is FrameStatus.Loading)
         assertEquals(listOf(BusPaths.PAGE_REQUEST), outbound(logs().drop(from)).filter { it in REPLAYABLE })
@@ -503,7 +507,7 @@ class LauncherHostLinkLossTest {
         assertTrue("${top().status}", top().status is FrameStatus.Unavailable)
         val screen = screen()
         // Dimmed and inert: the failure's Retry and Back are all there is to select.
-        assertEquals(listOf("retry", "back"), screen.blocks.filterIsInstance<ScreenBlock.Row>().map { it.key })
+        assertEquals("$screen", listOf("retry", "back"), screen.blocks.filterIsInstance<ScreenBlock.Row>().map { it.key })
         assertNull(screen.footer)
         retained(screen)
 
