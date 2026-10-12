@@ -37,8 +37,7 @@ class HeldDestinationTest {
 
     @Test
     fun `a held destination opened with the link down says so`() {
-        send(SessionEvent.LinkLost)
-        open(card(held = true))
+        open(card(held = true), linkLost = true)
         assertEquals(PARAMS, top().paramsJson)
         assertEquals(SessionReducer.UNAVAILABLE_LINK_LOST, (top().status as FrameStatus.Unavailable).reason)
         assertTrue(effects.none { it is RequestPage })
@@ -63,10 +62,12 @@ class HeldDestinationTest {
         held = held,
     )
 
-    private fun open(stop: ActivityStop) {
+    private fun open(stop: ActivityStop, linkLost: Boolean = false) {
         send(SessionEvent.ActivityStarted(stop))
         send(SessionEvent.TripleTap(1_000))
         send(SessionEvent.Tick(1_000 + PageSurfaceContract.GATE_MS))
+        // As the host does: a session that opens is told the phone is already gone.
+        if (linkLost) send(SessionEvent.LinkLost)
         SessionFocus.tokenOf(model)?.let { send(SessionEvent.FocusShown(it, 1_900)) }
         send(SessionEvent.Enter(2_040, pressStartMs = 2_000))
     }
