@@ -724,7 +724,7 @@ class LauncherHostLinkLossTest {
         idle()
     }
 
-    /** Maps pinned with a destination and non-default params, and a plain Timer, over the bundle. */
+    /** Maps pinned with a destination and non-default params, and two plain cards, over the bundle. */
     private fun startHeldCards() {
         startActivity(
             "maps",
@@ -737,6 +737,8 @@ class LauncherHostLinkLossTest {
             ),
         )
         startActivity("alpha", card().copy(primary = "Timer"))
+        // A third card: the root lists the Activities page only beside more than two.
+        startActivity("bravo", card().copy(primary = "Steps"))
     }
 
     /**
