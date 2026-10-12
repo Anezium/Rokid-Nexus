@@ -1512,7 +1512,11 @@ class AssistantSettingsActivity : Activity() {
         pickerRow(
             title = conversationWindowLabel(minutes),
             hint = if (minutes == CodexAuthStore.DEFAULT_IDLE_WINDOW_MINUTES) "default" else null,
-            description = "Start fresh after ${conversationWindowLabel(minutes)}",
+            description = if (minutes == CodexAuthStore.UNLIMITED_IDLE_WINDOW_MINUTES) {
+                "Never start fresh automatically"
+            } else {
+                "Start fresh after ${conversationWindowLabel(minutes)}"
+            },
             onClick = {
                 authStore.setConversationIdleWindowMinutes(minutes)
                 renderConversationSettings()
@@ -1521,8 +1525,11 @@ class AssistantSettingsActivity : Activity() {
             dotSink = { windowDots[minutes] = it },
         )
 
-    private fun conversationWindowLabel(minutes: Int): String =
-        if (minutes == CodexAuthStore.SEVEN_DAYS_IN_MINUTES) "7 days" else "$minutes minutes"
+    private fun conversationWindowLabel(minutes: Int): String = when (minutes) {
+        CodexAuthStore.SEVEN_DAYS_IN_MINUTES -> "7 days"
+        CodexAuthStore.UNLIMITED_IDLE_WINDOW_MINUTES -> "Unlimited"
+        else -> "$minutes minutes"
+    }
 
     /**
      * The one-of-N row shared by every picker on this screen: label, optional hint, and

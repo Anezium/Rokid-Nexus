@@ -30,6 +30,23 @@ class AssistantThreadStoreTest {
     }
 
     @Test
+    fun unlimitedWindowKeepsThreadActiveAfterFourHundredIdleDays() {
+        var now = 1_000L
+        val store = store { now }
+        val id = store.appendTurn(null, "Paris", "Noted.", hadPhoto = false)
+
+        now += 400 * 24 * 60 * 60_000L
+        assertEquals(id, store.activeThreadOrNull(CodexAuthStore.UNLIMITED_IDLE_WINDOW_MINUTES)?.id)
+        assertNull(store.activeThreadOrNull(CodexAuthStore.SEVEN_DAYS_IN_MINUTES))
+
+        now = Long.MAX_VALUE
+        assertEquals(id, store.activeThreadOrNull(CodexAuthStore.UNLIMITED_IDLE_WINDOW_MINUTES)?.id)
+
+        store.startNewThread()
+        assertNull(store.activeThreadOrNull(CodexAuthStore.UNLIMITED_IDLE_WINDOW_MINUTES))
+    }
+
+    @Test
     fun photoTurnStoresExactlyOnePrivateFileAndReadsIdenticalBytes() {
         val jpeg = byteArrayOf(1, 2, 3, 4, 5)
         val store = store { 1_000L }

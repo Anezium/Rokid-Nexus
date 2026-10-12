@@ -533,9 +533,11 @@ class CodexAuthStore internal constructor(
         // Must equal the router id of the ChatGPT provider: selectedProviderId() feeds
         // ProviderRouter.providerFor() directly.
         const val CHATGPT_PROVIDER_ID = ChatGptCodexProvider.ID
-        val SUPPORTED_IDLE_WINDOW_MINUTES = listOf(2, 5, 10, 30, SEVEN_DAYS_IN_MINUTES)
+        val SUPPORTED_IDLE_WINDOW_MINUTES =
+            listOf(2, 5, 10, 30, SEVEN_DAYS_IN_MINUTES, UNLIMITED_IDLE_WINDOW_MINUTES)
         const val DEFAULT_IDLE_WINDOW_MINUTES = 10
         const val SEVEN_DAYS_IN_MINUTES = 7 * 24 * 60
+        const val UNLIMITED_IDLE_WINDOW_MINUTES = Int.MAX_VALUE
         const val MAX_ASSISTANT_MEMORY_CHARS = 4000
         const val MAX_CUSTOM_SYSTEM_PROMPT_CHARS = 4000
         const val MAX_SYNCED_ACCOUNT_CONTEXT_CHARS = 6000
@@ -573,8 +575,14 @@ class CodexAuthStore internal constructor(
         private const val KEY_CONSUMER_ACCOUNT_NO_API_ORG = "consumer_account_no_api_org"
 
         private fun supportedIdleWindowMinutes(minutes: Int): Int =
-            SUPPORTED_IDLE_WINDOW_MINUTES.minBy { supported ->
-                kotlin.math.abs(supported.toLong() - minutes.toLong())
+            if (minutes == UNLIMITED_IDLE_WINDOW_MINUTES) {
+                UNLIMITED_IDLE_WINDOW_MINUTES
+            } else {
+                // Unlimited is a sentinel; finite values keep their existing nearest-window mapping.
+                SUPPORTED_IDLE_WINDOW_MINUTES.filterNot { it == UNLIMITED_IDLE_WINDOW_MINUTES }
+                    .minBy { supported ->
+                        kotlin.math.abs(supported.toLong() - minutes.toLong())
+                    }
             }
     }
 }
