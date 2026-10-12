@@ -514,7 +514,7 @@ internal class SessionScreens(
         statusText: String?,
     ): SessionScreen {
         val snapshot = status.lastSnapshot
-        val body = snapshot?.let { items.body(it.page) }
+        val body = snapshot?.let(items::retainedBody)
         val readsFirst = snapshot != null && (frame.overflowing || body is PageBody.Document)
         val failure = listOfNotNull(
             ScreenBlock.Text("unavailable", UNAVAILABLE_TITLE, TextRole.TITLE, centered = true),
@@ -555,7 +555,7 @@ internal class SessionScreens(
     }
 
     /** Retained content that fits beside the failure: what the page showed, dimmed, its actions left out. */
-    private fun retainedBlocks(snapshot: Snapshot): List<ScreenBlock> = when (val body = items.body(snapshot.page)) {
+    private fun retainedBlocks(snapshot: Snapshot): List<ScreenBlock> = when (val body = items.retainedBody(snapshot)) {
         is PageBody.Summary -> listOfNotNull(
             body.primary?.let { ScreenBlock.Text("last:primary", it, TextRole.FIGURE, dimmed = true) },
             body.secondary?.let { ScreenBlock.Text("last:secondary", it, TextRole.BODY, dimmed = true) },
@@ -1079,7 +1079,7 @@ internal class SessionScreens(
 
     /** A retained snapshot drawn while it is being revalidated: readable, never selectable. */
     private fun summaryOf(snapshot: Snapshot, frame: Frame, readable: Boolean): List<ScreenBlock> {
-        val body = items.body(snapshot.page) ?: return listOf(ScreenBlock.Text("retained", snapshot.page.title, TextRole.BODY))
+        val body = items.retainedBody(snapshot) ?: return listOf(ScreenBlock.Text("retained", snapshot.page.title, TextRole.BODY))
         val first = when (body) {
             is PageBody.Summary -> body.primary ?: body.secondary ?: body.text
             is PageBody.Document -> body.segments.firstOrNull()?.text

@@ -79,6 +79,9 @@ internal fun interface PageItemResolver {
     /** Whether the page's typed body can be drawn here at all; checked before it is ever shown. */
     fun accepts(page: PageSurfaceResponse.Page): Boolean = true
 
+    /** Whether a page accepted now is validated with the launcher bundle's templates. */
+    fun acceptsExtended(): Boolean = false
+
     /**
      * The keys of a page's control strip (a media page's controls), in swipe order, with the one
      * a first tap focuses; null for a page without one. Its rows come first among [entries].

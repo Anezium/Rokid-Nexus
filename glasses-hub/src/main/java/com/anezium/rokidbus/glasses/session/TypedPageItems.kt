@@ -58,8 +58,18 @@ internal class TypedPageItems(
     private val decoded = ArrayDeque<Decoded>()
 
     /** The typed body, or null when this hub cannot draw it. */
-    fun body(page: PageSurfaceResponse.Page): PageBody? {
-        val extended = extended()
+    fun body(page: PageSurfaceResponse.Page): PageBody? = decode(page, extended())
+
+    /**
+     * A retained snapshot's body, read with the templates it was accepted under, so a page the
+     * bundle validated stays readable once the bundle is gone. Only ever drawn dimmed and inert:
+     * rows, actions and new answers all go through [body] and the live negotiation.
+     */
+    fun retainedBody(snapshot: Snapshot): PageBody? = decode(snapshot.page, snapshot.extended)
+
+    override fun acceptsExtended(): Boolean = extended()
+
+    private fun decode(page: PageSurfaceResponse.Page, extended: Boolean): PageBody? {
         decoded.firstOrNull { it.page === page && it.extended == extended }?.let { return it.body }
         val local = isLocalPage(page.correlation.pageId)
         val owner = PageTemplateContract.namespaceOf(page.correlation.pageId)

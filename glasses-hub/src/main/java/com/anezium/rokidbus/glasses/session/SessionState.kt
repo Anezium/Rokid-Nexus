@@ -4,10 +4,15 @@ import com.anezium.rokidbus.shared.AmbientSize
 import com.anezium.rokidbus.shared.PageSurfaceContract
 import com.anezium.rokidbus.shared.PageSurfaceResponse
 
-/** A validated page as retained by a frame; [byteSize] is the UTF-8 size of its serialized payload. */
+/**
+ * A validated page as retained by a frame; [byteSize] is the UTF-8 size of its serialized payload.
+ * [extended] records that it was accepted with the launcher bundle's templates, so a retained copy
+ * stays readable after the bundle goes; it is never a reason to act on it or to accept another.
+ */
 internal data class Snapshot(
     val page: PageSurfaceResponse.Page,
     val byteSize: Int = page.byteSize,
+    val extended: Boolean = false,
 )
 
 internal data class PendingInvocation(val invocationId: String, val actionId: String, val sinceMs: Long)

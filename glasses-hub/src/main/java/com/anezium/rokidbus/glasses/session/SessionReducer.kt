@@ -1070,7 +1070,7 @@ internal class SessionReducer(
         val floor = top.revisionFloor
         if (floor != null && page.revision < floor) return keep(model)
         val kept = status.previous?.takeIf { page.revision == floor }
-        val snapshot = kept ?: Snapshot(page)
+        val snapshot = kept ?: Snapshot(page, extended = itemResolver.acceptsExtended())
         // The first display of a frame starts its lease; an uncovered frame already holds one.
         val lease = status.leaseUntilMs ?: (nowMs + PageSurfaceContract.LEASE_MS)
         val granted = listOfNotNull(
@@ -1205,7 +1205,7 @@ internal class SessionReducer(
         nowMs: Long,
     ): SessionTransition {
         val replaced = top.copy(
-            status = status.copy(snapshot = Snapshot(page), revision = page.revision),
+            status = status.copy(snapshot = Snapshot(page, extended = itemResolver.acceptsExtended()), revision = page.revision),
             revisionFloor = page.revision,
             shownAtMs = nowMs,
             // A confirmation was for the revision the wearer saw; a new one cancels it. The display
