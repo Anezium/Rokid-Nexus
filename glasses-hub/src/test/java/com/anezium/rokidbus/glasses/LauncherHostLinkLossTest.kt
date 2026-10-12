@@ -245,7 +245,8 @@ class LauncherHostLinkLossTest {
         cxrUp(true)
         connectSpp()
         announce(oldPhone())
-        assertEquals(setOf("delta:activity", "echo:activity"), surfaceIds())
+        // In the collection's eviction order: the primary (first started) and the most recent stay.
+        assertEquals(setOf("alpha:activity", "echo:activity"), surfaceIds())
         assertEquals(LauncherBackend.LEGACY, NexusInput.backend)
     }
 
