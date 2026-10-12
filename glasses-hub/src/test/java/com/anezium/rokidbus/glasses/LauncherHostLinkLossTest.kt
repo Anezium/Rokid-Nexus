@@ -265,7 +265,7 @@ class LauncherHostLinkLossTest {
         assertEquals(LauncherBackend.SESSION, NexusInput.backend)
         assertEquals(generation, NexusSession.generation)
         val during = NexusSession.state as SessionState.InPage
-        assertEquals(before.root, during.root)
+        assertEquals(shape(before.root), shape(during.root))
         assertEquals(before.frames.map { it.pageId }, during.frames.map { it.pageId })
         assertEquals(draft, model().draft)
         assertTrue(model().linkLost)
@@ -274,7 +274,7 @@ class LauncherHostLinkLossTest {
         val after = NexusSession.state as SessionState.InPage
         assertEquals(LauncherBackend.SESSION, NexusInput.backend)
         assertEquals(generation, NexusSession.generation)
-        assertEquals(before.root, after.root)
+        assertEquals(shape(before.root), shape(after.root))
         assertEquals(before.frames.map { it.pageId }, after.frames.map { it.pageId })
         assertTrue(after.frames.none { it.status is FrameStatus.Loading })
         assertEquals(draft, model().draft)
@@ -522,6 +522,13 @@ class LauncherHostLinkLossTest {
     }
 
     private fun top() = (NexusSession.state as SessionState.InPage).frames.last()
+
+    /**
+     * The root underneath: its stops in order and the one selected. A card's own content may
+     * change meanwhile (it turns last-known, its bundle fields wait for the phone), never which
+     * cards there are or where the wearer was.
+     */
+    private fun shape(root: SessionState.Root) = root.stops.map { Triple(it.id, it.kind, it.pageId) } to root.selected
 
     private fun surfaceIds(): Set<String> = collection.map { it.surfaceId }.toSet()
 
