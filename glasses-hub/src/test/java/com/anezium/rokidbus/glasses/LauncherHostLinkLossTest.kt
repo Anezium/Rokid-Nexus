@@ -179,11 +179,12 @@ class LauncherHostLinkLossTest {
     @Test
     fun `an outage in either order keeps an open route page over a retained draft`() {
         linkUp()
+        // Before the session opens: an open root's membership is frozen.
+        startRoute()
         openConversation()
         dictate("on my way")
         val draft = model().draft
         backToRoot()
-        startRoute()
         openRouteFromRoot()
         assertEquals("maps:route", top().pageId)
 
