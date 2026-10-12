@@ -1,6 +1,6 @@
 # Interactive activities and the completed Nexus launcher
 
-Decision date: 2026-10-10. Owner-approved direction and implementation authorization. This document describes intended behavior; it does not claim the following extensions already ship. The implementation report must distinguish delivered code, tested behavior and device evidence.
+Decision date: 2026-10-10. Owner-approved direction and implementation authorization. This document describes intended behavior; it does not claim the following extensions already ship. Implementation status (2026-10-12): implemented in source and accepted by independent review, not yet released or device-approved; docs/LAUNCHER_COMPLETION_REPORT.md maps each decision to code, tests and pending hardware checks. The implementation report must distinguish delivered code, tested behavior and device evidence.
 
 ## 1. A generic plugin feature
 

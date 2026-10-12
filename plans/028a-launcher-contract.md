@@ -353,10 +353,12 @@ at `text`. Islands stay passive; native apps and surfaces keep their input.
 
 8.3 Launcher backend: `PhoneHubCapabilities.launcherBackend` = `"session" | "legacy"` when the
 user chose explicitly on the phone (absent = no opinion). Glasses precedence: phone explicit >
-glasses stored `launcher.backend` > default. The default becomes SESSION only in the final
-acceptance commit and only when the phone negotiated the bundle; LEGACY stays the rollback and
-the fallback for old phones. No settings reset. The exported backend receivers require
-`android.permission.DUMP` (adb shell keeps it).
+glasses stored `launcher.backend` > default. The default is SESSION when the phone's last
+announcement negotiated the bundle (the persisted announced version, never the live link) and
+LEGACY otherwise; LEGACY stays the rollback and the fallback for old phones. No settings reset.
+The exported backend receivers require `android.permission.DUMP` (adb shell keeps it).
+Delivered: the acceptance flip (`LauncherBackend.BUNDLE_DEFAULT = SESSION`) landed after the
+independent reviews of 2026-10-12; see docs/LAUNCHER_COMPLETION_REPORT.md.
 
 ## 9. English HUD copy for the r17 French strings (lanes use these exactly)
 

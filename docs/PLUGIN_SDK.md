@@ -1985,10 +1985,12 @@ plugin's row or card, reads, and goes BACK to exactly where they were. The wire
 contract is BUSSPEC's "Session and page protocol v1", extended by its
 "Launcher bundle v1".
 
-The session is opt-in on the glasses (the default launcher backend is the
-shipped one), and both hubs must negotiate page support. An old phone or glasses
-hub, or a plugin without the metadata below, keeps today's behaviour: your
-plugin appears in Applications as an explicitly labelled full-app immersion.
+The session is the glasses' default launcher when the phone's last announcement
+negotiated the launcher bundle; the user can still choose the classic launcher on
+the phone or the glasses. Both hubs must negotiate page support. An old phone or
+glasses hub, or a plugin without the metadata below, keeps today's behaviour:
+your plugin appears in Applications as an explicitly labelled full-app
+immersion.
 
 ### Opting in
 

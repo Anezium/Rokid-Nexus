@@ -1,5 +1,7 @@
 # Plan 028 — Complete the Nexus launcher and interactive plugin activities
 
+Implementation status (2026-10-12): source implemented, integrated and accepted by independent review on dev/launcher-complete; not released, installed or device-approved. Hardware acceptance remains the shipping gate. See docs/LAUNCHER_COMPLETION_REPORT.md.
+
 Status: Approved for implementation by the owner on 2026-10-10. This amendment records the accepted r17 glasses UI and the subsequent Astra/Fable activity consultation. It supersedes conflicting presentation sketches and staged restrictions in plan 027 and the completed PR3a delivery contract for this new task. Delivered public contracts remain the starting point; evolve and document them explicitly.
 
 ## Owner authorization and reference

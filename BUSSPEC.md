@@ -1748,15 +1748,15 @@ treat one older than three seconds as absent.
 
 ## Session and page protocol v1
 
-The Nexus session and its consultation pages are opt-in. The glasses hub keeps
-its shipped launcher and notice behaviour on the default `LEGACY` launcher
-backend (`launcher.backend`, switched with the
-`com.anezium.rokidbus.glasses.action.SET_LAUNCHER_BACKEND` broadcast); only the
-`SESSION` backend opens the session described here. Both hubs negotiate the
-page protocol separately from that local preference, so support can be
-announced while page UI and page requests stay unreachable on `LEGACY`. With
-the launcher bundle, an explicit choice the user made on the phone takes
-precedence over the glasses' stored backend; see "Launcher backend".
+Only the `SESSION` launcher backend opens the session described here; the
+`LEGACY` backend keeps the classic launcher and notice behaviour. `SESSION` is
+the default when the phone's last capabilities announcement negotiated the
+launcher bundle, and `LEGACY` otherwise; an explicit choice (the phone's, then
+the glasses' `launcher.backend`, switched with the
+`com.anezium.rokidbus.glasses.action.SET_LAUNCHER_BACKEND` broadcast) outranks
+the default; see "Launcher backend". Both hubs negotiate the page protocol
+separately from the backend, so support can be announced while page UI and page
+requests stay unreachable on `LEGACY`.
 
 Version 1 specifies consultation: a root built from live state, four typed hub
 templates, authenticated provider routing, and labelled immersion launches. A hub
@@ -2424,9 +2424,13 @@ the draft never goes to another recipient.
 `PhoneHubCapabilities.launcherBackend` is `session` or `legacy` when the user
 chose explicitly on the phone, and absent otherwise. The glasses resolve it as:
 the phone's explicit choice, then the glasses' stored `launcher.backend`, then
-the default. The default becomes `SESSION` only in the final acceptance of the
-launcher and only when the phone negotiated the bundle; `LEGACY` stays the
-rollback and the fallback for old phones, and no setting is reset. The exported
+the default. The default is `SESSION` when the phone's **last** capabilities
+announcement negotiated the launcher bundle, and `LEGACY` before any
+announcement, for an older phone and for an invalid version. The glasses persist
+only that negotiated version and the phone's choice, with no peer identity; a
+link loss re-resolves nothing, so an outage never switches or closes the open
+launcher, and only a new announcement changes the default. `LEGACY` stays the
+rollback through either explicit choice, and no setting is reset. The exported
 backend receivers require `android.permission.DUMP`, which adb shell keeps.
 
 ## Camera contract
