@@ -1834,7 +1834,8 @@ internal class SessionReducer(
         pageId: String,
         nowMs: Long,
     ): SessionTransition {
-        if (!launcherActive()) return openFrame(model, root, below, pageId, null, nowMs)
+        // A link loss keeps the destination the bundle validated: it opens inert, asking nothing.
+        if (!launcherActive() && !model.linkLost) return openFrame(model, root, below, pageId, null, nowMs)
         val destination = activity.destination
         return when {
             activity.activation == ActivityActivation.DESTINATION && destination != null ->

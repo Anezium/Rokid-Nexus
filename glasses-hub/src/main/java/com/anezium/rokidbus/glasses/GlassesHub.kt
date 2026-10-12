@@ -148,6 +148,8 @@ object GlassesHub {
     @Volatile private var cxrUp = false
     @Volatile private var phoneConnected = false
     @Volatile private var remotePhoneCapabilities = PhoneHubCapabilities(0, null)
+    /** The last announcement negotiated the launcher bundle; a link loss does not change it. */
+    @Volatile private var launcherBundleAnnounced = false
 
     private val aidl = object : IBusService.Stub() {
         override fun apiVersion(): Int = BusConstants.API_VERSION
@@ -1355,6 +1357,13 @@ object GlassesHub {
 
     internal fun launcherInteractiveActive(): Boolean = LauncherInteractiveContract.isActive(launcherInteractiveVersion())
 
+    /**
+     * The link went while the bundle was negotiated and no announcement has come since: what the
+     * bundle validated may still be shown, read-only. Nothing may act on it, and the next
+     * announcement, whatever it negotiates, ends it.
+     */
+    internal fun launcherBundleHeldThroughLoss(): Boolean = launcherBundleAnnounced && !launcherInteractiveActive()
+
     /** Both hubs on session/page v1 over the current link; a disconnect resets the phone's side. */
     internal fun pageSessionSupported(): Boolean =
         phoneConnected &&
@@ -1417,6 +1426,7 @@ object GlassesHub {
     }
 
     private fun updateRemotePhoneCapabilities(payload: JSONObject) {
+        val released = launcherBundleHeldThroughLoss()
         val advertised = PhoneHubCapabilitiesContract.parse(payload)
         val next = PhoneHubCapabilitiesContract.create(
             features = supportedPhoneCapabilities(advertised.features),
@@ -1428,6 +1438,8 @@ object GlassesHub {
             launcherInteractiveVersion = advertised.launcherInteractiveVersion,
             launcherBackend = advertised.launcherBackend,
         )
+        // Whatever this announcement negotiates is the truth from now on, an older phone's included.
+        launcherBundleAnnounced = LauncherInteractiveContract.isActive(PhoneHubCapabilitiesContract.negotiatedLauncherInteractiveVersion(next))
         appContext?.let {
             ActivityController.setAlwaysExpanded(it, next.activityAlwaysExpanded)
             HudTopInset.set(
@@ -1444,6 +1456,7 @@ object GlassesHub {
             // Still an answer: an older phone's all-default announcement equals what a link loss
             // cleared to, and the collection that loss kept at the bundle's size must follow it.
             ActivityController.onLauncherNegotiated(launcherInteractiveVersion())
+            if (released) NexusSession.onLauncherNegotiated()
             return
         }
         remotePhoneCapabilities = next
@@ -1458,6 +1471,7 @@ object GlassesHub {
         } else {
             // A reconnect to the same or an older phone re-sizes a collection a link loss kept.
             ActivityController.onLauncherNegotiated(launcherInteractiveVersion())
+            if (released) NexusSession.onLauncherNegotiated()
         }
         if (next.pageSessionVersion != previous.pageSessionVersion) {
             // A version-only change: the session and the catalog follow it, and nothing replays.

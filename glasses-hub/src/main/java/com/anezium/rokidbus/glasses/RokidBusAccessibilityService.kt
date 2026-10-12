@@ -1672,11 +1672,14 @@ internal object NexusSession {
 
     /**
      * The whole collection reaches the session, offline entries included. The launcher-bundle
-     * fields are read only over a pair that negotiated it; a v1 pair gets v1 cards.
+     * fields are read only over a pair that negotiated it; a v1 pair gets v1 cards. Through a link
+     * loss the cards keep what the bundle validated, to read and to open inert, but never a
+     * command: until the phone announces again, nothing on them can be sent.
      */
     private fun onActivities(render: ActivityRenderState) {
         latestActivities = render
         val interactive = GlassesHub.launcherInteractiveActive()
+        val held = !interactive && GlassesHub.launcherBundleHeldThroughLoss()
         val sources = render.collection.map { entry ->
             val content = entry.content
             val base = ActivitySource(
@@ -1692,10 +1695,8 @@ internal object NexusSession {
                 stale = entry.stale,
                 knownAtWallMs = entry.knownAtWallMs.takeIf { entry.stale },
             )
-            if (!interactive) {
-                base
-            } else {
-                base.copy(
+            when {
+                interactive -> base.copy(
                     userPinned = content.userPinned,
                     offline = content.isOffline,
                     knownAtWallMs = content.knownAtWallMs ?: base.knownAtWallMs,
@@ -1705,6 +1706,14 @@ internal object NexusSession {
                     commands = if (content.isOffline) emptyList() else content.actions,
                     defaultActionId = content.effectiveDefaultActionId,
                 )
+                held -> base.copy(
+                    userPinned = content.userPinned,
+                    offline = content.isOffline,
+                    knownAtWallMs = content.knownAtWallMs ?: base.knownAtWallMs,
+                    destination = content.destination,
+                    activation = content.effectiveActivation,
+                )
+                else -> base
             }
         }
         val events = activityFeed.update(sources)
