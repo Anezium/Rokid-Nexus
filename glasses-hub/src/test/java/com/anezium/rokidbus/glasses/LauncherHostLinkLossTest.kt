@@ -271,7 +271,11 @@ class LauncherHostLinkLossTest {
                 defaultControl = "toggle",
             ),
             title = "Media Deck",
-            actions = JSONArray().put(JSONObject().put("id", "toggle").put("label", "Pause").put("kind", "plugin").put("confirm", false)),
+            actions = JSONArray().put(
+                JSONObject().put("id", "toggle").put("label", "Pause").put("kind", "plugin").put("confirm", false)
+                    .put(PageActionTypeContract.FIELD_TYPED, PageActionTypeContract.encode(PageActionType.MediaPause))
+                    .put(QuickActionPolicyContract.FIELD_HUB_QUICK, false),
+            ),
         )
         // Live, the page carries its control.
         assertTrue(screen().blocks.any { it is ScreenBlock.Media })
