@@ -10,7 +10,11 @@ import com.anezium.rokidbus.shared.PageDestination
 import com.anezium.rokidbus.shared.PageSurfaceContract
 import com.anezium.rokidbus.shared.PageSurfaceRequest
 import com.anezium.rokidbus.shared.PageTemplateContract
+import com.anezium.rokidbus.shared.PageActionType
+import com.anezium.rokidbus.shared.PageActionTypeContract
+import com.anezium.rokidbus.shared.QuickActionPolicyContract
 import org.json.JSONArray
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -112,12 +116,18 @@ class RetainedProvenanceTest {
     )
 
     private fun respond(request: PageSurfaceRequest, body: PageBody, now: Long) {
+        // A conversation's composer names its typed Send among the page's actions.
+        val actions = if (body is PageBody.Conversation) JSONArray().put(sendAction()) else JSONArray()
         val payload = PageSurfaceContract.correlationPayload(request.correlation)
             .put("revision", 1).put("template", body.template).put("title", "Ana")
-            .put("body", PageTemplateContract.encode(body)).put("actions", JSONArray()).put("live", true)
+            .put("body", PageTemplateContract.encode(body)).put("actions", actions).put("live", true)
         send(SessionEvent.PageResponse(payload, now))
         assertTrue("${top().status}", top().status is FrameStatus.Shown)
     }
+
+    private fun sendAction(): JSONObject = JSONObject().put("id", "send").put("label", "Send").put("kind", "plugin").put("confirm", false)
+        .put(PageActionTypeContract.FIELD_TYPED, PageActionTypeContract.encode(PageActionType.ComposeSend))
+        .put(QuickActionPolicyContract.FIELD_HUB_QUICK, false)
 
     /** A press begun after what it lands on was drawn. */
     private fun press(at: Long) {
