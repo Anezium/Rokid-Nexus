@@ -87,6 +87,9 @@ class AssistantThreadStore private constructor(
         val activeThread = state.activeThreadId
             ?.let { activeId -> state.threads.firstOrNull { it.id == activeId } }
             ?: return@synchronized null
+        if (idleWindowMinutes == CodexAuthStore.UNLIMITED_IDLE_WINDOW_MINUTES) {
+            return@synchronized activeThread
+        }
         val idleWindowMs = idleWindowMinutes.toLong() * MILLIS_PER_MINUTE
         activeThread.takeIf { clock() - it.updatedAtMs <= idleWindowMs }
     }

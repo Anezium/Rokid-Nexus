@@ -74,6 +74,52 @@ class CodexAuthStoreLogicTest {
     }
 
     @Test
+    fun unlimitedConversationWindowRoundTrips() {
+        val prefs = FakeSharedPreferences()
+        val store = CodexAuthStore(prefs)
+
+        store.setConversationIdleWindowMinutes(CodexAuthStore.UNLIMITED_IDLE_WINDOW_MINUTES)
+
+        assertEquals(
+            CodexAuthStore.UNLIMITED_IDLE_WINDOW_MINUTES,
+            store.conversationIdleWindowMinutes(),
+        )
+        assertEquals(
+            CodexAuthStore.UNLIMITED_IDLE_WINDOW_MINUTES,
+            CodexAuthStore(prefs).conversationIdleWindowMinutes(),
+        )
+        assertEquals(
+            listOf(
+                2, 5, 10, 30,
+                CodexAuthStore.SEVEN_DAYS_IN_MINUTES,
+                CodexAuthStore.UNLIMITED_IDLE_WINDOW_MINUTES,
+            ),
+            CodexAuthStore.SUPPORTED_IDLE_WINDOW_MINUTES,
+        )
+    }
+
+    @Test
+    fun storedFiniteIdleWindowsKeepTheirNearestSupportedValue() {
+        val expectedWindows = mapOf(
+            Int.MIN_VALUE to 2,
+            7 to 5,
+            5055 to 30,
+            5056 to CodexAuthStore.SEVEN_DAYS_IN_MINUTES,
+            Int.MAX_VALUE - 1 to CodexAuthStore.SEVEN_DAYS_IN_MINUTES,
+        )
+
+        expectedWindows.forEach { (storedMinutes, expectedMinutes) ->
+            val store = CodexAuthStore(
+                FakeSharedPreferences(mapOf("conversation_idle_window_minutes" to storedMinutes)),
+            )
+
+            assertEquals(expectedMinutes, store.conversationIdleWindowMinutes())
+            store.setConversationIdleWindowMinutes(storedMinutes)
+            assertEquals(expectedMinutes, store.conversationIdleWindowMinutes())
+        }
+    }
+
+    @Test
     fun memorySetterTrimsAndTruncatesToMaximumLength() {
         val store = CodexAuthStore(FakeSharedPreferences())
         val oversized = " \n" + "x".repeat(CodexAuthStore.MAX_ASSISTANT_MEMORY_CHARS + 25) + "\t "
