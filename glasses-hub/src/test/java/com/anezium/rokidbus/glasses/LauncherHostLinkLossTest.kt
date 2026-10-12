@@ -1,24 +1,33 @@
 package com.anezium.rokidbus.glasses
 
 import android.accessibilityservice.AccessibilityService
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.view.View
 import android.os.Looper
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityEvent
 import com.anezium.rokidbus.glasses.input.LauncherBackend
+import com.anezium.rokidbus.glasses.page.ConversationView
+import com.anezium.rokidbus.glasses.page.PageStyle
+import com.anezium.rokidbus.glasses.page.SessionScreenView
 import com.anezium.rokidbus.glasses.session.ActivityStop
 import com.anezium.rokidbus.glasses.session.BubbleSide
+import com.anezium.rokidbus.glasses.session.BubbleStyle
 import com.anezium.rokidbus.glasses.session.CommandFacts
 import com.anezium.rokidbus.glasses.session.DraftState
 import com.anezium.rokidbus.glasses.session.FrameMode
 import com.anezium.rokidbus.glasses.session.FrameStatus
 import com.anezium.rokidbus.glasses.session.NoticeEntry
 import com.anezium.rokidbus.glasses.session.NoticePreview
+import com.anezium.rokidbus.glasses.session.PageItem
 import com.anezium.rokidbus.glasses.session.RootStop
 import com.anezium.rokidbus.glasses.session.RootStopKind
 import com.anezium.rokidbus.glasses.session.RootStops
 import com.anezium.rokidbus.glasses.session.ScreenBlock
 import com.anezium.rokidbus.glasses.session.SessionEvent
 import com.anezium.rokidbus.glasses.session.SessionFocus
+import com.anezium.rokidbus.glasses.session.SessionHost
 import com.anezium.rokidbus.glasses.session.SessionModel
 import com.anezium.rokidbus.glasses.session.SessionReducer
 import com.anezium.rokidbus.glasses.session.SessionRunner
@@ -26,6 +35,7 @@ import com.anezium.rokidbus.glasses.session.SessionScreen
 import com.anezium.rokidbus.glasses.session.SessionScreens
 import com.anezium.rokidbus.glasses.session.SessionState
 import com.anezium.rokidbus.glasses.session.TypedPageItems
+import com.anezium.rokidbus.glasses.session.TypedRow
 import com.anezium.rokidbus.shared.ActivityActivation
 import com.anezium.rokidbus.shared.ActivityPersistence
 import com.anezium.rokidbus.shared.ActivityState
@@ -38,6 +48,7 @@ import com.anezium.rokidbus.shared.ComposeDictateFinal
 import com.anezium.rokidbus.shared.ComposeDictationReason
 import com.anezium.rokidbus.shared.ConversationComposer
 import com.anezium.rokidbus.shared.ConversationMessage
+import com.anezium.rokidbus.shared.ConversationMessageStatus
 import com.anezium.rokidbus.shared.ConversationRole
 import com.anezium.rokidbus.shared.LauncherInteractiveContract
 import com.anezium.rokidbus.shared.MediaPlaybackState
@@ -285,42 +296,64 @@ class LauncherHostLinkLossTest {
     }
 
     @Test
-    fun `a retained conversation too tall for the viewport is read page by page, and only Retry asks again`() {
+    fun `a tall retained group conversation pages as the conversation it was after an SPP-first loss`() {
+        tallConversationOutage(sppFirst = true)
+    }
+
+    @Test
+    fun `a tall retained group conversation pages as the conversation it was after a CXR-first loss`() {
+        tallConversationOutage(sppFirst = false)
+    }
+
+    @Test
+    fun `a held destination opens exactly and inert when CXR alone is back before the phone announces`() {
+        heldDestinationBeforeAnnouncement(sppFirst = true, cxrReturns = true)
+    }
+
+    @Test
+    fun `a held destination opens exactly and inert when SPP alone is back before the phone announces`() {
+        heldDestinationBeforeAnnouncement(sppFirst = false, cxrReturns = false)
+    }
+
+    @Test
+    fun `a pages-only phone's fresh announcement ends the hold with v1 cards that open its main page`() {
         linkUp()
-        val messages = (1..20).map { index ->
-            ConversationMessage(
-                "m$index",
-                if (index % 2 == 0) ConversationRole.OURS else ConversationRole.RECEIVED,
-                "Message $index " + "about the evening plans and who brings what ".repeat(2),
-            )
-        }
-        openConversation(conversation(messages))
-        val from = logs().size
+        startHeldCards()
         linkDown(sppFirst = true)
-
-        // The renderer measures the retained bubbles taller than the viewport and says so.
-        val fit = requireNotNull(screen().fit) { "${screen()}" }
-        NexusSession.dispatch(SessionEvent.ContentOverflowed(fit.frame, fit.pageId, fit.revision))
-        idle()
-        assertEquals(FrameMode.READING, top().mode)
-        val reading = screen()
-        val document = reading.blocks.filterIsInstance<ScreenBlock.Document>().single()
-        assertTrue(document.dimmed)
-        assertEquals(messages.map { it.text }, document.segments.map { it.text })
-        assertTrue(reading.blocks.none { it is ScreenBlock.Row })
-        assertNull(reading.footer)
-
-        linkUp()
-        assertTrue(top().status is FrameStatus.Unavailable)
-        assertTrue(outbound(logs().drop(from)).none { it in REPLAYABLE })
-        // A tap on the text reaches Retry, asking nothing; the wearer's Retry is what asks again.
+        cxrUp(true)
+        assertTrue(cards().getValue("maps").destination != null)
+        val from = logs().size
+        // Pages, no launcher bundle: the cards become v1 ones, and pages are legitimately live.
+        announce(pagesOnlyPhone())
+        val maps = cards().getValue("maps")
+        assertNull(maps.destination)
+        assertNull(maps.activation)
+        assertFalse(maps.userPinned)
+        assertTrue(GlassesHub.pageSessionSupported())
+        assertFalse(GlassesHub.launcherInteractiveActive())
+        openRoot()
+        selectRootStop { it.kind == RootStopKind.ACTIVITY && it.id.startsWith("maps") }
         freshPress()
-        assertEquals(FrameMode.ROWS, top().mode)
-        assertEquals(0, top().selected)
-        assertTrue(outbound(logs().drop(from)).none { it in REPLAYABLE })
-        freshPress()
-        assertTrue("${top().status}", top().status is FrameStatus.Loading)
+        assertEquals(PageTemplateContract.mainPageId("maps"), top().pageId)
+        assertNull(top().paramsJson)
+        assertTrue(top().status is FrameStatus.Loading)
         assertEquals(listOf(BusPaths.PAGE_REQUEST), outbound(logs().drop(from)).filter { it in REPLAYABLE })
+    }
+
+    @Test
+    fun `an older phone's fresh announcement ends the hold and its cards open the hub summary`() {
+        linkUp()
+        startHeldCards()
+        linkDown(sppFirst = false)
+        connectSpp()
+        val from = logs().size
+        announce(oldPhone())
+        assertTrue(cards().values.all { it.destination == null && it.activation == null && !it.userPinned && !it.offline })
+        openRoot()
+        selectRootStop { it.kind == RootStopKind.ACTIVITY && it.id.startsWith("maps") }
+        freshPress()
+        assertEquals("nexus:activity:maps", top().pageId)
+        assertTrue(outbound(logs().drop(from)).none { it in REPLAYABLE || it.startsWith(COMPOSE_PREFIX) })
     }
 
     @Test
@@ -535,6 +568,257 @@ class LauncherHostLinkLossTest {
         assertTrue(since.joinToString("\n"), outbound(since).none { it in REPLAYABLE || it.startsWith(COMPOSE_PREFIX) })
     }
 
+    /**
+     * A tall captured group conversation: received from two named senders and ours, the same text
+     * on both sides, one of ours handed to the app and one unconfirmed, a capture caption.
+     */
+    private fun groupMessages(): List<ConversationMessage> = (1..18).map { index ->
+        val text = when (index) {
+            1, 2 -> "yes"
+            else -> "Message $index about the evening plans and who brings what to the park tonight"
+        }
+        when {
+            index == 2 || index % 3 == 0 -> ConversationMessage(
+                "m$index",
+                ConversationRole.OURS,
+                text,
+                status = when (index) {
+                    6 -> ConversationMessageStatus.HANDED_OFF
+                    9 -> ConversationMessageStatus.UNCONFIRMED
+                    else -> null
+                },
+            )
+            else -> ConversationMessage("m$index", ConversationRole.RECEIVED, text, sender = if (index % 2 == 0) "Alan" else "Mika")
+        }
+    }
+
+    /**
+     * A tall group conversation through a full loss in the order given: it is paged as the
+     * conversation it was, on screen and in the window, and only the wearer's second tap retries.
+     */
+    private fun tallConversationOutage(sppFirst: Boolean) {
+        linkUp()
+        val messages = groupMessages()
+        openConversation(conversation(messages, caption = "captured 21:47"))
+        val generation = NexusSession.generation
+        val from = logs().size
+        linkDown(sppFirst)
+        overflowRetained()
+        assertRetainedConversationPaged(messages, "captured 21:47")
+
+        // Back before any Retry: the same reading, still inert, nothing asked.
+        linkUp()
+        assertEquals(generation, NexusSession.generation)
+        assertTrue(top().status is FrameStatus.Unavailable)
+        assertEquals(FrameMode.READING, top().mode)
+        assertRetainedConversationPaged(messages, "captured 21:47")
+        assertTrue(outbound(logs().drop(from)).none { it in REPLAYABLE || it.startsWith(COMPOSE_PREFIX) })
+        // A tap on the text reaches Retry, asking nothing; the wearer's Retry is what asks again.
+        freshPress()
+        assertEquals(FrameMode.ROWS, top().mode)
+        assertEquals(0, top().selected)
+        assertTrue(outbound(logs().drop(from)).none { it in REPLAYABLE })
+        freshPress()
+        assertTrue("${top().status}", top().status is FrameStatus.Loading)
+        assertEquals(listOf(BusPaths.PAGE_REQUEST), outbound(logs().drop(from)).filter { it in REPLAYABLE })
+        assertEquals(LauncherBackend.SESSION, NexusInput.backend)
+    }
+
+    /** The window measured the retained content too tall; report it as the window does, if it has not yet. */
+    private fun overflowRetained() {
+        if (!top().overflowing) {
+            val fit = requireNotNull(screen().fit) { "${screen()}" }
+            NexusSession.dispatch(SessionEvent.ContentOverflowed(fit.frame, fit.pageId, fit.revision))
+            idle()
+        }
+        assertEquals(FrameMode.READING, top().mode)
+    }
+
+    /**
+     * The screen pages the retained conversation with its roles, senders, states and caption,
+     * dimmed and inert; the window draws every message across its pages on the right side.
+     */
+    private fun assertRetainedConversationPaged(messages: List<ConversationMessage>, caption: String) {
+        val screen = screen()
+        val block = screen.blocks.filterIsInstance<ScreenBlock.Conversation>().single()
+        assertTrue(block.dimmed)
+        assertEquals(caption, block.caption)
+        assertEquals(top().pageId, block.pageId)
+        assertEquals(messages.map { "m:${it.id}" }, block.bubbles.map { it.key })
+        messages.zip(block.bubbles).forEach { (message, bubble) ->
+            assertEquals(message.text, bubble.text)
+            assertEquals(message.id, expectedSide(message), bubble.side)
+            assertEquals(message.id, message.sender, bubble.sender)
+            assertEquals(
+                message.id,
+                when (message.status) {
+                    ConversationMessageStatus.HANDED_OFF -> SessionScreens.HANDED_TO_APP
+                    ConversationMessageStatus.UNCONFIRMED -> SessionScreens.UNCONFIRMED_CHECK_PHONE
+                    null -> null
+                },
+                bubble.meta,
+            )
+            assertEquals(message.id, message.status == ConversationMessageStatus.UNCONFIRMED, bubble.style == BubbleStyle.DASHED)
+        }
+        // Nothing to act on: no Document flattening, no rows, no composer, an honest hint.
+        assertTrue(screen.blocks.none { it is ScreenBlock.Document || it is ScreenBlock.Row })
+        assertNull(screen.footer)
+        assertTrue(screen.hint?.action.orEmpty(), screen.hint?.action.orEmpty().endsWith("tap for Retry / Back"))
+
+        // What the window actually draws, page by page, from the first.
+        val pages = top().pageStarts.size
+        assertTrue("pages=$pages", pages > 1)
+        repeat(pages) { send(SessionEvent.Step(-1, now())) }
+        val drawn = mutableListOf<ConversationView.DrawnBubble>()
+        var captionShown = false
+        repeat(pages) { index ->
+            if (index > 0) send(SessionEvent.Step(1, now()))
+            val view = conversationView()
+            draw(view)
+            drawn += view.drawn
+            captionShown = captionShown || view.captionShown
+        }
+        val byId = messages.associateBy { "m:${it.id}" }
+        assertEquals(byId.keys, drawn.map { it.key }.toSet())
+        drawn.forEach { slice ->
+            val message = byId.getValue(slice.key)
+            assertEquals(slice.key, expectedSide(message), slice.side)
+            assertEquals(slice.key, PageStyle.muted, slice.textColor)
+            slice.sender?.let { assertEquals(slice.key, message.sender, it) }
+        }
+        // Each named sender is drawn above their message, and the caption is drawn once paged to it.
+        messages.filter { it.sender != null }.forEach { message ->
+            assertTrue(message.id, drawn.any { it.key == "m:${message.id}" && it.sender == message.sender })
+        }
+        assertTrue(captionShown)
+    }
+
+    private fun expectedSide(message: ConversationMessage): BubbleSide = when (message.role) {
+        ConversationRole.RECEIVED -> BubbleSide.LEFT
+        ConversationRole.OURS -> BubbleSide.RIGHT
+        ConversationRole.UNKNOWN -> BubbleSide.NONE
+    }
+
+    /** The session window's conversation view, laid out at the HUD's size if the window has not been yet. */
+    private fun conversationView(): ConversationView {
+        val host = staticField(NexusSession::class.java, "host").get(null) as SessionHost
+        val window = SessionHost::class.java.getDeclaredField("window").apply { isAccessible = true }.get(host)
+        val root = window.javaClass.getDeclaredField("root").apply { isAccessible = true }.get(window) as SessionScreenView
+        if (root.width == 0) {
+            root.measure(
+                View.MeasureSpec.makeMeasureSpec(PageStyle.WIDTH_PX, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(PageStyle.HEIGHT_PX, View.MeasureSpec.EXACTLY),
+            )
+            root.layout(0, 0, PageStyle.WIDTH_PX, PageStyle.HEIGHT_PX)
+            idle()
+        }
+        return root.blockViews.getValue(SessionScreens.CONVERSATION_BLOCK) as ConversationView
+    }
+
+    private fun draw(view: View) {
+        view.draw(Canvas(Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888)))
+    }
+
+    private fun send(event: SessionEvent) {
+        NexusSession.dispatch(event)
+        idle()
+    }
+
+    /** Maps pinned with a destination and non-default params, and a plain Timer, over the bundle. */
+    private fun startHeldCards() {
+        startActivity(
+            "maps",
+            card().copy(
+                primary = "120 m",
+                destination = PageDestination("maps:route", HELD_PARAMS),
+                activation = ActivityActivation.DESTINATION,
+                state = ActivityState.LIVE,
+                userPinned = true,
+            ),
+        )
+        startActivity("alpha", card().copy(primary = "Timer"))
+    }
+
+    /**
+     * A full loss, then one transport back with the phone silent: the held card still goes to its
+     * exact page and params, inert, from the root and from Activities, and nothing asks the phone
+     * until the wearer's Retry after the bundle is announced again.
+     */
+    private fun heldDestinationBeforeAnnouncement(sppFirst: Boolean, cxrReturns: Boolean) {
+        linkUp()
+        startHeldCards()
+        openConversation()
+        dictate("on my way")
+        val draft = model().draft
+        closeSession()
+        val from = logs().size
+
+        linkDown(sppFirst)
+        if (cxrReturns) cxrUp(true) else connectSpp()
+        assertTrue(GlassesHub.isPhoneConnected())
+        assertFalse(model().linkLost)
+        assertFalse(GlassesHub.launcherInteractiveActive())
+        assertFalse(GlassesHub.pageSessionSupported())
+        val held = cards().getValue("maps")
+        assertEquals(PageDestination("maps:route", HELD_PARAMS), held.destination)
+        assertTrue(held.commands.isEmpty())
+
+        // From the root.
+        openRoot()
+        selectRootStop { it.kind == RootStopKind.ACTIVITY && it.id.startsWith("maps") }
+        freshPress()
+        assertHeldDestinationInert()
+        closeSession()
+
+        // From the Activities page.
+        openRoot()
+        selectRootStop { it.kind == RootStopKind.ACTIVITIES }
+        freshPress()
+        selectRow { it.item == PageItem.Activity("maps") }
+        freshPress()
+        assertHeldDestinationInert()
+        // A Retry while the phone is still silent asks nothing either.
+        freshPress()
+        assertTrue("${top().status}", top().status is FrameStatus.Unavailable)
+        assertEquals(HELD_PARAMS, top().paramsJson)
+        assertTrue(outbound(logs().drop(from)).none { it in REPLAYABLE || it.startsWith(COMPOSE_PREFIX) })
+
+        // The rest of the link and the bundle's announcement: still nothing replayed.
+        if (cxrReturns) connectSpp() else cxrUp(true)
+        announce(bundlePhone())
+        assertEquals("maps:route", top().pageId)
+        assertTrue(top().status is FrameStatus.Unavailable)
+        assertTrue(outbound(logs().drop(from)).none { it in REPLAYABLE || it.startsWith(COMPOSE_PREFIX) })
+        // The wearer's Retry asks for exactly the validated page and params.
+        top().selected.takeIf { it != 0 }?.let { repeat(it) { send(SessionEvent.Step(-1, now())) } }
+        freshPress()
+        assertTrue("${top().status}", top().status is FrameStatus.Loading)
+        assertEquals(HELD_PARAMS, top().paramsJson)
+        assertEquals(listOf(BusPaths.PAGE_REQUEST), outbound(logs().drop(from)).filter { it in REPLAYABLE })
+        assertEquals(draft, model().draft)
+        assertEquals(LauncherBackend.SESSION, NexusInput.backend)
+    }
+
+    private fun assertHeldDestinationInert() {
+        assertEquals("maps:route", top().pageId)
+        assertEquals(HELD_PARAMS, top().paramsJson)
+        val inert = top().status as FrameStatus.Unavailable
+        assertNull(inert.lastSnapshot)
+        assertFalse(inert.reason == SessionReducer.UNAVAILABLE_LINK_LOST)
+        assertEquals(listOf("retry", "back"), screen().blocks.filterIsInstance<ScreenBlock.Row>().map { it.key })
+    }
+
+    /** Steps the top frame's selection to the first row matching [predicate]. */
+    private fun selectRow(predicate: (TypedRow) -> Boolean) {
+        val items = staticField(NexusSession::class.java, "items").get(null) as TypedPageItems
+        val rows = items.rows((top().status as FrameStatus.Shown).snapshot.page)
+        val index = rows.indexOfFirst(predicate)
+        assertTrue("$rows", index >= 0)
+        val delta = index - top().selected
+        repeat(kotlin.math.abs(delta)) { send(SessionEvent.Step(if (delta > 0) 1 else -1, now())) }
+        assertEquals(rows[index].key, top().selectedKey)
+    }
+
     private fun assertConversationRetained(screen: SessionScreen) {
         reading(screen)?.let { segments ->
             assertEquals(listOf("on est devant", "j'arrive"), segments)
@@ -660,6 +944,11 @@ class LauncherHostLinkLossTest {
         ),
     )
 
+    /** A phone with pages but not the launcher bundle. */
+    private fun pagesOnlyPhone(): JSONObject = PhoneHubCapabilitiesContract.toJson(
+        PhoneHubCapabilitiesContract.create(features = 0, cameraConsumerName = null, pageSessionVersion = PageSurfaceContract.VERSION),
+    )
+
     /** A phone from before pages and the bundle: no features, versions, backend or display settings. */
     private fun oldPhone(): JSONObject =
         PhoneHubCapabilitiesContract.toJson(PhoneHubCapabilitiesContract.create(features = 0, cameraConsumerName = null))
@@ -756,10 +1045,11 @@ class LauncherHostLinkLossTest {
             ConversationMessage("m1", ConversationRole.RECEIVED, "on est devant"),
             ConversationMessage("m2", ConversationRole.OURS, "j'arrive"),
         ),
+        caption: String = "captured 14:02",
     ) = PageBody.Conversation(
         threadKey = "t1",
         messages = messages,
-        caption = "captured 14:02",
+        caption = caption,
         composer = ConversationComposer("Ana", "send", 500, true),
     )
 
@@ -947,5 +1237,6 @@ class LauncherHostLinkLossTest {
         const val COMPOSE_PREFIX = "/core/compose/"
         val OUTBOUND = listOf("SPP TX ", "CXR-S TX ", "session send dropped path=")
         const val AUTH_BOUND_MS = 5_000L
+        const val HELD_PARAMS = """{"trip":"home","mode":"walk"}"""
     }
 }
