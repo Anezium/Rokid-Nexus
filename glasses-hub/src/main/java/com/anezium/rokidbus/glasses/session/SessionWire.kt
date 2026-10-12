@@ -107,6 +107,8 @@ internal data class ActivitySource(
     val significantOrder: Long? = null,
     /** Held while the phone link is down; see [ActivityStop.stale]. */
     val stale: Boolean = false,
+    /** Its launcher fields were validated before a link loss and nothing was announced since; see [ActivityStop.held]. */
+    val held: Boolean = false,
 )
 
 /**
@@ -155,6 +157,7 @@ internal class ActivityFeed(
                 icon = iconOf(source.ownerPluginId),
                 startedOrder = source.startedOrder,
                 significantOrder = source.significantOrder,
+                held = source.held,
             )
             if (stop == previous) return@forEach
             known[source.surfaceId] = stop

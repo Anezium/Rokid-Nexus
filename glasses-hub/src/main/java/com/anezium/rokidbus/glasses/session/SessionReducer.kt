@@ -754,6 +754,7 @@ internal class SessionReducer(
         paramsJson: String?,
         nowMs: Long,
         openApp: OpenApp? = null,
+        inert: Boolean = false,
     ): SessionTransition {
         if (below.size + 1 >= PageSurfaceContract.MAX_FRAMES) {
             // Nothing is allocated: the close names no frame and is never sent.
@@ -763,8 +764,9 @@ internal class SessionReducer(
             )
         }
         val frameIndex = below.size + 1
-        if (model.linkLost && !isLocalPage(pageId)) {
-            val frame = Frame(pageId, FrameStatus.Unavailable(null, UNAVAILABLE_LINK_LOST), paramsJson = paramsJson, openApp = openApp)
+        if ((model.linkLost || inert) && !isLocalPage(pageId)) {
+            val reason = if (model.linkLost) UNAVAILABLE_LINK_LOST else UNAVAILABLE_RECONNECTING
+            val frame = Frame(pageId, FrameStatus.Unavailable(null, reason), paramsJson = paramsJson, openApp = openApp)
             return SessionTransition(model.copy(state = SessionState.InPage(below + frame, root)), listOf(ShowFrame))
         }
         val (requestId, counted) = model.nextId("r")
@@ -1835,12 +1837,12 @@ internal class SessionReducer(
         pageId: String,
         nowMs: Long,
     ): SessionTransition {
-        // A link loss keeps the destination the bundle validated: it opens inert, asking nothing.
-        if (!launcherActive() && !model.linkLost) return openFrame(model, root, below, pageId, null, nowMs)
+        if (!launcherActive() && !activity.held) return openFrame(model, root, below, pageId, null, nowMs)
         val destination = activity.destination
         return when {
+            // A held card goes where the bundle validated, a transport back or not: inert, asking nothing.
             activity.activation == ActivityActivation.DESTINATION && destination != null ->
-                openFrame(model, root, below, destination.pageId, destination.paramsJson, nowMs, openAppOf(activity))
+                openFrame(model, root, below, destination.pageId, destination.paramsJson, nowMs, openAppOf(activity), inert = activity.held)
             activity.activation == ActivityActivation.COMMANDS && !activity.lastKnown && activity.commands.isNotEmpty() -> {
                 val slots = ActivityCommands.slots(activity)
                 val index = ActivityCommands.initialIndex(activity, slots)
@@ -2045,6 +2047,9 @@ internal class SessionReducer(
         const val RESULT_DONE = "done"
         const val RESULT_REJECTED = "rejected"
         const val UNAVAILABLE_LINK_LOST = "link_lost"
+
+        /** A transport is back but the phone has not announced what it supports yet. */
+        const val UNAVAILABLE_RECONNECTING = "reconnecting"
 
         /** SPP went away with CXR still up, and this page needed SPP. */
         const val UNAVAILABLE_DATA_PLANE = "data_plane"

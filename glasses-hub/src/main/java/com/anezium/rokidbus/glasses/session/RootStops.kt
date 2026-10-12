@@ -43,6 +43,12 @@ internal data class ActivityStop(
     /** The activity tier's start order and latest significant update, for the deterministic order. */
     val startedOrder: Long = 0,
     val significantOrder: Long? = null,
+    /**
+     * Its destination and activation were validated over the launcher bundle before the link went,
+     * and the phone has not announced since: it still navigates there, but what it opens asks the
+     * phone nothing until the bundle is negotiated again.
+     */
+    val held: Boolean = false,
 ) {
     /**
      * Drawn as last known, its commands inert: offline on the phone, or [stale] while the link is

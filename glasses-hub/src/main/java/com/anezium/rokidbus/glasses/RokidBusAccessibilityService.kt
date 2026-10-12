@@ -1712,6 +1712,7 @@ internal object NexusSession {
                     knownAtWallMs = content.knownAtWallMs ?: base.knownAtWallMs,
                     destination = content.destination,
                     activation = content.effectiveActivation,
+                    held = true,
                 )
                 else -> base
             }
