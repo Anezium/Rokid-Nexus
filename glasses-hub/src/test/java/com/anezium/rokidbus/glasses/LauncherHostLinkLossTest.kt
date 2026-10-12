@@ -506,8 +506,15 @@ class LauncherHostLinkLossTest {
         assertTrue(model().linkLost)
         assertTrue("${top().status}", top().status is FrameStatus.Unavailable)
         val screen = screen()
-        // Dimmed and inert: the failure's Retry and Back are all there is to select.
-        assertEquals("$screen", listOf("retry", "back"), screen.blocks.filterIsInstance<ScreenBlock.Row>().map { it.key })
+        // Dimmed and inert: read page by page when the window measured it too tall, else with the
+        // failure's Retry and Back as all there is to select.
+        val rows = screen.blocks.filterIsInstance<ScreenBlock.Row>().map { it.key }
+        val reading = screen.blocks.filterIsInstance<ScreenBlock.Document>().singleOrNull()
+        if (reading != null) {
+            assertTrue("$screen", reading.dimmed && rows.isEmpty())
+        } else {
+            assertEquals("$screen", listOf("retry", "back"), rows)
+        }
         assertNull(screen.footer)
         retained(screen)
 
@@ -529,6 +536,10 @@ class LauncherHostLinkLossTest {
     }
 
     private fun assertConversationRetained(screen: SessionScreen) {
+        reading(screen)?.let { segments ->
+            assertEquals(listOf("on est devant", "j'arrive"), segments)
+            return
+        }
         val conversation = screen.blocks.filterIsInstance<ScreenBlock.Conversation>().single()
         assertTrue(conversation.dimmed)
         assertEquals(listOf("on est devant", "j'arrive"), conversation.bubbles.map { it.text })
@@ -537,20 +548,32 @@ class LauncherHostLinkLossTest {
     }
 
     private fun assertRouteRetained(screen: SessionScreen) {
+        // A retained position is no position: no map, no live manoeuvre, in either form.
+        assertTrue(screen.blocks.none { it is ScreenBlock.Map || it is ScreenBlock.Maneuver })
+        reading(screen)?.let { segments ->
+            assertEquals(listOf("120 m \u00b7 Rue de Rivoli", "Arrival \u00b7 09:52"), segments)
+            return
+        }
         val texts = screen.blocks.filterIsInstance<ScreenBlock.Text>()
         assertTrue(texts.single { it.key == "last:distance" }.let { it.dimmed && it.text == "~120 m" })
         assertTrue(texts.single { it.key == "last:street" }.let { it.dimmed && it.text == "Rue de Rivoli" })
         assertTrue(screen.blocks.filterIsInstance<ScreenBlock.Fact>().single().let { it.dimmed && it.value == "09:52" })
-        // A retained position is no position: no map, no live manoeuvre.
-        assertTrue(screen.blocks.none { it is ScreenBlock.Map || it is ScreenBlock.Maneuver })
     }
 
     private fun assertMediaRetained(screen: SessionScreen) {
+        assertTrue(screen.blocks.none { it is ScreenBlock.Media })
+        reading(screen)?.let { segments ->
+            assertEquals(listOf("Nightcall", "Kavinsky", "OutRun"), segments)
+            return
+        }
         val texts = screen.blocks.filterIsInstance<ScreenBlock.Text>()
         assertTrue(texts.single { it.key == "last:title" }.let { it.dimmed && it.text == "Nightcall" })
-        assertTrue(texts.single { it.key == "last:artist" }.let { it.dimmed && it.text == "Kavinsky · OutRun" })
-        assertTrue(screen.blocks.none { it is ScreenBlock.Media })
+        assertTrue(texts.single { it.key == "last:artist" }.let { it.dimmed && it.text == "Kavinsky \u00b7 OutRun" })
     }
+
+    /** The retained text as read page by page, when the window measured it too tall; else null. */
+    private fun reading(screen: SessionScreen): List<String>? =
+        screen.blocks.filterIsInstance<ScreenBlock.Document>().singleOrNull()?.segments?.map { it.text }
 
     private fun linkUp() {
         cxrUp(true)
