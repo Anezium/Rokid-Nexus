@@ -1069,7 +1069,8 @@ internal class SessionReducer(
         // Revisions stay monotonic across refresh and retry; a rollback is dropped as stale.
         val floor = top.revisionFloor
         if (floor != null && page.revision < floor) return keep(model)
-        val kept = status.previous?.takeIf { page.revision == floor }
+        // The same revision keeps its laid-out snapshot, unless the templates it was read with changed.
+        val kept = status.previous?.takeIf { page.revision == floor && it.extended == itemResolver.acceptsExtended() }
         val snapshot = kept ?: Snapshot(page, extended = itemResolver.acceptsExtended())
         // The first display of a frame starts its lease; an uncovered frame already holds one.
         val lease = status.leaseUntilMs ?: (nowMs + PageSurfaceContract.LEASE_MS)
