@@ -1180,25 +1180,8 @@ class LauncherHostLinkLossTest {
 
     private fun logs(): List<String> = ShadowLog.getLogsForTag(TAG).map { it.msg }
 
-    /**
-     * The paths the glasses sent or tried to send the phone, once per attempt: a send that tried a
-     * transport and failed logs the transport's line, then the session's drop of the same path.
-     */
-    private fun outbound(lines: List<String>): List<String> {
-        val paths = mutableListOf<String>()
-        var lastTransport: String? = null
-        lines.forEach { line ->
-            val prefix = OUTBOUND.firstOrNull { line.startsWith(it) } ?: return@forEach
-            val path = line.removePrefix(prefix).substringBefore(' ')
-            if (prefix == DROPPED && path == lastTransport) {
-                lastTransport = null
-                return@forEach
-            }
-            paths += path
-            lastTransport = path.takeIf { prefix != DROPPED }
-        }
-        return paths
-    }
+    /** The paths the glasses sent or tried to send the phone, one per attempt. */
+    private fun outbound(lines: List<String>): List<String> = OutboundRecord.paths(lines)
 
     private fun now() = SystemClock.uptimeMillis()
 
@@ -1252,8 +1235,6 @@ class LauncherHostLinkLossTest {
         val SEQ = AtomicLong(System.nanoTime())
         val REPLAYABLE = setOf(BusPaths.PAGE_REQUEST, BusPaths.PAGE_ACTION, BusPaths.ACTIVITY_ACTION)
         const val COMPOSE_PREFIX = "/core/compose/"
-        const val DROPPED = "session send dropped path="
-        val OUTBOUND = listOf("SPP TX ", "CXR-S TX ", DROPPED)
         const val AUTH_BOUND_MS = 5_000L
         const val HELD_PARAMS = """{"trip":"home","mode":"walk"}"""
     }
