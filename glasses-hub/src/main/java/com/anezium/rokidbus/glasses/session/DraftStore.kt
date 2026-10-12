@@ -103,7 +103,11 @@ internal object DraftStore {
     fun pageReplyable(draft: Draft?, ownerPluginId: String?, threadKey: String?, revision: Long): Draft? {
         draft ?: return null
         if (draft.state != DraftState.AUTHORITY_LOST || draft.reopened || !draft.isFor(ownerPluginId, threadKey)) return draft
-        if (draft.lostRevision != null && revision <= draft.lostRevision) return draft
+        // Lost with no revision on screen (the page closed or still loading): the first answer seen
+        // may have been computed before the loss and crossed it on another transport, so it only
+        // marks the revision; a newer one, or a new notice for the thread, reopens it.
+        val lost = draft.lostRevision ?: return draft.copy(lostRevision = revision)
+        if (revision <= lost) return draft
         return draft.copy(reopened = true, pageReopened = true)
     }
 

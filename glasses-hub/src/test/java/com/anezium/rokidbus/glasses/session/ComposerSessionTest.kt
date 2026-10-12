@@ -416,6 +416,30 @@ class ComposerSessionTest {
     }
 
     @Test
+    fun `a page answer that crossed a withdrawal while no revision was shown never reopens the draft`() {
+        openThread("t1", at = 1_000)
+        dictate("see you", at = 3_000)
+        // The page is closed when the withdrawal arrives: no revision to bind the loss to.
+        openRoot(4_000)
+        send(SessionEvent.NoticeWithdrawn("relay", "t1"))
+        assertEquals(DraftState.AUTHORITY_LOST, model.draft?.state)
+
+        // Reopening the thread: its first answer may have been computed before the withdrawal.
+        reopenThread("t1", at = 5_000)
+        assertFalse(model.draft!!.reopened)
+        assertTrue(screen().footer is InlineFooter.StatusLine)
+        shown(6_000)
+        press(6_010)
+        assertNull(top().composerFocus)
+
+        // Only a newer revision that still says it can reply reopens Type.
+        respond(requestOf(), conversation("t1"), revision = 7, now = 7_000)
+        assertTrue(model.draft!!.reopened)
+        assertEquals(DraftState.AUTHORITY_LOST, model.draft?.state)
+        assertTrue(effects.none { it is SendAction })
+    }
+
+    @Test
     fun `a newer replyable revision of the draft's own thread reopens Type like a new notice, never Send as is`() {
         openThread("t1", at = 1_000)
         dictate("see you", at = 3_000)
