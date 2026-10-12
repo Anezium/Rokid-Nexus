@@ -110,6 +110,7 @@ class LauncherHostLinkLossTest {
         staticField(SppServerManager::class.java, "sessions").set(null, spp)
         staticField(GlassesHub::class.java, "appContext").set(null, app)
         service = Robolectric.setupService(OverlayService::class.java)
+        freshSessionModel()
         NexusInput.restartProcess(LauncherBackend.SESSION)
         // The accessibility service's own order: the session, the activity tier, then the input.
         NexusSession.onServiceConnected(service)
@@ -133,8 +134,9 @@ class LauncherHostLinkLossTest {
     @After
     fun tearDown() {
         NexusSession.dispatch(SessionEvent.Abort)
-        // The runtime is process-wide: leave no notice behind for the next test's root.
-        NexusSession.dispatch(SessionEvent.NoticePurged("relay"))
+        idle()
+        // The runtime is process-wide: no draft or notice of this test reaches the next one.
+        freshSessionModel()
         GlassesHub.onRemoteEnvelope(
             BusEnvelope(path = BusPaths.ACTIVITY_END, payload = ActivitySurfaceContract.emptySlotAssertPayload(SEQ.incrementAndGet())),
         )
@@ -373,8 +375,11 @@ class LauncherHostLinkLossTest {
         )
         openRoot()
         selectRootStop { it.kind == RootStopKind.NOTICE_PREVIEW }
+        val from = logs().size
         freshPress()
         assertEquals("relay:thread", top().pageId)
+        // The outbound record sees what a replay would be: the request went out over SPP.
+        assertEquals(listOf(BusPaths.PAGE_REQUEST), outbound(logs().drop(from)).filter { it in REPLAYABLE })
         answer(conversation(), title = "Ana")
     }
 
@@ -383,6 +388,7 @@ class LauncherHostLinkLossTest {
         freshPress()
         freshPress()
         val capture = requireNotNull(model().capture) { "no capture started" }
+        assertTrue(outbound(logs()).contains(ComposeContract.DICTATE_START_PATH))
         freshPress()
         GlassesHub.onRemoteEnvelope(
             BusEnvelope(
@@ -505,9 +511,13 @@ class LauncherHostLinkLossTest {
 
     // Observation.
 
-    private fun model(): SessionModel {
-        val runner = staticField(NexusSession::class.java, "runner").get(null) as SessionRunner
-        return runner.model
+    private fun runner() = staticField(NexusSession::class.java, "runner").get(null) as SessionRunner
+
+    private fun model(): SessionModel = runner().model
+
+    /** The session model of a process that just started, as every test here assumes. */
+    private fun freshSessionModel() {
+        SessionRunner::class.java.getDeclaredField("model").apply { isAccessible = true }.set(runner(), SessionModel())
     }
 
     private fun top() = (NexusSession.state as SessionState.InPage).frames.last()
