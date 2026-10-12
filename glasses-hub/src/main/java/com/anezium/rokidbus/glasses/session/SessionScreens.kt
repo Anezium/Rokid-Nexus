@@ -525,17 +525,27 @@ internal class SessionScreens(
             },
         )
         if (snapshot != null && readsFirst && frame.mode == FrameMode.READING) {
-            val document = ScreenBlock.Document(
-                "document", identity, frame.pageId, snapshot.page.revision,
-                readingSegments(body), frame.anchor, dimmed = true, footer = (body as? PageBody.Document)?.footer,
-            )
+            // A conversation is paged as the conversation it was: sides, senders, its capture
+            // caption and each message's own handoff state, dimmed, with no composer.
+            val reading = if (body is PageBody.Conversation) {
+                ScreenBlock.Conversation(
+                    CONVERSATION_BLOCK, body.caption, bubbles(body.messages), dimmed = true,
+                    frame = identity, pageId = frame.pageId, revision = snapshot.page.revision, anchor = frame.anchor,
+                )
+            } else {
+                ScreenBlock.Document(
+                    "document", identity, frame.pageId, snapshot.page.revision,
+                    readingSegments(body), frame.anchor, dimmed = true, footer = (body as? PageBody.Document)?.footer,
+                )
+            }
             val pages = frame.pageStarts.size
             return SessionScreen(
                 ScreenHeader(title.uppercase(), if (pages > 0) "${frame.page + 1}/$pages" else "back: $parent", pageIcon(frame.pageId)),
-                failure + document,
-                ScreenHint(listOfNotNull("swipe page".takeIf { pages > 1 }, "tap retry").joinToString(" · "), back),
+                failure + reading,
+                // The tap only reaches Retry and Back; a second one runs the selected row.
+                ScreenHint(listOfNotNull("swipe page".takeIf { pages > 1 }, TAP_RETRY_BACK).joinToString(" · "), back),
                 statusText,
-                "document",
+                reading.key,
             )
         }
         val retained = if (snapshot != null && !readsFirst) retainedBlocks(snapshot) else emptyList()
@@ -1142,6 +1152,9 @@ internal class SessionScreens(
         const val STILL_LOADING = "Still loading…"
         const val UNAVAILABLE_TITLE = "Detail unavailable"
         const val RETRY = "Retry"
+
+        /** Retained text being read: a tap only reaches Retry and Back, it never retries by itself. */
+        const val TAP_RETRY_BACK = "tap for Retry / Back"
         const val BACK = "Back"
         const val CANCEL = "Cancel"
         const val CONFIRM = "Confirm"
