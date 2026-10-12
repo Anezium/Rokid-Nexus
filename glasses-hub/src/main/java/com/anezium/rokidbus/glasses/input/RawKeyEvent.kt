@@ -99,6 +99,8 @@ internal enum class LauncherBackend {
             stored: String?,
             announcedBundleVersion: Int?,
             bundleDefault: LauncherBackend = BUNDLE_DEFAULT,
-        ): LauncherBackend = fromPhone(phone) ?: parse(stored) ?: defaultFor(announcedBundleVersion, bundleDefault)
+        ): LauncherBackend =
+            // The phone's choice is stored by enum name and announced in wire form; both read the same.
+            (fromPhone(phone) ?: parse(phone)) ?: parse(stored) ?: defaultFor(announcedBundleVersion, bundleDefault)
     }
 }

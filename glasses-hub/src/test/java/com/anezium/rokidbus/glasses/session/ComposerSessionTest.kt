@@ -419,13 +419,18 @@ class ComposerSessionTest {
     fun `a page answer that crossed a withdrawal while no revision was shown never reopens the draft`() {
         openThread("t1", at = 1_000)
         dictate("see you", at = 3_000)
-        // The page is closed when the withdrawal arrives: no revision to bind the loss to.
+        // The thread page is opened again and still loading when the withdrawal arrives.
         openRoot(4_000)
+        val card = root().stops.indexOfFirst { it.kind == RootStopKind.NOTICE_PREVIEW }
+        repeat(card) { send(SessionEvent.Step(1, 4_900L + it)) }
+        send(SessionEvent.Enter(5_000))
+        val request = effects.filterIsInstance<RequestPage>().single().request
+        assertEquals("relay:thread", request.correlation.pageId)
         send(SessionEvent.NoticeWithdrawn("relay", "t1"))
         assertEquals(DraftState.AUTHORITY_LOST, model.draft?.state)
 
-        // Reopening the thread: its first answer may have been computed before the withdrawal.
-        reopenThread("t1", at = 5_000)
+        // The answer in flight may have been computed before the withdrawal: it proves nothing.
+        respond(request, conversation("t1"), now = 5_100)
         assertFalse(model.draft!!.reopened)
         assertTrue(screen().footer is InlineFooter.StatusLine)
         shown(6_000)
