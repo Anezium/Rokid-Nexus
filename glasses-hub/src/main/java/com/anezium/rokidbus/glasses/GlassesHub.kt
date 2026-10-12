@@ -1440,7 +1440,12 @@ object GlassesHub {
             NexusInput.onPhoneAnnounced(it, next.launcherBackend, PhoneHubCapabilitiesContract.negotiatedLauncherInteractiveVersion(next))
         }
         val previous = remotePhoneCapabilities
-        if (next == previous) return
+        if (next == previous) {
+            // Still an answer: an older phone's all-default announcement equals what a link loss
+            // cleared to, and the collection that loss kept at the bundle's size must follow it.
+            ActivityController.onLauncherNegotiated(launcherInteractiveVersion())
+            return
+        }
         remotePhoneCapabilities = next
         log(
             "phone capabilities cameraConsumerReady=" +
