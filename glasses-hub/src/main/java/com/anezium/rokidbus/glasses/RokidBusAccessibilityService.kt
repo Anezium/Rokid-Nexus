@@ -22,6 +22,7 @@ import com.anezium.rokidbus.glasses.input.InputContext
 import com.anezium.rokidbus.glasses.input.InputDecision
 import com.anezium.rokidbus.glasses.input.KeyEventAdapter
 import com.anezium.rokidbus.glasses.input.LauncherBackend
+import com.anezium.rokidbus.glasses.input.LauncherBackendSelection
 import com.anezium.rokidbus.glasses.input.RawKeyEvent
 import com.anezium.rokidbus.glasses.input.RoutedIntent
 import com.anezium.rokidbus.glasses.session.HostScreen
@@ -2094,31 +2095,31 @@ internal object NexusInput {
     var backend: LauncherBackend = LauncherBackend.DEFAULT
         private set
 
+    @Volatile
+    private var selection: LauncherBackendSelection? = null
+
+    /** Plan 028a §8.3 over the persisted choices and last announced bundle, never the live link. */
+    private fun selection(context: Context): LauncherBackendSelection =
+        selection ?: synchronized(this) {
+            selection ?: LauncherBackendSelection(ActivityPresentationSettings.backendStore(context), ::switchTo)
+                .also { selection = it }
+        }
+
     fun onServiceConnected(service: AccessibilityService) {
         this.service = service
-        backend = resolveBackend(service)
+        // A boot before the phone connects resolves from what the last announcement left.
+        backend = selection(service).current()
         log("Launcher backend=${backend.name}")
     }
 
-    /** Plan 028a §8.3: phone explicit, then the glasses' stored choice, then the default. */
-    private fun resolveBackend(context: Context): LauncherBackend = LauncherBackend.resolve(
-        phone = ActivityPresentationSettings.phoneLauncherBackend(context),
-        stored = ActivityPresentationSettings.launcherBackend(context),
-        bundleNegotiated = GlassesHub.launcherInteractiveActive(),
-    )
-
     /**
-     * The phone announced its capabilities: [value] is its explicit backend, null for no opinion.
-     * It is recorded apart from the glasses' own choice, which it outranks without erasing.
+     * The phone announced its capabilities: [value] is its explicit backend, null for no opinion,
+     * and [negotiatedBundleVersion] the launcher bundle both hubs share by this announcement. Both
+     * are recorded apart from the glasses' own choice, which the phone's outranks without erasing.
+     * A link loss never comes here, so it never moves the launcher or aborts an open session.
      */
-    fun onPhoneBackend(context: Context, value: String?) {
-        ActivityPresentationSettings.setPhoneLauncherBackend(context.applicationContext, LauncherBackend.fromPhone(value)?.name)
-        switchTo(resolveBackend(context.applicationContext))
-    }
-
-    /** The bundle was negotiated or lost: only the default can follow it, never a choice. */
-    fun onLauncherNegotiated(context: Context) {
-        switchTo(resolveBackend(context.applicationContext))
+    fun onPhoneAnnounced(context: Context, value: String?, negotiatedBundleVersion: Int) {
+        selection(context).onPhoneAnnounced(value, negotiatedBundleVersion)
     }
 
     fun onServiceDestroyed() {
@@ -2136,10 +2137,8 @@ internal object NexusInput {
 
     /** The glasses' own explicit choice: stored as `launcher.backend`, applied unless the phone's outranks it. */
     fun setBackend(context: Context, next: LauncherBackend) {
-        ActivityPresentationSettings.setLauncherBackend(context.applicationContext, next.name)
-        val effective = resolveBackend(context.applicationContext)
+        val effective = selection(context).onGlassesChoice(next)
         if (effective != next) log("Launcher backend ${next.name} stored; the phone's explicit ${effective.name} applies")
-        switchTo(effective)
     }
 
     /**

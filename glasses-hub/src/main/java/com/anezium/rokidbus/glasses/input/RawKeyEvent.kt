@@ -67,15 +67,21 @@ internal enum class LauncherBackend {
     companion object {
         val DEFAULT = LEGACY
 
+        /**
+         * The default once the phone has announced the launcher bundle. It stays LEGACY until the
+         * acceptance commit of plan 028a §8.3 changes this one value to SESSION; LEGACY remains the
+         * rollback and the fallback before any announcement and for older phones.
+         */
+        val BUNDLE_DEFAULT = LEGACY
+
         fun parse(value: String?): LauncherBackend? = entries.firstOrNull { it.name == value }
 
         /**
-         * The backend nobody chose. It stays [DEFAULT] whether or not the pair negotiated the
-         * launcher bundle; plan 028a §8.3 turns it to SESSION over the bundle only in the final
-         * acceptance commit, and LEGACY stays the rollback and old phones' fallback.
+         * The backend nobody chose, from the bundle version the phone last announced (persisted,
+         * never the live link): [bundleDefault] over the bundle, [DEFAULT] otherwise.
          */
-        @Suppress("UNUSED_PARAMETER")
-        fun defaultFor(bundleNegotiated: Boolean): LauncherBackend = DEFAULT
+        fun defaultFor(announcedBundleVersion: Int?, bundleDefault: LauncherBackend = BUNDLE_DEFAULT): LauncherBackend =
+            if (LauncherBackendSelection.bundleActive(announcedBundleVersion)) bundleDefault else DEFAULT
 
         /** The phone's `launcherBackend` capability value, or null for no opinion. */
         fun fromPhone(value: String?): LauncherBackend? = when (value) {
@@ -88,7 +94,11 @@ internal enum class LauncherBackend {
          * Plan 028a §8.3: the phone's explicit choice, then the glasses' stored `launcher.backend`,
          * then the default. Each choice keeps its own record, so switching never erases another.
          */
-        fun resolve(phone: String?, stored: String?, bundleNegotiated: Boolean): LauncherBackend =
-            fromPhone(phone) ?: parse(stored) ?: defaultFor(bundleNegotiated)
+        fun resolve(
+            phone: String?,
+            stored: String?,
+            announcedBundleVersion: Int?,
+            bundleDefault: LauncherBackend = BUNDLE_DEFAULT,
+        ): LauncherBackend = fromPhone(phone) ?: parse(stored) ?: defaultFor(announcedBundleVersion, bundleDefault)
     }
 }

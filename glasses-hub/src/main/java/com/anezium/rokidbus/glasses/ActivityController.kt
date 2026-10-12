@@ -1,5 +1,6 @@
 package com.anezium.rokidbus.glasses
 
+import com.anezium.rokidbus.glasses.input.LauncherBackendSelection
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
@@ -555,6 +556,7 @@ internal object ActivityPresentationSettings {
     private const val ALWAYS_EXPANDED = "always_expanded"
     private const val LAUNCHER_BACKEND = "launcher.backend"
     private const val PHONE_LAUNCHER_BACKEND = "launcher.backend.phone"
+    private const val ANNOUNCED_LAUNCHER_BUNDLE = "launcher.bundle.announced"
 
     fun alwaysExpanded(context: Context): Boolean =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -597,6 +599,34 @@ internal object ActivityPresentationSettings {
         prefs.edit()
             .apply { if (value == null) remove(PHONE_LAUNCHER_BACKEND) else putString(PHONE_LAUNCHER_BACKEND, value) }
             .apply()
+    }
+
+    /**
+     * The launcher-bundle version the last phone announcement negotiated, null before any. It
+     * outlives link losses and reboots so the default launcher does not follow the live link.
+     */
+    fun announcedLauncherBundle(context: Context): Int? {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        return if (prefs.contains(ANNOUNCED_LAUNCHER_BUNDLE)) prefs.getInt(ANNOUNCED_LAUNCHER_BUNDLE, 0) else null
+    }
+
+    fun setAnnouncedLauncherBundle(context: Context, version: Int) {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        if (prefs.contains(ANNOUNCED_LAUNCHER_BUNDLE) && prefs.getInt(ANNOUNCED_LAUNCHER_BUNDLE, 0) == version) return
+        prefs.edit().putInt(ANNOUNCED_LAUNCHER_BUNDLE, version).apply()
+    }
+
+    /** The backend selection's store over these preferences. */
+    fun backendStore(context: Context): LauncherBackendSelection.Store {
+        val app = context.applicationContext ?: context
+        return object : LauncherBackendSelection.Store {
+            override fun phoneBackend(): String? = phoneLauncherBackend(app)
+            override fun setPhoneBackend(value: String?) = setPhoneLauncherBackend(app, value)
+            override fun glassesBackend(): String? = launcherBackend(app)
+            override fun setGlassesBackend(value: String) = setLauncherBackend(app, value)
+            override fun announcedBundleVersion(): Int? = announcedLauncherBundle(app)
+            override fun setAnnouncedBundleVersion(version: Int) = setAnnouncedLauncherBundle(app, version)
+        }
     }
 }
 

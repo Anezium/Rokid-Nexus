@@ -152,18 +152,19 @@ class GuidanceIslandTest {
 
     @Test
     fun `the phone's explicit backend outranks the glasses' stored one, which outranks the default`() {
-        assertEquals(LauncherBackend.SESSION, LauncherBackend.resolve(phone = "session", stored = "LEGACY", bundleNegotiated = true))
-        assertEquals(LauncherBackend.LEGACY, LauncherBackend.resolve(phone = "legacy", stored = "SESSION", bundleNegotiated = true))
-        assertEquals(LauncherBackend.SESSION, LauncherBackend.resolve(phone = null, stored = "SESSION", bundleNegotiated = false))
-        assertEquals(LauncherBackend.SESSION, LauncherBackend.resolve(phone = "unknown", stored = "SESSION", bundleNegotiated = true))
+        assertEquals(LauncherBackend.SESSION, LauncherBackend.resolve(phone = "session", stored = "LEGACY", announcedBundleVersion = 1))
+        assertEquals(LauncherBackend.LEGACY, LauncherBackend.resolve(phone = "legacy", stored = "SESSION", announcedBundleVersion = 1))
+        assertEquals(LauncherBackend.SESSION, LauncherBackend.resolve(phone = null, stored = "SESSION", announcedBundleVersion = null))
+        assertEquals(LauncherBackend.SESSION, LauncherBackend.resolve(phone = "unknown", stored = "SESSION", announcedBundleVersion = 1))
     }
 
     @Test
-    fun `nobody's choice keeps the legacy default in this lane, negotiated or not`() {
+    fun `nobody's choice keeps the legacy default until the acceptance flip, announced or not`() {
         assertEquals(LauncherBackend.LEGACY, LauncherBackend.DEFAULT)
-        assertEquals(LauncherBackend.LEGACY, LauncherBackend.resolve(phone = null, stored = null, bundleNegotiated = true))
-        assertEquals(LauncherBackend.LEGACY, LauncherBackend.resolve(phone = null, stored = null, bundleNegotiated = false))
-        assertEquals(LauncherBackend.LEGACY, LauncherBackend.resolve(phone = null, stored = "garbage", bundleNegotiated = true))
+        assertEquals(LauncherBackend.LEGACY, LauncherBackend.BUNDLE_DEFAULT)
+        assertEquals(LauncherBackend.LEGACY, LauncherBackend.resolve(phone = null, stored = null, announcedBundleVersion = 1))
+        assertEquals(LauncherBackend.LEGACY, LauncherBackend.resolve(phone = null, stored = null, announcedBundleVersion = null))
+        assertEquals(LauncherBackend.LEGACY, LauncherBackend.resolve(phone = null, stored = "garbage", announcedBundleVersion = 1))
         assertNull(LauncherBackend.fromPhone(null))
     }
 

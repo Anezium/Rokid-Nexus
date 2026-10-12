@@ -1435,8 +1435,9 @@ object GlassesHub {
                 manualDp = next.hudTopInsetDp,
                 auto = next.hudPositionAuto,
             )
-            // Every announcement states the phone's backend choice, absent meaning no opinion.
-            NexusInput.onPhoneBackend(it, next.launcherBackend)
+            // Every announcement states the phone's backend choice, absent meaning no opinion, and
+            // the bundle it negotiates; the launcher default follows this, never the live link.
+            NexusInput.onPhoneAnnounced(it, next.launcherBackend, PhoneHubCapabilitiesContract.negotiatedLauncherInteractiveVersion(next))
         }
         val previous = remotePhoneCapabilities
         if (next == previous) return
@@ -1496,7 +1497,6 @@ object GlassesHub {
         log("launcher bundle negotiated version=$version")
         ActivityController.onLauncherNegotiated(version, linkLost)
         NexusSession.onLauncherNegotiated()
-        appContext?.let(NexusInput::onLauncherNegotiated)
     }
 
     private fun errorEnvelope(id: String, code: String): BusEnvelope =
