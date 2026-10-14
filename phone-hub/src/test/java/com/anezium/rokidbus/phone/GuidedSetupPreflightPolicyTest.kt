@@ -73,8 +73,22 @@ class GuidedSetupPreflightPolicyTest {
             developerOptionsReady = true,
             coreReady = false,
         )
-        assertEquals(GuidedCheckId.entries.toSet(), preflight.checks.map { it.id }.toSet())
+        // The glasses' own pairing is only inspected by Re-pair glasses.
+        assertEquals(
+            GuidedCheckId.entries.toSet() - GuidedCheckId.SELF_PAIRING,
+            preflight.checks.map { it.id }.toSet(),
+        )
         assertEquals(GuidedCheckId.ACCESSIBILITY, preflight.blocking)
+        val repair = GuidedSetupPreflightPolicy.evaluate(
+            linkReady = true,
+            glassesAppRunning = true,
+            accessibilityEnabled = false,
+            wifiReady = true,
+            developerOptionsReady = true,
+            coreReady = false,
+            repair = true,
+        )
+        assertEquals(GuidedCheckId.entries.toSet(), repair.checks.map { it.id }.toSet())
     }
 
     /**
