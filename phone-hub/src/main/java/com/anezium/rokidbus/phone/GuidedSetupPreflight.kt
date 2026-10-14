@@ -30,6 +30,13 @@ internal enum class GuidedCheckId {
 
     /** Not blocking: Nexus unlocks this itself during the run. Shown so the owner sees why. */
     DEVELOPER,
+
+    /**
+     * Re-pair only: the glasses hold a pairing of their own, which is what lets them revive their
+     * helper after every restart. Core readiness says nothing about it — a phone-driven arm
+     * brings the helper back once without it.
+     */
+    SELF_PAIRING,
 }
 
 internal data class GuidedCheck(
@@ -43,6 +50,8 @@ internal data class GuidedPreflight(
     val blocking: GuidedCheckId?,
     /** True when the observed state already satisfies setup: offer a way out, not a wizard. */
     val alreadyComplete: Boolean,
+    /** Re-pair only: the glasses cannot maintain themselves until they pair again. */
+    val needsPairing: Boolean = false,
 )
 
 internal object GuidedSetupPreflightPolicy {
@@ -50,6 +59,10 @@ internal object GuidedSetupPreflightPolicy {
      * [coreReady] is the glasses' own verdict (accessibility on and secure settings granted). When
      * it holds there is nothing left to guide, whatever the other signals say — a unit armed
      * through the documented pm grant path never needed the pairing at all.
+     *
+     * [repair] is the maintenance entry an owner opens after setup, when the helper keeps dying:
+     * there, core readiness is exactly what is not in question, and only [maintenanceReady] —
+     * the glasses' own pairing — says whether anything is left to do.
      */
     fun evaluate(
         linkReady: Boolean,
@@ -58,21 +71,35 @@ internal object GuidedSetupPreflightPolicy {
         wifiReady: Boolean,
         developerOptionsReady: Boolean,
         coreReady: Boolean,
+        repair: Boolean = false,
+        maintenanceReady: Boolean = false,
     ): GuidedPreflight {
-        val checks = listOf(
+        val checks = listOfNotNull(
             GuidedCheck(GuidedCheckId.LINK, linkReady),
             GuidedCheck(GuidedCheckId.GLASSES_APP, glassesAppRunning),
             GuidedCheck(GuidedCheckId.ACCESSIBILITY, accessibilityEnabled),
             GuidedCheck(GuidedCheckId.WIFI, wifiReady),
             GuidedCheck(GuidedCheckId.DEVELOPER, developerOptionsReady),
+            GuidedCheck(GuidedCheckId.SELF_PAIRING, maintenanceReady).takeIf { repair },
         )
+        val needsPairing = repair && !maintenanceReady
         if (coreReady) {
-            return GuidedPreflight(checks = checks, blocking = null, alreadyComplete = true)
+            return GuidedPreflight(
+                checks = checks,
+                blocking = null,
+                alreadyComplete = !needsPairing,
+                needsPairing = needsPairing,
+            )
         }
         val blocking = BLOCKING_ORDER.firstOrNull { id ->
             checks.first { it.id == id }.satisfied.not()
         }
-        return GuidedPreflight(checks = checks, blocking = blocking, alreadyComplete = false)
+        return GuidedPreflight(
+            checks = checks,
+            blocking = blocking,
+            alreadyComplete = false,
+            needsPairing = needsPairing,
+        )
     }
 
     /**
@@ -87,6 +114,8 @@ internal object GuidedSetupPreflightPolicy {
         linkReady: Boolean,
         reportedStage: String,
         coreReady: Boolean,
+        repair: Boolean = false,
+        maintenanceReady: Boolean = false,
     ): GuidedPreflight {
         val reported = reportedStage.isNotBlank()
         return evaluate(
@@ -104,6 +133,8 @@ internal object GuidedSetupPreflightPolicy {
             // The glasses do not advertise this, and Nexus unlocks it during the run anyway.
             developerOptionsReady = true,
             coreReady = coreReady,
+            repair = repair,
+            maintenanceReady = maintenanceReady,
         )
     }
 
