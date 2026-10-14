@@ -221,7 +221,7 @@ class RokidBusAccessibilityService : AccessibilityService() {
         displayStandbyWatchdog.stop()
         NexusSession.onServiceDestroyed()
         NexusInput.onServiceDestroyed()
-        wirelessDebuggingAutomator?.stop()
+        wirelessDebuggingAutomator?.stop(SetupDisplayHoldEnd.SERVICE_DESTROYED)
         developerOptionsEnabler?.stop()
         pauseSetupWifiEnableIfActive(SetupStage.ENABLING_WIFI)
         unregisterWifiResumeCallback()
