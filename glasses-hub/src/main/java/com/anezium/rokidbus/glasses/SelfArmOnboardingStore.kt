@@ -133,6 +133,25 @@ internal object SelfArmOnboardingStore {
         return canMutateSession(context, sessionId)
     }
 
+    /**
+     * The session is current and, if it claims to be running, still heartbeating. A running
+     * session whose lease expired is dead even though nothing has finished it yet.
+     */
+    fun isSessionLive(
+        context: Context,
+        sessionId: String,
+        nowMillis: Long = System.currentTimeMillis(),
+    ): Boolean {
+        if (!isCurrentSession(context, sessionId)) return false
+        val preferences = prefs(context)
+        return !preferences.getBoolean(KEY_RUNNING, false) ||
+            SelfArmSessionPolicy.leaseValid(
+                nowMillis = nowMillis,
+                lastHeartbeatMillis = preferences.getLong(KEY_LAST_HEARTBEAT, 0L),
+                timeoutMillis = LEASE_TIMEOUT_MS,
+            )
+    }
+
     /** Running work uses its normal lease; paused user work gets a longer abandonment window. */
     fun isWifiStillNeededBySetup(
         context: Context,
@@ -357,6 +376,7 @@ internal object SelfArmOnboardingStore {
         writeFinished(context, setupState, success, diagnostic, completionMode)
         GlassesHub.onSetupSessionTerminal(context, sessionId)
         RokidBusAccessibilityService.onSetupSessionEnded(sessionId)
+        SelfArmLocalAdbBootstrapper.onSetupSessionEnded(sessionId)
     }
 
     private fun writeFinished(
@@ -406,6 +426,7 @@ internal object SelfArmOnboardingStore {
             .apply()
         if (invalidatedSessionId.isNotBlank()) {
             GlassesHub.onSetupSessionTerminal(context, invalidatedSessionId)
+            SelfArmLocalAdbBootstrapper.onSetupSessionEnded(invalidatedSessionId)
         }
         notifyChanged(context)
     }

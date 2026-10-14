@@ -297,8 +297,10 @@ internal object SelfArmController {
             // Not bootstrapped means the unit cannot spawn its own watchdog or command bridge, and
             // never will until it pairs: those are shell processes that a privileged session has to
             // start, and every reboot takes them with it. Ask for that pairing instead of logging
-            // the same no-op forever.
+            // the same no-op forever. The owner's repair asks for it itself, because the answer
+            // to that request is what the owner is told.
             if (!bootstrapComplete &&
+                reason != SelfArmBootRepairCoordinator.OWNER_REPAIR_REASON &&
                 (sessionId == null || SelfArmOnboardingStore.isCurrentSession(context, sessionId))
             ) {
                 SelfArmLocalAdbBootstrapper.requestSelfPairing(context)

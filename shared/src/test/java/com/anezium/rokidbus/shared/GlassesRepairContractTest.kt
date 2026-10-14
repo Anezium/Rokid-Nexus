@@ -50,6 +50,49 @@ class GlassesRepairContractTest {
     }
 
     @Test
+    fun `a version 1 request is a plain repair and only hears legacy results`() {
+        val legacy = JSONObject().put("version", 1)
+        assertFalse(GlassesRepairContract.requestIsPairingAware(legacy))
+        assertFalse(GlassesRepairContract.requestIsPairingAware(null))
+        // A version 1 phone never sent a mode, and one forged onto it is not honoured.
+        assertEquals(
+            GlassesRepairContract.MODE_REPAIR,
+            GlassesRepairContract.modeFromRequest(legacy.put("mode", GlassesRepairContract.MODE_PAIR)),
+        )
+        listOf(
+            GlassesRepairContract.RESULT_PARTIAL,
+            GlassesRepairContract.RESULT_PAIRING_PENDING,
+            GlassesRepairContract.RESULT_PAIRING_REQUIRED,
+        ).forEach { result ->
+            assertEquals(
+                GlassesRepairContract.RESULT_ARM_FAILED,
+                GlassesRepairContract.resultForRequester(result, requesterPairingAware = false),
+            )
+            assertEquals(result, GlassesRepairContract.resultForRequester(result, requesterPairingAware = true))
+        }
+        GlassesRepairContract.LEGACY_RESULTS.forEach { result ->
+            assertEquals(result, GlassesRepairContract.resultForRequester(result, requesterPairingAware = false))
+        }
+    }
+
+    @Test
+    fun `a pairing-aware request carries its mode and defaults to repair`() {
+        val pair = GlassesRepairContract.requestToJson(GlassesRepairContract.MODE_PAIR)
+        assertTrue(GlassesRepairContract.requestIsPairingAware(pair))
+        assertEquals(GlassesRepairContract.MODE_PAIR, GlassesRepairContract.modeFromRequest(pair))
+        assertEquals(
+            GlassesRepairContract.MODE_REPAIR,
+            GlassesRepairContract.modeFromRequest(GlassesRepairContract.requestToJson()),
+        )
+        assertEquals(
+            GlassesRepairContract.MODE_REPAIR,
+            GlassesRepairContract.modeFromRequest(
+                GlassesRepairContract.requestToJson().put("mode", "reformat"),
+            ),
+        )
+    }
+
+    @Test
     fun `an owner who never touched the switch gets the repair`() {
         assertTrue(GlassesRepairContract.DEFAULT_AUTO_REPAIR)
         assertFalse(GlassesRepairContract.RESULTS.isEmpty())

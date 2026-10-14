@@ -340,7 +340,12 @@ object GlassesHub {
                 sendRemote(errorEnvelope(envelope.id, "HUB_NOT_READY"))
                 return
             }
-            SelfArmBootRepairCoordinator.runOwnerRepair(context) { result ->
+            val pairingAware = GlassesRepairContract.requestIsPairingAware(envelope.payload)
+            SelfArmBootRepairCoordinator.runOwnerRepair(
+                context,
+                mode = GlassesRepairContract.modeFromRequest(envelope.payload),
+            ) { verdict ->
+                val result = GlassesRepairContract.resultForRequester(verdict, pairingAware)
                 val error = sendRemote(
                     BusEnvelope(
                         path = BusPaths.GLASSES_REPAIR_REPLY,
@@ -348,7 +353,7 @@ object GlassesHub {
                         payload = GlassesRepairContract.replyToJson(result),
                     ),
                 )
-                log("glassesRepair result=$result replyError=${error ?: "none"}")
+                log("glassesRepair result=$result verdict=$verdict replyError=${error ?: "none"}")
             }
             return
         }

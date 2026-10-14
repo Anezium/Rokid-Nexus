@@ -18,6 +18,7 @@ internal object SelfArmBridgeLivenessStore {
     private const val KEY_ARMED_BOOT_INSTANT = "armed_boot_instant"
     private const val KEY_ARMED_BRIDGE_VERSION = "armed_bridge_version"
     private const val KEY_ARMED_TLS_PORT = "armed_tls_port"
+    private const val KEY_ARMED_BRIDGE_RUNNING = "armed_bridge_running"
 
     private val bridgeDemandUnanswered = AtomicBoolean(false)
 
@@ -26,6 +27,7 @@ internal object SelfArmBridgeLivenessStore {
             .putLong(KEY_ARMED_BOOT_INSTANT, currentBootInstantMillis())
             .putString(KEY_ARMED_BRIDGE_VERSION, SelfArmConstants.BRIDGE_VERSION)
             .putInt(KEY_ARMED_TLS_PORT, tlsPort)
+            .putBoolean(KEY_ARMED_BRIDGE_RUNNING, bridgeRunning)
             .commit()
         // A bridge the arm could not start leaves the demand standing, so the next radio
         // opportunity keeps trying instead of declaring victory on the watchdog alone.
@@ -34,6 +36,18 @@ internal object SelfArmBridgeLivenessStore {
 
     fun armedBootInstantMillis(context: Context): Long? =
         prefs(context).getLong(KEY_ARMED_BOOT_INSTANT, 0L).takeIf { it != 0L }
+
+    /** Absent on installs armed before it was recorded: read as not running, never as running. */
+    fun armedBridgeRunning(context: Context): Boolean =
+        prefs(context).getBoolean(KEY_ARMED_BRIDGE_RUNNING, false)
+
+    fun helperRecord(context: Context): SelfArmOwnerRepairPolicy.HelperRecord =
+        SelfArmOwnerRepairPolicy.helperRecord(
+            armedBootInstantMs = armedBootInstantMillis(context),
+            armedBridgeRunning = armedBridgeRunning(context),
+            currentBootInstantMs = currentBootInstantMillis(),
+            bridgeDemandPending = isBridgeDemandPending(),
+        )
 
     fun presumedDead(context: Context): Boolean =
         SelfArmBridgeLivenessPolicy.presumedDead(

@@ -21,7 +21,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 internal object SelfArmBootRepairCoordinator {
     /** Not a bridge_liveness: reason — the owner asked, so re-pairing escalation is allowed. */
-    private const val OWNER_REPAIR_REASON = "boot_repair:owner_request"
+    internal const val OWNER_REPAIR_REASON = "boot_repair:owner_request"
 
     private val handler = Handler(Looper.getMainLooper())
     private val repairRunning = AtomicBoolean(false)
@@ -42,11 +42,16 @@ internal object SelfArmBootRepairCoordinator {
      * The phone's "repair now". Runs the same repair as the boot path, popup included when the
      * radio is down, and always answers [onResult] exactly once with a
      * [GlassesRepairContract] result code. Not throttled by the boot latch: the owner pressed a
-     * button and is watching.
+     * button and is watching. [GlassesRepairContract.MODE_PAIR] skips the arm and asks the
+     * glasses to pair themselves again.
      */
-    fun runOwnerRepair(context: Context, onResult: (String) -> Unit) {
+    fun runOwnerRepair(
+        context: Context,
+        mode: String = GlassesRepairContract.MODE_REPAIR,
+        onResult: (String) -> Unit,
+    ) {
         val appContext = context.applicationContext
-        handler.post { startOwnerRepair(appContext, onResult) }
+        handler.post { startOwnerRepair(appContext, mode, onResult) }
     }
 
     internal fun isRepairRunning(): Boolean = repairRunning.get()
@@ -116,9 +121,8 @@ internal object SelfArmBootRepairCoordinator {
         }
     }
 
-    private fun startOwnerRepair(context: Context, onResult: (String) -> Unit) {
-        if (SelfArmOnboardingStore.currentActiveSessionId(context).isNotBlank()) {
-            log("Owner repair refused reason=setup_session_active")
+    private fun startOwnerRepair(context: Context, mode: String, onResult: (String) -> Unit) {
+        if (!clearSetupSessionForOwner(context)) {
             onResult(GlassesRepairContract.RESULT_BUSY)
             return
         }
@@ -127,24 +131,41 @@ internal object SelfArmBootRepairCoordinator {
             onResult(GlassesRepairContract.RESULT_BUSY)
             return
         }
-        val wasPresumedDead = SelfArmBridgeLivenessStore.presumedDead(context)
-        val demandPending = SelfArmBridgeLivenessStore.isBridgeDemandPending()
+        val before = SelfArmBridgeLivenessStore.helperRecord(context)
+        val bootstrapComplete = SelfArmLocalAdbBootstrapper.isBootstrapComplete(context)
         val wifiWasOff = !SelfArmWirelessAdbController.isWifiEnabled(context)
         log(
-            "Owner repair starting presumedDead=$wasPresumedDead demandPending=$demandPending " +
-                "wifiOff=$wifiWasOff",
+            "Owner repair starting mode=$mode helperRecord=$before " +
+                "bootstrapComplete=$bootstrapComplete wifiOff=$wifiWasOff",
         )
-        if (!wifiWasOff) {
-            // The radio is already up: the arm can talk right now, no Settings run needed.
-            runOwnerArm(context, wasPresumedDead, wifiWasOff = false, onResult = onResult)
+        if (mode == GlassesRepairContract.MODE_PAIR) {
+            finishOwnerRepair(
+                context,
+                armed = false,
+                bridgeRunning = false,
+                before = before,
+                requestPairing = true,
+                onResult = onResult,
+            )
             return
         }
-        if (!wasPresumedDead && !demandPending) {
-            // Nothing on record says the helper is missing, and with the radio down the only way
-            // to double-check is the popup — which would cost the wearer a Settings run just to
-            // prove what the records already say.
-            repairRunning.set(false)
-            onResult(GlassesRepairContract.RESULT_ALREADY_HEALTHY)
+        if (!wifiWasOff || !bootstrapComplete) {
+            // With the radio up the arm can talk right now. Without a pairing of its own the arm
+            // cannot run at all, and the pairing run brings the radio up itself — no popup here.
+            runOwnerArm(context, before, wifiWasOff = false, onResult = onResult)
+            return
+        }
+        if (SelfArmOwnerRepairPolicy.mayAnswerHealthyWithoutMeasuring(before)) {
+            // Armed with its bridge this boot and nothing has failed since: the popup would only
+            // prove what the record already says.
+            finishOwnerRepair(
+                context,
+                armed = true,
+                bridgeRunning = true,
+                before = before,
+                requestPairing = false,
+                onResult = onResult,
+            )
             return
         }
         val started = RokidBusAccessibilityService.requestRepairWifiEnable { wifiEnabled ->
@@ -154,7 +175,7 @@ internal object SelfArmBootRepairCoordinator {
                     log("Owner repair abandoned reason=wifi_automation_failed")
                     onResult(GlassesRepairContract.RESULT_WIFI_UNAVAILABLE)
                 } else {
-                    runOwnerArm(context, wasPresumedDead, wifiWasOff = true, onResult = onResult)
+                    runOwnerArm(context, before, wifiWasOff = true, onResult = onResult)
                 }
             }
         }
@@ -165,9 +186,34 @@ internal object SelfArmBootRepairCoordinator {
         }
     }
 
+    /**
+     * False when a run is genuinely in progress. A session nothing is driving any more is
+     * dropped instead: answering busy to it forever is how an owner ended up with no way back.
+     */
+    private fun clearSetupSessionForOwner(context: Context): Boolean {
+        val sessionId = SelfArmOnboardingStore.currentActiveSessionId(context)
+        val disposition = SelfArmOwnerRepairPolicy.sessionDisposition(
+            sessionActive = sessionId.isNotBlank(),
+            sessionRunningWithValidLease = SelfArmOnboardingStore.snapshot(context).setupRunning,
+            manualArmInProgress = SelfArmOnboardingStore.isManualArmInProgress(context),
+        )
+        return when (disposition) {
+            SelfArmOwnerRepairPolicy.SessionDisposition.PROCEED -> true
+            SelfArmOwnerRepairPolicy.SessionDisposition.BUSY -> {
+                log("Owner repair refused reason=setup_session_active")
+                false
+            }
+            SelfArmOwnerRepairPolicy.SessionDisposition.SUPERSEDE -> {
+                log("Owner repair superseding idle setup session")
+                SelfArmOnboardingStore.invalidateSession(context)
+                true
+            }
+        }
+    }
+
     private fun runOwnerArm(
         context: Context,
-        wasPresumedDead: Boolean,
+        before: SelfArmOwnerRepairPolicy.HelperRecord,
         wifiWasOff: Boolean,
         onResult: (String) -> Unit,
     ) {
@@ -181,19 +227,22 @@ internal object SelfArmBootRepairCoordinator {
             reason = OWNER_REPAIR_REASON,
             restartWatchdog = false,
         ) { result ->
-            handler.post { finishOwnerArm(context, wasPresumedDead, wifiWasOff, result, onResult) }
+            handler.post { finishOwnerArm(context, before, wifiWasOff, result, onResult) }
         }
         if (!accepted) {
             // A background arm already holds the single-flight; report its outcome once it lands
-            // instead of racing it with a second run.
+            // instead of racing it with a second run. Only an arm on record for this boot counts:
+            // no record at all is unknown, not landed.
             SelfArmController.runWhenIdle {
                 handler.post {
-                    val result = if (SelfArmBridgeLivenessStore.presumedDead(context)) {
-                        SelfArmWatchdogEnsureResult.FAILED
-                    } else {
+                    val landed = SelfArmBridgeLivenessStore.armedBootInstantMillis(context) != null &&
+                        !SelfArmBridgeLivenessStore.presumedDead(context)
+                    val result = if (landed) {
                         SelfArmWatchdogEnsureResult.READY
+                    } else {
+                        SelfArmWatchdogEnsureResult.FAILED
                     }
-                    finishOwnerArm(context, wasPresumedDead, wifiWasOff, result, onResult)
+                    finishOwnerArm(context, before, wifiWasOff, result, onResult)
                 }
             }
         }
@@ -201,21 +250,24 @@ internal object SelfArmBootRepairCoordinator {
 
     private fun finishOwnerArm(
         context: Context,
-        wasPresumedDead: Boolean,
+        before: SelfArmOwnerRepairPolicy.HelperRecord,
         wifiWasOff: Boolean,
         result: SelfArmWatchdogEnsureResult,
         onResult: (String) -> Unit,
     ) {
         val armed = result == SelfArmWatchdogEnsureResult.READY
-        log("Owner repair arm finished result=$result wifiWasOff=$wifiWasOff")
+        // A successful arm has just put its own measurement on record, bridge included.
+        val bridgeRunning = armed && SelfArmBridgeLivenessStore.armedBridgeRunning(context)
+        log("Owner repair arm finished result=$result bridge=$bridgeRunning wifiWasOff=$wifiWasOff")
         val complete = {
-            repairRunning.set(false)
-            onResult(
-                when {
-                    !armed -> GlassesRepairContract.RESULT_ARM_FAILED
-                    !wasPresumedDead -> GlassesRepairContract.RESULT_ALREADY_HEALTHY
-                    else -> GlassesRepairContract.RESULT_REPAIRED
-                },
+            finishOwnerRepair(
+                context = context,
+                armed = armed,
+                bridgeRunning = bridgeRunning,
+                before = before,
+                // Read after the arm: a refused credential may have just been dropped.
+                requestPairing = !armed && !SelfArmLocalAdbBootstrapper.isBootstrapComplete(context),
+                onResult = onResult,
             )
         }
         if (wifiWasOff) {
@@ -225,6 +277,25 @@ internal object SelfArmBootRepairCoordinator {
         } else {
             complete()
         }
+    }
+
+    private fun finishOwnerRepair(
+        context: Context,
+        armed: Boolean,
+        bridgeRunning: Boolean,
+        before: SelfArmOwnerRepairPolicy.HelperRecord,
+        requestPairing: Boolean,
+        onResult: (String) -> Unit,
+    ) {
+        val pairing = if (requestPairing) {
+            SelfArmLocalAdbBootstrapper.requestSelfPairing(context, owner = true)
+        } else {
+            null
+        }
+        val verdict = SelfArmOwnerRepairPolicy.verdict(armed, bridgeRunning, before, pairing)
+        log("Owner repair verdict=$verdict pairing=${pairing?.logValue ?: "not_requested"}")
+        repairRunning.set(false)
+        onResult(verdict)
     }
 
     private fun restoreWifiIfOwed(
