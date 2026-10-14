@@ -53,17 +53,30 @@ class GlassesManualPairingEngineTest {
         val failed = fixture(FakeBackend(pairFailure = IOException("pairing failed")))
         assertTrue(failed.engine.submit(HOST, PAIR_PORT, CODE, allowStartFromIdle = true))
         assertTrue(failed.engine.state is GlassesManualPairingState.ERROR)
-        assertEquals(listOf(false), failed.control.abandonedPairingCloses)
+        assertEquals(listOf<String?>(null), failed.control.abandonedPairingCloses)
 
         val cancelled = fixture()
+        cancelled.engine.cancel(abandonSessionId = "session-1")
         cancelled.engine.cancel()
-        cancelled.engine.cancel(abandonPairing = false)
-        assertEquals(listOf(true, false), cancelled.control.abandonedPairingCloses)
+        assertEquals(listOf("session-1", null), cancelled.control.abandonedPairingCloses)
 
         // The hub shutting down closes the engine; nobody cancelled anything.
         val closed = fixture()
         closed.engine.close()
-        assertEquals(listOf(false), closed.control.abandonedPairingCloses)
+        assertEquals(listOf<String?>(null), closed.control.abandonedPairingCloses)
+    }
+
+    @Test
+    fun leavingAScreenThatStartedNoPairingAbandonsNothing() {
+        // Opened, looked at, left: an IDLE engine and no session adopted from the glasses. A
+        // Repair-now or background pairing running on the lens is not this screen's to end.
+        val fixture = fixture()
+        assertEquals(GlassesManualPairingState.IDLE, fixture.engine.state)
+
+        fixture.engine.cancel(abandonSessionId = null)
+        fixture.engine.cancel(abandonSessionId = "")
+
+        assertEquals(listOf<String?>(null, null), fixture.control.abandonedPairingCloses)
     }
 
     @Test
@@ -508,17 +521,17 @@ class GlassesManualPairingEngineTest {
         val actions = mutableListOf<GlassesManualControlAction>()
         val requestIds = mutableListOf<String>()
 
-        val abandonedPairingCloses = mutableListOf<Boolean>()
+        val abandonedPairingCloses = mutableListOf<String?>()
 
         override fun send(
             requestId: String,
             action: GlassesManualControlAction,
             armed: Boolean,
-            abandonPairing: Boolean,
+            abandonSessionId: String?,
         ): String? {
             requestIds += requestId
             actions += action
-            if (action == GlassesManualControlAction.CLOSE) abandonedPairingCloses += abandonPairing
+            if (action == GlassesManualControlAction.CLOSE) abandonedPairingCloses += abandonSessionId
             return null
         }
     }

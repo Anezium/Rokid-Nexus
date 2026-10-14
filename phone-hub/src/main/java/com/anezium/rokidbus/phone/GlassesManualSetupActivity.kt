@@ -75,6 +75,10 @@ class GlassesManualSetupActivity : Activity() {
     private var repairClient: BusClient? = null
     private var repairRequestInFlight = false
 
+    // The glasses' pairing session this screen's Re-pair started, as their reply named it. Only
+    // that run is ended when the owner leaves: one started elsewhere is not this screen's to end.
+    private var pairingSessionId: String? = null
+
     // The preflight is drawn from what the lens has reported, so it has to redraw when that
     // changes — otherwise waking the glasses app leaves the screen still insisting it is down.
     // Marshalled, because these updates arrive on a Binder thread.
@@ -103,6 +107,7 @@ class GlassesManualSetupActivity : Activity() {
             advancedEndpoint = saved.getString(STATE_ADVANCED_ENDPOINT).orEmpty()
             inlineStatus = saved.getString(STATE_INLINE_STATUS)
             inlineIsError = saved.getBoolean(STATE_INLINE_IS_ERROR, false)
+            pairingSessionId = saved.getString(STATE_PAIRING_SESSION)
         }
         window.statusBarColor = NexusUi.BG
         window.navigationBarColor = NexusUi.BG
@@ -186,6 +191,7 @@ class GlassesManualSetupActivity : Activity() {
         outState.putString(STATE_INLINE_STATUS, inlineStatus)
         outState.putBoolean(STATE_INLINE_IS_ERROR, inlineIsError)
         outState.putBoolean(STATE_REPAIR, repair)
+        outState.putString(STATE_PAIRING_SESSION, pairingSessionId)
     }
 
     override fun onDestroy() {
@@ -194,9 +200,9 @@ class GlassesManualSetupActivity : Activity() {
         repairClient?.close()
         repairClient = null
         // Leaving the wizard tears down any in-flight attempt so the glasses drop back to their HUD,
-        // and ends the self-pairing the glasses are running: left alone, a later Wi-Fi edge on
-        // the glasses would resume it with nobody watching. A rotation is not leaving.
-        engine?.cancel(abandonPairing = isFinishing)
+        // and ends the self-pairing this screen started: left alone, a later Wi-Fi edge on the
+        // glasses would resume it with nobody watching. A rotation is not leaving.
+        engine?.cancel(abandonSessionId = pairingSessionId.takeIf { isFinishing })
         super.onDestroy()
     }
 
@@ -502,6 +508,7 @@ class GlassesManualSetupActivity : Activity() {
             if (isDestroyed || isFinishing) return@request
             repairRequestInFlight = false
             val reply = result.getOrNull()
+            GlassesRepairContract.pairingSessionFromReply(reply)?.let { pairingSessionId = it }
             inlineStatus = if (result.isSuccess) {
                 GlassesRepairStatusText.pairMessage(reply)
             } else {
@@ -1079,6 +1086,7 @@ class GlassesManualSetupActivity : Activity() {
         private const val STATE_INLINE_STATUS = "inline_status"
         private const val STATE_INLINE_IS_ERROR = "inline_is_error"
         private const val STATE_REPAIR = "repair"
+        private const val STATE_PAIRING_SESSION = "pairing_session"
         private const val EXTRA_REPAIR = "com.anezium.rokidbus.phone.extra.REPAIR_PAIRING"
 
         /** The Re-pair glasses entry: reachable after setup, whatever the app's Developer mode. */

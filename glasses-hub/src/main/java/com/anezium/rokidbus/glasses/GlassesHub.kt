@@ -344,6 +344,13 @@ object GlassesHub {
             val mode = GlassesRepairContract.modeFromRequest(envelope.payload)
             SelfArmBootRepairCoordinator.runOwnerRepair(context, mode = mode) { verdict ->
                 val result = GlassesRepairContract.resultForRequester(verdict, pairingAware)
+                // Read in the same call that started the pairing, so it names that run.
+                val pairingSessionId = SelfArmOnboardingStore.currentActiveSessionId(context)
+                    .takeIf {
+                        pairingAware &&
+                            result == GlassesRepairContract.RESULT_PAIRING_PENDING &&
+                            SelfArmOnboardingStore.isPairingRequested(context, it)
+                    }
                 val error = sendRemote(
                     BusEnvelope(
                         path = BusPaths.GLASSES_REPAIR_REPLY,
@@ -351,6 +358,7 @@ object GlassesHub {
                         payload = GlassesRepairContract.replyToJson(
                             result,
                             mode = mode.takeIf { pairingAware },
+                            pairingSessionId = pairingSessionId,
                         ),
                     ),
                 )
@@ -1017,13 +1025,17 @@ object GlassesHub {
         // Only the owner leaving the pairing screen sets this; the engine's own failure CLOSE does
         // not, because the glasses may still finish a pairing whose phone-side step failed. It
         // runs even when no accessibility service took the CLOSE: the persisted intent is what
-        // a reconnecting service would otherwise resume.
+        // a reconnecting service would otherwise resume. It ends only the session it names: the
+        // one the screen started, never a run started elsewhere or the one that replaced it.
         if (context != null &&
             action == SelfArmManualAction.CLOSE &&
             !armed &&
             envelope.payload.optBoolean("abandonPairing", false)
         ) {
-            RokidBusAccessibilityService.abandonSelfPairing(context)
+            RokidBusAccessibilityService.abandonSelfPairing(
+                context,
+                envelope.payload.optString("abandonSessionId"),
+            )
         }
         if (!accepted) {
             sendRemote(errorEnvelope(envelope.id, "ACCESSIBILITY_UNAVAILABLE"))

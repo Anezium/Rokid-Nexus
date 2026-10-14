@@ -115,14 +115,38 @@ object GlassesRepairContract {
      * [mode] is what the glasses actually ran, echoed to a pairing-aware requester. Glasses
      * older than [PAIRING_AWARE_VERSION] ignore the requested mode, run the plain repair and
      * echo nothing, which is how the phone tells a re-pair from a repair it did not ask for.
+     *
+     * [pairingSessionId] names the glasses' pairing session behind a [RESULT_PAIRING_PENDING],
+     * so the screen that asked can later end that run and only that one.
      */
-    fun replyToJson(result: String, mode: String? = null): JSONObject = JSONObject()
+    fun replyToJson(
+        result: String,
+        mode: String? = null,
+        pairingSessionId: String? = null,
+    ): JSONObject = JSONObject()
         .put("version", VERSION)
         .put("result", result)
-        .apply { if (mode != null) put("mode", mode) }
+        .apply {
+            if (mode != null) put("mode", mode)
+            if (result == RESULT_PAIRING_PENDING && !pairingSessionId.isNullOrBlank()) {
+                put("pairingSession", pairingSessionId)
+            }
+        }
 
     /** True only when the answering glasses say they ran [MODE_PAIR]. */
     fun replyRanPairing(payload: JSONObject?): Boolean = payload?.optString("mode") == MODE_PAIR
+
+    /**
+     * The pairing session a [MODE_PAIR] request left running, or null. Glasses that do not name
+     * one leave the phone nothing to end, which is the safe side: it never ends a run it cannot
+     * prove it started.
+     */
+    fun pairingSessionFromReply(payload: JSONObject?): String? {
+        if (!replyRanPairing(payload) || resultFromReply(payload) != RESULT_PAIRING_PENDING) {
+            return null
+        }
+        return payload?.optString("pairingSession")?.takeIf { it.isNotBlank() }
+    }
 
     /** Null for a result this build does not know, so version skew reads as "no answer". */
     fun resultFromReply(payload: JSONObject?): String? =

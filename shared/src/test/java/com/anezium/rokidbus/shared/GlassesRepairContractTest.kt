@@ -121,6 +121,52 @@ class GlassesRepairContractTest {
     }
 
     @Test
+    fun `only a pending re-pair names the session the phone may end`() {
+        assertEquals(
+            "session-1",
+            GlassesRepairContract.pairingSessionFromReply(
+                GlassesRepairContract.replyToJson(
+                    GlassesRepairContract.RESULT_PAIRING_PENDING,
+                    GlassesRepairContract.MODE_PAIR,
+                    pairingSessionId = "session-1",
+                ),
+            ),
+        )
+        // Glasses that do not name it leave nothing to end.
+        assertNull(
+            GlassesRepairContract.pairingSessionFromReply(
+                GlassesRepairContract.replyToJson(
+                    GlassesRepairContract.RESULT_PAIRING_PENDING,
+                    GlassesRepairContract.MODE_PAIR,
+                ),
+            ),
+        )
+        // No pairing is running behind any other verdict, whatever the glasses put in it.
+        val busy = GlassesRepairContract.replyToJson(
+            GlassesRepairContract.RESULT_BUSY,
+            GlassesRepairContract.MODE_PAIR,
+            pairingSessionId = "session-1",
+        )
+        assertFalse(busy.has("pairingSession"))
+        assertNull(
+            GlassesRepairContract.pairingSessionFromReply(
+                JSONObject(busy.toString()).put("pairingSession", "session-1"),
+            ),
+        )
+        // A plain repair is not this screen's run to end.
+        assertNull(
+            GlassesRepairContract.pairingSessionFromReply(
+                GlassesRepairContract.replyToJson(
+                    GlassesRepairContract.RESULT_PAIRING_PENDING,
+                    GlassesRepairContract.MODE_REPAIR,
+                    pairingSessionId = "session-1",
+                ),
+            ),
+        )
+        assertNull(GlassesRepairContract.pairingSessionFromReply(null))
+    }
+
+    @Test
     fun `an owner who never touched the switch gets the repair`() {
         assertTrue(GlassesRepairContract.DEFAULT_AUTO_REPAIR)
         assertFalse(GlassesRepairContract.RESULTS.isEmpty())

@@ -164,7 +164,7 @@ class SelfArmPairingIntentResumeTest {
             SelfArmOnboardingStore.pause(context, sessionId, "waiting_for_wifi_network")
 
             // The phone's CLOSE with abandonPairing, with no manual-navigation session to end.
-            assertTrue(RokidBusAccessibilityService.abandonSelfPairing(context))
+            assertTrue(RokidBusAccessibilityService.abandonSelfPairing(context, sessionId))
 
             assertFalse(SelfArmOnboardingStore.isPairingRequested(context, sessionId))
             // Nothing is left for a Wi-Fi edge or a reconnecting service to resume.
@@ -186,8 +186,39 @@ class SelfArmPairingIntentResumeTest {
     fun `cancelling leaves a plain setup session alone`() {
         val sessionId = SelfArmOnboardingStore.beginSession(context)
 
-        assertFalse(RokidBusAccessibilityService.abandonSelfPairing(context))
+        assertFalse(RokidBusAccessibilityService.abandonSelfPairing(context, sessionId))
         assertEquals(sessionId, SelfArmOnboardingStore.currentActiveSessionId(context))
+    }
+
+    @Test
+    fun `a screen that started nothing cannot end a pairing started elsewhere`() {
+        // Repair now, or a background pairing: the screen being left never adopted it.
+        val foreign = SelfArmOnboardingStore.beginSession(context)
+        SelfArmOnboardingStore.markPairingRequested(context, foreign)
+
+        // What the CLOSE of an older phone build, or of a screen with nothing adopted, carries.
+        assertFalse(RokidBusAccessibilityService.abandonSelfPairing(context, ""))
+        assertFalse(RokidBusAccessibilityService.abandonSelfPairing(context, "another-session"))
+
+        assertEquals(foreign, SelfArmOnboardingStore.currentActiveSessionId(context))
+        assertTrue(SelfArmOnboardingStore.isPairingRequested(context, foreign))
+    }
+
+    @Test
+    fun `a stale close does not end the pairing that replaced its own`() {
+        val stale = SelfArmOnboardingStore.beginSession(context)
+        SelfArmOnboardingStore.markPairingRequested(context, stale)
+        SelfArmOnboardingStore.invalidateSession(context)
+        val replacement = SelfArmOnboardingStore.beginSession(context)
+        SelfArmOnboardingStore.markPairingRequested(context, replacement)
+
+        assertFalse(RokidBusAccessibilityService.abandonSelfPairing(context, stale))
+
+        assertEquals(replacement, SelfArmOnboardingStore.currentActiveSessionId(context))
+        assertTrue(SelfArmOnboardingStore.isPairingRequested(context, replacement))
+        // The replacement's own screen still ends it.
+        assertTrue(RokidBusAccessibilityService.abandonSelfPairing(context, replacement))
+        assertEquals("", SelfArmOnboardingStore.currentActiveSessionId(context))
     }
 
     @Test

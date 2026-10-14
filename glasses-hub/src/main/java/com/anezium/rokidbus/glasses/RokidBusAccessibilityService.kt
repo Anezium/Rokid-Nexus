@@ -1304,10 +1304,21 @@ class RokidBusAccessibilityService : AccessibilityService() {
          * session for the CLOSE to end, so its session is ended here: its intent goes with it and
          * no later Wi-Fi edge or service reconnect can resume the takeover. Works without a
          * connected service too, which is exactly when the store alone would otherwise resume it.
+         *
+         * Only [sessionId], the run the phone's screen started, is ended. A CLOSE naming no
+         * session (or another one) comes from a screen that started nothing current, so the run on
+         * the lens belongs to someone else and is left alone.
          */
-        internal fun abandonSelfPairing(context: Context): Boolean {
+        internal fun abandonSelfPairing(context: Context, sessionId: String): Boolean {
             val appContext = context.applicationContext
-            val sessionId = SelfArmOnboardingStore.currentActiveSessionId(appContext)
+            val currentSessionId = SelfArmOnboardingStore.currentActiveSessionId(appContext)
+            if (sessionId.isBlank() || sessionId != currentSessionId) {
+                log(
+                    "self-pairing abandon ignored reason=" +
+                        if (sessionId.isBlank()) "no_session" else "session_mismatch",
+                )
+                return false
+            }
             val drivingSettings = isSetupAutomationActive()
             if (!SelfArmOnboardingStore.endPairingSession(
                     appContext,
