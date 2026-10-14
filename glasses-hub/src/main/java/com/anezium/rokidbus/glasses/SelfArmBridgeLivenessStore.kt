@@ -19,6 +19,7 @@ internal object SelfArmBridgeLivenessStore {
     private const val KEY_ARMED_BRIDGE_VERSION = "armed_bridge_version"
     private const val KEY_ARMED_TLS_PORT = "armed_tls_port"
     private const val KEY_ARMED_BRIDGE_RUNNING = "armed_bridge_running"
+    private const val KEY_ARM_FAILED_SINCE = "arm_failed_since_armed"
 
     private val bridgeDemandUnanswered = AtomicBoolean(false)
 
@@ -28,11 +29,24 @@ internal object SelfArmBridgeLivenessStore {
             .putString(KEY_ARMED_BRIDGE_VERSION, SelfArmConstants.BRIDGE_VERSION)
             .putInt(KEY_ARMED_TLS_PORT, tlsPort)
             .putBoolean(KEY_ARMED_BRIDGE_RUNNING, bridgeRunning)
+            .putBoolean(KEY_ARM_FAILED_SINCE, false)
             .commit()
         // A bridge the arm could not start leaves the demand standing, so the next radio
         // opportunity keeps trying instead of declaring victory on the watchdog alone.
         if (bridgeRunning) bridgeDemandUnanswered.set(false)
     }
+
+    /**
+     * An arm that did not reach READY is a measurement too, and it contradicts the record: the
+     * helper the record says is alive could not be reached or restored. The arm epoch itself is
+     * kept, because it still says which boot the helper was last seen on.
+     */
+    fun recordArmFailed(context: Context) {
+        prefs(context).edit().putBoolean(KEY_ARM_FAILED_SINCE, true).commit()
+    }
+
+    fun armFailedSinceArmed(context: Context): Boolean =
+        prefs(context).getBoolean(KEY_ARM_FAILED_SINCE, false)
 
     fun armedBootInstantMillis(context: Context): Long? =
         prefs(context).getLong(KEY_ARMED_BOOT_INSTANT, 0L).takeIf { it != 0L }
@@ -47,6 +61,7 @@ internal object SelfArmBridgeLivenessStore {
             armedBridgeRunning = armedBridgeRunning(context),
             currentBootInstantMs = currentBootInstantMillis(),
             bridgeDemandPending = isBridgeDemandPending(),
+            armFailedSince = armFailedSinceArmed(context),
         )
 
     fun presumedDead(context: Context): Boolean =

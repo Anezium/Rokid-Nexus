@@ -38,6 +38,11 @@ internal object SelfArmController {
         }.onFailure {
             logError("Self-arm failed reason=$reason", it)
         }.getOrDefault(SelfArmWatchdogEnsureResult.FAILED)
+        // A successful arm put its own measurement on record; a failed one has to say so too, or
+        // an earlier success this boot keeps answering "already healthy" for a helper that died.
+        if (result != SelfArmWatchdogEnsureResult.READY) {
+            SelfArmBridgeLivenessStore.recordArmFailed(appContext)
+        }
         if (sessionId == null ||
             SelfArmOnboardingStore.isCurrentSession(appContext, sessionId)
         ) {

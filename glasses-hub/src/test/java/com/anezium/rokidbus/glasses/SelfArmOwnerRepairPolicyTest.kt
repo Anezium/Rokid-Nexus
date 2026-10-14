@@ -32,6 +32,10 @@ class SelfArmOwnerRepairPolicyTest {
         assertEquals(HelperRecord.NOT_ALIVE, record(boot - 3_600_000L, bridge = true, demand = false))
         assertEquals(HelperRecord.NOT_ALIVE, record(boot, bridge = false, demand = false))
         assertEquals(HelperRecord.NOT_ALIVE, record(boot, bridge = true, demand = true))
+        assertEquals(
+            HelperRecord.NOT_ALIVE,
+            SelfArmOwnerRepairPolicy.helperRecord(boot, true, boot, false, armFailedSince = true),
+        )
         assertTrue(SelfArmOwnerRepairPolicy.mayAnswerHealthyWithoutMeasuring(HelperRecord.ALIVE_THIS_BOOT))
         assertFalse(SelfArmOwnerRepairPolicy.mayAnswerHealthyWithoutMeasuring(HelperRecord.NOT_ALIVE))
     }

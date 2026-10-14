@@ -13,10 +13,13 @@ import com.anezium.rokidbus.shared.GlassesRepairContract
  */
 internal object SelfArmOwnerRepairPolicy {
     enum class HelperRecord {
-        /** Armed this boot with its bridge running, and no bridge demand has failed since. */
+        /** Armed this boot with its bridge running, and no arm or bridge demand has failed since. */
         ALIVE_THIS_BOOT,
 
-        /** Armed on an earlier boot, armed without its bridge, or its bridge failed a demand. */
+        /**
+         * Armed on an earlier boot, armed without its bridge, or contradicted since: a later arm
+         * failed, or the bridge failed a demand.
+         */
         NOT_ALIVE,
 
         /** No arm on record at all. */
@@ -39,11 +42,12 @@ internal object SelfArmOwnerRepairPolicy {
         armedBridgeRunning: Boolean,
         currentBootInstantMs: Long,
         bridgeDemandPending: Boolean,
+        armFailedSince: Boolean = false,
     ): HelperRecord = when {
         armedBootInstantMs == null -> HelperRecord.ABSENT
         SelfArmBridgeLivenessPolicy.presumedDead(armedBootInstantMs, currentBootInstantMs) ->
             HelperRecord.NOT_ALIVE
-        !armedBridgeRunning || bridgeDemandPending -> HelperRecord.NOT_ALIVE
+        !armedBridgeRunning || bridgeDemandPending || armFailedSince -> HelperRecord.NOT_ALIVE
         else -> HelperRecord.ALIVE_THIS_BOOT
     }
 

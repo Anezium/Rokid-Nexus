@@ -232,11 +232,12 @@ internal object SelfArmBootRepairCoordinator {
         if (!accepted) {
             // A background arm already holds the single-flight; report its outcome once it lands
             // instead of racing it with a second run. Only an arm on record for this boot counts:
-            // no record at all is unknown, not landed.
+            // no record at all is unknown, not landed, and a run that failed did not land.
             SelfArmController.runWhenIdle {
                 handler.post {
                     val landed = SelfArmBridgeLivenessStore.armedBootInstantMillis(context) != null &&
-                        !SelfArmBridgeLivenessStore.presumedDead(context)
+                        !SelfArmBridgeLivenessStore.presumedDead(context) &&
+                        !SelfArmBridgeLivenessStore.armFailedSinceArmed(context)
                     val result = if (landed) {
                         SelfArmWatchdogEnsureResult.READY
                     } else {
