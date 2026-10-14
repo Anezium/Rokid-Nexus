@@ -499,13 +499,13 @@ class GlassesManualSetupActivity : Activity() {
         ) { result ->
             if (isDestroyed || isFinishing) return@request
             repairRequestInFlight = false
-            val verdict = result.getOrNull()?.let(GlassesRepairContract::resultFromReply)
+            val reply = result.getOrNull()
             inlineStatus = if (result.isSuccess) {
-                GlassesRepairStatusText.message(verdict)
+                GlassesRepairStatusText.pairMessage(reply)
             } else {
                 GlassesRepairStatusText.NO_ANSWER
             }
-            inlineIsError = !GlassesRepairStatusText.isGood(verdict)
+            inlineIsError = !GlassesRepairStatusText.pairIsGood(reply)
             rerenderCurrent()
         }
     }

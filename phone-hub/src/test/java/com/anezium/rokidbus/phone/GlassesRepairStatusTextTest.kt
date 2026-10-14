@@ -30,6 +30,45 @@ class GlassesRepairStatusTextTest {
     }
 
     @Test
+    fun `a re-pair answered by glasses that ignored the mode says to update them`() {
+        // What glasses from before the pair mode send back: a plain repair's verdict, no mode.
+        listOf(
+            GlassesRepairContract.RESULT_ALREADY_HEALTHY,
+            GlassesRepairContract.RESULT_REPAIRED,
+            GlassesRepairContract.RESULT_ARM_FAILED,
+        ).forEach { result ->
+            val legacyReply = GlassesRepairContract.replyToJson(result)
+            assertEquals(GlassesRepairStatusText.PAIR_UNSUPPORTED, GlassesRepairStatusText.pairMessage(legacyReply))
+            assertFalse(GlassesRepairStatusText.pairIsGood(legacyReply))
+        }
+        assertTrue(GlassesRepairStatusText.PAIR_UNSUPPORTED.contains("Update Nexus on the glasses"))
+    }
+
+    @Test
+    fun `a re-pair the glasses ran reads as its verdict`() {
+        val pending = GlassesRepairContract.replyToJson(
+            GlassesRepairContract.RESULT_PAIRING_PENDING,
+            GlassesRepairContract.MODE_PAIR,
+        )
+        assertEquals(
+            GlassesRepairStatusText.message(GlassesRepairContract.RESULT_PAIRING_PENDING),
+            GlassesRepairStatusText.pairMessage(pending),
+        )
+        assertTrue(GlassesRepairStatusText.pairIsGood(pending))
+
+        val busy = GlassesRepairContract.replyToJson(
+            GlassesRepairContract.RESULT_BUSY,
+            GlassesRepairContract.MODE_PAIR,
+        )
+        assertEquals(
+            GlassesRepairStatusText.message(GlassesRepairContract.RESULT_BUSY),
+            GlassesRepairStatusText.pairMessage(busy),
+        )
+        assertFalse(GlassesRepairStatusText.pairIsGood(busy))
+        assertEquals(GlassesRepairStatusText.message(null), GlassesRepairStatusText.pairMessage(null))
+    }
+
+    @Test
     fun `only a running helper or a pairing underway reads as good`() {
         assertTrue(GlassesRepairStatusText.isGood(GlassesRepairContract.RESULT_REPAIRED))
         assertTrue(GlassesRepairStatusText.isGood(GlassesRepairContract.RESULT_ALREADY_HEALTHY))

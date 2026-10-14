@@ -111,9 +111,18 @@ object GlassesRepairContract {
     fun resultForRequester(result: String, requesterPairingAware: Boolean): String =
         if (requesterPairingAware || result in LEGACY_RESULTS) result else RESULT_ARM_FAILED
 
-    fun replyToJson(result: String): JSONObject = JSONObject()
+    /**
+     * [mode] is what the glasses actually ran, echoed to a pairing-aware requester. Glasses
+     * older than [PAIRING_AWARE_VERSION] ignore the requested mode, run the plain repair and
+     * echo nothing, which is how the phone tells a re-pair from a repair it did not ask for.
+     */
+    fun replyToJson(result: String, mode: String? = null): JSONObject = JSONObject()
         .put("version", VERSION)
         .put("result", result)
+        .apply { if (mode != null) put("mode", mode) }
+
+    /** True only when the answering glasses say they ran [MODE_PAIR]. */
+    fun replyRanPairing(payload: JSONObject?): Boolean = payload?.optString("mode") == MODE_PAIR
 
     /** Null for a result this build does not know, so version skew reads as "no answer". */
     fun resultFromReply(payload: JSONObject?): String? =

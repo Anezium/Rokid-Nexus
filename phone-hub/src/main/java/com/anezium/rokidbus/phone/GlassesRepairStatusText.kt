@@ -1,6 +1,7 @@
 package com.anezium.rokidbus.phone
 
 import com.anezium.rokidbus.shared.GlassesRepairContract
+import org.json.JSONObject
 
 /**
  * What the owner reads after asking the glasses to repair their helper. Each verdict says what
@@ -12,6 +13,11 @@ internal object GlassesRepairStatusText {
     const val REQUEST_TIMEOUT_MS = 150_000L
 
     const val NO_ANSWER = "The glasses did not answer. Check the connection and try again."
+
+    const val PAIR_UNSUPPORTED =
+        "The glasses could not re-pair: their Nexus app is too old to do it on request, so " +
+            "they ran an ordinary repair instead. Update Nexus on the glasses, then use Re-pair " +
+            "glasses again."
 
     fun message(result: String?): String = when (result) {
         GlassesRepairContract.RESULT_REPAIRED ->
@@ -35,6 +41,23 @@ internal object GlassesRepairStatusText {
             "The glasses are busy with another repair or with setup. Try again in a moment."
         else -> "The glasses sent an answer this version does not understand."
     }
+
+    /**
+     * The answer to a Re-pair. Glasses that did not echo the pair mode ran a plain repair, and
+     * its "already healthy" or "repaired" would read as a re-pair that never happened.
+     */
+    fun pairMessage(reply: JSONObject?): String {
+        val result = GlassesRepairContract.resultFromReply(reply)
+        return if (result != null && !GlassesRepairContract.replyRanPairing(reply)) {
+            PAIR_UNSUPPORTED
+        } else {
+            message(result)
+        }
+    }
+
+    fun pairIsGood(reply: JSONObject?): Boolean =
+        GlassesRepairContract.replyRanPairing(reply) &&
+            isGood(GlassesRepairContract.resultFromReply(reply))
 
     /** Verdicts that leave nothing for the owner to fix. */
     fun isGood(result: String?): Boolean = result == GlassesRepairContract.RESULT_REPAIRED ||

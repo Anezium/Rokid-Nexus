@@ -93,6 +93,34 @@ class GlassesRepairContractTest {
     }
 
     @Test
+    fun `only a reply echoing the pair mode says the glasses re-paired`() {
+        assertTrue(
+            GlassesRepairContract.replyRanPairing(
+                GlassesRepairContract.replyToJson(
+                    GlassesRepairContract.RESULT_PAIRING_PENDING,
+                    GlassesRepairContract.MODE_PAIR,
+                ),
+            ),
+        )
+        // Glasses that ignored the mode answer like this, even when the result looks fine.
+        val legacy = GlassesRepairContract.replyToJson(GlassesRepairContract.RESULT_ALREADY_HEALTHY)
+        assertFalse(GlassesRepairContract.replyRanPairing(legacy))
+        assertEquals(
+            GlassesRepairContract.RESULT_ALREADY_HEALTHY,
+            GlassesRepairContract.resultFromReply(legacy),
+        )
+        assertFalse(
+            GlassesRepairContract.replyRanPairing(
+                GlassesRepairContract.replyToJson(
+                    GlassesRepairContract.RESULT_REPAIRED,
+                    GlassesRepairContract.MODE_REPAIR,
+                ),
+            ),
+        )
+        assertFalse(GlassesRepairContract.replyRanPairing(null))
+    }
+
+    @Test
     fun `an owner who never touched the switch gets the repair`() {
         assertTrue(GlassesRepairContract.DEFAULT_AUTO_REPAIR)
         assertFalse(GlassesRepairContract.RESULTS.isEmpty())
