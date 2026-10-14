@@ -1,0 +1,66 @@
+# Issue #53 — device test results (2026-10-14)
+
+Build: `fix/issue53-repair-recovery` at `6aa117ad` (code at `ac871772`), debug APKs
+re-signed with the release key, installed over release 1.6.0 on an RV101
+(fw 1.26.011-20260929-150201, fr-FR) and a Galaxy S23+ (SM-S916B). Plan:
+`qa/issue53-repair-recovery-test-plan.md`.
+
+## Passed
+
+| Case | Evidence |
+|---|---|
+| 1.1–1.4 build, sign, install, link | signer `f5e938e2…`, `install -r` kept data, SPP authenticated, glasses shown as V1.7.0 |
+| 2.1 Repair on a healthy unit | `verdict=already_healthy`; "Nothing to repair — the glasses' helper is running." |
+| 2.2 Re-pair entry with Developer mode off | Settings → Maintenance → Re-pair glasses |
+| 2.3 open Re-pair, back out | plain CLOSE only, no abandon |
+| 3 issue state reproduced | helper `running=no`, `wireless_bootstrap_complete=false`, no arm record, accessibility bound |
+| 4.1 Repair in the issue state | `helperRecord=ABSENT` → `self-pairing requested owner=true outcome=started` → `verdict=pairing_pending`; phone text "The glasses need to pair again, and have started doing it themselves." |
+| 4.3 latch release | `self-pairing latch released reason=session_ended` after the run ends |
+| 4.4 retry | second Repair → `outcome=started` again |
+| 4.6 secrets | only `codeLen=6` logged; no code, port of the pairing server only as loopback |
+| 5.1/5.2 consent | auto-repair off (phone switch) → every background request `outcome=auto_repair_off backgroundAttempt=0/6`, no automator start, across two service rebinds |
+| 5.4 owner with auto-repair off | Re-pair/Repair still `outcome=started` |
+| 6.1 preflight | "Glasses paired to maintain themselves" unchecked on the unpaired unit; healthy unit shows all checks and "Re-pair anyway" |
+| 6.2 Re-pair | `Owner repair starting mode=pair` → `pairing_pending`; automation opens Settings |
+| 6.4 cancel | back out mid-run → `close accepted=true` → `self-pairing cancelled by the owner`, latch released, lens back on Nexus; no resume after a later service rebind |
+| 6.6 scoped cancel | Repair-now run kept going after opening/leaving Re-pair (reached `searching_pairing_code`) |
+| **End-to-end on fw 1.26.011** | with the display kept awake the existing automator paired the unit by itself: `wireless_debugging_open` → pairing dialog → `self-pair KADB success` → `local self-pair bootstrap complete`, helper `running=yes` ×2 (twice, ~15 s) |
+
+## Findings
+
+1. **Display sleep stalls the automation (new, high).** With nobody wearing the
+   glasses the panel sleeps after 5 s (vendor timeout); the run then loops
+   `waiting_for_settings` until `wireless_setup_timeout` (~95 s). Neither the
+   accessibility service nor the automator holds the display (no
+   `DisplayWakePolicy` hold). Kept awake, the same run succeeds. Wearers who stop
+   touching the touchpad will hit the same stall.
+2. **The "4 px Developer-options list" is not a blocker for the service.** The
+   automator's accessibility scroll reaches Wireless debugging on this firmware;
+   the earlier conclusion came from shell swipes/uiautomator only. The
+   Settings-search navigator is not needed for this firmware.
+3. **system_server watchdog kill after cancelling a re-pair (new, high, not yet
+   reproduced on purpose).** ~30 s after the 6.4 cancel, `system_server` blocked in
+   `AdbDebuggingManager$AdbDebuggingHandler.handleMessage` → `Thread.join`
+   (23:09:48), and the Watchdog killed it at 23:10:59 (`Blocked in handler on
+   foreground thread (android.fg)`): Android userspace restarted, Nexus restarted.
+   Suspected trigger: dismissing the pairing dialog (return to Nexus) while the
+   KADB pairing handshake is open, so the platform's pairing-thread join never
+   returns. ANR traces exist in `/data/anr/anr_2026-10-14-23-10-18-482` (not
+   readable from shell).
+4. **Verdict after reviving a dead helper says "already healthy" (8.2).** Helper
+   stopped on a paired unit, Repair restarted it (`result=READY bridge=true`) but
+   answered `already_healthy` because the record said alive this boot. The verdict
+   does not use the pre-arm state.
+5. Minor: a plain CLOSE with no manual session gets an `SPP TX /error` reply (2.3).
+   The phone's auto-repair push overwrites the glasses-side preference (expected,
+   but the plan's 5.1 step must use the phone switch).
+
+## Not run
+
+6.3 rotation, 6.5, 7 (service recreation), 8.3–8.8, 9 (phone code form), 10
+(compatibility matrix), 11 (navigator — superseded by finding 2).
+
+## State left
+
+Unit re-paired by itself (new identity), helper running, auto-repair back on,
+accessibility bound, test build installed on both devices.
