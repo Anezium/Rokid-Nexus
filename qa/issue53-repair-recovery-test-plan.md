@@ -211,6 +211,19 @@ required, and restore `fr-FR` afterwards.
 | N9 | Pairing values | code/port/IP never in logs or prefs |
 | N10 | Older firmware unit (if available) | the old direct route still works |
 
+### 11c. Setup display hold
+
+Logcat tag `NexusWirelessSetup`, lines `setup display hold run=…`; wake locks via
+`dumpsys power | grep setup-automation`.
+
+| # | Case | Expected |
+|---|---|---|
+| H1 | Sleeping unit → Re-pair | `decision=acquire … wake=true` once; panel stays lit past the 5 s vendor timeout on the plain lock (renewals log nothing); pairs as in round 6 |
+| H2 | Power button mid-run (panel held) | within ~2 s `reason=wearer_slept`; panel stays dark, no `acquire` while dark; no `setup-automation` lock in `dumpsys power`; run ends on its own deadline |
+| H3 | H2, then the wearer wakes the panel | `decision=acquire … wake=false`; run continues |
+| H4 | Success / cancel / phone-assisted success | `decision=release` with the matching reason; no `setup-automation` lock left |
+| H5 | Any run, 15 s after its end | `dumpsys power` lists no `setup-automation` lock |
+
 ## 12. Regression suites (before merge)
 
 ```bash
