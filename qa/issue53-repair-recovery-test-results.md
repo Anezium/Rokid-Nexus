@@ -79,6 +79,16 @@ re-signed with the release key, installed over release 1.6.0 on an RV101
 
 Observation: once, Developer options needed three scroll passes (`searching_wireless_debugging` ×16/×14/×14, 22 s) before the Wireless debugging row was found; the run still succeeded within its deadline.
 
+## Round 8 on device (both hubs at b61a023e)
+
+| Case | Result |
+|---|---|
+| 8.9 Wi-Fi off, helpers running | pass: `bridge Wi-Fi enable answered=true` → `Wi-Fi readiness=ready waitedMs=1707` → `helper running before arm=true` → `READY` → `Repair Wi-Fi restore … viaBridge=true observedOff=true owedKept=false` → `already_healthy`; `wifi_on=0` afterwards |
+| 8.10 Wi-Fi off, helpers stopped | pass: `answered=false` → Settings Wi-Fi run (hold 1.9 s) → `readiness=ready waitedMs=2594` → `helper running before arm=false` → `READY` → restore `observedOff=true` → `repaired`; helpers running, `wifi_on=0` |
+| H6 wearer sleep then service recreation | pass: `release reason=wearer_slept`, accessibility service rebound, panel `Asleep` for 12 s with no acquire; relit → new service `acquire … wake=false`, pairing completes |
+
+Edge seen while setting up H6: a power press in the ~1 s gap between the Wi-Fi-enable run and the bootstrap run is not observed by any renewal, so the next run acquires with `wake=true` once.
+
 ## Not run
 
 6.3 rotation, 6.5, 7 (service recreation), 8.3–8.8, 9 (phone code form), 10
