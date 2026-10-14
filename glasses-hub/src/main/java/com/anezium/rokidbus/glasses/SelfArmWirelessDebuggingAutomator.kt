@@ -84,6 +84,7 @@ internal class SelfArmWirelessDebuggingAutomator(
         },
         backstop = SetupDisplayHoldLifecycle.EXECUTOR_BACKSTOP,
         onBackstopRelease = { android.util.Log.i(TAG, formatSetupDisplayHoldTransition(it)) },
+        sleptScope = SetupDisplaySleptScope.PROCESS,
     )
 
     private var awaitingWirelessDebugConfirmation = false

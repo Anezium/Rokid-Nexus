@@ -519,6 +519,7 @@ internal object SelfArmOnboardingStore {
         }
         afterFinished(context, terminalStage)
         GlassesHub.onSetupSessionTerminal(context, sessionId)
+        SetupDisplaySleptScope.PROCESS.forget(sessionId)
         RokidBusAccessibilityService.onSetupSessionEnded(sessionId)
         SelfArmLocalAdbBootstrapper.onSetupSessionEnded(sessionId)
         return true
@@ -594,6 +595,7 @@ internal object SelfArmOnboardingStore {
         }
         if (invalidatedSessionId.isNotBlank()) {
             GlassesHub.onSetupSessionTerminal(context, invalidatedSessionId)
+            SetupDisplaySleptScope.PROCESS.forget(invalidatedSessionId)
             SelfArmLocalAdbBootstrapper.onSetupSessionEnded(invalidatedSessionId)
         }
         notifyChanged(context)

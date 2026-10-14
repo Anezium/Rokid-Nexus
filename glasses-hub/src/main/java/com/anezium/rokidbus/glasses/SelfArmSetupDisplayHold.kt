@@ -72,6 +72,36 @@ internal fun interface SetupDisplayHoldBackstop {
 }
 
 /**
+ * The one request scope whose wearer slept the panel mid-hold. It outlives any single
+ * [SetupDisplayHoldLifecycle]: the ROM recreates the accessibility service mid-session, and a
+ * fresh lifecycle that forgot the wearer's choice would wake the panel they just put to sleep.
+ */
+internal class SetupDisplaySleptScope {
+    private var scope: String? = null
+    private var checkedAtMs = 0L
+
+    @Synchronized
+    fun record(scope: String, atMs: Long) {
+        this.scope = scope
+        checkedAtMs = atMs
+    }
+
+    /** When [scope] was last found dark, or null when its wearer has not slept the panel. */
+    @Synchronized
+    fun checkedAtMs(scope: String): Long? = if (this.scope == scope) checkedAtMs else null
+
+    @Synchronized
+    fun forget(scope: String? = null) {
+        if (scope == null || this.scope == scope) this.scope = null
+    }
+
+    companion object {
+        /** Process-wide, so a recreated service still honours it; forgotten when its session ends. */
+        val PROCESS = SetupDisplaySleptScope()
+    }
+}
+
+/**
  * The display hold for the wireless setup automator's Settings runs.
  *
  * The vendor re-asserts a 5 s screen-off timeout at every boot, and a sleeping
@@ -87,12 +117,14 @@ internal fun interface SetupDisplayHoldBackstop {
  * Only the first acquisition of a hold wakes the panel. While a lease keeps the
  * vendor timeout away, a panel that goes dark was put to sleep by the wearer,
  * so the hold lets go and the runs of that scope leave the panel alone until
- * the wearer lights it again.
+ * the wearer lights it again — across a backstop expiry too, and across a
+ * recreated lifecycle when the caller shares [sleptScope].
  */
 internal class SetupDisplayHoldLifecycle(
     private val isInteractive: () -> Boolean,
     private val backstop: SetupDisplayHoldBackstop,
     private val onBackstopRelease: (SetupDisplayHoldTransition.Release) -> Unit = {},
+    private val sleptScope: SetupDisplaySleptScope = SetupDisplaySleptScope(),
     private val leaseMs: Long = LEASE_MS,
     private val renewIntervalMs: Long = RENEW_INTERVAL_MS,
 ) {
@@ -113,10 +145,6 @@ internal class SetupDisplayHoldLifecycle(
     private val lock = Any()
     private var hold: Hold? = null
     private var backstopGenerations = 0L
-
-    /** The scope whose wearer slept the panel mid-hold; its runs wait for the wearer to light it. */
-    private var sleptScope: String? = null
-    private var sleptCheckedAtMs = 0L
 
     fun heldRunToken(): Long? = synchronized(lock) { hold?.runToken }
 
@@ -148,8 +176,7 @@ internal class SetupDisplayHoldLifecycle(
             val handover = current.runToken != runToken
             if (!handover && nowMs - current.lastRenewedAtMs < renewIntervalMs) return null
             if (!panelInteractive()) {
-                sleptScope = current.scope
-                sleptCheckedAtMs = nowMs
+                sleptScope.record(current.scope, nowMs)
                 return releaseLocked(SetupDisplayHoldEnd.WEARER_SLEPT, nowMs, current.runToken)
             }
             if (runCatching { current.lease.acquire(nextLeaseMs, wake = false) }.isFailure) {
@@ -206,13 +233,14 @@ internal class SetupDisplayHoldLifecycle(
         nextLeaseMs: Long,
         leaseFactory: () -> SetupDisplayLease?,
     ): SetupDisplayHoldTransition? {
-        val resuming = sleptScope == scope
-        if (resuming) {
+        val sleptCheckedAtMs = sleptScope.checkedAtMs(scope)
+        val resuming = sleptCheckedAtMs != null
+        if (sleptCheckedAtMs != null) {
             if (nowMs - sleptCheckedAtMs < renewIntervalMs) return null
-            sleptCheckedAtMs = nowMs
+            sleptScope.record(scope, nowMs)
             if (!panelInteractive()) return null
         }
-        sleptScope = null
+        sleptScope.forget()
         // Lit again by the wearer, the panel needs holding, not waking.
         val wake = !resuming
         val lease = runCatching(leaseFactory).getOrNull()
@@ -257,7 +285,15 @@ internal class SetupDisplayHoldLifecycle(
         val released = synchronized(lock) {
             // A renewal, a handover or a release since this was armed owns the lease now.
             if (hold !== expected || expected.backstopGeneration != generation) return
-            releaseLocked(SetupDisplayHoldEnd.LEASE_EXPIRED, expected.leaseEndsAtMs, expected.runToken)
+            // Dark while our screen lease still held it: the wearer slept it, even though the
+            // stalled run never got to see that. Its next tick must not wake it again.
+            val reason = if (panelInteractive()) {
+                SetupDisplayHoldEnd.LEASE_EXPIRED
+            } else {
+                sleptScope.record(expected.scope, expected.leaseEndsAtMs)
+                SetupDisplayHoldEnd.WEARER_SLEPT
+            }
+            releaseLocked(reason, expected.leaseEndsAtMs, expected.runToken)
         }
         released?.let { runCatching { onBackstopRelease(it) } }
     }

@@ -319,6 +319,60 @@ class SetupDisplayHoldLifecycleTest {
     }
 
     @Test
+    fun `a backstop that finds the panel dark remembers the wearer slept it`() {
+        val harness = Harness()
+        harness.renew(runToken = 1L, nowMs = 0L, deadlineAtMs = 300_000L, scope = "session-a")
+
+        // The main thread stalled, the wearer pressed power, and only the backstop is left.
+        harness.interactive = false
+        harness.backstop.fireOnOwnThread(harness.backstop.tasks.single())
+        val nextTick = harness.renew(runToken = 1L, nowMs = 12_000L, deadlineAtMs = 300_000L, scope = "session-a")
+        harness.interactive = true
+        val lit = harness.renew(runToken = 1L, nowMs = 14_000L, deadlineAtMs = 300_000L, scope = "session-a")
+
+        assertEquals(SetupDisplayHoldEnd.WEARER_SLEPT, harness.backstopReleases.single().reason)
+        assertNull(nextTick)
+        assertEquals(SetupDisplayHoldTransition.Acquire(1L, LEASE_MS, wake = false), lit)
+        assertEquals(listOf(true, false), harness.leases.flatMap { it.wakes })
+    }
+
+    @Test
+    fun `a recreated lifecycle keeps a session's panel asleep`() {
+        val shared = SetupDisplaySleptScope()
+        val before = Harness(sleptScope = shared)
+        before.renew(runToken = 1L, nowMs = 0L, deadlineAtMs = 300_000L, scope = "session-a")
+        before.interactive = false
+        before.renew(runToken = 1L, nowMs = 2_000L, deadlineAtMs = 300_000L, scope = "session-a")
+
+        // The service is recreated mid-session: a fresh automator, a fresh lifecycle.
+        val after = Harness(sleptScope = shared).apply { interactive = false }
+        val resumedDark = after.renew(runToken = 1L, nowMs = 5_000L, deadlineAtMs = 300_000L, scope = "session-a")
+        after.interactive = true
+        val lit = after.renew(runToken = 1L, nowMs = 7_000L, deadlineAtMs = 300_000L, scope = "session-a")
+
+        assertNull(resumedDark)
+        assertEquals(SetupDisplayHoldTransition.Acquire(1L, LEASE_MS, wake = false), lit)
+    }
+
+    @Test
+    fun `a session's sleep memory ends with the session`() {
+        val shared = SetupDisplaySleptScope()
+        val harness = Harness(sleptScope = shared)
+        harness.renew(runToken = 1L, nowMs = 0L, deadlineAtMs = 300_000L, scope = "session-a")
+        harness.interactive = false
+        harness.renew(runToken = 1L, nowMs = 2_000L, deadlineAtMs = 300_000L, scope = "session-a")
+
+        shared.forget("session-b")
+        assertEquals(2_000L, shared.checkedAtMs("session-a"))
+        shared.forget("session-a")
+
+        assertNull(shared.checkedAtMs("session-a"))
+        val next = Harness(sleptScope = shared)
+            .renew(runToken = 1L, nowMs = 5_000L, deadlineAtMs = 300_000L, scope = "session-a")
+        assertEquals(SetupDisplayHoldTransition.Acquire(1L, LEASE_MS, wake = true), next)
+    }
+
+    @Test
     fun `a failing interactivity probe never ends a hold`() {
         val harness = Harness()
         harness.renew(runToken = 1L, nowMs = 0L, deadlineAtMs = 110_000L)
@@ -394,6 +448,7 @@ class SetupDisplayHoldLifecycleTest {
         private val powerAvailable: Boolean = true,
         private val failAcquireAfter: Int? = null,
         backstopFails: Boolean = false,
+        sleptScope: SetupDisplaySleptScope = SetupDisplaySleptScope(),
     ) {
         @Volatile var interactive = true
         @Volatile var probeFails = false
@@ -406,6 +461,7 @@ class SetupDisplayHoldLifecycleTest {
             },
             backstop = backstop,
             onBackstopRelease = { synchronized(backstopReleases) { backstopReleases += it } },
+            sleptScope = sleptScope,
         )
         val leases = mutableListOf<FakeLease>()
 
