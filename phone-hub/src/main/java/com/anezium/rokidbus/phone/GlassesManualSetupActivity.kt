@@ -489,7 +489,6 @@ class GlassesManualSetupActivity : Activity() {
         BusHubService.noteGlassesSetupUserIntent()
         SetupJournal.record(this, fromGlasses = false, code = "repair_pairing_requested")
         repairRequestInFlight = true
-        commandPending = true
         inlineStatus = getString(R.string.repair_pair_asking)
         inlineIsError = false
         rerenderCurrent()
@@ -500,7 +499,6 @@ class GlassesManualSetupActivity : Activity() {
         ) { result ->
             if (isDestroyed || isFinishing) return@request
             repairRequestInFlight = false
-            commandPending = false
             val verdict = result.getOrNull()?.let(GlassesRepairContract::resultFromReply)
             inlineStatus = if (result.isSuccess) {
                 GlassesRepairStatusText.message(verdict)
