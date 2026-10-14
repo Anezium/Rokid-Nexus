@@ -26,13 +26,18 @@ internal object SelfArmController {
      * instead of `restart`, and both scripts treat `start` as "no-op when the running version
      * matches, hand over when it does not" — so a healthy bridge is never killed just to prove it
      * was alive.
+     *
+     * [bindSetupSession] false is for a caller with its own lifecycle, the owner's repair: its
+     * arm takes no setup session that happens to be active, so a session that ends or is
+     * replaced mid-arm cannot swallow [onComplete].
      */
     fun ensureWatchdog(
         context: Context,
         reason: String,
         restartWatchdog: Boolean = true,
+        bindSetupSession: Boolean = true,
         onComplete: ((SelfArmWatchdogEnsureResult) -> Unit)? = null,
-    ): Boolean = runAsync(context, reason) { appContext, sessionId ->
+    ): Boolean = runAsync(context, reason, bindSetupSession = bindSetupSession) { appContext, sessionId ->
         val result = runCatching {
             runSelfArm(appContext, reason, restartWatchdog = restartWatchdog, sessionId = sessionId)
         }.onFailure {
@@ -50,9 +55,10 @@ internal object SelfArmController {
         }
     }
 
-    internal fun runWhenIdle(callback: () -> Unit) {
+    internal fun runWhenIdle(bindSetupSession: Boolean = true, callback: () -> Unit) {
         val context = SelfArmControllerContext.context
-        val sessionId = context?.let(SelfArmOnboardingStore::currentActiveSessionId).orEmpty()
+        val sessionId = context?.takeIf { bindSetupSession }
+            ?.let(SelfArmOnboardingStore::currentActiveSessionId).orEmpty()
         val guardedCallback = {
             if (sessionId.isBlank() ||
                 context == null ||
@@ -204,12 +210,13 @@ internal object SelfArmController {
         context: Context,
         reason: String,
         onComplete: (() -> Unit)? = null,
+        bindSetupSession: Boolean = true,
         operation: (Context, String?) -> Unit,
     ): Boolean {
         val appContext = context.applicationContext
         SelfArmControllerContext.context = appContext
         val sessionId = SelfArmOnboardingStore.currentActiveSessionId(appContext)
-            .takeIf(String::isNotBlank)
+            .takeIf { bindSetupSession && it.isNotBlank() }
         val accepted = synchronized(idleCallbacksLock) {
             operationRunning.compareAndSet(false, true)
         }

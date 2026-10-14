@@ -301,15 +301,27 @@ internal object SelfArmBootRepairCoordinator {
         attempt: Int,
         onResult: (String) -> Unit,
     ) {
+        if (SelfArmOnboardingStore.currentActiveSessionId(context).isNotBlank()) {
+            // Setup began while the radio came up or between attempts. The arm is setup's to run
+            // now, and so is the radio: the restore yields to the session.
+            log("Owner repair abandoned reason=setup_session_started attempt=$attempt")
+            restoreWifiIfOwed(context, trigger = "owner") {
+                repairRunning.set(false)
+                onResult(GlassesRepairContract.RESULT_BUSY)
+            }
+            return
+        }
         // Deliberately NOT a background-liveness reason: the owner pressed the button and is
         // watching, so a credential the daemon refuses may escalate to a fresh pairing request —
         // the one escalation SelfArmController.BRIDGE_LIVENESS_REASON_PREFIX forbids to re-arms
         // nobody asked for. restartWatchdog=false keeps the arm a `start`: a bridge that turns
-        // out to be healthy is never killed to prove it.
+        // out to be healthy is never killed to prove it. Unbound from setup sessions: one that
+        // starts or is replaced mid-arm must not swallow the result this repair waits on.
         val accepted = SelfArmController.ensureWatchdog(
             context,
             reason = OWNER_REPAIR_REASON,
             restartWatchdog = false,
+            bindSetupSession = false,
         ) { result ->
             handler.post { onOwnerArmFinished(context, before, wifiUpAt, attempt, result, onResult) }
         }
@@ -317,7 +329,7 @@ internal object SelfArmBootRepairCoordinator {
             // A background arm already holds the single-flight; report its outcome once it lands
             // instead of racing it with a second run. Only an arm on record for this boot counts:
             // no record at all is unknown, not landed, and a run that failed did not land.
-            SelfArmController.runWhenIdle {
+            SelfArmController.runWhenIdle(bindSetupSession = false) {
                 handler.post {
                     val landed = SelfArmBridgeLivenessStore.armedBootInstantMillis(context) != null &&
                         !SelfArmBridgeLivenessStore.presumedDead(context) &&
