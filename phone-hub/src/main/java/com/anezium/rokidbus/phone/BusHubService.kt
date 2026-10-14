@@ -4011,6 +4011,7 @@ class BusHubService : Service() {
         requestId: String,
         action: GlassesManualControlAction,
         armed: Boolean,
+        abandonPairing: Boolean,
     ): String? = sendRemote(
         BusEnvelope(
             path = BusPaths.GLASSES_SELFARM_MANUAL,
@@ -4019,7 +4020,11 @@ class BusHubService : Service() {
                 .put("version", 1)
                 .put("action", action.wireValue)
                 .apply {
-                    if (action == GlassesManualControlAction.CLOSE) put("armed", armed)
+                    if (action == GlassesManualControlAction.CLOSE) {
+                        put("armed", armed)
+                        // Older glasses ignore it and keep their previous CLOSE behaviour.
+                        if (abandonPairing) put("abandonPairing", true)
+                    }
                 },
         ),
     )

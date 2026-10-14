@@ -193,8 +193,10 @@ class GlassesManualSetupActivity : Activity() {
         engineSubscription = null
         repairClient?.close()
         repairClient = null
-        // Leaving the wizard tears down any in-flight attempt so the glasses drop back to their HUD.
-        engine?.cancel()
+        // Leaving the wizard tears down any in-flight attempt so the glasses drop back to their HUD,
+        // and ends the self-pairing the glasses are running: left alone, a later Wi-Fi edge on
+        // the glasses would resume it with nobody watching. A rotation is not leaving.
+        engine?.cancel(abandonPairing = isFinishing)
         super.onDestroy()
     }
 

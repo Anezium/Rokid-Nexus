@@ -47,6 +47,26 @@ class GlassesManualPairingEngineTest {
     }
 
     @Test
+    fun onlyTheOwnersCancelAsksTheGlassesToAbandonTheirPairing() {
+        // A failed phone-side pairing step is not the owner leaving: the glasses may still finish
+        // their own pairing, so its CLOSE must not end that run.
+        val failed = fixture(FakeBackend(pairFailure = IOException("pairing failed")))
+        assertTrue(failed.engine.submit(HOST, PAIR_PORT, CODE, allowStartFromIdle = true))
+        assertTrue(failed.engine.state is GlassesManualPairingState.ERROR)
+        assertEquals(listOf(false), failed.control.abandonedPairingCloses)
+
+        val cancelled = fixture()
+        cancelled.engine.cancel()
+        cancelled.engine.cancel(abandonPairing = false)
+        assertEquals(listOf(true, false), cancelled.control.abandonedPairingCloses)
+
+        // The hub shutting down closes the engine; nobody cancelled anything.
+        val closed = fixture()
+        closed.engine.close()
+        assertEquals(listOf(false), closed.control.abandonedPairingCloses)
+    }
+
+    @Test
     fun submitAfterCloseFailsTheAttemptInsteadOfThrowing() {
         val fixture = fixture(
             worker = ManualPairingTaskExecutor { throw RejectedExecutionException("shut down") },
@@ -488,13 +508,17 @@ class GlassesManualPairingEngineTest {
         val actions = mutableListOf<GlassesManualControlAction>()
         val requestIds = mutableListOf<String>()
 
+        val abandonedPairingCloses = mutableListOf<Boolean>()
+
         override fun send(
             requestId: String,
             action: GlassesManualControlAction,
             armed: Boolean,
+            abandonPairing: Boolean,
         ): String? {
             requestIds += requestId
             actions += action
+            if (action == GlassesManualControlAction.CLOSE) abandonedPairingCloses += abandonPairing
             return null
         }
     }

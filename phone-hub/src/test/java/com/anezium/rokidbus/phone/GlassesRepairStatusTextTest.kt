@@ -50,8 +50,9 @@ class GlassesRepairStatusTextTest {
             GlassesRepairContract.RESULT_PAIRING_PENDING,
             GlassesRepairContract.MODE_PAIR,
         )
+        // Leaving the Re-pair screen ends the pairing, so the owner is told to stay on it.
         assertEquals(
-            GlassesRepairStatusText.message(GlassesRepairContract.RESULT_PAIRING_PENDING),
+            GlassesRepairStatusText.PAIR_PENDING_STAY,
             GlassesRepairStatusText.pairMessage(pending),
         )
         assertTrue(GlassesRepairStatusText.pairIsGood(pending))

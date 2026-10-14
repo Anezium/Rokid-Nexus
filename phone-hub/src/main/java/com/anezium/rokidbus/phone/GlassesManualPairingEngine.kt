@@ -34,8 +34,16 @@ internal enum class GlassesManualControlAction(val wireValue: String) {
 }
 
 internal fun interface GlassesManualControlSender {
-    /** Returns null on success or a non-sensitive transport error code. */
-    fun send(requestId: String, action: GlassesManualControlAction, armed: Boolean): String?
+    /**
+     * Returns null on success or a non-sensitive transport error code. [abandonPairing] rides a
+     * CLOSE only when the owner left the flow, and ends a self-pairing run on the glasses too.
+     */
+    fun send(
+        requestId: String,
+        action: GlassesManualControlAction,
+        armed: Boolean,
+        abandonPairing: Boolean,
+    ): String?
 }
 
 internal fun interface ManualPairingCancellation {
@@ -307,7 +315,11 @@ internal class GlassesManualPairingEngine(
         return true
     }
 
-    fun cancel() {
+    /**
+     * [abandonPairing] is the owner walking away: the glasses also end a self-pairing they are
+     * running, so it cannot resume later as a takeover nobody is waiting for.
+     */
+    fun cancel(abandonPairing: Boolean = true) {
         val shouldNotify = synchronized(lock) {
             generation += 1L
             activeWork?.cancel()
@@ -321,7 +333,7 @@ internal class GlassesManualPairingEngine(
             resetReportedConnectPortLocked()
             state != GlassesManualPairingState.IDLE
         }
-        sendClose(armed = false)
+        sendClose(armed = false, abandonPairing = abandonPairing)
         if (shouldNotify) transitionUnconditionally(GlassesManualPairingState.IDLE)
     }
 
@@ -343,7 +355,8 @@ internal class GlassesManualPairingEngine(
     }
 
     override fun close() {
-        cancel()
+        // The hub going away is not the owner cancelling anything.
+        cancel(abandonPairing = false)
         observers.clear()
         shutdownResources()
     }
@@ -500,6 +513,7 @@ internal class GlassesManualPairingEngine(
             requestId,
             action,
             false,
+            false,
         )
         if (error != null) {
             onManualControlResponse(requestId, error)
@@ -508,10 +522,11 @@ internal class GlassesManualPairingEngine(
         return true
     }
 
-    private fun sendClose(armed: Boolean): String? = control.send(
+    private fun sendClose(armed: Boolean, abandonPairing: Boolean = false): String? = control.send(
         nextRequestId(),
         GlassesManualControlAction.CLOSE,
         armed,
+        abandonPairing,
     )
 
     private fun manualControlUserMessage(errorCode: String): String = when (errorCode) {

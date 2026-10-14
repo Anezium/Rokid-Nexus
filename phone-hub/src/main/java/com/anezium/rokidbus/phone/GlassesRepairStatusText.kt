@@ -19,6 +19,11 @@ internal object GlassesRepairStatusText {
             "they ran an ordinary repair instead. Update Nexus on the glasses, then use Re-pair " +
             "glasses again."
 
+    /** Said on the Re-pair screen, where leaving ends the pairing it started. */
+    const val PAIR_PENDING_STAY =
+        "The glasses have started pairing again by themselves. Keep them on and stay on this " +
+            "screen until it is done: leaving it stops the pairing."
+
     fun message(result: String?): String = when (result) {
         GlassesRepairContract.RESULT_REPAIRED ->
             "Repaired. The glasses' helper is running again."
@@ -48,10 +53,10 @@ internal object GlassesRepairStatusText {
      */
     fun pairMessage(reply: JSONObject?): String {
         val result = GlassesRepairContract.resultFromReply(reply)
-        return if (result != null && !GlassesRepairContract.replyRanPairing(reply)) {
-            PAIR_UNSUPPORTED
-        } else {
-            message(result)
+        return when {
+            result != null && !GlassesRepairContract.replyRanPairing(reply) -> PAIR_UNSUPPORTED
+            result == GlassesRepairContract.RESULT_PAIRING_PENDING -> PAIR_PENDING_STAY
+            else -> message(result)
         }
     }
 
