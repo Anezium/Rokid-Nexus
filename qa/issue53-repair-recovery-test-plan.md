@@ -149,6 +149,8 @@ Then edit `shared_prefs/selfarm_wireless.xml` through `run-as` so that
 | 8.6 | paired, arm fails | `arm_failed` |
 | 8.7 | arm succeeded → helper killed → failed repair → glasses Wi-Fi off → Repair | must **not** answer healthy from the old record |
 | 8.8 | absent arm record (state 3) with Wi-Fi off | not `already_healthy`; Wi-Fi is turned on through Settings to measure |
+| 8.9 | armed this boot, helpers running, glasses Wi-Fi off → Repair | `Owner repair bridge Wi-Fi enable answered=true`, no Settings popup, arm measures, `already_healthy`, Wi-Fi back off |
+| 8.10 | armed this boot, both helpers stopped, glasses Wi-Fi off → Repair | `answered=false` within ~6 s, then the Settings popup, arm revives, `repaired` |
 
 ## 9. Phone fallback arm (code form) — honest gap
 

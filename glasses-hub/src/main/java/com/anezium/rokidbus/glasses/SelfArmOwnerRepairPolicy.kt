@@ -68,10 +68,12 @@ internal object SelfArmOwnerRepairPolicy {
     }
 
     /**
-     * With the radio down, the only way to measure is the Settings popup. Spare it only when the
-     * record already says alive; an absent or contradicted record has to be checked.
+     * With the radio down, the arm needs it brought up first. The bridge does that silently, but
+     * only a record that says alive makes it worth waiting on before the Settings popup; an absent
+     * or contradicted record goes straight to the popup. Either way the arm then measures: a
+     * record that says alive cannot tell a helper still running from one stopped since.
      */
-    fun mayAnswerHealthyWithoutMeasuring(before: HelperRecord): Boolean =
+    fun mayTryBridgeBeforePopup(before: HelperRecord): Boolean =
         before == HelperRecord.ALIVE_THIS_BOOT
 
     /**

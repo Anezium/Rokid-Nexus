@@ -12,7 +12,7 @@ class SelfArmOwnerRepairPolicyTest {
     private val boot = 1_700_000_000_000L
 
     @Test
-    fun `an absent record is unknown and never answered healthy unmeasured`() {
+    fun `an absent record is unknown and goes straight to the popup`() {
         val record = SelfArmOwnerRepairPolicy.helperRecord(
             armedBootInstantMs = null,
             armedBridgeRunning = false,
@@ -20,7 +20,7 @@ class SelfArmOwnerRepairPolicyTest {
             bridgeDemandPending = false,
         )
         assertEquals(HelperRecord.ABSENT, record)
-        assertFalse(SelfArmOwnerRepairPolicy.mayAnswerHealthyWithoutMeasuring(record))
+        assertFalse(SelfArmOwnerRepairPolicy.mayTryBridgeBeforePopup(record))
     }
 
     @Test
@@ -36,8 +36,8 @@ class SelfArmOwnerRepairPolicyTest {
             HelperRecord.NOT_ALIVE,
             SelfArmOwnerRepairPolicy.helperRecord(boot, true, boot, false, armFailedSince = true),
         )
-        assertTrue(SelfArmOwnerRepairPolicy.mayAnswerHealthyWithoutMeasuring(HelperRecord.ALIVE_THIS_BOOT))
-        assertFalse(SelfArmOwnerRepairPolicy.mayAnswerHealthyWithoutMeasuring(HelperRecord.NOT_ALIVE))
+        assertTrue(SelfArmOwnerRepairPolicy.mayTryBridgeBeforePopup(HelperRecord.ALIVE_THIS_BOOT))
+        assertFalse(SelfArmOwnerRepairPolicy.mayTryBridgeBeforePopup(HelperRecord.NOT_ALIVE))
     }
 
     @Test

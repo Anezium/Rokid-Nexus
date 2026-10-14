@@ -155,19 +155,37 @@ internal object SelfArmBootRepairCoordinator {
             runOwnerArm(context, before, wifiWasOff = false, onResult = onResult)
             return
         }
-        if (SelfArmOwnerRepairPolicy.mayAnswerHealthyWithoutMeasuring(before)) {
-            // Armed with its bridge this boot and nothing has failed since: the popup would only
-            // prove what the record already says.
-            finishOwnerRepair(
-                context,
-                armed = true,
-                bridgeRunning = true,
-                before = before,
-                requestPairing = false,
-                onResult = onResult,
-            )
+        if (SelfArmOwnerRepairPolicy.mayTryBridgeBeforePopup(before)) {
+            // The record only says the bridge was armed this boot, not that it still runs. A
+            // bridge that brings the radio up is alive and spares the popup; the arm then
+            // measures the helpers for real.
+            Thread {
+                val viaBridge = runCatching { SelfArmCommandBridgeClient.setWifiEnabled(context, true) }
+                    .onFailure { logError("Owner repair bridge Wi-Fi call failed", it) }
+                    .getOrDefault(false)
+                log("Owner repair bridge Wi-Fi enable answered=$viaBridge")
+                handler.post {
+                    if (viaBridge) {
+                        runOwnerArm(context, before, wifiWasOff = true, onResult = onResult)
+                    } else {
+                        startOwnerRepairWifiPopup(context, before, onResult)
+                    }
+                }
+            }.apply {
+                name = "RokidNexusRepairBridgeProbe"
+                isDaemon = true
+                start()
+            }
             return
         }
+        startOwnerRepairWifiPopup(context, before, onResult)
+    }
+
+    private fun startOwnerRepairWifiPopup(
+        context: Context,
+        before: SelfArmOwnerRepairPolicy.HelperRecord,
+        onResult: (String) -> Unit,
+    ) {
         val started = RokidBusAccessibilityService.requestRepairWifiEnable { wifiEnabled ->
             handler.post {
                 if (!wifiEnabled) {
