@@ -53,7 +53,8 @@ object GlassesRepairContract {
 
     /**
      * The glasses could not be reached over Wi-Fi: the radio would not come on, or came on but
-     * never gave the repair a session to measure the helper through. Nothing was measured.
+     * never kept a session up long enough for the repair to finish through it. The helper may
+     * not have been measured or restored.
      */
     const val RESULT_WIFI_UNAVAILABLE = "wifi_unavailable"
 

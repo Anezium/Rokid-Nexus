@@ -33,7 +33,8 @@ class GlassesRepairStatusTextTest {
     fun `glasses that could not be reached never read as a helper that would not come back`() {
         // Device test 8.9: the helper was running; only the Wi-Fi session was not up yet.
         val text = GlassesRepairStatusText.message(GlassesRepairContract.RESULT_WIFI_UNAVAILABLE)
-        assertTrue(text, text.contains("not checked"))
+        // Nor as one that was surely never touched: the link can drop after the arm began.
+        assertTrue(text, text.contains("may not have been checked or restored"))
         assertFalse(text, text.contains("could not restore"))
     }
 
