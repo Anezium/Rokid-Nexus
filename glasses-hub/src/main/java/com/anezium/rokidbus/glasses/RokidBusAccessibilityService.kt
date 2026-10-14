@@ -305,37 +305,41 @@ class RokidBusAccessibilityService : AccessibilityService() {
         if (sessionId.isBlank()) return
         val snapshot = SelfArmOnboardingStore.snapshot(applicationContext)
         if (!SelfArmOnboardingStore.isCurrentSession(applicationContext, sessionId)) return
-        if (snapshot.coreReady) {
-            returnToOnboarding(sessionId)
-            SelfArmOnboardingStore.finish(
-                context = applicationContext,
-                sessionId = sessionId,
-                setupState = "wireless_bootstrap_complete",
-                success = true,
-                completionMode = if (snapshot.maintenanceReady) {
-                    SetupCompletionMode.AUTOMATIC
-                } else {
-                    SetupCompletionMode.PM_GRANT
-                },
-            )
-            return
-        }
-        if (!snapshot.wifiReady) {
-            val wifiEnabled = SelfArmWirelessAdbController.isWifiEnabled(applicationContext)
-            if (SelfArmWifiAutomationPolicy.shouldAutomate(
-                    accessibilityServiceArmed = true,
-                    wifiEnabled = wifiEnabled,
+        // A re-pair keeps going through the service recreation its own Wireless debugging toggle
+        // causes; only a session with nothing more to do may be closed as already set up.
+        val pairingRequested = SelfArmOnboardingStore.isPairingRequested(applicationContext, sessionId)
+        when (SelfArmOnboardingStore.resumeStep(applicationContext, sessionId, snapshot)) {
+            SelfArmSetupResumePolicy.Step.FINISH -> {
+                returnToOnboarding(sessionId)
+                SelfArmOnboardingStore.finish(
+                    context = applicationContext,
+                    sessionId = sessionId,
+                    setupState = "wireless_bootstrap_complete",
+                    success = true,
+                    completionMode = if (snapshot.maintenanceReady) {
+                        SetupCompletionMode.AUTOMATIC
+                    } else {
+                        SetupCompletionMode.PM_GRANT
+                    },
                 )
-            ) {
-                startSetupWifiEnable(sessionId, force = false)
-            } else if (wifiEnabled && snapshot.stage == SetupStage.ENABLING_WIFI) {
-                awaitValidatedWifiAfterAutomaticEnable(sessionId, force = false)
-            } else {
-                waitForWifi(sessionId, force = false)
             }
-            return
+            SelfArmSetupResumePolicy.Step.WAIT_FOR_WIFI -> {
+                val wifiEnabled = SelfArmWirelessAdbController.isWifiEnabled(applicationContext)
+                if (SelfArmWifiAutomationPolicy.shouldAutomate(
+                        accessibilityServiceArmed = true,
+                        wifiEnabled = wifiEnabled,
+                    )
+                ) {
+                    startSetupWifiEnable(sessionId, force = pairingRequested)
+                } else if (wifiEnabled && snapshot.stage == SetupStage.ENABLING_WIFI) {
+                    awaitValidatedWifiAfterAutomaticEnable(sessionId, force = pairingRequested)
+                } else {
+                    waitForWifi(sessionId, force = pairingRequested)
+                }
+            }
+            SelfArmSetupResumePolicy.Step.RUN_BOOTSTRAP ->
+                startWirelessBootstrap(sessionId, force = pairingRequested)
         }
-        startWirelessBootstrap(sessionId)
     }
 
     private fun startWirelessBootstrap(
@@ -347,7 +351,8 @@ class RokidBusAccessibilityService : AccessibilityService() {
         if (wirelessBootstrapActive && wirelessBootstrapSessionId == sessionId) return
         if (wirelessBootstrapActive) wirelessDebuggingAutomator?.stop()
         finishWifiEnableIfActive(false)
-        val forced = force || forcedWirelessBootstrap
+        val forced = force || forcedWirelessBootstrap ||
+            SelfArmOnboardingStore.isPairingRequested(applicationContext, sessionId)
         forcedWirelessBootstrap = false
         val snapshot = SelfArmOnboardingStore.snapshot(applicationContext)
         if (!SelfArmOnboardingStore.isCurrentSession(applicationContext, sessionId)) return
@@ -1163,6 +1168,7 @@ class RokidBusAccessibilityService : AccessibilityService() {
             val sessionId = SelfArmOnboardingStore.currentActiveSessionId(appContext)
             if (sessionId.isBlank()) return false
             val service = liveInstance ?: return false
+            if (force) SelfArmOnboardingStore.markPairingRequested(appContext, sessionId)
             service.main.post {
                 if (!SelfArmOnboardingStore.isCurrentSession(appContext, sessionId)) return@post
                 service.startWirelessBootstrap(sessionId, force)

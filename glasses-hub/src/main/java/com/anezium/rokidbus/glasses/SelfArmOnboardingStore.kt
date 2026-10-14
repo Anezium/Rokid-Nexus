@@ -108,6 +108,7 @@ internal object SelfArmOnboardingStore {
             .putBoolean(KEY_RUNNING, false)
             .putBoolean(KEY_LEGACY_ADB_SAFE, false)
             .putBoolean(KEY_MANUAL_ARM_IN_PROGRESS, false)
+            .putString(KEY_PAIRING_SESSION_ID, "")
             .putLong(KEY_RUNNING_SINCE, now)
             .putLong(KEY_LAST_HEARTBEAT, now)
             .putString(KEY_FAILURE_STATE, "")
@@ -250,6 +251,32 @@ internal object SelfArmOnboardingStore {
 
     fun isSetupRequested(context: Context): Boolean =
         prefs(context).getBoolean(KEY_REQUESTED, false)
+
+    /**
+     * Records that [sessionId] exists to pair the glasses again, not merely to finish setup. Lives
+     * in prefs because toggling Wireless debugging recreates the accessibility service mid-run:
+     * a resumed session that forgot why it was opened sees core setup already done and closes
+     * itself, leaving the glasses unpaired after the owner was told pairing had started.
+     */
+    fun markPairingRequested(context: Context, sessionId: String) {
+        if (!canMutateSession(context, sessionId)) return
+        prefs(context).edit().putString(KEY_PAIRING_SESSION_ID, sessionId).apply()
+    }
+
+    fun isPairingRequested(context: Context, sessionId: String): Boolean =
+        canMutateSession(context, sessionId) &&
+            prefs(context).getString(KEY_PAIRING_SESSION_ID, "") == sessionId
+
+    /** What a (re)connected accessibility service owes [sessionId], given what it observes. */
+    fun resumeStep(
+        context: Context,
+        sessionId: String,
+        snapshot: SelfArmOnboardingSnapshot,
+    ): SelfArmSetupResumePolicy.Step = SelfArmSetupResumePolicy.next(
+        coreReady = snapshot.coreReady,
+        pairingRequested = isPairingRequested(context, sessionId),
+        wifiReady = snapshot.wifiReady,
+    )
 
     /** Set right before we send the user into Accessibility settings, so the
      *  service can pull them straight back the moment they enable it. */
@@ -398,6 +425,7 @@ internal object SelfArmOnboardingStore {
             .putBoolean(KEY_RUNNING, false)
             .putBoolean(KEY_SESSION_ACTIVE, false)
             .putBoolean(KEY_MANUAL_ARM_IN_PROGRESS, false)
+            .putString(KEY_PAIRING_SESSION_ID, "")
             .putString(KEY_PROGRESS_STATE, setupState.trim().take(MAX_STATE_LENGTH))
             .putString(KEY_FAILURE_STATE, if (success) "" else setupState.trim().take(MAX_STATE_LENGTH))
             .putString(KEY_STAGE, terminalStage)
@@ -423,6 +451,7 @@ internal object SelfArmOnboardingStore {
             .putBoolean(KEY_SESSION_ACTIVE, false)
             .putBoolean(KEY_REQUESTED, false)
             .putBoolean(KEY_RUNNING, false)
+            .putString(KEY_PAIRING_SESSION_ID, "")
             .apply()
         if (invalidatedSessionId.isNotBlank()) {
             GlassesHub.onSetupSessionTerminal(context, invalidatedSessionId)
@@ -595,11 +624,28 @@ internal object SelfArmOnboardingStore {
     private const val KEY_LAST_HEARTBEAT = "setup_last_heartbeat"
     private const val KEY_STAGE = "setup_stage"
     private const val KEY_COMPLETION_MODE = "setup_completion_mode"
+    private const val KEY_PAIRING_SESSION_ID = "setup_pairing_session_id"
     internal const val PAUSED_WIFI_NEED_TIMEOUT_MS = 5 * 60_000L
     private const val MAX_STATE_LENGTH = 96
     private val networkPostureWorkerLock = Any()
     private var networkPostureRefreshThread: Thread? = null
     private val secureRandom = SecureRandom()
+}
+
+internal object SelfArmSetupResumePolicy {
+    enum class Step {
+        /** Core setup is already done and nothing more was asked of this session. */
+        FINISH,
+        WAIT_FOR_WIFI,
+        RUN_BOOTSTRAP,
+    }
+
+    /** Core readiness closes a session only when it was not opened to pair the glasses again. */
+    fun next(coreReady: Boolean, pairingRequested: Boolean, wifiReady: Boolean): Step = when {
+        coreReady && !pairingRequested -> Step.FINISH
+        !wifiReady -> Step.WAIT_FOR_WIFI
+        else -> Step.RUN_BOOTSTRAP
+    }
 }
 
 internal object SelfArmSessionPolicy {
