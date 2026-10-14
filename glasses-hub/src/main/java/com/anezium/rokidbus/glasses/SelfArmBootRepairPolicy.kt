@@ -94,4 +94,30 @@ internal object SelfArmBootRepairPolicy {
             cameraSessionActive -> WifiRestore.YIELDED
         else -> WifiRestore.DISABLE
     }
+
+    /** How a [WifiRestore.DISABLE] ended; [fallbackDropped] is set when the fallback was not tried. */
+    data class WifiDisableOutcome(
+        val viaBridge: Boolean,
+        val applied: Boolean,
+        val fallbackDropped: WifiRestore? = null,
+    )
+
+    /**
+     * Carries out a [WifiRestore.DISABLE]: the bridge, then the privileged session. The bridge can
+     * wait seconds before failing, and manual setup opens its session without going through the
+     * Wi-Fi handover thread, so [decideAgain] runs right before the fallback; anything but
+     * [WifiRestore.DISABLE] leaves the radio as it is.
+     */
+    fun disableRepairWifi(
+        viaBridge: () -> Boolean,
+        decideAgain: () -> WifiRestore,
+        viaSession: () -> Boolean,
+    ): WifiDisableOutcome {
+        if (viaBridge()) return WifiDisableOutcome(viaBridge = true, applied = true)
+        val decision = decideAgain()
+        if (decision != WifiRestore.DISABLE) {
+            return WifiDisableOutcome(viaBridge = false, applied = false, fallbackDropped = decision)
+        }
+        return WifiDisableOutcome(viaBridge = false, applied = viaSession())
+    }
 }

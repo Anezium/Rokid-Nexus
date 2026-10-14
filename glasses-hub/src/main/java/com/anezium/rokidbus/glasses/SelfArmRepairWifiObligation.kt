@@ -58,5 +58,8 @@ internal class SelfArmRepairWifiObligation {
     @Synchronized
     fun isOwed(): Boolean = owed
 
+    @Synchronized
+    fun droppedBecause(): String? = droppedBecause
+
     data class Release(val owed: Boolean, val droppedBecause: String?)
 }

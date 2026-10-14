@@ -500,22 +500,20 @@ internal object SelfArmBootRepairCoordinator {
 
     /** On the Wi-Fi handover thread: no handover lands between these checks and the disable. */
     private fun restoreWifiNow(context: Context, trigger: String) {
-        val claim = wifiObligation.release()
-        val wifiHubOwned = GlassesHub.isWifiHubOwned()
-        val setupSessionActive = SelfArmOnboardingStore.currentActiveSessionId(context).isNotBlank()
-        val mediaSyncSessionActive = MediaSyncEngine.isSessionActive()
-        val cameraSessionActive = GlassesHub.isCameraSessionActive()
-        val action = SelfArmBootRepairPolicy.restoreWifi(
-            repairOwesWifiOff = claim.owed,
-            wifiEnabledNow = SelfArmWirelessAdbController.isWifiEnabled(context),
-            wifiHubOwned = wifiHubOwned,
-            setupSessionActive = setupSessionActive,
-            mediaSyncSessionActive = mediaSyncSessionActive,
-            cameraSessionActive = cameraSessionActive,
-        )
+        try {
+            restoreHeldWifi(context, trigger)
+        } finally {
+            // Only once nothing is left to decide: until then a handover or a radio edge seen by the
+            // state watch can still drop the claim and veto the fallback disable.
+            wifiObligation.release()
+        }
+    }
+
+    private fun restoreHeldWifi(context: Context, trigger: String) {
+        val (action, owners) = decideWifiRestore(context)
         when (action) {
             SelfArmBootRepairPolicy.WifiRestore.NOT_OWED -> {
-                claim.droppedBecause?.let { reason ->
+                wifiObligation.droppedBecause()?.let { reason ->
                     log("Repair Wi-Fi restore trigger=$trigger result=dropped reason=$reason wifiLeftAsIs=true")
                 }
                 return
@@ -525,26 +523,57 @@ internal object SelfArmBootRepairCoordinator {
                 return
             }
             SelfArmBootRepairPolicy.WifiRestore.YIELDED -> {
-                log(
-                    "Repair Wi-Fi restore trigger=$trigger result=yielded wifiLeftOn=true " +
-                        "hubOwned=$wifiHubOwned setupSession=$setupSessionActive " +
-                        "mediaSync=$mediaSyncSessionActive cameraSession=$cameraSessionActive",
-                )
+                log("Repair Wi-Fi restore trigger=$trigger result=yielded wifiLeftOn=true $owners")
                 return
             }
             SelfArmBootRepairPolicy.WifiRestore.DISABLE -> Unit
         }
         // The bridge first: it is the quiet way back. Its fallback still never drives Settings,
         // and a radio that refuses to go down is left up, not owed to anyone later.
-        val viaBridge = runCatching { SelfArmCommandBridgeClient.setWifiEnabled(context, false) }
-            .onFailure { logError("Repair Wi-Fi restore bridge call failed", it) }
-            .getOrDefault(false)
-        val applied = viaBridge || SelfArmController.setWifiEnabled(context, false)
-        val observedOff = applied && awaitWifiOff(context)
-        log(
-            "Repair Wi-Fi restore trigger=$trigger applied=$applied viaBridge=$viaBridge " +
-                "observedOff=$observedOff",
+        var ownersAtFallback = owners
+        val outcome = SelfArmBootRepairPolicy.disableRepairWifi(
+            viaBridge = {
+                runCatching { SelfArmCommandBridgeClient.setWifiEnabled(context, false) }
+                    .onFailure { logError("Repair Wi-Fi restore bridge call failed", it) }
+                    .getOrDefault(false)
+            },
+            decideAgain = {
+                decideWifiRestore(context).also { ownersAtFallback = it.second }.first
+            },
+            viaSession = { SelfArmController.setWifiEnabled(context, false) },
         )
+        // Decided: the radio going down from here on is this repair's own doing, not a revocation.
+        val claimDropped = wifiObligation.release().droppedBecause
+        outcome.fallbackDropped?.let { decision ->
+            log(
+                "Repair Wi-Fi restore trigger=$trigger result=fallback_dropped decision=$decision " +
+                    "claimDropped=${claimDropped ?: "no"} wifiLeftAsIs=true $ownersAtFallback",
+            )
+            return
+        }
+        val observedOff = outcome.applied && awaitWifiOff(context)
+        log(
+            "Repair Wi-Fi restore trigger=$trigger applied=${outcome.applied} " +
+                "viaBridge=${outcome.viaBridge} observedOff=$observedOff",
+        )
+    }
+
+    /** The restore decision for the claim as it stands now, with the owners it weighed. */
+    private fun decideWifiRestore(context: Context): Pair<SelfArmBootRepairPolicy.WifiRestore, String> {
+        val wifiHubOwned = GlassesHub.isWifiHubOwned()
+        val setupSessionActive = SelfArmOnboardingStore.currentActiveSessionId(context).isNotBlank()
+        val mediaSyncSessionActive = MediaSyncEngine.isSessionActive()
+        val cameraSessionActive = GlassesHub.isCameraSessionActive()
+        val action = SelfArmBootRepairPolicy.restoreWifi(
+            repairOwesWifiOff = wifiObligation.isOwed(),
+            wifiEnabledNow = SelfArmWirelessAdbController.isWifiEnabled(context),
+            wifiHubOwned = wifiHubOwned,
+            setupSessionActive = setupSessionActive,
+            mediaSyncSessionActive = mediaSyncSessionActive,
+            cameraSessionActive = cameraSessionActive,
+        )
+        return action to "hubOwned=$wifiHubOwned setupSession=$setupSessionActive " +
+            "mediaSync=$mediaSyncSessionActive cameraSession=$cameraSessionActive"
     }
 
     private fun awaitWifiOff(context: Context): Boolean {

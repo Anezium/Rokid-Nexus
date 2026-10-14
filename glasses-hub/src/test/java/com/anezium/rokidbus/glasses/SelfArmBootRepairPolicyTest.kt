@@ -1,6 +1,7 @@
 package com.anezium.rokidbus.glasses
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Test
 
@@ -94,5 +95,72 @@ class SelfArmBootRepairPolicyTest {
             // The camera never claims ownership of a radio it found already up.
             restore(cameraSessionActive = true),
         ).forEach { assertEquals(SelfArmBootRepairPolicy.WifiRestore.YIELDED, it) }
+    }
+
+    @Test
+    fun `setup starting while the bridge waits keeps the fallback from disabling`() {
+        var setupSessionActive = false
+        var fallbackTried = false
+        val outcome = SelfArmBootRepairPolicy.disableRepairWifi(
+            viaBridge = {
+                // Manual setup opens its session off the Wi-Fi handover thread, mid-wait.
+                setupSessionActive = true
+                false
+            },
+            decideAgain = { restore(setupSessionActive = setupSessionActive) },
+            viaSession = {
+                fallbackTried = true
+                true
+            },
+        )
+        assertFalse(fallbackTried)
+        assertFalse(outcome.applied)
+        assertEquals(SelfArmBootRepairPolicy.WifiRestore.YIELDED, outcome.fallbackDropped)
+    }
+
+    @Test
+    fun `a claim dropped while the bridge waits keeps the fallback from disabling`() {
+        var fallbackTried = false
+        val outcome = SelfArmBootRepairPolicy.disableRepairWifi(
+            viaBridge = { false },
+            decideAgain = { restore(repairOwesWifiOff = false) },
+            viaSession = {
+                fallbackTried = true
+                true
+            },
+        )
+        assertFalse(fallbackTried)
+        assertEquals(SelfArmBootRepairPolicy.WifiRestore.NOT_OWED, outcome.fallbackDropped)
+    }
+
+    @Test
+    fun `a failed bridge falls back to the session while the radio is still the repair's`() {
+        val outcome = SelfArmBootRepairPolicy.disableRepairWifi(
+            viaBridge = { false },
+            decideAgain = { restore() },
+            viaSession = { true },
+        )
+        assertEquals(
+            SelfArmBootRepairPolicy.WifiDisableOutcome(viaBridge = false, applied = true),
+            outcome,
+        )
+    }
+
+    @Test
+    fun `a bridge that turned the radio off needs no second decision`() {
+        var decidedAgain = false
+        val outcome = SelfArmBootRepairPolicy.disableRepairWifi(
+            viaBridge = { true },
+            decideAgain = {
+                decidedAgain = true
+                restore()
+            },
+            viaSession = { error("fallback not expected") },
+        )
+        assertFalse(decidedAgain)
+        assertEquals(
+            SelfArmBootRepairPolicy.WifiDisableOutcome(viaBridge = true, applied = true),
+            outcome,
+        )
     }
 }
