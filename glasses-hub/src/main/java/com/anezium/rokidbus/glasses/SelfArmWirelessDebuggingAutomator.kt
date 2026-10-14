@@ -9,6 +9,7 @@ import android.graphics.Rect
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Handler
+import android.os.PowerManager
 import android.os.SystemClock
 import android.provider.Settings
 import android.util.Log
@@ -77,7 +78,13 @@ internal class SelfArmWirelessDebuggingAutomator(
     private var lastPhoneAssistedConnectPortReport = 0
     private var lastReportedProgressState = ""
     private val phonePairingOffer = SelfArmPhonePairingOfferTracker()
-    private val displayHold = SetupDisplayHoldLifecycle()
+    private val displayHold = SetupDisplayHoldLifecycle(
+        isInteractive = {
+            service.getSystemService(PowerManager::class.java)?.isInteractive != false
+        },
+        backstop = SetupDisplayHoldLifecycle.EXECUTOR_BACKSTOP,
+        onBackstopRelease = { android.util.Log.i(TAG, formatSetupDisplayHoldTransition(it)) },
+    )
 
     private var awaitingWirelessDebugConfirmation = false
     private var wirelessToggleRequestedAt = 0L
@@ -1859,7 +1866,9 @@ internal class SelfArmWirelessDebuggingAutomator(
         } else {
             deadlineAt
         }
-        displayHold.renew(runToken, nowMillis, holdDeadlineAt) {
+        // A session's chained runs answer to one wearer request; a sessionless run is its own.
+        val scope = sessionId.ifBlank { "run:$runToken" }
+        displayHold.renew(runToken, scope, nowMillis, holdDeadlineAt) {
             SetupDisplayHoldLifecycle.newLease(service.applicationContext)
         }
             ?.takeIf { it !is SetupDisplayHoldTransition.Renew }
