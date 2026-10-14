@@ -170,7 +170,6 @@ internal object WifiOwnershipReconciliationPolicy {
     fun decide(
         cameraLeaseOwned: Boolean,
         setupWifiOwned: Boolean,
-        repairWifiOwed: Boolean,
         cameraSessionActive: Boolean,
         setupSessionActive: Boolean,
         mediaSyncSessionActive: Boolean,
@@ -180,9 +179,7 @@ internal object WifiOwnershipReconciliationPolicy {
         cameraGracePending: Boolean,
         cameraGraceSatisfied: Boolean,
     ): WifiOwnershipReconciliationAction {
-        if (!cameraLeaseOwned && !setupWifiOwned && !repairWifiOwed) {
-            return WifiOwnershipReconciliationAction.NONE
-        }
+        if (!cameraLeaseOwned && !setupWifiOwned) return WifiOwnershipReconciliationAction.NONE
         if (cameraSessionActive || setupSessionActive || mediaSyncSessionActive ||
             selfArmOperationActive || setupEnableRequestActive
         ) {

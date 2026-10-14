@@ -57,25 +57,26 @@ internal object SelfArmBootRepairPolicy {
     }
 
     enum class WifiRestore {
-        /** The repair turned nothing on, or already settled its debt. */
+        /** The repair turned nothing on, or its claim was dropped while it ran. */
         NOT_OWED,
 
-        /** The radio is already off; only the record of the debt is left to drop. */
+        /** The radio is already off; nothing left to do. */
         SETTLED,
 
-        /** Someone else needs the radio now; the debt stays for the reconciliation to settle. */
-        DEFERRED,
+        /** Someone else needs the radio now: drop the claim and leave Wi-Fi on. */
+        YIELDED,
 
         /** Turn it off now. */
         DISABLE,
     }
 
     /**
-     * What to do with Wi-Fi a repair turned on, on every way the repair ends — success or not:
-     * whether the arm worked says nothing about whose radio it is. Turning it off runs through the
-     * bridge, with the privileged session as the fallback, never through Settings a second time;
-     * a radio that refuses to go down keeps the debt on record. Every owner that may have claimed
-     * the radio in the meantime defers it — the same yields the background re-arm honours.
+     * What to do with Wi-Fi a repair turned on, decided once as that repair ends — success or
+     * not: whether the arm worked says nothing about whose radio it is. Turning it off runs
+     * through the bridge, with the privileged session as the fallback, never through Settings a
+     * second time. Every owner that may have claimed the radio in the meantime wins outright —
+     * the same yields the background re-arm honours — because a radio left on is the lesser harm
+     * and nothing comes back later to settle it.
      */
     fun restoreWifi(
         repairOwesWifiOff: Boolean,
@@ -90,7 +91,7 @@ internal object SelfArmBootRepairPolicy {
         wifiHubOwned || setupSessionActive || mediaSyncSessionActive ||
             // A camera session that found the radio already up never claims hub ownership, so the
             // ownership check alone would let the restore cut the link mid-viewfinder.
-            cameraSessionActive -> WifiRestore.DEFERRED
+            cameraSessionActive -> WifiRestore.YIELDED
         else -> WifiRestore.DISABLE
     }
 }

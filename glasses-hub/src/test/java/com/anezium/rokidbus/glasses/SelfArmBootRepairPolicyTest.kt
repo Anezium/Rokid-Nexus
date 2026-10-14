@@ -78,7 +78,7 @@ class SelfArmBootRepairPolicyTest {
     }
 
     @Test
-    fun `a radio already off again only settles the debt`() {
+    fun `a radio already off again needs nothing more`() {
         assertEquals(
             SelfArmBootRepairPolicy.WifiRestore.SETTLED,
             restore(wifiEnabledNow = false),
@@ -86,13 +86,13 @@ class SelfArmBootRepairPolicyTest {
     }
 
     @Test
-    fun `every live radio owner defers the restore without forgetting it`() {
+    fun `every live radio owner wins and the radio is left on`() {
         listOf(
             restore(wifiHubOwned = true),
             restore(setupSessionActive = true),
             restore(mediaSyncSessionActive = true),
             // The camera never claims ownership of a radio it found already up.
             restore(cameraSessionActive = true),
-        ).forEach { assertEquals(SelfArmBootRepairPolicy.WifiRestore.DEFERRED, it) }
+        ).forEach { assertEquals(SelfArmBootRepairPolicy.WifiRestore.YIELDED, it) }
     }
 }

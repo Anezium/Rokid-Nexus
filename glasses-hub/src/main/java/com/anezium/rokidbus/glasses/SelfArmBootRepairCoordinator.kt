@@ -1,6 +1,10 @@
 package com.anezium.rokidbus.glasses
 
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.net.wifi.WifiManager
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
@@ -26,6 +30,8 @@ internal object SelfArmBootRepairCoordinator {
     private val handler = Handler(Looper.getMainLooper())
     private val repairRunning = AtomicBoolean(false)
     private var bootCheckRunnable: Runnable? = null
+    private val wifiObligation = SelfArmRepairWifiObligation()
+    private var wifiStateWatch: BroadcastReceiver? = null
 
     fun onAccessibilityServiceConnected(context: Context) {
         val appContext = context.applicationContext
@@ -56,6 +62,15 @@ internal object SelfArmBootRepairCoordinator {
 
     internal fun isRepairRunning(): Boolean = repairRunning.get()
 
+    /**
+     * Another owner took the radio while a repair that turned it on was still running: that repair
+     * no longer turns it off. Callers run on the Wi-Fi handover thread, the same one the restore
+     * decides on, so a handover is either seen by the restore or comes after its disable.
+     */
+    internal fun revokeWifiObligation(reason: String) {
+        if (wifiObligation.revoke(reason)) log("Repair Wi-Fi claim dropped reason=$reason")
+    }
+
     private fun maybeRunBootRepair(context: Context) {
         val blocker = SelfArmBootRepairPolicy.bootAttemptBlocker(
             autoRepairEnabled = SelfArmBootRepairStore.isAutoRepairEnabled(context),
@@ -78,13 +93,13 @@ internal object SelfArmBootRepairCoordinator {
         // boot's one attempt, and a hub restart mid-automation must not buy a second popup.
         SelfArmBootRepairStore.recordBootAttempt(context)
         log("Boot repair starting trigger=boot")
-        recordWifiDebt(context)
+        takeWifiObligation(context)
         val started = RokidBusAccessibilityService.requestRepairWifiEnable { wifiEnabled ->
             handler.post { onBootWifiAutomationFinished(context, wifiEnabled) }
         }
         if (!started) {
             log("Boot repair abandoned trigger=boot reason=service_not_live")
-            restoreWifiIfOwed(context, trigger = "boot", repairEnabledWifi = false) {
+            restoreWifiIfOwed(context, trigger = "boot") {
                 repairRunning.set(false)
             }
         }
@@ -95,7 +110,7 @@ internal object SelfArmBootRepairCoordinator {
             // One attempt per boot: the reason is on record and nothing retries until the next.
             log("Boot repair abandoned trigger=boot reason=wifi_automation_failed")
             // A half-finished automation may still have left the radio on.
-            restoreWifiIfOwed(context, trigger = "boot", repairEnabledWifi = false) {
+            restoreWifiIfOwed(context, trigger = "boot") {
                 repairRunning.set(false)
             }
             return
@@ -122,7 +137,7 @@ internal object SelfArmBootRepairCoordinator {
             return
         }
         log("Repair arm wait finished trigger=$trigger armed=$armed")
-        restoreWifiIfOwed(context, trigger = trigger, repairEnabledWifi = true) {
+        restoreWifiIfOwed(context, trigger = trigger) {
             repairRunning.set(false)
         }
     }
@@ -162,7 +177,7 @@ internal object SelfArmBootRepairCoordinator {
             return
         }
         // Owed from here on, whatever the arm finds: the wearer had this radio off.
-        recordWifiDebt(context)
+        takeWifiObligation(context)
         if (SelfArmOwnerRepairPolicy.mayTryBridgeBeforePopup(before)) {
             // The record only says the bridge was armed this boot, not that it still runs. A
             // bridge that brings the radio up is alive and spares the popup; the arm then
@@ -212,7 +227,7 @@ internal object SelfArmBootRepairCoordinator {
 
     /** A half-finished automation may still have left the radio on. */
     private fun abandonOwnerRepair(context: Context, onResult: (String) -> Unit) {
-        restoreWifiIfOwed(context, trigger = "owner", repairEnabledWifi = false) {
+        restoreWifiIfOwed(context, trigger = "owner") {
             repairRunning.set(false)
             onResult(GlassesRepairContract.RESULT_WIFI_UNAVAILABLE)
         }
@@ -382,8 +397,8 @@ internal object SelfArmBootRepairCoordinator {
         }
         // Restore before answering: released too early, a second "repair now" could open the
         // popup while this thread is still turning the radio off under it. Owed whether or not
-        // the arm worked; a debt an earlier repair could not settle is settled here too.
-        restoreWifiIfOwed(context, trigger = "owner", repairEnabledWifi = wifiBroughtUp, onDone = complete)
+        // the arm worked.
+        restoreWifiIfOwed(context, trigger = "owner", onDone = complete)
     }
 
     private fun finishOwnerRepair(
@@ -414,74 +429,110 @@ internal object SelfArmBootRepairCoordinator {
         onResult(verdict)
     }
 
-    private fun recordWifiDebt(context: Context) {
-        if (!SelfArmRepairWifiObligationStore.recordBeforeEnable(context)) {
-            // This run still restores from memory; only a hub death before then would forget it.
-            log("Repair Wi-Fi debt record failed")
+    /** Taken while the radio is still off, before anything asks for it. */
+    private fun takeWifiObligation(context: Context) {
+        wifiObligation.take()
+        if (wifiStateWatch != null) return
+        val watch = object : BroadcastReceiver() {
+            override fun onReceive(receiverContext: Context, intent: Intent) {
+                val enabled = when (
+                    intent.getIntExtra(WifiManager.EXTRA_WIFI_STATE, WifiManager.WIFI_STATE_UNKNOWN)
+                ) {
+                    WifiManager.WIFI_STATE_ENABLED -> true
+                    WifiManager.WIFI_STATE_DISABLING, WifiManager.WIFI_STATE_DISABLED -> false
+                    else -> return
+                }
+                if (wifiObligation.onRadioState(enabled)) {
+                    log("Repair Wi-Fi claim dropped reason=radio_turned_off_elsewhere")
+                }
+            }
         }
+        wifiStateWatch = runCatching {
+            context.registerReceiver(watch, IntentFilter(WifiManager.WIFI_STATE_CHANGED_ACTION))
+            watch
+        }.onFailure { logError("Repair Wi-Fi state watch failed", it) }.getOrNull()
+    }
+
+    private fun stopWifiStateWatch(context: Context) {
+        val watch = wifiStateWatch ?: return
+        wifiStateWatch = null
+        runCatching { context.unregisterReceiver(watch) }
     }
 
     /**
-     * Settles the Wi-Fi debt on every way a repair ends. [repairEnabledWifi] covers this run even
-     * if its durable record failed; the record covers a run that died before getting here.
+     * Decides, once and for good, what happens to the Wi-Fi this repair turned on, on every way
+     * it ends. Nothing is kept for later: a dropped claim, a yield, or a disable that cannot be
+     * confirmed all leave the radio as it is.
      */
-    private fun restoreWifiIfOwed(
-        context: Context,
-        trigger: String,
-        repairEnabledWifi: Boolean,
-        onDone: () -> Unit,
-    ) {
+    private fun restoreWifiIfOwed(context: Context, trigger: String, onDone: () -> Unit) {
+        val finish = {
+            stopWifiStateWatch(context)
+            onDone()
+        }
+        val queued = GlassesHub.runSerializedWithWifiHandovers {
+            try {
+                restoreWifiNow(context, trigger)
+            } catch (error: Throwable) {
+                logError("Repair Wi-Fi restore failed trigger=$trigger", error)
+            } finally {
+                handler.post(finish)
+            }
+        }
+        if (!queued) {
+            if (wifiObligation.release().owed) {
+                log("Repair Wi-Fi restore trigger=$trigger result=dropped reason=wifi_thread_unavailable")
+            }
+            finish()
+        }
+    }
+
+    /** On the Wi-Fi handover thread: no handover lands between these checks and the disable. */
+    private fun restoreWifiNow(context: Context, trigger: String) {
+        val claim = wifiObligation.release()
+        val wifiHubOwned = GlassesHub.isWifiHubOwned()
+        val setupSessionActive = SelfArmOnboardingStore.currentActiveSessionId(context).isNotBlank()
+        val mediaSyncSessionActive = MediaSyncEngine.isSessionActive()
+        val cameraSessionActive = GlassesHub.isCameraSessionActive()
         val action = SelfArmBootRepairPolicy.restoreWifi(
-            repairOwesWifiOff = repairEnabledWifi || SelfArmRepairWifiObligationStore.isOwed(context),
+            repairOwesWifiOff = claim.owed,
             wifiEnabledNow = SelfArmWirelessAdbController.isWifiEnabled(context),
-            wifiHubOwned = GlassesHub.isWifiHubOwned(),
-            setupSessionActive = SelfArmOnboardingStore.currentActiveSessionId(context).isNotBlank(),
-            mediaSyncSessionActive = MediaSyncEngine.isSessionActive(),
-            cameraSessionActive = GlassesHub.isCameraSessionActive(),
+            wifiHubOwned = wifiHubOwned,
+            setupSessionActive = setupSessionActive,
+            mediaSyncSessionActive = mediaSyncSessionActive,
+            cameraSessionActive = cameraSessionActive,
         )
         when (action) {
             SelfArmBootRepairPolicy.WifiRestore.NOT_OWED -> {
-                onDone()
+                claim.droppedBecause?.let { reason ->
+                    log("Repair Wi-Fi restore trigger=$trigger result=dropped reason=$reason wifiLeftAsIs=true")
+                }
                 return
             }
             SelfArmBootRepairPolicy.WifiRestore.SETTLED -> {
-                SelfArmRepairWifiObligationStore.clear(context)
                 log("Repair Wi-Fi restore trigger=$trigger result=already_off")
-                onDone()
                 return
             }
-            SelfArmBootRepairPolicy.WifiRestore.DEFERRED -> {
-                // Left on record: the hub's reconciliation settles it once that owner lets go.
-                if (repairEnabledWifi) SelfArmRepairWifiObligationStore.recordBeforeEnable(context)
-                log("Repair Wi-Fi restore deferred trigger=$trigger owedKept=true")
-                onDone()
+            SelfArmBootRepairPolicy.WifiRestore.YIELDED -> {
+                log(
+                    "Repair Wi-Fi restore trigger=$trigger result=yielded wifiLeftOn=true " +
+                        "hubOwned=$wifiHubOwned setupSession=$setupSessionActive " +
+                        "mediaSync=$mediaSyncSessionActive cameraSession=$cameraSessionActive",
+                )
                 return
             }
             SelfArmBootRepairPolicy.WifiRestore.DISABLE -> Unit
         }
-        Thread {
-            // The bridge first: it is the quiet way back. Its fallback still never drives
-            // Settings — a radio that refuses to go down stays up, its debt kept on record.
-            val viaBridge = runCatching { SelfArmCommandBridgeClient.setWifiEnabled(context, false) }
-                .onFailure { logError("Repair Wi-Fi restore bridge call failed", it) }
-                .getOrDefault(false)
-            val applied = viaBridge || SelfArmController.setWifiEnabled(context, false)
-            val observedOff = applied && awaitWifiOff(context)
-            if (observedOff) {
-                SelfArmRepairWifiObligationStore.clear(context)
-            } else {
-                SelfArmRepairWifiObligationStore.recordBeforeEnable(context)
-            }
-            log(
-                "Repair Wi-Fi restore trigger=$trigger applied=$applied viaBridge=$viaBridge " +
-                    "observedOff=$observedOff owedKept=${!observedOff}",
-            )
-            handler.post(onDone)
-        }.apply {
-            name = "RokidNexusRepairWifiRestore"
-            isDaemon = true
-            start()
-        }
+        // The bridge first: it is the quiet way back. Its fallback still never drives Settings,
+        // and a radio that refuses to go down is left up, not owed to anyone later.
+        val viaBridge = runCatching { SelfArmCommandBridgeClient.setWifiEnabled(context, false) }
+            .onFailure { logError("Repair Wi-Fi restore bridge call failed", it) }
+            .getOrDefault(false)
+        val applied = viaBridge || SelfArmController.setWifiEnabled(context, false)
+        val observedOff = applied && awaitWifiOff(context)
+        log(
+            "Repair Wi-Fi restore trigger=$trigger applied=$applied viaBridge=$viaBridge " +
+                "observedOff=$observedOff",
+        )
     }
 
     private fun awaitWifiOff(context: Context): Boolean {
