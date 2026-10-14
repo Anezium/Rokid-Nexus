@@ -305,6 +305,7 @@ class RokidBusAccessibilityService : AccessibilityService() {
         if (sessionId.isBlank()) return
         val snapshot = SelfArmOnboardingStore.snapshot(applicationContext)
         if (!SelfArmOnboardingStore.isCurrentSession(applicationContext, sessionId)) return
+        if (endPairingIfAbandoned(sessionId)) return
         // A re-pair keeps going through the service recreation its own Wireless debugging toggle
         // causes; only a session with nothing more to do may be closed as already set up.
         val pairingRequested = SelfArmOnboardingStore.isPairingRequested(applicationContext, sessionId)
@@ -342,11 +343,27 @@ class RokidBusAccessibilityService : AccessibilityService() {
         }
     }
 
+    /**
+     * The Settings takeovers below check this first: a pairing session whose intent outlived its
+     * window is closed instead of resumed, whatever `force` an in-memory wait captured when it
+     * was still live.
+     */
+    private fun endPairingIfAbandoned(sessionId: String): Boolean {
+        if (!SelfArmOnboardingStore.isPairingAbandoned(applicationContext, sessionId)) return false
+        log("self-pairing abandoned; closing its session instead of resuming it")
+        return SelfArmOnboardingStore.endPairingSession(
+            applicationContext,
+            sessionId,
+            SelfArmOnboardingStore.SELF_PAIRING_ABANDONED,
+        )
+    }
+
     private fun startWirelessBootstrap(
         sessionId: String,
         force: Boolean = false,
     ) {
         if (!SelfArmOnboardingStore.isCurrentSession(applicationContext, sessionId)) return
+        if (endPairingIfAbandoned(sessionId)) return
         if (manualNavigationActive) return
         if (wirelessBootstrapActive && wirelessBootstrapSessionId == sessionId) return
         if (wirelessBootstrapActive) wirelessDebuggingAutomator?.stop()
@@ -447,6 +464,7 @@ class RokidBusAccessibilityService : AccessibilityService() {
 
     private fun startSetupWifiEnable(sessionId: String, force: Boolean) {
         if (!SelfArmOnboardingStore.isCurrentSession(applicationContext, sessionId)) return
+        if (endPairingIfAbandoned(sessionId)) return
         if (manualNavigationActive) {
             waitForWifi(sessionId, force)
             return
@@ -1277,6 +1295,32 @@ class RokidBusAccessibilityService : AccessibilityService() {
                         guardedCompletion(true)
                     }
                 }
+            }
+            return true
+        }
+
+        /**
+         * The owner closed the phone's pairing screen. A self-pairing run has no manual-navigation
+         * session for the CLOSE to end, so its session is ended here: its intent goes with it and
+         * no later Wi-Fi edge or service reconnect can resume the takeover. Works without a
+         * connected service too, which is exactly when the store alone would otherwise resume it.
+         */
+        internal fun abandonSelfPairing(context: Context): Boolean {
+            val appContext = context.applicationContext
+            val sessionId = SelfArmOnboardingStore.currentActiveSessionId(appContext)
+            val drivingSettings = isSetupAutomationActive()
+            if (!SelfArmOnboardingStore.endPairingSession(
+                    appContext,
+                    sessionId,
+                    SelfArmOnboardingStore.SELF_PAIRING_CANCELLED,
+                )
+            ) {
+                return false
+            }
+            log("self-pairing cancelled by the owner")
+            // Stopping the automator leaves whichever Settings page it reached on the lens.
+            if (drivingSettings) {
+                liveInstance?.let { service -> service.main.post { service.returnToOnboarding() } }
             }
             return true
         }

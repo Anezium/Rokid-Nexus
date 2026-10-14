@@ -88,6 +88,109 @@ class SelfArmPairingIntentResumeTest {
     }
 
     @Test
+    fun `a recreation inside the paused window still resumes the re-pair`() {
+        val sessionId = SelfArmOnboardingStore.beginSession(context)
+        SelfArmOnboardingStore.markPairingRequested(context, sessionId)
+        SelfArmOnboardingStore.markRunning(context, sessionId)
+        SelfArmOnboardingStore.pause(context, sessionId, "wireless_setup_service_restarting")
+        val now = System.currentTimeMillis()
+
+        // Past the running lease, inside the paused window: a slow recreation or a Wi-Fi wait.
+        val later = now + SelfArmOnboardingStore.LEASE_TIMEOUT_MS + 15_000L
+        assertTrue(SelfArmOnboardingStore.isPairingRequested(context, sessionId, later))
+        assertFalse(SelfArmOnboardingStore.isPairingAbandoned(context, sessionId, later))
+    }
+
+    @Test
+    fun `an intent nobody is behind any more stops being consent`() {
+        val paused = SelfArmOnboardingStore.beginSession(context)
+        SelfArmOnboardingStore.markPairingRequested(context, paused)
+        SelfArmOnboardingStore.pause(context, paused, "waiting_for_wifi_network")
+        val expired = System.currentTimeMillis() + SelfArmOnboardingStore.PAUSED_WIFI_NEED_TIMEOUT_MS + 1L
+        assertFalse(SelfArmOnboardingStore.isPairingRequested(context, paused, expired))
+        assertTrue(SelfArmOnboardingStore.isPairingAbandoned(context, paused, expired))
+        // What the service does with it instead of resuming: the session ends.
+        assertTrue(
+            SelfArmOnboardingStore.endPairingSession(
+                context,
+                paused,
+                SelfArmOnboardingStore.SELF_PAIRING_ABANDONED,
+            ),
+        )
+        assertEquals("", SelfArmOnboardingStore.currentActiveSessionId(context))
+
+        // Running work loses it with its lease, long before the paused window.
+        val running = SelfArmOnboardingStore.beginSession(context)
+        SelfArmOnboardingStore.markPairingRequested(context, running)
+        SelfArmOnboardingStore.markRunning(context, running)
+        val lapsed = System.currentTimeMillis() + SelfArmOnboardingStore.LEASE_TIMEOUT_MS + 1L
+        assertFalse(SelfArmOnboardingStore.isPairingRequested(context, running, lapsed))
+    }
+
+    @Test
+    fun `an expired intent does not let a background request take over`() {
+        SelfArmBootRepairStore.setAutoRepairEnabled(context, false)
+        try {
+            val sessionId = SelfArmOnboardingStore.beginSession(context)
+            SelfArmOnboardingStore.markPairingRequested(context, sessionId)
+            SelfArmOnboardingStore.pause(context, sessionId, "waiting_for_wifi_network")
+            assertTrue(
+                SelfArmLocalAdbBootstrapper.requestSelfPairing(context, owner = false) !=
+                    SelfPairingOutcome.NOT_PERMITTED,
+            )
+
+            // The owner walked away long ago; the run's last sign of life is past the window.
+            context.getSharedPreferences("selfarm_onboarding", 0).edit()
+                .putLong(
+                    "setup_last_heartbeat",
+                    System.currentTimeMillis() - SelfArmOnboardingStore.PAUSED_WIFI_NEED_TIMEOUT_MS - 1L,
+                )
+                .commit()
+            assertEquals(
+                SelfPairingOutcome.NOT_PERMITTED,
+                SelfArmLocalAdbBootstrapper.requestSelfPairing(context, owner = false),
+            )
+        } finally {
+            SelfArmBootRepairStore.setAutoRepairEnabled(context, true)
+        }
+    }
+
+    @Test
+    fun `cancelling while waiting for Wi-Fi ends the re-pair for good`() {
+        SelfArmBootRepairStore.setAutoRepairEnabled(context, false)
+        try {
+            val sessionId = SelfArmOnboardingStore.beginSession(context)
+            SelfArmOnboardingStore.markPairingRequested(context, sessionId)
+            SelfArmOnboardingStore.pause(context, sessionId, "waiting_for_wifi_network")
+
+            // The phone's CLOSE with abandonPairing, with no manual-navigation session to end.
+            assertTrue(RokidBusAccessibilityService.abandonSelfPairing(context))
+
+            assertFalse(SelfArmOnboardingStore.isPairingRequested(context, sessionId))
+            // Nothing is left for a Wi-Fi edge or a reconnecting service to resume.
+            assertEquals("", SelfArmOnboardingStore.currentActiveSessionId(context))
+            assertEquals(
+                SelfArmOnboardingStore.SELF_PAIRING_CANCELLED,
+                SelfArmOnboardingStore.snapshot(context).failureState,
+            )
+            assertEquals(
+                SelfPairingOutcome.NOT_PERMITTED,
+                SelfArmLocalAdbBootstrapper.requestSelfPairing(context, owner = false),
+            )
+        } finally {
+            SelfArmBootRepairStore.setAutoRepairEnabled(context, true)
+        }
+    }
+
+    @Test
+    fun `cancelling leaves a plain setup session alone`() {
+        val sessionId = SelfArmOnboardingStore.beginSession(context)
+
+        assertFalse(RokidBusAccessibilityService.abandonSelfPairing(context))
+        assertEquals(sessionId, SelfArmOnboardingStore.currentActiveSessionId(context))
+    }
+
+    @Test
     fun `core readiness only closes a session nobody asked to pair`() {
         assertEquals(Step.FINISH, SelfArmSetupResumePolicy.next(true, false, wifiReady = true))
         assertEquals(Step.FINISH, SelfArmSetupResumePolicy.next(true, false, wifiReady = false))

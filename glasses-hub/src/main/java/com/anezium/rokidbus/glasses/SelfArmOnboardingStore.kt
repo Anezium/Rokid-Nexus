@@ -21,6 +21,8 @@ internal object SelfArmOnboardingStore {
     const val LEASE_TIMEOUT_MS = 45_000L
     const val HEARTBEAT_CADENCE_MS = 5_000L
     const val LEASE_EXPIRED_FAILURE = "setup_lease_expired"
+    const val SELF_PAIRING_CANCELLED = "self_pairing_cancelled"
+    const val SELF_PAIRING_ABANDONED = "self_pairing_abandoned"
 
     fun snapshot(
         context: Context,
@@ -260,12 +262,61 @@ internal object SelfArmOnboardingStore {
      */
     fun markPairingRequested(context: Context, sessionId: String) {
         if (!canMutateSession(context, sessionId)) return
-        prefs(context).edit().putString(KEY_PAIRING_SESSION_ID, sessionId).apply()
+        // The request is fresh activity: a paused session picked up again must not read as
+        // abandoned the moment it is asked to pair.
+        prefs(context).edit()
+            .putString(KEY_PAIRING_SESSION_ID, sessionId)
+            .putLong(KEY_LAST_HEARTBEAT, System.currentTimeMillis())
+            .apply()
     }
 
-    fun isPairingRequested(context: Context, sessionId: String): Boolean =
+    /**
+     * The pairing intent is consent to take over Settings, so it only stands while somebody is
+     * still behind it: running work within its lease, paused work (the service recreation the
+     * Wireless debugging toggle causes, a wait for Wi-Fi) within the paused abandonment window.
+     * Past that, a later Wi-Fi edge or service reconnect would resume a takeover nobody is
+     * waiting for.
+     */
+    fun isPairingRequested(
+        context: Context,
+        sessionId: String,
+        nowMillis: Long = System.currentTimeMillis(),
+    ): Boolean = hasPairingIntent(context, sessionId) && pairingIntentInWindow(context, nowMillis)
+
+    /** [sessionId] was opened to pair, and its intent has outlived its window. */
+    fun isPairingAbandoned(
+        context: Context,
+        sessionId: String,
+        nowMillis: Long = System.currentTimeMillis(),
+    ): Boolean = hasPairingIntent(context, sessionId) && !pairingIntentInWindow(context, nowMillis)
+
+    /**
+     * Ends [sessionId] if it was opened to pair, whether its intent is still live or not, so no
+     * later event can resume it. False when the session was not a pairing one: plain setup is not
+     * the pairing's to end.
+     */
+    fun endPairingSession(context: Context, sessionId: String, setupState: String): Boolean {
+        if (!hasPairingIntent(context, sessionId)) return false
+        finish(context = context, sessionId = sessionId, setupState = setupState, success = false)
+        return true
+    }
+
+    private fun hasPairingIntent(context: Context, sessionId: String): Boolean =
         canMutateSession(context, sessionId) &&
             prefs(context).getString(KEY_PAIRING_SESSION_ID, "") == sessionId
+
+    private fun pairingIntentInWindow(context: Context, nowMillis: Long): Boolean {
+        val preferences = prefs(context)
+        return SelfArmSessionPolicy.leaseValid(
+            nowMillis = nowMillis,
+            lastHeartbeatMillis = preferences.getLong(KEY_LAST_HEARTBEAT, 0L),
+            timeoutMillis = if (preferences.getBoolean(KEY_RUNNING, false)) {
+                LEASE_TIMEOUT_MS
+            } else {
+                PAUSED_WIFI_NEED_TIMEOUT_MS
+            },
+        )
+    }
 
     /** What a (re)connected accessibility service owes [sessionId], given what it observes. */
     fun resumeStep(

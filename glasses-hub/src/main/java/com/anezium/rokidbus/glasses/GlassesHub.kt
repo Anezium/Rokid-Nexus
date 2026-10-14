@@ -1014,6 +1014,17 @@ object GlassesHub {
             }
         }
         log("manual self-arm action=${action.wireValue} accepted=$accepted armed=$armed")
+        // Only the owner leaving the pairing screen sets this; the engine's own failure CLOSE does
+        // not, because the glasses may still finish a pairing whose phone-side step failed. It
+        // runs even when no accessibility service took the CLOSE: the persisted intent is what
+        // a reconnecting service would otherwise resume.
+        if (context != null &&
+            action == SelfArmManualAction.CLOSE &&
+            !armed &&
+            envelope.payload.optBoolean("abandonPairing", false)
+        ) {
+            RokidBusAccessibilityService.abandonSelfPairing(context)
+        }
         if (!accepted) {
             sendRemote(errorEnvelope(envelope.id, "ACCESSIBILITY_UNAVAILABLE"))
             return

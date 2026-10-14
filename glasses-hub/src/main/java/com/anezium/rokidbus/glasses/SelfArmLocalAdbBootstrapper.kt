@@ -366,8 +366,11 @@ internal class SelfArmLocalAdbBootstrapper(
                 // connected, and that service is what drives the Settings screens. Keep asking on
                 // later attempts rather than burning the single try on a moment when nothing
                 // could have answered.
+                // A paused session stays current until something ends it; one whose pairing
+                // intent has lapsed will never take over again, so it holds no latch either.
                 val admission = selfPairingGate.admit(owner, backgroundPermitted) { sessionId ->
-                    SelfArmOnboardingStore.isSessionLive(appContext, sessionId)
+                    SelfArmOnboardingStore.isSessionLive(appContext, sessionId) &&
+                        !SelfArmOnboardingStore.isPairingAbandoned(appContext, sessionId)
                 }
                 admission.releasedSessionId?.let {
                     log("self-pairing latch released reason=session_not_live")
