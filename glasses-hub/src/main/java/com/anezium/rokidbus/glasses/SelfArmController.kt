@@ -45,7 +45,7 @@ internal object SelfArmController {
         }.getOrDefault(SelfArmWatchdogEnsureResult.FAILED)
         // A successful arm put its own measurement on record; a failed one has to say so too, or
         // an earlier success this boot keeps answering "already healthy" for a helper that died.
-        if (result != SelfArmWatchdogEnsureResult.READY) {
+        if (SelfArmOwnerRepairPolicy.armContradictsRecord(result)) {
             SelfArmBridgeLivenessStore.recordArmFailed(appContext)
         }
         if (sessionId == null ||

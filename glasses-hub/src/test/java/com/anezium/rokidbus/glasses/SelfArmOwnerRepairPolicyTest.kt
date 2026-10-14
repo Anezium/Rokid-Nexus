@@ -24,6 +24,15 @@ class SelfArmOwnerRepairPolicyTest {
     }
 
     @Test
+    fun `only an arm that reached the helper and failed contradicts the record`() {
+        assertTrue(SelfArmOwnerRepairPolicy.armContradictsRecord(SelfArmWatchdogEnsureResult.FAILED))
+        assertFalse(
+            SelfArmOwnerRepairPolicy.armContradictsRecord(SelfArmWatchdogEnsureResult.SESSION_UNREACHABLE),
+        )
+        assertFalse(SelfArmOwnerRepairPolicy.armContradictsRecord(SelfArmWatchdogEnsureResult.READY))
+    }
+
+    @Test
     fun `only an arm this boot with its bridge running and no failed demand reads alive`() {
         fun record(armedAt: Long, bridge: Boolean, demand: Boolean) =
             SelfArmOwnerRepairPolicy.helperRecord(armedAt, bridge, boot, demand)

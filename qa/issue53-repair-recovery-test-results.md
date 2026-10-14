@@ -1,7 +1,7 @@
 # Issue #53 — device test results (2026-10-14)
 
 Build: `fix/issue53-repair-recovery` at `6aa117ad` (code at `ac871772`), debug APKs
-re-signed with the release key, installed over release 1.6.0 on an RV101
+re-signed with the release key, installed over the release 1.6.0 hubs those devices carried (the issue reports 1.7.0; the code under test is 1.7.0-based) on an RV101
 (fw 1.26.011-20260929-150201, fr-FR) and a Galaxy S23+ (SM-S916B). Plan:
 `qa/issue53-repair-recovery-test-plan.md`.
 

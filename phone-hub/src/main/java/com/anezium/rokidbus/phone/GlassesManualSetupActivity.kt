@@ -1,10 +1,10 @@
 package com.anezium.rokidbus.phone
 
 import android.app.Activity
-import android.graphics.Rect
-import android.graphics.Typeface
 import android.content.Context
 import android.content.Intent
+import android.graphics.Rect
+import android.graphics.Typeface
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper

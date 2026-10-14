@@ -77,6 +77,14 @@ internal object SelfArmOwnerRepairPolicy {
         before == HelperRecord.ALIVE_THIS_BOOT
 
     /**
+     * Only an arm that reached the helper and failed says anything about it. One that could not
+     * open its session — the routine case with the radio off, on every accessibility reconnect —
+     * measured nothing, and marking the record would send the next owner repair to the popup.
+     */
+    fun armContradictsRecord(result: SelfArmWatchdogEnsureResult): Boolean =
+        result == SelfArmWatchdogEnsureResult.FAILED
+
+    /**
      * How long an arm waits, after the repair brought Wi-Fi up, for what it actually talks over: a
      * Wi-Fi network and adbd's TLS port. The radio reports "on" seconds before either exists, and
      * an arm started on that report measures nothing — it answered "could not restore" for a

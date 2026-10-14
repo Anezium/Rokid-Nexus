@@ -2,8 +2,8 @@
 
 Branch `fix/issue53-repair-recovery`. Covers the three owner-approved items
 (observable/retriable pairing request, Settings → Maintenance → Re-pair glasses,
-repair verdict from real helper health) and the Settings-search navigator that
-will replace the Developer-options traversal on firmware 1.26.011.
+repair verdict from real helper health), plus the setup display hold and the
+Wi-Fi-off repair path that device testing on firmware 1.26.011 called for.
 
 Device serials are operator-local. Set them first (Git Bash):
 
@@ -152,7 +152,7 @@ Then edit `shared_prefs/selfarm_wireless.xml` through `run-as` so that
 | 8.9 | armed this boot, helpers running, glasses Wi-Fi off → Repair | `Owner repair bridge Wi-Fi enable answered=true`, no Settings popup, then `Owner repair Wi-Fi readiness=ready waitedMs=…` **before** `Owner repair arm finished result=READY … helperWasRunning=true`, `already_healthy`, then `Repair Wi-Fi restore trigger=owner applied=true viaBridge=true observedOff=true` (Wi-Fi back off) |
 | 8.10 | both helpers stopped (record `NOT_ALIVE`, or `ALIVE_THIS_BOOT` with `answered=false` within ~6 s), glasses Wi-Fi off → Repair | the Settings popup (`start: Wi-Fi enable automator started`), then `Owner repair Wi-Fi readiness=ready` before the arm, `result=READY`, `repaired`, then `Repair Wi-Fi restore trigger=owner … observedOff=true` (Wi-Fi back off) |
 | 8.11 | as 8.9 or 8.10, but no known Wi-Fi network in range (or the router off) | `Owner repair Wi-Fi readiness=no_network waitedMs≈20000`, up to two `Owner repair arm retry result=SESSION_UNREACHABLE nextAttempt=…` lines, verdict `wifi_unavailable` (phone: "Could not reach the glasses over Wi-Fi, so their helper may not have been checked or restored…"), never `arm_failed`; Wi-Fi back off as in 8.9 |
-| 8.12 | Wi-Fi turned on by the repair, restore cannot apply (e.g. stop both helpers and keep the router off so the arm fails) | `Repair Wi-Fi restore … observedOff=false`, Wi-Fi stays on, and nothing settles it later: `run-as com.anezium.rokidbus cat shared_prefs/selfarm_wireless.xml` has no `repair_wifi_off_owed_boot_instant`, and no later `glassesWifi disable` or `Repair Wi-Fi restore` turns it off (the claim lives only in that repair's memory) |
+| 8.12 | Wi-Fi turned on by the repair, restore cannot apply (e.g. stop both helpers and keep the router off so the arm fails) | `Repair Wi-Fi restore … observedOff=false`, Wi-Fi stays on, and nothing settles it later: `run-as com.anezium.rokidbus.glasses cat shared_prefs/selfarm_wireless.xml` has no `repair_wifi_off_owed_boot_instant`, and no later `glassesWifi disable` or `Repair Wi-Fi restore` turns it off (the claim lives only in that repair's memory) |
 | 8.13 | as 8.10, and while the arm runs open a native app that needs Wi-Fi (Maps), or start a camera/Lens session | `Repair Wi-Fi claim dropped reason=native_app:…` (or `reason=camera_request`), then `Repair Wi-Fi restore trigger=owner result=dropped reason=… wifiLeftAsIs=true`; Wi-Fi stays on. With the camera session still open at the end instead: `result=yielded wifiLeftOn=true … cameraSession=true` |
 | 8.14 | as 8.10, and while the repair runs turn Wi-Fi off then on again from the glasses' quick settings | `Repair Wi-Fi claim dropped reason=radio_turned_off_elsewhere`, then `result=dropped …`; Wi-Fi stays on |
 | 8.15 | as 8.10, and during `Owner repair Wi-Fi readiness` start wireless setup from the phone | `Owner repair abandoned reason=setup_session_started`, `Repair Wi-Fi restore … result=yielded … setupSession=true`, phone shows busy; once setup ends, a new Repair runs (no endless `repair_already_running`) |
@@ -174,47 +174,20 @@ Then edit `shared_prefs/selfarm_wireless.xml` through `run-as` so that
 | 10.3 | new | 1.6.0/1.7.0 release | Re-pair shows "Update Nexus on the glasses, then use Re-pair glasses again" (one ordinary repair may run first) |
 | 10.4 | old | old | baseline behaviour unchanged |
 
-## 11. Settings-search navigator (once implemented)
+## 11. Settings automation on firmware 1.26.011
 
-Route: `android.settings.APP_SEARCH_SETTINGS` → type the label resolved from Settings'
-own resources (`adb_wireless_ip_addr_preference_title`, `adb_pair_method_code_title`,
-then `enable_adb_wireless` / `adb_wireless_settings`) → click the result whose title
-matches exactly → Wireless debugging page → pairing row → pairing dialog
-(`id/pairing_code`, `id/ip_addr`). Fallbacks: search "Wireless debugging" (Developer
-options with a usable viewport), CoordinatorLayout `content_parent` scroll-forward
-collapse, focus traversal.
-
-### 11a. Locale probe (shell, can run before the navigator exists)
-
-For each locale: switch, wait for the search index, run the route by hand with shell
-injection, screenshot each step, restore French at the end.
-
-| # | Locale | Checks |
-|---|---|---|
-| L1 | fr-FR | baseline (already verified by research) |
-| L2 | en-US | "Pair device with pairing code" result found by full-label query |
-| L3 | zh-CN | full-label query finds the result (no-space tokenization); prefix query behaviour noted |
-| L4 | ja-JP, ko-KR | same as L3 |
-| L5 | right after a locale switch | does the index still hold the old language? how long until reindexed? |
-| L6 | any | "associer"/"pair" also returns Bluetooth results — exact-title selection must pick the right one |
-
-Changing the system locale is a settings change on the owner's glasses: owner go
-required, and restore `fr-FR` afterwards.
-
-### 11b. Navigator through the real accessibility service
+The Settings-search navigator planned here is not needed: on the device the existing
+automator reaches Wireless debugging through its accessibility scroll (the "4 px list"
+seen with shell swipes does not apply to the service). What stalled it was the panel
+sleeping, which 11c covers.
 
 | # | Case | Expected |
 |---|---|---|
-| N1 | Fresh pairing, Wireless debugging **off** | search → page → enable → confirmation → pairing dialog → `self-pairing … bootstrap complete`; helper `running=yes`; `wireless_bootstrap_complete=true` |
-| N2 | "Allow wireless debugging on this network?" dialog | recognised (package/class + localized resource), positive button clicked; nothing else clicked |
-| N3 | Wireless debugging already on | goes straight to the pairing dialog |
-| N4 | `ACTION_SET_TEXT` with accented / CJK text | text lands in `android:id/search_src_text` |
-| N5 | Search index missing or no exact result | falls back to the next route, logged; no click on an unidentified row |
-| N6 | Wearer touches the touchpad mid-run / screen sleeps | run recovers or ends cleanly within the deadline |
-| N7 | Cancel from the phone mid-navigation | Settings left, session ended, no resume |
-| N8 | End-to-end issue scenario: state 3 → Repair now | `pairing_pending` → automation pairs → `repaired` on the next Repair; survives a glasses reboot (boot repair re-arms by itself) |
-| N9 | Pairing values | code/port/IP never in logs or prefs |
-| N10 | Older firmware unit (if available) | the old direct route still works |
+| N1 | Fresh pairing from the issue state (section 3), panel asleep | `wireless_debugging_open` → pairing dialog → `self-pair KADB success` → `local self-pair bootstrap complete`; helpers `running=yes`; `wireless_bootstrap_complete=true` |
+| N2 | Wireless debugging initially off on an untrusted network | the "Allow wireless debugging on this network?" confirmation is accepted; nothing else is clicked (not yet exercised) |
+| N3 | Cancel from the phone mid-navigation | Settings left, session ended, no resume |
+| N4 | Pairing values | only `codeLen` logged; code, port and IP never in logs or prefs |
+| N5 | Other locales | not yet exercised; labels come from Settings' own resources |
 
 ### 11c. Setup display hold
 
