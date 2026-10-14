@@ -100,25 +100,27 @@ internal object SelfArmOnboardingStore {
         val sessionId = ByteArray(8)
             .also(secureRandom::nextBytes)
             .joinToString("") { byte -> "%02x".format(Locale.ROOT, byte.toInt() and 0xff) }
-        val prefs = prefs(context)
-        val generation = prefs.getInt(KEY_GENERATION, 0) + 1
-        prefs.edit()
-            .putInt(KEY_GENERATION, generation)
-            .putString(KEY_SESSION_ID, sessionId)
-            .putBoolean(KEY_SESSION_ACTIVE, true)
-            .putBoolean(KEY_REQUESTED, true)
-            .putBoolean(KEY_RUNNING, false)
-            .putBoolean(KEY_LEGACY_ADB_SAFE, false)
-            .putBoolean(KEY_MANUAL_ARM_IN_PROGRESS, false)
-            .putString(KEY_PAIRING_SESSION_ID, "")
-            .putLong(KEY_RUNNING_SINCE, now)
-            .putLong(KEY_LAST_HEARTBEAT, now)
-            .putString(KEY_FAILURE_STATE, "")
-            .putString(KEY_FAILURE_DIAGNOSTIC, "")
-            .putString(KEY_PROGRESS_STATE, "waiting_for_nexus_accessibility")
-            .putString(KEY_STAGE, SetupStage.WAITING_FOR_ACCESSIBILITY)
-            .putString(KEY_COMPLETION_MODE, SetupCompletionMode.UNKNOWN)
-            .apply()
+        synchronized(sessionLock) {
+            val prefs = prefs(context)
+            val generation = prefs.getInt(KEY_GENERATION, 0) + 1
+            prefs.edit()
+                .putInt(KEY_GENERATION, generation)
+                .putString(KEY_SESSION_ID, sessionId)
+                .putBoolean(KEY_SESSION_ACTIVE, true)
+                .putBoolean(KEY_REQUESTED, true)
+                .putBoolean(KEY_RUNNING, false)
+                .putBoolean(KEY_LEGACY_ADB_SAFE, false)
+                .putBoolean(KEY_MANUAL_ARM_IN_PROGRESS, false)
+                .putString(KEY_PAIRING_SESSION_ID, "")
+                .putLong(KEY_RUNNING_SINCE, now)
+                .putLong(KEY_LAST_HEARTBEAT, now)
+                .putString(KEY_FAILURE_STATE, "")
+                .putString(KEY_FAILURE_DIAGNOSTIC, "")
+                .putString(KEY_PROGRESS_STATE, "waiting_for_nexus_accessibility")
+                .putString(KEY_STAGE, SetupStage.WAITING_FOR_ACCESSIBILITY)
+                .putString(KEY_COMPLETION_MODE, SetupCompletionMode.UNKNOWN)
+                .apply()
+        }
         notifyChanged(context, SetupStage.WAITING_FOR_ACCESSIBILITY)
         return sessionId
     }
@@ -295,11 +297,16 @@ internal object SelfArmOnboardingStore {
      * later event can resume it. False when the session was not a pairing one: plain setup is not
      * the pairing's to end.
      */
-    fun endPairingSession(context: Context, sessionId: String, setupState: String): Boolean {
-        if (!hasPairingIntent(context, sessionId)) return false
-        finish(context = context, sessionId = sessionId, setupState = setupState, success = false)
-        return true
-    }
+    fun endPairingSession(context: Context, sessionId: String, setupState: String): Boolean =
+        finishSession(
+            context = context,
+            sessionId = sessionId,
+            setupState = setupState,
+            success = false,
+            diagnostic = "",
+            completionMode = SetupCompletionMode.UNKNOWN,
+            pairingOnly = true,
+        )
 
     private fun hasPairingIntent(context: Context, sessionId: String): Boolean =
         canMutateSession(context, sessionId) &&
@@ -474,11 +481,47 @@ internal object SelfArmOnboardingStore {
         diagnostic: String = "",
         completionMode: String = SetupCompletionMode.UNKNOWN,
     ) {
-        if (!canMutateSession(context, sessionId)) return
-        writeFinished(context, setupState, success, diagnostic, completionMode)
+        finishSession(
+            context = context,
+            sessionId = sessionId,
+            setupState = setupState,
+            success = success,
+            diagnostic = diagnostic,
+            completionMode = completionMode,
+            pairingOnly = false,
+        )
+    }
+
+    /**
+     * Ends [sessionId] only if it is still the current session (and, with [pairingOnly], still a
+     * pairing one) at the moment its end is written. Callers on other threads -- the SPP worker
+     * handling the phone's CLOSE -- would otherwise pass the check, lose the race to a replacement
+     * session begun on the main thread, and end that one instead. True when this call ended it;
+     * the teardown that follows runs only then.
+     */
+    private fun finishSession(
+        context: Context,
+        sessionId: String,
+        setupState: String,
+        success: Boolean,
+        diagnostic: String,
+        completionMode: String,
+        pairingOnly: Boolean,
+    ): Boolean {
+        val terminalStage = synchronized(sessionLock) {
+            val endable = if (pairingOnly) {
+                hasPairingIntent(context, sessionId)
+            } else {
+                canMutateSession(context, sessionId)
+            }
+            if (!endable) return false
+            commitFinished(context, setupState, success, diagnostic, completionMode)
+        }
+        afterFinished(context, terminalStage)
         GlassesHub.onSetupSessionTerminal(context, sessionId)
         RokidBusAccessibilityService.onSetupSessionEnded(sessionId)
         SelfArmLocalAdbBootstrapper.onSetupSessionEnded(sessionId)
+        return true
     }
 
     private fun writeFinished(
@@ -488,8 +531,25 @@ internal object SelfArmOnboardingStore {
         diagnostic: String,
         completionMode: String,
     ) {
+        val terminalStage = synchronized(sessionLock) {
+            commitFinished(context, setupState, success, diagnostic, completionMode)
+        }
+        afterFinished(context, terminalStage)
+    }
+
+    private fun afterFinished(context: Context, terminalStage: String) {
         SelfArmPhoneArmConfirmation.cancel()
         cancelNetworkPostureRefresh()
+        notifyChanged(context, terminalStage)
+    }
+
+    private fun commitFinished(
+        context: Context,
+        setupState: String,
+        success: Boolean,
+        diagnostic: String,
+        completionMode: String,
+    ): String {
         val terminalStage = when {
             success -> SetupStage.COMPLETE
             setupState.contains("manual_step_needed") -> SetupStage.MANUAL_REQUIRED
@@ -511,24 +571,27 @@ internal object SelfArmOnboardingStore {
                     .take(MAX_SUPPORT_DIAGNOSTIC_LENGTH),
             )
             .apply()
-        notifyChanged(context, terminalStage)
+        return terminalStage
     }
 
     fun invalidateSession(context: Context) {
         RokidBusAccessibilityService.cancelSetupSessionWork()
         SelfArmPhoneArmConfirmation.cancel()
         cancelNetworkPostureRefresh()
-        val prefs = prefs(context)
-        val invalidatedSessionId = prefs.getString(KEY_SESSION_ID, "").orEmpty()
-        prefs.edit()
-            .putInt(KEY_GENERATION, prefs.getInt(KEY_GENERATION, 0) + 1)
-            .putString(KEY_SESSION_ID, "")
-            .putBoolean(KEY_SESSION_ACTIVE, false)
-            .putBoolean(KEY_REQUESTED, false)
-            .putBoolean(KEY_RUNNING, false)
-            .putBoolean(KEY_MANUAL_ARM_IN_PROGRESS, false)
-            .putString(KEY_PAIRING_SESSION_ID, "")
-            .apply()
+        val invalidatedSessionId = synchronized(sessionLock) {
+            val prefs = prefs(context)
+            prefs.getString(KEY_SESSION_ID, "").orEmpty().also {
+                prefs.edit()
+                    .putInt(KEY_GENERATION, prefs.getInt(KEY_GENERATION, 0) + 1)
+                    .putString(KEY_SESSION_ID, "")
+                    .putBoolean(KEY_SESSION_ACTIVE, false)
+                    .putBoolean(KEY_REQUESTED, false)
+                    .putBoolean(KEY_RUNNING, false)
+                    .putBoolean(KEY_MANUAL_ARM_IN_PROGRESS, false)
+                    .putString(KEY_PAIRING_SESSION_ID, "")
+                    .apply()
+            }
+        }
         if (invalidatedSessionId.isNotBlank()) {
             GlassesHub.onSetupSessionTerminal(context, invalidatedSessionId)
             SelfArmLocalAdbBootstrapper.onSetupSessionEnded(invalidatedSessionId)
@@ -704,6 +767,11 @@ internal object SelfArmOnboardingStore {
     internal const val PAUSED_WIFI_NEED_TIMEOUT_MS = 5 * 60_000L
     private const val MAX_STATE_LENGTH = 96
     private val networkPostureWorkerLock = Any()
+
+    // Guards the session identity: begin, replace, invalidate and every compare-and-finish. A
+    // SharedPreferences apply() updates the in-memory map before it returns, so a write made under
+    // this lock is what the next holder reads.
+    private val sessionLock = Any()
     private var networkPostureRefreshThread: Thread? = null
     private val secureRandom = SecureRandom()
 }

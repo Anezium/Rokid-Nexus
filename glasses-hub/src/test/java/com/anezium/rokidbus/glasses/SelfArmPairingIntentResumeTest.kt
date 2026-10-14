@@ -1,12 +1,18 @@
 package com.anezium.rokidbus.glasses
 
 import android.Manifest
+import android.content.Context
 import android.provider.Settings
 import com.anezium.rokidbus.glasses.SelfArmSetupResumePolicy.Step
+import com.anezium.rokidbus.shared.BusEnvelope
+import com.anezium.rokidbus.shared.BusPaths
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
+import org.json.JSONObject
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -222,6 +228,96 @@ class SelfArmPairingIntentResumeTest {
     }
 
     @Test
+    fun `ending a session that was replaced leaves the replacement running`() {
+        val stale = SelfArmOnboardingStore.beginSession(context)
+        SelfArmOnboardingStore.markPairingRequested(context, stale)
+        // The main thread starts a new run while the CLOSE for the old one is still in flight.
+        val replacement = SelfArmOnboardingStore.beginSession(context)
+        SelfArmOnboardingStore.markPairingRequested(context, replacement)
+
+        assertFalse(
+            SelfArmOnboardingStore.endPairingSession(
+                context,
+                stale,
+                SelfArmOnboardingStore.SELF_PAIRING_CANCELLED,
+            ),
+        )
+
+        assertEquals(replacement, SelfArmOnboardingStore.currentActiveSessionId(context))
+        assertTrue(SelfArmOnboardingStore.isPairingRequested(context, replacement))
+    }
+
+    @Test
+    fun `an end racing a replacement never ends the replacement`() {
+        repeat(RACE_ROUNDS) { round ->
+            val ending = SelfArmOnboardingStore.beginSession(context)
+            SelfArmOnboardingStore.markPairingRequested(context, ending)
+            val start = CountDownLatch(1)
+            // The SPP worker delivering the CLOSE, against the main thread starting a new run.
+            val worker = Thread {
+                start.await()
+                SelfArmOnboardingStore.endPairingSession(
+                    context,
+                    ending,
+                    SelfArmOnboardingStore.SELF_PAIRING_CANCELLED,
+                )
+            }
+            worker.start()
+            start.countDown()
+            val replacement = SelfArmOnboardingStore.beginSession(context)
+            SelfArmOnboardingStore.markPairingRequested(context, replacement)
+            worker.join(TimeUnit.SECONDS.toMillis(5))
+
+            assertEquals(
+                "round $round",
+                replacement,
+                SelfArmOnboardingStore.currentActiveSessionId(context),
+            )
+            assertTrue("round $round", SelfArmOnboardingStore.isPairingRequested(context, replacement))
+        }
+    }
+
+    @Test
+    fun `the phone's close ends only the pairing it names`() {
+        withHubContext {
+            val sessionId = SelfArmOnboardingStore.beginSession(context)
+            SelfArmOnboardingStore.markPairingRequested(context, sessionId)
+
+            GlassesHub.onRemoteEnvelope(abandonClose(abandonSessionId = null))
+            GlassesHub.onRemoteEnvelope(abandonClose(abandonSessionId = "another-session"))
+            assertEquals(sessionId, SelfArmOnboardingStore.currentActiveSessionId(context))
+            assertTrue(SelfArmOnboardingStore.isPairingRequested(context, sessionId))
+
+            GlassesHub.onRemoteEnvelope(abandonClose(abandonSessionId = sessionId))
+            assertEquals("", SelfArmOnboardingStore.currentActiveSessionId(context))
+            assertEquals(
+                SelfArmOnboardingStore.SELF_PAIRING_CANCELLED,
+                SelfArmOnboardingStore.snapshot(context).failureState,
+            )
+        }
+    }
+
+    private fun abandonClose(abandonSessionId: String?) = BusEnvelope(
+        path = BusPaths.GLASSES_SELFARM_MANUAL,
+        payload = JSONObject()
+            .put("action", SelfArmManualAction.CLOSE.wireValue)
+            .put("abandonPairing", true)
+            .also { payload -> abandonSessionId?.let { payload.put("abandonSessionId", it) } },
+    )
+
+    /** The hub's context without [GlassesHub.start], which would bring up SPP and CXR. */
+    private fun withHubContext(block: () -> Unit) {
+        val field = GlassesHub::class.java.getDeclaredField("appContext").apply { isAccessible = true }
+        val previous = field.get(null) as Context?
+        field.set(null, context)
+        try {
+            block()
+        } finally {
+            field.set(null, previous)
+        }
+    }
+
+    @Test
     fun `core readiness only closes a session nobody asked to pair`() {
         assertEquals(Step.FINISH, SelfArmSetupResumePolicy.next(true, false, wifiReady = true))
         assertEquals(Step.FINISH, SelfArmSetupResumePolicy.next(true, false, wifiReady = false))
@@ -229,5 +325,9 @@ class SelfArmPairingIntentResumeTest {
         assertEquals(Step.WAIT_FOR_WIFI, SelfArmSetupResumePolicy.next(true, true, wifiReady = false))
         assertEquals(Step.RUN_BOOTSTRAP, SelfArmSetupResumePolicy.next(false, false, wifiReady = true))
         assertEquals(Step.WAIT_FOR_WIFI, SelfArmSetupResumePolicy.next(false, false, wifiReady = false))
+    }
+
+    private companion object {
+        const val RACE_ROUNDS = 200
     }
 }

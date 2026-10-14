@@ -1320,6 +1320,9 @@ class RokidBusAccessibilityService : AccessibilityService() {
                 return false
             }
             val drivingSettings = isSetupAutomationActive()
+            // Read before the end: the session only ends if nothing replaced it in between, so a
+            // later generation means a new run started after this one ended.
+            val generation = SelfArmOnboardingStore.currentGeneration(appContext)
             if (!SelfArmOnboardingStore.endPairingSession(
                     appContext,
                     sessionId,
@@ -1331,7 +1334,13 @@ class RokidBusAccessibilityService : AccessibilityService() {
             log("self-pairing cancelled by the owner")
             // Stopping the automator leaves whichever Settings page it reached on the lens.
             if (drivingSettings) {
-                liveInstance?.let { service -> service.main.post { service.returnToOnboarding() } }
+                liveInstance?.let { service ->
+                    service.main.post {
+                        if (SelfArmOnboardingStore.currentGeneration(appContext) == generation) {
+                            service.returnToOnboarding()
+                        }
+                    }
+                }
             }
             return true
         }
