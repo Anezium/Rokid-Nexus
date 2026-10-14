@@ -300,7 +300,10 @@ internal object SelfArmOnboardingStore {
      * service instance) so it survives the service being destroyed and recreated mid-pairing.
      */
     fun markManualArmInProgress(context: Context) {
-        prefs(context).edit().putBoolean(KEY_MANUAL_ARM_IN_PROGRESS, true).apply()
+        prefs(context).edit()
+            .putBoolean(KEY_MANUAL_ARM_IN_PROGRESS, true)
+            .putLong(KEY_LAST_HEARTBEAT, System.currentTimeMillis())
+            .apply()
     }
 
     fun clearManualArmInProgress(context: Context) {
@@ -309,6 +312,27 @@ internal object SelfArmOnboardingStore {
 
     fun isManualArmInProgress(context: Context): Boolean =
         prefs(context).getBoolean(KEY_MANUAL_ARM_IN_PROGRESS, false)
+
+    /**
+     * A manual arm counts as work in progress only while its session still heartbeats. The flag
+     * alone is raised the moment manual navigation opens, before anything is armed, and outlives
+     * a flow paused on Wi-Fi or simply walked away from; on its own it answered "busy" to every
+     * later owner repair. The navigation run heartbeats while it is open, and so does the
+     * phone-arm confirmation, so real work keeps its lease.
+     */
+    fun isManualArmLeased(
+        context: Context,
+        nowMillis: Long = System.currentTimeMillis(),
+    ): Boolean {
+        val preferences = prefs(context)
+        return preferences.getBoolean(KEY_MANUAL_ARM_IN_PROGRESS, false) &&
+            preferences.getBoolean(KEY_SESSION_ACTIVE, false) &&
+            SelfArmSessionPolicy.leaseValid(
+                nowMillis = nowMillis,
+                lastHeartbeatMillis = preferences.getLong(KEY_LAST_HEARTBEAT, 0L),
+                timeoutMillis = LEASE_TIMEOUT_MS,
+            )
+    }
 
     fun markRunning(context: Context) {
         val sessionId = currentActiveSessionId(context)
@@ -451,6 +475,7 @@ internal object SelfArmOnboardingStore {
             .putBoolean(KEY_SESSION_ACTIVE, false)
             .putBoolean(KEY_REQUESTED, false)
             .putBoolean(KEY_RUNNING, false)
+            .putBoolean(KEY_MANUAL_ARM_IN_PROGRESS, false)
             .putString(KEY_PAIRING_SESSION_ID, "")
             .apply()
         if (invalidatedSessionId.isNotBlank()) {

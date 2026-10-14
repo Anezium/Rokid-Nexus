@@ -77,14 +77,15 @@ class SelfArmOwnerRepairPolicyTest {
     }
 
     @Test
-    fun `only a heartbeating run or a phone arm in progress makes the owner wait`() {
+    fun `only a heartbeating run or a leased manual arm makes the owner wait`() {
         fun disposition(active: Boolean, running: Boolean, manual: Boolean) =
             SelfArmOwnerRepairPolicy.sessionDisposition(active, running, manual)
 
         assertEquals(SessionDisposition.PROCEED, disposition(active = false, running = false, manual = false))
         assertEquals(SessionDisposition.BUSY, disposition(active = true, running = true, manual = false))
         assertEquals(SessionDisposition.BUSY, disposition(active = true, running = false, manual = true))
-        // Paused, never started, or running on an expired lease: nothing is driving it.
+        // Paused, never started, running on an expired lease, or a manual flow left without a
+        // lease: nothing is driving it.
         assertEquals(SessionDisposition.SUPERSEDE, disposition(active = true, running = false, manual = false))
     }
 }

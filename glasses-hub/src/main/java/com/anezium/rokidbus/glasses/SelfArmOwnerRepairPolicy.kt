@@ -54,16 +54,16 @@ internal object SelfArmOwnerRepairPolicy {
     /**
      * An owner pressing the button deserves a fresh attempt, so a session that nothing is driving
      * — paused on Wi-Fi, left behind by a request whose run never started, or running with an
-     * expired lease — is no reason to answer busy. Only a heartbeating run or a phone-driven arm
-     * in progress is.
+     * expired lease — is no reason to answer busy. Only a heartbeating run or a manual arm whose
+     * session still heartbeats is; a manual flow left open without a lease is abandoned.
      */
     fun sessionDisposition(
         sessionActive: Boolean,
         sessionRunningWithValidLease: Boolean,
-        manualArmInProgress: Boolean,
+        manualArmLeased: Boolean,
     ): SessionDisposition = when {
         !sessionActive -> SessionDisposition.PROCEED
-        sessionRunningWithValidLease || manualArmInProgress -> SessionDisposition.BUSY
+        sessionRunningWithValidLease || manualArmLeased -> SessionDisposition.BUSY
         else -> SessionDisposition.SUPERSEDE
     }
 

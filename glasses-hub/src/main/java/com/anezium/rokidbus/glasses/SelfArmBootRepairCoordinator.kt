@@ -195,7 +195,7 @@ internal object SelfArmBootRepairCoordinator {
         val disposition = SelfArmOwnerRepairPolicy.sessionDisposition(
             sessionActive = sessionId.isNotBlank(),
             sessionRunningWithValidLease = SelfArmOnboardingStore.snapshot(context).setupRunning,
-            manualArmInProgress = SelfArmOnboardingStore.isManualArmInProgress(context),
+            manualArmLeased = SelfArmOnboardingStore.isManualArmLeased(context),
         )
         return when (disposition) {
             SelfArmOwnerRepairPolicy.SessionDisposition.PROCEED -> true
