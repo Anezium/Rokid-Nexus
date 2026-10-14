@@ -1014,6 +1014,7 @@ internal class SelfArmWirelessDebuggingAutomator(
             return true
         }
 
+        releaseDisplayHold(SetupDisplayHoldEnd.SUCCEEDED)
         service.returnToOnboarding(resultSessionId)
         service.onWirelessBootstrapFinished(resultSessionId)
         cancelLiveWork()
