@@ -100,6 +100,15 @@ Edge seen while setting up H6: a power press in the ~1 s gap between the Wi-Fi-e
 
 Not exercised on device: 8.13 (native app during the arm) and 8.15 (setup started during the readiness wait).
 
+## Round 10 on device (glasses at 196b4092)
+
+| Case | Result |
+|---|---|
+| 8.9 regression | pass: `readiness=ready waitedMs=1696` → `helper running before arm=true` → restore `viaBridge=true observedOff=true` → `already_healthy`, `wifi_on=0` |
+| 8.10 regression | pass: `readiness=ready waitedMs=2535` → `helper running before arm=false` → restore `observedOff=true` → `repaired`, helpers running |
+
+The setup-during-bridge-wait fallback veto is covered by `SelfArmBootRepairPolicyTest` only; it could not be timed by hand on the device.
+
 ## Not run
 
 6.3 rotation, 6.5, 7 (service recreation), 8.3–8.8, 9 (phone code form), 10
