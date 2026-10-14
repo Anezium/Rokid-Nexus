@@ -89,6 +89,17 @@ Observation: once, Developer options needed three scroll passes (`searching_wire
 
 Edge seen while setting up H6: a power press in the ~1 s gap between the Wi-Fi-enable run and the bootstrap run is not observed by any renewal, so the next run acquires with `wake=true` once.
 
+## Round 9 on device (both hubs at 639d3470)
+
+| Case | Result |
+|---|---|
+| 8.9 Wi-Fi off, helpers running | pass: `answered=true` → `readiness=ready waitedMs=1737` → `READY` → `Repair Wi-Fi restore trigger=owner applied=true viaBridge=true observedOff=true` → `already_healthy`, `wifi_on=0` |
+| 8.10 Wi-Fi off, helpers stopped | pass: `answered=false` → `readiness=ready waitedMs=2511` → `helper running before arm=false` → `READY` → restore `observedOff=true` → `repaired`, helpers running, `wifi_on=0` |
+| 8.14 radio turned off by someone else during the repair | pass: `Repair Wi-Fi claim dropped reason=radio_turned_off_elsewhere` → `readiness=no_network waitedMs=20119` → one `arm retry result=SESSION_UNREACHABLE` → restore `result=dropped … wifiLeftAsIs=true` → `verdict=wifi_unavailable` |
+| 8.11 text | "Could not reach the glasses over Wi-Fi, so their helper may not have been checked or restored…" |
+
+Not exercised on device: 8.13 (native app during the arm) and 8.15 (setup started during the readiness wait).
+
 ## Not run
 
 6.3 rotation, 6.5, 7 (service recreation), 8.3–8.8, 9 (phone code form), 10
