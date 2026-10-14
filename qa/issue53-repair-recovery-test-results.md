@@ -55,6 +55,16 @@ re-signed with the release key, installed over release 1.6.0 on an RV101
    The phone's auto-repair push overwrites the glasses-side preference (expected,
    but the plan's 5.1 step must use the phone switch).
 
+## Round 6 on device (glasses build with cd41a405 + 94f5e719)
+
+| Case | Evidence |
+|---|---|
+| Finding 1 fixed | panel `Asleep`, issue state, Repair from the phone, nobody touching the glasses: `setup display hold run=3 decision=acquire` → `self-pair KADB success` → `local self-pair bootstrap complete` in 10.5 s → `release reason=succeeded`; panel back to `Asleep`, `Wake Locks: size=0` |
+| Cancel releases the hold | Re-pair anyway, back out at `wireless_debugging_open` → `self-pairing cancelled by the owner` → `release reason=stopped` 2 ms later; panel sleeps |
+| Finding 4 fixed (8.2) | scripts stopped on a paired unit → `helper running before arm=false` → `verdict=repaired`; "Repaired. The glasses' helper is running again." |
+| 2.1 still right | healthy unit → `helper running before arm=true` → `already_healthy` |
+| Finding 3 | not reproduced in four deliberate attempts (cancel after KADB success, at `wireless_debugging_open`, at `searching_pairing_code`, exact 6.4 replay on an unpaired unit) nor during the round-6 cancel; kept as a watch item |
+
 ## Not run
 
 6.3 rotation, 6.5, 7 (service recreation), 8.3–8.8, 9 (phone code form), 10
