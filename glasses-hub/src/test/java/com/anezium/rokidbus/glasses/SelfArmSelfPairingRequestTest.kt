@@ -49,6 +49,43 @@ class SelfArmSelfPairingRequestTest {
     }
 
     @Test
+    fun backgroundPairingNeedsAutomaticRepairOrAPairingAlreadyAskedFor() {
+        val context = RuntimeEnvironment.getApplication()
+        SelfArmOnboardingStore.invalidateSession(context)
+        SelfArmBootRepairStore.setAutoRepairEnabled(context, false)
+        ShadowLog.clear()
+
+        // The wearer turned automatic repair off: a background arm may not take over the screen.
+        assertEquals(
+            SelfPairingOutcome.NOT_PERMITTED,
+            SelfArmLocalAdbBootstrapper.requestSelfPairing(context, owner = false),
+        )
+        assertTrue(requestLines().last().contains("owner=false outcome=auto_repair_off"))
+        // The owner asking from the phone is consent enough.
+        assertEquals(
+            SelfPairingOutcome.SERVICE_UNAVAILABLE,
+            SelfArmLocalAdbBootstrapper.requestSelfPairing(context, owner = true),
+        )
+
+        // A pairing already asked for in the current session is consent too.
+        SelfArmOnboardingStore.invalidateSession(context)
+        val sessionId = SelfArmOnboardingStore.beginSession(context)
+        SelfArmOnboardingStore.markPairingRequested(context, sessionId)
+        assertTrue(
+            SelfArmLocalAdbBootstrapper.requestSelfPairing(context, owner = false) !=
+                SelfPairingOutcome.NOT_PERMITTED,
+        )
+
+        // And so is the switch left on.
+        SelfArmOnboardingStore.invalidateSession(context)
+        SelfArmBootRepairStore.setAutoRepairEnabled(context, true)
+        assertTrue(
+            SelfArmLocalAdbBootstrapper.requestSelfPairing(context, owner = false) !=
+                SelfPairingOutcome.NOT_PERMITTED,
+        )
+    }
+
+    @Test
     fun aSessionStopsBeingLiveWhenItFinishesExpiresOrIsSuperseded() {
         val context = RuntimeEnvironment.getApplication()
         SelfArmOnboardingStore.invalidateSession(context)

@@ -13,6 +13,12 @@ internal enum class SelfPairingOutcome(val logValue: String) {
 
     /** Background requests spent their budget for this process; only the owner may ask now. */
     BUDGET_EXHAUSTED("budget_exhausted"),
+
+    /**
+     * A background request on a unit whose wearer turned automatic repair off, with no pairing
+     * asked for: the Settings takeover would be unannounced, so only the owner may start it.
+     */
+    NOT_PERMITTED("auto_repair_off"),
     ;
 
     /** True when a pairing run is underway because of, or despite, this request. */
@@ -26,7 +32,8 @@ internal enum class SelfPairingOutcome(val logValue: String) {
  * that session is no longer live — finished, failed, expired, superseded — the latch is gone too.
  * A latch that outlived its run is what turned every later "Repair now" into a silent no-op.
  * Background requests are budgeted so a unit that cannot pair does not drive Settings over the
- * wearer forever; the owner's request never counts against that budget.
+ * wearer forever, and need the wearer's standing consent before spending any of it; the owner's
+ * request needs neither.
  */
 internal class SelfArmSelfPairingGate(private val backgroundBudget: Int) {
     data class Admission(
@@ -42,7 +49,7 @@ internal class SelfArmSelfPairingGate(private val backgroundBudget: Int) {
     private var backgroundAttempts = 0
 
     @Synchronized
-    fun admit(owner: Boolean, isLive: (String) -> Boolean): Admission {
+    fun admit(owner: Boolean, backgroundPermitted: Boolean, isLive: (String) -> Boolean): Admission {
         var released: String? = null
         inFlightSessionId?.let { sessionId ->
             if (isLive(sessionId)) {
@@ -52,6 +59,9 @@ internal class SelfArmSelfPairingGate(private val backgroundBudget: Int) {
             released = sessionId
         }
         if (owner) return Admission(null, 0, released)
+        if (!backgroundPermitted) {
+            return Admission(SelfPairingOutcome.NOT_PERMITTED, backgroundAttempts, released)
+        }
         if (backgroundAttempts >= backgroundBudget) {
             return Admission(SelfPairingOutcome.BUDGET_EXHAUSTED, backgroundAttempts, released)
         }

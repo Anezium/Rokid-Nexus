@@ -348,15 +348,25 @@ internal class SelfArmLocalAdbBootstrapper(
          * session brings them back. So a unit that has lost its own pairing has also lost its
          * autonomy — it stays maintained only for as long as someone runs the manual flow from the
          * phone. Re-pairing is what gives it back.
+         *
+         * Pairing drives Settings over whatever the wearer is looking at, so a request nobody
+         * made from the phone needs the same standing consent as the boot repair — the automatic
+         * repair switch — or a pairing already asked for in the current session.
          */
         internal fun requestSelfPairing(context: Context, owner: Boolean = false): SelfPairingOutcome {
             val appContext = context.applicationContext
             return synchronized(selfPairingLock) {
+                val backgroundPermitted = owner ||
+                    SelfArmBootRepairStore.isAutoRepairEnabled(appContext) ||
+                    SelfArmOnboardingStore.isPairingRequested(
+                        appContext,
+                        SelfArmOnboardingStore.currentActiveSessionId(appContext),
+                    )
                 // The first background request usually lands before the accessibility service has
                 // connected, and that service is what drives the Settings screens. Keep asking on
                 // later attempts rather than burning the single try on a moment when nothing
                 // could have answered.
-                val admission = selfPairingGate.admit(owner) { sessionId ->
+                val admission = selfPairingGate.admit(owner, backgroundPermitted) { sessionId ->
                     SelfArmOnboardingStore.isSessionLive(appContext, sessionId)
                 }
                 admission.releasedSessionId?.let {

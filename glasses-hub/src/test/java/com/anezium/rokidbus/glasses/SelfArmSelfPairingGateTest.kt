@@ -11,7 +11,7 @@ class SelfArmSelfPairingGateTest {
     private val isLive: (String) -> Boolean = { it in liveSessions }
 
     private fun SelfArmSelfPairingGate.start(owner: Boolean, sessionId: String): SelfArmSelfPairingGate.Admission {
-        val admission = admit(owner, isLive)
+        val admission = admit(owner, backgroundPermitted = true, isLive)
         if (admission.refusal == null) {
             liveSessions += sessionId
             onStarted(sessionId)
@@ -24,8 +24,8 @@ class SelfArmSelfPairingGateTest {
         val gate = SelfArmSelfPairingGate(backgroundBudget = 6)
         assertNull(gate.start(owner = false, sessionId = "a").refusal)
 
-        assertEquals(SelfPairingOutcome.ALREADY_IN_FLIGHT, gate.admit(owner = false, isLive).refusal)
-        assertEquals(SelfPairingOutcome.ALREADY_IN_FLIGHT, gate.admit(owner = true, isLive).refusal)
+        assertEquals(SelfPairingOutcome.ALREADY_IN_FLIGHT, gate.admit(owner = false, backgroundPermitted = true, isLive).refusal)
+        assertEquals(SelfPairingOutcome.ALREADY_IN_FLIGHT, gate.admit(owner = true, backgroundPermitted = true, isLive).refusal)
     }
 
     @Test
@@ -50,7 +50,7 @@ class SelfArmSelfPairingGateTest {
         // Lease expired or superseded: no finish callback ever came.
         liveSessions -= "expired"
 
-        val admission = gate.admit(owner = true, isLive)
+        val admission = gate.admit(owner = true, backgroundPermitted = true, isLive)
 
         assertNull(admission.refusal)
         assertEquals("expired", admission.releasedSessionId)
@@ -70,18 +70,32 @@ class SelfArmSelfPairingGateTest {
     fun `background requests are budgeted and the owner never is`() {
         val gate = SelfArmSelfPairingGate(backgroundBudget = 2)
         // Requests that found nothing to drive Settings still spend the budget.
-        assertEquals(1, gate.admit(owner = false, isLive).backgroundAttempt)
-        assertEquals(2, gate.admit(owner = false, isLive).backgroundAttempt)
+        assertEquals(1, gate.admit(owner = false, backgroundPermitted = true, isLive).backgroundAttempt)
+        assertEquals(2, gate.admit(owner = false, backgroundPermitted = true, isLive).backgroundAttempt)
 
-        val exhausted = gate.admit(owner = false, isLive)
+        val exhausted = gate.admit(owner = false, backgroundPermitted = true, isLive)
         assertEquals(SelfPairingOutcome.BUDGET_EXHAUSTED, exhausted.refusal)
         assertEquals(2, exhausted.backgroundAttempt)
 
         repeat(5) {
-            val owner = gate.admit(owner = true, isLive)
+            val owner = gate.admit(owner = true, backgroundPermitted = true, isLive)
             assertNull(owner.refusal)
             assertEquals(0, owner.backgroundAttempt)
         }
+    }
+
+    @Test
+    fun `without standing consent only the owner may start a pairing`() {
+        val gate = SelfArmSelfPairingGate(backgroundBudget = 6)
+
+        val refused = gate.admit(owner = false, backgroundPermitted = false, isLive)
+        assertEquals(SelfPairingOutcome.NOT_PERMITTED, refused.refusal)
+        // A refused request is not an attempt: consent given later still has the whole budget.
+        assertEquals(0, refused.backgroundAttempt)
+        assertEquals(1, gate.admit(owner = false, backgroundPermitted = true, isLive).backgroundAttempt)
+
+        assertNull(gate.admit(owner = true, backgroundPermitted = false, isLive).refusal)
+        assertFalse(SelfPairingOutcome.NOT_PERMITTED.pending)
     }
 
     @Test
