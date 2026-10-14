@@ -340,15 +340,29 @@ object GlassesHub {
                 sendRemote(errorEnvelope(envelope.id, "HUB_NOT_READY"))
                 return
             }
-            SelfArmBootRepairCoordinator.runOwnerRepair(context) { result ->
+            val pairingAware = GlassesRepairContract.requestIsPairingAware(envelope.payload)
+            val mode = GlassesRepairContract.modeFromRequest(envelope.payload)
+            SelfArmBootRepairCoordinator.runOwnerRepair(context, mode = mode) { verdict ->
+                val result = GlassesRepairContract.resultForRequester(verdict, pairingAware)
+                // Read in the same call that started the pairing, so it names that run.
+                val pairingSessionId = SelfArmOnboardingStore.currentActiveSessionId(context)
+                    .takeIf {
+                        pairingAware &&
+                            result == GlassesRepairContract.RESULT_PAIRING_PENDING &&
+                            SelfArmOnboardingStore.isPairingRequested(context, it)
+                    }
                 val error = sendRemote(
                     BusEnvelope(
                         path = BusPaths.GLASSES_REPAIR_REPLY,
                         id = envelope.id,
-                        payload = GlassesRepairContract.replyToJson(result),
+                        payload = GlassesRepairContract.replyToJson(
+                            result,
+                            mode = mode.takeIf { pairingAware },
+                            pairingSessionId = pairingSessionId,
+                        ),
                     ),
                 )
-                log("glassesRepair result=$result replyError=${error ?: "none"}")
+                log("glassesRepair result=$result verdict=$verdict replyError=${error ?: "none"}")
             }
             return
         }
@@ -1008,6 +1022,21 @@ object GlassesHub {
             }
         }
         log("manual self-arm action=${action.wireValue} accepted=$accepted armed=$armed")
+        // Only the owner leaving the pairing screen sets this; the engine's own failure CLOSE does
+        // not, because the glasses may still finish a pairing whose phone-side step failed. It
+        // runs even when no accessibility service took the CLOSE: the persisted intent is what
+        // a reconnecting service would otherwise resume. It ends only the session it names: the
+        // one the screen started, never a run started elsewhere or the one that replaced it.
+        if (context != null &&
+            action == SelfArmManualAction.CLOSE &&
+            !armed &&
+            envelope.payload.optBoolean("abandonPairing", false)
+        ) {
+            RokidBusAccessibilityService.abandonSelfPairing(
+                context,
+                envelope.payload.optString("abandonSessionId"),
+            )
+        }
         if (!accepted) {
             sendRemote(errorEnvelope(envelope.id, "ACCESSIBILITY_UNAVAILABLE"))
             return
@@ -1311,6 +1340,16 @@ object GlassesHub {
         if (cameraSessionTracker.reset()) log("camera session reset: :camera process is gone")
     }
 
+    /**
+     * Runs [block] on the thread every Wi-Fi handover goes through, so a repair's last look at
+     * who owns the radio and its disable cannot interleave with one. False when it cannot be
+     * queued; the caller then has to finish without it.
+     */
+    internal fun runSerializedWithWifiHandovers(block: () -> Unit): Boolean =
+        runCatching { wifiRequestExecutor.execute(block) }
+            .onFailure { logError("glassesWifi serialized task rejected", it) }
+            .isSuccess
+
     internal fun requestWifiOwnershipReconciliation(context: Context, trigger: String) {
         val applicationContext = context.applicationContext
         wifiRequestExecutor.execute {
@@ -1420,6 +1459,7 @@ object GlassesHub {
     }
 
     private fun handleGlassesWifiRequest(context: Context, sessionId: String) {
+        SelfArmBootRepairCoordinator.revokeWifiObligation("camera_request")
         val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
         if (wifiManager == null) {
             log("glassesWifiRequest enabled=true hubOwned=${wifiOwnership?.isHubOwned() == true} applied=false")
@@ -1459,6 +1499,8 @@ object GlassesHub {
         wifiRequestExecutor.execute {
             cancelPendingWifiDisable("native_app:$packageName")
             val handedOver = wifiOwnership?.handOverToUser() == true
+            // A running repair's claim goes the same way: the wearer now wants this radio.
+            SelfArmBootRepairCoordinator.revokeWifiObligation("native_app:$packageName")
             val wifiManager = appContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
             val alreadyEnabled = runCatching { wifiManager?.isWifiEnabled }
                 .onFailure { logError("nativeAppWifi state read failed", it) }

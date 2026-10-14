@@ -161,6 +161,18 @@
     <string name="guided_support_code">Support code: %1$s</string>
 
     <string name="guided_wordmark">MANUAL SETUP</string>
+
+    <!-- ===== Re-pair glasses (Settings > Maintenance, the same screen after setup) ===== -->
+    <string name="repair_pair_title">Re-pair glasses</string>
+    <string name="repair_pair_wordmark">RE-PAIR GLASSES</string>
+    <string name="repair_pair_intro">The glasses keep a small helper running, and bring it back after every restart through a pairing of their own. A reinstall or a reset can lose that pairing. Re-pairing has the glasses open their own Wireless debugging screen and pair themselves: keep them on and leave them be while it runs.</string>
+    <string name="guided_check_self_pairing">Glasses paired to maintain themselves</string>
+    <string name="repair_pair_needed">Everything else is in place; what is missing is the glasses\' own pairing. Pairing from this phone brings the helper back too, but only until the glasses restart.</string>
+    <string name="repair_pair_action">Re-pair glasses</string>
+    <string name="repair_pair_again">Re-pair anyway</string>
+    <string name="repair_pair_offer">Helper keeps stopping? Re-pair glasses</string>
+    <string name="repair_pair_status_paired">Your glasses are set up and paired to maintain themselves.</string>
+    <string name="repair_pair_asking">Asking the glasses to pair themselves…</string>
     <string name="guided_working_pairing_title">Pairing…</string>
     <string name="guided_working_pairing_body">Connecting to your glasses. Keep them on.</string>
     <string name="guided_working_connecting_title">Almost there…</string>
@@ -168,7 +180,7 @@
     <string name="guided_working_arming_title">Finishing setup…</string>
     <string name="guided_working_arming_body">Arming Nexus on your glasses. Don’t take them off yet.</string>
     <string name="guided_done_title">You’re all set</string>
-    <string name="guided_done_body">Your glasses are armed and the plugin launcher is ready. You won’t have to do this again — it sticks across reboots.</string>
+    <string name="guided_done_body">Your glasses are armed and the plugin launcher is ready. This pairing belongs to the phone, so if the helper stops after the glasses restart, use Settings, then Re-pair glasses.</string>
     <string name="guided_failed_title">That didn’t work</string>
     <string name="guided_failed_check_label">WHAT TO CHECK</string>
     <string name="guided_failed_check_wifi">The glasses and this phone are on the same Wi-Fi</string>

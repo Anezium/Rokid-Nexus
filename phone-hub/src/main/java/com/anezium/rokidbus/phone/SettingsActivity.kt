@@ -221,6 +221,19 @@ class SettingsActivity : Activity() {
             addView(BusTheme.gap(this@SettingsActivity, 10))
             addView(glassesRepairNowRow(), NexusUi.block())
             addView(BusTheme.gap(this@SettingsActivity, 10))
+            // Not behind Developer mode: "Repair now" sends owners here when the glasses have
+            // lost their pairing, and that happens to people who never opened Advanced.
+            addView(
+                actionRow(
+                    title = "Re-pair glasses",
+                    value = "Open",
+                    danger = false,
+                ) {
+                    startActivity(GlassesManualSetupActivity.repairIntent(this@SettingsActivity))
+                },
+                NexusUi.block(),
+            )
+            addView(BusTheme.gap(this@SettingsActivity, 10))
             addView(accessibilityCheckRow(), NexusUi.block())
             addView(BusTheme.gap(this@SettingsActivity, 10))
             addView(
@@ -694,36 +707,26 @@ class SettingsActivity : Activity() {
         repairInFlight = true
         repairValue?.text = "Working…"
         showRepairStatus("Asking the glasses to check their helper…", autoClear = false)
+        // A repair that finds the pairing gone starts one, and the glasses may hand its last step
+        // to this phone. That offer is only accepted after a setup request from the owner, and
+        // pressing this button is one.
+        BusHubService.noteGlassesSetupUserIntent()
         client.request(
             BusPaths.GLASSES_REPAIR_REQUEST,
             GlassesRepairContract.requestToJson(),
-            timeoutMs = REPAIR_REQUEST_TIMEOUT_MS,
+            timeoutMs = GlassesRepairStatusText.REQUEST_TIMEOUT_MS,
         ) { result ->
             if (isDestroyed || isFinishing) return@request
             repairInFlight = false
             repairValue?.text = "Repair ›"
             val message = result.fold(
                 onSuccess = { payload ->
-                    repairStatusMessage(GlassesRepairContract.resultFromReply(payload))
+                    GlassesRepairStatusText.message(GlassesRepairContract.resultFromReply(payload))
                 },
-                onFailure = { "The glasses did not answer. Check the connection and try again." },
+                onFailure = { GlassesRepairStatusText.NO_ANSWER },
             )
             showRepairStatus(message)
         }
-    }
-
-    private fun repairStatusMessage(result: String?): String = when (result) {
-        GlassesRepairContract.RESULT_REPAIRED ->
-            "Repaired. The glasses have their helper back."
-        GlassesRepairContract.RESULT_ALREADY_HEALTHY ->
-            "Nothing to repair — the helper is already in place."
-        GlassesRepairContract.RESULT_WIFI_UNAVAILABLE ->
-            "Could not turn on the glasses' Wi-Fi. Wake the glasses and try again."
-        GlassesRepairContract.RESULT_ARM_FAILED ->
-            "The glasses could not restore the helper. Try again, or redo the glasses setup."
-        GlassesRepairContract.RESULT_BUSY ->
-            "The glasses are busy with another repair or with setup. Try again in a moment."
-        else -> "The glasses sent an answer this version does not understand."
     }
 
     private fun showRepairStatus(message: String, autoClear: Boolean = true) {

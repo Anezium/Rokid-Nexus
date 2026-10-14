@@ -50,6 +50,123 @@ class GlassesRepairContractTest {
     }
 
     @Test
+    fun `a version 1 request is a plain repair and only hears legacy results`() {
+        val legacy = JSONObject().put("version", 1)
+        assertFalse(GlassesRepairContract.requestIsPairingAware(legacy))
+        assertFalse(GlassesRepairContract.requestIsPairingAware(null))
+        // A version 1 phone never sent a mode, and one forged onto it is not honoured.
+        assertEquals(
+            GlassesRepairContract.MODE_REPAIR,
+            GlassesRepairContract.modeFromRequest(legacy.put("mode", GlassesRepairContract.MODE_PAIR)),
+        )
+        listOf(
+            GlassesRepairContract.RESULT_PARTIAL,
+            GlassesRepairContract.RESULT_PAIRING_PENDING,
+            GlassesRepairContract.RESULT_PAIRING_REQUIRED,
+        ).forEach { result ->
+            assertEquals(
+                GlassesRepairContract.RESULT_ARM_FAILED,
+                GlassesRepairContract.resultForRequester(result, requesterPairingAware = false),
+            )
+            assertEquals(result, GlassesRepairContract.resultForRequester(result, requesterPairingAware = true))
+        }
+        GlassesRepairContract.LEGACY_RESULTS.forEach { result ->
+            assertEquals(result, GlassesRepairContract.resultForRequester(result, requesterPairingAware = false))
+        }
+    }
+
+    @Test
+    fun `a pairing-aware request carries its mode and defaults to repair`() {
+        val pair = GlassesRepairContract.requestToJson(GlassesRepairContract.MODE_PAIR)
+        assertTrue(GlassesRepairContract.requestIsPairingAware(pair))
+        assertEquals(GlassesRepairContract.MODE_PAIR, GlassesRepairContract.modeFromRequest(pair))
+        assertEquals(
+            GlassesRepairContract.MODE_REPAIR,
+            GlassesRepairContract.modeFromRequest(GlassesRepairContract.requestToJson()),
+        )
+        assertEquals(
+            GlassesRepairContract.MODE_REPAIR,
+            GlassesRepairContract.modeFromRequest(
+                GlassesRepairContract.requestToJson().put("mode", "reformat"),
+            ),
+        )
+    }
+
+    @Test
+    fun `only a reply echoing the pair mode says the glasses re-paired`() {
+        assertTrue(
+            GlassesRepairContract.replyRanPairing(
+                GlassesRepairContract.replyToJson(
+                    GlassesRepairContract.RESULT_PAIRING_PENDING,
+                    GlassesRepairContract.MODE_PAIR,
+                ),
+            ),
+        )
+        // Glasses that ignored the mode answer like this, even when the result looks fine.
+        val legacy = GlassesRepairContract.replyToJson(GlassesRepairContract.RESULT_ALREADY_HEALTHY)
+        assertFalse(GlassesRepairContract.replyRanPairing(legacy))
+        assertEquals(
+            GlassesRepairContract.RESULT_ALREADY_HEALTHY,
+            GlassesRepairContract.resultFromReply(legacy),
+        )
+        assertFalse(
+            GlassesRepairContract.replyRanPairing(
+                GlassesRepairContract.replyToJson(
+                    GlassesRepairContract.RESULT_REPAIRED,
+                    GlassesRepairContract.MODE_REPAIR,
+                ),
+            ),
+        )
+        assertFalse(GlassesRepairContract.replyRanPairing(null))
+    }
+
+    @Test
+    fun `only a pending re-pair names the session the phone may end`() {
+        assertEquals(
+            "session-1",
+            GlassesRepairContract.pairingSessionFromReply(
+                GlassesRepairContract.replyToJson(
+                    GlassesRepairContract.RESULT_PAIRING_PENDING,
+                    GlassesRepairContract.MODE_PAIR,
+                    pairingSessionId = "session-1",
+                ),
+            ),
+        )
+        // Glasses that do not name it leave nothing to end.
+        assertNull(
+            GlassesRepairContract.pairingSessionFromReply(
+                GlassesRepairContract.replyToJson(
+                    GlassesRepairContract.RESULT_PAIRING_PENDING,
+                    GlassesRepairContract.MODE_PAIR,
+                ),
+            ),
+        )
+        // No pairing is running behind any other verdict, whatever the glasses put in it.
+        val busy = GlassesRepairContract.replyToJson(
+            GlassesRepairContract.RESULT_BUSY,
+            GlassesRepairContract.MODE_PAIR,
+            pairingSessionId = "session-1",
+        )
+        assertFalse(busy.has("pairingSession"))
+        assertNull(
+            GlassesRepairContract.pairingSessionFromReply(
+                JSONObject(busy.toString()).put("pairingSession", "session-1"),
+            ),
+        )
+        // A plain repair is not this screen's run to end.
+        assertNull(
+            GlassesRepairContract.pairingSessionFromReply(
+                GlassesRepairContract.replyToJson(
+                    GlassesRepairContract.RESULT_PAIRING_PENDING,
+                    GlassesRepairContract.MODE_REPAIR,
+                    pairingSessionId = "session-1",
+                ),
+            ),
+        )
+        assertNull(GlassesRepairContract.pairingSessionFromReply(null))
+    }
+
+    @Test
     fun `an owner who never touched the switch gets the repair`() {
         assertTrue(GlassesRepairContract.DEFAULT_AUTO_REPAIR)
         assertFalse(GlassesRepairContract.RESULTS.isEmpty())

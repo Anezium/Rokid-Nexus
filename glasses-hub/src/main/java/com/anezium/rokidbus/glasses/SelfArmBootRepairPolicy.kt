@@ -56,28 +56,68 @@ internal object SelfArmBootRepairPolicy {
         else -> null
     }
 
+    enum class WifiRestore {
+        /** The repair turned nothing on, or its claim was dropped while it ran. */
+        NOT_OWED,
+
+        /** The radio is already off; nothing left to do. */
+        SETTLED,
+
+        /** Someone else needs the radio now: drop the claim and leave Wi-Fi on. */
+        YIELDED,
+
+        /** Turn it off now. */
+        DISABLE,
+    }
+
     /**
-     * Whether the Wi-Fi the repair turned on may be turned back off. Restoring runs through the
-     * revived bridge, never through Settings a second time, so a bridge still presumed dead
-     * leaves the radio as the automation left it. Every owner that may have claimed the radio in
-     * the meantime blocks the restore — the same yields the background re-arm honours.
+     * What to do with Wi-Fi a repair turned on, decided once as that repair ends — success or
+     * not: whether the arm worked says nothing about whose radio it is. Turning it off runs
+     * through the bridge, with the privileged session as the fallback, never through Settings a
+     * second time. Every owner that may have claimed the radio in the meantime wins outright —
+     * the same yields the background re-arm honours — because a radio left on is the lesser harm
+     * and nothing comes back later to settle it.
      */
-    fun shouldRestoreWifi(
-        wifiWasOffBeforeRepair: Boolean,
+    fun restoreWifi(
+        repairOwesWifiOff: Boolean,
         wifiEnabledNow: Boolean,
-        bridgePresumedDead: Boolean,
         wifiHubOwned: Boolean,
         setupSessionActive: Boolean,
         mediaSyncSessionActive: Boolean,
         cameraSessionActive: Boolean,
-    ): Boolean =
-        wifiWasOffBeforeRepair &&
-            wifiEnabledNow &&
-            !bridgePresumedDead &&
-            !wifiHubOwned &&
-            !setupSessionActive &&
-            !mediaSyncSessionActive &&
+    ): WifiRestore = when {
+        !repairOwesWifiOff -> WifiRestore.NOT_OWED
+        !wifiEnabledNow -> WifiRestore.SETTLED
+        wifiHubOwned || setupSessionActive || mediaSyncSessionActive ||
             // A camera session that found the radio already up never claims hub ownership, so the
             // ownership check alone would let the restore cut the link mid-viewfinder.
-            !cameraSessionActive
+            cameraSessionActive -> WifiRestore.YIELDED
+        else -> WifiRestore.DISABLE
+    }
+
+    /** How a [WifiRestore.DISABLE] ended; [fallbackDropped] is set when the fallback was not tried. */
+    data class WifiDisableOutcome(
+        val viaBridge: Boolean,
+        val applied: Boolean,
+        val fallbackDropped: WifiRestore? = null,
+    )
+
+    /**
+     * Carries out a [WifiRestore.DISABLE]: the bridge, then the privileged session. The bridge can
+     * wait seconds before failing, and manual setup opens its session without going through the
+     * Wi-Fi handover thread, so [decideAgain] runs right before the fallback; anything but
+     * [WifiRestore.DISABLE] leaves the radio as it is.
+     */
+    fun disableRepairWifi(
+        viaBridge: () -> Boolean,
+        decideAgain: () -> WifiRestore,
+        viaSession: () -> Boolean,
+    ): WifiDisableOutcome {
+        if (viaBridge()) return WifiDisableOutcome(viaBridge = true, applied = true)
+        val decision = decideAgain()
+        if (decision != WifiRestore.DISABLE) {
+            return WifiDisableOutcome(viaBridge = false, applied = false, fallbackDropped = decision)
+        }
+        return WifiDisableOutcome(viaBridge = false, applied = viaSession())
+    }
 }

@@ -18,22 +18,74 @@ internal object SelfArmBridgeLivenessStore {
     private const val KEY_ARMED_BOOT_INSTANT = "armed_boot_instant"
     private const val KEY_ARMED_BRIDGE_VERSION = "armed_bridge_version"
     private const val KEY_ARMED_TLS_PORT = "armed_tls_port"
+    private const val KEY_ARMED_BRIDGE_RUNNING = "armed_bridge_running"
+    private const val KEY_ARM_FAILED_SINCE = "arm_failed_since_armed"
+    private const val KEY_ARMED_HELPER_WAS_RUNNING = "armed_helper_was_running"
 
     private val bridgeDemandUnanswered = AtomicBoolean(false)
 
-    fun recordArmed(context: Context, tlsPort: Int, bridgeRunning: Boolean) {
+    fun recordArmed(
+        context: Context,
+        tlsPort: Int,
+        bridgeRunning: Boolean,
+        helperRunningBefore: Boolean? = null,
+    ) {
         prefs(context).edit()
             .putLong(KEY_ARMED_BOOT_INSTANT, currentBootInstantMillis())
             .putString(KEY_ARMED_BRIDGE_VERSION, SelfArmConstants.BRIDGE_VERSION)
             .putInt(KEY_ARMED_TLS_PORT, tlsPort)
+            .putBoolean(KEY_ARMED_BRIDGE_RUNNING, bridgeRunning)
+            .putBoolean(KEY_ARM_FAILED_SINCE, false)
+            .apply {
+                if (helperRunningBefore == null) {
+                    remove(KEY_ARMED_HELPER_WAS_RUNNING)
+                } else {
+                    putBoolean(KEY_ARMED_HELPER_WAS_RUNNING, helperRunningBefore)
+                }
+            }
             .commit()
         // A bridge the arm could not start leaves the demand standing, so the next radio
         // opportunity keeps trying instead of declaring victory on the watchdog alone.
         if (bridgeRunning) bridgeDemandUnanswered.set(false)
     }
 
+    /**
+     * An arm that did not reach READY is a measurement too, and it contradicts the record: the
+     * helper the record says is alive could not be reached or restored. The arm epoch itself is
+     * kept, because it still says which boot the helper was last seen on.
+     */
+    fun recordArmFailed(context: Context) {
+        prefs(context).edit().putBoolean(KEY_ARM_FAILED_SINCE, true).commit()
+    }
+
+    fun armFailedSinceArmed(context: Context): Boolean =
+        prefs(context).getBoolean(KEY_ARM_FAILED_SINCE, false)
+
     fun armedBootInstantMillis(context: Context): Long? =
         prefs(context).getLong(KEY_ARMED_BOOT_INSTANT, 0L).takeIf { it != 0L }
+
+    /** Absent on installs armed before it was recorded: read as not running, never as running. */
+    fun armedBridgeRunning(context: Context): Boolean =
+        prefs(context).getBoolean(KEY_ARMED_BRIDGE_RUNNING, false)
+
+    /**
+     * Whether the last successful arm found the watchdog and the bridge already running before it
+     * started anything; null when that arm could not tell.
+     */
+    fun armedHelperWasRunning(context: Context): Boolean? {
+        val prefs = prefs(context)
+        if (!prefs.contains(KEY_ARMED_HELPER_WAS_RUNNING)) return null
+        return prefs.getBoolean(KEY_ARMED_HELPER_WAS_RUNNING, false)
+    }
+
+    fun helperRecord(context: Context): SelfArmOwnerRepairPolicy.HelperRecord =
+        SelfArmOwnerRepairPolicy.helperRecord(
+            armedBootInstantMs = armedBootInstantMillis(context),
+            armedBridgeRunning = armedBridgeRunning(context),
+            currentBootInstantMs = currentBootInstantMillis(),
+            bridgeDemandPending = isBridgeDemandPending(),
+            armFailedSince = armFailedSinceArmed(context),
+        )
 
     fun presumedDead(context: Context): Boolean =
         SelfArmBridgeLivenessPolicy.presumedDead(

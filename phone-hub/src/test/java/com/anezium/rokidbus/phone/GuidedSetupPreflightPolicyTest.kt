@@ -73,8 +73,22 @@ class GuidedSetupPreflightPolicyTest {
             developerOptionsReady = true,
             coreReady = false,
         )
-        assertEquals(GuidedCheckId.entries.toSet(), preflight.checks.map { it.id }.toSet())
+        // The glasses' own pairing is only inspected by Re-pair glasses.
+        assertEquals(
+            GuidedCheckId.entries.toSet() - GuidedCheckId.SELF_PAIRING,
+            preflight.checks.map { it.id }.toSet(),
+        )
         assertEquals(GuidedCheckId.ACCESSIBILITY, preflight.blocking)
+        val repair = GuidedSetupPreflightPolicy.evaluate(
+            linkReady = true,
+            glassesAppRunning = true,
+            accessibilityEnabled = false,
+            wifiReady = true,
+            developerOptionsReady = true,
+            coreReady = false,
+            repair = true,
+        )
+        assertEquals(GuidedCheckId.entries.toSet(), repair.checks.map { it.id }.toSet())
     }
 
     /**
@@ -158,5 +172,59 @@ class GuidedSetupPreflightPolicyTest {
             coreReady = false,
         )
         assertEquals(GuidedCheckId.WIFI, preflight.blocking)
+    }
+
+    @Test
+    fun `re-pair stays open when the glasses are core-ready but never paired themselves`() {
+        val preflight = GuidedSetupPreflightPolicy.fromReportedStage(
+            linkReady = true,
+            reportedStage = SetupStage.COMPLETE,
+            coreReady = true,
+            repair = true,
+            maintenanceReady = false,
+        )
+        assertFalse(preflight.alreadyComplete)
+        assertTrue(preflight.needsPairing)
+        assertNull(preflight.blocking)
+        assertFalse(preflight.checks.first { it.id == GuidedCheckId.SELF_PAIRING }.satisfied)
+    }
+
+    @Test
+    fun `re-pair reads done only once the glasses hold their own pairing`() {
+        val preflight = GuidedSetupPreflightPolicy.fromReportedStage(
+            linkReady = true,
+            reportedStage = SetupStage.COMPLETE,
+            coreReady = true,
+            repair = true,
+            maintenanceReady = true,
+        )
+        assertTrue(preflight.alreadyComplete)
+        assertFalse(preflight.needsPairing)
+    }
+
+    @Test
+    fun `re-pair still clears real blockers first`() {
+        val preflight = GuidedSetupPreflightPolicy.fromReportedStage(
+            linkReady = false,
+            reportedStage = SetupStage.COMPLETE,
+            coreReady = false,
+            repair = true,
+            maintenanceReady = false,
+        )
+        assertEquals(GuidedCheckId.LINK, preflight.blocking)
+        assertTrue(preflight.needsPairing)
+    }
+
+    @Test
+    fun `plain manual setup keeps its core-ready verdict and shows no pairing check`() {
+        val preflight = GuidedSetupPreflightPolicy.fromReportedStage(
+            linkReady = true,
+            reportedStage = SetupStage.COMPLETE,
+            coreReady = true,
+            maintenanceReady = false,
+        )
+        assertTrue(preflight.alreadyComplete)
+        assertFalse(preflight.needsPairing)
+        assertTrue(preflight.checks.none { it.id == GuidedCheckId.SELF_PAIRING })
     }
 }

@@ -128,6 +128,47 @@ class SelfArmSessionCommandTest {
     }
 
     @Test
+    fun helperStatusProbeOnlyReadsTheScriptsStatus() {
+        val probe = SelfArmSessionCommand.buildHelperStatus()
+
+        assertTrue(probe.contains("sh \"\$WATCHDOG\" status"))
+        assertTrue(probe.contains("sh \"\$BRIDGE\" status"))
+        listOf("start", "restart", "stop", "repair").forEach { verb ->
+            assertFalse(verb, probe.contains("sh \"\$WATCHDOG\" $verb"))
+            assertFalse(verb, probe.contains("sh \"\$BRIDGE\" $verb"))
+        }
+        assertFalse(probe.contains("setprop"))
+        assertFalse(probe.contains("settings put"))
+        assertFalse(probe.contains("pm grant"))
+        assertFalse(probe.contains("base64"))
+    }
+
+    @Test
+    fun helperStatusSentinelNeedsBothRunning() {
+        assertEquals(
+            true,
+            SelfArmSessionCommand.helperRunning("ROKID_NEXUS_HELPER_STATUS watchdog=1 bridge=1\n"),
+        )
+        assertEquals(
+            false,
+            SelfArmSessionCommand.helperRunning("ROKID_NEXUS_HELPER_STATUS watchdog=1 bridge=0\n"),
+        )
+        assertEquals(
+            false,
+            SelfArmSessionCommand.helperRunning("ROKID_NEXUS_HELPER_STATUS watchdog=0 bridge=1\n"),
+        )
+        assertEquals(null, SelfArmSessionCommand.helperRunning("sh: status: not found\n"))
+        // The arm sentinel reports the state after the arm and must never pass for the probe.
+        assertEquals(
+            null,
+            SelfArmSessionCommand.helperRunning(
+                "ROKID_NEXUS_ARM_RESULT grant=1 a11y=1 service=1 watchdog=1 bridge=1 " +
+                    "persist=-1 service_port=-1 legacy_tcp_disabled=1\n",
+            ),
+        )
+    }
+
+    @Test
     fun armBridgeSentinelIsSurfacedIndependentlyOfSuccess() {
         val bridgeUp = "ROKID_NEXUS_ARM_RESULT grant=1 a11y=1 service=1 watchdog=1 bridge=1 " +
             "persist=-1 service_port=-1 legacy_tcp_disabled=1\n"

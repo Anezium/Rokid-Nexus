@@ -221,7 +221,7 @@ class RokidBusAccessibilityService : AccessibilityService() {
         displayStandbyWatchdog.stop()
         NexusSession.onServiceDestroyed()
         NexusInput.onServiceDestroyed()
-        wirelessDebuggingAutomator?.stop()
+        wirelessDebuggingAutomator?.stop(SetupDisplayHoldEnd.SERVICE_DESTROYED)
         developerOptionsEnabler?.stop()
         pauseSetupWifiEnableIfActive(SetupStage.ENABLING_WIFI)
         unregisterWifiResumeCallback()
@@ -305,37 +305,57 @@ class RokidBusAccessibilityService : AccessibilityService() {
         if (sessionId.isBlank()) return
         val snapshot = SelfArmOnboardingStore.snapshot(applicationContext)
         if (!SelfArmOnboardingStore.isCurrentSession(applicationContext, sessionId)) return
-        if (snapshot.coreReady) {
-            returnToOnboarding(sessionId)
-            SelfArmOnboardingStore.finish(
-                context = applicationContext,
-                sessionId = sessionId,
-                setupState = "wireless_bootstrap_complete",
-                success = true,
-                completionMode = if (snapshot.maintenanceReady) {
-                    SetupCompletionMode.AUTOMATIC
-                } else {
-                    SetupCompletionMode.PM_GRANT
-                },
-            )
-            return
-        }
-        if (!snapshot.wifiReady) {
-            val wifiEnabled = SelfArmWirelessAdbController.isWifiEnabled(applicationContext)
-            if (SelfArmWifiAutomationPolicy.shouldAutomate(
-                    accessibilityServiceArmed = true,
-                    wifiEnabled = wifiEnabled,
+        if (endPairingIfAbandoned(sessionId)) return
+        // A re-pair keeps going through the service recreation its own Wireless debugging toggle
+        // causes; only a session with nothing more to do may be closed as already set up.
+        val pairingRequested = SelfArmOnboardingStore.isPairingRequested(applicationContext, sessionId)
+        when (SelfArmOnboardingStore.resumeStep(applicationContext, sessionId, snapshot)) {
+            SelfArmSetupResumePolicy.Step.FINISH -> {
+                returnToOnboarding(sessionId)
+                SelfArmOnboardingStore.finish(
+                    context = applicationContext,
+                    sessionId = sessionId,
+                    setupState = "wireless_bootstrap_complete",
+                    success = true,
+                    completionMode = if (snapshot.maintenanceReady) {
+                        SetupCompletionMode.AUTOMATIC
+                    } else {
+                        SetupCompletionMode.PM_GRANT
+                    },
                 )
-            ) {
-                startSetupWifiEnable(sessionId, force = false)
-            } else if (wifiEnabled && snapshot.stage == SetupStage.ENABLING_WIFI) {
-                awaitValidatedWifiAfterAutomaticEnable(sessionId, force = false)
-            } else {
-                waitForWifi(sessionId, force = false)
             }
-            return
+            SelfArmSetupResumePolicy.Step.WAIT_FOR_WIFI -> {
+                val wifiEnabled = SelfArmWirelessAdbController.isWifiEnabled(applicationContext)
+                if (SelfArmWifiAutomationPolicy.shouldAutomate(
+                        accessibilityServiceArmed = true,
+                        wifiEnabled = wifiEnabled,
+                    )
+                ) {
+                    startSetupWifiEnable(sessionId, force = pairingRequested)
+                } else if (wifiEnabled && snapshot.stage == SetupStage.ENABLING_WIFI) {
+                    awaitValidatedWifiAfterAutomaticEnable(sessionId, force = pairingRequested)
+                } else {
+                    waitForWifi(sessionId, force = pairingRequested)
+                }
+            }
+            SelfArmSetupResumePolicy.Step.RUN_BOOTSTRAP ->
+                startWirelessBootstrap(sessionId, force = pairingRequested)
         }
-        startWirelessBootstrap(sessionId)
+    }
+
+    /**
+     * The Settings takeovers below check this first: a pairing session whose intent outlived its
+     * window is closed instead of resumed, whatever `force` an in-memory wait captured when it
+     * was still live.
+     */
+    private fun endPairingIfAbandoned(sessionId: String): Boolean {
+        if (!SelfArmOnboardingStore.isPairingAbandoned(applicationContext, sessionId)) return false
+        log("self-pairing abandoned; closing its session instead of resuming it")
+        return SelfArmOnboardingStore.endPairingSession(
+            applicationContext,
+            sessionId,
+            SelfArmOnboardingStore.SELF_PAIRING_ABANDONED,
+        )
     }
 
     private fun startWirelessBootstrap(
@@ -343,11 +363,13 @@ class RokidBusAccessibilityService : AccessibilityService() {
         force: Boolean = false,
     ) {
         if (!SelfArmOnboardingStore.isCurrentSession(applicationContext, sessionId)) return
+        if (endPairingIfAbandoned(sessionId)) return
         if (manualNavigationActive) return
         if (wirelessBootstrapActive && wirelessBootstrapSessionId == sessionId) return
         if (wirelessBootstrapActive) wirelessDebuggingAutomator?.stop()
         finishWifiEnableIfActive(false)
-        val forced = force || forcedWirelessBootstrap
+        val forced = force || forcedWirelessBootstrap ||
+            SelfArmOnboardingStore.isPairingRequested(applicationContext, sessionId)
         forcedWirelessBootstrap = false
         val snapshot = SelfArmOnboardingStore.snapshot(applicationContext)
         if (!SelfArmOnboardingStore.isCurrentSession(applicationContext, sessionId)) return
@@ -442,6 +464,7 @@ class RokidBusAccessibilityService : AccessibilityService() {
 
     private fun startSetupWifiEnable(sessionId: String, force: Boolean) {
         if (!SelfArmOnboardingStore.isCurrentSession(applicationContext, sessionId)) return
+        if (endPairingIfAbandoned(sessionId)) return
         if (manualNavigationActive) {
             waitForWifi(sessionId, force)
             return
@@ -1163,6 +1186,7 @@ class RokidBusAccessibilityService : AccessibilityService() {
             val sessionId = SelfArmOnboardingStore.currentActiveSessionId(appContext)
             if (sessionId.isBlank()) return false
             val service = liveInstance ?: return false
+            if (force) SelfArmOnboardingStore.markPairingRequested(appContext, sessionId)
             service.main.post {
                 if (!SelfArmOnboardingStore.isCurrentSession(appContext, sessionId)) return@post
                 service.startWirelessBootstrap(sessionId, force)
@@ -1269,6 +1293,52 @@ class RokidBusAccessibilityService : AccessibilityService() {
                     SelfArmManualAction.CLOSE -> {
                         service.closeManualNavigation(sessionId, armed)
                         guardedCompletion(true)
+                    }
+                }
+            }
+            return true
+        }
+
+        /**
+         * The owner closed the phone's pairing screen. A self-pairing run has no manual-navigation
+         * session for the CLOSE to end, so its session is ended here: its intent goes with it and
+         * no later Wi-Fi edge or service reconnect can resume the takeover. Works without a
+         * connected service too, which is exactly when the store alone would otherwise resume it.
+         *
+         * Only [sessionId], the run the phone's screen started, is ended. A CLOSE naming no
+         * session (or another one) comes from a screen that started nothing current, so the run on
+         * the lens belongs to someone else and is left alone.
+         */
+        internal fun abandonSelfPairing(context: Context, sessionId: String): Boolean {
+            val appContext = context.applicationContext
+            val currentSessionId = SelfArmOnboardingStore.currentActiveSessionId(appContext)
+            if (sessionId.isBlank() || sessionId != currentSessionId) {
+                log(
+                    "self-pairing abandon ignored reason=" +
+                        if (sessionId.isBlank()) "no_session" else "session_mismatch",
+                )
+                return false
+            }
+            val drivingSettings = isSetupAutomationActive()
+            // Read before the end: the session only ends if nothing replaced it in between, so a
+            // later generation means a new run started after this one ended.
+            val generation = SelfArmOnboardingStore.currentGeneration(appContext)
+            if (!SelfArmOnboardingStore.endPairingSession(
+                    appContext,
+                    sessionId,
+                    SelfArmOnboardingStore.SELF_PAIRING_CANCELLED,
+                )
+            ) {
+                return false
+            }
+            log("self-pairing cancelled by the owner")
+            // Stopping the automator leaves whichever Settings page it reached on the lens.
+            if (drivingSettings) {
+                liveInstance?.let { service ->
+                    service.main.post {
+                        if (SelfArmOnboardingStore.currentGeneration(appContext) == generation) {
+                            service.returnToOnboarding()
+                        }
                     }
                 }
             }

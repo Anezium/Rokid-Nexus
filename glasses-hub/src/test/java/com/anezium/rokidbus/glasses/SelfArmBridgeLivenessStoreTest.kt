@@ -28,4 +28,29 @@ class SelfArmBridgeLivenessStoreTest {
         // Same boot as the recording: nothing to presume dead.
         assertFalse(SelfArmBridgeLivenessStore.presumedDead(context))
     }
+
+    @Test
+    fun eachArmReplacesWhatItFoundBeforeActing() {
+        val context = RuntimeEnvironment.getApplication()
+
+        SelfArmBridgeLivenessStore.recordArmed(
+            context,
+            tlsPort = 42799,
+            bridgeRunning = true,
+            helperRunningBefore = false,
+        )
+        assertEquals(false, SelfArmBridgeLivenessStore.armedHelperWasRunning(context))
+
+        SelfArmBridgeLivenessStore.recordArmed(
+            context,
+            tlsPort = 42799,
+            bridgeRunning = true,
+            helperRunningBefore = true,
+        )
+        assertEquals(true, SelfArmBridgeLivenessStore.armedHelperWasRunning(context))
+
+        // An arm that could not tell must not leave the previous arm's answer behind.
+        SelfArmBridgeLivenessStore.recordArmed(context, tlsPort = 42799, bridgeRunning = true)
+        assertEquals(null, SelfArmBridgeLivenessStore.armedHelperWasRunning(context))
+    }
 }
