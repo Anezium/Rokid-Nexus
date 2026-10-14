@@ -214,7 +214,12 @@ internal class SelfArmLocalAdbBootstrapper(
                 // here, which makes this the one spot the arm epoch is always put on record. That
                 // epoch is the app's only readable proof of which boot the bridge was alive on:
                 // the bridge's own heartbeat file is shell-owned and invisible to the app.
-                SelfArmBridgeLivenessStore.recordArmed(appContext, result.port, result.bridgeRunning)
+                SelfArmBridgeLivenessStore.recordArmed(
+                    appContext,
+                    result.port,
+                    result.bridgeRunning,
+                    result.helperRunningBefore,
+                )
             }
         }
 

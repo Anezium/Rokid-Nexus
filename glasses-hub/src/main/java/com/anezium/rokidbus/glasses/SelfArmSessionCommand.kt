@@ -8,6 +8,7 @@ internal object SelfArmSessionCommand {
     private const val PREPARE_SENTINEL = "ROKID_NEXUS_PREPARE_RESULT"
     private const val RESTART_SENTINEL = "ROKID_NEXUS_ADBD_RESTART_RESULT"
     private const val ARM_SENTINEL = "ROKID_NEXUS_ARM_RESULT"
+    private const val HELPER_STATUS_SENTINEL = "ROKID_NEXUS_HELPER_STATUS"
 
     data class RestartRequest(
         val oldAdbdPid: String,
@@ -91,6 +92,26 @@ internal object SelfArmSessionCommand {
         // toggle and the bridge is retried on the next re-arm.
     }
 
+    /**
+     * Read-only and glasses-only: what the helper scripts report before an arm touches anything,
+     * so the owner's repair can tell a helper that was already running from one the arm just
+     * brought back. Kept out of [buildArm], which the phone mirrors byte for byte.
+     */
+    fun buildHelperStatus(): String = buildString {
+        appendCommonVariables()
+        appendHelperStatus()
+        appendLine(
+            "echo '$HELPER_STATUS_SENTINEL watchdog='\"\$WATCHDOG_RUNNING\"" +
+                "' bridge='\"\$BRIDGE_RUNNING\"",
+        )
+    }
+
+    /** True only when both were running; null when the probe gave no answer. */
+    fun helperRunning(output: String): Boolean? {
+        val values = sentinelValues(output, HELPER_STATUS_SENTINEL) ?: return null
+        return values["watchdog"] == "1" && values["bridge"] == "1"
+    }
+
     fun prepareSucceeded(output: String): Boolean {
         val values = sentinelValues(output, PREPARE_SENTINEL) ?: return false
         return commonSucceeded(values) &&
@@ -152,23 +173,25 @@ internal object SelfArmSessionCommand {
         appendLine("  *\":\$SVC:\"*|*\":\$SVC_SHORT:\"*) SERVICE_PRESENT=1 ;;")
         appendLine("  *) SERVICE_PRESENT=0 ;;")
         appendLine("esac")
-        if (includeWatchdog) {
-            appendLine("WATCHDOG_STATUS=\"\$(sh \"\$WATCHDOG\" status 2>/dev/null || true)\"")
-            appendLine("case \"\$WATCHDOG_STATUS\" in")
-            appendLine("  *\"running=yes\"*) WATCHDOG_RUNNING=1 ;;")
-            appendLine("  *) WATCHDOG_RUNNING=0 ;;")
-            appendLine("esac")
-            appendLine("BRIDGE_STATUS=\"\$(sh \"\$BRIDGE\" status 2>/dev/null || true)\"")
-            appendLine("case \"\$BRIDGE_STATUS\" in")
-            appendLine("  *\"running=yes\"*) BRIDGE_RUNNING=1 ;;")
-            appendLine("  *) BRIDGE_RUNNING=0 ;;")
-            appendLine("esac")
-        }
+        if (includeWatchdog) appendHelperStatus()
         appendLine("PERSIST_PORT=\"\$(getprop persist.adb.tcp.port)\"")
         appendLine("SERVICE_PORT=\"\$(getprop service.adb.tcp.port)\"")
         appendLine("case \"\$PERSIST_PORT:\$SERVICE_PORT\" in")
         appendLine("  -1:-1) LEGACY_TCP_DISABLED=1 ;;")
         appendLine("  *) LEGACY_TCP_DISABLED=0 ;;")
+        appendLine("esac")
+    }
+
+    private fun StringBuilder.appendHelperStatus() {
+        appendLine("WATCHDOG_STATUS=\"\$(sh \"\$WATCHDOG\" status 2>/dev/null || true)\"")
+        appendLine("case \"\$WATCHDOG_STATUS\" in")
+        appendLine("  *\"running=yes\"*) WATCHDOG_RUNNING=1 ;;")
+        appendLine("  *) WATCHDOG_RUNNING=0 ;;")
+        appendLine("esac")
+        appendLine("BRIDGE_STATUS=\"\$(sh \"\$BRIDGE\" status 2>/dev/null || true)\"")
+        appendLine("case \"\$BRIDGE_STATUS\" in")
+        appendLine("  *\"running=yes\"*) BRIDGE_RUNNING=1 ;;")
+        appendLine("  *) BRIDGE_RUNNING=0 ;;")
         appendLine("esac")
     }
 

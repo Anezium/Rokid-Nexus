@@ -20,16 +20,29 @@ internal object SelfArmBridgeLivenessStore {
     private const val KEY_ARMED_TLS_PORT = "armed_tls_port"
     private const val KEY_ARMED_BRIDGE_RUNNING = "armed_bridge_running"
     private const val KEY_ARM_FAILED_SINCE = "arm_failed_since_armed"
+    private const val KEY_ARMED_HELPER_WAS_RUNNING = "armed_helper_was_running"
 
     private val bridgeDemandUnanswered = AtomicBoolean(false)
 
-    fun recordArmed(context: Context, tlsPort: Int, bridgeRunning: Boolean) {
+    fun recordArmed(
+        context: Context,
+        tlsPort: Int,
+        bridgeRunning: Boolean,
+        helperRunningBefore: Boolean? = null,
+    ) {
         prefs(context).edit()
             .putLong(KEY_ARMED_BOOT_INSTANT, currentBootInstantMillis())
             .putString(KEY_ARMED_BRIDGE_VERSION, SelfArmConstants.BRIDGE_VERSION)
             .putInt(KEY_ARMED_TLS_PORT, tlsPort)
             .putBoolean(KEY_ARMED_BRIDGE_RUNNING, bridgeRunning)
             .putBoolean(KEY_ARM_FAILED_SINCE, false)
+            .apply {
+                if (helperRunningBefore == null) {
+                    remove(KEY_ARMED_HELPER_WAS_RUNNING)
+                } else {
+                    putBoolean(KEY_ARMED_HELPER_WAS_RUNNING, helperRunningBefore)
+                }
+            }
             .commit()
         // A bridge the arm could not start leaves the demand standing, so the next radio
         // opportunity keeps trying instead of declaring victory on the watchdog alone.
@@ -54,6 +67,16 @@ internal object SelfArmBridgeLivenessStore {
     /** Absent on installs armed before it was recorded: read as not running, never as running. */
     fun armedBridgeRunning(context: Context): Boolean =
         prefs(context).getBoolean(KEY_ARMED_BRIDGE_RUNNING, false)
+
+    /**
+     * Whether the last successful arm found the watchdog and the bridge already running before it
+     * started anything; null when that arm could not tell.
+     */
+    fun armedHelperWasRunning(context: Context): Boolean? {
+        val prefs = prefs(context)
+        if (!prefs.contains(KEY_ARMED_HELPER_WAS_RUNNING)) return null
+        return prefs.getBoolean(KEY_ARMED_HELPER_WAS_RUNNING, false)
+    }
 
     fun helperRecord(context: Context): SelfArmOwnerRepairPolicy.HelperRecord =
         SelfArmOwnerRepairPolicy.helperRecord(

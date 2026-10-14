@@ -54,6 +54,65 @@ class SelfArmOwnerRepairPolicyTest {
     }
 
     @Test
+    fun `what the arm found before it acted wins over the record`() {
+        fun verdict(bridge: Boolean, before: HelperRecord, wasRunning: Boolean?) =
+            SelfArmOwnerRepairPolicy.verdict(
+                armed = true,
+                bridgeRunning = bridge,
+                before = before,
+                pairing = null,
+                helperRunningBeforeArm = wasRunning,
+            )
+
+        // Device test 8.2: alive on record, both stopped by hand, restarted by the arm.
+        assertEquals(
+            GlassesRepairContract.RESULT_REPAIRED,
+            verdict(true, HelperRecord.ALIVE_THIS_BOOT, wasRunning = false),
+        )
+        assertEquals(
+            GlassesRepairContract.RESULT_ALREADY_HEALTHY,
+            verdict(true, HelperRecord.ALIVE_THIS_BOOT, wasRunning = true),
+        )
+        assertEquals(
+            GlassesRepairContract.RESULT_ALREADY_HEALTHY,
+            verdict(true, HelperRecord.NOT_ALIVE, wasRunning = true),
+        )
+        assertEquals(
+            GlassesRepairContract.RESULT_REPAIRED,
+            verdict(true, HelperRecord.ABSENT, wasRunning = false),
+        )
+        // Partial stays partial whatever was running before.
+        assertEquals(
+            GlassesRepairContract.RESULT_PARTIAL,
+            verdict(false, HelperRecord.ALIVE_THIS_BOOT, wasRunning = true),
+        )
+        assertEquals(
+            GlassesRepairContract.RESULT_PARTIAL,
+            verdict(false, HelperRecord.ALIVE_THIS_BOOT, wasRunning = false),
+        )
+        // An arm that could not tell falls back to the record, as before.
+        assertEquals(
+            GlassesRepairContract.RESULT_ALREADY_HEALTHY,
+            verdict(true, HelperRecord.ALIVE_THIS_BOOT, wasRunning = null),
+        )
+        assertEquals(
+            GlassesRepairContract.RESULT_REPAIRED,
+            verdict(true, HelperRecord.NOT_ALIVE, wasRunning = null),
+        )
+        // A failed arm is never rescued by the measurement either.
+        assertEquals(
+            GlassesRepairContract.RESULT_ARM_FAILED,
+            SelfArmOwnerRepairPolicy.verdict(
+                armed = false,
+                bridgeRunning = false,
+                before = HelperRecord.ALIVE_THIS_BOOT,
+                pairing = null,
+                helperRunningBeforeArm = true,
+            ),
+        )
+    }
+
+    @Test
     fun `no arm means pairing pending, pairing required or a failed arm`() {
         fun verdict(pairing: SelfPairingOutcome?) =
             SelfArmOwnerRepairPolicy.verdict(

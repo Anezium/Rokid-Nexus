@@ -75,16 +75,21 @@ internal object SelfArmOwnerRepairPolicy {
         before == HelperRecord.ALIVE_THIS_BOOT
 
     /**
-     * [armed] and [bridgeRunning] are what the arm measured; [pairing] is the answer to the
-     * pairing request made when no arm was possible without one, or null when none was made.
+     * [armed] and [bridgeRunning] are what the arm measured as it left the helper;
+     * [helperRunningBeforeArm] is what the same arm found before it started anything, and wins
+     * over the record whenever it is known — a record that says alive cannot tell a helper still
+     * running from one stopped since. [pairing] is the answer to the pairing request made when no
+     * arm was possible without one, or null when none was made.
      */
     fun verdict(
         armed: Boolean,
         bridgeRunning: Boolean,
         before: HelperRecord,
         pairing: SelfPairingOutcome?,
+        helperRunningBeforeArm: Boolean? = null,
     ): String = when {
-        armed && bridgeRunning && before == HelperRecord.ALIVE_THIS_BOOT ->
+        armed && bridgeRunning &&
+            (helperRunningBeforeArm ?: (before == HelperRecord.ALIVE_THIS_BOOT)) ->
             GlassesRepairContract.RESULT_ALREADY_HEALTHY
         armed && bridgeRunning -> GlassesRepairContract.RESULT_REPAIRED
         armed -> GlassesRepairContract.RESULT_PARTIAL

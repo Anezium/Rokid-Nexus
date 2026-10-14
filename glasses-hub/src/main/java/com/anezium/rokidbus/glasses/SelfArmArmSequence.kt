@@ -27,6 +27,8 @@ internal data class SelfArmSequenceResult(
     val output: String,
     val posture: SelfArmNetworkPosture,
     val bridgeRunning: Boolean,
+    /** Watchdog and bridge both running before the arm acted; null when the probe gave no answer. */
+    val helperRunningBefore: Boolean?,
 )
 
 internal class SelfArmSequenceException(
@@ -56,6 +58,7 @@ internal object SelfArmArmSequence {
         val outputs = mutableListOf<String>()
         try {
             commandDispatched = true
+            val helperRunningBefore = probeHelperRunning(session, operations)
             val prepareCommand = SelfArmSessionCommand.buildPrepare(watchdogScript, bridgeScript)
             val classicArmCommand = if (session.transport == SelfArmShellTransport.CLASSIC_LOOPBACK) {
                 SelfArmSessionCommand.buildArm(restartWatchdog)
@@ -185,6 +188,7 @@ internal object SelfArmArmSequence {
                 output = outputs.joinToString("\n"),
                 posture = posture,
                 bridgeRunning = SelfArmSessionCommand.armBridgeRunning(arm.output),
+                helperRunningBefore = helperRunningBefore,
             )
         } catch (exception: SelfArmSequenceException) {
             throw exception
@@ -204,6 +208,28 @@ internal object SelfArmArmSequence {
         } finally {
             runCatching { session.close() }
         }
+    }
+
+    /**
+     * Best-effort: an unanswered probe leaves the fact unknown and never fails the arm. A stream
+     * it killed is reconnected by the prepare step's own transport retry.
+     */
+    private fun probeHelperRunning(
+        session: SelfArmShellSession,
+        operations: SelfArmSequenceOperations,
+    ): Boolean? {
+        val running = try {
+            SelfArmSessionCommand.helperRunning(
+                session.shell(SelfArmSessionCommand.buildHelperStatus()).output,
+            )
+        } catch (exception: InterruptedException) {
+            throw exception
+        } catch (exception: Exception) {
+            operations.log("helper status probe failed: ${failureMessage(exception)}")
+            null
+        }
+        operations.log("helper running before arm=${running ?: "unknown"}")
+        return running
     }
 
     private fun executeStepWithTransportRetry(

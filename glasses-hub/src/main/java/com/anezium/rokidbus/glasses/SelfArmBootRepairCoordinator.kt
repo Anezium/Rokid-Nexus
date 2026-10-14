@@ -259,13 +259,24 @@ internal object SelfArmBootRepairCoordinator {
         val armed = result == SelfArmWatchdogEnsureResult.READY
         // A successful arm has just put its own measurement on record, bridge included.
         val bridgeRunning = armed && SelfArmBridgeLivenessStore.armedBridgeRunning(context)
-        log("Owner repair arm finished result=$result bridge=$bridgeRunning wifiWasOff=$wifiWasOff")
+        // Measured by the same arm before it started anything: a record that says alive is no
+        // proof the helper was still running when the owner asked.
+        val helperWasRunning = if (armed) {
+            SelfArmBridgeLivenessStore.armedHelperWasRunning(context)
+        } else {
+            null
+        }
+        log(
+            "Owner repair arm finished result=$result bridge=$bridgeRunning " +
+                "helperWasRunning=${helperWasRunning ?: "unknown"} wifiWasOff=$wifiWasOff",
+        )
         val complete = {
             finishOwnerRepair(
                 context = context,
                 armed = armed,
                 bridgeRunning = bridgeRunning,
                 before = before,
+                helperRunningBeforeArm = helperWasRunning,
                 // Read after the arm: a refused credential may have just been dropped.
                 requestPairing = !armed && !SelfArmLocalAdbBootstrapper.isBootstrapComplete(context),
                 onResult = onResult,
@@ -287,13 +298,20 @@ internal object SelfArmBootRepairCoordinator {
         before: SelfArmOwnerRepairPolicy.HelperRecord,
         requestPairing: Boolean,
         onResult: (String) -> Unit,
+        helperRunningBeforeArm: Boolean? = null,
     ) {
         val pairing = if (requestPairing) {
             SelfArmLocalAdbBootstrapper.requestSelfPairing(context, owner = true)
         } else {
             null
         }
-        val verdict = SelfArmOwnerRepairPolicy.verdict(armed, bridgeRunning, before, pairing)
+        val verdict = SelfArmOwnerRepairPolicy.verdict(
+            armed = armed,
+            bridgeRunning = bridgeRunning,
+            before = before,
+            pairing = pairing,
+            helperRunningBeforeArm = helperRunningBeforeArm,
+        )
         log("Owner repair verdict=$verdict pairing=${pairing?.logValue ?: "not_requested"}")
         repairRunning.set(false)
         onResult(verdict)

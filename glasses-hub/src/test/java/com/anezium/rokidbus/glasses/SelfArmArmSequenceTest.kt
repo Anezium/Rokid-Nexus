@@ -58,6 +58,86 @@ class SelfArmArmSequenceTest {
     }
 
     @Test
+    fun helperStateIsMeasuredBeforeTheArmStartsAnything() {
+        fun run(helperStatus: String, transport: SelfArmShellTransport): Pair<Boolean?, List<String>> {
+            val events = mutableListOf<String>()
+            val commands = mutableListOf<String>()
+            val session = FakeSession(
+                port = 37201,
+                transport = transport,
+                events = events,
+                commands = commands,
+                helperStatus = helperStatus,
+            )
+            val result = SelfArmArmSequence.run(
+                initialSession = session,
+                watchdogScript = "script",
+                bridgeScript = "bridge",
+                restartWatchdog = false,
+                operations = operations(
+                    posture = SAFE,
+                    events = events,
+                    reconnect = { _, _ ->
+                        FakeSession(37202, SelfArmShellTransport.PAIRED_TLS, events, commands = commands)
+                    },
+                ),
+            )
+            return result.helperRunningBefore to commands
+        }
+
+        val (alreadyRunning, commands) = run(HELPER_RUNNING, SelfArmShellTransport.PAIRED_TLS)
+        assertEquals(true, alreadyRunning)
+        assertEquals(SelfArmSessionCommand.buildHelperStatus(), commands.first())
+        assertEquals(false, run(HELPER_STOPPED, SelfArmShellTransport.PAIRED_TLS).first)
+        // One of the two down is not "already running": the arm had to start the other.
+        assertEquals(
+            false,
+            run("ROKID_NEXUS_HELPER_STATUS watchdog=1 bridge=0\n", SelfArmShellTransport.PAIRED_TLS).first,
+        )
+        // Classic ADB folds the arm into the prepare command; the probe still comes first.
+        val (classic, classicCommands) = run(HELPER_STOPPED, SelfArmShellTransport.CLASSIC_LOOPBACK)
+        assertEquals(false, classic)
+        assertEquals(SelfArmSessionCommand.buildHelperStatus(), classicCommands.first())
+        assertEquals(null, run("no sentinel\n", SelfArmShellTransport.PAIRED_TLS).first)
+    }
+
+    @Test
+    fun aFailedHelperProbeLeavesTheStateUnknownWithoutFailingTheArm() {
+        val events = mutableListOf<String>()
+        val logs = mutableListOf<String>()
+        val session = FakeSession(
+            port = 37201,
+            transport = SelfArmShellTransport.PAIRED_TLS,
+            events = events,
+            shellFailure = { command ->
+                if (command.contains("ROKID_NEXUS_HELPER_STATUS")) {
+                    IOException("ADB stream is closed for local id 4")
+                } else {
+                    null
+                }
+            },
+        )
+
+        val result = SelfArmArmSequence.run(
+            initialSession = session,
+            watchdogScript = "script",
+            bridgeScript = "bridge",
+            restartWatchdog = false,
+            operations = operations(
+                posture = SAFE,
+                events = events,
+                reconnect = { _, _ -> error("reconnect should not run") },
+                log = logs::add,
+            ),
+        )
+
+        assertEquals(null, result.helperRunningBefore)
+        assertTrue(result.bridgeRunning)
+        assertTrue(logs.contains("helper status probe failed: ADB stream is closed for local id 4"))
+        assertTrue(logs.contains("helper running before arm=unknown"))
+    }
+
+    @Test
     fun lingeringListenerRestartsReconnectsThenArms() {
         val events = mutableListOf<String>()
         val initial = FakeSession(37201, SelfArmShellTransport.PAIRED_TLS, events)
@@ -277,7 +357,8 @@ class SelfArmArmSequenceTest {
         }
 
         assertEquals(2, reconnectCount)
-        assertEquals(3, commands.size)
+        // The status probe on the first session, then the prepare and its two retries.
+        assertEquals(4, commands.size)
     }
 
     @Test
@@ -315,6 +396,7 @@ class SelfArmArmSequenceTest {
 
         assertEquals(
             listOf(
+                SelfArmSessionCommand.buildHelperStatus(),
                 SelfArmSessionCommand.buildPrepare("script", "bridge"),
                 SelfArmSessionCommand.buildArm(restartWatchdog = true),
                 SelfArmSessionCommand.buildRestartAdbd(),
@@ -350,11 +432,13 @@ class SelfArmArmSequenceTest {
         private val shellFailure: (String) -> IOException? = { null },
         private val commands: MutableList<String>? = null,
         private val armResult: String = ARM_OK,
+        private val helperStatus: String = HELPER_RUNNING,
     ) : SelfArmShellSession {
         override fun shell(command: String): SelfArmShellResult {
             commands?.add(command)
             shellFailure(command)?.let { throw it }
             return when {
+                command.contains("ROKID_NEXUS_HELPER_STATUS") -> SelfArmShellResult(0, helperStatus)
                 command.contains("ROKID_NEXUS_PREPARE_RESULT") -> {
                     events += "prepare"
                     if (command.contains("sh \"\$WATCHDOG\" start")) {
@@ -399,6 +483,8 @@ class SelfArmArmSequenceTest {
         const val ARM_OK =
             "ROKID_NEXUS_ARM_RESULT grant=1 a11y=1 service=1 watchdog=1 bridge=1 " +
                 "persist=-1 service_port=-1 legacy_tcp_disabled=1\n"
+        const val HELPER_RUNNING = "ROKID_NEXUS_HELPER_STATUS watchdog=1 bridge=1\n"
+        const val HELPER_STOPPED = "ROKID_NEXUS_HELPER_STATUS watchdog=0 bridge=0\n"
         const val ARM_BRIDGE_DOWN =
             "ROKID_NEXUS_ARM_RESULT grant=1 a11y=1 service=1 watchdog=1 bridge=0 " +
                 "persist=-1 service_port=-1 legacy_tcp_disabled=1\n"
