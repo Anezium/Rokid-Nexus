@@ -65,6 +65,20 @@ re-signed with the release key, installed over release 1.6.0 on an RV101
 | 2.1 still right | healthy unit → `helper running before arm=true` → `already_healthy` |
 | Finding 3 | not reproduced in four deliberate attempts (cancel after KADB success, at `wireless_debugging_open`, at `searching_pairing_code`, exact 6.4 replay on an unpaired unit) nor during the round-6 cancel; kept as a watch item |
 
+## Round 7 on device (glasses build at dddde636)
+
+| Case | Result |
+|---|---|
+| H1 sleeping unit → Re-pair | pass: one `acquire … wake=true`, panel `Awake` for the whole 35 s run on the plain lock (14 renewals), paired, `release reason=succeeded`, panel back to `Asleep`, `Wake Locks: size=0` |
+| H2 power button mid-run | pass: `release reason=wearer_slept` at 4.4 s, panel stays `Asleep` for 12 s, no lock held |
+| H3 wearer relights | pass: `acquire … wake=false`, run continues to `self-pair KADB success` |
+| H4/H5 end of run | pass: `release reason=succeeded`, `size=0` 15 s later |
+| 8.9 Wi-Fi off, helpers running | **fail**: `bridge Wi-Fi enable answered=true`, then the arm runs at once → `SESSION_UNREACHABLE` → `verdict=arm_failed` ("could not restore the helper" while it was running); `Repair Wi-Fi restore skipped trigger=owner armed=false` leaves Wi-Fi on |
+| 8.10 Wi-Fi off, helpers stopped | **fail** on the pre-existing Settings path: Wi-Fi enable automator → arm → `SESSION_UNREACHABLE` → `arm_failed`, Wi-Fi left on, helpers still dead |
+| Same Repair seconds later, Wi-Fi on | `helper running before arm=false` → `repaired`: the Wi-Fi-off failures are a race between Wi-Fi coming up and the TLS session |
+
+Observation: once, Developer options needed three scroll passes (`searching_wireless_debugging` ×16/×14/×14, 22 s) before the Wireless debugging row was found; the run still succeeded within its deadline.
+
 ## Not run
 
 6.3 rotation, 6.5, 7 (service recreation), 8.3–8.8, 9 (phone code form), 10
