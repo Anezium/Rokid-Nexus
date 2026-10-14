@@ -51,7 +51,10 @@ object GlassesRepairContract {
     /** The glasses cannot revive the helper without pairing again, and could not start it. */
     const val RESULT_PAIRING_REQUIRED = "pairing_required"
 
-    /** The Settings automation could not turn the glasses' Wi-Fi on. */
+    /**
+     * The glasses could not be reached over Wi-Fi: the radio would not come on, or came on but
+     * never gave the repair a session to measure the helper through. Nothing was measured.
+     */
     const val RESULT_WIFI_UNAVAILABLE = "wifi_unavailable"
 
     /** Wi-Fi came up but the helper could not be restored over it. */

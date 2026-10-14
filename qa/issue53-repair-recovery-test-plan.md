@@ -149,8 +149,10 @@ Then edit `shared_prefs/selfarm_wireless.xml` through `run-as` so that
 | 8.6 | paired, arm fails | `arm_failed` |
 | 8.7 | arm succeeded → helper killed → failed repair → glasses Wi-Fi off → Repair | must **not** answer healthy from the old record |
 | 8.8 | absent arm record (state 3) with Wi-Fi off | not `already_healthy`; Wi-Fi is turned on through Settings to measure |
-| 8.9 | armed this boot, helpers running, glasses Wi-Fi off → Repair | `Owner repair bridge Wi-Fi enable answered=true`, no Settings popup, arm measures, `already_healthy`, Wi-Fi back off |
-| 8.10 | armed this boot, both helpers stopped, glasses Wi-Fi off → Repair | `answered=false` within ~6 s, then the Settings popup, arm revives, `repaired` |
+| 8.9 | armed this boot, helpers running, glasses Wi-Fi off → Repair | `Owner repair bridge Wi-Fi enable answered=true`, no Settings popup, then `Owner repair Wi-Fi readiness=ready waitedMs=…` **before** `Owner repair arm finished result=READY … helperWasRunning=true`, `already_healthy`, then `Repair Wi-Fi restore trigger=owner applied=true viaBridge=true observedOff=true owedKept=false` (Wi-Fi back off) |
+| 8.10 | both helpers stopped (record `NOT_ALIVE`, or `ALIVE_THIS_BOOT` with `answered=false` within ~6 s), glasses Wi-Fi off → Repair | the Settings popup (`start: Wi-Fi enable automator started`), then `Owner repair Wi-Fi readiness=ready` before the arm, `result=READY`, `repaired`, then `Repair Wi-Fi restore trigger=owner … observedOff=true owedKept=false` (Wi-Fi back off) |
+| 8.11 | as 8.9 or 8.10, but no known Wi-Fi network in range (or the router off) | `Owner repair Wi-Fi readiness=no_network waitedMs≈20000`, up to two `Owner repair arm retry result=SESSION_UNREACHABLE nextAttempt=…` lines, verdict `wifi_unavailable` (phone: "Could not reach the glasses over Wi-Fi, so their helper was not checked…"), never `arm_failed`; Wi-Fi back off as in 8.9 |
+| 8.12 | Wi-Fi turned on by the repair, restore cannot apply (e.g. stop both helpers and keep the router off so the arm fails) | `Repair Wi-Fi restore … observedOff=false owedKept=true`; `run-as com.anezium.rokidbus cat shared_prefs/selfarm_wireless.xml` shows `repair_wifi_off_owed_boot_instant`; once the helper is back, the next background re-arm settles it (`glassesWifi disable trigger=watchdog_ensure_finished … observedOff=true`) or the next Repair does (`Repair Wi-Fi restore trigger=owner … observedOff=true`), and the key is gone |
 
 ## 9. Phone fallback arm (code form) — honest gap
 
@@ -223,6 +225,8 @@ Logcat tag `NexusWirelessSetup`, lines `setup display hold run=…`; wake locks 
 | H3 | H2, then the wearer wakes the panel | `decision=acquire … wake=false`; run continues |
 | H4 | Success / cancel / phone-assisted success | `decision=release` with the matching reason; no `setup-automation` lock left |
 | H5 | Any run, 15 s after its end | `dumpsys power` lists no `setup-automation` lock |
+| H6 | H2 (panel slept mid-session), then recreate the service in the same process: drop the Nexus service from `settings get secure enabled_accessibility_services` and put the list back | `AccessibilityService connected` again, the session resumes, and no `decision=acquire … wake=true` for that session while dark; waking it gives `wake=false` |
+| H7 | Not forceable on a healthy main thread — unit-tested (`a backstop that finds the panel dark remembers the wearer slept it`). If seen: a backstop release with the panel dark | logs `reason=wearer_slept` (not `lease_expired`), and the next tick logs no `wake=true` |
 
 ## 12. Regression suites (before merge)
 

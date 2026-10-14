@@ -39,7 +39,8 @@ internal object GlassesRepairStatusText {
             "The glasses need to pair again but could not start it. Open Nexus on the glasses, " +
                 "then use Re-pair glasses."
         GlassesRepairContract.RESULT_WIFI_UNAVAILABLE ->
-            "Could not turn on the glasses' Wi-Fi. Wake the glasses and try again."
+            "Could not reach the glasses over Wi-Fi, so their helper was not checked. Wake the " +
+                "glasses, make sure they can join a Wi-Fi network, and try again."
         GlassesRepairContract.RESULT_ARM_FAILED ->
             "The glasses could not restore the helper. Try again, or use Re-pair glasses."
         GlassesRepairContract.RESULT_BUSY ->

@@ -232,6 +232,21 @@ class GlassesWifiOwnershipTest {
     }
 
     @Test
+    fun `a repair's wifi debt alone is settled at once, after every live consumer`() {
+        assertEquals(
+            WifiOwnershipReconciliationAction.DISABLE_NOW,
+            reconcile(cameraLeaseOwned = false, repairWifiOwed = true),
+        )
+        listOf(
+            reconcile(cameraLeaseOwned = false, repairWifiOwed = true, cameraSessionActive = true),
+            reconcile(cameraLeaseOwned = false, repairWifiOwed = true, setupSessionActive = true),
+            reconcile(cameraLeaseOwned = false, repairWifiOwed = true, mediaSyncSessionActive = true),
+            // The repair itself, still running, settles its own debt as it ends.
+            reconcile(cameraLeaseOwned = false, repairWifiOwed = true, selfArmOperationActive = true),
+        ).forEach { assertEquals(WifiOwnershipReconciliationAction.NONE, it) }
+    }
+
+    @Test
     fun `a pending grace is never duplicated`() {
         assertEquals(
             WifiOwnershipReconciliationAction.NONE,
@@ -242,6 +257,7 @@ class GlassesWifiOwnershipTest {
     private fun reconcile(
         cameraLeaseOwned: Boolean = true,
         setupWifiOwned: Boolean = false,
+        repairWifiOwed: Boolean = false,
         cameraSessionActive: Boolean = false,
         setupSessionActive: Boolean = false,
         mediaSyncSessionActive: Boolean = false,
@@ -253,6 +269,7 @@ class GlassesWifiOwnershipTest {
     ): WifiOwnershipReconciliationAction = WifiOwnershipReconciliationPolicy.decide(
         cameraLeaseOwned = cameraLeaseOwned,
         setupWifiOwned = setupWifiOwned,
+        repairWifiOwed = repairWifiOwed,
         cameraSessionActive = cameraSessionActive,
         setupSessionActive = setupSessionActive,
         mediaSyncSessionActive = mediaSyncSessionActive,

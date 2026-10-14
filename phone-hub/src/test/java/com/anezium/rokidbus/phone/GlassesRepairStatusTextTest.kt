@@ -30,6 +30,14 @@ class GlassesRepairStatusTextTest {
     }
 
     @Test
+    fun `glasses that could not be reached never read as a helper that would not come back`() {
+        // Device test 8.9: the helper was running; only the Wi-Fi session was not up yet.
+        val text = GlassesRepairStatusText.message(GlassesRepairContract.RESULT_WIFI_UNAVAILABLE)
+        assertTrue(text, text.contains("not checked"))
+        assertFalse(text, text.contains("could not restore"))
+    }
+
+    @Test
     fun `a re-pair answered by glasses that ignored the mode says to update them`() {
         // What glasses from before the pair mode send back: a plain repair's verdict, no mode.
         listOf(

@@ -1488,6 +1488,8 @@ object GlassesHub {
         wifiRequestExecutor.execute {
             cancelPendingWifiDisable("native_app:$packageName")
             val handedOver = wifiOwnership?.handOverToUser() == true
+            // A repair's debt is forgiven the same way: the wearer now wants this radio.
+            SelfArmRepairWifiObligationStore.clear(appContext)
             val wifiManager = appContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
             val alreadyEnabled = runCatching { wifiManager?.isWifiEnabled }
                 .onFailure { logError("nativeAppWifi state read failed", it) }
@@ -1567,27 +1569,34 @@ object GlassesHub {
                 ownership.isEnableRequestPossiblyInFlight() ||
                     wifiEnableA11yInFlight.get() ||
                     cameraSessionTracker.isActive()
-            if (setupEnableRequestActive || cameraEnableRequestActive) {
+            // A running repair records its debt before it turns the radio on.
+            val repairRunning = SelfArmBootRepairCoordinator.isRepairRunning()
+            if (setupEnableRequestActive || cameraEnableRequestActive || repairRunning) {
                 log(
                     "glassesWifi reconcile trigger=$trigger action=none " +
                         "setupEnableRequestActive=$setupEnableRequestActive " +
-                        "cameraEnableRequestActive=$cameraEnableRequestActive",
+                        "cameraEnableRequestActive=$cameraEnableRequestActive " +
+                        "repairRunning=$repairRunning",
                 )
                 return
             }
             cancelPendingWifiDisable("radio_observed_off")
             ownership.observeRadioState(wifiEnabled = false)
             SelfArmSetupWifiOwnershipStore.clearAfterRadioDisabled(context)
+            SelfArmRepairWifiObligationStore.clear(context)
             log("glassesWifi reconcile trigger=$trigger result=already_off")
             return
         }
         val action = WifiOwnershipReconciliationPolicy.decide(
             cameraLeaseOwned = ownership.isHubOwned(),
             setupWifiOwned = SelfArmSetupWifiOwnershipStore.isNexusOwned(context),
+            repairWifiOwed = SelfArmRepairWifiObligationStore.isOwed(context),
             cameraSessionActive = cameraSessionTracker.isActive(),
             setupSessionActive = SelfArmOnboardingStore.isWifiStillNeededBySetup(context),
             mediaSyncSessionActive = MediaSyncEngine.isSessionActive(),
-            selfArmOperationActive = SelfArmController.isOperationRunning(),
+            // A running repair settles its own debt as it ends.
+            selfArmOperationActive = SelfArmController.isOperationRunning() ||
+                SelfArmBootRepairCoordinator.isRepairRunning(),
             setupEnableRequestActive = setupEnableRequestActive,
             cameraGraceRequested = cameraGraceRequested,
             cameraGracePending = wifiDisableFuture != null,
@@ -1621,6 +1630,7 @@ object GlassesHub {
         if (observedOff) {
             ownership.observeRadioState(wifiEnabled = false)
             SelfArmSetupWifiOwnershipStore.clearAfterRadioDisabled(context)
+            SelfArmRepairWifiObligationStore.clear(context)
         }
         log(
             "glassesWifi disable trigger=$trigger viaBridge=$viaBridge " +

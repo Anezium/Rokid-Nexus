@@ -1,9 +1,7 @@
 package com.anezium.rokidbus.glasses
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SelfArmBootRepairPolicyTest {
@@ -51,17 +49,15 @@ class SelfArmBootRepairPolicyTest {
     }
 
     private fun restore(
-        wifiWasOffBeforeRepair: Boolean = true,
+        repairOwesWifiOff: Boolean = true,
         wifiEnabledNow: Boolean = true,
-        bridgePresumedDead: Boolean = false,
         wifiHubOwned: Boolean = false,
         setupSessionActive: Boolean = false,
         mediaSyncSessionActive: Boolean = false,
         cameraSessionActive: Boolean = false,
-    ): Boolean = SelfArmBootRepairPolicy.shouldRestoreWifi(
-        wifiWasOffBeforeRepair = wifiWasOffBeforeRepair,
+    ): SelfArmBootRepairPolicy.WifiRestore = SelfArmBootRepairPolicy.restoreWifi(
+        repairOwesWifiOff = repairOwesWifiOff,
         wifiEnabledNow = wifiEnabledNow,
-        bridgePresumedDead = bridgePresumedDead,
         wifiHubOwned = wifiHubOwned,
         setupSessionActive = setupSessionActive,
         mediaSyncSessionActive = mediaSyncSessionActive,
@@ -69,32 +65,34 @@ class SelfArmBootRepairPolicyTest {
     )
 
     @Test
-    fun `wifi goes back off only when the repair owes it and the bridge can do it`() {
-        assertTrue(restore())
+    fun `wifi the repair turned on goes back off`() {
+        assertEquals(SelfArmBootRepairPolicy.WifiRestore.DISABLE, restore())
     }
 
     @Test
     fun `a radio the repair did not turn on is never touched`() {
-        assertFalse(restore(wifiWasOffBeforeRepair = false))
+        assertEquals(
+            SelfArmBootRepairPolicy.WifiRestore.NOT_OWED,
+            restore(repairOwesWifiOff = false),
+        )
     }
 
     @Test
-    fun `a radio already off again is left alone`() {
-        assertFalse(restore(wifiEnabledNow = false))
+    fun `a radio already off again only settles the debt`() {
+        assertEquals(
+            SelfArmBootRepairPolicy.WifiRestore.SETTLED,
+            restore(wifiEnabledNow = false),
+        )
     }
 
     @Test
-    fun `a dead bridge means the radio stays as the automation left it`() {
-        // Restoring would take a second Settings run, and the automation already had its turn.
-        assertFalse(restore(bridgePresumedDead = true))
-    }
-
-    @Test
-    fun `every live radio owner blocks the restore`() {
-        assertFalse(restore(wifiHubOwned = true))
-        assertFalse(restore(setupSessionActive = true))
-        assertFalse(restore(mediaSyncSessionActive = true))
-        // The camera never claims ownership of a radio it found already up.
-        assertFalse(restore(cameraSessionActive = true))
+    fun `every live radio owner defers the restore without forgetting it`() {
+        listOf(
+            restore(wifiHubOwned = true),
+            restore(setupSessionActive = true),
+            restore(mediaSyncSessionActive = true),
+            // The camera never claims ownership of a radio it found already up.
+            restore(cameraSessionActive = true),
+        ).forEach { assertEquals(SelfArmBootRepairPolicy.WifiRestore.DEFERRED, it) }
     }
 }

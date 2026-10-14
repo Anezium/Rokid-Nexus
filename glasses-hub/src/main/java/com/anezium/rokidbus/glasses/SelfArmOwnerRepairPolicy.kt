@@ -77,11 +77,79 @@ internal object SelfArmOwnerRepairPolicy {
         before == HelperRecord.ALIVE_THIS_BOOT
 
     /**
+     * How long an arm waits, after the repair brought Wi-Fi up, for what it actually talks over: a
+     * Wi-Fi network and adbd's TLS port. The radio reports "on" seconds before either exists, and
+     * an arm started on that report measures nothing — it answered "could not restore" for a
+     * helper that was running (issue #53, round 8 on device).
+     */
+    const val WIFI_READY_TIMEOUT_MS = 20_000L
+    const val WIFI_READY_POLL_MS = 500L
+
+    /** An arm that still cannot reach its session right after the bring-up is tried again, boundedly. */
+    const val UNREACHABLE_ARM_ATTEMPTS = 3
+    const val UNREACHABLE_RETRY_WINDOW_MS = 30_000L
+    const val UNREACHABLE_RETRY_DELAY_MS = 2_000L
+
+    enum class ArmReadiness(val logValue: String) {
+        READY("ready"),
+        NO_NETWORK("no_network"),
+        NO_TLS_PORT("no_tls_port"),
+    }
+
+    /**
+     * Waits up to [timeoutMs] for a Wi-Fi network, then for adbd's TLS port. Not a gate: the arm
+     * runs either way and stays the only measurement; this only keeps it from running too early.
+     */
+    fun awaitArmReadiness(
+        networkReady: () -> Boolean,
+        enableWirelessDebugging: () -> Unit,
+        readTlsPort: () -> Int,
+        nowMs: () -> Long,
+        sleep: (Long) -> Unit,
+        timeoutMs: Long = WIFI_READY_TIMEOUT_MS,
+        pollMs: Long = WIFI_READY_POLL_MS,
+    ): ArmReadiness {
+        val deadline = nowMs() + timeoutMs
+        while (!networkReady()) {
+            if (nowMs() >= deadline) return ArmReadiness.NO_NETWORK
+            sleep(pollMs)
+        }
+        // The framework drops wireless debugging while the radio is off and may not restore it
+        // by itself; the arm would ask for it anyway, only later.
+        enableWirelessDebugging()
+        while (readTlsPort() <= 0) {
+            if (nowMs() >= deadline) return ArmReadiness.NO_TLS_PORT
+            sleep(pollMs)
+        }
+        return ArmReadiness.READY
+    }
+
+    /**
+     * Whether an arm that just finished deserves another try. Only right after this repair
+     * brought Wi-Fi up ([msSinceWifiUp] non-null), and only when it never reached the helper:
+     * its session was unreachable, or — [result] null — another arm held the single flight and
+     * did not land, so this repair measured nothing itself.
+     */
+    fun mayRetryArm(
+        result: SelfArmWatchdogEnsureResult?,
+        attempt: Int,
+        msSinceWifiUp: Long?,
+        bootstrapComplete: Boolean,
+    ): Boolean = msSinceWifiUp != null &&
+        msSinceWifiUp < UNREACHABLE_RETRY_WINDOW_MS &&
+        attempt < UNREACHABLE_ARM_ATTEMPTS &&
+        // A refused credential the arm just dropped needs a pairing, not another arm.
+        bootstrapComplete &&
+        (result == null || result == SelfArmWatchdogEnsureResult.SESSION_UNREACHABLE)
+
+    /**
      * [armed] and [bridgeRunning] are what the arm measured as it left the helper;
      * [helperRunningBeforeArm] is what the same arm found before it started anything, and wins
      * over the record whenever it is known — a record that says alive cannot tell a helper still
      * running from one stopped since. [pairing] is the answer to the pairing request made when no
-     * arm was possible without one, or null when none was made.
+     * arm was possible without one, or null when none was made. [sessionUnreachable] says the
+     * arm never reached the helper at all: the glasses could not be reached over Wi-Fi, which
+     * is not the same as a helper that would not come back.
      */
     fun verdict(
         armed: Boolean,
@@ -89,6 +157,7 @@ internal object SelfArmOwnerRepairPolicy {
         before: HelperRecord,
         pairing: SelfPairingOutcome?,
         helperRunningBeforeArm: Boolean? = null,
+        sessionUnreachable: Boolean = false,
     ): String = when {
         armed && bridgeRunning &&
             (helperRunningBeforeArm ?: (before == HelperRecord.ALIVE_THIS_BOOT)) ->
@@ -97,6 +166,7 @@ internal object SelfArmOwnerRepairPolicy {
         armed -> GlassesRepairContract.RESULT_PARTIAL
         pairing?.pending == true -> GlassesRepairContract.RESULT_PAIRING_PENDING
         pairing != null -> GlassesRepairContract.RESULT_PAIRING_REQUIRED
+        sessionUnreachable -> GlassesRepairContract.RESULT_WIFI_UNAVAILABLE
         else -> GlassesRepairContract.RESULT_ARM_FAILED
     }
 }
