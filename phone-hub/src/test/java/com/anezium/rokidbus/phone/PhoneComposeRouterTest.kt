@@ -286,22 +286,18 @@ class PhoneComposeRouterTest {
     @Test
     fun `a keyboard that cannot open ends the capture uncommitted at once, and a retry starts clean`() {
         host.keyboardOpens = false
-        router.handleGlasses(ComposeContract.TYPE_START_PATH, ComposeContract.typeStart(ComposeTypeStart("t1", "hi", 100)))
-        val done = host.sent(ComposeContract.TYPE_DONE_PATH).map { ComposeContract.parseTypeDone(it) }
-        assertEquals(listOf(ComposeTypeDone("t1", committed = false)), done)
+        startTyping(CAPTURE_A, "Hi")
+        assertEquals(listOf(ComposeTypeDone(CAPTURE_A, committed = false)), dones())
         // Nothing is left of it: a late phone event for it changes nothing.
-        router.onPhoneText("t1", "late")
-        router.onPhoneDone("t1", commit = true, text = "late")
+        router.onPhoneText(CAPTURE_A, "late")
+        router.onPhoneDone(CAPTURE_A, commit = true, text = "late")
         assertTrue(host.sent(ComposeContract.TYPE_TEXT_PATH).isEmpty())
-        assertEquals(1, host.sent(ComposeContract.TYPE_DONE_PATH).size)
+        assertEquals(1, dones().size)
 
         host.keyboardOpens = true
-        router.handleGlasses(ComposeContract.TYPE_START_PATH, ComposeContract.typeStart(ComposeTypeStart("t2", "", 100)))
-        router.onPhoneDone("t2", commit = true, text = "on my way")
-        assertEquals(
-            ComposeTypeDone("t2", committed = true, text = "on my way"),
-            ComposeContract.parseTypeDone(host.sent(ComposeContract.TYPE_DONE_PATH).last()),
-        )
+        startTyping(CAPTURE_B, "")
+        router.onPhoneDone(CAPTURE_B, commit = true, text = "on my way")
+        assertEquals(ComposeTypeDone(CAPTURE_B, committed = true, text = "on my way"), dones().last())
     }
 
     @Test
