@@ -69,7 +69,7 @@ class RelayLauncherThreadTest {
     private val threadId: String
         get() = ReplyRepository.stableId(chat.key)
 
-    private fun handoffs() = ReplyRepository.inboxEntries().single { it.id == threadId }.snapshot.handoffs
+    private fun handoffs() = ReplyRepository.threadEntries().single { it.id == threadId }.snapshot.handoffs
 
     private fun request(requestId: String, pageId: String) =
         PageSurfaceContract.correlationPayload(PageCorrelation(requestId, 1, 1, pageId))

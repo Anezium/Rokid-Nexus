@@ -71,6 +71,12 @@ internal object ReplyRepository {
 
     /** Per thread, the replies this process handed to the app, until the app's own copy shows them. */
     private val handoffs = mutableMapOf<String, List<RelayHandoff>>()
+
+    /**
+     * Threads answered from Relay. The classic inbox drops them, as it always did, until the app
+     * posts the thread again; the launcher's thread pages keep reading them with their handoff.
+     */
+    private val answered = mutableSetOf<String>()
     private var nextHandoffSerial = 0L
     private val lastCaptureAtMs = AtomicLong(0L)
 
@@ -145,6 +151,7 @@ internal object ReplyRepository {
             imagePreview = imagePreview,
         )
         pending[id] = reply
+        answered.remove(id)
         recent[id] = ReadableReply(
             snapshot = RelayInboxSnapshot(
                 id = id,
@@ -203,6 +210,7 @@ internal object ReplyRepository {
         // The thread stays: the reply reads in it as ours, handed to the app, until a later
         // capture shows the app's own copy of it. Nothing here claims it was delivered or read.
         recordHandoff(notificationId, text, RelayHandoffStatus.HANDED_OFF, settings.messagesPerThread())
+        synchronized(this) { answered += notificationId }
         NotificationControl.notifyInboxChanged()
         return ReplySendResult.Sent
     }
@@ -256,12 +264,19 @@ internal object ReplyRepository {
     fun threadIdForPage(pageId: String): String? =
         (recent.keys + pending.keys).firstOrNull { RelayPages.threadPageId(it) == pageId }
 
+    /** The classic inbox of the band and the full app: every thread not answered from Relay since the app last posted it. */
     @Synchronized
-    fun inboxEntries(): List<RelayInboxEntry> = RelayInboxCatalog.entries(
-        snapshots = recent.values.map { readable ->
+    fun inboxEntries(): List<RelayInboxEntry> = entries { it !in answered }
+
+    /** Every thread Relay can read, answered ones included, for the launcher's thread pages. */
+    @Synchronized
+    fun threadEntries(): List<RelayInboxEntry> = entries { true }
+
+    private fun entries(include: (String) -> Boolean): List<RelayInboxEntry> = RelayInboxCatalog.entries(
+        snapshots = recent.values.filter { include(it.snapshot.id) }.map { readable ->
             handoffs[readable.snapshot.id]?.let { readable.snapshot.copy(handoffs = it) } ?: readable.snapshot
         },
-        liveReplyIds = pending.keys.toSet(),
+        liveReplyIds = pending.keys.filter(include).toSet(),
     )
 
     /** Keeps readable text in memory while dropping every process-bound reply object. */
@@ -275,6 +290,7 @@ internal object ReplyRepository {
         pending.clear()
         recent.clear()
         handoffs.clear()
+        answered.clear()
     }
 
     @Synchronized
@@ -296,6 +312,7 @@ internal object ReplyRepository {
                 ?: return
             recent.remove(oldestId)
             handoffs.remove(oldestId)
+            answered.remove(oldestId)
         }
     }
 

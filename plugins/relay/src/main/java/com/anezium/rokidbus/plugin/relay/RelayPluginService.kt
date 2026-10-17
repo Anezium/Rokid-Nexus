@@ -88,7 +88,7 @@ class RelayPluginService : NexusPluginService() {
             RelayPages.page(
                 pageId,
                 revision,
-                ReplyRepository.inboxEntries(),
+                ReplyRepository.threadEntries(),
                 settings.hideInboxPreviews(),
                 conversation = nexusClient?.supportsLauncherInteractive() == true,
             ) {
