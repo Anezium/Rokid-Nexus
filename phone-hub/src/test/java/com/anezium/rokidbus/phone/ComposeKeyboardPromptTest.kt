@@ -45,7 +45,7 @@ class ComposeKeyboardPromptTest {
     @Config(sdk = [32])
     fun `on Android 12L with the phone locked the keyboard is offered by notification`() {
         ShadowSettings.setCanDrawOverlays(true)
-        shadowOf(app.getSystemService(KeyguardManager::class.java)).setIsKeyguardLocked(true)
+        shadowOf(app.getSystemService(KeyguardManager::class.java)).setKeyguardLocked(true)
         ComposeKeyboardPrompt.open(app, request)
         assertEquals(1, prompts().size)
     }
