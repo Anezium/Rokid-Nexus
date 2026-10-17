@@ -8,6 +8,7 @@ import com.anezium.rokidbus.shared.ComposeContract
 import com.anezium.rokidbus.shared.ComposeDictateStart
 import com.anezium.rokidbus.shared.ComposeDictateStop
 import com.anezium.rokidbus.shared.ComposeDictationReason
+import com.anezium.rokidbus.shared.ComposeTypeDone
 import com.anezium.rokidbus.shared.ComposeTypeStart
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -283,6 +284,27 @@ class PhoneComposeRouterTest {
     }
 
     @Test
+    fun `a keyboard that cannot open ends the capture uncommitted at once, and a retry starts clean`() {
+        host.keyboardOpens = false
+        router.handleGlasses(ComposeContract.TYPE_START_PATH, ComposeContract.typeStart(ComposeTypeStart("t1", "hi", 100)))
+        val done = host.sent(ComposeContract.TYPE_DONE_PATH).map { ComposeContract.parseTypeDone(it) }
+        assertEquals(listOf(ComposeTypeDone("t1", committed = false)), done)
+        // Nothing is left of it: a late phone event for it changes nothing.
+        router.onPhoneText("t1", "late")
+        router.onPhoneDone("t1", commit = true, text = "late")
+        assertTrue(host.sent(ComposeContract.TYPE_TEXT_PATH).isEmpty())
+        assertEquals(1, host.sent(ComposeContract.TYPE_DONE_PATH).size)
+
+        host.keyboardOpens = true
+        router.handleGlasses(ComposeContract.TYPE_START_PATH, ComposeContract.typeStart(ComposeTypeStart("t2", "", 100)))
+        router.onPhoneDone("t2", commit = true, text = "on my way")
+        assertEquals(
+            ComposeTypeDone("t2", committed = true, text = "on my way"),
+            ComposeContract.parseTypeDone(host.sent(ComposeContract.TYPE_DONE_PATH).last()),
+        )
+    }
+
+    @Test
     fun `one typing capture at a time - a new one ends the old uncommitted`() {
         startTyping(CAPTURE_A, "old")
         startTyping(CAPTURE_B, "new")
@@ -385,8 +407,12 @@ class PhoneComposeRouterTest {
 
         override fun pluginSpeechActive(): Boolean = pluginSpeech
 
-        override fun openKeyboard(request: ComposeTypeStart) {
+        /** What the phone could bring up for the keyboard; false when nothing could open. */
+        var keyboardOpens = true
+
+        override fun openKeyboard(request: ComposeTypeStart): Boolean {
             opened += request
+            return keyboardOpens
         }
 
         override fun closeKeyboard(captureId: String) {

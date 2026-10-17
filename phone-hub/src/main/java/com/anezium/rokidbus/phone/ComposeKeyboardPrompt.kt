@@ -9,6 +9,7 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Build
 import android.util.Log
 import com.anezium.rokidbus.shared.ComposeTypeStart
 
@@ -46,7 +47,12 @@ internal object ComposeKeyboardPrompt {
     private var currentText: String = ""
     private var screen: ComposeKeyboardScreen? = null
 
-    fun open(context: Context, request: ComposeTypeStart) {
+    /**
+     * Whether the keyboard is in front of the user or one tap away. When neither the screen nor
+     * the notification could come up, the capture is forgotten here and the caller ends it, so
+     * the glasses never wait for text nobody can type.
+     */
+    fun open(context: Context, request: ComposeTypeStart): Boolean {
         val visible = synchronized(this) {
             current = request
             currentText = request.initialText
@@ -54,16 +60,23 @@ internal object ComposeKeyboardPrompt {
         }
         if (visible != null) {
             visible.onCaptureChanged(request, request.initialText)
-            return
+            return true
         }
         val locked = context.getSystemService(KeyguardManager::class.java)?.isKeyguardLocked == true
         if (RemoteKeyboardPrompt.canOpenByItself(context) && !locked) {
             val opened = runCatching { context.startActivity(screenIntent(context)) }
                 .onFailure { Log.w(TAG, "Could not open the composer keyboard", it) }
                 .isSuccess
-            if (opened) return
+            if (opened) return true
         }
-        postNotification(context)
+        if (postNotification(context)) return true
+        synchronized(this) {
+            if (current?.captureId == request.captureId) {
+                current = null
+                currentText = ""
+            }
+        }
+        return false
     }
 
     fun close(context: Context, captureId: String) {
@@ -114,12 +127,15 @@ internal object ComposeKeyboardPrompt {
         }
     }
 
-    private fun postNotification(context: Context) {
-        if (context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+    /** Whether the prompt was posted. The runtime notification grant exists from Android 13 only. */
+    private fun postNotification(context: Context): Boolean {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
             Log.d(TAG, "Composer keyboard prompt skipped: POST_NOTIFICATIONS permission not granted")
-            return
+            return false
         }
-        val manager = context.getSystemService(NotificationManager::class.java) ?: return
+        val manager = context.getSystemService(NotificationManager::class.java) ?: return false
         manager.createNotificationChannel(
             NotificationChannel(CHANNEL_ID, "Glasses replies", NotificationManager.IMPORTANCE_HIGH),
         )
@@ -137,8 +153,9 @@ internal object ComposeKeyboardPrompt {
             .setAutoCancel(true)
             .setTimeoutAfter(NOTIFICATION_TIMEOUT_MS)
             .build()
-        runCatching { manager.notify(NOTIFICATION_TAG, NOTIFICATION_ID, notification) }
+        return runCatching { manager.notify(NOTIFICATION_TAG, NOTIFICATION_ID, notification) }
             .onFailure { Log.w(TAG, "Could not post the composer keyboard prompt", it) }
+            .isSuccess
     }
 
     /**

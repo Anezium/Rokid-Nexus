@@ -39,8 +39,11 @@ internal interface PhoneComposeHost {
     /** A plugin's speech session holds the hub's single speech session. */
     fun pluginSpeechActive(): Boolean
 
-    /** Opens the phone keyboard for [request]: directly when Android allows it, else a heads-up. */
-    fun openKeyboard(request: ComposeTypeStart)
+    /**
+     * Opens the phone keyboard for [request]: directly when Android allows it, else a heads-up.
+     * False when neither could come up.
+     */
+    fun openKeyboard(request: ComposeTypeStart): Boolean
 
     /** Closes the keyboard opened for [captureId], screen and heads-up alike. */
     fun closeKeyboard(captureId: String)
@@ -294,7 +297,14 @@ internal class PhoneComposeRouter(private val host: PhoneComposeHost) {
         }
         // The screen moves to the new capture; the one it replaces ends uncommitted.
         replaced?.let { sendDone(it.captureId, committedText = null) }
-        host.openKeyboard(request)
+        if (!host.openKeyboard(request)) {
+            // Neither the keyboard screen nor its notification can come up: the capture ends
+            // uncommitted now rather than leave the glasses waiting for text.
+            val failed = synchronized(lock) { typing?.takeIf { it.captureId == request.captureId }?.also { typing = null } }
+            failed?.let { sendDone(it.captureId, committedText = null) }
+            host.log("compose typing could not open the phone keyboard capture=${request.captureId}")
+            return
+        }
         host.log("compose typing started capture=${request.captureId}")
     }
 

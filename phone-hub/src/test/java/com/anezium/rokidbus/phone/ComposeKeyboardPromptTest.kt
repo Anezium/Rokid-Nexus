@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import com.anezium.rokidbus.shared.ComposeTypeStart
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -37,7 +38,7 @@ class ComposeKeyboardPromptTest {
     @Config(sdk = [30])
     fun `on Android 11 without the overlay permission the keyboard is offered by notification`() {
         ShadowSettings.setCanDrawOverlays(false)
-        ComposeKeyboardPrompt.open(app, request)
+        assertTrue(ComposeKeyboardPrompt.open(app, request))
         assertEquals(1, prompts().size)
     }
 
@@ -46,7 +47,7 @@ class ComposeKeyboardPromptTest {
     fun `on Android 12L with the phone locked the keyboard is offered by notification`() {
         ShadowSettings.setCanDrawOverlays(true)
         shadowOf(app.getSystemService(KeyguardManager::class.java)).setKeyguardLocked(true)
-        ComposeKeyboardPrompt.open(app, request)
+        assertTrue(ComposeKeyboardPrompt.open(app, request))
         assertEquals(1, prompts().size)
     }
 
@@ -54,12 +55,12 @@ class ComposeKeyboardPromptTest {
     @Config(sdk = [33])
     fun `on Android 13 the notification needs its runtime grant`() {
         shadowOf(app).denyPermissions(Manifest.permission.POST_NOTIFICATIONS)
-        ComposeKeyboardPrompt.open(app, request)
+        // Nothing can come up: the caller is told, so it ends the capture.
+        assertFalse(ComposeKeyboardPrompt.open(app, request))
         assertTrue(prompts().isEmpty())
-        ComposeKeyboardPrompt.close(app, request.captureId)
 
         shadowOf(app).grantPermissions(Manifest.permission.POST_NOTIFICATIONS)
-        ComposeKeyboardPrompt.open(app, request)
+        assertTrue(ComposeKeyboardPrompt.open(app, request))
         assertEquals(1, prompts().size)
     }
 }

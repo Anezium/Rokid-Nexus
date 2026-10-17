@@ -386,7 +386,7 @@ class BusHubService : Service() {
             override fun pluginSpeechActive(): Boolean =
                 synchronized(speechBusLock) { activeSpeechBusSession?.ended?.get() == false }
 
-            override fun openKeyboard(request: ComposeTypeStart) =
+            override fun openKeyboard(request: ComposeTypeStart): Boolean =
                 ComposeKeyboardPrompt.open(applicationContext, request)
 
             override fun closeKeyboard(captureId: String) =
