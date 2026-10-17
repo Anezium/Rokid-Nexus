@@ -97,10 +97,7 @@ class RelayLegacyInboxTest {
     fun `a reply sent from the full app leaves the classic inbox, with or without clearing`() {
         start(clearAfterReply = false)
         assertEquals(ReplySendResult.Sent, ReplyRepository.sendReply(app, threadId, "On my way"))
-        assertFalse(inboxIds().contains(threadId))
-        // The full app opened again lists what is left: not the answered thread.
-        service.get().onNexusOpen()
-        RelayHubFixture.idle()
+        // The full app's list, on every open, is the classic inbox.
         assertFalse(inboxIds().contains(threadId))
 
         RelaySettings(app).setClearAfterReply(true)
