@@ -154,8 +154,9 @@ session's drop on the next log line; the F1 link-loss mutation was not run.
 
 Known limits after the Astra fixes:
 - The phone's queued notice **withdrawals** are still memory-only (purges are now durable): a withdrawal
-  owed when the phone hub dies is lost, and the glasses keep that entry until the owner's next notice,
-  a purge, or their own restart.
+  owed when the phone hub dies is lost, and the glasses keep that entry, within the 24-hour display
+  bound, until a purge of its owner, eviction by the 30-entry cap, or their own restart. A later notice
+  from the same owner does not remove it.
 - A thread answered from Relay leaves the classic inbox but keeps its reply authority for the
   launcher's thread page, as the accepted launcher design wants; it re-enters the classic inbox when the
   app posts it again.

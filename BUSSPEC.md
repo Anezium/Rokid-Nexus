@@ -1829,9 +1829,11 @@ age (a display bound, not a reply lease). An entry holds its owner, its
 flag, its label, the text as shown on the band (the owner's redaction and the
 wearer's hide choices preserved), its arrival time, and a local state `new`,
 `seen`, `handed_off` or `withdrawn`. A withdraw marks matching entries
-withdrawn; a purge removes the owner's entries, and a root already open or
-beneath a page shows an inert `Notification removed` placeholder in place of any
-stop that showed that owner; a link loss keeps entries but leaves them read-only
+withdrawn; a purge removes the owner's entries, then refreshes every root
+already open or beneath a page from the remaining history: a stop that still
+references the purged owner after that refresh becomes an inert `Notification
+removed` placeholder in the same slot, while a generic preview may instead
+follow a surviving entry of another owner; a link loss keeps entries but leaves them read-only
 until the phone is back. The root's notification stop is
 an aggregate card (`<n> conversations`, opening the owner's main page) when the
 newest live conversation entries come from more than one thread of one owner;
