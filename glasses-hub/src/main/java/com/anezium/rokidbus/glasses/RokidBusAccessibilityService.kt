@@ -2135,6 +2135,7 @@ internal object NexusInput {
         this.service = service
         // A boot before the phone connects resolves from what the last announcement left.
         backend = selection(service).current()
+        ActivityController.onLauncherBackendChanged()
         log("Launcher backend=${backend.name}")
     }
 
@@ -2181,6 +2182,7 @@ internal object NexusInput {
             backend = next
             arbiter.reset()
             scheduleTick()
+            ActivityController.onLauncherBackendChanged()
             log("Launcher backend=${next.name}")
         }
     }

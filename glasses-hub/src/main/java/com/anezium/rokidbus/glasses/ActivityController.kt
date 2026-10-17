@@ -1,5 +1,6 @@
 package com.anezium.rokidbus.glasses
 
+import com.anezium.rokidbus.glasses.input.LauncherBackend
 import com.anezium.rokidbus.glasses.input.LauncherBackendSelection
 import android.content.Context
 import android.os.Handler
@@ -746,10 +747,13 @@ internal object ActivityController {
             launcherVersion = version
             // A link loss is not a downgrade: the phone keeps its collection until it announces
             // again, and trimming here would drop offline entries the phone still holds.
-            if (linkLost || version == capacityVersion) return@runOnMain
-            capacityVersion = version
-            val evicted = state.setCapacity(ActivitySurfaceContract.effectiveCollectionCapacity(version))
-            if (evicted.isNotEmpty()) log("activity collection trimmed count=${evicted.size}")
+            if (linkLost) return@runOnMain
+            if (version != capacityVersion) {
+                capacityVersion = version
+                val evicted = state.setCapacity(ActivitySurfaceContract.effectiveCollectionCapacity(version))
+                if (evicted.isNotEmpty()) log("activity collection trimmed count=${evicted.size}")
+            }
+            // Every announcement may change whether the bundle's ambient presentation applies.
             publish()
         }
     }
@@ -844,15 +848,16 @@ internal object ActivityController {
     }
 
     private fun publishEvent(result: ActivityMutation.Applied, nowMs: Long) {
+        val ambient = launcherAmbient()
         val event = state.presentEvent(
             surfaceId = result.surfaceId,
-            context = presentationContext(),
+            context = presentationContext(ambient),
             significant = result.significant,
             urgent = result.urgent,
             nowMs = nowMs,
             alwaysExpanded = alwaysExpanded(),
-            sizeOf = AmbientPreferences::effectiveSize,
-            mode = AmbientForeground.mode(),
+            sizeOf = ambientSizes(ambient),
+            mode = ambientMode(ambient),
         )
         if (result.significant && event.presentation == ActivityPresentation.PULSE) {
             log("activity flare throttled id=${result.surfaceId}")
@@ -874,16 +879,17 @@ internal object ActivityController {
         eventUrgent: Boolean = false,
         nowMs: Long = SystemClock.elapsedRealtime(),
     ) {
+        val ambient = launcherAmbient()
         latestRender = staleness.apply(state.snapshot(
             nowMs = nowMs,
-            context = presentationContext(),
+            context = presentationContext(ambient),
             pinCorner = PinController.activePin()?.content?.position,
             alwaysExpanded = alwaysExpanded(),
             eventSurfaceId = eventSurfaceId,
             eventPresentation = eventPresentation,
             eventUrgent = eventUrgent,
-            sizeOf = AmbientPreferences::effectiveSize,
-            mode = AmbientForeground.mode(),
+            sizeOf = ambientSizes(ambient),
+            mode = ambientMode(ambient),
         ))
         // A route lives as long as its activity: ended or offline, its geometry and heading go.
         RouteLive.retain(
@@ -899,15 +905,37 @@ internal object ActivityController {
     }
 
     /**
-     * The open Nexus session counts as the launcher, explicitly, whichever backend drew it; under
-     * Nexus's own windows the foreground resolver tells the home from a native app.
+     * The launcher bundle's ambient presentation (plan 028a §8.1-§8.2) is the new launcher's, over
+     * a pair whose last announcement negotiated the bundle; a link loss keeps it, as it keeps the
+     * backend. The classic launcher and an older phone keep the islands of the hub before the
+     * bundle: no foreground policy, no saved size, an app in front treated as the home.
      */
-    private fun presentationContext(): ActivityPresentationContext = when {
+    private fun launcherAmbient(): Boolean =
+        (GlassesHub.launcherInteractiveActive() || GlassesHub.launcherBundleHeldThroughLoss()) &&
+            NexusInput.backend == LauncherBackend.SESSION
+
+    private fun ambientSizes(ambient: Boolean): (String) -> AmbientSize? =
+        if (ambient) AmbientPreferences::effectiveSize else { _ -> null }
+
+    private fun ambientMode(ambient: Boolean): ForegroundAmbientMode =
+        if (ambient) AmbientForeground.mode() else ForegroundAmbientMode.RESIDENTS
+
+    /**
+     * With the bundle's ambient presentation, the open Nexus session counts as the launcher and the
+     * foreground resolver tells the home from a native app; without it, as before the bundle, only
+     * the classic launcher's overlay does, and anything else is the home.
+     */
+    private fun presentationContext(ambient: Boolean): ActivityPresentationContext = when {
         cameraOverlayActive -> ActivityPresentationContext.CAMERA_OVERLAY
         SurfaceController.activeSurface() != null -> ActivityPresentationContext.ACTIVE_SURFACE
-        LauncherOverlayRenderer.isShown() || sessionOpen -> ActivityPresentationContext.NEXUS_LAUNCHER
-        AmbientForeground.homeInFront -> ActivityPresentationContext.IDLE_HOME
+        LauncherOverlayRenderer.isShown() || (ambient && sessionOpen) -> ActivityPresentationContext.NEXUS_LAUNCHER
+        !ambient || AmbientForeground.homeInFront -> ActivityPresentationContext.IDLE_HOME
         else -> ActivityPresentationContext.NATIVE_APP
+    }
+
+    /** The launcher backend changed: the islands follow whether the bundle's ambient presentation applies. */
+    fun onLauncherBackendChanged() {
+        runOnMain(::contextChanged)
     }
 
     /** The Nexus session opened or closed; told by the session host, on the main thread. */
