@@ -187,7 +187,28 @@ Known limits after the Astra fixes:
 
 All builds ran in the configured integration checkout, hubs without `-PskipCxrGlobal`.
 
-After the Astra fixes, at `a2c46cc6` (source equal to the final commit except documentation), all ten
+After merging `origin/main` (`ad9191d6`, hubs 1.7.1) in merge commit `5c560fbb`, at `13b696a6` (source
+equal to the final commit except documentation), all ten suites re-executed with `--rerun-tasks`:
+
+```
+BUILD SUCCESSFUL in 56s
+194 actionable tasks: 194 executed
+```
+
+```
+BUILD SUCCESSFUL in 1m 56s
+160 actionable tasks: 160 executed
+```
+
+JUnit XML: **3831 tests, 0 failures, 0 errors, 0 skipped** — shared 494, bus-client 192, phone-hub 933,
+glasses-hub 1137, nav 129 (main moved six planner tests into the SDK's `NexusGuidancePlannerTest`), relay 128,
+media 78, assistant 555, sample 55, transit 130. Debug APKs 1.7.1 (10701): phone hub 23,240,731 bytes, SHA-256
+`9fb3c59467cfde86a82eae4945c7bd93a166c55a60b24d363982e6e7ec607767`; glasses hub 24,328,608 bytes, SHA-256
+`cffd2111f68f70461f28128d6ed2f0b673914b4f7550ed9f6f1a37e8dda33fa3`. One earlier full run hit the known
+`bus-client` `NexusPageTest` timing flake and passed when rerun. Resolution record:
+`build/launcher-complete/reviews/MAIN-MERGE-20261017.md` in the integration checkout (local, not published).
+
+Before the merge, after the Astra fixes, at `a2c46cc6` (source equal to the final commit except documentation), all ten
 suites re-executed with `--rerun-tasks`:
 
 `./gradlew :shared:test :bus-client:testDebugUnitTest :plugin-nav:testDebugUnitTest :plugin-relay:testDebugUnitTest :plugin-media:testDebugUnitTest :plugin-assistant:testDebugUnitTest :plugin-sample:testDebugUnitTest :plugin-transit:testDebugUnitTest -PskipCxrGlobal=true --rerun-tasks`
